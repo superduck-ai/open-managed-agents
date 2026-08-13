@@ -2,8 +2,9 @@ package codesessions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"strings"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -11,11 +12,16 @@ import (
 func (s *Service) syncPublicSessionStatusFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
 	// worker 状态属于内部执行协议；这里只把可公开表达的状态同步到 session 和主线程。
 	// 找不到公开 session/thread 代表旧数据或尚未完成初始化，不应让 worker 上报失败。
-	publicStatus, ok := publicSessionStatusFromWorkerStatus(workerStatus)
-	if !ok || strings.TrimSpace(record.SessionExternalID) == "" {
+	if record.SessionExternalID == "" {
 		return nil
 	}
-	if err := s.db.SetSessionStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if workerStatus == "running" {
+		return s.publishPublicRunningStatus(ctx, record)
+	}
+	if workerStatus != "idle" && workerStatus != "requires_action" {
+		return nil
+	}
+	if err := s.db.SetSessionStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, "idle"); err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
 	thread, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
@@ -25,20 +31,33 @@ func (s *Service) syncPublicSessionStatusFromWorker(ctx context.Context, record 
 		}
 		return err
 	}
-	if err := s.db.SetSessionThreadStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, thread.ExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := s.db.SetSessionThreadStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, thread.ExternalID, "idle"); err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
 	return nil
 }
 
-func publicSessionStatusFromWorkerStatus(workerStatus string) (string, bool) {
-	// requires_action 对公开 API 表示“等待用户输入”，因此映射为 idle；其余内部状态不外泄。
-	switch workerStatus {
-	case "running":
-		return "running", true
-	case "idle", "requires_action":
-		return "idle", true
-	default:
-		return "", false
+func (s *Service) publishPublicRunningStatus(ctx context.Context, record db.CodeSession) error {
+	session, found, err := s.db.GetSession(ctx, record.WorkspaceUUID, record.SessionExternalID)
+	if err != nil {
+		return err
 	}
+	if !found {
+		return nil
+	}
+	if session.Status == "running" {
+		return nil
+	}
+	now := time.Now().UTC()
+	eventID := stablePublicEventID(record.ExternalID, "worker_status_running\x00"+session.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	payload, err := marshalRaw(map[string]any{
+		"id":           eventID,
+		"type":         "session.status_running",
+		"created_at":   formatTime(now),
+		"processed_at": formatTime(now),
+	})
+	if err != nil {
+		return err
+	}
+	return s.publishPublicPayloads(ctx, record.ExternalID, []json.RawMessage{payload})
 }

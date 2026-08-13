@@ -352,9 +352,12 @@ func (s *Service) publishPublicPayloadsToSink(ctx context.Context, codeSessionID
 	if len(payloads) == 0 {
 		return db.CodeSession{}, nil
 	}
-	codeSession, err := s.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return db.CodeSession{}, err
+	}
+	if !found {
+		return db.CodeSession{}, db.ErrNotFound
 	}
 	s.sinkMu.Lock()
 	sink := s.sink
@@ -488,7 +491,7 @@ func requestIDString(requestID *string) string {
 }
 
 func stablePublicEventID(codeSessionID, seed string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(codeSessionID) + "\x00public\x00" + strings.TrimSpace(seed)))
+	sum := sha256.Sum256([]byte(codeSessionID + "\x00public\x00" + seed))
 	return "sevt_" + hex.EncodeToString(sum[:16])
 }
 

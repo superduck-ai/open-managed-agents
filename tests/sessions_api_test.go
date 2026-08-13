@@ -256,15 +256,26 @@ func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
 
 func mustSessionRecord(t *testing.T, app *testApp, sessionExternalID string) db.Session {
 	t.Helper()
-	session, err := app.db.GetSession(
+	session, found, err := app.db.GetSession(
 		context.Background(),
 		getDefaultDBIDs(t, app.pool).WorkspaceUUID,
 		sessionExternalID,
 	)
-	if err != nil {
-		t.Fatalf("load Session %q: %v", sessionExternalID, err)
+	if err != nil || !found {
+		t.Fatalf("load Session %q = (%t, %v), want found", sessionExternalID, found, err)
 	}
 	return session
+}
+
+func getCodeSession(app *testApp, ctx context.Context, codeSessionID string) (db.CodeSession, error) {
+	record, found, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return db.CodeSession{}, err
+	}
+	if !found {
+		return db.CodeSession{}, db.ErrNotFound
+	}
+	return record, nil
 }
 
 func TestSessionsEnvironmentKeyAccess(t *testing.T) {
@@ -706,7 +717,7 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 		t.Fatalf("set code session initializing: %v", err)
 	}
 
-	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load initializing code session: %v", err)
 	}
@@ -723,7 +734,7 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
 		t.Fatalf("activate with startup history: %v", err)
 	}
-	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err = getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("reload activated code session: %v", err)
 	}
@@ -769,11 +780,11 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 		t.Fatalf("set Code Session initializing: %v", err)
 	}
 
-	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
-	if err != nil {
-		t.Fatalf("load Session: %v", err)
+	session, found, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
+	if err != nil || !found {
+		t.Fatalf("load Session = (%t, %v), want found", found, err)
 	}
-	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load Code Session: %v", err)
 	}
@@ -839,11 +850,11 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 		t.Fatalf("set rollback code session initializing: %v", err)
 	}
 	sendSessionEvents(t, app, sessionResponse.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"history must remain durable"}]}]}`, defaultTestKey)
-	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
-	if err != nil {
-		t.Fatalf("load rollback Session: %v", err)
+	session, found, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
+	if err != nil || !found {
+		t.Fatalf("load rollback Session = (%t, %v), want found", found, err)
 	}
-	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load rollback Code Session: %v", err)
 	}
@@ -870,7 +881,7 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	if listErr != nil || len(after) != 1 {
 		t.Fatalf("rollback inbound after delivery = (%#v, %v), want unchanged initialize", after, listErr)
 	}
-	reloaded, err := app.db.GetCodeSession(ctx, codeSessionID)
+	reloaded, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("reload rollback Code Session: %v", err)
 	}
@@ -1269,11 +1280,11 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("initial worker read metadata = %+v, want nil", metadata)
 	}
 
-	seedState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"external_metadata":{"pending_action":{"tool_name":"OldTool"},"task_summary":"stale","persisted":true}}`)
+	seedState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"external_metadata":{"pending_action":{"tool_name":"OldTool"},"task_summary":"stale","persisted":true}}`)
 	if _, ok := seedState.Worker.ExternalMetadata["persisted"]; !ok {
 		t.Fatalf("seed worker metadata missing persisted key: %+v", seedState.Worker.ExternalMetadata)
 	}
-	initState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"idle","requires_action_details":null,"external_metadata":{"pending_action":null,"task_summary":null}}`)
+	initState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle","requires_action_details":null,"external_metadata":{"pending_action":null,"task_summary":null}}`)
 	if initState.Worker.WorkerStatus != "idle" {
 		t.Fatalf("init worker status = %q, want idle", initState.Worker.WorkerStatus)
 	}
@@ -1287,7 +1298,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("metadata merge did not preserve persisted key: %+v", initState.Worker.ExternalMetadata)
 	}
 
-	requiresState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"requires_action","requires_action_details":{"tool_name":"Bash","action_description":"Running npm test","request_id":"req_worker_state"},"external_metadata":{"pending_action":{"tool_name":"Bash"},"persisted":{"kept":true}}}`)
+	requiresState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"requires_action","requires_action_details":{"tool_name":"Bash","action_description":"Running npm test","request_id":"req_worker_state"},"external_metadata":{"pending_action":{"tool_name":"Bash"},"persisted":{"kept":true}}}`)
 	if requiresState.Worker.WorkerStatus != "requires_action" {
 		t.Fatalf("requires action worker status = %q, want requires_action", requiresState.Worker.WorkerStatus)
 	}
@@ -1307,7 +1318,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("primary thread status after requires_action = %+v, want idle", threads.Data)
 	}
 
-	runningState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"running","requires_action_details":{"tool_name":"Bash"}}`)
+	runningState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running","requires_action_details":{"tool_name":"Bash"}}`)
 	if runningState.Worker.WorkerStatus != "running" || !rawMessageIsJSONNull(runningState.Worker.RequiresActionDetails) {
 		t.Fatalf("running worker state = %+v, details=%s; want running with cleared details", runningState.Worker, runningState.Worker.RequiresActionDetails)
 	}
@@ -1318,7 +1329,23 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
 		t.Fatalf("primary thread status after running = %+v, want running", threads.Data)
 	}
-	runningDetailsOnlyState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"requires_action_details":{"tool_name":"Bash"}}`)
+	runningEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 1 {
+		t.Fatalf("session.status_running events = %d, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
+	runningEvent := sessionEventObjectByType(t, runningEvents, "session.status_running")
+	if runningEvent["id"] == "" || runningEvent["processed_at"] == "" {
+		t.Fatalf("session.status_running missing persisted fields: %#v", runningEvent)
+	}
+	if _, ok := runningEvent["stop_reason"]; ok {
+		t.Fatalf("session.status_running unexpectedly contains stop_reason: %#v", runningEvent)
+	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 1 {
+		t.Fatalf("duplicate running state produced %d events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
+	runningDetailsOnlyState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"requires_action_details":{"tool_name":"Bash"}}`)
 	if runningDetailsOnlyState.Worker.WorkerStatus != "running" || !rawMessageIsJSONNull(runningDetailsOnlyState.Worker.RequiresActionDetails) {
 		t.Fatalf("running details-only worker state = %+v, details=%s; want running with cleared details", runningDetailsOnlyState.Worker, runningDetailsOnlyState.Worker.RequiresActionDetails)
 	}
@@ -1396,7 +1423,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("download output = %q, want %q", got, outputContent)
 	}
 
-	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
+	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
 	if idleState.Worker.WorkerStatus != "idle" || !rawMessageIsJSONNull(idleState.Worker.RequiresActionDetails) {
 		t.Fatalf("idle worker state = %+v, details=%s; want idle with cleared details", idleState.Worker, idleState.Worker.RequiresActionDetails)
 	}
@@ -1467,6 +1494,12 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if eventPageContains(diagEvents, "diag from ccr worker") {
 		t.Fatalf("worker diagnostics leaked into public session events: %+v", diagEvents.Data)
 	}
+
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 2 {
+		t.Fatalf("second idle-to-running transition produced %d events, want 2: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
 }
 
 func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
@@ -1483,9 +1516,9 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get api key: %v", err)
 	}
-	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
-	if err != nil {
-		t.Fatalf("get stored session: %v", err)
+	storedSession, found, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
+	if err != nil || !found {
+		t.Fatalf("get stored session = (%t, %v), want found", found, err)
 	}
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	hiddenEventID := "sevt_legacy_env_manager_log_" + eventSuffix
@@ -1754,13 +1787,13 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 	ctx := context.Background()
 
-	beforeKeepAlive, err := app.db.GetCodeSession(ctx, codeSessionID)
+	beforeKeepAlive, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load before keep_alive: %v", err)
 	}
 	time.Sleep(5 * time.Millisecond)
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{"type":"keep_alive"}}]}`)
-	afterKeepAlive, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterKeepAlive, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load after keep_alive: %v", err)
 	}
@@ -2320,7 +2353,7 @@ func TestCodeSessionWorkerRegisterEpochsAreSessionScopedAndConcurrent(t *testing
 	if !seen["2"] || !seen["3"] || len(seen) != 2 {
 		t.Fatalf("concurrent register epochs = %+v, want 2 and 3", seen)
 	}
-	record, err := app.db.GetCodeSession(context.Background(), codeSessionA)
+	record, err := getCodeSession(app, context.Background(), codeSessionA)
 	if err != nil {
 		t.Fatalf("load code session A: %v", err)
 	}
@@ -2441,7 +2474,7 @@ func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *test
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	ctx := context.Background()
 
-	before, err := app.db.GetCodeSession(ctx, codeSessionID)
+	before, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load Code Session before append: %v", err)
 	}
@@ -2486,7 +2519,7 @@ func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *test
 		t.Fatalf("duplicate outbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateOutbound, duplicate, err, outbound.UUID)
 	}
 
-	after, err := app.db.GetCodeSession(ctx, codeSessionID)
+	after, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load Code Session after append: %v", err)
 	}
@@ -2533,7 +2566,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get worker without epoch status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
-	afterNoEpoch, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterNoEpoch, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after no-epoch get: %v", err)
 	}
@@ -2543,7 +2576,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 
 	resp = doCodeSessionWorkerRequestWithMethod(t, app, http.MethodGet, codeSessionID, "?worker_epoch="+url.QueryEscape(epoch1), "")
 	assertError(t, resp, http.StatusConflict, "conflict_error")
-	afterStaleGet, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterStaleGet, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after stale get: %v", err)
 	}
@@ -2552,7 +2585,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	}
 
 	getCodeSessionWorkerReadStateResponse(t, app, codeSessionID, epoch2)
-	afterCurrentGet, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterCurrentGet, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after current get: %v", err)
 	}
@@ -2563,7 +2596,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerConnectedForEpoch(ctx, codeSessionID, 1); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("stale epoch connect error = %v, want worker epoch mismatch", err)
 	}
-	afterStaleConnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterStaleConnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after stale connect: %v", err)
 	}
@@ -2573,7 +2606,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerConnectedForEpoch(ctx, codeSessionID, 2); err != nil {
 		t.Fatalf("current epoch connect: %v", err)
 	}
-	afterCurrentConnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterCurrentConnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after current connect: %v", err)
 	}
@@ -2584,7 +2617,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, 1); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("stale epoch disconnect error = %v, want worker epoch mismatch", err)
 	}
-	afterStaleDisconnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterStaleDisconnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after stale disconnect: %v", err)
 	}
@@ -2594,7 +2627,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, 2); err != nil {
 		t.Fatalf("current epoch disconnect: %v", err)
 	}
-	afterCurrentDisconnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterCurrentDisconnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after current disconnect: %v", err)
 	}
@@ -2662,8 +2695,9 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 		`[]`,
 		`{`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `}`,
-		`{"session_id":123,"worker_epoch":` + quoteJSON(workerEpoch) + `}`,
-		`{"session_id":"other","worker_epoch":` + quoteJSON(workerEpoch) + `}`,
+		`{"session_id":123,"worker_epoch":` + workerEpoch + `}`,
+		`{"session_id":"other","worker_epoch":` + workerEpoch + `}`,
+		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + quoteJSON(workerEpoch) + `}`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":"abc"}`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":1.2}`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":-1}`,
@@ -2677,15 +2711,20 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
 	badStateBodies := []string{
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"worker_status":"connected"}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"worker_status":123}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"external_metadata":null}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"external_metadata":[]}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"requires_action_details":[]}`,
+		`{"worker_epoch":` + workerEpoch + `,"worker_status":"connected"}`,
+		`{"worker_epoch":` + workerEpoch + `,"worker_status":123}`,
+		`{"worker_epoch":` + workerEpoch + `,"external_metadata":[]}`,
+		`{"worker_epoch":` + workerEpoch + `,"requires_action_details":[]}`,
+		`{"worker_epoch":` + quoteJSON(workerEpoch) + `}`,
 	}
 	for _, body := range badStateBodies {
 		resp := doCodeSessionWorkerRequestWithMethod(t, app, http.MethodPut, codeSessionID, "", body)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	}
+	nullStateResp := doCodeSessionWorkerRequestWithMethod(t, app, http.MethodPut, codeSessionID, "", `{"worker_epoch":`+workerEpoch+`,"worker_status":null,"requires_action_details":null,"external_metadata":null}`)
+	defer nullStateResp.Body.Close()
+	if nullStateResp.StatusCode != http.StatusOK {
+		t.Fatalf("null worker state fields status = %d, want 200: %s", nullStateResp.StatusCode, readAll(t, nullStateResp.Body))
 	}
 
 	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "abc", "application/x-protobuf", nil)
@@ -2702,7 +2741,7 @@ func TestCodeSessionWorkerOTLPAcceptsMissingEpochWithoutWorkerActivity(t *testin
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	before, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	before, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session before OTLP: %v", err)
 	}
@@ -2721,7 +2760,7 @@ func TestCodeSessionWorkerOTLPAcceptsMissingEpochWithoutWorkerActivity(t *testin
 		}
 	}
 
-	after, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	after, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after OTLP: %v", err)
 	}
@@ -2874,7 +2913,7 @@ func TestCodeSessionWorkerHeartbeatReportsSandboxTimeoutFailure(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
-	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"running"}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 	app.sandboxTimeouts.setError(errors.New("provider unavailable"))
 
 	resp := doCodeSessionWorkerRequest(t, app, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, workerEpoch))
@@ -2897,7 +2936,7 @@ func TestCodeSessionWorkerHeartbeatSkipsSandboxTimeoutWhenNotRunning(t *testing.
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 
-	beforeIdle, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	beforeIdle, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before idle heartbeat: %v", err)
 	}
@@ -2910,7 +2949,7 @@ func TestCodeSessionWorkerHeartbeatSkipsSandboxTimeoutWhenNotRunning(t *testing.
 		t.Fatalf("idle heartbeat sandbox timeout calls = %d, want 0", len(calls))
 	}
 
-	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"requires_action"}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"requires_action"}`)
 	time.Sleep(5 * time.Millisecond)
 	requiresActionExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, workerEpoch)
 	if !requiresActionExpiresAt.After(idleExpiresAt) {
@@ -2933,8 +2972,8 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 
 	epoch1 := registerCodeSessionWorker(t, app, codeSessionID)
-	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch1)+`,"worker_status":"running"}`)
-	before, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+epoch1+`,"worker_status":"running"}`)
+	before, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before heartbeat: %v", err)
 	}
@@ -2942,14 +2981,14 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 		t.Fatalf("register did not set worker lease/register timestamps: %+v", before)
 	}
 	time.Sleep(5 * time.Millisecond)
-	stringExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch1)
-	if !stringExpiresAt.After(*before.WorkerLeaseExpiresAt) {
-		t.Fatalf("string heartbeat lease expiry = %s, want after %s", stringExpiresAt, before.WorkerLeaseExpiresAt)
+	firstExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch1)
+	if !firstExpiresAt.After(*before.WorkerLeaseExpiresAt) {
+		t.Fatalf("first heartbeat lease expiry = %s, want after %s", firstExpiresAt, before.WorkerLeaseExpiresAt)
 	}
 	time.Sleep(5 * time.Millisecond)
-	numberExpiresAt := assertCodeSessionWorkerHeartbeatBody(t, app, codeSessionID, `{"session_id":`+quoteJSON(codeSessionID)+`,"worker_epoch":`+epoch1+`}`)
-	if !numberExpiresAt.After(stringExpiresAt) {
-		t.Fatalf("number heartbeat lease expiry = %s, want after %s", numberExpiresAt, stringExpiresAt)
+	secondExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch1)
+	if !secondExpiresAt.After(firstExpiresAt) {
+		t.Fatalf("second heartbeat lease expiry = %s, want after %s", secondExpiresAt, firstExpiresAt)
 	}
 	timeoutCalls := app.sandboxTimeouts.snapshotCalls()
 	if len(timeoutCalls) != 2 {
@@ -2967,7 +3006,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 			t.Fatalf("sandbox timeout call = %+v, want sandbox %q timeout %s", call, *sandbox.ProviderSandboxID, app.cfg.E2B.SandboxTimeout)
 		}
 	}
-	after, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	after, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after heartbeat: %v", err)
 	}
@@ -2978,7 +3017,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 		t.Fatalf("heartbeat lease expiry = %s, want after %s", after.WorkerLeaseExpiresAt, before.WorkerLeaseExpiresAt)
 	}
 
-	beforeFutureMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	beforeFutureMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before future mismatch heartbeat: %v", err)
 	}
@@ -2987,7 +3026,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 2 {
 		t.Fatalf("future epoch sandbox timeout calls = %d, want 2", len(calls))
 	}
-	afterFutureMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	afterFutureMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after future mismatch heartbeat: %v", err)
 	}
@@ -2997,7 +3036,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if epoch2 != "2" {
 		t.Fatalf("second register epoch = %q, want 2", epoch2)
 	}
-	beforeMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	beforeMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before mismatch heartbeat: %v", err)
 	}
@@ -3006,7 +3045,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 2 {
 		t.Fatalf("stale epoch sandbox timeout calls = %d, want 2", len(calls))
 	}
-	afterMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	afterMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after mismatch heartbeat: %v", err)
 	}
@@ -3015,7 +3054,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if _, err := app.pool.Exec(context.Background(), `update code_sessions set worker_lease_expires_at = now() - interval '5 seconds' where external_id = $1`, codeSessionID); err != nil {
 		t.Fatalf("expire worker lease inside grace: %v", err)
 	}
-	graceBefore, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	graceBefore, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load grace lease record: %v", err)
 	}
@@ -3023,7 +3062,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 3 {
 		t.Fatalf("grace heartbeat sandbox timeout calls = %d, want 3", len(calls))
 	}
-	graceAfter, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	graceAfter, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after grace heartbeat: %v", err)
 	}
@@ -3034,7 +3073,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if _, err := app.pool.Exec(context.Background(), `update code_sessions set worker_lease_expires_at = now() - interval '15 seconds' where external_id = $1`, codeSessionID); err != nil {
 		t.Fatalf("expire worker lease beyond grace: %v", err)
 	}
-	expired, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	expired, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load expired lease record: %v", err)
 	}
@@ -3048,7 +3087,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	}
 	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", epoch2, "application/x-protobuf", nil)
 	assertError(t, resp, http.StatusGone, "session_expired")
-	afterExpiredHeartbeat, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	afterExpiredHeartbeat, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after expired heartbeat: %v", err)
 	}
@@ -3217,7 +3256,7 @@ func TestCodeSessionWorkerEventsStreamRejectsInvalidReplayCursorWithoutConnectin
 	resp := doCodeSessionWorkerRequestWithMethod(t, app, http.MethodGet, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(workerEpoch)+"&from_sequence_num=bad-cursor", "")
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
-	after, err := app.db.GetCodeSession(ctx, codeSessionID)
+	after, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after invalid stream cursor: %v", err)
 	}
@@ -4041,7 +4080,7 @@ func codeSessionIngressToken(t *testing.T, app *testApp, codeSessionID string) s
 
 func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string, error) {
 	ctx := context.Background()
-	record, err := app.db.GetCodeSession(ctx, codeSessionID)
+	record, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		return "", err
 	}
@@ -4397,7 +4436,7 @@ func codeSessionEventsContainPayloadUUID(events []db.CodeSessionEvent, payloadUU
 
 func assertCodeSessionWorkerHeartbeat(t *testing.T, app *testApp, codeSessionID string, workerEpoch string) time.Time {
 	t.Helper()
-	return assertCodeSessionWorkerHeartbeatBody(t, app, codeSessionID, `{"session_id":`+quoteJSON(codeSessionID)+`,"worker_epoch":`+quoteJSON(workerEpoch)+`}`)
+	return assertCodeSessionWorkerHeartbeatBody(t, app, codeSessionID, `{"session_id":`+quoteJSON(codeSessionID)+`,"worker_epoch":`+workerEpoch+`}`)
 }
 
 func assertCodeSessionWorkerHeartbeatBody(t *testing.T, app *testApp, codeSessionID string, body string) time.Time {
@@ -4522,11 +4561,11 @@ func assertCodeSessionWorkerWriteStatus(t *testing.T, app *testApp, method strin
 }
 
 func workerStateBody(codeSessionID string, workerEpoch string) string {
-	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + quoteJSON(workerEpoch) + `}`
+	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + workerEpoch + `}`
 }
 
 func workerHeartbeatBody(codeSessionID string, workerEpoch string) string {
-	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + quoteJSON(workerEpoch) + `}`
+	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + workerEpoch + `}`
 }
 
 func workerDeliveryBody(workerEpoch string) string {

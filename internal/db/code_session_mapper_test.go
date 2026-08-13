@@ -8,6 +8,21 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+func TestCodeSessionMapperFindByExternalIDNotFound(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
+	row, found, err := NewCodeSessionMapper(executor).FindByExternalID(context.Background(), "codeses_missing")
+	if err != nil || found || row.UUID != "" {
+		t.Fatalf("FindByExternalID() = (%+v, %t, %v), want zero, false, nil", row, found, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"CodeSessionMapper.FindByExternalID",
+		yourbatis.StatementSelect,
+		[]any{"codeses_missing"},
+	)
+}
+
 func TestCodeSessionMapperFindVaultIDsNotFound(t *testing.T) {
 	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"vault_ids"}})
 	row, found, err := NewCodeSessionMapper(executor).FindVaultIDs(

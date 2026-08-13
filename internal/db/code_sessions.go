@@ -547,16 +547,13 @@ func decodeVaultIDList(raw []byte) ([]string, error) {
 	return ids, nil
 }
 
-func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, error) {
+func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, bool, error) {
 	mapper := NewCodeSessionMapper(d.mapperDB)
-	row, err := mapper.FindByExternalID(ctx, externalID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return CodeSession{}, ErrNotFound
+	row, found, err := mapper.FindByExternalID(ctx, externalID)
+	if err != nil || !found {
+		return CodeSession{}, found, err
 	}
-	if err != nil {
-		return CodeSession{}, err
-	}
-	return row.session(), nil
+	return row.session(), true, nil
 }
 
 func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUID string, sessionExternalID string) (CodeSession, error) {
@@ -1266,9 +1263,12 @@ func (d *DB) TouchCodeSessionWorkerActivityForActiveLease(ctx context.Context, c
 		return nil
 	}
 	// 条件更新未命中后再读取当前状态，以便把 takeover 与 lease 过期映射为不同 HTTP 错误。
-	record, err := d.GetCodeSession(ctx, codeSessionExternalID)
+	record, found, err := d.GetCodeSession(ctx, codeSessionExternalID)
 	if err != nil {
 		return err
+	}
+	if !found {
+		return ErrNotFound
 	}
 	if record.CurrentWorkerEpoch != epoch {
 		return ErrWorkerEpochMismatch

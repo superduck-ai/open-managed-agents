@@ -48,7 +48,7 @@ func (h *Handler) handleCodeSessionHTTPPoll(w http.ResponseWriter, r *http.Reque
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -124,7 +124,7 @@ func (h *Handler) handleGetCodeSessionWorker(w http.ResponseWriter, r *http.Requ
 	if _, _, ok := h.validateOptionalWorkerEpochRequest(w, r, codeSessionID); !ok {
 		return
 	}
-	record, err := h.db.GetCodeSession(r.Context(), codeSessionID)
+	record, err := h.getCodeSession(r.Context(), codeSessionID)
 	if err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
@@ -137,7 +137,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	record, err := h.db.GetCodeSession(r.Context(), codeSessionID)
+	record, err := h.getCodeSession(r.Context(), codeSessionID)
 	if err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
@@ -222,7 +222,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -446,12 +446,7 @@ func (h *Handler) handleCodeSessionWorkerHeartbeat(w http.ResponseWriter, r *htt
 	}
 	input, err := decodeCodeSessionWorkerHeartbeatBody(w, r, codeSessionID)
 	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			writeCodeSessionWorkerBodyReadError(w, r, err)
-			return
-		}
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
 	expiresAt, err := h.db.RecordCodeSessionWorkerHeartbeat(r.Context(), codeSessionID, input.WorkerEpoch, codeSessionWorkerLeaseTTL, codeSessionWorkerLeaseGrace)
@@ -528,7 +523,7 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		// 上报启动与安装指标；该 exporter 只携带 session bearer token。无 epoch
 		// telemetry 只确认 session 仍存在，不刷新 worker activity 或 lease，避免旧
 		// exporter 借遥测请求维持已经失效的 worker 所有权。
-		if _, err := h.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
+		if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
 			h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, 0, false, "", "", "session_load_error", err)
 			h.writeIngressLoadError(w, r, err)
 			return
@@ -551,7 +546,7 @@ func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Requ
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -579,7 +574,7 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -607,7 +602,7 @@ func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -639,7 +634,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	record, err := h.db.GetCodeSession(r.Context(), codeSessionID)
+	record, err := h.getCodeSession(r.Context(), codeSessionID)
 	if err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
@@ -786,6 +781,17 @@ func objectConfigValue(value any) map[string]any {
 	return object
 }
 
+func (h *Handler) getCodeSession(ctx context.Context, codeSessionID string) (db.CodeSession, error) {
+	record, found, err := h.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return db.CodeSession{}, err
+	}
+	if !found {
+		return db.CodeSession{}, db.ErrNotFound
+	}
+	return record, nil
+}
+
 func (h *Handler) writeIngressLoadError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Code session not found"))
@@ -800,9 +806,22 @@ type codeSessionWorkerEpochBody struct {
 	epoch int64
 }
 
-type codeSessionWorkerHeartbeatInput struct {
-	SessionID   string
-	WorkerEpoch int64
+type codeSessionWorkerHeartbeatBody struct {
+	SessionID   string `json:"session_id"`
+	WorkerEpoch int64  `json:"worker_epoch"`
+}
+
+type codeSessionWorkerRequiresActionDetails struct {
+	ToolName          *string `json:"tool_name,omitempty"`
+	ActionDescription *string `json:"action_description,omitempty"`
+	RequestID         *string `json:"request_id,omitempty"`
+}
+
+type codeSessionWorkerStateBody struct {
+	WorkerEpoch           int64                                   `json:"worker_epoch"`
+	WorkerStatus          string                                  `json:"worker_status"`
+	RequiresActionDetails *codeSessionWorkerRequiresActionDetails `json:"requires_action_details"`
+	ExternalMetadata      map[string]json.RawMessage              `json:"external_metadata"`
 }
 
 func (h *Handler) requireWorkerEpochBody(w http.ResponseWriter, r *http.Request, codeSessionID string) (codeSessionWorkerEpochBody, bool) {
@@ -1158,103 +1177,57 @@ func validateCodeSessionWorkerRegisterBody(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 
-func decodeCodeSessionWorkerHeartbeatBody(w http.ResponseWriter, r *http.Request, codeSessionID string) (codeSessionWorkerHeartbeatInput, error) {
-	body, err := readCodeSessionWorkerBody(w, r)
+func decodeCodeSessionWorkerHeartbeatBody(w http.ResponseWriter, r *http.Request, codeSessionID string) (codeSessionWorkerHeartbeatBody, error) {
+	request, err := httpapi.DecodeObjectBodyAs[codeSessionWorkerHeartbeatBody](w, r, maxIngressBodySize)
 	if err != nil {
-		return codeSessionWorkerHeartbeatInput{}, err
+		return codeSessionWorkerHeartbeatBody{}, err
 	}
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 {
-		return codeSessionWorkerHeartbeatInput{}, errors.New("heartbeat body is required")
+	if request.SessionID == "" {
+		return codeSessionWorkerHeartbeatBody{}, errors.New("session_id is required")
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
-		return codeSessionWorkerHeartbeatInput{}, errors.New("heartbeat body must be a JSON object")
+	if request.SessionID != codeSessionID {
+		return codeSessionWorkerHeartbeatBody{}, errors.New("session_id does not match code session id")
 	}
-
-	rawSessionID, ok := fields["session_id"]
-	if !ok {
-		return codeSessionWorkerHeartbeatInput{}, errors.New("session_id is required")
+	if request.WorkerEpoch <= 0 {
+		return codeSessionWorkerHeartbeatBody{}, errors.New("worker_epoch must be a positive integer")
 	}
-	var sessionID string
-	if err := json.Unmarshal(rawSessionID, &sessionID); err != nil {
-		return codeSessionWorkerHeartbeatInput{}, errors.New("session_id must be a string")
-	}
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return codeSessionWorkerHeartbeatInput{}, errors.New("session_id is required")
-	}
-	if sessionID != codeSessionID {
-		return codeSessionWorkerHeartbeatInput{}, errors.New("session_id does not match code session id")
-	}
-
-	rawEpoch, ok := fields["worker_epoch"]
-	if !ok {
-		return codeSessionWorkerHeartbeatInput{}, errors.New("worker_epoch is required")
-	}
-	epoch, err := parseWorkerEpochRaw(rawEpoch)
-	if err != nil {
-		return codeSessionWorkerHeartbeatInput{}, err
-	}
-	return codeSessionWorkerHeartbeatInput{SessionID: sessionID, WorkerEpoch: epoch}, nil
+	return *request, nil
 }
 
 func decodeCodeSessionWorkerStateBody(w http.ResponseWriter, r *http.Request) (db.UpdateCodeSessionWorkerStateInput, error) {
-	body, err := readCodeSessionWorkerBody(w, r)
+	request, err := httpapi.DecodeObjectBodyAs[codeSessionWorkerStateBody](w, r, maxIngressBodySize)
 	if err != nil {
 		return db.UpdateCodeSessionWorkerStateInput{}, err
 	}
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 {
-		return db.UpdateCodeSessionWorkerStateInput{}, errors.New("worker body is required")
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
-		return db.UpdateCodeSessionWorkerStateInput{}, errors.New("worker body must be a JSON object")
-	}
 
-	rawEpoch, ok := fields["worker_epoch"]
-	if !ok {
-		return db.UpdateCodeSessionWorkerStateInput{}, errors.New("worker_epoch is required")
+	if request.WorkerEpoch <= 0 {
+		return db.UpdateCodeSessionWorkerStateInput{}, errors.New("worker_epoch must be a positive integer")
 	}
-	epoch, err := parseWorkerEpochRaw(rawEpoch)
-	if err != nil {
-		return db.UpdateCodeSessionWorkerStateInput{}, err
-	}
-	input := db.UpdateCodeSessionWorkerStateInput{WorkerEpoch: epoch}
+	input := db.UpdateCodeSessionWorkerStateInput{WorkerEpoch: request.WorkerEpoch}
 
-	if rawStatus, ok := fields["worker_status"]; ok {
-		var status string
-		if err := json.Unmarshal(rawStatus, &status); err != nil {
-			return db.UpdateCodeSessionWorkerStateInput{}, errors.New("worker_status must be a string")
-		}
-		status = strings.TrimSpace(status)
-		if !validWorkerStatus(status) {
+	if request.WorkerStatus != "" {
+		if !validWorkerStatus(request.WorkerStatus) {
 			return db.UpdateCodeSessionWorkerStateInput{}, errors.New("worker_status must be one of: idle, running, requires_action")
 		}
-		input.WorkerStatus = &status
+		input.WorkerStatus = &request.WorkerStatus
 	}
 
-	if rawDetails, ok := fields["requires_action_details"]; ok {
-		rawDetails = bytes.TrimSpace(rawDetails)
-		if !rawJSONIsNull(rawDetails) && !rawJSONObject(rawDetails) {
-			return db.UpdateCodeSessionWorkerStateInput{}, errors.New("requires_action_details must be an object or null")
+	if request.RequiresActionDetails != nil {
+		details, err := json.Marshal(request.RequiresActionDetails)
+		if err != nil {
+			return db.UpdateCodeSessionWorkerStateInput{}, errors.New("requires_action_details must be an object")
 		}
 		input.RequiresActionDetailsSet = true
-		if rawJSONIsNull(rawDetails) {
-			input.RequiresActionDetails = json.RawMessage(`null`)
-		} else {
-			input.RequiresActionDetails = copyRawMessage(rawDetails)
-		}
+		input.RequiresActionDetails = details
 	}
 
-	if rawMetadata, ok := fields["external_metadata"]; ok {
-		rawMetadata = bytes.TrimSpace(rawMetadata)
-		if !rawJSONObject(rawMetadata) {
+	if request.ExternalMetadata != nil {
+		metadata, err := json.Marshal(request.ExternalMetadata)
+		if err != nil {
 			return db.UpdateCodeSessionWorkerStateInput{}, errors.New("external_metadata must be an object")
 		}
 		input.ExternalMetadataSet = true
-		input.ExternalMetadata = copyRawMessage(rawMetadata)
+		input.ExternalMetadata = metadata
 	}
 
 	return input, nil
@@ -1267,20 +1240,6 @@ func validWorkerStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func rawJSONIsNull(raw json.RawMessage) bool {
-	raw = bytes.TrimSpace(raw)
-	return len(raw) == 0 || bytes.Equal(raw, []byte("null"))
-}
-
-func rawJSONObject(raw json.RawMessage) bool {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || raw[0] != '{' {
-		return false
-	}
-	var object map[string]json.RawMessage
-	return json.Unmarshal(raw, &object) == nil && object != nil
 }
 
 func copyRawMessage(raw json.RawMessage) json.RawMessage {

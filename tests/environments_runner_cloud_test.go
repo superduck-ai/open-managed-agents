@@ -307,9 +307,9 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("rclone config does not mount /uploads at the managed-agents root: %#v", rcloneConfig.Mounts)
 	}
 
-	stored, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
-	if err != nil {
-		t.Fatalf("load stored session: %v", err)
+	stored, found, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
+	if err != nil || !found {
+		t.Fatalf("load stored session = (%t, %v), want found", found, err)
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal(stored.Metadata, &metadata); err != nil {
@@ -627,9 +627,9 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		t.Fatalf("list package runner work count/error = %d/%v, want one work", len(works), workErr)
 	}
 	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
-	storedSession, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceUUID, session.ID)
-	if sessionErr != nil {
-		t.Fatalf("load package runner session: %v", sessionErr)
+	storedSession, sessionFound, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceUUID, session.ID)
+	if sessionErr != nil || !sessionFound {
+		t.Fatalf("load package runner session = (%t, %v), want found", sessionFound, sessionErr)
 	}
 	provider.sessionHasRuntimeMetadata = hasJSONKey(storedSession.Metadata, "claude_code_session_id")
 	if err := app.pool.QueryRow(inspectionCtx, `
@@ -788,9 +788,9 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 	if codeSession.Status != "terminated" || codeSession.ConnectionStatus != "disconnected" || codeSession.WorkerLeaseExpiresAt != nil {
 		t.Fatalf("compensated code session = %#v", codeSession)
 	}
-	storedSession, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
-	if err != nil {
-		t.Fatalf("load Session after manager failure: %v", err)
+	storedSession, found, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
+	if err != nil || !found {
+		t.Fatalf("load Session after manager failure = (%t, %v), want found", found, err)
 	}
 	if hasJSONKey(storedSession.Metadata, "claude_code_session_id") {
 		t.Fatalf("failed runtime was published in Session metadata: %s", storedSession.Metadata)

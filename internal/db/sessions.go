@@ -214,10 +214,13 @@ func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Sessi
 	return session, thread, resources, work, err
 }
 
-func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
+func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, bool, error) {
 	mapper := NewSessionMapper(d.mapperDB)
-	row, err := mapper.FindByExternalID(ctx, workspaceUUID, externalID)
-	return row.session(), mapNoRows(err)
+	row, found, err := mapper.FindByExternalID(ctx, workspaceUUID, externalID)
+	if err != nil || !found {
+		return Session{}, found, err
+	}
+	return row.session(), true, nil
 }
 
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {

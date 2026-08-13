@@ -27,9 +27,12 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	if h == nil || len(payloads) == 0 {
 		return nil
 	}
-	session, err := h.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
+	session, found, err := h.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {
 		return err
+	}
+	if !found {
+		return db.ErrNotFound
 	}
 	var events []db.SessionEvent
 	now := time.Now().UTC()

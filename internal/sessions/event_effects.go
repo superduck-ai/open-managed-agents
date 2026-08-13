@@ -17,11 +17,12 @@ import (
 
 func (h *Handler) applySessionEventEffects(ctx context.Context, event db.SessionEvent) {
 	if event.EventType == "session.thread_created" {
-		session, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
+		session, found, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
 		if err != nil {
-			if !errors.Is(err, db.ErrNotFound) {
-				h.logger.ErrorContext(ctx, "load session for thread_created", "session_id", event.SessionExternalID, "error", err)
-			}
+			h.logger.ErrorContext(ctx, "load session for thread_created", "session_id", event.SessionExternalID, "error", err)
+			return
+		}
+		if !found {
 			return
 		}
 		if threadID := sessionThreadIDFromEvent(event); threadID != nil {
@@ -38,14 +39,14 @@ func (h *Handler) applySessionEventEffects(ctx context.Context, event db.Session
 		if threadID == nil {
 			return
 		}
-		session, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
-		if err == nil {
+		session, found, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
+		if err == nil && found {
 			var payload map[string]any
 			_ = json.Unmarshal(event.Payload, &payload)
 			if err := h.ensureSessionThread(ctx, session, *threadID, payload, event.CreatedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
 				h.logger.ErrorContext(ctx, "ensure session thread for status", "session_id", event.SessionExternalID, "thread_id", *threadID, "error", err)
 			}
-		} else if !errors.Is(err, db.ErrNotFound) {
+		} else if err != nil {
 			h.logger.ErrorContext(ctx, "load session for thread status", "session_id", event.SessionExternalID, "error", err)
 		}
 		if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, *threadID, status); err != nil && !errors.Is(err, db.ErrNotFound) {

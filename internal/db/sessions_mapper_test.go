@@ -8,6 +8,25 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
+	row, found, err := NewSessionMapper(executor).FindByExternalID(
+		context.Background(),
+		"workspace-uuid",
+		"ses_missing",
+	)
+	if err != nil || found || row.UUID != "" {
+		t.Fatalf("FindByExternalID() = (%+v, %t, %v), want zero, false, nil", row, found, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"SessionMapper.FindByExternalID",
+		yourbatis.StatementSelect,
+		[]any{"workspace-uuid", "ses_missing"},
+	)
+}
+
 func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	sessionParams := sessionWriteParams{

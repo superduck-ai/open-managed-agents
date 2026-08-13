@@ -48,7 +48,7 @@ func (h *Handler) handleCodeSessionHTTPPoll(w http.ResponseWriter, r *http.Reque
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -124,7 +124,7 @@ func (h *Handler) handleGetCodeSessionWorker(w http.ResponseWriter, r *http.Requ
 	if _, _, ok := h.validateOptionalWorkerEpochRequest(w, r, codeSessionID); !ok {
 		return
 	}
-	record, err := h.getCodeSession(r.Context(), codeSessionID)
+	record, err := h.requireCodeSession(r.Context(), codeSessionID)
 	if err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
@@ -137,7 +137,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	record, err := h.getCodeSession(r.Context(), codeSessionID)
+	record, err := h.requireCodeSession(r.Context(), codeSessionID)
 	if err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
@@ -222,7 +222,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -523,7 +523,7 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		// 上报启动与安装指标；该 exporter 只携带 session bearer token。无 epoch
 		// telemetry 只确认 session 仍存在，不刷新 worker activity 或 lease，避免旧
 		// exporter 借遥测请求维持已经失效的 worker 所有权。
-		if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
+		if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
 			h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, 0, false, "", "", "session_load_error", err)
 			h.writeIngressLoadError(w, r, err)
 			return
@@ -546,7 +546,7 @@ func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Requ
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -574,7 +574,7 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -602,7 +602,7 @@ func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	if _, err := h.getCodeSession(r.Context(), codeSessionID); err != nil {
+	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -634,7 +634,7 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	record, err := h.getCodeSession(r.Context(), codeSessionID)
+	record, err := h.requireCodeSession(r.Context(), codeSessionID)
 	if err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
@@ -781,19 +781,19 @@ func objectConfigValue(value any) map[string]any {
 	return object
 }
 
-func (h *Handler) getCodeSession(ctx context.Context, codeSessionID string) (db.CodeSession, error) {
+func (h *Handler) requireCodeSession(ctx context.Context, codeSessionID string) (db.CodeSession, error) {
 	record, found, err := h.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
-		return db.CodeSession{}, err
+		return db.CodeSession{}, mapCodeSessionLoadError(err, codeSessionID)
 	}
 	if !found {
-		return db.CodeSession{}, db.ErrNotFound
+		return db.CodeSession{}, mapCodeSessionLoadError(db.ErrNotFound, codeSessionID)
 	}
 	return record, nil
 }
 
 func (h *Handler) writeIngressLoadError(w http.ResponseWriter, r *http.Request, err error) {
-	h.errorAdapter.Write(w, r, mapCodeSessionLoadError(err))
+	h.errorAdapter.Write(w, r, err)
 }
 
 type codeSessionWorkerEpochBody struct {
@@ -871,7 +871,7 @@ func (h *Handler) validateWorkerEpochValue(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) writeWorkerEpochDBError(w http.ResponseWriter, r *http.Request, codeSessionID string, err error, internalMessage string) {
 	if errors.Is(err, db.ErrNotFound) {
-		h.writeIngressLoadError(w, r, err)
+		h.writeIngressLoadError(w, r, mapCodeSessionLoadError(err, codeSessionID))
 		return
 	}
 	if errors.Is(err, db.ErrWorkerEpochMismatch) {

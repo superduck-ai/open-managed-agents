@@ -20,7 +20,7 @@ func TestMapCodeSessionLoadError(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mapped := mapCodeSessionLoadError(test.cause)
+			mapped := mapCodeSessionLoadError(test.cause, "code_session_test")
 			appErr, ok := errors.AsType[*apperr.Error](mapped)
 			if !ok {
 				t.Fatalf("error type = %T, want *apperr.Error", mapped)

@@ -58,6 +58,8 @@ flowchart LR
 - `/workspaces/{workspaceId}/mcp-servers/new`
 - `/workspaces/{workspaceId}/mcp-servers/{mcpServerId}`
 
+管理页采用与 Skills、Files 一致的资源列表：表格行用于选择资源，行末更多菜单承载编辑、归档和删除操作；创建、详情与编辑在右侧资源面板中完成。选择资源时同步详情 URL，关闭面板回到列表 URL；列表保留搜索、状态筛选与游标分页。
+
 Agent Create/Edit 的“自定义 MCP”页签只加载 Active 资源并提供选择、重试与新标签页创建入口，不提供内联名称或 URL 输入。窗口重新获得焦点时刷新列表。已有 Agent 的历史 MCP 直接来自 Agent snapshot，不要求能在工作区资源列表中反查；工作区候选与现有 Agent MCP 同名但 URL 不同时，候选不允许添加并明确展示冲突提示。
 
 前端 Workspace MCP Server DTO 与 Console client 位于共享 API 边界，管理页与 Agent 编辑器分别依赖该边界。请求显式发送当前路由 workspace 的 `X-Workspace-ID`；管理路由在 WorkspaceProvider 与 URL workspace 对齐后才开始查询，避免直接打开其他工作区路由时读取旧上下文。
@@ -66,5 +68,5 @@ Agent Create/Edit 的“自定义 MCP”页签只加载 Active 资源并提供�
 
 - Console API 覆盖规范化、重复冲突、跨租户 404、Active/Archived、游标分页和受信组织别名。
 - Mapper 单测覆盖每个方法、动态 SQL 分支、参数顺序、endpoint/search 敏感参数、多行/nullable、`sql.ErrNoRows` 与执行错误；真实 PostgreSQL 测试覆盖 `RETURNING`、工作区隔离、归档和软删除。
-- 管理页覆盖列表、创建、归档与游标分页。
+- 管理页覆盖资源列表、右侧创建/详情/编辑面板、更多操作菜单、归档与游标分页。
 - Agent 表单覆盖 Directory 失败时仍可选择工作区 MCP、请求体只复制 `{name,type,url}`，以及历史未入库 MCP 的 Rendered 保存。

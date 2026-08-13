@@ -41,6 +41,7 @@ test('lists workspace MCP servers and creates a reusable configuration', async (
 
   expect(await screen.findByRole('heading', { name: 'MCP Servers' })).toBeTruthy();
   expect(await screen.findByText('internal-docs')).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'MCP servers list' }).closest('[data-slot="card"]')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Create MCP server' }));
 
   const dialog = await screen.findByRole('dialog', { name: 'Create MCP server' });
@@ -55,6 +56,8 @@ test('lists workspace MCP servers and creates a reusable configuration', async (
     name: 'billing',
     url: 'https://billing.example/mcp',
   });
+  expect(await screen.findByRole('dialog', { name: 'billing' })).toBeTruthy();
+  expect(window.location.pathname).toBe('/workspaces/default/mcp-servers/mcpsrv_created');
   expect(dialog).toBeTruthy();
 });
 
@@ -73,7 +76,8 @@ test('archives a workspace MCP server after confirmation', async () => {
 
   renderPage(<MCPServersPage />);
   expect(await screen.findByText('internal-docs')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Archive internal-docs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for internal-docs' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
   const confirmation = await screen.findByRole('alertdialog', { name: 'Archive MCP server?' });
   fireEvent.click(screen.getByRole('button', { name: 'Archive', hidden: false }));
 
@@ -104,9 +108,10 @@ test('paginates the management list with the backend cursor', async () => {
   expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
 });
 
-test('loads the detail route, updates it, and deletes it from the management page', async () => {
+test('opens a resource detail panel, then updates and deletes it', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers/mcpsrv_test');
   const requests: Array<{ url: string; method: string; body: string }> = [];
+  let currentServer = mcpServer();
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
@@ -115,15 +120,21 @@ test('loads the detail route, updates it, and deletes it from the management pag
       return Response.json({ id: 'mcpsrv_test', type: 'mcp_server_deleted', deleted: true });
     }
     if (method === 'POST') {
-      return Response.json(mcpServer({ name: 'renamed-docs' }));
+      currentServer = mcpServer({ name: 'renamed-docs' });
+      return Response.json(currentServer);
     }
     if (url.endsWith('/mcpsrv_test')) {
-      return Response.json(mcpServer());
+      return Response.json(currentServer);
     }
-    return Response.json({ data: [mcpServer()], next_page: null });
+    return Response.json({ data: [currentServer], next_page: null });
   });
 
   renderPage(<MCPServerDetailPage />);
+  const detail = await screen.findByRole('dialog', { name: 'internal-docs' });
+  expect(within(detail).getByText('https://docs.example/mcp')).toBeTruthy();
+  fireEvent.click(within(detail).getByRole('button', { name: 'Actions for internal-docs' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+
   const dialog = await screen.findByRole('dialog', { name: 'Edit MCP server' });
   fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'renamed-docs' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -132,11 +143,32 @@ test('loads the detail route, updates it, and deletes it from the management pag
     name: 'renamed-docs',
     url: 'https://docs.example/mcp',
   });
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit MCP server' })).toBeNull());
+  const updatedDetail = await screen.findByRole('dialog', { name: 'renamed-docs' });
 
-  fireEvent.click(screen.getByRole('button', { name: 'Delete internal-docs' }));
+  fireEvent.click(within(updatedDetail).getByRole('button', { name: 'Actions for renamed-docs' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Delete', hidden: false }));
   await waitFor(() => expect(requests.some((request) => request.method === 'DELETE')).toBe(true));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'renamed-docs' })).toBeNull());
+  expect(window.location.pathname).toBe('/workspaces/default/mcp-servers');
+});
+
+test('opens a row in the right-side resource detail panel and syncs the URL', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/mcpsrv_test')) {
+      return Response.json(mcpServer());
+    }
+    return Response.json({ data: [mcpServer()], next_page: null });
+  });
+
+  renderPage(<MCPServersPage />);
+  const row = await screen.findByRole('row', { name: /mcpsrv_test internal-docs/ });
+  fireEvent.click(row);
+
+  expect(await screen.findByRole('dialog', { name: 'internal-docs' })).toBeTruthy();
+  expect(window.location.pathname).toBe('/workspaces/default/mcp-servers/mcpsrv_test');
 });
 
 test('shows a retryable error when a detail route cannot load its MCP server', async () => {

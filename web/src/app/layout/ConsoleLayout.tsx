@@ -1007,9 +1007,11 @@ function isSessionsPath(currentPath: string) {
 
 function isBuildPath(currentPath: string) {
   return (
-    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/mcp-servers', '/batches'].includes(
+      currentPath,
+    ) ||
     currentPath.startsWith('/workbench/') ||
-    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|batches)(\/|$)/.test(currentPath)
+    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|mcp-servers|batches)(\/|$)/.test(currentPath)
   );
 }
 

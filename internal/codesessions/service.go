@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -25,7 +24,6 @@ type Service struct {
 	db          *db.DB
 	credentials *SessionCredentials
 	logger      *slog.Logger
-	sinkMu      sync.Mutex
 	sink        PublicEventSink
 }
 
@@ -353,13 +351,10 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	if !found {
 		return db.ErrNotFound
 	}
-	s.sinkMu.Lock()
-	sink := s.sink
-	s.sinkMu.Unlock()
-	if sink == nil {
+	if s.sink == nil {
 		return nil
 	}
-	return sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
+	return s.sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
 }
 
 func (s *Service) reconcileSubagentEvents(ctx context.Context, codeSessionID string) {

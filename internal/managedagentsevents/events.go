@@ -97,7 +97,7 @@ func IsWorkerOutputEvent(eventType string) bool {
 }
 
 func SessionStatus(eventType string) (string, bool) {
-	switch strings.TrimSpace(eventType) {
+	switch eventType {
 	case "session.status_run_started", "session.status_running", "session.running":
 		return "running", true
 	case "session.status_rescheduled":

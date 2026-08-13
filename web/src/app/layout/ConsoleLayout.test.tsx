@@ -39,6 +39,9 @@ describe('ConsoleShell', () => {
     expect(screen.getByText('Deployments')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
     expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/workspaces/default/skills');
+    expect(screen.getByRole('link', { name: 'MCP Servers' }).getAttribute('href')).toBe(
+      '/workspaces/default/mcp-servers',
+    );
     expect(screen.getByRole('link', { name: 'Batches' }).getAttribute('href')).toBe('/workspaces/default/batches');
     expect(screen.getByRole('link', { name: 'Caching' }).getAttribute('href')).toBe('/usage/cache');
     expect(screen.getByRole('link', { name: 'Rate limits' }).getAttribute('href')).toBe('/usage/limits');
@@ -363,6 +366,27 @@ describe('ConsoleShell', () => {
 
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/workspaces/wrkspc_foo/agents'));
     expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
+  });
+
+  test('keeps the MCP server subroute when selecting another workspace', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers/mcpsrv_test');
+    const navigate = mock(async () => undefined);
+
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/mcp-servers/mcpsrv_test"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        onLogout={() => undefined}
+        onNavigate={navigate}
+      >
+        <div>MCP server content</div>
+      </ConsoleShell>,
+    );
+
+    fireEvent.click(getWorkspaceMenuButton(/Default/i));
+    fireEvent.click(screen.getByRole('menuitem', { name: /foo/i }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/workspaces/wrkspc_foo/mcp-servers/mcpsrv_test'));
   });
 
   test('syncs the workspace selector from workspace-scoped routes', async () => {

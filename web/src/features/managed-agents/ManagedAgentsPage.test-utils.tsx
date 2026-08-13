@@ -252,6 +252,7 @@ export type MockAgentsApiOptions = {
   skills?: SkillFixture[];
   mcpDirectoryServers?: Array<Record<string, unknown>>;
   mcpDirectoryErrorOnce?: boolean;
+  workspaceMCPServers?: Array<Record<string, unknown>>;
   mcpToolCatalogs?: Array<Record<string, unknown>>;
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
@@ -402,6 +403,13 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'MCP directory unavailable' } }, 503);
       }
       return jsonResponse({ servers: options.mcpDirectoryServers ?? [] });
+    }
+
+    if (
+      url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_servers(?:\?|$)/) &&
+      method === 'GET'
+    ) {
+      return jsonResponse({ data: options.workspaceMCPServers ?? [], next_page: null });
     }
 
     if (url.startsWith('/v1/agents?') && method === 'GET') {

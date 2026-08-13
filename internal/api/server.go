@@ -22,6 +22,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpservers"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
@@ -100,6 +101,7 @@ func NewServer(deps ServerDeps) *Server {
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
 	workbenchLogger := componentLogger("workbench")
 	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
+	mcpServerHandler := mcpservers.NewHandler(deps.DB, componentLogger("mcp_servers"))
 	filestoreService := deps.FilestoreService
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
@@ -139,7 +141,7 @@ func NewServer(deps ServerDeps) *Server {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	s.registerVersionedAPIRoutes(router)
-	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler)
+	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler)
 	s.router = router
 	return s
 }
@@ -190,7 +192,12 @@ func filestoreNotFound(w http.ResponseWriter, _ *http.Request) {
 	filestoreapi.WriteProtocolError(w, http.StatusNotFound, "not_found", "Not found")
 }
 
-func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogger *slog.Logger, mcpCatalogHandler *mcpcatalogs.Handler) {
+func (s *Server) registerPlatformConsoleRoutes(
+	router chi.Router,
+	workbenchLogger *slog.Logger,
+	mcpCatalogHandler *mcpcatalogs.Handler,
+	mcpServerHandler *mcpservers.Handler,
+) {
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
@@ -223,6 +230,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
+			mcpServerHandler.RegisterRoutes(r)
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
 			s.files.RegisterPlatformRoutes(r)

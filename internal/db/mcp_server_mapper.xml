@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MCPServerMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        name,
+        transport_type,
+        endpoint_url,
+        created_at,
+        updated_at,
+        archived_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="mcpServerMapperRow">
+        INSERT INTO mcp_servers (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            name,
+            transport_type,
+            endpoint_url,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.Name},
+            #{params.TransportType},
+            #{params.EndpointURL,sensitive=true},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="mcpServerMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM mcp_servers
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="mcpServerMapperRow">
+        UPDATE mcp_servers
+        SET name = #{params.Name},
+            transport_type = #{params.TransportType},
+            endpoint_url = #{params.EndpointURL,sensitive=true},
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="mcpServerMapperRow">
+        UPDATE mcp_servers
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="SoftDeleteByExternalID" result="returning" resultType="mcpServerMapperRow">
+        UPDATE mcp_servers
+        SET deleted_at = COALESCE(deleted_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <select id="ListPage" resultType="mcpServerMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM mcp_servers
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <if test="!params.IncludeArchived">
+                AND archived_at IS NULL
+            </if>
+            <if test="params.Search != ''">
+                AND (
+                    POSITION(LOWER(#{params.Search,sensitive=true}) IN LOWER(name)) &gt; 0
+                    OR POSITION(LOWER(#{params.Search,sensitive=true}) IN LOWER(endpoint_url)) &gt; 0
+                )
+            </if>
+            <if test="params.Cursor != nil">
+                AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+</mapper>

@@ -33,9 +33,10 @@ flowchart LR
 
 ## 字段与组件复用
 
-- General、Multiagent、Skills、Tools 复用 Create Agent 的 `AgentConfigRenderedEditor`，因此搜索、多选、版本固定、MCP Directory/自定义页签、权限聚合和 Custom Tool 校验保持一致。
+- General、Multiagent、Skills、Tools 复用 Create Agent 的 `AgentConfigRenderedEditor`，因此搜索、多选、版本固定、MCP Directory/工作区候选页签、权限聚合和 Custom Tool 校验保持一致。
 - 编辑既有模型 ID 时保留 `model.speed`；已有 `self`、固定 Agent 版本和固定 Skill 版本会展示并保留。
-- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；自定义 MCP 名称只允许字母、数字、下划线、连字符和句点且不得包含连续两个下划线 `__`，并通过不含内嵌凭据或 fragment 的 HTTP/HTTPS URL 添加，创建阶段不探测工具列表。
+- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；新增自定义 MCP 只能从当前工作区 Active MCP Servers 中选择，选择时把名称与 URL 复制到新 Agent 版本，不保存资源 ID。
+- 既有 Agent 中不属于当前工作区 MCP Servers 的历史配置仍可在 Rendered 中回显、保存和移除；管理资源改名、归档或删除不回写已有 Agent 版本。
 - Rendered 不提供新增 Custom Tool 的入口，但继续允许编辑和移除已有 Custom Tool，Raw 往返不丢失其定义。
 - 内置工具回显当前固定 Claude Code 2.1.120 的 22 项默认工具，与创建页和后端 `--tools` 清单一致；`web_fetch` 对应 Claude Code 本地 `WebFetch`，不启用 Messages API 的模型服务端同名工具。内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中。
 

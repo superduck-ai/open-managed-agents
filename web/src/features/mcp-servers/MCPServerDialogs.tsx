@@ -1,5 +1,5 @@
 import { AlertCircle, RefreshCw, X } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import {
   mcpServerErrorMessage,
@@ -7,6 +7,7 @@ import {
   type WorkspaceMCPServer,
 } from '../../shared/api/workspaceMCPServers';
 import { useI18n } from '../../shared/i18n';
+import { type MCPServerInputError, validateMCPServerInput } from '../../shared/lib/mcp-server-input';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import {
   AlertDialog,
@@ -19,13 +20,21 @@ import {
   AlertDialogTitle,
 } from '../../shared/ui/alert-dialog';
 import { Button } from '../../shared/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../shared/ui/dialog';
 import { Input } from '../../shared/ui/input';
-import { Label } from '../../shared/ui/label';
+import { Field, FieldDescription, FieldError, FieldLabel } from '../../shared/ui/field';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../../shared/ui/sheet';
 import { MCPServerActionsMenu, MCPServerStatusBadge } from './MCPServersTable';
 
-export type MCPServerPanelTarget =
-  { mode: 'create' } | { mode: 'detail'; serverId: string } | { mode: 'edit'; server: WorkspaceMCPServer };
+export type MCPServerDetailTarget = { serverId: string };
+export type MCPServerEditorTarget = { mode: 'create' } | { mode: 'edit'; server: WorkspaceMCPServer };
 export type MCPServerDestructiveTarget = { action: 'archive' | 'delete'; server: WorkspaceMCPServer };
 
 export function MCPServerPanel({
@@ -39,10 +48,8 @@ export function MCPServerPanel({
   onEdit,
   onArchive,
   onDelete,
-  onShowDetail,
-  onSubmit,
 }: {
-  target: MCPServerPanelTarget | null;
+  target: MCPServerDetailTarget | null;
   detailServer?: WorkspaceMCPServer;
   detailLoading: boolean;
   detailError: unknown;
@@ -52,33 +59,21 @@ export function MCPServerPanel({
   onEdit: (server: WorkspaceMCPServer) => void;
   onArchive: (server: WorkspaceMCPServer) => void;
   onDelete: (server: WorkspaceMCPServer) => void;
-  onShowDetail: (serverId: string) => void;
-  onSubmit: (input: MCPServerMutation) => Promise<void>;
 }) {
-  const server = target?.mode === 'edit' ? target.server : detailServer;
   return (
     <Sheet open={Boolean(target)} onOpenChange={(open) => !open && onClose()}>
       <SheetContent showCloseButton={false} showOverlay={false} side="right" className="gap-0 p-0 sm:!max-w-md">
-        {target?.mode === 'create' || target?.mode === 'edit' ? (
-          <MCPServerFormPanel
-            target={target}
-            onClose={onClose}
-            onCancel={() => (target.mode === 'edit' ? onShowDetail(target.server.id) : onClose())}
-            onSubmit={onSubmit}
-          />
-        ) : (
-          <MCPServerDetailPanel
-            server={server}
-            isLoading={detailLoading}
-            error={detailError}
-            formatter={formatter}
-            onClose={onClose}
-            onRetry={onRetry}
-            onEdit={onEdit}
-            onArchive={onArchive}
-            onDelete={onDelete}
-          />
-        )}
+        <MCPServerDetailPanel
+          server={detailServer}
+          isLoading={detailLoading}
+          error={detailError}
+          formatter={formatter}
+          onClose={onClose}
+          onRetry={onRetry}
+          onEdit={onEdit}
+          onArchive={onArchive}
+          onDelete={onDelete}
+        />
       </SheetContent>
     </Sheet>
   );
@@ -172,33 +167,47 @@ function MCPServerDetailPanel({
   );
 }
 
-function MCPServerFormPanel({
+export function MCPServerEditor({
   target,
   onClose,
-  onCancel,
   onSubmit,
 }: {
-  target: Extract<MCPServerPanelTarget, { mode: 'create' | 'edit' }>;
+  target: MCPServerEditorTarget | null;
   onClose: () => void;
-  onCancel: () => void;
+  onSubmit: (input: MCPServerMutation) => Promise<void>;
+}) {
+  if (!target) {
+    return null;
+  }
+  const editorKey = target.mode === 'edit' ? `edit:${target.server.id}` : 'create';
+  return <MCPServerEditorDialog key={editorKey} target={target} onClose={onClose} onSubmit={onSubmit} />;
+}
+
+function MCPServerEditorDialog({
+  target,
+  onClose,
+  onSubmit,
+}: {
+  target: MCPServerEditorTarget;
+  onClose: () => void;
   onSubmit: (input: MCPServerMutation) => Promise<void>;
 }) {
   const { msg } = useI18n();
-  const [name, setName] = useState('');
-  const [url, setURL] = useState('');
+  const [name, setName] = useState(target.mode === 'edit' ? target.server.name : '');
+  const [url, setURL] = useState(target.mode === 'edit' ? target.server.url : '');
+  const [inputErrors, setInputErrors] = useState<ReturnType<typeof validateMCPServerInput>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setName(target.mode === 'edit' ? target.server.name : '');
-    setURL(target.mode === 'edit' ? target.server.url : '');
-    setError(null);
-  }, [target]);
 
   const editing = target.mode === 'edit';
   const title = editing ? msg('mcpServers.edit', 'Edit MCP server') : msg('mcpServers.create', 'Create MCP server');
   const submit = async () => {
-    if (!name.trim() || !url.trim() || saving) return;
+    if (saving) return;
+    const nextInputErrors = validateMCPServerInput(name, url);
+    if (Object.keys(nextInputErrors).length > 0) {
+      setInputErrors(nextInputErrors);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -211,61 +220,114 @@ function MCPServerFormPanel({
   };
 
   return (
-    <>
-      <SheetHeader className="border-b border-border px-4 py-4 pr-12">
-        <SheetTitle>{title}</SheetTitle>
-        <SheetDescription>
-          {msg(
-            'mcpServers.editorDescription',
-            'Agents can select this configuration and copy its name and endpoint into their next version.',
-          )}
-        </SheetDescription>
-        <div className="absolute right-4 top-4">
-          <PanelCloseButton disabled={saving} onClose={onClose} />
+    <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            {msg(
+              'mcpServers.editorDescription',
+              'Agents can select this configuration and copy its name and endpoint into their next version.',
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <Field data-invalid={Boolean(inputErrors.name)}>
+            <FieldLabel htmlFor="mcp-server-name">
+              {msg('managedAgents.agents.createDialog.customMcpName', 'Name')}
+            </FieldLabel>
+            <Input
+              id="mcp-server-name"
+              value={name}
+              autoComplete="off"
+              placeholder="internal-docs"
+              aria-invalid={Boolean(inputErrors.name) || undefined}
+              onChange={(event) => {
+                setName(event.currentTarget.value);
+                setInputErrors((current) => ({ ...current, name: undefined }));
+              }}
+            />
+            <FieldError>{mcpInputError('name', inputErrors.name, msg)}</FieldError>
+          </Field>
+          <Field data-invalid={Boolean(inputErrors.url)}>
+            <FieldLabel htmlFor="mcp-server-url">
+              {msg('managedAgents.agents.createDialog.customMcpUrl', 'MCP Server URL')}
+            </FieldLabel>
+            <Input
+              id="mcp-server-url"
+              value={url}
+              inputMode="url"
+              autoComplete="url"
+              placeholder="https://mcp.example.com/mcp"
+              aria-invalid={Boolean(inputErrors.url) || undefined}
+              onChange={(event) => {
+                setURL(event.currentTarget.value);
+                setInputErrors((current) => ({ ...current, url: undefined }));
+              }}
+            />
+            <FieldDescription>
+              {msg('managedAgents.agents.createDialog.customMcpUrlHint', 'Only HTTP and HTTPS URLs are supported.')}
+            </FieldDescription>
+            <FieldError>{mcpInputError('url', inputErrors.url, msg)}</FieldError>
+          </Field>
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
         </div>
-      </SheetHeader>
-      <div className="subtle-scrollbar flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        <div className="space-y-2">
-          <Label htmlFor="mcp-server-name">{msg('mcpServers.name', 'Name')}</Label>
-          <Input
-            id="mcp-server-name"
-            value={name}
-            autoComplete="off"
-            placeholder="internal-docs"
-            onChange={(event) => setName(event.currentTarget.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="mcp-server-url">{msg('mcpServers.endpointUrl', 'Endpoint URL')}</Label>
-          <Input
-            id="mcp-server-url"
-            value={url}
-            type="url"
-            autoComplete="url"
-            placeholder="https://mcp.example.com/mcp"
-            onChange={(event) => setURL(event.currentTarget.value)}
-          />
-        </div>
-        {error ? (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-      </div>
-      <div className="flex justify-end gap-2 border-t border-border px-4 py-4">
-        <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>
-          {msg('common.cancel', 'Cancel')}
-        </Button>
-        <Button type="button" disabled={!name.trim() || !url.trim() || saving} onClick={() => void submit()}>
-          {saving
-            ? msg('common.saving', 'Saving...')
-            : editing
-              ? msg('common.save', 'Save')
-              : msg('common.create', 'Create')}
-        </Button>
-      </div>
-    </>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={saving} onClick={onClose}>
+            {msg('common.cancel', 'Cancel')}
+          </Button>
+          <Button type="button" disabled={saving} onClick={() => void submit()}>
+            {saving
+              ? msg('common.saving', 'Saving...')
+              : editing
+                ? msg('common.save', 'Save')
+                : msg('common.create', 'Create')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
+}
+
+function mcpInputError(
+  field: 'name' | 'url',
+  error: MCPServerInputError | undefined,
+  msg: ReturnType<typeof useI18n>['msg'],
+) {
+  if (!error) return null;
+  if (field === 'name') {
+    switch (error) {
+      case 'required':
+        return msg('managedAgents.agents.createDialog.customMcpNameRequired', 'Name is required.');
+      case 'too_long':
+        return msg('managedAgents.agents.createDialog.customMcpNameTooLong', 'Name must be at most 255 characters.');
+      case 'ambiguous':
+        return msg(
+          'managedAgents.agents.createDialog.customMcpNameAmbiguous',
+          'Name must not contain consecutive underscores.',
+        );
+      default:
+        return msg(
+          'managedAgents.agents.createDialog.customMcpNameInvalid',
+          'Use only letters, numbers, underscores, hyphens, or periods.',
+        );
+    }
+  }
+  switch (error) {
+    case 'required':
+      return msg('managedAgents.agents.createDialog.customMcpUrlRequired', 'MCP Server URL is required.');
+    case 'too_long':
+      return msg('managedAgents.agents.createDialog.customMcpUrlTooLong', 'MCP Server URL must be at most 2048 bytes.');
+    default:
+      return msg(
+        'managedAgents.agents.createDialog.customMcpUrlInvalid',
+        'Enter a valid HTTP or HTTPS MCP Server URL.',
+      );
+  }
 }
 
 function DetailSection({

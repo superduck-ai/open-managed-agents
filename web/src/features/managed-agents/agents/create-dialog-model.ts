@@ -8,6 +8,11 @@ import {
 } from '../types';
 import { cloneJsonValue, toRecord } from '../utils';
 import {
+  isHTTPMCPServerURL,
+  isUnambiguousMCPServerName,
+  validateMCPServerInput,
+} from '../../../shared/lib/mcp-server-input';
+import {
   BUILT_IN_AGENT_TOOLSETS,
   aggregateToolPermissions,
   effectiveToolPermission,
@@ -95,9 +100,9 @@ const mcpServerSchema = z
       .min(1)
       .max(255)
       .regex(/^[A-Za-z0-9_.-]+$/)
-      .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
+      .refine(isUnambiguousMCPServerName, 'MCP server name must not contain "__".'),
     type: z.literal('url'),
-    url: z.string().trim().max(2048).refine(isHTTPURL, 'MCP server URL must be a safe HTTP/HTTPS URL.'),
+    url: z.string().trim().max(2048).refine(isHTTPMCPServerURL, 'MCP server URL must be a safe HTTP/HTTPS URL.'),
   })
   .strict();
 
@@ -163,7 +168,7 @@ const mcpToolsetSchema = z
       .min(1)
       .max(255)
       .regex(/^[A-Za-z0-9_.-]+$/)
-      .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
+      .refine(isUnambiguousMCPServerName, 'MCP server name must not contain "__".'),
     default_config: permissionConfigSchema.optional(),
     configs: z.array(mcpToolConfigSchema).optional(),
   })
@@ -428,53 +433,18 @@ export function permissionConfig(permission: EditablePermission) {
 }
 
 function validateMcpServerInput(draft: CreateAgentInput, name: string, url: string): McpServerInputErrors {
-  const errors: McpServerInputErrors = {};
-  if (!name) {
-    errors.name = 'required';
-  } else if (name.length > 255) {
-    errors.name = 'too_long';
-  } else if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
-    errors.name = 'invalid';
-  } else if (!isUnambiguousMcpServerName(name)) {
-    errors.name = 'ambiguous';
-  } else if (
+  const errors: McpServerInputErrors = validateMCPServerInput(name, url);
+  const nameInUse =
     draft.mcp_servers.some((server) => toRecord(server)?.name === name) ||
-    draft.tools.some((tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === name)
-  ) {
+    draft.tools.some((tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === name);
+  if (!errors.name && nameInUse) {
     errors.name = 'duplicate';
-  }
-
-  if (!url) {
-    errors.url = 'required';
-  } else if (url.length > 2048) {
-    errors.url = 'too_long';
-  } else if (!isHTTPURL(url)) {
-    errors.url = 'invalid';
   }
 
   if (draft.mcp_servers.length >= 20) {
     errors.form = 'limit';
   }
   return errors;
-}
-
-function isUnambiguousMcpServerName(value: string) {
-  return !value.includes('__');
-}
-
-function isHTTPURL(value: string) {
-  try {
-    const parsed = new URL(value);
-    return (
-      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
-      Boolean(parsed.hostname) &&
-      !parsed.username &&
-      !parsed.password &&
-      !parsed.hash
-    );
-  } catch {
-    return false;
-  }
 }
 
 function normalizeDraftModel(model: AgentModelInput): AgentModelInput {

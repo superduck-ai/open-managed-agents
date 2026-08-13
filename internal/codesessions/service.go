@@ -208,9 +208,7 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSess
 		if err := s.publishPublicPayloads(ctx, codeSessionID, publicPayloads); err != nil {
 			return err
 		}
-		if event.EventType == "session.thread_created" {
-			s.backfillSubagentEvents(ctx, codeSessionID)
-		}
+		s.reconcileSubagentEvents(ctx, codeSessionID)
 	}
 	return nil
 }
@@ -277,9 +275,7 @@ func (s *Service) appendWorkerEvent(ctx context.Context, codeSessionID string, r
 	if err := s.publishPublicPayloads(ctx, codeSessionID, publicPayloads); err != nil {
 		return err
 	}
-	if meta.EventType == "session.thread_created" {
-		s.backfillSubagentEvents(ctx, codeSessionID)
-	}
+	s.reconcileSubagentEvents(ctx, codeSessionID)
 	return nil
 }
 
@@ -363,7 +359,7 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	return sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
 }
 
-func (s *Service) backfillSubagentEvents(ctx context.Context, codeSessionID string) {
+func (s *Service) reconcileSubagentEvents(ctx context.Context, codeSessionID string) {
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err == nil && found {
 		err = s.publishSubagentInternalEvents(ctx, codeSession)

@@ -100,6 +100,7 @@ func (h *Handler) handlePutCodeSessionWorker(w http.ResponseWriter, r *http.Requ
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not sync code session worker status"))
 			return
 		}
+		h.service.reconcileSubagentEvents(r.Context(), codeSessionID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.codeSessionWorkerState(updated, r, input.WorkerEpoch))
 }

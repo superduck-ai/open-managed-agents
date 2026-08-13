@@ -937,6 +937,17 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 	`, session.ID, child.ID); err != nil {
 		t.Fatalf("delete child session events before backfill: %v", err)
 	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
+	sessionRecord := mustSessionRecord(t, app, session.ID)
+	storedChildEvents, _, err := app.db.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{
+		WorkspaceUUID:     sessionRecord.WorkspaceUUID,
+		SessionExternalID: session.ID,
+		ThreadExternalID:  child.ID,
+		Limit:             100,
+	})
+	if err != nil || len(storedChildEvents) == 0 {
+		t.Fatalf("child events after worker state reconciliation = (%d, %v), want restored events", len(storedChildEvents), err)
+	}
 
 	childEvents := listThreadEvents(t, app, session.ID, child.ID, defaultTestKey)
 	for _, want := range []string{

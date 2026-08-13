@@ -2,10 +2,29 @@ package codesessions
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+
+	"github.com/go-chi/chi/v5"
 )
+
+func TestCodeSessionHTTPPollReturnsErrorsThroughAdapter(t *testing.T) {
+	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
+	router := chi.NewRouter()
+	handler.RegisterV1Routes(router)
+
+	request := httptest.NewRequest(http.MethodGet, "/code/sessions/cse_test/", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
+	}
+}
 
 func TestSessionContextFromCodeSessionUsesStoredConfig(t *testing.T) {
 	record := db.CodeSession{

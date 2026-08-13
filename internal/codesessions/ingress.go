@@ -29,28 +29,18 @@ const (
 	internalEventsPageSize      = 500
 )
 
-func (h *Handler) handleCodeSession(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		// legacy WebSocket ingress 已移除。必须在请求进入旧的 30 秒 HTTP poll
-		// 之前拒绝 WebSocket upgrade，避免退化成长轮询请求。
-		if strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
-			return
-		}
-		h.handleCodeSessionHTTPPoll(w, r)
-		return
-	}
-	h.handleSessionIngressPersistence(w, r)
-}
-
-func (h *Handler) handleCodeSessionHTTPPoll(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleCodeSessionHTTPPoll(w http.ResponseWriter, r *http.Request) error {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
-		return
+	// legacy WebSocket ingress 已移除。必须在请求进入旧的 30 秒 HTTP poll
+	// 之前拒绝 WebSocket upgrade，避免退化成长轮询请求。
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
+		return codeSessionRouteNotFound()
+	}
+	if err := h.authorizeSessionIngressRequest(r, codeSessionID); err != nil {
+		return err
 	}
 	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
-		h.writeIngressLoadError(w, r, err)
-		return
+		return err
 	}
 	if err := h.db.MarkCodeSessionWorkerConnected(r.Context(), codeSessionID); err != nil && !errors.Is(err, db.ErrNotFound) {
 		h.logger.ErrorContext(r.Context(), "mark code session http poll connected", "code_session_id", codeSessionID, "error", err)
@@ -63,9 +53,7 @@ func (h *Handler) handleCodeSessionHTTPPoll(w http.ResponseWriter, r *http.Reque
 	for {
 		events, err := h.db.ListQueuedCodeSessionInboundEvents(r.Context(), codeSessionID)
 		if err != nil {
-			h.logger.ErrorContext(r.Context(), "list queued code session http poll events", "code_session_id", codeSessionID, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list code session events"))
-			return
+			return codeSessionEventsLoadError(err, codeSessionID)
 		}
 		if len(events) > 0 {
 			payloads := make([]json.RawMessage, 0, len(events))
@@ -78,14 +66,14 @@ func (h *Handler) handleCodeSessionHTTPPoll(w http.ResponseWriter, r *http.Reque
 					h.logger.ErrorContext(r.Context(), "mark code session http poll event sent", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
 				}
 			}
-			return
+			return nil
 		}
 		select {
 		case <-r.Context().Done():
-			return
+			return nil
 		case <-deadline.C:
 			httpapi.WriteJSON(w, http.StatusOK, map[string]any{"events": []any{}})
-			return
+			return nil
 		case <-ticker.C:
 		}
 	}

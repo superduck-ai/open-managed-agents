@@ -15,61 +15,61 @@ import (
 	"github.com/google/uuid"
 )
 
-func (h *Handler) applySessionEventEffects(ctx context.Context, event db.SessionEvent) {
+func (h *Handler) applySessionEventProjection(ctx context.Context, event db.SessionEvent) error {
 	if event.EventType == "session.thread_created" {
 		session, found, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
 		if err != nil {
-			h.logger.ErrorContext(ctx, "load session for thread_created", "session_id", event.SessionExternalID, "error", err)
-			return
+			return err
 		}
 		if !found {
-			return
+			return nil
 		}
 		if threadID := sessionThreadIDFromEvent(event); threadID != nil {
 			var payload map[string]any
 			_ = json.Unmarshal(event.Payload, &payload)
 			if err := h.ensureSessionThread(ctx, session, *threadID, payload, event.CreatedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
-				h.logger.ErrorContext(ctx, "ensure session thread", "session_id", event.SessionExternalID, "thread_id", *threadID, "error", err)
+				return err
 			}
 		}
-		return
+		return nil
 	}
 	if status, ok := threadStatusFromEventType(event.EventType); ok {
 		threadID := sessionThreadIDFromEvent(event)
 		if threadID == nil {
-			return
+			return nil
 		}
 		session, found, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
-		if err == nil && found {
+		if err != nil {
+			return err
+		}
+		if found {
 			var payload map[string]any
 			_ = json.Unmarshal(event.Payload, &payload)
 			if err := h.ensureSessionThread(ctx, session, *threadID, payload, event.CreatedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
-				h.logger.ErrorContext(ctx, "ensure session thread for status", "session_id", event.SessionExternalID, "thread_id", *threadID, "error", err)
+				return err
 			}
-		} else if err != nil {
-			h.logger.ErrorContext(ctx, "load session for thread status", "session_id", event.SessionExternalID, "error", err)
 		}
 		if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, *threadID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-			h.logger.ErrorContext(ctx, "update session thread status from event", "session_id", event.SessionExternalID, "thread_id", *threadID, "event_type", event.EventType, "error", err)
-			return
+			return err
 		}
-		h.updateAggregatedSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID)
-		return
+		return h.projectAggregatedSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID)
 	}
 	status, ok := sessionStatusFromEventType(event.EventType)
 	if !ok {
-		return
-	}
-	if err := h.db.SetSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-		h.logger.ErrorContext(ctx, "update session status from event", "session_id", event.SessionExternalID, "event_type", event.EventType, "error", err)
+		return nil
 	}
 	thread, err := h.db.GetPrimarySessionThread(ctx, event.WorkspaceUUID, event.SessionExternalID)
-	if err != nil {
-		return
+	if err == nil {
+		if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, thread.ExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+			return err
+		}
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return err
 	}
-	if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, thread.ExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-		h.logger.ErrorContext(ctx, "update primary session thread status from event", "session_id", event.SessionExternalID, "thread_id", thread.ExternalID, "event_type", event.EventType, "error", err)
+	if err := h.db.SetSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+		return err
 	}
+	return nil
 }
 
 func sessionStatusFromEventType(eventType string) (string, bool) {
@@ -80,16 +80,16 @@ func threadStatusFromEventType(eventType string) (string, bool) {
 	return maevents.ThreadStatus(eventType)
 }
 
-func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceUUID string, sessionID string) {
+func (h *Handler) projectAggregatedSessionStatus(ctx context.Context, workspaceUUID string, sessionID string) error {
 	threads, err := h.db.ListSessionThreads(ctx, workspaceUUID, sessionID)
 	if err != nil {
-		if !errors.Is(err, db.ErrNotFound) {
-			h.logger.ErrorContext(ctx, "list session threads for aggregate", "session_id", sessionID, "error", err)
+		if errors.Is(err, db.ErrNotFound) {
+			return nil
 		}
-		return
+		return err
 	}
 	if len(threads) == 0 {
-		return
+		return nil
 	}
 	status := "terminated"
 	for _, thread := range threads {
@@ -97,9 +97,9 @@ func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceUU
 		case "running":
 			status = "running"
 			if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-				h.logger.ErrorContext(ctx, "aggregate session status", "session_id", sessionID, "error", err)
+				return err
 			}
-			return
+			return nil
 		case "rescheduling":
 			if status != "running" {
 				status = "rescheduling"
@@ -111,8 +111,9 @@ func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceUU
 		}
 	}
 	if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-		h.logger.ErrorContext(ctx, "aggregate session status", "session_id", sessionID, "error", err)
+		return err
 	}
+	return nil
 }
 
 func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, error) {

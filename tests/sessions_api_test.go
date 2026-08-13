@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
@@ -1349,6 +1350,33 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if len(runningEvents.Data) != 1 {
 		t.Fatalf("duplicate running state produced %d events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
 	}
+	codeSession, err := getCodeSession(app, context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("load code session for projection retry: %v", err)
+	}
+	sessionRecord := mustSessionRecord(t, app, session.ID)
+	if err := app.db.SetSessionThreadStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, threads.Data[0].ID, "idle"); err != nil {
+		t.Fatalf("make primary thread projection stale: %v", err)
+	}
+	if err := app.db.SetSessionStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, "idle"); err != nil {
+		t.Fatalf("make session projection stale: %v", err)
+	}
+	retryService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
+	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil)
+	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
+		t.Fatalf("retry existing running event projection: %v", err)
+	}
+	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
+		t.Fatalf("public session status after projection retry = %q, want running", got)
+	}
+	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
+	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
+		t.Fatalf("primary thread status after projection retry = %+v, want running", threads.Data)
+	}
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 1 {
+		t.Fatalf("projection retry produced %d running events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
 	runningDetailsOnlyState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"requires_action_details":{"tool_name":"Bash"}}`)
 	if runningDetailsOnlyState.Worker.WorkerStatus != "running" || !rawMessageIsJSONNull(runningDetailsOnlyState.Worker.RequiresActionDetails) {
 		t.Fatalf("running details-only worker state = %+v, details=%s; want running with cleared details", runningDetailsOnlyState.Worker, runningDetailsOnlyState.Worker.RequiresActionDetails)
@@ -1361,7 +1389,6 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("primary thread status after details-only update = %+v, want running", threads.Data)
 	}
 
-	sessionRecord := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
 		sessionRecord.WorkspaceUUID,
@@ -1427,6 +1454,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("download output = %q, want %q", got, outputContent)
 	}
 
+	idleEventsBefore := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
 	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
 	if idleState.Worker.WorkerStatus != "idle" || !rawMessageIsJSONNull(idleState.Worker.RequiresActionDetails) {
 		t.Fatalf("idle worker state = %+v, details=%s; want idle with cleared details", idleState.Worker, idleState.Worker.RequiresActionDetails)
@@ -1440,6 +1468,19 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
 	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
 		t.Fatalf("primary thread status after idle = %+v, want idle", threads.Data)
+	}
+	idleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	if len(idleEvents.Data) != len(idleEventsBefore.Data)+1 {
+		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
+	}
+	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
+	if _, ok := idleEvent["stop_reason"]; ok {
+		t.Fatalf("worker session.status_idle unexpectedly contains stop_reason: %#v", idleEvent)
+	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
+	duplicateIdleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	if len(duplicateIdleEvents.Data) != len(idleEvents.Data) {
+		t.Fatalf("duplicate idle state produced %d events, want %d: %+v", len(duplicateIdleEvents.Data), len(idleEvents.Data), duplicateIdleEvents.Data)
 	}
 	afterIdleFiles := listFiles(t, app, "scope_id="+session.ID)
 	var outputFileAfterIdle *metadataResponse

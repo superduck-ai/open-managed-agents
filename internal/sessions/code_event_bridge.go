@@ -72,10 +72,26 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		return err
 	}
+	persisted := make(map[string]db.SessionEvent, len(created))
 	for _, event := range created {
-		h.applySessionEventEffects(ctx, event)
+		persisted[event.ExternalID] = event
+	}
+	// Idempotent retries reapply stored state projections; only newly inserted events leave the process.
+	var projectionErr error
+	for _, event := range events {
+		stored, ok := persisted[event.ExternalID]
+		var eventErr error
+		if !ok {
+			stored, eventErr = h.db.GetSessionEvent(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
+		}
+		if eventErr == nil {
+			eventErr = h.applySessionEventProjection(ctx, stored)
+		}
+		projectionErr = errors.Join(projectionErr, eventErr)
+	}
+	for _, event := range created {
 		h.broadcast(event)
 	}
 	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
-	return nil
+	return projectionErr
 }

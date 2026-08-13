@@ -187,9 +187,11 @@ final worker_status != requires_action  => 一律保存为 null
 | `idle` | `idle` |
 | `requires_action` | `idle` |
 
-同步发生在 worker state DB 更新提交之后。`running` 不再直接修改 public session/thread 行，而是先持久化 `session.status_running`，再由统一的 session event effect 更新状态并广播 SSE、投递 webhook。事件在 PUT 返回成功前完成发布，因此 worker 应等待 PUT 成功后再开始模型请求或发送 `span.model_request_start`。同一 public running 状态下重复上报不会生成重复事件；session 先回到 idle 后再次上报 running 会生成新的事件。
+同步发生在 worker state DB 更新提交之后。`running`、`idle` 和 `requires_action` 都通过同一条 public event 管道同步：先持久化 `session.status_running` 或 `session.status_idle`，再由 session event projection 更新 public session 与 primary thread，随后广播 SSE，并且只为首次创建的事件投递 webhook。同一 public 状态下重复上报不会生成重复事件；状态发生转换后再次上报会生成新的事件。
 
-`idle` 和 `requires_action` 暂时保留直接状态同步；其中 `requires_action` 不是 public session status enum，阻塞语义仍由 worker state、metadata 以及工具权限路径产生的 `session.status_idle.stop_reason` 表达。同步时忽略 `ErrNotFound`；其它 DB 错误会让请求返回 `500 api_error`，此时 worker state 已经持久化，但 handler 不返回成功响应，避免调用方误以为 public 状态也同步完成。
+`requires_action` 不是 public session status enum，因此 worker 状态只映射为不带 `stop_reason` 的普通 `session.status_idle`。工具阻塞语义仍由 worker state、metadata 以及工具权限路径产生的 `session.status_idle.stop_reason` 表达。
+
+如果事件已经持久化但状态 projection 失败，PUT 返回 `500 api_error`。worker 使用相同状态重试时会命中同一个稳定事件 ID；服务端会重新执行已存在事件的 projection，但不会重复广播 SSE 或投递 webhook。Session 状态最后写入，作为 primary thread projection 已完成的标记，避免部分成功让后续重试被提前跳过。
 
 如果请求没有显式 `worker_status`，不会触发 public session/thread 状态同步。details-only update 会保留当前 public status。
 

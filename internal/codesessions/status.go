@@ -17,11 +17,11 @@ func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.Cod
 	if !ok {
 		return nil
 	}
-	if err := s.publishPublicSessionStatus(ctx, record, eventType); err != nil {
+	payloads, err := s.publicSessionStatusPayloads(ctx, record, eventType)
+	if err != nil {
 		return err
 	}
-	s.reconcileSubagentEvents(ctx, record.ExternalID)
-	return nil
+	return s.publishWorkerPublicPayloads(ctx, record.ExternalID, payloads)
 }
 
 func publicEventTypeFromWorkerStatus(status string) (string, bool) {
@@ -35,28 +35,28 @@ func publicEventTypeFromWorkerStatus(status string) (string, bool) {
 	}
 }
 
-func (s *Service) publishPublicSessionStatus(ctx context.Context, record db.CodeSession, eventType string) error {
+func (s *Service) publicSessionStatusPayloads(ctx context.Context, record db.CodeSession, eventType string) ([]json.RawMessage, error) {
 	status, ok := maevents.SessionStatus(eventType)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	session, found, err := s.db.GetSession(ctx, record.WorkspaceUUID, record.SessionExternalID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !found {
-		return nil
+		return nil, nil
 	}
 	if session.Status == status {
 		thread, found, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !found {
-			return nil
+			return nil, nil
 		}
 		if thread.Status == status {
-			return nil
+			return nil, nil
 		}
 	}
 	now := time.Now().UTC()
@@ -68,7 +68,7 @@ func (s *Service) publishPublicSessionStatus(ctx context.Context, record db.Code
 		"processed_at": formatTime(now),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.publishPublicPayloads(ctx, record.ExternalID, []json.RawMessage{payload})
+	return []json.RawMessage{payload}, nil
 }

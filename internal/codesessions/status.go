@@ -3,7 +3,6 @@ package codesessions
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -45,12 +44,12 @@ func (s *Service) publishPublicSessionStatus(ctx context.Context, record db.Code
 		return nil
 	}
 	if session.Status == status {
-		thread, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
+		thread, found, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
 		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return nil
-			}
 			return err
+		}
+		if !found {
+			return nil
 		}
 		if thread.Status == status {
 			return nil

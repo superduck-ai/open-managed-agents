@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -339,10 +341,16 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	return sessions, hasMore, nil
 }
 
-func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, error) {
+func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, bool, error) {
 	mapper := NewSessionThreadMapper(d.mapperDB)
 	row, err := mapper.FindPrimary(ctx, workspaceUUID, sessionExternalID)
-	return row.thread(), mapNoRows(err)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionThread{}, false, nil
+	}
+	if err != nil {
+		return SessionThread{}, false, err
+	}
+	return row.thread(), true, nil
 }
 
 func (d *DB) GetSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, error) {

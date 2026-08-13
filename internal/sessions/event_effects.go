@@ -58,13 +58,14 @@ func (h *Handler) applySessionEventProjection(ctx context.Context, event db.Sess
 	if !ok {
 		return nil
 	}
-	thread, err := h.db.GetPrimarySessionThread(ctx, event.WorkspaceUUID, event.SessionExternalID)
-	if err == nil {
+	thread, found, err := h.db.GetPrimarySessionThread(ctx, event.WorkspaceUUID, event.SessionExternalID)
+	if err != nil {
+		return err
+	}
+	if found {
 		if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, thread.ExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
 			return err
 		}
-	} else if !errors.Is(err, db.ErrNotFound) {
-		return err
 	}
 	if err := h.db.SetSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err

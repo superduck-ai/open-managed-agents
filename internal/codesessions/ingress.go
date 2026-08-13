@@ -812,9 +812,11 @@ type codeSessionWorkerHeartbeatBody struct {
 }
 
 type codeSessionWorkerRequiresActionDetails struct {
-	ToolName          *string `json:"tool_name,omitempty"`
-	ActionDescription *string `json:"action_description,omitempty"`
-	RequestID         *string `json:"request_id,omitempty"`
+	ToolName          *string                    `json:"tool_name,omitempty"`
+	ActionDescription *string                    `json:"action_description,omitempty"`
+	ToolUseID         *string                    `json:"tool_use_id,omitempty"`
+	RequestID         *string                    `json:"request_id,omitempty"`
+	Input             map[string]json.RawMessage `json:"input,omitempty"`
 }
 
 type codeSessionWorkerStateBody struct {

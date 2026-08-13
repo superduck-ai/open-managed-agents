@@ -1298,12 +1298,16 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("metadata merge did not preserve persisted key: %+v", initState.Worker.ExternalMetadata)
 	}
 
-	requiresState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"requires_action","requires_action_details":{"tool_name":"Bash","action_description":"Running npm test","request_id":"req_worker_state"},"external_metadata":{"pending_action":{"tool_name":"Bash"},"persisted":{"kept":true}}}`)
+	requiresState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"requires_action","requires_action_details":{"tool_name":"Bash","action_description":"Running npm test","tool_use_id":"tool_worker_state","request_id":"req_worker_state","input":{"command":"npm test"}},"external_metadata":{"pending_action":{"tool_name":"Bash"},"persisted":{"kept":true}}}`)
 	if requiresState.Worker.WorkerStatus != "requires_action" {
 		t.Fatalf("requires action worker status = %q, want requires_action", requiresState.Worker.WorkerStatus)
 	}
-	var actionDetails map[string]string
-	if err := json.Unmarshal(requiresState.Worker.RequiresActionDetails, &actionDetails); err != nil || actionDetails["tool_name"] != "Bash" {
+	var actionDetails struct {
+		ToolName  string                     `json:"tool_name"`
+		ToolUseID string                     `json:"tool_use_id"`
+		Input     map[string]json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(requiresState.Worker.RequiresActionDetails, &actionDetails); err != nil || actionDetails.ToolName != "Bash" || actionDetails.ToolUseID != "tool_worker_state" || string(actionDetails.Input["command"]) != `"npm test"` {
 		t.Fatalf("requires_action_details = %s, err=%v", requiresState.Worker.RequiresActionDetails, err)
 	}
 	var pendingAction map[string]string

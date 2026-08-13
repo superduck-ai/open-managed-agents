@@ -115,7 +115,7 @@ DB 行为：
 |---|---|---:|---|
 | `worker_epoch` | JSON number | 是 | 必须是正 int64；`0`、负数、小数、字符串、`null` 都是 400 |
 | `worker_status` | string 或 `null` | 否 | 非空时必须精确为 `idle`、`running`、`requires_action`；缺省、空字符串或 `null` 不更新状态 |
-| `requires_action_details` | object 或 `null` | 否 | 按客户端 schema 解析 `tool_name`、`action_description`、`request_id`；未知字段忽略；最终 status 不是 `requires_action` 时会被清空 |
+| `requires_action_details` | object 或 `null` | 否 | 按客户端 schema 解析 `tool_name`、`action_description`、`tool_use_id`、`request_id`、`input`；未知字段忽略；最终 status 不是 `requires_action` 时会被清空 |
 | `external_metadata` | object 或 `null` | 否 | object 按一层 merge patch 应用；顶层 `null` 不更新 metadata；object 内的 value 为 JSON `null` 时删除该 key |
 
 未知字段当前会被忽略。

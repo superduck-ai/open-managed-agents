@@ -9,7 +9,7 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func (s *Service) syncPublicSessionStatusFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
+func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
 	if record.SessionExternalID == "" {
 		return nil
 	}
@@ -17,7 +17,11 @@ func (s *Service) syncPublicSessionStatusFromWorker(ctx context.Context, record 
 	if !ok {
 		return nil
 	}
-	return s.publishPublicSessionStatus(ctx, record, eventType)
+	if err := s.publishPublicSessionStatus(ctx, record, eventType); err != nil {
+		return err
+	}
+	s.reconcileSubagentEvents(ctx, record.ExternalID)
+	return nil
 }
 
 func publicEventTypeFromWorkerStatus(status string) (string, bool) {

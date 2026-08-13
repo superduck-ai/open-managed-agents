@@ -95,12 +95,11 @@ func (h *Handler) handlePutCodeSessionWorker(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if input.WorkerStatus != nil {
-		if err := h.service.syncPublicSessionStatusFromWorker(r.Context(), updated, *input.WorkerStatus); err != nil {
+		if err := h.service.syncPublicSessionFromWorker(r.Context(), updated, *input.WorkerStatus); err != nil {
 			h.logger.ErrorContext(r.Context(), "sync public session status from worker", "code_session_id", codeSessionID, "session_id", updated.SessionExternalID, "worker_status", *input.WorkerStatus, "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not sync code session worker status"))
 			return
 		}
-		h.service.reconcileSubagentEvents(r.Context(), codeSessionID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.codeSessionWorkerState(updated, r, input.WorkerEpoch))
 }

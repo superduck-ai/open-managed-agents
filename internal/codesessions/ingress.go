@@ -787,7 +787,7 @@ func (h *Handler) requireCodeSession(ctx context.Context, codeSessionID string) 
 		return db.CodeSession{}, mapCodeSessionLoadError(err, codeSessionID)
 	}
 	if !found {
-		return db.CodeSession{}, mapCodeSessionLoadError(db.ErrNotFound, codeSessionID)
+		return db.CodeSession{}, codeSessionNotFound(nil)
 	}
 	return record, nil
 }

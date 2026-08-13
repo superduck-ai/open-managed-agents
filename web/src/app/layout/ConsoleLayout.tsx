@@ -857,6 +857,7 @@ const workspaceBuildPathByHref: Record<string, string> = {
   '/playground': 'playground',
   '/files': 'files',
   '/skills': 'skills',
+  '/mcp-servers': 'mcp-servers',
   '/batches': 'batches',
 };
 
@@ -909,7 +910,7 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
     .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
     .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
     .replace(
-      /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|batches)/,
+      /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|mcp-servers|batches)/,
       `/workspaces/${encodedWorkspaceId}/$1`,
     )
     .replace(

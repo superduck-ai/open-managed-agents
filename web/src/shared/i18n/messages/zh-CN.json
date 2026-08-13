@@ -1148,7 +1148,7 @@
   "nav.llmModels": "LLM 模型",
   "nav.manage": "管理",
   "nav.managedAgents": "托管 Agents",
-  "nav.mcpServers": "MCP Servers",
+  "nav.mcpServers": "MCP 服务器",
   "nav.mcpTunnels": "MCP 隧道",
   "nav.members": "成员",
   "nav.memoryStores": "记忆存储",

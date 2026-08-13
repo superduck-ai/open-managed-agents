@@ -42,11 +42,25 @@ test('lists workspace MCP servers and creates a reusable configuration', async (
   expect(await screen.findByRole('heading', { name: 'MCP Servers' })).toBeTruthy();
   expect(await screen.findByText('internal-docs')).toBeTruthy();
   expect(screen.getByRole('region', { name: 'MCP servers list' }).closest('[data-slot="card"]')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Create MCP server' }));
+  const createButton = screen.getByRole('button', { name: 'Create MCP server' });
+  const filters = screen.getByTestId('mcp-server-filters');
+  const search = screen.getByRole('textbox', { name: 'Search MCP servers' });
+  expect(createButton.closest('header')).toBeTruthy();
+  expect(createButton.closest('header')?.contains(search)).toBe(false);
+  expect(filters.contains(search)).toBe(true);
+  expect(filters.compareDocumentPosition(screen.getByRole('region', { name: 'MCP servers list' }))).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+  fireEvent.click(createButton);
 
   const dialog = await screen.findByRole('dialog', { name: 'Create MCP server' });
+  expect(dialog.getAttribute('data-slot')).toBe('dialog-content');
+  expect(dialog.closest('[data-slot="sheet-content"]')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Create', hidden: false }));
+  expect(await screen.findByText('Name is required.')).toBeTruthy();
+  expect(screen.getByText('MCP Server URL is required.')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'billing' } });
-  fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://billing.example/mcp' } });
+  fireEvent.change(screen.getByLabelText('MCP Server URL'), { target: { value: 'https://billing.example/mcp' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create', hidden: false }));
 
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
@@ -136,6 +150,8 @@ test('opens a resource detail panel, then updates and deletes it', async () => {
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
 
   const dialog = await screen.findByRole('dialog', { name: 'Edit MCP server' });
+  expect(dialog.getAttribute('data-slot')).toBe('dialog-content');
+  expect(dialog.closest('[data-slot="sheet-content"]')).toBeNull();
   fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'renamed-docs' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));

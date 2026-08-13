@@ -13,7 +13,11 @@ import {
   type WorkspaceMCPServer,
 } from '../../shared/api/workspaceMCPServers';
 import { useWorkspace } from '../../shared/workspaces/context';
-import { type MCPServerDestructiveTarget, type MCPServerPanelTarget } from './MCPServerDialogs';
+import {
+  type MCPServerDestructiveTarget,
+  type MCPServerDetailTarget,
+  type MCPServerEditorTarget,
+} from './MCPServerDialogs';
 
 export type MCPServerScope = 'active' | 'all';
 
@@ -42,8 +46,11 @@ export function useMCPServerData({
 }) {
   const [search, setSearch] = useState('');
   const [scope, setScope] = useState<MCPServerScope>('active');
-  const [pageIndex, setPageIndex] = useState(0);
-  const [pageTokens, setPageTokens] = useState<Array<string | undefined>>([undefined]);
+  const paginationKey = `${orgUuid ?? ''}\u0000${workspaceId}\u0000${scope}\u0000${search}`;
+  const [pagination, setPagination] = useState<MCPServerPagination>(() => newMCPServerPagination(paginationKey));
+  const currentPagination = pagination.key === paginationKey ? pagination : newMCPServerPagination(paginationKey);
+  const pageIndex = currentPagination.pageIndex;
+  const pageTokens = currentPagination.pageTokens;
   const listQuery = useQuery({
     queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, search.trim(), scope, pageTokens[pageIndex] ?? ''],
     queryFn: () =>
@@ -62,18 +69,26 @@ export function useMCPServerData({
     retry: false,
   });
 
-  useEffect(() => {
-    setPageIndex(0);
-    setPageTokens([undefined]);
-  }, [orgUuid, scope, search, workspaceId]);
+  const setPageIndex = (next: number | ((current: number) => number)) => {
+    setPagination((current) => {
+      const active = current.key === paginationKey ? current : newMCPServerPagination(paginationKey);
+      return { ...active, pageIndex: typeof next === 'function' ? next(active.pageIndex) : next };
+    });
+  };
 
   const nextPage = () => {
     const nextPageToken = listQuery.data?.next_page;
     if (!nextPageToken) {
       return;
     }
-    setPageTokens((current) => [...current.slice(0, pageIndex + 1), nextPageToken]);
-    setPageIndex((current) => current + 1);
+    setPagination((current) => {
+      const active = current.key === paginationKey ? current : newMCPServerPagination(paginationKey);
+      return {
+        key: paginationKey,
+        pageIndex: active.pageIndex + 1,
+        pageTokens: [...active.pageTokens.slice(0, active.pageIndex + 1), nextPageToken],
+      };
+    });
   };
 
   return {
@@ -89,6 +104,16 @@ export function useMCPServerData({
   };
 }
 
+type MCPServerPagination = {
+  key: string;
+  pageIndex: number;
+  pageTokens: Array<string | undefined>;
+};
+
+function newMCPServerPagination(key: string): MCPServerPagination {
+  return { key, pageIndex: 0, pageTokens: [undefined] };
+}
+
 export function useMCPServerActions({
   orgUuid,
   workspaceId,
@@ -102,15 +127,22 @@ export function useMCPServerActions({
 }) {
   const { csrfToken } = useAuth();
   const queryClient = useQueryClient();
-  const [panel, setPanel] = useState<MCPServerPanelTarget | null>(() =>
-    initialCreateOpen ? { mode: 'create' } : initialServerId ? { mode: 'detail', serverId: initialServerId } : null,
+  const [panel, setPanel] = useState<MCPServerDetailTarget | null>(() =>
+    initialServerId ? { serverId: initialServerId } : null,
+  );
+  const [editor, setEditor] = useState<MCPServerEditorTarget | null>(() =>
+    initialCreateOpen ? { mode: 'create' } : null,
   );
   const [destructive, setDestructive] = useState<MCPServerDestructiveTarget | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
 
   useEffect(() => {
-    const handlePopState = () => setPanel(panelTargetFromPath());
+    const handlePopState = () => {
+      const routeState = mcpServerRouteStateFromPath();
+      setPanel(routeState.panel);
+      setEditor(routeState.editor);
+    };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
@@ -123,17 +155,25 @@ export function useMCPServerActions({
     replacePageURL(mcpServersIndexHref(workspaceId));
   };
 
-  const submitPanel = async (input: MCPServerMutation) => {
-    if (!orgUuid || !panel || panel.mode === 'detail') {
+  const closeEditor = () => {
+    setEditor(null);
+    if (window.location.pathname === mcpServerCreateHref(workspaceId)) {
+      replacePageURL(mcpServersIndexHref(workspaceId));
+    }
+  };
+
+  const submitEditor = async (input: MCPServerMutation) => {
+    if (!orgUuid || !editor) {
       return;
     }
     const saved =
-      panel.mode === 'create'
+      editor.mode === 'create'
         ? await createWorkspaceMCPServer(orgUuid, workspaceId, input, csrfToken)
-        : await updateWorkspaceMCPServer(orgUuid, workspaceId, panel.server.id, input, csrfToken);
+        : await updateWorkspaceMCPServer(orgUuid, workspaceId, editor.server.id, input, csrfToken);
     queryClient.setQueryData(['workspace-mcp-server', orgUuid, workspaceId, saved.id], saved);
     await invalidateList();
-    setPanel({ mode: 'detail', serverId: saved.id });
+    setEditor(null);
+    setPanel({ serverId: saved.id });
     replacePageURL(mcpServerDetailHref(workspaceId, saved.id));
   };
 
@@ -156,7 +196,7 @@ export function useMCPServerActions({
         });
         await invalidateList();
       }
-      if (destructive.action === 'delete' && selectedServerId(panel) === destructive.server.id) {
+      if (destructive.action === 'delete' && panel?.serverId === destructive.server.id) {
         closePanel();
       }
       setDestructive(null);
@@ -173,39 +213,35 @@ export function useMCPServerActions({
   };
 
   const openCreate = () => {
-    setPanel({ mode: 'create' });
+    setPanel(null);
+    setEditor({ mode: 'create' });
     pushPageURL(mcpServerCreateHref(workspaceId));
   };
 
   const openDetail = (serverId: string) => {
-    setPanel({ mode: 'detail', serverId });
+    setPanel({ serverId });
     pushPageURL(mcpServerDetailHref(workspaceId, serverId));
   };
 
   const openEdit = (server: WorkspaceMCPServer) => {
-    setPanel({ mode: 'edit', server });
-    pushPageURL(mcpServerDetailHref(workspaceId, server.id));
-  };
-
-  const showDetail = (serverId: string) => {
-    setPanel({ mode: 'detail', serverId });
-    replacePageURL(mcpServerDetailHref(workspaceId, serverId));
+    setEditor({ mode: 'edit', server });
   };
 
   return {
     panel,
-    selectedServerId: selectedServerId(panel),
-    detailServerId: panel?.mode === 'detail' ? panel.serverId : undefined,
+    editor,
+    selectedServerId: panel?.serverId ?? null,
+    detailServerId: panel?.serverId,
     destructive,
     actionError,
     isActing,
     closePanel,
-    submitPanel,
+    closeEditor,
+    submitEditor,
     confirmDestructive,
     openCreate,
     openDetail,
     openEdit,
-    showDetail,
     openDestructive,
     closeDestructive: () => !isActing && setDestructive(null),
   };
@@ -237,17 +273,16 @@ function pushPageURL(path: string) {
   }
 }
 
-function panelTargetFromPath(): MCPServerPanelTarget | null {
+function mcpServerRouteStateFromPath(): {
+  panel: MCPServerDetailTarget | null;
+  editor: MCPServerEditorTarget | null;
+} {
   const match = window.location.pathname.match(/\/mcp-servers\/([^/]+)$/);
   if (!match) {
-    return null;
+    return { panel: null, editor: null };
   }
-  return match[1] === 'new' ? { mode: 'create' } : { mode: 'detail', serverId: decodeURIComponent(match[1]) };
-}
-
-function selectedServerId(panel: MCPServerPanelTarget | null) {
-  if (!panel || panel.mode === 'create') {
-    return null;
+  if (match[1] === 'new') {
+    return { panel: null, editor: { mode: 'create' } };
   }
-  return panel.mode === 'detail' ? panel.serverId : panel.server.id;
+  return { panel: { serverId: decodeURIComponent(match[1]) }, editor: null };
 }

@@ -793,12 +793,7 @@ func (h *Handler) getCodeSession(ctx context.Context, codeSessionID string) (db.
 }
 
 func (h *Handler) writeIngressLoadError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, db.ErrNotFound) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Code session not found"))
-		return
-	}
-	h.logger.ErrorContext(r.Context(), "load code session", "error", err)
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not load code session"))
+	h.errorAdapter.Write(w, r, mapCodeSessionLoadError(err))
 }
 
 type codeSessionWorkerEpochBody struct {

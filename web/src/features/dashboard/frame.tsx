@@ -1,13 +1,11 @@
-import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronLeft, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '@/shared/lib/utils';
-import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/shared/ui/empty';
 import { Field, FieldLabel } from '@/shared/ui/field';
-import { Pagination, PaginationContent, PaginationItem } from '@/shared/ui/pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import type { IconComponent } from './model';
@@ -88,6 +86,8 @@ export function BackLink({ href, label }: { href: string; label: string }) {
   );
 }
 
+export { CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from '@/shared/ui/resource-table';
+
 export function EmptyState({
   icon: Icon,
   title,
@@ -122,117 +122,6 @@ export function EmptyState({
         </EmptyContent>
       ) : null}
     </Empty>
-  );
-}
-
-export function CursorPagination({
-  previousLabel,
-  nextLabel,
-  updatingLabel,
-  canPrevious,
-  canNext,
-  isUpdating,
-  onPrevious,
-  onNext,
-}: {
-  previousLabel: string;
-  nextLabel: string;
-  updatingLabel: string;
-  canPrevious: boolean;
-  canNext: boolean;
-  isUpdating: boolean;
-  onPrevious: () => void;
-  onNext: () => void;
-}) {
-  return (
-    <div className="mt-5 flex items-center gap-2">
-      <Pagination className="mx-0 w-auto justify-start">
-        <PaginationContent>
-          <PaginationItem>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={previousLabel}
-              className="text-muted-foreground"
-              disabled={!canPrevious}
-              onClick={onPrevious}
-            >
-              <ChevronLeft className="size-4" aria-hidden />
-            </Button>
-          </PaginationItem>
-          <PaginationItem>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={nextLabel}
-              className="text-muted-foreground"
-              disabled={!canNext}
-              onClick={onNext}
-            >
-              <ChevronRight className="size-4" aria-hidden />
-            </Button>
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
-      {isUpdating ? <span className="ml-2 text-xs text-muted-foreground/70">{updatingLabel}</span> : null}
-    </div>
-  );
-}
-
-export function TableLoadingRow({ colSpan, label }: { colSpan: number; label: string }) {
-  return (
-    <TableRow className="border-b border-border">
-      <TableCell colSpan={colSpan} className="h-24 px-3 py-6 text-sm text-muted-foreground">
-        <span className="inline-flex items-center gap-2">
-          <RefreshCw className="size-3.5 animate-spin" aria-hidden />
-          {label}
-        </span>
-      </TableCell>
-    </TableRow>
-  );
-}
-
-export function TableErrorRow({
-  colSpan,
-  title,
-  message,
-  retryLabel,
-  onRetry,
-}: {
-  colSpan: number;
-  title: string;
-  message: string;
-  retryLabel: string;
-  onRetry: () => void;
-}) {
-  return (
-    <TableRow className="border-b border-border">
-      <TableCell colSpan={colSpan} className="h-28 px-3 py-6">
-        <Alert variant="destructive" className="max-w-xl">
-          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <AlertTitle>{title}</AlertTitle>
-          <AlertDescription>
-            <p>{message}</p>
-            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={onRetry}>
-              <RefreshCw className="size-3.5" aria-hidden />
-              {retryLabel}
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </TableCell>
-    </TableRow>
-  );
-}
-
-export function TableEmptyRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
-  return (
-    <TableRow className="border-b border-border">
-      <TableCell colSpan={colSpan} className="h-24 px-3 py-6 text-sm text-muted-foreground">
-        {children}
-      </TableCell>
-    </TableRow>
   );
 }
 

@@ -976,9 +976,9 @@ function isWideConsolePath(currentPath: string) {
 
 function isBuildPath(currentPath: string) {
   return (
-    ['/workbench', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    ['/workbench', '/playground', '/files', '/skills', '/mcp-servers', '/batches'].includes(currentPath) ||
     currentPath.startsWith('/workbench/') ||
-    /^\/workspaces\/[^/]+\/(?:playground|files|skills|batches)(\/|$)/.test(currentPath)
+    /^\/workspaces\/[^/]+\/(?:playground|files|skills|mcp-servers|batches)(\/|$)/.test(currentPath)
   );
 }
 

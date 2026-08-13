@@ -75,6 +75,23 @@ describe('ConsoleShell', () => {
     expect(scrollArea?.classList.contains('sidebar-scroll-area')).toBe(true);
   });
 
+  test('uses the wide build layout for MCP server routes', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/mcp-servers"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        onLogout={() => undefined}
+      >
+        <div>MCP server content</div>
+      </ConsoleShell>,
+    );
+
+    const content = screen.getByText('MCP server content').parentElement;
+    expect(content?.className).toContain('lg:px-8');
+    expect(content?.className).not.toContain('max-w-[928px]');
+  });
+
   test('collapses and expands the desktop sidebar from the sidebar rail', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(

@@ -633,6 +633,82 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByText(/Secret values are never shown here/)).toBeTruthy();
   });
 
+  test('shows a sent message without refreshing an idle session page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'idle';
+    api.resources.sessionThreads = [];
+    api.resources.sessionEvents = [
+      {
+        id: 'evt_message_before_send',
+        type: 'user.message',
+        created_at: new Date(Date.now() - 2_000).toISOString(),
+        content: [{ type: 'text', text: 'Existing message.' }],
+      },
+      {
+        id: 'evt_idle_before_send',
+        type: 'session.status_idle',
+        created_at: new Date(Date.now() - 1_000).toISOString(),
+      },
+    ];
+    const staleEvents = api.resources.sessionEvents.map((event) => ({
+      ...event,
+      processed_at: event.created_at,
+    }));
+    const fetchSessionEvents = globalThis.fetch;
+    let staleReadAfterPost = false;
+    let messagePosted = false;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(input, init);
+      if (url === '/v1/sessions/sesn_one123456/events?beta=true' && method === 'POST') {
+        const response = await fetchSessionEvents(input, init);
+        staleReadAfterPost = true;
+        messagePosted = true;
+        return response;
+      }
+      if (messagePosted && url.startsWith('/v1/sessions/sesn_one123456/events/stream?') && method === 'GET') {
+        const now = new Date().toISOString();
+        const frames = [
+          { id: 'evt_running_after_send', type: 'session.status_running', created_at: now },
+          {
+            id: 'evt_agent_reply_after_send',
+            type: 'agent.message',
+            created_at: now,
+            processed_at: now,
+            content: [{ type: 'text', text: 'Agent reply arrived live.' }],
+          },
+          { id: 'evt_idle_after_send', type: 'session.status_idle', created_at: now },
+        ]
+          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+          .join('');
+        return new Response(frames, { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (staleReadAfterPost && url.startsWith('/v1/sessions/sesn_one123456/events?') && method === 'GET') {
+        staleReadAfterPost = false;
+        return new Response(
+          JSON.stringify({
+            data: staleEvents,
+            next_page: null,
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return fetchSessionEvents(input, init);
+    }) as typeof fetch;
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByText('Existing message.')).toBeTruthy();
+    const composer = await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.change(composer, { target: { value: 'Render this message immediately.' } });
+    fireEvent.keyDown(composer, { key: 'Enter', shiftKey: false });
+
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
+    expect(await screen.findByText('Render this message immediately.')).toBeTruthy();
+    expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
+  });
+
   test('renders transcript idle gaps with the original striped separator', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');

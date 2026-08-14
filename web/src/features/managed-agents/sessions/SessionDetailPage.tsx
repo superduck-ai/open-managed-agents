@@ -761,6 +761,14 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                     live={conversationState.live}
                     onError={setMutationError}
                     onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
+                    onMessageSent={(sentEvents) => {
+                      eventData.appendPrimaryEvents(sentEvents);
+                      setSession((currentSession) =>
+                        currentSession && currentSession.id === session.id
+                          ? { ...currentSession, status: 'running' }
+                          : currentSession,
+                      );
+                    }}
                     sessionId={session.id}
                     workspaceId={activeWorkspaceId}
                   />

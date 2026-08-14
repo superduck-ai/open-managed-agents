@@ -3,6 +3,7 @@ import { ArrowUp, Square } from 'lucide-react';
 import { useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { interruptQuickstartSession, postQuickstartSessionMessage } from '../api';
+import { type QuickstartSessionEvent } from '../types';
 import {
   quickstartComposerFrameClassName,
   quickstartComposerSendButtonClassName,
@@ -15,6 +16,7 @@ export function SessionMessageComposer({
   live,
   onError,
   onEventsChanged,
+  onMessageSent,
   sessionId,
   workspaceId,
 }: {
@@ -22,6 +24,7 @@ export function SessionMessageComposer({
   live: boolean;
   onError: (error: string | null) => void;
   onEventsChanged: () => void;
+  onMessageSent: (events: QuickstartSessionEvent[]) => void;
   sessionId: string;
   workspaceId: string;
 }) {
@@ -38,9 +41,9 @@ export function SessionMessageComposer({
     setSending(true);
     onError(null);
     try {
-      await postQuickstartSessionMessage(sessionId, trimmedDraft, workspaceId);
+      const response = await postQuickstartSessionMessage(sessionId, trimmedDraft, workspaceId);
       setDraft('');
-      onEventsChanged();
+      response.data?.length ? onMessageSent(response.data) : onEventsChanged();
     } catch (error) {
       onError(errorMessage(error));
     } finally {

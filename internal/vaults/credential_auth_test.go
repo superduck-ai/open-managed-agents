@@ -31,7 +31,13 @@ func TestNormalizeCredentialAuthForUpdateRequiresCompleteReplacementWithoutSecre
 			current: db.VaultCredential{
 				AuthType:      "environment_variable",
 				CredentialKey: "TOKEN",
-				Auth:          json.RawMessage(`{"type":"environment_variable","secret_name":"TOKEN","networking":{"type":"unrestricted"}}`),
+				Auth: json.RawMessage(`{
+					"type":"environment_variable",
+					"secret_name":"TOKEN",
+					"placeholder":"oma_ph_testplaceholder0123456789abcd",
+					"networking":{"type":"unrestricted"},
+					"injection_location":{"header":true,"body":false}
+				}`),
 			},
 			update: `{"type":"environment_variable"}`,
 		},

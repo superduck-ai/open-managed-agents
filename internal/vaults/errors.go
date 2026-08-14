@@ -24,6 +24,18 @@ var ErrInjectionRejected = errors.New("vault credential injection rejected")
 // when injection rejects.
 const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavailable"
 
+// ErrMITMRequiredForEnvCredentials is returned at Session mount when active
+// Environment Variable Credentials are attached but upstream proxy MITM is off.
+var ErrMITMRequiredForEnvCredentials = errors.New("upstream proxy MITM is required for environment variable credentials")
+
+// ErrSubstitutionRejected is the upstream-proxy fail-closed sentinel when
+// Egress Secret Substitution cannot open a needed Secret envelope.
+var ErrSubstitutionRejected = errors.New("vault environment variable substitution rejected")
+
+// SubstitutionUnavailablePublicMessage is the client-safe text for MITM 502
+// when Egress Secret Substitution rejects a request.
+const SubstitutionUnavailablePublicMessage = "Environment variable credentials are unavailable"
+
 var errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
 
 func injectionRejected(cause error) error {
@@ -31,6 +43,13 @@ func injectionRejected(cause error) error {
 		return ErrInjectionRejected
 	}
 	return fmt.Errorf("%w: %w", ErrInjectionRejected, cause)
+}
+
+func substitutionRejected(cause error) error {
+	if cause == nil {
+		return ErrSubstitutionRejected
+	}
+	return fmt.Errorf("%w: %w", ErrSubstitutionRejected, cause)
 }
 
 func missingCredential() error {

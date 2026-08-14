@@ -55,9 +55,11 @@ type staticBearerCredentialAuth struct {
 func (*staticBearerCredentialAuth) credentialAuthVariant() {}
 
 type environmentVariableCredentialAuth struct {
-	Type       credentialAuthType       `json:"type"`
-	SecretName string                   `json:"secret_name"`
-	Networking credentialAuthNetworking `json:"networking"`
+	Type              credentialAuthType          `json:"type"`
+	SecretName        string                      `json:"secret_name"`
+	Placeholder       string                      `json:"placeholder"`
+	Networking        credentialAuthNetworking    `json:"networking"`
+	InjectionLocation credentialInjectionLocation `json:"injection_location"`
 }
 
 func (*environmentVariableCredentialAuth) credentialAuthVariant() {}

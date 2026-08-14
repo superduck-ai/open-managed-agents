@@ -46,6 +46,24 @@ func ValidateAllowedHost(entry string) error {
 	return err
 }
 
+// AllowsHost reports whether host:port matches any allowed_hosts entry using
+// Environment networking hostname/wildcard semantics. An empty list never matches.
+// Invalid entries fail closed.
+func AllowsHost(allowedHosts []string, host string, port string) (bool, error) {
+	entries, err := parseConfigAllowedHosts(allowedHosts)
+	if err != nil {
+		return false, err
+	}
+	normalized, err := NormalizeHost(host)
+	if err != nil {
+		return false, nil
+	}
+	if !validAllowedPort(port) {
+		return false, nil
+	}
+	return newHostMatcher(entries).match(normalized, port), nil
+}
+
 func parseAllowedHost(entry string) (allowedHost, error) {
 	if strings.Contains(entry, "://") || strings.Contains(entry, "/") {
 		return allowedHost{}, errAllowedHost

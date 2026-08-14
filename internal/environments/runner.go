@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 
 	"github.com/google/uuid"
 )
@@ -76,10 +77,11 @@ type Runner struct {
 }
 
 type managedAgentLaunchPreparation struct {
-	Session       db.Session
-	SessionConfig json.RawMessage
-	WorkDir       string
-	Title         string
+	Session         db.Session
+	SessionConfig   json.RawMessage
+	WorkDir         string
+	Title           string
+	EnvPlaceholders map[string]string
 }
 
 type managedAgentRuntimeLaunch struct {
@@ -491,17 +493,52 @@ func (r *Runner) prepareManagedAgentLaunch(
 	}
 	runtimeResources := resolveManagedAgentRuntimeResources(resources)
 	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
+	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)
+	if err != nil {
+		return nil, err
+	}
 	workDir := runtimeResources.workDir
 	title := ""
 	if session.Title != nil {
 		title = *session.Title
 	}
 	return &managedAgentLaunchPreparation{
-		Session:       session,
-		SessionConfig: sessionConfig,
-		WorkDir:       workDir,
-		Title:         title,
+		Session:         session,
+		SessionConfig:   sessionConfig,
+		WorkDir:         workDir,
+		Title:           title,
+		EnvPlaceholders: envPlaceholders,
 	}, nil
+}
+
+func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session db.Session) (map[string]string, error) {
+	vaultIDs, err := decodeSessionVaultIDs(session.VaultIDs)
+	if err != nil {
+		return nil, fmt.Errorf("decode session vault_ids: %w", err)
+	}
+	if len(vaultIDs) == 0 {
+		return nil, nil
+	}
+	credentials, err := r.db.ListActiveVaultCredentialsForVaultIDs(ctx, session.WorkspaceUUID, vaultIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list vault credentials for env mount: %w", err)
+	}
+	placeholders, err := vaults.PrepareEnvCredentialMount(r.cfg.CodeSession.UpstreamProxyMITMEnabled, credentials)
+	if err != nil {
+		return nil, err
+	}
+	return placeholders, nil
+}
+
+func decodeSessionVaultIDs(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (r *Runner) createManagedAgentRuntimeLaunch(
@@ -531,6 +568,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		preparation.WorkDir,
 		preparation.SessionConfig,
 		r.cfg,
+		preparation.EnvPlaceholders,
 	)
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

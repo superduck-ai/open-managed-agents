@@ -9,7 +9,7 @@ import { Textarea } from '../../../shared/ui/textarea';
 import { cn } from '../../../shared/lib/utils';
 import { ManagedTextField } from '../components/common';
 import { type CredentialFormValues } from '../types';
-import { credentialEnvHostsMissing } from './model';
+import { credentialEnvHostsMissing, credentialEnvInjectionMissing } from './model';
 
 type EnvironmentVariableCredentialFieldsProps = {
   values: CredentialFormValues;
@@ -28,6 +28,7 @@ export function EnvironmentVariableCredentialFields({
 }: EnvironmentVariableCredentialFieldsProps) {
   const { msg } = useI18n();
   const hostsMissing = credentialEnvHostsMissing(values);
+  const injectionMissing = credentialEnvInjectionMissing(values);
   const limited = msg('managedAgents.credentialVaults.credentialDialog.networkingLimited', 'Limited');
   const unrestricted = msg('managedAgents.credentialVaults.credentialDialog.networkingUnrestricted', 'Unrestricted');
 
@@ -89,13 +90,12 @@ export function EnvironmentVariableCredentialFields({
             onChange={(event) => onChange({ allowedHostsText: event.target.value })}
           />
           {hostsMissing ? (
-            <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert">
-              <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+            <FieldAlert>
               {msg(
                 'managedAgents.credentialVaults.credentialDialog.allowedHostsRequired',
                 'At least one host is required for limited networking.',
               )}
-            </p>
+            </FieldAlert>
           ) : null}
           <FieldDescription>
             {msg(
@@ -106,7 +106,7 @@ export function EnvironmentVariableCredentialFields({
         </Field>
       ) : null}
 
-      <Field className="gap-2">
+      <Field className="gap-2" data-invalid={injectionMissing || undefined}>
         <FieldLabel>
           {msg('managedAgents.credentialVaults.credentialDialog.injectionLocation', 'Injection location')}
         </FieldLabel>
@@ -114,16 +114,26 @@ export function EnvironmentVariableCredentialFields({
           <InjectionLocationRow
             id="credential-inject-header"
             checked={values.injectHeader}
+            invalid={injectionMissing}
             label={msg('managedAgents.credentialVaults.credentialDialog.injectionHeader', 'Request headers')}
             onCheckedChange={(injectHeader) => onChange({ injectHeader })}
           />
           <InjectionLocationRow
             id="credential-inject-body"
             checked={values.injectBody}
+            invalid={injectionMissing}
             label={msg('managedAgents.credentialVaults.credentialDialog.injectionBody', 'Request body')}
             onCheckedChange={(injectBody) => onChange({ injectBody })}
           />
         </div>
+        {injectionMissing ? (
+          <FieldAlert>
+            {msg(
+              'managedAgents.credentialVaults.credentialDialog.injectionLocationRequired',
+              'Select at least one injection location.',
+            )}
+          </FieldAlert>
+        ) : null}
         <FieldDescription>
           {msg(
             'managedAgents.credentialVaults.credentialDialog.injectionHint',
@@ -159,20 +169,36 @@ function NetworkingOption({
   );
 }
 
+function FieldAlert({ children }: { children: string }) {
+  return (
+    <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert">
+      <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+      {children}
+    </p>
+  );
+}
+
 function InjectionLocationRow({
   id,
   checked,
+  invalid,
   label,
   onCheckedChange,
 }: {
   id: string;
   checked: boolean;
+  invalid: boolean;
   label: string;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
     <div className="flex items-center gap-2">
-      <Checkbox id={id} checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
+      <Checkbox
+        id={id}
+        checked={checked}
+        aria-invalid={invalid || undefined}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+      />
       <Label htmlFor={id} className="text-sm font-normal text-foreground">
         {label}
       </Label>

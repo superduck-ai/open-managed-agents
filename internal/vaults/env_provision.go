@@ -8,25 +8,13 @@ import "github.com/superduck-ai/open-managed-agents/internal/db"
 // return secret_name → placeholder for sandbox startup (Vault Attachment Order,
 // first secret_name wins; Platform Reserved Environment Names are never set).
 func PrepareEnvCredentialMount(mitmEnabled bool, credentials []db.VaultCredential) (map[string]string, error) {
-	placeholders := make(map[string]string)
-	hasEnv := false
-	for i := range credentials {
-		cred := credentials[i]
-		if credentialAuthType(cred.AuthType) != credentialAuthTypeEnvironmentVariable {
-			continue
-		}
-		hasEnv = true
-		value, err := decodeEnvironmentCredentialAuth(cred.Auth)
-		if err != nil {
-			return nil, err
-		}
-		if PlatformReservedSecretName(value.SecretName) {
-			continue
-		}
-		if _, exists := placeholders[value.SecretName]; exists {
-			continue
-		}
-		placeholders[value.SecretName] = value.Placeholder
+	hasEnv, bound, err := uniqueEnvironmentCredentials(credentials)
+	if err != nil {
+		return nil, err
+	}
+	placeholders := make(map[string]string, len(bound))
+	for _, item := range bound {
+		placeholders[item.value.SecretName] = item.value.Placeholder
 	}
 	if hasEnv && !mitmEnabled {
 		return nil, ErrMITMRequiredForEnvCredentials

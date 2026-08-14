@@ -20,6 +20,7 @@ func TestPrepareEnvCredentialMount(t *testing.T) {
 		readyEnvCredential("SHARED", "oma_ph_first"),
 		readyEnvCredential("SHARED", "oma_ph_second"),
 		readyEnvCredential("ANTHROPIC_API_KEY", "oma_ph_reserved"),
+		readyEnvCredential("anthropic_api_key", "oma_ph_reserved_lower"),
 	})
 	if err != nil {
 		t.Fatalf("PrepareEnvCredentialMount: %v", err)
@@ -29,6 +30,9 @@ func TestPrepareEnvCredentialMount(t *testing.T) {
 	}
 	if _, ok := got["ANTHROPIC_API_KEY"]; ok {
 		t.Fatalf("reserved name must not be provisioned: %#v", got)
+	}
+	if _, ok := got["anthropic_api_key"]; ok {
+		t.Fatalf("reserved name case variant must not be provisioned: %#v", got)
 	}
 }
 

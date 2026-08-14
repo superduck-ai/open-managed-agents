@@ -1354,6 +1354,7 @@
   "managedAgents.credentialVaults.credentialDialog.injectionHeader": "Request headers",
   "managedAgents.credentialVaults.credentialDialog.injectionBody": "Request body",
   "managedAgents.credentialVaults.credentialDialog.injectionHint": "Limiting to request headers is recommended unless the service reads the secret from the request body.",
+  "managedAgents.credentialVaults.credentialDialog.injectionLocationRequired": "Select at least one injection location.",
   "managedAgents.credentialVaults.credentialDialog.clearMcpServer": "Clear MCP server",
   "managedAgents.credentialVaults.credentialDialog.mcpCustomServer": "Custom server",
   "managedAgents.credentialVaults.credentialDialog.mcpCustomServerDescription": "Enter a custom MCP server URL",

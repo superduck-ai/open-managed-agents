@@ -1354,6 +1354,7 @@
   "managedAgents.credentialVaults.credentialDialog.injectionHeader": "请求头",
   "managedAgents.credentialVaults.credentialDialog.injectionBody": "请求体",
   "managedAgents.credentialVaults.credentialDialog.injectionHint": "除非服务从请求体读取密钥，否则建议仅限制到请求头。",
+  "managedAgents.credentialVaults.credentialDialog.injectionLocationRequired": "至少选择一个注入位置。",
   "managedAgents.credentialVaults.credentialDialog.clearMcpServer": "清除 MCP 服务器",
   "managedAgents.credentialVaults.credentialDialog.mcpCustomServer": "自定义服务器",
   "managedAgents.credentialVaults.credentialDialog.mcpCustomServerDescription": "输入自定义 MCP 服务器 URL",

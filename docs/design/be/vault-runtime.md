@@ -180,7 +180,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | Placeholder | 创建时随机持久化（`oma_ph_` 前缀）；轮换 `secret_value` 不改 placeholder；缺 placeholder / injection_location 的旧凭证作废（archive 重建，无惰性补齐） |
 | Injection Location | API + runtime 支持 header 与 body；省略 → header-only；全关 → 400 |
 | Networking | 省略 → 400；limited 至少一 host |
-| 平台保留名 | create 400；挂载合并时平台键不被覆盖 |
+| 平台保留名 | create 400（大小写不敏感）；`secret_name` 须为 POSIX 标识符（`[A-Za-z_][A-Za-z0-9_]*`），两端空白 trim 后持久化；挂载合并时平台键不被覆盖 |
 | Vault Attachment Order | `vault_ids` 先到先得（同 `secret_name`） |
 | 数据加载 | 每个 MITM HTTP 请求查库一次；不缓存明文 |
 | Open 失败 | **拒请求**（`ErrSubstitutionRejected` → 502） |

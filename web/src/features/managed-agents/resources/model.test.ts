@@ -9,6 +9,7 @@ import {
 } from '../types';
 import {
   credentialAuthBody,
+  credentialEnvInjectionMissing,
   credentialFormReady,
   credentialFormValues,
   emptyCredentialFormValues,
@@ -261,6 +262,8 @@ describe('credentialAuthBody environment_variable', () => {
     expect(credentialFormReady(envValues({ networkType: 'unrestricted', allowedHostsText: '' }), 'create', true)).toBe(
       true,
     );
+    expect(credentialEnvInjectionMissing(envValues({ injectHeader: false, injectBody: false }))).toBe(true);
+    expect(credentialEnvInjectionMissing(envValues({ injectHeader: false, injectBody: true }))).toBe(false);
     expect(credentialFormReady(envValues({ injectHeader: false, injectBody: false }), 'create', true)).toBe(false);
     expect(credentialFormReady(envValues({ injectHeader: false, injectBody: true }), 'create', true)).toBe(true);
     expect(credentialFormReady(envValues({ secretValue: '' }), 'edit', true)).toBe(true);

@@ -247,14 +247,8 @@ func normalizeStaticBearerForCreate(input staticBearerCredentialCreateInput) (cr
 }
 
 func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCreateInput) (credentialAuthState, error) {
-	secretName, err := requireNonEmptyString(input.SecretName, "auth.secret_name")
+	secretName, err := parseSecretName(input.SecretName)
 	if err != nil {
-		return credentialAuthState{}, err
-	}
-	if err := validateSecretName(secretName); err != nil {
-		return credentialAuthState{}, err
-	}
-	if err := validateSecretNameNotReserved(secretName); err != nil {
 		return credentialAuthState{}, err
 	}
 	secretValue, err := requireNonBlankVerbatim(input.SecretValue, "auth.secret_value")
@@ -268,7 +262,7 @@ func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCr
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	injectionLocation, err := normalizeInjectionLocationForCreate(input.InjectionLocation)
+	injectionLocation, err := applyInjectionLocation(credentialInjectionLocation{Header: true, Body: false}, input.InjectionLocation)
 	if err != nil {
 		return credentialAuthState{}, err
 	}
@@ -326,9 +320,9 @@ func normalizeCredentialAuthForUpdate(current db.VaultCredential, currentSecret 
 		if err := decodeCredentialAuthInput(raw, &input); err != nil {
 			return credentialAuthState{}, err
 		}
-		publicAuth, ok := stored.value.(*environmentVariableCredentialAuth)
-		if !ok {
-			return credentialAuthState{}, errors.New("stored credential auth type is invalid")
+		publicAuth, err := requireReadyEnvironmentAuth(stored.value)
+		if err != nil {
+			return credentialAuthState{}, err
 		}
 		return normalizeEnvironmentVariableForUpdate(current, currentSecret, input, publicAuth)
 	default:
@@ -424,12 +418,6 @@ func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []
 }
 
 func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSecret []byte, input environmentVariableCredentialUpdateInput, publicAuth *environmentVariableCredentialAuth) (credentialAuthState, error) {
-	if strings.TrimSpace(publicAuth.Placeholder) == "" {
-		return credentialAuthState{}, errors.New("environment variable credential is missing placeholder; archive and recreate")
-	}
-	if !publicAuth.InjectionLocation.Header && !publicAuth.InjectionLocation.Body {
-		return credentialAuthState{}, errors.New("environment variable credential is missing injection_location; archive and recreate")
-	}
 	secretPayload := environmentVariableCredentialSecret{Type: credentialAuthTypeEnvironmentVariable}
 	if len(currentSecret) != 0 {
 		var err error
@@ -462,7 +450,7 @@ func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSe
 		}
 		publicAuth.Networking = networking
 	}
-	injectionLocation, err := mergeInjectionLocationForUpdate(publicAuth.InjectionLocation, input.InjectionLocation)
+	injectionLocation, err := applyInjectionLocation(publicAuth.InjectionLocation, input.InjectionLocation)
 	if err != nil {
 		return credentialAuthState{}, err
 	}
@@ -617,13 +605,6 @@ func validateHTTPURL(value, name string) error {
 func validateRFC3339(value, name string) error {
 	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
 		return fmt.Errorf("%s must be RFC3339", name)
-	}
-	return nil
-}
-
-func validateSecretName(value string) error {
-	if len(value) > 255 {
-		return errors.New("auth.secret_name must be at most 255 characters")
 	}
 	return nil
 }

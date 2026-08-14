@@ -665,6 +665,10 @@ export function credentialEnvHostsMissing(values: CredentialFormValues): boolean
   );
 }
 
+export function credentialEnvInjectionMissing(values: CredentialFormValues): boolean {
+  return values.authType === 'environment_variable' && !values.injectHeader && !values.injectBody;
+}
+
 function credentialNetworkingBody(values: CredentialFormValues) {
   if (values.networkType === 'limited') {
     return {
@@ -924,10 +928,7 @@ export function credentialFormReady(values: CredentialFormValues, mode: 'create'
     return false;
   }
   if (values.authType === 'environment_variable') {
-    if (!values.injectHeader && !values.injectBody) {
-      return false;
-    }
-    if (credentialEnvHostsMissing(values)) {
+    if (credentialEnvInjectionMissing(values) || credentialEnvHostsMissing(values)) {
       return false;
     }
     // Edit: secret value optional (sealed secrets are not returned; rotate only when provided).

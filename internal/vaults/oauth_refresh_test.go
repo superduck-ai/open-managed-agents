@@ -36,7 +36,7 @@ func TestDecodeMCPOAuthCredentialAuthErrors(t *testing.T) {
 }
 
 func TestAccessTokenExpired(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	now := oauthRefreshNow()
 	t.Run("failure missing expires_at is not expired", func(t *testing.T) {
 		expired, err := accessTokenExpired(nil, now)
 		if err != nil || expired {
@@ -74,30 +74,15 @@ func TestAccessTokenExpired(t *testing.T) {
 
 func TestHasMCPOAuthRefreshMaterial(t *testing.T) {
 	t.Run("failure missing refresh blocks", func(t *testing.T) {
-		auth := &mcpOAuthCredentialAuth{Type: credentialAuthTypeMCPOAuth, MCPServerURL: "https://mcp.example.com/mcp"}
+		auth := &mcpOAuthCredentialAuth{Type: credentialAuthTypeMCPOAuth, MCPServerURL: testInjectMCPURL}
 		secret := mcpOAuthCredentialSecret{Type: credentialAuthTypeMCPOAuth, AccessToken: "tok"}
 		if hasMCPOAuthRefreshMaterial(auth, secret) {
 			t.Fatal("expected false without refresh material")
 		}
 	})
 	t.Run("success complete refresh material", func(t *testing.T) {
-		auth := &mcpOAuthCredentialAuth{
-			Type:         credentialAuthTypeMCPOAuth,
-			MCPServerURL: "https://mcp.example.com/mcp",
-			Refresh: &mcpOAuthRefresh{
-				TokenEndpoint:     "https://example.com/token",
-				ClientID:          "client",
-				TokenEndpointAuth: tokenEndpointAuth{Type: "none"},
-			},
-		}
-		secret := mcpOAuthCredentialSecret{
-			Type:        credentialAuthTypeMCPOAuth,
-			AccessToken: "tok",
-			Refresh: &mcpOAuthRefreshSecret{
-				RefreshToken:      "refresh",
-				TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "none"},
-			},
-		}
+		auth := testMCPOAuthPublicAuth("https://example.com/token", nil)
+		secret := testMCPOAuthSecret("tok", "refresh")
 		if !hasMCPOAuthRefreshMaterial(auth, secret) {
 			t.Fatal("expected true with complete refresh material")
 		}
@@ -117,25 +102,13 @@ func TestExchangeMCPOAuthRefreshKeepsRefreshTokenWhenOmitted(t *testing.T) {
 	}))
 	defer server.Close()
 
-	publicAuth := &mcpOAuthCredentialAuth{
-		Type:         credentialAuthTypeMCPOAuth,
-		MCPServerURL: "https://mcp.example.com/mcp",
-		ExpiresAt:    strPtr("2020-01-01T00:00:00Z"),
-		Refresh: &mcpOAuthRefresh{
-			TokenEndpoint:     server.URL,
-			ClientID:          "client",
-			TokenEndpointAuth: tokenEndpointAuth{Type: "none"},
-		},
-	}
-	secret := mcpOAuthCredentialSecret{
-		Type:        credentialAuthTypeMCPOAuth,
-		AccessToken: "old-access",
-		Refresh: &mcpOAuthRefreshSecret{
-			RefreshToken:      "old-refresh",
-			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "none"},
-		},
-	}
-	token, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(t.Context(), server.Client(), publicAuth, secret, time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
+	token, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(
+		t.Context(),
+		server.Client(),
+		testMCPOAuthPublicAuth(server.URL, strPtr("2020-01-01T00:00:00Z")),
+		testMCPOAuthSecret("old-access", "old-refresh"),
+		oauthRefreshNow(),
+	)
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -159,7 +132,7 @@ func TestExchangeMCPOAuthRefreshKeepsRefreshTokenWhenOmitted(t *testing.T) {
 }
 
 func TestResolveExpiresAtAfterRefresh(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	now := oauthRefreshNow()
 	t.Run("failure expired previous cleared without expires_in", func(t *testing.T) {
 		got := resolveExpiresAtAfterRefresh(now, strPtr("2026-08-10T11:00:00Z"), 0)
 		if got != nil {
@@ -213,37 +186,21 @@ func TestOAuthExpiresInUnmarshalJSON(t *testing.T) {
 }
 
 func TestExchangeMCPOAuthRefreshExpiresAtPolicy(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	newServer := func(payload map[string]any) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(payload)
+	now := oauthRefreshNow()
+	secret := testMCPOAuthSecret("old-access", "old-refresh")
+	exchange := func(t *testing.T, expiresAt *string) *mcpOAuthCredentialAuth {
+		t.Helper()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "new-access"})
 		}))
-	}
-	baseAuth := func(serverURL string, expiresAt *string) *mcpOAuthCredentialAuth {
-		return &mcpOAuthCredentialAuth{
-			Type:         credentialAuthTypeMCPOAuth,
-			MCPServerURL: "https://mcp.example.com/mcp",
-			ExpiresAt:    expiresAt,
-			Refresh: &mcpOAuthRefresh{
-				TokenEndpoint:     serverURL,
-				ClientID:          "client",
-				TokenEndpointAuth: tokenEndpointAuth{Type: "none"},
-			},
-		}
-	}
-	secret := mcpOAuthCredentialSecret{
-		Type:        credentialAuthTypeMCPOAuth,
-		AccessToken: "old-access",
-		Refresh: &mcpOAuthRefreshSecret{
-			RefreshToken:      "old-refresh",
-			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "none"},
-		},
-	}
-
-	t.Run("failure past expires_at cleared when response omits expires_in", func(t *testing.T) {
-		server := newServer(map[string]any{"access_token": "new-access"})
-		defer server.Close()
-		_, nextAuth, _, err := exchangeMCPOAuthRefresh(t.Context(), server.Client(), baseAuth(server.URL, strPtr("2020-01-01T00:00:00Z")), secret, now)
+		t.Cleanup(server.Close)
+		_, nextAuth, _, err := exchangeMCPOAuthRefresh(
+			t.Context(),
+			server.Client(),
+			testMCPOAuthPublicAuth(server.URL, expiresAt),
+			secret,
+			now,
+		)
 		if err != nil {
 			t.Fatalf("exchange: %v", err)
 		}
@@ -251,22 +208,18 @@ func TestExchangeMCPOAuthRefreshExpiresAtPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode auth: %v", err)
 		}
+		return savedAuth
+	}
+
+	t.Run("failure past expires_at cleared when response omits expires_in", func(t *testing.T) {
+		savedAuth := exchange(t, strPtr("2020-01-01T00:00:00Z"))
 		if savedAuth.ExpiresAt != nil {
 			t.Fatalf("expires_at = %v, want nil", savedAuth.ExpiresAt)
 		}
 	})
 	t.Run("success future expires_at preserved when response omits expires_in", func(t *testing.T) {
-		server := newServer(map[string]any{"access_token": "new-access"})
-		defer server.Close()
 		previous := strPtr("2026-08-10T18:00:00Z")
-		_, nextAuth, _, err := exchangeMCPOAuthRefresh(t.Context(), server.Client(), baseAuth(server.URL, previous), secret, now)
-		if err != nil {
-			t.Fatalf("exchange: %v", err)
-		}
-		savedAuth, err := decodeMCPOAuthCredentialAuth(nextAuth)
-		if err != nil {
-			t.Fatalf("decode auth: %v", err)
-		}
+		savedAuth := exchange(t, previous)
 		if savedAuth.ExpiresAt == nil || *savedAuth.ExpiresAt != *previous {
 			t.Fatalf("expires_at = %v, want %v", savedAuth.ExpiresAt, previous)
 		}
@@ -274,31 +227,18 @@ func TestExchangeMCPOAuthRefreshExpiresAtPolicy(t *testing.T) {
 }
 
 func TestRefreshMCPOAuthCredentialReusesWinnerAfterCASConflict(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	tokenCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		tokenCalls++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token": "loser-should-not-persist",
-			"expires_in":   3600,
-		})
-	}))
-	defer server.Close()
-
-	svc := newTestSecretsService(t)
-	stale := sealedMCPOAuthCredential(t, svc, server.URL, "stale-access", "refresh-token", strPtr("2020-01-01T00:00:00Z"))
-	winner := sealedMCPOAuthCredential(t, svc, server.URL, "winner-access", "refresh-token", strPtr("2026-08-10T18:00:00Z"))
-
+	env := newOAuthRefreshEnv(t, "loser-should-not-persist")
+	stale, winner := env.staleWinner("refresh-token", false)
 	store := &fakeCredentialStore{
 		updateErr:  db.ErrVersionConflict,
 		get:        winner,
 		getResults: []db.VaultCredential{stale},
 	}
-	injector := newTestInjector(t, svc, store, server.Client(), now)
+	injector := env.injector(store)
 
 	// force=true models the 401 path; entry reload misses winner, then after CAS
 	// conflict force must clear so the winner's unexpired token is reused.
-	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, now, true)
+	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, true)
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -308,8 +248,8 @@ func TestRefreshMCPOAuthCredentialReusesWinnerAfterCASConflict(t *testing.T) {
 	if saved == nil || saved.ExternalID != winner.ExternalID {
 		t.Fatalf("saved = %+v", saved)
 	}
-	if tokenCalls != 1 {
-		t.Fatalf("token endpoint calls = %d, want 1", tokenCalls)
+	if env.tokenCalls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1", env.tokenCalls.Load())
 	}
 	if store.updateCalls != 1 || store.getCalls != 2 {
 		t.Fatalf("updateCalls=%d getCalls=%d", store.updateCalls, store.getCalls)
@@ -317,29 +257,17 @@ func TestRefreshMCPOAuthCredentialReusesWinnerAfterCASConflict(t *testing.T) {
 }
 
 func TestRefreshMCPOAuthCredentialReloadsAfterExchangeFailure(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	tokenCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		tokenCalls++
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
-	}))
-	defer server.Close()
-
-	svc := newTestSecretsService(t)
-	stale := sealedMCPOAuthCredential(t, svc, server.URL, "stale-access", "consumed-refresh", strPtr("2020-01-01T00:00:00Z"))
-	winner := sealedMCPOAuthCredential(t, svc, server.URL, "winner-access", "consumed-refresh", strPtr("2026-08-10T18:00:00Z"))
-	winner.SecretVersion = stale.SecretVersion + 1
-
+	env := newOAuthRefreshEnv(t, "")
+	stale, winner := env.staleWinner("consumed-refresh", true)
 	store := &fakeCredentialStore{
 		get:        winner,
 		getResults: []db.VaultCredential{stale},
 	}
-	injector := newTestInjector(t, svc, store, server.Client(), now)
+	injector := env.injector(store)
 
 	// 401 path: entry reload still sees stale; exchange then fails invalid_grant
 	// because winner consumed the one-time refresh_token; reload reuses winner.
-	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, now, true)
+	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, true)
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -349,8 +277,8 @@ func TestRefreshMCPOAuthCredentialReloadsAfterExchangeFailure(t *testing.T) {
 	if saved == nil || saved.ExternalID != winner.ExternalID {
 		t.Fatalf("saved = %+v", saved)
 	}
-	if tokenCalls != 1 {
-		t.Fatalf("token endpoint calls = %d, want 1", tokenCalls)
+	if env.tokenCalls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1", env.tokenCalls.Load())
 	}
 	if store.updateCalls != 0 {
 		t.Fatalf("updateCalls=%d, want 0 (no write on exchange failure)", store.updateCalls)
@@ -361,45 +289,27 @@ func TestRefreshMCPOAuthCredentialReloadsAfterExchangeFailure(t *testing.T) {
 }
 
 func TestRefreshMCPOAuthCredentialKeepsExchangeErrorWhenVersionUnchanged(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	tokenCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		tokenCalls++
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
-	}))
-	defer server.Close()
-
-	svc := newTestSecretsService(t)
-	stale := sealedMCPOAuthCredential(t, svc, server.URL, "stale-access", "bad-refresh", strPtr("2020-01-01T00:00:00Z"))
+	env := newOAuthRefreshEnv(t, "")
+	stale := env.staleCred("bad-refresh")
 	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale, stale}}
-	injector := newTestInjector(t, svc, store, server.Client(), now)
+	injector := env.injector(store)
 
-	_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, now, true)
+	_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, true)
 	if err == nil {
 		t.Fatal("expected exchange error when reload does not advance SecretVersion")
 	}
-	if tokenCalls != 1 {
-		t.Fatalf("token endpoint calls = %d, want 1 (no retry exchange)", tokenCalls)
+	if env.tokenCalls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1 (no retry exchange)", env.tokenCalls.Load())
 	}
 }
 
 func TestRefreshMCPOAuthCredentialConcurrentExchangeOnce(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	var tokenCalls int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&tokenCalls, 1)
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fresh-access", "expires_in": 3600})
-	}))
-	defer server.Close()
-
-	svc := newTestSecretsService(t)
-	stale := sealedMCPOAuthCredential(t, svc, server.URL, "stale-access", "refresh-token", strPtr("2020-01-01T00:00:00Z"))
-	winner := sealedMCPOAuthCredential(t, svc, server.URL, "winner-access", "refresh-token", strPtr("2026-08-10T18:00:00Z"))
+	env := newOAuthRefreshEnv(t, "fresh-access")
+	stale, winner := env.staleWinner("refresh-token", false)
 	// Entry reload is still stale; the loser reloads again under the lock and
 	// sees the winner's fresh token without a second exchange.
 	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale, winner, winner}}
-	injector := newTestInjector(t, svc, store, server.Client(), now)
+	injector := env.injector(store)
 
 	var wg sync.WaitGroup
 	results := make([]string, 2)
@@ -407,7 +317,7 @@ func TestRefreshMCPOAuthCredentialConcurrentExchangeOnce(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			token, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, now, false)
+			token, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, false)
 			if err != nil {
 				results[i] = "error:" + err.Error()
 				return
@@ -422,29 +332,101 @@ func TestRefreshMCPOAuthCredentialConcurrentExchangeOnce(t *testing.T) {
 			t.Fatalf("result = %q", token)
 		}
 	}
-	if got := atomic.LoadInt32(&tokenCalls); got != 1 {
+	if got := env.tokenCalls.Load(); got != 1 {
 		t.Fatalf("token endpoint calls = %d, want 1", got)
 	}
 }
 
 func TestRefreshMCPOAuthCredentialRetainsLock(t *testing.T) {
-	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fresh-access", "expires_in": 3600})
-	}))
-	defer server.Close()
-
-	svc := newTestSecretsService(t)
-	stale := sealedMCPOAuthCredential(t, svc, server.URL, "stale-access", "refresh-token", strPtr("2020-01-01T00:00:00Z"))
+	env := newOAuthRefreshEnv(t, "fresh-access")
+	stale := env.staleCred("refresh-token")
 	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale}}
-	injector := newTestInjector(t, svc, store, server.Client(), now)
+	injector := env.injector(store)
 
-	if _, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, now, false); err != nil {
+	if _, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, false); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
 	if _, ok := injector.refreshLocks.Load(stale.ExternalID); !ok {
 		t.Fatalf("refreshLocks missing %q after refresh (mutex must be retained)", stale.ExternalID)
 	}
+}
+
+func oauthRefreshNow() time.Time {
+	return time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+}
+
+func testMCPOAuthPublicAuth(tokenURL string, expiresAt *string) *mcpOAuthCredentialAuth {
+	return &mcpOAuthCredentialAuth{
+		Type:         credentialAuthTypeMCPOAuth,
+		MCPServerURL: testInjectMCPURL,
+		ExpiresAt:    expiresAt,
+		Refresh: &mcpOAuthRefresh{
+			TokenEndpoint:     tokenURL,
+			ClientID:          "client",
+			TokenEndpointAuth: tokenEndpointAuth{Type: "none"},
+		},
+	}
+}
+
+func testMCPOAuthSecret(accessToken, refreshToken string) mcpOAuthCredentialSecret {
+	return mcpOAuthCredentialSecret{
+		Type:        credentialAuthTypeMCPOAuth,
+		AccessToken: accessToken,
+		Refresh: &mcpOAuthRefreshSecret{
+			RefreshToken:      refreshToken,
+			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "none"},
+		},
+	}
+}
+
+// oauthRefreshEnv is the shared token-endpoint + secrets + clock seam for refresh tests.
+type oauthRefreshEnv struct {
+	t          *testing.T
+	now        time.Time
+	svc        *secrets.Service
+	tokenURL   string
+	client     *http.Client
+	tokenCalls *atomic.Int32
+}
+
+// newOAuthRefreshEnv starts a token server. Empty accessToken yields invalid_grant.
+func newOAuthRefreshEnv(t *testing.T, accessToken string) *oauthRefreshEnv {
+	t.Helper()
+	var server *httptest.Server
+	var calls *atomic.Int32
+	if accessToken == "" {
+		server, calls = newOAuthInvalidGrantServer(t)
+	} else {
+		server, calls = newOAuthAccessTokenServer(t, accessToken)
+	}
+	return &oauthRefreshEnv{
+		t:          t,
+		now:        oauthRefreshNow(),
+		svc:        newTestSecretsService(t),
+		tokenURL:   server.URL,
+		client:     server.Client(),
+		tokenCalls: calls,
+	}
+}
+
+func (e *oauthRefreshEnv) injector(store *fakeCredentialStore) *Injector {
+	e.t.Helper()
+	return newTestInjector(e.t, e.svc, store, e.client, e.now)
+}
+
+func (e *oauthRefreshEnv) staleCred(refreshToken string) db.VaultCredential {
+	e.t.Helper()
+	return sealedMCPOAuthCredential(e.t, e.svc, e.tokenURL, "stale-access", refreshToken, strPtr("2020-01-01T00:00:00Z"))
+}
+
+func (e *oauthRefreshEnv) staleWinner(refreshToken string, bumpWinnerVersion bool) (db.VaultCredential, db.VaultCredential) {
+	e.t.Helper()
+	stale := e.staleCred(refreshToken)
+	winner := sealedMCPOAuthCredential(e.t, e.svc, e.tokenURL, "winner-access", refreshToken, strPtr("2026-08-10T18:00:00Z"))
+	if bumpWinnerVersion {
+		winner.SecretVersion = stale.SecretVersion + 1
+	}
+	return stale, winner
 }
 
 func sealedMCPOAuthCredential(
@@ -456,33 +438,17 @@ func sealedMCPOAuthCredential(
 	expiresAt *string,
 ) db.VaultCredential {
 	t.Helper()
-	auth, err := json.Marshal(mcpOAuthCredentialAuth{
-		Type:         credentialAuthTypeMCPOAuth,
-		MCPServerURL: "https://mcp.example.com/mcp",
-		ExpiresAt:    expiresAt,
-		Refresh: &mcpOAuthRefresh{
-			TokenEndpoint:     tokenEndpoint,
-			ClientID:          "client",
-			TokenEndpointAuth: tokenEndpointAuth{Type: "none"},
-		},
-	})
+	auth, err := json.Marshal(testMCPOAuthPublicAuth(tokenEndpoint, expiresAt))
 	if err != nil {
 		t.Fatalf("marshal auth: %v", err)
 	}
-	secret, err := json.Marshal(mcpOAuthCredentialSecret{
-		Type:        credentialAuthTypeMCPOAuth,
-		AccessToken: accessToken,
-		Refresh: &mcpOAuthRefreshSecret{
-			RefreshToken:      refreshToken,
-			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "none"},
-		},
-	})
+	secret, err := json.Marshal(testMCPOAuthSecret(accessToken, refreshToken))
 	if err != nil {
 		t.Fatalf("marshal secret: %v", err)
 	}
 	credential := db.VaultCredential{
-		OrganizationUUID: "00000000-0000-0000-0000-000000000001",
-		WorkspaceUUID:    "00000000-0000-0000-0000-000000000002",
+		OrganizationUUID: testInjectOrgUUID,
+		WorkspaceUUID:    testInjectWsUUID,
 		VaultExternalID:  "vlt_test",
 		ExternalID:       "cred_" + accessToken,
 		AuthType:         "mcp_oauth",

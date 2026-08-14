@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,43 +57,86 @@ func TestOpenStaticBearerToken(t *testing.T) {
 	}
 }
 
-func TestWrapTransportLoadsCredentialsOnceAcrossUnauthorizedWalk(t *testing.T) {
-	svc := newTestSecretsService(t)
-	first := sealedStaticBearerCredential(t, svc, "https://mcp.example.com/mcp", "tok-a", "cred_a")
-	second := sealedStaticBearerCredential(t, svc, "https://mcp.example.com/mcp", "tok-b", "cred_b")
-	store := &fakeCredentialStore{
-		vaultIDs:    []string{"vlt_a", "vlt_b"},
-		credentials: []db.VaultCredential{first, second},
-	}
-	upstreamCalls := 0
-	var lastAuth string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamCalls++
+const (
+	testInjectOrgUUID = "00000000-0000-0000-0000-000000000001"
+	testInjectWsUUID  = "00000000-0000-0000-0000-000000000002"
+	testInjectMCPURL  = "https://mcp.example.com/mcp"
+)
+
+type mcpAuthProbe struct {
+	calls int
+	last  string
+	seen  []string
+}
+
+// newMCPAuthProbeUpstream returns 200 only for Bearer okToken; all other auths get 401.
+func newMCPAuthProbeUpstream(t *testing.T, okToken string) (*httptest.Server, *mcpAuthProbe) {
+	t.Helper()
+	probe := &mcpAuthProbe{}
+	ok := "Bearer " + okToken
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probe.calls++
 		auth := r.Header.Get("Authorization")
-		lastAuth = auth
-		if auth == "Bearer tok-a" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if auth == "Bearer tok-b" {
+		probe.last = auth
+		probe.seen = append(probe.seen, auth)
+		if auth == ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, "ok")
 			return
 		}
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
-	defer upstream.Close()
+	t.Cleanup(srv.Close)
+	return srv, probe
+}
 
-	injector := newTestInjector(t, svc, store, nil, time.Time{})
-	target, err := url.Parse("https://mcp.example.com/mcp")
+func newOAuthAccessTokenServer(t *testing.T, accessToken string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": accessToken,
+			"expires_in":   3600,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func newOAuthInvalidGrantServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func wrapTransportRoundTrip(t *testing.T, injector *Injector, upstream *httptest.Server) *http.Response {
+	t.Helper()
+	return wrapTransportRoundTripWithin(t, injector, upstream, 0)
+}
+
+func wrapTransportRoundTripWithin(
+	t *testing.T,
+	injector *Injector,
+	upstream *httptest.Server,
+	timeout time.Duration,
+) *http.Response {
+	t.Helper()
+	target, err := url.Parse(testInjectMCPURL)
 	if err != nil {
 		t.Fatalf("parse target: %v", err)
 	}
 	transport := injector.WrapTransport(
 		context.Background(),
 		"cse_test",
-		"00000000-0000-0000-0000-000000000001",
-		"00000000-0000-0000-0000-000000000002",
+		testInjectOrgUUID,
+		testInjectWsUUID,
 		target,
 		upstream.Client().Transport,
 	)
@@ -100,91 +144,79 @@ func TestWrapTransportLoadsCredentialsOnceAcrossUnauthorizedWalk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	resp, err := transport.RoundTrip(req)
-	if err != nil {
-		t.Fatalf("RoundTrip: %v", err)
+	var resp *http.Response
+	var tripErr error
+	if timeout <= 0 {
+		resp, tripErr = transport.RoundTrip(req)
+	} else {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			resp, tripErr = transport.RoundTrip(req)
+		}()
+		select {
+		case <-done:
+		case <-time.After(timeout):
+			t.Fatal("RoundTrip hung; excluded map likely keyed by empty ExternalID")
+		}
 	}
-	defer resp.Body.Close()
+	if tripErr != nil {
+		t.Fatalf("RoundTrip: %v", tripErr)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+func TestWrapTransportLoadsCredentialsOnceAcrossUnauthorizedWalk(t *testing.T) {
+	svc := newTestSecretsService(t)
+	first := sealedStaticBearerCredential(t, svc, testInjectMCPURL, "tok-a", "cred_a")
+	second := sealedStaticBearerCredential(t, svc, testInjectMCPURL, "tok-b", "cred_b")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{"vlt_a", "vlt_b"},
+		credentials: []db.VaultCredential{first, second},
+	}
+	upstream, probe := newMCPAuthProbeUpstream(t, "tok-b")
+	injector := newTestInjector(t, svc, store, nil, time.Time{})
+
+	resp := wrapTransportRoundTrip(t, injector, upstream)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, lastAuth=%q", resp.StatusCode, lastAuth)
+		t.Fatalf("status = %d, lastAuth=%q", resp.StatusCode, probe.last)
 	}
-	if lastAuth != "Bearer tok-b" {
-		t.Fatalf("lastAuth = %q, want Bearer tok-b", lastAuth)
+	if probe.last != "Bearer tok-b" {
+		t.Fatalf("lastAuth = %q, want Bearer tok-b", probe.last)
 	}
 	if store.vaultIDCalls != 1 || store.credentialCalls != 1 {
 		t.Fatalf("loader calls vaultIDs=%d credentials=%d, want 1 each", store.vaultIDCalls, store.credentialCalls)
 	}
-	if upstreamCalls != 2 {
-		t.Fatalf("upstream calls = %d, want 2", upstreamCalls)
+	if probe.calls != 2 {
+		t.Fatalf("upstream calls = %d, want 2", probe.calls)
 	}
 }
 
 func TestWrapTransportMCPOAuthUnauthorizedRefreshesAndRetries(t *testing.T) {
 	svc := newTestSecretsService(t)
-	tokenCalls := 0
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		tokenCalls++
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fresh-access", "expires_in": 3600})
-	}))
-	defer tokenServer.Close()
-
+	tokenServer, tokenCalls := newOAuthAccessTokenServer(t, "fresh-access")
 	// expires_at is in the future so the first inject reuses the stored token;
 	// the upstream 401 then triggers a forced refresh.
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	credential := sealedMCPOAuthCredential(t, svc, tokenServer.URL, "stale-access", "refresh-token", strPtr("2026-08-10T18:00:00Z"))
-	store := &fakeCredentialStore{getResults: []db.VaultCredential{credential}}
-	store.vaultIDs = []string{"vlt_o"}
-	store.credentials = []db.VaultCredential{credential}
-
-	upstreamCalls := 0
-	var lastAuth string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamCalls++
-		auth := r.Header.Get("Authorization")
-		lastAuth = auth
-		if auth == "Bearer stale-access" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if auth == "Bearer fresh-access" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = io.WriteString(w, "ok")
-			return
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer upstream.Close()
-
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{"vlt_o"},
+		credentials: []db.VaultCredential{credential},
+		getResults:  []db.VaultCredential{credential},
+	}
+	upstream, probe := newMCPAuthProbeUpstream(t, "fresh-access")
 	injector := newTestInjector(t, svc, store, tokenServer.Client(), now)
-	target, err := url.Parse("https://mcp.example.com/mcp")
-	if err != nil {
-		t.Fatalf("parse target: %v", err)
-	}
-	transport := injector.WrapTransport(
-		context.Background(),
-		"cse_test",
-		"00000000-0000-0000-0000-000000000001",
-		"00000000-0000-0000-0000-000000000002",
-		target,
-		upstream.Client().Transport,
-	)
-	req, err := http.NewRequest(http.MethodPost, upstream.URL, nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	resp, err := transport.RoundTrip(req)
-	if err != nil {
-		t.Fatalf("RoundTrip: %v", err)
-	}
-	defer resp.Body.Close()
+
+	resp := wrapTransportRoundTrip(t, injector, upstream)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, lastAuth=%q", resp.StatusCode, lastAuth)
+		t.Fatalf("status = %d, lastAuth=%q", resp.StatusCode, probe.last)
 	}
-	if lastAuth != "Bearer fresh-access" {
-		t.Fatalf("lastAuth = %q, want Bearer fresh-access", lastAuth)
+	if probe.last != "Bearer fresh-access" {
+		t.Fatalf("lastAuth = %q, want Bearer fresh-access", probe.last)
 	}
-	if tokenCalls != 1 || upstreamCalls != 2 {
-		t.Fatalf("tokenCalls=%d upstreamCalls=%d", tokenCalls, upstreamCalls)
+	if tokenCalls.Load() != 1 || probe.calls != 2 {
+		t.Fatalf("tokenCalls=%d upstreamCalls=%d", tokenCalls.Load(), probe.calls)
 	}
 	if store.updateCalls != 1 {
 		t.Fatalf("updateCalls=%d", store.updateCalls)
@@ -199,71 +231,24 @@ func TestWrapTransportExcludesByPlanCredIDWhenUpdateReturnsEmptyRow(t *testing.T
 	// Walk state must key off planCredID or the same mcp_oauth entry is
 	// re-selected forever after a post-refresh 401.
 	svc := newTestSecretsService(t)
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fresh-access", "expires_in": 3600})
-	}))
-	defer tokenServer.Close()
-
+	tokenServer, _ := newOAuthAccessTokenServer(t, "fresh-access")
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	oauth := sealedMCPOAuthCredential(t, svc, tokenServer.URL, "stale-access", "refresh-token", strPtr("2026-08-10T18:00:00Z"))
-	fallback := sealedStaticBearerCredential(t, svc, "https://mcp.example.com/mcp", "tok-b", "cred_b")
+	fallback := sealedStaticBearerCredential(t, svc, testInjectMCPURL, "tok-b", "cred_b")
 	store := &fakeCredentialStore{
 		vaultIDs:    []string{"vlt_o", "vlt_b"},
 		credentials: []db.VaultCredential{oauth, fallback},
 		getResults:  []db.VaultCredential{oauth},
 	}
-
-	var seen []string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		seen = append(seen, auth)
-		if auth == "Bearer tok-b" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = io.WriteString(w, "ok")
-			return
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer upstream.Close()
-
+	upstream, probe := newMCPAuthProbeUpstream(t, "tok-b")
 	injector := newTestInjector(t, svc, store, tokenServer.Client(), now)
-	target, err := url.Parse("https://mcp.example.com/mcp")
-	if err != nil {
-		t.Fatalf("parse target: %v", err)
-	}
-	transport := injector.WrapTransport(
-		context.Background(),
-		"cse_test",
-		"00000000-0000-0000-0000-000000000001",
-		"00000000-0000-0000-0000-000000000002",
-		target,
-		upstream.Client().Transport,
-	)
-	req, err := http.NewRequest(http.MethodPost, upstream.URL, nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	done := make(chan struct{})
-	var resp *http.Response
-	var tripErr error
-	go func() {
-		defer close(done)
-		resp, tripErr = transport.RoundTrip(req)
-	}()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("RoundTrip hung; excluded map likely keyed by empty ExternalID")
-	}
-	if tripErr != nil {
-		t.Fatalf("RoundTrip: %v", tripErr)
-	}
-	defer resp.Body.Close()
+
+	resp := wrapTransportRoundTripWithin(t, injector, upstream, 3*time.Second)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, seen=%v", resp.StatusCode, seen)
+		t.Fatalf("status = %d, seen=%v", resp.StatusCode, probe.seen)
 	}
-	if len(seen) < 2 || seen[len(seen)-1] != "Bearer tok-b" {
-		t.Fatalf("seen = %v, want walk to tok-b", seen)
+	if len(probe.seen) < 2 || probe.seen[len(probe.seen)-1] != "Bearer tok-b" {
+		t.Fatalf("seen = %v, want walk to tok-b", probe.seen)
 	}
 }
 
@@ -327,8 +312,8 @@ func sealedStaticBearerCredential(t *testing.T, svc *secrets.Service, serverURL,
 		t.Fatalf("marshal secret: %v", err)
 	}
 	credential := db.VaultCredential{
-		OrganizationUUID: "00000000-0000-0000-0000-000000000001",
-		WorkspaceUUID:    "00000000-0000-0000-0000-000000000002",
+		OrganizationUUID: testInjectOrgUUID,
+		WorkspaceUUID:    testInjectWsUUID,
 		VaultExternalID:  "vlt_" + id,
 		ExternalID:       id,
 		AuthType:         "static_bearer",

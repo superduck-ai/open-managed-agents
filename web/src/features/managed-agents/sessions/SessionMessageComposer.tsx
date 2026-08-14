@@ -49,11 +49,10 @@ export function SessionMessageComposer({
     try {
       const response = await postQuickstartSessionMessage(sessionId, trimmedDraft, workspaceId);
       setDraft('');
-      if (response.data?.length) {
-        onMessageSent(response.data);
-      } else {
-        onEventsChanged();
-      }
+      // Always mark the session running: even with no returned events the stream
+      // loop's forced tail sync backfills the message, so no history-refresh
+      // fallback is needed.
+      onMessageSent(response.data ?? []);
     } catch (error) {
       onError(errorMessage(error));
     } finally {

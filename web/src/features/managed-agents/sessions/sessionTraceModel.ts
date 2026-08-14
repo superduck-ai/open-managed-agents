@@ -2368,7 +2368,10 @@ export function compareSessionEvents(left: QuickstartSessionEvent, right: Quicks
 // a user.message is newer (message just sent, agent status not yet broadcast) —
 // then null, so the caller keeps its current status and the optimistic "running"
 // survives until the reply or a terminal status lands.
-export function sessionStatusFromEvents(events: QuickstartSessionEvent[]) {
+export function sessionStatusFromEvents(events: QuickstartSessionEvent[]): {
+  status: string;
+  event: QuickstartSessionEvent;
+} | null {
   const ordered = [...events].sort(compareSessionEvents);
   for (let index = ordered.length - 1; index >= 0; index -= 1) {
     const type = sessionEventType(ordered[index]);
@@ -2377,7 +2380,7 @@ export function sessionStatusFromEvents(events: QuickstartSessionEvent[]) {
     }
     const status = sessionStatusFromEventType(type);
     if (status) {
-      return status;
+      return { status, event: ordered[index] };
     }
   }
   return null;

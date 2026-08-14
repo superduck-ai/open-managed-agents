@@ -296,13 +296,25 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   // so a missed frame (or a reply that fully landed before SSE subscribed) still
   // corrects an optimistic "running". No-op while the statuses agree.
   useEffect(() => {
-    const nextStatus = sessionStatusFromEvents(events);
-    if (!nextStatus || !session || nextStatus === session.status.toLowerCase()) {
+    const next = sessionStatusFromEvents(events);
+    if (!next || !session) {
       return;
     }
-    setSession((currentSession) =>
-      currentSession && currentSession.id === session.id ? { ...currentSession, status: nextStatus } : currentSession,
-    );
+    setSession((currentSession) => {
+      if (!currentSession || currentSession.id !== session.id) {
+        return currentSession;
+      }
+      // Mirror the live-frame path: a cached session.deleted must also archive,
+      // otherwise the header keeps the Archive action enabled.
+      const archivedAt =
+        next.status === 'deleted'
+          ? (currentSession.archived_at ?? sessionEventUpdateTimestamp(next.event, currentSession.updated_at))
+          : currentSession.archived_at;
+      if (next.status === currentSession.status.toLowerCase() && archivedAt === currentSession.archived_at) {
+        return currentSession;
+      }
+      return { ...currentSession, status: next.status, archived_at: archivedAt };
+    });
   }, [events, session]);
   const traceStartMs = useMemo(() => {
     const sessionStart = session?.created_at ? Date.parse(session.created_at) : NaN;

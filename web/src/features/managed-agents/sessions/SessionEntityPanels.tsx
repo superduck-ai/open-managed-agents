@@ -75,7 +75,12 @@ export function SessionEntityPanels({
       </TabsContent>
       <AgentDetails agent={related.agent} emptyText={emptyText} />
       <EnvironmentDetails environment={related.environment} emptyText={emptyText} />
-      <CredentialDetails credentials={related.credentials} emptyText={emptyText} hasVaults={Boolean(vaultKey)} />
+      <CredentialDetails
+        credentials={related.credentials}
+        emptyText={emptyText}
+        error={related.error}
+        hasVaults={Boolean(vaultKey)}
+      />
     </>
   );
 }
@@ -240,10 +245,12 @@ function EnvironmentDetails({
 function CredentialDetails({
   credentials,
   emptyText,
+  error,
   hasVaults,
 }: {
   credentials: RelatedEntities['credentials'];
   emptyText: string;
+  error: string | null;
   hasVaults: boolean;
 }) {
   const { msg } = useI18n();
@@ -257,36 +264,41 @@ function CredentialDetails({
         )}
       >
         {credentials.length ? (
-          credentials.map(({ vault, items }) => (
-            <section key={vault.id} className="mb-6 last:mb-0">
-              <DetailGrid
-                rows={[
-                  [msg('managedAgents.credentialVaults.kindTitle', 'Vault'), vault.display_name],
-                  [msg('common.id', 'ID'), vault.id],
-                  [msg('common.created', 'Created'), vault.created_at],
-                ]}
-              />
-              <div className="mt-4 divide-y divide-border rounded-lg border border-border">
-                {items.length ? (
-                  items.map((credential) => (
-                    <div
-                      key={credential.id}
-                      className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
-                    >
-                      <div>
-                        <div className="font-medium">{credential.display_name}</div>
-                        <div className="font-mono text-xs text-muted-foreground">{credential.id}</div>
+          <>
+            {credentials.map(({ vault, items }) => (
+              <section key={vault.id} className="mb-6 last:mb-0">
+                <DetailGrid
+                  rows={[
+                    [msg('managedAgents.credentialVaults.kindTitle', 'Vault'), vault.display_name],
+                    [msg('common.id', 'ID'), vault.id],
+                    [msg('common.created', 'Created'), vault.created_at],
+                  ]}
+                />
+                <div className="mt-4 divide-y divide-border rounded-lg border border-border">
+                  {items.length ? (
+                    items.map((credential) => (
+                      <div
+                        key={credential.id}
+                        className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                      >
+                        <div>
+                          <div className="font-medium">{credential.display_name}</div>
+                          <div className="font-mono text-xs text-muted-foreground">{credential.id}</div>
+                        </div>
+                        <div className="text-sm text-muted-foreground">{credentialAuthLabel(credential.auth, msg)}</div>
+                        <div className="text-xs text-muted-foreground">{credential.updated_at}</div>
                       </div>
-                      <div className="text-sm text-muted-foreground">{credentialAuthLabel(credential.auth, msg)}</div>
-                      <div className="text-xs text-muted-foreground">{credential.updated_at}</div>
-                    </div>
-                  ))
-                ) : (
-                  <EmptyText>{msg('managedAgents.credentialVaults.credentials.empty', 'No credentials yet')}</EmptyText>
-                )}
-              </div>
-            </section>
-          ))
+                    ))
+                  ) : (
+                    <EmptyText>
+                      {msg('managedAgents.credentialVaults.credentials.empty', 'No credentials yet')}
+                    </EmptyText>
+                  )}
+                </div>
+              </section>
+            ))}
+            {error ? <p className="text-sm text-muted-foreground">{error}</p> : null}
+          </>
         ) : (
           <EmptyText>
             {hasVaults ? emptyText : msg('managedAgents.sessions.context.noVaults', 'No credentials connected')}

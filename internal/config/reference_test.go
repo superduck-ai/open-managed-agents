@@ -39,6 +39,7 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"vault",
 		"vault.master_key",
 		"vault.master_key.kek",
+		"vault.master_key.version",
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {

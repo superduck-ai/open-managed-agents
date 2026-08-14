@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -31,6 +29,9 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/uuid"
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 type sessionAPIResponse struct {
@@ -1269,7 +1270,7 @@ func TestCodeSessionHTTPPollReceivesQueuedUserEvents(t *testing.T) {
 }
 
 func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-bucket"))
+	app := newTestAppWithOTLPForwarder(t, "sessions-code-worker-bucket")
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-code-worker-agent"}`)
@@ -2419,7 +2420,7 @@ func TestCodeSessionWorkerRegisterEpochsAreSessionScopedAndConcurrent(t *testing
 }
 
 func TestCodeSessionWorkerEpochProtection(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-epoch-protection-bucket"))
+	app := newTestAppWithOTLPForwarder(t, "sessions-code-worker-epoch-protection-bucket")
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-epoch-protection-agent"}`)
@@ -2441,8 +2442,8 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "events/delivery", workerDeliveryBody(epoch1), http.StatusConflict, "conflict_error")
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "diagnostics", workerDiagnosticsBody(codeSessionID, epoch1, "old diag"), http.StatusConflict, "conflict_error")
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, epoch1), http.StatusConflict, "conflict_error")
-	assertCodeSessionWorkerOTLPError(t, app, codeSessionID, "metrics", epoch1, http.StatusConflict, "conflict_error")
-	assertCodeSessionWorkerOTLPError(t, app, codeSessionID, "logs", epoch1, http.StatusConflict, "conflict_error")
+	assertCodeSessionWorkerOTLPError(t, app, codeSessionID, "metrics", epoch1, http.StatusConflict, "worker epoch mismatch")
+	assertCodeSessionWorkerOTLPError(t, app, codeSessionID, "logs", epoch1, http.StatusConflict, "worker epoch mismatch")
 
 	if got := putCodeSessionWorker(t, app, codeSessionID, epoch2); got != epoch2 {
 		t.Fatalf("put current epoch response = %q, want %q", got, epoch2)
@@ -2452,8 +2453,10 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch2)
 	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics", epoch2)
 	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "metrics", epoch2)
-	assertCodeSessionWorkerOTLPQueryCompatibility(t, app, codeSessionID, "metrics", epoch2)
+	assertCodeSessionWorkerOTLPRejectsQueryEpoch(t, app, codeSessionID, "metrics", epoch2)
 	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs", epoch2)
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/logs", epoch2)
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/traces", epoch2)
 	postCodeSessionWorkerEvents(t, app, codeSessionID, workerEventBody(session.ID, "current", epoch2))
 	postCodeSessionWorkerDiagnostics(t, app, codeSessionID, workerDiagnosticsBody(codeSessionID, epoch2, "current diag"))
 }
@@ -2735,7 +2738,7 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 }
 
 func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-epoch-invalid-bucket"))
+	app := newTestAppWithOTLPForwarder(t, "sessions-code-worker-epoch-invalid-bucket")
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-epoch-invalid-agent"}`)
@@ -2784,11 +2787,11 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 	}
 
 	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "abc", "application/x-protobuf", nil)
-	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusBadRequest, "worker_epoch must be a positive integer")
 }
 
-func TestCodeSessionWorkerOTLPAcceptsMissingEpochWithoutWorkerActivity(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-otlp-missing-epoch-bucket"))
+func TestCodeSessionWorkerOTLPRejectsMissingEpochWithoutWorkerActivity(t *testing.T) {
+	app := newTestAppWithOTLPForwarder(t, "sessions-code-worker-otlp-missing-epoch-bucket")
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-otlp-missing-epoch-agent"}`)
@@ -2804,16 +2807,7 @@ func TestCodeSessionWorkerOTLPAcceptsMissingEpochWithoutWorkerActivity(t *testin
 
 	for _, suffix := range []string{"metrics", "logs"} {
 		resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "", "application/x-protobuf", nil)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("post epochless worker otlp/%s status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))
-		}
-		if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/x-protobuf") {
-			t.Fatalf("post epochless worker otlp/%s content-type = %q, want application/x-protobuf", suffix, contentType)
-		}
-		if body := readAll(t, resp.Body); len(body) != 0 {
-			t.Fatalf("post epochless worker otlp/%s body = %q, want empty protobuf response", suffix, string(body))
-		}
+		assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusBadRequest, "x-worker-epoch header is required")
 	}
 
 	after, err := getCodeSession(app, context.Background(), codeSessionID)
@@ -2843,96 +2837,35 @@ func TestCodeSessionWorkerOTLPRejectsInvalidSessionIngress(t *testing.T) {
 		name          string
 		pathSessionID string
 		token         string
+		contentType   string
+		message       string
 	}{
-		{name: "legacy session identifier", pathSessionID: codeSessionID, token: codeSessionID},
-		{name: "token for another session path", pathSessionID: "cse_other_otlp_session", token: ingressToken},
+		{
+			name:          "missing token JSON",
+			pathSessionID: codeSessionID,
+			contentType:   "application/json",
+			message:       "Missing session ingress token",
+		},
+		{
+			name:          "legacy session identifier protobuf",
+			pathSessionID: codeSessionID,
+			token:         codeSessionID,
+			contentType:   "application/x-protobuf",
+			message:       "Invalid session ingress token",
+		},
+		{
+			name:          "token for another session path",
+			pathSessionID: "cse_other_otlp_session",
+			token:         ingressToken,
+			contentType:   "application/x-protobuf",
+			message:       "Invalid session ingress token",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := doCodeSessionWorkerOTLPRequestWithToken(t, app, tc.pathSessionID, "metrics", "1", "application/x-protobuf", nil, tc.token)
-			assertError(t, resp, http.StatusUnauthorized, "authentication_error")
+			resp := doCodeSessionWorkerOTLPRequestWithToken(t, app, tc.pathSessionID, "metrics", "1", tc.contentType, nil, tc.token)
+			assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusUnauthorized, tc.message)
 		})
-	}
-}
-
-func TestCodeSessionWorkerOTLPFileLogWritesAcceptedTelemetry(t *testing.T) {
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.CodeSession.OTLPFileLogEnabled = true
-	cfg.CodeSession.OTLPLogRoot = t.TempDir()
-	cfg.CodeSession.OTLPLogBodyPreviewBytes = 128
-	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-code-worker-otlp-file-log-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-otlp-file-log-agent"}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-worker-otlp-file-log-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	epoch1 := registerCodeSessionWorker(t, app, codeSessionID)
-
-	metricsBody := []byte(`{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]},"scopeMetrics":[{"scope":{"name":"com.anthropic.claude_code"},"metrics":[{"name":"claude_code.integration.counter","sum":{"aggregationTemporality":"AGGREGATION_TEMPORALITY_CUMULATIVE","isMonotonic":true,"dataPoints":[{"timeUnixNano":"1783348800000000000","asInt":"3","attributes":[{"key":"phase","value":{"stringValue":"handler-test"}}]}]}}]}]}]}`)
-	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", epoch1, "application/json", metricsBody)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("post current-epoch metrics status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-
-	logsBody := []byte(`{"resourceLogs":[{"scopeLogs":[{"scope":{"name":"com.anthropic.claude_code.events"},"logRecords":[{"timeUnixNano":"1783348860000000000","severityNumber":"SEVERITY_NUMBER_INFO","severityText":"INFO","body":{"stringValue":"claude_code.integration_event"},"attributes":[{"key":"event.name","value":{"stringValue":"integration_event"}}]}]}]}]}`)
-	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "logs", epoch1, "application/json", logsBody)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("post current-epoch logs status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-
-	otlpDir := filepath.Join(cfg.CodeSession.OTLPLogRoot, codeSessionID, "otlp")
-	requestLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "requests.jsonl"))
-	if len(requestLines) != 2 {
-		t.Fatalf("request jsonl lines = %d, want 2: %#v", len(requestLines), requestLines)
-	}
-	firstEpoch := requestLines[0]["worker_epoch"].(map[string]any)
-	if firstEpoch["present"] != true || firstEpoch["value"] != epoch1 {
-		t.Fatalf("metrics request worker_epoch = %#v, want epoch %s", firstEpoch, epoch1)
-	}
-	secondEpoch := requestLines[1]["worker_epoch"].(map[string]any)
-	if secondEpoch["present"] != true || secondEpoch["value"] != epoch1 {
-		t.Fatalf("current epoch request worker_epoch = %#v, want epoch %s", secondEpoch, epoch1)
-	}
-
-	metricLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "metrics.jsonl"))
-	if len(metricLines) != 1 {
-		t.Fatalf("metrics jsonl lines = %d, want 1: %#v", len(metricLines), metricLines)
-	}
-	metric := metricLines[0]["metric"].(map[string]any)
-	if metric["name"] != "claude_code.integration.counter" {
-		t.Fatalf("metric name = %#v, want claude_code.integration.counter", metric)
-	}
-	point := metricLines[0]["point"].(map[string]any)
-	if point["value"].(float64) != 3 {
-		t.Fatalf("metric point = %#v, want value=3", point)
-	}
-
-	logLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "logs.jsonl"))
-	if len(logLines) != 1 {
-		t.Fatalf("logs jsonl lines = %d, want 1: %#v", len(logLines), logLines)
-	}
-	record := logLines[0]["log"].(map[string]any)
-	if record["body"] != "claude_code.integration_event" {
-		t.Fatalf("log record = %#v, want integration event body", record)
-	}
-
-	epoch2 := registerCodeSessionWorker(t, app, codeSessionID)
-	if epoch2 == epoch1 {
-		t.Fatalf("epoch2 = %q, want new epoch", epoch2)
-	}
-	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "logs", epoch1, "application/json", logsBody)
-	assertError(t, resp, http.StatusConflict, "conflict_error")
-	afterConflictRequests := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "requests.jsonl"))
-	if len(afterConflictRequests) != len(requestLines) {
-		t.Fatalf("request jsonl lines after stale epoch = %d, want %d", len(afterConflictRequests), len(requestLines))
 	}
 }
 
@@ -3017,7 +2950,7 @@ func TestCodeSessionWorkerHeartbeatSkipsSandboxTimeoutWhenNotRunning(t *testing.
 }
 
 func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-heartbeat-lease-bucket"))
+	app := newTestAppWithOTLPForwarder(t, "sessions-code-worker-heartbeat-lease-bucket")
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-heartbeat-lease-agent"}`)
@@ -3142,7 +3075,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 		t.Fatalf("expired heartbeat sandbox timeout calls = %d, want 3", len(calls))
 	}
 	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", epoch2, "application/x-protobuf", nil)
-	assertError(t, resp, http.StatusGone, "session_expired")
+	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusGone, "code session worker lease expired")
 	afterExpiredHeartbeat, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after expired heartbeat: %v", err)
@@ -4555,9 +4488,41 @@ func postCodeSessionWorkerDiagnostics(t *testing.T, app *testApp, codeSessionID 
 	}
 }
 
+func newTestAppWithOTLPForwarder(t *testing.T, bucket string) *testApp {
+	t.Helper()
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/api/oma/v1/") {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(sink.Close)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load OTLP test config: %v", err)
+	}
+	cfg.Observability.Enabled = true
+	cfg.Observability.Backend = config.ObservabilityBackendOpenObserve
+	cfg.Observability.OpenObserve.BaseURL = sink.URL
+	cfg.Observability.OpenObserve.Organization = "oma"
+	cfg.Observability.OpenObserve.Ingestion = config.BackendCredentialsConfig{
+		Username: "test-ingestion",
+		Password: "test-password",
+	}
+	cfg.Observability.OpenObserve.Query = config.BackendQueryConfig{
+		Username: "test-query",
+		Password: "test-query-password",
+		Timeout:  15 * time.Second,
+	}
+	return newTestAppWithStore(t, &cfg, newFakeStore(bucket))
+}
+
 func assertCodeSessionWorkerOTLP(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string) {
 	t.Helper()
-	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, workerEpoch, "application/x-protobuf", nil)
+	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, workerEpoch, "application/x-protobuf", []byte{0x0a, 0x00})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post worker otlp/%s status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))
@@ -4585,22 +4550,39 @@ func assertCodeSessionWorkerOTLPJSON(t *testing.T, app *testApp, codeSessionID s
 	}
 }
 
-func assertCodeSessionWorkerOTLPQueryCompatibility(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string) {
+func assertCodeSessionWorkerOTLPRejectsQueryEpoch(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string) {
 	t.Helper()
 	resp := doCodeSessionWorkerRequest(t, app, codeSessionID, "otlp/"+suffix+"?worker_epoch="+url.QueryEscape(workerEpoch), `{"resourceMetrics":[]}`)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("post worker otlp/%s query epoch status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))
-	}
-	if body := strings.TrimSpace(string(readAll(t, resp.Body))); body != "{}" {
-		t.Fatalf("post worker otlp/%s query epoch body = %q, want {}", suffix, body)
-	}
+	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusBadRequest, "x-worker-epoch header is required")
 }
 
-func assertCodeSessionWorkerOTLPError(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string, status int, errorType string) {
+func assertCodeSessionWorkerOTLPError(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string, status int, message string) {
 	t.Helper()
 	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, workerEpoch, "application/x-protobuf", nil)
-	assertError(t, resp, status, errorType)
+	assertCodeSessionWorkerOTLPResponse(t, resp, status, message)
+}
+
+func assertCodeSessionWorkerOTLPResponse(t *testing.T, resp *http.Response, status int, message string) {
+	t.Helper()
+	defer resp.Body.Close()
+	body := readAll(t, resp.Body)
+	if resp.StatusCode != status {
+		t.Fatalf("OTLP status = %d, want %d: %s", resp.StatusCode, status, string(body))
+	}
+	decoded := &statuspb.Status{}
+	contentType := resp.Header.Get("Content-Type")
+	var err error
+	if strings.HasPrefix(contentType, "application/json") {
+		err = protojson.Unmarshal(body, decoded)
+	} else {
+		err = proto.Unmarshal(body, decoded)
+	}
+	if err != nil {
+		t.Fatalf("decode OTLP status (%s): %v", contentType, err)
+	}
+	if !strings.Contains(decoded.Message, message) {
+		t.Fatalf("OTLP message = %q, want containing %q", decoded.Message, message)
+	}
 }
 
 func assertCodeSessionWorkerWriteStatus(t *testing.T, app *testApp, method string, codeSessionID string, suffix string, body string, status int, errorType string) {
@@ -4698,24 +4680,6 @@ func doCodeSessionWorkerOTLPRequestWithToken(t *testing.T, app *testApp, codeSes
 		t.Fatalf("do code session worker otlp request: %v", err)
 	}
 	return resp
-}
-
-func readJSONLObjectsForTest(t *testing.T, path string) []map[string]any {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read jsonl %s: %v", path, err)
-	}
-	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
-	result := make([]map[string]any, 0, len(lines))
-	for _, line := range lines {
-		var object map[string]any
-		if err := json.Unmarshal(line, &object); err != nil {
-			t.Fatalf("decode jsonl line %q: %v", string(line), err)
-		}
-		result = append(result, object)
-	}
-	return result
 }
 
 func readCodeSessionWorkerSSEFramesFromSuffix(t *testing.T, app *testApp, codeSessionID string, suffix string, waitFor string) []string {

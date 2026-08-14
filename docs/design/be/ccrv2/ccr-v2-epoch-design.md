@@ -112,7 +112,7 @@ return nextEpoch
 - epoch mismatch: `409 conflict_error`
 - auth failure: `401 authentication_error`
 
-`POST /worker/otlp/metrics` 与 `POST /worker/otlp/logs` 是例外：environment-manager 会在 worker register 前通过标准 OTLP exporter 上报生命周期 telemetry，且该 exporter 只携带 session Authorization。缺少 epoch 的 OTLP 请求在确认 session 存在后可以接收，但不得刷新 worker activity 或 lease；如果请求携带 epoch，则仍执行当前 epoch 与 active lease 校验，stale epoch 返回 `409`，非法 epoch 返回 `400`。
+`POST /worker/otlp/{signal}` 不设无 epoch 例外。Environment Manager 先完成 worker register，再用注册返回的真实 epoch 初始化自身 exporter 并启动 Claude Code；所有受管 OTLP 请求都必须携带 `X-Worker-Epoch`，并在读取 body 前通过当前 epoch 与 active lease 校验。
 
 `POST /worker/events/delivery` 除了校验当前 epoch，还要求被 ACK 的 inbound event 已经由同一 epoch 的 SSE stream 写出并标记为 `sent`；queued 事件、旧发送 epoch 事件或未知事件不会推进状态，只计入 delivery 响应的 `ignored`。
 

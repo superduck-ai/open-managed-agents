@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -31,7 +30,8 @@ type Handler struct {
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
-	otlpLogMu                 sync.Mutex
+	otlpSink                  otlpSink
+	otlpAdmission             *otlpAdmission
 }
 
 // SandboxTimeoutExtender renews the provider-side lifetime of a managed-agent
@@ -57,6 +57,8 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		upstreamProxy:          newUpstreamProxyRuntime(),
 		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),
 		injectMCPProxyHeaders:  func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error { return nil },
+		otlpSink:               newOTLPSink(cfg.Observability),
+		otlpAdmission:          newOTLPAdmission(defaultOTLPGlobalConcurrency, defaultOTLPSessionConcurrency),
 	}
 	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
 	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext

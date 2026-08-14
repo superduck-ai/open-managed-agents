@@ -32,6 +32,7 @@ import {
   extractSessionEventUsage,
   numericValueFromKeys,
   sessionEventDurationMs,
+  sessionStatusFromEventType,
   stringValueFromKeys,
 } from './sessionDetailModel';
 import { sessionCanonicalDisplayEvent } from './SessionTracePanel';
@@ -596,7 +597,13 @@ export function sessionDisplayEntryInProgress(event: QuickstartSessionEvent, kin
     return true;
   }
   const status = stringValueFromKeys(event, ['status', 'state', 'lifecycle']).toLowerCase();
-  return status === 'running' || status === 'queued' || status === 'rescheduled' || status === 'evaluating';
+  return (
+    status === 'running' ||
+    status === 'queued' ||
+    status === 'rescheduled' ||
+    status === 'rescheduling' ||
+    status === 'evaluating'
+  );
 }
 
 export function idleGapEntry(idleAtMs: number, nextAtMs: number, traceStartMs: number): IdleGapEntry {
@@ -2355,6 +2362,25 @@ export function compareSessionEvents(left: QuickstartSessionEvent, right: Quicks
     return 1;
   }
   return 0;
+}
+
+// Latest status implied by the event cache: the newest status event wins, unless
+// a user.message is newer (message just sent, agent status not yet broadcast) —
+// then null, so the caller keeps its current status and the optimistic "running"
+// survives until the reply or a terminal status lands.
+export function sessionStatusFromEvents(events: QuickstartSessionEvent[]) {
+  const ordered = [...events].sort(compareSessionEvents);
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const type = sessionEventType(ordered[index]);
+    if (type === 'user.message') {
+      return null;
+    }
+    const status = sessionStatusFromEventType(type);
+    if (status) {
+      return status;
+    }
+  }
+  return null;
 }
 
 export function sessionEventCanonicalKey(event: QuickstartSessionEvent) {

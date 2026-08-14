@@ -1,6 +1,6 @@
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
 import { ArrowUp, Square } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { interruptQuickstartSession, postQuickstartSessionMessage } from '../api';
 import { type QuickstartSessionEvent } from '../types';
@@ -32,27 +32,39 @@ export function SessionMessageComposer({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
+  // In-flight guards are refs: state updates only apply after a re-render, so a
+  // second Enter (or Enter + send click) in the same frame would pass a state
+  // guard and double-post the message.
+  const sendingRef = useRef(false);
+  const interruptingRef = useRef(false);
   const trimmedDraft = draft.trim();
 
   const submit = async () => {
-    if (!trimmedDraft || disabled || sending) {
+    if (!trimmedDraft || disabled || sendingRef.current) {
       return;
     }
+    sendingRef.current = true;
     setSending(true);
     onError(null);
     try {
       const response = await postQuickstartSessionMessage(sessionId, trimmedDraft, workspaceId);
       setDraft('');
-      response.data?.length ? onMessageSent(response.data) : onEventsChanged();
+      if (response.data?.length) {
+        onMessageSent(response.data);
+      } else {
+        onEventsChanged();
+      }
     } catch (error) {
       onError(errorMessage(error));
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
 
   const interrupt = async () => {
-    if (interrupting) return;
+    if (interruptingRef.current) return;
+    interruptingRef.current = true;
     setInterrupting(true);
     onError(null);
     try {
@@ -61,6 +73,7 @@ export function SessionMessageComposer({
     } catch (error) {
       onError(errorMessage(error));
     } finally {
+      interruptingRef.current = false;
       setInterrupting(false);
     }
   };

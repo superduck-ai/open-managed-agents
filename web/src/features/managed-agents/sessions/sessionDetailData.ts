@@ -252,7 +252,17 @@ export async function runSessionEventStreamLoop({
     }
     try {
       if (!historySynced) {
-        const historyCache = await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal });
+        // Force a tail sync before subscribing: the stream is live-only, so events
+        // broadcast between a send/interrupt and this subscribe (e.g. a fast agent
+        // reply) would otherwise be lost for good. Merge dedups by event id.
+        const historyCache = await syncSessionEventHistory({
+          queryClient,
+          sessionId,
+          workspaceId,
+          threadId,
+          signal,
+          force: true,
+        });
         onCacheChange();
         historySynced = true;
         if (

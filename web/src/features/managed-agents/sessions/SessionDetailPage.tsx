@@ -81,6 +81,7 @@ import {
   compareSessionEvents,
   sessionEventTimestamp,
   sessionEventType,
+  sessionStatusFromEvents,
 } from './sessionTraceModel';
 import {
   EventDetailPanel,
@@ -290,6 +291,19 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const eventsLoading = eventData.loading || eventData.childLoading;
   const eventError = eventData.error;
   const sortedEvents = useMemo(() => [...events].sort(compareSessionEvents), [events]);
+
+  // Reconcile the header status from the event cache, not just live stream frames,
+  // so a missed frame (or a reply that fully landed before SSE subscribed) still
+  // corrects an optimistic "running". No-op while the statuses agree.
+  useEffect(() => {
+    const nextStatus = sessionStatusFromEvents(events);
+    if (!nextStatus || !session || nextStatus === session.status.toLowerCase()) {
+      return;
+    }
+    setSession((currentSession) =>
+      currentSession && currentSession.id === session.id ? { ...currentSession, status: nextStatus } : currentSession,
+    );
+  }, [events, session]);
   const traceStartMs = useMemo(() => {
     const sessionStart = session?.created_at ? Date.parse(session.created_at) : NaN;
     if (Number.isFinite(sessionStart)) {
@@ -709,7 +723,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             </TabsList>
           </div>
 
-          <TabsContent value="events" className="mt-0 min-h-0 pt-4">
+          {/* keepMounted: switching tabs must not wipe the composer draft or the list scroll position. */}
+          <TabsContent value="events" keepMounted className="mt-0 min-h-0 pt-4">
             <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
               <EventsTab
                 activeLane={activeLane}

@@ -244,7 +244,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -364,6 +364,38 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 }
 
+func TestBuildEnvironmentManagerPayloadMergesVaultEnvPlaceholders(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
+	payload, err := buildEnvironmentManagerV0Payload(
+		"cse_test",
+		"sk-ant-si-test-token",
+		"sk-ant-oat01-test-token",
+		1,
+		"",
+		json.RawMessage(`{}`),
+		cfg,
+		map[string]string{
+			"NOTION_API_KEY":     "oma_ph_notion",
+			"CLAUDE_CODE_REMOTE": "oma_ph_should_not_overwrite",
+		},
+	)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	startupEnv := body["startup_context"].(map[string]any)["environment_variables"].(map[string]any)
+	if startupEnv["NOTION_API_KEY"] != "oma_ph_notion" {
+		t.Fatalf("NOTION_API_KEY = %v", startupEnv["NOTION_API_KEY"])
+	}
+	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" {
+		t.Fatalf("platform reserved env must win, got %v", startupEnv["CLAUDE_CODE_REMOTE"])
+	}
+}
+
 func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{
@@ -371,7 +403,7 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
 		"claude_code_args":{"mcp-config":"/tmp/managed-agent-mcp-config.json"}
 	}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -420,7 +452,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -461,7 +493,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *tes
 		"OTEL_LOGS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -497,7 +529,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *tes
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -528,7 +560,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://collector.example.com/v1/metrics"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -557,7 +589,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t 
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://collector.example.com/v1/logs"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}

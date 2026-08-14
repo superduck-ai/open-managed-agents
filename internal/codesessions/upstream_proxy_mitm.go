@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
+
 	"golang.org/x/net/websocket"
 )
 
@@ -24,7 +26,7 @@ const (
 
 // serveUpstreamProxyMITM 把 CCR 的 framed WebSocket 转换为 TLS server，并用独立、严格校验的 TLS client 连接真实网站。
 // 客户端侧只协商 HTTP/1.1，避免在尚未实现 HTTP/2 server 语义时错误宣告 h2；ReverseProxy 仍支持流式响应和 HTTP Upgrade。
-func (h *Handler) serveUpstreamProxyMITM(connection *websocket.Conn, target string, resolvedTarget string) {
+func (h *Handler) serveUpstreamProxyMITM(connection *websocket.Conn, identity upstreamProxyIdentity, target string, resolvedTarget string) {
 	authority, err := h.loadUpstreamProxyCA()
 	if err != nil {
 		_ = sendUpstreamProxyHTTPStatus(connection, http.StatusBadGateway)
@@ -64,7 +66,7 @@ func (h *Handler) serveUpstreamProxyMITM(connection *websocket.Conn, target stri
 	if err := clientConnection.HandshakeContext(handshakeContext); err != nil {
 		return
 	}
-	_ = h.serveUpstreamProxyMITMHTTP(clientConnection, transport, target, targetHost)
+	_ = h.serveUpstreamProxyMITMHTTP(clientConnection, transport, identity, target, targetHost)
 }
 
 func newUpstreamProxyMITMServerTLSConfig(authority *upstreamProxyCertificateAuthority, targetHost string, now time.Time) (*tls.Config, error) {
@@ -156,7 +158,7 @@ func newUpstreamProxyMITMTransport(dialer *upstreamProxyMITMTLSDialer) *http.Tra
 	}
 }
 
-func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http.RoundTripper, target string, targetHost string) error {
+func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http.RoundTripper, identity upstreamProxyIdentity, target string, targetHost string) error {
 	targetURL := &url.URL{Scheme: "https", Host: target}
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
@@ -181,6 +183,22 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			http.Error(w, "request host does not match CONNECT target", http.StatusMisdirectedRequest)
 			return
 		}
+		if h.egressSubstitutor != nil {
+			if err := h.substituteUpstreamProxyEnvSecrets(request.Context(), identity, request, target); err != nil {
+				h.logger.WarnContext(request.Context(), "upstream proxy egress substitution rejected",
+					"code_session_id", identity.codeSessionExternalID,
+					"host", targetHost,
+					"error", err,
+				)
+				status := http.StatusBadGateway
+				message := http.StatusText(status)
+				if errors.Is(err, vaults.ErrSubstitutionRejected) {
+					message = vaults.SubstitutionUnavailablePublicMessage
+				}
+				http.Error(w, message, status)
+				return
+			}
+		}
 		logURL := *targetURL
 		logURL.Path = request.URL.Path
 		logURL.RawPath = request.URL.RawPath
@@ -203,6 +221,24 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 		return nil
 	}
 	return err
+}
+
+func (h *Handler) substituteUpstreamProxyEnvSecrets(ctx context.Context, identity upstreamProxyIdentity, request *http.Request, target string) error {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		host = target
+		port = "443"
+	}
+	host = canonicalUpstreamProxyHostname(host)
+	return h.egressSubstitutor.SubstituteEnvSecrets(
+		ctx,
+		identity.codeSessionExternalID,
+		identity.organizationUUID,
+		identity.workspaceUUID,
+		request,
+		host,
+		port,
+	)
 }
 
 func upstreamProxyHTTPRequestMatchesTarget(request *http.Request, targetHost string) bool {

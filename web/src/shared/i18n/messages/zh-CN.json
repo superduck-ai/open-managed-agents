@@ -1335,6 +1335,7 @@
   "managedAgents.credentialVaults.credentialDialog.injectionHeader": "请求头",
   "managedAgents.credentialVaults.credentialDialog.injectionBody": "请求体",
   "managedAgents.credentialVaults.credentialDialog.injectionHint": "除非服务从请求体读取密钥，否则建议仅限制到请求头。",
+  "managedAgents.credentialVaults.credentialDialog.injectionLocationRequired": "至少选择一个注入位置。",
   "managedAgents.credentialVaults.credentialDialog.mcpDirectoryEmpty": "未找到 MCP 服务器。",
   "managedAgents.credentialVaults.credentialDialog.mcpDirectoryPlaceholder": "从目录选择，或在下方输入 URL",
   "managedAgents.credentialVaults.credentialDialog.mcpDirectorySearch": "搜索 MCP 目录...",

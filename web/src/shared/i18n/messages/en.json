@@ -1335,6 +1335,7 @@
   "managedAgents.credentialVaults.credentialDialog.injectionHeader": "Request headers",
   "managedAgents.credentialVaults.credentialDialog.injectionBody": "Request body",
   "managedAgents.credentialVaults.credentialDialog.injectionHint": "Limiting to request headers is recommended unless the service reads the secret from the request body.",
+  "managedAgents.credentialVaults.credentialDialog.injectionLocationRequired": "Select at least one injection location.",
   "managedAgents.credentialVaults.credentialDialog.mcpDirectoryEmpty": "No MCP servers found.",
   "managedAgents.credentialVaults.credentialDialog.mcpDirectoryPlaceholder": "Choose from directory or enter URL below",
   "managedAgents.credentialVaults.credentialDialog.mcpDirectorySearch": "Search MCP directory...",

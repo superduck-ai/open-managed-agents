@@ -75,6 +75,10 @@ func NewEgressSubstitutor(database *db.DB, secretSvc *secrets.Service, logger *s
 	if database != nil {
 		store = database
 	}
+	return newEgressSubstitutor(store, secretSvc, logger)
+}
+
+func newEgressSubstitutor(store credentialStore, secretSvc *secrets.Service, logger *slog.Logger) *EgressSubstitutor {
 	return &EgressSubstitutor{
 		store:     store,
 		secretSvc: secretSvc,
@@ -97,6 +101,9 @@ func (s *EgressSubstitutor) SubstituteEnvSecrets(
 	port := strings.TrimSpace(targetPort)
 	if port == "" {
 		port = "443"
+	}
+	if s == nil || s.store == nil {
+		return substitutionRejected(errCredentialStoreUnavailable)
 	}
 	vaultIDs, err := s.store.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
 	if err != nil {
@@ -124,55 +131,46 @@ func (s *EgressSubstitutor) buildSubstitutions(
 	port string,
 	credentials []db.VaultCredential,
 ) ([]byte, []egressSubstitution, error) {
+	_, bound, err := uniqueEnvironmentCredentials(credentials)
+	if err != nil {
+		return nil, nil, substitutionRejected(err)
+	}
 	out := make([]egressSubstitution, 0)
-	bySecretName := make(map[string]struct{})
 	var body []byte
 	bodyLoaded := false
-	for i := range credentials {
-		cred := &credentials[i]
-		if credentialAuthType(cred.AuthType) != credentialAuthTypeEnvironmentVariable {
-			continue
-		}
-		value, err := decodeEnvironmentCredentialAuth(cred.Auth)
-		if err != nil {
-			return nil, nil, substitutionRejected(err)
-		}
-		if _, exists := bySecretName[value.SecretName]; exists {
-			continue
-		}
-		covers, err := credentialNetworkingCoversHost(value.Networking, host, port)
+	for _, item := range bound {
+		covers, err := credentialNetworkingCoversHost(item.value.Networking, host, port)
 		if err != nil {
 			return nil, nil, substitutionRejected(err)
 		}
 		if !covers {
 			continue
 		}
-		if value.InjectionLocation.Body && !bodyLoaded {
+		if item.value.InjectionLocation.Body && !bodyLoaded {
 			body, err = snapshotRequestBody(req)
 			if err != nil {
 				return nil, nil, substitutionRejected(err)
 			}
 			bodyLoaded = true
 		}
-		if !requestNeedsPlaceholder(req, body, value.Placeholder, value.InjectionLocation) {
+		if !requestNeedsPlaceholder(req, body, item.value.Placeholder, item.value.InjectionLocation) {
 			continue
 		}
-		secretValue, err := s.openEnvironmentSecret(ctx, cred)
+		secretValue, err := s.openEnvironmentSecret(ctx, &item.row)
 		if err != nil {
 			s.logger.WarnContext(ctx, "open environment variable credential failed",
-				"credential_id", cred.ExternalID,
-				"auth_type", cred.AuthType,
+				"credential_id", item.row.ExternalID,
+				"auth_type", item.row.AuthType,
 				"error", err,
 			)
 			return nil, nil, substitutionRejected(err)
 		}
 		out = append(out, egressSubstitution{
-			placeholder: value.Placeholder,
+			placeholder: item.value.Placeholder,
 			secretValue: secretValue,
-			header:      value.InjectionLocation.Header,
-			body:        value.InjectionLocation.Body,
+			header:      item.value.InjectionLocation.Header,
+			body:        item.value.InjectionLocation.Body,
 		})
-		bySecretName[value.SecretName] = struct{}{}
 	}
 	return body, out, nil
 }

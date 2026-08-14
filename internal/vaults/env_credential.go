@@ -7,9 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-const opaquePlaceholderPrefix = "oma_ph_"
+const (
+	opaquePlaceholderPrefix = "oma_ph_"
+	maxSecretNameLength     = 255
+)
 
 type credentialInjectionLocation struct {
 	Header bool `json:"header"`
@@ -39,17 +44,91 @@ func decodeEnvironmentCredentialAuth(authJSON []byte) (*environmentVariableCrede
 	if err != nil {
 		return nil, fmt.Errorf("environment variable credential auth is invalid: %w", err)
 	}
-	value, ok := auth.value.(*environmentVariableCredentialAuth)
-	if !ok || value == nil {
+	return requireReadyEnvironmentAuth(auth.value)
+}
+
+func requireReadyEnvironmentAuth(value credentialAuthVariant) (*environmentVariableCredentialAuth, error) {
+	env, ok := value.(*environmentVariableCredentialAuth)
+	if !ok || env == nil {
 		return nil, errors.New("credential is not environment_variable")
 	}
-	if strings.TrimSpace(value.Placeholder) == "" {
+	if strings.TrimSpace(env.Placeholder) == "" {
 		return nil, errors.New("environment variable credential is missing placeholder; archive and recreate")
 	}
-	if !value.InjectionLocation.Header && !value.InjectionLocation.Body {
+	if !env.InjectionLocation.Header && !env.InjectionLocation.Body {
 		return nil, errors.New("environment variable credential is missing injection_location; archive and recreate")
 	}
-	return value, nil
+	return env, nil
+}
+
+type environmentCredential struct {
+	row   db.VaultCredential
+	value *environmentVariableCredentialAuth
+}
+
+// uniqueEnvironmentCredentials walks credentials in Vault Attachment Order.
+// Reserved names are omitted from the result but still set hasEnv (MITM is
+// required if any env credential is attached). First secret_name wins.
+func uniqueEnvironmentCredentials(credentials []db.VaultCredential) (bool, []environmentCredential, error) {
+	hasEnv := false
+	seen := make(map[string]struct{})
+	bound := make([]environmentCredential, 0)
+	for i := range credentials {
+		if credentialAuthType(credentials[i].AuthType) != credentialAuthTypeEnvironmentVariable {
+			continue
+		}
+		hasEnv = true
+		value, err := decodeEnvironmentCredentialAuth(credentials[i].Auth)
+		if err != nil {
+			return false, nil, err
+		}
+		if PlatformReservedSecretName(value.SecretName) {
+			continue
+		}
+		if _, exists := seen[value.SecretName]; exists {
+			continue
+		}
+		seen[value.SecretName] = struct{}{}
+		bound = append(bound, environmentCredential{row: credentials[i], value: value})
+	}
+	return hasEnv, bound, nil
+}
+
+// parseSecretName returns the secret_name to persist. Callers do not trim,
+// match POSIX identifiers, or consult the reserved-name set themselves.
+func parseSecretName(value string) (string, error) {
+	name := strings.TrimSpace(value)
+	if name == "" {
+		return "", errors.New("auth.secret_name must be non-empty")
+	}
+	if len(name) > maxSecretNameLength {
+		return "", errors.New("auth.secret_name must be at most 255 characters")
+	}
+	if !posixEnvironmentName(name) {
+		return "", errors.New("auth.secret_name must be a POSIX environment variable name")
+	}
+	if PlatformReservedSecretName(name) {
+		return "", fmt.Errorf("auth.secret_name %q is reserved", name)
+	}
+	return name, nil
+}
+
+func posixEnvironmentName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		isLetter := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+		if c == '_' || isLetter {
+			continue
+		}
+		if i > 0 && c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func generateOpaquePlaceholder() (string, error) {
@@ -60,9 +139,9 @@ func generateOpaquePlaceholder() (string, error) {
 	return opaquePlaceholderPrefix + base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func normalizeInjectionLocationForCreate(raw json.RawMessage) (credentialInjectionLocation, error) {
+func applyInjectionLocation(base credentialInjectionLocation, raw json.RawMessage) (credentialInjectionLocation, error) {
 	if len(raw) == 0 {
-		return credentialInjectionLocation{Header: true, Body: false}, nil
+		return base, nil
 	}
 	if isJSONNull(raw) {
 		return credentialInjectionLocation{}, errors.New("auth.injection_location must be omitted instead of null")
@@ -71,32 +150,7 @@ func normalizeInjectionLocationForCreate(raw json.RawMessage) (credentialInjecti
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return credentialInjectionLocation{}, errors.New("auth.injection_location must be an object")
 	}
-	// CMA Console default: header only.
-	location := credentialInjectionLocation{Header: true, Body: false}
-	if input.Header != nil {
-		location.Header = *input.Header
-	}
-	if input.Body != nil {
-		location.Body = *input.Body
-	}
-	if !location.Header && !location.Body {
-		return credentialInjectionLocation{}, errors.New("auth.injection_location must enable header or body")
-	}
-	return location, nil
-}
-
-func mergeInjectionLocationForUpdate(current credentialInjectionLocation, raw json.RawMessage) (credentialInjectionLocation, error) {
-	if len(raw) == 0 {
-		return current, nil
-	}
-	if isJSONNull(raw) {
-		return credentialInjectionLocation{}, errors.New("auth.injection_location must be omitted instead of null")
-	}
-	var input credentialInjectionLocationInput
-	if err := json.Unmarshal(raw, &input); err != nil {
-		return credentialInjectionLocation{}, errors.New("auth.injection_location must be an object")
-	}
-	next := current
+	next := base
 	if input.Header != nil {
 		next.Header = *input.Header
 	}
@@ -113,7 +167,7 @@ func mergeInjectionLocationForUpdate(current credentialInjectionLocation, raw js
 // platform (Managed Agent / Code Session startup) and cannot be used as an
 // Environment Variable Credential secret_name.
 func PlatformReservedSecretName(secretName string) bool {
-	_, reserved := platformReservedSecretNames[secretName]
+	_, reserved := platformReservedSecretNames[strings.ToUpper(secretName)]
 	return reserved
 }
 
@@ -150,17 +204,10 @@ var platformReservedSecretNames = func() map[string]struct{} {
 	}
 	out := make(map[string]struct{}, len(names)+len(claudeRuntimeModelEnvironmentKeys))
 	for _, name := range names {
-		out[name] = struct{}{}
+		out[strings.ToUpper(name)] = struct{}{}
 	}
 	for _, name := range claudeRuntimeModelEnvironmentKeys {
-		out[name] = struct{}{}
+		out[strings.ToUpper(name)] = struct{}{}
 	}
 	return out
 }()
-
-func validateSecretNameNotReserved(secretName string) error {
-	if PlatformReservedSecretName(secretName) {
-		return fmt.Errorf("auth.secret_name %q is reserved", secretName)
-	}
-	return nil
-}

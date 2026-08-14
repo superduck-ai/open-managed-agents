@@ -1,5 +1,7 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,8 +37,7 @@ import {
   type SessionTraceView,
 } from '../types';
 import { compactEntityId, copyText, errorMessage, managedEntityListHref } from '../utils';
-import clsx from 'clsx';
-import { Archive, ChevronDown, Copy, RotateCcw, X } from 'lucide-react';
+import { Archive, Bot, Box, ChevronDown, Copy, FolderOpen, KeyRound, ListTree, RotateCcw, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SessionDetailDeltaFramesContext, useSessionDetailEventData } from './sessionDetailData';
 import {
@@ -61,6 +62,7 @@ import {
   sessionEventListFilterValue,
   sessionEventUpdateTimestamp,
   sessionShouldStreamEvents,
+  sessionStatusIsLive,
   sessionStatusFromEventType,
   writeSessionArchivedLanePreference,
   writeSessionDetailUrlState,
@@ -89,6 +91,9 @@ import {
   SessionTraceViewMode,
 } from './SessionTracePanel';
 import { DebugRow, TranscriptRow } from './sessionTraceRows';
+import { SessionEntityPanels } from './SessionEntityPanels';
+import { SessionMessageComposer } from './SessionMessageComposer';
+import { SessionWorkspaceCard } from './SessionWorkspaceCard';
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
   const { activeWorkspaceId } = useWorkspace();
@@ -104,6 +109,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [eventRefreshKey, setEventRefreshKey] = useState(0);
   const [view, setView] = useState<SessionTraceView>(readSessionDetailInitialView);
   const [query, setQuery] = useState('');
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -278,7 +284,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     includeArchivedThreads: showArchivedLanes,
     live: sessionShouldStreamEvents(session),
     onPrimaryEvent: handlePrimaryStreamEvent,
-    refreshKey,
+    refreshKey: refreshKey + eventRefreshKey,
   });
   const events = eventData.events;
   const eventsLoading = eventData.loading || eventData.childLoading;
@@ -487,41 +493,33 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     setSelectedDetailTab('content');
   }, []);
   const handleArchive = async () => {
-    if (!session) {
-      return;
-    }
+    if (!session) return;
     setBusyAction('archive');
     setMutationError(null);
     try {
-      const updated = await archiveManagedEntity('sessions', session.id, activeWorkspaceId);
-      setSession(updated as SessionApiResponse);
+      setSession((await archiveManagedEntity('sessions', session.id, activeWorkspaceId)) as SessionApiResponse);
       toast.success(msg('managedAgents.sessions.detail.archivedToast', 'Session archived'));
-      setConfirmAction(null);
     } catch (error) {
       setMutationError(errorMessage(error));
-      setConfirmAction(null);
     } finally {
+      setConfirmAction(null);
       setBusyAction(null);
     }
   };
   const handleDelete = async () => {
-    if (!session) {
-      return;
-    }
+    if (!session) return;
     setBusyAction('delete');
     setMutationError(null);
     try {
       await deleteManagedEntity('sessions', session.id, activeWorkspaceId);
-      setConfirmAction(null);
-      setBusyAction(null);
       window.location.assign(listHref);
     } catch (error) {
       setMutationError(errorMessage(error));
+    } finally {
       setConfirmAction(null);
       setBusyAction(null);
     }
   };
-
   if (loading) {
     return (
       <section className="min-h-[calc(100vh-48px)] text-foreground">
@@ -545,10 +543,14 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   const archived = Boolean(session.archived_at);
+  const conversationState = sessionConversationState(session);
 
   return (
     <TooltipProvider>
-      <section className="relative min-h-[calc(100vh-48px)] text-foreground" data-testid="session-detail-page">
+      <section
+        className="relative flex min-h-[calc(100vh-48px)] w-full flex-col text-foreground xl:h-[calc(100dvh-48px)] xl:min-h-0 xl:overflow-hidden"
+        data-testid="session-detail-page"
+      >
         {confirmAction ? (
           <ConfirmEntityDialog
             action={confirmAction}
@@ -677,61 +679,110 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
           <ManagedWarningAlert className="mb-4 max-w-xl">{metadataError || eventError}</ManagedWarningAlert>
         ) : null}
 
-        <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
-          <EventsTab
-            activeLane={activeLane}
-            childLoading={eventsLoading}
-            copyPayload={copyPayload}
-            detailPanelRef={detailPanelRef}
-            entries={entries}
-            events={events}
-            filteredEntries={filteredEntries}
-            filterOptions={filterOptions}
-            hasFilter={hasFilter}
-            lanes={lanes}
-            onClearFilters={() => {
-              setSelectedTypes([]);
-              setQuery('');
-              handleSelectLane(SESSION_MAIN_LANE_ID, null);
-            }}
-            onCopyAll={() =>
-              void handleCopy(
-                copyPayload,
-                msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
-              )
-            }
-            onQueryChange={setQuery}
-            onOpenDeltas={(entryId) => {
-              setSelectedEntryId(entryId);
-              setSelectedDetailTab('deltas');
-            }}
-            onSelectEntry={(entryId) => {
-              setSelectedEntryId(entryId);
-              setSelectedDetailTab('content');
-            }}
-            onSelectLane={handleSelectLane}
-            onThreadClick={handleThreadClick}
-            onSelectedTypesChange={setSelectedTypes}
-            onTimelineSeek={handleTimelineSeek}
-            onViewChange={setView}
-            query={query}
-            scrollerRef={scrollerRef}
-            selectedEntry={selectedEntry}
-            selectedDetailTab={selectedDetailTab}
-            selectedEntryId={selectedEntryId}
-            selectedTypes={selectedTypes}
-            suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
-            archivedLaneCount={archivedLaneCount}
-            isMultiAgent={isMultiAgent}
-            showArchivedLanes={showArchivedLanes}
-            timeline={timeline}
-            timelineVisibleIds={timelineVisibleIds}
-            threadNameById={threadNameById}
-            onDetailTabChange={setSelectedDetailTab}
-            onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
-            view={view}
+        <Tabs defaultValue="events" className="min-h-0 flex-1 gap-0">
+          <div className="border-b border-border">
+            <TabsList
+              variant="line"
+              aria-label={msg('managedAgents.sessions.detail.workspaceTabs', 'Session workspace')}
+              className="h-auto min-h-10 w-full flex-wrap justify-start gap-x-5 gap-y-1 p-0"
+            >
+              <TabsTrigger value="events" className="h-10 flex-none gap-2 px-1">
+                <ListTree className="size-4" aria-hidden />
+                {msg('managedAgents.sessions.detail.eventsTab', 'Events')}
+              </TabsTrigger>
+              <TabsTrigger value="resources" className="h-10 flex-none gap-2 px-1">
+                <FolderOpen className="size-4" aria-hidden />
+                {msg('managedAgents.sessions.detail.resourcesTab', 'Resources')}
+              </TabsTrigger>
+              <TabsTrigger value="agent" className="h-10 flex-none gap-2 px-1">
+                <Bot className="size-4" aria-hidden />
+                {msg('managedAgents.sessions.detail.agentTab', 'Agent')}
+              </TabsTrigger>
+              <TabsTrigger value="environment" className="h-10 flex-none gap-2 px-1">
+                <Box className="size-4" aria-hidden />
+                {msg('managedAgents.sessions.detail.environmentTab', 'Environment')}
+              </TabsTrigger>
+              <TabsTrigger value="vaults" className="h-10 flex-none gap-2 px-1">
+                <KeyRound className="size-4" aria-hidden />
+                {msg('managedAgents.sessions.detail.vaultsTab', 'Vaults')}
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="events" className="mt-0 min-h-0 pt-4">
+            <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
+              <EventsTab
+                activeLane={activeLane}
+                childLoading={eventsLoading}
+                copyPayload={copyPayload}
+                detailPanelRef={detailPanelRef}
+                entries={entries}
+                events={events}
+                filteredEntries={filteredEntries}
+                filterOptions={filterOptions}
+                hasFilter={hasFilter}
+                lanes={lanes}
+                onClearFilters={() => {
+                  setSelectedTypes([]);
+                  setQuery('');
+                  handleSelectLane(SESSION_MAIN_LANE_ID, null);
+                }}
+                onCopyAll={() =>
+                  void handleCopy(
+                    copyPayload,
+                    msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
+                  )
+                }
+                onQueryChange={setQuery}
+                onOpenDeltas={(entryId) => {
+                  setSelectedEntryId(entryId);
+                  setSelectedDetailTab('deltas');
+                }}
+                onSelectEntry={(entryId) => {
+                  setSelectedEntryId(entryId);
+                  setSelectedDetailTab('content');
+                }}
+                onSelectLane={handleSelectLane}
+                onThreadClick={handleThreadClick}
+                onSelectedTypesChange={setSelectedTypes}
+                onTimelineSeek={handleTimelineSeek}
+                onViewChange={setView}
+                query={query}
+                scrollerRef={scrollerRef}
+                selectedEntry={selectedEntry}
+                selectedDetailTab={selectedDetailTab}
+                selectedEntryId={selectedEntryId}
+                selectedTypes={selectedTypes}
+                suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
+                archivedLaneCount={archivedLaneCount}
+                composer={
+                  <SessionMessageComposer
+                    disabled={conversationState.disabled}
+                    live={conversationState.live}
+                    onError={setMutationError}
+                    onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
+                    sessionId={session.id}
+                    workspaceId={activeWorkspaceId}
+                  />
+                }
+                isMultiAgent={isMultiAgent}
+                showArchivedLanes={showArchivedLanes}
+                timeline={timeline}
+                timelineVisibleIds={timelineVisibleIds}
+                threadNameById={threadNameById}
+                onDetailTabChange={setSelectedDetailTab}
+                onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
+                view={view}
+              />
+            </SessionDetailDeltaFramesContext.Provider>
+          </TabsContent>
+          <SessionEntityPanels
+            refreshKey={refreshKey}
+            resources={resources}
+            session={session}
+            workspaceId={activeWorkspaceId}
           />
-        </SessionDetailDeltaFramesContext.Provider>
+        </Tabs>
       </section>
     </TooltipProvider>
   );
@@ -741,10 +792,20 @@ export function EventsTab(props: EventsTabProps) {
   return <EventsTabInner {...props} />;
 }
 
+function sessionConversationState(session: SessionApiResponse) {
+  const archived = Boolean(session.archived_at);
+  const status = session.status.toLowerCase();
+  return {
+    disabled: archived || status === 'deleted' || status === 'terminated',
+    live: !archived && sessionStatusIsLive(status),
+  };
+}
+
 export function EventsTabInner({
   activeLane,
   archivedLaneCount,
   childLoading,
+  composer,
   entries,
   events,
   filteredEntries,
@@ -780,9 +841,9 @@ export function EventsTabInner({
 }: EventsTabProps) {
   const { msg } = useI18n();
   return (
-    <div data-testid="events-tab">
+    <SessionWorkspaceCard className="h-full gap-0 py-0" data-testid="events-tab">
       <KeyboardShortcutsModal />
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-0 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <ViewModeSegment value={view} onChange={onViewChange} />
           <div className="h-5 w-px bg-accent" aria-hidden />
@@ -805,18 +866,20 @@ export function EventsTabInner({
         </Button>
       </div>
 
-      <EventsMinimap
-        lanes={timeline}
-        activeLane={activeLane}
-        selectedEntryId={selectedEntry?.id ?? selectedEntryId}
-        visibleIds={timelineVisibleIds}
-        scrollerRef={scrollerRef}
-        suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
-        onLaneChange={onSelectLane}
-        onSeek={onTimelineSeek}
-      />
+      <div className="px-3 pt-3">
+        <EventsMinimap
+          lanes={timeline}
+          activeLane={activeLane}
+          selectedEntryId={selectedEntry?.id ?? selectedEntryId}
+          visibleIds={timelineVisibleIds}
+          scrollerRef={scrollerRef}
+          suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
+          onLaneChange={onSelectLane}
+          onSeek={onTimelineSeek}
+        />
+      </div>
 
-      <div className="flex min-h-0 flex-col border-t border-border" data-testid="session-trace-shell">
+      <div className="flex min-h-0 flex-1 flex-col border-t border-border" data-testid="session-trace-shell">
         <LaneTabStrip
           lanes={lanes}
           activeLane={activeLane}
@@ -830,61 +893,62 @@ export function EventsTabInner({
           onToggleArchivedLanes={onToggleArchivedLanes}
         />
 
-        <div
-          className={clsx(
-            'grid min-h-[420px]',
-            selectedEntry ? 'lg:grid-cols-[minmax(0,1fr)_minmax(360px,44%)]' : 'grid-cols-1',
-          )}
-        >
-          <div
-            ref={scrollerRef}
-            data-testid="session-trace-list-pane"
-            className={clsx(
-              'subtle-scrollbar max-h-[calc(100vh-330px)] min-h-[420px] min-w-0 overflow-x-hidden overflow-y-auto px-0 py-3',
-              selectedEntry && 'lg:border-r lg:border-border',
-            )}
-          >
-            {childLoading && !events.length ? (
-              <SessionTraceSkeleton />
-            ) : filteredEntries.length ? (
-              <div className="flex flex-col pb-8">
-                {filteredEntries.map((entry) =>
-                  view === 'debug' && entry.kind === 'debug' ? (
-                    <DebugRow
-                      key={entry.id}
-                      entry={entry}
-                      selected={sessionEventEntryMatchesSelectedId(entry, selectedEntryId)}
-                      onSelect={() => onSelectEntry(entry.displayEvent.id)}
-                      onOpenDeltas={() => onOpenDeltas(entry.displayEvent.id)}
-                    />
-                  ) : (
-                    <TranscriptRow
-                      key={entry.id}
-                      entry={entry}
-                      selected={sessionEventEntryMatchesSelectedId(entry, selectedEntryId)}
-                      onSelect={() => onSelectEntry(sessionEventEntrySelectionId(entry))}
-                      threadNameById={threadNameById}
-                      onThreadClick={onThreadClick}
-                    />
-                  ),
-                )}
-              </div>
-            ) : (
-              <SessionTraceEmpty
-                message={
-                  entries.length === 0
-                    ? msg(
-                        'managedAgents.sessions.trace.noEvents',
-                        'No events yet. Events will appear here as they occur.',
-                      )
-                    : msg('managedAgents.sessions.trace.noMatchingEvents', 'No events match the current filters.')
-                }
-                onClear={hasFilter ? onClearFilters : undefined}
-              />
-            )}
+        <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_clamp(22rem,32vw,34rem)]">
+          <div className="flex min-h-0 min-w-0 flex-col">
+            <div
+              ref={scrollerRef}
+              data-testid="session-trace-list-pane"
+              className="subtle-scrollbar min-h-80 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-3 xl:min-h-0"
+            >
+              {childLoading && !events.length ? (
+                <SessionTraceSkeleton />
+              ) : filteredEntries.length ? (
+                <div className="flex flex-col pb-8">
+                  {filteredEntries.map((entry) =>
+                    view === 'debug' && entry.kind === 'debug' ? (
+                      <DebugRow
+                        key={entry.id}
+                        entry={entry}
+                        selected={sessionEventEntryMatchesSelectedId(entry, selectedEntryId)}
+                        onSelect={() => onSelectEntry(entry.displayEvent.id)}
+                        onOpenDeltas={() => onOpenDeltas(entry.displayEvent.id)}
+                      />
+                    ) : (
+                      <TranscriptRow
+                        key={entry.id}
+                        entry={entry}
+                        selected={sessionEventEntryMatchesSelectedId(entry, selectedEntryId)}
+                        onSelect={() => onSelectEntry(sessionEventEntrySelectionId(entry))}
+                        threadNameById={threadNameById}
+                        onThreadClick={onThreadClick}
+                      />
+                    ),
+                  )}
+                </div>
+              ) : (
+                <SessionTraceEmpty
+                  message={
+                    entries.length === 0
+                      ? msg(
+                          'managedAgents.sessions.trace.noEvents',
+                          'No events yet. Events will appear here as they occur.',
+                        )
+                      : msg('managedAgents.sessions.trace.noMatchingEvents', 'No events match the current filters.')
+                  }
+                  onClear={hasFilter ? onClearFilters : undefined}
+                />
+              )}
+            </div>
+            {composer}
           </div>
-          {selectedEntry ? (
-            <div ref={detailPanelRef} data-testid="session-event-detail-panel" className="min-h-0">
+          <div
+            ref={detailPanelRef}
+            data-testid="session-event-detail-panel"
+            className={`min-h-0 border-t border-border bg-muted/20 xl:border-l xl:border-t-0 ${
+              selectedEntry ? 'block' : 'hidden xl:block'
+            }`}
+          >
+            {selectedEntry ? (
               <EventDetailPanel
                 entry={selectedEntry}
                 view={view}
@@ -893,11 +957,22 @@ export function EventsTabInner({
                 onClose={() => onSelectEntry(null)}
                 onDetailTabChange={onDetailTabChange}
               />
-            </div>
-          ) : null}
+            ) : (
+              <Empty className="h-full min-h-80 rounded-none border-0 xl:min-h-0">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <ListTree aria-hidden />
+                  </EmptyMedia>
+                  <EmptyTitle className="text-muted-foreground">
+                    {msg('managedAgents.sessions.detail.selectEvent', 'Select an event to inspect its details.')}
+                  </EmptyTitle>
+                </EmptyHeader>
+              </Empty>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </SessionWorkspaceCard>
   );
 }
 

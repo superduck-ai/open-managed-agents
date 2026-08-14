@@ -697,16 +697,20 @@ export function registerManagedAgentsResourceTests() {
       return fetchSessionEvents(input, init);
     }) as typeof fetch;
 
-    renderManagedAgentsPage('sessions');
+    try {
+      renderManagedAgentsPage('sessions');
 
-    expect(await screen.findByText('Existing message.')).toBeTruthy();
-    const composer = await screen.findByRole('textbox', { name: 'Message' });
-    fireEvent.change(composer, { target: { value: 'Render this message immediately.' } });
-    fireEvent.keyDown(composer, { key: 'Enter', shiftKey: false });
+      expect(await screen.findByText('Existing message.')).toBeTruthy();
+      const composer = await screen.findByRole('textbox', { name: 'Message' });
+      fireEvent.change(composer, { target: { value: 'Render this message immediately.' } });
+      fireEvent.keyDown(composer, { key: 'Enter', shiftKey: false });
 
-    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
-    expect(await screen.findByText('Render this message immediately.')).toBeTruthy();
-    expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
+      await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
+      expect(await screen.findByText('Render this message immediately.')).toBeTruthy();
+      expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
+    } finally {
+      globalThis.fetch = fetchSessionEvents;
+    }
   });
 
   test('renders transcript idle gaps with the original striped separator', async () => {

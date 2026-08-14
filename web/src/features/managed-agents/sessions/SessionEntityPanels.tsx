@@ -17,10 +17,12 @@ import {
 import { errorMessage, objectRecord, titleCase } from '../utils';
 import { SessionWorkspaceCard } from './SessionWorkspaceCard';
 
+type VaultWithCredentials = { vault: VaultApiResponse; items: VaultCredentialApiResponse[] };
+
 type RelatedEntities = {
   agent: AgentApiResponse | null;
   environment: EnvironmentApiResponse | null;
-  credentials: Array<{ vault: VaultApiResponse; items: VaultCredentialApiResponse[] }>;
+  credentials: VaultWithCredentials[];
   loading: boolean;
   error: string | null;
 };
@@ -73,7 +75,7 @@ export function SessionEntityPanels({
       </TabsContent>
       <AgentDetails agent={related.agent} emptyText={emptyText} />
       <EnvironmentDetails environment={related.environment} emptyText={emptyText} />
-      <CredentialDetails credentials={related.credentials} emptyText={emptyText} />
+      <CredentialDetails credentials={related.credentials} emptyText={emptyText} hasVaults={Boolean(vaultKey)} />
     </>
   );
 }
@@ -94,19 +96,26 @@ function useRelatedEntities(
     void Promise.allSettled([
       agentId ? retrieveAgent(agentId, workspaceId, agentVersion) : Promise.resolve(null),
       environmentId ? retrieveManagedEntity('environments', environmentId, workspaceId) : Promise.resolve(null),
-      Promise.all(
-        vaultIds.map(async (vaultId) => ({
+      // Per-vault allSettled: one failing vault must not blank out the others
+      // (design doc: keep the rest of a category when one entity fails).
+      Promise.allSettled(
+        vaultIds.map(async (vaultId): Promise<VaultWithCredentials> => ({
           vault: (await retrieveManagedEntity('credential-vaults', vaultId, workspaceId)) as VaultApiResponse,
           items: (await listVaultCredentials(vaultId, workspaceId)).data ?? [],
         })),
       ),
     ]).then((results) => {
       if (!active) return;
-      const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      const vaultResults = results[2].status === 'fulfilled' ? results[2].value : [];
+      const rejected = [...results.slice(0, 2), ...vaultResults].find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
       setRelated({
         agent: results[0].status === 'fulfilled' ? (results[0].value as AgentApiResponse | null) : null,
         environment: results[1].status === 'fulfilled' ? (results[1].value as EnvironmentApiResponse | null) : null,
-        credentials: results[2].status === 'fulfilled' ? results[2].value : [],
+        credentials: vaultResults
+          .filter((result): result is PromiseFulfilledResult<VaultWithCredentials> => result.status === 'fulfilled')
+          .map((result) => result.value),
         loading: false,
         error: rejected ? errorMessage(rejected.reason) : null,
       });
@@ -231,9 +240,11 @@ function EnvironmentDetails({
 function CredentialDetails({
   credentials,
   emptyText,
+  hasVaults,
 }: {
   credentials: RelatedEntities['credentials'];
   emptyText: string;
+  hasVaults: boolean;
 }) {
   const { msg } = useI18n();
   return (
@@ -277,7 +288,9 @@ function CredentialDetails({
             </section>
           ))
         ) : (
-          <EmptyText>{emptyText}</EmptyText>
+          <EmptyText>
+            {hasVaults ? emptyText : msg('managedAgents.sessions.context.noVaults', 'No credentials connected')}
+          </EmptyText>
         )}
       </FullWidthCard>
     </TabsContent>

@@ -32,12 +32,6 @@ func TestTableMappersBuildDynamicQueries(t *testing.T) {
 		)
 		assertMapperSQLContains(t, inboundBound, "workspace_uuid = $1 AND idempotency_key = $2 AND deleted_at IS NULL")
 
-		outboundBound := buildCodeSessionOutboundEventMapperGetCodeSessionOutboundEventByIdempotencyKey(
-			yourbatis.DialectPostgres,
-			workspaceUUID,
-			"idem-outbound",
-		)
-		assertMapperSQLContains(t, outboundBound, "workspace_uuid = $1 AND idempotency_key = $2 AND deleted_at IS NULL")
 	})
 
 	t.Run("activation code session lock", func(t *testing.T) {
@@ -104,28 +98,6 @@ func TestTableMappersBuildWrites(t *testing.T) {
 	assertMapperSQLContains(t, singleInboundBound, "INSERT INTO code_session_inbound_events")
 	assertMapperSQLContains(t, singleInboundBound, "RETURNING uuid, external_id")
 
-	outboundRow := codeSessionOutboundEventInsertRow{
-		ExternalID:            "evt_outbound_test",
-		OrganizationUUID:      organizationUUID,
-		WorkspaceUUID:         workspaceUUID,
-		CodeSessionUUID:       codeSessionUUID,
-		CodeSessionExternalID: "codeses_test",
-		SequenceNum:           1,
-		EventType:             "assistant",
-		EventSubtype:          "message",
-		Payload:               []byte(`{"type":"assistant"}`),
-		PayloadHash:           "hash-outbound",
-		IdempotencyKey:        "idem-outbound",
-		Source:                "worker",
-		Ephemeral:             true,
-		CreatedAt:             createdAt,
-	}
-	singleOutboundBound := buildCodeSessionOutboundEventMapperInsertCodeSessionOutboundEvent(
-		yourbatis.DialectPostgres,
-		outboundRow,
-	)
-	assertMapperSQLContains(t, singleOutboundBound, "INSERT INTO code_session_outbound_events")
-	assertMapperSQLContains(t, singleOutboundBound, "RETURNING uuid, external_id")
 }
 
 func TestListExistingActivationInboundEventsBatchesLookup(t *testing.T) {

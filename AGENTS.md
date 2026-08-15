@@ -45,6 +45,13 @@
 - Anthropic/API、数据库和第三方 payload 的字段名属于外部合同，可在边界 DTO、对象属性和解构中保留 `snake_case`；进入内部变量或业务模型后应映射为上述语言惯例，不要把例外扩散到业务标识符。
 - Go 命名由 `.golangci.yml` 中 `revive/var-naming` 强制；前端命名由 `bun run lint:naming` 强制，并在 pre-commit 与 `.github/workflows/web-naming.yml` 中执行。
 
+## TrimSpace 使用规范
+
+- `strings.TrimSpace` 和 `bytes.TrimSpace` 只允许用在确实可能携带首尾空白的外部输入边界，例如用户提交的请求字段、CLI 参数、环境变量、配置文件值和第三方 payload；这类值应在进入内部模型前修剪一次。
+- 不要对内部生成或已校验的值做防御性修剪：常量、代码拼接的标识符、UUID、enum、数据库行扫描结果，以及上游已经修剪过的值都不需要再 TrimSpace。
+- 同一条数据流上不得层层重复 TrimSpace；修剪责任属于最早接触不可信输入的 HTTP/resource/service 边界，下游代码应假设值已清洁。
+- 不要用 TrimSpace 掩盖 bug：如果内部 ID、路径或协议字段出现意外空白，应在产生它的位置修复，而不是在每个消费点静默吞掉。
+
 ## JSON 与 schema 边界
 
 - `json.RawMessage` 只用于数据库 JSON/JSONB、HTTP/第三方 payload、延迟解析和未知字段透传等序列化边界。业务逻辑一旦需要读取其中字段，应在边界附近解析为命名 schema/DTO，再映射为内部领域类型。

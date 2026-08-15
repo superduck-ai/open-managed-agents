@@ -335,16 +335,20 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 	if !h.authorizeSessionIngress(w, r, codeSessionID) {
 		return
 	}
-	workerReq, ok := h.requireWorkerEpochBody(w, r, codeSessionID)
-	if !ok {
-		return
-	}
-	events, err := decodeCodeSessionWorkerEventsPayload(workerReq.body)
+	workerReq, err := httpapi.DecodeObjectBodyAs[codeSessionWorkerEventsBody](w, r, maxIngressBodySize)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
-	if err := h.service.AppendWorkerOutputEventsForEpoch(r.Context(), codeSessionID, workerReq.epoch, events, "code-session-worker"); err != nil {
+	if workerReq.WorkerEpoch <= 0 {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "worker_epoch must be a positive integer"))
+		return
+	}
+	if len(workerReq.Events) == 0 {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "events must be a non-empty array"))
+		return
+	}
+	if err := h.service.AppendWorkerOutputEventsForEpoch(r.Context(), codeSessionID, int64(workerReq.WorkerEpoch), workerReq.Events); err != nil {
 		if errors.Is(err, ErrProtocol) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 			return
@@ -410,7 +414,7 @@ func (h *Handler) handleCodeSessionWorkerDiagnostics(w http.ResponseWriter, r *h
 		return
 	}
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEventForEpoch(r.Context(), codeSessionID, workerReq.epoch, payload, "code-session-worker-diagnostics"); err != nil {
+		if err := h.service.AppendWorkerEventForEpoch(r.Context(), codeSessionID, workerReq.epoch, payload); err != nil {
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -544,7 +548,7 @@ func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload, "http-ingress"); err != nil {
+		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload); err != nil {
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -572,7 +576,7 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 		return
 	}
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload, "diag-logs"); err != nil {
+		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload); err != nil {
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -608,7 +612,7 @@ func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http
 		return
 	}
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload, "http-persistence"); err != nil {
+		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload); err != nil {
 			h.logger.ErrorContext(r.Context(), "append code session persistence event", "code_session_id", codeSessionID, "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append session ingress event"))
 			return
@@ -1236,52 +1240,20 @@ func copyRawMessage(raw json.RawMessage) json.RawMessage {
 	return json.RawMessage(copied)
 }
 
-func decodeCodeSessionWorkerEventsPayload(body []byte) ([]workerOutputEvent, error) {
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 {
-		return nil, errors.New("events body is required")
+type codeSessionWorkerEventsBody struct {
+	WorkerEpoch workerEpoch         `json:"worker_epoch"`
+	Events      []workerOutputEvent `json:"events"`
+}
+
+type workerEpoch int64
+
+func (epoch *workerEpoch) UnmarshalJSON(data []byte) error {
+	value, err := parseWorkerEpochRaw(data)
+	if err != nil {
+		return err
 	}
-	var envelope struct {
-		Events []struct {
-			Payload   json.RawMessage `json:"payload"`
-			Ephemeral bool            `json:"ephemeral"`
-		} `json:"events"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if err := decoder.Decode(&envelope); err != nil {
-		return nil, errors.New("Invalid JSON body")
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("Invalid JSON body")
-	}
-	if len(envelope.Events) == 0 {
-		return nil, errors.New("events must be a non-empty array")
-	}
-	events := make([]workerOutputEvent, 0, len(envelope.Events))
-	for i, event := range envelope.Events {
-		payload := bytes.TrimSpace(event.Payload)
-		if len(payload) == 0 || bytes.Equal(payload, []byte("null")) {
-			return nil, fmt.Errorf("events[%d].payload is required", i)
-		}
-		object, err := decodeJSONObject(payload)
-		if err != nil {
-			return nil, fmt.Errorf("events[%d].payload must be a json object", i)
-		}
-		eventType := stringField(object, "type")
-		if eventType == "" {
-			return nil, fmt.Errorf("events[%d].payload.type is required", i)
-		}
-		if eventType != "keep_alive" && stringField(object, "uuid") == "" {
-			return nil, fmt.Errorf("events[%d].payload.uuid is required", i)
-		}
-		events = append(events, workerOutputEvent{
-			Payload:   json.RawMessage(append([]byte(nil), payload...)),
-			Ephemeral: event.Ephemeral,
-		})
-	}
-	return events, nil
+	*epoch = workerEpoch(value)
+	return nil
 }
 
 func decodeCodeSessionWorkerDeliveryPayload(body []byte) ([]db.CodeSessionWorkerDeliveryUpdate, error) {
@@ -1374,17 +1346,25 @@ func decodeCodeSessionWorkerInternalEvent(codeSessionID string, raw json.RawMess
 	if !ok {
 		return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload is required")
 	}
-	payload, payloadObject, err := normalizeJSONObject(rawPayload)
+	var payloadSchema struct {
+		Type    string `json:"type"`
+		UUID    string `json:"uuid"`
+		AgentID string `json:"agentId"`
+	}
+	if err := json.Unmarshal(rawPayload, &payloadSchema); err != nil {
+		return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload must be a json object")
+	}
+	meta, err := BuildEventMetadata(codeSessionID, "internal", rawPayload)
 	if err != nil {
 		return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload must be a json object")
 	}
-	if eventType := stringField(payloadObject, "type"); !isCodeSessionTranscriptPayloadType(eventType) {
+	if eventType := strings.TrimSpace(payloadSchema.Type); !isCodeSessionTranscriptPayloadType(eventType) {
 		if eventType == "" {
 			return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload type is required")
 		}
 		return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload type must be user, assistant, attachment, or system")
 	}
-	payloadUUID := stringField(payloadObject, "uuid")
+	payloadUUID := strings.TrimSpace(payloadSchema.UUID)
 	if payloadUUID == "" {
 		return db.AppendCodeSessionInternalEventInput{}, errors.New("event payload uuid is required")
 	}
@@ -1396,7 +1376,7 @@ func decodeCodeSessionWorkerInternalEvent(codeSessionID string, raw json.RawMess
 	if err != nil {
 		return db.AppendCodeSessionInternalEventInput{}, err
 	}
-	payloadAgentID := stringField(payloadObject, "agentId")
+	payloadAgentID := strings.TrimSpace(payloadSchema.AgentID)
 	if agentID != "" && payloadAgentID != "" && agentID != payloadAgentID {
 		return db.AppendCodeSessionInternalEventInput{}, errors.New("event agent_id and payload.agentId must match")
 	}
@@ -1406,10 +1386,6 @@ func decodeCodeSessionWorkerInternalEvent(codeSessionID string, raw json.RawMess
 	var agentIDPtr *string
 	if agentID != "" {
 		agentIDPtr = &agentID
-	}
-	meta, err := BuildEventMetadata(codeSessionID, "internal", payload)
-	if err != nil {
-		return db.AppendCodeSessionInternalEventInput{}, err
 	}
 	eventMetadata, err := optionalJSONRaw(envelope["event_metadata"], "event_metadata")
 	if err != nil {

@@ -265,6 +265,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_USE_CCR_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
+		startupEnv["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] != "true" ||
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
 	}

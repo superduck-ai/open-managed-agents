@@ -868,10 +868,11 @@ export function mockManagedResourceApi() {
     ],
     sessionResources: [
       {
-        id: 'file_orders123456',
+        id: 'sesrsc_orders123456',
         type: 'file',
         created_at: new Date(Date.now() - 80_000).toISOString(),
-        filename: 'orders.zip',
+        file_id: 'file_orders123456',
+        mount_path: '/uploads/orders.zip',
       },
     ],
     sessionThreads: [

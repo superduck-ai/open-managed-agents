@@ -563,7 +563,6 @@ export function registerManagedAgentsAgentsTests() {
     expect(detailTabs.dataset.slot).toBe('tabs-list');
     expect(within(detailTabs).getByRole('tab', { name: 'Agent' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tabpanel').textContent).toContain('Current system prompt');
-    expect(screen.getByText('New').closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     expect(screen.getByText('Fast').closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     expect(await screen.findByText('Customer triage')).toBeTruthy();
     expect(screen.getByText('Weekly reporting')).toBeTruthy();

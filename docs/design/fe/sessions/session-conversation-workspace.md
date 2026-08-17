@@ -8,7 +8,7 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 
 会话摘要下方提供五个一级页签：
 
-1. **事件**：复用现有 transcript/debug、事件筛选、搜索、线程 lane、minimap 和事件详情面板。
+1. **事件**：提供 Transcript、Debug 和 Trace 三个 segment；前两者复用事件筛选、搜索、线程 lane、minimap 和事件详情面板。
 2. **资源**：展示真实 `session.resources.list` 返回的挂载项。
 3. **智能体**：展示会话固定的 Agent 版本、模型、系统提示词和工具类型。
 4. **环境**：展示 Session 引用的 Environment、状态和网络模式。
@@ -28,6 +28,8 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 | 凭据     | Vault + credential list     | 按 `vault_ids` 读取元数据，禁止请求 credential secret   |
 
 关联实体并行加载；一类关联实体失败时保留其余可用数据并显示不可用状态，不影响事件与对话。
+
+Trace segment 仅在 `observability.enabled=true` 时查询当前 Session 的 traces。选中 trace 后使用 `trace_id` 查询参数保存详情状态，返回列表或切换到其他 segment 时删除该参数；observability 路由返回 404 时展示 “Observability is not enabled”，不使用通用加载错误。
 
 ## 对话和停止行为
 

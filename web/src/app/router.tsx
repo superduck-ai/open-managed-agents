@@ -165,6 +165,10 @@ const workspaceSessionsRoute = createRoute({
 const sessionDetailSearch = (search: Record<string, unknown>) => ({
   segment: search.segment === 'debug' || search.segment === 'trace' ? search.segment : undefined,
   event: typeof search.event === 'string' && search.event.trim() ? search.event.trim() : undefined,
+  trace_id:
+    typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
+      ? search.trace_id.trim()
+      : undefined,
 });
 
 const workspaceSessionDetailRoute = createRoute({

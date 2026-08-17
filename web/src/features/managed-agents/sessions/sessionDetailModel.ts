@@ -630,6 +630,9 @@ export function writeSessionDetailUrlState(
   } else {
     url.searchParams.delete('segment');
   }
+  if (view !== 'trace') {
+    url.searchParams.delete('trace_id');
+  }
   if (eventId) {
     url.searchParams.set('event', eventId);
   } else {

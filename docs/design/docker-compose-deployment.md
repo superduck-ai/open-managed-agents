@@ -194,6 +194,10 @@ Traces 统一保存 61 天——Analytics 需要对比最大 30 天当前窗口�
 Stream 设置不能延长全局保留期。本地调试端口只绑定 `127.0.0.1`；OMA 服务间访问
 使用 `http://openobserve:5080`。
 
+新生成的 `oma-server.local.yaml` 默认启用 Observability 和内容采集，并使用 Compose 的
+OpenObserve 本地账号。修改 Compose 账号时需同步修改该文件；生产环境必须使用独立 Secret。
+`just init-compose-config` 不覆盖已有文件，旧部署升级时需手动补齐开关和凭据。
+
 ## 8. 本地开发模式
 
 本地开发推荐只用 Docker Compose 启动 PostgreSQL、Redis 和 MinIO；e2b-local、oma-server 与 Vite 都直接从宿主机源码启动。这样 oma-server 可以直接访问 Docker Sandbox 暴露在宿主机 loopback 上的动态 envd 端口，也可以直接验证 e2b-local 的最新源码。

@@ -569,6 +569,18 @@ func TestDockerComposeDeclaresDevelopmentCredentialPosture(t *testing.T) {
 	if strings.TrimSpace(cfg.CodeSession.JWTSigningPrivateKeyFile) != "" {
 		t.Fatalf("Compose development jwt_signing_private_key_file = %q, want process-local ephemeral key", cfg.CodeSession.JWTSigningPrivateKeyFile)
 	}
+	if !cfg.Observability.Enabled || !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("Compose observability enabled/content_capture_enabled = %t/%t, want true/true", cfg.Observability.Enabled, cfg.Observability.ContentCaptureEnabled)
+	}
+	if cfg.Observability.Backend != ObservabilityBackendOpenObserve {
+		t.Fatalf("Compose observability backend = %q, want %q", cfg.Observability.Backend, ObservabilityBackendOpenObserve)
+	}
+	if cfg.Observability.OpenObserve.Ingestion.Username != "root@example.com" || cfg.Observability.OpenObserve.Query.Username != "root@example.com" {
+		t.Fatalf("Compose OpenObserve usernames = %q/%q, want local root account", cfg.Observability.OpenObserve.Ingestion.Username, cfg.Observability.OpenObserve.Query.Username)
+	}
+	if cfg.Observability.OpenObserve.Ingestion.Password != "Complexpass#123" || cfg.Observability.OpenObserve.Query.Password != "Complexpass#123" {
+		t.Fatal("Compose OpenObserve passwords must match the local docker-compose default")
+	}
 }
 
 func TestDockerComposeSandboxCallbackUsesPublishedAPIPort(t *testing.T) {

@@ -49,11 +49,9 @@ code_session:
   sandbox_api_base_url: http://host.docker.internal:38080
 
 observability:
-  enabled: false
-  # Content capture sends prompt originals, model output, and tool input/output
-  # (which may include source code, command output, and secrets) to the
-  # observability store. Default is on; set false to keep structure-only
-  # telemetry (spans, durations, tokens, tool names).
+  enabled: true
+  # May capture prompts, model output, tool data, source code, and secrets.
+  # Set false for structure-only telemetry.
   content_capture_enabled: true
   otlp:
     max_request_bytes: 16777216
@@ -64,10 +62,11 @@ observability:
     organization: oma
     logs_stream: oma_claude_code
     traces_stream: oma_claude_code
+    # Local credentials must match docker-compose.yml.
     ingestion:
-      username: ""
-      password: ""
+      username: root@example.com
+      password: "Complexpass#123"
     query:
-      username: ""
-      password: ""
+      username: root@example.com
+      password: "Complexpass#123"
       timeout: 15s

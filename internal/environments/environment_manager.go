@@ -236,12 +236,11 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	environmentVariables["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] = "1"
 	delete(environmentVariables, "CLAUDE_CODE_SESSION_ACCESS_TOKEN") // 避免遮蔽 environment-manager 注入的 WebSocket auth FD。
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
-	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
 	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1" // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
-	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, sessionIngressToken, "1")
+	applyCodeSessionOTLPEnvironment(environmentVariables, cfg.Observability)
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
 		startupContext["sources"] = []any{}
@@ -285,99 +284,38 @@ func claudeRuntimeModelEnvironment(modelID string) map[string]string {
 	}
 }
 
-func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string, workerEpoch string) {
-	if environmentVariables == nil {
+// applyCodeSessionOTLPEnvironment 只做默认值补齐，用户配置无条件优先：
+// session 已设置的键一律保留，未设置的键才写入平台默认值。导出 endpoint、
+// auth header 和 worker epoch 不在这里注入——它们由 environment-manager 在
+// /worker/register 拿到真实 epoch 后注入；伪造或过期的值会被 ingress 的
+// epoch/lease 校验拒绝，因此这里也不做任何 env 清洗。
+func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg config.ObservabilityConfig) {
+	if !cfg.Enabled {
 		return
 	}
-	requiredHeaders := []string{
-		"Authorization=Bearer " + sessionIngressToken,
-		"x-worker-epoch=" + workerEpoch,
+	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_ENABLE_TELEMETRY", "1")
+	// Runner shell defaults this to 1 to skip marketplace/auto-update. Claude Code
+	// treats a non-empty value as "essential traffic only" and will not export OTEL.
+	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+	setDefaultEnvironmentVariable(environmentVariables, "ENABLE_BETA_TRACING_DETAILED", "1")
+	if cfg.ContentCaptureEnabled {
+		// Without these grants Claude Code exports user_prompt="<REDACTED>" and
+		// omits tool input/output; detailed tracing alone only carries structure.
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_USER_PROMPTS", "1")
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_DETAILS", "1")
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_CONTENT", "1")
 	}
-	metricsInjected := false
-	logsInjected := false
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		exporters := stringFromMap(environmentVariables, "OTEL_METRICS_EXPORTER")
-		if exporters == "" || commaListContains(exporters, "otlp") {
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL, codeSessionID))
-			metricsInjected = true
-		}
-	}
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		exporters := stringFromMap(environmentVariables, "OTEL_LOGS_EXPORTER")
-		if exporters == "" || commaListContains(exporters, "otlp") {
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", codeSessionWorkerOTLPLogsEndpoint(apiBaseURL, codeSessionID))
-			logsInjected = true
-		}
-	}
-	if metricsInjected {
-		environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = ensureOTLPHeaders(
-			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_HEADERS"),
-			requiredHeaders,
-		)
-	}
-	if logsInjected {
-		environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = ensureOTLPHeaders(
-			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_HEADERS"),
-			requiredHeaders,
-		)
-	}
-}
-
-func codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL string, codeSessionID string) string {
-	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/metrics"
-}
-
-func codeSessionWorkerOTLPLogsEndpoint(apiBaseURL string, codeSessionID string) string {
-	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/logs"
 }
 
 func setDefaultEnvironmentVariable(environmentVariables map[string]any, key string, value string) {
 	if stringFromMap(environmentVariables, key) == "" {
 		environmentVariables[key] = value
 	}
-}
-
-func ensureOTLPHeaders(raw string, required []string) string {
-	pairs := make([]string, 0, len(required)+2)
-	seen := map[string]struct{}{}
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		pairs = append(pairs, pair)
-		key, _, ok := strings.Cut(pair, "=")
-		if ok {
-			seen[strings.ToLower(strings.TrimSpace(key))] = struct{}{}
-		}
-	}
-	for _, pair := range required {
-		key, _, ok := strings.Cut(pair, "=")
-		if !ok {
-			continue
-		}
-		normalizedKey := strings.ToLower(strings.TrimSpace(key))
-		if _, ok := seen[normalizedKey]; ok {
-			continue
-		}
-		pairs = append(pairs, pair)
-		seen[normalizedKey] = struct{}{}
-	}
-	return strings.Join(pairs, ",")
-}
-
-func commaListContains(raw string, want string) bool {
-	want = strings.TrimSpace(strings.ToLower(want))
-	for _, item := range strings.Split(raw, ",") {
-		if strings.TrimSpace(strings.ToLower(item)) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func codeSessionSandboxAPIBaseURL(cfg config.Config) string {

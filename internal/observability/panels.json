@@ -1,0 +1,1914 @@
+{
+  "version": 1,
+  "tabs": [
+    {
+      "id": "overview",
+      "title_key": "observability.tab.overview",
+      "panels": [
+        {
+          "id": "overview.active_sessions",
+          "title_key": "observability.panel.overview.active_sessions",
+          "render_type": "stat",
+          "unit": "count",
+          "query_ref": "overview.active_sessions",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.interactions",
+          "title_key": "observability.panel.overview.interactions",
+          "render_type": "stat",
+          "unit": "count",
+          "query_ref": "overview.interactions",
+          "grid": {
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.token_total",
+          "title_key": "observability.panel.overview.token_total",
+          "render_type": "stat",
+          "unit": "tokens",
+          "query_ref": "overview.token_total",
+          "grid": {
+            "x": 6,
+            "y": 0,
+            "w": 3,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.cost_estimated",
+          "title_key": "observability.panel.overview.cost_estimated",
+          "render_type": "stat",
+          "unit": "usd",
+          "query_ref": "overview.cost_estimated",
+          "grid": {
+            "x": 9,
+            "y": 0,
+            "w": 3,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.ttft_avg",
+          "title_key": "observability.panel.overview.ttft_avg",
+          "render_type": "stat",
+          "unit": "duration_ms",
+          "query_ref": "overview.ttft_avg",
+          "grid": {
+            "x": 0,
+            "y": 1,
+            "w": 3,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.session_error_rate",
+          "title_key": "observability.panel.overview.session_error_rate",
+          "render_type": "stat",
+          "unit": "percent",
+          "query_ref": "overview.session_error_rate",
+          "grid": {
+            "x": 3,
+            "y": 1,
+            "w": 3,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.session_turns_percentiles",
+          "title_key": "observability.panel.overview.session_turns_percentiles",
+          "render_type": "multistat",
+          "unit": "count",
+          "query_ref": "overview.session_turns_percentiles",
+          "grid": {
+            "x": 6,
+            "y": 1,
+            "w": 3,
+            "h": 1
+          },
+          "options": {
+            "subtitle_key": "observability.multistat.per_session"
+          }
+        },
+        {
+          "id": "overview.session_tokens_percentiles",
+          "title_key": "observability.panel.overview.session_tokens_percentiles",
+          "render_type": "multistat",
+          "unit": "tokens",
+          "query_ref": "overview.session_tokens_percentiles",
+          "grid": {
+            "x": 9,
+            "y": 1,
+            "w": 3,
+            "h": 1
+          },
+          "options": {
+            "subtitle_key": "observability.multistat.per_session"
+          }
+        },
+        {
+          "id": "overview.session_trend",
+          "title_key": "observability.panel.overview.session_trend",
+          "render_type": "timeseries",
+          "unit": "count",
+          "query_ref": "overview.session_trend",
+          "grid": {
+            "x": 0,
+            "y": 2,
+            "w": 6,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.llm_request_trend",
+          "title_key": "observability.panel.overview.llm_request_trend",
+          "render_type": "timeseries",
+          "unit": "count",
+          "query_ref": "overview.llm_request_trend",
+          "grid": {
+            "x": 6,
+            "y": 2,
+            "w": 6,
+            "h": 2
+          },
+          "options": {
+            "series_units": {
+              "failure_rate": "percent"
+            }
+          }
+        },
+        {
+          "id": "overview.token_trend",
+          "title_key": "observability.panel.overview.token_trend",
+          "render_type": "timeseries",
+          "unit": "tokens",
+          "query_ref": "overview.token_trend",
+          "grid": {
+            "x": 0,
+            "y": 4,
+            "w": 6,
+            "h": 2
+          },
+          "options": {
+            "stacked": true
+          }
+        },
+        {
+          "id": "overview.interaction_duration_trend",
+          "title_key": "observability.panel.overview.interaction_duration_trend",
+          "render_type": "timeseries",
+          "unit": "duration_ms",
+          "query_ref": "overview.interaction_duration_trend",
+          "grid": {
+            "x": 6,
+            "y": 4,
+            "w": 6,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "overview.model_stats",
+          "title_key": "observability.panel.overview.model_stats",
+          "render_type": "categorical",
+          "unit": "tokens",
+          "query_ref": "overview.model_stats",
+          "grid": {
+            "x": 0,
+            "y": 6,
+            "w": 6,
+            "h": 3
+          },
+          "options": {
+            "chart": "pie"
+          }
+        },
+        {
+          "id": "overview.tool_top",
+          "title_key": "observability.panel.overview.tool_top",
+          "render_type": "categorical",
+          "unit": "count",
+          "query_ref": "overview.tool_top",
+          "grid": {
+            "x": 6,
+            "y": 6,
+            "w": 6,
+            "h": 3
+          },
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "title_key": "observability.tab.model",
+      "panels": [
+        {
+          "id": "model.requests",
+          "title_key": "observability.panel.model.requests",
+          "render_type": "stat",
+          "unit": "count",
+          "query_ref": "model.requests",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 2,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "model.duration_avg",
+          "title_key": "observability.panel.model.duration_avg",
+          "render_type": "stat",
+          "unit": "duration_ms",
+          "query_ref": "model.duration_avg",
+          "grid": {
+            "x": 2,
+            "y": 0,
+            "w": 2,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "model.failure_rate",
+          "title_key": "observability.panel.model.failure_rate",
+          "render_type": "stat",
+          "unit": "percent",
+          "query_ref": "model.failure_rate",
+          "grid": {
+            "x": 4,
+            "y": 0,
+            "w": 2,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "model.token_total",
+          "title_key": "observability.panel.model.token_total",
+          "render_type": "stat",
+          "unit": "tokens",
+          "query_ref": "model.token_total",
+          "grid": {
+            "x": 6,
+            "y": 0,
+            "w": 2,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "model.ttft_avg",
+          "title_key": "observability.panel.model.ttft_avg",
+          "render_type": "stat",
+          "unit": "duration_ms",
+          "query_ref": "model.ttft_avg",
+          "grid": {
+            "x": 8,
+            "y": 0,
+            "w": 2,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "model.cost_estimated",
+          "title_key": "observability.panel.model.cost_estimated",
+          "render_type": "stat",
+          "unit": "usd",
+          "query_ref": "model.cost_estimated",
+          "grid": {
+            "x": 10,
+            "y": 0,
+            "w": 2,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "model.token_distribution",
+          "title_key": "observability.panel.model.token_distribution",
+          "render_type": "categorical",
+          "unit": "tokens",
+          "query_ref": "model.token_distribution",
+          "grid": {
+            "x": 0,
+            "y": 1,
+            "w": 4,
+            "h": 2
+          },
+          "options": {
+            "chart": "pie"
+          }
+        },
+        {
+          "id": "model.token_trend",
+          "title_key": "observability.panel.model.token_trend",
+          "render_type": "timeseries",
+          "unit": "tokens",
+          "query_ref": "model.token_trend",
+          "grid": {
+            "x": 4,
+            "y": 1,
+            "w": 4,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "model.token_per_request_trend",
+          "title_key": "observability.panel.model.token_per_request_trend",
+          "render_type": "timeseries",
+          "unit": "tokens",
+          "query_ref": "model.token_per_request_trend",
+          "grid": {
+            "x": 8,
+            "y": 1,
+            "w": 4,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "model.request_trend",
+          "title_key": "observability.panel.model.request_trend",
+          "render_type": "timeseries",
+          "unit": "count",
+          "query_ref": "model.request_trend",
+          "grid": {
+            "x": 0,
+            "y": 3,
+            "w": 4,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "model.request_latency_trend",
+          "title_key": "observability.panel.model.request_latency_trend",
+          "render_type": "timeseries",
+          "unit": "duration_ms",
+          "query_ref": "model.request_latency_trend",
+          "grid": {
+            "x": 4,
+            "y": 3,
+            "w": 4,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "model.error_trend",
+          "title_key": "observability.panel.model.error_trend",
+          "render_type": "timeseries",
+          "unit": "count",
+          "query_ref": "model.error_trend",
+          "grid": {
+            "x": 8,
+            "y": 3,
+            "w": 4,
+            "h": 2
+          },
+          "options": {
+            "series_units": {
+              "failure_rate": "percent"
+            }
+          }
+        },
+        {
+          "id": "model.stats_table",
+          "title_key": "observability.panel.model.stats_table",
+          "render_type": "table",
+          "unit": "",
+          "query_ref": "model.stats_table",
+          "grid": {
+            "x": 0,
+            "y": 5,
+            "w": 12,
+            "h": 3
+          },
+          "options": {
+            "columns": [
+              {
+                "key": "model",
+                "label_key": "observability.column.model",
+                "format": "string",
+                "sortable": true
+              },
+              {
+                "key": "input_tokens",
+                "label_key": "observability.column.input_tokens",
+                "format": "tokens",
+                "sortable": true
+              },
+              {
+                "key": "output_tokens",
+                "label_key": "observability.column.output_tokens",
+                "format": "tokens",
+                "sortable": true
+              },
+              {
+                "key": "cache_read_tokens",
+                "label_key": "observability.column.cache_read_tokens",
+                "format": "tokens",
+                "sortable": true
+              },
+              {
+                "key": "cache_creation_tokens",
+                "label_key": "observability.column.cache_creation_tokens",
+                "format": "tokens",
+                "sortable": true
+              },
+              {
+                "key": "token_total",
+                "label_key": "observability.column.token_total",
+                "format": "tokens",
+                "sortable": true
+              },
+              {
+                "key": "requests",
+                "label_key": "observability.column.requests",
+                "format": "number",
+                "sortable": true
+              },
+              {
+                "key": "errors",
+                "label_key": "observability.column.errors",
+                "format": "number",
+                "sortable": true
+              },
+              {
+                "key": "failure_rate",
+                "label_key": "observability.column.failure_rate",
+                "format": "percent",
+                "sortable": true
+              },
+              {
+                "key": "avg_duration_ms",
+                "label_key": "observability.column.avg_duration",
+                "format": "duration_ms",
+                "sortable": true
+              },
+              {
+                "key": "p95_duration_ms",
+                "label_key": "observability.column.p95_duration",
+                "format": "duration_ms",
+                "sortable": true
+              },
+              {
+                "key": "p99_duration_ms",
+                "label_key": "observability.column.p99_duration",
+                "format": "duration_ms",
+                "sortable": true
+              },
+              {
+                "key": "avg_ttft_ms",
+                "label_key": "observability.column.avg_ttft",
+                "format": "duration_ms",
+                "sortable": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tool",
+      "title_key": "observability.tab.tool",
+      "panels": [
+        {
+          "id": "tool.calls",
+          "title_key": "observability.panel.tool.calls",
+          "render_type": "stat",
+          "unit": "count",
+          "query_ref": "tool.calls",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 4,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "tool.duration_avg",
+          "title_key": "observability.panel.tool.duration_avg",
+          "render_type": "stat",
+          "unit": "duration_ms",
+          "query_ref": "tool.duration_avg",
+          "grid": {
+            "x": 4,
+            "y": 0,
+            "w": 4,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "tool.errors",
+          "title_key": "observability.panel.tool.errors",
+          "render_type": "stat",
+          "unit": "count",
+          "query_ref": "tool.errors",
+          "grid": {
+            "x": 8,
+            "y": 0,
+            "w": 4,
+            "h": 1
+          },
+          "options": {}
+        },
+        {
+          "id": "tool.calls_trend",
+          "title_key": "observability.panel.tool.calls_trend",
+          "render_type": "timeseries",
+          "unit": "count",
+          "query_ref": "tool.calls_trend",
+          "grid": {
+            "x": 0,
+            "y": 1,
+            "w": 4,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "tool.duration_trend",
+          "title_key": "observability.panel.tool.duration_trend",
+          "render_type": "timeseries",
+          "unit": "duration_ms",
+          "query_ref": "tool.duration_trend",
+          "grid": {
+            "x": 4,
+            "y": 1,
+            "w": 4,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "tool.errors_trend",
+          "title_key": "observability.panel.tool.errors_trend",
+          "render_type": "timeseries",
+          "unit": "count",
+          "query_ref": "tool.errors_trend",
+          "grid": {
+            "x": 8,
+            "y": 1,
+            "w": 4,
+            "h": 2
+          },
+          "options": {}
+        },
+        {
+          "id": "tool.stats_table",
+          "title_key": "observability.panel.tool.stats_table",
+          "render_type": "table",
+          "unit": "",
+          "query_ref": "tool.stats_table",
+          "grid": {
+            "x": 0,
+            "y": 3,
+            "w": 12,
+            "h": 3
+          },
+          "options": {
+            "columns": [
+              {
+                "key": "tool_name",
+                "label_key": "observability.column.tool_name",
+                "format": "string",
+                "sortable": true
+              },
+              {
+                "key": "calls",
+                "label_key": "observability.column.calls",
+                "format": "number",
+                "sortable": true
+              },
+              {
+                "key": "errors",
+                "label_key": "observability.column.errors",
+                "format": "number",
+                "sortable": true
+              },
+              {
+                "key": "avg_duration_ms",
+                "label_key": "observability.column.avg_duration",
+                "format": "duration_ms",
+                "sortable": true
+              },
+              {
+                "key": "p95_duration_ms",
+                "label_key": "observability.column.p95_duration",
+                "format": "duration_ms",
+                "sortable": true
+              },
+              {
+                "key": "max_duration_ms",
+                "label_key": "observability.column.max_duration",
+                "format": "duration_ms",
+                "sortable": true
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "query_ref": "overview.active_sessions",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.interactions",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.token_total",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.cost_estimated",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.ttft_avg",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.session_error_rate",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.session_turns_percentiles",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.session_tokens_percentiles",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.session_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.llm_request_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.token_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.interaction_duration_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.model_stats",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "overview.tool_top",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.requests",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.duration_avg",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.failure_rate",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.token_total",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.ttft_avg",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.cost_estimated",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.token_distribution",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.token_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.token_per_request_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.request_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.request_latency_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.error_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "model.stats_table",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "model",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "tool.calls",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "tool",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "tool.duration_avg",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "tool",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "tool.errors",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "tool",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "tool.calls_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "tool",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "tool.duration_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "tool",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "tool.errors_trend",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "tool",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "tool.stats_table",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "tool",
+          "type": "string_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "trace.trend.count",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "trace.trend.interaction_duration",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "trace.trend.errors",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "trace.list",
+      "variables": [
+        {
+          "name": "start_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": true
+        },
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "trace_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false
+        }
+      ]
+    },
+    {
+      "query_ref": "trace.detail",
+      "variables": [
+        {
+          "name": "agent_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "agent_version",
+          "type": "int_list",
+          "required": false
+        },
+        {
+          "name": "trace_id",
+          "type": "string",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

@@ -845,6 +845,15 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
 export function mockManagedResourceApi() {
   const now = new Date().toISOString();
   const requests: RecordedRequest[] = [];
+  const sessionResources = [
+    {
+      id: 'sesrsc_orders123456',
+      type: 'file',
+      created_at: new Date(Date.now() - 80_000).toISOString(),
+      file_id: 'file_orders123456',
+      mount_path: '/uploads/orders.zip',
+    },
+  ];
   const resources = {
     agents: [
       agentResponse({
@@ -864,17 +873,10 @@ export function mockManagedResourceApi() {
         type: 'session',
         updated_at: now,
         vault_ids: ['vlt_one123456'],
+        resources: sessionResources,
       },
     ],
-    sessionResources: [
-      {
-        id: 'sesrsc_orders123456',
-        type: 'file',
-        created_at: new Date(Date.now() - 80_000).toISOString(),
-        file_id: 'file_orders123456',
-        mount_path: '/uploads/orders.zip',
-      },
-    ],
+    sessionResources,
     sessionThreads: [
       {
         id: 'sthr_reporter123456',

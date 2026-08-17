@@ -9,7 +9,7 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 会话摘要下方提供五个一级页签：
 
 1. **事件**：复用现有 transcript/debug、事件筛选、搜索、线程 lane、minimap 和事件详情面板。
-2. **资源**：展示真实 `session.resources.list` 返回的挂载项。
+2. **资源**：展示 Session retrieve 响应中 `resources` 返回的挂载项。
 3. **智能体**：展示会话固定的 Agent 版本、模型、系统提示词和工具类型。
 4. **环境**：展示 Session 引用的 Environment、状态和网络模式。
 5. **凭据**：展示 Session 关联的凭据保险库和凭据元数据。页面不得读取或展示 credential 的 secret 值。
@@ -18,16 +18,18 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 
 ## 数据来源
 
-| 区域     | 数据来源                    | 说明                                                    |
-| -------- | --------------------------- | ------------------------------------------------------- |
-| 会话摘要 | Session retrieve            | 状态、Agent 引用、Environment ID、Vault IDs、用量和时间 |
-| 事件     | Session/Thread events + SSE | 保留现有缓存、补帧和实时状态机                          |
-| 资源     | Session resources list      | 只展示 API 实际返回的资源，不虚构环境变量等类型         |
-| 智能体   | Agent retrieve              | 按 `session.agent` 中的 ID 和固定版本读取               |
-| 环境     | Environment retrieve        | 按 `environment_id` 读取                                |
-| 凭据     | Vault + credential list     | 按 `vault_ids` 读取元数据，禁止请求 credential secret   |
+| 区域     | 数据来源                    | 说明                                                     |
+| -------- | --------------------------- | -------------------------------------------------------- |
+| 会话摘要 | Session retrieve            | 状态、Agent 引用、Environment ID、Vault IDs、用量和时间  |
+| 事件     | Session/Thread events + SSE | 保留现有缓存、补帧和实时状态机                           |
+| 资源     | Session retrieve            | 只展示 `resources` 实际返回的资源，不拼接 Files API 数据 |
+| 智能体   | Agent retrieve              | 按 `session.agent` 中的 ID 和固定版本读取                |
+| 环境     | Environment retrieve        | 按 `environment_id` 读取                                 |
+| 凭据     | Vault + credential list     | 按 `vault_ids` 读取元数据，禁止请求 credential secret    |
 
 关联实体并行加载；一类关联实体失败时保留其余可用数据并显示不可用状态，不影响事件与对话。
+
+进入资源页签时重新请求 Session retrieve，以获取后端最新的 `resources`。事件流不触发资源刷新；前端不调用 Session resources list 或 Files API 补齐资源字段。
 
 ## 对话和停止行为
 

@@ -38,12 +38,10 @@ const emptyRelatedEntities: RelatedEntities = {
 
 export function SessionEntityPanels({
   refreshKey,
-  resources,
   session,
   workspaceId,
 }: {
   refreshKey: number;
-  resources: SessionResourceApiResponse[];
   session: SessionApiResponse;
   workspaceId: string;
 }) {
@@ -67,8 +65,8 @@ export function SessionEntityPanels({
             'Files, repositories, and memory stores available inside this session.',
           )}
         >
-          {resources.length ? (
-            <ResourceTable resources={resources} />
+          {session.resources.length ? (
+            <ResourceTable resources={session.resources} />
           ) : (
             <EmptyText>{msg('managedAgents.sessions.nested.noResources', 'No resources mounted')}</EmptyText>
           )}
@@ -361,41 +359,47 @@ function ResourceTable({ resources }: { resources: SessionResourceApiResponse[] 
 
   return (
     <div className="overflow-hidden rounded-lg border border-border">
-      <Table className="min-w-[860px] table-fixed text-left">
+      <Table className="min-w-[760px] table-fixed text-left">
+        <colgroup>
+          <col className="w-[18%]" />
+          <col className="w-[27%]" />
+          <col className="w-[27%]" />
+          <col className="w-[28%]" />
+        </colgroup>
         <TableHeader className="bg-card-raised text-muted-foreground">
           <TableRow className="hover:bg-transparent">
-            <TableHead className="w-[24%] px-4 text-muted-foreground">{msg('common.name', 'Name')}</TableHead>
-            <TableHead className="w-[120px] px-4 text-muted-foreground">
+            <TableHead className="px-5 text-muted-foreground">
               {msg('managedAgents.sessions.trace.type', 'Type')}
             </TableHead>
-            <TableHead className="w-[220px] px-4 text-muted-foreground">
+            <TableHead className="px-5 text-muted-foreground">
+              {msg('managedAgents.sessions.resources.resourceId', 'Resource ID')}
+            </TableHead>
+            <TableHead className="px-5 text-muted-foreground">
               {msg('managedAgents.sessions.resources.fileId', 'File ID')}
             </TableHead>
-            <TableHead className="px-4 text-muted-foreground">
+            <TableHead className="px-5 text-muted-foreground">
               {msg('managedAgents.sessions.resources.mountPath', 'Mount path')}
             </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {resources.map((resource, index) => {
-            const name = resourceName(resource);
-            const fileId = typeof resource.file_id === 'string' && resource.file_id ? resource.file_id : '—';
-            const path = resourcePath(resource) || '—';
+            const resourceId = resource.id ?? '—';
+            const fileId = resource.file_id ?? '—';
+            const mountPath = resource.mount_path ?? '—';
             return (
-              <TableRow key={String(resource.id ?? index)} className="bg-card text-foreground">
-                <TableCell className="h-12 truncate px-4 font-medium" title={name}>
-                  {name}
+              <TableRow key={resource.id ?? index} className="bg-card text-foreground">
+                <TableCell className="h-14 px-5">
+                  <Badge variant="secondary">{titleCase((resource.type ?? 'resource').replaceAll('_', ' '))}</Badge>
                 </TableCell>
-                <TableCell className="h-12 px-4">
-                  <Badge variant="secondary">
-                    {titleCase(String(resource.type ?? 'resource').replaceAll('_', ' '))}
-                  </Badge>
+                <TableCell className="h-14 truncate px-5 font-mono text-xs text-muted-foreground" title={resourceId}>
+                  {resourceId}
                 </TableCell>
-                <TableCell className="h-12 truncate px-4 font-mono text-xs text-muted-foreground" title={fileId}>
+                <TableCell className="h-14 truncate px-5 font-mono text-xs text-muted-foreground" title={fileId}>
                   {fileId}
                 </TableCell>
-                <TableCell className="h-12 truncate px-4 font-mono text-xs text-muted-foreground" title={path}>
-                  {path}
+                <TableCell className="h-14 truncate px-5 font-mono text-xs text-muted-foreground" title={mountPath}>
+                  {mountPath}
                 </TableCell>
               </TableRow>
             );
@@ -408,19 +412,6 @@ function ResourceTable({ resources }: { resources: SessionResourceApiResponse[] 
 
 function EmptyText({ children }: { children: React.ReactNode }) {
   return <div className="py-12 text-center text-sm text-muted-foreground">{children}</div>;
-}
-
-function resourceName(resource: SessionResourceApiResponse) {
-  for (const key of ['filename', 'name']) if (typeof resource[key] === 'string' && resource[key]) return resource[key];
-  const basename = resourcePath(resource).split('/').filter(Boolean).at(-1);
-  if (basename) return basename;
-  return String(resource.id ?? 'Resource');
-}
-
-function resourcePath(resource: SessionResourceApiResponse) {
-  for (const key of ['mount_path', 'path', 'repository', 'url'])
-    if (typeof resource[key] === 'string' && resource[key]) return resource[key];
-  return '';
 }
 
 function isNonEmptyString(value: unknown): value is string {

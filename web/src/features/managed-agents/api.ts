@@ -607,12 +607,6 @@ export async function listAllSessionThreads(sessionId: string, workspaceId: stri
   });
 }
 
-export function listSessionResourcesForDetail(sessionId: string, workspaceId: string) {
-  return sessionDetailSingleFlight(`resources:${workspaceId}:${sessionId}`, () =>
-    listSessionResources(sessionId, workspaceId),
-  );
-}
-
 export function listSessionEvents(
   sessionId: string,
   workspaceId: string,

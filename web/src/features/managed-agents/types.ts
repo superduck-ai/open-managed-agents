@@ -169,6 +169,7 @@ export type SessionApiResponse = {
   created_at: string;
   deployment_id?: string | null;
   environment_id: string;
+  resources: SessionResourceApiResponse[];
   stats?: unknown;
   status: string;
   title?: string | null;
@@ -301,6 +302,8 @@ export type EnvironmentWorkApiResponse = {
 export type SessionResourceApiResponse = {
   id?: string;
   created_at?: string;
+  file_id?: string;
+  mount_path?: string;
   type?: string;
   [key: string]: unknown;
 };

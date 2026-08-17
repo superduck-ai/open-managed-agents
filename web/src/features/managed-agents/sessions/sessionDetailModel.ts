@@ -492,10 +492,8 @@ export function sessionResourcesLabel(resources: SessionResourceApiResponse[], m
   if (!resources.length) {
     return '';
   }
-  const fileCount = resources.filter((resource) =>
-    String(resource.type || resource.resource_type || '').includes('file'),
-  ).length;
-  if (fileCount > 0 && fileCount === resources.length) {
+  const fileCount = resources.filter((resource) => resource.type === 'file').length;
+  if (fileCount === resources.length) {
     return msg('managedAgents.sessions.detail.fileCount', '{count, plural, one {# file} other {# files}}', {
       count: fileCount,
     });

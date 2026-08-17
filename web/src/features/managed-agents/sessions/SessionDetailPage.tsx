@@ -16,7 +16,6 @@ import {
   archiveManagedEntity,
   deleteManagedEntity,
   listAllSessionThreads,
-  listSessionResourcesForDetail,
   retrieveSessionDetailSession,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
   sessionThreadListSignature,
@@ -31,7 +30,6 @@ import {
   type SessionApiResponse,
   type SessionDebugDetailTab,
   type SessionEventListEntry,
-  type SessionResourceApiResponse,
   type SessionThreadApiResponse,
   type SessionTraceFilterOption,
   type SessionTraceView,
@@ -103,7 +101,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const listHref = managedEntityListHref(activeWorkspaceId, 'sessions');
   const listLabel = resourceTitle(config, msg);
   const [session, setSession] = useState<SessionApiResponse | null>(null);
-  const [resources, setResources] = useState<SessionResourceApiResponse[]>([]);
   const [threads, setThreads] = useState<SessionThreadApiResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -152,7 +149,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       })().catch(() => undefined);
     }, 600);
   }, [activeWorkspaceId, session?.id]);
-  const refreshSessionMetadata = useCallback(() => {
+  const refreshSessionResources = useCallback(() => {
     if (!session?.id) {
       return;
     }
@@ -183,11 +180,9 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       }
       if (type === 'session.thread_created') {
         refreshSessionThreads();
-      } else if (type === 'session.updated') {
-        refreshSessionMetadata();
       }
     },
-    [activeSessionId, refreshSessionMetadata, refreshSessionThreads],
+    [activeSessionId, refreshSessionThreads],
   );
 
   useEffect(() => {
@@ -195,7 +190,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     setLoading(true);
     setLoadError(null);
     setMetadataError(null);
-    setResources([]);
     setThreads([]);
     setMetadataLoaded(false);
     void (async () => {
@@ -207,26 +201,20 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         setSession(loadedSession);
         setLoading(false);
 
-        const [resourcesResult, threadsResult] = await Promise.allSettled([
-          listSessionResourcesForDetail(loadedSession.id, activeWorkspaceId),
-          listAllSessionThreads(loadedSession.id, activeWorkspaceId),
-        ]);
-        if (!active) {
-          return;
+        try {
+          const threadsPage = await listAllSessionThreads(loadedSession.id, activeWorkspaceId);
+          if (active) {
+            setThreads(threadsPage.data ?? []);
+          }
+        } catch (error) {
+          if (active) {
+            setMetadataError(errorMessage(error));
+          }
+        } finally {
+          if (active) {
+            setMetadataLoaded(true);
+          }
         }
-        const loadedThreads = threadsResult.status === 'fulfilled' ? (threadsResult.value.data ?? []) : [];
-        if (resourcesResult.status === 'fulfilled') {
-          setResources(resourcesResult.value.data ?? []);
-        }
-        if (threadsResult.status === 'fulfilled') {
-          setThreads(loadedThreads);
-        }
-        setMetadataLoaded(true);
-        const settledResults = [resourcesResult, threadsResult] as PromiseSettledResult<unknown>[];
-        const firstRejected = settledResults.find(
-          (result): result is PromiseRejectedResult => result.status === 'rejected',
-        );
-        setMetadataError(firstRejected ? errorMessage(firstRejected.reason) : null);
       } catch (error) {
         if (active) {
           setSession(null);
@@ -379,8 +367,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     [activeLane, entriesByLaneId, filteredEntries, query, selectedTypes, timeline, view],
   );
   const summary = useMemo(
-    () => (session ? buildSessionDetailSummary(session, resources, sortedEvents, formatters, msg) : null),
-    [formatters, msg, resources, session, sortedEvents],
+    () => (session ? buildSessionDetailSummary(session, session.resources, sortedEvents, formatters, msg) : null),
+    [formatters, msg, session, sortedEvents],
   );
   const copyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries, view), [filteredEntries, view]);
 
@@ -716,7 +704,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 <ListTree className="size-4" aria-hidden />
                 {msg('managedAgents.sessions.detail.eventsTab', 'Events')}
               </TabsTrigger>
-              <TabsTrigger value="resources" className="h-10 flex-none gap-2 px-1">
+              <TabsTrigger value="resources" className="h-10 flex-none gap-2 px-1" onClick={refreshSessionResources}>
                 <FolderOpen className="size-4" aria-hidden />
                 {msg('managedAgents.sessions.detail.resourcesTab', 'Resources')}
               </TabsTrigger>
@@ -811,12 +799,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               />
             </SessionDetailDeltaFramesContext.Provider>
           </TabsContent>
-          <SessionEntityPanels
-            refreshKey={refreshKey}
-            resources={resources}
-            session={session}
-            workspaceId={activeWorkspaceId}
-          />
+          <SessionEntityPanels refreshKey={refreshKey} session={session} workspaceId={activeWorkspaceId} />
         </Tabs>
       </section>
     </TooltipProvider>

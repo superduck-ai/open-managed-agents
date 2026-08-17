@@ -72,10 +72,17 @@ func readRequiredJSON[T any](r *http.Request, disallowUnknownFields bool) (T, er
 }
 
 func visibleOrgUUID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	orgUUID, ok := resolvedVisibleOrgUUID(r)
+	if !ok {
+		organizationNotFound(w)
+	}
+	return orgUUID, ok
+}
+
+func resolvedVisibleOrgUUID(r *http.Request) (string, bool) {
 	orgUUID := strings.TrimSpace(chi.URLParam(r, "orgUuid"))
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if orgUUID == "" || !ok {
-		organizationNotFound(w)
 		return "", false
 	}
 	if principalCanSeeOrg(principal, orgUUID) {
@@ -86,7 +93,6 @@ func visibleOrgUUID(w http.ResponseWriter, r *http.Request) (string, bool) {
 			return localOrgUUID, true
 		}
 	}
-	organizationNotFound(w)
 	return "", false
 }
 

@@ -310,16 +310,6 @@
           AND deleted_at IS NULL
     </update>
 
-    <update id="TouchWorkerActivityForActiveLease" result="rows">
-        UPDATE code_sessions
-        SET last_worker_activity_at = #{now},
-            updated_at = #{now}
-        WHERE external_id = #{codeSessionExternalID}
-          AND current_worker_epoch = #{epoch}
-          AND worker_lease_expires_at &gt; #{now}
-          AND deleted_at IS NULL
-    </update>
-
     <update id="TouchWorkerActivity" result="rows">
         UPDATE code_sessions
         SET last_worker_activity_at = #{now},

@@ -1003,7 +1003,6 @@ func newS3ObjectStore(t *testing.T, override *config.Config) (storage.ObjectStor
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -1031,7 +1030,6 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}

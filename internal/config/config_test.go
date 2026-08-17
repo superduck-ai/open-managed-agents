@@ -92,8 +92,9 @@ batch:
   worker_concurrency: 7
   upstream_timeout: 45s
 code_session:
-  otlp_log_root: runtime/otlp
   jwt_signing_private_key_file: ${CONFIG_TEST_HOME}/jwt.pem
+observability:
+  content_capture_enabled: false
 webhook:
   endpoint_url: https://example.com/webhooks
   signing_key: yaml-signing-key
@@ -121,20 +122,115 @@ bootstrap:
 	if cfg.Batch.WorkerConcurrency != 7 || cfg.Batch.UpstreamTimeout != 45*time.Second {
 		t.Fatalf("unexpected batch config: concurrency=%d timeout=%s", cfg.Batch.WorkerConcurrency, cfg.Batch.UpstreamTimeout)
 	}
-	if cfg.CodeSession.OTLPFileLogEnabled {
-		t.Fatal("CodeSession.OTLPFileLogEnabled = true, want production default false")
-	}
-	if cfg.CodeSession.OTLPLogRoot != filepath.Join(root, "config", "runtime", "otlp") {
-		t.Fatalf("CodeSession.OTLPLogRoot = %q, want config-relative path", cfg.CodeSession.OTLPLogRoot)
-	}
 	if cfg.CodeSession.JWTSigningPrivateKeyFile != filepath.Join(root, "home", "jwt.pem") {
 		t.Fatalf("CodeSession.JWTSigningPrivateKeyFile = %q, want expanded path", cfg.CodeSession.JWTSigningPrivateKeyFile)
+	}
+	if cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("unexpected observability content policy: %#v", cfg.Observability)
 	}
 	if !cfg.Webhook.WorkerEnabled {
 		t.Fatal("Webhook.WorkerEnabled = false, want derived true")
 	}
 	if cfg.Bootstrap.WorkspaceName != "yaml-workspace" {
 		t.Fatalf("Bootstrap.WorkspaceName = %q, want yaml-workspace", cfg.Bootstrap.WorkspaceName)
+	}
+}
+
+func TestLoadDefaultsObservabilitySignalPolicy(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Observability.Enabled || !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("unexpected default observability policy: %#v", cfg.Observability)
+	}
+	if cfg.Observability.Backend != ObservabilityBackendOpenObserve {
+		t.Fatalf("Observability.Backend = %q, want %q", cfg.Observability.Backend, ObservabilityBackendOpenObserve)
+	}
+	if cfg.Observability.OpenObserve.Query.Timeout != 15*time.Second {
+		t.Fatalf("OpenObserve.Query.Timeout = %s, want 15s", cfg.Observability.OpenObserve.Query.Timeout)
+	}
+}
+
+func TestLoadKeepsContentCaptureEnabledWhenObservabilityIsPartial(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `
+observability:
+  enabled: false
+`)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("ContentCaptureEnabled = false, want default true when omitted: %#v", cfg.Observability)
+	}
+}
+
+func TestValidateObservabilityConfigOpenObserveBaseURL(t *testing.T) {
+	cfg := enabledOpenObserveConfig()
+	tests := []struct {
+		baseURL   string
+		wantError bool
+	}{
+		{baseURL: "http://openobserve:5080"},
+		{baseURL: "openobserve:5080", wantError: true},
+		{baseURL: "ftp://openobserve:5080", wantError: true},
+		{baseURL: "http://user@openobserve:5080", wantError: true},
+		{baseURL: "http://openobserve:5080?debug=true", wantError: true},
+		{baseURL: "http://openobserve:5080#fragment", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.baseURL, func(t *testing.T) {
+			cfg.OpenObserve.BaseURL = test.baseURL
+			err := validateObservabilityConfig(cfg)
+			if (err != nil) != test.wantError {
+				t.Fatalf("validateObservabilityConfig() error = %v, wantError %v", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestValidateObservabilityConfigRejectsUnsupportedBackend(t *testing.T) {
+	cfg := enabledOpenObserveConfig()
+	cfg.Backend = "clickhouse"
+	err := validateObservabilityConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "observability.backend") {
+		t.Fatalf("validateObservabilityConfig() error = %v, want backend error", err)
+	}
+}
+
+func TestValidateObservabilityConfigRequiresQueryBlock(t *testing.T) {
+	t.Run("missing query username", func(t *testing.T) {
+		cfg := enabledOpenObserveConfig()
+		cfg.OpenObserve.Query.Username = ""
+		err := validateObservabilityConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "observability.openobserve.query.username") {
+			t.Fatalf("validateObservabilityConfig() error = %v, want query.username error", err)
+		}
+	})
+	t.Run("non-positive query timeout", func(t *testing.T) {
+		cfg := enabledOpenObserveConfig()
+		cfg.OpenObserve.Query.Timeout = 0
+		err := validateObservabilityConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "observability.openobserve.query.timeout") {
+			t.Fatalf("validateObservabilityConfig() error = %v, want query.timeout error", err)
+		}
+	})
+}
+
+func enabledOpenObserveConfig() ObservabilityConfig {
+	return ObservabilityConfig{
+		Enabled: true,
+		Backend: ObservabilityBackendOpenObserve,
+		OpenObserve: OpenObserveConfig{
+			BaseURL:      "http://openobserve:5080",
+			Organization: "oma",
+			LogsStream:   "logs",
+			TracesStream: "traces",
+			Ingestion:    BackendCredentialsConfig{Username: "ingest", Password: "ingest-secret"},
+			Query:        BackendQueryConfig{Username: "query", Password: "query-secret", Timeout: 15 * time.Second},
+		},
 	}
 }
 
@@ -148,6 +244,31 @@ anthropic_upstream:
 `)
 	if err == nil || !strings.Contains(err.Error(), "model_mappings") {
 		t.Fatalf("Load() error = %v, want chained model_mappings error", err)
+	}
+}
+
+func TestValidateCodeSessionSandboxAPIBaseURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		environment string
+		config      CodeSessionConfig
+		enabled     bool
+		wantError   bool
+	}{
+		{name: "observability disabled with no URL", environment: EnvironmentProd},
+		{name: "missing URL", environment: EnvironmentProd, enabled: true, wantError: true},
+		{name: "invalid URL with observability disabled", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "openobserve.local"}, wantError: true},
+		{name: "production HTTPS", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example"}, enabled: true},
+		{name: "production HTTP rejected with observability disabled", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "http://oma.internal"}, wantError: true},
+		{name: "development HTTP", environment: EnvironmentDev, config: CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:38080"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateCodeSessionSandboxAPIBaseURL(test.environment, test.config, test.enabled)
+			if (err != nil) != test.wantError {
+				t.Fatalf("validateCodeSessionSandboxAPIBaseURL() error = %v, wantError %v", err, test.wantError)
+			}
+		})
 	}
 }
 
@@ -179,8 +300,6 @@ env: prod
 database:
   url: postgresql://yaml/database
   auto_migrate: false
-code_session:
-  otlp_file_log_enabled: false
 webhook:
   endpoint_url: https://example.com/webhooks
   signing_key: yaml-signing-key
@@ -190,7 +309,6 @@ webhook:
 	t.Setenv("APP_ENV", "dev")
 	t.Setenv("DATABASE_URL", "postgresql://environment/database")
 	t.Setenv("DB_AUTO_MIGRATE", "true")
-	t.Setenv("CODE_SESSION_OTLP_FILE_LOG_ENABLED", "true")
 	t.Setenv("WEBHOOK_WORKER_ENABLED", "false")
 
 	cfg, err := Load()
@@ -200,8 +318,8 @@ webhook:
 	if cfg.Env != "prod" || cfg.Database.URL != "postgresql://yaml/database" {
 		t.Fatalf("environment changed YAML: env=%q database=%q", cfg.Env, cfg.Database.URL)
 	}
-	if cfg.Database.AutoMigrate || cfg.CodeSession.OTLPFileLogEnabled || !cfg.Webhook.WorkerEnabled {
-		t.Fatalf("environment changed YAML booleans: auto_migrate=%t otlp=%t webhook=%t", cfg.Database.AutoMigrate, cfg.CodeSession.OTLPFileLogEnabled, cfg.Webhook.WorkerEnabled)
+	if cfg.Database.AutoMigrate || !cfg.Webhook.WorkerEnabled {
+		t.Fatalf("environment changed YAML booleans: auto_migrate=%t webhook=%t", cfg.Database.AutoMigrate, cfg.Webhook.WorkerEnabled)
 	}
 }
 
@@ -212,8 +330,6 @@ func TestLoadYAMLExplicitDynamicDefaults(t *testing.T) {
 env: prod
 database:
   auto_migrate: true
-code_session:
-  otlp_file_log_enabled: true
 webhook:
   endpoint_url: https://example.com/webhooks
   signing_key: yaml-signing-key
@@ -225,8 +341,8 @@ webhook:
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !cfg.Database.AutoMigrate || !cfg.CodeSession.OTLPFileLogEnabled || cfg.Webhook.WorkerEnabled {
-		t.Fatalf("explicit YAML values were not preserved: auto_migrate=%t otlp=%t webhook=%t", cfg.Database.AutoMigrate, cfg.CodeSession.OTLPFileLogEnabled, cfg.Webhook.WorkerEnabled)
+	if !cfg.Database.AutoMigrate || cfg.Webhook.WorkerEnabled {
+		t.Fatalf("explicit YAML values were not preserved: auto_migrate=%t webhook=%t", cfg.Database.AutoMigrate, cfg.Webhook.WorkerEnabled)
 	}
 }
 
@@ -238,6 +354,8 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 	}{
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "optional list item field", overrides: "bootstrap:\n  seed_api_keys:\n    - external_idd: typo\n      key: secret\n", wantField: "external_idd"},
+		// D7 迁移后废弃的平铺凭据键不得被静默接受。
+		{name: "retired flat openobserve key", overrides: "observability:\n  openobserve:\n    ingestion_username: leftover\n", wantField: "ingestion_username"},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -451,6 +569,18 @@ func TestDockerComposeDeclaresDevelopmentCredentialPosture(t *testing.T) {
 	if strings.TrimSpace(cfg.CodeSession.JWTSigningPrivateKeyFile) != "" {
 		t.Fatalf("Compose development jwt_signing_private_key_file = %q, want process-local ephemeral key", cfg.CodeSession.JWTSigningPrivateKeyFile)
 	}
+	if !cfg.Observability.Enabled || !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("Compose observability enabled/content_capture_enabled = %t/%t, want true/true", cfg.Observability.Enabled, cfg.Observability.ContentCaptureEnabled)
+	}
+	if cfg.Observability.Backend != ObservabilityBackendOpenObserve {
+		t.Fatalf("Compose observability backend = %q, want %q", cfg.Observability.Backend, ObservabilityBackendOpenObserve)
+	}
+	if cfg.Observability.OpenObserve.Ingestion.Username != "root@example.com" || cfg.Observability.OpenObserve.Query.Username != "root@example.com" {
+		t.Fatalf("Compose OpenObserve usernames = %q/%q, want local root account", cfg.Observability.OpenObserve.Ingestion.Username, cfg.Observability.OpenObserve.Query.Username)
+	}
+	if cfg.Observability.OpenObserve.Ingestion.Password != "Complexpass#123" || cfg.Observability.OpenObserve.Query.Password != "Complexpass#123" {
+		t.Fatal("Compose OpenObserve passwords must match the local docker-compose default")
+	}
 }
 
 func TestDockerComposeSandboxCallbackUsesPublishedAPIPort(t *testing.T) {
@@ -563,61 +693,6 @@ func TestLoadDatabaseAutoMigrateOverride(t *testing.T) {
 			t.Fatal("DatabaseAutoMigrate = true, want false")
 		}
 	})
-}
-
-func TestLoadCodeSessionOTLPFileLogDefaults(t *testing.T) {
-	t.Run("development enabled", func(t *testing.T) {
-		prepareLoadTest(t)
-
-		cfg, err := loadConfigTestYAML(t, "")
-		if err != nil {
-			t.Fatalf("load config: %v", err)
-		}
-		if !cfg.CodeSession.OTLPFileLogEnabled {
-			t.Fatal("CodeSessionOTLPFileLogEnabled = false, want true")
-		}
-		wantLogRoot := filepath.Join(filepath.Dir(os.Getenv(configFileEnv)), "logs")
-		if cfg.CodeSession.OTLPLogRoot != wantLogRoot {
-			t.Fatalf("CodeSessionOTLPLogRoot = %q, want %q", cfg.CodeSession.OTLPLogRoot, wantLogRoot)
-		}
-		if cfg.CodeSession.OTLPLogBodyPreviewBytes != 256*1024 {
-			t.Fatalf("CodeSessionOTLPLogBodyPreviewBytes = %d, want %d", cfg.CodeSession.OTLPLogBodyPreviewBytes, 256*1024)
-		}
-	})
-
-	t.Run("production disabled", func(t *testing.T) {
-		prepareLoadTest(t)
-		cfg, err := loadConfigTestYAML(t, "env: prod\n")
-		if err != nil {
-			t.Fatalf("load config: %v", err)
-		}
-		if cfg.CodeSession.OTLPFileLogEnabled {
-			t.Fatal("CodeSessionOTLPFileLogEnabled = true, want false")
-		}
-	})
-}
-
-func TestLoadCodeSessionOTLPFileLogOverrides(t *testing.T) {
-	prepareLoadTest(t)
-	cfg, err := loadConfigTestYAML(t, `
-env: prod
-code_session:
-  otlp_file_log_enabled: true
-  otlp_log_root: /tmp/custom-otlp
-  otlp_log_body_preview_bytes: 1024
-`)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if !cfg.CodeSession.OTLPFileLogEnabled {
-		t.Fatal("CodeSessionOTLPFileLogEnabled = false, want true")
-	}
-	if cfg.CodeSession.OTLPLogRoot != "/tmp/custom-otlp" {
-		t.Fatalf("CodeSessionOTLPLogRoot = %q, want /tmp/custom-otlp", cfg.CodeSession.OTLPLogRoot)
-	}
-	if cfg.CodeSession.OTLPLogBodyPreviewBytes != 1024 {
-		t.Fatalf("CodeSessionOTLPLogBodyPreviewBytes = %d, want 1024", cfg.CodeSession.OTLPLogBodyPreviewBytes)
-	}
 }
 
 func TestLoadCodeSessionUpstreamProxySSRFProtectionOverride(t *testing.T) {

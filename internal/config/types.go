@@ -3,9 +3,10 @@ package config
 import "time"
 
 const (
-	EnvironmentDev  = "dev"
-	EnvironmentProd = "prod"
-	StorageTypeS3   = "s3"
+	EnvironmentDev                  = "dev"
+	EnvironmentProd                 = "prod"
+	StorageTypeS3                   = "s3"
+	ObservabilityBackendOpenObserve = "openobserve"
 )
 
 type Config struct {
@@ -19,6 +20,7 @@ type Config struct {
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       CodeSessionConfig       `yaml:"code_session"`
+	Observability     ObservabilityConfig     `yaml:"observability"`
 	Webhook           WebhookConfig           `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
@@ -124,9 +126,6 @@ type EnvironmentRunnerConfig struct {
 
 type CodeSessionConfig struct {
 	SandboxAPIBaseURL        string `yaml:"sandbox_api_base_url"`
-	OTLPFileLogEnabled       bool   `yaml:"otlp_file_log_enabled"`
-	OTLPLogRoot              string `yaml:"otlp_log_root"`
-	OTLPLogBodyPreviewBytes  int    `yaml:"otlp_log_body_preview_bytes"`
 	JWTSigningPrivateKeyFile string `yaml:"jwt_signing_private_key_file"`
 	// UpstreamProxyMITMEnabled 开启后，CCR CONNECT 会在服务端终止客户端 TLS，按 HTTP 转发，再独立验证真实上游 TLS。
 	UpstreamProxyMITMEnabled bool `yaml:"upstream_proxy_mitm_enabled"`
@@ -135,6 +134,43 @@ type CodeSessionConfig struct {
 	UpstreamProxyCAKeyFile string `yaml:"upstream_proxy_ca_key_file"`
 	// UpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
 	UpstreamProxyDisableSSRFProtection bool `yaml:"upstream_proxy_disable_ssrf_protection"`
+}
+
+type ObservabilityConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// ContentCaptureEnabled defaults to true. It authorizes prompt originals,
+	// model output, and tool input/output payloads to enter the observability
+	// store. Set false to keep structural telemetry only (spans, durations,
+	// tokens, tool names).
+	ContentCaptureEnabled bool                    `yaml:"content_capture_enabled"`
+	OTLP                  ObservabilityOTLPConfig `yaml:"otlp"`
+	Backend               string                  `yaml:"backend"`
+	OpenObserve           OpenObserveConfig       `yaml:"openobserve"`
+}
+
+type OpenObserveConfig struct {
+	BaseURL      string                   `yaml:"base_url"`
+	Organization string                   `yaml:"organization"`
+	LogsStream   string                   `yaml:"logs_stream"`
+	TracesStream string                   `yaml:"traces_stream"`
+	Ingestion    BackendCredentialsConfig `yaml:"ingestion"`
+	Query        BackendQueryConfig       `yaml:"query"`
+}
+
+type BackendCredentialsConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type BackendQueryConfig struct {
+	Username string        `yaml:"username"`
+	Password string        `yaml:"password"`
+	Timeout  time.Duration `yaml:"timeout"`
+}
+
+type ObservabilityOTLPConfig struct {
+	MaxRequestBytes int64         `yaml:"max_request_bytes"`
+	ForwardTimeout  time.Duration `yaml:"forward_timeout"`
 }
 
 type WebhookConfig struct {

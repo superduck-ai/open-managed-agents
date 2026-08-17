@@ -25,6 +25,7 @@ import {
   type SessionTimelineLane,
   type SessionTraceFilterOption,
   type SessionTraceView,
+  type SessionDetailSegment,
   type ToolBatchEntry,
   type ToolCallEntry,
 } from '../types';
@@ -587,12 +588,15 @@ export function truncateLaneLabel(label: string) {
   return `${value.slice(0, 11)}...${value.slice(-4)}`;
 }
 
-export function readSessionDetailInitialView(): SessionTraceView {
+export function readSessionDetailInitialView(): SessionDetailSegment {
   if (typeof window === 'undefined') {
     return 'transcript';
   }
   const segment = new URLSearchParams(window.location.search).get('segment');
-  return segment === 'debug' ? 'debug' : 'transcript';
+  if (segment === 'debug' || segment === 'trace') {
+    return segment;
+  }
+  return 'transcript';
 }
 
 export function readSessionDetailInitialEventId() {
@@ -612,7 +616,7 @@ export function readSessionDetailInitialLaneId() {
 }
 
 export function writeSessionDetailUrlState(
-  view: SessionTraceView,
+  view: SessionDetailSegment,
   eventId: string | null,
   laneId: string,
   showArchivedLanes: boolean,
@@ -621,10 +625,13 @@ export function writeSessionDetailUrlState(
     return;
   }
   const url = new URL(window.location.href);
-  if (view === 'debug') {
-    url.searchParams.set('segment', 'debug');
+  if (view === 'debug' || view === 'trace') {
+    url.searchParams.set('segment', view);
   } else {
     url.searchParams.delete('segment');
+  }
+  if (view !== 'trace') {
+    url.searchParams.delete('trace_id');
   }
   if (eventId) {
     url.searchParams.set('event', eventId);

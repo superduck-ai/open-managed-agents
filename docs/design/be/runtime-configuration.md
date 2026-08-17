@@ -78,7 +78,6 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY` | `environment_runner.enabled` / `concurrency` | 仅在覆盖代码默认值时配置 |
 | `ENVIRONMENT_MANAGER_PATH` / `CLAUDE_AGENT_VERSION` / `CLAUDE_PATH` | `environment_runner.manager_path` / `claude_agent_version` / `claude_path` | 路径可使用 YAML 路径展开语法 |
 | `CODE_SESSION_SANDBOX_API_BASE_URL` | `code_session.sandbox_api_base_url` | 必须是 sandbox 实际可达地址，不从监听地址推导 |
-| `CODE_SESSION_OTLP_*` | `code_session.otlp_*` | 后缀保持小写 snake case |
 | `CODE_SESSION_JWT_SIGNING_KEY_FILE` | `code_session.jwt_signing_private_key_file` | 字段改名；生产环境必须指向稳定只读私钥 |
 | `CODE_SESSION_UPSTREAM_PROXY_*` | `code_session.upstream_proxy_*` | 迁移 MITM、CA 私钥路径和 SSRF 诊断开关 |
 | `WEBHOOK_ENDPOINT_URL` / `ANTHROPIC_WEBHOOK_SIGNING_KEY` | `webhook.endpoint_url` / `webhook.signing_key` | signing key 字段不再使用 Anthropic 环境变量名 |
@@ -109,7 +108,6 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 - `environment_runner.manager_path`
 - `environment_runner.claude_path`
-- `code_session.otlp_log_root`
 - `code_session.jwt_signing_private_key_file`
 - `code_session.upstream_proxy_ca_key_file`
 
@@ -122,11 +120,14 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 部分默认值依赖其他字段，因此只在 YAML 未显式设置对应字段时派生：
 
 - `database.auto_migrate`：`env` 为 `prod` 时默认关闭，`dev` 时默认开启。
-- `code_session.otlp_file_log_enabled`：`env` 为 `prod` 时默认关闭，`dev` 时默认开启。
 - `webhook.worker_enabled`：同时配置 endpoint 和 signing key 时默认开启。
 - `bootstrap.seed_api_keys`：未配置时根据 Bootstrap 和 SDK fixture 的 ID/key 生成默认 seed keys；显式空列表表示不 seed API key。
 
-`code_session.sandbox_api_base_url` 不从 `server.addr` 或其他字段推导。空值会保持为空；需要 sandbox 回调 code-session ingress 或 OTLP endpoint 时，部署配置必须显式提供 sandbox 可访问的地址。Docker Compose 的进程监听端口为容器内 `8080`、宿主机发布端口为 `38080`，因此其部署 YAML 显式使用 `http://host.docker.internal:38080`，不能使用容器监听端口代替。
+`code_session.sandbox_api_base_url` 不从 `server.addr` 或其他字段推导。空值会保持为空；需要 sandbox 回调 code-session ingress 或 OTLP endpoint 时，部署配置必须显式提供 sandbox 可访问的地址。非空值必须是绝对 HTTP(S) URL；生产环境必须使用 HTTPS。Docker Compose 使用 `env: dev`，因此可显式使用 `http://host.docker.internal:38080`。
+
+Observability 使用独立的进程级 YAML 配置：`observability.enabled` 控制采集、转发与查询 API（开启即注入 Metrics、Logs 和 Detailed Trace 全部信号，不再按信号拆分开关）；`observability.backend` 选择写入/查询后端（首版仅 `openobserve`）；`observability.content_capture_enabled`（默认 true）控制 prompt 原文、模型输出和工具输入/输出正文是否进入可观测存储，设为 false 时仅保留结构化遥测（span 结构、耗时、token、工具名）；`observability.otlp` 控制 ingress body 上限和转发超时；选中后端块内的 `ingestion` 与 `query` 分组分别保存写入凭据和查询凭据（`query.timeout` 默认 15s）。OpenObserve 凭据只存在于 OMA 服务端，不进入 Agent、Session 或 Sandbox 环境。
+
+这是一次 breaking 迁移：OpenObserve 平铺 ingestion 凭据已删除，改为嵌套的 `observability.openobserve.ingestion.{username,password}` 与 `observability.openobserve.query.{username,password,timeout}`。升级前必须改写 YAML；严格解析不会接受旧平铺键，也不提供兼容层。旧 `code_session.otlp_file_log_enabled`、`code_session.otlp_log_root` 和 `code_session.otlp_log_body_preview_bytes` 也已随本地文件日志功能一起删除。
 
 Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base_url` 作为 rclone `service_url`，因此启用 Environment Runner 时该地址必须同时能从 E2B Sandbox 访问 Filestore HTTP 路由。Runner 通过 E2B Files API 每 `200ms` 探测 `/tmp/rclone-mounts/ready`，最长 `20s`；这两个值是运行时合同，不提供 YAML 配置。
 
@@ -148,7 +149,8 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |
 | `E2BConfig` | `e2b` | E2B provider 连接、模板和超时 |
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令 |
-| `CodeSessionConfig` | `code_session` | Code session ingress、JWT、OTLP 文件日志和上游代理安全配置 |
+| `CodeSessionConfig` | `code_session` | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置 |
+| `ObservabilityConfig` | `observability` | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
 | `WebhookConfig` | `webhook` | Webhook endpoint、签名、事件和投递 worker 策略 |
 | `BootstrapConfig` | `bootstrap` | 本地默认身份和需要 seed 的 API keys |
 | `SDKFixtureConfig` | `sdk_fixtures` | 官方 SDK 兼容测试使用的稳定 fixture 标识 |

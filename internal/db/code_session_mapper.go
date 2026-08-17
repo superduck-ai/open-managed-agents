@@ -150,7 +150,6 @@ type CodeSessionMapper interface {
 	UpdateCodeSessionInternalSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) error
 	ActivateCodeSession(ctx context.Context, codeSessionUUID string, now time.Time) (int64, error)
 	TouchWorkerActivityByUUID(ctx context.Context, codeSessionUUID string, now time.Time) error
-	TouchWorkerActivityForActiveLease(ctx context.Context, codeSessionExternalID string, epoch int64, now time.Time) (int64, error)
 	TouchWorkerActivity(ctx context.Context, codeSessionExternalID string, requiredEpoch *int64, now time.Time) (int64, error)
 	UpdateConnection(ctx context.Context, params updateCodeSessionConnectionParams) (int64, error)
 	TerminateByExternalID(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (int64, error)

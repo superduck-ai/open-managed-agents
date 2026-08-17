@@ -14,8 +14,6 @@ import {
   type AgentListFilters,
   type AgentPageResponse,
   type AgentSearchResponse,
-  type AgentSessionAnalyticsOverview,
-  type AgentSessionAnalyticsTimeseries,
   type AgentUpdateInput,
   type CreateAgentInput,
   type CredentialFormValues,
@@ -287,23 +285,6 @@ export function createAgentDetailDeployment(
       schedule: deploymentSchedule(values),
     },
     workspaceId,
-  );
-}
-
-export function getAgentSessionAnalyticsOverview(orgUuid: string, agentId: string) {
-  const params = new URLSearchParams({ agent_id: agentId });
-  return consoleApi<AgentSessionAnalyticsOverview>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/analytics/sessions/overview?${params.toString()}`,
-  );
-}
-
-export function getAgentSessionAnalyticsTimeseries(orgUuid: string, agentId: string, groupBy?: string) {
-  const params = new URLSearchParams({ agent_id: agentId });
-  if (groupBy) {
-    params.set('group_by', groupBy);
-  }
-  return consoleApi<AgentSessionAnalyticsTimeseries>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/analytics/sessions/timeseries?${params.toString()}`,
   );
 }
 

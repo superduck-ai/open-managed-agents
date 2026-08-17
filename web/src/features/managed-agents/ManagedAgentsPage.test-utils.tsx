@@ -53,6 +53,68 @@ const managedAgentsAuthContextValue: AuthContextValue = {
   logout: async () => undefined,
 };
 
+function mockObservabilityDashboard() {
+  return {
+    version: 1,
+    tabs: [
+      {
+        id: 'overview',
+        title_key: 'observability.tab.overview',
+        panels: [
+          {
+            id: 'overview.active_sessions',
+            title_key: 'observability.panel.overview.active_sessions',
+            render_type: 'stat',
+            unit: 'count',
+            query_ref: 'overview.active_sessions',
+            grid: { x: 0, y: 0, w: 2, h: 1 },
+            options: {},
+          },
+          {
+            id: 'overview.token_total',
+            title_key: 'observability.panel.overview.token_total',
+            render_type: 'stat',
+            unit: 'tokens',
+            query_ref: 'overview.token_total',
+            grid: { x: 4, y: 0, w: 2, h: 1 },
+            options: {},
+          },
+        ],
+      },
+      { id: 'model', title_key: 'observability.tab.model', panels: [] },
+      { id: 'tool', title_key: 'observability.tab.tool', panels: [] },
+    ],
+    queries: [
+      {
+        query_ref: 'overview.active_sessions',
+        variables: [
+          { name: 'start_time', type: 'time', required: true },
+          { name: 'end_time', type: 'time', required: true },
+          { name: 'agent_id', type: 'string', required: false },
+        ],
+      },
+      {
+        query_ref: 'overview.token_total',
+        variables: [
+          { name: 'start_time', type: 'time', required: true },
+          { name: 'end_time', type: 'time', required: true },
+          { name: 'agent_id', type: 'string', required: false },
+        ],
+      },
+    ],
+  };
+}
+
+function mockObservabilityPanelResult(queryRef: string) {
+  const current = queryRef === 'overview.token_total' ? 12345 : 3;
+  return {
+    query_ref: queryRef,
+    render_type: 'stat',
+    data_as_of: '2026-08-13T00:00:00.000Z',
+    data: { current, previous: 2, change_percent: 50 },
+  };
+}
+
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
@@ -244,8 +306,6 @@ export type MockAgentsApiOptions = {
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
   mcpToolCatalogRefreshWait?: Promise<void>;
-  analyticsOverview?: Record<string, unknown>;
-  analyticsTimeseries?: Array<Record<string, unknown>>;
   modelMappings?: Record<string, string>;
   modelMappingsErrorOnce?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
@@ -637,27 +697,17 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       return jsonResponse({ data: [], next_page: null });
     }
 
-    if (url.startsWith('/api/organizations/org_test/analytics/sessions/overview') && method === 'GET') {
-      return jsonResponse(
-        options.analyticsOverview ?? {
-          sessions_count: 0,
-          error_rate: 0,
-          input_tokens: { total: 0, p50: 0, p95: 0 },
-          output_tokens: { total: 0, p50: 0, p95: 0 },
-          duration: { p50: 0, p95: 0 },
-          active_time: { p50: 0, p95: 0 },
-          input_tokens_per_session: { p50: 0, p95: 0 },
-          output_tokens_per_session: { p50: 0, p95: 0 },
-          turns_per_session: { p50: 0, p95: 0 },
-          tool_call_counts: {},
-          stop_reason_counts: {},
-          data_as_of: null,
-        },
-      );
+    if (url === '/api/organizations/org_test/observability/dashboard' && method === 'GET') {
+      return jsonResponse(mockObservabilityDashboard());
     }
 
-    if (url.startsWith('/api/organizations/org_test/analytics/sessions/timeseries') && method === 'GET') {
-      return jsonResponse({ data: options.analyticsTimeseries ?? [] });
+    if (url === '/api/organizations/org_test/observability/panels/query' && method === 'POST') {
+      const queryRef = typeof body?.query_ref === 'string' ? body.query_ref : 'overview.active_sessions';
+      return jsonResponse(mockObservabilityPanelResult(queryRef));
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/traces') && method === 'GET') {
+      return jsonResponse({ data_as_of: '2026-08-13T00:00:00.000Z', has_more: false, items: [] });
     }
 
     const sessionEventsMatch = url.match(/^\/v1\/sessions\/([^/]+)\/events\?beta=true/);

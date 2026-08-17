@@ -1162,22 +1162,10 @@ func (d *DB) TouchCodeSessionWorkerActivityForEpoch(ctx context.Context, codeSes
 	return d.touchCodeSessionWorkerActivity(ctx, codeSessionExternalID, &epoch)
 }
 
-// TouchCodeSessionWorkerActivityForActiveLease 只允许 OTLP 刷新当前 epoch 且 lease 尚未过期的 worker，
-// 不能借遥测请求复活已经被接管或租约过期的 worker。
-func (d *DB) TouchCodeSessionWorkerActivityForActiveLease(ctx context.Context, codeSessionExternalID string, epoch int64) error {
-	if epoch <= 0 {
-		return ErrWorkerEpochMismatch
-	}
-	now := time.Now().UTC()
-	mapper := NewCodeSessionMapper(d.mapperDB)
-	rowsAffected, err := mapper.TouchWorkerActivityForActiveLease(ctx, codeSessionExternalID, epoch, now)
-	if err != nil {
-		return err
-	}
-	if rowsAffected > 0 {
-		return nil
-	}
-	// 条件更新未命中后再读取当前状态，以便把 takeover 与 lease 过期映射为不同 HTTP 错误。
+// ValidateCodeSessionWorkerActiveLease checks that a worker is currently
+// registered without writing any state. OTLP ingress calls it before reading
+// the body so expired workers are rejected without doing decode work.
+func (d *DB) ValidateCodeSessionWorkerActiveLease(ctx context.Context, codeSessionExternalID string) error {
 	record, found, err := d.GetCodeSession(ctx, codeSessionExternalID)
 	if err != nil {
 		return err
@@ -1185,10 +1173,10 @@ func (d *DB) TouchCodeSessionWorkerActivityForActiveLease(ctx context.Context, c
 	if !found {
 		return ErrNotFound
 	}
-	if record.CurrentWorkerEpoch != epoch {
-		return ErrWorkerEpochMismatch
+	if record.WorkerLeaseExpiresAt == nil || !record.WorkerLeaseExpiresAt.After(time.Now().UTC()) {
+		return ErrWorkerLeaseExpired
 	}
-	return ErrWorkerLeaseExpired
+	return nil
 }
 
 func (d *DB) touchCodeSessionWorkerActivity(ctx context.Context, codeSessionExternalID string, requiredEpoch *int64) error {

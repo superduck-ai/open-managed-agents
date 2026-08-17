@@ -22,7 +22,10 @@
 - `internal/platformapi`
   - 承载平台/console 相关 HTTP route registration、请求解析、响应映射和轻量业务编排。
   - 继续依赖 `internal/platform` 的领域类型与错误，并在 HTTP 边界完成 JSON shape 映射。
+  - Agent 可观测查询在这里完成 organization/workspace scope、HTTP body/query 提取和响应写入；变量类型、时间范围及 response DTO 由 `internal/observability` 统一维护。
   - 负责目录、登录、组织 profile/SSO、console workspace/API key/member/invite、billing/usage、environment token，以及管理后台独立的 platform Messages proxy。
+- `internal/observability`
+  - 持有 Agent 可观测的变量合同、业务查询、结果 DTO 与稳定错误，并把后端查询错误映射为业务错误；不依赖 `internal/platformapi`。中立核心不引用 OpenObserve 方言，OpenObserve 适配位于其子包。
 - `internal/messages`
   - 承载共享的 Anthropic-compatible `POST /v1/messages` handler、敏感 header 清洗、上游凭证注入与 JSON/SSE 响应转发。
   - 服务 service API 和 platform `/v1`；不替代管理后台的 organization-scoped platform proxy，也不负责入口鉴权。
@@ -43,8 +46,9 @@
 - `/v1/messages` 进入通用凭据感知中间件；code-session Messages token 只在 service auth 的这个 `POST` 路径被接受。
 - `registerPlatformConsoleRoutes` 将 `/api`、`/auth`、`/oauth`、`/web-api` 的平台 console 路由直接注册到根 chi router，不再通过成对的精确路径和 wildcard handler 转发到第二个 router。
 - `/api/organizations/{orgUuid}` 下的 Workbench 子路由从 `workbench` 注册，并由 `internal/api` 注入 `anthropic_upstream` 配置。
+- `observability.enabled=true` 时，`/api/organizations/{orgUuid}/observability/*` 在同一鉴权组内注册；关闭时不注册并返回 404。原先只返回零值的 `/analytics/sessions/{overview,timeseries}` 兼容路由已删除。
 
-路径、middleware 顺序、鉴权入口和响应结构在本次迁移中保持不变。
+除上述 observability 路由替换外，其他路径、middleware 顺序、鉴权入口和响应结构保持不变。
 
 ## 依赖方向
 
@@ -58,7 +62,7 @@ flowchart LR
 ```
 
 - `internal/api` 可以依赖 `internal/httpapi`、`internal/messages`、`internal/platformapi`、`internal/workbench`。
-- `internal/platformapi` 和 `internal/workbench` 可以依赖 `internal/httpapi` 的公共 helper；`internal/workbench` 还可以依赖只包含进程配置类型的 `internal/config`，但只接收自身需要的 `AnthropicUpstreamConfig`，不接收根 `Config`。
+- `internal/platformapi` 和 `internal/workbench` 可以依赖 `internal/httpapi` 的公共 helper；`internal/platformapi` 可以依赖 `internal/observability` 的业务类型与错误，反向依赖禁止；`internal/workbench` 还可以依赖只包含进程配置类型的 `internal/config`，但只接收自身需要的 `AnthropicUpstreamConfig`，不接收根 `Config`。
 - `internal/httpapi` 不依赖 `internal/platformapi`、`internal/workbench` 或具体业务 handler。
 - `internal/platform` 保持领域类型/错误包，不引入 HTTP handler，避免与 `internal/db` 形成反向依赖或 import cycle。
 - `internal/api` 只保存 `codesessions.Handler` 作为 HTTP 资源入口；需要创建 code session 或发布事件的 `sessions`、`environments` 依赖 `codesessions.Service`，不依赖 HTTP handler。

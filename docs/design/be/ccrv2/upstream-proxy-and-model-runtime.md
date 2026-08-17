@@ -68,9 +68,7 @@ CLAUDE_CODE_WORKER_EPOCH=1
 CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 ```
 
-`startup_context.api_base_url` 是 sandbox 可访问的 Open Managed Agents API 地址。payload 不再注入上游 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_API_KEY`；environment-manager 使用 `api_base_url` 作为 Claude 的 `ANTHROPIC_BASE_URL` fallback。
-
-payload 始终在 `startup_context.claude_code_args` 中设置 `settings=/root/.claude/launcher-settings.json`，由 environment-manager 展开为 Claude Code 的 `--settings /root/.claude/launcher-settings.json` 启动参数；已有的 `mcp-config` 等参数保持不变。
+`startup_context.api_base_url` 是 sandbox 可访问的 Open Managed Agents API 地址。payload 不再注入上游 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_API_KEY`；environment-manager 使用 `api_base_url` 作为 Claude 的 `ANTHROPIC_BASE_URL` fallback。OMA 不注入额外 `--settings` 文件；Agent 配置已有的 `mcp-config` 等参数保持不变。
 
 environment-manager 启动 Claude 时还会根据 executor 的 session ID 设置 `CLAUDE_CODE_SESSION_ID` 与 `CLAUDE_CODE_REMOTE_SESSION_ID`。后者是 relay 的必要条件；缺失时 Claude 会记录 `CLAUDE_CODE_REMOTE_SESSION_ID unset; proxy disabled`，即使 token 文件和其他开关都存在也不会注入代理环境。
 

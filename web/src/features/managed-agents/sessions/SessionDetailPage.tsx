@@ -35,10 +35,11 @@ import {
   type SessionThreadApiResponse,
   type SessionTraceFilterOption,
   type SessionTraceView,
+  type SessionDetailSegment,
 } from '../types';
 import { compactEntityId, copyText, errorMessage, managedEntityListHref } from '../utils';
 import { Archive, Bot, Box, ChevronDown, Copy, FolderOpen, KeyRound, ListTree, RotateCcw, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { cloneElement, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { SessionDetailDeltaFramesContext, useSessionDetailEventData } from './sessionDetailData';
 import {
   buildSessionDetailFilterOptions,
@@ -89,9 +90,10 @@ import {
   SessionTraceEmpty,
   SessionTraceSearch,
   SessionTraceSkeleton,
-  SessionTraceViewMode,
+  SessionDetailSegmentMode,
 } from './SessionTracePanel';
 import { DebugRow, TranscriptRow } from './sessionTraceRows';
+import { SessionTraceObservability } from '../../observability/traces/SessionTraceObservability';
 import { SessionEntityPanels } from './SessionEntityPanels';
 import { SessionMessageComposer } from './SessionMessageComposer';
 import { SessionWorkspaceCard } from './SessionWorkspaceCard';
@@ -111,7 +113,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [eventRefreshKey, setEventRefreshKey] = useState(0);
-  const [view, setView] = useState<SessionTraceView>(readSessionDetailInitialView);
+  const [segment, setSegment] = useState<SessionDetailSegment>(readSessionDetailInitialView);
+  const view = sessionTraceViewFromSegment(segment);
   const [query, setQuery] = useState('');
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedLaneId, setSelectedLaneId] = useState(readSessionDetailInitialLaneId);
@@ -385,14 +388,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const copyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries, view), [filteredEntries, view]);
 
   useEffect(() => {
-    setSelectedTypes([]);
-    setQuery('');
-    setSelectedDetailTab('content');
-  }, [view]);
-
-  useEffect(() => {
-    writeSessionDetailUrlState(view, selectedEntryId, selectedLaneId, showArchivedLanes);
-  }, [selectedEntryId, selectedLaneId, showArchivedLanes, view]);
+    writeSessionDetailUrlState(segment, selectedEntryId, selectedLaneId, showArchivedLanes);
+  }, [segment, selectedEntryId, selectedLaneId, showArchivedLanes]);
 
   useEffect(() => {
     if (!metadataLoaded) {
@@ -738,77 +735,87 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
           {/* keepMounted: switching tabs must not wipe the composer draft or the list scroll position. */}
           <TabsContent value="events" keepMounted className="mt-0 min-h-0 pt-4">
             <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
-              <EventsTab
-                activeLane={activeLane}
-                childLoading={eventsLoading}
-                copyPayload={copyPayload}
-                detailPanelRef={detailPanelRef}
-                entries={entries}
-                events={events}
-                filteredEntries={filteredEntries}
-                filterOptions={filterOptions}
-                hasFilter={hasFilter}
-                lanes={lanes}
-                onClearFilters={() => {
-                  setSelectedTypes([]);
-                  setQuery('');
-                  handleSelectLane(SESSION_MAIN_LANE_ID, null);
-                }}
-                onCopyAll={() =>
-                  void handleCopy(
-                    copyPayload,
-                    msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
-                  )
-                }
-                onQueryChange={setQuery}
-                onOpenDeltas={(entryId) => {
-                  setSelectedEntryId(entryId);
-                  setSelectedDetailTab('deltas');
-                }}
-                onSelectEntry={(entryId) => {
-                  setSelectedEntryId(entryId);
-                  setSelectedDetailTab('content');
-                }}
-                onSelectLane={handleSelectLane}
-                onThreadClick={handleThreadClick}
-                onSelectedTypesChange={setSelectedTypes}
-                onTimelineSeek={handleTimelineSeek}
-                onViewChange={setView}
-                query={query}
-                scrollerRef={scrollerRef}
-                selectedEntry={selectedEntry}
-                selectedDetailTab={selectedDetailTab}
-                selectedEntryId={selectedEntryId}
-                selectedTypes={selectedTypes}
-                suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
-                archivedLaneCount={archivedLaneCount}
-                composer={
-                  <SessionMessageComposer
-                    disabled={conversationState.disabled}
-                    live={conversationState.live}
-                    onError={setMutationError}
-                    onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
-                    onMessageSent={(sentEvents) => {
-                      eventData.appendPrimaryEvents(sentEvents);
-                      setSession((currentSession) =>
-                        currentSession && currentSession.id === session.id
-                          ? { ...currentSession, status: 'running' }
-                          : currentSession,
-                      );
-                    }}
-                    sessionId={session.id}
-                    workspaceId={activeWorkspaceId}
-                  />
-                }
-                isMultiAgent={isMultiAgent}
-                showArchivedLanes={showArchivedLanes}
-                timeline={timeline}
-                timelineVisibleIds={timelineVisibleIds}
-                threadNameById={threadNameById}
-                onDetailTabChange={setSelectedDetailTab}
-                onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
-                view={view}
-              />
+              <SessionDetailBody
+                segment={segment}
+                sessionId={sessionId}
+                setQuery={setQuery}
+                setSegment={setSegment}
+                setSelectedDetailTab={setSelectedDetailTab}
+                setSelectedTypes={setSelectedTypes}
+                workspaceId={activeWorkspaceId}
+              >
+                <EventsTab
+                  activeLane={activeLane}
+                  childLoading={eventsLoading}
+                  copyPayload={copyPayload}
+                  detailPanelRef={detailPanelRef}
+                  entries={entries}
+                  events={events}
+                  filteredEntries={filteredEntries}
+                  filterOptions={filterOptions}
+                  hasFilter={hasFilter}
+                  lanes={lanes}
+                  onClearFilters={() => {
+                    setSelectedTypes([]);
+                    setQuery('');
+                    handleSelectLane(SESSION_MAIN_LANE_ID, null);
+                  }}
+                  onCopyAll={() =>
+                    void handleCopy(
+                      copyPayload,
+                      msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
+                    )
+                  }
+                  onQueryChange={setQuery}
+                  onOpenDeltas={(entryId) => {
+                    setSelectedEntryId(entryId);
+                    setSelectedDetailTab('deltas');
+                  }}
+                  onSelectEntry={(entryId) => {
+                    setSelectedEntryId(entryId);
+                    setSelectedDetailTab('content');
+                  }}
+                  onSelectLane={handleSelectLane}
+                  onThreadClick={handleThreadClick}
+                  onSelectedTypesChange={setSelectedTypes}
+                  onTimelineSeek={handleTimelineSeek}
+                  onViewChange={setSegment}
+                  query={query}
+                  scrollerRef={scrollerRef}
+                  selectedEntry={selectedEntry}
+                  selectedDetailTab={selectedDetailTab}
+                  selectedEntryId={selectedEntryId}
+                  selectedTypes={selectedTypes}
+                  suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
+                  archivedLaneCount={archivedLaneCount}
+                  composer={
+                    <SessionMessageComposer
+                      disabled={conversationState.disabled}
+                      live={conversationState.live}
+                      onError={setMutationError}
+                      onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
+                      onMessageSent={(sentEvents) => {
+                        eventData.appendPrimaryEvents(sentEvents);
+                        setSession((currentSession) =>
+                          currentSession && currentSession.id === session.id
+                            ? { ...currentSession, status: 'running' }
+                            : currentSession,
+                        );
+                      }}
+                      sessionId={session.id}
+                      workspaceId={activeWorkspaceId}
+                    />
+                  }
+                  isMultiAgent={isMultiAgent}
+                  showArchivedLanes={showArchivedLanes}
+                  timeline={timeline}
+                  timelineVisibleIds={timelineVisibleIds}
+                  threadNameById={threadNameById}
+                  onDetailTabChange={setSelectedDetailTab}
+                  onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
+                  view={view}
+                />
+              </SessionDetailBody>
             </SessionDetailDeltaFramesContext.Provider>
           </TabsContent>
           <SessionEntityPanels
@@ -820,6 +827,52 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         </Tabs>
       </section>
     </TooltipProvider>
+  );
+}
+
+function sessionTraceViewFromSegment(segment: SessionDetailSegment): SessionTraceView {
+  return segment === 'trace' ? 'transcript' : segment;
+}
+
+function SessionDetailBody({
+  children,
+  segment,
+  sessionId,
+  setQuery,
+  setSegment,
+  setSelectedDetailTab,
+  setSelectedTypes,
+  workspaceId,
+}: {
+  children: ReactElement<{ onViewChange: (next: SessionDetailSegment) => void }>;
+  segment: SessionDetailSegment;
+  sessionId: string;
+  setQuery: (next: string) => void;
+  setSegment: (next: SessionDetailSegment) => void;
+  setSelectedDetailTab: (next: SessionDebugDetailTab) => void;
+  setSelectedTypes: (next: string[]) => void;
+  workspaceId: string;
+}) {
+  const onSegmentChange = (next: SessionDetailSegment) => {
+    setSegment(next);
+    setSelectedTypes([]);
+    setQuery('');
+    setSelectedDetailTab('content');
+  };
+  return (
+    <>
+      <div className={segment === 'trace' ? 'hidden' : 'contents'}>
+        {cloneElement(children, { onViewChange: onSegmentChange })}
+      </div>
+      {segment === 'trace' ? (
+        <div data-testid="trace-tab">
+          <div className="flex flex-wrap items-center gap-3 border-b border-border px-0 py-3">
+            <SessionDetailSegmentMode value={segment} onChange={onSegmentChange} />
+          </div>
+          <SessionTraceObservability key={workspaceId} sessionId={sessionId} />
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -1011,8 +1064,11 @@ export function EventsTabInner({
   );
 }
 
-export function ViewModeSegment(props: { value: SessionTraceView; onChange: (value: SessionTraceView) => void }) {
-  return <SessionTraceViewMode {...props} />;
+export function ViewModeSegment(props: {
+  value: SessionDetailSegment;
+  onChange: (value: SessionDetailSegment) => void;
+}) {
+  return <SessionDetailSegmentMode {...props} />;
 }
 
 export function ExpandingSearch(props: { value: string; onChange: (value: string) => void }) {

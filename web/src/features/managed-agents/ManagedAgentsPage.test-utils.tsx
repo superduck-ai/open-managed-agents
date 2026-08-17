@@ -1312,6 +1312,40 @@ export function mockManagedResourceApi() {
         updated_at: now,
       },
     ],
+    dreams: [
+      {
+        id: 'drm_one123456',
+        type: 'dream',
+        inputs: [
+          { type: 'memory_store', memory_store_id: 'memstore_one123456' },
+          { type: 'sessions', session_ids: ['sesn_one123456', 'sesn_two123456'] },
+        ],
+        instructions: null,
+        model: 'claude-opus-4-8',
+        status: 'succeeded',
+        outputs: [{ type: 'memory_store', memory_store_id: 'memstore_output123456' }],
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+        error: null,
+      },
+      {
+        id: 'drm_two123456',
+        type: 'dream',
+        inputs: [
+          { type: 'memory_store', memory_store_id: 'memstore_one123456' },
+          { type: 'sessions', session_ids: ['sesn_one123456'] },
+        ],
+        instructions: null,
+        model: 'claude-sonnet-4-6',
+        status: 'pending',
+        outputs: [],
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+        error: null,
+      },
+    ],
     memories: [
       {
         id: 'mem_one123456',
@@ -1626,6 +1660,42 @@ export function mockManagedResourceApi() {
         return matchesCreatedAtParams(memoryStore, params);
       });
       return jsonResponse({ data: filteredMemoryStores, next_page: null });
+    }
+    if (url.startsWith('/v1/dreams?') && method === 'GET') {
+      return jsonResponse({ data: resources.dreams, next_page: null });
+    }
+    const cancelDreamMatch = url.match(/^\/v1\/dreams\/([^/?]+)\/cancel\?beta=true$/);
+    if (cancelDreamMatch && method === 'POST') {
+      const dreamId = decodeURIComponent(cancelDreamMatch[1]);
+      const existing = resources.dreams.find((dream) => dream.id === dreamId) ?? resources.dreams[0];
+      const updated = { ...existing, status: 'cancelled', updated_at: new Date().toISOString() };
+      resources.dreams = [updated, ...resources.dreams.filter((dream) => dream.id !== dreamId)];
+      return jsonResponse(updated);
+    }
+    const archiveDreamMatch = url.match(/^\/v1\/dreams\/([^/?]+)\/archive\?beta=true$/);
+    if (archiveDreamMatch && method === 'POST') {
+      const dreamId = decodeURIComponent(archiveDreamMatch[1]);
+      const existing = resources.dreams.find((dream) => dream.id === dreamId) ?? resources.dreams[0];
+      const updated = { ...existing, archived_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      resources.dreams = [updated, ...resources.dreams.filter((dream) => dream.id !== dreamId)];
+      return jsonResponse(updated);
+    }
+    if (url === '/v1/dreams?beta=true' && method === 'POST') {
+      const created = {
+        id: 'drm_created123456',
+        type: 'dream',
+        inputs: Array.isArray(body?.inputs) ? body.inputs : [],
+        instructions: typeof body?.instructions === 'string' ? body.instructions : null,
+        model: typeof body?.model === 'string' ? body.model : 'claude-opus-4-8',
+        status: 'pending',
+        outputs: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        archived_at: null,
+        error: null,
+      };
+      resources.dreams = [created, ...resources.dreams];
+      return jsonResponse(created);
     }
     if (url === '/v1/memory_stores/memstore_one123456?beta=true' && method === 'GET') {
       return jsonResponse(resources.memoryStores[0]);

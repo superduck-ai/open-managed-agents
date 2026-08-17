@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="DreamMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        input_store_uuid,
+        session_ids,
+        instructions,
+        model,
+        status,
+        output_store_uuid,
+        error,
+        created_at,
+        updated_at,
+        archived_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="dreamRow">
+        INSERT INTO dreams (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            input_store_uuid,
+            session_ids,
+            instructions,
+            model,
+            status,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.InputStoreUUID},
+            CAST(#{params.SessionIDs,sensitive=true} AS jsonb),
+            #{params.Instructions},
+            #{params.Model},
+            #{params.Status},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="dreamRow">
+        SELECT
+        <include refid="columns"/>
+        FROM dreams
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </select>
+
+    <select id="FindForUpdate" resultType="dreamRow">
+        SELECT
+        <include refid="columns"/>
+        FROM dreams
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND archived_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="ListPage" resultType="dreamRow">
+        SELECT
+        <include refid="columns"/>
+        FROM dreams
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND archived_at IS NULL
+            <if test="params.HasCursor">
+                AND (
+                    created_at &lt; #{params.CursorCreatedAt}
+                    OR (created_at = #{params.CursorCreatedAt} AND uuid &lt; #{params.CursorUUID})
+                )
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.Limit}
+    </select>
+
+    <update id="UpdateStatus" result="rows">
+        UPDATE dreams
+        SET status = #{params.Status},
+            updated_at = NOW()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND archived_at IS NULL
+        AND status IN ('pending', 'running')
+        AND status != #{params.Status}
+    </update>
+
+    <update id="SetOutputStore" result="rows">
+        UPDATE dreams
+        SET output_store_uuid = #{params.OutputStoreUUID},
+            updated_at = NOW()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND archived_at IS NULL
+        AND status = 'running'
+    </update>
+
+    <update id="SetError" result="rows">
+        UPDATE dreams
+        SET error = #{params.Error},
+            status = 'failed',
+            updated_at = NOW()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND archived_at IS NULL
+        AND status = 'running'
+    </update>
+
+    <update id="ArchiveByExternalID" result="rows">
+        UPDATE dreams
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND archived_at IS NULL
+        AND status IN ('succeeded', 'failed', 'cancelled')
+    </update>
+</mapper>

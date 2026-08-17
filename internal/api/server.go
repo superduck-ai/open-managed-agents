@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
+	dreamsapi "github.com/superduck-ai/open-managed-agents/internal/dreams"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/files"
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
@@ -55,6 +56,7 @@ type Server struct {
 	codeSessions         *codesessions.Handler
 	deployments          *deploymentsapi.Handler
 	deploymentRuns       *deploymentsapi.RunsHandler
+	dreams               *dreamsapi.Handler
 	envs                 *environments.Handler
 	files                *files.Handler
 	filestore            *filestoreapi.Handler
@@ -121,6 +123,7 @@ func NewServer(deps ServerDeps) *Server {
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets),
 		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
+		dreams:               dreamsapi.NewHandler(deps.DB, componentLogger("dreams")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
@@ -240,6 +243,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/agents", s.agents)
 	r.Mount("/deployment_runs", s.deploymentRuns)
 	r.Mount("/deployments", s.deployments)
+	r.Mount("/dreams", s.dreams)
 	r.Mount("/environments", s.envs)
 	r.Mount("/files", s.files)
 	r.Mount("/memory_stores", s.memory)

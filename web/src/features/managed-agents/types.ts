@@ -229,6 +229,45 @@ export type MemoryStoreApiResponse = {
   updated_at: string;
 };
 
+export type DreamStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived';
+
+export type DreamInputResponse = {
+  type: 'memory_store' | 'sessions';
+  memory_store_id?: string;
+  session_ids?: string[];
+};
+
+export type DreamApiResponse = {
+  id: string;
+  type: 'dream';
+  inputs: DreamInputResponse[];
+  instructions?: string | null;
+  model: string;
+  status: DreamStatus;
+  outputs: Array<{ type: 'memory_store'; memory_store_id: string }>;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+  error?: string | null;
+};
+
+export type DreamPageResponse = {
+  data: DreamApiResponse[];
+  next_page: string | null;
+};
+
+export type DreamCreateInput = {
+  model: string;
+  inputs: Array<{ type: 'memory_store'; memory_store_id: string } | { type: 'sessions'; session_ids: string[] }>;
+  instructions?: string;
+};
+
+export type DreamFormValues = {
+  memoryStoreId: string;
+  sessionIds: string[];
+  model: string;
+};
+
 export type ManagedEntityApiResponse =
   SessionApiResponse | DeploymentApiResponse | EnvironmentApiResponse | VaultApiResponse | MemoryStoreApiResponse;
 

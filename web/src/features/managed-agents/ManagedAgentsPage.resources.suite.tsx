@@ -2497,9 +2497,73 @@ export function registerManagedAgentsResourceTests() {
 
   test('renders the dreaming loading panel', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/dreams');
+    mockManagedResourceApi();
     render(<ManagedAgentsPage section="dreams" />);
 
     expect(screen.getByRole('heading', { name: 'Dreaming' })).toBeTruthy();
     expect(screen.getByText('Captured Dreaming assets are loading.')).toBeTruthy();
+  });
+
+  test('lists dreams from the real v1 dreams endpoint', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/dreams');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="dreams" />);
+
+    expect(await screen.findByText('drm_one123456')).toBeTruthy();
+    expect(screen.getByText('memstore_one123456 · 2 sessions')).toBeTruthy();
+    expect(screen.getByText('Model: claude-opus-4-8')).toBeTruthy();
+    expect(screen.getByText('Succeeded')).toBeTruthy();
+    expect(api.requests.some((request) => request.url.startsWith('/v1/dreams?') && request.method === 'GET')).toBe(
+      true,
+    );
+  });
+
+  test('creates a dream with memory store, sessions, and model', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/dreams');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="dreams" />);
+
+    expect(await screen.findByText('drm_one123456')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create dream' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create dream' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Memory store' }).textContent).toContain('Memory one'),
+    );
+    fireEvent.click(within(dialog).getByText('Session one'));
+    fireEvent.change(within(dialog).getByLabelText('Model'), { target: { value: 'claude-opus-4-8' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create dream' }));
+
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url === '/v1/dreams?beta=true' && request.method === 'POST')).toBe(
+        true,
+      ),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/dreams?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.model).toBe('claude-opus-4-8');
+    expect(createRequest?.body?.inputs).toEqual([
+      { type: 'memory_store', memory_store_id: 'memstore_one123456' },
+      { type: 'sessions', session_ids: ['sesn_one123456'] },
+    ]);
+    expect(createRequest?.headers['anthropic-beta']).toBe('managed-agents-2026-04-01,dreaming-2026-04-21');
+  });
+
+  test('cancels and archives dreams from the list', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/dreams');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="dreams" />);
+
+    expect(await screen.findByText('drm_one123456')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) => request.url === '/v1/dreams/drm_one123456/archive?beta=true' && request.method === 'POST',
+        ),
+      ).toBe(true),
+    );
   });
 }

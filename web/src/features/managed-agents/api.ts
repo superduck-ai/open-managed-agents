@@ -21,6 +21,9 @@ import {
   type CredentialFormValues,
   type DeploymentApiResponse,
   type DeploymentRunApiResponse,
+  type DreamApiResponse,
+  type DreamCreateInput,
+  type DreamPageResponse,
   type EnvironmentApiResponse,
   type EnvironmentWorkApiResponse,
   type FileMetadataApiResponse,
@@ -1697,4 +1700,40 @@ export function localTimezone() {
   } catch {
     return 'UTC';
   }
+}
+
+const dreamsBetaHeaders = { 'anthropic-beta': 'managed-agents-2026-04-01,dreaming-2026-04-21' };
+
+export function listDreams(workspaceId: string, page?: PageCursor) {
+  return consoleApi<DreamPageResponse>(`/v1/dreams?beta=true${page ? `&page=${encodeURIComponent(page)}` : ''}`, {
+    headers: { ...workspaceHeaders(workspaceId), ...dreamsBetaHeaders },
+  });
+}
+
+export function retrieveDream(dreamId: string, workspaceId: string) {
+  return consoleApi<DreamApiResponse>(`/v1/dreams/${encodeURIComponent(dreamId)}?beta=true`, {
+    headers: { ...workspaceHeaders(workspaceId), ...dreamsBetaHeaders },
+  });
+}
+
+export function createDream(input: DreamCreateInput, workspaceId: string) {
+  return consoleApi<DreamApiResponse>('/v1/dreams?beta=true', {
+    method: 'POST',
+    headers: { ...workspaceHeaders(workspaceId), ...dreamsBetaHeaders },
+    body: JSON.stringify(input),
+  });
+}
+
+export function cancelDream(dreamId: string, workspaceId: string) {
+  return consoleApi<DreamApiResponse>(`/v1/dreams/${encodeURIComponent(dreamId)}/cancel?beta=true`, {
+    method: 'POST',
+    headers: { ...workspaceHeaders(workspaceId), ...dreamsBetaHeaders },
+  });
+}
+
+export function archiveDream(dreamId: string, workspaceId: string) {
+  return consoleApi<DreamApiResponse>(`/v1/dreams/${encodeURIComponent(dreamId)}/archive?beta=true`, {
+    method: 'POST',
+    headers: { ...workspaceHeaders(workspaceId), ...dreamsBetaHeaders },
+  });
 }

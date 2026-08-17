@@ -677,7 +677,9 @@ export function writeSessionArchivedLanePreference(value: boolean) {
 
 export function sessionStatusIsLive(status: string) {
   const normalized = status.toLowerCase();
-  return normalized === 'running' || normalized === 'queued' || normalized === 'rescheduled';
+  return (
+    normalized === 'running' || normalized === 'queued' || normalized === 'rescheduled' || normalized === 'rescheduling'
+  );
 }
 
 export function sessionStatusFromEventType(type: string) {
@@ -686,8 +688,9 @@ export function sessionStatusFromEventType(type: string) {
       return 'running';
     case 'session.status_idle':
       return 'idle';
+    // The backend maps this event to the "rescheduling" session status.
     case 'session.status_rescheduled':
-      return 'rescheduled';
+      return 'rescheduling';
     case 'session.status_terminated':
       return 'terminated';
     case 'session.deleted':

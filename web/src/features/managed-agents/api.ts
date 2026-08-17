@@ -799,7 +799,7 @@ export function createQuickstartSession(
 }
 
 export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
-  return anthropicBetaApi.sessions.events.send<unknown>(
+  return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
     {
       events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
@@ -1145,6 +1145,9 @@ export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEve
         return false;
       }
       continue;
+    }
+    if (type === 'user.message') {
+      return false;
     }
     if (type === 'session.status_idle' || type === 'session.status_terminated' || type === 'session.deleted') {
       return true;

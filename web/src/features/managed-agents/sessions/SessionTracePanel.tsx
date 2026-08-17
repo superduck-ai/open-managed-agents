@@ -761,9 +761,7 @@ export function SessionTraceDetail({
     <div
       className={clsx(
         'relative flex flex-col overflow-hidden',
-        placement === 'overlay'
-          ? 'absolute inset-0 z-10 bg-secondary'
-          : 'border-t border-border bg-transparent lg:max-h-[calc(100vh-330px)] lg:border-l lg:border-t-0',
+        placement === 'overlay' ? 'absolute inset-0 z-10 bg-secondary' : 'h-full bg-transparent',
       )}
       data-placement={placement}
       data-testid="session-trace-detail"
@@ -838,9 +836,7 @@ export function EventDetailPanel({
     <div
       className={clsx(
         'relative flex flex-col overflow-hidden',
-        placement === 'overlay'
-          ? 'absolute inset-0 z-10 bg-secondary'
-          : 'border-t border-border bg-transparent lg:max-h-[calc(100vh-330px)] lg:border-l lg:border-t-0',
+        placement === 'overlay' ? 'absolute inset-0 z-10 bg-secondary' : 'h-full bg-transparent',
       )}
       data-placement={placement}
       data-testid="session-trace-detail"

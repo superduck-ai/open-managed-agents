@@ -1857,10 +1857,6 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	if beforeKeepAlive.LastWorkerActivityAt == nil || afterKeepAlive.LastWorkerActivityAt == nil || !afterKeepAlive.LastWorkerActivityAt.After(*beforeKeepAlive.LastWorkerActivityAt) {
 		t.Fatalf("keep_alive activity before=%v after=%v, want refreshed", beforeKeepAlive.LastWorkerActivityAt, afterKeepAlive.LastWorkerActivityAt)
 	}
-	if got := listCodeSessionOutboundEventsForTest(t, app, codeSessionID); len(got) != 0 {
-		t.Fatalf("keep_alive wrote outbound rows: %+v", got)
-	}
-
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	streamUUID := "stream-worker-" + suffix
 	assistantUUID := "assistant-worker-contract-" + suffix
@@ -1869,23 +1865,6 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 		`{"payload":{"type":"assistant","uuid":` + quoteJSON(assistantUUID) + `,"message":{"role":"assistant","content":"durable assistant contract"},"created_at":"2026-06-16T01:10:00Z"}}` +
 		`]}`
 	postCodeSessionWorkerEvents(t, app, codeSessionID, batch)
-	rows := listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 2 {
-		t.Fatalf("outbound rows len = %d, want 2: %+v", len(rows), rows)
-	}
-	if rows[0].SequenceNum != 1 || rows[0].EventType != "stream_event" || rows[0].PayloadUUID != streamUUID || !rows[0].Ephemeral {
-		t.Fatalf("first outbound row = %+v, want ephemeral stream_event seq 1", rows[0])
-	}
-	if rows[1].SequenceNum != 2 || rows[1].EventType != "assistant" || rows[1].PayloadUUID != assistantUUID || rows[1].Ephemeral {
-		t.Fatalf("second outbound row = %+v, want durable assistant seq 2", rows[1])
-	}
-	var streamPayload map[string]any
-	if err := json.Unmarshal(rows[0].Payload, &streamPayload); err != nil {
-		t.Fatalf("decode stream payload: %v", err)
-	}
-	if streamPayload["session_id"] != codeSessionID || strings.TrimSpace(fmt.Sprint(streamPayload["timestamp"])) == "" {
-		t.Fatalf("normalized stream payload missing session_id/timestamp: %s", rows[0].Payload)
-	}
 	agentMessages := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContainsCount(agentMessages, "durable assistant contract") != 1 {
 		t.Fatalf("durable assistant public projection count != 1: %+v", agentMessages.Data)
@@ -1896,10 +1875,6 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	}
 
 	postCodeSessionWorkerEvents(t, app, codeSessionID, batch)
-	rows = listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 2 {
-		t.Fatalf("duplicate batch wrote outbound rows len = %d, want 2: %+v", len(rows), rows)
-	}
 	agentMessages = listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContainsCount(agentMessages, "durable assistant contract") != 1 {
 		t.Fatalf("duplicate batch republished assistant event: %+v", agentMessages.Data)
@@ -1908,10 +1883,6 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	controlUUID := "control-worker-" + suffix
 	controlBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":{"type":"control_request","uuid":` + quoteJSON(controlUUID) + `,"request_id":"req_` + suffix + `","request":{"subtype":"can_use_tool","tool_use_id":"toolu_` + suffix + `","input":{"ok":true}}}}]}`
 	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
-	rows = listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 3 || rows[2].SequenceNum != 3 || rows[2].EventType != "control_request" || rows[2].PayloadUUID != controlUUID {
-		t.Fatalf("control_request outbound row mismatch: %+v", rows)
-	}
 	var autoApproveCount int
 	if err := app.pool.QueryRow(ctx, `
 		select count(*)
@@ -1964,6 +1935,18 @@ func TestCodeSessionMCPDefaultAllowAutoApprovesWorkerPermissionRequest(t *testin
 		`"request":{"subtype":"can_use_tool","tool_name":"mcp__weather_service__get_weather","tool_use_id":` + quoteJSON(toolUseID) + `,"input":{"location":"Beijing"}}` +
 		`}}]}`
 	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+	var autoApproveCount int
+	if err := app.pool.QueryRow(context.Background(), `
+		select count(*)
+		from code_session_inbound_events
+		where code_session_external_id = $1 and source = 'auto-approve' and deleted_at is null
+	`, codeSessionID).Scan(&autoApproveCount); err != nil {
+		t.Fatalf("count auto-approve inbound events: %v", err)
+	}
+	if autoApproveCount != 1 {
+		t.Fatalf("duplicate control request produced %d auto responses, want 1", autoApproveCount)
+	}
 
 	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "auto-approve")
 	if source != "auto-approve" || eventType != "control_response" {
@@ -2057,6 +2040,9 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if !ok || toolEventID == "" {
 		t.Fatalf("agent.mcp_tool_use id = %#v, want non-empty string: %#v", toolEvent["id"], toolEvent)
 	}
+	if toolEvent["request_id"] != requestID {
+		t.Fatalf("agent.mcp_tool_use request_id = %#v, want %s: %#v", toolEvent["request_id"], requestID, toolEvent)
+	}
 	statusEvent := sessionEventObjectByType(t, publicEvents, "session.status_idle")
 	stopReason, ok := statusEvent["stop_reason"].(map[string]any)
 	if !ok {
@@ -2118,8 +2104,8 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	`, codeSessionID).Scan(&afterCompatCount); err != nil {
 		t.Fatalf("count tool confirmation inbound events after compat send: %v", err)
 	}
-	if afterCompatCount != beforeCompatCount+1 {
-		t.Fatalf("legacy tool confirmation inbound count = %d, want %d", afterCompatCount, beforeCompatCount+1)
+	if afterCompatCount != beforeCompatCount {
+		t.Fatalf("duplicate legacy tool confirmation inbound count = %d, want %d", afterCompatCount, beforeCompatCount)
 	}
 }
 
@@ -2199,6 +2185,9 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	if primaryToolEvent["session_thread_id"] != childThreadID {
 		t.Fatalf("primary blocking tool event session_thread_id = %v, want %s: %#v", primaryToolEvent["session_thread_id"], childThreadID, primaryToolEvent)
 	}
+	if primaryToolEvent["request_id"] != requestID {
+		t.Fatalf("primary blocking tool event request_id = %v, want %s: %#v", primaryToolEvent["request_id"], requestID, primaryToolEvent)
+	}
 	primaryStatusEvent := sessionEventObjectByType(t, primaryEvents, "session.status_idle")
 	primaryStopReason, ok := primaryStatusEvent["stop_reason"].(map[string]any)
 	if !ok {
@@ -2271,7 +2260,7 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	}
 }
 
-func TestCodeSessionWorkerEventsDuplicateRetryPublishesExistingDurableEvent(t *testing.T) {
+func TestCodeSessionWorkerEventsDeduplicateDurableAndDiscardEphemeral(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-events-duplicate-retry-bucket"))
 	defer app.close()
 
@@ -2282,64 +2271,24 @@ func TestCodeSessionWorkerEventsDuplicateRetryPublishesExistingDurableEvent(t *t
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
-	ctx := context.Background()
 
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	payloadUUID := "assistant-worker-duplicate-retry-" + suffix
 	payload := json.RawMessage(`{"type":"assistant","uuid":` + quoteJSON(payloadUUID) + `,"session_id":` + quoteJSON(codeSessionID) + `,"created_at":"2026-06-16T01:10:00Z","timestamp":"2026-06-16T01:10:00Z","message":{"role":"assistant","content":"duplicate retry assistant"}}`)
-	_, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_dup_retry_" + suffix,
-		EventType:      "assistant",
-		PayloadUUID:    &payloadUUID,
-		Payload:        payload,
-		PayloadHash:    "duplicate-retry-" + suffix,
-		IdempotencyKey: codeSessionID + ":outbound:uuid:" + payloadUUID,
-		Source:         "test",
-	})
-	if err != nil || duplicate {
-		t.Fatalf("seed duplicate retry outbound event duplicate=%v err=%v", duplicate, err)
-	}
-	if events := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey); eventPageContains(events, "duplicate retry assistant") {
-		t.Fatalf("seeded raw outbound event unexpectedly published public event: %+v", events.Data)
-	}
-
-	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":`+string(payload)+`,"ephemeral":true}]}`)
-	rows := listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 1 {
-		t.Fatalf("duplicate retry wrote outbound rows len = %d, want 1: %+v", len(rows), rows)
-	}
+	durableBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":` + string(payload) + `}]}`
+	postCodeSessionWorkerEvents(t, app, codeSessionID, durableBody)
+	postCodeSessionWorkerEvents(t, app, codeSessionID, durableBody)
 	agentMessages := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContainsCount(agentMessages, "duplicate retry assistant") != 1 {
-		t.Fatalf("duplicate retry did not publish one public event: %+v", agentMessages.Data)
+		t.Fatalf("duplicate durable event count != 1: %+v", agentMessages.Data)
 	}
 
 	ephemeralPayloadUUID := "assistant-worker-duplicate-retry-ephemeral-" + suffix
 	ephemeralPayload := json.RawMessage(`{"type":"assistant","uuid":` + quoteJSON(ephemeralPayloadUUID) + `,"session_id":` + quoteJSON(codeSessionID) + `,"created_at":"2026-06-16T01:11:00Z","timestamp":"2026-06-16T01:11:00Z","message":{"role":"assistant","content":"ephemeral duplicate retry assistant"}}`)
-	_, duplicate, err = app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_dup_retry_ephemeral_" + suffix,
-		EventType:      "assistant",
-		PayloadUUID:    &ephemeralPayloadUUID,
-		Payload:        ephemeralPayload,
-		PayloadHash:    "duplicate-retry-ephemeral-" + suffix,
-		IdempotencyKey: codeSessionID + ":outbound:uuid:" + ephemeralPayloadUUID,
-		Source:         "test",
-		Ephemeral:      true,
-	})
-	if err != nil || duplicate {
-		t.Fatalf("seed ephemeral duplicate retry outbound event duplicate=%v err=%v", duplicate, err)
-	}
-	if events := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey); eventPageContains(events, "ephemeral duplicate retry assistant") {
-		t.Fatalf("seeded ephemeral raw outbound event unexpectedly published public event: %+v", events.Data)
-	}
-
-	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":`+string(ephemeralPayload)+`,"ephemeral":false}]}`)
-	rows = listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 2 || !rows[1].Ephemeral {
-		t.Fatalf("ephemeral duplicate retry row mismatch: %+v", rows)
-	}
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":`+string(ephemeralPayload)+`,"ephemeral":true}]}`)
 	agentMessages = listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContains(agentMessages, "ephemeral duplicate retry assistant") {
-		t.Fatalf("ephemeral duplicate retry published public event: %+v", agentMessages.Data)
+		t.Fatalf("ephemeral event was persisted publicly: %+v", agentMessages.Data)
 	}
 	if eventPageContainsCount(agentMessages, "duplicate retry assistant") != 1 {
 		t.Fatalf("durable duplicate retry public event count changed: %+v", agentMessages.Data)
@@ -2363,8 +2312,9 @@ func TestCodeSessionWorkerEventsStaleEpochDoesNotAppend(t *testing.T) {
 		t.Fatalf("epochs = %q/%q, want 1/2", epoch1, epoch2)
 	}
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "events", workerEventBody(session.ID, "stale", epoch1), http.StatusConflict, "conflict_error")
-	if got := listCodeSessionOutboundEventsForTest(t, app, codeSessionID); len(got) != 0 {
-		t.Fatalf("stale epoch wrote outbound rows: %+v", got)
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
+	if eventPageContains(publicEvents, "stale") {
+		t.Fatalf("stale epoch published a public event: %+v", publicEvents.Data)
 	}
 }
 
@@ -2457,67 +2407,7 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	postCodeSessionWorkerDiagnostics(t, app, codeSessionID, workerDiagnosticsBody(codeSessionID, epoch2, "current diag"))
 }
 
-func TestCodeSessionWorkerEventAppendChecksEpochInsideTransaction(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-epoch-append-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-epoch-append-agent"}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-worker-epoch-append-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	ctx := context.Background()
-
-	epoch1 := registerCodeSessionWorker(t, app, codeSessionID)
-	if epoch1 != "1" {
-		t.Fatalf("first worker epoch = %q, want 1", epoch1)
-	}
-	if err := app.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, 1); err != nil {
-		t.Fatalf("prevalidate epoch 1 before takeover: %v", err)
-	}
-	epoch2 := registerCodeSessionWorker(t, app, codeSessionID)
-	if epoch2 != "2" {
-		t.Fatalf("second worker epoch = %q, want 2", epoch2)
-	}
-
-	staleEpoch := int64(1)
-	eventSuffix := strings.TrimPrefix(codeSessionID, "cse_")
-	staleID := "csev_epoch_stale_append_" + eventSuffix
-	_, _, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:          staleID,
-		EventType:           "assistant",
-		Payload:             json.RawMessage(`{"type":"assistant","message":{"content":"stale write"}}`),
-		PayloadHash:         "stale-write",
-		Source:              "test",
-		RequiredWorkerEpoch: &staleEpoch,
-	})
-	if !errors.Is(err, db.ErrWorkerEpochMismatch) {
-		t.Fatalf("stale append error = %v, want worker epoch mismatch", err)
-	}
-	var staleCount int
-	if err := app.pool.QueryRow(ctx, `select count(*) from code_session_outbound_events where external_id = $1`, staleID).Scan(&staleCount); err != nil {
-		t.Fatalf("count stale outbound events: %v", err)
-	}
-	if staleCount != 0 {
-		t.Fatalf("stale append inserted %d events, want 0", staleCount)
-	}
-
-	currentEpoch := int64(2)
-	_, _, err = app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:          "csev_epoch_current_append_" + eventSuffix,
-		EventType:           "assistant",
-		Payload:             json.RawMessage(`{"type":"assistant","message":{"content":"current write"}}`),
-		PayloadHash:         "current-write",
-		Source:              "test",
-		RequiredWorkerEpoch: &currentEpoch,
-	})
-	if err != nil {
-		t.Fatalf("current epoch append: %v", err)
-	}
-}
-
-func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *testing.T) {
+func TestCodeSessionInboundEventAppendPreservesIdempotencyAndSequence(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-event-append-sequences-bucket"))
 	defer app.close()
 
@@ -2554,38 +2444,12 @@ func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *test
 		t.Fatalf("duplicate inbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateInbound, duplicate, err, inbound.UUID)
 	}
 
-	outboundInput := db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_outbound_sequence_" + suffix,
-		EventType:      "assistant",
-		Payload:        json.RawMessage(`{"type":"assistant"}`),
-		PayloadHash:    "outbound-sequence",
-		IdempotencyKey: "outbound-sequence:" + suffix,
-		Source:         "test",
-	}
-	outbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
-	if err != nil || duplicate {
-		t.Fatalf("append outbound event = (%+v, duplicate=%v, err=%v)", outbound, duplicate, err)
-	}
-	if outbound.SequenceNum != before.LastOutboundSequenceNum+1 {
-		t.Fatalf("outbound sequence = %d, want %d", outbound.SequenceNum, before.LastOutboundSequenceNum+1)
-	}
-	duplicateOutbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
-	if err != nil || !duplicate || duplicateOutbound.UUID != outbound.UUID {
-		t.Fatalf("duplicate outbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateOutbound, duplicate, err, outbound.UUID)
-	}
-
 	after, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load Code Session after append: %v", err)
 	}
-	if after.LastInboundSequenceNum != inbound.SequenceNum || after.LastOutboundSequenceNum != outbound.SequenceNum {
-		t.Fatalf(
-			"stored sequences = inbound %d/outbound %d, want inbound %d/outbound %d",
-			after.LastInboundSequenceNum,
-			after.LastOutboundSequenceNum,
-			inbound.SequenceNum,
-			outbound.SequenceNum,
-		)
+	if after.LastInboundSequenceNum != inbound.SequenceNum {
+		t.Fatalf("stored inbound sequence = %d, want %d", after.LastInboundSequenceNum, inbound.SequenceNum)
 	}
 }
 
@@ -2719,18 +2583,6 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 		t.Fatalf("touch epoch 0 error = %v, want worker epoch mismatch", err)
 	}
 
-	zero := int64(0)
-	_, _, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:          "csev_epoch_zero_append_" + strings.TrimPrefix(codeSessionID, "cse_"),
-		EventType:           "assistant",
-		Payload:             json.RawMessage(`{"type":"assistant","message":{"content":"zero write"}}`),
-		PayloadHash:         "zero-write",
-		Source:              "test",
-		RequiredWorkerEpoch: &zero,
-	})
-	if !errors.Is(err, db.ErrWorkerEpochMismatch) {
-		t.Fatalf("append epoch 0 error = %v, want worker epoch mismatch", err)
-	}
 }
 
 func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
@@ -3690,14 +3542,37 @@ func TestSessionsSchemaHasNoForeignKeys(t *testing.T) {
 			and ns.oid = current_schema()::regnamespace
 			and cls.relname in (
 				'sessions', 'session_threads', 'session_events', 'session_resources',
-				'code_sessions', 'code_session_inbound_events', 'code_session_outbound_events',
-				'code_session_internal_events'
+				'code_sessions', 'code_session_inbound_events', 'code_session_internal_events'
 			)
 	`).Scan(&foreignKeyCount); err != nil {
 		t.Fatalf("count sessions foreign keys: %v", err)
 	}
 	if foreignKeyCount != 0 {
 		t.Fatalf("sessions foreign key count = %d, want 0", foreignKeyCount)
+	}
+
+	var outboundTableExists bool
+	if err := app.pool.QueryRow(context.Background(), `
+		select to_regclass(current_schema() || '.code_session_outbound_events') is not null
+	`).Scan(&outboundTableExists); err != nil {
+		t.Fatalf("check outbound event table: %v", err)
+	}
+	if outboundTableExists {
+		t.Fatal("code_session_outbound_events still exists")
+	}
+
+	var outboundSequenceColumnCount int
+	if err := app.pool.QueryRow(context.Background(), `
+		select count(*)
+		from information_schema.columns
+		where table_schema = current_schema()
+		  and table_name = 'code_sessions'
+		  and column_name = 'last_outbound_sequence_num'
+	`).Scan(&outboundSequenceColumnCount); err != nil {
+		t.Fatalf("check outbound sequence column: %v", err)
+	}
+	if outboundSequenceColumnCount != 0 {
+		t.Fatalf("last_outbound_sequence_num column count = %d, want 0", outboundSequenceColumnCount)
 	}
 }
 
@@ -3950,42 +3825,6 @@ func eventPageContainsCount(events sessionEventPageAPIResponse, needle string) i
 		}
 	}
 	return count
-}
-
-type codeSessionOutboundEventForTest struct {
-	SequenceNum int64
-	EventType   string
-	PayloadUUID string
-	Payload     json.RawMessage
-	Ephemeral   bool
-}
-
-func listCodeSessionOutboundEventsForTest(t *testing.T, app *testApp, codeSessionID string) []codeSessionOutboundEventForTest {
-	t.Helper()
-	rows, err := app.pool.Query(context.Background(), `
-		select sequence_num, event_type, coalesce(payload_uuid, ''), payload, ephemeral
-		from code_session_outbound_events
-		where code_session_external_id = $1 and deleted_at is null
-		order by sequence_num asc
-	`, codeSessionID)
-	if err != nil {
-		t.Fatalf("list code session outbound events: %v", err)
-	}
-	defer rows.Close()
-	events := []codeSessionOutboundEventForTest{}
-	for rows.Next() {
-		var event codeSessionOutboundEventForTest
-		var payload []byte
-		if err := rows.Scan(&event.SequenceNum, &event.EventType, &event.PayloadUUID, &payload, &event.Ephemeral); err != nil {
-			t.Fatalf("scan code session outbound event: %v", err)
-		}
-		event.Payload = json.RawMessage(append([]byte(nil), payload...))
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate code session outbound events: %v", err)
-	}
-	return events
 }
 
 func latestCodeSessionInboundEventForSource(t *testing.T, app *testApp, codeSessionID string, source string) (string, string, json.RawMessage) {

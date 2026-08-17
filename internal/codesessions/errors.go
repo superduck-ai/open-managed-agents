@@ -44,3 +44,16 @@ func mapCodeSessionLoadError(err error, codeSessionID string) error {
 		fmt.Errorf("load code session %q: %w", codeSessionID, err),
 	)
 }
+
+func invalidWorkerPayload(message string, cause error) error {
+	return &workerPayloadError{message: message, cause: cause}
+}
+
+type workerPayloadError struct {
+	message string
+	cause   error
+}
+
+func (e *workerPayloadError) Error() string { return e.message }
+
+func (e *workerPayloadError) Unwrap() error { return e.cause }

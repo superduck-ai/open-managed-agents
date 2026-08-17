@@ -20,7 +20,6 @@
         metadata,
         connection_status,
         last_inbound_sequence_num,
-        last_outbound_sequence_num,
         last_internal_sequence_num,
         last_worker_connected_at,
         last_worker_activity_at,
@@ -283,13 +282,6 @@
     <update id="UpdateCodeSessionInboundSequence" result="rows">
         UPDATE code_sessions
         SET last_inbound_sequence_num = #{sequenceNum},
-            updated_at = #{now}
-        WHERE uuid = #{codeSessionUUID}
-    </update>
-
-    <update id="UpdateCodeSessionOutboundSequence" result="rows">
-        UPDATE code_sessions
-        SET last_outbound_sequence_num = #{sequenceNum},
             updated_at = #{now}
         WHERE uuid = #{codeSessionUUID}
     </update>

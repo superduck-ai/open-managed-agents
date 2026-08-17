@@ -65,6 +65,7 @@ CCR_UPSTREAM_PROXY_ENABLED=1
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
 CLAUDE_CODE_USE_CCR_V2=1
 CLAUDE_CODE_WORKER_EPOCH=1
+CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 ```
 
 `startup_context.api_base_url` 是 sandbox 可访问的 Open Managed Agents API 地址。payload 不再注入上游 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_API_KEY`；environment-manager 使用 `api_base_url` 作为 Claude 的 `ANTHROPIC_BASE_URL` fallback。OMA 不注入额外 `--settings` 文件；Agent 配置已有的 `mcp-config` 等参数保持不变。

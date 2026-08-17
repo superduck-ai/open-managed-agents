@@ -677,6 +677,7 @@ export type EventsTabProps = {
   activeLane: string;
   archivedLaneCount: number;
   childLoading: boolean;
+  composer?: ReactNode;
   copyPayload: string;
   detailPanelRef: RefObject<HTMLDivElement | null>;
   entries: SessionEventListEntry[];

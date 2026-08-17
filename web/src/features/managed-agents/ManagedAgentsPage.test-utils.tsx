@@ -1394,6 +1394,20 @@ export function mockManagedResourceApi() {
     if (url.startsWith('/v1/agents?') && method === 'GET') {
       return jsonResponse({ data: resources.agents, next_page: null });
     }
+    const retrieveAgentMatch = url.match(/^\/v1\/agents\/([^/?]+)\?/);
+    if (retrieveAgentMatch && method === 'GET') {
+      const agentId = decodeURIComponent(retrieveAgentMatch[1]);
+      const requestedVersion = Number(new URL(url, 'https://oma.duck.ai').searchParams.get('version'));
+      const agent = resources.agents.find((item) => item.id === agentId);
+      if (!agent) {
+        return jsonResponse({ error: { message: 'not found' } }, 404);
+      }
+      return jsonResponse({
+        ...agent,
+        name: agentId === 'agent_option123456' ? 'Ecommerce Basket Analysis Agent' : agent.name,
+        version: Number.isFinite(requestedVersion) && requestedVersion > 0 ? requestedVersion : agent.version,
+      });
+    }
     if (url.startsWith('/v1/sessions?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;
       const agentId = params.get('agent_id');
@@ -1445,6 +1459,16 @@ export function mockManagedResourceApi() {
     const sessionEventsMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/events\?/);
     if (sessionEventsMatch && method === 'GET') {
       return jsonResponse({ data: persistedSessionEvents(resources.sessionEvents), next_page: null });
+    }
+    if (sessionEventsMatch && method === 'POST') {
+      const incomingEvents = Array.isArray(body?.events) ? (body.events as Record<string, unknown>[]) : [];
+      const createdEvents = incomingEvents.map((event, index) => ({
+        ...event,
+        id: `evt_user_action_${resources.sessionEvents.length + index + 1}`,
+        created_at: new Date().toISOString(),
+      }));
+      (resources.sessionEvents as Record<string, unknown>[]).push(...createdEvents);
+      return jsonResponse({ data: createdEvents });
     }
     if (url.startsWith('/v1/deployments?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;

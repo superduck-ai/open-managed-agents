@@ -238,7 +238,13 @@ function getOTLPExporterConfig() {
 
 OMA 在 `startup_context.environment_variables` 写入 Claude Code 的 telemetry、exporter、protocol、temporality，以及 signal-specific endpoint 和 SessionIngress Authorization header。平台连接变量覆盖同名用户值，使不会动态配置 OTLP 的旧版 Environment Manager 也能按既有启动合同工作；worker epoch 不进入 OTLP 配置。
 
-`observability.enabled=true` 时，OMA 无条件注入 metrics、logs 和 detailed tracing 的全套静态变量（含 `ENABLE_BETA_TRACING_DETAILED=1`），不再按信号拆分开关。内容采集由 `observability.content_capture_enabled`（默认 true）单独控制：开启时 OMA 追加注入 `OTEL_LOG_USER_PROMPTS=1`、`OTEL_LOG_TOOL_DETAILS=1`、`OTEL_LOG_TOOL_CONTENT=1`，授权 prompt 原文、工具输入/输出正文上报（可能包含源码、命令输出和密钥）；关闭时仅保留结构化遥测，且用户自带的内容授权变量会被平台剥离、不予补回。Runner 启动 environment-manager 时仍会默认带上 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 以跳过 marketplace 和自动更新；可观测开启时 OMA 会在 Claude 的 startup env 里把它覆盖成空字符串，否则 Claude Code 会把非空值当成 essential-traffic，从而不导出 OTEL。
+```bash
+CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
+CLAUDE_CODE_USE_CCR_V2=1
+CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
+```
+
+`observability.enabled=true` 时，OMA 无条件注入 metrics、logs 和 detailed tracing 的全套静态变量（含 `ENABLE_BETA_TRACING_DETAILED=1`），不再按信号拆分开关。内容采集由 `observability.content_capture_enabled`（默认 true）单独控制：开启时 OMA 默认补齐 `OTEL_LOG_USER_PROMPTS=1`、`OTEL_LOG_TOOL_DETAILS=1`、`OTEL_LOG_TOOL_CONTENT=1`，授权 prompt 原文、工具输入/输出正文上报（可能包含源码、命令输出和密钥）；关闭时平台不补这些变量。Runner 启动 environment-manager 时仍会默认带上 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 以跳过 marketplace 和自动更新；可观测开启时 OMA 会在 Claude 的 startup env 里把它覆盖成空字符串，否则 Claude Code 会把非空值当成 essential-traffic，从而不导出 OTEL。
 
 Console Agent 可观测不再从 PostgreSQL 读取 Active Time / Token 看板。写入端仍把 OTLP 转发到 OpenObserve（凭据键为 `observability.openobserve.ingestion.*`）；查询走 `observability.openobserve.query.*` 与 `POST /api/organizations/{org}/observability/panels/query`。默认 Claude Code 版本保持 `2.1.120`。
 

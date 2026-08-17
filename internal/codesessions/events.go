@@ -1,13 +1,11 @@
 package codesessions
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -23,51 +21,79 @@ type EventMetadata struct {
 	IdempotencyKey string
 }
 
+type eventPayloadMetadataSchema struct {
+	Type      string `json:"type"`
+	Subtype   string `json:"subtype"`
+	UUID      string `json:"uuid"`
+	RequestID string `json:"request_id"`
+	Request   struct {
+		Subtype string `json:"subtype"`
+	} `json:"request"`
+	Response struct {
+		Subtype   string `json:"subtype"`
+		RequestID string `json:"request_id"`
+	} `json:"response"`
+	Event struct {
+		Type string `json:"type"`
+	} `json:"event"`
+}
+
 func BuildEventMetadata(codeSessionID, direction string, raw json.RawMessage) (EventMetadata, error) {
-	normalized, object, err := normalizeJSONObject(raw)
+	schema, err := decodeEventPayloadMetadata(raw)
 	if err != nil {
 		return EventMetadata{}, err
 	}
-	eventType := stringField(object, "type")
+	eventType := schema.Type
 	if eventType == "" {
 		return EventMetadata{}, fmt.Errorf("%w: missing event type", ErrProtocol)
 	}
-	eventSubtype := stringField(object, "subtype")
+	eventSubtype := schema.Subtype
 	if eventSubtype == "" {
-		eventSubtype = nestedStringField(object, "request", "subtype")
+		eventSubtype = schema.Request.Subtype
 	}
 	if eventSubtype == "" {
-		eventSubtype = nestedStringField(object, "response", "subtype")
+		eventSubtype = schema.Response.Subtype
 	}
 	if eventSubtype == "" {
-		eventSubtype = nestedStringField(object, "event", "type")
+		eventSubtype = schema.Event.Type
 	}
 
 	var payloadUUID *string
-	if value := stringField(object, "uuid"); value != "" {
-		payloadUUID = &value
+	if schema.UUID != "" {
+		payloadUUID = &schema.UUID
 	}
 	var requestID *string
-	if value := stringField(object, "request_id"); value != "" {
-		requestID = &value
+	if schema.RequestID != "" {
+		requestID = &schema.RequestID
 	}
 	if requestID == nil {
-		if value := nestedStringField(object, "response", "request_id"); value != "" {
-			requestID = &value
+		if schema.Response.RequestID != "" {
+			requestID = &schema.Response.RequestID
 		}
 	}
 
-	sum := sha256.Sum256(normalized)
+	sum := sha256.Sum256(raw)
 	meta := EventMetadata{
 		EventType:    eventType,
 		EventSubtype: eventSubtype,
 		PayloadUUID:  payloadUUID,
 		RequestID:    requestID,
-		Payload:      normalized,
+		Payload:      raw,
 		PayloadHash:  hex.EncodeToString(sum[:]),
 	}
 	meta.IdempotencyKey = eventIdempotencyKey(codeSessionID, direction, meta)
 	return meta, nil
+}
+
+func decodeEventPayloadMetadata(raw json.RawMessage) (eventPayloadMetadataSchema, error) {
+	if len(raw) == 0 {
+		return eventPayloadMetadataSchema{}, fmt.Errorf("%w: empty payload", ErrProtocol)
+	}
+	var schema eventPayloadMetadataSchema
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return eventPayloadMetadataSchema{}, fmt.Errorf("%w: invalid JSON: %w", ErrProtocol, err)
+	}
+	return schema, nil
 }
 
 func eventIdempotencyKey(codeSessionID, direction string, meta EventMetadata) string {
@@ -81,51 +107,12 @@ func eventIdempotencyKey(codeSessionID, direction string, meta EventMetadata) st
 	return prefix + "hash:" + meta.EventType + ":" + meta.PayloadHash
 }
 
-func normalizeJSONObject(raw json.RawMessage) (json.RawMessage, map[string]any, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return nil, nil, fmt.Errorf("%w: empty payload", ErrProtocol)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, nil, fmt.Errorf("%w: invalid json", ErrProtocol)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, nil, fmt.Errorf("%w: trailing json data", ErrProtocol)
-	}
-	object, ok := value.(map[string]any)
-	if !ok {
-		return nil, nil, fmt.Errorf("%w: payload must be a json object", ErrProtocol)
-	}
-	encoded, err := json.Marshal(object)
-	if err != nil {
-		return nil, nil, err
-	}
-	return json.RawMessage(encoded), object, nil
-}
-
-func decodeJSONObject(raw json.RawMessage) (map[string]any, error) {
-	_, object, err := normalizeJSONObject(raw)
-	return object, err
-}
-
 func stringField(object map[string]any, field string) string {
 	value, ok := object[field].(string)
 	if !ok {
 		return ""
 	}
 	return strings.TrimSpace(value)
-}
-
-func nestedStringField(object map[string]any, parent, field string) string {
-	nested, ok := object[parent].(map[string]any)
-	if !ok {
-		return ""
-	}
-	return stringField(nested, field)
 }
 
 func marshalRaw(value any) (json.RawMessage, error) {

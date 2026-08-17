@@ -1,24 +1,48 @@
 package openobserve
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 )
 
-func TestTraceDetailWindowUnbounded(t *testing.T) {
-	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
-	start, end := traceDetailWindow(observability.TimeWindow{}, now)
-	if !start.Equal(time.Unix(1, 0).UTC()) {
-		t.Fatalf("start = %s, want unix 1s", start)
+func TestTraceSpansReportsTruncation(t *testing.T) {
+	var captured searchRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		hits := make([]map[string]any, sizeTraceDetail+1)
+		for index := range hits {
+			hits[index] = map[string]any{"span_id": strconv.Itoa(index), "start_time": strconv.Itoa(index + 1)}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"hits": hits})
+	}))
+	defer server.Close()
+	backend := NewWithHTTPClient(config.OpenObserveConfig{
+		BaseURL: server.URL, Organization: "oma",
+		Query: config.BackendQueryConfig{Username: "u", Password: "p", Timeout: time.Second},
+	}, nil, server.Client())
+	bound := testBound()
+	bound.Values["trace_id"] = observability.TypedValue{Str: "trace-1"}
+	result, err := backend.TraceSpans(context.Background(), observability.TraceDetailQuery{Bound: bound, TraceID: "trace-1"})
+	if err != nil {
+		t.Fatalf("TraceSpans() error = %v", err)
 	}
-	if start.UnixMicro() == 0 {
-		t.Fatal("OpenObserve rejects start_time=0")
+	if !result.Truncated || len(result.Spans) != sizeTraceDetail {
+		t.Fatalf("result = truncated %v spans %d", result.Truncated, len(result.Spans))
 	}
-	if !end.Equal(now.Add(time.Hour)) {
-		t.Fatalf("end = %s, want now+1h", end)
+	if captured.Query.Size != sizeTraceDetail+1 || captured.Query.StartTime != bound.Window.Start.UnixMicro() || captured.Query.EndTime != bound.Window.End.UnixMicro() {
+		t.Fatalf("query = %+v", captured.Query)
 	}
 }
 
@@ -52,16 +76,5 @@ func TestNormalizeTraceListHitPreview(t *testing.T) {
 	}
 	if empty["input"] != "" || empty["output"] != "" {
 		t.Fatalf("empty preview = %v %v", empty["input"], empty["output"])
-	}
-}
-
-func TestTraceDetailWindowKeepsBoundRange(t *testing.T) {
-	window := observability.TimeWindow{
-		Start: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-		End:   time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC),
-	}
-	start, end := traceDetailWindow(window, time.Now().UTC())
-	if !start.Equal(window.Start) || !end.Equal(window.End) {
-		t.Fatalf("got %s %s", start, end)
 	}
 }

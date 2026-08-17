@@ -246,6 +246,17 @@ Environment Manager 在 `/worker/register` 成功后，用注册返回的真实 
 
 Console Agent 可观测不再从 PostgreSQL 读取 Active Time / Token 看板。写入端仍把 OTLP 转发到 OpenObserve（凭据键为 `observability.openobserve.ingestion.*`）；查询走 `observability.openobserve.query.*` 与 `POST /api/organizations/{org}/observability/panels/query`。默认 Claude Code 版本保持 `2.1.120`。
 
+Console 查询 API 只在 `observability.enabled=true` 时注册，统一使用平台 session 中的 organization/workspace scope；浏览器不能覆盖租户字段，也不会获得 OpenObserve SQL 或凭据。接口为：
+
+| 方法与路径 | 合同 |
+| --- | --- |
+| `GET /api/organizations/{org}/observability/dashboard` | 返回不含 SQL/stream 的看板投影。 |
+| `POST /api/organizations/{org}/observability/panels/query` | 请求体上限 64 KiB；只执行内嵌 `query_ref`。 |
+| `GET /api/organizations/{org}/observability/traces` | `start_time/end_time` 必须成对提供且最长 30 天；支持 Agent、Session、Version、Trace ID 和状态过滤。 |
+| `GET /api/organizations/{org}/observability/traces/{trace_id}` | 可选时间窗遵循同一校验；省略时查最近 30 天，并在结束端保留 1 小时时钟偏差。最多返回 2000 个 spans，超出时响应 `truncated=true`。 |
+
+旧的 `/analytics/sessions/overview` 与 `/analytics/sessions/timeseries` 只返回零值且没有真实数据来源，已随新查询 API 删除；关闭 observability 时新旧接口均为 404。
+
 ### 当前 environment-manager 指标与展示建议
 
 当前 environment-manager exporter 每 60 秒重复导出同一组 cumulative/gauge 点。产品查询层必须先按 `code_session_id + metric.name + point.attributes` 识别 series，并取最新点；不能把 OpenObserve 中每个 sample 直接求和，否则会把同一次启动或安装重复计算。

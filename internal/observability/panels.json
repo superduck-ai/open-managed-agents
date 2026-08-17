@@ -1889,6 +1889,16 @@
       "query_ref": "trace.detail",
       "variables": [
         {
+          "name": "start_time",
+          "type": "time",
+          "required": false
+        },
+        {
+          "name": "end_time",
+          "type": "time",
+          "required": false
+        },
+        {
           "name": "agent_id",
           "type": "string",
           "required": false

@@ -47,9 +47,10 @@ type TraceSpanEventDTO struct {
 }
 
 type TraceDetailResult struct {
-	TraceID  string         `json:"trace_id"`
-	DataAsOf time.Time      `json:"data_as_of"`
-	Spans    []TraceSpanDTO `json:"spans"`
+	TraceID   string         `json:"trace_id"`
+	DataAsOf  time.Time      `json:"data_as_of"`
+	Spans     []TraceSpanDTO `json:"spans"`
+	Truncated bool           `json:"truncated"`
 }
 
 func mapTraceList(rows []Row) (items []TraceListItem, hasMore bool, err error) {

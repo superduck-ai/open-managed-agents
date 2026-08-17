@@ -26,6 +26,10 @@ func errInternal(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
+func errRequestTooLarge(message string) error {
+	return apperr.New(apperr.RequestTooLarge, message, nil)
+}
+
 func QueryTimeout(cause error) error {
 	return errTimeout("observability query timed out", cause)
 }
@@ -48,6 +52,10 @@ func UnresolvedPlaceholder(placeholder string) error {
 
 func InvalidLiteral(message string) error {
 	return errInvalidArgument(message)
+}
+
+func QueryRequestTooLarge() error {
+	return errRequestTooLarge("observability query request is too large")
 }
 
 func errQueryRefNotFound(queryRef string) error {

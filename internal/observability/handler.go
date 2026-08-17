@@ -161,6 +161,10 @@ func (h *Handler) GetTrace(ctx context.Context, scope TenantScope, traceID strin
 	if err != nil {
 		return TraceDetailResult{}, err
 	}
+	dataAsOf := h.now()
+	if bound.Window.Start.IsZero() {
+		bound.Window = TimeWindow{Start: dataAsOf.Add(-maxQuerySpan), End: dataAsOf.Add(time.Hour)}
+	}
 	if err := h.ensureOwnership(ctx, bound.Scope); err != nil {
 		return TraceDetailResult{}, err
 	}
@@ -168,7 +172,12 @@ func (h *Handler) GetTrace(ctx context.Context, scope TenantScope, traceID strin
 	if err != nil {
 		return TraceDetailResult{}, err
 	}
-	return TraceDetailResult{TraceID: traceID, DataAsOf: h.now(), Spans: mapTraceSpans(spans)}, nil
+	return TraceDetailResult{
+		TraceID:   traceID,
+		DataAsOf:  dataAsOf,
+		Spans:     mapTraceSpans(spans.Spans),
+		Truncated: spans.Truncated,
+	}, nil
 }
 
 func (h *Handler) ensureOwnership(ctx context.Context, scope TenantScope) error {

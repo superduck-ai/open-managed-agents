@@ -77,9 +77,14 @@ type TraceDetailQuery struct {
 	TraceID string
 }
 
+type TraceSpansResult struct {
+	Spans     []Span
+	Truncated bool
+}
+
 // QueryBackend executes one query and returns standard rows or spans.
 type QueryBackend interface {
 	PanelRows(ctx context.Context, queryRef string, bound BoundVariables) ([]Row, error)
 	TraceListRows(ctx context.Context, q TraceListQuery) ([]Row, error)
-	TraceSpans(ctx context.Context, q TraceDetailQuery) ([]Span, error)
+	TraceSpans(ctx context.Context, q TraceDetailQuery) (TraceSpansResult, error)
 }

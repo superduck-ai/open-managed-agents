@@ -84,29 +84,32 @@ func (b *Backend) TraceListRows(ctx context.Context, q observability.TraceListQu
 	return rows, nil
 }
 
-func (b *Backend) TraceSpans(ctx context.Context, q observability.TraceDetailQuery) ([]observability.Span, error) {
+func (b *Backend) TraceSpans(ctx context.Context, q observability.TraceDetailQuery) (observability.TraceSpansResult, error) {
 	query, ok := lookupQuery("trace.detail")
 	if !ok {
-		return nil, observability.QueryInternal("missing trace.detail query", nil)
+		return observability.TraceSpansResult{}, observability.QueryInternal("missing trace.detail query", nil)
 	}
 	sql, err := renderSQL(query.SQL, q.Bound, query.StreamType, renderExtras{})
 	if err != nil {
-		return nil, err
+		return observability.TraceSpansResult{}, err
 	}
-	start, end := traceDetailWindow(q.Bound.Window, time.Now().UTC())
-	hits, err := b.client.search(ctx, query.StreamType, sql, start, end, sizeTraceDetail)
+	hits, err := b.client.search(ctx, query.StreamType, sql, q.Bound.Window.Start, q.Bound.Window.End, sizeTraceDetail+1)
 	if err != nil {
-		return nil, err
+		return observability.TraceSpansResult{}, err
+	}
+	truncated := len(hits) > sizeTraceDetail
+	if truncated {
+		hits = hits[:sizeTraceDetail]
 	}
 	spans := make([]observability.Span, 0, len(hits))
 	for _, hit := range hits {
 		span, mapErr := spanFromHit(hit)
 		if mapErr != nil {
-			return nil, mapErr
+			return observability.TraceSpansResult{}, mapErr
 		}
 		spans = append(spans, span)
 	}
-	return spans, nil
+	return observability.TraceSpansResult{Spans: spans, Truncated: truncated}, nil
 }
 
 func searchWindow(queryRef string, bound observability.BoundVariables) (time.Time, time.Time) {
@@ -123,14 +126,6 @@ func sizeFor(queryRef string) int {
 		return sizeTimeseries
 	}
 	return sizeDefault
-}
-
-func traceDetailWindow(window observability.TimeWindow, now time.Time) (time.Time, time.Time) {
-	if window.Start.IsZero() || window.End.IsZero() {
-		// OpenObserve file_list rejects start_time=0 (unix epoch microseconds).
-		return time.Unix(1, 0).UTC(), now.Add(time.Hour)
-	}
-	return window.Start, window.End
 }
 
 func rowsFromHits(hits []map[string]any) []observability.Row {

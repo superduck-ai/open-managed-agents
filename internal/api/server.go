@@ -25,6 +25,8 @@ import (
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
+	"github.com/superduck-ai/open-managed-agents/internal/observability"
+	"github.com/superduck-ai/open-managed-agents/internal/observability/openobserve"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
@@ -208,10 +210,16 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
 			platformapi.RegisterOrganizationExperienceRoutes(r)
 			platformapi.RegisterOrganizationBillingRoutes(r)
-			platformapi.RegisterOrganizationAnalyticsRoutes(r)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.cfg)
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream, workbenchLogger)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
+			if s.cfg.Observability.Enabled {
+				obsLogger := s.logger.With("component", "observability")
+				// 配置校验保证 enabled 时 backend 只会是受支持的值。
+				backend := openobserve.New(s.cfg.Observability.OpenObserve, obsLogger)
+				handler := observability.NewHandler(backend, observability.DBStore{DB: s.db}, obsLogger)
+				platformapi.RegisterOrganizationObservabilityRoutes(r, handler, obsLogger)
+			}
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {
 			platformapi.RegisterOrganizationOAuthEnvironmentRoutes(r)

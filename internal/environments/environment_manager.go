@@ -317,7 +317,7 @@ func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg co
 }
 
 func setDefaultEnvironmentVariable(environmentVariables map[string]any, key string, value string) {
-	if stringFromMap(environmentVariables, key) == "" {
+	if _, configured := environmentVariables[key]; !configured {
 		environmentVariables[key] = value
 	}
 }

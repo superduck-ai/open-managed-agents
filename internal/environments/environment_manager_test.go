@@ -427,6 +427,7 @@ func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) 
 		},
 	}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
+		"CLAUDE_CODE_ENABLE_TELEMETRY":"",
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com",
 		"OTEL_EXPORTER_OTLP_METRICS_HEADERS":"Authorization=Bearer stale",
@@ -443,8 +444,8 @@ func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) 
 	}
 	if startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
 		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
-		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "1" {
-		t.Fatalf("platform defaults missing for unset keys: %#v", startupEnv)
+		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "" {
+		t.Fatalf("user telemetry values or platform defaults mismatch: %#v", startupEnv)
 	}
 	if got := startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "" {
 		t.Fatalf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %#v, want empty so Claude can export OTEL", got)

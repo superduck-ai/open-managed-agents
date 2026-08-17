@@ -1368,7 +1368,7 @@
   "managedAgents.observability.sessionActivity": "会话活动",
   "managedAgents.observability.sessions": "会话",
   "managedAgents.observability.stopReasons": "停止原因",
-  "managedAgents.observability.title": "可观测性",
+  "managedAgents.observability.title": "可观测",
   "managedAgents.observability.toolUsage": "工具使用情况",
   "managedAgents.observability.totalInputTokens": "输入 Token 总数",
   "managedAgents.observability.totalOutputTokens": "输出 Token 总数",

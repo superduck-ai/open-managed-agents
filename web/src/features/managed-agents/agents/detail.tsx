@@ -410,15 +410,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
             value="observability"
             className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
           >
-            <span className="inline-flex items-center gap-2">
-              {msg('managedAgents.observability.title', 'Observability')}
-              <Badge
-                variant="secondary"
-                className="h-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-secondary-foreground"
-              >
-                {msg('common.new', 'New')}
-              </Badge>
-            </span>
+            {msg('managedAgents.observability.title', 'Observability')}
           </TabsTrigger>
         </TabsList>
 

@@ -1247,22 +1247,16 @@ func (d *DB) TouchCodeSessionWorkerActivityForEpoch(ctx context.Context, codeSes
 	return d.touchCodeSessionWorkerActivity(ctx, codeSessionExternalID, &epoch)
 }
 
-// ValidateCodeSessionWorkerActiveLease checks the current worker fence without
-// writing any state. OTLP ingress calls it on every request before reading the
-// body, so stale or taken-over workers are rejected without doing decode work.
-func (d *DB) ValidateCodeSessionWorkerActiveLease(ctx context.Context, codeSessionExternalID string, epoch int64) error {
-	if epoch <= 0 {
-		return ErrWorkerEpochMismatch
-	}
+// ValidateCodeSessionWorkerActiveLease checks that a worker is currently
+// registered without writing any state. OTLP ingress calls it before reading
+// the body so expired workers are rejected without doing decode work.
+func (d *DB) ValidateCodeSessionWorkerActiveLease(ctx context.Context, codeSessionExternalID string) error {
 	record, found, err := d.GetCodeSession(ctx, codeSessionExternalID)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return ErrNotFound
-	}
-	if record.CurrentWorkerEpoch != epoch {
-		return ErrWorkerEpochMismatch
 	}
 	if record.WorkerLeaseExpiresAt == nil || !record.WorkerLeaseExpiresAt.After(time.Now().UTC()) {
 		return ErrWorkerLeaseExpired

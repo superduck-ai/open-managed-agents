@@ -35,7 +35,6 @@ type trustedOTLPResourceAttributes struct {
 	codeSessionID    string
 	agentID          string
 	agentVersion     int64
-	workerEpoch      int64
 }
 
 func parseOTLPProtocol(contentType string) (otlpProtocol, error) {
@@ -189,9 +188,6 @@ func trustedOTLPAttributes(attrs trustedOTLPResourceAttributes) []*commonpb.KeyV
 		otlpStringAttribute("oma.code_session.id", attrs.codeSessionID),
 		otlpStringAttribute("oma.agent.id", attrs.agentID),
 		otlpIntAttribute("oma.agent.version", attrs.agentVersion),
-	}
-	if attrs.workerEpoch > 0 {
-		attributes = append(attributes, otlpIntAttribute("oma.worker.epoch", attrs.workerEpoch))
 	}
 	return attributes
 }

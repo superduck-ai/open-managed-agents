@@ -16,7 +16,6 @@ const (
 	defaultClaudeAgentVersion     = "2.1.120"
 	defaultClaudePath             = "/opt/claude-code/bin/claude"
 	defaultEnvironmentWorkDir     = "/home/user"
-	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 )
 
@@ -228,9 +227,6 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	startupContext["api_base_url"] = apiBaseURL
 	startupContext["use_code_sessions"] = true
 	startupContext["session_id"] = codeSessionID
-	claudeCodeArgs := mapStringAnyValue(startupContext["claude_code_args"])
-	claudeCodeArgs["settings"] = launcherSettingsPath
-	startupContext["claude_code_args"] = claudeCodeArgs
 	environmentVariables := mapStringAnyValue(startupContext["environment_variables"])
 	environmentVariables["CLAUDE_CODE_REMOTE"] = "true" // 进入 remote-session 路径并初始化 CCR relay。
 	environmentVariables["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] = "1"
@@ -240,7 +236,7 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
-	applyCodeSessionOTLPEnvironment(environmentVariables, cfg.Observability)
+	applyCodeSessionOTLPEnvironment(environmentVariables, cfg.Observability, apiBaseURL, codeSessionID, sessionIngressToken)
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
 		startupContext["sources"] = []any{}
@@ -284,12 +280,10 @@ func claudeRuntimeModelEnvironment(modelID string) map[string]string {
 	}
 }
 
-// applyCodeSessionOTLPEnvironment 只做默认值补齐，用户配置无条件优先：
-// session 已设置的键一律保留，未设置的键才写入平台默认值。导出 endpoint、
-// auth header 和 worker epoch 不在这里注入——它们由 environment-manager 在
-// /worker/register 拿到真实 epoch 后注入；伪造或过期的值会被 ingress 的
-// epoch/lease 校验拒绝，因此这里也不做任何 env 清洗。
-func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg config.ObservabilityConfig) {
+// applyCodeSessionOTLPEnvironment 对采集选项只补默认值；连接 OMA 所需的
+// endpoint 和 Authorization 由平台覆盖，兼容不会动态配置 OTLP 的旧版
+// environment-manager。OTLP ingress 仍会校验 session token 与 active lease。
+func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg config.ObservabilityConfig, apiBaseURL, codeSessionID, sessionIngressToken string) {
 	if !cfg.Enabled {
 		return
 	}
@@ -310,6 +304,16 @@ func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg co
 		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_DETAILS", "1")
 		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_CONTENT", "1")
 	}
+
+	otlpBaseURL := strings.TrimRight(apiBaseURL, "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp"
+	headers := "Authorization=Bearer " + sessionIngressToken
+	environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ""
+	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] = otlpBaseURL + "/metrics"
+	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = headers
+	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] = otlpBaseURL + "/logs"
+	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = headers
+	environmentVariables["BETA_TRACING_ENDPOINT"] = otlpBaseURL
+	environmentVariables["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = headers
 }
 
 func setDefaultEnvironmentVariable(environmentVariables map[string]any, key string, value string) {

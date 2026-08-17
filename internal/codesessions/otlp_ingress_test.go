@@ -81,15 +81,3 @@ func TestReadOTLPRequestBodyEnforcesEncodingAndExpandedLimit(t *testing.T) {
 		})
 	}
 }
-
-func TestParseOTLPWorkerEpochRequiresHeader(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/otlp?worker_epoch=7", nil)
-	if _, err := parseOTLPWorkerEpoch(request); err == nil {
-		t.Fatal("query worker_epoch unexpectedly accepted")
-	}
-	request.Header.Set("x-worker-epoch", "7")
-	epoch, err := parseOTLPWorkerEpoch(request)
-	if err != nil || epoch != 7 {
-		t.Fatalf("parseOTLPWorkerEpoch() = %d, %v", epoch, err)
-	}
-}

@@ -112,12 +112,6 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 	}
 	defer release()
 
-	workerEpoch, err := parseOTLPWorkerEpoch(r)
-	if err != nil {
-		writeOTLPStatus(w, protocol, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-
 	// 可信租户属性的唯一来源；注入 payload 的身份全部取自它而非 worker 输入。
 	credentialContext, err := h.db.GetCodeSessionCredentialContextForIssue(
 		r.Context(),
@@ -129,7 +123,7 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		h.writeOTLPDatabaseError(w, r, protocol, codeSessionID, err)
 		return
 	}
-	if err := h.db.ValidateCodeSessionWorkerActiveLease(r.Context(), codeSessionID, workerEpoch); err != nil {
+	if err := h.db.ValidateCodeSessionWorkerActiveLease(r.Context(), codeSessionID); err != nil {
 		h.writeOTLPDatabaseError(w, r, protocol, codeSessionID, err)
 		return
 	}
@@ -156,7 +150,6 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		codeSessionID:    credentialContext.CodeSessionExternalID,
 		agentID:          credentialContext.AgentExternalID,
 		agentVersion:     int64(credentialContext.AgentVersion),
-		workerEpoch:      workerEpoch,
 	})
 	if err != nil {
 		writeOTLPStatus(w, protocol, http.StatusBadRequest, err.Error(), "")
@@ -179,14 +172,6 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 	}
 
 	writeOTLPSuccess(w, protocol, response.body)
-}
-
-func parseOTLPWorkerEpoch(r *http.Request) (int64, error) {
-	value := strings.TrimSpace(r.Header.Get("x-worker-epoch"))
-	if value == "" {
-		return 0, errors.New("x-worker-epoch header is required")
-	}
-	return parseWorkerEpochString(value)
 }
 
 // otlpSessionIngressAuthStatus 把 sessionIngressClaims 的 apperr 翻译成 OTLP
@@ -215,8 +200,6 @@ func (h *Handler) writeOTLPDatabaseError(w http.ResponseWriter, r *http.Request,
 	switch {
 	case errors.Is(err, db.ErrNotFound):
 		writeOTLPStatus(w, protocol, http.StatusGone, "code session is no longer active", "")
-	case errors.Is(err, db.ErrWorkerEpochMismatch):
-		writeOTLPStatus(w, protocol, http.StatusConflict, "worker epoch mismatch", "")
 	case errors.Is(err, db.ErrWorkerLeaseExpired):
 		writeOTLPStatus(w, protocol, http.StatusGone, "code session worker lease expired", "")
 	default:

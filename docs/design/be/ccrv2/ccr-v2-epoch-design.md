@@ -112,7 +112,7 @@ return nextEpoch
 - epoch mismatch: `409 conflict_error`
 - auth failure: `401 authentication_error`
 
-`POST /worker/otlp/{signal}` 不设无 epoch 例外。Environment Manager 先完成 worker register，再用注册返回的真实 epoch 初始化自身 exporter 并启动 Claude Code；所有受管 OTLP 请求都必须携带 `X-Worker-Epoch`，并在读取 body 前通过当前 epoch 与 active lease 校验。
+`POST /worker/otlp/{signal}` 不参与 epoch fencing。OMA 在启动 payload 中注入 endpoint 与 SessionIngress Authorization，服务端在读取 body 前校验当前 worker lease；其他 worker 写入口仍按本节要求携带 epoch。
 
 `POST /worker/events/delivery` 除了校验当前 epoch，还要求被 ACK 的 inbound event 已经由同一 epoch 的 SSE stream 写出并标记为 `sent`；queued 事件、旧发送 epoch 事件或未知事件不会推进状态，只计入 delivery 响应的 `ignored`。
 
@@ -286,7 +286,7 @@ CCR v2 worker 使用持久化 inbound event 队列和带 epoch 的
 - 不同 code session 都从 `1` 开始，互不影响。
 - 旧 epoch 调 worker 写 endpoints 返回 `409`。
 - 当前 epoch 调同样 endpoints 成功。
-- 必须携带 epoch 的 worker 写入口缺失、`0`、非数字、浮点、负数 `worker_epoch` 返回 `400`；OTLP 缺失 epoch 可以成功且不更新 worker activity/lease，非法 epoch 仍返回 `400`。
+- 必须携带 epoch 的 worker 写入口缺失、`0`、非数字、浮点、负数 `worker_epoch` 返回 `400`；OTLP 不读取 epoch，成功上报也不更新 worker activity/lease。
 - heartbeat 当前 epoch 更新 heartbeat/lease 时间。
 - heartbeat 旧 epoch 返回 `409` 且不更新 lease。
 - lease 过期不自动 bump，下一次 register 才 bump。

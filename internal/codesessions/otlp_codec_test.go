@@ -23,7 +23,6 @@ func TestCanonicalizeOTLPPayloadReplacesUntrustedOMAAttributes(t *testing.T) {
 		codeSessionID:    "cse_trusted",
 		agentID:          "agent_trusted",
 		agentVersion:     7,
-		workerEpoch:      3,
 	}
 	wantResourceAttributes := []*commonpb.KeyValue{
 		otlpStringAttribute("service.name", "claude-code"),
@@ -33,7 +32,6 @@ func TestCanonicalizeOTLPPayloadReplacesUntrustedOMAAttributes(t *testing.T) {
 		otlpStringAttribute("oma.code_session.id", "cse_trusted"),
 		otlpStringAttribute("oma.agent.id", "agent_trusted"),
 		otlpIntAttribute("oma.agent.version", 7),
-		otlpIntAttribute("oma.worker.epoch", 3),
 	}
 	wantNestedAttributes := []*commonpb.KeyValue{otlpStringAttribute("event.name", "tool")}
 

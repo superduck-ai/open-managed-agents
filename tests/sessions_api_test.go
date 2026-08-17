@@ -1521,8 +1521,8 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{"type":"user","uuid":"internal-`+strings.TrimPrefix(session.ID, "sesn_")+`"}}]}`)
 	assertCodeSessionWorkerDelivery(t, app, codeSessionID, workerEpoch)
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, workerEpoch)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics", workerEpoch)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs", workerEpoch)
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics")
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs")
 
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"events":[{"payload":{"type":"assistant","uuid":"assistant-worker-`+eventSuffix+`","message":{"role":"assistant","content":"hello from ccr worker"},"created_at":"2026-06-16T01:10:00Z"}}],"worker_epoch":`+quoteJSON(workerEpoch)+`}`)
@@ -2442,21 +2442,17 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "events/delivery", workerDeliveryBody(epoch1), http.StatusConflict, "conflict_error")
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "diagnostics", workerDiagnosticsBody(codeSessionID, epoch1, "old diag"), http.StatusConflict, "conflict_error")
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, epoch1), http.StatusConflict, "conflict_error")
-	assertCodeSessionWorkerOTLPError(t, app, codeSessionID, "metrics", epoch1, http.StatusConflict, "worker epoch mismatch")
-	assertCodeSessionWorkerOTLPError(t, app, codeSessionID, "logs", epoch1, http.StatusConflict, "worker epoch mismatch")
-
 	if got := putCodeSessionWorker(t, app, codeSessionID, epoch2); got != epoch2 {
 		t.Fatalf("put current epoch response = %q, want %q", got, epoch2)
 	}
 	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch2)+`,"events":[]}`)
 	assertCodeSessionWorkerDelivery(t, app, codeSessionID, epoch2)
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch2)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics", epoch2)
-	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "metrics", epoch2)
-	assertCodeSessionWorkerOTLPRejectsQueryEpoch(t, app, codeSessionID, "metrics", epoch2)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs", epoch2)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/logs", epoch2)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/traces", epoch2)
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics")
+	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "metrics")
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs")
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/logs")
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/traces")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, workerEventBody(session.ID, "current", epoch2))
 	postCodeSessionWorkerDiagnostics(t, app, codeSessionID, workerDiagnosticsBody(codeSessionID, epoch2, "current diag"))
 }
@@ -2786,11 +2782,9 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 		t.Fatalf("null worker state fields status = %d, want 200: %s", nullStateResp.StatusCode, readAll(t, nullStateResp.Body))
 	}
 
-	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "abc", "application/x-protobuf", nil)
-	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusBadRequest, "worker_epoch must be a positive integer")
 }
 
-func TestCodeSessionWorkerOTLPRejectsMissingEpochWithoutWorkerActivity(t *testing.T) {
+func TestCodeSessionWorkerOTLPAcceptsWithoutEpochWithoutWorkerActivity(t *testing.T) {
 	app := newTestAppWithOTLPForwarder(t, "sessions-code-worker-otlp-missing-epoch-bucket")
 	defer app.close()
 
@@ -2800,14 +2794,14 @@ func TestCodeSessionWorkerOTLPRejectsMissingEpochWithoutWorkerActivity(t *testin
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	registerCodeSessionWorker(t, app, codeSessionID)
 	before, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session before OTLP: %v", err)
 	}
 
 	for _, suffix := range []string{"metrics", "logs"} {
-		resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "", "application/x-protobuf", nil)
-		assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusBadRequest, "x-worker-epoch header is required")
+		assertCodeSessionWorkerOTLP(t, app, codeSessionID, suffix)
 	}
 
 	after, err := getCodeSession(app, context.Background(), codeSessionID)
@@ -2817,7 +2811,7 @@ func TestCodeSessionWorkerOTLPRejectsMissingEpochWithoutWorkerActivity(t *testin
 	if after.CurrentWorkerEpoch != before.CurrentWorkerEpoch ||
 		!nullableTimeEqual(after.LastWorkerActivityAt, before.LastWorkerActivityAt) ||
 		!nullableTimeEqual(after.WorkerLeaseExpiresAt, before.WorkerLeaseExpiresAt) {
-		t.Fatalf("epochless OTLP changed worker ownership state: before=%+v after=%+v", before, after)
+		t.Fatalf("OTLP changed worker ownership state: before=%+v after=%+v", before, after)
 	}
 }
 
@@ -2863,7 +2857,7 @@ func TestCodeSessionWorkerOTLPRejectsInvalidSessionIngress(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := doCodeSessionWorkerOTLPRequestWithToken(t, app, tc.pathSessionID, "metrics", "1", tc.contentType, nil, tc.token)
+			resp := doCodeSessionWorkerOTLPRequestWithToken(t, app, tc.pathSessionID, "metrics", tc.contentType, nil, tc.token)
 			assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusUnauthorized, tc.message)
 		})
 	}
@@ -3074,7 +3068,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 3 {
 		t.Fatalf("expired heartbeat sandbox timeout calls = %d, want 3", len(calls))
 	}
-	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", epoch2, "application/x-protobuf", nil)
+	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "application/x-protobuf", nil)
 	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusGone, "code session worker lease expired")
 	afterExpiredHeartbeat, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
@@ -4520,9 +4514,9 @@ func newTestAppWithOTLPForwarder(t *testing.T, bucket string) *testApp {
 	return newTestAppWithStore(t, &cfg, newFakeStore(bucket))
 }
 
-func assertCodeSessionWorkerOTLP(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string) {
+func assertCodeSessionWorkerOTLP(t *testing.T, app *testApp, codeSessionID string, suffix string) {
 	t.Helper()
-	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, workerEpoch, "application/x-protobuf", []byte{0x0a, 0x00})
+	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "application/x-protobuf", []byte{0x0a, 0x00})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post worker otlp/%s status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))
@@ -4535,9 +4529,9 @@ func assertCodeSessionWorkerOTLP(t *testing.T, app *testApp, codeSessionID strin
 	}
 }
 
-func assertCodeSessionWorkerOTLPJSON(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string) {
+func assertCodeSessionWorkerOTLPJSON(t *testing.T, app *testApp, codeSessionID string, suffix string) {
 	t.Helper()
-	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, workerEpoch, "application/json", []byte(`{"resourceMetrics":[]}`))
+	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "application/json", []byte(`{"resourceMetrics":[]}`))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post worker otlp/%s json status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))
@@ -4548,18 +4542,6 @@ func assertCodeSessionWorkerOTLPJSON(t *testing.T, app *testApp, codeSessionID s
 	if body := strings.TrimSpace(string(readAll(t, resp.Body))); body != "{}" {
 		t.Fatalf("post worker otlp/%s json body = %q, want {}", suffix, body)
 	}
-}
-
-func assertCodeSessionWorkerOTLPRejectsQueryEpoch(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string) {
-	t.Helper()
-	resp := doCodeSessionWorkerRequest(t, app, codeSessionID, "otlp/"+suffix+"?worker_epoch="+url.QueryEscape(workerEpoch), `{"resourceMetrics":[]}`)
-	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusBadRequest, "x-worker-epoch header is required")
-}
-
-func assertCodeSessionWorkerOTLPError(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string, status int, message string) {
-	t.Helper()
-	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, workerEpoch, "application/x-protobuf", nil)
-	assertCodeSessionWorkerOTLPResponse(t, resp, status, message)
 }
 
 func assertCodeSessionWorkerOTLPResponse(t *testing.T, resp *http.Response, status int, message string) {
@@ -4657,13 +4639,13 @@ func doCodeSessionWorkerRequestWithToken(t *testing.T, app *testApp, method stri
 	return resp
 }
 
-func doCodeSessionWorkerOTLPRequest(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string, contentType string, body []byte) *http.Response {
+func doCodeSessionWorkerOTLPRequest(t *testing.T, app *testApp, codeSessionID string, suffix string, contentType string, body []byte) *http.Response {
 	t.Helper()
 	token := codeSessionIngressToken(t, app, codeSessionID)
-	return doCodeSessionWorkerOTLPRequestWithToken(t, app, codeSessionID, suffix, workerEpoch, contentType, body, token)
+	return doCodeSessionWorkerOTLPRequestWithToken(t, app, codeSessionID, suffix, contentType, body, token)
 }
 
-func doCodeSessionWorkerOTLPRequestWithToken(t *testing.T, app *testApp, codeSessionID string, suffix string, workerEpoch string, contentType string, body []byte, token string) *http.Response {
+func doCodeSessionWorkerOTLPRequestWithToken(t *testing.T, app *testApp, codeSessionID string, suffix string, contentType string, body []byte, token string) *http.Response {
 	t.Helper()
 	path := app.baseURL + "/v1/code/sessions/" + codeSessionID + "/worker/otlp/" + strings.TrimPrefix(suffix, "/")
 	req, err := http.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -4672,9 +4654,6 @@ func doCodeSessionWorkerOTLPRequestWithToken(t *testing.T, app *testApp, codeSes
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", contentType)
-	if strings.TrimSpace(workerEpoch) != "" {
-		req.Header.Set("X-Worker-Epoch", workerEpoch)
-	}
 	resp, err := app.client.Do(req)
 	if err != nil {
 		t.Fatalf("do code session worker otlp request: %v", err)

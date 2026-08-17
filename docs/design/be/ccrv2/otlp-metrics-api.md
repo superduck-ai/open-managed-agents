@@ -21,11 +21,10 @@ POST /v1/code/sessions/{code_session_id}/worker/otlp/v1/traces
 
 1. 验证 `Authorization: Bearer sk-ant-si-<JWT>` 的固定算法、`kid`、签名、issuer、audience，并要求 JWT `session_id` 与 path 中的 `code_session_id` 一致。
 2. 同时限制压缩前和解压后的请求体大小，严格解码 OTLP JSON/protobuf body。
-3. worker epoch 必填，且必须等于当前 epoch、对应 worker lease 未过期。
-4. 格式非法的 epoch 返回 `400` 和 OTLP `google.rpc.Status(INVALID_ARGUMENT)`。
-5. 旧 worker epoch 返回 `409` 和 OTLP `google.rpc.Status(ABORTED)`；租约过期返回 `410` 和 `google.rpc.Status(FAILED_PRECONDITION)`。
-6. 删除客户端提供的所有 `oma.*` 属性，以及经 OpenObserve 字段归一化后落入 `oma_*` 命名空间的别名，再从受信 Session 状态注入租户、Session、Agent、Version 和 epoch。
-7. 使用服务端凭据转发到 OpenObserve，并保留 partial success、`Retry-After` 和 OTLP 错误语义；OMA 不在本地落盘原始遥测。
+3. 要求当前 worker lease 有效；OTLP 不读取或校验 worker epoch。
+4. 租约过期返回 `410` 和 OTLP `google.rpc.Status(FAILED_PRECONDITION)`。
+5. 删除客户端提供的所有 `oma.*` 属性，以及经 OpenObserve 字段归一化后落入 `oma_*` 命名空间的别名，再从受信 Session 状态注入租户、Session、Agent 和 Version。
+6. 使用服务端凭据转发到 OpenObserve，并保留 partial success、`Retry-After` 和 OTLP 错误语义；OMA 不在本地落盘原始遥测。
 
 实现文件：
 
@@ -75,13 +74,12 @@ POST /v1/code/sessions/{code_session_id}/worker/otlp/logs
 | Header | 必需 | 描述 |
 |--------|------|------|
 | `Authorization: Bearer sk-ant-si-<JWT>` | 是 | session-ingress JWT，必须通过签名和标准 claims 校验，且 `session_id` 必须与 path 一致 |
-| `X-Worker-Epoch: {epoch}` | 是 | 当前 worker epoch；用于拒绝旧 worker 写入并检查 active lease |
 | `Content-Type` | 是 | `application/x-protobuf` 或 `application/json` |
 | `Accept` | 否 | 当前实现忽略该字段；响应编码始终跟随请求 `Content-Type` |
 
 成功响应编码与请求 `Content-Type` 一致：JSON 请求返回 OTLP JSON 响应，Protobuf 请求返回 OTLP Protobuf 响应。`Accept` 不改变响应编码。
 
-Environment Manager 先完成 `/worker/register`，取得真实 epoch 后才初始化自身 OTel exporter 并启动 Claude Code，因此所有受管 OTLP 请求都必须通过 `X-Worker-Epoch` 传递 epoch；不保留 query 参数或 pre-register 无 epoch 兼容路径。
+OMA 在启动 payload 中直接注入 signal-specific endpoint 与 SessionIngress Authorization header，旧版 Environment Manager 只需按既有合同把环境变量传给 Claude Code。Environment Manager 仍需先完成 `/worker/register` 并维持 heartbeat lease，但 OTLP 请求不携带 worker epoch。
 
 ---
 
@@ -207,8 +205,8 @@ function getOTLPExporterConfig() {
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | 当前后端默认注入 session metrics endpoint | Metrics 专用端点 |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | 当前后端默认注入 session logs endpoint | Logs 专用端点 |
 | `OTEL_EXPORTER_OTLP_HEADERS` | - | 通用 OTLP 请求头；后端不会向该变量注入 session token，避免 token 被自定义 signal endpoint 通过 fallback header 发送到外部 collector |
-| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | 当前后端默认注入 auth 和 epoch | Metrics 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
-| `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | 当前后端默认注入 auth 和 epoch | Logs 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | 当前后端默认注入 auth | Metrics 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
+| `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | 当前后端默认注入 auth | Logs 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
 
 ### 协议配置
 
@@ -238,9 +236,7 @@ function getOTLPExporterConfig() {
 
 ### Code Session 环境变量注入
 
-OMA 只在 `startup_context.environment_variables` 写入 Claude Code 的静态 telemetry、exporter、protocol 和 temporality 变量，不写死 worker epoch，也不把 SessionIngress token 放入启动 payload 的环境变量。
-
-Environment Manager 在 `/worker/register` 成功后，用注册返回的真实 epoch 和已有的 SessionIngress token 生成 signal-specific endpoint/header。平台受管变量会覆盖宿主环境中的同名值，用户不能改写路由、鉴权或敏感内容采集开关。
+OMA 在 `startup_context.environment_variables` 写入 Claude Code 的 telemetry、exporter、protocol、temporality，以及 signal-specific endpoint 和 SessionIngress Authorization header。平台连接变量覆盖同名用户值，使不会动态配置 OTLP 的旧版 Environment Manager 也能按既有启动合同工作；worker epoch 不进入 OTLP 配置。
 
 `observability.enabled=true` 时，OMA 无条件注入 metrics、logs 和 detailed tracing 的全套静态变量（含 `ENABLE_BETA_TRACING_DETAILED=1`），不再按信号拆分开关。内容采集由 `observability.content_capture_enabled`（默认 true）单独控制：开启时 OMA 追加注入 `OTEL_LOG_USER_PROMPTS=1`、`OTEL_LOG_TOOL_DETAILS=1`、`OTEL_LOG_TOOL_CONTENT=1`，授权 prompt 原文、工具输入/输出正文上报（可能包含源码、命令输出和密钥）；关闭时仅保留结构化遥测，且用户自带的内容授权变量会被平台剥离、不予补回。Runner 启动 environment-manager 时仍会默认带上 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 以跳过 marketplace 和自动更新；可观测开启时 OMA 会在 Claude 的 startup env 里把它覆盖成空字符串，否则 Claude Code 会把非空值当成 essential-traffic，从而不导出 OTEL。
 
@@ -497,7 +493,6 @@ config.httpAgentOptions = {
 // 静态 headers（从环境变量读取）
 {
   "Authorization": "Bearer <token>",
-  "X-Worker-Epoch": "<epoch>",
   "X-Custom-Header": "value"
 }
 
@@ -508,10 +503,7 @@ config.headers = async () => {
 }
 ```
 
-Code session OTLP 端点运行时必须同时具备 Authorization 和 epoch：
-
-1. `Authorization: Bearer sk-ant-si-<JWT>`，并要求签名 JWT 的 `session_id` 与 OTLP URL path 一致。
-2. `X-Worker-Epoch: {epoch}`，用于拒绝旧 worker 写入并校验 active lease。
+Code session OTLP 端点运行时必须携带 `Authorization: Bearer sk-ant-si-<JWT>`，并要求签名 JWT 的 `session_id` 与 OTLP URL path 一致。服务端根据 code session 当前状态校验 active lease，不读取 worker epoch。
 
 ---
 
@@ -521,10 +513,10 @@ Code session OTLP 端点运行时必须同时具备 Authorization 和 epoch：
 
 当前实现位于 `internal/codesessions/otlp_ingress.go`、`otlp_codec.go` 和 `otlp_forward.go`：
 
-1. 校验 SessionIngress JWT、请求 path 及其 Metrics、Logs 或 Detailed Tracing 开关、可信凭证上下文、必填 `X-Worker-Epoch`、当前 epoch 和 active lease；关闭的信号在读取 body 前返回 403。
+1. 校验 Observability 全局开关、SessionIngress JWT、请求 path、可信凭证上下文和 active lease。
 2. 上述授权在读取请求 body 前完成；失效 worker 不进入解压和 OTLP 解码。
 3. 同时限制压缩前和解压后 body 大小，再按请求 `Content-Type` 严格解码 JSON/Protobuf。
-4. 删除客户端各层级提供的 `oma.*` 属性及其 OpenObserve `oma_*` / `service_oma_*` 归一化别名（后者对应 traces 侧租户列的 `service_` 前缀），注入服务端可信 Organization、Workspace、Session、Agent、Version 和 epoch。
+4. 删除客户端各层级提供的 `oma.*` 属性及其 OpenObserve `oma_*` / `service_oma_*` 归一化别名（后者对应 traces 侧租户列的 `service_` 前缀），注入服务端可信 Organization、Workspace、Session、Agent 和 Version。
 5. payload 校验成功后用服务端凭据转发到 OpenObserve；OTLP 不写 worker 状态，liveness 完全由 heartbeat 维护。
 6. 保留 OpenObserve partial success 和 `Retry-After`；不在 OMA 本地落盘 OTLP body，也不把上游错误正文写入应用日志。
 
@@ -533,10 +525,7 @@ Code session OTLP 端点运行时必须同时具备 Authorization 和 epoch：
 | 场景 | 状态码 | error type |
 |------|--------|------------|
 | token 缺失或不匹配 | 401 | OTLP typed error |
-| 对应 Metrics、Logs 或 Detailed Tracing 开关关闭 | 403 | OTLP typed error |
-| epoch 缺失或格式非法 | 400 | OTLP typed error |
 | session 不再 active | 410 | OTLP typed error |
-| epoch 与当前 worker 不匹配 | 409 | OTLP typed error |
 | 当前 worker lease 已过期 | 410 | OTLP typed error |
 | body 超过限制 | 413 | OTLP typed error |
 | OpenObserve 暂时不可用 | 503 | OTLP typed error，可重试 |
@@ -762,7 +751,6 @@ POST /v1/code/sessions/cse_abc123/worker/otlp/metrics HTTP/1.1
 Host: telemetry.example.com
 Content-Type: application/json
 Authorization: Bearer sk-ant-si-<signed-session-ingress-jwt>
-X-Worker-Epoch: 1
 
 {
   "resourceMetrics": [
@@ -901,10 +889,9 @@ claude
 ```bash
 # 使用 curl 测试 HTTP/JSON 端点
 curl -X POST http://127.0.0.1:38080/v1/code/sessions/cse_abc123/worker/otlp/metrics \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${SESSION_INGRESS_TOKEN}" \
-  -H "X-Worker-Epoch: 1" \
-  -d '{"resourceMetrics": []}'
+	-H "Content-Type: application/json" \
+	-H "Authorization: Bearer ${SESSION_INGRESS_TOKEN}" \
+	-d '{"resourceMetrics": []}'
 ```
 
 ---
@@ -954,7 +941,7 @@ go run ./cmd/observability-e2e
 3. **导出间隔**：默认 60 秒
 4. **认证**：`Authorization: Bearer sk-ant-si-<JWT>`，校验签名和 claims，并把 `session_id` 绑定到请求 path
 5. **时间聚合**：默认 DELTA（增量）
-6. **worker 防护**：Claude Code 和 Environment Manager exporter 都通过 `X-Worker-Epoch` 传当前 epoch，服务端要求当前 lease 有效
+6. **worker 防护**：服务端要求当前 worker lease 有效；OTLP 不参与 worker epoch fencing
 
 ### 配置常量
 
@@ -967,11 +954,11 @@ go run ./cmd/observability-e2e
 ### 当前服务端要求
 
 1. 校验 session-ingress JWT，并要求 JWT `session_id` 与 path 中的 `code_session_id` 一致。
-2. 只从 `X-Worker-Epoch` 读取必填 epoch，在读取 body 前校验当前 epoch 与 active lease。
+2. 在读取 body 前校验当前 worker lease；不读取 worker epoch。
 3. 请求体同时受压缩前和解压后大小限制，并严格解码 OTLP JSON/Protobuf。
 4. 删除客户端 `oma.*` 及其 OpenObserve `oma_*` / `service_oma_*` 归一化别名后注入服务端可信上下文；OTLP 是只读校验加转发，不刷新 worker activity。
 5. 使用服务端 OpenObserve 凭据转发，保留 partial success 与可重试错误语义。
-6. stale epoch 返回 409，非法或缺失 epoch 返回 400，过期 lease 返回 410。
+6. 未注册或 lease 过期的 worker 返回 410。
 7. 应用日志只记录白名单元数据，不记录请求或上游响应正文；OMA 不保存本地 JSONL 副本。
 
 ### 后续扩展要求

@@ -220,4 +220,5 @@ volumes:
   pgdata:
   redisdata:
   miniodata:
+  openobservedata:
   webdist:

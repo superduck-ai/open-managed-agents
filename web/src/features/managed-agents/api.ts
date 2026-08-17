@@ -1641,6 +1641,18 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
             ...(mountPath ? { mount_path: mountPath } : {}),
           };
         }),
+        ...(values.gitRepository.url.trim()
+          ? [
+              {
+                type: 'github_repository',
+                url: values.gitRepository.url.trim(),
+                mount_path: values.gitRepository.mountPath.trim() || undefined,
+                ...(values.gitRepository.token.trim()
+                  ? { authorization_token: values.gitRepository.token.trim() }
+                  : {}),
+              },
+            ]
+          : []),
       };
     case 'deployments':
       return {

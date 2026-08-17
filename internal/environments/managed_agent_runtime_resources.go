@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 type managedAgentRuntimeResources struct {
@@ -13,16 +14,18 @@ type managedAgentRuntimeResources struct {
 }
 
 type githubRepositoryRuntimePayload struct {
-	URL       string          `json:"url"`
-	MountPath string          `json:"mount_path"`
-	Checkout  json.RawMessage `json:"checkout"`
+	URL                string          `json:"url"`
+	MountPath          string          `json:"mount_path"`
+	Checkout           json.RawMessage `json:"checkout"`
+	AuthorizationToken string          `json:"authorization_token,omitempty"`
 }
 
 type gitRepositoryRuntimeSource struct {
-	Type      string          `json:"type"`
-	URL       string          `json:"url"`
-	MountPath string          `json:"mount_path"`
-	Checkout  json.RawMessage `json:"checkout,omitempty"`
+	Type               string          `json:"type"`
+	URL                string          `json:"url"`
+	MountPath          string          `json:"mount_path"`
+	Checkout           json.RawMessage `json:"checkout,omitempty"`
+	AuthorizationToken string          `json:"authorization_token,omitempty"`
 }
 
 func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managedAgentRuntimeResources {
@@ -44,6 +47,7 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managed
 				workDirResource = resource
 				resolved.workDir = payload.MountPath
 			}
+			payload.AuthorizationToken = githubAuthorizationTokenFromSecret(resource.SecretPayload)
 			source, ok := gitRepositoryRuntimeSourceJSON(payload)
 			if ok {
 				resolved.sources = append(resolved.sources, source)
@@ -75,12 +79,28 @@ func gitRepositoryRuntimeSourceJSON(payload githubRepositoryRuntimePayload) (jso
 		payload.Checkout = nil
 	}
 	raw, err := json.Marshal(gitRepositoryRuntimeSource{
-		Type:      "git_repository",
-		URL:       payload.URL,
-		MountPath: payload.MountPath,
-		Checkout:  payload.Checkout,
+		Type:               "git_repository",
+		URL:                payload.URL,
+		MountPath:          payload.MountPath,
+		Checkout:           payload.Checkout,
+		AuthorizationToken: payload.AuthorizationToken,
 	})
 	return raw, err == nil
+}
+
+// githubAuthorizationTokenFromSecret 从 SecretPayload 提取 authorization_token（私有仓库 clone 用）。
+// SecretPayload 格式：{"authorization_token": "ghp_..."}，由入库边界保证有效。
+func githubAuthorizationTokenFromSecret(raw json.RawMessage) string {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
+		return ""
+	}
+	var secret struct {
+		AuthorizationToken string `json:"authorization_token"`
+	}
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return ""
+	}
+	return secret.AuthorizationToken
 }
 
 func opaqueRuntimeSourceJSON(raw json.RawMessage) (json.RawMessage, bool) {

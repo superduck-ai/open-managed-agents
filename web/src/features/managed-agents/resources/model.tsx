@@ -332,6 +332,7 @@ export function initialFormValues(
     vaultIds: entity ? entityVaultIds(entity) : [],
     memoryStoreIds: entity ? entityMemoryStoreIds(entity) : [],
     fileResources: [],
+    gitRepository: { url: '', mountPath: '', token: '' },
   };
 }
 

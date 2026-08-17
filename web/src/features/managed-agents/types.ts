@@ -557,11 +557,18 @@ export type ManagedEntityFormValues = {
   vaultIds: string[];
   memoryStoreIds: string[];
   fileResources: SessionFileResourceFormValue[];
+  gitRepository: SessionGitRepositoryFormValue;
 };
 
 export type SessionFileResourceFormValue = {
   fileId: string;
   mountPath: string;
+};
+
+export type SessionGitRepositoryFormValue = {
+  url: string;
+  mountPath: string;
+  token: string;
 };
 
 export type EntityOption = {

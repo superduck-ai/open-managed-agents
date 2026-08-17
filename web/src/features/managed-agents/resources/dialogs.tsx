@@ -1025,11 +1025,45 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <SessionFileResourcesField
-                    resources={values.fileResources}
-                    workspaceId={workspaceId}
-                    onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
-                  />
+                  <>
+                    <SessionFileResourcesField
+                      resources={values.fileResources}
+                      workspaceId={workspaceId}
+                      onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
+                    />
+                    <div className="space-y-3 rounded-lg border border-border bg-secondary p-3">
+                      <div className="text-sm font-medium text-foreground">
+                        {msg('managedAgents.sessions.gitRepository', 'GitHub repository')}
+                      </div>
+                      <ManagedTextField
+                        label={msg('managedAgents.sessions.gitUrl', 'Repository URL')}
+                        value={values.gitRepository.url}
+                        placeholder="https://github.com/org/private-repo"
+                        onChange={(url) =>
+                          setValues((current) => ({ ...current, gitRepository: { ...current.gitRepository, url } }))
+                        }
+                      />
+                      <ManagedTextField
+                        label={msg('managedAgents.sessions.gitMountPath', 'Repository mount path')}
+                        value={values.gitRepository.mountPath}
+                        placeholder="/workspace/repository"
+                        onChange={(mountPath) =>
+                          setValues((current) => ({
+                            ...current,
+                            gitRepository: { ...current.gitRepository, mountPath },
+                          }))
+                        }
+                      />
+                      <ManagedTextField
+                        label={msg('managedAgents.sessions.gitToken', 'Access token')}
+                        value={values.gitRepository.token}
+                        placeholder={msg('managedAgents.sessions.gitTokenPlaceholder', 'ghp_... (optional)')}
+                        onChange={(token) =>
+                          setValues((current) => ({ ...current, gitRepository: { ...current.gitRepository, token } }))
+                        }
+                      />
+                    </div>
+                  </>
                 ) : null}
               </>
             ) : null}

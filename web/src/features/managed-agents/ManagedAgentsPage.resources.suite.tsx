@@ -1762,6 +1762,84 @@ export function registerManagedAgentsResourceTests() {
     expect(createRequest?.headers['x-workspace-id']).toBe('default');
   });
 
+  test('creates a session with a github repository resource and authorization token', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    expect(within(dialog).getByText('GitHub repository')).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText('Repository URL'), {
+      target: { value: 'https://github.com/example/private' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Repository mount path'), {
+      target: { value: '/workspace/private' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Access token'), {
+      target: { value: 'ghp_verify_token' },
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([
+      {
+        type: 'github_repository',
+        url: 'https://github.com/example/private',
+        mount_path: '/workspace/private',
+        authorization_token: 'ghp_verify_token',
+      },
+    ]);
+  });
+
+  test('creates a session with a github repository URL but without an authorization token', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.change(within(dialog).getByLabelText('Repository URL'), {
+      target: { value: 'https://github.com/example/public' },
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([
+      {
+        type: 'github_repository',
+        url: 'https://github.com/example/public',
+        mount_path: undefined,
+      },
+    ]);
+  });
+
   test('renders the official-style create deployment dialog and submits deployment payload', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
     const api = mockManagedResourceApi();

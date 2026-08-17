@@ -8,6 +8,7 @@ export type ManagedAgentSection =
   | 'quickstart'
   | 'agents'
   | 'sessions'
+  | 'observability'
   | 'deployments'
   | 'environments'
   | 'credential-vaults'
@@ -82,37 +83,6 @@ export type AgentDetailDeploymentFilters = {
   cursor: PageCursor;
 };
 
-export type AnalyticsMetricBucket = {
-  value?: unknown;
-  total?: unknown;
-  p50?: unknown;
-  p95?: unknown;
-  count?: unknown;
-  [key: string]: unknown;
-};
-
-export type AgentSessionAnalyticsOverview = {
-  sessions_count?: number | AnalyticsMetricBucket;
-  error_rate?: number | AnalyticsMetricBucket;
-  input_tokens?: AnalyticsMetricBucket;
-  output_tokens?: AnalyticsMetricBucket;
-  duration?: AnalyticsMetricBucket;
-  active_time?: AnalyticsMetricBucket;
-  input_tokens_per_session?: AnalyticsMetricBucket;
-  output_tokens_per_session?: AnalyticsMetricBucket;
-  turns_per_session?: AnalyticsMetricBucket;
-  tool_call_counts?: Record<string, unknown>;
-  stop_reason_counts?: Record<string, unknown>;
-  data_as_of?: string | null;
-  [key: string]: unknown;
-};
-
-export type AgentSessionAnalyticsTimeseries = {
-  data?: Array<Record<string, unknown>>;
-  data_points?: Array<Record<string, unknown>>;
-  [key: string]: unknown;
-};
-
 export type AgentUpdateInput = {
   version: number;
   name: string;
@@ -126,7 +96,7 @@ export type AgentUpdateInput = {
   multiagent: unknown | null;
 };
 
-export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams'>;
+export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams' | 'observability'>;
 
 export type PageResponse<T> = {
   data: T[];
@@ -344,6 +314,8 @@ export type SessionEventUsage = {
 };
 
 export type SessionTraceView = 'transcript' | 'debug';
+
+export type SessionDetailSegment = SessionTraceView | 'trace';
 
 export type SessionTraceDisplayKind = 'prose' | 'command' | 'json' | 'log' | 'metric' | 'status' | 'thinking';
 
@@ -686,7 +658,7 @@ export type HighlightLanguage =
   'bash' | 'bash-yaml' | 'javascript' | 'json' | 'plaintext' | 'python' | 'typescript' | 'yaml';
 
 export type ResourceConfig = {
-  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>;
+  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams' | 'observability'>;
   title: string;
   description: string;
   createLabel?: string;
@@ -725,7 +697,7 @@ export type EventsTabProps = {
   onSelectedTypesChange: (types: string[]) => void;
   onTimelineSeek: (entryId: string | null) => void;
   onToggleArchivedLanes: (nextPressed: boolean) => void;
-  onViewChange: (view: SessionTraceView) => void;
+  onViewChange: (view: SessionDetailSegment) => void;
   query: string;
   scrollerRef: RefObject<HTMLDivElement | null>;
   selectedEntry: SessionEventListEntry | null;

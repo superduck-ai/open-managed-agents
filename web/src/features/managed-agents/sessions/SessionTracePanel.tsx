@@ -33,6 +33,7 @@ import {
   type SessionTraceFamily,
   type SessionTraceFilterOption,
   type SessionTraceView,
+  type SessionDetailSegment,
   type ToolBatchEntry,
   type ToolCallEntry,
   type ToolLifecycle,
@@ -241,25 +242,55 @@ export function SessionTraceViewMode({
   value: SessionTraceView;
   onChange: (value: SessionTraceView) => void;
 }) {
+  return <SessionSegmentTabs value={value} items={['transcript', 'debug']} onChange={onChange} />;
+}
+
+export function SessionDetailSegmentMode({
+  value,
+  onChange,
+}: {
+  value: SessionDetailSegment;
+  onChange: (value: SessionDetailSegment) => void;
+}) {
+  return <SessionSegmentTabs value={value} items={['transcript', 'debug', 'trace']} onChange={onChange} />;
+}
+
+function SessionSegmentTabs<T extends SessionDetailSegment>({
+  value,
+  items,
+  onChange,
+}: {
+  value: T;
+  items: readonly T[];
+  onChange: (value: T) => void;
+}) {
   const { msg } = useI18n();
   const label = msg('managedAgents.sessions.trace.viewMode', 'View mode');
   return (
-    <Tabs value={value} className="gap-0" onValueChange={(nextValue) => onChange(nextValue as SessionTraceView)}>
+    <Tabs value={value} className="gap-0" onValueChange={(nextValue) => onChange(nextValue as T)}>
       <TabsList aria-label={label} className="h-7 rounded-full bg-accent p-0.5">
-        {(['transcript', 'debug'] as const).map((item) => (
+        {items.map((item) => (
           <TabsTrigger
             key={item}
             value={item}
             className="h-6 flex-none rounded-full border-transparent bg-transparent px-3 text-sm font-medium text-muted-foreground shadow-none after:hidden data-active:bg-card data-active:text-foreground"
           >
-            {item === 'transcript'
-              ? msg('managedAgents.sessions.trace.transcript', 'Transcript')
-              : msg('managedAgents.sessions.trace.debug', 'Debug')}
+            {segmentLabel(item, msg)}
           </TabsTrigger>
         ))}
       </TabsList>
     </Tabs>
   );
+}
+
+function segmentLabel(item: SessionDetailSegment, msg: ReturnType<typeof useI18n>['msg']) {
+  if (item === 'transcript') {
+    return msg('managedAgents.sessions.trace.transcript', 'Transcript');
+  }
+  if (item === 'debug') {
+    return msg('managedAgents.sessions.trace.debug', 'Debug');
+  }
+  return msg('managedAgents.sessions.trace.trace', 'Trace');
 }
 
 function toggleSessionFilterOption({

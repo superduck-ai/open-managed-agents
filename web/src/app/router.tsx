@@ -163,7 +163,7 @@ const workspaceSessionsRoute = createRoute({
 });
 
 const sessionDetailSearch = (search: Record<string, unknown>) => ({
-  segment: search.segment === 'debug' ? 'debug' : undefined,
+  segment: search.segment === 'debug' || search.segment === 'trace' ? search.segment : undefined,
   event: typeof search.event === 'string' && search.event.trim() ? search.event.trim() : undefined,
 });
 
@@ -172,6 +172,18 @@ const workspaceSessionDetailRoute = createRoute({
   path: 'workspaces/$workspaceId/sessions/$sessionId',
   validateSearch: sessionDetailSearch,
   component: () => <ManagedAgentsPage section="sessions" />,
+});
+
+const observabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'observability',
+  component: () => <ManagedAgentsPage section="observability" />,
+});
+
+const workspaceObservabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/observability',
+  component: () => <ManagedAgentsPage section="observability" />,
 });
 
 const deploymentsRoute = createRoute({
@@ -474,6 +486,8 @@ const routeTree = rootRoute.addChildren([
       sessionsRoute,
       workspaceSessionsRoute,
       workspaceSessionDetailRoute,
+      observabilityRoute,
+      workspaceObservabilityRoute,
       deploymentsRoute,
       workspaceDeploymentsRoute,
       workspaceDeploymentDetailRoute,

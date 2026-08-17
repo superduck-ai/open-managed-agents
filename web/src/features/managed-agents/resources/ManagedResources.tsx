@@ -84,7 +84,10 @@ export const agentRows: Array<Record<string, ReactNode>> = [
   },
 ];
 
-export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>, ResourceConfig> = {
+export const resourceConfigs: Record<
+  Exclude<ManagedAgentSection, 'quickstart' | 'dreams' | 'observability'>,
+  ResourceConfig
+> = {
   agents: {
     section: 'agents',
     title: 'Agents',

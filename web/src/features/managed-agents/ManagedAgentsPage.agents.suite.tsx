@@ -1195,76 +1195,65 @@ export function registerManagedAgentsAgentsTests() {
     ]);
   });
 
-  test('renders agent observability and requests agent-scoped analytics', async () => {
+  test('renders agent observability and requests agent-scoped panels', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_detail123456?tab=observability');
-    const api = mockAgentsApi(
-      [
-        {
-          id: 'agent_detail123456',
-          name: 'Current agent',
-          version: 2,
-        },
-      ],
+    const api = mockAgentsApi([
       {
-        analyticsOverview: {
-          sessions_count: 3,
-          error_rate: 0.025,
-          input_tokens: { total: 12345, p50: 100, p95: 200 },
-          output_tokens: { total: 678, p50: 50, p95: 75 },
-          duration: { p50: 30, p90: 40, p95: 45 },
-          active_time: { p50: 6, p90: 9, p95: 12 },
-          turns_per_session: { p50: 2, p90: 3, p95: 4 },
-          tool_call_counts: { bash: 2 },
-          stop_reason_counts: { end_turn: 3 },
-          data_as_of: '2026-07-03T00:00:00Z',
-        },
-        analyticsTimeseries: [{ outcome_category: 'success', sessions_count: 3 }],
+        id: 'agent_detail123456',
+        name: 'Current agent',
+        version: 2,
       },
-    );
+    ]);
     renderManagedAgentsPage('agents');
 
     expect(await screen.findByRole('heading', { name: 'Current agent' })).toBeTruthy();
-    expect((await screen.findAllByText('Sessions')).length).toBeGreaterThan(1);
-    expect(await screen.findByText('12,345')).toBeTruthy();
-    expect(await screen.findByText('2.5%')).toBeTruthy();
-    expect(screen.getByText('Tool usage')).toBeTruthy();
-    expect(screen.getByText('Bash')).toBeTruthy();
-    const sessionActivityCard = screen.getByText('Session activity').closest('[data-slot="card"]');
-    expect(sessionActivityCard?.getAttribute('data-slot')).toBe('card');
-    const groupByTrigger = screen.getByRole('combobox', { name: 'Group by' });
-    expect(groupByTrigger.dataset.slot).toBe('select-trigger');
-    expect(groupByTrigger.className.includes('bg-secondary')).toBe(false);
-    const turnsCard = screen.getByText('Turns').closest('[data-slot="card"]');
-    expect(turnsCard).toBeTruthy();
-    expect(turnsCard?.querySelector('[data-slot="tabs-list"]')?.getAttribute('data-slot')).toBe('tabs-list');
-    expect(
-      within(turnsCard as HTMLElement)
-        .getByRole('tab', { name: 'p50' })
-        .getAttribute('aria-selected'),
-    ).toBe('true');
-    expect(within(turnsCard as HTMLElement).getByRole('tabpanel').textContent).toContain('2');
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toBeTruthy();
+    expect(await screen.findByText('Active sessions')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Models' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Tools' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Traces' })).toBeTruthy();
+    expect(screen.queryByLabelText('Agent')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Session' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Time range,/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
+    expect(screen.queryByText(/As of /)).toBeNull();
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => {
+          if (request.method !== 'POST' || request.url !== '/api/organizations/org_test/observability/panels/query') {
+            return false;
+          }
+          const variables = request.body?.variables as Record<string, unknown> | undefined;
+          return request.body?.query_ref === 'overview.token_total' && variables?.agent_id === 'agent_detail123456';
+        }),
+      ).toBe(true),
+    );
+  });
 
-    fireEvent.click(within(turnsCard as HTMLElement).getByRole('tab', { name: 'p95' }));
+  test('workspace observability uses agent and session selectors', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/observability');
+    mockAgentsApi(
+      [
+        { id: 'agent_one123456', name: 'Alpha', version: 1 },
+        { id: 'agent_two123456', name: 'Beta', version: 1 },
+      ],
+      {
+        sessions: [
+          { id: 'sesn_alpha123456', agentId: 'agent_one123456', version: 1, title: 'Alpha session' },
+          { id: 'sesn_beta123456', agentId: 'agent_two123456', version: 1, title: 'Beta session' },
+        ],
+      },
+    );
+    renderManagedAgentsPage('observability');
 
-    expect(
-      within(turnsCard as HTMLElement)
-        .getByRole('tab', { name: 'p95' })
-        .getAttribute('aria-selected'),
-    ).toBe('true');
-    expect(within(turnsCard as HTMLElement).getByRole('tabpanel').textContent).toContain('4');
-    expect(
-      api.requests.some(
-        (request) =>
-          request.url === '/api/organizations/org_test/analytics/sessions/overview?agent_id=agent_detail123456',
-      ),
-    ).toBe(true);
-    expect(
-      api.requests.some(
-        (request) =>
-          request.url ===
-          '/api/organizations/org_test/analytics/sessions/timeseries?agent_id=agent_detail123456&group_by=agent_version',
-      ),
-    ).toBe(true);
+    expect(await screen.findByRole('heading', { name: 'Observability' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Agent' }).textContent).toContain('All agents');
+    expect(screen.getByRole('combobox', { name: 'Session' }).textContent).toContain('All sessions');
+    await selectManagedComboboxOption(document.body, 'Agent', /Alpha/);
+    expect(screen.getByRole('combobox', { name: 'Agent' }).textContent).toContain('Alpha');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Session' }));
+    expect(await screen.findByRole('option', { name: /Alpha session/ })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /Beta session/ })).toBeNull();
   });
 
   test('renders missing agent and missing version states with shared alerts', async () => {

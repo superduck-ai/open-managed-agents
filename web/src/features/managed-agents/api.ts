@@ -23,6 +23,7 @@ import {
   type DeploymentRunApiResponse,
   type EnvironmentApiResponse,
   type EnvironmentWorkApiResponse,
+  type FileMetadataApiResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntityListFilters,
@@ -553,6 +554,10 @@ export function listSessionResources(sessionId: string, workspaceId: string) {
   return anthropicBetaApi.sessions.resources.list<SessionResourceApiResponse>(sessionId, {}, workspaceId) as Promise<
     PageResponse<SessionResourceApiResponse>
   >;
+}
+
+export function retrieveFileMetadata(fileId: string, workspaceId: string) {
+  return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
 }
 
 export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;

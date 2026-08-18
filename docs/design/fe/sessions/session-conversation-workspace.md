@@ -18,18 +18,18 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 
 ## 数据来源
 
-| 区域     | 数据来源                    | 说明                                                     |
-| -------- | --------------------------- | -------------------------------------------------------- |
-| 会话摘要 | Session retrieve            | 状态、Agent 引用、Environment ID、Vault IDs、用量和时间  |
-| 事件     | Session/Thread events + SSE | 保留现有缓存、补帧和实时状态机                           |
-| 资源     | Session retrieve            | 只展示 `resources` 实际返回的资源，不拼接 Files API 数据 |
-| 智能体   | Agent retrieve              | 按 `session.agent` 中的 ID 和固定版本读取                |
-| 环境     | Environment retrieve        | 按 `environment_id` 读取                                 |
-| 凭据     | Vault + credential list     | 按 `vault_ids` 读取元数据，禁止请求 credential secret    |
+| 区域     | 数据来源                         | 说明                                                         |
+| -------- | -------------------------------- | ------------------------------------------------------------ |
+| 会话摘要 | Session retrieve                 | 状态、Agent 引用、Environment ID、Vault IDs、用量和时间      |
+| 事件     | Session/Thread events + SSE      | 保留现有缓存、补帧和实时状态机                               |
+| 资源     | Session retrieve + File metadata | Session 返回挂载关系；文件名按 `file_id` 获取 Files metadata |
+| 智能体   | Agent retrieve                   | 按 `session.agent` 中的 ID 和固定版本读取                    |
+| 环境     | Environment retrieve             | 按 `environment_id` 读取                                     |
+| 凭据     | Vault + credential list          | 按 `vault_ids` 读取元数据，禁止请求 credential secret        |
 
 关联实体并行加载；一类关联实体失败时保留其余可用数据并显示不可用状态，不影响事件与对话。
 
-进入资源页签时重新请求 Session retrieve，以获取后端最新的 `resources`。事件流不触发资源刷新；前端不调用 Session resources list 或 Files API 补齐资源字段。
+进入资源页签时重新请求 Session retrieve，以获取后端最新的 `resources`。文件资源再按 `file_id` 请求 File metadata 获取文件名；不从 `mount_path` 推断名称，也不调用 Session resources list 或 Files list。事件流不触发资源刷新。
 
 ## 对话和停止行为
 

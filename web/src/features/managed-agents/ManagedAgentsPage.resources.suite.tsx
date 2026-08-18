@@ -613,13 +613,18 @@ export function registerManagedAgentsResourceTests() {
     const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
     fireEvent.click(within(workspaceTabs).getByRole('tab', { name: /Resources/ }));
     expect((await screen.findByText('Mounted resources')).closest('[data-session-workspace-card]')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Type' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Resource ID' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'File ID' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Mount path' })).toBeTruthy();
-    expect(screen.getByText('sesrsc_orders123456')).toBeTruthy();
+    expect(await screen.findByText('source-orders.zip')).toBeTruthy();
     expect(screen.getByText('file_orders123456')).toBeTruthy();
     expect(screen.getByText('/uploads/orders.zip')).toBeTruthy();
+    expect(
+      api.requests.some(
+        (request) => request.url === '/v1/files/file_orders123456?beta=true' && request.method === 'GET',
+      ),
+    ).toBe(true);
     expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
     expect(
       api.requests.some(

@@ -308,6 +308,17 @@ export type SessionResourceApiResponse = {
   [key: string]: unknown;
 };
 
+export type FileMetadataApiResponse = {
+  id: string;
+  created_at: string;
+  downloadable?: boolean;
+  filename: string;
+  mime_type: string;
+  scope?: unknown;
+  size_bytes: number;
+  type: 'file';
+};
+
 export type SessionThreadApiResponse = {
   id: string;
   archived_at?: string | null;

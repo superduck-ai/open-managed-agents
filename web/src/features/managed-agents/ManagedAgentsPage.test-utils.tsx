@@ -1391,6 +1391,21 @@ export function mockManagedResourceApi() {
       const session = resources.sessions.find((item) => item.id === sessionId);
       return session ? jsonResponse(session) : jsonResponse({ error: { message: 'not found' } }, 404);
     }
+    const fileMetadataMatch = url.match(/^\/v1\/files\/([^/?]+)\?beta=true$/);
+    if (fileMetadataMatch && method === 'GET') {
+      const fileId = decodeURIComponent(fileMetadataMatch[1]);
+      return jsonResponse({
+        id: fileId,
+        type: 'file',
+        filename: 'source-orders.zip',
+        size_bytes: 2_048,
+        mime_type: 'application/zip',
+        created_at: new Date(Date.now() - 100_000).toISOString(),
+        downloadable: true,
+        scope: null,
+        metadata: {},
+      });
+    }
     const sessionResourcesMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/resources\?/);
     if (sessionResourcesMatch && method === 'GET') {
       return jsonResponse({ data: resources.sessionResources, next_page: null });

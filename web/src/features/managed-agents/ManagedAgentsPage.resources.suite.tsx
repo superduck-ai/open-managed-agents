@@ -750,6 +750,52 @@ export function registerManagedAgentsResourceTests() {
     }
   });
 
+  test('preserves live session state and reports Get Session failures when refreshing resources', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessionEvents = api.resources.sessionEvents.filter((event) => event.type !== 'session.status_idle');
+    const baseFetch = globalThis.fetch;
+    let failResourceRefresh = false;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (
+        failResourceRefresh &&
+        requestUrl(input) === '/v1/sessions/sesn_one123456?beta=true' &&
+        requestMethod(input, init) === 'GET'
+      ) {
+        return new Response(JSON.stringify({ error: { message: 'resource refresh failed' } }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      renderManagedAgentsPage('sessions');
+
+      expect((await screen.findAllByText('Running')).length).toBeGreaterThan(0);
+      api.resources.sessions[0].status = 'idle';
+      api.resources.sessions[0].resources.push({
+        id: 'sesrsc_new_output123456',
+        type: 'file',
+        created_at: new Date().toISOString(),
+        file_id: 'file_new_output123456',
+        mount_path: '/outputs/new-output.txt',
+      });
+      const resourcesTab = screen.getByRole('tab', { name: /Resources/ });
+      fireEvent.click(resourcesTab);
+
+      expect(await screen.findByText('file_new_output123456')).toBeTruthy();
+      expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
+
+      failResourceRefresh = true;
+      fireEvent.click(resourcesTab);
+      expect(await screen.findByText('resource refresh failed')).toBeTruthy();
+    } finally {
+      globalThis.fetch = baseFetch;
+    }
+  });
+
   test('renders transcript idle gaps with the original striped separator', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');

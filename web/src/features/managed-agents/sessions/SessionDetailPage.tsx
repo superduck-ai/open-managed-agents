@@ -105,6 +105,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [resourceRefreshError, setResourceRefreshError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [eventRefreshKey, setEventRefreshKey] = useState(0);
@@ -154,9 +155,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       return;
     }
     const activeSessionId = session.id;
+    setResourceRefreshError(null);
     void retrieveSessionDetailSession(activeSessionId, activeWorkspaceId)
-      .then((updatedSession) => setSession(updatedSession))
-      .catch(() => undefined);
+      .then((updatedSession) => setSession((currentSession) => mergeSessionResources(currentSession, updatedSession)))
+      .catch((error) => setResourceRefreshError(errorMessage(error)));
   }, [activeWorkspaceId, session?.id]);
   const activeSessionId = session?.id ?? null;
   const handlePrimaryStreamEvent = useCallback(
@@ -190,6 +192,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     setLoading(true);
     setLoadError(null);
     setMetadataError(null);
+    setResourceRefreshError(null);
     setThreads([]);
     setMetadataLoaded(false);
     void (async () => {
@@ -558,6 +561,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
 
   const archived = Boolean(session.archived_at);
   const conversationState = sessionConversationState(session);
+  const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
 
   return (
     <TooltipProvider>
@@ -689,9 +693,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         </header>
 
         {mutationError ? <ManagedErrorAlert className="mb-4 max-w-xl">{mutationError}</ManagedErrorAlert> : null}
-        {metadataError || eventError ? (
-          <ManagedWarningAlert className="mb-4 max-w-xl">{metadataError || eventError}</ManagedWarningAlert>
-        ) : null}
+        {warningError ? <ManagedWarningAlert className="mb-4 max-w-xl">{warningError}</ManagedWarningAlert> : null}
 
         <Tabs defaultValue="events" className="min-h-0 flex-1 gap-0">
           <div className="border-b border-border">
@@ -808,6 +810,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
 
 export function EventsTab(props: EventsTabProps) {
   return <EventsTabInner {...props} />;
+}
+
+function mergeSessionResources(currentSession: SessionApiResponse | null, updatedSession: SessionApiResponse) {
+  return currentSession?.id === updatedSession.id
+    ? { ...currentSession, resources: updatedSession.resources }
+    : currentSession;
 }
 
 function sessionConversationState(session: SessionApiResponse) {

@@ -213,6 +213,7 @@ These rules describe the current sandbox environment and do not replace your ass
 ## Uploaded inputs
 
 - A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
+- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
 - /mnt/session/uploads is read-only. Do not modify files under this directory.
 - Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
 - First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.

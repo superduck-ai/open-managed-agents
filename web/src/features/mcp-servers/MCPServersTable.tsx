@@ -1,9 +1,8 @@
-import { Archive, Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import type { MouseEvent } from 'react';
 
 import { cn } from '@/shared/lib/utils';
 import { type WorkspaceMCPServer, mcpServerErrorMessage } from '@/shared/api/workspaceMCPServers';
-import { Badge } from '@/shared/ui/badge';
 import {
   CopyIdCell,
   DataTableCell,
@@ -28,7 +27,6 @@ type MCPServersTableProps = {
   onRetry: () => void;
   onOpen: (serverId: string) => void;
   onEdit: (server: WorkspaceMCPServer) => void;
-  onArchive: (server: WorkspaceMCPServer) => void;
   onDelete: (server: WorkspaceMCPServer) => void;
 };
 
@@ -38,11 +36,10 @@ export function MCPServersTable(props: MCPServersTableProps) {
     <section aria-label={msg('mcpServers.listAria', 'MCP servers list')} className="min-w-0 overflow-x-auto">
       <Table className={cn(dataTableClassName, 'min-w-[840px]')}>
         <colgroup>
-          <col className="w-[17%]" />
           <col className="w-[20%]" />
-          <col className="w-[32%]" />
-          <col className="w-[12%]" />
-          <col className="w-[15%]" />
+          <col className="w-[22%]" />
+          <col className="w-[36%]" />
+          <col className="w-[18%]" />
           <col className="w-[4%]" />
         </colgroup>
         <TableHeader>
@@ -53,9 +50,6 @@ export function MCPServersTable(props: MCPServersTableProps) {
             </TableHead>
             <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
               {msg('mcpServers.endpoint', 'Endpoint')}
-            </TableHead>
-            <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
-              {msg('mcpServers.status', 'Status')}
             </TableHead>
             <TableHead className={cn(dataTableHeaderCellClassName, 'truncate')}>
               {msg('mcpServers.updated', 'Updated')}
@@ -83,17 +77,16 @@ function MCPServersTableBody({
   onRetry,
   onOpen,
   onEdit,
-  onArchive,
   onDelete,
 }: MCPServersTableProps) {
   const { msg } = useI18n();
   if (isLoading) {
-    return <TableLoadingRow colSpan={6} label={msg('mcpServers.loading', 'Loading MCP servers...')} />;
+    return <TableLoadingRow colSpan={5} label={msg('mcpServers.loading', 'Loading MCP servers...')} />;
   }
   if (error) {
     return (
       <TableErrorRow
-        colSpan={6}
+        colSpan={5}
         title={msg('mcpServers.loadError', 'MCP servers could not be loaded.')}
         message={mcpServerErrorMessage(error)}
         retryLabel={msg('common.retry', 'Retry')}
@@ -102,7 +95,7 @@ function MCPServersTableBody({
     );
   }
   if (servers.length === 0) {
-    return <TableEmptyRow colSpan={6}>{msg('mcpServers.empty', 'No MCP servers match this view.')}</TableEmptyRow>;
+    return <TableEmptyRow colSpan={5}>{msg('mcpServers.empty', 'No MCP servers match this view.')}</TableEmptyRow>;
   }
   return servers.map((server) => (
     <MCPServerRow
@@ -112,7 +105,6 @@ function MCPServersTableBody({
       formatter={formatter}
       onOpen={onOpen}
       onEdit={onEdit}
-      onArchive={onArchive}
       onDelete={onDelete}
     />
   ));
@@ -124,9 +116,8 @@ function MCPServerRow({
   formatter,
   onOpen,
   onEdit,
-  onArchive,
   onDelete,
-}: Pick<MCPServersTableProps, 'formatter' | 'onOpen' | 'onEdit' | 'onArchive' | 'onDelete'> & {
+}: Pick<MCPServersTableProps, 'formatter' | 'onOpen' | 'onEdit' | 'onDelete'> & {
   server: WorkspaceMCPServer;
   selected: boolean;
 }) {
@@ -147,14 +138,11 @@ function MCPServerRow({
       <DataTableCell className="truncate font-mono text-xs text-muted-foreground" title={server.url}>
         {server.url}
       </DataTableCell>
-      <DataTableCell className="truncate">
-        <MCPServerStatusBadge status={server.status} />
-      </DataTableCell>
       <DataTableCell className="truncate text-muted-foreground">
         {formatDate(server.updated_at, formatter)}
       </DataTableCell>
       <DataTableCell edge="end" className="px-2 text-right">
-        <MCPServerActionsMenu server={server} onEdit={onEdit} onArchive={onArchive} onDelete={onDelete} />
+        <MCPServerActionsMenu server={server} onEdit={onEdit} onDelete={onDelete} />
       </DataTableCell>
     </DataTableRow>
   );
@@ -163,12 +151,10 @@ function MCPServerRow({
 export function MCPServerActionsMenu({
   server,
   onEdit,
-  onArchive,
   onDelete,
 }: {
   server: WorkspaceMCPServer;
   onEdit: (server: WorkspaceMCPServer) => void;
-  onArchive: (server: WorkspaceMCPServer) => void;
   onDelete: (server: WorkspaceMCPServer) => void;
 }) {
   const { msg } = useI18n();
@@ -187,27 +173,12 @@ export function MCPServerActionsMenu({
           <Pencil aria-hidden />
           {msg('common.edit', 'Edit')}
         </DropdownMenuItem>
-        {server.status === 'active' ? (
-          <DropdownMenuItem onClick={(event) => runMenuAction(event, () => onArchive(server))}>
-            <Archive aria-hidden />
-            {msg('common.archive', 'Archive')}
-          </DropdownMenuItem>
-        ) : null}
         <DropdownMenuItem variant="destructive" onClick={(event) => runMenuAction(event, () => onDelete(server))}>
           <Trash2 aria-hidden />
           {msg('common.delete', 'Delete')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-export function MCPServerStatusBadge({ status }: { status: WorkspaceMCPServer['status'] }) {
-  const { msg } = useI18n();
-  return (
-    <Badge variant="secondary" className="rounded-md">
-      {status === 'active' ? msg('mcpServers.active', 'Active') : msg('mcpServers.archived', 'Archived')}
-    </Badge>
   );
 }
 

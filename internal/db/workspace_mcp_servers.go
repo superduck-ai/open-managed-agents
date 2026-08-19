@@ -17,7 +17,6 @@ type WorkspaceMCPServer struct {
 	EndpointURL      string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
-	ArchivedAt       *time.Time
 	DeletedAt        *time.Time
 }
 
@@ -27,11 +26,10 @@ type WorkspaceMCPServerPageCursor struct {
 }
 
 type ListWorkspaceMCPServersPageParams struct {
-	WorkspaceUUID   string
-	Search          string
-	Limit           int
-	Cursor          *WorkspaceMCPServerPageCursor
-	IncludeArchived bool
+	WorkspaceUUID string
+	Search        string
+	Limit         int
+	Cursor        *WorkspaceMCPServerPageCursor
 }
 
 func (d *DB) CreateWorkspaceMCPServer(ctx context.Context, server WorkspaceMCPServer) (WorkspaceMCPServer, error) {
@@ -51,7 +49,7 @@ func (d *DB) ListWorkspaceMCPServersPage(ctx context.Context, params ListWorkspa
 	}
 	rows, err := NewMCPServerMapper(d.mapperDB).ListPage(ctx, mcpServerPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, Search: params.Search, FetchLimit: params.Limit + 1,
-		Cursor: params.Cursor, IncludeArchived: params.IncludeArchived,
+		Cursor: params.Cursor,
 	})
 	if err != nil {
 		return nil, false, err
@@ -89,14 +87,6 @@ func (d *DB) UpdateWorkspaceMCPServer(ctx context.Context, workspaceUUID, extern
 	return row.workspaceMCPServer(), nil
 }
 
-func (d *DB) ArchiveWorkspaceMCPServer(ctx context.Context, workspaceUUID, externalID string) (WorkspaceMCPServer, error) {
-	row, err := NewMCPServerMapper(d.mapperDB).ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return WorkspaceMCPServer{}, mapNoRows(err)
-	}
-	return row.workspaceMCPServer(), nil
-}
-
 func (d *DB) DeleteWorkspaceMCPServer(ctx context.Context, workspaceUUID, externalID string) error {
 	_, err := NewMCPServerMapper(d.mapperDB).SoftDeleteByExternalID(ctx, workspaceUUID, externalID)
 	return mapNoRows(err)
@@ -116,6 +106,6 @@ func (r mcpServerMapperRow) workspaceMCPServer() WorkspaceMCPServer {
 		UUID: r.UUID, ExternalID: r.ExternalID,
 		OrganizationUUID: r.OrganizationUUID, WorkspaceUUID: r.WorkspaceUUID,
 		Name: r.Name, TransportType: r.TransportType, EndpointURL: r.EndpointURL,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, DeletedAt: r.DeletedAt,
 	}
 }

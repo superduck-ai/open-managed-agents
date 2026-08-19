@@ -35,8 +35,8 @@ flowchart LR
 
 - General、Multiagent、Skills、Tools 复用 Create Agent 的 `AgentConfigRenderedEditor`，因此搜索、多选、版本固定、MCP Directory/工作区候选页签、权限聚合和 Custom Tool 校验保持一致。
 - 编辑既有模型 ID 时保留 `model.speed`；已有 `self`、固定 Agent 版本和固定 Skill 版本会展示并保留。
-- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；新增自定义 MCP 只能从当前工作区 Active MCP Servers 中选择，选择时把名称与 URL 复制到新 Agent 版本，不保存资源 ID。
-- 既有 Agent 中不属于当前工作区 MCP Servers 的历史配置仍可在 Rendered 中回显、保存和移除；管理资源改名、归档或删除不回写已有 Agent 版本。
+- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；新增自定义 MCP 只能从当前工作区未删除的 MCP 配置目录中选择，选择时把名称与 URL 复制到新 Agent 版本，不保存目录项 ID。
+- 既有 Agent 中不属于当前工作区 MCP 配置目录的历史配置仍可在 Rendered 中回显、保存和移除；管理目录项修改或删除不回写已有 Agent 版本。
 - Rendered 不提供新增 Custom Tool 的入口，但继续允许编辑和移除已有 Custom Tool，Raw 往返不丢失其定义。
 - 内置工具只展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`；Raw 可继续保留后端合同允许的其他既有配置。
 

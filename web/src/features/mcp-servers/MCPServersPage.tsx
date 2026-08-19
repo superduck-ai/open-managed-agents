@@ -1,14 +1,13 @@
-import { Plus, Search } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useMemo } from 'react';
 
 import { Button } from '../../shared/ui/button';
 import { CursorPagination } from '../../shared/ui/resource-table';
-import { Input } from '../../shared/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import { useI18n } from '../../shared/i18n';
+import { ResourceSearchField } from '../../shared/ui/resource-filters';
 import { MCPServerDestructiveDialog, MCPServerEditor, MCPServerPanel } from './MCPServerDialogs';
 import { MCPServersTable } from './MCPServersTable';
-import { useMCPServerActions, useMCPServerData, useMCPServerWorkspace, type MCPServerScope } from './useMCPServersPage';
+import { useMCPServerActions, useMCPServerData, useMCPServerWorkspace } from './useMCPServersPage';
 
 export function MCPServersPage({
   initialCreateOpen = false,
@@ -19,11 +18,7 @@ export function MCPServersPage({
   const actions = useMCPServerActions({ ...workspace, initialCreateOpen, initialServerId });
   const data = useMCPServerData({ ...workspace, detailServerId: actions.detailServerId });
   const servers = data.listQuery.data?.data ?? [];
-  const scopeOptions = [
-    { value: 'active' as const, label: msg('mcpServers.filter.active', 'Active') },
-    { value: 'all' as const, label: msg('mcpServers.filter.all', 'All statuses') },
-  ];
-  const scopeLabel = scopeOptions.find((option) => option.value === data.scope)?.label ?? scopeOptions[0].label;
+  const searchPlaceholder = msg('mcpServers.searchPlaceholder', 'Search by name or endpoint');
   const formatter = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }),
     [locale],
@@ -35,9 +30,11 @@ export function MCPServersPage({
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">MCP Servers</h1>
           <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
-            {msg('mcpServers.description', 'Configure reusable custom MCP servers for the {workspaceName} workspace.', {
-              workspaceName: workspace.workspaceName,
-            })}
+            {msg(
+              'mcpServers.description',
+              'Manage the reusable custom MCP configuration directory for the {workspaceName} workspace.',
+              { workspaceName: workspace.workspaceName },
+            )}
           </p>
         </div>
         <Button type="button" className="h-9 shrink-0" onClick={actions.openCreate}>
@@ -47,41 +44,15 @@ export function MCPServersPage({
       </header>
 
       <div data-testid="mcp-server-filters" className="mb-7 flex flex-wrap items-center gap-2">
-        <div className="relative block h-9 w-[320px] max-w-full">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/70"
-            aria-hidden
-          />
-          <Input
-            value={data.search}
-            aria-label={msg('mcpServers.search', 'Search MCP servers')}
-            placeholder={msg('mcpServers.searchPlaceholder', 'Search by name or endpoint')}
-            className="h-9 border-border bg-secondary pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border focus-visible:ring-0"
-            onChange={(event) => data.setSearch(event.currentTarget.value)}
-          />
-        </div>
-        <Select<MCPServerScope>
-          value={data.scope}
-          items={scopeOptions}
-          onValueChange={(value) => value && data.setScope(value)}
-        >
-          <SelectTrigger
-            aria-label={msg('mcpServers.statusFilter', 'Status filter')}
-            className="h-9 gap-2 border-border bg-secondary px-3 text-sm"
-          >
-            <SelectValue>
-              <span className="text-muted-foreground">{msg('mcpServers.status', 'Status')}</span>
-              <span className="font-medium text-foreground">{scopeLabel}</span>
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent align="start" alignItemWithTrigger={false}>
-            {scopeOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value} label={option.label}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <ResourceSearchField
+          id="mcp-server-search"
+          value={data.search}
+          placeholder={searchPlaceholder}
+          clearLabel={msg('common.clearSearch', 'Clear {placeholder}', {
+            placeholder: searchPlaceholder,
+          })}
+          onChange={data.setSearch}
+        />
       </div>
 
       <MCPServersTable
@@ -94,8 +65,7 @@ export function MCPServersPage({
         onRetry={() => void data.listQuery.refetch()}
         onOpen={actions.openDetail}
         onEdit={actions.openEdit}
-        onArchive={(server) => actions.openDestructive('archive', server)}
-        onDelete={(server) => actions.openDestructive('delete', server)}
+        onDelete={actions.openDestructive}
       />
 
       <CursorPagination
@@ -118,8 +88,7 @@ export function MCPServersPage({
         onClose={actions.closePanel}
         onRetry={() => void data.detailQuery.refetch()}
         onEdit={actions.openEdit}
-        onArchive={(server) => actions.openDestructive('archive', server)}
-        onDelete={(server) => actions.openDestructive('delete', server)}
+        onDelete={actions.openDestructive}
       />
       <MCPServerEditor target={actions.editor} onClose={actions.closeEditor} onSubmit={actions.submitEditor} />
       <MCPServerDestructiveDialog

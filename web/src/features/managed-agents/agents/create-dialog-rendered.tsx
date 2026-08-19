@@ -67,7 +67,7 @@ export function AgentConfigRenderedEditor({
     retry: false,
   });
   const workspaceServersQuery = useQuery({
-    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, '', 'active'],
+    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, 'agent-picker'],
     queryFn: () => listAllWorkspaceMCPServers(orgUuid ?? '', workspaceId),
     enabled: Boolean(orgUuid && workspaceId),
     retry: false,

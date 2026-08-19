@@ -17,7 +17,6 @@ type mcpServerMapperRow struct {
 	EndpointURL      string     `db:"endpoint_url"`
 	CreatedAt        time.Time  `db:"created_at"`
 	UpdatedAt        time.Time  `db:"updated_at"`
-	ArchivedAt       *time.Time `db:"archived_at"`
 	DeletedAt        *time.Time `db:"deleted_at"`
 }
 
@@ -34,18 +33,16 @@ type mcpServerWriteParams struct {
 }
 
 type mcpServerPageMapperParams struct {
-	WorkspaceUUID   string
-	Search          string
-	FetchLimit      int
-	Cursor          *WorkspaceMCPServerPageCursor
-	IncludeArchived bool
+	WorkspaceUUID string
+	Search        string
+	FetchLimit    int
+	Cursor        *WorkspaceMCPServerPageCursor
 }
 
 type MCPServerMapper interface {
 	Insert(ctx context.Context, params mcpServerWriteParams) (mcpServerMapperRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (mcpServerMapperRow, error)
 	UpdateByExternalID(ctx context.Context, params mcpServerWriteParams) (mcpServerMapperRow, error)
-	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (mcpServerMapperRow, error)
 	SoftDeleteByExternalID(ctx context.Context, workspaceUUID, externalID string) (mcpServerMapperRow, error)
 	ListPage(ctx context.Context, params mcpServerPageMapperParams) ([]mcpServerMapperRow, error)
 }

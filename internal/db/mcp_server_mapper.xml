@@ -10,7 +10,6 @@
         endpoint_url,
         created_at,
         updated_at,
-        archived_at,
         deleted_at
     </sql>
 
@@ -62,17 +61,6 @@
         <include refid="columns"/>
     </update>
 
-    <update id="ArchiveByExternalID" result="returning" resultType="mcpServerMapperRow">
-        UPDATE mcp_servers
-        SET archived_at = COALESCE(archived_at, NOW()),
-            updated_at = NOW()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND external_id = #{externalID}
-        AND deleted_at IS NULL
-        RETURNING
-        <include refid="columns"/>
-    </update>
-
     <update id="SoftDeleteByExternalID" result="returning" resultType="mcpServerMapperRow">
         UPDATE mcp_servers
         SET deleted_at = COALESCE(deleted_at, NOW()),
@@ -91,9 +79,6 @@
         <where>
             workspace_uuid = #{params.WorkspaceUUID}
             AND deleted_at IS NULL
-            <if test="!params.IncludeArchived">
-                AND archived_at IS NULL
-            </if>
             <if test="params.Search != ''">
                 AND (
                     POSITION(LOWER(#{params.Search,sensitive=true}) IN LOWER(name)) &gt; 0

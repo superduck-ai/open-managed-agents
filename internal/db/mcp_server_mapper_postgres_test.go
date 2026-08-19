@@ -46,9 +46,16 @@ func TestMCPServerMapperPostgreSQL(t *testing.T) {
 			endpoint_url text NOT NULL,
 			created_at timestamptz NOT NULL,
 			updated_at timestamptz NOT NULL,
-			archived_at timestamptz,
 			deleted_at timestamptz
-		) ON COMMIT DROP
+		) ON COMMIT DROP;
+
+		CREATE UNIQUE INDEX fixture_mcp_servers_workspace_name_unique
+			ON mcp_servers (workspace_uuid, name)
+			WHERE deleted_at IS NULL;
+
+		CREATE UNIQUE INDEX fixture_mcp_servers_workspace_endpoint_unique
+			ON mcp_servers (workspace_uuid, transport_type, endpoint_url)
+			WHERE deleted_at IS NULL;
 	`)
 	mapper := NewMCPServerMapper(tx)
 	now := time.Date(2026, time.August, 13, 1, 2, 3, 0, time.UTC)
@@ -75,9 +82,9 @@ func TestMCPServerMapperPostgreSQL(t *testing.T) {
 		}
 	})
 
-	t.Run("success scans returning and nullable lifecycle fields", func(t *testing.T) {
+	t.Run("success copies, lists, updates, and directly deletes reusable configurations", func(t *testing.T) {
 		created, createErr := mapper.Insert(ctx, params)
-		if createErr != nil || created.ExternalID != params.ExternalID || created.ArchivedAt != nil || created.DeletedAt != nil {
+		if createErr != nil || created.ExternalID != params.ExternalID || created.DeletedAt != nil {
 			t.Fatalf("Insert() = (%+v, %v)", created, createErr)
 		}
 
@@ -97,36 +104,33 @@ func TestMCPServerMapperPostgreSQL(t *testing.T) {
 			t.Fatalf("ListPage() = (%+v, %v)", rows, listErr)
 		}
 		otherRows, listErr := mapper.ListPage(ctx, mcpServerPageMapperParams{
-			WorkspaceUUID: otherWorkspaceUUID, FetchLimit: 2, IncludeArchived: true,
+			WorkspaceUUID: otherWorkspaceUUID, FetchLimit: 2,
 		})
 		if listErr != nil || len(otherRows) != 0 {
 			t.Fatalf("cross-workspace ListPage() = (%+v, %v)", otherRows, listErr)
 		}
 
-		archived, archiveErr := mapper.ArchiveByExternalID(ctx, workspaceUUID, params.ExternalID)
-		if archiveErr != nil || archived.ArchivedAt == nil || archived.DeletedAt != nil {
-			t.Fatalf("ArchiveByExternalID() = (%+v, %v)", archived, archiveErr)
-		}
-		activeRows, listErr := mapper.ListPage(ctx, mcpServerPageMapperParams{
-			WorkspaceUUID: workspaceUUID, FetchLimit: 2,
-		})
-		if listErr != nil || len(activeRows) != 0 {
-			t.Fatalf("active ListPage() = (%+v, %v)", activeRows, listErr)
-		}
-		allRows, listErr := mapper.ListPage(ctx, mcpServerPageMapperParams{
-			WorkspaceUUID: workspaceUUID, FetchLimit: 2, IncludeArchived: true,
-		})
-		if listErr != nil || len(allRows) != 1 || allRows[0].ArchivedAt == nil {
-			t.Fatalf("archived ListPage() = (%+v, %v)", allRows, listErr)
-		}
-
 		deleted, deleteErr := mapper.SoftDeleteByExternalID(ctx, workspaceUUID, params.ExternalID)
-		if deleteErr != nil || deleted.ArchivedAt == nil || deleted.DeletedAt == nil {
+		if deleteErr != nil || deleted.DeletedAt == nil {
 			t.Fatalf("SoftDeleteByExternalID() = (%+v, %v)", deleted, deleteErr)
+		}
+		rows, listErr = mapper.ListPage(ctx, mcpServerPageMapperParams{WorkspaceUUID: workspaceUUID, FetchLimit: 2})
+		if listErr != nil || len(rows) != 0 {
+			t.Fatalf("ListPage() after delete = (%+v, %v)", rows, listErr)
 		}
 		_, findErr := mapper.FindByExternalID(ctx, workspaceUUID, params.ExternalID)
 		if !errors.Is(findErr, sql.ErrNoRows) {
 			t.Fatalf("FindByExternalID() after delete error = %v, want sql.ErrNoRows", findErr)
+		}
+
+		replacement := params
+		replacement.UUID = "00000000-0000-4000-8000-000000000004"
+		replacement.ExternalID = "mcp_replacement"
+		replacement.CreatedAt = updatedAt.Add(time.Minute)
+		replacement.UpdatedAt = replacement.CreatedAt
+		createdReplacement, replacementErr := mapper.Insert(ctx, replacement)
+		if replacementErr != nil || createdReplacement.Name != params.Name || createdReplacement.EndpointURL != params.EndpointURL {
+			t.Fatalf("Insert() replacement after delete = (%+v, %v)", createdReplacement, replacementErr)
 		}
 	})
 }

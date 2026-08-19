@@ -44,10 +44,12 @@ test('lists workspace MCP servers and creates a reusable configuration', async (
   expect(screen.getByRole('region', { name: 'MCP servers list' }).closest('[data-slot="card"]')).toBeNull();
   const createButton = screen.getByRole('button', { name: 'Create MCP server' });
   const filters = screen.getByTestId('mcp-server-filters');
-  const search = screen.getByRole('textbox', { name: 'Search MCP servers' });
+  const search = screen.getByRole('textbox', { name: 'Search by name or endpoint' });
   expect(createButton.closest('header')).toBeTruthy();
   expect(createButton.closest('header')?.contains(search)).toBe(false);
   expect(filters.contains(search)).toBe(true);
+  expect(search.className).toContain('h-9');
+  expect(screen.queryByRole('button', { name: /Status/ })).toBeNull();
   expect(filters.compareDocumentPosition(screen.getByRole('region', { name: 'MCP servers list' }))).toBe(
     Node.DOCUMENT_POSITION_FOLLOWING,
   );
@@ -75,32 +77,38 @@ test('lists workspace MCP servers and creates a reusable configuration', async (
   expect(dialog).toBeTruthy();
 });
 
-test('archives a workspace MCP server after confirmation', async () => {
-  resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
-  const requests: Array<{ url: string; method: string }> = [];
-  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const method = init?.method ?? 'GET';
-    requests.push({ url, method });
-    if (url.endsWith('/archive')) {
-      return Response.json(mcpServer({ status: 'archived' }));
+test('shows a localized duplicate error in the Chinese editor', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers/new');
+  globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if ((init?.method ?? 'GET') === 'POST') {
+      return Response.json(
+        { error: 'conflict', message: 'An MCP server with this name or URL already exists' },
+        { status: 409 },
+      );
     }
-    return Response.json({ data: [mcpServer()], next_page: null });
+    return Response.json({ data: [], next_page: null });
   });
 
-  renderPage(<MCPServersPage />);
-  expect(await screen.findByText('internal-docs')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Actions for internal-docs' }));
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
-  const confirmation = await screen.findByRole('alertdialog', { name: 'Archive MCP server?' });
-  fireEvent.click(screen.getByRole('button', { name: 'Archive', hidden: false }));
+  renderPage(<MCPServersPage initialCreateOpen />, {}, 'zh-CN');
+  fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'internal-docs' } });
+  fireEvent.change(screen.getByLabelText('MCP 服务器 URL'), {
+    target: { value: 'https://docs.example/mcp' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: '创建', hidden: false }));
 
-  await waitFor(() =>
-    expect(requests.some((request) => request.url.endsWith('/mcpsrv_test/archive') && request.method === 'POST')).toBe(
-      true,
-    ),
-  );
-  expect(confirmation).toBeTruthy();
+  expect(await screen.findByText('已存在同名或使用相同 URL 的 MCP 服务器。')).toBeTruthy();
+  expect(screen.queryByText('An MCP server with this name or URL already exists')).toBeNull();
+});
+
+test('localizes the MCP search clear control in Chinese', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
+  globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));
+
+  renderPage(<MCPServersPage />, {}, 'zh-CN');
+  const search = await screen.findByRole('textbox', { name: '按名称或 endpoint 搜索' });
+  fireEvent.change(search, { target: { value: 'docs' } });
+
+  expect(screen.getByRole('button', { name: '清除按名称或 endpoint 搜索' })).toBeTruthy();
 });
 
 test('paginates the management list with the backend cursor', async () => {
@@ -163,6 +171,12 @@ test('opens a resource detail panel, then updates and deletes it', async () => {
 
   fireEvent.click(within(updatedDetail).getByRole('button', { name: 'Actions for renamed-docs' }));
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+  expect(
+    await screen.findByText(
+      'This removes the reusable configuration from the workspace directory. Existing Agents keep the configuration already copied into their versions.',
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole('menuitem', { name: 'Archive' })).toBeNull();
   fireEvent.click(await screen.findByRole('button', { name: 'Delete', hidden: false }));
   await waitFor(() => expect(requests.some((request) => request.method === 'DELETE')).toBe(true));
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'renamed-docs' })).toBeNull());
@@ -228,15 +242,17 @@ function mcpServer(overrides: Record<string, unknown> = {}) {
     name: 'internal-docs',
     transport_type: 'url',
     url: 'https://docs.example/mcp',
-    status: 'active',
     created_at: '2026-08-13T00:00:00Z',
     updated_at: '2026-08-13T00:00:00Z',
-    archived_at: null,
     ...overrides,
   };
 }
 
-function renderPage(children: ReactNode, workspaceOverrides: Partial<WorkspaceContextValue> = {}) {
+function renderPage(
+  children: ReactNode,
+  workspaceOverrides: Partial<WorkspaceContextValue> = {},
+  locale: 'en' | 'zh-CN' = 'en',
+) {
   const rootRoute = createRootRoute();
   const pageRoute = createRoute({ getParentRoute: () => rootRoute, path: '$' });
   const router = createRouter({
@@ -265,7 +281,7 @@ function renderPage(children: ReactNode, workspaceOverrides: Partial<WorkspaceCo
   };
   return render(
     <RouterContextProvider router={router}>
-      <I18nProvider initialLocale="en">
+      <I18nProvider initialLocale={locale}>
         <AuthContext.Provider value={auth}>
           <WorkspaceContext.Provider value={workspace}>
             <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>

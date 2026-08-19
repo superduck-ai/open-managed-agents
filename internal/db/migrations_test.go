@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+func TestRemoveMCPServerArchivingMigrationKeepsReversibleSchemaChange(t *testing.T) {
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00051_remove_mcp_server_archiving.sql")
+	if err != nil {
+		t.Fatalf("read MCP Server archiving removal migration: %v", err)
+	}
+
+	contents := strings.ToLower(string(migration))
+	for _, fragment := range []string{
+		"alter table mcp_servers",
+		"drop column archived_at",
+		"add column archived_at timestamptz",
+	} {
+		if !strings.Contains(contents, fragment) {
+			t.Fatalf("MCP Server archiving removal migration does not contain %q", fragment)
+		}
+	}
+}
+
 func TestSnapshotSessionSkillsMigrationSkipsExistingFiles(t *testing.T) {
 	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00048_snapshot_session_skills.sql")
 	if err != nil {

@@ -1,0 +1,27 @@
+# The public Mintlify site is defined only by docs.json, locale directories,
+# and the small set of root-level brand assets.
+.mintlify-template-inspect/
+.worktrees/
+cmd/
+config/
+deploy/
+/docs/
+envd-bin/
+internal/
+scripts/
+tests/
+tmp/
+web/
+*.go
+go.mod
+go.sum
+Dockerfile
+docker-compose.yml
+justfile
+README.cn.md
+AGENTS.md
+AGENTS.local.md
+AGENTS.override.md
+CLAUDE.md
+CLAUDE.local.md
+CONTEXT.md

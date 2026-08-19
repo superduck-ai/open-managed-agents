@@ -198,6 +198,38 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if len(queued) != 2 || queued[0].EventType != "control_request" || queued[0].EventSubtype != "initialize" || queued[1].EventType != "user" {
 		t.Fatalf("unexpected queued inbound events: %#v", queued)
 	}
+	var initialize map[string]any
+	if err := json.Unmarshal(queued[0].Payload, &initialize); err != nil {
+		t.Fatalf("decode initialize worker event: %v", err)
+	}
+	initializeRequest := initialize["request"].(map[string]any)
+	if initializeRequest["systemPrompt"] != "You are a concise coding assistant." {
+		t.Fatalf("initialize systemPrompt = %q", initializeRequest["systemPrompt"])
+	}
+	const expectedManagedAgentEnvironmentPrompt = `# Managed-agent environment
+
+These rules describe the current sandbox environment and do not replace your assigned role.
+
+## Uploaded inputs
+
+- A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
+- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
+- /mnt/session/uploads is read-only. Do not modify files under this directory.
+- Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
+- First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.
+- Search the working directory only after the uploads check finds no match. Do not report a file missing until both locations have been checked in this order.
+- Uploaded filenames and paths are authoritative. Use an exact path when provided; otherwise, use only a path returned by inspecting /mnt/session/uploads. If multiple files match, ask the user which one to use.
+- Never guess, truncate, rename, or reconstruct an uploaded input path. Do not infer an upload path from metadata such as a file ID.
+
+## Output deliverables
+
+- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
+- A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
+- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
+- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
+	if initializeRequest["appendSystemPrompt"] != expectedManagedAgentEnvironmentPrompt {
+		t.Fatalf("initialize appendSystemPrompt = %q", initializeRequest["appendSystemPrompt"])
+	}
 	var initial map[string]any
 	if err := json.Unmarshal(queued[1].Payload, &initial); err != nil {
 		t.Fatalf("decode initial worker event: %v", err)
@@ -307,9 +339,9 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("rclone config does not mount /uploads at the managed-agents root: %#v", rcloneConfig.Mounts)
 	}
 
-	stored, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
-	if err != nil {
-		t.Fatalf("load stored session: %v", err)
+	stored, found, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
+	if err != nil || !found {
+		t.Fatalf("load stored session = (%t, %v), want found", found, err)
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal(stored.Metadata, &metadata); err != nil {
@@ -627,9 +659,9 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		t.Fatalf("list package runner work count/error = %d/%v, want one work", len(works), workErr)
 	}
 	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
-	storedSession, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceUUID, session.ID)
-	if sessionErr != nil {
-		t.Fatalf("load package runner session: %v", sessionErr)
+	storedSession, sessionFound, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceUUID, session.ID)
+	if sessionErr != nil || !sessionFound {
+		t.Fatalf("load package runner session = (%t, %v), want found", sessionFound, sessionErr)
 	}
 	provider.sessionHasRuntimeMetadata = hasJSONKey(storedSession.Metadata, "claude_code_session_id")
 	if err := app.pool.QueryRow(inspectionCtx, `
@@ -788,9 +820,9 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 	if codeSession.Status != "terminated" || codeSession.ConnectionStatus != "disconnected" || codeSession.WorkerLeaseExpiresAt != nil {
 		t.Fatalf("compensated code session = %#v", codeSession)
 	}
-	storedSession, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
-	if err != nil {
-		t.Fatalf("load Session after manager failure: %v", err)
+	storedSession, found, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
+	if err != nil || !found {
+		t.Fatalf("load Session after manager failure = (%t, %v), want found", found, err)
 	}
 	if hasJSONKey(storedSession.Metadata, "claude_code_session_id") {
 		t.Fatalf("failed runtime was published in Session metadata: %s", storedSession.Metadata)

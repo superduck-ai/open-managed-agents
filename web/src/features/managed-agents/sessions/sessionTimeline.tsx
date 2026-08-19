@@ -1011,7 +1011,7 @@ export function LaneTabStrip({
     });
   };
   return (
-    <div className="flex items-center gap-2 border-b border-border px-0 py-2" data-testid="lane-tab-strip">
+    <div className="flex items-center gap-2 border-b border-border px-4 py-2" data-testid="lane-tab-strip">
       {scrollState.canScroll ? (
         <Button
           type="button"

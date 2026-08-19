@@ -88,12 +88,12 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v, want file resource limit %d", err, db.MaxSessionFileResources)
 	}
 
-	if _, err := app.db.GetSession(
+	if _, found, err := app.db.GetSession(
 		context.Background(),
 		workspaceUUID,
 		input.Session.ExternalID,
-	); !errors.Is(err, db.ErrNotFound) {
-		t.Fatalf("GetSession() after rollback error = %v, want ErrNotFound", err)
+	); err != nil || found {
+		t.Fatalf("GetSession() after rollback = (%t, %v), want false, nil", found, err)
 	}
 }
 

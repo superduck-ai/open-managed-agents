@@ -1,0 +1,53 @@
+---
+title: "获取 Session"
+description: "读取 Session 当前状态、Agent 快照和资源。"
+api: "GET /v1/sessions/{session_id}?beta=true"
+---
+
+返回当前 Workspace 中的一个 Session。该资源当前要求 `beta=true`。
+
+<ParamField path="session_id" type="string" required>
+  `sesn_` 开头的 Session ID。
+</ParamField>
+
+<ParamField query="beta" type="boolean" required>
+  必须为 `true`。
+</ParamField>
+
+<ResponseField name="id" type="string">
+  Session ID。
+</ResponseField>
+
+<ResponseField name="agent" type="object">
+  创建 Session 时保存的 Agent 快照。
+</ResponseField>
+
+<ResponseField name="environment_id" type="string">
+  运行该任务的 Environment。
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  当前生命周期状态，例如 `idle` 或 `running`。
+</ResponseField>
+
+<ResponseField name="resources" type="array">
+  Session 当前挂载的资源。
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  聚合使用量。
+</ResponseField>
+
+<ResponseField name="stats" type="object">
+  Session 运行统计。
+</ResponseField>
+
+```bash
+curl 'http://localhost:38080/v1/sessions/sesn_01...?beta=true' \
+  -H 'Authorization: Bearer sk-ant-local-default' \
+  -H 'anthropic-version: 2023-06-01'
+```
+
+<Note>
+  读取 Session 只返回当前快照。需要增量进度时，请使用 `/events`、`/events/stream` 或 Thread stream 接口。
+</Note>

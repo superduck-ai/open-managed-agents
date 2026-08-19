@@ -2,43 +2,84 @@ package codesessions
 
 import (
 	"context"
-	"errors"
-	"strings"
+	"encoding/json"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func (s *Service) syncPublicSessionStatusFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
-	// worker 状态属于内部执行协议；这里只把可公开表达的状态同步到 session 和主线程。
-	// 找不到公开 session/thread 代表旧数据或尚未完成初始化，不应让 worker 上报失败。
-	publicStatus, ok := publicSessionStatusFromWorkerStatus(workerStatus)
-	if !ok || strings.TrimSpace(record.SessionExternalID) == "" {
+func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
+	if record.SessionExternalID == "" {
 		return nil
 	}
-	if err := s.db.SetSessionStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
-		return err
+	eventType, ok := publicEventTypeFromWorkerStatus(workerStatus)
+	if !ok {
+		return nil
 	}
-	thread, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
+	payloads, err := s.publicSessionStatusPayloads(ctx, record, eventType)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return nil
-		}
 		return err
 	}
-	if err := s.db.SetSessionThreadStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, thread.ExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
-		return err
-	}
-	return nil
+	return s.publishWorkerPublicPayloads(ctx, record.ExternalID, payloads)
 }
 
-func publicSessionStatusFromWorkerStatus(workerStatus string) (string, bool) {
-	// requires_action 对公开 API 表示“等待用户输入”，因此映射为 idle；其余内部状态不外泄。
-	switch workerStatus {
+func publicEventTypeFromWorkerStatus(status string) (string, bool) {
+	switch status {
 	case "running":
-		return "running", true
+		return "session.status_running", true
 	case "idle", "requires_action":
-		return "idle", true
+		return "session.status_idle", true
 	default:
 		return "", false
 	}
+}
+
+// 把 worker 内部状态同步成外部可消费的 session 状态事件，并在 session 和主 thread 都已经处于目标状态时跳过重复发布。
+// worker 报告 running，需要发布事件
+//
+//	比如：
+//	- workerStatus = "running"
+//	- publicEventTypeFromWorkerStatus 把它映射为 eventType = "session.status_running"
+//	- maevents.SessionStatus("session.status_running") 返回 status = "running"
+func (s *Service) publicSessionStatusPayloads(ctx context.Context, record db.CodeSession, eventType string) ([]json.RawMessage, error) {
+	status, ok := maevents.SessionStatus(eventType)
+	if !ok {
+		return nil, nil
+	}
+	// 从 db 查 session status
+	session, found, err := s.db.GetSession(ctx, record.WorkspaceUUID, record.SessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	// 状态相同，则查主 Agent 的状态
+	if session.Status == status {
+		thread, found, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, nil
+		}
+		// 如果主 Agent 也状态相同，则不需要重复发布
+		if thread.Status == status {
+			return nil, nil
+		}
+	}
+	//
+	now := time.Now().UTC()
+	eventID := stablePublicEventID(record.ExternalID, "worker_status_"+status+"\x00"+session.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	payload, err := marshalRaw(map[string]any{
+		"id":           eventID,
+		"type":         eventType,
+		"created_at":   formatTime(now),
+		"processed_at": formatTime(now),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []json.RawMessage{payload}, nil
 }

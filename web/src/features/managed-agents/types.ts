@@ -169,6 +169,7 @@ export type SessionApiResponse = {
   created_at: string;
   deployment_id?: string | null;
   environment_id: string;
+  resources: SessionResourceApiResponse[];
   stats?: unknown;
   status: string;
   title?: string | null;
@@ -301,8 +302,21 @@ export type EnvironmentWorkApiResponse = {
 export type SessionResourceApiResponse = {
   id?: string;
   created_at?: string;
+  file_id?: string;
+  mount_path?: string;
   type?: string;
   [key: string]: unknown;
+};
+
+export type FileMetadataApiResponse = {
+  id: string;
+  created_at: string;
+  downloadable?: boolean;
+  filename: string;
+  mime_type: string;
+  scope?: unknown;
+  size_bytes: number;
+  type: 'file';
 };
 
 export type SessionThreadApiResponse = {
@@ -719,6 +733,7 @@ export type EventsTabProps = {
   activeLane: string;
   archivedLaneCount: number;
   childLoading: boolean;
+  composer?: ReactNode;
   copyPayload: string;
   detailPanelRef: RefObject<HTMLDivElement | null>;
   entries: SessionEventListEntry[];

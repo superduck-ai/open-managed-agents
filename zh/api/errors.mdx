@@ -1,0 +1,54 @@
+---
+title: "错误"
+description: "理解 OMA 的 HTTP 状态码、错误信封和 request ID。"
+icon: "triangle-exclamation"
+---
+
+OMA 的公共 API 使用与 Anthropic 风格兼容的错误信封。
+
+```json
+{
+  "type": "error",
+  "request_id": "req_01...",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "model is required"
+  }
+}
+```
+
+<ResponseField name="type" type="string">
+  顶层对象类型。错误响应固定为 `error`。
+</ResponseField>
+
+<ResponseField name="request_id" type="string">
+  本次请求的追踪 ID。联系部署运维人员时应一并提供。
+</ResponseField>
+
+<ResponseField name="error.type" type="string">
+  稳定的错误分类，例如 `authentication_error`、`invalid_request_error` 或 `not_found_error`。
+</ResponseField>
+
+<ResponseField name="error.message" type="string">
+  面向开发者的错误说明。不要依赖完整文案做程序分支判断。
+</ResponseField>
+
+## 常见状态码
+
+| 状态码 | 含义 | 建议 |
+| --- | --- | --- |
+| `400` | 请求字段、分页或 beta 参数无效 | 修正请求后再试 |
+| `401` | 缺少或无法识别凭证 | 检查 API key 和认证头 |
+| `403` | 当前身份没有所需权限 | 检查 Workspace 和资源权限 |
+| `404` | 路由或租户范围内的资源不存在 | 检查路径与资源 ID |
+| `409` | 版本或资源状态冲突 | 重新读取资源后再提交 |
+| `413` | 请求体或上传文件过大 | 缩小请求或检查部署限制 |
+| `500` | 服务内部错误 | 使用 `request_id` 检查服务日志 |
+
+## 重试
+
+只对临时网络错误、`429` 或明确可恢复的 `5xx` 执行带抖动的指数退避。校验错误、认证错误和版本冲突需要先修改请求，盲目重试不会成功。
+
+<Warning>
+  `/v1/filestore` 使用 rclone-filestore 协议需要的扁平错误格式，不使用本页的通用错误信封。
+</Warning>

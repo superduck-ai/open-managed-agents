@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -25,13 +25,7 @@ type Service struct {
 	db          *db.DB
 	credentials *SessionCredentials
 	logger      *slog.Logger
-	sinkMu      sync.Mutex
 	sink        PublicEventSink
-}
-
-type workerOutputEvent struct {
-	Payload   json.RawMessage
-	Ephemeral bool
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
@@ -121,157 +115,185 @@ func (s *Service) QueueRawCodeSessionEvents(ctx context.Context, codeSession db.
 	return nil
 }
 
-func (s *Service) AppendWorkerEvent(ctx context.Context, codeSessionID string, raw json.RawMessage, source string) error {
-	return s.appendWorkerEvent(ctx, codeSessionID, nil, raw, source)
+func (s *Service) AppendWorkerEvent(ctx context.Context, codeSessionID string, raw json.RawMessage) error {
+	if s == nil {
+		return nil
+	}
+	prepared, err := prepareSingleWorkerEvent(codeSessionID, raw, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if prepared.eventType == "keep_alive" {
+		return s.db.TouchCodeSessionWorkerActivity(ctx, codeSessionID)
+	}
+	return s.applyWorkerOutputEvent(ctx, codeSessionID, &prepared)
 }
 
-func (s *Service) AppendWorkerEventForEpoch(ctx context.Context, codeSessionID string, workerEpoch int64, raw json.RawMessage, source string) error {
-	return s.appendWorkerEvent(ctx, codeSessionID, &workerEpoch, raw, source)
+func (s *Service) AppendWorkerEventForEpoch(ctx context.Context, codeSessionID string, workerEpoch int64, raw json.RawMessage) error {
+	if s == nil {
+		return nil
+	}
+	prepared, err := prepareSingleWorkerEvent(codeSessionID, raw, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, workerEpoch); err != nil {
+		return err
+	}
+	if prepared.eventType == "keep_alive" {
+		return nil
+	}
+	return s.applyWorkerOutputEvent(ctx, codeSessionID, &prepared)
 }
 
-func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSessionID string, workerEpoch int64, events []workerOutputEvent, source string) error {
+func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSessionID string, workerEpoch int64, events []workerOutputEvent) error {
 	if s == nil || len(events) == 0 {
 		return nil
 	}
-	codeSessionID = strings.TrimSpace(codeSessionID)
 	if codeSessionID == "" {
 		return ErrProtocol
 	}
 	if workerEpoch <= 0 {
 		return db.ErrWorkerEpochMismatch
 	}
-	source = strings.TrimSpace(source)
 	now := time.Now().UTC()
-	for _, input := range events {
-		payload, object, err := normalizeWorkerOutputPayload(codeSessionID, input.Payload, now)
-		if err != nil {
-			return err
-		}
-		eventType := stringField(object, "type")
-		if eventType == "keep_alive" {
-			if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, workerEpoch); err != nil {
-				return err
-			}
-			continue
-		}
-		meta, err := BuildEventMetadata(codeSessionID, "outbound", payload)
-		if err != nil {
-			return err
-		}
-		eventID, err := ids.New("csev_")
-		if err != nil {
-			return err
-		}
-		event, duplicate, err := s.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-			ExternalID:          eventID,
-			EventType:           meta.EventType,
-			EventSubtype:        meta.EventSubtype,
-			PayloadUUID:         meta.PayloadUUID,
-			RequestID:           meta.RequestID,
-			Payload:             meta.Payload,
-			PayloadHash:         meta.PayloadHash,
-			IdempotencyKey:      meta.IdempotencyKey,
-			Source:              source,
-			CreatedAt:           time.Now().UTC(),
-			RequiredWorkerEpoch: &workerEpoch,
-			Ephemeral:           input.Ephemeral,
-		})
-		if err != nil {
-			return err
-		}
+	prepared, err := prepareWorkerOutputEvents(codeSessionID, events, now)
+	if err != nil {
+		return err
+	}
+	// This conditional update is the batch linearization point. It serializes
+	// against worker registration and rejects a worker that has lost its epoch.
+	if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, workerEpoch); err != nil {
+		return err
+	}
+	return s.applyWorkerOutputEvents(ctx, codeSessionID, prepared)
+}
+
+type preparedWorkerOutputEvent struct {
+	eventType      string
+	metadata       EventMetadata
+	controlRequest *workerControlRequestPayload
+	publicPayloads []json.RawMessage
+}
+
+func prepareSingleWorkerEvent(codeSessionID string, raw json.RawMessage, now time.Time) (preparedWorkerOutputEvent, error) {
+	if codeSessionID == "" {
+		return preparedWorkerOutputEvent{}, ErrProtocol
+	}
+	payload, err := normalizeWorkerOutboundPayload(codeSessionID, raw, now)
+	if err != nil {
+		return preparedWorkerOutputEvent{}, err
+	}
+	meta, err := BuildEventMetadata(codeSessionID, "outbound", payload)
+	if err != nil {
+		return preparedWorkerOutputEvent{}, err
+	}
+	prepared := preparedWorkerOutputEvent{eventType: meta.EventType}
+	if meta.EventType == "keep_alive" || isHiddenWorkerEvent(meta.EventType) {
 		if meta.EventType == "control_request" && meta.EventSubtype == "can_use_tool" {
-			if duplicate {
-				continue
-			}
-			if err := s.handleToolPermissionRequest(ctx, codeSessionID, object, meta); err != nil {
-				return err
-			}
-			continue
-		}
-		publicObject := object
-		if duplicate {
-			publicObject, err = decodeJSONObject(event.Payload)
+			controlRequest, err := prepareWorkerControlRequest(payload, meta)
 			if err != nil {
-				return err
+				return preparedWorkerOutputEvent{}, fmt.Errorf("%w: invalid control_request payload", ErrProtocol)
 			}
+			controlRequest.eventType = meta.EventType
+			return controlRequest, nil
 		}
-		if event.Ephemeral || !isPublicWorkerOutputEvent(event.EventType) {
-			continue
-		}
-		publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, event, publicObject)
+		return prepared, nil
+	}
+	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, transientWorkerEvent(meta, now), payload)
+	if err != nil {
+		return preparedWorkerOutputEvent{}, err
+	}
+	if ok {
+		prepared.publicPayloads = publicPayloads
+	}
+	return prepared, nil
+}
+
+func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, error) {
+	prepared := make([]preparedWorkerOutputEvent, 0, len(events))
+	for i, event := range events {
+		output, err := prepareWorkerOutputEvent(codeSessionID, event, now)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("%w: events[%d]: %v", ErrProtocol, i, err)
 		}
-		if !ok {
-			continue
-		}
-		if err := s.publishPublicPayloads(ctx, codeSessionID, publicPayloads); err != nil {
+		prepared = append(prepared, output)
+	}
+	return prepared, nil
+}
+
+func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
+	header, err := decodeWorkerPayloadHeader(input.Payload)
+	if err != nil {
+		return preparedWorkerOutputEvent{}, err
+	}
+	if header.Type == "keep_alive" {
+		return preparedWorkerOutputEvent{}, nil
+	}
+	meta, err := BuildEventMetadata(codeSessionID, "outbound", input.Payload)
+	if err != nil {
+		return preparedWorkerOutputEvent{}, err
+	}
+	if header.Type == "control_request" {
+		return prepareWorkerControlRequest(input.Payload, meta)
+	}
+	if input.Ephemeral || !isPublicWorkerOutputEvent(meta.EventType) {
+		return preparedWorkerOutputEvent{}, nil
+	}
+	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, transientWorkerEvent(meta, now), input.Payload)
+	if err != nil {
+		return preparedWorkerOutputEvent{}, err
+	}
+	if !ok {
+		return preparedWorkerOutputEvent{}, nil
+	}
+	return preparedWorkerOutputEvent{publicPayloads: publicPayloads}, nil
+}
+
+func prepareWorkerControlRequest(payload json.RawMessage, meta EventMetadata) (preparedWorkerOutputEvent, error) {
+	controlRequest, err := decodeWorkerControlRequestPayload(payload)
+	if err != nil {
+		return preparedWorkerOutputEvent{}, errors.New("payload is an invalid control_request")
+	}
+	if controlRequest.Request.Subtype != "can_use_tool" {
+		return preparedWorkerOutputEvent{}, nil
+	}
+	return preparedWorkerOutputEvent{
+		metadata:       meta,
+		controlRequest: &controlRequest,
+	}, nil
+}
+
+func (s *Service) applyWorkerOutputEvents(ctx context.Context, codeSessionID string, events []preparedWorkerOutputEvent) error {
+	for i := range events {
+		if err := s.applyWorkerOutputEvent(ctx, codeSessionID, &events[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) appendWorkerEvent(ctx context.Context, codeSessionID string, requiredWorkerEpoch *int64, raw json.RawMessage, source string) error {
-	if s == nil {
+func (s *Service) applyWorkerOutputEvent(ctx context.Context, codeSessionID string, event *preparedWorkerOutputEvent) error {
+	if event.controlRequest != nil {
+		return s.handleToolPermissionRequest(ctx, codeSessionID, event.controlRequest, event.metadata)
+	}
+	if len(event.publicPayloads) == 0 {
 		return nil
 	}
-	codeSessionID = strings.TrimSpace(codeSessionID)
-	if codeSessionID == "" {
-		return ErrProtocol
+	return s.publishWorkerPublicPayloads(ctx, codeSessionID, event.publicPayloads)
+}
+
+func transientWorkerEvent(meta EventMetadata, createdAt time.Time) db.CodeSessionEvent {
+	return db.CodeSessionEvent{
+		EventType:      meta.EventType,
+		EventSubtype:   meta.EventSubtype,
+		PayloadUUID:    meta.PayloadUUID,
+		RequestID:      meta.RequestID,
+		Payload:        meta.Payload,
+		PayloadHash:    meta.PayloadHash,
+		IdempotencyKey: meta.IdempotencyKey,
+		CreatedAt:      createdAt,
 	}
-	payload, object, err := normalizeWorkerOutboundPayload(codeSessionID, raw, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	meta, err := BuildEventMetadata(codeSessionID, "outbound", payload)
-	if err != nil {
-		return err
-	}
-	if meta.EventType == "keep_alive" {
-		if requiredWorkerEpoch != nil {
-			return s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, *requiredWorkerEpoch)
-		}
-		return s.db.TouchCodeSessionWorkerActivity(ctx, codeSessionID)
-	}
-	eventID, err := ids.New("csev_")
-	if err != nil {
-		return err
-	}
-	event, duplicate, err := s.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:          eventID,
-		EventType:           meta.EventType,
-		EventSubtype:        meta.EventSubtype,
-		PayloadUUID:         meta.PayloadUUID,
-		RequestID:           meta.RequestID,
-		Payload:             meta.Payload,
-		PayloadHash:         meta.PayloadHash,
-		IdempotencyKey:      meta.IdempotencyKey,
-		Source:              strings.TrimSpace(source),
-		CreatedAt:           time.Now().UTC(),
-		DeliveryStatus:      "",
-		RequiredWorkerEpoch: requiredWorkerEpoch,
-	})
-	if err != nil {
-		return err
-	}
-	if duplicate {
-		return nil
-	}
-	if meta.EventType == "control_request" && meta.EventSubtype == "can_use_tool" {
-		return s.handleToolPermissionRequest(ctx, codeSessionID, object, meta)
-	}
-	if isHiddenWorkerEvent(meta.EventType) {
-		return nil
-	}
-	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, event, object)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-	return s.publishPublicPayloads(ctx, codeSessionID, publicPayloads)
 }
 
 func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSession, configRaw json.RawMessage, now time.Time) error {
@@ -334,35 +356,39 @@ func newInboundEventInput(codeSessionID string, payload json.RawMessage, source 
 	}, nil
 }
 
-func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
-	codeSession, err := s.publishPublicPayloadsToSink(ctx, codeSessionID, payloads)
-	if err != nil {
+func (s *Service) publishWorkerPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
+	if err := s.publishPublicPayloads(ctx, codeSessionID, payloads); err != nil {
 		return err
 	}
-	if codeSession.ExternalID == "" {
-		return nil
-	}
-	if err := s.publishSubagentInternalEvents(ctx, codeSession); err != nil {
-		s.logger.ErrorContext(ctx, "publish subagent internal events", "code_session_id", codeSession.ExternalID, "session_id", codeSession.SessionExternalID, "error", err)
-	}
+	s.reconcileSubagentEvents(ctx, codeSessionID)
 	return nil
 }
 
-func (s *Service) publishPublicPayloadsToSink(ctx context.Context, codeSessionID string, payloads []json.RawMessage) (db.CodeSession, error) {
+func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
 	if len(payloads) == 0 {
-		return db.CodeSession{}, nil
+		return nil
 	}
-	codeSession, err := s.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
-		return db.CodeSession{}, err
+		return err
 	}
-	s.sinkMu.Lock()
-	sink := s.sink
-	s.sinkMu.Unlock()
-	if sink == nil {
-		return codeSession, nil
+	if !found {
+		return db.ErrNotFound
 	}
-	return codeSession, sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
+	if s.sink == nil {
+		return nil
+	}
+	return s.sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
+}
+
+func (s *Service) reconcileSubagentEvents(ctx context.Context, codeSessionID string) {
+	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	if err == nil && found {
+		err = s.publishSubagentInternalEvents(ctx, codeSession)
+	}
+	if err != nil {
+		s.logger.ErrorContext(ctx, "publish subagent internal events", "code_session_id", codeSessionID, "error", err)
+	}
 }
 
 func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
@@ -407,8 +433,7 @@ func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession
 	if len(payloads) == 0 {
 		return nil
 	}
-	_, err = s.publishPublicPayloadsToSink(ctx, codeSession.ExternalID, payloads)
-	return err
+	return s.publishPublicPayloads(ctx, codeSession.ExternalID, payloads)
 }
 
 func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
@@ -488,7 +513,7 @@ func requestIDString(requestID *string) string {
 }
 
 func stablePublicEventID(codeSessionID, seed string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(codeSessionID) + "\x00public\x00" + strings.TrimSpace(seed)))
+	sum := sha256.Sum256([]byte(codeSessionID + "\x00public\x00" + seed))
 	return "sevt_" + hex.EncodeToString(sum[:16])
 }
 

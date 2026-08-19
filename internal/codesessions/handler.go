@@ -10,6 +10,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -22,6 +23,7 @@ type Handler struct {
 	db                     *db.DB
 	service                *Service
 	logger                 *slog.Logger
+	errorAdapter           *httpapi.ErrorAdapter
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
@@ -51,6 +53,7 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		db:                     service.db,
 		service:                service,
 		logger:                 logger,
+		errorAdapter:           httpapi.NewErrorAdapter(logger),
 		sandboxTimeoutExtender: sandboxTimeoutExtender,
 		upstreamProxy:          newUpstreamProxyRuntime(),
 		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),

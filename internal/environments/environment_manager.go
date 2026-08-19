@@ -18,6 +18,27 @@ const (
 	defaultEnvironmentWorkDir     = "/home/user"
 	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
+	managedAgentEnvironmentPrompt = `# Managed-agent environment
+
+These rules describe the current sandbox environment and do not replace your assigned role.
+
+## Uploaded inputs
+
+- A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
+- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
+- /mnt/session/uploads is read-only. Do not modify files under this directory.
+- Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
+- First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.
+- Search the working directory only after the uploads check finds no match. Do not report a file missing until both locations have been checked in this order.
+- Uploaded filenames and paths are authoritative. Use an exact path when provided; otherwise, use only a path returned by inspecting /mnt/session/uploads. If multiple files match, ask the user which one to use.
+- Never guess, truncate, rename, or reconstruct an uploaded input path. Do not infer an upload path from metadata such as a file ID.
+
+## Output deliverables
+
+- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
+- A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
+- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
+- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
 )
 
 func managedAgentSessionConfig(
@@ -28,10 +49,14 @@ func managedAgentSessionConfig(
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
-		"origin":   "managed_agents_api",
-		"model":    modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":  runtimeResources.sources,
-		"outcomes": []any{},
+		"origin":               "managed_agents_api",
+		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
+		"sources":              runtimeResources.sources,
+		"outcomes":             []any{},
+		"append_system_prompt": managedAgentEnvironmentPrompt,
+	}
+	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
+		body["system_prompt"] = system
 	}
 	if len(mcpServers) > 0 {
 		body["mcp_servers"] = mcpServers
@@ -238,7 +263,8 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	delete(environmentVariables, "CLAUDE_CODE_SESSION_ACCESS_TOKEN") // 避免遮蔽 environment-manager 注入的 WebSocket auth FD。
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
 	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
-	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1" // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
+	environmentVariables["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] = "true" // 让 worker 输出包含 streaming 中间消息。
+	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"              // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
@@ -410,10 +436,20 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		"export CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=${CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL:-1}",
 		"export CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH=${CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH:-0}",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
+		// 让 environment-manager 自身及其子进程把 GitHub SSH remote 改写为经受控 HTTPS 出口访问。
+		"export GIT_CONFIG_COUNT=3",
+		"export GIT_CONFIG_KEY_0=credential.interactive",
+		"export GIT_CONFIG_VALUE_0=false",
+		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_1=git@github.com:",
+		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
+		"export GIT_EDITOR=true",
+		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
+		"export GIT_TERMINAL_PROMPT=0",
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
 		"exec " + shellQuote(managerPath) +
 			" task-run" +
-			" --stdin" +
 			" --session " + shellQuote(codeSessionID) +
 			" --session-mode resume-cached" +
 			" --claude-agent-version " + shellQuote("current") +

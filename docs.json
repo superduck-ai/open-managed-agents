@@ -1,0 +1,215 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Open Managed Agents",
+  "description": "Open-source, self-hosted infrastructure for managed AI agents.",
+  "colors": {
+    "primary": "#525252",
+    "light": "#171717",
+    "dark": "#D4D4D4"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "zh-CN",
+        "default": true,
+        "navbar": {
+          "links": [
+            {
+              "label": "GitHub",
+              "href": "https://github.com/superduck-ai/open-managed-agents"
+            }
+          ],
+          "primary": {
+            "type": "button",
+            "label": "快速开始",
+            "href": "/zh/docs/quickstart"
+          }
+        },
+        "tabs": [
+          {
+            "tab": "文档",
+            "icon": "book-open",
+            "groups": [
+              {
+                "group": "开始使用",
+                "pages": [
+                  "zh/docs/overview",
+                  "zh/docs/quickstart"
+                ]
+              },
+              {
+                "group": "理解 OMA",
+                "pages": [
+                  "zh/docs/concepts"
+                ]
+              },
+              {
+                "group": "部署与运维",
+                "pages": [
+                  "zh/docs/deployment",
+                  "zh/docs/configuration"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "API 参考",
+            "icon": "brackets-curly",
+            "groups": [
+              {
+                "group": "开始使用",
+                "pages": [
+                  "zh/api/overview",
+                  "zh/api/authentication",
+                  "zh/api/pagination",
+                  "zh/api/errors"
+                ]
+              },
+              {
+                "group": "Models",
+                "pages": [
+                  "zh/api/endpoints/list-models"
+                ]
+              },
+              {
+                "group": "Agents",
+                "pages": [
+                  "zh/api/endpoints/list-agents",
+                  "zh/api/endpoints/create-agent"
+                ]
+              },
+              {
+                "group": "Sessions",
+                "pages": [
+                  "zh/api/endpoints/create-session",
+                  "zh/api/endpoints/retrieve-session"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "en",
+        "navbar": {
+          "links": [
+            {
+              "label": "GitHub",
+              "href": "https://github.com/superduck-ai/open-managed-agents"
+            }
+          ],
+          "primary": {
+            "type": "button",
+            "label": "Quickstart",
+            "href": "/en/docs/quickstart"
+          }
+        },
+        "tabs": [
+          {
+            "tab": "Documentation",
+            "icon": "book-open",
+            "groups": [
+              {
+                "group": "Get started",
+                "pages": [
+                  "en/docs/overview",
+                  "en/docs/quickstart"
+                ]
+              },
+              {
+                "group": "Understand OMA",
+                "pages": [
+                  "en/docs/concepts"
+                ]
+              },
+              {
+                "group": "Deploy and operate",
+                "pages": [
+                  "en/docs/deployment",
+                  "en/docs/configuration"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "API reference",
+            "icon": "brackets-curly",
+            "groups": [
+              {
+                "group": "Get started",
+                "pages": [
+                  "en/api/overview",
+                  "en/api/authentication",
+                  "en/api/pagination",
+                  "en/api/errors"
+                ]
+              },
+              {
+                "group": "Models",
+                "pages": [
+                  "en/api/endpoints/list-models"
+                ]
+              },
+              {
+                "group": "Agents",
+                "pages": [
+                  "en/api/endpoints/list-agents",
+                  "en/api/endpoints/create-agent"
+                ]
+              },
+              {
+                "group": "Sessions",
+                "pages": [
+                  "en/api/endpoints/create-session",
+                  "en/api/endpoints/retrieve-session"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "api": {
+    "mdx": {
+      "server": "http://localhost:38080",
+      "auth": {
+        "method": "bearer",
+        "name": "Authorization"
+      }
+    },
+    "playground": {
+      "display": "simple"
+    },
+    "examples": {
+      "languages": [
+        "curl",
+        "python",
+        "typescript",
+        "go"
+      ],
+      "defaults": "required"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "mcp",
+      "cursor"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/superduck-ai/open-managed-agents"
+    }
+  }
+}

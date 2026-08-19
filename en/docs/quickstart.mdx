@@ -1,0 +1,90 @@
+---
+title: "Quickstart"
+description: "Start OMA with Docker Compose and make your first API request."
+icon: "rocket"
+---
+
+This guide starts PostgreSQL, Redis, MinIO, e2b-local, OMA Server, and the web console with Docker Compose.
+
+## Prerequisites
+
+- Linux Docker Engine 20.10+, or OrbStack on macOS
+- Docker Compose
+- Git
+- `just` for the repository helper commands
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/superduck-ai/open-managed-agents.git
+    cd open-managed-agents
+    ```
+  </Step>
+
+  <Step title="Initialize local configuration">
+    ```bash
+    just init-compose-config
+    ```
+
+    The command creates `deploy/docker-compose/oma-server.local.yaml` from a secret-free template and never overwrites an existing file.
+  </Step>
+
+  <Step title="Add runtime credentials">
+    Edit `deploy/docker-compose/oma-server.local.yaml`. Review the upstream model credentials, object storage, and sandbox settings.
+
+    <Warning>
+      Never commit real API keys, private keys, or production credentials. The generated local file is ignored by Git.
+    </Warning>
+  </Step>
+
+  <Step title="Start the services">
+    ```bash
+    docker compose up -d
+    ```
+
+    Default addresses:
+
+    - Console: `http://localhost:28080`
+    - API: `http://localhost:38080`
+  </Step>
+
+  <Step title="Check service health">
+    ```bash
+    curl http://localhost:38080/healthz
+    ```
+
+    Expected response:
+
+    ```json
+    {"status":"ok"}
+    ```
+  </Step>
+
+  <Step title="Make your first API request">
+    The development seed creates `sk-ant-local-default` by default.
+
+    ```bash
+    curl http://localhost:38080/v1/models \
+      -H 'Authorization: Bearer sk-ant-local-default'
+    ```
+  </Step>
+</Steps>
+
+## Inspect the deployment
+
+```bash
+docker compose ps
+docker compose logs -f oma-server
+```
+
+## Stop the local environment
+
+```bash
+docker compose down
+```
+
+Adding `-v` also deletes Compose-managed data volumes. Do not use it unless you intend to remove the local database and object storage data.
+
+<Card title="Next: core concepts" icon="diagram-project" href="/en/docs/concepts">
+  Learn how agents, environments, sessions, resources, and deployments work together.
+</Card>

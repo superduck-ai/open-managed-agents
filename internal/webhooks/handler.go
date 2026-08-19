@@ -56,10 +56,10 @@ var supportedEndpointEventTypes = map[string]struct{}{
 }
 
 type Handler struct {
-	cfg    config.WebhookConfig
-	db     *db.DB
-	logger *slog.Logger
-	router chi.Router
+	cfg          config.WebhookConfig
+	db           *db.DB
+	errorAdapter *httpapi.ErrorAdapter
+	router       chi.Router
 }
 
 type webhookResponse struct {
@@ -92,79 +92,71 @@ type regenerateSigningSecretResponse struct {
 
 func NewHandler(cfg config.WebhookConfig, database *db.DB, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, logger: logger}
+	h := &Handler{cfg: cfg, db: database, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
-	router.Post("/", h.create)
-	router.Get("/", h.list)
-	router.Get("/{webhook_id}", h.retrieveRoute)
-	router.Post("/{webhook_id}/regenerate_signing_secret", h.regenerateSigningSecretRoute)
-	router.Post("/{webhook_id}", h.updateRoute)
-	router.Delete("/{webhook_id}", h.deleteRoute)
+	router.NotFound(wrap(h.notFound))
+	router.MethodNotAllowed(wrap(h.notFound))
+	router.Post("/", wrap(h.create))
+	router.Get("/", wrap(h.list))
+	router.Get("/{webhook_id}", wrap(h.retrieveRoute))
+	router.Post("/{webhook_id}/regenerate_signing_secret", wrap(h.regenerateSigningSecretRoute))
+	router.Post("/{webhook_id}", wrap(h.updateRoute))
+	router.Delete("/{webhook_id}", wrap(h.deleteRoute))
 	h.router = router
 	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !hasWebhooksBeta(r) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Webhooks API requires anthropic-beta: webhooks-2026-03-01"))
+		h.errorAdapter.Write(w, r, webhooksBetaRequired())
 		return
 	}
 	h.router.ServeHTTP(w, r)
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
+	return webhookRouteNotFound()
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return webhookAuthenticationRequired()
 	}
 	fields, err := decodeWebhookObjectBody(w, r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	endpointURL, err := parseWebhookRequiredString(fields, "url")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	if err := validateWebhookURL(endpointURL, h.cfg.AllowInsecure); err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	name, err := parseWebhookRequiredString(fields, "name")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	description := ""
 	if raw, ok := fields["description"]; ok {
 		description, err = parseWebhookRawString(raw, "description")
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	enabledEvents, err := parseEnabledEvents(fields["enabled_events"])
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	webhookID, err := ids.New("wh_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create webhook"))
-		return
+		return internalError("Could not create webhook", fmt.Errorf("generate webhook ID: %w", err))
 	}
 	signingSecret, err := newSigningSecret()
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create webhook"))
-		return
+		return internalError("Could not create webhook", fmt.Errorf("generate webhook signing secret: %w", err))
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateWebhookEndpoint(r.Context(), db.WebhookEndpoint{
@@ -183,108 +175,95 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:           now,
 	})
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create webhook"))
-		return
+		return internalError("Could not create webhook", fmt.Errorf("create webhook %q: %w", webhookID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWebhookEndpoint(created, true))
+	return nil
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return webhookAuthenticationRequired()
 	}
 	records, err := h.db.ListWebhookEndpoints(r.Context(), principal.WorkspaceUUID)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list webhooks"))
-		return
+		return internalError("Could not list webhooks", fmt.Errorf("list webhooks: %w", err))
 	}
 	data := make([]webhookResponse, 0, len(records))
 	for _, record := range records {
 		data = append(data, responseFromWebhookEndpoint(record, false))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, webhookPageResponse{Data: data})
+	return nil
 }
 
-func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return webhookAuthenticationRequired()
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
 	record, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
-			return
+			return webhookNotFound(webhookID, err)
 		}
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve webhook"))
-		return
+		return internalError("Could not retrieve webhook", fmt.Errorf("retrieve webhook %q: %w", webhookID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWebhookEndpoint(record, false))
+	return nil
 }
 
-func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return webhookAuthenticationRequired()
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
 	current, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
-			return
+			return webhookNotFound(webhookID, err)
 		}
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update webhook"))
-		return
+		return internalError("Could not update webhook", fmt.Errorf("retrieve webhook %q for update: %w", webhookID, err))
 	}
 	fields, err := decodeWebhookObjectBody(w, r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	next := current
 	if raw, ok := fields["url"]; ok {
 		next.URL, err = parseWebhookRawString(raw, "url")
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if err := validateWebhookURL(next.URL, h.cfg.AllowInsecure); err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	if raw, ok := fields["name"]; ok {
 		next.Name, err = parseWebhookRawString(raw, "name")
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if raw, ok := fields["description"]; ok {
 		next.Description, err = parseWebhookRawString(raw, "description")
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if raw, ok := fields["enabled_events"]; ok {
 		next.EnabledEvents, err = parseEnabledEvents(raw)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if raw, ok := fields["status"]; ok {
 		next.Status, err = parseWebhookRawString(raw, "status")
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 		switch next.Status {
 		case "enabled":
@@ -296,66 +275,58 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 				next.DisabledReason = &reason
 			}
 		default:
-			writeBadRequest(w, r, errors.New("status must be enabled or disabled"))
-			return
+			return invalidRequest(errors.New("status must be enabled or disabled"))
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
-			return
+			return webhookNotFound(webhookID, err)
 		}
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update webhook"))
-		return
+		return internalError("Could not update webhook", fmt.Errorf("update webhook %q: %w", webhookID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWebhookEndpoint(updated, false))
+	return nil
 }
 
-func (h *Handler) regenerateSigningSecretRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) regenerateSigningSecretRoute(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return webhookAuthenticationRequired()
 	}
 	if err := decodeWebhookEmptyObjectBody(w, r); err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	signingSecret, err := newSigningSecret()
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not regenerate webhook signing secret"))
-		return
+		return internalError("Could not regenerate webhook signing secret", fmt.Errorf("generate webhook signing secret: %w", err))
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
 	if err := h.db.RegenerateWebhookEndpointSigningSecret(r.Context(), principal.WorkspaceUUID, webhookID, signingSecret, time.Now().UTC()); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
-			return
+			return webhookNotFound(webhookID, err)
 		}
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not regenerate webhook signing secret"))
-		return
+		return internalError("Could not regenerate webhook signing secret", fmt.Errorf("regenerate webhook %q signing secret: %w", webhookID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, regenerateSigningSecretResponse{SigningSecret: signingSecret})
+	return nil
 }
 
-func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return webhookAuthenticationRequired()
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
 	if err := h.db.DeleteWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
-			return
+			return webhookNotFound(webhookID, err)
 		}
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete webhook"))
-		return
+		return internalError("Could not delete webhook", fmt.Errorf("delete webhook %q: %w", webhookID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: webhookID, Type: "webhook_deleted"})
+	return nil
 }
 
 func responseFromWebhookEndpoint(record db.WebhookEndpoint, includeSecret bool) webhookResponse {
@@ -529,8 +500,4 @@ func hasWebhooksBeta(r *http.Request) bool {
 		}
 	}
 	return false
-}
-
-func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 }

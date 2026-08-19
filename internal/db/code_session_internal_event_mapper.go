@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"time"
 )
@@ -72,10 +73,10 @@ func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {
 		PayloadUUID:           r.PayloadUUID,
 		AgentID:               r.AgentID,
 		IsCompaction:          r.IsCompaction,
-		Payload:               copyRaw(r.Payload),
+		Payload:               bytes.Clone(r.Payload),
 		PayloadHash:           r.PayloadHash,
 		IdempotencyKey:        r.IdempotencyKey,
-		EventMetadata:         copyRaw(r.EventMetadata),
+		EventMetadata:         bytes.Clone(r.EventMetadata),
 		CreatedAt:             r.CreatedAt,
 		UpdatedAt:             r.UpdatedAt,
 		DeletedAt:             r.DeletedAt,

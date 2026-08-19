@@ -97,6 +97,7 @@ export function EventsMinimap({
   onLaneChange: (laneId: string, targetEntryId?: string | null) => void;
   onSeek: (entryId: string | null) => void;
 }) {
+  const { msg } = useI18n();
   const ticks = useMemo(() => buildTimelineTicks(lanes), [lanes]);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -414,7 +415,7 @@ export function EventsMinimap({
   return (
     <div
       className="oma-session-timeline relative z-10 shrink-0 px-0 pb-2"
-      aria-label="Session event timeline"
+      aria-label={msg('managedAgents.sessions.detail.eventTimeline', 'Session event timeline')}
       data-testid="events-minimap"
     >
       <div
@@ -1010,7 +1011,7 @@ export function LaneTabStrip({
     });
   };
   return (
-    <div className="flex items-center gap-2 border-b border-border px-0 py-2" data-testid="lane-tab-strip">
+    <div className="flex items-center gap-2 border-b border-border px-4 py-2" data-testid="lane-tab-strip">
       {scrollState.canScroll ? (
         <Button
           type="button"

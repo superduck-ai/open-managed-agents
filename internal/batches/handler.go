@@ -30,11 +30,12 @@ const messageBatchesBeta = "message-batches-2024-09-24"
 var customIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	store  storage.ObjectStore
-	logger *slog.Logger
-	router chi.Router
+	cfg          config.Config
+	db           *db.DB
+	store        storage.ObjectStore
+	logger       *slog.Logger
+	errorAdapter *httpapi.ErrorAdapter
+	router       chi.Router
 }
 
 type batchBetaInfo struct {
@@ -83,15 +84,16 @@ type listResponse struct {
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, store: store, logger: logger}
+	h := &Handler{cfg: cfg, db: database, store: store, logger: logger, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
-	router.Post("/", h.createRoute)
-	router.Get("/", h.list)
-	router.Get("/{message_batch_id}", h.retrieveRoute)
-	router.Delete("/{message_batch_id}", h.deleteRoute)
-	router.Post("/{message_batch_id}/cancel", h.cancelRoute)
+	router.NotFound(wrap(h.notFound))
+	router.MethodNotAllowed(wrap(h.notFound))
+	router.Post("/", wrap(h.createRoute))
+	router.Get("/", wrap(h.list))
+	router.Get("/{message_batch_id}", wrap(h.retrieveRoute))
+	router.Delete("/{message_batch_id}", wrap(h.deleteRoute))
+	router.Post("/{message_batch_id}/cancel", wrap(h.cancelRoute))
 	router.Get("/{message_batch_id}/results", h.resultsRoute)
 	h.router = router
 	return h
@@ -100,7 +102,7 @@ func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, l
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isBeta, betaHeaders, betaErr := parseBatchBeta(r)
 	if betaErr != nil {
-		httpapi.WriteError(w, r, betaErr)
+		h.errorAdapter.Write(w, r, betaErr)
 		return
 	}
 
@@ -108,8 +110,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
+	return batchRouteNotFound()
 }
 
 func withBatchBetaInfo(ctx context.Context, info batchBetaInfo) context.Context {
@@ -121,49 +123,39 @@ func batchBetaInfoFromContext(ctx context.Context) batchBetaInfo {
 	return info
 }
 
-func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) error {
 	info := batchBetaInfoFromContext(r.Context())
-	h.create(w, r, info.IsBeta, info.BetaHeaders)
+	return h.create(w, r, info.IsBeta, info.BetaHeaders)
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, betaHeaders []string) {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, betaHeaders []string) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return batchAuthenticationRequired()
 	}
 	if h.isOfficialSDKFixture(principal) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress"))
-		return
+		return nil
 	}
 	if h.cfg.AnthropicUpstream.APIKey == "" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "anthropic_upstream.api_key is required for Message Batches"))
-		return
+		return batchServiceUnavailable()
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.Batch.MaxBodyBytes)
-	var body createRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&body); err != nil {
-		status := http.StatusBadRequest
-		message := "Invalid JSON body"
+	body, err := httpapi.DecodeObjectBodyAs[createRequest](w, r, h.cfg.Batch.MaxBodyBytes)
+	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			status = http.StatusRequestEntityTooLarge
-			message = "Request body exceeds maximum size"
+			return requestTooLarge(err)
 		}
-		httpapi.WriteError(w, r, httpapi.NewError(status, "invalid_request_error", message))
-		return
+		return invalidRequest(err)
 	}
 	if err := h.validateCreate(body, betaHeaders); err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 
 	externalID, err := ids.New("msgbatch_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate batch ID"))
-		return
+		return internalError("Could not generate batch ID", fmt.Errorf("generate message batch ID: %w", err))
 	}
 	now := time.Now().UTC()
 	apiVariant := "stable"
@@ -189,8 +181,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	for i, item := range body.Requests {
 		reqID, err := ids.New("msgbatchreq_")
 		if err != nil {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate batch request ID"))
-			return
+			return internalError("Could not generate batch request ID", fmt.Errorf("generate message batch request ID at index %d: %w", i, err))
 		}
 		reqs = append(reqs, db.NewBatchRequest{
 			ExternalID:    reqID,
@@ -202,14 +193,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	}
 	created, err := h.db.CreateMessageBatch(r.Context(), record, reqs)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "create message batch", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create message batch"))
-		return
+		return internalError("Could not create message batch", fmt.Errorf("create message batch %q: %w", externalID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromRecord(r, created))
+	return nil
 }
 
-func (h *Handler) validateCreate(body createRequest, betaHeaders []string) error {
+func (h *Handler) validateCreate(body *createRequest, betaHeaders []string) error {
 	if len(body.Requests) == 0 {
 		return errors.New("requests must contain at least one request")
 	}
@@ -276,18 +266,17 @@ func validateParams(raw json.RawMessage) error {
 	return nil
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if h.isOfficialSDKFixture(principal) {
 		batch := h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress")
 		first := batch.ID
 		httpapi.WriteJSON(w, http.StatusOK, listResponse{Data: []messageBatchResponse{batch}, FirstID: &first, LastID: &first})
-		return
+		return nil
 	}
 	limit, err := parseLimit(r)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListMessageBatchesPage(r.Context(), db.ListMessageBatchesPageParams{
 		WorkspaceUUID: principal.WorkspaceUUID,
@@ -296,9 +285,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		Limit:         limit,
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list message batches", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list message batches"))
-		return
+		return internalError("Could not list message batches", fmt.Errorf("list message batches: %w", err))
 	}
 	data := make([]messageBatchResponse, 0, len(records))
 	for _, record := range records {
@@ -310,58 +297,54 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		lastID = &data[len(data)-1].ID
 	}
 	httpapi.WriteJSON(w, http.StatusOK, listResponse{Data: data, HasMore: hasMore, FirstID: firstID, LastID: lastID})
+	return nil
 }
 
-func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
-	h.retrieve(w, r, chi.URLParam(r, "message_batch_id"))
+func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.retrieve(w, r, chi.URLParam(r, "message_batch_id"))
 }
 
-func (h *Handler) cancelRoute(w http.ResponseWriter, r *http.Request) {
-	h.cancel(w, r, chi.URLParam(r, "message_batch_id"))
+func (h *Handler) cancelRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.cancel(w, r, chi.URLParam(r, "message_batch_id"))
 }
 
-func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
-	h.delete(w, r, chi.URLParam(r, "message_batch_id"))
+func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.delete(w, r, chi.URLParam(r, "message_batch_id"))
 }
 
 func (h *Handler) resultsRoute(w http.ResponseWriter, r *http.Request) {
 	h.results(w, r, chi.URLParam(r, "message_batch_id"))
 }
 
-func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, batchID string) {
+func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, batchID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureID(principal, batchID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, batchID, "ended"))
-			return
+			return nil
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
-			return
+			return messageBatchNotFound(batchID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get message batch", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve message batch"))
-		return
+		return internalError("Could not retrieve message batch", fmt.Errorf("retrieve message batch %q: %w", batchID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromRecord(r, record))
+	return nil
 }
 
-func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string) {
+func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if h.isOfficialSDKFixtureID(principal, batchID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, batchID, "canceling"))
-		return
+		return nil
 	}
 	record, err := h.db.CancelMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
-			return
+			return messageBatchNotFound(batchID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "cancel message batch", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not cancel message batch"))
-		return
+		return internalError("Could not cancel message batch", fmt.Errorf("cancel message batch %q: %w", batchID, err))
 	}
 	if record.ProcessingStatus == "canceling" {
 		if err := h.db.EnqueueMessageBatchJob(r.Context(), record.WorkspaceUUID, record.UUID, record.ExternalID); err != nil {
@@ -369,36 +352,30 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string)
 		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromRecord(r, record))
+	return nil
 }
 
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string) {
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if h.isOfficialSDKFixtureID(principal, batchID) {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": batchID, "type": "message_batch_deleted"})
-		return
+		return nil
 	}
 	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
-			return
+			return messageBatchNotFound(batchID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get message batch before delete", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete message batch"))
-		return
+		return internalError("Could not delete message batch", fmt.Errorf("retrieve message batch %q for deletion: %w", batchID, err))
 	}
 	if err := h.db.SoftDeleteMessageBatch(r.Context(), principal.WorkspaceUUID, batchID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "invalid_request_error", "Message batch must be ended before deletion"))
-			return
+			return messageBatchMustBeEnded(err)
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
-			return
+			return messageBatchNotFound(batchID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "soft delete message batch", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete message batch"))
-		return
+		return internalError("Could not delete message batch", fmt.Errorf("soft delete message batch %q: %w", batchID, err))
 	}
 	if record.ResultsS3Key != nil {
 		if err := h.store.Delete(r.Context(), *record.ResultsS3Key, storage.DeleteOptions{}); err != nil {
@@ -409,6 +386,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": batchID, "type": "message_batch_deleted"})
+	return nil
 }
 
 func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string) {
@@ -422,25 +400,23 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
+			h.errorAdapter.Write(w, r, messageBatchNotFound(batchID, err))
 			return
 		}
-		h.logger.ErrorContext(r.Context(), "get message batch before results", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve message batch results"))
+		h.errorAdapter.Write(w, r, internalError("Could not retrieve message batch results", fmt.Errorf("get message batch %q before results: %w", batchID, err)))
 		return
 	}
 	if record.ProcessingStatus != "ended" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Message batch has not ended"))
+		h.errorAdapter.Write(w, r, messageBatchHasNotEnded())
 		return
 	}
 	if resultsExpired(record, h.cfg.Batch.ResultRetentionDays) || record.ResultsS3Key == nil || record.ResultsSizeBytes == nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch results are not available"))
+		h.errorAdapter.Write(w, r, messageBatchResultsUnavailable())
 		return
 	}
 	object, err := h.store.Open(r.Context(), *record.ResultsS3Key, nil)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "get message batch results object", "batch_id", batchID, "key", *record.ResultsS3Key, "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve message batch results"))
+		h.errorAdapter.Write(w, r, internalError("Could not retrieve message batch results", fmt.Errorf("open message batch %q results object %q: %w", batchID, *record.ResultsS3Key, err)))
 		return
 	}
 	defer object.Body.Close()
@@ -458,7 +434,7 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 	}
 }
 
-func parseBatchBeta(r *http.Request) (bool, []string, *httpapi.Error) {
+func parseBatchBeta(r *http.Request) (bool, []string, error) {
 	if r.URL.Query().Get("beta") != "true" {
 		return false, nil, nil
 	}
@@ -481,7 +457,7 @@ func parseBatchBeta(r *http.Request) (bool, []string, *httpapi.Error) {
 		extras = append(extras, value)
 	}
 	if !found {
-		return true, nil, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Message Batches beta requires anthropic-beta: message-batches-2024-09-24")
+		return true, nil, batchBetaRequired()
 	}
 	return true, extras, nil
 }

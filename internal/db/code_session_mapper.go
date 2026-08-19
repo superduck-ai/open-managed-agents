@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -25,7 +26,6 @@ type codeSessionRow struct {
 	Metadata                    []byte     `db:"metadata"`
 	ConnectionStatus            string     `db:"connection_status"`
 	LastInboundSequenceNum      int64      `db:"last_inbound_sequence_num"`
-	LastOutboundSequenceNum     int64      `db:"last_outbound_sequence_num"`
 	LastInternalSequenceNum     int64      `db:"last_internal_sequence_num"`
 	LastWorkerConnectedAt       *time.Time `db:"last_worker_connected_at"`
 	LastWorkerActivityAt        *time.Time `db:"last_worker_activity_at"`
@@ -115,6 +115,10 @@ type codeSessionNetworkPolicyContextRow struct {
 	AgentSnapshot         []byte `db:"agent_snapshot"`
 }
 
+type codeSessionVaultIDsRow struct {
+	VaultIDs []byte `db:"vault_ids"`
+}
+
 type codeSessionWorkerLeaseRow struct {
 	UUID                 string       `db:"uuid"`
 	CurrentWorkerEpoch   int64        `db:"current_worker_epoch"`
@@ -131,7 +135,8 @@ type CodeSessionMapper interface {
 	FindCredentialByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (codeSessionCredentialContextRow, error)
 	FindCredentialForIssue(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionCredentialContextRow, error)
 	FindNetworkPolicyContext(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionNetworkPolicyContextRow, error)
-	FindByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, error)
+	FindVaultIDs(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionVaultIDsRow, bool, error)
+	FindByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
 	FindLatestBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (codeSessionRow, error)
 	LockCodeSessionByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
 	LockInitializingCodeSession(ctx context.Context, workspaceUUID, codeSessionUUID string) (codeSessionRow, bool, error)
@@ -142,7 +147,6 @@ type CodeSessionMapper interface {
 	HeartbeatWorkerByUUID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
 	UpdateWorkerState(ctx context.Context, params updateCodeSessionWorkerStateParams) (codeSessionRow, error)
 	UpdateCodeSessionInboundSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) (int64, error)
-	UpdateCodeSessionOutboundSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) (int64, error)
 	UpdateCodeSessionInternalSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) error
 	ActivateCodeSession(ctx context.Context, codeSessionUUID string, now time.Time) (int64, error)
 	TouchWorkerActivityByUUID(ctx context.Context, codeSessionUUID string, now time.Time) error
@@ -153,7 +157,7 @@ type CodeSessionMapper interface {
 }
 
 func (r codeSessionRow) session() CodeSession {
-	workerExternalMetadata := copyRaw(r.WorkerExternalMetadata)
+	workerExternalMetadata := bytes.Clone(r.WorkerExternalMetadata)
 	if len(workerExternalMetadata) == 0 {
 		workerExternalMetadata = json.RawMessage(`{}`)
 	}
@@ -170,10 +174,9 @@ func (r codeSessionRow) session() CodeSession {
 		PermissionMode:              r.PermissionMode,
 		Model:                       r.Model,
 		Status:                      r.Status,
-		Metadata:                    copyRaw(r.Metadata),
+		Metadata:                    bytes.Clone(r.Metadata),
 		ConnectionStatus:            r.ConnectionStatus,
 		LastInboundSequenceNum:      r.LastInboundSequenceNum,
-		LastOutboundSequenceNum:     r.LastOutboundSequenceNum,
 		LastInternalSequenceNum:     r.LastInternalSequenceNum,
 		LastWorkerConnectedAt:       r.LastWorkerConnectedAt,
 		LastWorkerActivityAt:        r.LastWorkerActivityAt,
@@ -182,10 +185,10 @@ func (r codeSessionRow) session() CodeSession {
 		WorkerRegisteredAt:          r.WorkerRegisteredAt,
 		WorkerLastHeartbeatAt:       r.WorkerLastHeartbeatAt,
 		WorkerTokenSessionID:        r.WorkerTokenSessionID,
-		WorkerBinding:               copyRaw(r.WorkerBinding),
+		WorkerBinding:               bytes.Clone(r.WorkerBinding),
 		WorkerStatus:                r.WorkerStatus,
 		WorkerExternalMetadata:      workerExternalMetadata,
-		WorkerRequiresActionDetails: copyRaw(r.WorkerRequiresActionDetails),
+		WorkerRequiresActionDetails: bytes.Clone(r.WorkerRequiresActionDetails),
 		CreatedAt:                   r.CreatedAt,
 		UpdatedAt:                   r.UpdatedAt,
 		DeletedAt:                   r.DeletedAt,

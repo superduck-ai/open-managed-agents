@@ -15,7 +15,7 @@ func TestConsoleMembersAPI(t *testing.T) {
 
 	var orgUUID string
 	var userUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select o.uuid::text
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid
@@ -25,7 +25,7 @@ func TestConsoleMembersAPI(t *testing.T) {
 	}
 	suffix := uniqueAdminSuffix()
 	email := "console-member-" + suffix + "@example.com"
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		insert into users (external_id, organization_uuid, email, name, role)
 		values ($1, $2, $3, $4, 'admin')
 		returning uuid::text

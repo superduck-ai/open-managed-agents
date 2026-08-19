@@ -4,8 +4,6 @@
 
 本文记录 `/workspaces/{workspace_id}/agent-quickstart` 的对话呈现、问题确认和顶部进度条契约。键盘发送行为仍由 [Managed Agent Quickstart Composer 键盘交互](./managed-agent-quickstart-composer.md) 定义；模型提示词语言由 [Quickstart / Agent Builder 提示词 i18n](./agent/quickstart-prompt-i18n.md) 定义。
 
-本文中的 `Question set`、`Interaction card` 与 `Explicit confirmation` 采用仓库根目录 [领域词汇表](../../../CONTEXT.md) 的定义。
-
 ## 目标
 
 - 把 Quickstart 呈现为连续的对话记录，使用户能够回看每一次说明、工具动作、问题和结果。
@@ -21,6 +19,8 @@ Quickstart 的文本消息、状态、工具调用、问题集和完成结果都
 
 - 用户可以在原始上下文中查看待回答问题，并在完成后继续回看选择结果；
 - transcript 是唯一的对话顺序来源，不再同时维护滚动消息和 pinned interaction 两套呈现位置。
+
+Transcript 由 `MessageScroller` 的 `autoScroll` 跟随底部；单条消息、流式状态和错误状态都不设置 `scrollAnchor`。因此新增内容保持在 composer 上方可见，不通过尾部 spacer 把最新消息固定到滚动区顶部。
 
 连续的同一发言方内容组成一个视觉消息组。消息组的第一项显示头像和发言方名称，后续相邻项复用该视觉上下文；状态行不会改变前后内容的发言方归属。
 
@@ -45,9 +45,11 @@ flowchart TD
 
 `ask_user_questions` 的一次 tool call 构成一个 Question set，可以包含一个或多个问题。
 
+等待确认的 Questionnaire 使用 shadcn 官方 styled component 的扁平组合：表单不再额外包一层卡片边框，选项自身承担交互边界；内容宽度限制为 `max-w-xl`，与 assistant 文本气泡保持接近，并保留官方标题、选项和操作区的默认间距。已提交摘要仍可使用紧凑卡片承载回看入口。
+
 ### 单个问题
 
-- 单选、多选和 Other 输入都只更新本地草稿；选择选项不会自动提交。
+- 单选、多选和 Other 输入都只更新本地草稿；单选题的选项与 Other 互斥，多选题可以同时保留选项和 Other，选择或输入都不会自动提交。
 - 只有草稿包含至少一个选项或非空 Other 内容时，Confirm 才可用。
 - 点击 Confirm 后一次性生成该问题集的 `tool_result`。
 - Skip 保留既有语义：结束整个问题集并把跳过结果返回模型。
@@ -128,7 +130,7 @@ flowchart LR
 - `components.tsx` 保留现有公共导出外观，避免页面入口承担与本次重构无关的导入迁移。
 - `transcriptModel` 是原始聊天状态与可见 transcript 之间的 seam。它通过一个纯 interface 返回可见 entries、`continued` 和最后一个发言方，测试不需要进入 renderer 内部。
 - `QuickstartTurnGroup` 是可见 transcript 与视觉消息 chrome 之间的 seam。transcript 只提供 `continued`，`chatLayout` 在该 interface 后集中处理所有 turn 的头像、名称、间距和缩进。
-- `questions/` 内的状态 hook 保护逐题草稿、导航和一次性提交不变量；编辑态和已提交回看视图不再留在聚合展示文件中。
+- `AskUserQuestionsCard` 配合 shadcn Questionnaire 管理逐题草稿、导航和一次性提交；`SubmittedQuestionSet` 只负责已提交结果的回看。
 - `toolPresentation` 同时提供展示布局与 `occupiesSpeaker`，renderer 和 transcript 分组共用同一份工具元数据。
 
 ## 工具动作呈现
@@ -146,6 +148,7 @@ flowchart LR
 - 待回答与已完成的问题卡都位于 transcript 内，不存在独立 pinned interaction 容器。
 - 连续同一发言方的消息只在组首显示头像和名称。
 - 流式与错误 turn 遵循同一分组规则，不重复显示连续 assistant 组的头像和名称。
+- 新消息、流式状态和问题卡跟随 transcript 底部，消息列表末尾不保留锚定 spacer。
 - `flag_schedule_intent` 以紧凑状态行保留在 transcript 中；未知工具保持既有的人类可读 fallback 和 Terminal 图标。
 - 窄屏模式隐藏可见步骤名称、缩短连接线、无横向溢出，进度条仍居中且完整名称可被辅助技术读取。
 - 缺少 `AuthProvider` 时不静默降级；测试环境显式注入认证上下文。

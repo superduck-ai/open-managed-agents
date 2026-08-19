@@ -54,7 +54,8 @@ Mapper runtime 使用 `pgx/stdlib` 暴露的同一个 `database/sql.DB`，因此
 `yourbatis.Executor` 构造局部 Mapper，确保所有语句绑定到当前 `*yourbatis.Tx`，不会绕过事务。
 
 Mapper 构造器只包装 executor，不创建连接或持有独立生命周期。Yourbatis runtime 也不单独创建
-或关闭连接池；`DB.Close` 统一关闭标准库包装层与底层 `pgxpool`。进程组装层向
+连接池；底层 `pgxpool` 保持为 `DB` 的私有实现细节，`DB.Close` 通过 `mapperDB.Close` 关闭标准库包装层，
+再关闭该连接池。进程组装层向
 `db.Open` 显式传入 `component=database` 的 `slog.Logger`，`mapperDB` 通过
 `yourbatis.SlogLogger` 持有它，事务自动继承相同 logger。成功语句使用 Debug 级别，失败语句
 使用 Error 级别；`YOURBATIS_DEBUG` 仍是独立的本地诊断开关，可额外输出带脱敏参数的 SQL 块。

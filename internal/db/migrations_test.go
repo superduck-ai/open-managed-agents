@@ -37,7 +37,7 @@ func TestSessionResourceMigrationsPreserveMainHistory(t *testing.T) {
 		"00046_name_compatibility_workspace_display_ids.sql",
 		"00047_unify_session_resources_and_files.sql",
 		"00048_snapshot_session_skills.sql",
-		"00049_add_session_resource_file_ownership.sql",
+		"00052_add_session_resource_file_ownership.sql",
 	}
 
 	entries, err := fs.ReadDir(embeddedMigrations, "migrations")

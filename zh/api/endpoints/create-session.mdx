@@ -1,0 +1,54 @@
+---
+title: "创建 Session"
+description: "将 Agent 和 Environment 组合为一次有状态任务。"
+api: "POST /v1/sessions?beta=true"
+---
+
+创建 Session，并为它创建主 Thread 与排队中的 Environment Work。该资源当前要求 `beta=true`。
+
+<ParamField query="beta" type="boolean" required>
+  必须为 `true`。
+</ParamField>
+
+<ParamField body="agent" type="string | object" required>
+  Agent ID，或 `{ "type": "agent", "id": "agent_...", "version": 1 }`。
+</ParamField>
+
+<ParamField body="environment_id" type="string" required>
+  未归档的 Environment ID。
+</ParamField>
+
+<ParamField body="title" type="string | null">
+  Session 标题。
+</ParamField>
+
+<ParamField body="resources" type="array">
+  要挂载的 File、Git repository、Memory Store 或 URL 资源。
+</ParamField>
+
+<ParamField body="vault_ids" type="array">
+  Session 可以使用的 Vault ID。
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  自定义键值 metadata。
+</ParamField>
+
+```json Request
+{
+  "agent": {
+    "type": "agent",
+    "id": "agent_01...",
+    "version": 1
+  },
+  "environment_id": "env_01...",
+  "title": "Update the installation guide",
+  "resources": [],
+  "vault_ids": [],
+  "metadata": {
+    "source": "docs"
+  }
+}
+```
+
+创建成功后，Session 初始状态通常为 `idle`，相关 Environment Work 会进入队列。使用 Session Events 或 Thread Stream 观察后续执行。

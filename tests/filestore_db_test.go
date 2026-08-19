@@ -23,7 +23,7 @@ func TestSessionNamespaceUsesResourcesAndFiles(t *testing.T) {
 	t.Cleanup(app.close)
 
 	var oldTableExists bool
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select to_regclass(current_schema() || '.filestore_entries') is not null
 	`).Scan(&oldTableExists); err != nil {
 		t.Fatalf("query old Filestore table: %v", err)
@@ -33,7 +33,7 @@ func TestSessionNamespaceUsesResourcesAndFiles(t *testing.T) {
 	}
 
 	var resourceColumns, fileColumns, forbiddenColumns int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select
 			count(*) filter (where table_name = 'session_resources'
 				and column_name = any($1::text[])),
@@ -70,7 +70,7 @@ func TestSessionResourceFileOwnershipConstraints(t *testing.T) {
 	}
 
 	t.Run("failure directory cannot carry File ownership", func(t *testing.T) {
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update session_resources
 			set file_ownership = 'owned'
 			where workspace_uuid = $1 and session_uuid = $2 and path = '/outputs'
@@ -90,7 +90,7 @@ func TestSessionResourceFileOwnershipConstraints(t *testing.T) {
 	}
 
 	t.Run("failure namespace File requires ownership", func(t *testing.T) {
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update session_resources set file_ownership = null where uuid = $1
 		`, result.Node.UUID); err == nil {
 			t.Fatal("namespace File accepted NULL ownership")
@@ -98,7 +98,7 @@ func TestSessionResourceFileOwnershipConstraints(t *testing.T) {
 	})
 
 	t.Run("failure ownership value is closed", func(t *testing.T) {
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update session_resources set file_ownership = 'borrowed' where uuid = $1
 		`, result.Node.UUID); err == nil {
 			t.Fatal("namespace File accepted unknown ownership")
@@ -152,12 +152,12 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v, want file resource limit %d", err, db.MaxSessionFileResources)
 	}
 
-	if _, err := app.db.GetSession(
+	if _, found, err := app.db.GetSession(
 		context.Background(),
 		workspaceUUID,
 		input.Session.ExternalID,
-	); !errors.Is(err, db.ErrNotFound) {
-		t.Fatalf("GetSession() after rollback error = %v, want ErrNotFound", err)
+	); err != nil || found {
+		t.Fatalf("GetSession() after rollback = (%t, %v), want false, nil", found, err)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestCreateSessionRollsBackWhenFilesystemScopeIsInvalid(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v, want ErrPreconditionFailed", err)
 	}
 	var sessionCount, threadCount, workCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select
 			(select count(*) from sessions where external_id = $1),
 			(select count(*) from session_threads where external_id = $2),
@@ -214,7 +214,7 @@ func TestCreateSessionRollsBackAfterFilesystemIDCollisions(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v, want ErrDuplicate", err)
 	}
 	var sessionCount, threadCount, filesystemCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select
 			(select count(*) from sessions where uuid = $1),
 			(select count(*) from session_threads where uuid = $2),
@@ -292,7 +292,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	}
 
 	var activeCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*) from filestore_filesystems
 		where workspace_uuid = $1 and session_uuid = $2 and deleted_at is null
 	`, workspaceUUID, created.UUID).Scan(&activeCount); err != nil {
@@ -301,7 +301,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	if activeCount != 1 {
 		t.Fatalf("active session filesystems = %d, want 1", activeCount)
 	}
-	rows, err := app.db.Pool.Query(context.Background(), `
+	rows, err := app.pool.Query(context.Background(), `
 		select path, resource_type, parent_path
 		from session_resources
 		where workspace_uuid = $1
@@ -545,7 +545,7 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 		if !found {
 			t.Fatalf("lease attempt %d returned %+v, want job %s", attempt, leasedJobs, job.UUID)
 		}
-		if _, err := app.db.Pool.Exec(ctx, `
+		if _, err := app.pool.Exec(ctx, `
 			update jobs set locked_until = now() - interval '1 minute' where uuid = $1
 		`, job.UUID); err != nil {
 			t.Fatalf("expire lease attempt %d: %v", attempt, err)
@@ -564,7 +564,7 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 
 	var status, lastError string
 	var hasLeaseAttempts bool
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		select status, coalesce(payload->>'last_error', ''), payload ? 'lease_attempts'
 		from jobs where uuid = $1
 	`, job.UUID).Scan(&status, &lastError, &hasLeaseAttempts); err != nil {
@@ -614,7 +614,7 @@ func TestFilestoreObjectCleanupJobMapperLifecycle(t *testing.T) {
 	}
 	var payloadWorkspaceUUID, payloadFilesystemUUID string
 	var hasWorkspaceID, hasFilesystemID, hasFilesystemExternalID bool
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		select payload->>'workspace_uuid', payload->>'filesystem_uuid',
 			payload ? 'workspace_id', payload ? 'filesystem_id', payload ? 'filesystem_external_id'
 		from jobs where uuid = $1
@@ -725,7 +725,7 @@ func TestConcurrentProvisionCreatesOneSessionFilesystem(t *testing.T) {
 	}
 
 	var activeCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*) from filestore_filesystems
 		where workspace_uuid = $1 and session_uuid = $2 and deleted_at is null
 	`, workspaceUUID, sessionUUID).Scan(&activeCount); err != nil {
@@ -767,7 +767,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("put malformed cleanup candidate: %v", err)
 	}
-	deleteResult, err := app.db.Pool.Exec(context.Background(), `
+	deleteResult, err := app.pool.Exec(context.Background(), `
 		delete from files
 		where uuid = (
 				select file_uuid from session_resources where uuid = $1
@@ -795,7 +795,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 		t.Fatalf("project cleanup skill: %v", err)
 	}
 	var cleanupSkillFileUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select cast(file_uuid as text)
 		from session_resources
 		where workspace_uuid = $1 and session_uuid = $2
@@ -806,7 +806,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	var entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID string
 	var entryAPIKeyUUID, entrySessionUUID string
 	var entryCodeSessionUUID *string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select resource.organization_uuid::text, resource.workspace_uuid::text, filesystem.uuid::text,
 			api_key.uuid::text, resource.session_uuid::text, filesystem.code_session_uuid::text
 		from session_resources resource
@@ -829,7 +829,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 			entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID,
 			entryAPIKeyUUID, entrySessionUUID, entryCodeSessionUUID)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update session_resources
 		set payload = jsonb_build_object('type', 'file', 'visibility_test', true)
 		where workspace_uuid = $1 and session_uuid = $2
@@ -846,7 +846,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 		t.Fatalf("deleted session filesystem lookup error = %v, want ErrNotFound", err)
 	}
 	var ownedAwaitingCleanup bool
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select deleted_at is null
 		from session_resources
 		where workspace_uuid = $1 and session_uuid = $2 and path = '/results/output.txt'
@@ -857,7 +857,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 		t.Fatal("Session delete retired owned Resource before object cleanup")
 	}
 	var parentJobs, objectJobs int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select
 			count(*) filter (where type = 'filestore_filesystem_cleanup'),
 			count(*) filter (where type = 'filestore_object_cleanup')
@@ -871,7 +871,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	if parentJobs != 1 || objectJobs != 0 {
 		t.Fatalf("cleanup jobs after Session delete = parent %d, object %d; want 1, 0", parentJobs, objectJobs)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update jobs
 		set run_after = '1900-01-01T00:00:00Z',
 			created_at = '1900-01-01T00:00:00Z'
@@ -898,7 +898,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 		t.Fatalf("filesystem cleanup anomalies = %+v", anomalies)
 	}
 	var activeEntries, activeSkillArchiveEntries, cleanupObjects int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select
 			(select count(*) from session_resources where session_uuid = $1 and deleted_at is null),
 			(select count(*) from session_resources
@@ -922,7 +922,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 		)
 	}
 	var cleanupSkillFileRetired bool
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select deleted_at is not null from files where uuid = $1
 	`, cleanupSkillFileUUID).Scan(&cleanupSkillFileRetired); err != nil {
 		t.Fatalf("load cleaned-up Skill File snapshot: %v", err)
@@ -968,7 +968,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	}
 
 	var legacyTable *string
-	if err := app.db.Pool.QueryRow(
+	if err := app.pool.QueryRow(
 		context.Background(),
 		`select cast(to_regclass('filestore_skill_archives') as text)`,
 	).Scan(&legacyTable); err != nil {
@@ -981,7 +981,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	versionUUID := uuid.NewString()
 	skillUUID := uuid.NewString()
 	skillExternalID := "skill_" + uuid.NewString()
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		insert into skills (
 			uuid, external_id, workspace_uuid, source, display_title,
 			latest_version, created_by_api_key_uuid
@@ -991,7 +991,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	`, skillUUID, skillExternalID, workspaceUUID, apiKeyUUID).Scan(&skillUUID); err != nil {
 		t.Fatalf("insert archive test skill: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		insert into skill_versions (
 			uuid, external_id, workspace_uuid, skill_uuid, skill_external_id,
 			version, name, directory, s3_bucket, s3_key, size_bytes, sha256,
@@ -1004,8 +1004,8 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		t.Fatalf("insert archive test skill version: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = app.db.Pool.Exec(context.Background(), `delete from skill_versions where skill_uuid = $1`, skillUUID)
-		_, _ = app.db.Pool.Exec(context.Background(), `delete from skills where uuid = $1`, skillUUID)
+		_, _ = app.pool.Exec(context.Background(), `delete from skill_versions where skill_uuid = $1`, skillUUID)
+		_, _ = app.pool.Exec(context.Background(), `delete from skills where uuid = $1`, skillUUID)
 	})
 	err = app.db.ReplaceSessionSkillArchiveResources(
 		context.Background(),
@@ -1039,7 +1039,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	entry := entries[0]
 	replacedEntryUUID := entry.ID
 	var snapshotFileUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select cast(resource.file_uuid as text)
 		from session_resources resource
 		join files file
@@ -1066,7 +1066,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		metadata.SkillSource != "custom" {
 		t.Fatalf("Skill Archive Resource = %#v, metadata = %#v", entry, metadata)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update skill_versions
 		set s3_key = 'catalog/changed.zip', size_bytes = 256,
 			sha256 = $2, deleted_at = now()
@@ -1129,7 +1129,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		t.Fatalf("Skill Archive Resources after clear = %#v", entries)
 	}
 	var retiredAt *time.Time
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select deleted_at
 		from session_resources
 		where id = $1
@@ -1140,7 +1140,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		t.Fatal("retired Skill Archive Resource deleted_at = nil")
 	}
 	var snapshotFileRetiredAt *time.Time
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select deleted_at from files where uuid = $1
 	`, snapshotFileUUID).Scan(&snapshotFileRetiredAt); err != nil {
 		t.Fatalf("load retired Skill Archive File snapshot: %v", err)
@@ -1173,7 +1173,7 @@ func seedFilestoreSkillVersion(
 	t.Helper()
 	skillUUID := uuid.NewString()
 	skillExternalID := "skill_" + uuid.NewString()
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		insert into skills (
 			uuid, external_id, workspace_uuid, source, display_title,
 			latest_version, created_by_api_key_uuid
@@ -1184,7 +1184,7 @@ func seedFilestoreSkillVersion(
 		t.Fatalf("insert Filestore skill: %v", err)
 	}
 	versionUUID := uuid.NewString()
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		insert into skill_versions (
 			uuid, external_id, workspace_uuid, skill_uuid, skill_external_id,
 			version, name, directory, s3_bucket, s3_key, size_bytes, sha256,
@@ -1196,8 +1196,8 @@ func seedFilestoreSkillVersion(
 		t.Fatalf("insert Filestore skill version: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = app.db.Pool.Exec(context.Background(), `delete from skill_versions where skill_uuid = $1`, skillUUID)
-		_, _ = app.db.Pool.Exec(context.Background(), `delete from skills where uuid = $1`, skillUUID)
+		_, _ = app.pool.Exec(context.Background(), `delete from skill_versions where skill_uuid = $1`, skillUUID)
+		_, _ = app.pool.Exec(context.Background(), `delete from skills where uuid = $1`, skillUUID)
 	})
 	return versionUUID
 }
@@ -1215,7 +1215,7 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 	secondSessionUUID := uuid.NewString()
 	secondSessionExternalID := "session_filestore_lookup_second_" + uuid.NewString()
 	now := time.Now().UTC()
-	if _, err := app.db.Pool.Exec(ctx, `
+	if _, err := app.pool.Exec(ctx, `
 		insert into sessions (
 			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
 			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
@@ -1237,7 +1237,7 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 		{filesystemUUID: firstUUID, externalID: firstExternalID, sessionUUID: sessionUUID, codeSessionUUID: stringPointer(codeSessionUUID)},
 		{filesystemUUID: secondUUID, externalID: secondExternalID, sessionUUID: secondSessionUUID},
 	} {
-		if _, err := app.db.Pool.Exec(ctx, `
+		if _, err := app.pool.Exec(ctx, `
 			insert into filestore_filesystems (
 				uuid, external_id, organization_uuid, workspace_uuid,
 				session_uuid, code_session_uuid, created_by_api_key_uuid, created_at, updated_at
@@ -1308,19 +1308,19 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 			{statement: `delete from workspaces where id = $1`, argument: workspaceID},
 			{statement: `delete from organizations where id = $1`, argument: organizationID},
 		} {
-			if _, err := app.db.Pool.Exec(context.Background(), cleanup.statement, cleanup.argument); err != nil {
+			if _, err := app.pool.Exec(context.Background(), cleanup.statement, cleanup.argument); err != nil {
 				t.Errorf("clean up Filestore lookup fixture: %v", err)
 			}
 		}
 	})
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		insert into organizations (name)
 		values ($1)
 		returning id, uuid::text
 	`, "Filestore lookup "+suffix).Scan(&organizationID, &organizationUUID); err != nil {
 		t.Fatalf("insert lookup organization: %v", err)
 	}
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		insert into workspaces (external_id, organization_uuid, name)
 		select $1, uuid, $3
 		from organizations
@@ -1330,7 +1330,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 		t.Fatalf("insert lookup workspace: %v", err)
 	}
 	apiKeyUUID := uuid.NewString()
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		insert into api_keys (uuid, external_id, workspace_uuid, key_hash, status)
 		values ($1, $2, $3, $4, 'active')
 		returning id
@@ -1339,7 +1339,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 	}
 	sessionUUID := uuid.NewString()
 	sessionExternalID := "session_filestore_lookup_" + suffix
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		insert into sessions (
 			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
 			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
@@ -1354,7 +1354,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 	}
 	codeSessionUUID = uuid.NewString()
 	codeSessionExternalID := "codesession_filestore_lookup_" + suffix
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		insert into code_sessions (
 			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
 			session_external_id, environment_uuid, environment_external_id, status
@@ -1379,7 +1379,7 @@ func insertFilestoreCollisionOwner(
 	t.Helper()
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	sessionUUID := uuid.NewString()
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		insert into sessions (
 			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
 			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
@@ -1391,7 +1391,7 @@ func insertFilestoreCollisionOwner(
 		uuid.NewString(), "agent_filestore_collision_"+suffix); err != nil {
 		t.Fatalf("insert collision owner Session: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		insert into filestore_filesystems (
 			external_id, organization_uuid, workspace_uuid, session_uuid, created_by_api_key_uuid
 		)

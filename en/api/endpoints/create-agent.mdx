@@ -1,0 +1,63 @@
+---
+title: "Create an agent"
+description: "Create a versioned managed agent definition."
+api: "POST /v1/agents?beta=true"
+---
+
+Creates an agent definition. This resource currently requires `beta=true`.
+
+<ParamField query="beta" type="boolean" required>
+  Must be `true`.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Agent name.
+</ParamField>
+
+<ParamField body="model" type="string | object" required>
+  A model ID, or `{ "id": "...", "speed": "standard | fast" }`.
+</ParamField>
+
+<ParamField body="description" type="string | null">
+  A user-facing description.
+</ParamField>
+
+<ParamField body="system" type="string | null">
+  The system prompt for the agent.
+</ParamField>
+
+<ParamField body="mcp_servers" type="array">
+  MCP servers. The current format accepts `{name, type: "url", url}`.
+</ParamField>
+
+<ParamField body="skills" type="array">
+  Skills available to the agent.
+</ParamField>
+
+<ParamField body="tools" type="array">
+  Tools available to the agent.
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Custom key-value metadata.
+</ParamField>
+
+```json Request
+{
+  "name": "repository-maintainer",
+  "description": "Maintains a repository and reports verified changes.",
+  "model": {
+    "id": "claude-sonnet-4-6",
+    "speed": "standard"
+  },
+  "system": "Inspect the repository, make focused changes, and verify them.",
+  "mcp_servers": [],
+  "skills": [],
+  "tools": [],
+  "metadata": {
+    "team": "platform"
+  }
+}
+```
+
+The response contains the generated `agent_...` ID, version, normalized configuration, and timestamps. Agent updates must include the current `version` to detect concurrent changes.

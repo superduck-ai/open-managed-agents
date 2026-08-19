@@ -2,11 +2,21 @@ package codesessions
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
+
+func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testing.T) {
+	_, _, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+		EventType: "result",
+	}, json.RawMessage(`{"type":"result","uuid":"result-uuid","duration_ms":"invalid"}`))
+	if !errors.Is(err, ErrProtocol) {
+		t.Fatalf("publicPayloadsFromWorkerEvent() error = %v, want ErrProtocol", err)
+	}
+}
 
 func TestPublicPayloadFromWorkerEventPassesThroughCanonicalOutputs(t *testing.T) {
 	outputs := []string{
@@ -47,11 +57,11 @@ func TestPublicPayloadFromWorkerEventPassesThroughCanonicalOutputs(t *testing.T)
 				EventType:      eventType,
 				IdempotencyKey: "idem_" + eventType,
 				CreatedAt:      createdAt,
-			}, map[string]any{
+			}, mustRawJSON(t, map[string]any{
 				"type":       eventType,
 				"uuid":       "uuid_" + eventType,
 				"created_at": "2026-06-16T01:10:00Z",
-			})
+			}))
 			if err != nil {
 				t.Fatalf("publicPayloadFromWorkerEvent returned error: %v", err)
 			}
@@ -88,7 +98,7 @@ func TestPublicPayloadFromWorkerEventRejectsClientOnlyAndHiddenEvents(t *testing
 				EventType:      eventType,
 				IdempotencyKey: "idem_" + eventType,
 				CreatedAt:      time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC),
-			}, map[string]any{"type": eventType, "uuid": "uuid_" + eventType})
+			}, mustRawJSON(t, map[string]any{"type": eventType, "uuid": "uuid_" + eventType}))
 			if err != nil {
 				t.Fatalf("publicPayloadFromWorkerEvent returned error: %v", err)
 			}
@@ -107,7 +117,7 @@ func TestPublicPayloadFromWorkerEventPassesThroughStreamPreview(t *testing.T) {
 				EventType:      eventType,
 				IdempotencyKey: "idem_" + eventType,
 				CreatedAt:      time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC),
-			}, map[string]any{"type": eventType, "uuid": "uuid_" + eventType, "delta": map[string]any{"text": "preview"}})
+			}, mustRawJSON(t, map[string]any{"type": eventType, "uuid": "uuid_" + eventType, "delta": map[string]any{"text": "preview"}}))
 			if err != nil {
 				t.Fatalf("publicPayloadFromWorkerEvent returned error: %v", err)
 			}
@@ -131,7 +141,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 		EventType:      "assistant",
 		IdempotencyKey: "assistant_blocks",
 		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC),
-	}, map[string]any{
+	}, mustRawJSON(t, map[string]any{
 		"type": "assistant",
 		"uuid": "assistant-blocks",
 		"message": map[string]any{
@@ -147,7 +157,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("publicPayloadsFromWorkerEvent returned error: %v", err)
 	}
@@ -220,11 +230,11 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 		EventType:      "user",
 		IdempotencyKey: "user_echo",
 		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC),
-	}, map[string]any{
+	}, mustRawJSON(t, map[string]any{
 		"type":    "user",
 		"uuid":    "user-echo",
 		"message": map[string]any{"role": "user", "content": "duplicate user prompt"},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("plain user mapping returned error: %v", err)
 	}
@@ -237,7 +247,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 		EventType:      "user",
 		IdempotencyKey: "user_tool_result",
 		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 5, 0, time.UTC),
-	}, map[string]any{
+	}, mustRawJSON(t, map[string]any{
 		"type": "user",
 		"uuid": "user-tool-result",
 		"message": map[string]any{
@@ -253,7 +263,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("tool_result user mapping returned error: %v", err)
 	}
@@ -282,7 +292,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 		EventType:      "user",
 		IdempotencyKey: "user_plain_tool_result",
 		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 6, 0, time.UTC),
-	}, map[string]any{
+	}, mustRawJSON(t, map[string]any{
 		"type": "user",
 		"uuid": "user-plain-tool-result",
 		"message": map[string]any{
@@ -298,7 +308,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 				},
 			},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("plain tool_result user mapping returned error: %v", err)
 	}
@@ -324,7 +334,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *tes
 		EventType:      "result",
 		IdempotencyKey: "result_event",
 		CreatedAt:      createdAt,
-	}, map[string]any{
+	}, mustRawJSON(t, map[string]any{
 		"type":            "result",
 		"uuid":            "result-uuid",
 		"created_at":      "2026-06-16T01:11:00Z",
@@ -342,7 +352,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *tes
 				"outputTokens": float64(866),
 			},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("result mapping returned error: %v", err)
 	}
@@ -450,7 +460,7 @@ func TestPublicPayloadFromWorkerEventNormalizesIdleStopReasonVariants(t *testing
 				EventType:      tc.eventType,
 				IdempotencyKey: tc.name,
 				CreatedAt:      time.Date(2026, 6, 16, 1, 11, 0, 0, time.UTC),
-			}, object)
+			}, mustRawJSON(t, object))
 			if err != nil {
 				t.Fatalf("publicPayloadFromWorkerEvent returned error: %v", err)
 			}
@@ -487,7 +497,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		EventType:      "system",
 		IdempotencyKey: "task_started",
 		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC),
-	}, map[string]any{
+	}, mustRawJSON(t, map[string]any{
 		"type":        "system",
 		"uuid":        "system-task-started",
 		"subtype":     "task_started",
@@ -495,7 +505,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		"tool_use_id": "tool_translate",
 		"description": "Translate to Japanese",
 		"prompt":      "Translate hello, world to Japanese.",
-	})
+	}))
 	if err != nil {
 		t.Fatalf("task_started mapping returned error: %v", err)
 	}
@@ -525,7 +535,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		EventType:      "system",
 		IdempotencyKey: "task_done",
 		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 5, 0, time.UTC),
-	}, map[string]any{
+	}, mustRawJSON(t, map[string]any{
 		"type":        "system",
 		"uuid":        "system-task-done",
 		"subtype":     "task_notification",
@@ -534,7 +544,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		"status":      "completed",
 		"summary":     "Translate to Japanese",
 		"usage":       map[string]any{"duration_ms": float64(5000)},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("task_notification mapping returned error: %v", err)
 	}

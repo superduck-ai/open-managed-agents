@@ -51,14 +51,6 @@ func patchSessionAgent(current json.RawMessage, raw json.RawMessage) (json.RawMe
 	return httpapi.MarshalRaw(snapshot)
 }
 
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
-		return "", fmt.Errorf("%s is required", name)
-	}
-	return parseRequiredRawString(raw, name)
-}
-
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return "", fmt.Errorf("%s is required", name)
@@ -73,9 +65,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	return value, nil
 }
 
-func parseNullableStringField(fields map[string]json.RawMessage, name string) (*string, error) {
-	raw, ok := fields[name]
-	if !ok {
+func nullableStringOrMissing(raw json.RawMessage, name string) (*string, error) {
+	if len(raw) == 0 {
 		return nil, nil
 	}
 	return nullableStringFromRaw(raw, name)
@@ -103,9 +94,8 @@ func optionalStringWithDefault(raw json.RawMessage, fallback, name string) (stri
 	return value, nil
 }
 
-func copyOptionalPayloadString(payload map[string]any, fields map[string]json.RawMessage, name string) {
-	raw, ok := fields[name]
-	if !ok || httpapi.IsJSONNull(raw) {
+func copyOptionalPayloadString(payload map[string]any, raw json.RawMessage, name string) {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return
 	}
 	var value string
@@ -118,8 +108,8 @@ func validateMetadataEntries(metadata map[string]string) error {
 	return httpapi.ValidateMetadataEntryLimit(metadata, 16, "metadata may contain at most 16 entries")
 }
 
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
+func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 {
 		return raw
 	}
 	return json.RawMessage(fallback)
@@ -392,93 +382,4 @@ func decodeCursor(raw string) (*time.Time, string, error) {
 	}
 	createdAt = createdAt.UTC()
 	return &createdAt, payload.UUID, nil
-}
-
-func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-}
-
-func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
-	if writeFileResourcePersistenceError(w, r, err) {
-		return
-	}
-	var refErr resourceReferenceError
-	if errors.As(err, &refErr) {
-		if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Memory store not found: "+refErr.ResourceID))
-			return
-		}
-		if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrInvalidState) {
-			writeBadRequest(w, r, errors.New("memory store must not be archived"))
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "session resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not validate session resource"))
-		return
-	}
-	writeBadRequest(w, r, err)
-}
-
-func (h *Handler) writeSessionLoadError(w http.ResponseWriter, r *http.Request, err error, sessionID string) {
-	if writeFileResourcePersistenceError(w, r, err) {
-		return
-	}
-	if errors.Is(err, db.ErrNotFound) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Session not found: "+sessionID))
-		return
-	}
-	if errors.Is(err, db.ErrInvalidState) {
-		writeBadRequest(w, r, errors.New("session state does not allow this operation"))
-		return
-	}
-	h.logger.ErrorContext(r.Context(), "session operation", "error", err)
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Session operation failed"))
-}
-
-func writeFileResourcePersistenceError(w http.ResponseWriter, r *http.Request, err error) bool {
-	var limitErr *db.SessionFileResourceLimitError
-	if errors.As(err, &limitErr) {
-		writeBadRequest(w, r, limitErr)
-		return true
-	}
-	var mountConflictErr *db.SessionFileMountConflictError
-	if errors.As(err, &mountConflictErr) {
-		writeBadRequest(w, r, errors.New("file resource mount_path conflicts with another Session file resource"))
-		return true
-	}
-	if errors.Is(err, db.ErrFileReferenceNotFound) {
-		httpapi.WriteError(w, r, httpapi.NewError(
-			http.StatusNotFound,
-			"not_found_error",
-			"File referenced by the session resource was not found",
-		))
-		return true
-	}
-	if errors.Is(err, db.ErrFilestorePathExists) {
-		httpapi.WriteError(w, r, httpapi.NewError(
-			http.StatusConflict,
-			"conflict_error",
-			"File resource mount_path conflicts with the session filesystem",
-		))
-		return true
-	}
-	return false
-}
-
-func (h *Handler) writeThreadLoadError(w http.ResponseWriter, r *http.Request, err error, threadID string) {
-	if errors.Is(err, db.ErrNotFound) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Thread not found: "+threadID))
-		return
-	}
-	h.logger.ErrorContext(r.Context(), "thread operation", "error", err)
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Thread operation failed"))
-}
-
-func (h *Handler) writeResourceLoadError(w http.ResponseWriter, r *http.Request, err error, resourceID string) {
-	if errors.Is(err, db.ErrNotFound) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Resource not found: "+resourceID))
-		return
-	}
-	h.logger.ErrorContext(r.Context(), "resource operation", "error", err)
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Resource operation failed"))
 }

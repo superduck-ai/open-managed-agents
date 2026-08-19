@@ -45,6 +45,13 @@
 - Anthropic/API、数据库和第三方 payload 的字段名属于外部合同，可在边界 DTO、对象属性和解构中保留 `snake_case`；进入内部变量或业务模型后应映射为上述语言惯例，不要把例外扩散到业务标识符。
 - Go 命名由 `.golangci.yml` 中 `revive/var-naming` 强制；前端命名由 `bun run lint:naming` 强制，并在 pre-commit 与 `.github/workflows/web-naming.yml` 中执行。
 
+## TrimSpace 使用规范
+
+- `strings.TrimSpace` 和 `bytes.TrimSpace` 只允许用在确实可能携带首尾空白的外部输入边界，例如用户提交的请求字段、CLI 参数、环境变量、配置文件值和第三方 payload；这类值应在进入内部模型前修剪一次。
+- 不要对内部生成或已校验的值做防御性修剪：常量、代码拼接的标识符、UUID、enum、数据库行扫描结果，以及上游已经修剪过的值都不需要再 TrimSpace。
+- 同一条数据流上不得层层重复 TrimSpace；修剪责任属于最早接触不可信输入的 HTTP/resource/service 边界，下游代码应假设值已清洁。
+- 不要用 TrimSpace 掩盖 bug：如果内部 ID、路径或协议字段出现意外空白，应在产生它的位置修复，而不是在每个消费点静默吞掉。
+
 ## JSON 与 schema 边界
 
 - `json.RawMessage` 只用于数据库 JSON/JSONB、HTTP/第三方 payload、延迟解析和未知字段透传等序列化边界。业务逻辑一旦需要读取其中字段，应在边界附近解析为命名 schema/DTO，再映射为内部领域类型。
@@ -103,7 +110,8 @@
 - `internal/db` 是持久化边界。它不能导入 `internal/api`、`internal/httpapi` 或任何 handler/resource 包；不能构造 HTTP 状态码、HTTP 响应、Anthropic error JSON。
 - API 层可以依赖 DB 层；DB 层不能反向依赖 API 层。共享基础包也不能依赖具体功能 handler 或资源包。
 - API request/response DTO 不要直接变成数据库 schema 的影子。数据库行结构、API 响应结构和内部业务结构可以相互映射，但不要因为方便而把 HTTP 字段泄漏进 DB 层。
-- 业务错误应在 handler/resource 层映射为 `internal/httpapi.WriteError`；DB 层返回普通 Go error、not found/conflict 这类可识别错误或结果状态。
+- 业务错误应在 handler/resource 层翻译为应用错误，再由 `internal/httpapi` 的最终 HTTP 边界写入响应；DB 层返回普通 Go error、not found/conflict 这类可识别错误或结果状态。
+- 每个资源包的稳定错误合同必须集中定义在该包根目录的 `errors.go`，包括 sentinel、公开错误文案、`apperr.New` 构造和下层错误映射。handler、service 等其他文件不得直接构造应用错误，只能调用 `errors.go` 中命名清楚的构造或映射函数；仅用于补充私有 cause 上下文的 `fmt.Errorf` 可以保留在调用点。
 - 多租户边界必须显式：所有 workspace/org 级资源查询和写入都要带 `organization_id`、`workspace_id` 或对应 external scope，避免只按 external_id 全局查询导致越权。
 - 鉴权和权限判断属于 API/resource/service 层；DB 层可以做 key lookup/hash 等数据访问，但不要承载“这个用户能否执行某动作”的业务授权决策。
 - 多表写入、状态机推进、幂等写入和 outbox/event 写入应保持事务一致性；不要把半个事务散落在多个 handler 分支里。

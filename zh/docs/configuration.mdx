@@ -1,0 +1,83 @@
+---
+title: "配置"
+description: "配置 OMA Server、存储、上游模型、Sandbox 和安全密钥。"
+icon: "sliders"
+---
+
+OMA 使用严格校验的 YAML 配置。服务会从当前目录向上查找 `config/config.yaml`，直到遇到 `go.mod`；也可以使用 `CONFIG_FILE` 指定文件。
+
+## 加载规则
+
+```text
+代码默认值 < YAML 配置
+```
+
+业务环境变量不会覆盖 YAML。`CONFIG_FILE` 只负责选择配置文件。写错字段名、使用未知字段或提供无效枚举时，服务会拒绝启动。
+
+## 最小开发配置
+
+```yaml
+env: dev
+
+server:
+  addr: 127.0.0.1:38080
+
+database:
+  url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
+
+redis:
+  url: redis://localhost:6379
+
+storage:
+  type: s3
+  s3:
+    endpoint: http://localhost:9000
+    bucket: claude-files
+    region: us-east-1
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    force_path_style: true
+
+anthropic_upstream:
+  base_url: https://api.anthropic.com
+  api_key: ""
+```
+
+## 主要配置分组
+
+<AccordionGroup>
+  <Accordion title="server、database 和 redis">
+    配置监听地址、PostgreSQL 连接和平台 Session 存储。生产环境默认不自动迁移数据库。
+  </Accordion>
+  <Accordion title="storage">
+    配置 S3 兼容对象存储、bucket、容量限制和 path-style 访问。文件、Skills 与批处理结果依赖该存储。
+  </Accordion>
+  <Accordion title="anthropic_upstream">
+    配置上游模型服务的 base URL、API key 和可选模型映射。模型调用会通过 OMA 转发到该上游。
+  </Accordion>
+  <Accordion title="e2b 和 environment_runner">
+    配置 Sandbox API、模板、超时、并发和 Agent Runtime 路径。
+  </Accordion>
+  <Accordion title="code_session">
+    配置 Sandbox 回调 URL、OTLP 文件日志、JWT 签名私钥和可选的上游代理 CA。
+  </Accordion>
+  <Accordion title="vault 和 webhook">
+    配置 Vault 主 KEK，以及 Webhook 端点、签名密钥、重试和 worker 行为。
+  </Accordion>
+</AccordionGroup>
+
+## 密钥文件
+
+生产环境优先通过只读 Secret 文件挂载稳定私钥，不要把密钥写入镜像或仓库。
+
+```bash
+just generate-code-session-jwt-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
+just generate-vault-kek \
+  config/secrets/vault-kek
+```
+
+<Note>
+  仓库中的 `docs/configuration-reference.yaml` 记录全部已接受字段和安全示例值；`config/config.example.yaml` 是日常开发使用的最小示例。
+</Note>

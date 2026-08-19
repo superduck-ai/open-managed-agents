@@ -10,7 +10,10 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
 // Handler 是 code-session 的 HTTP transport 边界。
@@ -20,6 +23,7 @@ type Handler struct {
 	db                     *db.DB
 	service                *Service
 	logger                 *slog.Logger
+	errorAdapter           *httpapi.ErrorAdapter
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
@@ -48,6 +52,7 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		db:                     service.db,
 		service:                service,
 		logger:                 logger,
+		errorAdapter:           httpapi.NewErrorAdapter(logger),
 		sandboxTimeoutExtender: sandboxTimeoutExtender,
 		upstreamProxy:          newUpstreamProxyRuntime(),
 		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),
@@ -63,4 +68,23 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		}
 	}
 	return handler
+}
+
+// WithVaultSecrets wires vault static_bearer injection into the MCP HTTP proxy.
+func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service) *Handler {
+	if h == nil || h.db == nil || secretSvc == nil {
+		return h
+	}
+	injector := vaults.NewInjector(h.db, secretSvc)
+	h.injectMCPProxyHeaders = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, headers http.Header) error {
+		return injector.RewriteAuthorization(
+			ctx,
+			claims.SessionID,
+			claims.OrganizationUUID,
+			claims.WorkspaceUUID,
+			target,
+			headers,
+		)
+	}
+	return h
 }

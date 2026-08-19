@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
-func TestWriteFileResourcePersistenceErrorMapsTypedConflicts(t *testing.T) {
+func TestMapFileResourcePersistenceErrorMapsTypedConflicts(t *testing.T) {
 	tests := []struct {
 		name       string
 		err        error
@@ -45,9 +46,11 @@ func TestWriteFileResourcePersistenceErrorMapsTypedConflicts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, "/v1/sessions/session_test/resources", nil)
-			if !writeFileResourcePersistenceError(recorder, request, test.err) {
-				t.Fatal("writeFileResourcePersistenceError() did not handle error")
+			mapped, ok := mapFileResourcePersistenceError(test.err)
+			if !ok {
+				t.Fatal("mapFileResourcePersistenceError() did not handle error")
 			}
+			httpapi.NewErrorAdapter(nil).Write(recorder, request, mapped)
 			if recorder.Code != test.wantStatus {
 				t.Fatalf("status = %d, want %d", recorder.Code, test.wantStatus)
 			}

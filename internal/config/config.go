@@ -77,7 +77,73 @@ func validate(cfg Config) error {
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
 	}
+	if err := validateVaultMasterKey(cfg.Vault); err != nil {
+		return err
+	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
+}
+
+func (m MasterKeyConfig) inlineKEKSet() bool {
+	return strings.TrimSpace(m.Kek) != ""
+}
+
+func (m MasterKeyConfig) fileKEKSet() bool {
+	return strings.TrimSpace(m.KekFile) != ""
+}
+
+// KEKConfigured reports whether either inline kek or kek_file is set.
+func (m MasterKeyConfig) KEKConfigured() bool {
+	return m.inlineKEKSet() || m.fileKEKSet()
+}
+
+// EffectiveVersion returns the current wrap key version. Unset/0 defaults to 1
+// so single-key deployments need not declare version explicitly.
+func (m MasterKeyConfig) EffectiveVersion() int64 {
+	if m.Version == 0 {
+		return 1
+	}
+	return m.Version
+}
+
+// validateVaultMasterKey enforces the vault KEK input contract: exactly one of
+// kek / kek_file on the current key (required in every env, same as S3 keys),
+// at most one source on each decrypt_only entry, and unique positive versions
+// that do not collide with the current wrap version.
+func validateVaultMasterKey(cfg VaultConfig) error {
+	mk := cfg.MasterKey
+	switch {
+	case mk.inlineKEKSet() && mk.fileKEKSet():
+		return errors.New("configure at most one of vault.master_key.kek or kek_file")
+	case !mk.KEKConfigured():
+		return errors.New("vault.master_key.kek or kek_file is required")
+	}
+	if mk.Version < 0 {
+		return errors.New("vault.master_key.version must be >= 0")
+	}
+	currentVersion := mk.EffectiveVersion()
+	seen := map[int64]struct{}{currentVersion: {}}
+	for i, entry := range mk.DecryptOnly {
+		prefix := fmt.Sprintf("vault.master_key.decrypt_only[%d]", i)
+		if entry.Version <= 0 {
+			return fmt.Errorf("%s.version must be a positive integer", prefix)
+		}
+		if _, ok := seen[entry.Version]; ok {
+			if entry.Version == currentVersion {
+				return fmt.Errorf("%s.version %d collides with vault.master_key.version", prefix, entry.Version)
+			}
+			return fmt.Errorf("%s.version %d is duplicated", prefix, entry.Version)
+		}
+		seen[entry.Version] = struct{}{}
+		inline := strings.TrimSpace(entry.Kek) != ""
+		file := strings.TrimSpace(entry.KekFile) != ""
+		switch {
+		case inline && file:
+			return fmt.Errorf("%s: configure at most one of kek or kek_file", prefix)
+		case !inline && !file:
+			return fmt.Errorf("%s: kek or kek_file is required", prefix)
+		}
+	}
+	return nil
 }
 
 func validatePositiveValues(cfg Config) error {

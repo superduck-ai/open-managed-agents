@@ -1,7 +1,7 @@
 -- +goose Up
 
 alter table session_resources
-	add column file_ownership text;
+	add column if not exists file_ownership text;
 
 -- 在仍可使用 PR #190 既有 payload 判别时完成一次性 preflight。
 -- 任一行无法同时满足 namespace、租户、Files 身份与生命周期不变量时，
@@ -119,13 +119,16 @@ where resource_type = 'file'
 	and path is not null;
 
 alter table session_resources
-	drop constraint session_resources_namespace_shape_check;
+	drop constraint if exists session_resources_namespace_shape_check;
 
-drop index session_resources_owned_file_uuid_v1_idx;
+drop index if exists session_resources_owned_file_uuid_v1_idx;
 
-create unique index session_resources_owned_file_uuid_v2_key
+create unique index if not exists session_resources_owned_file_uuid_v2_key
 	on session_resources (workspace_uuid, file_uuid)
 	where resource_type = 'file' and file_ownership = 'owned';
+
+alter table session_resources
+	drop constraint if exists session_resources_file_ownership_check;
 
 alter table session_resources
 	add constraint session_resources_file_ownership_check check (
@@ -176,6 +179,6 @@ alter table session_resources
 -- +goose StatementBegin
 do $$
 begin
-	raise exception 'migration 00049 cannot be reversed safely because file ownership is no longer encoded by payload';
+	raise exception 'migration 00052 cannot be reversed safely because file ownership is no longer encoded by payload';
 end $$;
 -- +goose StatementEnd

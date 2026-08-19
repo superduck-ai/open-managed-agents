@@ -474,9 +474,12 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if !ok || !cloudEnvironment(env) {
 		return nil, nil
 	}
-	session, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
+	session, found, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("load managed agent Session: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("load managed agent Session: %w", db.ErrNotFound)
 	}
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
@@ -719,9 +722,12 @@ func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.
 		if !ok {
 			return fmt.Errorf("limited managed-agent MCP policy requires session work identity")
 		}
-		session, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
+		session, found, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
 		if err != nil {
 			return err
+		}
+		if !found {
+			return db.ErrNotFound
 		}
 		hosts, err = networkpolicy.MCPAllowedHosts(session.AgentSnapshot)
 		if err != nil {

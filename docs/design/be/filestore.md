@@ -136,6 +136,8 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 
 五个挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token 并设置 `readonly=true`；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
 
+OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/user-data/outputs/<relative-path>`。提示词为用户提到的文件名或相对路径规定固定查找顺序：先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，只有 uploads 未命中后才搜索工作目录；两处都检查前不得报告文件不存在。Claude 只能使用实际命中的上传路径，不截断、改名或从 `file_id` 推断文件名；写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
+
 Runner 不执行独立的 mount preparation；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
@@ -212,7 +214,7 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 
 迁移 `00047_unify_session_resources_and_files.sql` 完成 namespace 的原子切换，迁移
 `00048_snapshot_session_skills.sql` 将 Skill Archive 从 catalog version 投影转换为 Session File 快照，迁移
-`00049_add_session_resource_file_ownership.sql` 为普通 namespace File 增加显式所有权：
+`00052_add_session_resource_file_ownership.sql` 为普通 namespace File 增加显式所有权：
 
 `00036` 至 `00046` 保持与已发布 main 完全一致；Session Resource/File 迁移只追加到其后，不能通过重编号把新 SQL 塞入已经记录在 `goose_db_version` 的版本。这样从 main `00046` 原地升级与空库顺序执行得到相同 schema，也不会因 force-push 后复用版本号而静默跳过 namespace 切换。
 

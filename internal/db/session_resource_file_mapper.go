@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -97,8 +98,8 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		SizeBytes:             row.SizeBytes,
 		MediaType:             row.MediaType,
 		DetectedMimeType:      row.DetectedMimeType,
-		Metadata:              copyRaw(row.Metadata),
-		AuthorizationMetadata: copyRaw(row.AuthorizationMetadata),
+		Metadata:              bytes.Clone(row.Metadata),
+		AuthorizationMetadata: bytes.Clone(row.AuthorizationMetadata),
 		Tags:                  tags,
 		Downloadable:          row.Downloadable,
 		MD5:                   row.MD5,

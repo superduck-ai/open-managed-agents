@@ -13,6 +13,7 @@ import { errorMessage } from '../../utils';
 import { loadAgentMcpToolCatalogs, loadMcpDirectoryServers, refreshAgentMcpToolCatalogs } from './api';
 import {
   buildAgentToolDisplayCards,
+  builtInAgentToolDescription,
   type AgentToolDisplayCard,
   type McpToolCatalog,
   type ToolPermissionState,
@@ -266,38 +267,44 @@ export function AgentToolCard({
                   : 'divide-y divide-border'
               }
             >
-              {card.tools.map((tool, index) => (
-                <div
-                  key={`${tool.name}-${index}`}
-                  className={`grid min-w-0 items-center gap-x-4 gap-y-1 px-4 py-2.5 text-sm sm:pl-12 ${
-                    tool.permission
-                      ? 'grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[10rem_minmax(0,1fr)_auto]'
-                      : 'grid-cols-1 sm:grid-cols-[10rem_minmax(0,1fr)]'
-                  }`}
-                >
-                  <code className="min-w-0 truncate font-mono text-xs text-foreground" title={tool.name}>
-                    {tool.name}
-                  </code>
-                  {tool.description ? (
-                    <span
-                      className={`min-w-0 truncate text-muted-foreground ${
-                        tool.permission ? 'col-span-2 row-start-2 sm:col-span-1 sm:col-start-2 sm:row-start-1' : ''
-                      }`}
-                      title={tool.description}
-                    >
-                      {tool.description}
-                    </span>
-                  ) : (
-                    <span className="hidden min-w-0 sm:block" />
-                  )}
-                  {tool.permission ? (
-                    <PermissionBadge
-                      permission={tool.permission}
-                      className="col-start-2 row-start-1 justify-self-end sm:col-start-3"
-                    />
-                  ) : null}
-                </div>
-              ))}
+              {card.tools.map((tool, index) => {
+                const description =
+                  card.kind === 'built-in' && tool.description
+                    ? builtInAgentToolDescription({ name: tool.name, description: tool.description }, msg)
+                    : tool.description;
+                return (
+                  <div
+                    key={`${tool.name}-${index}`}
+                    className={`grid min-w-0 items-center gap-x-4 gap-y-1 px-4 py-2.5 text-sm sm:pl-12 ${
+                      tool.permission
+                        ? 'grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[10rem_minmax(0,1fr)_auto]'
+                        : 'grid-cols-1 sm:grid-cols-[10rem_minmax(0,1fr)]'
+                    }`}
+                  >
+                    <code className="min-w-0 truncate font-mono text-xs text-foreground" title={tool.name}>
+                      {tool.name}
+                    </code>
+                    {description ? (
+                      <span
+                        className={`min-w-0 truncate text-muted-foreground ${
+                          tool.permission ? 'col-span-2 row-start-2 sm:col-span-1 sm:col-start-2 sm:row-start-1' : ''
+                        }`}
+                        title={description}
+                      >
+                        {description}
+                      </span>
+                    ) : (
+                      <span className="hidden min-w-0 sm:block" />
+                    )}
+                    {tool.permission ? (
+                      <PermissionBadge
+                        permission={tool.permission}
+                        className="col-start-2 row-start-1 justify-self-end sm:col-start-3"
+                      />
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="px-4 py-3 pl-12 text-sm text-muted-foreground">

@@ -249,7 +249,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("create Filestore file: %v", err)
 		}
-		if _, err := fixture.app.db.Pool.Exec(context.Background(), `
+		if _, err := fixture.app.pool.Exec(context.Background(), `
 			update workspace_storage_usage
 			set files_bytes = 1, filestore_bytes = 1
 			where workspace_uuid = $1

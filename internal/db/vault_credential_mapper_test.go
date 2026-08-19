@@ -10,6 +10,9 @@ import (
 func TestVaultCredentialMapperBuilders(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 5, 10, 0, 0, 0, time.UTC)
 	creatorUUID := "33333333-3333-4333-8333-333333333333"
+	formatVersion := int32(1)
+	keyProvider := "local"
+	keyVersion := int64(1)
 	params := insertVaultCredentialParams{
 		UUID:                "credential-uuid",
 		ExternalID:          "vaultcred_test",
@@ -23,21 +26,30 @@ func TestVaultCredentialMapperBuilders(t *testing.T) {
 		AuthType:            "bearer",
 		CredentialKey:       "token",
 		Auth:                []byte(`{"type":"bearer"}`),
-		SecretPayload:       []byte(`{"token":"encrypted"}`),
+		Ciphertext:          []byte("cipher"),
+		Nonce:               []byte("nonce"),
+		WrappedDEK:          []byte("wrapped"),
+		FormatVersion:       &formatVersion,
+		KeyProvider:         &keyProvider,
+		KeyVersion:          &keyVersion,
+		Version:             0,
 		CreatedAt:           createdAt,
 	}
+	bound := buildVaultCredentialMapperInsert(yourbatis.DialectPostgres, params)
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: vaultCredentialMapperInsertStatement,
-		bound:     buildVaultCredentialMapperInsert(yourbatis.DialectPostgres, params),
+		bound:     bound,
 		wantID:    "VaultCredentialMapper.Insert",
 		wantKind:  yourbatis.StatementInsert,
 		wantArgumentNames: []string{
 			"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 			"params.VaultUUID", "params.VaultExternalID", "params.CreatedByAPIKeyUUID",
 			"params.DisplayName", "params.Metadata", "params.AuthType", "params.CredentialKey",
-			"params.Auth", "params.SecretPayload", "params.CreatedAt", "params.CreatedAt",
+			"params.Auth", "params.Ciphertext", "params.Nonce", "params.WrappedDEK",
+			"params.FormatVersion", "params.KeyProvider", "params.KeyVersion", "params.Version",
+			"params.CreatedAt", "params.CreatedAt",
 		},
-		wantSensitiveArgumentNames: []string{"params.CredentialKey", "params.Auth", "params.SecretPayload"},
+		wantSensitiveArgumentNames: []string{"params.CredentialKey", "params.Auth", "params.Ciphertext", "params.Nonce", "params.WrappedDEK"},
 		wantSQLFragments:           []string{"INSERT INTO vault_credentials", "CAST($9 AS jsonb)", "CAST($12 AS jsonb)"},
 	})
 
@@ -54,5 +66,17 @@ func TestVaultCredentialMapperBuilders(t *testing.T) {
 			"params.Cursor.UUID", "params.Limit",
 		},
 		wantSQLFragments: []string{"vault_external_id = $2", "(created_at, uuid) < ($3, $4)", "LIMIT $5"},
+	})
+
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement:         vaultCredentialMapperListActiveByVaultUUIDsStatement,
+		bound:             buildVaultCredentialMapperListActiveByVaultUUIDs(yourbatis.DialectPostgres, "workspace-uuid", []string{"vault-uuid-a", "vault-uuid-b"}),
+		wantID:            "VaultCredentialMapper.ListActiveByVaultUUIDs",
+		wantKind:          yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "vaultUUID", "vaultUUID"},
+		wantSQLFragments: []string{
+			"workspace_uuid = $1", "vault_uuid IN ( $2 , $3 )",
+			"archived_at IS NULL", "ORDER BY vault_uuid, created_at DESC, uuid DESC",
+		},
 	})
 }

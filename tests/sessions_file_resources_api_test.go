@@ -19,9 +19,9 @@ func TestSessionFileResourceContract(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-resource-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-file-resource-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	file := uploadFile(t, app, "quarterly report.csv", "text/csv", []byte("quarter,total\nQ1,10\n"))
 	defer deleteFile(t, app, file.ID)
 
@@ -372,7 +372,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 			)
 		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 				update workspace_storage_usage
 			set filestore_bytes = 123
 			where workspace_uuid = $1
@@ -513,12 +513,12 @@ func TestSessionInputResourcePreservesSourcePolicy(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-input-catalog-policy-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-input-catalog-policy-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	file := uploadFile(t, app, "private-input.txt", "text/plain", []byte("private input"))
 	defer deleteFile(t, app, file.ID)
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update files
 		set downloadable = false
 		where external_id = $1 and deleted_at is null
@@ -547,9 +547,9 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-reference-lifecycle-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-file-reference-lifecycle-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	file := uploadFile(t, app, "protected.txt", "text/plain", []byte("shared object"))
 	beforeSessionStorageBytes := defaultWorkspaceStorageBytes(t, app)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+
@@ -728,7 +728,7 @@ func TestSessionFileCatalogWorkspaceIsolation(t *testing.T) {
 	otherKey := "sk-ant-session-file-catalog-other"
 	seedWorkspaceKey(
 		t,
-		app.db,
+		app.pool,
 		"org_session_file_catalog_other",
 		"workspace_session_file_catalog_other",
 		"api_key_session_file_catalog_other",
@@ -736,9 +736,9 @@ func TestSessionFileCatalogWorkspaceIsolation(t *testing.T) {
 	)
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-catalog-isolation-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-file-catalog-isolation-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	source := uploadFile(t, app, "workspace-private.txt", "text/plain", []byte("workspace private"))
 	defer deleteFile(t, app, source.ID)
 	session := createSession(
@@ -795,9 +795,9 @@ func TestSessionOutputCatalogWriteIsAtomic(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-output-atomic-catalog-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-output-atomic-catalog-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	defer deleteSession(t, app, session.ID)
 	record := mustSessionRecord(t, app, session.ID)
@@ -815,7 +815,7 @@ func TestSessionOutputCatalogWriteIsAtomic(t *testing.T) {
 	}
 
 	const constraint = "files_reject_session_output_catalog_write_test"
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		alter table files
 		add constraint `+constraint+`
 		check (scope_id is null) not valid
@@ -823,7 +823,7 @@ func TestSessionOutputCatalogWriteIsAtomic(t *testing.T) {
 		t.Fatalf("install catalog failure constraint: %v", err)
 	}
 	defer func() {
-		if _, err := app.db.Pool.Exec(
+		if _, err := app.pool.Exec(
 			context.Background(),
 			"alter table files drop constraint if exists "+constraint,
 		); err != nil {
@@ -865,9 +865,9 @@ func TestSessionOutputCatalogMaterializesMultipleFiles(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-output-multiple-catalog-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-output-multiple-catalog-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	defer deleteSession(t, app, session.ID)
 	record := mustSessionRecord(t, app, session.ID)
@@ -949,9 +949,9 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-output-catalog-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-output-catalog-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	defer deleteSession(t, app, session.ID)
 	record := mustSessionRecord(t, app, session.ID)
@@ -1019,7 +1019,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		"application/json",
 	)
 	assertError(t, rejectedOwnedAttach, http.StatusNotFound, "not_found_error")
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update session_resources
 		set deleted_at = now(), updated_at = now()
 		where uuid = $1 and file_ownership = 'owned'
@@ -1036,7 +1036,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		"application/json",
 	)
 	assertError(t, rejectedHistoricalOwnedAttach, http.StatusNotFound, "not_found_error")
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update session_resources
 		set deleted_at = null, updated_at = now()
 		where uuid = $1 and file_ownership = 'owned'
@@ -1064,7 +1064,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	if len(files) != 1 || files[0].ExternalID != outputFileID {
 		t.Fatalf("repeated output listing = %+v, want stable file ID %q", files, outputFileID)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update session_resources
 		set payload = jsonb_build_object(
 			'id', external_id,
@@ -1096,7 +1096,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	}
 	var persistedOwnership string
 	var payloadPresent bool
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select file_ownership, payload is not null
 		from session_resources
 		where uuid = $1
@@ -1111,7 +1111,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 			replaced.Node,
 		)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update session_resources set payload = null where uuid = $1
 	`, entry.Node.UUID); err != nil {
 		t.Fatalf("restore internal Output payload: %v", err)
@@ -1248,9 +1248,9 @@ func TestSessionInputResourceRejectsGenericFilestoreMutations(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-logical-view-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-file-logical-view-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	file := uploadFile(t, app, "logical-view.txt", "text/plain", []byte("shared object"))
 	defer deleteFile(t, app, file.ID)
 
@@ -1324,9 +1324,9 @@ func TestSessionFileResourceBindSerializesWithSourceDelete(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-concurrent-delete-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-file-concurrent-delete-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	file := uploadFile(t, app, "concurrent.txt", "text/plain", []byte("serialized"))
 	defer deleteFile(t, app, file.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
@@ -1427,9 +1427,9 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-reference-retirement-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-file-reference-retirement-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	file := uploadFile(t, app, "retained.txt", "text/plain", []byte("source object"))
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+
 		`,"environment_id":`+quoteJSON(env.ID)+
@@ -1472,7 +1472,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 		t.Fatalf("load source File: %v", err)
 	}
 	var filesBytesBefore, filestoreBytesBefore int64
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select files_bytes, filestore_bytes
 		from workspace_storage_usage
 		where workspace_uuid = $1
@@ -1491,7 +1491,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	}
 
 	var cleanupJobUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		update jobs
 		set status = 'running',
 			locked_by = 'input-resource-reference-retirement-test',
@@ -1524,7 +1524,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	}
 	var activeEntries, filestoreObjectJobs int
 	var filesBytesAfter, filestoreBytesAfter int64
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select
 			(select count(*)
 			 from session_resources
@@ -1587,9 +1587,9 @@ func TestCreateSessionResourceFileLimitIsAtomic(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-resource-limit-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"session-resource-limit-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	file := uploadFile(t, app, "shared.txt", "text/plain", []byte("shared"))
 	defer deleteFile(t, app, file.ID)
 

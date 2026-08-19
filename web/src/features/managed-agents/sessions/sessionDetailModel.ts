@@ -5,7 +5,7 @@ import {
   sessionThreadIsArchived,
   sessionThreadIsChild,
 } from '../api';
-import { entityAgentId, entityStatusLabel, entityVaultIds } from '../resources/ManagedResources';
+import { entityAgentId, entityVaultIds, localizedEntityStatusLabel } from '../resources/ManagedResources';
 import {
   type DisplayEventEntry,
   type DisplayEventType,
@@ -46,7 +46,7 @@ export function buildSessionDetailSummary(
   msg: I18nMsg,
 ) {
   const title = session.title || sessionAgentDisplayName(session.agent) || session.id;
-  const statusLabel = entityStatusLabel(session);
+  const statusLabel = localizedEntityStatusLabel('sessions', session, msg);
   const chips: SessionDetailSummaryChip[] = [];
   const agentLabel = sessionAgentDisplayName(session.agent) || entityAgentId(session);
   if (agentLabel) {
@@ -492,10 +492,8 @@ export function sessionResourcesLabel(resources: SessionResourceApiResponse[], m
   if (!resources.length) {
     return '';
   }
-  const fileCount = resources.filter((resource) =>
-    String(resource.type || resource.resource_type || '').includes('file'),
-  ).length;
-  if (fileCount > 0 && fileCount === resources.length) {
+  const fileCount = resources.filter((resource) => resource.type === 'file').length;
+  if (fileCount === resources.length) {
     return msg('managedAgents.sessions.detail.fileCount', '{count, plural, one {# file} other {# files}}', {
       count: fileCount,
     });
@@ -673,7 +671,9 @@ export function writeSessionArchivedLanePreference(value: boolean) {
 
 export function sessionStatusIsLive(status: string) {
   const normalized = status.toLowerCase();
-  return normalized === 'running' || normalized === 'queued' || normalized === 'rescheduled';
+  return (
+    normalized === 'running' || normalized === 'queued' || normalized === 'rescheduled' || normalized === 'rescheduling'
+  );
 }
 
 export function sessionStatusFromEventType(type: string) {
@@ -682,8 +682,9 @@ export function sessionStatusFromEventType(type: string) {
       return 'running';
     case 'session.status_idle':
       return 'idle';
+    // The backend maps this event to the "rescheduling" session status.
     case 'session.status_rescheduled':
-      return 'rescheduled';
+      return 'rescheduling';
     case 'session.status_terminated':
       return 'terminated';
     case 'session.deleted':

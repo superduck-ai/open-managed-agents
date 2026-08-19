@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 
 	"github.com/google/uuid"
 )
@@ -60,7 +61,7 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	defer app.close()
 
 	ctx := context.Background()
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 
 	workspace, err := app.db.GetAdminWorkspace(ctx, ids.OrganizationUUID, "workspace_default")
 	if err != nil {
@@ -106,14 +107,14 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 		t.Fatalf("created Console API key = %+v, want null creator and workspace %s", createdKey.APIKey, ids.WorkspaceUUID)
 	}
 	defer func() {
-		if _, cleanupErr := app.db.Pool.Exec(
+		if _, cleanupErr := app.pool.Exec(
 			context.Background(),
 			"delete from console_api_keys where external_id = $1",
 			createdKey.APIKey.ID,
 		); cleanupErr != nil {
 			t.Errorf("delete Console API key fixture: %v", cleanupErr)
 		}
-		if _, cleanupErr := app.db.Pool.Exec(
+		if _, cleanupErr := app.pool.Exec(
 			context.Background(),
 			"delete from api_keys where external_id = $1",
 			createdKey.APIKey.ID,
@@ -304,7 +305,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	defer app.close()
 
 	ctx := context.Background()
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	suffix := uuid.NewString()
 	now := time.Now().UTC()
 
@@ -526,9 +527,16 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		AuthType:         "static_bearer",
 		CredentialKey:    "typed_uuid_" + suffix,
 		Auth:             []byte(`{"type":"bearer"}`),
-		SecretPayload:    []byte(`{"token":"test"}`),
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		SecretEnvelope: &secrets.Envelope{
+			Ciphertext:    []byte("typed-uuid-cipher"),
+			Nonce:         []byte("nonce-12byte"),
+			WrappedDEK:    []byte("typed-uuid-wrap"),
+			FormatVersion: 1,
+			KeyProvider:   "local",
+			KeyVersion:    1,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	})
 	if err != nil || credential.CreatedByAPIKeyUUID != "" || credential.VaultUUID != vault.UUID {
 		t.Fatalf("create Vault credential with nullable creator UUID = (%+v, %v)", credential, err)
@@ -672,7 +680,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	now := time.Now().UTC()
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 

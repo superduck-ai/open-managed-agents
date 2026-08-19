@@ -21,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -124,9 +125,8 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var req platformMCPVaultAuthStartRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := decoder.Decode(&req); err != nil {
+	req, err := httpapi.DecodeObjectBodyAs[platformMCPVaultAuthStartRequest](w, r, 1<<20)
+	if err != nil {
 		writePlatformMCPVaultAuthError(w, http.StatusBadRequest, platformMCPVaultAuthVerificationRequestFailed, "")
 		return
 	}
@@ -400,7 +400,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		s.logger.ErrorContext(r.Context(), "build mcp oauth credential metadata for flow", "flow_external_id", flow.ExternalID, "error", err)
 		metadata = json.RawMessage(`{}`)
 	}
-	created, err := s.db.CreateVaultCredential(r.Context(), db.VaultCredential{
+	credential := db.VaultCredential{
 		UUID:                uuid.NewString(),
 		ExternalID:          credentialID,
 		OrganizationUUID:    flow.OrganizationUUID,
@@ -416,7 +416,19 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		SecretPayload:       secretPayload,
 		CreatedAt:           now,
 		UpdatedAt:           now,
-	})
+	}
+	if err := vaultsapi.SealCredentialSecret(r.Context(), s.vaultSecrets, &credential); err != nil {
+		s.logger.ErrorContext(r.Context(), "seal mcp oauth vault credential for flow", "flow_external_id", flow.ExternalID, "error", err)
+		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthVerificationRequestFailed, now)
+		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
+			Type:      "vault_oauth_complete",
+			FlowID:    flow.ExternalID,
+			VaultID:   flow.VaultExternalID,
+			ErrorCode: platformMCPVaultAuthVerificationRequestFailed,
+		})
+		return
+	}
+	created, err := s.db.CreateVaultCredential(r.Context(), credential)
 	if err != nil {
 		errorCode := platformMCPVaultAuthVerificationRequestFailed
 		if errors.Is(err, db.ErrDuplicate) {

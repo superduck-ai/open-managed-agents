@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -18,86 +19,71 @@ import (
 	"github.com/google/uuid"
 )
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireSessionManager(w, r)
-	if !ok {
-		return
-	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireSessionManager(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return err
 	}
-	if h.isOfficialSDKFixturePrincipal(principal) && h.createUsesOfficialFixtures(fields) {
+	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	if h.isOfficialSDKFixturePrincipal(principal) && h.createUsesOfficialFixtures(body) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
-		return
+		return nil
 	}
 
-	agent, snapshot, err := h.resolveAgent(r, principal, fields["agent"])
+	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
-	environmentID, err := parseRequiredStringField(fields, "environment_id")
+	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-			return
+			return environmentNotFound(environmentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get environment for session", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
-		return
+		return internalError("Could not create session", fmt.Errorf("get environment %q for session: %w", environmentID, err))
 	}
 	if env.ArchivedAt != nil {
-		writeBadRequest(w, r, errors.New("environment must not be archived"))
-		return
+		return invalidRequest(errors.New("environment must not be archived"))
 	}
-	metadata, err := httpapi.NormalizeMetadata(fieldOrDefault(fields, "metadata", `{}`), validateMetadataEntries)
+	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
-	title, err := parseNullableStringField(fields, "title")
+	title, err := nullableStringOrMissing(body.Title, "title")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
-	vaultIDs, err := h.normalizeVaultIDs(r, principal, fieldOrDefault(fields, "vault_ids", `[]`))
+	vaultIDs, err := h.normalizeVaultIDs(r, principal, rawOrDefault(body.VaultIDs, `[]`))
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 
 	sessionID, err := ids.New("sesn_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate session ID"))
-		return
+		return internalError("Could not generate session ID", fmt.Errorf("generate session ID: %w", err))
 	}
 	threadID, err := ids.New("sthr_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate thread ID"))
-		return
+		return internalError("Could not generate thread ID", fmt.Errorf("generate thread ID: %w", err))
 	}
 	workID, err := ids.New("work_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate work ID"))
-		return
+		return internalError("Could not generate work ID", fmt.Errorf("generate work ID: %w", err))
 	}
 	now := time.Now().UTC()
-	resources, err := h.resourcesFromCreate(r, principal, sessionID, fields["resources"], now)
+	resources, err := h.resourcesFromCreate(r, principal, sessionID, body.Resources, now)
 	if err != nil {
-		h.writeResourceBuildError(w, r, err)
-		return
+		return mapResourceBuildError(err)
 	}
 	resourceInputs, err := sessionResourceWriteInputs(resources)
 	if err != nil {
-		h.writeResourceBuildError(w, r, err)
-		return
+		return mapResourceBuildError(err)
 	}
 	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
 	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
@@ -151,12 +137,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		if writeFileResourcePersistenceError(w, r, err) {
-			return
+		if mapped, ok := mapFileResourcePersistenceError(err); ok {
+			return mapped
 		}
-		h.logger.ErrorContext(r.Context(), "create session", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
-		return
+		return internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
 	}
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.created", created.ExternalID, nil)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.pending", created.ExternalID, nil)
@@ -165,67 +149,56 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_idled", created.ExternalID, &thread.ExternalID)
 	response, err := h.responseFromSession(r, created)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "load session response", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
-		return
+		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireSessionManager(w, r)
-	if !ok {
-		return
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireSessionManager(r)
+	if err != nil {
+		return err
 	}
 	limit, err := httpapi.ParseLimit(r, 1000)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	cursor, err := decodeSessionCursor(r.URL.Query().Get("page"))
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	order, err := parseOrder(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	includeArchived, err := parseOptionalBool(r, "include_archived")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	agentVersion, err := parseOptionalPositiveInt(r, "agent_version")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtGT, err := httpapi.ParseOptionalTime(r, "created_at[gt]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtGTE, err := httpapi.ParseOptionalTime(r, "created_at[gte]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtLT, err := httpapi.ParseOptionalTime(r, "created_at[lt]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtLTE, err := httpapi.ParseOptionalTime(r, "created_at[lte]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	statuses, err := parseRepeatedStatuses(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListSessionsPage(r.Context(), db.ListSessionsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
@@ -244,17 +217,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list sessions", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list sessions"))
-		return
+		return internalError("Could not list sessions", fmt.Errorf("list sessions: %w", err))
 	}
 	data := make([]sessionResponse, 0, len(records))
 	for _, record := range records {
 		response, err := h.responseFromSession(r, record)
 		if err != nil {
-			h.logger.ErrorContext(r.Context(), "list session response", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list sessions"))
-			return
+			return internalError("Could not list sessions", fmt.Errorf("load session %q response: %w", record.ExternalID, err))
 		}
 		data = append(data, response)
 	}
@@ -264,82 +233,77 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[sessionResponse]{Data: data, NextPage: nextPage})
+	return nil
 }
 
-func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	if h.isOfficialSDKFixtureSession(r, sessionID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
-		return
+		return nil
 	}
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessRead)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
+	if err != nil {
+		return err
 	}
 	response, err := h.responseFromSession(r, session)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "retrieve session response", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve session"))
-		return
+		return internalError("Could not retrieve session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
 }
 
-func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireSessionManager(w, r)
-	if !ok {
-		return
+func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireSessionManager(r)
+	if err != nil {
+		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
 	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
-		return
+		return nil
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	if current.ArchivedAt != nil || current.Status != "idle" {
-		writeBadRequest(w, r, errors.New("session must be idle and unarchived to update"))
-		return
+		return invalidRequest(errors.New("session must be idle and unarchived to update"))
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
-	if _, ok := fields["vault_ids"]; ok {
-		writeBadRequest(w, r, errors.New("vault_ids updates are not supported"))
-		return
+	if len(body.VaultIDs) > 0 {
+		return invalidRequest(errors.New("vault_ids updates are not supported"))
 	}
 	next := current
-	if raw, ok := fields["title"]; ok {
-		next.Title, err = nullableStringFromRaw(raw, "title")
+	if len(body.Title) > 0 {
+		next.Title, err = nullableStringFromRaw(body.Title, "title")
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = httpapi.PatchMetadata(next.Metadata, raw, validateMetadataEntries)
+	if len(body.Metadata) > 0 {
+		next.Metadata, err = httpapi.PatchMetadata(next.Metadata, body.Metadata, validateMetadataEntries)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
-	if raw, ok := fields["agent"]; ok {
-		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, raw)
+	if len(body.Agent) > 0 {
+		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, body.Agent)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
 	}
 	event, err := h.sessionUpdatedEvent(updated)
 	if err == nil {
@@ -347,65 +311,64 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := h.responseFromSession(r, updated)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "update session response", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update session"))
-		return
+		return internalError("Could not update session", fmt.Errorf("load updated session %q response: %w", sessionID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
 }
 
-func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireSessionManager(w, r)
-	if !ok {
-		return
+func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireSessionManager(r)
+	if err != nil {
+		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
 	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), true))
-		return
+		return nil
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	if current.Status == "running" || current.Status == "rescheduling" {
-		writeBadRequest(w, r, errors.New("running sessions cannot be archived"))
-		return
+		return invalidRequest(errors.New("running sessions cannot be archived"))
 	}
 	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
 	}
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "archive session response", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive session"))
-		return
+		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
 }
 
-func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireSessionManager(w, r)
-	if !ok {
-		return
+func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireSessionManager(r)
+	if err != nil {
+		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
 	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
-		return
+		return nil
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	if current.Status == "running" || current.Status == "rescheduling" {
-		writeBadRequest(w, r, errors.New("running sessions cannot be deleted"))
-		return
+		return invalidRequest(errors.New("running sessions cannot be deleted"))
 	}
 	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, nil)
 	if err == nil {
@@ -418,32 +381,31 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
 	}
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
+	return nil
 }
 
-func (h *Handler) listEventsRoute(w http.ResponseWriter, r *http.Request) {
-	h.listEvents(w, r, chi.URLParam(r, "session_id"), "")
+func (h *Handler) listEventsRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.listEvents(w, r, chi.URLParam(r, "session_id"), "")
 }
 
-func (h *Handler) listThreadEventsRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listThreadEventsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessEventsRead)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
+	if err != nil {
+		return err
 	}
 	if _, err := h.db.GetSessionThread(r.Context(), workspaceUUIDFromRequest(r), sessionID, threadID); err != nil {
-		h.writeThreadLoadError(w, r, err, threadID)
-		return
+		return mapThreadLoadError(err, threadID)
 	}
 	if err := h.backfillSubagentThreadEventsIfEmpty(r.Context(), session, threadID); err != nil {
 		h.logger.ErrorContext(r.Context(), "backfill subagent thread events", "session_id", sessionID, "thread_id", threadID, "error", err)
 	}
-	h.listEvents(w, r, sessionID, threadID)
+	return h.listEvents(w, r, sessionID, threadID)
 }
 
 func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, session db.Session, threadID string) error {
@@ -471,49 +433,41 @@ func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, sessi
 	return h.codeSessions.PublishSubagentInternalEvents(ctx, codeSession)
 }
 
-func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) {
+func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) error {
 	if h.isOfficialSDKFixtureSession(r, sessionID) {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: []json.RawMessage{}})
-		return
+		return nil
 	}
-	_, ok := h.authorizeSession(w, r, sessionID, sessionAccessEventsRead)
-	if !ok {
-		return
+	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
+		return err
 	}
 	limit, err := httpapi.ParseLimit(r, 1000)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	cursor, err := decodeEventCursor(r.URL.Query().Get("page"))
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	order, err := parseOrder(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtGT, err := httpapi.ParseOptionalTime(r, "created_at[gt]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtGTE, err := httpapi.ParseOptionalTime(r, "created_at[gte]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtLT, err := httpapi.ParseOptionalTime(r, "created_at[lt]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	createdAtLTE, err := httpapi.ParseOptionalTime(r, "created_at[lte]")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListSessionEventsPage(r.Context(), db.ListSessionEventsPageParams{
 		WorkspaceUUID:     workspaceUUIDFromRequest(r),
@@ -530,15 +484,11 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		CreatedAtLTE:      createdAtLTE,
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list session events", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list events"))
-		return
+		return internalError("Could not list events", fmt.Errorf("list session %q events: %w", sessionID, err))
 	}
 	hiddenPrimaryToolUseIDs, err := h.primaryOrphanToolUseIDsWithChildCopies(r.Context(), sessionID, threadID, records)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list session events child tool projections", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list events"))
-		return
+		return internalError("Could not list events", fmt.Errorf("list session %q child tool projections: %w", sessionID, err))
 	}
 	data := make([]json.RawMessage, 0, len(records))
 	for _, record := range records {
@@ -556,24 +506,21 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: data, NextPage: nextPage})
+	return nil
 }
 
-func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionEventsRequest](w, r, maxSessionBodySize)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
-	rawEvents, ok := fields["events"]
-	if !ok {
-		writeBadRequest(w, r, errors.New("events is required"))
-		return
+	if len(body.Events) == 0 {
+		return invalidRequest(errors.New("events is required"))
 	}
 	var inputs []json.RawMessage
-	if err := json.Unmarshal(rawEvents, &inputs); err != nil || len(inputs) == 0 {
-		writeBadRequest(w, r, errors.New("events must be a non-empty array"))
-		return
+	if err := json.Unmarshal(body.Events, &inputs); err != nil || len(inputs) == 0 {
+		return invalidRequest(errors.New("events must be a non-empty array"))
 	}
 	if h.isOfficialSDKFixtureSession(r, sessionID) {
 		now := time.Now().UTC()
@@ -581,17 +528,16 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		for _, raw := range inputs {
 			payload, err := normalizeFixtureEvent(raw, now)
 			if err != nil {
-				writeBadRequest(w, r, err)
-				return
+				return invalidRequest(err)
 			}
 			data = append(data, payload)
 		}
 		httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})
-		return
+		return nil
 	}
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessEventsSend)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsSend)
+	if err != nil {
+		return err
 	}
 	now := time.Now().UTC()
 	events := make([]db.SessionEvent, 0, len(inputs))
@@ -600,8 +546,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	for _, raw := range inputs {
 		event, outcomes, changed, err := normalizeInputEvent(normalizedSession, raw, now)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 		if changed {
 			normalizedSession.OutcomeEvaluations = outcomes
@@ -616,11 +561,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
-			writeBadRequest(w, r, errors.New("archived sessions do not accept new events"))
-			return
+			return invalidRequest(errors.New("archived sessions do not accept new events"))
 		}
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
 	}
 	for _, event := range created {
 		h.broadcast(event)
@@ -644,171 +587,159 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		data = append(data, sessionEventPayload(event))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})
+	return nil
 }
 
-func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	if h.isOfficialSDKFixtureSession(r, sessionID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
-		return
+		return nil
 	}
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessManageResources)
-	if !ok {
-		return
-	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	session, err := h.authorizeSession(r, sessionID, sessionAccessManageResources)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return err
 	}
-	resource, err := h.resourceFromFields(r, session, fields, time.Now().UTC())
+	body, err := httpapi.DecodeObjectBodyAs[sessionResourceRequest](w, r, maxSessionBodySize)
 	if err != nil {
-		h.writeResourceBuildError(w, r, err)
-		return
+		return invalidRequest(err)
+	}
+	resource, err := h.resourceFromRequest(r, session, body, time.Now().UTC())
+	if err != nil {
+		return mapResourceBuildError(err)
 	}
 	resourceInput, err := sessionResourceWriteInput(resource)
 	if err != nil {
-		h.writeResourceBuildError(w, r, err)
-		return
+		return mapResourceBuildError(err)
 	}
 	created, err := h.db.CreateSessionResource(
 		r.Context(),
 		resourceInput,
 	)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(created))
+	return nil
 }
 
-func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	if h.isOfficialSDKFixtureSession(r, sessionID) {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: []json.RawMessage{h.fixtureResource(time.Now().UTC())}})
-		return
+		return nil
 	}
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessRead)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
+	if err != nil {
+		return err
 	}
 	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list session resources", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list resources"))
-		return
+		return internalError("Could not list resources", fmt.Errorf("list session %q resources: %w", sessionID, err))
 	}
 	data := resourcesToResponses(resources)
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: data})
+	return nil
 }
 
-func (h *Handler) retrieveResourceRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) retrieveResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	resourceID := chi.URLParam(r, "resource_id")
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessRead)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
+	if err != nil {
+		return err
 	}
 	if h.isFixtureResource(r, sessionID, resourceID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
-		return
+		return nil
 	}
 	resource, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
 	if err != nil {
-		h.writeResourceLoadError(w, r, err, resourceID)
-		return
+		return mapResourceLoadError(err, resourceID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(resource))
+	return nil
 }
 
-func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	resourceID := chi.URLParam(r, "resource_id")
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessManageResources)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessManageResources)
+	if err != nil {
+		return err
 	}
 	if h.isFixtureResource(r, sessionID, resourceID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
-		return
+		return nil
 	}
 	current, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
 	if err != nil {
-		h.writeResourceLoadError(w, r, err, resourceID)
-		return
+		return mapResourceLoadError(err, resourceID)
 	}
 	if current.ResourceType != "github_repository" {
-		writeBadRequest(w, r, errors.New("only github_repository resources can be updated"))
-		return
+		return invalidRequest(errors.New("only github_repository resources can be updated"))
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionResourceUpdateRequest](w, r, maxSessionBodySize)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
-	token, err := parseRequiredStringField(fields, "authorization_token")
+	token, err := parseRequiredRawString(body.AuthorizationToken, "authorization_token")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	secret, _ := httpapi.MarshalRaw(map[string]any{"authorization_token": token})
 	updated, err := h.db.UpdateSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID, current.Payload, secret)
 	if err != nil {
-		h.writeResourceLoadError(w, r, err, resourceID)
-		return
+		return mapResourceLoadError(err, resourceID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(updated))
+	return nil
 }
 
-func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	resourceID := chi.URLParam(r, "resource_id")
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessManageResources)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessManageResources)
+	if err != nil {
+		return err
 	}
 	if h.isFixtureResource(r, sessionID, resourceID) {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: resourceID, Type: "session_resource_deleted"})
-		return
+		return nil
 	}
 	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
-			h.writeSessionLoadError(w, r, err, sessionID)
-			return
+			return mapSessionLoadError(err, sessionID)
 		}
-		h.writeResourceLoadError(w, r, err, resourceID)
-		return
+		return mapResourceLoadError(err, resourceID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: resourceID, Type: "session_resource_deleted"})
+	return nil
 }
 
-func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	if h.isOfficialSDKFixtureSession(r, sessionID) {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse[threadResponse]{Data: []threadResponse{h.fixtureThread(time.Now().UTC(), false)}})
-		return
+		return nil
 	}
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessRead)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
+	if err != nil {
+		return err
 	}
 	if _, err := h.ensurePrimarySessionThread(r.Context(), session); err != nil {
-		h.logger.ErrorContext(r.Context(), "ensure primary session thread", "session_id", session.ExternalID, "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list threads"))
-		return
+		return internalError("Could not list threads", fmt.Errorf("ensure primary thread for session %q: %w", sessionID, err))
 	}
 	limit, err := httpapi.ParseLimit(r, 1000)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	if strings.TrimSpace(r.URL.Query().Get("limit")) == "" {
 		limit = 500
 	}
 	cursor, err := decodeThreadCursor(r.URL.Query().Get("page"))
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListSessionThreadsPage(r.Context(), db.ListSessionThreadsPageParams{
 		WorkspaceUUID:     session.WorkspaceUUID,
@@ -817,9 +748,7 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) {
 		Cursor:            cursor,
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list session threads", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list threads"))
-		return
+		return internalError("Could not list threads", fmt.Errorf("list session %q threads: %w", sessionID, err))
 	}
 	data := make([]threadResponse, 0, len(records))
 	for _, thread := range records {
@@ -831,48 +760,51 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) {
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[threadResponse]{Data: data, NextPage: nextPage})
+	return nil
 }
 
-func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessRead)
-	if !ok {
-		return
+	session, err := h.authorizeSession(r, sessionID, sessionAccessRead)
+	if err != nil {
+		return err
 	}
 	if h.isFixtureThread(r, sessionID, threadID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureThread(time.Now().UTC(), false))
-		return
+		return nil
 	}
 	thread, err := h.db.GetSessionThread(r.Context(), session.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
-		h.writeThreadLoadError(w, r, err, threadID)
-		return
+		return mapThreadLoadError(err, threadID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
+	return nil
 }
 
-func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireSessionManager(w, r)
-	if !ok {
-		return
+func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireSessionManager(r)
+	if err != nil {
+		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
 	if h.isFixtureThread(r, sessionID, threadID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureThread(time.Now().UTC(), true))
-		return
+		return nil
 	}
-	session, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	session, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return
+		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
-		h.writeThreadLoadError(w, r, err, threadID)
-		return
+		return mapThreadLoadError(err, threadID)
 	}
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
+	return nil
 }

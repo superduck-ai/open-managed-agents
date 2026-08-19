@@ -55,14 +55,15 @@ export function CredentialDialog({
   onClose: () => void;
   onSubmit: (values: CredentialFormValues) => Promise<void>;
 }) {
+  const { msg } = useI18n();
   const [values, setValues] = useState<CredentialFormValues>(() => credentialFormValues(credential));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canSubmit =
     values.displayName.trim() &&
     (values.authType === 'static_bearer'
-      ? values.mcpServerUrl.trim() && values.token.trim()
-      : values.secretName.trim() && values.secretValue.trim());
+      ? values.mcpServerUrl.trim() && (credential != null || values.token.trim())
+      : values.secretName.trim() && (credential != null || values.secretValue.trim()));
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -84,23 +85,41 @@ export function CredentialDialog({
       <DialogContent className="sm:max-w-[520px]">
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>{credential ? 'Edit credential' : 'Add credential'}</DialogTitle>
-            <DialogDescription>Store a credential for MCP servers or environment variables.</DialogDescription>
+            <DialogTitle>
+              {credential
+                ? msg('managedAgents.credentialVaults.credentialDialog.edit', 'Edit credential')
+                : msg('managedAgents.credentialVaults.credentialDialog.add', 'Add credential')}
+            </DialogTitle>
+            <DialogDescription>
+              {msg(
+                'managedAgents.credentialVaults.credentialDialog.description',
+                'Store a credential for MCP servers or environment variables.',
+              )}
+            </DialogDescription>
           </DialogHeader>
           <div className="mt-5 space-y-4">
             <ManagedTextField
-              label="Display name"
+              label={msg('managedAgents.credentialVaults.credentialDialog.displayName', 'Display name')}
               value={values.displayName}
               onChange={(displayName) => setValues((current) => ({ ...current, displayName }))}
               autoFocus
             />
             <ManagedSelectField
-              label="Auth type"
+              label={msg('managedAgents.credentialVaults.credentialDialog.authType', 'Authentication type')}
               value={values.authType}
-              placeholder="Auth type"
+              placeholder={msg('managedAgents.credentialVaults.credentialDialog.authType', 'Authentication type')}
               options={[
-                { id: 'static_bearer', label: 'Static bearer' },
-                { id: 'environment_variable', label: 'Environment variable' },
+                {
+                  id: 'static_bearer',
+                  label: msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Static bearer token'),
+                },
+                {
+                  id: 'environment_variable',
+                  label: msg(
+                    'managedAgents.credentialVaults.credentialDialog.environmentVariable',
+                    'Environment variable',
+                  ),
+                },
               ]}
               onChange={(authType) =>
                 setValues((current) => ({
@@ -112,30 +131,31 @@ export function CredentialDialog({
             {values.authType === 'static_bearer' ? (
               <>
                 <ManagedTextField
-                  label="MCP server URL"
+                  label={msg('managedAgents.credentialVaults.credentialDialog.mcpServerUrl', 'MCP server URL')}
                   value={values.mcpServerUrl}
                   placeholder="https://example.com/mcp"
                   onChange={(mcpServerUrl) => setValues((current) => ({ ...current, mcpServerUrl }))}
                 />
                 <ManagedTextField
-                  label="Token"
+                  label={msg('managedAgents.credentialVaults.credentialDialog.token', 'Token')}
                   value={values.token}
-                  placeholder="Token"
+                  placeholder={msg('managedAgents.credentialVaults.credentialDialog.token', 'Token')}
                   onChange={(token) => setValues((current) => ({ ...current, token }))}
                 />
               </>
             ) : (
               <>
                 <ManagedTextField
-                  label="Secret name"
+                  label={msg('managedAgents.credentialVaults.credentialDialog.secretName', 'Secret name')}
                   value={values.secretName}
                   placeholder="EXAMPLE_TOKEN"
+                  disabled={credential != null}
                   onChange={(secretName) => setValues((current) => ({ ...current, secretName }))}
                 />
                 <ManagedTextField
-                  label="Secret value"
+                  label={msg('managedAgents.credentialVaults.credentialDialog.secretValue', 'Secret value')}
                   value={values.secretValue}
-                  placeholder="Secret value"
+                  placeholder={msg('managedAgents.credentialVaults.credentialDialog.secretValue', 'Secret value')}
                   onChange={(secretValue) => setValues((current) => ({ ...current, secretValue }))}
                 />
               </>
@@ -144,10 +164,14 @@ export function CredentialDialog({
           {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
           <DialogFooter className="mt-5">
             <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
+              {msg('common.cancel', 'Cancel')}
             </Button>
             <Button type="submit" disabled={!canSubmit || submitting}>
-              {submitting ? 'Saving...' : credential ? 'Save changes' : 'Add credential'}
+              {submitting
+                ? msg('common.saving', 'Saving...')
+                : credential
+                  ? msg('common.saveChanges', 'Save changes')
+                  : msg('managedAgents.credentialVaults.credentialDialog.add', 'Add credential')}
             </Button>
           </DialogFooter>
         </form>
@@ -165,6 +189,7 @@ export function MemoryDialog({
   onClose: () => void;
   onSubmit: (values: MemoryFormValues) => Promise<void>;
 }) {
+  const { msg } = useI18n();
   const [values, setValues] = useState<MemoryFormValues>(() => ({
     path: memory?.path || '',
     content: memory?.content || '',
@@ -191,31 +216,44 @@ export function MemoryDialog({
       <DialogContent className="sm:max-w-[560px]">
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>{memory ? 'Edit memory' : 'Add memory'}</DialogTitle>
-            <DialogDescription>Persist a path and content value in this memory store.</DialogDescription>
+            <DialogTitle>
+              {memory
+                ? msg('managedAgents.memoryStores.memoryDialog.edit', 'Edit memory')
+                : msg('managedAgents.memoryStores.memoryDialog.add', 'Add memory')}
+            </DialogTitle>
+            <DialogDescription>
+              {msg(
+                'managedAgents.memoryStores.memoryDialog.description',
+                'Save a path and its content in this memory store.',
+              )}
+            </DialogDescription>
           </DialogHeader>
           <div className="mt-5 space-y-4">
             <ManagedTextField
-              label="Path"
+              label={msg('managedAgents.memoryStores.memoryDialog.path', 'Path')}
               value={values.path}
               placeholder="/notes/example.txt"
               onChange={(path) => setValues((current) => ({ ...current, path }))}
               autoFocus
             />
             <ManagedTextArea
-              label="Content"
+              label={msg('managedAgents.memoryStores.memoryDialog.content', 'Content')}
               value={values.content}
-              placeholder="Memory content"
+              placeholder={msg('managedAgents.memoryStores.memoryDialog.placeholder', 'Memory content')}
               onChange={(content) => setValues((current) => ({ ...current, content }))}
             />
           </div>
           {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
           <DialogFooter className="mt-5">
             <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
+              {msg('common.cancel', 'Cancel')}
             </Button>
             <Button type="submit" disabled={!canSubmit || submitting}>
-              {submitting ? 'Saving...' : memory ? 'Save changes' : 'Add memory'}
+              {submitting
+                ? msg('common.saving', 'Saving...')
+                : memory
+                  ? msg('common.saveChanges', 'Save changes')
+                  : msg('managedAgents.memoryStores.memoryDialog.add', 'Add memory')}
             </Button>
           </DialogFooter>
         </form>

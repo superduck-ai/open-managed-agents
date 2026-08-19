@@ -1,11 +1,47 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestCodeSessionMapperFindByExternalIDNotFound(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
+	row, found, err := NewCodeSessionMapper(executor).FindByExternalID(context.Background(), "codeses_missing")
+	if err != nil || found || row.UUID != "" {
+		t.Fatalf("FindByExternalID() = (%+v, %t, %v), want zero, false, nil", row, found, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"CodeSessionMapper.FindByExternalID",
+		yourbatis.StatementSelect,
+		[]any{"codeses_missing"},
+	)
+}
+
+func TestCodeSessionMapperFindVaultIDsNotFound(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"vault_ids"}})
+	row, found, err := NewCodeSessionMapper(executor).FindVaultIDs(
+		context.Background(),
+		"org-uuid",
+		"workspace-uuid",
+		"codeses_missing",
+	)
+	if err != nil || found || len(row.VaultIDs) != 0 {
+		t.Fatalf("FindVaultIDs() = (%+v, %t, %v), want zero, false, nil", row, found, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"CodeSessionMapper.FindVaultIDs",
+		yourbatis.StatementSelect,
+		[]any{"codeses_missing", "org-uuid", "workspace-uuid"},
+	)
+}
 
 func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
@@ -144,15 +180,6 @@ func TestCodeSessionEventMapperBuilderContracts(t *testing.T) {
 				"params.Now", "params.UUID",
 			},
 			wantSQLFragments: []string{"UPDATE code_session_inbound_events", "delivery_worker_epoch = $8", "uuid = $11"},
-		}},
-		{"outbound page", mapperBuilderContract{
-			statement: codeSessionOutboundEventMapperListAfterStatement,
-			bound: buildCodeSessionOutboundEventMapperListAfter(
-				yourbatis.DialectPostgres, "codeses_test", 10, 100,
-			),
-			wantID: "CodeSessionOutboundEventMapper.ListAfter", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{"codeSessionExternalID", "afterSequence", "limit"},
-			wantSQLFragments:  []string{"FROM code_session_outbound_events", "sequence_num > $2", "LIMIT $3"},
 		}},
 		{"internal insert", mapperBuilderContract{
 			statement: codeSessionInternalEventMapperInsertStatement,

@@ -40,7 +40,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced File workspace: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 49); err == nil {
+	if _, err := provider.UpTo(ctx, 52); err == nil {
 		t.Fatal("ownership migration accepted a cross-workspace File reference")
 	}
 	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -59,7 +59,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced Resource backing path: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 49); err == nil {
+	if _, err := provider.UpTo(ctx, 52); err == nil {
 		t.Fatal("ownership migration accepted an inconsistent referenced Resource payload")
 	}
 	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -78,7 +78,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break owned File Session scope: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 49); err == nil {
+	if _, err := provider.UpTo(ctx, 52); err == nil {
 		t.Fatal("ownership migration accepted an owned File scoped to another Session")
 	}
 	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -107,7 +107,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed mixed referenced/owned File: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 49); err == nil {
+	if _, err := provider.UpTo(ctx, 52); err == nil {
 		t.Fatal("ownership migration accepted a File shared by owned and referenced Resources")
 	}
 	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -117,8 +117,8 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 		t.Fatalf("remove mixed ownership fixture: %v", err)
 	}
 
-	if _, err := provider.UpTo(ctx, 49); err != nil {
-		t.Fatalf("migrate ownership fixture database to 49: %v", err)
+	if _, err := provider.UpTo(ctx, 52); err != nil {
+		t.Fatalf("migrate ownership fixture database to 52: %v", err)
 	}
 	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
 	rows, err := standardDB.QueryContext(ctx, `

@@ -23,6 +23,7 @@ import {
   type DeploymentRunApiResponse,
   type EnvironmentApiResponse,
   type EnvironmentWorkApiResponse,
+  type FileMetadataApiResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntityListFilters,
@@ -555,6 +556,10 @@ export function listSessionResources(sessionId: string, workspaceId: string) {
   >;
 }
 
+export function retrieveFileMetadata(fileId: string, workspaceId: string) {
+  return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
+}
+
 export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;
 
 export const SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS = 90_000;
@@ -605,12 +610,6 @@ export async function listAllSessionThreads(sessionId: string, workspaceId: stri
     } while (page);
     return { data, next_page: null } satisfies PageResponse<SessionThreadApiResponse>;
   });
-}
-
-export function listSessionResourcesForDetail(sessionId: string, workspaceId: string) {
-  return sessionDetailSingleFlight(`resources:${workspaceId}:${sessionId}`, () =>
-    listSessionResources(sessionId, workspaceId),
-  );
 }
 
 export function listSessionEvents(
@@ -818,7 +817,7 @@ export function createQuickstartSession(
 }
 
 export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
-  return anthropicBetaApi.sessions.events.send<unknown>(
+  return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
     {
       events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
@@ -1165,6 +1164,9 @@ export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEve
       }
       continue;
     }
+    if (type === 'user.message') {
+      return false;
+    }
     if (type === 'session.status_idle' || type === 'session.status_terminated' || type === 'session.deleted') {
       return true;
     }
@@ -1504,7 +1506,7 @@ export function listVaultCredentials(vaultId: string, workspaceId: string) {
 export function createVaultCredential(vaultId: string, values: CredentialFormValues, workspaceId: string) {
   return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
     vaultId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, true), metadata: {} },
+    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'create'), metadata: {} },
     workspaceId,
   );
 }
@@ -1518,7 +1520,7 @@ export function updateVaultCredential(
   return anthropicBetaApi.vaults.credentials.update<VaultCredentialApiResponse>(
     vaultId,
     credentialId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, false), metadata: {} },
+    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'update'), metadata: {} },
     workspaceId,
   );
 }

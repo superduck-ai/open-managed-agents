@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var filestoreAuthPaths = []string{
@@ -192,7 +193,7 @@ func TestAuthenticateFilestoreOwnsProtocolError(t *testing.T) {
 }
 
 func TestFilestoreJWTAuthentication(t *testing.T) {
-	database, cfg, fixture := newFilestoreAuthDatabaseFixture(t)
+	database, pool, cfg, fixture := newFilestoreAuthDatabaseFixture(t)
 	credentials := newFilestoreAuthCredentials(t)
 	token, err := credentials.filestore.Issue(fixture.tokenIdentity)
 	if err != nil {
@@ -444,18 +445,18 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		otherFilesystemUUID := uuid.NewString()
 		otherFilesystemExternalID := "fs_filestore_cross_" + suffix
 
-		if _, err := database.Pool.Exec(context.Background(), `
+		if _, err := pool.Exec(context.Background(), `
 			insert into workspaces (uuid, external_id, organization_uuid, name)
 			values ($1, $2, $3, $4)
 		`, otherWorkspaceUUID, otherWorkspaceExternalID, fixture.tokenIdentity.OrgUUID, "Filestore cross-workspace test"); err != nil {
 			t.Fatalf("insert other workspace: %v", err)
 		}
 		defer func() {
-			_, _ = database.Pool.Exec(context.Background(), `delete from filestore_filesystems where uuid = $1`, otherFilesystemUUID)
-			_, _ = database.Pool.Exec(context.Background(), `delete from sessions where uuid = $1`, otherSessionUUID)
-			_, _ = database.Pool.Exec(context.Background(), `delete from workspaces where uuid = $1`, otherWorkspaceUUID)
+			_, _ = pool.Exec(context.Background(), `delete from filestore_filesystems where uuid = $1`, otherFilesystemUUID)
+			_, _ = pool.Exec(context.Background(), `delete from sessions where uuid = $1`, otherSessionUUID)
+			_, _ = pool.Exec(context.Background(), `delete from workspaces where uuid = $1`, otherWorkspaceUUID)
 		}()
-		if _, err := database.Pool.Exec(context.Background(), `
+		if _, err := pool.Exec(context.Background(), `
 			insert into sessions (
 				uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
 				environment_uuid, environment_external_id, agent_uuid, agent_external_id,
@@ -467,7 +468,7 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 			uuid.NewString(), "agent_filestore_cross_"+suffix); err != nil {
 			t.Fatalf("insert other workspace session: %v", err)
 		}
-		if _, err := database.Pool.Exec(context.Background(), `
+		if _, err := pool.Exec(context.Background(), `
 			insert into filestore_filesystems (
 				uuid, external_id, organization_uuid, workspace_uuid, session_uuid
 			)
@@ -525,11 +526,11 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		},
 	} {
 		t.Run("failure "+test.name+" revokes existing token", func(t *testing.T) {
-			if _, err := database.Pool.Exec(context.Background(), test.mutate, fixture.tokenIdentity.WorkspaceUUID, fixture.sessionExternalID); err != nil {
+			if _, err := pool.Exec(context.Background(), test.mutate, fixture.tokenIdentity.WorkspaceUUID, fixture.sessionExternalID); err != nil {
 				t.Fatalf("mutate Session lifecycle: %v", err)
 			}
 			defer func() {
-				if _, err := database.Pool.Exec(context.Background(), test.restore, fixture.tokenIdentity.WorkspaceUUID, fixture.sessionExternalID); err != nil {
+				if _, err := pool.Exec(context.Background(), test.restore, fixture.tokenIdentity.WorkspaceUUID, fixture.sessionExternalID); err != nil {
 					t.Errorf("restore Session lifecycle: %v", err)
 				}
 			}()
@@ -554,7 +555,7 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 	})
 }
 
-func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, filestoreAuthFixture) {
+func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, config.Config, filestoreAuthFixture) {
 	t.Helper()
 
 	cfg, err := config.Load()
@@ -568,6 +569,11 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 	if err := database.Migrate(context.Background()); err != nil {
 		database.Close()
 		t.Fatalf("migrate filestore auth database: %v", err)
+	}
+	pool, err := pgxpool.New(context.Background(), cfg.Database.URL)
+	if err != nil {
+		database.Close()
+		t.Fatalf("open filestore auth test pool: %v", err)
 	}
 
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -587,36 +593,37 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = database.Pool.Exec(ctx, `delete from filestore_filesystems where external_id = $1`, filesystemID)
-		_, _ = database.Pool.Exec(ctx, `delete from code_sessions where external_id = $1`, codeSessionID)
-		_, _ = database.Pool.Exec(ctx, `delete from sessions where external_id = $1`, publicSessionID)
-		_, _ = database.Pool.Exec(ctx, `delete from api_keys where key_hash = $1`, auth.HashAPIKey(workspaceAPIKey))
-		_, _ = database.Pool.Exec(ctx, `delete from users where external_id = $1`, accountExternalID)
-		_, _ = database.Pool.Exec(ctx, `delete from workspaces where external_id = $1`, workspaceExternalID)
-		_, _ = database.Pool.Exec(ctx, `delete from organizations where uuid = $1`, organizationUUID)
+		_, _ = pool.Exec(ctx, `delete from filestore_filesystems where external_id = $1`, filesystemID)
+		_, _ = pool.Exec(ctx, `delete from code_sessions where external_id = $1`, codeSessionID)
+		_, _ = pool.Exec(ctx, `delete from sessions where external_id = $1`, publicSessionID)
+		_, _ = pool.Exec(ctx, `delete from api_keys where key_hash = $1`, auth.HashAPIKey(workspaceAPIKey))
+		_, _ = pool.Exec(ctx, `delete from users where external_id = $1`, accountExternalID)
+		_, _ = pool.Exec(ctx, `delete from workspaces where external_id = $1`, workspaceExternalID)
+		_, _ = pool.Exec(ctx, `delete from organizations where uuid = $1`, organizationUUID)
+		pool.Close()
 		database.Close()
 	})
 
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into organizations (uuid, name, settings)
 		values ($1, $2, '{"org_taints":["restricted","compliance"]}'::jsonb)
 	`, organizationUUID, "Filestore auth test"); err != nil {
 		t.Fatalf("insert filestore auth organization: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into workspaces (uuid, external_id, organization_uuid, name, external_key_id)
 		values ($1, $2, $3, $4, 'key_filestore_auth')
 	`, workspaceUUID, workspaceExternalID, organizationUUID, "Filestore auth test"); err != nil {
 		t.Fatalf("insert filestore auth workspace: %v", err)
 	}
 	apiKeyUUID := uuid.NewString()
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into api_keys (uuid, external_id, workspace_uuid, key_hash, status)
 		values ($1, $2, $3, $4, 'active')
 	`, apiKeyUUID, "api_key_filestore_auth_"+suffix, workspaceUUID, auth.HashAPIKey(workspaceAPIKey)); err != nil {
 		t.Fatalf("insert filestore auth API key: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into users (uuid, external_id, organization_uuid, email, name, role)
 		values ($1, $2, $3, $4, $5, 'developer')
 	`, accountUUID, accountExternalID, organizationUUID, accountExternalID+"@example.com", "Filestore auth account"); err != nil {
@@ -625,7 +632,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 	sessionUUID := uuid.NewString()
 	environmentUUID := uuid.NewString()
 	agentUUID := uuid.NewString()
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into sessions (
 			uuid, external_id, organization_uuid, workspace_uuid,
 			created_by_api_key_uuid, environment_uuid, environment_external_id,
@@ -638,7 +645,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 		t.Fatalf("insert filestore auth session: %v", err)
 	}
 	codeSessionUUID := uuid.NewString()
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into code_sessions (
 			uuid, external_id, organization_uuid, workspace_uuid,
 			session_uuid, session_external_id, environment_uuid,
@@ -651,7 +658,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 		auth.HashAPIKey(codeSessionCredential)); err != nil {
 		t.Fatalf("insert filestore auth code session: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into filestore_filesystems (
 			uuid, external_id, organization_uuid, workspace_uuid,
 			session_uuid, code_session_uuid
@@ -661,7 +668,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 		t.Fatalf("insert filestore auth filesystem: %v", err)
 	}
 
-	return database, cfg, filestoreAuthFixture{
+	return database, pool, cfg, filestoreAuthFixture{
 		filesystemUUID:    filesystemUUID,
 		sessionExternalID: publicSessionID,
 		tokenIdentity: filestore.TokenIdentity{

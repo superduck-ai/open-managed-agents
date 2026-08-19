@@ -4,7 +4,7 @@
 
 Create Agent 弹窗同时提供结构化 `Rendered` 表单和 YAML/JSON `Raw` 编辑器。两种视图只编辑同一份 Draft，避免切换视图、切换格式或使用模板时出现字段丢失。
 
-本期沿用既有 `model: string | {id, speed}` 合同，不展示或接受 `model.effort`。后端现有 Agents API 已支持 multiagent、skills、MCP 和工具权限，因此无需新增路由或数据库迁移。
+本期沿用既有 `model: string | {id, speed}` 合同，不展示或接受 `model.effort`。Agents API 继续接收内嵌的 `mcp_servers` 快照；可复用自定义 MCP 由独立的工作区资源提供候选。
 
 ## 状态流
 
@@ -35,11 +35,14 @@ flowchart LR
 
 ### MCP 与 Tools
 
-- “添加 MCP 服务器”沿用 CMA 官方的 Popover 与 Directory 搜索列表，并在同一 Popover 中增加“自定义 MCP”页签作为 OMA 扩展；两个页签共享同一 Draft 写入接口。
-- 添加 Directory 或自定义 MCP 必须原子添加 `mcp_servers` 和同名 `mcp_toolset`；删除时原子删除二者。名称 trim 后必填、最长 255 个字符、只允许字母、数字、下划线、连字符和句点、不得包含连续两个下划线 `__`，并以大小写敏感方式在当前 Agent 内保持唯一；URL trim 后必填、最长 2048 个字符，且必须是不含内嵌凭据或 fragment 的 HTTP/HTTPS 绝对地址；每个 Agent 最多配置 20 个 MCP Server。Toolset 与逐工具配置名称必须唯一；MCP 工具名称只允许字母、数字、下划线、连字符和句点，最长 128 个字符。
-- 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API；自定义 MCP 在创建阶段不探测工具列表，只提供 Toolset 级权限。
+- “添加 MCP 服务器”沿用 Popover，并提供 Directory 与“自定义 MCP”两个候选页签。自定义页签只列出当前工作区未删除的 MCP 配置目录项，不在 Agent 表单内编辑名称或 URL；“创建 MCP 服务器”会在新标签页打开 `/workspaces/{workspaceId}/mcp-servers/new`，原 Draft 保留，窗口重新获得焦点时刷新候选。
+- 选择 Directory 或工作区 MCP 配置时，前端把当时的 `{name,type:"url",url}` 复制进 Agent Draft，并原子添加同名 `mcp_toolset`；Agent 不保存工作区 MCP 目录项 ID。删除 Agent Draft 中的 MCP 时原子删除 server 与 toolset。管理目录项后续修改或删除不会改写已有 Agent 版本，删除目录项也不检查 Agent 使用情况。
+- Agent 名称与 URL 的 Draft 校验保持不变：名称 trim 后必填、最长 255 个字符、只允许字母、数字、下划线、连字符和句点、不得包含 `__`，并在当前 Agent 内大小写敏感唯一；URL 必须是不含内嵌凭据或 fragment 的 HTTP/HTTPS 绝对地址；每个 Agent 最多 20 个 MCP Server。
+- 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API；工作区自定义 MCP 不探测工具列表，只提供 Toolset 级权限。
 - MCP 候选项优先加载 Directory 明确提供的 HTTP/HTTPS 图片 `icon_url`；若该字段是网页或图片加载失败，则依次尝试其同源 `/favicon.ico` 和基于该 Directory 公开主机名的公共 favicon 服务，仍不可用时回退到 Server 图标。自定义 MCP 不向图标组件提供 URL，因此前端不会探测 Agent 配置的 MCP 主机，也不会把自定义主机名发送给第三方。
-- Directory 加载失败不阻止使用自定义 MCP；关闭、取消或按 Escape 会丢弃尚未提交的名称和 URL，但不会关闭外层 Agent 编辑弹窗或修改 Draft。
+- Directory 与工作区 MCP 查询相互独立；任一来源失败都不会阻止另一页签选择，并分别提供重试。
+- 工作区候选与当前 Agent 已有 MCP 同名但 URL 不同时，不允许静默覆盖；候选保持不可添加并展示包含冲突名称的明确提示。
+- 合法 Raw 或既有 Agent 中未出现在工作区资源列表里的历史 MCP 仍在 Rendered 中按 Agent 快照回显，可调整权限、保存或移除，不会被强制迁移或丢弃。
 - 内置工具展示当前固定 Claude Code 2.1.120 的 22 项默认工具。列表优先展示原有 7 项：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`，随后展示 `task`、`ask_user_question`、`cron_create`、`cron_delete`、`cron_list`、`enter_plan_mode`、`enter_worktree`、`exit_plan_mode`、`exit_worktree`、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write`，默认 `always_allow`。`web_fetch` 映射到 Claude Code 在 Sandbox 内执行的 `WebFetch`，不表示 Messages API 的模型服务端工具；内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中；新 MCP 默认 `always_ask`。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
 - Toolset 级权限写入 `default_config` 并清空逐工具覆盖；逐工具权限与默认值一致时不保留冗余覆盖。
@@ -53,14 +56,14 @@ flowchart LR
 - 弹窗入口负责模型映射、模型目录加载、创建提交和导航。
 - Draft hook 负责 Rendered/Raw/格式状态及严格 codec。
 - Rendered 各区块只调用 Draft 纯函数，不直接构造请求体。
-- Models、Agents、Skills、Directory 查询经 feature API 适配，展示组件不依赖 Dashboard 页面模块；Models 通过 Anthropic `/v1` SDK client 加载，与 `/api` Console client 保持边界分离。
+- Models、Agents、Skills、Directory 查询经 feature API 适配；工作区 MCP 候选通过 Console API 加载。Models 通过 Anthropic `/v1` SDK client 加载，与 `/api` Console client 保持边界分离。
 - 工具权限读语义复用 Agent 详情页模型，写语义集中在创建 Draft 模型中。
 - 桌面端弹窗最大宽度为 `880px`，说明列收至 `220px`。该尺寸以改造前 `720px` 创建弹窗和项目 `780px` 宽表单为基准，为 Rendered 模式额外保留说明列空间，同时避免接近 `1120px` Raw 编辑器的视觉体量；窄屏仍使用视口内边距和单列布局。
 
 ## 验收
 
 - YAML 与 JSON 可往返全部支持字段，未知顶层字段和 `model.effort` 被拒绝。
-- Rendered 可完成 General、Multiagent、Skills、内置工具与 Directory/自定义 MCP 配置；既有 Custom Tool 可继续编辑和移除。
+- Rendered 可完成 General、Multiagent、Skills、内置工具与 Directory/工作区 MCP 选择；表单中不再出现自定义 MCP 名称或 URL 输入。既有 Custom Tool 与历史 MCP 可继续编辑权限、保存或移除。
 - MCP 与 toolset 始终成对，权限聚合和 deny 序列化与运行时一致。
 - 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
 - 弹窗支持键盘导航、浅深主题和窄屏单列布局。

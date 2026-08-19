@@ -27,12 +27,11 @@ import {
   toolsetPermission,
   updateCustomTool,
 } from './create-dialog-model';
-import { CreateDialogMcpPicker } from './create-dialog-mcp-picker';
+import { CreateDialogMcpPicker, type CreateDialogMcpPickerProps } from './create-dialog-mcp-picker';
 import {
   BUILT_IN_AGENT_TOOLSETS,
   builtInAgentToolDescription,
   effectiveToolPermission,
-  type McpDirectoryServer,
   type ToolPermissionState,
 } from './tools/model';
 
@@ -43,16 +42,14 @@ export function CreateDialogToolsEditor({
   directoryServers,
   directoryLoading,
   directoryError,
+  workspaceServers,
+  workspaceServersLoading,
+  workspaceServersError,
   onRetryDirectory,
+  onRetryWorkspaceServers,
+  onCreateWorkspaceServer,
   onChange,
-}: {
-  draft: CreateAgentInput;
-  directoryServers: McpDirectoryServer[];
-  directoryLoading: boolean;
-  directoryError: boolean;
-  onRetryDirectory: () => void;
-  onChange: (next: CreateAgentInput) => void;
-}) {
+}: CreateDialogMcpPickerProps) {
   const { msg } = useI18n();
   const hasBuiltInToolset = draft.tools.some((tool) => tool.type === 'agent_toolset_20260401');
 
@@ -135,7 +132,12 @@ export function CreateDialogToolsEditor({
           directoryServers={directoryServers}
           directoryLoading={directoryLoading}
           directoryError={directoryError}
+          workspaceServers={workspaceServers}
+          workspaceServersLoading={workspaceServersLoading}
+          workspaceServersError={workspaceServersError}
           onRetryDirectory={onRetryDirectory}
+          onRetryWorkspaceServers={onRetryWorkspaceServers}
+          onCreateWorkspaceServer={onCreateWorkspaceServer}
           onChange={onChange}
         />
       </div>

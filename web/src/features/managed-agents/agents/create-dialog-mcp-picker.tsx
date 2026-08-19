@@ -1,45 +1,51 @@
-import { ChevronsUpDown, Plus } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ChevronsUpDown, ExternalLink, Plus } from 'lucide-react';
+import { useCallback, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
+import { type WorkspaceMCPServer } from '../../../shared/api/workspaceMCPServers';
 import { Button } from '../../../shared/ui/button';
-import { Field, FieldDescription, FieldError, FieldLabel } from '../../../shared/ui/field';
-import { Input } from '../../../shared/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../shared/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { type CreateAgentInput } from '../types';
 import { toRecord } from '../utils';
-import { addMcpServer, type McpServerInputErrors } from './create-dialog-model';
+import { addMcpServer } from './create-dialog-model';
 import { CreateDialogPickerList } from './create-dialog-picker';
 import { type McpDirectoryServer } from './tools/model';
 import { RemoteServerIcon } from './tools/RemoteServerIcon';
 
 type McpPickerTab = 'directory' | 'custom';
 
+export type CreateDialogMcpPickerProps = {
+  draft: CreateAgentInput;
+  directoryServers: McpDirectoryServer[];
+  directoryLoading: boolean;
+  directoryError: boolean;
+  workspaceServers: WorkspaceMCPServer[];
+  workspaceServersLoading: boolean;
+  workspaceServersError: boolean;
+  onRetryDirectory: () => void;
+  onRetryWorkspaceServers: () => void;
+  onCreateWorkspaceServer: () => void;
+  onChange: (next: CreateAgentInput) => void;
+};
+
 export function CreateDialogMcpPicker({
   draft,
   directoryServers,
   directoryLoading,
   directoryError,
+  workspaceServers,
+  workspaceServersLoading,
+  workspaceServersError,
   onRetryDirectory,
+  onRetryWorkspaceServers,
+  onCreateWorkspaceServer,
   onChange,
-}: {
-  draft: CreateAgentInput;
-  directoryServers: McpDirectoryServer[];
-  directoryLoading: boolean;
-  directoryError: boolean;
-  onRetryDirectory: () => void;
-  onChange: (next: CreateAgentInput) => void;
-}) {
+}: CreateDialogMcpPickerProps) {
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<McpPickerTab>('directory');
   const [searchValue, setSearchValue] = useState('');
-  const [name, setName] = useState('');
-  const [url, setURL] = useState('');
-  const [errors, setErrors] = useState<McpServerInputErrors>({});
-  const [directoryAddFailed, setDirectoryAddFailed] = useState(false);
-  const nameInputRef = useRef<HTMLInputElement>(null);
-  const fieldID = useId();
+  const [addFailed, setAddFailed] = useState(false);
   const atLimit = draft.mcp_servers.length >= 20;
   const configuredServerNames = draft.mcp_servers.flatMap((server) => {
     const serverName = toRecord(server)?.name;
@@ -48,26 +54,28 @@ export function CreateDialogMcpPicker({
   const availableServers = directoryServers.filter(
     (server) => server.url && !configuredServerNames.includes(server.slug),
   );
+  const availableWorkspaceServers = workspaceServers.filter((server) => !configuredServerNames.includes(server.name));
+  const conflictingWorkspaceServers = workspaceServers.filter((server) => {
+    const configured = draft.mcp_servers.find((candidate) => toRecord(candidate)?.name === server.name);
+    const configuredURL = toRecord(configured)?.url;
+    return typeof configuredURL === 'string' && configuredURL !== server.url;
+  });
   const normalizedSearch = searchValue.trim().toLowerCase();
   const filteredServers = normalizedSearch
     ? availableServers.filter((server) =>
         `${server.displayName} ${server.slug} ${server.url}`.toLowerCase().includes(normalizedSearch),
       )
     : availableServers;
-
-  useEffect(() => {
-    if (open && activeTab === 'custom') {
-      nameInputRef.current?.focus();
-    }
-  }, [activeTab, open]);
+  const filteredWorkspaceServers = normalizedSearch
+    ? availableWorkspaceServers.filter((server) =>
+        `${server.name} ${server.url}`.toLowerCase().includes(normalizedSearch),
+      )
+    : availableWorkspaceServers;
 
   const reset = useCallback(() => {
     setActiveTab('directory');
     setSearchValue('');
-    setName('');
-    setURL('');
-    setErrors({});
-    setDirectoryAddFailed(false);
+    setAddFailed(false);
   }, []);
 
   const close = useCallback(() => {
@@ -89,18 +97,21 @@ export function CreateDialogMcpPicker({
     }
     const result = addMcpServer(draft, { name: server.slug, url: server.url });
     if (!result.ok) {
-      setDirectoryAddFailed(true);
+      setAddFailed(true);
       return;
     }
     onChange(result.draft);
     close();
   };
 
-  const addCustomServer = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const result = addMcpServer(draft, { name, url });
+  const addWorkspaceServer = (id: string) => {
+    const server = availableWorkspaceServers.find((candidate) => candidate.id === id);
+    if (!server) {
+      return;
+    }
+    const result = addMcpServer(draft, { name: server.name, url: server.url });
     if (!result.ok) {
-      setErrors(result.errors);
+      setAddFailed(true);
       return;
     }
     onChange(result.draft);
@@ -156,68 +167,61 @@ export function CreateDialogMcpPicker({
               searchValue={searchValue}
               onSearchChange={setSearchValue}
             />
-            {atLimit ? (
-              <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
-                {msg('managedAgents.agents.createDialog.mcpServerLimit', 'An agent can use at most 20 MCP servers.')}
-              </p>
-            ) : null}
-            {directoryAddFailed ? (
-              <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
-                {msg('managedAgents.agents.createDialog.mcpAddFailed', 'Could not add this MCP server.')}
-              </p>
-            ) : null}
+            <MCPPickerAlerts atLimit={atLimit} addFailed={addFailed} />
           </TabsContent>
           <TabsContent value="custom" className="mt-0">
-            <form className="space-y-4 p-4" onSubmit={addCustomServer}>
-              <Field data-invalid={Boolean(errors.name)}>
-                <FieldLabel htmlFor={`${fieldID}-name`}>
-                  {msg('managedAgents.agents.createDialog.customMcpName', 'Name')}
-                </FieldLabel>
-                <Input
-                  ref={nameInputRef}
-                  id={`${fieldID}-name`}
-                  value={name}
-                  placeholder="internal-docs"
-                  aria-invalid={Boolean(errors.name) || undefined}
-                  onChange={(event) => {
-                    setName(event.target.value);
-                    setErrors((current) => ({ ...current, name: undefined }));
-                  }}
-                />
-                <FieldError>{mcpInputError('name', errors.name, msg)}</FieldError>
-              </Field>
-              <Field data-invalid={Boolean(errors.url)}>
-                <FieldLabel htmlFor={`${fieldID}-url`}>
-                  {msg('managedAgents.agents.createDialog.customMcpUrl', 'MCP Server URL')}
-                </FieldLabel>
-                <Input
-                  id={`${fieldID}-url`}
-                  value={url}
-                  inputMode="url"
-                  placeholder="https://mcp.example.com/mcp"
-                  aria-invalid={Boolean(errors.url) || undefined}
-                  onChange={(event) => {
-                    setURL(event.target.value);
-                    setErrors((current) => ({ ...current, url: undefined }));
-                  }}
-                />
-                <FieldDescription>
-                  {msg('managedAgents.agents.createDialog.customMcpUrlHint', 'Only HTTP and HTTPS URLs are supported.')}
-                </FieldDescription>
-                <FieldError>{mcpInputError('url', errors.url, msg)}</FieldError>
-              </Field>
-              {errors.form ? (
-                <FieldError>
-                  {msg('managedAgents.agents.createDialog.mcpServerLimit', 'An agent can use at most 20 MCP servers.')}
-                </FieldError>
-              ) : null}
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={close}>
-                  {msg('common.cancel', 'Cancel')}
-                </Button>
-                <Button type="submit">{msg('managedAgents.agents.createDialog.addMcpServer', 'Add MCP server')}</Button>
-              </div>
-            </form>
+            <p className="border-b border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+              {msg(
+                'managedAgents.agents.createDialog.customMcpCopyHint',
+                'Selecting an entry copies its name and endpoint into the Agent configuration. Later directory changes do not update the Agent.',
+              )}
+            </p>
+            <CreateDialogPickerList
+              searchPlaceholder={msg(
+                'managedAgents.agents.createDialog.searchCustomMcpServers',
+                'Search custom MCP servers...',
+              )}
+              emptyLabel={msg('managedAgents.agents.createDialog.noCustomMcpServers', 'No custom MCP servers yet.')}
+              options={filteredWorkspaceServers.map((server) => ({
+                id: server.id,
+                label: server.name,
+                description: server.url,
+                disabled: atLimit,
+                icon: <RemoteServerIcon className="size-8" iconClassName="size-4" />,
+              }))}
+              selectedIds={[]}
+              loading={workspaceServersLoading}
+              error={workspaceServersError}
+              onRetry={onRetryWorkspaceServers}
+              onToggle={addWorkspaceServer}
+              searchValue={searchValue}
+              onSearchChange={setSearchValue}
+            />
+            <MCPPickerAlerts atLimit={atLimit} addFailed={addFailed} />
+            {conflictingWorkspaceServers.length > 0 ? (
+              <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
+                {msg(
+                  'managedAgents.agents.createDialog.mcpNameUrlConflict',
+                  'This Agent already uses {names} with a different URL. Remove the existing MCP before adding the workspace version.',
+                  { names: conflictingWorkspaceServers.map((server) => server.name).join(', ') },
+                )}
+              </p>
+            ) : null}
+            <div className="border-t border-border p-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start"
+                onClick={() => {
+                  onCreateWorkspaceServer();
+                  close();
+                }}
+              >
+                <ExternalLink className="size-4" aria-hidden />
+                {msg('mcpServers.create', 'Create MCP server')}
+              </Button>
+            </div>
           </TabsContent>
         </Tabs>
       </PopoverContent>
@@ -225,46 +229,20 @@ export function CreateDialogMcpPicker({
   );
 }
 
-function mcpInputError(
-  field: 'name' | 'url',
-  error: McpServerInputErrors[typeof field],
-  msg: ReturnType<typeof useI18n>['msg'],
-) {
-  if (!error) {
-    return null;
-  }
-  if (field === 'name') {
-    switch (error) {
-      case 'required':
-        return msg('managedAgents.agents.createDialog.customMcpNameRequired', 'Name is required.');
-      case 'too_long':
-        return msg('managedAgents.agents.createDialog.customMcpNameTooLong', 'Name must be at most 255 characters.');
-      case 'invalid':
-        return msg(
-          'managedAgents.agents.createDialog.customMcpNameInvalid',
-          'Use only letters, numbers, underscores, hyphens, and periods.',
-        );
-      case 'ambiguous':
-        return msg(
-          'managedAgents.agents.createDialog.customMcpNameAmbiguous',
-          'Name must not contain two consecutive underscores.',
-        );
-      default:
-        return msg('managedAgents.agents.createDialog.customMcpNameDuplicate', 'This MCP server name is already used.');
-    }
-  }
-  switch (error) {
-    case 'required':
-      return msg('managedAgents.agents.createDialog.customMcpUrlRequired', 'MCP Server URL is required.');
-    case 'too_long':
-      return msg(
-        'managedAgents.agents.createDialog.customMcpUrlTooLong',
-        'MCP Server URL must be at most 2048 characters.',
-      );
-    default:
-      return msg(
-        'managedAgents.agents.createDialog.customMcpUrlInvalid',
-        'Enter a valid HTTP or HTTPS MCP Server URL.',
-      );
-  }
+function MCPPickerAlerts({ atLimit, addFailed }: { atLimit: boolean; addFailed: boolean }) {
+  const { msg } = useI18n();
+  return (
+    <>
+      {atLimit ? (
+        <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
+          {msg('managedAgents.agents.createDialog.mcpServerLimit', 'An agent can use at most 20 MCP servers.')}
+        </p>
+      ) : null}
+      {addFailed ? (
+        <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
+          {msg('managedAgents.agents.createDialog.mcpAddFailed', 'Could not add this MCP server.')}
+        </p>
+      ) : null}
+    </>
+  );
 }

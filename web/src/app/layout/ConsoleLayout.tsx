@@ -834,6 +834,7 @@ const workspaceBuildPathByHref: Record<string, string> = {
   '/playground': 'playground',
   '/files': 'files',
   '/skills': 'skills',
+  '/mcp-servers': 'mcp-servers',
   '/batches': 'batches',
 };
 
@@ -885,7 +886,10 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   nextPath ??= currentPath
     .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
     .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
-    .replace(/^\/workspaces\/[^/]+\/(playground|files|skills|batches)/, `/workspaces/${encodedWorkspaceId}/$1`)
+    .replace(
+      /^\/workspaces\/[^/]+\/(playground|files|skills|mcp-servers|batches)/,
+      `/workspaces/${encodedWorkspaceId}/$1`,
+    )
     .replace(
       /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)/,
       `/workspaces/${encodedWorkspaceId}/$1`,
@@ -972,9 +976,9 @@ function isWideConsolePath(currentPath: string) {
 
 function isBuildPath(currentPath: string) {
   return (
-    ['/workbench', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    ['/workbench', '/playground', '/files', '/skills', '/mcp-servers', '/batches'].includes(currentPath) ||
     currentPath.startsWith('/workbench/') ||
-    /^\/workspaces\/[^/]+\/(?:playground|files|skills|batches)(\/|$)/.test(currentPath)
+    /^\/workspaces\/[^/]+\/(?:playground|files|skills|mcp-servers|batches)(\/|$)/.test(currentPath)
   );
 }
 

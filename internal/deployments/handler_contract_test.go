@@ -61,6 +61,23 @@ func TestScheduleResponseKeepsInvalidStoredCron(t *testing.T) {
 	}
 }
 
+func TestDeploymentResponseShowsUpcomingRunsWhilePaused(t *testing.T) {
+	response, err := responseFromDeployment(db.Deployment{
+		ExternalID: "deployment_test",
+		Status:     "paused",
+		Schedule:   json.RawMessage(`{"type":"cron","expression":"0 9 * * *","timezone":"UTC"}`),
+	}, time.Date(2026, time.August, 19, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("responseFromDeployment() error = %v", err)
+	}
+	if response.Schedule == nil || len(response.Schedule.UpcomingRunsAt) != upcomingRunCount {
+		t.Fatalf("paused upcoming_runs_at = %#v", response.Schedule)
+	}
+	if response.Schedule.UpcomingRunsAt[0] != "2026-08-19T09:00:00Z" {
+		t.Fatalf("paused upcoming_runs_at[0] = %q", response.Schedule.UpcomingRunsAt[0])
+	}
+}
+
 func TestDeploymentResourcesResponse(t *testing.T) {
 	t.Run("rejects invalid stored resources", func(t *testing.T) {
 		if _, err := deploymentResourcesResponse(json.RawMessage(`{"type":"file"}`)); err == nil {

@@ -1174,7 +1174,7 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 		deployment.Schedule,
 		deployment.LastRunAt,
 		now,
-		deployment.Status != "active" || deployment.ArchivedAt != nil,
+		deployment.ArchivedAt != nil,
 	)
 	return deploymentResponse{
 		ID:            deployment.ExternalID,

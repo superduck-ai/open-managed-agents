@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -44,11 +46,64 @@ func parseDeploymentSchedule(raw json.RawMessage) (parsedSchedule, error) {
 	if config.Type != "cron" {
 		return parsedSchedule{}, errors.New("schedule.type must be cron")
 	}
-	cronSchedule, err := cronParser.Parse("CRON_TZ=" + config.Timezone + " " + config.Expression)
+	if strings.ContainsAny(config.Expression, "LW#?@") {
+		return parsedSchedule{}, errors.New("schedule.expression contains unsupported syntax")
+	}
+	config.Timezone = strings.TrimSpace(config.Timezone)
+	if config.Timezone == "" || config.Timezone == "Local" {
+		return parsedSchedule{}, errors.New("schedule.timezone must be a valid IANA timezone")
+	}
+	if _, err := time.LoadLocation(config.Timezone); err != nil {
+		return parsedSchedule{}, errors.New("schedule.timezone must be a valid IANA timezone")
+	}
+	cronSchedule, err := cronParser.Parse("CRON_TZ=" + config.Timezone + " " + normalizeSundayAlias(config.Expression))
 	if err != nil {
 		return parsedSchedule{}, fmt.Errorf("schedule.expression %w", err)
 	}
 	return parsedSchedule{config: config, cron: cronSchedule}, nil
+}
+
+func normalizeSundayAlias(expression string) string {
+	fields := strings.Fields(expression)
+	if len(fields) != 5 {
+		return expression
+	}
+	items := strings.Split(fields[4], ",")
+	normalized := make([]string, 0, len(items)+1)
+	for _, item := range items {
+		base, stepText, hasStep := strings.Cut(item, "/")
+		if base == "7" {
+			normalized = append(normalized, "0")
+			continue
+		}
+		startText, endText, hasRange := strings.Cut(base, "-")
+		if !hasRange || endText != "7" {
+			normalized = append(normalized, item)
+			continue
+		}
+		start, startErr := strconv.Atoi(startText)
+		step := 1
+		var stepErr error
+		if hasStep {
+			step, stepErr = strconv.Atoi(stepText)
+		}
+		if startErr != nil || stepErr != nil || start > 7 || step <= 0 {
+			normalized = append(normalized, item)
+			continue
+		}
+		if start < 7 {
+			rangeItem := startText + "-6"
+			if hasStep {
+				rangeItem += "/" + stepText
+			}
+			normalized = append(normalized, rangeItem)
+		}
+		if (7-start)%step == 0 {
+			normalized = append(normalized, "0")
+		}
+	}
+	fields[4] = strings.Join(normalized, ",")
+	return strings.Join(fields, " ")
 }
 
 func upcomingRuns(schedule cron.Schedule, now time.Time, inactive bool) []string {

@@ -57,7 +57,7 @@ OMA 使用 River `v0.42.0` 持久执行 schedule。River 官方 migrator 在应�
 
 Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
-- Deployment schedule 由 `robfig/cron/v3` 解析五段 Cron 和 timezone；解析失败时返回参数错误。
+- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；DOW 接受 `0-7` 且 `7` 等同 Sunday，`L/W/#/?/@` 等扩展语法被拒绝，再由 `robfig/cron/v3` 解析；解析失败时返回参数错误。
 - `upcoming_runs_at` 返回最多五个名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - River Job 直接使用名义 occurrence，不增加私有 jitter 算法。
@@ -95,7 +95,7 @@ sequenceDiagram
 - 其他引用或配置失败生成最终失败 Run。只有公开的 14 类 paused-reason error 会自动暂停；`session_rate_limited_error` 与 `session_creation_rejected_error` 不暂停，并继续下一个 occurrence。
 - 数据库或进程级失败交给 River 重试；Run、Session 与 Deployment 状态在同一个 Yourbatis 事务中提交或回滚，当前 River Job 由 Worker 返回结果后交给 River 完成。occurrence 唯一索引保证业务事务提交后发生进程故障时，River 重试不会创建重复 Run。
 - paused Deployment 仍允许 manual Run。
-- paused 或 archived Deployment 的 `upcoming_runs_at` 为空。
+- active 或 paused Deployment 的 `upcoming_runs_at` 返回接下来最多五个名义时刻；只有 archived Deployment 返回空数组。
 
 组织级最多保留 1,000 个未归档且 schedule 非空的 Deployment。创建以及从无 schedule 更新为有 schedule 时进行 best-effort 计数检查；并发请求可能短暂越过限制，不额外引入 organization 锁或配额计数器。
 

@@ -1,0 +1,37 @@
+---
+title: "智能体生命周期"
+description: "检索、搜索、更新、版本化和归档智能体。"
+---
+
+所有智能体端点要求 `?beta=true`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/v1/agents` | 创建智能体 |
+| `GET` | `/v1/agents` | 列出当前版本 |
+| `POST` | `/v1/agents:search` | 按名称搜索 |
+| `GET` | `/v1/agents/{id}` | 读取当前或指定 `version` |
+| `POST` | `/v1/agents/{id}` | 更新并创建新版本 |
+| `POST` | `/v1/agents/{id}/archive` | 归档 |
+| `GET` | `/v1/agents/{id}/versions` | 列出版本 |
+
+## 更新语义
+
+更新请求必须包含当前整数 `version`。成功时版本加一；并发冲突返回 `409 conflict_error`。归档智能体不能更新。
+
+```json
+{
+  "version": 3,
+  "description": "Maintains repositories and verifies focused changes.",
+  "metadata": { "release": "2026-08" }
+}
+```
+
+## 列表与搜索
+
+列表支持 `limit`、`page`、`include_archived`、`created_at[gte]` 和 `created_at[lte]`。搜索请求把 `name`、`limit`、`page` 与 `include_archived` 放在 JSON 请求体中。
+
+<CardGroup cols={2}>
+  <Card title="创建智能体" href="/docs/zh/api/endpoints/create-agent" />
+  <Card title="列出智能体" href="/docs/zh/api/endpoints/list-agents" />
+</CardGroup>

@@ -1,0 +1,32 @@
+---
+title: "Events and streaming"
+description: "Send session input, read durable history, and process real-time SSE events."
+---
+
+Events are OMA's durable interaction protocol. Client input and runtime output become history records; SSE provides low-latency delivery while list endpoints recover disconnects.
+
+## Client input
+
+Supported inputs are `user.message`, `system.message`, `user.interrupt`, `user.tool_confirmation`, `user.tool_result`, `user.custom_tool_result`, and `user.define_outcome`.
+
+```bash
+curl 'http://localhost:38080/v1/sessions/sesn_01.../events?beta=true' \
+  -H 'Authorization: Bearer sk-ant-local-default' \
+  -H 'Content-Type: application/json' \
+  -d '{"events":[{"type":"user.message","content":[{"type":"text","text":"Run the tests"}]}]}'
+```
+
+Runtime output includes agent messages and thinking, tool calls and results, session/thread state, thread coordination, and span events. `event_start` and `event_delta` are real-time deltas and are not stored in history.
+
+## Subscribe with SSE
+
+```bash
+curl -N 'http://localhost:38080/v1/sessions/sesn_01.../events/stream?beta=true' \
+  -H 'Authorization: Bearer sk-ant-local-default'
+```
+
+Use `GET .../events` with time, type, order, and cursor filters after reconnecting, deduplicate by event ID, then resume SSE. Threads expose their own history and stream endpoints.
+
+Return confirmations and custom tool results with the original call ID. Multi-agent results also need `session_thread_id`.
+
+<Card title="Events API" href="/docs/en/api/session-events/list-events" />

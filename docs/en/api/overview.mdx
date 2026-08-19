@@ -1,0 +1,137 @@
+---
+title: "API overview"
+description: "Use the OMA `/v1` API to create and run managed agents."
+---
+
+OMA provides a resource-oriented HTTP API and preserves stable request, response, and error shapes for compatible SDKs. The default local base URL is:
+
+```text
+http://localhost:38080
+```
+
+Public resource endpoints are under `/v1`. Console routes under `/api`, `/auth`, and `/web-api` are not part of the public SDK contract.
+
+## Prerequisites
+
+You need a reachable OMA deployment and workspace API key. Managed-agent execution also needs PostgreSQL, S3-compatible storage, and an available environment runner. Messages requires the operator to configure `anthropic_upstream.api_key`.
+
+## First request
+
+```bash
+curl http://localhost:38080/v1/models \
+  -H 'Authorization: Bearer sk-ant-local-default'
+```
+
+You can also use `X-Api-Key`:
+
+```bash
+curl http://localhost:38080/v1/models \
+  -H 'X-Api-Key: sk-ant-local-default'
+```
+
+## Client SDKs
+
+Configure a compatible SDK with the OMA base URL and API key. The repository continuously exercises core resources through Go, Python, and TypeScript SDKs; other languages can use HTTP directly.
+
+<CodeGroup>
+```python Python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-ant-local-default",
+    base_url="http://localhost:38080",
+)
+```
+
+```typescript TypeScript
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  apiKey: "sk-ant-local-default",
+  baseURL: "http://localhost:38080",
+});
+```
+</CodeGroup>
+
+## Common headers
+
+| Header | Requirement | Purpose |
+| --- | --- | --- |
+| `Authorization: Bearer <key>` | Choose one | Bearer API key |
+| `X-Api-Key: <key>` | Choose one | API key header commonly used by compatible SDKs |
+| `Content-Type: application/json` | JSON requests | Request body encoding |
+| `anthropic-version: 2023-06-01` | Recommended for SDK-compatible calls | API compatibility version |
+| `anthropic-beta` | Resource-specific | Enables selected beta contracts |
+
+<Warning>
+  OMA does not have one universal beta request template. Some resources require `?beta=true`, while others also validate a resource-specific `anthropic-beta` value. Follow each resource page.
+</Warning>
+
+## Core resources
+
+<CardGroup cols={2}>
+  <Card title="Models" href="/docs/en/api/models/list-models">
+    Inspect the models and capabilities exposed by this deployment.
+  </Card>
+  <Card title="Messages" href="/docs/en/api/messages/create-a-message">
+    Send model requests and run large asynchronous workloads through nested batch operations.
+  </Card>
+  <Card title="Agents" href="/docs/en/api/agents/create-agent">
+    Manage versioned model, tool, and instruction definitions.
+  </Card>
+  <Card title="Sessions" href="/docs/en/api/sessions/create-session">
+    Create stateful tasks and manage session events, resources, threads, and thread event streams.
+  </Card>
+  <Card title="Environments" href="/docs/en/api/environments/create-environment">
+    Manage sandbox environments, work items, and runtime configuration.
+  </Card>
+  <Card title="Files" href="/docs/en/api/files/upload-file">
+    Manage input files and task artifacts.
+  </Card>
+  <Card title="Skills" href="/docs/en/api/skills/create-skill">
+    Manage reusable skills and their versions.
+  </Card>
+  <Card title="Deployments" href="/docs/en/api/deployments/create-deployment">
+    Manage repeatable deployments and deployment runs.
+  </Card>
+  <Card title="Memory stores" href="/docs/en/api/memory-stores/create-a-memory-store">
+    Manage memory stores, memories, and memory versions.
+  </Card>
+  <Card title="Vaults" href="/docs/en/api/vaults/create-vault">
+    Manage vaults and their credentials.
+  </Card>
+  <Card title="Webhooks" href="/docs/en/api/webhooks/create-webhook">
+    Forward state events to external systems.
+  </Card>
+</CardGroup>
+
+The API reference follows resource ownership: Batches are nested under Messages and Work under Environments; Events, Resources, Threads, and thread Events are nested under Sessions; skill Versions, Memories and memory Versions, and Vault Credentials are nested under their respective parent resources. `/v1/organizations` and Filestore are administrative or runtime contracts outside this application-facing reference.
+
+## Responses and tracing
+
+Successful responses use JSON. The service returns a `request-id` header and includes the same identifier in error bodies for log correlation.
+
+```json
+{
+  "type": "error",
+  "request_id": "req_...",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "..."
+  }
+}
+```
+
+## Limits and availability
+
+OMA has no single hosted global rate tier. Request concurrency, file capacity, batch workers, environment runners, sandboxes, and upstream model limits are determined by deployment configuration and infrastructure. Clients should still handle `429`, temporary `5xx`, long-lived SSE, and disconnects.
+
+<Note>
+  Your self-hosted OMA deployment defines its available regions, ingress addresses, service tiers, and SLAs.
+</Note>
+
+<CardGroup cols={3}>
+  <Card title="Authentication" href="/docs/en/api/authentication" />
+  <Card title="Pagination" href="/docs/en/api/pagination" />
+  <Card title="Errors" href="/docs/en/api/errors" />
+</CardGroup>

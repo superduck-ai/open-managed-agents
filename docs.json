@@ -1,176 +1,817 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "maple",
+  "theme": "luma",
   "name": "Open Managed Agents",
   "description": "Open-source, self-hosted infrastructure for managed AI agents.",
   "colors": {
-    "primary": "#525252",
-    "light": "#171717",
-    "dark": "#D4D4D4"
+    "primary": "#18181B",
+    "light": "#FAFAFA",
+    "dark": "#737373"
+  },
+  "appearance": {
+    "default": "system",
+    "strict": false
+  },
+  "fonts": {
+    "family": "Inter"
   },
   "favicon": "/favicon.svg",
   "logo": {
     "light": "/logo/light.svg",
     "dark": "/logo/dark.svg"
   },
+  "redirects": [
+    {
+      "source": "/zh/docs/:slug*",
+      "destination": "/docs/zh/:slug*",
+      "permanent": true
+    },
+    {
+      "source": "/zh/api/:slug*",
+      "destination": "/docs/zh/api/:slug*",
+      "permanent": true
+    },
+    {
+      "source": "/en/docs/:slug*",
+      "destination": "/docs/en/:slug*",
+      "permanent": true
+    },
+    {
+      "source": "/en/api/:slug*",
+      "destination": "/docs/en/api/:slug*",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/mcp-connectors",
+      "destination": "/docs/zh/mcp-connector",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/sandbox-security",
+      "destination": "/docs/zh/self-hosted-sandboxes-security",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/sandbox-runtime-reference",
+      "destination": "/docs/zh/cloud-sandboxes-reference",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/events-streaming",
+      "destination": "/docs/zh/events-and-streaming",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/outcomes",
+      "destination": "/docs/zh/define-outcomes",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/multiagent",
+      "destination": "/docs/zh/multiagent-orchestration",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/limits",
+      "destination": "/docs/zh/budgets",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/concepts",
+      "destination": "/docs/zh/overview",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/compatibility",
+      "destination": "/docs/zh/reference",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/mcp-connectors",
+      "destination": "/docs/en/mcp-connector",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/sandbox-security",
+      "destination": "/docs/en/self-hosted-sandboxes-security",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/sandbox-runtime-reference",
+      "destination": "/docs/en/cloud-sandboxes-reference",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/events-streaming",
+      "destination": "/docs/en/events-and-streaming",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/outcomes",
+      "destination": "/docs/en/define-outcomes",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/multiagent",
+      "destination": "/docs/en/multiagent-orchestration",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/limits",
+      "destination": "/docs/en/budgets",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/concepts",
+      "destination": "/docs/en/overview",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/compatibility",
+      "destination": "/docs/en/reference",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/deployment",
+      "destination": "/docs/zh/self-hosted-sandboxes",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/configuration",
+      "destination": "/docs/zh/reference",
+      "permanent": true
+    },
+    {
+      "source": "/docs/zh/observability",
+      "destination": "/docs/zh/reference",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/deployment",
+      "destination": "/docs/en/self-hosted-sandboxes",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/configuration",
+      "destination": "/docs/en/reference",
+      "permanent": true
+    },
+    {
+      "source": "/docs/en/observability",
+      "destination": "/docs/en/reference",
+      "permanent": true
+    }
+  ],
   "navigation": {
     "languages": [
       {
         "language": "zh-CN",
         "default": true,
-        "navbar": {
-          "links": [
-            {
-              "label": "GitHub",
-              "href": "https://github.com/superduck-ai/open-managed-agents"
-            }
-          ],
-          "primary": {
-            "type": "button",
-            "label": "快速开始",
-            "href": "/zh/docs/quickstart"
-          }
-        },
         "tabs": [
           {
             "tab": "文档",
-            "icon": "book-open",
             "groups": [
               {
-                "group": "开始使用",
+                "group": "第一步",
                 "pages": [
-                  "zh/docs/overview",
-                  "zh/docs/quickstart"
+                  "docs/zh/overview",
+                  "docs/zh/quickstart",
+                  "docs/zh/onboarding",
+                  "docs/zh/migration"
                 ]
               },
               {
-                "group": "理解 OMA",
+                "group": "定义智能体",
                 "pages": [
-                  "zh/docs/concepts"
+                  "docs/zh/agent-setup",
+                  "docs/zh/tools",
+                  "docs/zh/mcp-connector",
+                  "docs/zh/permission-policies",
+                  "docs/zh/skills"
                 ]
               },
               {
-                "group": "部署与运维",
+                "group": "配置智能体环境",
                 "pages": [
-                  "zh/docs/deployment",
-                  "zh/docs/configuration"
+                  "docs/zh/environments",
+                  "docs/zh/cloud-sandboxes-reference",
+                  {
+                    "group": "自托管沙箱",
+                    "expanded": false,
+                    "pages": [
+                      "docs/zh/self-hosted-sandboxes",
+                      "docs/zh/self-hosted-sandboxes-security"
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "将工作委派给智能体",
+                "pages": [
+                  "docs/zh/sessions",
+                  "docs/zh/session-operations",
+                  "docs/zh/events-and-streaming",
+                  "docs/zh/budgets",
+                  "docs/zh/webhooks",
+                  "docs/zh/define-outcomes",
+                  "docs/zh/vaults"
+                ]
+              },
+              {
+                "group": "管理智能体上下文",
+                "pages": [
+                  "docs/zh/github",
+                  "docs/zh/files",
+                  {
+                    "group": "构建持久记忆",
+                    "expanded": false,
+                    "pages": [
+                      "docs/zh/memory",
+                      "docs/zh/dreams"
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "高级编排",
+                "pages": [
+                  "docs/zh/multiagent-orchestration",
+                  "docs/zh/scheduled-deployments"
+                ]
+              },
+              {
+                "group": "参考",
+                "pages": [
+                  "docs/zh/reference"
                 ]
               }
             ]
           },
           {
             "tab": "API 参考",
-            "icon": "brackets-curly",
             "groups": [
               {
                 "group": "开始使用",
                 "pages": [
-                  "zh/api/overview",
-                  "zh/api/authentication",
-                  "zh/api/pagination",
-                  "zh/api/errors"
+                  "docs/zh/api/overview",
+                  "docs/zh/api/authentication",
+                  "docs/zh/api/versioning-beta",
+                  "docs/zh/api/pagination",
+                  "docs/zh/api/errors"
                 ]
               },
               {
-                "group": "Models",
+                "group": "核心 API",
                 "pages": [
-                  "zh/api/endpoints/list-models"
+                  {
+                    "group": "消息",
+                    "pages": [
+                      "POST /v1/messages",
+                      {
+                        "group": "批处理",
+                        "pages": [
+                          "POST /v1/messages/batches",
+                          "GET /v1/messages/batches",
+                          "GET /v1/messages/batches/{message_batch_id}",
+                          "DELETE /v1/messages/batches/{message_batch_id}",
+                          "POST /v1/messages/batches/{message_batch_id}/cancel",
+                          "GET /v1/messages/batches/{message_batch_id}/results"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "模型",
+                    "pages": [
+                      "GET /v1/models"
+                    ]
+                  },
+                  {
+                    "group": "文件",
+                    "pages": [
+                      "POST /v1/files",
+                      "GET /v1/files",
+                      "GET /v1/files/{file_id}",
+                      "DELETE /v1/files/{file_id}",
+                      "GET /v1/files/{file_id}/content"
+                    ]
+                  },
+                  {
+                    "group": "技能",
+                    "pages": [
+                      "POST /v1/skills",
+                      "GET /v1/skills",
+                      "GET /v1/skills/{skill_id}",
+                      "DELETE /v1/skills/{skill_id}",
+                      {
+                        "group": "版本",
+                        "pages": [
+                          "POST /v1/skills/{skill_id}/versions",
+                          "GET /v1/skills/{skill_id}/versions",
+                          "GET /v1/skills/{skill_id}/versions/{version}",
+                          "DELETE /v1/skills/{skill_id}/versions/{version}",
+                          "GET /v1/skills/{skill_id}/versions/{version}/content"
+                        ]
+                      }
+                    ]
+                  }
                 ]
               },
               {
-                "group": "Agents",
+                "group": "托管智能体",
                 "pages": [
-                  "zh/api/endpoints/list-agents",
-                  "zh/api/endpoints/create-agent"
+                  {
+                    "group": "智能体",
+                    "pages": [
+                      "POST /v1/agents",
+                      "GET /v1/agents",
+                      "GET /v1/agents/{agent_id}",
+                      "POST /v1/agents/{agent_id}",
+                      "POST /v1/agents/{agent_id}/archive",
+                      "GET /v1/agents/{agent_id}/versions",
+                      "POST /v1/agents:search"
+                    ]
+                  },
+                  {
+                    "group": "环境",
+                    "pages": [
+                      "POST /v1/environments",
+                      "GET /v1/environments",
+                      "GET /v1/environments/{environment_id}",
+                      "POST /v1/environments/{environment_id}",
+                      "DELETE /v1/environments/{environment_id}",
+                      "POST /v1/environments/{environment_id}/archive",
+                      {
+                        "group": "woker",
+                        "pages": [
+                          "GET /v1/environments/{environment_id}/work/stats",
+                          "GET /v1/environments/{environment_id}/work/poll",
+                          "POST /v1/environments/{environment_id}/work/{work_id}/ack",
+                          "POST /v1/environments/{environment_id}/work/{work_id}/heartbeat",
+                          "POST /v1/environments/{environment_id}/work/{work_id}/stop",
+                          "GET /v1/environments/{environment_id}/work/{work_id}",
+                          "POST /v1/environments/{environment_id}/work/{work_id}",
+                          "GET /v1/environments/{environment_id}/work"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "会话",
+                    "pages": [
+                      "POST /v1/sessions",
+                      "GET /v1/sessions",
+                      "GET /v1/sessions/{session_id}",
+                      "POST /v1/sessions/{session_id}",
+                      "DELETE /v1/sessions/{session_id}",
+                      "POST /v1/sessions/{session_id}/archive",
+                      {
+                        "group": "事件",
+                        "pages": [
+                          "GET /v1/sessions/{session_id}/events",
+                          "POST /v1/sessions/{session_id}/events",
+                          "GET /v1/sessions/{session_id}/events/stream"
+                        ]
+                      },
+                      {
+                        "group": "资源",
+                        "pages": [
+                          "GET /v1/sessions/{session_id}/resources",
+                          "POST /v1/sessions/{session_id}/resources",
+                          "GET /v1/sessions/{session_id}/resources/{resource_id}",
+                          "DELETE /v1/sessions/{session_id}/resources/{resource_id}",
+                          "POST /v1/sessions/{session_id}/resources/{resource_id}"
+                        ]
+                      },
+                      {
+                        "group": "线程",
+                        "pages": [
+                          "GET /v1/sessions/{session_id}/threads",
+                          "GET /v1/sessions/{session_id}/threads/{thread_id}",
+                          "POST /v1/sessions/{session_id}/threads/{thread_id}/archive",
+                          {
+                            "group": "事件",
+                            "pages": [
+                              "GET /v1/sessions/{session_id}/threads/{thread_id}/events",
+                              "GET /v1/sessions/{session_id}/threads/{thread_id}/stream"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "部署",
+                    "pages": [
+                      "POST /v1/deployments",
+                      "GET /v1/deployments",
+                      "GET /v1/deployments/{deployment_id}",
+                      "POST /v1/deployments/{deployment_id}",
+                      "POST /v1/deployments/{deployment_id}/archive",
+                      "POST /v1/deployments/{deployment_id}/pause",
+                      "POST /v1/deployments/{deployment_id}/unpause",
+                      "POST /v1/deployments/{deployment_id}/run"
+                    ]
+                  },
+                  {
+                    "group": "部署运行",
+                    "pages": [
+                      "GET /v1/deployment_runs",
+                      "GET /v1/deployment_runs/{deployment_run_id}"
+                    ]
+                  },
+                  {
+                    "group": "密钥库",
+                    "pages": [
+                      "POST /v1/vaults",
+                      "GET /v1/vaults",
+                      "GET /v1/vaults/{vault_id}",
+                      "POST /v1/vaults/{vault_id}",
+                      "DELETE /v1/vaults/{vault_id}",
+                      "POST /v1/vaults/{vault_id}/archive",
+                      {
+                        "group": "凭据",
+                        "pages": [
+                          "POST /v1/vaults/{vault_id}/credentials",
+                          "GET /v1/vaults/{vault_id}/credentials",
+                          "GET /v1/vaults/{vault_id}/credentials/{credential_id}",
+                          "POST /v1/vaults/{vault_id}/credentials/{credential_id}",
+                          "DELETE /v1/vaults/{vault_id}/credentials/{credential_id}",
+                          "POST /v1/vaults/{vault_id}/credentials/{credential_id}/archive",
+                          "POST /v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "记忆存储",
+                    "pages": [
+                      "POST /v1/memory_stores",
+                      "GET /v1/memory_stores",
+                      "GET /v1/memory_stores/{memory_store_id}",
+                      "POST /v1/memory_stores/{memory_store_id}",
+                      "DELETE /v1/memory_stores/{memory_store_id}",
+                      "POST /v1/memory_stores/{memory_store_id}/archive",
+                      {
+                        "group": "记忆",
+                        "pages": [
+                          "POST /v1/memory_stores/{memory_store_id}/memories",
+                          "GET /v1/memory_stores/{memory_store_id}/memories",
+                          "GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}",
+                          "POST /v1/memory_stores/{memory_store_id}/memories/{memory_id}",
+                          "DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}"
+                        ]
+                      },
+                      {
+                        "group": "版本",
+                        "pages": [
+                          "GET /v1/memory_stores/{memory_store_id}/memory_versions",
+                          "GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}",
+                          "POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact"
+                        ]
+                      }
+                    ]
+                  }
                 ]
               },
               {
-                "group": "Sessions",
+                "group": "Webhook",
                 "pages": [
-                  "zh/api/endpoints/create-session",
-                  "zh/api/endpoints/retrieve-session"
+                  "POST /v1/webhooks",
+                  "GET /v1/webhooks",
+                  "GET /v1/webhooks/{webhook_id}",
+                  "POST /v1/webhooks/{webhook_id}",
+                  "DELETE /v1/webhooks/{webhook_id}",
+                  "POST /v1/webhooks/{webhook_id}/regenerate_signing_secret"
                 ]
               }
-            ]
+            ],
+            "openapi": "openapi/oma.zh.json"
           }
         ]
       },
       {
         "language": "en",
-        "navbar": {
-          "links": [
-            {
-              "label": "GitHub",
-              "href": "https://github.com/superduck-ai/open-managed-agents"
-            }
-          ],
-          "primary": {
-            "type": "button",
-            "label": "Quickstart",
-            "href": "/en/docs/quickstart"
-          }
-        },
         "tabs": [
           {
             "tab": "Documentation",
-            "icon": "book-open",
             "groups": [
               {
-                "group": "Get started",
+                "group": "First steps",
                 "pages": [
-                  "en/docs/overview",
-                  "en/docs/quickstart"
+                  "docs/en/overview",
+                  "docs/en/quickstart",
+                  "docs/en/onboarding",
+                  "docs/en/migration"
                 ]
               },
               {
-                "group": "Understand OMA",
+                "group": "Define your agent",
                 "pages": [
-                  "en/docs/concepts"
+                  "docs/en/agent-setup",
+                  "docs/en/tools",
+                  "docs/en/mcp-connector",
+                  "docs/en/permission-policies",
+                  "docs/en/skills"
                 ]
               },
               {
-                "group": "Deploy and operate",
+                "group": "Configure agent environment",
                 "pages": [
-                  "en/docs/deployment",
-                  "en/docs/configuration"
+                  "docs/en/environments",
+                  "docs/en/cloud-sandboxes-reference",
+                  {
+                    "group": "Self-hosted sandboxes",
+                    "expanded": false,
+                    "pages": [
+                      "docs/en/self-hosted-sandboxes",
+                      "docs/en/self-hosted-sandboxes-security"
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "Delegate work to your agent",
+                "pages": [
+                  "docs/en/sessions",
+                  "docs/en/session-operations",
+                  "docs/en/events-and-streaming",
+                  "docs/en/budgets",
+                  "docs/en/webhooks",
+                  "docs/en/define-outcomes",
+                  "docs/en/vaults"
+                ]
+              },
+              {
+                "group": "Manage agent context",
+                "pages": [
+                  "docs/en/github",
+                  "docs/en/files",
+                  {
+                    "group": "Build persistent memory",
+                    "expanded": false,
+                    "pages": [
+                      "docs/en/memory",
+                      "docs/en/dreams"
+                    ]
+                  }
+                ]
+              },
+              {
+                "group": "Advanced orchestration",
+                "pages": [
+                  "docs/en/multiagent-orchestration",
+                  "docs/en/scheduled-deployments"
+                ]
+              },
+              {
+                "group": "Reference",
+                "pages": [
+                  "docs/en/reference"
                 ]
               }
             ]
           },
           {
             "tab": "API reference",
-            "icon": "brackets-curly",
             "groups": [
               {
                 "group": "Get started",
                 "pages": [
-                  "en/api/overview",
-                  "en/api/authentication",
-                  "en/api/pagination",
-                  "en/api/errors"
+                  "docs/en/api/overview",
+                  "docs/en/api/authentication",
+                  "docs/en/api/versioning-beta",
+                  "docs/en/api/pagination",
+                  "docs/en/api/errors"
                 ]
               },
               {
-                "group": "Models",
+                "group": "Core API",
                 "pages": [
-                  "en/api/endpoints/list-models"
+                  {
+                    "group": "Messages",
+                    "pages": [
+                      "POST /v1/messages",
+                      {
+                        "group": "Batches",
+                        "pages": [
+                          "POST /v1/messages/batches",
+                          "GET /v1/messages/batches",
+                          "GET /v1/messages/batches/{message_batch_id}",
+                          "DELETE /v1/messages/batches/{message_batch_id}",
+                          "POST /v1/messages/batches/{message_batch_id}/cancel",
+                          "GET /v1/messages/batches/{message_batch_id}/results"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "Models",
+                    "pages": [
+                      "GET /v1/models"
+                    ]
+                  },
+                  {
+                    "group": "Files",
+                    "pages": [
+                      "POST /v1/files",
+                      "GET /v1/files",
+                      "GET /v1/files/{file_id}",
+                      "DELETE /v1/files/{file_id}",
+                      "GET /v1/files/{file_id}/content"
+                    ]
+                  },
+                  {
+                    "group": "Skills",
+                    "pages": [
+                      "POST /v1/skills",
+                      "GET /v1/skills",
+                      "GET /v1/skills/{skill_id}",
+                      "DELETE /v1/skills/{skill_id}",
+                      {
+                        "group": "Versions",
+                        "pages": [
+                          "POST /v1/skills/{skill_id}/versions",
+                          "GET /v1/skills/{skill_id}/versions",
+                          "GET /v1/skills/{skill_id}/versions/{version}",
+                          "DELETE /v1/skills/{skill_id}/versions/{version}",
+                          "GET /v1/skills/{skill_id}/versions/{version}/content"
+                        ]
+                      }
+                    ]
+                  }
                 ]
               },
               {
-                "group": "Agents",
+                "group": "Managed Agents",
                 "pages": [
-                  "en/api/endpoints/list-agents",
-                  "en/api/endpoints/create-agent"
+                  {
+                    "group": "Agents",
+                    "pages": [
+                      "POST /v1/agents",
+                      "GET /v1/agents",
+                      "GET /v1/agents/{agent_id}",
+                      "POST /v1/agents/{agent_id}",
+                      "POST /v1/agents/{agent_id}/archive",
+                      "GET /v1/agents/{agent_id}/versions",
+                      "POST /v1/agents:search"
+                    ]
+                  },
+                  {
+                    "group": "Environments",
+                    "pages": [
+                      "POST /v1/environments",
+                      "GET /v1/environments",
+                      "GET /v1/environments/{environment_id}",
+                      "POST /v1/environments/{environment_id}",
+                      "DELETE /v1/environments/{environment_id}",
+                      "POST /v1/environments/{environment_id}/archive",
+                      {
+                        "group": "Work",
+                        "pages": [
+                          "GET /v1/environments/{environment_id}/work/stats",
+                          "GET /v1/environments/{environment_id}/work/poll",
+                          "POST /v1/environments/{environment_id}/work/{work_id}/ack",
+                          "POST /v1/environments/{environment_id}/work/{work_id}/heartbeat",
+                          "POST /v1/environments/{environment_id}/work/{work_id}/stop",
+                          "GET /v1/environments/{environment_id}/work/{work_id}",
+                          "POST /v1/environments/{environment_id}/work/{work_id}",
+                          "GET /v1/environments/{environment_id}/work"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "Sessions",
+                    "pages": [
+                      "POST /v1/sessions",
+                      "GET /v1/sessions",
+                      "GET /v1/sessions/{session_id}",
+                      "POST /v1/sessions/{session_id}",
+                      "DELETE /v1/sessions/{session_id}",
+                      "POST /v1/sessions/{session_id}/archive",
+                      {
+                        "group": "Events",
+                        "pages": [
+                          "GET /v1/sessions/{session_id}/events",
+                          "POST /v1/sessions/{session_id}/events",
+                          "GET /v1/sessions/{session_id}/events/stream"
+                        ]
+                      },
+                      {
+                        "group": "Resources",
+                        "pages": [
+                          "GET /v1/sessions/{session_id}/resources",
+                          "POST /v1/sessions/{session_id}/resources",
+                          "GET /v1/sessions/{session_id}/resources/{resource_id}",
+                          "DELETE /v1/sessions/{session_id}/resources/{resource_id}",
+                          "POST /v1/sessions/{session_id}/resources/{resource_id}"
+                        ]
+                      },
+                      {
+                        "group": "Threads",
+                        "pages": [
+                          "GET /v1/sessions/{session_id}/threads",
+                          "GET /v1/sessions/{session_id}/threads/{thread_id}",
+                          "POST /v1/sessions/{session_id}/threads/{thread_id}/archive",
+                          {
+                            "group": "Events",
+                            "pages": [
+                              "GET /v1/sessions/{session_id}/threads/{thread_id}/events",
+                              "GET /v1/sessions/{session_id}/threads/{thread_id}/stream"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "Deployments",
+                    "pages": [
+                      "POST /v1/deployments",
+                      "GET /v1/deployments",
+                      "GET /v1/deployments/{deployment_id}",
+                      "POST /v1/deployments/{deployment_id}",
+                      "POST /v1/deployments/{deployment_id}/archive",
+                      "POST /v1/deployments/{deployment_id}/pause",
+                      "POST /v1/deployments/{deployment_id}/unpause",
+                      "POST /v1/deployments/{deployment_id}/run"
+                    ]
+                  },
+                  {
+                    "group": "Deployment Runs",
+                    "pages": [
+                      "GET /v1/deployment_runs",
+                      "GET /v1/deployment_runs/{deployment_run_id}"
+                    ]
+                  },
+                  {
+                    "group": "Vaults",
+                    "pages": [
+                      "POST /v1/vaults",
+                      "GET /v1/vaults",
+                      "GET /v1/vaults/{vault_id}",
+                      "POST /v1/vaults/{vault_id}",
+                      "DELETE /v1/vaults/{vault_id}",
+                      "POST /v1/vaults/{vault_id}/archive",
+                      {
+                        "group": "Credentials",
+                        "pages": [
+                          "POST /v1/vaults/{vault_id}/credentials",
+                          "GET /v1/vaults/{vault_id}/credentials",
+                          "GET /v1/vaults/{vault_id}/credentials/{credential_id}",
+                          "POST /v1/vaults/{vault_id}/credentials/{credential_id}",
+                          "DELETE /v1/vaults/{vault_id}/credentials/{credential_id}",
+                          "POST /v1/vaults/{vault_id}/credentials/{credential_id}/archive",
+                          "POST /v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "group": "Memory stores",
+                    "pages": [
+                      "POST /v1/memory_stores",
+                      "GET /v1/memory_stores",
+                      "GET /v1/memory_stores/{memory_store_id}",
+                      "POST /v1/memory_stores/{memory_store_id}",
+                      "DELETE /v1/memory_stores/{memory_store_id}",
+                      "POST /v1/memory_stores/{memory_store_id}/archive",
+                      {
+                        "group": "Memories",
+                        "pages": [
+                          "POST /v1/memory_stores/{memory_store_id}/memories",
+                          "GET /v1/memory_stores/{memory_store_id}/memories",
+                          "GET /v1/memory_stores/{memory_store_id}/memories/{memory_id}",
+                          "POST /v1/memory_stores/{memory_store_id}/memories/{memory_id}",
+                          "DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}"
+                        ]
+                      },
+                      {
+                        "group": "Versions",
+                        "pages": [
+                          "GET /v1/memory_stores/{memory_store_id}/memory_versions",
+                          "GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}",
+                          "POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact"
+                        ]
+                      }
+                    ]
+                  }
                 ]
               },
               {
-                "group": "Sessions",
+                "group": "Webhooks",
                 "pages": [
-                  "en/api/endpoints/create-session",
-                  "en/api/endpoints/retrieve-session"
+                  "POST /v1/webhooks",
+                  "GET /v1/webhooks",
+                  "GET /v1/webhooks/{webhook_id}",
+                  "POST /v1/webhooks/{webhook_id}",
+                  "DELETE /v1/webhooks/{webhook_id}",
+                  "POST /v1/webhooks/{webhook_id}/regenerate_signing_secret"
                 ]
               }
-            ]
+            ],
+            "openapi": "openapi/oma.en.json"
           }
         ]
       }
@@ -194,7 +835,8 @@
         "typescript",
         "go"
       ],
-      "defaults": "required"
+      "defaults": "required",
+      "prefill": true
     }
   },
   "contextual": {
@@ -202,7 +844,6 @@
       "copy",
       "view",
       "chatgpt",
-      "claude",
       "mcp",
       "cursor"
     ]

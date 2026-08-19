@@ -1,0 +1,434 @@
+---
+title: "订阅 Webhook"
+sidebarTitle: "订阅 Webhook"
+description: "无需轮询即可在重大事件发生时获得通知。"
+---
+
+会话是长时间运行的交互。虽然大多数实时交互通过 [SSE 事件流](/docs/zh/events-and-streaming)进行，但 Webhook 会在发生重大状态变化时通知您。
+
+Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收到 Webhook 事件时，需要通过 `GET` 调用直接获取该对象。这样可以避免在重试时传递过时数据，并使每次传递的数据量保持较小。
+
+## 支持的事件类型
+
+<Tabs>
+  <Tab title="会话事件">
+    | 事件                                 | 触发条件                                                                                                                                                                                                                                                |
+    | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `session.status_run_started`       | 智能体开始执行。每次会话状态转换为 `running` 时都会触发此事件。                                                                                                                                                                                                               |
+    | `session.status_idled`             | 智能体正在等待输入，例如工具权限审批或新的用户消息。                                                                                                                                                                                                                          |
+    | `session.budget_reached`           | 会话达到其[预算](/docs/zh/budgets)并暂停。对于您设置的每个预算值，此事件最多触发一次；更改预算会重新激活该触发条件。                                                                                                                                   |
+    | `session.status_rescheduled`       | 发生了暂时性错误，会话正在自动重试。                                                                                                                                                                                                                                  |
+    | `session.status_terminated`        | 会话已终止，原因可能是发生了不可恢复的错误，或会话已被归档。                                                                                                                                                                                                                      |
+    | `session.thread_created`           | 新的[多智能体线程](/docs/zh/multiagent-orchestration)已开启：协调器调用的另一个智能体正在开始工作，或正在咨询会话的[顾问](/docs/zh/multiagent-orchestration#give-the-session-an-advisor)。          |
+    | `session.thread_idled`             | [多智能体交互](/docs/zh/multiagent-orchestration)中的某个智能体正在等待输入。                                                                                                                                              |
+    | `session.thread_terminated`        | 某个[多智能体线程](/docs/zh/multiagent-orchestration)已终止，原因可能是该线程被归档，或其重试次数已耗尽。由协调器派生的子线程在完成工作后会进入 `idle` 状态，而非 `terminated`（顾问线程在其咨询完成后会终止）。此事件仅针对子线程触发；主线程的结束（包括归档整个会话）仅以 `session.status_terminated` 的形式呈现。 |
+    | `session.outcome_evaluation_ended` | 单次迭代的[结果评估](/docs/zh/define-outcomes)已完成。                                                                                                                                                              |
+    | `session.updated`                  | 会话属性已更改（例如，其名称或配置已更新）。                                                                                                                                                                                                                              |
+    | `session.deleted`                  | 会话已被永久删除。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                                                                                                                                                                  |
+  </Tab>
+
+  <Tab title="密钥库事件">
+    | 事件                                | 触发条件                                                                        |
+    | --------------------------------- | --------------------------------------------------------------------------- |
+    | `vault.created`                   | 密钥库已创建。                                                                     |
+    | `vault.archived`                  | 密钥库已归档。同时会为每个底层凭据发出 `vault_credential.archived` 事件。                         |
+    | `vault.deleted`                   | 密钥库已删除。同时会为每个底层凭据发出 `vault_credential.deleted` 事件。没有可获取的对象，因此请将该事件本身视为最终状态。 |
+    | `vault_credential.created`        | 凭据已创建。                                                                      |
+    | `vault_credential.archived`       | 凭据已归档，可能是直接归档，也可能是由于密钥库归档所致。                                                |
+    | `vault_credential.deleted`        | 凭据已删除，可能是直接删除，也可能是由于密钥库删除所致。没有可获取的对象，因此请将该事件本身视为最终状态。                       |
+    | `vault_credential.refresh_failed` | 某个 `mcp_oauth` 凭据无法刷新（刷新令牌无效，或 OAuth 服务器返回了不可恢复的错误）。                        |
+  </Tab>
+
+  <Tab title="智能体事件">
+    这些事件跟踪您工作区中智能体资源的生命周期，与会话事件流中传递的智能体事件不同。
+
+    | 事件               | 触发条件                                                                                                              |
+    | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+    | `agent.created`  | 智能体已创建。                                                                                                           |
+    | `agent.updated`  | [智能体的新版本](/docs/zh/agent-setup#update-an-agent)已发布。不创建新版本的更新不会触发此事件。 |
+    | `agent.archived` | 智能体已归档。                                                                                                           |
+    | `agent.deleted`  | 智能体已被永久删除。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                               |
+  </Tab>
+
+  <Tab title="部署事件">
+    | 事件                    | 触发条件                                                                                                                                                                                    |
+    | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `deployment.created`  | [计划部署](/docs/zh/scheduled-deployments)已创建。                                                                                                 |
+    | `deployment.updated`  | 部署属性已更改（例如，其计划已更新）。                                                                                                                                                                     |
+    | `deployment.paused`   | 部署已暂停，可能是应请求暂停，也可能是在计划运行因不可恢复的错误（例如子智能体已归档或环境已归档）而失败时自动暂停。可恢复的失败（包括速率限制）不会暂停部署。请参阅[失败行为](/docs/zh/scheduled-deployments#failure-behavior)。 |
+    | `deployment.unpaused` | 部署已取消暂停，恢复其计划。                                                                                                                                                                          |
+    | `deployment.archived` | 部署已归档，可能是直接归档，也可能是因为其智能体已被归档。如果智能体被删除而非归档，则计划部署会在其下一次计划运行时被归档；没有计划的部署不会被自动归档。                                                                                                           |
+    | `deployment.deleted`  | 部署已被永久删除。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                                                                                                      |
+  </Tab>
+
+  <Tab title="部署运行事件">
+    | 事件                         | 触发条件                                                                                                                                                                                                                          |
+    | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `deployment_run.started`   | 计划运行已开始。只有计划运行会发出 `deployment_run` 事件；[手动运行](/docs/zh/scheduled-deployments#trigger-a-manual-run)不会。                                                                             |
+    | `deployment_run.succeeded` | 计划运行已创建其会话。该事件携带的 `data.id`（运行 ID）与该运行的 `deployment_run.started` 事件相同。要跟踪会话的工作进展，请订阅其会话事件（"会话事件"选项卡），或获取[部署运行](/docs/zh/scheduled-deployments#deployment-runs)以查看其 `session_id`。 |
+    | `deployment_run.failed`    | 计划运行未能创建会话。该事件携带的 `data.id` 与该运行的 `deployment_run.started` 事件相同。获取[部署运行](/docs/zh/scheduled-deployments#deployment-runs)以查看错误详情。                                                 |
+  </Tab>
+
+  <Tab title="环境事件">
+    | 事件                     | 触发条件                                       |
+    | ---------------------- | ------------------------------------------ |
+    | `environment.created`  | 环境已创建。                                     |
+    | `environment.updated`  | 环境已更新，且至少有一个字段发生了变化。无操作的更新不会发出任何事件。        |
+    | `environment.archived` | 环境已归档。对已归档的环境再次执行归档不会发出任何事件。               |
+    | `environment.deleted`  | 环境已删除，包括删除已归档的环境。没有可获取的对象，因此请将该事件本身视为最终状态。 |
+
+    环境的[woker](/docs/zh/self-hosted-sandboxes)不会发出任何 Webhook 事件。
+  </Tab>
+
+  <Tab title="记忆存储事件">
+    | 事件                      | 触发条件                                                                                                         |
+    | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+    | `memory_store.created`  | 记忆存储已创建，可能是由您创建，也可能是由 OMA 运营的进程克隆您现有的某个存储而创建。                                                          |
+    | `memory_store.archived` | 记忆存储已归档。对已归档的存储再次执行归档不会发出任何事件。                                                                               |
+    | `memory_store.deleted`  | 记忆存储已删除，包括删除已归档的存储。删除存储会级联删除其记忆和记忆版本，但不会为每条记忆发出事件；单个 `memory_store.deleted` 事件即为信号。没有可获取的对象，因此请将该事件本身视为最终状态。 |
+
+    单个[记忆](/docs/zh/memory)和记忆版本不会发出任何 Webhook 事件。
+  </Tab>
+</Tabs>
+
+## 注册端点
+
+访问 OMA 控制台中的 **Manage > Webhooks**。
+
+Webhook 端点由以下部分组成：
+
+* **URL：** 必须是端口 443 上的 HTTPS，且主机名可公开解析。
+* **事件类型：** 此端点接收的 `data.type` 值列表。端点仅接收其已订阅的事件。
+* **签名密钥：** 创建时生成的 32 字节、以 `whsec_` 为前缀的密钥。该密钥仅显示一次，因此请安全存储以用于验证 Webhook 传递。
+
+## 验证签名
+
+每次传递都携带 `webhook-id`、`webhook-timestamp` 和 `webhook-signature` 标头。使用 SDK 的 `unwrap()` 辅助方法可一步完成签名验证和事件解析。如果签名无效或负载已超过 5 分钟，该方法会抛出异常。
+
+将 `ANTHROPIC_WEBHOOK_SIGNING_KEY` 设置为端点创建时显示的以 `whsec_` 为前缀的密钥。
+
+<CodeGroup>
+  ```python Python
+  from flask import Flask, request
+  import anthropic
+
+  client = anthropic.Anthropic()  # reads ANTHROPIC_WEBHOOK_SIGNING_KEY from env
+  app = Flask(__name__)
+
+
+  @app.route("/webhook", methods=["POST"])
+  def webhook():
+      try:
+          # 如果签名无效或负载已过期，unwrap() 会抛出异常
+          event = client.beta.webhooks.unwrap(
+              request.get_data(as_text=True),
+              headers=dict(request.headers),
+          )
+      except Exception:
+          return "invalid signature", 400
+
+      if event.data.type == "session.status_idled":
+          print("session idled:", event.data.id)
+      # 处理其他事件类型
+
+      return "", 200
+  ```
+
+  ```typescript TypeScript
+  import express from "express";
+  import Anthropic from "@anthropic-ai/sdk";
+
+  const client = new Anthropic(); // reads ANTHROPIC_WEBHOOK_SIGNING_KEY from env
+  const app = express();
+
+  // 重要：使用 express.raw() 而非 express.json()。签名是基于原始字节计算的。
+  app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
+    let event;
+    try {
+      // 如果签名无效或负载已过期，unwrap() 会抛出异常
+      event = client.beta.webhooks.unwrap(req.body.toString("utf8"), {
+        headers: req.headers as Record<string, string>
+      });
+    } catch {
+      return res.status(400).send("invalid signature");
+    }
+
+    switch (event.data.type) {
+      case "session.status_idled":
+        console.log("session idled:", event.data.id);
+        break;
+      // 处理其他事件类型
+    }
+
+    res.sendStatus(200);
+  });
+  ```
+
+  ```csharp C#
+  using Anthropic;
+
+  var client = new AnthropicClient(); // reads ANTHROPIC_WEBHOOK_SIGNING_KEY from env
+  var app = WebApplication.Create(args);
+
+  app.MapPost("/webhook", async (HttpRequest request) =>
+  {
+      using var reader = new StreamReader(request.Body);
+      var body = await reader.ReadToEndAsync();
+      var headers = request.Headers.ToDictionary(header => header.Key, header => header.Value.ToString());
+
+      UnwrapWebhookEvent webhookEvent;
+      try
+      {
+          // 如果签名无效或负载已过期，Unwrap() 会抛出异常
+          webhookEvent = client.Beta.Webhooks.Unwrap(body, headers);
+      }
+      catch
+      {
+          return Results.BadRequest("invalid signature");
+      }
+
+      if (webhookEvent.Data.TryPickSessionStatusIdled(out var idled))
+      {
+          Console.WriteLine($"session idled: {idled.ID}");
+      }
+      // 处理其他事件类型
+
+      return Results.Ok();
+  });
+  ```
+
+  ```go Go
+  package main
+
+  import (
+      "fmt"
+      "io"
+      "net/http"
+
+      "github.com/anthropics/anthropic-sdk-go"
+  )
+
+  var client = anthropic.NewClient() // reads ANTHROPIC_WEBHOOK_SIGNING_KEY from env
+
+  func webhook(w http.ResponseWriter, r *http.Request) {
+      body, err := io.ReadAll(r.Body)
+      if err != nil {
+          http.Error(w, "could not read body", http.StatusBadRequest)
+          return
+      }
+
+      // 如果签名无效或负载已过期，Unwrap 会返回错误
+      event, err := client.Beta.Webhooks.Unwrap(body, r.Header)
+      if err != nil {
+          http.Error(w, "invalid signature", http.StatusBadRequest)
+          return
+      }
+
+      switch event.Data.Type {
+      case "session.status_idled":
+          fmt.Println("session idled:", event.Data.ID)
+          // 处理其他事件类型
+      }
+
+      w.WriteHeader(http.StatusOK)
+  }
+
+  func main() {
+      http.HandleFunc("/webhook", webhook)
+  }
+  ```
+
+  ```java Java
+  import com.anthropic.client.AnthropicClient;
+  import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+  import com.anthropic.core.UnwrapWebhookParams;
+  import com.anthropic.core.http.Headers;
+  import com.sun.net.httpserver.HttpServer;
+
+  // 从环境变量读取 ANTHROPIC_WEBHOOK_SIGNING_KEY
+  AnthropicClient client = AnthropicOkHttpClient.fromEnv();
+
+  void main() throws Exception {
+      var server = HttpServer.create(new InetSocketAddress(8000), 0);
+      server.createContext("/webhook", exchange -> {
+          var body = new String(exchange.getRequestBody().readAllBytes());
+          var headers = Headers.builder();
+          exchange.getRequestHeaders().forEach(headers::put);
+
+          try {
+              // 如果签名无效或负载已过期，unwrap() 会抛出异常
+              var event = client.beta().webhooks().unwrap(
+                  UnwrapWebhookParams.builder()
+                      .body(body)
+                      .headers(headers.build())
+                      .build());
+
+              event.data().sessionStatusIdled().ifPresent(idled ->
+                  IO.println("session idled: " + idled.id()));
+              // 处理其他事件类型
+
+              exchange.sendResponseHeaders(200, -1);
+          } catch (Exception _) {
+              exchange.sendResponseHeaders(400, -1);
+          }
+          exchange.close();
+      });
+  }
+  ```
+
+  ```php PHP
+  use Anthropic\Client;
+  use Anthropic\Core\Exceptions\WebhookException;
+
+  $client = new Client(); // reads ANTHROPIC_WEBHOOK_SIGNING_KEY from env
+
+  $body = file_get_contents('php://input');
+  $headers = getallheaders();
+
+  try {
+      // 如果签名无效或负载已过期，unwrap() 会抛出异常
+      $event = $client->beta->webhooks->unwrap($body, headers: $headers);
+  } catch (WebhookException) {
+      http_response_code(400);
+      exit('invalid signature');
+  }
+
+  match ($event->data->type) {
+      'session.status_idled' => print "session idled: {$event->data->id}\n",
+      // 处理其他事件类型
+      default => null,
+  };
+
+  http_response_code(200);
+  ```
+
+  ```ruby Ruby
+  require "sinatra"
+  require "anthropic"
+
+  client = Anthropic::Client.new # reads ANTHROPIC_WEBHOOK_SIGNING_KEY from env
+
+  post "/webhook" do
+    headers = request.env
+      .select { |key, _| key.start_with?("HTTP_") }
+      .transform_keys { it.delete_prefix("HTTP_").downcase.tr("_", "-") }
+
+    begin
+      # 如果签名无效或负载已过期，unwrap 会抛出异常
+      event = client.beta.webhooks.unwrap(request.body.read, headers: headers)
+    rescue StandardError
+      halt 400, "invalid signature"
+    end
+
+    if event.data.type == :"session.status_idled"
+      puts "session idled: #{event.data.id}"
+    end
+    # 处理其他事件类型
+
+    status 200
+  end
+  ```
+</CodeGroup>
+
+## 处理事件
+
+解析请求体，根据 `data.type` 进行分支处理，并按 ID 获取资源。返回任何 `2xx` 状态码以确认接收。任何其他响应都会计入该端点的失败记录：`3xx` 会立即禁用端点（永远不会跟随重定向），而其他失败会被重试；有关重试和自动禁用规则，请参阅[传递行为](/docs/zh/webhooks#delivery-behavior)。
+
+每个事件负载都具有相同的结构，包括事件类型、标识符以及事件发生时的时间戳。
+
+```json
+{
+  "type": "event",
+  "id": "whe_9d5c1f7e...",
+  "created_at": "2026-03-18T14:05:22Z",
+  "data": {
+    "type": "session.status_idled",
+    "id": "sesn_01XYZ...",
+    "organization_id": "8a3d2f1e-...",
+    "workspace_id": "c7b0e4d9-..."
+  }
+}
+```
+
+<CodeGroup>
+  ```python Python
+  if event.data.type == "session.status_idled":
+      session = client.beta.sessions.retrieve(event.data.id)
+      notify_user(session)
+  return "", 204
+  ```
+
+  ```typescript TypeScript
+  if (event.data.type === "session.status_idled") {
+    const session = await client.beta.sessions.retrieve(event.data.id);
+    notifyUser(session);
+  }
+  res.sendStatus(204);
+  ```
+
+  ```csharp C#
+  if (webhookEvent.Data.TryPickSessionStatusIdled(out var idled))
+  {
+      var session = await client.Beta.Sessions.Retrieve(idled.ID);
+      NotifyUser(session);
+  }
+  return Results.StatusCode(204);
+  ```
+
+  ```go Go
+  if event.Data.Type == "session.status_idled" {
+      session, err := client.Beta.Sessions.Get(r.Context(), event.Data.ID, anthropic.BetaSessionGetParams{})
+      if err != nil {
+          panic(err)
+      }
+      notifyUser(session)
+  }
+  w.WriteHeader(http.StatusNoContent)
+  ```
+
+  ```java Java
+  event.data().sessionStatusIdled().ifPresent(idled -> {
+      var session = client.beta().sessions().retrieve(idled.id());
+      notifyUser(session);
+  });
+  exchange.sendResponseHeaders(204, -1);
+  ```
+
+  ```php PHP
+  if ($event->data->type === 'session.status_idled') {
+      $session = $client->beta->sessions->retrieve($event->data->id);
+      notifyUser($session);
+  }
+  http_response_code(204);
+  ```
+
+  ```ruby Ruby
+  if event.data.type == :"session.status_idled"
+    session = client.beta.sessions.retrieve(event.data.id)
+    notify_user(session)
+  end
+  status 204
+  ```
+</CodeGroup>
+
+顶层的 `event.id` 对每个事件是唯一的，而非对每次传递唯一。如果您两次收到相同的 `event.id`，则表示这是一次重试，您可以将其丢弃。
+
+## 传递行为
+
+* **重复：** 端点可能多次收到同一事件，且每次尝试传递的顶层 `event.id` 都相同（与 `webhook-id` 标头的值相同）。请基于该值进行去重。
+
+* **订阅范围：** 事件仅传递给在其发出时刻已订阅该类型的端点。如果事件发出时没有任何端点订阅其类型，则该事件永远不会被传递，且之后订阅也不会回填该事件，因此请在需要某个事件类型之前就订阅它。
+
+* **不保证顺序。** 事件不会按其发生的顺序传递：即使结果先产生，`session.status_idled` 也可能在 `session.outcome_evaluation_ended` 之前到达；同一资源的 `.deleted` 事件也可能在 `.archived` 事件之前到达。请根据您获取的资源来驱动状态，而不是根据事件到达的顺序。
+
+* **重试：** 对于每个端点和事件，OMA 最多进行三次传递尝试（触发自动禁用的响应永远不会被重试，详见本节后文），重试之间采用带抖动的指数退避，间隔在 5 到 120 秒之间。每次尝试传递的 `event.id` 都相同。最后一次尝试失败后，该事件会被丢弃：它不会排队等待后续传递，也没有任何信号表明它已丢失。Webhook 不是持久化日志，因此如果您需要观察每一次状态转换，请通过 API 列出或获取资源来进行核对。
+
+* **时间戳：** `webhook-timestamp` 标头在对传递尝试进行签名时打上时间戳，并在每次重试时重新生成，因此重试不会被 SDK 的新鲜度检查拒绝。它是传递尝试的时钟，而非事件的时钟：请使用事件负载中的 `created_at` 来获取事件发生的时间。
+
+* **自动禁用：** 在以下三种情况下，端点会被自动设置为 `disabled`，并附带机器可读的 `disabled_reason`：
+
+  * 端点返回 `3xx` 响应。永远不会跟随重定向；这会在第一次尝试时立即禁用端点，原因为 `auto-disabled: endpoint URL returned a redirect (3xx)`。如果您的端点已迁移，请在 OMA 控制台 中更新 URL 并重新启用该端点。
+  * 当 OMA 连接时，端点的 URL 解析为非公共 IP 地址。这会立即禁用端点，原因为 `auto-disabled: endpoint URL resolved to an invalid address`。
+  * 向该端点的传递持续失败了一段时间，原因为 `auto-disabled after sustained delivery failures`。触发条件是端点连续失败的时长，而非传递次数。单个 `2xx` 响应即可重置该时间窗口，因此单个不稳定的事件不会导致端点被禁用。
+
+  这三种情况都是可逆的：解决问题后，在 OMA 控制台 中重新启用端点即可。端点被禁用期间发出的事件不会被重放。

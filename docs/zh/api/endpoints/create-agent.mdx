@@ -1,0 +1,68 @@
+---
+title: "创建智能体"
+description: "创建一个可版本化的托管智能体定义。"
+api: "POST /v1/agents?beta=true"
+---
+
+创建智能体定义。该资源当前要求 `beta=true`。
+
+<ParamField query="beta" type="boolean" required>
+  必须为 `true`。
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  智能体名称。
+</ParamField>
+
+<ParamField body="model" type="string | object" required>
+  模型 ID，或 `{ "id": "...", "speed": "standard | fast" }`。
+</ParamField>
+
+<ParamField body="description" type="string | null">
+  面向使用者的描述。
+</ParamField>
+
+<ParamField body="system" type="string | null">
+  智能体的系统提示。
+</ParamField>
+
+<ParamField body="mcp_servers" type="array">
+  MCP 服务器列表。当前支持 `{name, type: "url", url}`。
+</ParamField>
+
+<ParamField body="skills" type="array">
+  智能体使用的技能。
+</ParamField>
+
+<ParamField body="tools" type="array">
+  智能体可用工具。
+</ParamField>
+
+<ParamField body="multiagent" type="object | null">
+  可选协调器配置，包含 1 到 20 个固定智能体引用。
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  自定义键值元数据。
+</ParamField>
+
+```json 请求
+{
+  "name": "repository-maintainer",
+  "description": "Maintains a repository and reports verified changes.",
+  "model": {
+    "id": "claude-sonnet-4-6",
+    "speed": "standard"
+  },
+  "system": "Inspect the repository, make focused changes, and verify them.",
+  "mcp_servers": [],
+  "skills": [],
+  "tools": [],
+  "multiagent": null,
+  "metadata": {
+    "team": "platform"
+  }
+}
+```
+
+响应包含生成的 `agent_...` ID、版本号、归一化配置和时间戳。更新智能体时必须提交当前 `version`，以检测并发修改。

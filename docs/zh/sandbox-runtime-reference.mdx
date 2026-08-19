@@ -1,0 +1,30 @@
+---
+title: "沙箱运行时参考"
+description: "标准 OMA 沙箱镜像需要提供的命令、路径和基础能力。"
+---
+
+OMA 不固定发行版，但标准 Runner 假设镜像满足以下合同。
+
+## 路径和命令
+
+| 项目 | 默认或要求 |
+| --- | --- |
+| 环境 Manager | `/usr/local/bin/environment-manager` |
+| 智能体运行时 | `/opt/claude-code/bin/claude`，可配置 |
+| 工作区 | `/workspace` |
+| 技能 | `/skills/<directory>` |
+| 文件存储服务 | 由 Runner 配置 rclone/FUSE |
+
+环境 Manager 必须支持 `provision-packages --protocol v1 --stdin`，从 stdin 读取不超过 1 MiB 的 JSON manifest，并输出一个不超过 16 KiB 的严格 v1 JSON 结果。
+
+## 软件包管理器
+
+标准合同支持 `apt`、`cargo`、`gem`、`go`、`npm`、`pip`。镜像可以不预装所有生态，但如果环境请求了某管理器，运行时必须可执行它或返回明确的 package provisioning 失败。
+
+## 系统工具
+
+实际工具集合由镜像维护。最小镜像通常需要 shell、Git、CA bundle、归档工具、网络诊断工具和 rclone。不要在文档中假设某个语言版本存在；对版本敏感的任务应通过环境 package 或固定自定义镜像声明。
+
+## 容量与超时
+
+沙箱规格由 E2B/provider 和部署配置决定，不由 OMA API 固定。`e2b.sandbox_timeout`、`environment_runner.package_provision_timeout` 和 provider 侧资源限制应同时配置，并由监控验证实际生效。

@@ -1,0 +1,24 @@
+---
+title: "Versioning and beta features"
+description: "Send the correct version header and beta activation for each OMA resource."
+---
+
+OMA `/v1` combines stable compatibility endpoints with beta contracts from different resource families. Activation is part of each resource contract and is not interchangeable.
+
+| Resource | Query | Headers |
+| --- | --- | --- |
+| Models, stable Messages | None | Messages should send `anthropic-version: 2023-06-01` |
+| Beta Messages | `beta=true` | `anthropic-version: 2023-06-01`; add the beta feature identifiers required by the selected fields to `anthropic-beta` |
+| Stable Message Batches shape | None | `anthropic-version` |
+| Beta Message Batches shape | `beta=true` | `anthropic-beta: message-batches-2024-09-24` |
+| Agents, Environments, Sessions, Memory Stores, Vaults | `beta=true` | No additional beta header |
+| Files | None | `anthropic-beta: files-api-2025-04-14` |
+| Skills | `beta=true` | `anthropic-beta: skills-2025-10-02` |
+| Deployments, Deployment Runs | None | `anthropic-version: 2023-06-01` and `anthropic-beta: managed-agents-2026-04-01` |
+| Webhooks | None | `anthropic-beta: webhooks-2026-03-01` |
+
+<Warning>
+  Console cookie sessions use a `?beta=true` shortcut on some managed-agent routes. API-key clients must send the documented public headers instead of copying browser traffic.
+</Warning>
+
+`anthropic-beta` may be repeated or comma-separated. Deployment contracts currently require the exact API version above. Messages forwards the query string and compatible caller headers to the configured upstream. Verify the headers emitted by your SDK before upgrading.

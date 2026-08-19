@@ -1,0 +1,20 @@
+---
+title: "Observability and troubleshooting"
+description: "Use request IDs, structured logs, events, queue statistics, and metrics to diagnose failures."
+---
+
+API requests, environment work, sandbox execution, and upstream model calls are distinct stages. Identify the failing boundary first.
+
+- `/healthz` checks process health
+- `request-id` correlates API errors with structured logs
+- Session/thread status and events describe task lifecycle
+- Environment work and stats expose queues, pollers, and heartbeats
+- Deployment runs record trigger and reference failures
+- Webhook status reports disabled endpoints
+- Optional OTLP file logs support development diagnostics
+
+Start with the request ID, inspect session and work state, find the last durable event, check runner heartbeat and package provisioning, then inspect upstream model, MCP, vault refresh, and network policy.
+
+<Warning>
+  Never log request bodies, file contents, Authorization, cookies, API keys, OAuth tokens, or secrets. Use bounded categories, IDs, and status fields.
+</Warning>

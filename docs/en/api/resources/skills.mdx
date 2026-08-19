@@ -1,0 +1,16 @@
+---
+title: "Skills"
+description: "Manage custom skill packages and immutable versions."
+---
+
+Skills require both `?beta=true` and `anthropic-beta: skills-2025-10-02`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/skills` | Create multipart package / list |
+| `GET` / `DELETE` | `/v1/skills/{id}` | Retrieve / delete custom skill |
+| `POST` / `GET` | `/v1/skills/{id}/versions` | Create / list versions |
+| `GET` / `DELETE` | `/v1/skills/{id}/versions/{version}` | Retrieve / delete custom version |
+| `GET` | `/v1/skills/{id}/versions/{version}/content` | Download ZIP |
+
+Packages are bounded ZIP files with a valid `SKILL.md`. The response `source` distinguishes built-in, read-only skills from custom skills. Lists use `limit` and opaque `page`. `latest` resolves the newest version, but production agents should pin a version.

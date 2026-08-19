@@ -54,13 +54,8 @@ export function CreateDialogMcpPicker({
   const availableServers = directoryServers.filter(
     (server) => server.url && !configuredServerNames.includes(server.slug),
   );
-  const availableWorkspaceServers = workspaceServers.filter(
-    (server) => server.status === 'active' && !configuredServerNames.includes(server.name),
-  );
+  const availableWorkspaceServers = workspaceServers.filter((server) => !configuredServerNames.includes(server.name));
   const conflictingWorkspaceServers = workspaceServers.filter((server) => {
-    if (server.status !== 'active') {
-      return false;
-    }
     const configured = draft.mcp_servers.find((candidate) => toRecord(candidate)?.name === server.name);
     const configuredURL = toRecord(configured)?.url;
     return typeof configuredURL === 'string' && configuredURL !== server.url;
@@ -175,6 +170,12 @@ export function CreateDialogMcpPicker({
             <MCPPickerAlerts atLimit={atLimit} addFailed={addFailed} />
           </TabsContent>
           <TabsContent value="custom" className="mt-0">
+            <p className="border-b border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+              {msg(
+                'managedAgents.agents.createDialog.customMcpCopyHint',
+                'Selecting an entry copies its name and endpoint into the Agent configuration. Later directory changes do not update the Agent.',
+              )}
+            </p>
             <CreateDialogPickerList
               searchPlaceholder={msg(
                 'managedAgents.agents.createDialog.searchCustomMcpServers',

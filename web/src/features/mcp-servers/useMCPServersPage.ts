@@ -2,7 +2,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../shared/auth/context';
 import {
-  archiveWorkspaceMCPServer,
   createWorkspaceMCPServer,
   deleteWorkspaceMCPServer,
   getWorkspaceMCPServer,
@@ -18,8 +17,6 @@ import {
   type MCPServerDetailTarget,
   type MCPServerEditorTarget,
 } from './MCPServerDialogs';
-
-export type MCPServerScope = 'active' | 'all';
 
 export function useMCPServerWorkspace() {
   const { orgUuid, activeWorkspace, activeWorkspaceId, workspaces } = useWorkspace();
@@ -45,18 +42,16 @@ export function useMCPServerData({
   detailServerId?: string;
 }) {
   const [search, setSearch] = useState('');
-  const [scope, setScope] = useState<MCPServerScope>('active');
-  const paginationKey = `${orgUuid ?? ''}\u0000${workspaceId}\u0000${scope}\u0000${search}`;
+  const paginationKey = `${orgUuid ?? ''}\u0000${workspaceId}\u0000${search}`;
   const [pagination, setPagination] = useState<MCPServerPagination>(() => newMCPServerPagination(paginationKey));
   const currentPagination = pagination.key === paginationKey ? pagination : newMCPServerPagination(paginationKey);
   const pageIndex = currentPagination.pageIndex;
   const pageTokens = currentPagination.pageTokens;
   const listQuery = useQuery({
-    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, search.trim(), scope, pageTokens[pageIndex] ?? ''],
+    queryKey: ['workspace-mcp-servers', orgUuid ?? '', workspaceId, search.trim(), pageTokens[pageIndex] ?? ''],
     queryFn: () =>
       listWorkspaceMCPServers(orgUuid ?? '', workspaceId, {
         search,
-        includeArchived: scope === 'all',
         page: pageTokens[pageIndex],
       }),
     enabled: Boolean(orgUuid && workspaceId && workspaceReady),
@@ -94,8 +89,6 @@ export function useMCPServerData({
   return {
     search,
     setSearch,
-    scope,
-    setScope,
     pageIndex,
     setPageIndex,
     listQuery,
@@ -184,19 +177,13 @@ export function useMCPServerActions({
     setIsActing(true);
     setActionError(null);
     try {
-      if (destructive.action === 'archive') {
-        const archived = await archiveWorkspaceMCPServer(orgUuid, workspaceId, destructive.server.id, csrfToken);
-        queryClient.setQueryData(['workspace-mcp-server', orgUuid, workspaceId, archived.id], archived);
-        await invalidateList();
-      } else {
-        await deleteWorkspaceMCPServer(orgUuid, workspaceId, destructive.server.id, csrfToken);
-        queryClient.removeQueries({
-          queryKey: ['workspace-mcp-server', orgUuid, workspaceId, destructive.server.id],
-          exact: true,
-        });
-        await invalidateList();
-      }
-      if (destructive.action === 'delete' && panel?.serverId === destructive.server.id) {
+      await deleteWorkspaceMCPServer(orgUuid, workspaceId, destructive.server.id, csrfToken);
+      queryClient.removeQueries({
+        queryKey: ['workspace-mcp-server', orgUuid, workspaceId, destructive.server.id],
+        exact: true,
+      });
+      await invalidateList();
+      if (panel?.serverId === destructive.server.id) {
         closePanel();
       }
       setDestructive(null);
@@ -207,9 +194,9 @@ export function useMCPServerActions({
     }
   };
 
-  const openDestructive = (action: MCPServerDestructiveTarget['action'], server: WorkspaceMCPServer) => {
+  const openDestructive = (server: WorkspaceMCPServer) => {
     setActionError(null);
-    setDestructive({ action, server });
+    setDestructive({ server });
   };
 
   const openCreate = () => {

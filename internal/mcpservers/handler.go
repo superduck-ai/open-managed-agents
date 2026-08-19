@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +31,6 @@ type Store interface {
 	ListWorkspaceMCPServersPage(context.Context, db.ListWorkspaceMCPServersPageParams) ([]db.WorkspaceMCPServer, bool, error)
 	GetWorkspaceMCPServer(context.Context, string, string) (db.WorkspaceMCPServer, error)
 	UpdateWorkspaceMCPServer(context.Context, string, string, db.WorkspaceMCPServer) (db.WorkspaceMCPServer, error)
-	ArchiveWorkspaceMCPServer(context.Context, string, string) (db.WorkspaceMCPServer, error)
 	DeleteWorkspaceMCPServer(context.Context, string, string) error
 }
 
@@ -47,15 +45,13 @@ type mutationRequest struct {
 }
 
 type serverResponse struct {
-	ID         string  `json:"id"`
-	Type       string  `json:"type"`
-	Name       string  `json:"name"`
-	Transport  string  `json:"transport_type"`
-	URL        string  `json:"url"`
-	Status     string  `json:"status"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
-	ArchivedAt *string `json:"archived_at"`
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	Transport string `json:"transport_type"`
+	URL       string `json:"url"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type pageResponse struct {
@@ -73,7 +69,6 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/workspaces/{workspaceId}/mcp_servers", h.wrap(h.list))
 	r.Get("/workspaces/{workspaceId}/mcp_servers/{mcpServerId}", h.wrap(h.retrieve))
 	r.Post("/workspaces/{workspaceId}/mcp_servers/{mcpServerId}", h.wrap(h.update))
-	r.Post("/workspaces/{workspaceId}/mcp_servers/{mcpServerId}/archive", h.wrap(h.archive))
 	r.Delete("/workspaces/{workspaceId}/mcp_servers/{mcpServerId}", h.wrap(h.delete))
 }
 
@@ -90,7 +85,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	externalID, err := ids.New("mcpsrv_")
+	externalID, err := ids.New("mcp_")
 	if err != nil {
 		return mapStoreError(err, "create")
 	}
@@ -126,13 +121,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	includeArchived, err := optionalBool(r.URL.Query().Get("include_archived"))
-	if err != nil {
-		return err
-	}
 	servers, hasMore, err := h.store.ListWorkspaceMCPServersPage(r.Context(), db.ListWorkspaceMCPServersPageParams{
 		WorkspaceUUID: principal.WorkspaceUUID, Search: strings.TrimSpace(r.URL.Query().Get("search")),
-		Limit: limit, Cursor: cursor, IncludeArchived: includeArchived,
+		Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
 		return mapStoreError(err, "list")
@@ -184,19 +175,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) error {
 		return mapStoreError(err, "update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromServer(updated))
-	return nil
-}
-
-func (h *Handler) archive(w http.ResponseWriter, r *http.Request) error {
-	principal, err := scopedPrincipal(r)
-	if err != nil {
-		return err
-	}
-	server, err := h.store.ArchiveWorkspaceMCPServer(r.Context(), principal.WorkspaceUUID, chi.URLParam(r, "mcpServerId"))
-	if err != nil {
-		return mapStoreError(err, "archive")
-	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromServer(server))
 	return nil
 }
 
@@ -273,40 +251,15 @@ func normalizeInput(input mutationRequest) (string, string, error) {
 }
 
 func responseFromServer(server db.WorkspaceMCPServer) serverResponse {
-	status := "active"
-	if server.ArchivedAt != nil {
-		status = "archived"
-	}
 	return serverResponse{
-		ID:         server.ExternalID,
-		Type:       "mcp_server",
-		Name:       server.Name,
-		Transport:  server.TransportType,
-		URL:        server.EndpointURL,
-		Status:     status,
-		CreatedAt:  server.CreatedAt.Format(time.RFC3339Nano),
-		UpdatedAt:  server.UpdatedAt.Format(time.RFC3339Nano),
-		ArchivedAt: optionalTime(server.ArchivedAt),
+		ID:        server.ExternalID,
+		Type:      "mcp_server",
+		Name:      server.Name,
+		Transport: server.TransportType,
+		URL:       server.EndpointURL,
+		CreatedAt: server.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt: server.UpdatedAt.Format(time.RFC3339Nano),
 	}
-}
-
-func optionalTime(value *time.Time) *string {
-	if value == nil {
-		return nil
-	}
-	formatted := value.Format(time.RFC3339Nano)
-	return &formatted
-}
-
-func optionalBool(raw string) (bool, error) {
-	if strings.TrimSpace(raw) == "" {
-		return false, nil
-	}
-	value, err := strconv.ParseBool(raw)
-	if err != nil {
-		return false, invalidArchivedFilter(err)
-	}
-	return value, nil
 }
 
 func encodeCursor(server db.WorkspaceMCPServer) string {

@@ -50,12 +50,6 @@ func TestMCPServerMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames:          []string{"params.Name", "params.TransportType", "params.EndpointURL", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID"},
 			wantSensitiveArgumentNames: []string{"params.EndpointURL"}, wantSQLFragments: []string{"UPDATE mcp_servers", "RETURNING"},
 		}},
-		{"archive", mapperBuilderContract{
-			statement: mCPServerMapperArchiveByExternalIDStatement,
-			bound:     buildMCPServerMapperArchiveByExternalID(yourbatis.DialectPostgres, params.WorkspaceUUID, params.ExternalID),
-			wantID:    "MCPServerMapper.ArchiveByExternalID", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames: []string{"workspaceUUID", "externalID"}, wantSQLFragments: []string{"archived_at = COALESCE", "RETURNING"},
-		}},
 		{"soft delete", mapperBuilderContract{
 			statement: mCPServerMapperSoftDeleteByExternalIDStatement,
 			bound:     buildMCPServerMapperSoftDeleteByExternalID(yourbatis.DialectPostgres, params.WorkspaceUUID, params.ExternalID),
@@ -69,7 +63,7 @@ func TestMCPServerMapperBuilderContracts(t *testing.T) {
 				"params.WorkspaceUUID", "params.Search", "params.Search", "params.Cursor.CreatedAt", "params.Cursor.UUID", "params.FetchLimit",
 			},
 			wantSensitiveArgumentNames: []string{"params.Search", "params.Search"},
-			wantSQLFragments:           []string{"archived_at IS NULL", "POSITION", "(created_at, uuid) < ($4, $5)", "LIMIT $6"},
+			wantSQLFragments:           []string{"deleted_at IS NULL", "POSITION", "(created_at, uuid) < ($4, $5)", "LIMIT $6"},
 		}},
 	}
 	for _, test := range tests {
@@ -78,9 +72,8 @@ func TestMCPServerMapperBuilderContracts(t *testing.T) {
 
 	t.Run("list page omits optional filters", func(t *testing.T) {
 		bound := buildMCPServerMapperListPage(yourbatis.DialectPostgres, mcpServerPageMapperParams{
-			WorkspaceUUID:   params.WorkspaceUUID,
-			FetchLimit:      21,
-			IncludeArchived: true,
+			WorkspaceUUID: params.WorkspaceUUID,
+			FetchLimit:    21,
 		})
 		assertMapperBuilderContract(t, mapperBuilderContract{
 			statement: mCPServerMapperListPageStatement,
@@ -89,7 +82,7 @@ func TestMCPServerMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"params.WorkspaceUUID", "params.FetchLimit"},
 			wantSQLFragments:  []string{"workspace_uuid = $1", "ORDER BY created_at DESC, uuid DESC", "LIMIT $2"},
 		})
-		for _, unexpected := range []string{"archived_at IS NULL", "POSITION", "(created_at, uuid) <"} {
+		for _, unexpected := range []string{"POSITION", "(created_at, uuid) <"} {
 			if containsMapperSQL(bound.SQL, unexpected) {
 				t.Fatalf("ListPage SQL = %q, does not want optional fragment %q", bound.SQL, unexpected)
 			}
@@ -99,7 +92,7 @@ func TestMCPServerMapperBuilderContracts(t *testing.T) {
 
 func TestMCPServerMapperResultSemantics(t *testing.T) {
 	ctx := context.Background()
-	rowValues := mcpServerMapperTestRow(nil, nil)
+	rowValues := mcpServerMapperTestRow(nil)
 	rowResponse := func() mapperTestResponse {
 		return mapperTestResponse{columns: mcpServerMapperTestColumns(), rows: [][]driver.Value{rowValues}}
 	}
@@ -124,9 +117,6 @@ func TestMCPServerMapperResultSemantics(t *testing.T) {
 		{name: "update returns row", call: func(mapper MCPServerMapper) (mcpServerMapperRow, error) {
 			return mapper.UpdateByExternalID(ctx, params)
 		}},
-		{name: "archive returns nullable row", call: func(mapper MCPServerMapper) (mcpServerMapperRow, error) {
-			return mapper.ArchiveByExternalID(ctx, params.WorkspaceUUID, params.ExternalID)
-		}},
 		{name: "soft delete returns nullable row", call: func(mapper MCPServerMapper) (mcpServerMapperRow, error) {
 			return mapper.SoftDeleteByExternalID(ctx, params.WorkspaceUUID, params.ExternalID)
 		}},
@@ -141,20 +131,18 @@ func TestMCPServerMapperResultSemantics(t *testing.T) {
 		})
 	}
 
-	t.Run("list returns multiple rows and nullable timestamps", func(t *testing.T) {
-		archivedAt := params.CreatedAt.Add(time.Minute)
-		deletedAt := archivedAt.Add(time.Minute)
+	t.Run("list returns multiple rows", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: mcpServerMapperTestColumns(),
 			rows: [][]driver.Value{
-				mcpServerMapperTestRow(nil, nil),
-				mcpServerMapperTestRow(archivedAt, deletedAt),
+				mcpServerMapperTestRow(nil),
+				mcpServerMapperTestRow(nil),
 			},
 		})
 		rows, err := NewMCPServerMapper(executor).ListPage(ctx, mcpServerPageMapperParams{
-			WorkspaceUUID: params.WorkspaceUUID, FetchLimit: 20, IncludeArchived: true,
+			WorkspaceUUID: params.WorkspaceUUID, FetchLimit: 20,
 		})
-		if err != nil || len(rows) != 2 || rows[0].ArchivedAt != nil || rows[1].ArchivedAt == nil || rows[1].DeletedAt == nil {
+		if err != nil || len(rows) != 2 || rows[0].DeletedAt != nil || rows[1].DeletedAt != nil {
 			t.Fatalf("ListPage() = (%+v, %v)", rows, err)
 		}
 	})
@@ -169,10 +157,6 @@ func TestMCPServerMapperResultSemantics(t *testing.T) {
 		}},
 		{name: "update", call: func(mapper MCPServerMapper) error {
 			_, err := mapper.UpdateByExternalID(ctx, params)
-			return err
-		}},
-		{name: "archive", call: func(mapper MCPServerMapper) error {
-			_, err := mapper.ArchiveByExternalID(ctx, params.WorkspaceUUID, "mcpsrv_missing")
 			return err
 		}},
 		{name: "soft delete", call: func(mapper MCPServerMapper) error {
@@ -202,10 +186,6 @@ func TestMCPServerMapperResultSemantics(t *testing.T) {
 			_, err := NewMCPServerMapper(executor).UpdateByExternalID(ctx, params)
 			return err
 		}},
-		{statementID: "MCPServerMapper.ArchiveByExternalID", kind: yourbatis.StatementUpdate, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewMCPServerMapper(executor).ArchiveByExternalID(ctx, params.WorkspaceUUID, params.ExternalID)
-			return err
-		}},
 		{statementID: "MCPServerMapper.SoftDeleteByExternalID", kind: yourbatis.StatementUpdate, query: true, call: func(executor yourbatis.Executor) error {
 			_, err := NewMCPServerMapper(executor).SoftDeleteByExternalID(ctx, params.WorkspaceUUID, params.ExternalID)
 			return err
@@ -227,15 +207,15 @@ func TestMCPServerMapperResultSemantics(t *testing.T) {
 func mcpServerMapperTestColumns() []string {
 	return []string{
 		"uuid", "external_id", "organization_uuid", "workspace_uuid", "name", "transport_type",
-		"endpoint_url", "created_at", "updated_at", "archived_at", "deleted_at",
+		"endpoint_url", "created_at", "updated_at", "deleted_at",
 	}
 }
 
-func mcpServerMapperTestRow(archivedAt, deletedAt any) []driver.Value {
+func mcpServerMapperTestRow(deletedAt any) []driver.Value {
 	now := time.Date(2026, time.August, 13, 1, 2, 3, 0, time.UTC)
 	return []driver.Value{
 		"00000000-0000-4000-8000-000000000003", "mcpsrv_test",
 		"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
-		"internal-docs", "url", "https://example.test/mcp", now, now, archivedAt, deletedAt,
+		"internal-docs", "url", "https://example.test/mcp", now, now, deletedAt,
 	}
 }

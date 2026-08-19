@@ -327,7 +327,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(window.location.search).toBe('?tab=config');
   });
 
-  test('selects a reusable workspace MCP without exposing inline custom configuration', async () => {
+  test('copies a reusable workspace MCP into Agent configuration without inline editing', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi([], {
       mcpDirectoryErrorOnce: true,
@@ -338,10 +338,8 @@ export function registerManagedAgentsAgentsTests() {
           name: 'internal-docs',
           transport_type: 'url',
           url: 'https://docs.example.com/mcp',
-          status: 'active',
           created_at: '2026-08-13T00:00:00Z',
           updated_at: '2026-08-13T00:00:00Z',
-          archived_at: null,
         },
       ],
     });
@@ -360,6 +358,15 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(customPanel).queryByLabelText('Name')).toBeNull();
     expect(within(customPanel).queryByLabelText('MCP Server URL')).toBeNull();
     expect(within(customPanel).getByRole('button', { name: 'Create MCP server' })).toBeTruthy();
+    expect(
+      within(customPanel).getByText(
+        'Selecting an entry copies its name and endpoint into the Agent configuration. Later directory changes do not update the Agent.',
+      ),
+    ).toBeTruthy();
+    const listRequest = api.requests.find(
+      (request) => request.url.includes('/mcp_servers') && request.method === 'GET',
+    );
+    expect(new URL(listRequest!.url, 'https://oma.duck.ai').searchParams.has('include_archived')).toBe(false);
     fireEvent.click(await within(customPanel).findByRole('option', { name: /internal-docs/ }));
     expect(within(dialog).getByText('https://docs.example.com/mcp')).toBeTruthy();
 
@@ -391,10 +398,8 @@ export function registerManagedAgentsAgentsTests() {
             name: 'docs',
             transport_type: 'url',
             url: 'https://new.example.com/mcp',
-            status: 'active',
             created_at: '2026-08-13T00:00:00Z',
             updated_at: '2026-08-13T00:00:00Z',
-            archived_at: null,
           },
         ],
       },
@@ -455,10 +460,8 @@ export function registerManagedAgentsAgentsTests() {
             name: 'internal-docs',
             transport_type: 'url',
             url: 'https://mcp.example.com/mcp',
-            status: 'active',
             created_at: '2026-08-13T00:00:00Z',
             updated_at: '2026-08-13T00:00:00Z',
-            archived_at: null,
           },
         ],
       },

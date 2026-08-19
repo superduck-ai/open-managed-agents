@@ -54,28 +54,31 @@ func TestCreateWorkspaceMCPServerNormalizesAndScopesConfiguration(t *testing.T) 
 	if store.created.Name != "internal-docs" || store.created.EndpointURL != "https://example.com/mcp" {
 		t.Fatalf("created config = (%q, %q), want normalized values", store.created.Name, store.created.EndpointURL)
 	}
+	if !strings.HasPrefix(store.created.ExternalID, "mcp_") {
+		t.Fatalf("created external ID = %q, want mcp_ prefix", store.created.ExternalID)
+	}
 	if !strings.Contains(recorder.Body.String(), `"type":"mcp_server"`) ||
 		!strings.Contains(recorder.Body.String(), `"url":"https://example.com/mcp"`) {
 		t.Fatalf("response = %s, want MCP server response", recorder.Body.String())
 	}
+	if strings.Contains(recorder.Body.String(), `"status"`) || strings.Contains(recorder.Body.String(), `"archived_at"`) {
+		t.Fatalf("response = %s, does not want archive lifecycle fields", recorder.Body.String())
+	}
 }
 
-func TestWorkspaceMCPServerRoutesKeepTenantAndLifecycleBoundaries(t *testing.T) {
-	active := testMCPServer("mcpsrv_active", "docs", "https://docs.example.com/mcp")
-	archived := testMCPServer("mcpsrv_archived", "archive", "https://archive.example.com/mcp")
-	archivedAt := archived.UpdatedAt.Add(time.Hour)
-	archived.ArchivedAt = &archivedAt
-	store := &mcpServerStoreStub{servers: []db.WorkspaceMCPServer{active, archived}}
+func TestWorkspaceMCPServerRoutesKeepTenantAndSnapshotBoundaries(t *testing.T) {
+	server := testMCPServer("mcpsrv_active", "docs", "https://docs.example.com/mcp")
+	store := &mcpServerStoreStub{servers: []db.WorkspaceMCPServer{server}}
 	handler := NewHandler(store, nil)
 	router := chi.NewRouter()
 	router.Route("/api/console/organizations/{orgUuid}", handler.RegisterRoutes)
 
-	t.Run("list defaults to active and supports search", func(t *testing.T) {
+	t.Run("list supports search", func(t *testing.T) {
 		response := serveMCPServerRequest(router, http.MethodGet, "/api/console/organizations/org_test/workspaces/workspace_test/mcp_servers?search=doc", "")
-		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":"mcpsrv_active"`) || strings.Contains(response.Body.String(), "mcpsrv_archived") {
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":"mcpsrv_active"`) {
 			t.Fatalf("list response = %d %s", response.Code, response.Body.String())
 		}
-		if store.lastList.WorkspaceUUID != "workspace-uuid" || store.lastList.Search != "doc" || store.lastList.IncludeArchived {
+		if store.lastList.WorkspaceUUID != "workspace-uuid" || store.lastList.Search != "doc" {
 			t.Fatalf("list params = %#v", store.lastList)
 		}
 	})
@@ -94,11 +97,14 @@ func TestWorkspaceMCPServerRoutesKeepTenantAndLifecycleBoundaries(t *testing.T) 
 		}
 	})
 
-	t.Run("archive and delete are scoped", func(t *testing.T) {
+	t.Run("archive route is not exposed", func(t *testing.T) {
 		archiveResponse := serveMCPServerRequest(router, http.MethodPost, "/api/console/organizations/org_test/workspaces/workspace_test/mcp_servers/mcpsrv_active/archive", "")
-		if archiveResponse.Code != http.StatusOK || store.archivedID != "mcpsrv_active" {
+		if archiveResponse.Code != http.StatusNotFound {
 			t.Fatalf("archive response = %d body=%s", archiveResponse.Code, archiveResponse.Body.String())
 		}
+	})
+
+	t.Run("delete removes only the reusable directory entry", func(t *testing.T) {
 		deleteResponse := serveMCPServerRequest(router, http.MethodDelete, "/api/console/organizations/org_test/workspaces/workspace_test/mcp_servers/mcpsrv_active", "")
 		if deleteResponse.Code != http.StatusOK || store.deletedID != "mcpsrv_active" || !strings.Contains(deleteResponse.Body.String(), `"deleted":true`) {
 			t.Fatalf("delete response = %d body=%s", deleteResponse.Code, deleteResponse.Body.String())
@@ -277,24 +283,23 @@ func TestWorkspaceMCPServerConsoleErrorLogsSafeStructuredInternalFailure(t *test
 }
 
 type mcpServerStoreStub struct {
-	created    *db.WorkspaceMCPServer
-	createErr  error
-	servers    []db.WorkspaceMCPServer
-	lastList   db.ListWorkspaceMCPServersPageParams
-	listCalls  int
-	getCalls   int
-	updated    db.WorkspaceMCPServer
-	archivedID string
-	deletedID  string
+	created   *db.WorkspaceMCPServer
+	createErr error
+	servers   []db.WorkspaceMCPServer
+	lastList  db.ListWorkspaceMCPServersPageParams
+	listCalls int
+	getCalls  int
+	updated   db.WorkspaceMCPServer
+	deletedID string
 }
 
 func (s *mcpServerStoreStub) CreateWorkspaceMCPServer(_ context.Context, server db.WorkspaceMCPServer) (db.WorkspaceMCPServer, error) {
 	if s.createErr != nil {
 		return db.WorkspaceMCPServer{}, s.createErr
 	}
-	s.created = &server
+	createdInput := server
+	s.created = &createdInput
 	server.UUID = "mcp-server-uuid"
-	server.ExternalID = "mcpsrv_test"
 	server.CreatedAt = time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
 	server.UpdatedAt = server.CreatedAt
 	return server, nil
@@ -305,9 +310,6 @@ func (s *mcpServerStoreStub) ListWorkspaceMCPServersPage(_ context.Context, para
 	s.lastList = params
 	rows := make([]db.WorkspaceMCPServer, 0, len(s.servers))
 	for _, server := range s.servers {
-		if !params.IncludeArchived && server.ArchivedAt != nil {
-			continue
-		}
 		if params.Search != "" && !strings.Contains(strings.ToLower(server.Name+" "+server.EndpointURL), strings.ToLower(params.Search)) {
 			continue
 		}
@@ -336,17 +338,6 @@ func (s *mcpServerStoreStub) UpdateWorkspaceMCPServer(_ context.Context, workspa
 	next.UpdatedAt = next.CreatedAt.Add(time.Hour)
 	s.updated = next
 	return next, nil
-}
-
-func (s *mcpServerStoreStub) ArchiveWorkspaceMCPServer(_ context.Context, workspaceUUID, externalID string) (db.WorkspaceMCPServer, error) {
-	if workspaceUUID != "workspace-uuid" {
-		return db.WorkspaceMCPServer{}, db.ErrNotFound
-	}
-	s.archivedID = externalID
-	server := testMCPServer(externalID, "docs", "https://docs.example.com/mcp")
-	now := server.UpdatedAt.Add(time.Hour)
-	server.ArchivedAt = &now
-	return server, nil
 }
 
 func (s *mcpServerStoreStub) DeleteWorkspaceMCPServer(_ context.Context, workspaceUUID, externalID string) error {

@@ -9,18 +9,17 @@ import (
 )
 
 const (
-	invalidJSONMessage           = "Invalid JSON body"
-	invalidLimitMessage          = "limit must be between 1 and 100"
-	invalidPageMessage           = "page is invalid"
-	invalidArchivedFilterMessage = "include_archived must be true or false"
-	nameRequiredMessage          = "name is required"
-	nameTooLongMessage           = "name must be at most 255 characters"
-	nameFormatMessage            = "name must use letters, numbers, underscores, hyphens, or periods and must not contain consecutive underscores"
-	endpointTooLongMessage       = "url must be at most 2048 bytes"
-	invalidEndpointMessage       = "url must be a valid HTTP or HTTPS MCP server URL without credentials or fragment"
-	resourceNotFoundMessage      = "MCP server not found"
-	duplicateResourceMessage     = "An MCP server with this name or URL already exists"
-	internalServerErrorMessage   = "Internal server error"
+	invalidJSONMessage         = "Invalid JSON body"
+	invalidLimitMessage        = "limit must be between 1 and 100"
+	invalidPageMessage         = "page is invalid"
+	nameRequiredMessage        = "name is required"
+	nameTooLongMessage         = "name must be at most 255 characters"
+	nameFormatMessage          = "name must use letters, numbers, underscores, hyphens, or periods and must not contain consecutive underscores"
+	endpointTooLongMessage     = "url must be at most 2048 bytes"
+	invalidEndpointMessage     = "url must be a valid HTTP or HTTPS MCP server URL without credentials or fragment"
+	resourceNotFoundMessage    = "MCP server not found"
+	duplicateResourceMessage   = "An MCP server with this name or URL already exists"
+	internalServerErrorMessage = "Internal server error"
 )
 
 var errInvalidPageCursor = errors.New("invalid MCP server page cursor")
@@ -35,10 +34,6 @@ func invalidLimit(cause error) error {
 
 func invalidPage(cause error) error {
 	return apperr.New(apperr.InvalidArgument, invalidPageMessage, cause)
-}
-
-func invalidArchivedFilter(cause error) error {
-	return apperr.New(apperr.InvalidArgument, invalidArchivedFilterMessage, cause)
 }
 
 func nameRequired() error {

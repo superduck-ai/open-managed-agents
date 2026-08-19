@@ -31,11 +31,11 @@ import {
 import { Input } from '../../shared/ui/input';
 import { Field, FieldDescription, FieldError, FieldLabel } from '../../shared/ui/field';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../../shared/ui/sheet';
-import { MCPServerActionsMenu, MCPServerStatusBadge } from './MCPServersTable';
+import { MCPServerActionsMenu } from './MCPServersTable';
 
 export type MCPServerDetailTarget = { serverId: string };
 export type MCPServerEditorTarget = { mode: 'create' } | { mode: 'edit'; server: WorkspaceMCPServer };
-export type MCPServerDestructiveTarget = { action: 'archive' | 'delete'; server: WorkspaceMCPServer };
+export type MCPServerDestructiveTarget = { server: WorkspaceMCPServer };
 
 export function MCPServerPanel({
   target,
@@ -46,7 +46,6 @@ export function MCPServerPanel({
   onClose,
   onRetry,
   onEdit,
-  onArchive,
   onDelete,
 }: {
   target: MCPServerDetailTarget | null;
@@ -57,7 +56,6 @@ export function MCPServerPanel({
   onClose: () => void;
   onRetry: () => void;
   onEdit: (server: WorkspaceMCPServer) => void;
-  onArchive: (server: WorkspaceMCPServer) => void;
   onDelete: (server: WorkspaceMCPServer) => void;
 }) {
   return (
@@ -71,7 +69,6 @@ export function MCPServerPanel({
           onClose={onClose}
           onRetry={onRetry}
           onEdit={onEdit}
-          onArchive={onArchive}
           onDelete={onDelete}
         />
       </SheetContent>
@@ -87,7 +84,6 @@ function MCPServerDetailPanel({
   onClose,
   onRetry,
   onEdit,
-  onArchive,
   onDelete,
 }: {
   server?: WorkspaceMCPServer;
@@ -97,7 +93,6 @@ function MCPServerDetailPanel({
   onClose: () => void;
   onRetry: () => void;
   onEdit: (server: WorkspaceMCPServer) => void;
-  onArchive: (server: WorkspaceMCPServer) => void;
   onDelete: (server: WorkspaceMCPServer) => void;
 }) {
   const { msg } = useI18n();
@@ -131,14 +126,11 @@ function MCPServerDetailPanel({
       <SheetHeader className="border-b border-border px-4 py-4 pr-12">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <SheetTitle className="truncate">{server.name}</SheetTitle>
-              <MCPServerStatusBadge status={server.status} />
-            </div>
+            <SheetTitle className="truncate">{server.name}</SheetTitle>
             <SheetDescription className="mt-1 font-mono">{server.id}</SheetDescription>
           </div>
           <div className="absolute right-4 top-4 flex items-center gap-1">
-            <MCPServerActionsMenu server={server} onEdit={onEdit} onArchive={onArchive} onDelete={onDelete} />
+            <MCPServerActionsMenu server={server} onEdit={onEdit} onDelete={onDelete} />
             <PanelCloseButton onClose={onClose} />
           </div>
         </div>
@@ -150,17 +142,10 @@ function MCPServerDetailPanel({
         <DetailSection title={msg('mcpServers.configuration', 'Configuration')} bordered>
           <DetailRow label={msg('common.name', 'Name')} value={server.name} />
           <DetailRow label={msg('mcpServers.transport', 'Transport')} value={server.transport_type} mono />
-          <DetailRow label={msg('mcpServers.status', 'Status')} value={server.status} />
         </DetailSection>
         <DetailSection title={msg('mcpServers.lifecycle', 'Lifecycle')} bordered>
           <DetailRow label={msg('common.created', 'Created')} value={formatDate(server.created_at, formatter)} />
           <DetailRow label={msg('common.updated', 'Updated')} value={formatDate(server.updated_at, formatter)} />
-          {server.archived_at ? (
-            <DetailRow
-              label={msg('mcpServers.archivedAt', 'Archived')}
-              value={formatDate(server.archived_at, formatter)}
-            />
-          ) : null}
         </DetailSection>
       </div>
     </>
@@ -213,7 +198,12 @@ function MCPServerEditorDialog({
     try {
       await onSubmit({ name: name.trim(), url: url.trim() });
     } catch (submitError) {
-      setError(mcpServerErrorMessage(submitError));
+      setError(
+        mcpServerErrorMessage(
+          submitError,
+          msg('mcpServers.errors.duplicate', 'An MCP server with this name or URL already exists.'),
+        ),
+      );
     } finally {
       setSaving(false);
     }
@@ -227,7 +217,7 @@ function MCPServerEditorDialog({
           <DialogDescription>
             {msg(
               'mcpServers.editorDescription',
-              'Agents can select this configuration and copy its name and endpoint into their next version.',
+              'When an Agent selects this configuration, its name and endpoint are copied into the Agent configuration.',
             )}
           </DialogDescription>
         </DialogHeader>
@@ -388,26 +378,16 @@ export function MCPServerDestructiveDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
-  const archive = target?.action === 'archive';
   return (
     <AlertDialog open={Boolean(target)} onOpenChange={(open) => !open && onClose()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            {archive
-              ? msg('mcpServers.archiveTitle', 'Archive MCP server?')
-              : msg('mcpServers.deleteTitle', 'Delete MCP server?')}
-          </AlertDialogTitle>
+          <AlertDialogTitle>{msg('mcpServers.deleteTitle', 'Delete MCP server?')}</AlertDialogTitle>
           <AlertDialogDescription>
-            {archive
-              ? msg(
-                  'mcpServers.archiveDescription',
-                  'Archived servers stop appearing in Agent selection, but existing Agent versions keep their copied configuration.',
-                )
-              : msg(
-                  'mcpServers.deleteDescription',
-                  'This removes the reusable configuration. Existing Agent versions keep their copied configuration.',
-                )}
+            {msg(
+              'mcpServers.deleteDescription',
+              'This removes the reusable configuration from the workspace directory. Existing Agents keep the configuration already copied into their versions.',
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error ? (
@@ -417,8 +397,8 @@ export function MCPServerDestructiveDialog({
         ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isActing}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
-          <AlertDialogAction variant={archive ? 'default' : 'destructive'} disabled={isActing} onClick={onConfirm}>
-            {archive ? msg('common.archive', 'Archive') : msg('common.delete', 'Delete')}
+          <AlertDialogAction variant="destructive" disabled={isActing} onClick={onConfirm}>
+            {msg('common.delete', 'Delete')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

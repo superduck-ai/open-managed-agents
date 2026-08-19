@@ -6,10 +6,8 @@ export type WorkspaceMCPServer = {
   name: string;
   transport_type: 'url';
   url: string;
-  status: 'active' | 'archived';
   created_at: string;
   updated_at: string;
-  archived_at: string | null;
 };
 
 export type WorkspaceMCPServerPage = {
@@ -24,7 +22,6 @@ export type MCPServerMutation = {
 
 type ListWorkspaceMCPServersOptions = {
   search?: string;
-  includeArchived?: boolean;
   page?: string;
 };
 
@@ -48,9 +45,6 @@ export function listWorkspaceMCPServers(
   const query = new URLSearchParams();
   if (options.search?.trim()) {
     query.set('search', options.search.trim());
-  }
-  if (options.includeArchived) {
-    query.set('include_archived', 'true');
   }
   if (options.page) {
     query.set('page', options.page);
@@ -96,14 +90,6 @@ export function updateWorkspaceMCPServer(
   });
 }
 
-export function archiveWorkspaceMCPServer(orgUuid: string, workspaceId: string, serverId: string, csrfToken?: string) {
-  return consoleApi<WorkspaceMCPServer>(`${resourcePath(orgUuid, workspaceId, serverId)}/archive`, {
-    method: 'POST',
-    headers: workspaceHeaders(workspaceId),
-    csrfToken,
-  });
-}
-
 export function deleteWorkspaceMCPServer(orgUuid: string, workspaceId: string, serverId: string, csrfToken?: string) {
   return consoleApi<{ id: string; type: 'mcp_server_deleted'; deleted: boolean }>(
     resourcePath(orgUuid, workspaceId, serverId),
@@ -111,8 +97,11 @@ export function deleteWorkspaceMCPServer(orgUuid: string, workspaceId: string, s
   );
 }
 
-export function mcpServerErrorMessage(error: unknown) {
+export function mcpServerErrorMessage(error: unknown, duplicateMessage?: string) {
   const apiError = error as Partial<ApiError> | undefined;
+  if (apiError?.code === 'conflict' && duplicateMessage) {
+    return duplicateMessage;
+  }
   if (apiError && typeof apiError.message === 'string' && apiError.message.trim()) {
     return apiError.message;
   }

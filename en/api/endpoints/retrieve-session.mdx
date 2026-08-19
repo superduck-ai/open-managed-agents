@@ -1,0 +1,53 @@
+---
+title: "Retrieve a session"
+description: "Read the current session state, agent snapshot, and resources."
+api: "GET /v1/sessions/{session_id}?beta=true"
+---
+
+Returns a session from the current workspace. This resource currently requires `beta=true`.
+
+<ParamField path="session_id" type="string" required>
+  The `sesn_`-prefixed session ID.
+</ParamField>
+
+<ParamField query="beta" type="boolean" required>
+  Must be `true`.
+</ParamField>
+
+<ResponseField name="id" type="string">
+  The session ID.
+</ResponseField>
+
+<ResponseField name="agent" type="object">
+  The agent snapshot captured when the session was created.
+</ResponseField>
+
+<ResponseField name="environment_id" type="string">
+  The environment running this task.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current lifecycle state, such as `idle` or `running`.
+</ResponseField>
+
+<ResponseField name="resources" type="array">
+  Resources currently mounted into the session.
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Aggregated usage information.
+</ResponseField>
+
+<ResponseField name="stats" type="object">
+  Session execution statistics.
+</ResponseField>
+
+```bash
+curl 'http://localhost:38080/v1/sessions/sesn_01...?beta=true' \
+  -H 'Authorization: Bearer sk-ant-local-default' \
+  -H 'anthropic-version: 2023-06-01'
+```
+
+<Note>
+  Retrieving a session returns its current snapshot. Use `/events`, `/events/stream`, or a thread stream when you need incremental progress.
+</Note>

@@ -1,0 +1,83 @@
+---
+title: "Configuration"
+description: "Configure the OMA server, storage, upstream models, sandboxes, and security keys."
+icon: "sliders"
+---
+
+OMA uses a strictly validated YAML configuration. The service searches upward for `config/config.yaml` until it reaches `go.mod`, or you can select a file with `CONFIG_FILE`.
+
+## Loading rules
+
+```text
+Code defaults < YAML configuration
+```
+
+Business environment variables do not override YAML. `CONFIG_FILE` only selects a file. Unknown fields, misspelled names, and invalid enum values prevent startup.
+
+## Minimal development configuration
+
+```yaml
+env: dev
+
+server:
+  addr: 127.0.0.1:38080
+
+database:
+  url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
+
+redis:
+  url: redis://localhost:6379
+
+storage:
+  type: s3
+  s3:
+    endpoint: http://localhost:9000
+    bucket: claude-files
+    region: us-east-1
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    force_path_style: true
+
+anthropic_upstream:
+  base_url: https://api.anthropic.com
+  api_key: ""
+```
+
+## Main configuration groups
+
+<AccordionGroup>
+  <Accordion title="server, database, and redis">
+    Configure the listen address, PostgreSQL connection, and platform session storage. Production mode does not automatically migrate the database by default.
+  </Accordion>
+  <Accordion title="storage">
+    Configure S3-compatible storage, the bucket, capacity limits, and path-style access. Files, skills, and batch results depend on this storage.
+  </Accordion>
+  <Accordion title="anthropic_upstream">
+    Configure the upstream model base URL, API key, and optional model mappings. OMA forwards model requests to this service.
+  </Accordion>
+  <Accordion title="e2b and environment_runner">
+    Configure sandbox APIs, templates, timeouts, concurrency, and agent runtime paths.
+  </Accordion>
+  <Accordion title="code_session">
+    Configure the sandbox callback URL, OTLP file logs, JWT signing key, and optional upstream proxy CA.
+  </Accordion>
+  <Accordion title="vault and webhook">
+    Configure the vault master KEK, webhook endpoint, signing key, retries, and worker behavior.
+  </Accordion>
+</AccordionGroup>
+
+## Key files
+
+For production, mount stable private keys through read-only secrets. Never bake them into an image or commit them.
+
+```bash
+just generate-code-session-jwt-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
+just generate-vault-kek \
+  config/secrets/vault-kek
+```
+
+<Note>
+  `docs/configuration-reference.yaml` contains every accepted field with safe example values. `config/config.example.yaml` is the smaller template for daily development.
+</Note>

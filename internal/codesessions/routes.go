@@ -35,9 +35,9 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 	// code-session ID 只在资源根路径声明一次；worker 作为该 session 的子资源注册，
 	// 避免通过字符串拼接重复完整路径，并让后续资源级中间件可以挂载在明确的 chi 子路由上。
 	router.Route("/code/sessions/{code_session_id}", func(sessionRouter chi.Router) {
-		sessionRouter.Get("/", h.handleCodeSession)
-		sessionRouter.Post("/", h.handleCodeSession)
-		sessionRouter.Put("/", h.handleCodeSession)
+		sessionRouter.Get("/", h.errorAdapter.Wrap(h.handleCodeSessionHTTPPoll))
+		sessionRouter.Post("/", h.handleSessionIngressPersistence)
+		sessionRouter.Put("/", h.handleSessionIngressPersistence)
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
 			workerRouter.Put("/", h.handlePutCodeSessionWorker)

@@ -276,9 +276,12 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
 		return nil
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	if current.ArchivedAt != nil || current.Status != "idle" {
 		return invalidRequest(errors.New("session must be idle and unarchived to update"))
@@ -336,9 +339,12 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), true))
 		return nil
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	if current.Status == "running" || current.Status == "rescheduling" {
 		return invalidRequest(errors.New("running sessions cannot be archived"))
@@ -366,9 +372,12 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 		return nil
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	if current.Status == "running" || current.Status == "rescheduling" {
 		return invalidRequest(errors.New("running sessions cannot be deleted"))
@@ -823,9 +832,12 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureThread(time.Now().UTC(), true))
 		return nil
 	}
-	session, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	session, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {

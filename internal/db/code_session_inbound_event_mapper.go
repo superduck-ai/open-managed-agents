@@ -33,7 +33,6 @@ type codeSessionEventRow struct {
 	LastDeliveryAttemptAt *time.Time `db:"last_delivery_attempt_at"`
 	LastDeliveryUpdateAt  *time.Time `db:"last_delivery_update_at"`
 	DeliveryAttempts      int        `db:"delivery_attempts"`
-	Ephemeral             bool       `db:"ephemeral"`
 	CreatedAt             time.Time  `db:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at"`
 	DeletedAt             *time.Time `db:"deleted_at"`
@@ -115,7 +114,6 @@ func (r codeSessionEventRow) event() CodeSessionEvent {
 		LastDeliveryAttemptAt: r.LastDeliveryAttemptAt,
 		LastDeliveryUpdateAt:  r.LastDeliveryUpdateAt,
 		DeliveryAttempts:      r.DeliveryAttempts,
-		Ephemeral:             r.Ephemeral,
 		CreatedAt:             r.CreatedAt,
 		UpdatedAt:             r.UpdatedAt,
 		DeletedAt:             r.DeletedAt,

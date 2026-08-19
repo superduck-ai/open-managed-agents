@@ -386,13 +386,13 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 	})
 
 	t.Run("failure malformed MCP contract fails closed before explicit host matching", func(t *testing.T) {
-		codeSession, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+		codeSession, err := getCodeSession(app, context.Background(), codeSessionID)
 		if err != nil {
 			t.Fatalf("load code session scope: %v", err)
 		}
-		originalSession, err := app.db.GetSession(context.Background(), codeSession.WorkspaceUUID, session.ID)
-		if err != nil {
-			t.Fatalf("load original session snapshot: %v", err)
+		originalSession, found, err := app.db.GetSession(context.Background(), codeSession.WorkspaceUUID, session.ID)
+		if err != nil || !found {
+			t.Fatalf("load original session snapshot = (%t, %v), want found", found, err)
 		}
 		if _, err := app.pool.Exec(context.Background(), `
 			update environments
@@ -542,7 +542,7 @@ func codeSessionIngressTokenWithScope(
 	workspaceUUID string,
 ) string {
 	t.Helper()
-	record, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	record, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("get code session: %v", err)
 	}

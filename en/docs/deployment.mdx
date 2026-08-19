@@ -1,0 +1,59 @@
+---
+title: "Deployment"
+description: "Deploy OMA with Docker Compose and understand the production boundary."
+icon: "server"
+---
+
+OMA includes a Docker Compose topology for the control plane and local infrastructure required to run managed agents.
+
+## Compose services
+
+| Service | Purpose | Default port |
+| --- | --- | --- |
+| `oma-server` | `/v1` API and console backend | `38080` |
+| `caddy` | Web console and reverse proxy | `28080` |
+| `postgres` | Resource metadata | `5432` |
+| `redis` | Platform sessions | `6379` |
+| `minio` | Files, skills, and batch artifacts | `9000` / `9001` |
+| `e2b-local` | Local sandbox gateway | `3099` |
+
+## Start the full topology
+
+```bash
+just init-compose-config
+docker compose up -d
+docker compose ps
+```
+
+Compose mounts the configuration file read-only into `oma-server`. The application reads one complete YAML file and does not merge the tracked template with the local file.
+
+## Local development topology
+
+When debugging the backend or sandbox, run PostgreSQL, Redis, MinIO, and e2b-local in Compose, then run the Go server and Vite on the host. The callback address must be reachable from inside a sandbox container:
+
+```yaml
+code_session:
+  sandbox_api_base_url: http://host.docker.internal:38080
+```
+
+## Production requirements
+
+<Warning>
+  The default Compose topology targets local development. Do not expose it publicly without production hardening.
+</Warning>
+
+At minimum, a production deployment should:
+
+- Set `env` to `prod`
+- Disable automatic database migration and run migrations explicitly in the release process
+- Mount a stable Ed25519 private key for code sessions
+- Configure a stable vault KEK with backup and rotation procedures
+- Use dedicated PostgreSQL, Redis, and object storage credentials
+- Put TLS, network controls, and access controls in front of the API and console
+- Configure logs, metrics, backups, and restore verification
+
+Development mode generates an in-memory code-session key when no key file is provided. A restart invalidates old session-ingress JWTs, so this behavior is not suitable for production.
+
+<Card title="Configuration" icon="sliders" href="/en/docs/configuration">
+  Review the core YAML groups, loading rules, and sensitive settings.
+</Card>

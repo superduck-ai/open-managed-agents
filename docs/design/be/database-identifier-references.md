@@ -95,15 +95,15 @@ identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
 | 资源目录（`00041`） | `files`、`skills`、`agents`、`environments`、`vaults`、`memory_stores`、`webhook_endpoints`、`message_batches` | organization、workspace、creator、environment 等所属资源引用 |
 | 资源子表（`00041`） | `skill_versions`、`agent_versions`、`environment_keys`、`vault_credentials`、`mcp_oauth_flows`、`memories`、`memory_versions`、`message_batch_requests` | 父资源、租户、creator/user 和 current/redaction version 引用 |
 | 编排与会话（`00042`） | `deployments`、`deployment_runs`、`sessions`、`session_threads`、`session_resources`、`session_events` | organization、workspace、API key、environment、agent、deployment、session、thread 引用 |
-| Code Session 与 runtime（`00043`） | `code_sessions`、三个 `code_session_*_events` 表、`environment_work`、`environment_worker_polls`、`environment_sandboxes` | organization、workspace、session、environment、code session、work 引用 |
+| Code Session 与 runtime（`00043`） | `code_sessions`、当时存在的三个 `code_session_*_events` 表、`environment_work`、`environment_worker_polls`、`environment_sandboxes` | organization、workspace、session、environment、code session、work 引用；outbound event 表随后由 `00051` 移除 |
 | 后台与统计（`00043`） | `jobs`、`workspace_storage_usage` | `workspace_uuid` |
 | Console 与 Workbench（`00044`） | `console_api_keys`、`workbench_prompts`、`workbench_prompt_revisions`、`workbench_prompt_kv`、`workbench_evaluations`、`workbench_generated_test_cases` | organization、workspace、API key、user、prompt、revision 引用 |
 | Admin Tunnel（`00045`） | `mcp_tunnels`、`mcp_tunnel_certificates` | organization、workspace、tunnel 引用 |
 | Console/Workbench 兼容展示（`00046`） | `console_api_keys`、`workbench_prompts` | 将非权威文本列明确命名为 `workspace_display_id`；资源定位仍只使用 `workspace_uuid` |
 
 例如 `skill_versions.skill_uuid`、`deployment_runs.deployment_uuid`、
-`session_events.session_uuid`、`code_session_outbound_events.code_session_uuid` 和
-`workbench_evaluations.revision_ref_uuid` 都直接引用父资源的稳定 UUID，不再保存父表 identity。
+`session_events.session_uuid` 和 `workbench_evaluations.revision_ref_uuid` 都直接引用父资源的稳定 UUID，
+不再保存父表 identity。
 仅为外部协议兼容而存在的 `*_external_id` 或 `prompt_uuid` 文本字段继续保留其协议语义，但不再
 承担数据库内部资源关联。
 

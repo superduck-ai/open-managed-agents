@@ -1,0 +1,63 @@
+---
+title: "创建 Agent"
+description: "创建一个可版本化的 Managed Agent 定义。"
+api: "POST /v1/agents?beta=true"
+---
+
+创建 Agent 定义。该资源当前要求 `beta=true`。
+
+<ParamField query="beta" type="boolean" required>
+  必须为 `true`。
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Agent 名称。
+</ParamField>
+
+<ParamField body="model" type="string | object" required>
+  模型 ID，或 `{ "id": "...", "speed": "standard | fast" }`。
+</ParamField>
+
+<ParamField body="description" type="string | null">
+  面向使用者的描述。
+</ParamField>
+
+<ParamField body="system" type="string | null">
+  Agent 的系统提示。
+</ParamField>
+
+<ParamField body="mcp_servers" type="array">
+  MCP Server 列表。当前支持 `{name, type: "url", url}`。
+</ParamField>
+
+<ParamField body="skills" type="array">
+  Agent 使用的 Skills。
+</ParamField>
+
+<ParamField body="tools" type="array">
+  Agent 可用工具。
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  自定义键值 metadata。
+</ParamField>
+
+```json Request
+{
+  "name": "repository-maintainer",
+  "description": "Maintains a repository and reports verified changes.",
+  "model": {
+    "id": "claude-sonnet-4-6",
+    "speed": "standard"
+  },
+  "system": "Inspect the repository, make focused changes, and verify them.",
+  "mcp_servers": [],
+  "skills": [],
+  "tools": [],
+  "metadata": {
+    "team": "platform"
+  }
+}
+```
+
+响应包含生成的 `agent_...` ID、版本号、归一化配置和时间戳。更新 Agent 时必须提交当前 `version`，以检测并发修改。

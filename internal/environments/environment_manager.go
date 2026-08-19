@@ -3,12 +3,10 @@ package environments
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	urlpkg "net/url"
 	"path"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -20,6 +18,27 @@ const (
 	defaultEnvironmentWorkDir     = "/home/user"
 	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
+	managedAgentEnvironmentPrompt = `# Managed-agent environment
+
+These rules describe the current sandbox environment and do not replace your assigned role.
+
+## Uploaded inputs
+
+- A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
+- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
+- /mnt/session/uploads is read-only. Do not modify files under this directory.
+- Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
+- First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.
+- Search the working directory only after the uploads check finds no match. Do not report a file missing until both locations have been checked in this order.
+- Uploaded filenames and paths are authoritative. Use an exact path when provided; otherwise, use only a path returned by inspecting /mnt/session/uploads. If multiple files match, ask the user which one to use.
+- Never guess, truncate, rename, or reconstruct an uploaded input path. Do not infer an upload path from metadata such as a file ID.
+
+## Output deliverables
+
+- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
+- A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
+- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
+- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
 )
 
 func managedAgentSessionConfig(
@@ -30,10 +49,14 @@ func managedAgentSessionConfig(
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
-		"origin":   "managed_agents_api",
-		"model":    modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":  runtimeResources.sources,
-		"outcomes": []any{},
+		"origin":               "managed_agents_api",
+		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
+		"sources":              runtimeResources.sources,
+		"outcomes":             []any{},
+		"append_system_prompt": managedAgentEnvironmentPrompt,
+	}
+	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
+		body["system_prompt"] = system
 	}
 	if len(mcpServers) > 0 {
 		body["mcp_servers"] = mcpServers
@@ -93,53 +116,6 @@ func managedAgentMCPConfigFile(mcpConfig map[string]any) map[string]any {
 		"content": base64.StdEncoding.EncodeToString(content),
 		"mode":    0o600,
 	}
-}
-
-func proxyManagedAgentMCPConfig(startupContext map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string) error {
-	rawConfig, ok := startupContext["mcp_config"]
-	if !ok {
-		return nil
-	}
-	mcpConfig, ok := rawConfig.(map[string]any)
-	if !ok {
-		return errors.New("managed agent mcp_config must be an object")
-	}
-	servers, ok := mcpConfig["mcpServers"].(map[string]any)
-	if !ok {
-		return errors.New("managed agent mcpServers must be an object")
-	}
-	for name, rawServer := range servers {
-		server, ok := rawServer.(map[string]any)
-		if !ok {
-			return errors.New("managed agent MCP server " + name + " must be an object")
-		}
-		upstreamURL := stringFromMap(server, "url")
-		proxyURL, err := codeSessionMCPProxyURL(apiBaseURL, codeSessionID, upstreamURL)
-		if err != nil {
-			return err
-		}
-		server["url"] = proxyURL
-		headers := mapStringAnyValue(server["headers"])
-		headers["Authorization"] = "Bearer " + sessionIngressToken
-		server["headers"] = headers
-	}
-	startupContext["mcp_config"] = mcpConfig
-	startupContext["mcp_config_file"] = managedAgentMCPConfigFile(mcpConfig)
-	return nil
-}
-
-func codeSessionMCPProxyURL(apiBaseURL string, codeSessionID string, upstreamURL string) (string, error) {
-	base, err := urlpkg.Parse(strings.TrimSpace(apiBaseURL))
-	if err != nil || base.Scheme == "" || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
-		return "", errors.New("code_session.sandbox_api_base_url must be an absolute HTTP(S) URL for MCP proxying")
-	}
-	if collections.IsBlank(codeSessionID) || collections.IsBlank(upstreamURL) {
-		return "", errors.New("managed agent MCP proxy requires a code session ID and upstream URL")
-	}
-	base.RawQuery = ""
-	base.Fragment = ""
-	proxyURL := strings.TrimRight(base.String(), "/") + "/v2/ccr-sessions/" + urlpkg.PathEscape(codeSessionID) + "/mcp"
-	return proxyURL + "?" + urlpkg.Values{"mcp_url": {upstreamURL}}.Encode(), nil
 }
 
 func mcpToolsetsByServer(tools []any) map[string]map[string]any {
@@ -275,9 +251,6 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	}
 	apiBaseURL := codeSessionSandboxAPIBaseURL(cfg)
 	startupContext["api_base_url"] = apiBaseURL
-	if err := proxyManagedAgentMCPConfig(startupContext, apiBaseURL, codeSessionID, sessionIngressToken); err != nil {
-		return nil, err
-	}
 	startupContext["use_code_sessions"] = true
 	startupContext["session_id"] = codeSessionID
 	claudeCodeArgs := mapStringAnyValue(startupContext["claude_code_args"])
@@ -289,7 +262,8 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	delete(environmentVariables, "CLAUDE_CODE_SESSION_ACCESS_TOKEN") // 避免遮蔽 environment-manager 注入的 WebSocket auth FD。
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
 	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
-	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1" // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
+	environmentVariables["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] = "true" // 让 worker 输出包含 streaming 中间消息。
+	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"              // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
@@ -458,7 +432,6 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
 		"exec " + shellQuote(managerPath) +
 			" task-run" +
-			" --stdin" +
 			" --session " + shellQuote(codeSessionID) +
 			" --session-mode resume-cached" +
 			" --claude-agent-version " + shellQuote("current") +

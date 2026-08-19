@@ -124,9 +124,7 @@ ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, epoch) error
 
 它只读取当前 epoch，用于不落库的轻量端点或读路径的兼容校验。注意：这个方法不能作为真正写入事件或 ACK 状态的唯一保护，因为它和后续写入之间可能被新的 register 插队。
 
-## 6. 事务内写入保护
-
-关键修正：**任何会落库 worker event 的路径，epoch 校验必须与事件写入处在同一个 DB 事务和同一把 code session 行锁下。**
+## 6. Worker output 的条件写入保护
 
 仅在 HTTP handler 中先调用 `ValidateCodeSessionWorkerEpoch()` 不够。存在如下竞态：
 
@@ -135,53 +133,53 @@ current_worker_epoch = 1
 
 旧 worker A: Validate epoch=1 通过
 新 worker B: register，锁行并 bump 到 epoch=2，提交
-旧 worker A: 继续 append event
+旧 worker A: 继续处理 output event
 ```
 
-如果 append 事务内不再检查 epoch，旧 worker A 会在被抢占后继续写入。
+worker output 不再写入私有 outbound event log。`POST /worker/events` 在处理整批
+output 前，先执行一次带 epoch 条件的 activity update：
 
-因此 `AppendCodeSessionEventInput` 支持：
-
-```go
-RequiredWorkerEpoch *int64
+```sql
+update code_sessions
+set last_worker_activity_at = $now,
+    updated_at = $now
+where external_id = $code_session_id
+  and current_worker_epoch = $worker_epoch
+  and deleted_at is null;
 ```
 
-`appendCodeSessionEvent()` 的事务必须这样执行：
+0 rows 时再区分 session 不存在与 epoch mismatch。该条件 update 是整个 batch 的
+线性化点；它与 register 对同一 `code_sessions` 行的更新互斥：
 
-```go
-tx := begin()
-session := select code_sessions
-  where external_id = $1 and deleted_at is null
-  for update
-
-if input.RequiredWorkerEpoch != nil &&
-   session.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
-    return ErrWorkerEpochMismatch
-}
-
-insert code_session_outbound_events / inbound_events
-update code_sessions sequence_num
-commit()
-```
-
-该事务由共享的 `yourbatis.DB.Transaction` 创建；回调中的同一个事务 `Executor`
-同时构造 `CodeSessionMapper`、`CodeSessionInboundEventMapper` 和
-`CodeSessionOutboundEventMapper`。`CodeSessionMapper.LockCodeSessionByExternalID`
-负责日常 append 的行锁，不附加 `initializing` 状态限制；启动激活仍使用独立的
-`LockInitializingCodeSession`。方向对应的 event mapper 在锁内完成幂等单条查询和
-`INSERT ... RETURNING`，随后由 `CodeSessionMapper` 更新对应方向的 sequence。
-激活使用的 inbound 批量 insert 保持独立，不经过单条 append。
-
-这样线性化语义才成立：
-
-- 如果旧 worker 先拿到锁并写完，再发生 register，则这次写入发生在抢占之前，可以接受。
-- 如果新 register 先拿到锁并 bump epoch，则旧 worker 后续 append 必须返回 `409`，不能写 event。
+- 如果旧 worker 的条件 update 先完成，则该 batch 视为在抢占前已被服务端接纳。
+- 如果 register 先 bump epoch，则旧 worker 的条件 update 影响 0 rows，整个 batch 返回 `409`，不会发布 public event 或生成 control response。
 
 当前 worker 写事件路径应调用带 epoch 的 service 入口：
 
 ```go
-AppendWorkerEventForEpoch(ctx, codeSessionID, workerEpoch, payload, source)
+AppendWorkerOutputEventsForEpoch(ctx, codeSessionID, workerEpoch, events)
 ```
+
+HTTP envelope 只把每个 `payload` 解码为 `json.RawMessage`。服务端先用公共 header
+schema 读取 `type` 和 `uuid`，只有 `control_request` 等确实需要解释的类型才继续解析
+具体 schema；未知类型与未知字段保持在原始 payload 中。事件 metadata 也通过命名
+schema 读取公共字段，不使用 `map[string]any` 充当已知字段模型。只有公开事件映射需要
+遍历、拆分或补充开放结构时，才会生成可变的公开 payload。公开事件 mapper 自身接收
+`json.RawMessage`，按 `assistant`、`user`、`system`、`result` 或 opaque 类型解析对应 schema；
+已知字段不再由调用方解码成 `map[string]any` 后传入。整批事件的 schema 解析、metadata
+构建和公开 payload 转换均在 epoch gate 前完成；gate 通过后的 apply 阶段只执行权限处理
+和事件发布，不再因后续事件格式错误造成同一 batch 部分发布。
+
+单条 epoch 兼容入口同样先解析并准备事件，再执行带 epoch 条件的 activity update。
+该条件更新既校验 worker 所有权，也刷新活跃时间；`keep_alive` 通过该更新后直接返回，
+不会再执行一次无条件 heartbeat。无 epoch 的兼容入口则只在事件类型确实为 `keep_alive`
+时执行普通 activity update。事件应用阶段不携带 heartbeat 策略参数。
+
+batch 中可公开的 durable output 直接以稳定 public event ID 幂等写入
+`session_events`；`ephemeral`、隐藏协议事件和 diagnostics 不持久化。工具权限的
+`control_response` 仍写入 inbound 队列，并依靠由原始 `request_id` 派生的稳定 UUID
+去重。internal transcript 仍按原有事务在 code session 行锁内校验 epoch 后写入
+`code_session_internal_events`。
 
 legacy ingress 路径如果继续使用无 epoch 的 `AppendWorkerEvent()`，必须被明确归类为兼容路径；如果要纳入 CCR v2 所有权保证，也需要改造成 register/epoch 模型。
 
@@ -234,10 +232,10 @@ lease 过期本身不修改 epoch。UI 或观测状态用 `worker_lease_expires_
 |---|---|
 | 两个 register 并发 | `RegisterCodeSessionWorker` 在同一 code session 行上 `for update`，返回连续不同 epoch |
 | 不同 session 并发 | 行级锁互不阻塞 |
-| 旧 worker 预校验后被抢占 | event append 事务内重新检查 `RequiredWorkerEpoch` |
+| 旧 worker 预校验后被抢占 | output batch 先执行带 `current_worker_epoch` 条件的 activity update；internal event 在 append 事务内校验 epoch |
 | heartbeat 旧 epoch 续租 | 条件 update 带 `current_worker_epoch = $epoch` |
 | lease 过期和 register 竞态 | lease 过期不改 epoch，register 行锁负责所有权切换 |
-| idempotency key 重放 | 先在 append 事务内确认 epoch，再查重和返回 existing event |
+| idempotency key 重放 | public event 使用稳定 ID 幂等插入；control response 使用 request 派生 UUID；internal event 在事务内查重 |
 | 读路径状态写覆盖当前 worker | 只有携带当前 epoch 的读路径才允许条件刷新 connected/disconnected |
 
 ## 10. HTTP 契约

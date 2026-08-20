@@ -86,6 +86,24 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 		contract mapperBuilderContract
 	}{
 		{
+			name: "list resources",
+			contract: mapperBuilderContract{
+				statement:         sessionResourceMapperListStatement,
+				bound:             buildSessionResourceMapperList(yourbatis.DialectPostgres, "workspace-uuid", "session-external-id"),
+				wantID:            "SessionResourceMapper.List",
+				wantKind:          yourbatis.StatementSelect,
+				wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"},
+				wantSQLFragments: []string{
+					"payload IS NOT NULL",
+					"resource_type = 'file'",
+					"left(path, char_length('/outputs/')) = '/outputs/'",
+					"expires_at IS NULL OR expires_at > now()",
+					"file_uuid, path",
+					"ORDER BY created_at DESC, uuid DESC",
+				},
+			},
+		},
+		{
 			name: "count session file resources",
 			contract: mapperBuilderContract{
 				statement:         sessionResourceMapperCountSessionFileResourcesStatement,

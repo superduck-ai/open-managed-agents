@@ -46,6 +46,8 @@ type sessionResourceRow struct {
 	ResourceType      string     `db:"resource_type"`
 	Payload           []byte     `db:"payload"`
 	SecretPayload     []byte     `db:"secret_payload"`
+	FileUUID          *string    `db:"file_uuid"`
+	Path              *string    `db:"path"`
 	CreatedAt         time.Time  `db:"created_at"`
 	UpdatedAt         time.Time  `db:"updated_at"`
 	DeletedAt         *time.Time `db:"deleted_at"`

@@ -80,6 +80,18 @@ func (d *DB) GetFileByUUIDInOrganization(ctx context.Context, organizationUUID s
 	return fileRecordFromMapperRow(row, err)
 }
 
+func (d *DB) ListFilesByUUIDs(ctx context.Context, workspaceUUID string, fileUUIDs []string) ([]FileRecord, error) {
+	if len(fileUUIDs) == 0 {
+		return nil, nil
+	}
+	mapper := NewFileMapper(d.mapperDB)
+	rows, err := mapper.ListFilesByUUIDs(ctx, fileMapperFileUUIDsParams{
+		WorkspaceUUID: workspaceUUID,
+		FileUUIDs:     fileUUIDs,
+	})
+	return fileRecordsFromMapperRows(rows, err)
+}
+
 func (d *DB) ListFiles(ctx context.Context, workspaceUUID string, scopeID string) ([]FileRecord, error) {
 	params := newFileMapperListParams(workspaceUUID, scopeID)
 	mapper := NewFileMapper(d.mapperDB)

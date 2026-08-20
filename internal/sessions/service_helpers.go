@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -439,7 +440,7 @@ func appendOutcomeEvaluation(raw json.RawMessage, outcomeID string, maxIteration
 }
 
 func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sessionResponse, error) {
-	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
+	resources, ownedFiles, err := h.loadSessionResourcesWithOwnedFiles(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return sessionResponse{}, err
 	}
@@ -452,7 +453,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		EnvironmentID:      session.EnvironmentExternalID,
 		Metadata:           httpapi.RawOr(session.Metadata, `{}`),
 		OutcomeEvaluations: httpapi.RawOr(session.OutcomeEvaluations, `[]`),
-		Resources:          resourcesToResponses(resources),
+		Resources:          resourcesToResponses(resources, ownedFiles),
 		Stats:              httpapi.RawOr(session.Stats, `{}`),
 		Status:             session.Status,
 		Title:              session.Title,
@@ -461,6 +462,39 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		Usage:              httpapi.RawOr(session.Usage, `{}`),
 		VaultIDs:           httpapi.RawOr(session.VaultIDs, `[]`),
 	}, nil
+}
+
+func (h *Handler) loadSessionResourcesWithOwnedFiles(ctx context.Context, workspaceUUID, sessionExternalID string) ([]db.SessionResource, map[string]db.FileRecord, error) {
+	resources, err := h.db.ListSessionResources(ctx, workspaceUUID, sessionExternalID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ownedFiles, err := h.loadOwnedFileMapping(ctx, workspaceUUID, resources)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resources, ownedFiles, nil
+}
+
+func (h *Handler) loadOwnedFileMapping(ctx context.Context, workspaceUUID string, resources []db.SessionResource) (map[string]db.FileRecord, error) {
+	fileUUIDs := make([]string, 0, len(resources))
+	for _, resource := range resources {
+		if resource.ResourceType == sessionresource.FileType && isOutputResource(resource) && resource.FileUUID != "" {
+			fileUUIDs = append(fileUUIDs, resource.FileUUID)
+		}
+	}
+	if len(fileUUIDs) == 0 {
+		return nil, nil
+	}
+	files, err := h.db.ListFilesByUUIDs(ctx, workspaceUUID, fileUUIDs)
+	if err != nil {
+		return nil, err
+	}
+	mapping := make(map[string]db.FileRecord, len(files))
+	for _, file := range files {
+		mapping[file.UUID] = file
+	}
+	return mapping, nil
 }
 
 func responseFromThread(thread db.SessionThread) threadResponse {
@@ -479,24 +513,31 @@ func responseFromThread(thread db.SessionThread) threadResponse {
 	}
 }
 
-func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {
+func resourcesToResponses(resources []db.SessionResource, ownedFiles map[string]db.FileRecord) []json.RawMessage {
 	data := make([]json.RawMessage, 0, len(resources))
 	for _, resource := range resources {
-		data = append(data, responseFromResource(resource))
+		data = append(data, responseFromResource(resource, ownedFiles))
 	}
 	return data
 }
 
-func responseFromResource(resource db.SessionResource) json.RawMessage {
+func responseFromResource(resource db.SessionResource, ownedFiles map[string]db.FileRecord) json.RawMessage {
 	var payload map[string]any
-	if err := json.Unmarshal(resource.Payload, &payload); err != nil || payload == nil {
-		payload = map[string]any{"id": resource.ExternalID, "type": resource.ResourceType}
+	if resource.ResourceType == sessionresource.FileType && isOutputResource(resource) {
+		payload = map[string]any{}
+	} else if err := json.Unmarshal(resource.Payload, &payload); err != nil || payload == nil {
+		payload = map[string]any{}
 	}
 	payload["id"] = resource.ExternalID
 	payload["type"] = resource.ResourceType
 	if resource.ResourceType == sessionresource.FileType {
 		delete(payload, "source")
-		if mountPath, ok := payload["mount_path"].(string); ok {
+		if isOutputResource(resource) {
+			if file, ok := ownedFiles[resource.FileUUID]; ok {
+				payload["file_id"] = file.ExternalID
+			}
+			payload["mount_path"] = resource.Path
+		} else if mountPath, ok := payload["mount_path"].(string); ok {
 			if publicMountPath, err := sandboxmount.FileBackingPath(mountPath); err == nil {
 				payload["mount_path"] = publicMountPath
 			}
@@ -506,4 +547,8 @@ func responseFromResource(resource db.SessionResource) json.RawMessage {
 	payload["updated_at"] = httpapi.FormatTime(resource.UpdatedAt)
 	raw, _ := json.Marshal(payload)
 	return raw
+}
+
+func isOutputResource(resource db.SessionResource) bool {
+	return strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")
 }

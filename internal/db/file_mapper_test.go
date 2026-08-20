@@ -60,6 +60,15 @@ func TestFileMapperBuildsPostgresArguments(t *testing.T) {
 			wantClauses:  []string{"owner.payload IS NULL", "'/outputs/'"},
 		},
 		{
+			name: "list files by UUIDs",
+			bound: buildFileMapperListFilesByUUIDs(yourbatis.DialectPostgres, fileMapperFileUUIDsParams{
+				WorkspaceUUID: workspaceUUID,
+				FileUUIDs:     []string{"00000000-0000-4000-8000-000000000444", "00000000-0000-4000-8000-000000000555"},
+			}),
+			wantArgCount: 3,
+			wantClauses:  []string{"workspace_uuid = $1", "uuid IN", "deleted_at IS NULL"},
+		},
+		{
 			name:         "list scoped files",
 			bound:        buildFileMapperListFiles(yourbatis.DialectPostgres, pageParams),
 			wantArgCount: 2,

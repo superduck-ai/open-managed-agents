@@ -90,6 +90,17 @@
             AND deleted_at IS NULL
     </select>
 
+    <select id="ListFilesByUUIDs" resultType="fileRecordRow">
+        SELECT <include refid="fileColumns"/>
+        FROM files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+            AND uuid IN
+            <foreach collection="params.FileUUIDs" item="fileUUID" open="(" separator="," close=")">
+                #{fileUUID}
+            </foreach>
+            AND deleted_at IS NULL
+    </select>
+
     <select id="GetFileByUUIDInOrganization" resultType="fileRecordRow">
         SELECT f.uuid, f.external_id, f.workspace_uuid, f.filename, f.mime_type,
             f.size_bytes, f.sha256, f.s3_bucket, f.s3_key, f.downloadable,

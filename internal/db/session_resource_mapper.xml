@@ -6,6 +6,10 @@
         created_at, updated_at, deleted_at
     </sql>
 
+    <sql id="sessionResourceListColumns">
+        <include refid="sessionResourceColumns"/>, file_uuid, path
+    </sql>
+
     <insert id="Insert" result="returning" resultType="sessionResourceRow">
         INSERT INTO session_resources (
             uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
@@ -25,22 +29,36 @@
     </insert>
 
     <select id="FindByExternalID" resultType="sessionResourceRow">
-        SELECT <include refid="sessionResourceColumns"/>
+        SELECT <include refid="sessionResourceListColumns"/>
         FROM session_resources
         WHERE workspace_uuid = #{workspaceUUID}
         AND session_external_id = #{sessionExternalID}
         AND external_id = #{resourceExternalID}
-        AND payload IS NOT NULL
         AND deleted_at IS NULL
+        AND (
+            payload IS NOT NULL
+            OR (
+                resource_type = 'file'
+                AND left(path, char_length('/outputs/')) = '/outputs/'
+                AND (expires_at IS NULL OR expires_at > now())
+            )
+        )
     </select>
 
     <select id="List" resultType="sessionResourceRow">
-        SELECT <include refid="sessionResourceColumns"/>
+        SELECT <include refid="sessionResourceListColumns"/>
         FROM session_resources
         WHERE workspace_uuid = #{workspaceUUID}
         AND session_external_id = #{sessionExternalID}
-        AND payload IS NOT NULL
         AND deleted_at IS NULL
+        AND (
+            payload IS NOT NULL
+            OR (
+                resource_type = 'file'
+                AND left(path, char_length('/outputs/')) = '/outputs/'
+                AND (expires_at IS NULL OR expires_at > now())
+            )
+        )
         ORDER BY created_at DESC, uuid DESC
     </select>
 

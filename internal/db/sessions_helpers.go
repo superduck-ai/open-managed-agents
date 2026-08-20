@@ -284,8 +284,16 @@ func (r sessionResourceRow) resource() SessionResource {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ResourceType: r.ResourceType, Payload: bytes.Clone(r.Payload), SecretPayload: bytes.Clone(r.SecretPayload),
+		FileUUID: sessionString(r.FileUUID), Path: sessionString(r.Path),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, DeletedAt: r.DeletedAt,
 	}
+}
+
+func sessionString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (r sessionEventRow) event() SessionEvent {

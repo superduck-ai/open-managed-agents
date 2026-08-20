@@ -99,6 +99,70 @@ func TestRedisBusSubscribesToSessionChannelAndWaitsForAcknowledgement(t *testing
 	}
 }
 
+func TestRedisBusUnsubscribesSessionChannelAndAllowsResubscribe(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	subscription := newAcknowledgingRedisSubscription()
+	bus := &RedisBus{
+		pubsub:        subscription,
+		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		subscriptions: make(map[string]*sessionSubscription),
+		cancel:        cancel,
+		done:          make(chan struct{}),
+	}
+	go bus.receive(ctx)
+
+	first := make(chan error, 1)
+	go func() {
+		first <- bus.Subscribe(ctx, "session-test")
+	}()
+	select {
+	case <-subscription.subscribeCalled:
+	case <-time.After(time.Second):
+		t.Fatal("initial Redis Subscribe() was not called")
+	}
+	subscription.acknowledge("oma:s:session-test")
+	select {
+	case err := <-first:
+		if err != nil {
+			t.Fatalf("initial Subscribe() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial Subscribe() did not return after acknowledgement")
+	}
+
+	if err := bus.Unsubscribe(ctx, "session-test"); err != nil {
+		t.Fatalf("Unsubscribe() error = %v", err)
+	}
+	if got, want := subscription.lastUnsubscribedChannel(), "oma:s:session-test"; got != want {
+		t.Fatalf("unsubscribed channel = %q, want %q", got, want)
+	}
+
+	second := make(chan error, 1)
+	go func() {
+		second <- bus.Subscribe(ctx, "session-test")
+	}()
+	select {
+	case <-subscription.subscribeCalled:
+	case <-time.After(time.Second):
+		t.Fatal("second Redis Subscribe() was not called")
+	}
+	subscription.acknowledge("oma:s:session-test")
+	select {
+	case err := <-second:
+		if err != nil {
+			t.Fatalf("second Subscribe() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Subscribe() did not return after acknowledgement")
+	}
+	if got := subscription.subscribeCount(); got != 2 {
+		t.Fatalf("Redis subscribe count = %d, want 2", got)
+	}
+	if err := bus.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
 func TestValidateEnvelopeKind(t *testing.T) {
 	for _, kind := range []Kind{KindSessionEvents, KindCodeSessionStream} {
 		envelope := Envelope{Kind: kind, Payload: json.RawMessage(`{}`)}
@@ -139,6 +203,10 @@ func (s *blockingRedisSubscription) Subscribe(context.Context, ...string) error 
 	return nil
 }
 
+func (s *blockingRedisSubscription) Unsubscribe(context.Context, ...string) error {
+	return nil
+}
+
 func (s *blockingRedisSubscription) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.closed)
@@ -149,6 +217,7 @@ func (s *blockingRedisSubscription) Close() error {
 type acknowledgingRedisSubscription struct {
 	mu              sync.Mutex
 	channels        []string
+	unsubscribed    []string
 	items           chan any
 	closed          chan struct{}
 	subscribeCalled chan struct{}
@@ -182,6 +251,13 @@ func (s *acknowledgingRedisSubscription) Subscribe(_ context.Context, channels .
 	return nil
 }
 
+func (s *acknowledgingRedisSubscription) Unsubscribe(_ context.Context, channels ...string) error {
+	s.mu.Lock()
+	s.unsubscribed = append(s.unsubscribed, channels...)
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *acknowledgingRedisSubscription) acknowledge(channel string) {
 	s.items <- &redis.Subscription{Kind: "subscribe", Channel: channel}
 }
@@ -206,4 +282,13 @@ func (s *acknowledgingRedisSubscription) subscribeCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.channels)
+}
+
+func (s *acknowledgingRedisSubscription) lastUnsubscribedChannel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.unsubscribed) == 0 {
+		return ""
+	}
+	return s.unsubscribed[len(s.unsubscribed)-1]
 }

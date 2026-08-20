@@ -8,8 +8,8 @@ import (
 )
 
 func StableAssistantEventID(codeSessionID, messageID string, contentBlockIndex int, eventType string) string {
-	seed := "assistant-preview-v1\x00" + strings.TrimSpace(messageID) + "\x00" + strconv.Itoa(contentBlockIndex) + "\x00" + strings.TrimSpace(eventType)
-	sum := sha256.Sum256([]byte(strings.TrimSpace(codeSessionID) + "\x00public\x00" + seed))
+	seed := "assistant-preview-v1\x00" + messageID + "\x00" + strconv.Itoa(contentBlockIndex) + "\x00" + eventType
+	sum := sha256.Sum256([]byte(codeSessionID + "\x00public\x00" + seed))
 	return "sevt_" + hex.EncodeToString(sum[:16])
 }
 

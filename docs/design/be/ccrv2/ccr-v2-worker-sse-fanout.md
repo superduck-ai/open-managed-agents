@@ -36,13 +36,17 @@ sequenceDiagram
     A->>R: PUBLISH oma:s:session_id persisted event
     R-->>B: session fanout
     B-->>C: agent.message / agent.thinking
+    A->>R: PUBLISH session.status_terminated
+    R-->>B: terminal session fanout
+    B-->>C: session.status_terminated
+    B->>R: UNSUBSCRIBE oma:s:session_id
 ```
 
 ## Preview 转换
 
 实际 Worker 协议中的 `content_block_delta` 已经是真正的增量片段，不是 full-so-far snapshot。后端不累计或比较文本：
 
-- `message_start.message.id` 保存为当前原始 session 的 message ID。
+- Preview 的 `message_start.message.id` 与最终 assistant payload 的 `message.id` 都在各自 Worker JSON 解码边界修剪首尾空白，再参与确定性 ID 计算。
 - `content_block_start` 根据 block type 发送一次 `event_start`。
 - `text_delta.text` 原样映射成 `event_delta.delta.content.text`，公开 `delta.index` 固定为 `0`。
 - `thinking_delta` 不产生 `event_delta`；`agent.thinking` 只有 `event_start` 预览。
@@ -51,6 +55,8 @@ sequenceDiagram
 - Preview SSE 的 `created_at` 使用规范化 worker payload 的创建时间，缺失或无效时回退到接收时间；`processed_at` 使用接收实例的转换时间。接收实例使用 SSE 已解析出的实际订阅线程 ID 补充 `session_thread_id`，主线程 preview 不需要在生产端查询物理 thread ID。
 
 预览和最终事件共享确定性 ID：
+
+最终 assistant content 数组中的兼容标量 block 也按 `agent.message` 和原始 block index 使用同一公式，确保 final event 能替换并清理对应 preview。
 
 ```text
 seed = "assistant-preview-v1"
@@ -71,7 +77,7 @@ id = "sevt_" + first_16_bytes_hex(
 
 建立 SSE 时先注册本机 subscriber，再订阅 `oma:s:<session_id>`，并等待 Redis 返回该频道的 `subscribe` ACK；只有 ACK 成功后才向客户端发送 `: connected`。这样 ACK 之后到达的消息不会落在本机 subscriber 注册之前。多个 SSE 连接订阅同一 session 时复用同一个 Redis 频道订阅和实例级 preview converter。
 
-当前不维护 SSE 连接引用计数，也不在单个连接关闭时取消 Redis 订阅。session 频道订阅保留到 API 进程退出；基于 session terminated 信号的提前清理作为后续优化，避免在终止事件来源尚未统一前误退订。
+当前不维护 SSE 连接引用计数，也不在单个连接关闭时取消 Redis 订阅。这样临时没有本地 SSE 时，实例级 preview converter 仍能连续接收 `message_start`、`content_block_start` 和 delta，后续重连不会只看到缺少上下文的孤立 delta。实例收到 `session.status_terminated` 或 `session.deleted` 后，先将终态事件加入本地 SSE 队列，再取消对应 `oma:s:<session_id>` 订阅并删除本地订阅状态；idle 和 thread terminated 不会触发整个 session 的退订。
 
 Hub subscriber 只以 `workspace_uuid + session_id` 匹配转换后的 preview 或持久事件。线程范围、`event_deltas[]` 类型和 `event_start`/`event_delta` 配对由 SSE 连接自己的状态过滤。未请求 delta 的连接不会解析 Worker raw payload，也不会维护 message/block 或去重状态。单连接缓冲区为 256 个 delivery；缓冲区满时关闭连接，而不是丢弃某个中间 delta 后继续发送，从而保证客户端只看到连续前缀。
 

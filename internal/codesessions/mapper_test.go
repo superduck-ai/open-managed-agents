@@ -195,6 +195,37 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	}
 }
 
+func TestPublicPayloadsFromWorkerEventMapsScalarAssistantBlockToPreviewID(t *testing.T) {
+	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+		ExternalID:     "csev_scalar_assistant_block",
+		EventType:      "assistant",
+		IdempotencyKey: "scalar_assistant_block",
+		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC),
+	}, mustRawJSON(t, map[string]any{
+		"type": "assistant",
+		"uuid": "scalar-assistant-block",
+		"message": map[string]any{
+			"id":      " msg_scalar_block ",
+			"role":    "assistant",
+			"content": []any{"hello"},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("publicPayloadsFromWorkerEvent returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("publicPayloadsFromWorkerEvent ok = false, want true")
+	}
+	objects := decodePublicPayloads(t, payloads)
+	if len(objects) != 1 || objects[0]["type"] != "agent.message" {
+		t.Fatalf("scalar assistant payloads = %#v, want one agent.message", objects)
+	}
+	wantID := maevents.StableAssistantEventID("csev_test", "msg_scalar_block", 0, "agent.message")
+	if got := objects[0]["id"]; got != wantID {
+		t.Fatalf("scalar assistant id = %q, want preview id %q", got, wantID)
+	}
+}
+
 func TestPublicPayloadsFromInternalSubagentEventMarksOwnerThread(t *testing.T) {
 	payloads, err := publicPayloadsFromInternalSubagentEvent("csev_test", db.CodeSessionInternalEvent{
 		ExternalID:     "csie_subagent_assistant",

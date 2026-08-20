@@ -37,6 +37,7 @@ type Handler func(context.Context, Envelope)
 type EventBus interface {
 	Publish(context.Context, string, Envelope) error
 	Subscribe(context.Context, string) error
+	Unsubscribe(context.Context, string) error
 	Register(Handler, func())
 	Close() error
 }
@@ -71,6 +72,11 @@ func (b *LocalBus) Subscribe(_ context.Context, sessionID string) error {
 	return err
 }
 
+func (b *LocalBus) Unsubscribe(_ context.Context, sessionID string) error {
+	_, err := sessionChannel(sessionID)
+	return err
+}
+
 func (b *LocalBus) Register(handler Handler, _ func()) {
 	if handler == nil {
 		return
@@ -101,6 +107,7 @@ type RedisBus struct {
 type redisSubscription interface {
 	Receive(context.Context) (any, error)
 	Subscribe(context.Context, ...string) error
+	Unsubscribe(context.Context, ...string) error
 	Close() error
 }
 
@@ -169,6 +176,23 @@ func (b *RedisBus) Subscribe(ctx context.Context, sessionID string) error {
 	case <-subscription.done:
 		return subscription.err
 	}
+}
+
+func (b *RedisBus) Unsubscribe(ctx context.Context, sessionID string) error {
+	channel, err := sessionChannel(sessionID)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, exists := b.subscriptions[channel]; !exists {
+		return nil
+	}
+	delete(b.subscriptions, channel)
+	if err := b.pubsub.Unsubscribe(ctx, channel); err != nil {
+		return fmt.Errorf("unsubscribe redis channel %s: %w", channel, err)
+	}
+	return nil
 }
 
 func (b *RedisBus) Register(handler Handler, reset func()) {

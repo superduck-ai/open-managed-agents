@@ -76,7 +76,8 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	for _, event := range created {
 		persisted[event.ExternalID] = event
 	}
-	// Idempotent retries reapply stored state projections; only newly inserted convertEvents leave the process.
+	// Idempotent retries reapply stored state projections. Only newly inserted
+	// events are broadcast and have webhooks enqueued.
 	var projectionErr error
 	for _, event := range events {
 		stored, ok := persisted[event.ExternalID]

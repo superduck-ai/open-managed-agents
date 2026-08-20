@@ -3,6 +3,7 @@ package codesessions
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
 
 // Worker output protocol sources in superduck-code:
@@ -58,6 +59,15 @@ type workerAssistantOutputPayload struct {
 	Content           json.RawMessage     `json:"content"`
 	ContentBlockIndex *int                `json:"content_block_index"`
 	Message           workerOutputMessage `json:"message"`
+}
+
+func decodeWorkerAssistantOutputPayload(raw json.RawMessage) (workerAssistantOutputPayload, error) {
+	var payload workerAssistantOutputPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return workerAssistantOutputPayload{}, err
+	}
+	payload.Message.ID = strings.TrimSpace(payload.Message.ID)
+	return payload, nil
 }
 
 type workerUserOutputPayload struct {

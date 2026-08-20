@@ -130,13 +130,55 @@ func TestPublishCodeSessionStreamEventsUsesProvidedRouteWithoutDatabase(t *testi
 	}
 }
 
+func TestReceiveSessionEventsFanoutKeepsNonTerminalSubscription(t *testing.T) {
+	bus := &recordingEventBus{}
+	handler := &Handler{
+		eventBus: bus,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		streams:  newStreamHub(),
+	}
+	handler.receiveSessionEventsFanout(context.Background(), []sessionStreamEvent{{
+		WorkspaceUUID:     "workspace-test",
+		SessionExternalID: "session-test",
+		EventType:         "session.status_idle",
+	}})
+	if len(bus.unsubscribedSessionIDs) != 0 {
+		t.Fatalf("unsubscribed sessions = %v, want none", bus.unsubscribedSessionIDs)
+	}
+}
+
+func TestReceiveSessionEventsFanoutDeliversTerminalEventBeforeUnsubscribe(t *testing.T) {
+	bus := &recordingEventBus{}
+	handler := &Handler{
+		eventBus: bus,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		streams:  newStreamHub(),
+	}
+	_, ch := handler.streams.subscribe("workspace-test", "session-test")
+	handler.receiveSessionEventsFanout(context.Background(), []sessionStreamEvent{{
+		WorkspaceUUID:     "workspace-test",
+		SessionExternalID: "session-test",
+		EventType:         "session.status_terminated",
+	}})
+
+	delivery := <-ch
+	eventDelivery, ok := delivery.(sessionEventDelivery)
+	if !ok || eventDelivery.event.EventType != "session.status_terminated" {
+		t.Fatalf("terminal delivery = %#v, want session.status_terminated", delivery)
+	}
+	if len(bus.unsubscribedSessionIDs) != 1 || bus.unsubscribedSessionIDs[0] != "session-test" {
+		t.Fatalf("unsubscribed sessions = %v, want session-test", bus.unsubscribedSessionIDs)
+	}
+}
+
 type recordedPublication struct {
 	sessionID string
 	envelope  sessionfanout.Envelope
 }
 
 type recordingEventBus struct {
-	publications []recordedPublication
+	publications           []recordedPublication
+	unsubscribedSessionIDs []string
 }
 
 func (b *recordingEventBus) Publish(_ context.Context, sessionID string, envelope sessionfanout.Envelope) error {
@@ -145,6 +187,11 @@ func (b *recordingEventBus) Publish(_ context.Context, sessionID string, envelop
 }
 
 func (b *recordingEventBus) Subscribe(context.Context, string) error {
+	return nil
+}
+
+func (b *recordingEventBus) Unsubscribe(_ context.Context, sessionID string) error {
+	b.unsubscribedSessionIDs = append(b.unsubscribedSessionIDs, sessionID)
 	return nil
 }
 

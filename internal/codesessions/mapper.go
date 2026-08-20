@@ -134,8 +134,8 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 	object := materializePublicPayload(fields)
 	switch event.EventType {
 	case "assistant":
-		var payload workerAssistantOutputPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
+		payload, err := decodeWorkerAssistantOutputPayload(raw)
+		if err != nil {
 			return nil, false, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
 		return assistantPublicPayloadCandidates(codeSessionID, object, payload), true, nil
@@ -204,8 +204,8 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw json.RawMessage, eventType string, object map[string]any) ([]publicPayloadCandidate, error) {
 	switch eventType {
 	case "assistant":
-		var payload workerAssistantOutputPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
+		payload, err := decodeWorkerAssistantOutputPayload(raw)
+		if err != nil {
 			return nil, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
 		return assistantPublicPayloadCandidates(codeSessionID, object, payload), nil
@@ -464,8 +464,12 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 		contentBlockIndex := assistantContentBlockIndex(schema, index, len(blocks))
 		block, ok := value.(map[string]any)
 		if !ok {
+			payload := publicPayloadWithSingleContentBlock(object, "agent.message", value)
+			if schema.Message.ID != "" {
+				payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, "agent.message")
+			}
 			candidates = append(candidates, publicPayloadCandidate{
-				payload:    publicPayloadWithSingleContentBlock(object, "agent.message", value),
+				payload:    payload,
 				seedSuffix: fmt.Sprintf("content:%d", index),
 				timeOffset: time.Duration(index) * time.Millisecond,
 			})

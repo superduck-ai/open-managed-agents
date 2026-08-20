@@ -7,6 +7,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 )
 
@@ -93,9 +94,7 @@ func (h *Handler) receiveFanout(ctx context.Context, envelope sessionfanout.Enve
 			h.logger.WarnContext(ctx, "discard session events fanout", "error", err)
 			return
 		}
-		for _, event := range payload.Events {
-			h.streams.broadcastEvent(event)
-		}
+		h.receiveSessionEventsFanout(ctx, payload.Events)
 	case sessionfanout.KindCodeSessionStream:
 		var payload codeSessionStreamFanout
 		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
@@ -105,6 +104,22 @@ func (h *Handler) receiveFanout(ctx context.Context, envelope sessionfanout.Enve
 		for _, event := range h.previews.convert(payload) {
 			h.streams.broadcastEvent(event)
 		}
+	}
+}
+
+func (h *Handler) receiveSessionEventsFanout(ctx context.Context, events []sessionStreamEvent) {
+	terminalSessionID := ""
+	for _, event := range events {
+		h.streams.broadcastEvent(event)
+		if status, ok := maevents.SessionStatus(event.EventType); ok && status == "terminated" {
+			terminalSessionID = event.SessionExternalID
+		}
+	}
+	if terminalSessionID == "" {
+		return
+	}
+	if err := h.eventBus.Unsubscribe(ctx, terminalSessionID); err != nil {
+		h.logger.WarnContext(ctx, "unsubscribe terminated session fanout", "session_id", terminalSessionID, "error", err)
 	}
 }
 

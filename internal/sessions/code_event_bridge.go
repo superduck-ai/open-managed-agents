@@ -18,9 +18,7 @@ func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, 
 		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return
 	}
-	for _, event := range created {
-		h.broadcast(event)
-	}
+	h.publishSessionEvents(r.Context(), created)
 }
 
 func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
@@ -34,6 +32,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	if !found {
 		return db.ErrNotFound
 	}
+	var streamEvents []db.SessionEvent
 	var events []db.SessionEvent
 	now := time.Now().UTC()
 	for _, raw := range payloads {
@@ -43,7 +42,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 				h.logger.WarnContext(ctx, "skip code session stream delta", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
 				continue
 			}
-			h.broadcastStreamDelta(event)
+			streamEvents = append(streamEvents, event)
 			continue
 		}
 		batch, err := h.sessionEventsFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
@@ -53,6 +52,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		events = append(events, batch...)
 	}
+	h.publishSessionEvents(ctx, streamEvents)
 	if len(events) == 0 {
 		return nil
 	}
@@ -76,7 +76,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	for _, event := range created {
 		persisted[event.ExternalID] = event
 	}
-	// Idempotent retries reapply stored state projections; only newly inserted events leave the process.
+	// Idempotent retries reapply stored state projections; only newly inserted convertEvents leave the process.
 	var projectionErr error
 	for _, event := range events {
 		stored, ok := persisted[event.ExternalID]
@@ -89,9 +89,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		projectionErr = errors.Join(projectionErr, eventErr)
 	}
-	for _, event := range created {
-		h.broadcast(event)
-	}
+	h.publishSessionEvents(ctx, created)
 	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
 	return projectionErr
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -15,20 +14,11 @@ type RedisStore struct {
 	client *redis.Client
 }
 
-func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
-	if strings.TrimSpace(redisURL) == "" {
-		return nil, errors.New("redis.url is required")
+func NewRedisStore(client *redis.Client) *RedisStore {
+	if client == nil {
+		panic("platformsession: redis client is required")
 	}
-	options, err := redis.ParseURL(redisURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse redis.url: %w", err)
-	}
-	client := redis.NewClient(options)
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("connect redis: %w", err)
-	}
-	return &RedisStore{client: client}, nil
+	return &RedisStore{client: client}
 }
 
 func (s *RedisStore) Save(ctx context.Context, sessionKey string, session Session) error {
@@ -78,11 +68,4 @@ func (s *RedisStore) Delete(ctx context.Context, sessionKey string) error {
 		return nil
 	}
 	return s.client.Del(ctx, storeKey(sessionKey)).Err()
-}
-
-func (s *RedisStore) Close() error {
-	if s == nil || s.client == nil {
-		return nil
-	}
-	return s.client.Close()
 }

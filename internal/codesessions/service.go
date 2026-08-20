@@ -115,41 +115,41 @@ func (s *Service) QueueRawCodeSessionEvents(ctx context.Context, codeSession db.
 	return nil
 }
 
-func (s *Service) AppendWorkerEvent(ctx context.Context, codeSessionID string, raw json.RawMessage) error {
+func (s *Service) AppendWorkerEvent(ctx context.Context, route CodeSessionStreamRoute, raw json.RawMessage) error {
 	if s == nil {
 		return nil
 	}
-	prepared, err := prepareSingleWorkerEvent(codeSessionID, raw, time.Now().UTC())
+	codeSessionID := route.CodeSessionID
+	prepared, err := prepareWorkerOutputEvent(codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
 	if err != nil {
 		return err
 	}
-	if prepared.eventType == "keep_alive" {
+	if _, keepAlive := prepared.(preparedKeepAliveAction); keepAlive {
 		return s.db.TouchCodeSessionWorkerActivity(ctx, codeSessionID)
 	}
-	return s.applyWorkerOutputEvent(ctx, codeSessionID, &prepared)
+	return s.applyWorkerOutputEvents(ctx, route, 0, []preparedWorkerOutputEvent{prepared})
 }
 
-func (s *Service) AppendWorkerEventForEpoch(ctx context.Context, codeSessionID string, workerEpoch int64, raw json.RawMessage) error {
+func (s *Service) AppendWorkerEventForEpoch(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, raw json.RawMessage) error {
 	if s == nil {
 		return nil
 	}
-	prepared, err := prepareSingleWorkerEvent(codeSessionID, raw, time.Now().UTC())
+	codeSessionID := route.CodeSessionID
+	prepared, err := prepareWorkerOutputEvent(codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
 	if err != nil {
 		return err
 	}
 	if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, workerEpoch); err != nil {
 		return err
 	}
-	if prepared.eventType == "keep_alive" {
-		return nil
-	}
-	return s.applyWorkerOutputEvent(ctx, codeSessionID, &prepared)
+	return s.applyWorkerOutputEvents(ctx, route, workerEpoch, []preparedWorkerOutputEvent{prepared})
 }
 
-func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSessionID string, workerEpoch int64, events []workerOutputEvent) error {
+func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, events []workerOutputEvent) error {
 	if s == nil || len(events) == 0 {
 		return nil
 	}
+	codeSessionID := route.CodeSessionID
 	if codeSessionID == "" {
 		return ErrProtocol
 	}
@@ -166,49 +166,37 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSess
 	if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, workerEpoch); err != nil {
 		return err
 	}
-	return s.applyWorkerOutputEvents(ctx, codeSessionID, prepared)
+	return s.applyWorkerOutputEvents(ctx, route, workerEpoch, prepared)
 }
 
-type preparedWorkerOutputEvent struct {
-	eventType      string
-	metadata       EventMetadata
-	controlRequest *workerControlRequestPayload
-	publicPayloads []json.RawMessage
+// preparedWorkerOutputEvent is implemented by each prepared worker output
+// variant to keep the apply path type-safe.
+type preparedWorkerOutputEvent interface {
+	implPreparedWorkerOutputEvent()
 }
 
-func prepareSingleWorkerEvent(codeSessionID string, raw json.RawMessage, now time.Time) (preparedWorkerOutputEvent, error) {
-	if codeSessionID == "" {
-		return preparedWorkerOutputEvent{}, ErrProtocol
-	}
-	payload, err := normalizeWorkerOutboundPayload(codeSessionID, raw, now)
-	if err != nil {
-		return preparedWorkerOutputEvent{}, err
-	}
-	meta, err := BuildEventMetadata(codeSessionID, "outbound", payload)
-	if err != nil {
-		return preparedWorkerOutputEvent{}, err
-	}
-	prepared := preparedWorkerOutputEvent{eventType: meta.EventType}
-	if meta.EventType == "keep_alive" || isHiddenWorkerEvent(meta.EventType) {
-		if meta.EventType == "control_request" && meta.EventSubtype == "can_use_tool" {
-			controlRequest, err := prepareWorkerControlRequest(payload, meta)
-			if err != nil {
-				return preparedWorkerOutputEvent{}, fmt.Errorf("%w: invalid control_request payload", ErrProtocol)
-			}
-			controlRequest.eventType = meta.EventType
-			return controlRequest, nil
-		}
-		return prepared, nil
-	}
-	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, transientWorkerEvent(meta, now), payload)
-	if err != nil {
-		return preparedWorkerOutputEvent{}, err
-	}
-	if ok {
-		prepared.publicPayloads = publicPayloads
-	}
-	return prepared, nil
+type preparedNoopAction struct{}
+
+type preparedKeepAliveAction struct{}
+
+type preparedStreamAction struct {
+	payload json.RawMessage
 }
+
+type preparedControlAction struct {
+	request  workerControlRequestPayload
+	metadata EventMetadata
+}
+
+type preparedPublicAction struct {
+	payloads []json.RawMessage
+}
+
+func (preparedNoopAction) implPreparedWorkerOutputEvent()      {}
+func (preparedKeepAliveAction) implPreparedWorkerOutputEvent() {}
+func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
+func (preparedControlAction) implPreparedWorkerOutputEvent()   {}
+func (preparedPublicAction) implPreparedWorkerOutputEvent()    {}
 
 func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, error) {
 	prepared := make([]preparedWorkerOutputEvent, 0, len(events))
@@ -223,64 +211,114 @@ func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent,
 }
 
 func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
+	if codeSessionID == "" {
+		return nil, ErrProtocol
+	}
 	header, err := decodeWorkerPayloadHeader(input.Payload)
 	if err != nil {
-		return preparedWorkerOutputEvent{}, err
+		return nil, err
 	}
 	if header.Type == "keep_alive" {
-		return preparedWorkerOutputEvent{}, nil
+		return preparedKeepAliveAction{}, nil
 	}
-	meta, err := BuildEventMetadata(codeSessionID, "outbound", input.Payload)
+	payload, err := normalizeWorkerOutboundPayload(codeSessionID, input.Payload, now)
 	if err != nil {
-		return preparedWorkerOutputEvent{}, err
+		return nil, err
+	}
+	meta, err := BuildEventMetadata(codeSessionID, "outbound", payload)
+	if err != nil {
+		return nil, err
 	}
 	if header.Type == "control_request" {
-		return prepareWorkerControlRequest(input.Payload, meta)
+		prepared, err := prepareWorkerControlAction(payload, meta)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid control_request payload", ErrProtocol)
+		}
+		return prepared, nil
 	}
-	if input.Ephemeral || !isPublicWorkerOutputEvent(meta.EventType) {
-		return preparedWorkerOutputEvent{}, nil
+	if input.Ephemeral {
+		if meta.EventType == "stream_event" {
+			return preparedStreamAction{payload: payload}, nil
+		}
+		return preparedNoopAction{}, nil
 	}
-	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, transientWorkerEvent(meta, now), input.Payload)
+	if !isPublicWorkerOutputEvent(meta.EventType) {
+		return preparedNoopAction{}, nil
+	}
+	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, transientWorkerEvent(meta, now), payload)
 	if err != nil {
-		return preparedWorkerOutputEvent{}, err
+		return nil, err
 	}
 	if !ok {
-		return preparedWorkerOutputEvent{}, nil
+		return preparedNoopAction{}, nil
 	}
-	return preparedWorkerOutputEvent{publicPayloads: publicPayloads}, nil
+	return preparedPublicAction{payloads: publicPayloads}, nil
 }
 
-func prepareWorkerControlRequest(payload json.RawMessage, meta EventMetadata) (preparedWorkerOutputEvent, error) {
+func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (preparedWorkerOutputEvent, error) {
 	controlRequest, err := decodeWorkerControlRequestPayload(payload)
 	if err != nil {
-		return preparedWorkerOutputEvent{}, errors.New("payload is an invalid control_request")
+		return nil, errors.New("payload is an invalid control_request")
 	}
 	if controlRequest.Request.Subtype != "can_use_tool" {
-		return preparedWorkerOutputEvent{}, nil
+		return preparedNoopAction{}, nil
 	}
-	return preparedWorkerOutputEvent{
-		metadata:       meta,
-		controlRequest: &controlRequest,
+	return preparedControlAction{
+		request:  controlRequest,
+		metadata: meta,
 	}, nil
 }
 
-func (s *Service) applyWorkerOutputEvents(ctx context.Context, codeSessionID string, events []preparedWorkerOutputEvent) error {
-	for i := range events {
-		if err := s.applyWorkerOutputEvent(ctx, codeSessionID, &events[i]); err != nil {
+func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, workerOutputEvents []preparedWorkerOutputEvent) error {
+	for index := 0; index < len(workerOutputEvents); {
+		if _, ok := workerOutputEvents[index].(preparedStreamAction); ok {
+			payloads := leadingWorkerStreamPayloads(workerOutputEvents[index:])
+			s.publishWorkerStreamPayloads(ctx, route, workerEpoch, payloads)
+			index += len(payloads)
+			continue
+		}
+		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerOutputEvents[index]); err != nil {
 			return err
 		}
+		index++
 	}
 	return nil
 }
 
-func (s *Service) applyWorkerOutputEvent(ctx context.Context, codeSessionID string, event *preparedWorkerOutputEvent) error {
-	if event.controlRequest != nil {
-		return s.handleToolPermissionRequest(ctx, codeSessionID, event.controlRequest, event.metadata)
+func leadingWorkerStreamPayloads(workerOutputEvents []preparedWorkerOutputEvent) []json.RawMessage {
+	payloads := make([]json.RawMessage, 0, len(workerOutputEvents))
+	for _, workerOutputEvent := range workerOutputEvents {
+		stream, ok := workerOutputEvent.(preparedStreamAction)
+		if !ok {
+			break
+		}
+		payloads = append(payloads, stream.payload)
 	}
-	if len(event.publicPayloads) == 0 {
+	return payloads
+}
+
+func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerOutputEvent preparedWorkerOutputEvent) error {
+	switch prepared := workerOutputEvent.(type) {
+	case preparedNoopAction:
 		return nil
+	case preparedKeepAliveAction:
+		return nil
+	case preparedControlAction:
+		return s.handleToolPermissionRequest(ctx, codeSessionID, &prepared.request, prepared.metadata)
+	case preparedPublicAction:
+		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
+	default:
+		return fmt.Errorf("unsupported non-stream worker output event %T", workerOutputEvent)
 	}
-	return s.publishWorkerPublicPayloads(ctx, codeSessionID, event.publicPayloads)
+}
+
+func (s *Service) publishWorkerStreamPayloads(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payloads []json.RawMessage) {
+	if len(payloads) == 0 || s.sink == nil {
+		return
+	}
+	if err := s.sink.PublishCodeSessionStreamEvents(ctx, route, workerEpoch, payloads); err != nil {
+		s.logger.WarnContext(ctx, "publish worker stream preview", "code_session_id", route.CodeSessionID, "worker_epoch", workerEpoch, "event_count", len(payloads), "error", err)
+	}
 }
 
 func transientWorkerEvent(meta EventMetadata, createdAt time.Time) db.CodeSessionEvent {
@@ -475,15 +513,6 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 func shouldForwardPublicEventToWorker(eventType string) bool {
 	switch eventType {
 	case "user.message", "user.interrupt", "user.tool_confirmation", "user.tool_result", "user.custom_tool_result":
-		return true
-	default:
-		return false
-	}
-}
-
-func isHiddenWorkerEvent(eventType string) bool {
-	switch eventType {
-	case "control_request", "control_response", "control_cancel_request":
 		return true
 	default:
 		return false

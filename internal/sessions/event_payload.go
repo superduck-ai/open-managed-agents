@@ -215,22 +215,26 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 }
 
 func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
+	return eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID)
+}
+
+func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt time.Time, threadID string) json.RawMessage {
 	var payload map[string]any
-	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return event.Payload
+	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+		return payloadRaw
 	}
-	changed := ensureSessionEventTimeField(payload, "created_at", event.CreatedAt)
-	changed = ensureSessionEventTimeField(payload, "processed_at", event.ProcessedAt) || changed
+	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)
+	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
 		payload["session_thread_id"] = strings.TrimSpace(threadID)
 		changed = true
 	}
 	if !changed {
-		return event.Payload
+		return payloadRaw
 	}
 	raw, err := httpapi.MarshalRaw(payload)
 	if err != nil {
-		return event.Payload
+		return payloadRaw
 	}
 	return raw
 }

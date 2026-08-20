@@ -21,8 +21,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -63,11 +65,17 @@ func run(logger *slog.Logger) error {
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
-	platformSessions, err := platformsession.NewRedisStore(ctx, cfg.Redis.URL)
+	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
-		return fmt.Errorf("open platform session store: %w", err)
+		return fmt.Errorf("open redis client: %w", err)
 	}
-	defer platformSessions.Close()
+	defer redisClient.Close()
+	platformSessions := platformsession.NewRedisStore(redisClient)
+	sessionEventBus, err := sessionfanout.NewRedis(ctx, redisClient, logger.With("component", "session_event_bus"))
+	if err != nil {
+		return fmt.Errorf("open session event fanout: %w", err)
+	}
+	defer sessionEventBus.Close()
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
@@ -136,6 +144,7 @@ func run(logger *slog.Logger) error {
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,
+			SessionEventBus:        sessionEventBus,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

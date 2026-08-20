@@ -1,8 +1,6 @@
 package codesessions
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -140,7 +138,7 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, false, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
-		return assistantPublicPayloadCandidates(object, payload), true, nil
+		return assistantPublicPayloadCandidates(codeSessionID, object, payload), true, nil
 	case "user":
 		var payload workerUserOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
@@ -185,7 +183,7 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	if err := json.Unmarshal(event.Payload, &schema); err != nil {
 		return nil, fmt.Errorf("%w: invalid internal subagent payload: %w", ErrProtocol, err)
 	}
-	candidates, err := publicPayloadCandidatesFromInternalSubagentEvent(event.Payload, schema.Type, object)
+	candidates, err := publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID, event.Payload, schema.Type, object)
 	if err != nil {
 		return nil, err
 	}
@@ -203,14 +201,14 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	return payloads, nil
 }
 
-func publicPayloadCandidatesFromInternalSubagentEvent(raw json.RawMessage, eventType string, object map[string]any) ([]publicPayloadCandidate, error) {
+func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw json.RawMessage, eventType string, object map[string]any) ([]publicPayloadCandidate, error) {
 	switch eventType {
 	case "assistant":
 		var payload workerAssistantOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
-		return assistantPublicPayloadCandidates(object, payload), nil
+		return assistantPublicPayloadCandidates(codeSessionID, object, payload), nil
 	case "user":
 		var payload workerUserOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
@@ -450,14 +448,20 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 	return candidates
 }
 
-func assistantPublicPayloadCandidates(object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+func assistantPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+	delete(object, "content_block_index")
 	content := publicContentBlocks(workerOutputContent(schema.Content, schema.Message.Content))
 	blocks, ok := content.([]any)
 	if !ok || len(blocks) == 0 {
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "agent.message")}}
+		payload := publicPayloadWithType(object, "agent.message")
+		if schema.Message.ID != "" {
+			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, assistantContentBlockIndex(schema, 0, 1), "agent.message")
+		}
+		return []publicPayloadCandidate{{payload: payload}}
 	}
 	candidates := make([]publicPayloadCandidate, 0, len(blocks))
 	for index, value := range blocks {
+		contentBlockIndex := assistantContentBlockIndex(schema, index, len(blocks))
 		block, ok := value.(map[string]any)
 		if !ok {
 			candidates = append(candidates, publicPayloadCandidate{
@@ -476,6 +480,9 @@ func assistantPublicPayloadCandidates(object map[string]any, schema workerAssist
 			eventType = "agent.tool_use"
 		}
 		payload := publicPayloadWithSingleContentBlock(object, eventType, block)
+		if schema.Message.ID != "" && (eventType == "agent.message" || eventType == "agent.thinking") {
+			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
+		}
 		if eventType == "agent.tool_use" {
 			if toolUseID := stringField(block, "id"); toolUseID != "" {
 				payload["tool_use_id"] = toolUseID
@@ -495,6 +502,13 @@ func assistantPublicPayloadCandidates(object map[string]any, schema workerAssist
 		})
 	}
 	return candidates
+}
+
+func assistantContentBlockIndex(schema workerAssistantOutputPayload, fallback, blockCount int) int {
+	if blockCount == 1 && schema.ContentBlockIndex != nil && *schema.ContentBlockIndex >= 0 {
+		return *schema.ContentBlockIndex
+	}
+	return fallback
 }
 
 func publicPayloadWithSingleContentBlock(object map[string]any, eventType string, block any) map[string]any {
@@ -624,12 +638,7 @@ func claudeTaskThreadIDFromFields(codeSessionID, toolUseID, taskID string) strin
 }
 
 func claudeTaskThreadIDFromKey(codeSessionID string, key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(codeSessionID) + "\x00claude-task\x00" + key))
-	return "sthr_" + hex.EncodeToString(sum[:16])
+	return maevents.ClaudeTaskThreadID(codeSessionID, key)
 }
 
 func claudeToolResultContent(block map[string]any) []any {

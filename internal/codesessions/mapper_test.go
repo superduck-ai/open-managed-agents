@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testing.T) {
@@ -145,6 +146,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 		"type": "assistant",
 		"uuid": "assistant-blocks",
 		"message": map[string]any{
+			"id":   "msg_assistant_blocks",
 			"role": "assistant",
 			"content": []any{
 				map[string]any{"type": "thinking", "thinking": "plan"},
@@ -176,6 +178,12 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 		if objects[index]["id"] == "" || objects[index]["processed_at"] == "" {
 			t.Fatalf("payload[%d] missing normalized fields: %#v", index, objects[index])
 		}
+	}
+	if got, want := objects[0]["id"], maevents.StableAssistantEventID("csev_test", "msg_assistant_blocks", 0, "agent.thinking"); got != want {
+		t.Fatalf("thinking id = %q, want %q", got, want)
+	}
+	if got, want := objects[1]["id"], maevents.StableAssistantEventID("csev_test", "msg_assistant_blocks", 1, "agent.message"); got != want {
+		t.Fatalf("message id = %q, want %q", got, want)
 	}
 	toolPayload := objects[2]
 	if toolPayload["tool_use_id"] != "tool_translate" || toolPayload["name"] != "Agent" || toolPayload["tool_name"] != "Agent" {

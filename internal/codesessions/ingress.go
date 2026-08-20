@@ -332,13 +332,18 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 
 func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !ok {
 		return
 	}
 	workerReq, err := httpapi.DecodeObjectBodyAs[codeSessionWorkerEventsBody](w, r, maxIngressBodySize)
 	if err != nil {
 		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
+	}
+	if pretty, marshalErr := json.MarshalIndent(workerReq, "", "  "); marshalErr == nil {
+		h.logger.ErrorContext(r.Context(), "code session worker events request", "code_session_id", codeSessionID)
+		println(string(pretty))
 	}
 	if workerReq.WorkerEpoch <= 0 {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "worker_epoch must be a positive integer"))
@@ -348,7 +353,7 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "events must be a non-empty array"))
 		return
 	}
-	if err := h.service.AppendWorkerOutputEventsForEpoch(r.Context(), codeSessionID, int64(workerReq.WorkerEpoch), workerReq.Events); err != nil {
+	if err := h.service.AppendWorkerOutputEventsForEpoch(r.Context(), codeSessionStreamRouteFromClaims(claims), int64(workerReq.WorkerEpoch), workerReq.Events); err != nil {
 		if errors.Is(err, ErrProtocol) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 			return
@@ -401,7 +406,8 @@ func (h *Handler) handleCodeSessionWorkerDelivery(w http.ResponseWriter, r *http
 
 func (h *Handler) handleCodeSessionWorkerDiagnostics(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !ok {
 		return
 	}
 	workerReq, ok := h.requireWorkerEpochBody(w, r, codeSessionID)
@@ -413,8 +419,9 @@ func (h *Handler) handleCodeSessionWorkerDiagnostics(w http.ResponseWriter, r *h
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
+	route := codeSessionStreamRouteFromClaims(claims)
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEventForEpoch(r.Context(), codeSessionID, workerReq.epoch, payload); err != nil {
+		if err := h.service.AppendWorkerEventForEpoch(r.Context(), route, workerReq.epoch, payload); err != nil {
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -535,7 +542,8 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 
 func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !ok {
 		return
 	}
 	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
@@ -547,8 +555,9 @@ func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Requ
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
+	route := codeSessionStreamRouteFromClaims(claims)
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload); err != nil {
+		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -563,7 +572,8 @@ func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Requ
 
 func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !ok {
 		return
 	}
 	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
@@ -575,8 +585,9 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
+	route := codeSessionStreamRouteFromClaims(claims)
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload); err != nil {
+		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
 			if errors.Is(err, ErrProtocol) {
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 				return
@@ -591,7 +602,8 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 
 func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !ok {
 		return
 	}
 	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
@@ -611,8 +623,9 @@ func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
+	route := codeSessionStreamRouteFromClaims(claims)
 	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), codeSessionID, payload); err != nil {
+		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
 			h.logger.ErrorContext(r.Context(), "append code session persistence event", "code_session_id", codeSessionID, "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append session ingress event"))
 			return

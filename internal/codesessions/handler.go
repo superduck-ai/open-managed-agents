@@ -26,6 +26,7 @@ type Handler struct {
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
 	wrapMCPVaultTransport  mcpProxyTransportWrapper
+	egressSubstitutor      *vaults.EgressSubstitutor
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
@@ -67,7 +68,8 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 }
 
 // WithVaultSecrets wires vault credential injection (static_bearer / mcp_oauth)
-// into the MCP HTTP proxy, including one 401 refresh retry for mcp_oauth.
+// into the MCP HTTP proxy, including one 401 refresh retry for mcp_oauth, and
+// Egress Secret Substitution for environment_variable credentials on MITM.
 func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
@@ -83,5 +85,6 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service) *Handler {
 			base,
 		)
 	}
+	h.egressSubstitutor = vaults.NewEgressSubstitutor(h.db, secretSvc, h.logger)
 	return h
 }

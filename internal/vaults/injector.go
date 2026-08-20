@@ -340,11 +340,12 @@ func cloneRequestWithBody(req *http.Request, body []byte) *http.Request {
 	return out
 }
 
-// maxSnapshotRequestBodyBytes caps buffered MCP request bodies for 401 retry.
-// Larger bodies fail closed instead of silently truncating the replay.
+// maxSnapshotRequestBodyBytes caps buffered request bodies for MCP 401 retry
+// and Environment Variable body substitution. Larger bodies fail closed
+// instead of silently truncating replay or forwarding an unsubstituted placeholder.
 const maxSnapshotRequestBodyBytes = 32 << 20
 
-var errSnapshotRequestBodyTooLarge = fmt.Errorf("request body exceeds %d-byte MCP retry buffer", maxSnapshotRequestBodyBytes)
+var errSnapshotRequestBodyTooLarge = fmt.Errorf("request body exceeds %d-byte snapshot buffer", maxSnapshotRequestBodyBytes)
 
 func readWithinLimit(r io.Reader, max int64) ([]byte, error) {
 	if max < 0 {

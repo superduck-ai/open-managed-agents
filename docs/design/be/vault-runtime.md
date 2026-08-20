@@ -166,7 +166,36 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 | 项 | 决定 |
 |---|---|
-| 凭证类型 | **static_bearer** + **mcp_oauth**；`environment_variable` 本切片不做 |
+| 凭证类型 | **static_bearer** + **mcp_oauth**（MCP proxy）；**environment_variable**（Opaque Placeholder + Egress Secret Substitution） |
+| 注入落点 | MCP：Session MCP HTTP proxy（`WithVaultSecrets` → `Injector.WrapTransport`）；**不**走 CONNECT MITM。Runner **不再**自动改写 `mcp_config` 到该 proxy。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan。Env：Session 挂载时经 `startup_context.environment_variables` 灌入 Opaque Placeholder；出站经 CONNECT MITM `EgressSubstitutor` 做 Egress Secret Substitution |
+| Credential `networking` | MCP 注入仍不按 credential networking 门控。`environment_variable` **要求**显式 `networking`；limited 的 `allowed_hosts` 复用 Environment host 语义，仅约束是否可替换，不授予可达性 |
+| host 未覆盖 | MCP：passthrough。Env：未覆盖 host / 关闭的 Injection Location → 占位符原文透传 |
+
+### Environment Variable Credential（本切片）
+
+| 项 | 决定 |
+|---|---|
+| 模型 | Opaque Placeholder + Egress Secret Substitution（真值不下发沙箱） |
+| MITM | **硬前置**：Session 挂载时若有活跃 env 凭证且 `upstream_proxy_mitm_enabled=false` → 失败（`ErrMITMRequiredForEnvCredentials`） |
+| Placeholder | 创建时随机持久化（`oma_ph_` 前缀）；轮换 `secret_value` 不改 placeholder；缺 placeholder / injection_location 的旧凭证作废（archive 重建，无惰性补齐） |
+| Injection Location | API + runtime 支持 header 与 body；省略 → header-only；全关 → 400 |
+| Networking | 省略 → 400；limited 至少一 host |
+| 平台保留名 | create 400（大小写不敏感）；`secret_name` 须为 POSIX 标识符（`[A-Za-z_][A-Za-z0-9_]*`），两端空白 trim 后持久化；挂载合并时平台键不被覆盖 |
+| Vault Attachment Order | `vault_ids` 先到先得（同 `secret_name`） |
+| 数据加载 | 每个 MITM HTTP 请求查库一次；不缓存明文 |
+| Open 失败 | **拒请求**（`ErrSubstitutionRejected` → 502） |
+
+深模块缝：
+
+- `vaults.PrepareEnvCredentialMount` — Session 挂载（MITM 门闩 + placeholder map）
+- `vaults.EgressSubstitutor.SubstituteEnvSecrets` — MITM egress
+- `networkpolicy.AllowsHost` — Credential Networking host 匹配
+
+### 运行时注入决策（MCP，grilling 已确认）
+
+| 项 | 决定 |
+|---|---|
+| 凭证类型 | **static_bearer** + **mcp_oauth** |
 | 注入落点 | Session MCP HTTP proxy（`WithVaultSecrets` → `Injector.WrapTransport`）；**不**走 CONNECT MITM。Runner **不再**自动改写 `mcp_config` 到该 proxy。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan |
 | token endpoint 错误 | 非 2xx 只上报 HTTP status（`token endpoint status N`），不把 IdP `error` 原文带进 error/日志 |
 | `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
@@ -195,8 +224,6 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 后续（非本切片）：
 
-- **environment_variable**：环境占位符 / 出口替换（E2B 上另议）
-- Credential 级 `networking.allowed_hosts` 门控
 - `mcp_oauth_validate` 真探测；`vault_credential.refresh_failed` webhook
 
 显式 MCP proxy 调用方只持有 proxy URL + session JWT，没有上游 token。真 token 只在 OMA proxy 里瞬态出现。日志不记录明文。Runner 生成的 `mcp_config` 则保留原始 URL，不携带 session JWT 或上游 token。
@@ -208,7 +235,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 2. DB Direct cutover：加信封列 + 删 `secret_payload`；无 Expand/Backfill ✅
 3. vault API 收口：写走加密，读只返回元信息；缺信封 → 400；Open 失败 → 5xx ✅（含 platform MCP OAuth callback seal）
 4. Transport 注入（static_bearer MVP）✅
-5. OAuth 刷新 + mcp_oauth 注入（含 401 一轮）✅；env 占位符；credential networking — **未做**
+5. OAuth 刷新 + mcp_oauth 注入（含 401 一轮）✅；environment_variable Opaque Placeholder + Egress Secret Substitution ✅
 
 ## 验收（存库加密：已完成）
 
@@ -229,7 +256,14 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 - Open / refresh / 401 重试失败 → 跳过该凭证继续 walk；全部失败 → 502。
 - host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）。
 - 不自动跟随跨 origin redirect 携带注入头。
-- Environment / MCP proxy 网络策略仍生效；本切片不做 credential `networking`。
+- Environment / MCP proxy 网络策略仍生效；MCP 注入不做 credential `networking`。
+
+## 验收（environment_variable：本切片）
+
+- create 签发 `oma_ph_` placeholder；响应含 `injection_location`；不回显 `secret_value`。
+- Session 挂载：MITM 关且存在活跃 env 凭证 → 失败；否则 `startup_context.environment_variables` 灌入 placeholder（先到先得，不覆盖平台保留名）。
+- MITM egress：host/location 匹配时替换；未覆盖透传；Open 失败 → 502。
+- 旧凭证缺 placeholder / injection_location → update/挂载拒绝（archive 重建）。
 
 > 注：云 KMS 自动轮换 / DisableKey 另议。
 
@@ -249,8 +283,6 @@ Redirect 仍由前端传入 `{origin}/oauth/vault/success`。控制台 Optional 
 
 - `mcp_oauth_validate` 真 refresh / live MCP probe
 - `vault_credential.refresh_failed` webhook 发出
-- `environment_variable` 出口替换
-- Credential 级 `networking.allowed_hosts`
 - Expand/Backfill、`backfill_secrets`
 - Shamir / 云 KMS provider 实现
 - 重做 vault CRUD、管理页、MCP Catalog/Permission/Confirmation

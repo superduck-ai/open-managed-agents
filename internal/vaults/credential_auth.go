@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
-
-var credentialHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+$`)
 
 type credentialAuthState struct {
 	AuthType      string
@@ -48,9 +46,10 @@ type staticBearerCredentialCreateInput struct {
 }
 
 type environmentVariableCredentialCreateInput struct {
-	SecretName  string                     `json:"secret_name"`
-	SecretValue string                     `json:"secret_value"`
-	Networking  *credentialNetworkingInput `json:"networking"`
+	SecretName        string                     `json:"secret_name"`
+	SecretValue       string                     `json:"secret_value"`
+	Networking        *credentialNetworkingInput `json:"networking"`
+	InjectionLocation json.RawMessage            `json:"injection_location"`
 }
 
 type credentialNetworkingInput struct {
@@ -80,9 +79,10 @@ type staticBearerCredentialUpdateInput struct {
 }
 
 type environmentVariableCredentialUpdateInput struct {
-	SecretName  *string         `json:"secret_name"`
-	SecretValue *string         `json:"secret_value"`
-	Networking  json.RawMessage `json:"networking"`
+	SecretName        *string         `json:"secret_name"`
+	SecretValue       *string         `json:"secret_value"`
+	Networking        json.RawMessage `json:"networking"`
+	InjectionLocation json.RawMessage `json:"injection_location"`
 }
 
 func normalizeCredentialAuthForCreate(raw json.RawMessage) (credentialAuthState, error) {
@@ -236,25 +236,35 @@ func normalizeStaticBearerForCreate(input staticBearerCredentialCreateInput) (cr
 }
 
 func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCreateInput) (credentialAuthState, error) {
-	secretName, err := requireNonEmptyString(input.SecretName, "auth.secret_name")
+	secretName, err := parseSecretName(input.SecretName)
 	if err != nil {
-		return credentialAuthState{}, err
-	}
-	if err := validateSecretName(secretName); err != nil {
 		return credentialAuthState{}, err
 	}
 	secretValue, err := requireNonEmptyString(input.SecretValue, "auth.secret_value")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	networking, err := normalizeCredentialNetworking(input.Networking)
+	if input.Networking == nil {
+		return credentialAuthState{}, errors.New("auth.networking is required")
+	}
+	networking, err := normalizeCredentialNetworkingRequired(input.Networking)
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	injectionLocation, err := applyInjectionLocation(credentialInjectionLocation{Header: true, Body: false}, input.InjectionLocation)
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	placeholder, err := generateOpaquePlaceholder()
 	if err != nil {
 		return credentialAuthState{}, err
 	}
 	publicAuth := &environmentVariableCredentialAuth{
-		Type:       credentialAuthTypeEnvironmentVariable,
-		SecretName: secretName,
-		Networking: networking,
+		Type:              credentialAuthTypeEnvironmentVariable,
+		SecretName:        secretName,
+		Placeholder:       placeholder,
+		Networking:        networking,
+		InjectionLocation: injectionLocation,
 	}
 	secretPayload := environmentVariableCredentialSecret{Type: credentialAuthTypeEnvironmentVariable, SecretValue: secretValue}
 	return credentialAuthStateFromValues(credentialAuthTypeEnvironmentVariable, secretName, publicAuth, secretPayload)
@@ -299,9 +309,9 @@ func normalizeCredentialAuthForUpdate(current db.VaultCredential, currentSecret 
 		if err := decodeCredentialAuthInput(raw, &input); err != nil {
 			return credentialAuthState{}, err
 		}
-		publicAuth, ok := stored.value.(*environmentVariableCredentialAuth)
-		if !ok {
-			return credentialAuthState{}, errors.New("stored credential auth type is invalid")
+		publicAuth, err := requireReadyEnvironmentAuth(stored.value)
+		if err != nil {
+			return credentialAuthState{}, err
 		}
 		return normalizeEnvironmentVariableForUpdate(current, currentSecret, input, publicAuth)
 	default:
@@ -420,12 +430,20 @@ func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSe
 		if err := json.Unmarshal(input.Networking, &networkingInput); err != nil {
 			return credentialAuthState{}, errors.New("auth.networking must be an object")
 		}
-		networking, err := normalizeCredentialNetworking(networkingInput)
+		if networkingInput == nil {
+			return credentialAuthState{}, errors.New("auth.networking is required")
+		}
+		networking, err := normalizeCredentialNetworkingRequired(networkingInput)
 		if err != nil {
 			return credentialAuthState{}, err
 		}
 		publicAuth.Networking = networking
 	}
+	injectionLocation, err := applyInjectionLocation(publicAuth.InjectionLocation, input.InjectionLocation)
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	publicAuth.InjectionLocation = injectionLocation
 	if secretPayload.SecretValue == "" {
 		return credentialAuthState{}, ErrMissingSecretEnvelope
 	}
@@ -488,25 +506,39 @@ func patchMCPOAuthRefreshForUpdate(publicAuth *mcpOAuthCredentialAuth, secretPay
 	return nil
 }
 
-func normalizeCredentialNetworking(input *credentialNetworkingInput) (credentialAuthNetworking, error) {
-	if input == nil || input.Type == "" || input.Type == "unrestricted" {
+// normalizeCredentialNetworkingRequired rejects omit/empty type; used for
+// environment_variable credentials where networking must be explicit.
+func normalizeCredentialNetworkingRequired(input *credentialNetworkingInput) (credentialAuthNetworking, error) {
+	if input == nil || strings.TrimSpace(input.Type) == "" {
+		return credentialAuthNetworking{}, errors.New("auth.networking is required")
+	}
+	if input.Type == "unrestricted" {
 		return credentialAuthNetworking{Type: "unrestricted"}, nil
 	}
+	return normalizeLimitedCredentialNetworking(input)
+}
+
+func normalizeLimitedCredentialNetworking(input *credentialNetworkingInput) (credentialAuthNetworking, error) {
 	if input.Type != "limited" {
 		return credentialAuthNetworking{}, errors.New("auth.networking.type must be unrestricted or limited")
+	}
+	if len(input.AllowedHosts) == 0 {
+		return credentialAuthNetworking{}, errors.New("auth.networking.allowed_hosts must contain at least one host")
 	}
 	if len(input.AllowedHosts) > 16 {
 		return credentialAuthNetworking{}, errors.New("auth.networking.allowed_hosts must contain at most 16 hosts")
 	}
+	hosts := make([]string, 0, len(input.AllowedHosts))
 	for _, host := range input.AllowedHosts {
-		if _, err := requireNonEmptyString(host, "auth.networking.allowed_hosts entry"); err != nil {
+		trimmed, err := requireNonEmptyString(host, "auth.networking.allowed_hosts entry")
+		if err != nil {
 			return credentialAuthNetworking{}, err
 		}
-		if err := validateCredentialHost(host); err != nil {
-			return credentialAuthNetworking{}, err
+		if err := networkpolicy.ValidateAllowedHost(trimmed); err != nil {
+			return credentialAuthNetworking{}, fmt.Errorf("auth.networking.allowed_hosts entry: %w", err)
 		}
+		hosts = append(hosts, trimmed)
 	}
-	hosts := input.AllowedHosts
 	return credentialAuthNetworking{Type: "limited", AllowedHosts: &hosts}, nil
 }
 
@@ -561,26 +593,6 @@ func validateHTTPURL(value, name string) error {
 func validateRFC3339(value, name string) error {
 	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
 		return fmt.Errorf("%s must be RFC3339", name)
-	}
-	return nil
-}
-
-func validateSecretName(value string) error {
-	if len(value) > 255 {
-		return errors.New("auth.secret_name must be at most 255 characters")
-	}
-	return nil
-}
-
-func validateCredentialHost(host string) error {
-	if strings.Contains(host, "://") || strings.Contains(host, "/") || strings.Contains(host, ":") || strings.Contains(host, "[") || strings.Contains(host, "]") {
-		return errors.New("auth.networking.allowed_hosts entries must be hostnames without URL schemes")
-	}
-	if len(host) > 253 {
-		return errors.New("auth.networking.allowed_hosts entries must be at most 253 characters")
-	}
-	if !credentialHostPattern.MatchString(host) {
-		return errors.New("auth.networking.allowed_hosts entries must be valid hostnames")
 	}
 	return nil
 }

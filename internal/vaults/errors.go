@@ -24,13 +24,47 @@ var ErrInjectionRejected = errors.New("vault credential injection rejected")
 // when injection rejects.
 const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavailable"
 
-var errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
+// ErrMITMRequiredForEnvCredentials is returned at Session mount when active
+// Environment Variable Credentials are attached but upstream proxy MITM is off.
+var ErrMITMRequiredForEnvCredentials = errors.New("upstream proxy MITM is required for environment variable credentials")
+
+// ErrSubstitutionRejected is the upstream-proxy fail-closed sentinel when
+// Egress Secret Substitution cannot proceed.
+var ErrSubstitutionRejected = errors.New("vault environment variable substitution rejected")
+
+// SubstitutionUnavailablePublicMessage is the client-safe text for MITM 502
+// when Egress Secret Substitution rejects a request.
+const SubstitutionUnavailablePublicMessage = "Environment variable credentials are unavailable"
+
+// SubstitutionBodyTooLargePublicMessage is the client-safe text for MITM 502
+// when body injection is enabled but the request body exceeds the snapshot buffer.
+const SubstitutionBodyTooLargePublicMessage = "Request body exceeds 32 MiB; environment variable body substitution cannot be applied"
+
+// SubstitutionPublicMessage returns the MITM 502 text for a substitution rejection.
+func SubstitutionPublicMessage(err error) string {
+	if errors.Is(err, errSnapshotRequestBodyTooLarge) {
+		return SubstitutionBodyTooLargePublicMessage
+	}
+	return SubstitutionUnavailablePublicMessage
+}
+
+var (
+	errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
+	errCredentialStoreUnavailable = errors.New("credential store is unavailable")
+)
 
 func injectionRejected(cause error) error {
 	if cause == nil {
 		return ErrInjectionRejected
 	}
 	return fmt.Errorf("%w: %w", ErrInjectionRejected, cause)
+}
+
+func substitutionRejected(cause error) error {
+	if cause == nil {
+		return ErrSubstitutionRejected
+	}
+	return fmt.Errorf("%w: %w", ErrSubstitutionRejected, cause)
 }
 
 func missingCredential() error {

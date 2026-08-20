@@ -21,6 +21,7 @@
         usage,
         stats,
         outcome_evaluations,
+        budget,
         created_at,
         updated_at,
         archived_at,
@@ -32,7 +33,7 @@
             uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
             environment_uuid, environment_external_id, agent_uuid, agent_external_id,
             agent_version, agent_snapshot, deployment_uuid, deployment_external_id,
-            title, metadata, vault_ids, status, usage, stats, outcome_evaluations,
+            title, metadata, vault_ids, status, usage, stats, outcome_evaluations, budget,
             created_at, updated_at
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
@@ -42,7 +43,8 @@
             #{params.DeploymentID}, #{params.Title}, CAST(#{params.Metadata,sensitive=true} AS jsonb),
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb), #{params.Status},
             CAST(#{params.Usage,sensitive=true} AS jsonb), CAST(#{params.Stats,sensitive=true} AS jsonb),
-            CAST(#{params.OutcomeEvaluations,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}
+            CAST(#{params.OutcomeEvaluations,sensitive=true} AS jsonb),
+            CAST(#{params.Budget,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}
         )
         RETURNING <include refid="columns"/>
     </insert>
@@ -60,6 +62,7 @@
         SET agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
             title = #{params.Title},
             metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            budget = CAST(#{params.Budget,sensitive=true} AS jsonb),
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}

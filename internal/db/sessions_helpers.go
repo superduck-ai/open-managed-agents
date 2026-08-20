@@ -168,7 +168,7 @@ func sessionWriteParameters(session Session) sessionWriteParams {
 		DeploymentID: session.DeploymentID, Title: session.Title, Metadata: agentJSONArg(session.Metadata),
 		VaultIDs: agentJSONArg(session.VaultIDs), Status: session.Status, Usage: agentJSONArg(session.Usage),
 		Stats: agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
-		CreatedAt: session.CreatedAt,
+		Budget: agentJSONArg(session.Budget), CreatedAt: session.CreatedAt,
 	}
 }
 
@@ -264,7 +264,8 @@ func (r sessionRow) session() Session {
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
 		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),
 		VaultIDs: bytes.Clone(r.VaultIDs), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
-		OutcomeEvaluations: bytes.Clone(r.OutcomeEvaluations), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		OutcomeEvaluations: bytes.Clone(r.OutcomeEvaluations), Budget: bytes.Clone(r.Budget),
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }

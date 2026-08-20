@@ -551,6 +551,7 @@ export type ManagedEntityFormValues = {
   vaultIds: string[];
   memoryStoreIds: string[];
   fileResources: SessionFileResourceFormValue[];
+  budgetAmount: string;
 };
 
 export type SessionFileResourceFormValue = {

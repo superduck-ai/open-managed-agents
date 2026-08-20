@@ -63,6 +63,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	budget, err := normalizeBudget(body.Budget)
+	if err != nil {
+		return invalidRequest(err)
+	}
 
 	sessionID, err := ids.New("sesn_")
 	if err != nil {
@@ -102,6 +106,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			Title:                 title,
 			Metadata:              metadata,
 			VaultIDs:              vaultIDs,
+			Budget:                budget,
 			Status:                "idle",
 			Usage:                 json.RawMessage(`{}`),
 			Stats:                 json.RawMessage(`{}`),
@@ -282,6 +287,17 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(errors.New("vault_ids updates are not supported"))
 	}
 	next := current
+	if len(body.Budget) > 0 {
+		budget, err := normalizeBudget(body.Budget)
+		if err != nil {
+			return invalidRequest(err)
+		}
+		// 官方契约（budgets.md）：给无预算的 session 添加预算 → 400。
+		if budget != nil && len(current.Budget) == 0 {
+			return invalidRequest(errors.New("budget can only be added at session creation"))
+		}
+		next.Budget = budget
+	}
 	if len(body.Title) > 0 {
 		next.Title, err = nullableStringFromRaw(body.Title, "title")
 		if err != nil {

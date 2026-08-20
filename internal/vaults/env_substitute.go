@@ -3,6 +3,7 @@ package vaults
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -149,7 +150,7 @@ func (s *EgressSubstitutor) buildSubstitutions(
 		if item.value.InjectionLocation.Body && !bodyLoaded {
 			body, err = snapshotRequestBody(req)
 			if err != nil {
-				return nil, nil, substitutionRejected(err)
+				return nil, nil, substitutionRejected(fmt.Errorf("environment variable body substitution: %w", err))
 			}
 			bodyLoaded = true
 		}

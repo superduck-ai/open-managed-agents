@@ -114,6 +114,23 @@ func TestInjectionRejected(t *testing.T) {
 	})
 }
 
+func TestSubstitutionPublicMessage(t *testing.T) {
+	t.Parallel()
+	if SubstitutionUnavailablePublicMessage != "Environment variable credentials are unavailable" {
+		t.Fatalf("generic public message drifted: %q", SubstitutionUnavailablePublicMessage)
+	}
+	if SubstitutionBodyTooLargePublicMessage != "Request body exceeds 32 MiB; environment variable body substitution cannot be applied" {
+		t.Fatalf("body-too-large public message drifted: %q", SubstitutionBodyTooLargePublicMessage)
+	}
+	wrapped := substitutionRejected(errSnapshotRequestBodyTooLarge)
+	if got := SubstitutionPublicMessage(wrapped); got != SubstitutionBodyTooLargePublicMessage {
+		t.Fatalf("SubstitutionPublicMessage(body too large) = %q", got)
+	}
+	if got := SubstitutionPublicMessage(substitutionRejected(errors.New("open failed"))); got != SubstitutionUnavailablePublicMessage {
+		t.Fatalf("SubstitutionPublicMessage(other) = %q", got)
+	}
+}
+
 func TestRuntimeInjectionErrorConstructors(t *testing.T) {
 	tests := []struct {
 		name string

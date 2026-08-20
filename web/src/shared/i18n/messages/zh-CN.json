@@ -1317,7 +1317,6 @@
   "managedAgents.credentialVaults.credentialDialog.connecting": "正在连接...",
   "managedAgents.credentialVaults.credentialDialog.description": "保存 MCP 服务器或环境变量所需的凭据。",
   "managedAgents.credentialVaults.credentialDialog.displayName": "显示名称",
-  "managedAgents.credentialVaults.credentialDialog.nameOptional": "名称（可选）",
   "managedAgents.credentialVaults.credentialDialog.type": "类型",
   "managedAgents.credentialVaults.credentialDialog.edit": "编辑凭据",
   "managedAgents.credentialVaults.credentialDialog.environmentVariable": "环境变量",

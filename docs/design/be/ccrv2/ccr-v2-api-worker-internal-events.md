@@ -17,7 +17,7 @@
 |---|---|
 | 私有 transcript 落库 | 是，写入 `code_session_internal_events` |
 | 前端可见事件 | 否，不写 `session_events` |
-| worker output event | 否，不写 `code_session_outbound_events` |
+| worker output event | 否；outbound 私有日志已移除，公开输出直接进入 `session_events` |
 | 前端 SSE 广播 | 否 |
 | CCR v2 resume 读取 | 是，配套 `GET /worker/internal-events` |
 | worker epoch 写保护 | POST 在 DB 事务内校验 |
@@ -204,7 +204,7 @@ internal/db/migrations/00009_add_code_session_internal_events.sql
 | `agent_id` | null 表示 foreground；非 null 表示 subagent |
 | `is_compaction` | compaction 边界标记 |
 | `payload` | 原始 transcript payload |
-| `payload_hash` | payload 内容 hash |
+| `payload_hash` | 保留空白、字段和编码形式的原始 JSON 内容 hash |
 | `idempotency_key` | 基于 `payload.uuid` 的去重键 |
 | `event_metadata` | 可选事件元数据 |
 | `created_at` / `updated_at` / `deleted_at` | 标准时间字段 |

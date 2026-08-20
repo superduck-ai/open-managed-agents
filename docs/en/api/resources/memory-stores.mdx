@@ -1,0 +1,12 @@
+---
+title: "Memory Stores"
+description: "Manage stores, memory content, version history, and redaction."
+---
+
+Every Memory Stores request requires `?beta=true`.
+
+Store endpoints create/list at `/v1/memory_stores`, retrieve/update/delete at `/{id}`, and archive at `/{id}/archive`. Stores contain name, description, and string metadata.
+
+Memory endpoints create/list at `/{id}/memories` and retrieve/update/delete at `/memories/{memory_id}`. Content is limited to 102400 bytes and paths to 1024 bytes. Updates can submit a `content_sha256` precondition; deletes use `expected_content_sha256`.
+
+Version endpoints list at `/{id}/memory_versions`, retrieve `/{version_id}`, and redact historical content with `POST .../{version_id}/redact` while retaining audit metadata.

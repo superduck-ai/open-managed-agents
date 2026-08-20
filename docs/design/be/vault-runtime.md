@@ -11,7 +11,7 @@
 
 ## 背景
 
-Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。运行时注入挂在 Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`），对真实 `mcp_url` 注入 static_bearer。
+Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）仍支持对显式传入的真实 `mcp_url` 注入 static_bearer，但 Managed Agent Runner 不再自动把 MCP config URL 改写到该接口。
 ## 威胁模型（加密管到哪）
 
 | 场景 | 加密能否挡住 |
@@ -155,11 +155,11 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 ## 运行时注入（static_bearer MVP）
 
-> **状态：已实现。** 存库加密已完成；MCP HTTP proxy 路径仅注入 static_bearer。
+> **状态：已实现但不再由 Runner 自动接入。** 存库加密已完成；MCP HTTP proxy 路径仅注入 static_bearer。
 
-目标：Sandbox 调需认证的 MCP 时，由 OMA 在 MCP HTTP proxy 转发前注入凭证；Sandbox 只看到改写后的 proxy URL，看不到 token。
+目标：显式调用 OMA MCP HTTP proxy 时，由 OMA 在转发前注入凭证；调用方只看到 proxy URL，不看到 token。
 
-注入点：`/v2/ccr-sessions/{code_session_id}/mcp`。Runner 把真实 MCP URL 放进 `mcp_url`，Claude Code 只连 session 级 proxy。Proxy 验 JWT、按 Agent Snapshot + Environment 策略授权后，对真实 `mcp_url` 做 Credential URL match，再注入 `Authorization` 并转发。不依赖 upstream CONNECT MITM。
+注入点：`/v2/ccr-sessions/{code_session_id}/mcp`。显式调用方把真实 MCP URL 放进 `mcp_url`；Proxy 验 JWT、按 Agent Snapshot + Environment 策略授权后，对真实 `mcp_url` 做 Credential URL match，再注入 `Authorization` 并转发。不依赖 upstream CONNECT MITM。Managed Agent 当前保留原始 MCP URL 并通过 `HTTPS_PROXY` 走 CONNECT，因此不会经过此注入点；如需恢复自动 static_bearer 注入，应在 CONNECT MITM 边界单独实现。
 
 ### MVP 决策（grilling 已确认）
 
@@ -190,7 +190,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 - **environment_variable**：环境占位符 / 出口替换（E2B 上另议）
 - Credential 级 `networking.allowed_hosts` 门控
 
-Sandbox 拿到的 `mcp_config` 只有 proxy URL + session JWT，没有上游 token。真 token 只在 OMA proxy 里瞬态出现。日志不记录明文。
+显式 MCP proxy 调用方只持有 proxy URL + session JWT，没有上游 token。真 token 只在 OMA proxy 里瞬态出现。日志不记录明文。Runner 生成的 `mcp_config` 则保留原始 URL，不携带 session JWT 或上游 token。
 
 ## 实施阶段
 
@@ -214,7 +214,7 @@ Sandbox 拿到的 `mcp_config` 只有 proxy URL + session JWT，没有上游 tok
 
 ## 验收（运行时注入 MVP：已完成）
 
-- Managed Agent MCP 走 `/v2/ccr-sessions/{id}/mcp`；vault 注入接在该 proxy，不依赖 MITM。
+- 显式 MCP proxy 请求走 `/v2/ccr-sessions/{id}/mcp`；vault 注入接在该 proxy，不依赖 MITM。Managed Agent Runner 不再自动生成该 URL。
 - static_bearer：path 前缀命中后注入 Bearer；沙箱 / `mcp_config` / 日志不见 token。
 - host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）；命中后 Open 失败 → 拒绝（502）。
 - 不自动跟随跨 origin redirect 携带注入头。

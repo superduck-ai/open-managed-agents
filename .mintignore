@@ -1,0 +1,66 @@
+# The public Mintlify site is defined by docs.json, docs/{zh,en}, and the
+# small set of root-level brand assets. Other repository documentation stays
+# private to the source tree.
+.mintlify-template-inspect/
+.worktrees/
+cmd/
+config/
+deploy/
+/docs/.DS_Store
+/docs/adr/
+/docs/agents/
+/docs/configuration-reference.yaml
+/docs/design/
+/docs/local-quick-start.md
+/docs/research/
+# Replaced by localized OpenAPI-generated endpoint pages.
+/docs/en/api/endpoints/
+/docs/en/api/resources/
+/docs/zh/api/endpoints/
+/docs/zh/api/resources/
+# Superseded pre-alignment pages. Their public URLs are preserved by redirects
+# in docs.json, but they must not appear in search or duplicate the current
+# Managed Agents hierarchy.
+/docs/en/compatibility.mdx
+/docs/en/concepts.mdx
+/docs/en/configuration.mdx
+/docs/en/deployment.mdx
+/docs/en/events-streaming.mdx
+/docs/en/limits.mdx
+/docs/en/mcp-connectors.mdx
+/docs/en/multiagent.mdx
+/docs/en/observability.mdx
+/docs/en/outcomes.mdx
+/docs/en/sandbox-runtime-reference.mdx
+/docs/en/sandbox-security.mdx
+/docs/zh/compatibility.mdx
+/docs/zh/concepts.mdx
+/docs/zh/configuration.mdx
+/docs/zh/deployment.mdx
+/docs/zh/events-streaming.mdx
+/docs/zh/limits.mdx
+/docs/zh/mcp-connectors.mdx
+/docs/zh/multiagent.mdx
+/docs/zh/observability.mdx
+/docs/zh/outcomes.mdx
+/docs/zh/sandbox-runtime-reference.mdx
+/docs/zh/sandbox-security.mdx
+envd-bin/
+internal/
+scripts/
+tests/
+tmp/
+web/
+*.go
+go.mod
+go.sum
+Dockerfile
+docker-compose.yml
+justfile
+README.cn.md
+AGENTS.md
+AGENTS.local.md
+AGENTS.override.md
+CLAUDE.md
+CLAUDE.local.md
+CONTEXT.md

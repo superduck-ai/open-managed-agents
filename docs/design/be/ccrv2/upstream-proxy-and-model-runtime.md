@@ -1,8 +1,8 @@
-# CCRv2 子进程 HTTPS 代理与模型运行时
+# CCRv2 全进程 HTTPS 代理与模型运行时
 
 ## 目标
 
-Managed Agent 启动 Claude Code 后，Claude 创建的 Bash、MCP、LSP 和 hook 子进程需要继承 `HTTPS_PROXY`。当前 Claude Code 内置的 CCRv2 relay 已经负责在容器内监听本地 CONNECT 代理，但只有以下条件同时成立时才会启用：
+Managed Agent 启动 Claude Code 后，Claude 主进程及其创建的 Bash、MCP、LSP 和 hook 子进程都会使用 `HTTPS_PROXY`。当前 Claude Code 内置的 CCRv2 relay 已经负责在容器内监听本地 CONNECT 代理，但只有以下条件同时成立时才会启用：
 
 - `CLAUDE_CODE_REMOTE=true`
 - `CLAUDE_CODE_REMOTE_SESSION_ID` 是当前 code session ID
@@ -41,7 +41,9 @@ sequenceDiagram
     Claude->>API: GET /v1/code/upstreamproxy/ca-cert
     Claude->>Relay: start 127.0.0.1 ephemeral CONNECT listener
     Claude->>Claude: unlink /run/ccr/session_token after relay is ready
-    Claude->>Child: HTTPS_PROXY=http://127.0.0.1:{port}
+    Claude->>Claude: use HTTPS_PROXY=http://127.0.0.1:{port}
+    Claude->>Child: inherit HTTPS_PROXY
+    Claude->>Relay: CONNECT MCP and other public hosts
     Child->>Relay: CONNECT public-host:443
     Relay->>API: WebSocket /v1/code/upstreamproxy/ws
     alt MITM disabled
@@ -63,6 +65,7 @@ CCR_UPSTREAM_PROXY_ENABLED=1
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
 CLAUDE_CODE_USE_CCR_V2=1
 CLAUDE_CODE_WORKER_EPOCH=1
+CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 ```
 
 `startup_context.api_base_url` 是 sandbox 可访问的 Open Managed Agents API 地址。payload 不再注入上游 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_API_KEY`；environment-manager 使用 `api_base_url` 作为 Claude 的 `ANTHROPIC_BASE_URL` fallback。
@@ -77,6 +80,25 @@ payload 同时提供两种用途独立的 auth：
 - `anthropic_oauth`：使用只保存 hash、由 CCR worker lease 决定生命周期的 `sk-ant-oat01-...` token，通过 `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` 访问本地 `/v1/messages` 模型代理。
 
 payload 不再包含 `anthropic_api` 或 `CLAUDE_CODE_SESSION_ACCESS_TOKEN`。后者会优先于 WebSocket FD，被删除是为了保证 Claude 实际读取签名 ingress JWT。`cse_...` 只作为 URL 和 session 标识，不再作为 OTLP Bearer 凭证。
+
+### Git 私有仓库出站
+
+Runner 在执行 `environment-manager task-run` 前向其进程环境注入以下 Git 配置：
+
+```text
+GIT_CONFIG_COUNT=3
+GIT_CONFIG_KEY_0=credential.interactive
+GIT_CONFIG_VALUE_0=false
+GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf
+GIT_CONFIG_VALUE_1=git@github.com:
+GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf
+GIT_CONFIG_VALUE_2=ssh://git@github.com/
+GIT_EDITOR=true
+GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt
+GIT_TERMINAL_PROMPT=0
+```
+
+两条 `insteadOf` 在 Git 建连前把 `git@github.com:team/repo.git` 和 `ssh://git@github.com/team/repo.git` 改写为 `https://github.com/team/repo.git`。因为这些变量存在于 environment-manager 的启动环境，其自身执行的源码拉取以及后续 Claude、Bash 和 Git 子进程都会继承，不需要修改 Agent 生成的 `git clone` / `git fetch` 命令。改写后的 HTTPS 请求继续使用 runtime 注入的 `HTTPS_PROXY`；`GIT_SSL_CAINFO` 指向 runtime 合并 CA bundle，以验证 Gateway 动态签发的证书。关闭 credential 交互、terminal prompt 和 editor 可保证凭证失败时快速返回，不在无人值守的 Sandbox 中阻塞。
 
 Runner 把 environment-manager 作为 E2B 后台进程启动。包含双凭证的 payload 通过进程 PID 直接写入 stdin，随后显式关闭 EOF；payload 不写入沙箱文件系统。stdin 发送或关闭失败时，Runner 终止尚未完整初始化的后台进程并按沙箱启动失败处理。
 
@@ -153,7 +175,9 @@ Proxy-Authorization: Basic base64(code_session_id:session_ingress_jwt)
 
 ### `GET|POST|DELETE /v2/ccr-sessions/{code_session_id}/mcp`
 
-Managed Agent 的远程 MCP 不再由 Sandbox 直接访问。Runner 在 environment-manager payload 边界把 Agent Snapshot 中的真实 URL 编码到 `mcp_url`，并将 MCP config 的连接地址改成此 session 级代理，同时通过 config header 携带 session-ingress JWT。
+Runner 不再把 Managed Agent MCP URL 改写到该接口。MCP config 保留 Agent Snapshot 中的原始 URL，Claude 主进程通过 `HTTPS_PROXY` 将请求交给 CCRv2 CONNECT relay；配置中也不再为该接口注入 session-ingress header。
+
+该接口作为显式调用的兼容入口继续保留，其边界如下：
 
 代理执行以下边界：
 
@@ -276,4 +300,4 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 - Go module redirect 合同测试覆盖 `proxy.golang.org` 到 `storage.googleapis.com` 的 host 链；设置 `TEST_GO_MODULE_PROXY_REDIRECT=1` 可额外对真实大 module zip 运行 live redirect 验证。
 - `internal/codesessions` 与 DB-backed proxy 集成测试覆盖策略上下文边界：JWT org/workspace 作用域、Code Session 与 Environment/Session 绑定、不能借用另一 Environment allowlist、Environment/Session 缺失与持久化配置畸形时 fail-closed。
 - proxy 集成测试证明：limited 下授权目标能进入拨号路径、未授权目标在 DNS/拨号前收到 framed `403`、unrestricted 行为与现状兼容、Environment 更新对存活 Code Session 的下一次 CONNECT 即时生效。
-- linux/amd64 镜像验收通过真实 Claude CLI 和 Bash tool call 确认：relay 从 `/run/ccr/session_token` 读取 token 并启动，Claude 子进程同时具有指向同一 `127.0.0.1` relay 的 `HTTPS_PROXY`、`https_proxy`，以及 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`。
+- linux/amd64 镜像验收通过真实 Claude CLI 和 Bash tool call 确认：relay 从 `/run/ccr/session_token` 读取 token 并启动，Claude 主进程与子进程同时具有指向同一 `127.0.0.1` relay 的 `HTTPS_PROXY`、`https_proxy`，以及 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`。

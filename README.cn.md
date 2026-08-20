@@ -12,7 +12,7 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 
 ## 技术栈
 
-- 后端：Go `1.26.2`、`chi`、`pgx`、`goose`、AWS SDK for Go v2、Redis、Anthropic Go SDK。
+- 后端：Go `1.27.0`、`chi`、`pgx`、`goose`、AWS SDK for Go v2、Redis、Anthropic Go SDK。
 - 前端：Bun、Vite、React、TypeScript、Tailwind CSS、TanStack Router/Query/Table、Base UI、shadcn/ui 风格组件。
 - 存储：PostgreSQL、Redis、S3 兼容对象存储，默认本地使用 MinIO。
 - 沙箱：E2B 相关能力通过 `config/config.yaml` 的 `e2b` 节点启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。

@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -214,10 +216,13 @@ func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Sessi
 	return session, thread, resources, work, err
 }
 
-func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
+func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, bool, error) {
 	mapper := NewSessionMapper(d.mapperDB)
-	row, err := mapper.FindByExternalID(ctx, workspaceUUID, externalID)
-	return row.session(), mapNoRows(err)
+	row, found, err := mapper.FindByExternalID(ctx, workspaceUUID, externalID)
+	if err != nil || !found {
+		return Session{}, found, err
+	}
+	return row.session(), true, nil
 }
 
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
@@ -336,10 +341,16 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	return sessions, hasMore, nil
 }
 
-func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, error) {
+func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, bool, error) {
 	mapper := NewSessionThreadMapper(d.mapperDB)
 	row, err := mapper.FindPrimary(ctx, workspaceUUID, sessionExternalID)
-	return row.thread(), mapNoRows(err)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionThread{}, false, nil
+	}
+	if err != nil {
+		return SessionThread{}, false, err
+	}
+	return row.thread(), true, nil
 }
 
 func (d *DB) GetSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, error) {
@@ -531,6 +542,16 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionE
 	}
 	mapper := NewSessionEventMapper(d.mapperDB)
 	row, err := mapper.FindByExternalID(ctx, workspaceUUID, sessionExternalID, eventExternalID)
+	return row.event(), mapNoRows(err)
+}
+
+func (d *DB) GetSessionToolPermissionRequest(ctx context.Context, workspaceUUID string, sessionExternalID string, toolUseID string) (SessionEvent, error) {
+	toolUseID = strings.TrimSpace(toolUseID)
+	if toolUseID == "" {
+		return SessionEvent{}, ErrNotFound
+	}
+	mapper := NewSessionEventMapper(d.mapperDB)
+	row, err := mapper.FindLatestToolPermissionRequest(ctx, workspaceUUID, sessionExternalID, toolUseID)
 	return row.event(), mapNoRows(err)
 }
 

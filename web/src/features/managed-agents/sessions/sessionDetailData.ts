@@ -54,6 +54,16 @@ export function useSessionDetailEventData({
   const scopeThreadIds = useMemo(() => ['', ...childThreadIds], [childThreadIds]);
   const scopeKey = scopeThreadIds.join('\0');
   const bump = useCallback(() => setVersion((value) => value + 1), []);
+  const appendPrimaryEvents = useCallback(
+    (events: QuickstartSessionEvent[]) => {
+      if (!sessionId) {
+        return;
+      }
+      events.forEach((event) => mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', event));
+      bump();
+    },
+    [bump, queryClient, sessionId, workspaceId],
+  );
 
   useEffect(() => {
     if (!sessionId) {
@@ -205,7 +215,7 @@ export function useSessionDetailEventData({
     [queryClient, scopeKey, sessionId, version, workspaceId],
   );
 
-  return { events, deltaFrames, loading, childLoading, error };
+  return { events, deltaFrames, loading, childLoading, error, appendPrimaryEvents };
 }
 
 export async function runSessionEventStreamLoop({
@@ -242,7 +252,17 @@ export async function runSessionEventStreamLoop({
     }
     try {
       if (!historySynced) {
-        const historyCache = await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal });
+        // Force a tail sync before subscribing: the stream is live-only, so events
+        // broadcast between a send/interrupt and this subscribe (e.g. a fast agent
+        // reply) would otherwise be lost for good. Merge dedups by event id.
+        const historyCache = await syncSessionEventHistory({
+          queryClient,
+          sessionId,
+          workspaceId,
+          threadId,
+          signal,
+          force: true,
+        });
         onCacheChange();
         historySynced = true;
         if (

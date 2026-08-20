@@ -1,0 +1,694 @@
+---
+title: "添加文件"
+sidebarTitle: "附加和下载文件"
+description: "上传文件并将其挂载到您的沙盒中以进行读取和处理。"
+---
+
+您可以通过文件 API 上传文件并将其挂载到会话的沙盒中，从而向您的智能体提供文件。
+
+<Note>
+  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+</Note>
+
+## 上传文件
+
+首先，使用 [文件 API](/docs/zh/api/files/upload-file) 上传文件：
+
+<CodeGroup>
+  ```bash cURL
+  file=$(curl --fail-with-body -sS "${auth[@]}" \
+    "${base_url}/files" \
+    -F file=@data.csv)
+  file_id=$(jq -er '.id' <<<"${file}")
+  printf 'File ID: %s\n' "${file_id}"
+  ```
+
+  ```bash CLI
+  FILE_ID=$(ant beta:files upload \
+    --file data.csv \
+    --transform id --raw-output)
+  ```
+
+  ```python Python
+  file = client.beta.files.upload(file=Path("data.csv"))
+  print(f"File ID: {file.id}")
+  ```
+
+  ```typescript TypeScript
+  const file = await client.beta.files.upload({
+    file: await toFile(readFile("data.csv"), "data.csv", { type: "text/csv" }),
+  });
+  console.log(`File ID: ${file.id}`);
+  ```
+
+  ```csharp C#
+  await using var stream = File.OpenRead(csvPath);
+  var file = await client.Beta.Files.Upload(new() { File = stream });
+  Console.WriteLine($"File ID: {file.ID}");
+  ```
+
+  ```go Go
+  csvFile, err := os.Open("data.csv")
+  if err != nil {
+      panic(err)
+  }
+  defer csvFile.Close()
+
+  file, err := client.Beta.Files.Upload(ctx, anthropic.BetaFileUploadParams{
+      File: csvFile,
+  })
+  if err != nil {
+      panic(err)
+  }
+  fmt.Printf("File ID: %s\n", file.ID)
+  ```
+
+  ```java Java
+  var file = client.beta().files().upload(
+      FileUploadParams.builder().file(dataCsv).build()
+  );
+  IO.println("File ID: " + file.id());
+  ```
+
+  ```php PHP
+  $file = $client->beta->files->upload(
+      FileParam::fromResource(fopen($csvPath, 'r'), filename: 'data.csv', contentType: 'text/csv'),
+  );
+  echo "File ID: {$file->id}\n";
+  ```
+
+  ```ruby Ruby
+  file = client.beta.files.upload(file: Pathname(csv_path))
+  puts "File ID: #{file.id}"
+  ```
+</CodeGroup>
+
+## 在会话中挂载文件
+
+在创建会话时，通过将已上传的文件添加到 `resources` 数组中，将其挂载到沙盒中：
+
+<Tip>
+  `mount_path` 是可选的，但请确保上传的文件具有描述性的名称，以便智能体能够识别它。
+</Tip>
+
+<CodeGroup>
+  ```bash cURL
+  session=$(
+    jq -n \
+      --arg agent_id "${agent_id}" \
+      --arg environment_id "${environment_id}" \
+      --arg file_id "${file_id}" \
+      '{
+        agent: $agent_id,
+        environment_id: $environment_id,
+        resources: [
+          {
+            type: "file",
+            file_id: $file_id,
+            mount_path: "/data.csv"
+          }
+        ]
+      }' | curl --fail-with-body -sS "${auth[@]}" "${base_url}/sessions" --json @-
+  )
+  session_id=$(jq -er '.id' <<<"${session}")
+  ```
+
+  ```bash CLI
+  SESSION_ID=$(ant beta:sessions create \
+    --agent "$AGENT_ID" \
+    --environment-id "$ENVIRONMENT_ID" \
+    --transform id --raw-output <<EOF
+  resources:
+    - type: file
+      file_id: $FILE_ID
+      mount_path: /data.csv
+  EOF
+  )
+  ```
+
+  ```python Python
+  session = client.beta.sessions.create(
+      agent=agent.id,
+      environment_id=environment.id,
+      resources=[
+          {
+              "type": "file",
+              "file_id": file.id,
+              "mount_path": "/data.csv",
+          },
+      ],
+  )
+  ```
+
+  ```typescript TypeScript
+  const session = await client.beta.sessions.create({
+    agent: agent.id,
+    environment_id: environment.id,
+    resources: [
+      {
+        type: "file",
+        file_id: file.id,
+        mount_path: "/data.csv",
+      },
+    ],
+  });
+  ```
+
+  ```csharp C#
+  var session = await client.Beta.Sessions.Create(new()
+  {
+      Agent = agent.ID,
+      EnvironmentID = environment.ID,
+      Resources =
+      [
+          new BetaManagedAgentsFileResourceParams
+          {
+              Type = "file",
+              FileID = file.ID,
+              MountPath = "/data.csv",
+          },
+      ],
+  });
+  ```
+
+  ```go Go
+  session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+      Agent: anthropic.BetaSessionNewParamsAgentUnion{
+          OfString: anthropic.String(agent.ID),
+      },
+      EnvironmentID: environment.ID,
+      Resources: []anthropic.BetaSessionNewParamsResourceUnion{{
+          OfFile: &anthropic.BetaManagedAgentsFileResourceParams{
+              Type:      anthropic.BetaManagedAgentsFileResourceParamsTypeFile,
+              FileID:    file.ID,
+              MountPath: anthropic.String("/data.csv"),
+          },
+      }},
+  })
+  if err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var session = client.beta().sessions().create(
+      SessionCreateParams.builder()
+          .agent(agent.id())
+          .environmentId(environment.id())
+          .addResource(
+              BetaManagedAgentsFileResourceParams.builder()
+                  .type(BetaManagedAgentsFileResourceParams.Type.FILE)
+                  .fileId(file.id())
+                  .mountPath("/data.csv")
+                  .build()
+          )
+          .build()
+  );
+  ```
+
+  ```php PHP
+  $session = $client->beta->sessions->create(
+      agent: $agent->id,
+      environmentID: $environment->id,
+      resources: [
+          BetaManagedAgentsFileResourceParams::with(
+              type: 'file',
+              fileID: $file->id,
+              mountPath: '/data.csv',
+          ),
+      ],
+  );
+  ```
+
+  ```ruby Ruby
+  session = client.beta.sessions.create(
+    agent: agent.id,
+    environment_id: environment.id,
+    resources: [
+      {
+        type: "file",
+        file_id: file.id,
+        mount_path: "/data.csv"
+      }
+    ]
+  )
+  ```
+</CodeGroup>
+
+使用上述 `mount_path`，智能体会在 `/mnt/session/uploads/data.csv` 读取该文件（请参阅[文件路径](/docs/zh/files#file-paths)）。
+
+系统会创建一个新的 `file_id`，用于引用该文件在会话中的实例。这些副本不会计入您的[存储限制](/docs/zh/api/files/list-files)。
+
+## 多个文件
+
+通过向 `resources` 数组添加条目来挂载多个文件：
+
+<CodeGroup>
+  ```json cURL
+  "resources": [
+    { "type": "file", "file_id": "file_abc123", "mount_path": "/data.csv" },
+    { "type": "file", "file_id": "file_def456", "mount_path": "/config.json" },
+    { "type": "file", "file_id": "file_ghi789", "mount_path": "/src/main.py" }
+  ]
+  ```
+
+  ```yaml CLI
+  resources:
+    - type: file
+      file_id: file_abc123
+      mount_path: /data.csv
+    - type: file
+      file_id: file_def456
+      mount_path: /config.json
+    - type: file
+      file_id: file_ghi789
+      mount_path: /src/main.py
+  ```
+
+  ```python Python
+  resources = [
+      {"type": "file", "file_id": "file_abc123", "mount_path": "/data.csv"},
+      {"type": "file", "file_id": "file_def456", "mount_path": "/config.json"},
+      {"type": "file", "file_id": "file_ghi789", "mount_path": "/src/main.py"},
+  ]
+  ```
+
+  ```typescript TypeScript
+  resources: [
+    { type: "file", file_id: "file_abc123", mount_path: "/data.csv" },
+    { type: "file", file_id: "file_def456", mount_path: "/config.json" },
+    { type: "file", file_id: "file_ghi789", mount_path: "/src/main.py" }
+  ]
+  ```
+
+  ```csharp C#
+  using Anthropic.Models.Beta.Sessions;
+
+  var resources = new[]
+  {
+      new BetaManagedAgentsFileResourceParams { Type = BetaManagedAgentsFileResourceParamsType.File, FileID = "file_abc123", MountPath = "/data.csv" },
+      new BetaManagedAgentsFileResourceParams { Type = BetaManagedAgentsFileResourceParamsType.File, FileID = "file_def456", MountPath = "/config.json" },
+      new BetaManagedAgentsFileResourceParams { Type = BetaManagedAgentsFileResourceParamsType.File, FileID = "file_ghi789", MountPath = "/src/main.py" },
+  };
+  ```
+
+  ```go Go
+  resources := []anthropic.BetaSessionNewParamsResourceUnion{
+      {OfFile: &anthropic.BetaManagedAgentsFileResourceParams{Type: "file", FileID: "file_abc123", MountPath: anthropic.String("/data.csv")}},
+      {OfFile: &anthropic.BetaManagedAgentsFileResourceParams{Type: "file", FileID: "file_def456", MountPath: anthropic.String("/config.json")}},
+      {OfFile: &anthropic.BetaManagedAgentsFileResourceParams{Type: "file", FileID: "file_ghi789", MountPath: anthropic.String("/src/main.py")}},
+  }
+  ```
+
+  ```java Java
+  import com.anthropic.models.beta.sessions.*;
+  import java.util.List;
+
+  var resources = List.of(
+      BetaManagedAgentsFileResourceParams.builder()
+          .type(BetaManagedAgentsFileResourceParams.Type.FILE).fileId("file_abc123").mountPath("/data.csv").build(),
+      BetaManagedAgentsFileResourceParams.builder()
+          .type(BetaManagedAgentsFileResourceParams.Type.FILE).fileId("file_def456").mountPath("/config.json").build(),
+      BetaManagedAgentsFileResourceParams.builder()
+          .type(BetaManagedAgentsFileResourceParams.Type.FILE).fileId("file_ghi789").mountPath("/src/main.py").build()
+  );
+  ```
+
+  ```php PHP
+  $resources = [
+      ['type' => 'file', 'file_id' => 'file_abc123', 'mount_path' => '/data.csv'],
+      ['type' => 'file', 'file_id' => 'file_def456', 'mount_path' => '/config.json'],
+      ['type' => 'file', 'file_id' => 'file_ghi789', 'mount_path' => '/src/main.py'],
+  ];
+  ```
+
+  ```ruby Ruby
+  resources = [
+    {type: "file", file_id: "file_abc123", mount_path: "/data.csv"},
+    {type: "file", file_id: "file_def456", mount_path: "/config.json"},
+    {type: "file", file_id: "file_ghi789", mount_path: "/src/main.py"}
+  ]
+  ```
+</CodeGroup>
+
+每个会话最多支持 500 个文件。
+
+## 在运行中的会话上管理文件
+
+您可以在会话创建后使用会话资源 API 添加或删除文件。每个资源在添加（或列出）时都会返回一个 `id`，您可以使用它来执行删除操作。
+
+<CodeGroup>
+  ```bash cURL
+  resource=$(
+    jq -n --arg file_id "${file_id}" '{type: "file", file_id: $file_id}' \
+      | curl --fail-with-body -sS "${auth[@]}" \
+          "${base_url}/sessions/${session_id}/resources" --json @-
+  )
+  resource_id=$(jq -er '.id' <<<"${resource}")
+  printf '%s\n' "${resource_id}"  # "sesrsc_01ABC..."
+  ```
+
+  ```bash CLI
+  RESOURCE_ID=$(ant beta:sessions:resources add \
+    --session-id "$SESSION_ID" \
+    --type file \
+    --file-id "$FILE_ID" \
+    --transform id --raw-output)
+  ```
+
+  ```python Python
+  resource = client.beta.sessions.resources.add(
+      session.id,
+      type="file",
+      file_id=file.id,
+  )
+  print(resource.id)  # "sesrsc_01ABC..."
+  ```
+
+  ```typescript TypeScript
+  const resource = await client.beta.sessions.resources.add(session.id, {
+    type: "file",
+    file_id: file.id,
+  });
+  if (resource.type !== "file") {
+    throw new Error(`Unexpected resource type: ${resource.type}`);
+  }
+  console.log(resource.id); // "sesrsc_01ABC..."
+  ```
+
+  ```csharp C#
+  var resource = await client.Beta.Sessions.Resources.Add(session.ID, new()
+  {
+      Type = "file",
+      FileID = file.ID,
+  });
+  Console.WriteLine(resource.ID);  // "sesrsc_01ABC..."
+  ```
+
+  ```go Go
+  resource, err := client.Beta.Sessions.Resources.Add(ctx, session.ID, anthropic.BetaSessionResourceAddParams{
+      BetaManagedAgentsFileResourceParams: anthropic.BetaManagedAgentsFileResourceParams{
+          Type:   anthropic.BetaManagedAgentsFileResourceParamsTypeFile,
+          FileID: file.ID,
+      },
+  })
+  if err != nil {
+      panic(err)
+  }
+  fmt.Println(resource.ID) // "sesrsc_01ABC..."
+  ```
+
+  ```java Java
+  var resource = client.beta().sessions().resources().add(
+      session.id(),
+      ResourceAddParams.builder()
+          .betaManagedAgentsFileResourceParams(
+              BetaManagedAgentsFileResourceParams.builder()
+                  .type(BetaManagedAgentsFileResourceParams.Type.FILE)
+                  .fileId(file.id())
+                  .build()
+          )
+          .build()
+  );
+  IO.println(resource.id()); // "sesrsc_01ABC..."
+  ```
+
+  ```php PHP
+  $resource = $client->beta->sessions->resources->add(
+      $session->id,
+      type: 'file',
+      fileID: $file->id,
+  );
+  echo "{$resource->id}\n";  // "sesrsc_01ABC..."
+  ```
+
+  ```ruby Ruby
+  resource = client.beta.sessions.resources.add(
+    session.id,
+    type: "file",
+    file_id: file.id
+  )
+  puts resource.id # "sesrsc_01ABC..."
+  ```
+</CodeGroup>
+
+使用 `resources.list` 列出会话上的所有资源。要删除文件，请使用资源 ID 调用 `resources.delete`：
+
+<CodeGroup>
+  ```bash cURL
+  curl --fail-with-body -sS "${auth[@]}" \
+    "${base_url}/sessions/${session_id}/resources" \
+    | jq -r '.data[] | "\(.id) \(.type)"'
+
+  curl --fail-with-body -sS "${auth[@]}" -X DELETE \
+    "${base_url}/sessions/${session_id}/resources/${resource_id}" >/dev/null
+  ```
+
+  ```bash CLI
+  ant beta:sessions:resources list --session-id "$SESSION_ID"
+
+  ant beta:sessions:resources delete \
+    --session-id "$SESSION_ID" \
+    --resource-id "$RESOURCE_ID"
+  ```
+
+  ```python Python
+  listed = client.beta.sessions.resources.list(session.id)
+  for entry in listed.data:
+      print(entry.id, entry.type)
+
+  client.beta.sessions.resources.delete(resource.id, session_id=session.id)
+  ```
+
+  ```typescript TypeScript
+  const listed = await client.beta.sessions.resources.list(session.id);
+  for (const entry of listed.data) {
+    if (entry.type !== "memory_store") {
+      console.log(entry.id, entry.type);
+    }
+  }
+
+  await client.beta.sessions.resources.delete(resource.id, {
+    session_id: session.id,
+  });
+  ```
+
+  ```csharp C#
+  var listed = await client.Beta.Sessions.Resources.List(session.ID);
+  await foreach (var entry in listed.Paginate())
+  {
+      var type = entry.Match<string>(repo => repo.Type, fileRes => fileRes.Type, memoryStore => memoryStore.Type);
+      Console.WriteLine($"{entry.ID} {type}");
+  }
+
+  await client.Beta.Sessions.Resources.Delete(resource.ID, new() { SessionID = session.ID });
+  ```
+
+  ```go Go
+  listed, err := client.Beta.Sessions.Resources.List(ctx, session.ID, anthropic.BetaSessionResourceListParams{})
+  if err != nil {
+      panic(err)
+  }
+  for _, entry := range listed.Data {
+      fmt.Println(entry.ID, entry.Type)
+  }
+
+  if _, err := client.Beta.Sessions.Resources.Delete(ctx, resource.ID, anthropic.BetaSessionResourceDeleteParams{
+      SessionID: session.ID,
+  }); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var listed = client.beta().sessions().resources().list(session.id());
+  for (var entry : listed.data()) {
+      if (entry.isFile()) {
+          var fileResource = entry.asFile();
+          IO.println(fileResource.id() + " " + fileResource.type());
+      } else if (entry.isGitHubRepository()) {
+          var repoResource = entry.asGitHubRepository();
+          IO.println(repoResource.id() + " " + repoResource.type());
+      }
+  }
+
+  client.beta().sessions().resources().delete(
+      resource.id(),
+      ResourceDeleteParams.builder().sessionId(session.id()).build()
+  );
+  ```
+
+  ```php PHP
+  $listed = $client->beta->sessions->resources->list($session->id);
+  foreach ($listed->data as $entry) {
+      echo "{$entry->id} {$entry->type}\n";
+  }
+
+  $client->beta->sessions->resources->delete($resource->id, sessionID: $session->id);
+  ```
+
+  ```ruby Ruby
+  listed = client.beta.sessions.resources.list(session.id)
+  listed.data.each { puts "#{it.id} #{it.type}" }
+
+  client.beta.sessions.resources.delete(resource.id, session_id: session.id)
+  ```
+</CodeGroup>
+
+## 列出和下载会话文件
+
+使用 [文件 API](/docs/zh/api/files/list-files) 列出限定于某个会话的文件并下载它们。
+
+<CodeGroup>
+  ```bash cURL
+  # 列出与某个会话关联的文件
+  curl -fsSL "http://localhost:38080/v1/files?scope_id=sesn_abc123" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01"
+
+  # 下载文件
+  curl -fsSL "http://localhost:38080/v1/files/$FILE_ID/content" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -o output.txt
+  ```
+
+  ```bash CLI
+  # 列出与某个会话关联的文件
+  ant beta:files list --scope-id sesn_abc123 \
+    --beta managed-agents-2026-04-01
+
+  # 下载文件
+  ant beta:files download --file-id "$FILE_ID" --output output.txt
+  ```
+
+  ```python Python
+  # 列出与某个会话关联的文件
+  files = client.beta.files.list(
+      scope_id="sesn_abc123",
+      betas=["managed-agents-2026-04-01"],
+  )
+  for file in files:
+      print(file.id, file.filename)
+
+  # 下载文件
+  content = client.beta.files.download(files.data[0].id)
+  content.write_to_file("output.txt")
+  ```
+
+  ```typescript TypeScript
+  // 列出与某个会话关联的文件
+  const files = await client.beta.files.list({
+    scope_id: "sesn_abc123",
+    betas: ["managed-agents-2026-04-01"]
+  });
+  for (const file of files.data) {
+    console.log(file.id, file.filename);
+  }
+
+  // 下载文件
+  const content = await client.beta.files.download(files.data[0].id);
+  await content.writeToFile("output.txt");
+  ```
+
+  ```csharp C#
+  // 列出与某个会话关联的文件
+  var files = await client.Beta.Files.List(new FileListParams
+  {
+      ScopeID = "sesn_abc123",
+      Betas = ["managed-agents-2026-04-01"],
+  });
+
+  // 下载文件
+  byte[] content = await client.Beta.Files.Download(files.Data[0].ID);
+  await File.WriteAllBytesAsync("output.txt", content);
+  ```
+
+  ```go Go
+  // 列出与某个会话关联的文件
+  files, err := client.Beta.Files.List(ctx, anthropic.BetaFileListParams{
+      ScopeID: anthropic.String("sesn_abc123"),
+      Betas:   []anthropic.AnthropicBeta{"managed-agents-2026-04-01"},
+  })
+  if err != nil {
+      panic(err)
+  }
+
+  // 下载文件
+  resp, err := client.Beta.Files.Download(ctx, files.Data[0].ID, anthropic.BetaFileDownloadParams{})
+  if err != nil {
+      panic(err)
+  }
+  defer resp.Body.Close()
+  out, err := os.Create("output.txt")
+  if err != nil {
+      panic(err)
+  }
+  defer out.Close()
+  if _, err := io.Copy(out, resp.Body); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  // 列出与某个会话关联的文件
+  var files = client.beta().files().list(FileListParams.builder()
+      .scopeId("sesn_abc123")
+      .addBeta(AnthropicBeta.of("managed-agents-2026-04-01"))
+      .build());
+
+  // 下载文件
+  try (HttpResponse response = client.beta().files().download(files.data().get(0).id())) {
+      try (InputStream body = response.body()) {
+          Files.copy(body, Path.of("output.txt"), StandardCopyOption.REPLACE_EXISTING);
+      }
+  }
+  ```
+
+  ```php PHP
+  // 列出与某个会话关联的文件
+  $files = $client->beta->files->list(
+      scopeID: 'sesn_abc123',
+      betas: ['managed-agents-2026-04-01'],
+  );
+
+  // 下载文件
+  $content = $client->beta->files->download($files->data[0]->id);
+  file_put_contents('output.txt', $content);
+  ```
+
+  ```ruby Ruby
+  # 列出与会话关联的文件
+  files = client.beta.files.list(
+    scope_id: "sesn_abc123",
+    betas: ["managed-agents-2026-04-01"]
+  )
+
+  # 下载文件
+  content = client.beta.files.download(files.data[0].id)
+  File.binwrite("output.txt", content.read)
+  ```
+</CodeGroup>
+
+## 支持的文件类型
+
+智能体可以处理任何文件类型，包括：
+
+* 源代码（`.py`、`.js`、`.ts`、`.go`、`.rs` 等）
+* 数据文件（`.csv`、`.json`、`.xml`、`.yaml`）
+* 文档（`.txt`、`.md`）
+* 压缩包（`.zip`、`.tar.gz`）- 智能体可以使用 bash 解压这些文件
+* 二进制文件 - 智能体可以使用适当的工具处理这些文件
+
+## 文件路径
+
+<Note>
+  挂载到沙盒中的文件是只读副本。智能体可以读取它们，但无法修改原始上传的文件。要处理修改后的版本，智能体会将其写入沙盒内的新路径。
+</Note>
+
+* 您指定的路径以会话的 uploads 目录为根：`mount_path` 为 `/data.csv` 时，文件会被放置在沙盒中的 `/mnt/session/uploads/data.csv`
+* 如果您省略 `mount_path`，文件会被放置在 `/mnt/session/uploads/<file_id>`
+* 父目录会自动创建
+* 路径应为绝对路径（以 `/` 开头）

@@ -611,7 +611,7 @@ function SidebarFooter({
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            render={<a href="https://docs.anthropic.com/" target="_blank" rel="noreferrer" />}
+            render={<a href="https://oma.mintlify.site/" target="_blank" rel="noreferrer" />}
             tooltip={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
             aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}

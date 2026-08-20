@@ -35,7 +35,7 @@ describe('ConsoleShell', () => {
     expect(screen.getByText('Analytics')).toBeTruthy();
     expect(screen.getByText('Claude Code')).toBeTruthy();
     expect(screen.getByText('Manage')).toBeTruthy();
-    expect(screen.getByText('Documentation')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Documentation' }).getAttribute('href')).toBe('https://oma.mintlify.site/');
     expect(screen.getByText('Deployments')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
     expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/workspaces/default/skills');

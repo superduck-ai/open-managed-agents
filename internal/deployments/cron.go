@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,53 +55,29 @@ func parseDeploymentSchedule(raw json.RawMessage) (parsedSchedule, error) {
 	if _, err := time.LoadLocation(config.Timezone); err != nil {
 		return parsedSchedule{}, errors.New("schedule.timezone must be a valid IANA timezone")
 	}
-	cronSchedule, err := cronParser.Parse("CRON_TZ=" + config.Timezone + " " + normalizeSundayAlias(config.Expression))
+	cronSchedule, err := cronParser.Parse("CRON_TZ=" + config.Timezone + " " + mapSundaySeven(config.Expression))
 	if err != nil {
 		return parsedSchedule{}, fmt.Errorf("schedule.expression %w", err)
 	}
 	return parsedSchedule{config: config, cron: cronSchedule}, nil
 }
 
-func normalizeSundayAlias(expression string) string {
+// cron/v3 only accepts DOW 0-6. Official Claude cron uses 0-7, where 7 is Sunday.
+func mapSundaySeven(expression string) string {
 	fields := strings.Fields(expression)
 	if len(fields) != 5 {
 		return expression
 	}
 	items := strings.Split(fields[4], ",")
-	normalized := make([]string, 0, len(items)+1)
-	for _, item := range items {
-		base, stepText, hasStep := strings.Cut(item, "/")
-		if base == "7" {
-			normalized = append(normalized, "0")
-			continue
-		}
-		startText, endText, hasRange := strings.Cut(base, "-")
-		if !hasRange || endText != "7" {
-			normalized = append(normalized, item)
-			continue
-		}
-		start, startErr := strconv.Atoi(startText)
-		step := 1
-		var stepErr error
-		if hasStep {
-			step, stepErr = strconv.Atoi(stepText)
-		}
-		if startErr != nil || stepErr != nil || start > 7 || step <= 0 {
-			normalized = append(normalized, item)
-			continue
-		}
-		if start < 7 {
-			rangeItem := startText + "-6"
-			if hasStep {
-				rangeItem += "/" + stepText
-			}
-			normalized = append(normalized, rangeItem)
-		}
-		if (7-start)%step == 0 {
-			normalized = append(normalized, "0")
+	for i, item := range items {
+		switch {
+		case item == "7":
+			items[i] = "0"
+		case strings.HasSuffix(item, "-7"):
+			items[i] = strings.TrimSuffix(item, "-7") + "-6,0"
 		}
 	}
-	fields[4] = strings.Join(normalized, ",")
+	fields[4] = strings.Join(items, ",")
 	return strings.Join(fields, " ")
 }
 

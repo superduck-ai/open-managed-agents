@@ -57,7 +57,7 @@ OMA 使用 River `v0.42.0` 持久执行 schedule。River 官方 migrator 在应�
 
 Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
-- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；DOW 接受 `0-7` 且 `7` 等同 Sunday，`L/W/#/?/@` 等扩展语法被拒绝，再由 `robfig/cron/v3` 解析；解析失败时返回参数错误。
+- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；由 `robfig/cron/v3` 解析。DOW 接受 `0-7`，`7` 在解析前映射为 Sunday（`0`）。`L/W/#/?/@` 等扩展语法被拒绝；解析失败时返回参数错误。
 - `upcoming_runs_at` 返回最多五个名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - River Job 插入时把 Cron 名义 occurrence 写入 Job args；不增加私有 jitter 算法。

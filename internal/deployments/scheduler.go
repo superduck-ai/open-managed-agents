@@ -41,6 +41,7 @@ func (scheduledDeploymentArgs) Hooks() []rivertype.Hook {
 
 var _ river.JobArgsWithHooks = scheduledDeploymentArgs{}
 
+// River overwrites river_job.scheduled_at on retry, so the Cron occurrence is stored in job args.
 func stampScheduledDeploymentOccurrence(_ context.Context, params *rivertype.JobInsertParams) error {
 	if params.ScheduledAt == nil {
 		return errors.New("scheduled_deployment job requires scheduled_at")

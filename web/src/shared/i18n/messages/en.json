@@ -1336,7 +1336,6 @@
   "managedAgents.credentialVaults.credentialDialog.connecting": "Connecting...",
   "managedAgents.credentialVaults.credentialDialog.description": "Store a credential for MCP servers or environment variables.",
   "managedAgents.credentialVaults.credentialDialog.displayName": "Display name",
-  "managedAgents.credentialVaults.credentialDialog.nameOptional": "Name (optional)",
   "managedAgents.credentialVaults.credentialDialog.type": "Type",
   "managedAgents.credentialVaults.credentialDialog.edit": "Edit credential",
   "managedAgents.credentialVaults.credentialDialog.environmentVariable": "Environment variable",

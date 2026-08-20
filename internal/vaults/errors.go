@@ -36,6 +36,18 @@ var ErrSubstitutionRejected = errors.New("vault environment variable substitutio
 // when Egress Secret Substitution rejects a request.
 const SubstitutionUnavailablePublicMessage = "Environment variable credentials are unavailable"
 
+// SubstitutionBodyTooLargePublicMessage is the client-safe text for MITM 502
+// when body injection is enabled but the request body exceeds the snapshot buffer.
+const SubstitutionBodyTooLargePublicMessage = "Request body exceeds 32 MiB; environment variable body substitution cannot be applied"
+
+// SubstitutionPublicMessage returns the MITM 502 text for a substitution rejection.
+func SubstitutionPublicMessage(err error) string {
+	if errors.Is(err, errSnapshotRequestBodyTooLarge) {
+		return SubstitutionBodyTooLargePublicMessage
+	}
+	return SubstitutionUnavailablePublicMessage
+}
+
 var (
 	errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
 	errCredentialStoreUnavailable = errors.New("credential store is unavailable")

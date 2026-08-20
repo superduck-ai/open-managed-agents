@@ -33,6 +33,177 @@ func TestSubstituteEnvSecretsRejectsNilStore(t *testing.T) {
 	}
 }
 
+func TestSubstituteEnvSecretsBodyLocationRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	credential := sealedEnvCredentialWithLocation(t, svc, "NOTION_API_KEY", "oma_ph_a", "api.notion.com", "ntn_real", false, true)
+	substitutor := newEgressSubstitutor(&fakeCredentialStore{
+		vaultIDs:    []string{"vlt_a"},
+		credentials: []db.VaultCredential{credential},
+	}, svc, nil)
+	req, err := http.NewRequest(http.MethodPost, "https://api.notion.com/v1", strings.NewReader(`{"token":"oma_ph_a"}`))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.ContentLength = maxSnapshotRequestBodyBytes + 1
+
+	err = substitutor.SubstituteEnvSecrets(
+		context.Background(),
+		"cse_test",
+		credential.OrganizationUUID,
+		credential.WorkspaceUUID,
+		req,
+		"api.notion.com",
+		"443",
+	)
+	if !errors.Is(err, ErrSubstitutionRejected) {
+		t.Fatalf("error = %v, want ErrSubstitutionRejected", err)
+	}
+	if !errors.Is(err, errSnapshotRequestBodyTooLarge) {
+		t.Fatalf("error = %v, want errSnapshotRequestBodyTooLarge", err)
+	}
+	if !strings.Contains(err.Error(), "environment variable body substitution") {
+		t.Fatalf("error = %v, want body substitution cause", err)
+	}
+	if got := SubstitutionPublicMessage(err); got != SubstitutionBodyTooLargePublicMessage {
+		t.Fatalf("public message = %q", got)
+	}
+}
+
+func TestSubstituteEnvSecretsHeaderAndBodyRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	credential := sealedEnvCredentialWithLocation(t, svc, "NOTION_API_KEY", "oma_ph_a", "api.notion.com", "ntn_real", true, true)
+	substitutor := newEgressSubstitutor(&fakeCredentialStore{
+		vaultIDs:    []string{"vlt_a"},
+		credentials: []db.VaultCredential{credential},
+	}, svc, nil)
+	req, err := http.NewRequest(http.MethodPost, "https://api.notion.com/v1", strings.NewReader("oma_ph_a"))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer oma_ph_a")
+	req.ContentLength = maxSnapshotRequestBodyBytes + 1
+
+	err = substitutor.SubstituteEnvSecrets(
+		context.Background(),
+		"cse_test",
+		credential.OrganizationUUID,
+		credential.WorkspaceUUID,
+		req,
+		"api.notion.com",
+		"443",
+	)
+	if !errors.Is(err, ErrSubstitutionRejected) || !errors.Is(err, errSnapshotRequestBodyTooLarge) {
+		t.Fatalf("error = %v, want substitution rejected for oversized body", err)
+	}
+}
+
+func TestSubstituteEnvSecretsHeaderOnlyIgnoresBodyPlaceholder(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	credential := sealedEnvCredentialWithLocation(t, svc, "NOTION_API_KEY", "oma_ph_a", "api.notion.com", "ntn_real", true, false)
+	substitutor := newEgressSubstitutor(&fakeCredentialStore{
+		vaultIDs:    []string{"vlt_a"},
+		credentials: []db.VaultCredential{credential},
+	}, svc, nil)
+	req, err := http.NewRequest(http.MethodPost, "https://api.notion.com/v1", strings.NewReader(`{"token":"oma_ph_a"}`))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer oma_ph_a")
+
+	if err := substitutor.SubstituteEnvSecrets(
+		context.Background(),
+		"cse_test",
+		credential.OrganizationUUID,
+		credential.WorkspaceUUID,
+		req,
+		"api.notion.com",
+		"443",
+	); err != nil {
+		t.Fatalf("SubstituteEnvSecrets: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer ntn_real" {
+		t.Fatalf("Authorization = %q", got)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != `{"token":"oma_ph_a"}` {
+		t.Fatalf("body = %s, want unsubstituted placeholder", body)
+	}
+}
+
+func TestSubstituteEnvSecretsBodyOnlyIgnoresHeaderPlaceholder(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	credential := sealedEnvCredentialWithLocation(t, svc, "NOTION_API_KEY", "oma_ph_a", "api.notion.com", "ntn_real", false, true)
+	substitutor := newEgressSubstitutor(&fakeCredentialStore{
+		vaultIDs:    []string{"vlt_a"},
+		credentials: []db.VaultCredential{credential},
+	}, svc, nil)
+	req, err := http.NewRequest(http.MethodPost, "https://api.notion.com/v1", strings.NewReader(`{"token":"oma_ph_a"}`))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer oma_ph_a")
+
+	if err := substitutor.SubstituteEnvSecrets(
+		context.Background(),
+		"cse_test",
+		credential.OrganizationUUID,
+		credential.WorkspaceUUID,
+		req,
+		"api.notion.com",
+		"443",
+	); err != nil {
+		t.Fatalf("SubstituteEnvSecrets: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer oma_ph_a" {
+		t.Fatalf("Authorization = %q, want unsubstituted placeholder", got)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != `{"token":"ntn_real"}` {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestSubstituteEnvSecretsHeaderOnlyAllowsOversizedContentLength(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	credential := sealedEnvCredentialWithLocation(t, svc, "NOTION_API_KEY", "oma_ph_a", "api.notion.com", "ntn_real", true, false)
+	substitutor := newEgressSubstitutor(&fakeCredentialStore{
+		vaultIDs:    []string{"vlt_a"},
+		credentials: []db.VaultCredential{credential},
+	}, svc, nil)
+	req, err := http.NewRequest(http.MethodPost, "https://api.notion.com/v1", strings.NewReader("not-a-placeholder"))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer oma_ph_a")
+	req.ContentLength = maxSnapshotRequestBodyBytes + 1
+
+	if err := substitutor.SubstituteEnvSecrets(
+		context.Background(),
+		"cse_test",
+		credential.OrganizationUUID,
+		credential.WorkspaceUUID,
+		req,
+		"api.notion.com",
+		"443",
+	); err != nil {
+		t.Fatalf("SubstituteEnvSecrets: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer ntn_real" {
+		t.Fatalf("Authorization = %q", got)
+	}
+}
+
 func TestSubstituteEnvSecretsHeaderAndBody(t *testing.T) {
 	t.Parallel()
 	svc := newTestSecretsService(t)
@@ -126,12 +297,17 @@ func TestSubstituteEnvSecretsFirstSecretNameWins(t *testing.T) {
 
 func sealedEnvCredential(t *testing.T, svc *secrets.Service, secretName, placeholder, host, secretValue string) db.VaultCredential {
 	t.Helper()
+	return sealedEnvCredentialWithLocation(t, svc, secretName, placeholder, host, secretValue, true, false)
+}
+
+func sealedEnvCredentialWithLocation(t *testing.T, svc *secrets.Service, secretName, placeholder, host, secretValue string, header, body bool) db.VaultCredential {
+	t.Helper()
 	auth, _ := json.Marshal(map[string]any{
 		"type":               "environment_variable",
 		"secret_name":        secretName,
 		"placeholder":        placeholder,
 		"networking":         map[string]any{"type": "limited", "allowed_hosts": []string{host}},
-		"injection_location": map[string]any{"header": true, "body": false},
+		"injection_location": map[string]any{"header": header, "body": body},
 	})
 	secret, _ := json.Marshal(map[string]any{"type": "environment_variable", "secret_value": secretValue})
 	credential := db.VaultCredential{

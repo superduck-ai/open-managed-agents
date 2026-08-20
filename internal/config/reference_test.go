@@ -11,12 +11,36 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
+func TestConfigExampleContainsSupportedFields(t *testing.T) {
 	examplePath := repositoryFilePath(t, "config", "config.example.yaml")
 	got := configDocumentPaths(t, examplePath)
 	want := []string{
 		"anthropic_upstream",
 		"anthropic_upstream.api_key",
+		"web_search",
+		"web_search.max_server_tool_iterations",
+		"web_search.provider",
+		"web_search.timeout",
+		"web_search.providers",
+		"web_search.providers.brave",
+		"web_search.providers.brave.api_key",
+		"web_search.providers.brave.endpoint",
+		"web_search.providers.brave.options",
+		"web_search.providers.brave.options.country",
+		"web_search.providers.brave.options.search_language",
+		"web_search.providers.brave.options.ui_language",
+		"web_search.providers.brave.options.freshness",
+		"web_search.providers.brave.options.start_published_at",
+		"web_search.providers.brave.options.end_published_at",
+		"web_search.providers.brave.options.safe_search",
+		"web_search.providers.brave.options.spellcheck",
+		"web_search.providers.brave.options.result_filter",
+		"web_search.providers.brave.options.goggles",
+		"web_search.providers.brave.options.extra_snippets",
+		"web_search.providers.brave.options.units",
+		"web_search.providers.tavily",
+		"web_search.providers.tavily.api_key",
+		"web_search.providers.tavily.endpoint",
 		"database",
 		"database.url",
 		"e2b",
@@ -42,7 +66,7 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Fatalf("config.example.yaml fields =\n%s\nwant common-field contract =\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		t.Fatalf("config.example.yaml fields =\n%s\nwant supported-field contract =\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
@@ -54,7 +78,7 @@ func TestConfigurationReferenceCoversConfigYAMLContract(t *testing.T) {
 	wantSet := make(map[string]struct{})
 	collectConfigTypePaths(reflect.TypeFor[Config](), "", wantSet)
 	want := sortedConfigPaths(wantSet)
-	if !slices.Equal(got, want) {
+	if !configPathsMatch(got, want) {
 		t.Fatalf("configuration reference fields =\n%s\nwant Config YAML contract =\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
@@ -67,7 +91,7 @@ func TestYAMLInputCoversRuntimeConfigContract(t *testing.T) {
 
 	got := sortedConfigPaths(inputPaths)
 	want := sortedConfigPaths(runtimePaths)
-	if !slices.Equal(got, want) {
+	if !configPathsMatch(got, want) {
 		t.Fatalf("YAML input fields =\n%s\nwant runtime Config contract =\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
@@ -137,8 +161,56 @@ func collectConfigTypePaths(configType reflect.Type, prefix string, paths map[st
 			if fieldType.Elem().Kind() == reflect.Struct {
 				collectConfigTypePaths(fieldType.Elem(), path+"[]", paths)
 			}
+		case reflect.Map:
+			mapPath := path + ".*"
+			paths[mapPath] = struct{}{}
+			if fieldType.Elem().Kind() == reflect.Struct {
+				collectConfigTypePaths(fieldType.Elem(), mapPath, paths)
+			}
 		}
 	}
+}
+
+func configPathsMatch(actual, expected []string) bool {
+	for _, path := range actual {
+		found := false
+		for _, pattern := range expected {
+			if configPathMatches(pattern, path) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	for _, pattern := range expected {
+		found := false
+		for _, path := range actual {
+			if configPathMatches(pattern, path) {
+				found = true
+				break
+			}
+		}
+		if !found && !strings.HasSuffix(pattern, ".*") {
+			return false
+		}
+	}
+	return true
+}
+
+func configPathMatches(pattern, actual string) bool {
+	patternParts := strings.Split(pattern, ".")
+	actualParts := strings.Split(actual, ".")
+	if len(patternParts) != len(actualParts) {
+		return false
+	}
+	for index, patternPart := range patternParts {
+		if patternPart != "*" && patternPart != actualParts[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func joinConfigPath(prefix, name string) string {

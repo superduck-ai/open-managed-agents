@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -47,6 +48,75 @@ func TestHandlerUsesInjectedLogger(t *testing.T) {
 
 func (r proxyErrorReader) Read([]byte) (int, error) {
 	return 0, r.err
+}
+
+// newWebSearchGatewayTestHandler 组装一个走 web search gateway 分支的 handler：
+// code-session OAuth 凭证 + 已配置的 provider 是进入 gateway 的两个前提。
+func newWebSearchGatewayTestHandler(t *testing.T, baseURL string, logger *slog.Logger) *Handler {
+	t.Helper()
+	cfg := config.Config{AnthropicUpstream: config.AnthropicUpstreamConfig{APIKey: "test-key", BaseURL: baseURL}}
+	client := &http.Client{Timeout: time.Second}
+	return &Handler{
+		cfg:              cfg,
+		client:           client,
+		webSearchGateway: newWebSearchGateway(cfg, client, &webSearchTestSearcher{}, logger),
+		logger:           logger,
+	}
+}
+
+func doWebSearchGatewayTestRequest(handler *Handler, payload string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
+	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{
+		CredentialType: auth.CredentialTypeCodeSessionOAuth,
+	}))
+	recorder := httptest.NewRecorder()
+	handler.Create(recorder, request)
+	return recorder
+}
+
+func TestCreateLogsWebSearchGatewayFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	upstream.Close()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	handler := newWebSearchGatewayTestHandler(t, upstream.URL, logger)
+
+	recorder := doWebSearchGatewayTestRequest(handler,
+		`{"model":"model","max_tokens":16,"messages":[],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatalf("decode log entry: %v; log = %s", err, output.String())
+	}
+	if entry["level"] != "ERROR" || entry["msg"] != "handle Messages web search gateway request" || entry["error"] == nil {
+		t.Fatalf("unexpected log entry: %#v", entry)
+	}
+}
+
+func TestCreateLogsWebSearchGatewayRejection(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	handler := newWebSearchGatewayTestHandler(t, "https://upstream.invalid", logger)
+
+	// pause_turn 续传丢掉了 web_search 工具声明，gateway 必须拒绝而不是透传 server block。
+	recorder := doWebSearchGatewayTestRequest(handler, `{"model":"model","max_tokens":16,"messages":[`+
+		`{"role":"user","content":"search"},`+
+		`{"role":"assistant","content":[{"type":"server_tool_use","id":"srvtoolu_x","name":"web_search","input":{"query":"query"}}]}`+
+		`]}`)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatalf("decode log entry: %v; log = %s", err, output.String())
+	}
+	if entry["level"] != "WARN" || entry["msg"] != "reject Messages web search gateway request" || entry["error"] == nil {
+		t.Fatalf("unexpected log entry: %#v", entry)
+	}
 }
 
 func TestWriteProxyResponseReturnsBodyReadError(t *testing.T) {

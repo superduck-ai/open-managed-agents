@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -101,6 +102,31 @@ webhook:
     - session.created
 bootstrap:
   workspace_name: yaml-workspace
+web_search:
+  provider: tavily
+  timeout: 7s
+  max_server_tool_iterations: 5
+  providers:
+    tavily:
+      endpoint: http://localhost:9999/search
+      api_key: yaml-search-key
+    brave:
+      endpoint: http://localhost:9998/search
+      api_key: yaml-brave-key
+      options:
+        country: US
+        search_language: en
+        ui_language: en-US
+        freshness: pw
+        start_published_at: 2025-01-01T00:00:00Z
+        end_published_at: 2025-01-31T00:00:00Z
+        safe_search: strict
+        spellcheck: true
+        result_filter: web
+        goggles:
+          - https://example.test/goggle
+        extra_snippets: true
+        units: metric
 `)
 	t.Setenv("CONFIG_TEST_HOME", filepath.Join(root, "home"))
 	t.Chdir(nested)
@@ -135,6 +161,36 @@ bootstrap:
 	}
 	if cfg.Bootstrap.WorkspaceName != "yaml-workspace" {
 		t.Fatalf("Bootstrap.WorkspaceName = %q, want yaml-workspace", cfg.Bootstrap.WorkspaceName)
+	}
+	if cfg.WebSearch.Provider != "tavily" || cfg.WebSearch.MaxServerToolIterations != 5 {
+		t.Fatalf("unexpected web search config: %#v", cfg.WebSearch)
+	}
+	tavily := cfg.WebSearch.Providers["tavily"]
+	if tavily.Endpoint != "http://localhost:9999/search" || tavily.APIKey != "yaml-search-key" {
+		t.Fatalf("unexpected Tavily web search config: %#v", tavily)
+	}
+	brave := cfg.WebSearch.Providers["brave"]
+	encodedOptions, err := json.Marshal(brave.Options)
+	if err != nil {
+		t.Fatalf("marshal Brave web search options: %v", err)
+	}
+	var braveOptions struct {
+		Country          string   `json:"country"`
+		SearchLanguage   string   `json:"search_language"`
+		StartPublishedAt string   `json:"start_published_at"`
+		EndPublishedAt   string   `json:"end_published_at"`
+		SafeSearch       string   `json:"safe_search"`
+		ExtraSnippets    bool     `json:"extra_snippets"`
+		Goggles          []string `json:"goggles"`
+	}
+	if err := json.Unmarshal(encodedOptions, &braveOptions); err != nil {
+		t.Fatalf("decode Brave web search options: %v", err)
+	}
+	if brave.Endpoint != "http://localhost:9998/search" || brave.APIKey != "yaml-brave-key" ||
+		braveOptions.Country != "US" || braveOptions.SearchLanguage != "en" || braveOptions.SafeSearch != "strict" ||
+		braveOptions.StartPublishedAt != "2025-01-01T00:00:00Z" || braveOptions.EndPublishedAt != "2025-01-31T00:00:00Z" ||
+		!braveOptions.ExtraSnippets || len(braveOptions.Goggles) != 1 {
+		t.Fatalf("unexpected Brave web search config: provider=%#v options=%#v", brave, braveOptions)
 	}
 }
 
@@ -238,6 +294,7 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 	}{
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "optional list item field", overrides: "bootstrap:\n  seed_api_keys:\n    - external_idd: typo\n      key: secret\n", wantField: "external_idd"},
+		{name: "provider field", overrides: "web_search:\n  providers:\n    tavily:\n      endpiont: https://example.test\n", wantField: "endpiont"},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -328,6 +385,65 @@ func TestLoadYAMLRejectsNullAndNonPositiveValues(t *testing.T) {
 	})
 }
 
+func TestLoadRejectsNegativeWebSearchValues(t *testing.T) {
+	negativeCases := []struct {
+		name      string
+		overrides string
+		wantField string
+	}{
+		{name: "timeout", overrides: "web_search:\n  timeout: -1s\n", wantField: "web_search.timeout"},
+		{
+			name:      "server tool iterations",
+			overrides: "web_search:\n  max_server_tool_iterations: -5\n",
+			wantField: "web_search.max_server_tool_iterations",
+		},
+	}
+	for _, testCase := range negativeCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			prepareLoadTest(t)
+			_, err := loadConfigTestYAML(t, testCase.overrides)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantField+" must not be negative") {
+				t.Fatalf("Load() error = %v, want negative-value error for %s", err, testCase.wantField)
+			}
+		})
+	}
+
+	t.Run("zero uses built-in defaults", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "web_search:\n  timeout: 0s\n  max_server_tool_iterations: 0\n")
+		if err != nil {
+			t.Fatalf("Load() error = %v, want zero values accepted", err)
+		}
+		if cfg.WebSearch.Timeout != 0 || cfg.WebSearch.MaxServerToolIterations != 0 {
+			t.Fatalf("web search config = %#v, want zero values preserved", cfg.WebSearch)
+		}
+	})
+}
+
+func TestLoadNormalizesWebSearchProviderNames(t *testing.T) {
+	t.Run("rejects names differing only by case", func(t *testing.T) {
+		prepareLoadTest(t)
+		_, err := loadConfigTestYAML(t, "web_search:\n  providers:\n    brave:\n      api_key: first\n    Brave:\n      api_key: second\n")
+		if err == nil || !strings.Contains(err.Error(), "name the same provider") {
+			t.Fatalf("Load() error = %v, want duplicate provider name error", err)
+		}
+	})
+
+	t.Run("success lowercases the configured name", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "web_search:\n  provider: Brave\n  providers:\n    Brave:\n      api_key: brave-key\n")
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if _, unnormalized := cfg.WebSearch.Providers["Brave"]; unnormalized {
+			t.Fatalf("web search providers = %#v, want the configured name lowercased", cfg.WebSearch.Providers)
+		}
+		if cfg.WebSearch.Providers["brave"].APIKey != "brave-key" {
+			t.Fatalf("web search providers = %#v, want brave to keep the configured key", cfg.WebSearch.Providers)
+		}
+	})
+}
+
 func TestLoadYAMLSeedAPIKeyPresence(t *testing.T) {
 	t.Run("omitted uses derived defaults", func(t *testing.T) {
 		prepareLoadTest(t)
@@ -390,7 +506,6 @@ func TestDockerComposeKeepsSecretsOutOfTrackedTemplate(t *testing.T) {
 	cfg := loadValidatedConfigTestFile(t, configPath)
 	secretValues := map[string]string{
 		"anthropic_upstream.api_key": cfg.AnthropicUpstream.APIKey,
-		"e2b.api_key":                cfg.E2B.APIKey,
 		"e2b.access_token":           cfg.E2B.AccessToken,
 		"webhook.signing_key":        cfg.Webhook.SigningKey,
 	}
@@ -398,6 +513,10 @@ func TestDockerComposeKeepsSecretsOutOfTrackedTemplate(t *testing.T) {
 		if strings.TrimSpace(value) != "" {
 			t.Fatalf("tracked Compose template %s must be empty", name)
 		}
+	}
+	const localE2BAPIKey = "e2b_0000000000000000000000000000000000000000"
+	if cfg.E2B.APIKey != localE2BAPIKey {
+		t.Fatalf("tracked Compose template e2b.api_key = %q, want fixed local placeholder", cfg.E2B.APIKey)
 	}
 
 	compose := loadDockerComposeTestFile(t)
@@ -504,6 +623,18 @@ func TestLoadStorageS3ForcePathStyleDefault(t *testing.T) {
 	}
 	if !cfg.Storage.S3.ForcePathStyle {
 		t.Fatal("Storage.S3.ForcePathStyle = false, want true")
+	}
+}
+
+func TestLoadWebSearchServerToolIterationsDefault(t *testing.T) {
+	prepareLoadTest(t)
+
+	cfg, err := loadConfigTestYAML(t, "")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.WebSearch.MaxServerToolIterations != 10 {
+		t.Fatalf("MaxServerToolIterations = %d, want 10", cfg.WebSearch.MaxServerToolIterations)
 	}
 }
 

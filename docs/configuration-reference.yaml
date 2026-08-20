@@ -38,6 +38,36 @@ anthropic_upstream:
   # Chained mappings are rejected; multiple logical IDs may share one upstream ID.
   model_mappings: {}
 
+web_search:
+  # Built-in providers are tavily and brave. Leaving the selected api_key empty disables the gateway.
+  provider: tavily
+  timeout: 30s
+  # Maximum server-tool sampling iterations per request. One iteration is one BYOK model request.
+  # This is independent of tools[].max_uses, which limits actual search executions.
+  max_server_tool_iterations: 10
+  providers:
+    tavily:
+      # Tavily supports allowed_domains and blocked_domains from the Anthropic tool declaration.
+      endpoint: ""
+      api_key: ""
+    brave:
+      # Brave does not support those domain filters; such a request is rejected before BYOK.
+      endpoint: ""
+      api_key: ""
+      options:
+        country: US
+        search_language: en
+        ui_language: en-US
+        freshness: ""
+        start_published_at: ""
+        end_published_at: ""
+        safe_search: moderate
+        spellcheck: true
+        result_filter: web
+        goggles: []
+        extra_snippets: false
+        units: metric
+
 batch:
   worker_enabled: true
   worker_concurrency: 2
@@ -50,6 +80,8 @@ batch:
   expiry_sweep_interval: 5m
 
 e2b:
+  # e2b-local still requires an SDK-valid value: e2b_ followed by lowercase hex.
+  # Keep this empty when using the public E2B endpoint until a real key is set.
   api_key: ""
   access_token: ""
   domain: ""

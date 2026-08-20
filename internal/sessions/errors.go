@@ -93,6 +93,43 @@ func mapSessionLoadError(err error, sessionID string) error {
 	return internalError("Session operation failed", fmt.Errorf("session %q operation: %w", sessionID, err))
 }
 
+type eventInputError struct{ cause error }
+
+func (e *eventInputError) Error() string { return e.cause.Error() }
+
+func (e *eventInputError) Unwrap() error { return e.cause }
+
+type eventProcessingError struct{ cause error }
+
+func (e *eventProcessingError) Error() string { return e.cause.Error() }
+
+func (e *eventProcessingError) Unwrap() error { return e.cause }
+
+func markEventInputError(err error) error {
+	return &eventInputError{cause: err}
+}
+
+func isEventInputError(err error) bool {
+	var inputErr *eventInputError
+	return errors.As(err, &inputErr)
+}
+
+func markEventProcessingError(err error) error {
+	return &eventProcessingError{cause: err}
+}
+
+func isEventProcessingError(err error) bool {
+	var processingErr *eventProcessingError
+	return errors.As(err, &processingErr)
+}
+
+func mapEventProcessingError(err error, sessionID string) error {
+	if isEventInputError(err) {
+		return invalidRequest(err)
+	}
+	return internalError("Could not process session events", fmt.Errorf("process events for session %q: %w", sessionID, err))
+}
+
 func mapFileResourcePersistenceError(err error) (error, bool) {
 	var limitErr *db.SessionFileResourceLimitError
 	if errors.As(err, &limitErr) {
@@ -121,6 +158,9 @@ func mapThreadLoadError(err error, threadID string) error {
 func mapResourceLoadError(err error, resourceID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return resourceNotFound(resourceID, err)
+	}
+	if errors.Is(err, db.ErrFileInUse) {
+		return apperr.New(apperr.Conflict, "File resource is referenced by a Session event", err)
 	}
 	return internalError("Resource operation failed", fmt.Errorf("resource %q operation: %w", resourceID, err))
 }

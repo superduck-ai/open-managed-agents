@@ -10,15 +10,31 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 
 	"github.com/google/uuid"
 )
 
-func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallback time.Time) (json.RawMessage, error) {
-	fields, err := decodeRawJSONObject(raw)
+func workerPayloadForPublicEvent(
+	codeSessionID string,
+	eventType string,
+	raw json.RawMessage,
+	fallback time.Time,
+	fileBindings []sessioncontract.EventFileBinding,
+) (json.RawMessage, error) {
+	prepared, err := sessioneventfiles.WorkerPayload(eventType, raw, fileBindings)
 	if err != nil {
 		return nil, err
 	}
+	return workerPayloadFromPublicEvent(codeSessionID, prepared, fallback)
+}
+
+func workerPayloadFromPublicEvent(
+	codeSessionID string,
+	raw json.RawMessage,
+	fallback time.Time,
+) (json.RawMessage, error) {
 	var schema workerOutputCommonPayload
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, fmt.Errorf("%w: invalid public event payload: %w", ErrProtocol, err)
@@ -48,6 +64,10 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 		}
 		return marshalRaw(payload)
 	default:
+		fields, err := decodeRawJSONObject(raw)
+		if err != nil {
+			return nil, err
+		}
 		if schema.UUID == "" {
 			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewString()))
 		}

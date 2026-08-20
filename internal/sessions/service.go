@@ -81,34 +81,45 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	resourceInputs, err := sessionResourceWriteInputs(resources)
+	resourcePlan, err := planSessionResourceWrites(resources)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
+	sessionRecord := db.Session{
+		UUID:                  uuid.NewString(),
+		ExternalID:            sessionID,
+		OrganizationUUID:      principal.OrganizationUUID,
+		WorkspaceUUID:         principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+		EnvironmentUUID:       env.UUID,
+		EnvironmentExternalID: env.ExternalID,
+		AgentUUID:             agent.UUID,
+		AgentExternalID:       agent.ExternalID,
+		AgentVersion:          agent.CurrentVersion,
+		AgentSnapshot:         snapshot,
+		Title:                 title,
+		Metadata:              metadata,
+		VaultIDs:              vaultIDs,
+		Status:                "idle",
+		Usage:                 json.RawMessage(`{}`),
+		Stats:                 json.RawMessage(`{}`),
+		OutcomeEvaluations:    json.RawMessage(`[]`),
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+	initialEvents, outcomes, err := normalizeInitialSessionEvents(
+		sessionRecord,
+		body.InitialEvents,
+		resourcePlan.eventBindings,
+		now,
+	)
+	if err != nil {
+		return mapEventProcessingError(err, sessionID)
+	}
+	sessionRecord.OutcomeEvaluations = outcomes
 	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
 	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
-		Session: db.Session{
-			UUID:                  uuid.NewString(),
-			ExternalID:            sessionID,
-			OrganizationUUID:      principal.OrganizationUUID,
-			WorkspaceUUID:         principal.WorkspaceUUID,
-			CreatedByAPIKeyUUID:   principal.APIKeyUUID,
-			EnvironmentUUID:       env.UUID,
-			EnvironmentExternalID: env.ExternalID,
-			AgentUUID:             agent.UUID,
-			AgentExternalID:       agent.ExternalID,
-			AgentVersion:          agent.CurrentVersion,
-			AgentSnapshot:         snapshot,
-			Title:                 title,
-			Metadata:              metadata,
-			VaultIDs:              vaultIDs,
-			Status:                "idle",
-			Usage:                 json.RawMessage(`{}`),
-			Stats:                 json.RawMessage(`{}`),
-			OutcomeEvaluations:    json.RawMessage(`[]`),
-			CreatedAt:             now,
-			UpdatedAt:             now,
-		},
+		Session: sessionRecord,
 		Thread: db.SessionThread{
 			UUID:             uuid.NewString(),
 			ExternalID:       threadID,
@@ -121,7 +132,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		},
-		Resources: resourceInputs,
+		Resources:     resourcePlan.inputs,
+		InitialEvents: initialEvents,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
 			ExternalID:            workID,
@@ -540,26 +552,53 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	now := time.Now().UTC()
-	events := make([]db.SessionEvent, 0, len(inputs))
-	var outcomesChanged bool
-	normalizedSession := session
-	for _, raw := range inputs {
-		event, outcomes, changed, err := normalizeInputEvent(normalizedSession, raw, now)
-		if err != nil {
-			return invalidRequest(err)
-		}
-		if changed {
-			normalizedSession.OutcomeEvaluations = outcomes
-			outcomesChanged = true
-		}
-		events = append(events, event)
-	}
-	var outcomeEvaluations json.RawMessage
-	if outcomesChanged {
-		outcomeEvaluations = normalizedSession.OutcomeEvaluations
-	}
-	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	var (
+		created                []db.SessionEvent
+		preparedWorkerPayloads map[string]json.RawMessage
+		outcomesChanged        bool
+	)
+	err = h.db.WithSessionEventWriteTx(
+		r.Context(),
+		session.WorkspaceUUID,
+		session.ExternalID,
+		func(tx db.SessionEventWriteTx, lockedSession db.Session) error {
+			session = lockedSession
+			storedBindings, txErr := tx.ListFileBindings(r.Context(), lockedSession)
+			if txErr != nil {
+				return txErr
+			}
+			bindings := storedBindings
+			events := make([]db.SessionEvent, 0, len(inputs))
+			preparedWorkerPayloads = make(map[string]json.RawMessage, len(inputs))
+			normalizedSession := lockedSession
+			for _, raw := range inputs {
+				event, outcomes, changed, normalizeErr := normalizeInputEvent(normalizedSession, raw, now)
+				if normalizeErr != nil {
+					return markEventProcessingError(normalizeErr)
+				}
+				workerPayload, prepareErr := prepareEventWorkerContent(event, bindings)
+				if prepareErr != nil {
+					return markEventProcessingError(prepareErr)
+				}
+				preparedWorkerPayloads[event.ExternalID] = workerPayload
+				if changed {
+					normalizedSession.OutcomeEvaluations = outcomes
+					outcomesChanged = true
+				}
+				events = append(events, event)
+			}
+			var outcomeEvaluations json.RawMessage
+			if outcomesChanged {
+				outcomeEvaluations = normalizedSession.OutcomeEvaluations
+			}
+			created, txErr = tx.AppendEvents(r.Context(), lockedSession, events, outcomeEvaluations)
+			return txErr
+		},
+	)
 	if err != nil {
+		if isEventProcessingError(err) {
+			return mapEventProcessingError(err, sessionID)
+		}
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
 		}
@@ -569,7 +608,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		h.broadcast(event)
 	}
 	if h.codeSessions != nil {
-		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
+		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created, preparedWorkerPayloads); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
 		}
 	}

@@ -318,12 +318,9 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 	workspaceUUID string,
 	sessionExternalID string,
 ) (Session, error) {
-	row, found, err := tx.sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+	row, err := tx.sessionMapper.LockForMutation(ctx, workspaceUUID, sessionExternalID)
 	if err != nil {
-		return Session{}, err
-	}
-	if !found {
-		return Session{}, ErrNotFound
+		return Session{}, mapNoRows(err)
 	}
 	return row.session(), nil
 }

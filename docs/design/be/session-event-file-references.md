@@ -58,7 +58,8 @@ Resource 随即被删除，worker 转换时再也找不到挂载”的竞态。F
 
 Session 创建请求先规范化本次 `resources`，再用同一规则校验 `initial_events`，最后在一个事务
 内写入 Session、Resource、公开初始事件和 Environment Work。初始事件支持 `user.message`、
-`user.define_outcome`，以及符合既有顺序约束的末尾 `system.message`。
+`user.define_outcome`，以及符合既有顺序约束的末尾 `system.message`。创建边界只校验引用，不生成
+随后会丢弃的 worker payload；Code Session activation 从已提交的公开历史统一执行实际转换。
 
 Deployment 创建仍保存公开的 `initial_events` 模板；每次运行在物化 Session Resource 后，用本次
 运行解析出的 File 绑定校验初始事件。引用未出现在 Deployment `resources` 中、文件已删除或绑定
@@ -76,6 +77,9 @@ Deployment 创建仍保存公开的 `initial_events` 模板；每次运行在物
 两个入口都遵循相同的内容转换规则：保留原始文本和非 file-source content block，移除公开的
 file-source block，并在消息末尾增加去重后的 Claude Code 原生引用。realtime 在 Session 写事务内
 执行该转换；activation 从持久化公开历史和活动绑定重新执行转换：
+
+转换器在边界一次解码事件 envelope、content block 与 file source，并复用同一份解析结果完成引用
+解析和 worker 内容生成；公开 payload 仍保持原始字节语义，不承载内部挂载路径。
 
 ```text
 用户原始文本

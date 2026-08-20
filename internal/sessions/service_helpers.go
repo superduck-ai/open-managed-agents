@@ -411,8 +411,13 @@ func validateContentBlocks(payload map[string]any, field string, required bool) 
 		if !ok {
 			return fmt.Errorf("%s items must be objects", field)
 		}
-		if requiredStringValue(block, "type") == "" {
+		blockType := requiredStringValue(block, "type")
+		if blockType == "" {
 			return fmt.Errorf("%s item type is required", field)
+		}
+		source, _ := block["source"].(map[string]any)
+		if requiredStringValue(source, "type") == "file" && requiredStringValue(source, "file_id") == "" {
+			return errors.New("file content block source.file_id is required")
 		}
 	}
 	return nil

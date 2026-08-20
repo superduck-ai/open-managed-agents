@@ -42,13 +42,6 @@ func DefaultFileMountPath(fileID, filename string) string {
 	return FileSource + "/" + filename
 }
 
-// ValidateFileMountPath 校验 File resource 在固定 uploads 根目录下的相对命名空间路径。
-// 对外合同使用绝对路径形式；Sandbox 中的最终路径始终加上 SandboxUploadsMount 前缀。
-func ValidateFileMountPath(mountPath string) error {
-	_, err := FileBackingPath(mountPath)
-	return err
-}
-
 // FileBackingPath 将对外 mount_path 映射到 Session Filestore 的固定 uploads namespace。
 func FileBackingPath(mountPath string) (string, error) {
 	if err := validateBackingPath("mount_path", mountPath); err != nil {
@@ -83,32 +76,6 @@ func validateBackingPath(label, value string) error {
 	for _, character := range value {
 		if unicode.IsControl(character) {
 			return fmt.Errorf("%s must not contain control characters", label)
-		}
-	}
-	return nil
-}
-
-// ValidateFileMountPaths 校验重复路径与祖先/后代冲突。
-func ValidateFileMountPaths(mountPaths []string) error {
-	backingPaths := make([]string, len(mountPaths))
-	for index, mountPath := range mountPaths {
-		backingPath, err := FileBackingPath(mountPath)
-		if err != nil {
-			return err
-		}
-		backingPaths[index] = backingPath
-	}
-	for index, current := range mountPaths {
-		currentBackingPath := backingPaths[index]
-		for otherIndex, other := range mountPaths[index+1:] {
-			otherBackingPath := backingPaths[index+1+otherIndex]
-			if currentBackingPath == otherBackingPath {
-				return fmt.Errorf("resource mount_path is duplicated: %s", current)
-			}
-			if filestorepath.IsDescendant(currentBackingPath, otherBackingPath) ||
-				filestorepath.IsDescendant(otherBackingPath, currentBackingPath) {
-				return fmt.Errorf("resource mount_path values conflict by ancestry: %s and %s", current, other)
-			}
 		}
 	}
 	return nil

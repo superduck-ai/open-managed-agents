@@ -57,6 +57,18 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 
 	tests := []mapperBuilderContract{
 		{
+			statement: sessionMapperLockForMutationStatement,
+			bound: buildSessionMapperLockForMutation(
+				yourbatis.DialectPostgres,
+				"workspace-uuid",
+				"ses_test",
+			),
+			wantID:            "SessionMapper.LockForMutation",
+			wantKind:          yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"},
+			wantSQLFragments:  []string{"FROM sessions", "deleted_at IS NULL", "FOR UPDATE"},
+		},
+		{
 			statement: sessionMapperInsertStatement,
 			bound:     buildSessionMapperInsert(yourbatis.DialectPostgres, sessionParams),
 			wantID:    "SessionMapper.Insert", wantKind: yourbatis.StatementInsert,
@@ -187,6 +199,11 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 	ctx := context.Background()
 	tests := []mapperExecutionErrorContract{
+		{statementID: "SessionMapper.LockForMutation", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			mapper := NewSessionMapper(executor)
+			_, err := mapper.LockForMutation(ctx, "", "")
+			return err
+		}},
 		{statementID: "SessionMapper.Insert", kind: yourbatis.StatementInsert, query: true, call: func(executor yourbatis.Executor) error {
 			mapper := NewSessionMapper(executor)
 			_, err := mapper.Insert(ctx, sessionWriteParams{})

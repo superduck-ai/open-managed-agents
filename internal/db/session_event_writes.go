@@ -33,12 +33,9 @@ func (d *DB) WithSessionEventWriteTx(
 			sessionResourceMapper: NewSessionResourceMapper(executor),
 			sessionThreadMapper:   NewSessionThreadMapper(executor),
 		}
-		row, found, err := tx.sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		row, err := tx.sessionMapper.LockForMutation(ctx, workspaceUUID, sessionExternalID)
 		if err != nil {
-			return err
-		}
-		if !found {
-			return ErrNotFound
+			return mapNoRows(err)
 		}
 		session := row.session()
 		if session.ArchivedAt != nil {

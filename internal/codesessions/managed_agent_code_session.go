@@ -194,7 +194,13 @@ func (s *Service) convertSessionEventToInbound(
 	event db.SessionEvent,
 	fileBindings []sessioncontract.EventFileBinding,
 ) (db.AppendCodeSessionEventInput, error) {
-	payload, err := workerPayloadForPublicEvent(codeSessionID, event.Payload, event.ProcessedAt, fileBindings)
+	payload, err := workerPayloadForPublicEvent(
+		codeSessionID,
+		event.EventType,
+		event.Payload,
+		event.ProcessedAt,
+		fileBindings,
+	)
 	if err != nil {
 		return db.AppendCodeSessionEventInput{}, err
 	}

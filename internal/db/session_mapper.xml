@@ -161,18 +161,8 @@
         LIMIT #{params.FetchLimit}
     </select>
 
-    <select id="LockForResourceMutation" resultType="sessionRow">
+    <select id="LockForMutation" resultType="sessionRow">
         SELECT <include refid="columns"/>
-        FROM sessions
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND external_id = #{sessionExternalID}
-        AND deleted_at IS NULL
-        FOR UPDATE
-    </select>
-
-    <select id="LockSessionForEvents" resultType="sessionRow">
-        SELECT
-        <include refid="columns"/>
         FROM sessions
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{sessionExternalID}

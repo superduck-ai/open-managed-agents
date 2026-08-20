@@ -54,8 +54,8 @@ func normalizeInitialSessionEvents(
 		if err := validateInitialSessionEventOrder(events, event, index, len(inputs)); err != nil {
 			return nil, nil, markEventInputError(err)
 		}
-		if _, err := prepareEventWorkerContent(event, bindings); err != nil {
-			return nil, nil, err
+		if err := sessioneventfiles.ValidateMountedReferences(event.EventType, event.Payload, bindings); err != nil {
+			return nil, nil, markEventInputError(err)
 		}
 		if changed {
 			normalizedSession.OutcomeEvaluations = outcomes

@@ -14,7 +14,6 @@ func TestPlanDeploymentSessionResourcesRejectsInvalidSecrets(t *testing.T) {
 	_, err := planDeploymentSessionResources(
 		db.Deployment{ResourceSecrets: json.RawMessage(`[]`)},
 		nil,
-		nil,
 		time.Time{},
 	)
 	if err == nil {
@@ -40,11 +39,9 @@ func TestParseDeploymentRunResources(t *testing.T) {
 		{name: "unsupported type", raw: `[{"type":"directory"}]`},
 		{name: "file ID is missing", raw: `[{"type":"file"}]`},
 		{name: "file ID is not a string", raw: `[{"type":"file","file_id":1}]`},
-		{name: "file ID is all whitespace", raw: `[{"type":"file","file_id":"   "}]`},
 		{name: "memory store ID is missing", raw: `[{"type":"memory_store"}]`},
 		{name: "memory store ID is not a string", raw: `[{"type":"memory_store","memory_store_id":1}]`},
-		{name: "memory store ID is all whitespace", raw: `[{"type":"memory_store","memory_store_id":"   "}]`},
-		{name: "reference field belongs to another type", raw: `[{"type":"github_repository","file_id":"file_test"}]`},
+		{name: "GitHub URL is missing", raw: `[{"type":"github_repository"}]`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -56,30 +53,17 @@ func TestParseDeploymentRunResources(t *testing.T) {
 
 	t.Run("accepts normalized resource references", func(t *testing.T) {
 		resources, err := parseDeploymentRunResources(json.RawMessage(`[
-			{"type":"file","file_id":"file_test","mount_path":"/uploads/file.txt"},
+			{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/uploads/file.txt"},
 			{"type":"memory_store","memory_store_id":"mem_test"},
 			{"type":"github_repository","url":"https://github.com/example/repo.git"}
 		]`))
 		if err != nil {
 			t.Fatalf("parseDeploymentRunResources() error = %v", err)
 		}
-		if len(resources) != 3 || resources[0].FileID != "file_test" ||
-			resources[1].MemoryStoreID != "mem_test" || resources[2].Type != "github_repository" ||
-			len(resources[0].raw) == 0 {
-			t.Fatalf("parseDeploymentRunResources() = %+v", resources)
-		}
-	})
-
-	t.Run("preserves resource IDs with surrounding whitespace", func(t *testing.T) {
-		resources, err := parseDeploymentRunResources(json.RawMessage(`[
-			{"type":"file","file_id":" file_test "},
-			{"type":"memory_store","memory_store_id":" mem_test "}
-		]`))
-		if err != nil {
-			t.Fatalf("parseDeploymentRunResources() error = %v", err)
-		}
-		if len(resources) != 2 || resources[0].FileID != " file_test " ||
-			resources[1].MemoryStoreID != " mem_test " {
+		if len(resources) != 3 || resources[0].fileSpec == nil ||
+			resources[0].fileSpec.FileID() != "file_test" ||
+			resources[1].payload.MemoryStoreID != "mem_test" ||
+			resources[2].payload.Type != "github_repository" {
 			t.Fatalf("parseDeploymentRunResources() = %+v", resources)
 		}
 	})
@@ -92,12 +76,10 @@ func TestPlanDeploymentSessionResourcesSharesFileBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseDeploymentRunResources() error = %v", err)
 	}
+	stored[0].file = db.FileRecord{ExternalID: "file_test", MimeType: "text/csv"}
 	plan, err := planDeploymentSessionResources(
 		db.Deployment{},
 		stored,
-		map[string]db.FileRecord{
-			"file_test": {ExternalID: "file_test", MimeType: "text/csv"},
-		},
 		time.Now().UTC(),
 	)
 	if err != nil {

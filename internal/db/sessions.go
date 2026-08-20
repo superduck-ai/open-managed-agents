@@ -402,7 +402,7 @@ func (d *DB) CreateSessionResource(
 	var created SessionResource
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, txErr := sessionMapper.LockForResourceMutation(ctx, resource.WorkspaceUUID, resource.SessionExternalID)
+		row, txErr := sessionMapper.LockForMutation(ctx, resource.WorkspaceUUID, resource.SessionExternalID)
 		if txErr != nil {
 			return mapNoRows(txErr)
 		}
@@ -465,7 +465,7 @@ func (d *DB) UpdateSessionResource(ctx context.Context, workspaceUUID string, se
 func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, err := sessionMapper.LockForResourceMutation(ctx, workspaceUUID, sessionExternalID)
+		row, err := sessionMapper.LockForMutation(ctx, workspaceUUID, sessionExternalID)
 		if err != nil {
 			return mapNoRows(err)
 		}
@@ -516,12 +516,9 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 	var created []SessionEvent
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		row, txErr := sessionMapper.LockForMutation(ctx, workspaceUUID, sessionExternalID)
 		if txErr != nil {
-			return txErr
-		}
-		if !found {
-			return ErrNotFound
+			return mapNoRows(txErr)
 		}
 		session := row.session()
 		if session.ArchivedAt != nil {

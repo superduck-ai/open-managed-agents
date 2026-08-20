@@ -18,23 +18,16 @@ import (
 
 func workerPayloadForPublicEvent(
 	codeSessionID string,
+	eventType string,
 	raw json.RawMessage,
 	fallback time.Time,
 	fileBindings []sessioncontract.EventFileBinding,
 ) (json.RawMessage, error) {
-	_, err := decodeRawJSONObject(raw)
+	prepared, err := sessioneventfiles.WorkerPayload(eventType, raw, fileBindings)
 	if err != nil {
 		return nil, err
 	}
-	var schema workerOutputCommonPayload
-	if err := json.Unmarshal(raw, &schema); err != nil {
-		return nil, fmt.Errorf("%w: invalid public event payload: %w", ErrProtocol, err)
-	}
-	raw, err = sessioneventfiles.WorkerPayload(schema.Type, raw, fileBindings)
-	if err != nil {
-		return nil, err
-	}
-	return workerPayloadFromPublicEvent(codeSessionID, raw, fallback)
+	return workerPayloadFromPublicEvent(codeSessionID, prepared, fallback)
 }
 
 func workerPayloadFromPublicEvent(
@@ -42,10 +35,6 @@ func workerPayloadFromPublicEvent(
 	raw json.RawMessage,
 	fallback time.Time,
 ) (json.RawMessage, error) {
-	fields, err := decodeRawJSONObject(raw)
-	if err != nil {
-		return nil, err
-	}
 	var schema workerOutputCommonPayload
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, fmt.Errorf("%w: invalid public event payload: %w", ErrProtocol, err)
@@ -75,6 +64,10 @@ func workerPayloadFromPublicEvent(
 		}
 		return marshalRaw(payload)
 	default:
+		fields, err := decodeRawJSONObject(raw)
+		if err != nil {
+			return nil, err
+		}
 		if schema.UUID == "" {
 			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewString()))
 		}

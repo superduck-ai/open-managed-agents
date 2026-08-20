@@ -3,6 +3,7 @@ package sessioneventfiles
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestReferenceValidationFailures(t *testing.T) {
 			name:      "file ID is all whitespace",
 			eventType: "user.message",
 			payload:   `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"   "}}]}`,
-			want:      "source.file_id is required",
+			want:      "Session Resources API",
 		},
 		{
 			name:      "padded file ID uses exact match",
@@ -69,17 +70,31 @@ func TestReferenceValidationFailures(t *testing.T) {
 			if !IsValidationError(mountedErr) {
 				t.Fatalf("ValidateMountedReferences() error type = %T, want validation error", mountedErr)
 			}
-			worker, workerErr := WorkerPayload(test.eventType, raw, test.bindings)
-			if workerErr == nil || !strings.Contains(workerErr.Error(), test.want) {
-				t.Fatalf("WorkerPayload() error = %v, want containing %q", workerErr, test.want)
-			}
-			if worker != nil {
-				t.Fatalf("WorkerPayload() payload = %s, want nil on validation failure", worker)
-			}
-			if !IsValidationError(workerErr) {
-				t.Fatalf("WorkerPayload() error type = %T, want validation error", workerErr)
+		})
+	}
+}
+
+func TestValidateMountedReferencesRejectsLocalSourceTypes(t *testing.T) {
+	for _, sourceType := range []string{"path", "file_path", "local_file", "local_path"} {
+		t.Run(sourceType, func(t *testing.T) {
+			raw := json.RawMessage(`{"type":"user.message","content":[{"type":"document","source":{"type":` +
+				strconv.Quote(sourceType) + `,"file_path":"/tmp/private.txt"}}]}`)
+			err := ValidateMountedReferences("user.message", raw, nil)
+			if err == nil || !strings.Contains(err.Error(), "local file paths are not accepted") {
+				t.Fatalf("ValidateMountedReferences() error = %v, want local path rejection", err)
 			}
 		})
+	}
+}
+
+func TestWorkerPayloadReturnsReferenceValidationError(t *testing.T) {
+	raw := json.RawMessage(`{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"file_missing"}}]}`)
+	worker, err := WorkerPayload("user.message", raw, nil)
+	if err == nil || !IsValidationError(err) {
+		t.Fatalf("WorkerPayload() error = %v, want validation error", err)
+	}
+	if worker != nil {
+		t.Fatalf("WorkerPayload() payload = %s, want nil", worker)
 	}
 }
 
@@ -107,7 +122,9 @@ func TestWorkerPayloadInjectsDeduplicatedMountedPaths(t *testing.T) {
 		t.Fatalf("worker payload still contains file-source blocks: %s", workerPayload)
 	}
 
-	var envelope eventEnvelope
+	var envelope struct {
+		Content []json.RawMessage `json:"content"`
+	}
 	if err := json.Unmarshal(workerPayload, &envelope); err != nil {
 		t.Fatalf("decode worker payload: %v", err)
 	}

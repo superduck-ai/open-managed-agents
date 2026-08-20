@@ -546,7 +546,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 	if deployment.ArchivedAt != nil {
 		return invalidRequest(errors.New("archived deployments cannot be run"))
 	}
-	storedResources, filesByID, referenceError := h.validateRunReferences(r, principal, deployment)
+	storedResources, referenceError := h.validateRunReferences(r, principal, deployment)
 	if referenceError != nil {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceError)
 	}
@@ -559,7 +559,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, runError("unknown_error", err.Error()))
 	}
-	resourcePlan, err := planDeploymentSessionResources(deployment, storedResources, filesByID, now)
+	resourcePlan, err := planDeploymentSessionResources(deployment, storedResources, now)
 	if err != nil {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 	}
@@ -706,60 +706,60 @@ func (h *Handler) validateRunReferences(
 	r *http.Request,
 	principal auth.Principal,
 	deployment db.Deployment,
-) ([]deploymentRunResource, map[string]db.FileRecord, json.RawMessage) {
+) ([]deploymentRunResource, json.RawMessage) {
 	agent, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, deployment.AgentExternalID)
 	if err != nil {
-		return nil, nil, runErrorForReference("agent", err, false)
+		return nil, runErrorForReference("agent", err, false)
 	}
 	if agent.ArchivedAt != nil {
-		return nil, nil, runErrorForReference("agent", nil, true)
+		return nil, runErrorForReference("agent", nil, true)
 	}
 	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
-		return nil, nil, runErrorForReference("environment", err, false)
+		return nil, runErrorForReference("environment", err, false)
 	}
 	if env.ArchivedAt != nil {
-		return nil, nil, runErrorForReference("environment", nil, true)
+		return nil, runErrorForReference("environment", nil, true)
 	}
 	var vaultIDs []string
 	if len(deployment.VaultIDs) > 0 && !httpapi.IsJSONNull(deployment.VaultIDs) {
 		if err := json.Unmarshal(deployment.VaultIDs, &vaultIDs); err != nil {
-			return nil, nil, runError("unknown_error", "Stored vault references are invalid")
+			return nil, runError("unknown_error", "Stored vault references are invalid")
 		}
 	}
 	for _, vaultID := range vaultIDs {
 		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 		if err != nil {
-			return nil, nil, runErrorForReference("vault", err, false)
+			return nil, runErrorForReference("vault", err, false)
 		}
 		if vault.ArchivedAt != nil {
-			return nil, nil, runErrorForReference("vault", nil, true)
+			return nil, runErrorForReference("vault", nil, true)
 		}
 	}
 	resources, err := parseDeploymentRunResources(deployment.Resources)
 	if err != nil {
-		return nil, nil, runError("unknown_error", "Stored resources are invalid")
+		return nil, runError("unknown_error", "Stored resources are invalid")
 	}
-	filesByID := make(map[string]db.FileRecord)
-	for _, resource := range resources {
-		switch resource.Type {
+	for index := range resources {
+		resource := &resources[index]
+		switch resource.payload.Type {
 		case "file":
-			file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, resource.FileID)
+			file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, resource.fileSpec.FileID())
 			if err != nil {
-				return nil, nil, runErrorForReference("file", err, false)
+				return nil, runErrorForReference("file", err, false)
 			}
-			filesByID[resource.FileID] = file
+			resource.file = file
 		case "memory_store":
-			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, resource.MemoryStoreID)
+			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, resource.payload.MemoryStoreID)
 			if err != nil {
-				return nil, nil, runErrorForReference("memory_store", err, false)
+				return nil, runErrorForReference("memory_store", err, false)
 			}
 			if store.ArchivedAt != nil {
-				return nil, nil, runErrorForReference("memory_store", nil, true)
+				return nil, runErrorForReference("memory_store", nil, true)
 			}
 		}
 	}
-	return resources, filesByID, nil
+	return resources, nil
 }
 
 func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {

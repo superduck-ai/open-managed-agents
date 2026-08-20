@@ -87,29 +87,6 @@ func TestFileBackingPath(t *testing.T) {
 	})
 }
 
-func TestValidateFileMountPaths(t *testing.T) {
-	t.Run("rejects duplicate paths", func(t *testing.T) {
-		if err := ValidateFileMountPaths([]string{"/workspace/data.csv", "/workspace/data.csv"}); err == nil {
-			t.Fatal("ValidateFileMountPaths() accepted duplicate paths")
-		}
-	})
-	t.Run("rejects ancestry conflicts", func(t *testing.T) {
-		if err := ValidateFileMountPaths([]string{"/workspace/data", "/workspace/data/file.csv"}); err == nil {
-			t.Fatal("ValidateFileMountPaths() accepted ancestry conflict")
-		}
-	})
-	t.Run("rejects public and legacy aliases of one backing path", func(t *testing.T) {
-		if err := ValidateFileMountPaths([]string{"/uploads/file_test", "/file_test"}); err == nil {
-			t.Fatal("ValidateFileMountPaths() accepted duplicate backing paths")
-		}
-	})
-	t.Run("accepts distinct paths", func(t *testing.T) {
-		if err := ValidateFileMountPaths([]string{"/workspace/data.csv", "/workspace/config.json"}); err != nil {
-			t.Fatalf("ValidateFileMountPaths(): %v", err)
-		}
-	})
-}
-
 func TestDefaultFileMountPath(t *testing.T) {
 	if mountPath := DefaultFileMountPath("file_abc123", "quarterly report.csv"); mountPath != "/uploads/quarterly report.csv" {
 		t.Fatalf("default mount path = %q", mountPath)

@@ -35,3 +35,14 @@ func TestNormalizeInputEventClassifiesInputAndInternalErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestNormalizeInputEventRejectsMissingFileIDAtInputBoundary(t *testing.T) {
+	_, _, _, err := normalizeInputEvent(
+		db.Session{},
+		json.RawMessage(`{"type":"user.message","content":[{"type":"document","source":{"type":"file"}}]}`),
+		time.Now().UTC(),
+	)
+	if err == nil || !isEventInputError(err) {
+		t.Fatalf("normalizeInputEvent() error = %v, want eventInputError", err)
+	}
+}

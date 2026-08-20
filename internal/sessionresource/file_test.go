@@ -31,35 +31,24 @@ func TestNormalizeFileSpecRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestParseStoredFileSpecRejectsNonCanonicalPayload(t *testing.T) {
+func TestRestoreFileSpecRejectsNonCanonicalFields(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name string
-		raw  string
+		name      string
+		fileID    string
+		source    string
+		mountPath string
 	}{
-		{
-			name: "missing source",
-			raw:  `{"type":"file","file_id":"file_test","mount_path":"/data.csv"}`,
-		},
-		{
-			name: "missing file ID",
-			raw:  `{"type":"file","file_id":"","source":"/uploads","mount_path":"/data.csv"}`,
-		},
-		{
-			name: "wrong type",
-			raw:  `{"type":"memory_store","file_id":"file_test","source":"/uploads","mount_path":"/data.csv"}`,
-		},
-		{
-			name: "relative mount",
-			raw:  `{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"data.csv"}`,
-		},
+		{name: "missing source", fileID: "file_test", mountPath: "/data.csv"},
+		{name: "missing file ID", source: "/uploads", mountPath: "/data.csv"},
+		{name: "relative mount", fileID: "file_test", source: "/uploads", mountPath: "data.csv"},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := ParseStoredFileSpec(json.RawMessage(test.raw)); err == nil {
-				t.Fatal("ParseStoredFileSpec() succeeded")
+			if _, err := RestoreFileSpec(test.fileID, test.source, test.mountPath); err == nil {
+				t.Fatal("RestoreFileSpec() succeeded")
 			}
 		})
 	}
@@ -103,14 +92,6 @@ func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 	if parsed != spec {
 		t.Fatalf("parsed = %#v, want %#v", parsed, spec)
 	}
-	stored, err := ParseStoredFileSpec(raw)
-	if err != nil {
-		t.Fatalf("ParseStoredFileSpec(): %v", err)
-	}
-	if stored != spec {
-		t.Fatalf("stored = %#v, want %#v", stored, spec)
-	}
-
 	mount, err := spec.SessionFileBinding("sesrsc_test")
 	if err != nil {
 		t.Fatalf("SessionFileBinding(): %v", err)
@@ -136,19 +117,42 @@ func TestDefaultGitHubRepositoryMountPath(t *testing.T) {
 func TestValidateFileSpecsRejectsAggregateConflicts(t *testing.T) {
 	t.Parallel()
 
-	if err := ValidateFileSpecs([]FileSpec{
-		{fileID: "file_first", mountPath: "/workspace/data"},
-		{fileID: "file_second", mountPath: "/workspace/data/child"},
-	}); err == nil {
+	duplicate, err := newFileSpec("file_duplicate", "/workspace/data")
+	if err != nil {
+		t.Fatalf("newFileSpec(duplicate): %v", err)
+	}
+	first, err := newFileSpec("file_first", "/workspace/data")
+	if err != nil {
+		t.Fatalf("newFileSpec(first): %v", err)
+	}
+	if err := ValidateFileSpecs([]FileSpec{first, duplicate}); err == nil {
+		t.Fatal("ValidateFileSpecs() accepted duplicate path")
+	}
+	alias, err := newFileSpec("file_alias", "/uploads/workspace/data")
+	if err != nil {
+		t.Fatalf("newFileSpec(alias): %v", err)
+	}
+	if err := ValidateFileSpecs([]FileSpec{first, alias}); err == nil {
+		t.Fatal("ValidateFileSpecs() accepted duplicate backing path")
+	}
+	second, err := newFileSpec("file_second", "/workspace/data/child")
+	if err != nil {
+		t.Fatalf("newFileSpec(second): %v", err)
+	}
+	if err := ValidateFileSpecs([]FileSpec{first, second}); err == nil {
 		t.Fatal("ValidateFileSpecs() accepted ancestor conflict")
 	}
 
 	specs := make([]FileSpec, 0, MaxFileResources+1)
 	for index := 0; index <= MaxFileResources; index++ {
-		specs = append(specs, FileSpec{
-			fileID:    "file_" + strings.Repeat("x", index+1),
-			mountPath: "/workspace/" + strings.Repeat("x", index+1),
-		})
+		spec, specErr := newFileSpec(
+			"file_"+strings.Repeat("x", index+1),
+			"/workspace/"+strings.Repeat("x", index+1),
+		)
+		if specErr != nil {
+			t.Fatalf("newFileSpec(%d): %v", index, specErr)
+		}
+		specs = append(specs, spec)
 	}
 	if err := ValidateFileSpecs(specs); err == nil {
 		t.Fatal("ValidateFileSpecs() accepted too many files")

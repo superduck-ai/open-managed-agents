@@ -14,10 +14,6 @@ import (
 
 const userMessageType = "user.message"
 
-type eventEnvelope struct {
-	Content []json.RawMessage `json:"content"`
-}
-
 type contentBlock struct {
 	Type   string          `json:"type"`
 	Source json.RawMessage `json:"source"`
@@ -32,6 +28,18 @@ type fileSource struct {
 type reference struct {
 	blockType string
 	fileID    string
+}
+
+type parsedContentBlock struct {
+	raw           json.RawMessage
+	fileReference bool
+}
+
+type resolvedEvent struct {
+	object     map[string]json.RawMessage
+	blocks     []parsedContentBlock
+	references []reference
+	bindings   []sessioncontract.EventFileBinding
 }
 
 type validationError struct{ cause error }
@@ -56,11 +64,7 @@ func ValidateMountedReferences(
 	raw json.RawMessage,
 	bindings []sessioncontract.EventFileBinding,
 ) error {
-	references, err := referencesFromEvent(eventType, raw)
-	if err != nil {
-		return markValidationError(err)
-	}
-	_, err = resolveReferences(references, bindings)
+	_, err := resolveEvent(eventType, raw, bindings)
 	if err != nil {
 		return markValidationError(err)
 	}
@@ -70,35 +74,22 @@ func ValidateMountedReferences(
 // WorkerPayload replaces public file-source blocks with Claude Code @ path
 // mentions while preserving the original public event outside this function.
 func WorkerPayload(eventType string, raw json.RawMessage, bindings []sessioncontract.EventFileBinding) (json.RawMessage, error) {
-	references, err := referencesFromEvent(eventType, raw)
+	event, err := resolveEvent(eventType, raw, bindings)
 	if err != nil {
 		return nil, markValidationError(err)
 	}
-	if len(references) == 0 {
+	if len(event.references) == 0 {
 		return raw, nil
 	}
-	resolved, err := resolveReferences(references, bindings)
-	if err != nil {
-		return nil, markValidationError(err)
-	}
-
-	var envelope eventEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, errors.New("event payload is invalid")
-	}
-	workerContent := make([]json.RawMessage, 0, len(envelope.Content)+1)
-	for _, item := range envelope.Content {
-		fileBlock, err := isFileSourceBlock(item)
-		if err != nil {
-			return nil, err
-		}
-		if !fileBlock {
-			workerContent = append(workerContent, item)
+	workerContent := make([]json.RawMessage, 0, len(event.blocks)+1)
+	for _, block := range event.blocks {
+		if !block.fileReference {
+			workerContent = append(workerContent, block.raw)
 		}
 	}
-	mentions := make([]string, 0, len(resolved))
-	seenPaths := make(map[string]struct{}, len(resolved))
-	for _, binding := range resolved {
+	mentions := make([]string, 0, len(event.bindings))
+	seenPaths := make(map[string]struct{}, len(event.bindings))
+	for _, binding := range event.bindings {
 		mention, sandboxPath, err := pathMention(binding.Path)
 		if err != nil {
 			return nil, fmt.Errorf("file_id %s has an invalid mount path", binding.FileID)
@@ -121,44 +112,68 @@ func WorkerPayload(eventType string, raw json.RawMessage, bindings []sessioncont
 	if err != nil {
 		return nil, err
 	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil {
-		return nil, errors.New("event payload is invalid")
-	}
-	object["content"] = contentRaw
-	return json.Marshal(object)
+	event.object["content"] = contentRaw
+	return json.Marshal(event.object)
 }
 
-func referencesFromEvent(eventType string, raw json.RawMessage) ([]reference, error) {
-	var envelope eventEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, errors.New("event payload is invalid")
+func resolveEvent(
+	eventType string,
+	raw json.RawMessage,
+	bindings []sessioncontract.EventFileBinding,
+) (resolvedEvent, error) {
+	event, err := parseEvent(eventType, raw)
+	if err != nil {
+		return resolvedEvent{}, err
 	}
-	references := make([]reference, 0)
-	for _, item := range envelope.Content {
+	event.bindings, err = resolveReferences(event.references, bindings)
+	if err != nil {
+		return resolvedEvent{}, err
+	}
+	return event, nil
+}
+
+func parseEvent(eventType string, raw json.RawMessage) (resolvedEvent, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return resolvedEvent{}, errors.New("event payload is invalid")
+	}
+	var content []json.RawMessage
+	if contentRaw, exists := object["content"]; exists {
+		if err := json.Unmarshal(contentRaw, &content); err != nil {
+			return resolvedEvent{}, errors.New("event payload is invalid")
+		}
+	}
+	event := resolvedEvent{
+		object:     object,
+		blocks:     make([]parsedContentBlock, 0, len(content)),
+		references: make([]reference, 0),
+	}
+	for _, item := range content {
 		block, source, err := decodeFileCapableBlock(item)
 		if err != nil {
-			return nil, err
+			return resolvedEvent{}, err
 		}
+		parsedBlock := parsedContentBlock{raw: item}
 		if block == nil || source == nil {
+			event.blocks = append(event.blocks, parsedBlock)
 			continue
 		}
 		if source.Path != "" || localPathSourceType(source.Type) {
-			return nil, errors.New("local file paths are not accepted; upload the file and attach it through the Session Resources API")
+			return resolvedEvent{}, errors.New("local file paths are not accepted; upload the file and attach it through the Session Resources API")
 		}
 		if source.Type != "file" {
+			event.blocks = append(event.blocks, parsedBlock)
 			continue
 		}
 		if eventType != userMessageType {
-			return nil, errors.New("file content blocks are only supported in user.message events")
+			return resolvedEvent{}, errors.New("file content blocks are only supported in user.message events")
 		}
 		fileID := source.FileID
-		if strings.TrimSpace(fileID) == "" {
-			return nil, errors.New("file content block source.file_id is required")
-		}
-		references = append(references, reference{blockType: block.Type, fileID: fileID})
+		parsedBlock.fileReference = true
+		event.blocks = append(event.blocks, parsedBlock)
+		event.references = append(event.references, reference{blockType: block.Type, fileID: fileID})
 	}
-	return references, nil
+	return event, nil
 }
 
 func decodeFileCapableBlock(raw json.RawMessage) (*contentBlock, *fileSource, error) {
@@ -177,11 +192,6 @@ func decodeFileCapableBlock(raw json.RawMessage) (*contentBlock, *fileSource, er
 		return nil, nil, errors.New("document and image source must be an object")
 	}
 	return &block, &source, nil
-}
-
-func isFileSourceBlock(raw json.RawMessage) (bool, error) {
-	block, source, err := decodeFileCapableBlock(raw)
-	return err == nil && block != nil && source != nil && source.Type == "file", err
 }
 
 func resolveReferences(
@@ -230,7 +240,7 @@ func localPathSourceType(sourceType string) bool {
 }
 
 func supportedImageMimeType(mimeType string) bool {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	switch strings.ToLower(mimeType) {
 	case "image/jpeg", "image/png", "image/gif", "image/webp":
 		return true
 	default:

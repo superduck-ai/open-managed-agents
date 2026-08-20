@@ -108,7 +108,7 @@ CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
 - **Input Resource**（payload 非空）：`source_file_uuid` 指向 Source File（上传文件），`file_id` 在 payload 中 ✅
 - **Output Resource**（payload 为 NULL）：`file_uuid` 指向 Owned File（生成文件），但该投影**未暴露 Owned File 的 `external_id`（`file_` ID）** ❌
 
-同时 `sessionResourceColumns`（`session_resource_mapper.xml:3-7`）**不含 `path`、`file_uuid` 字段**，`SessionResource` 行结构也没有 `FileUUID`（`session_resource_mapper.go:75-128` 仅有写入参数）。因此现有 `responseFromResource`（`service_helpers.go:490-509`）对输出文件只能返回 `{id, type, created_at, updated_at}`，无法回填 `file_id`/`mount_path`。
+同时 `sessionResourceColumns`（`session_resource_mapper.xml:3-7`）**不含 `path` 字段**，`SessionResource` 行结构既没有公开路径也没有 Owned File 的 `external_id`（`session_resource_mapper.go` 仅有写入参数）。因此改动前的 `responseFromResource` 对输出文件只能返回 `{id, type, created_at, updated_at}`，无法回填 `file_id`/`mount_path`。
 
 `resource_type` 语义（`session_resource_mapper.xml:147,190,321`）：**Output Resource 的 `resource_type='file'`，payload=NULL**；目录、skill archive 各有独立类型。这为「去掉 payload 过滤后区分输出文件」提供了依据。
 
@@ -126,35 +126,75 @@ CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
 
 ### 改动 2（#258 主体）：Get Session 返回输出文件并回填 `file_id`/`mount_path`
 
-**性能前提（已分析确认）**：逐条 `GetFileByUUID` 回填会产生 **N+1 查询**（每个输出文件 1 次 DB 往返）。典型 Session 生成文件数十~上百 → 数十次往返。必须**批量加载**：`List` + 1 次 `IN` 查询，总成本 O(1) 次往返，无 N+1。实现如下：
+**读取原子性前提（评审后修正）**：Owned File 的 `external_id` 必须与 Session Resource **同批读出**。`retireSessionResourceFileTx`（`session_resource_file_helpers.go:425-443`）在同一事务里先退休 `files` 行再退休 `session_resources` 行，因此稳态下不存在「File 已删、Resource 仍活」；但**分两次独立查询**会在事务提交的间隙返回缺少 `file_id` 的输出资源，违反 #258 验收项。同时 Session 列表逐条构造响应（`service.go:229`，limit 上限 1000），额外一次 File 查询会把既有 N 次放大到 2N。两个问题的同一个解法是 **JOIN**：
 
-1. **`ListSessionResources` 的过滤从 `AND payload IS NOT NULL` 改为「用户资源 + `/outputs/` 下 Output 文件」**（`session_resource_mapper.xml:49-56`）：
+1. **`List` / `FindByExternalID` 改为 `LEFT JOIN files` 并收窄可见性**（`session_resource_mapper.xml`）：
    ```sql
+   FROM session_resources resource
+   LEFT JOIN files file
+       ON file.uuid = resource.file_uuid
+       AND file.workspace_uuid = resource.workspace_uuid
+       AND file.deleted_at IS NULL
+   WHERE resource.workspace_uuid = #{workspaceUUID}
+   AND resource.session_external_id = #{sessionExternalID}
+   AND resource.deleted_at IS NULL
    AND (
-       payload IS NOT NULL
+       resource.payload IS NOT NULL
        OR (
-           resource_type = 'file'
-           AND path IS NOT NULL
-           AND left(path, char_length('/outputs/')) = '/outputs/'
+           resource.resource_type = 'file'
+           AND left(resource.path, char_length('/outputs/')) = '/outputs/'
+           AND (resource.expires_at IS NULL OR resource.expires_at > now())
+           AND file.uuid IS NOT NULL
        )
    )
    ```
    - 目录、skill archive 等其他资源**仍被排除**（不进入返回集合），无需在响应层二次区分
-   - `SessionResource` 行结构**新增 `FileUUID`、`Path` 字段**（`sessionResourceListColumns` 含 `file_uuid, path`，RETURNING 语句保持原列集避免「引用未插入列」错误），供回填使用
+   - `expires_at` 过滤与 `visibleFilePredicate`（`file_mapper.xml:9-29`）对齐，带 TTL 的过期输出文件不可见
+   - `file.uuid IS NOT NULL` 保证输出资源必然带 `file_id`，不会返回残缺资源
+   - `SessionResource` 新增 `Path` 与 `FileExternalID` 字段（`sessionResourceListColumns` 含 `resource.path` 与 `file.external_id AS file_external_id`）；写入语句的 RETURNING 保持原列集，避免引用未插入列
+   - 两条读取语句都走 JOIN，因此单资源 GET 与列表行为一致，不需要额外加载步骤
 
-2. **批量加载 Owned File**：`loadOwnedFileMapping` 中一次性加载该 session 全部 Output Resource（`type=file` 且 path 在 `/outputs/` 下）的 `file_uuid → FileRecord`（`files` 表，`WHERE file_uuid IN (...)` 单条查询，`ListFilesByUUIDs`），构建映射传给 `responseFromResource`
-
-3. **`responseFromResource` 回填**（`service_helpers.go`）：
-   - `isOutputResource` 判断：**path 前缀 `/outputs/`**（`strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")`，与 SQL `List` 的 `/outputs/` 判断一致）
-   - Output Resource：从映射回填 `file_id`（Owned File 的 `external_id`，`file_...`）+ `mount_path`（`/outputs/<relative-path>`，来自 session_resources 的 `path` 字段）
+2. **`responseFromResource` 回填**（`service_helpers.go`）：
+   - `isOutputResource` 判断：**path 前缀 `/outputs/`**（`strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")`，与 SQL 的 `/outputs/` 判断一致）
+   - Output Resource：直接使用同批 JOIN 出的 `resource.FileExternalID` 作为 `file_id`，`resource.Path` 作为 `mount_path`（`/outputs/<relative-path>`）
    - Input Resource（payload 非空，`file_id` 在 payload）：保持现状
    - Output Resource 的 payload 为空，**跳过 `json.Unmarshal`**（空 payload 必然失败，白做）；直接建空 map
+   - 保持纯函数签名 `responseFromResource(resource)`，不需要传入预加载映射
 
-4. **`responseFromResource` 保持纯函数**，通过 `resourcesToResponses(resources, ownedFiles)` 传入已加载映射（不改为方法）
+**性能结论**：每个 Session 仍是 1 次资源查询，Session 列表维持既有 N 次往返，不引入新的 N+1。JOIN 只多取 `files.external_id` 一列，且 CLAUDE.md 允许「确实读取目标表字段」的 JOIN。
 
-**性能结论**：`List`（去掉过滤）+ 1 次 `IN` 批量查询，共 2 次 DB 往返，O(session 资源数) 内存；相比逐条回填（N+1）节省大量往返。`MaxFileResources`（500）限制下内存可控。
+**响应长度上限（评审后补齐）**：改动前 `resources[]` 被写入侧的 500 上限兜住（`sessionresource.ValidateFileSpecs` + `enforceSessionFileResourceCapacityTx`）。输出资源不吃这个配额——`CountSessionFileResources`（`session_resource_mapper.xml`）带 `payload IS NOT NULL`，Filestore 写入侧只校验 workspace 字节配额、不限文件数——所以让输出文件进入 `resources[]` 会把长度变成无上限，并被 List Sessions（limit 上限 1000）放大。`List` 因此在 SQL 层自己截断：
 
-### 改动 3（前端配套，本期范围外 → sub-issue/sub-PR）
+```sql
+SELECT ... , row_number() OVER (
+    PARTITION BY (resource.payload IS NULL)
+    ORDER BY resource.created_at DESC, resource.uuid DESC
+) AS output_rank
+...
+WHERE resource.payload IS NOT NULL
+OR resource.output_rank <= #{maxOutputResources}
+```
+
+- `PARTITION BY (resource.payload IS NULL)` 让用户资源与输出文件各自排名，**用户资源不受截断**（它们已有写入侧上限）
+- 输出文件保留 `created_at DESC` 最近的 `MaxSessionOutputFileResources` 条（`db.MaxSessionOutputFileResources = sessioncontract.MaxFileResources`，即 500），与写入侧同一水位，正常用量下行为与改动前完全一致
+- 超过上限时是**静默截断**：`resources[]` 只承载最近 500 个输出文件，**完整集合以 `files.list(scope_id)` 为准**（官方契约本身也只要求 `files.list` 能列全输出文件）
+- `FindByExternalID` 不需要截断（单行查询），因此被截断的输出资源仍可按 ID 单独取回
+
+更彻底的做法是让输出文件也计入写入侧 500 配额，但那会让 agent 写满后 `/outputs/` 写入失败，失败语义要穿过 rclone FUSE 传回 agent，影响面落在运行时，需单独设计。
+
+### 改动 3（评审补充）：输出资源在单资源路由上的语义
+
+去掉 `payload IS NOT NULL` 后，输出资源开始能被 `FindByExternalID` 查到，三条单资源路由的行为随之变化：
+
+| 路由 | 改动前 | 改动后 | 依据 |
+|---|---|---|---|
+| `GET /v1/sessions/{id}/resources/{rid}` | 404（被 payload 过滤挡住） | 200，带 `file_id`/`mount_path` | `FindByExternalID` 走同一可见性 SQL |
+| `PATCH .../resources/{rid}` | 404 | 400 `only github_repository resources can be updated` | `service.go:683` 的类型检查 |
+| `DELETE .../resources/{rid}` | 404 | **仍是 404** | `GetSessionResourceForMutation`（`session_resource_mapper.xml:132`）保留 `payload IS NOT NULL` |
+
+GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属于 Filestore/Files API（`RemoveFilestoreFile` 与清理 worker 成对退休 `files` 与 `session_resources`），不允许通过 Session Resource 路由单边删除 Resource 行而留下孤立 File 行。读取路径开放、写入路径继续拒绝，是这个所有权边界的直接体现。
+
+### 改动 4（前端配套，本期范围外 → sub-issue/sub-PR）
 
 对齐 #259 已合并的 `SessionEntityPanels.tsx` 资源表格：`ResourceTable` 已读取 `resource.file_id`/`mount_path`（`SessionEntityPanels.tsx:419-430`），并对 `file_id` 反查文件名（`useSessionFileNames`）。前端**已具备展示 file_id/mount_path 的能力**；本期后端补齐 `file_id` 后前端表格自动展示。**前端「可下载」标记与下载入口另行开 sub-issue/sub-PR**（本期不做）。
 
@@ -169,10 +209,12 @@ CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
 | **下载不越权** | 下载走 `GetFile`（带 `visibleFilePredicate`），已删除/过期/非 outputs 的生成文件返回 404 |
 | **配额/清理** | 生成文件已有 filestore 配额与清理链路，下载不新增对象、不重复计费 |
 | **不复制对象** | 下载直接流式读 `record.S3Key`，不产生新对象 |
-| **N+1 风险** | Get Session 资源回填采用批量加载（1 次 `IN` 查询），避免逐条查询；`resourcesToResponses` 传入已加载映射 |
+| **N+1 风险** | 输出文件的 `file_id` 由 `List`/`FindByExternalID` 的 `LEFT JOIN files` 同批取出，每个 Session 仍是 1 次资源查询；Session 列表（limit 上限 1000）维持既有 N 次往返，不叠加 File 查询 |
+| **残缺输出资源** | `file.uuid IS NOT NULL` 使 File 行已退休的输出资源整条不可见，避免返回没有 `file_id` 的资源 |
+| **响应长度上限** | 输出文件不吃写入侧的 `MaxFileResources` 配额，因此 `List` 在 SQL 层按 `output_rank` 截断到 `MaxSessionOutputFileResources`（500）；用户资源不受截断，完整输出集合以 `files.list(scope_id)` 为准 |
 | **Output 识别** | `isOutputResource` 用 **path 前缀 `/outputs/`** 判断（`sandboxmount.OutputsRoot` 常量），与 SQL `List` 的 `/outputs/` 判断一致，不依赖 payload 空这个伴随特征 |
 | **`OutputsRoot` 常量** | 新增 `sandboxmount.OutputsRoot = "/outputs"`（与 `FileSource = "/uploads"` 并列，挂载路径合同归属地） |
-| **改过滤的回归风险** | `ListSessionResources` 过滤改为「用户资源 + `/outputs/` 下 Output 文件」后，目录、skill archive **仍被排除**（SQL 层保证）；前端 `ResourceTable` 依赖 `file_id`/`mount_path`，为 NULL 时显示 `—`（现状兜底，`SessionEntityPanels.tsx:428-430`） |
+| **改过滤的回归风险** | `ListSessionResources` 过滤改为「用户资源 + `/outputs/` 下活动 Output 文件」后，目录、skill archive **仍被排除**（SQL 层保证）；前端 `ResourceTable` 依赖 `file_id`/`mount_path`，为 NULL 时显示 `—`（现状兜底，`SessionEntityPanels.tsx:428-430`） |
 | **`visibleFilePredicate` 子查询性能** | `GetFile`（单行）场景开销可忽略；`ListSessionFilesPage`（列表）对每行做 `session_resources` 的 EXISTS 子查询，若验证发现慢，需确认 `session_resources(file_uuid, workspace_uuid, deleted_at)` 索引覆盖（filestore 既有投影依赖） |
 | **file_id 一致性** | Get Session 返回的输出文件 `file_id` 必须与 `files.list(scope_id)` 的 `f.id` 一致（同一 `files` 表 `external_id`），前端 `useSessionFileNames` 反查依赖此一致性 |
 
@@ -188,11 +230,15 @@ CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
 ## 测试计划
 
 - **单测**：
-  - `ListSessionResources` 改过滤后，Output Resource 进入返回集合；**目录、skill archive 不进入**（负向）
+  - `List`/`FindByExternalID` 的 builder 断言覆盖 `LEFT JOIN files`、`file.external_id AS file_external_id`、`expires_at` 过滤与 `file.uuid IS NOT NULL`
   - `responseFromResource` 对 Output Resource 回填 `file_id`/`mount_path`；Input Resource、目录、archive 保持现状
-  - 批量加载映射（`IN` 查询）正确性；`resourcesToResponses` 传入映射后无 N+1（用 mock DB 断言查询次数）
-  - `visibleFilePredicate`：`/outputs` 下活动 Owned File 可见、已删除不可见、移出 `/outputs` 不可见（若现有 `db` 测试未覆盖则补）
-  - 下载端点：`Downloadable=true` 放行、`false` 400
+  - JSON 字面量 `null` payload 不触发 nil-map panic
+- **真实 PostgreSQL（`tests/session_resources_visibility_test.go`）**：同一 Session 内种入 Input 文件、活动 Output 文件、过期 Output 文件、`/outputs/` 目录、skill archive、`/tool_results/` 下 Owned File 和 `github_repository`，断言：
+  - `List` 只返回用户资源与活动 Output 文件；目录、skill archive、过期 Output 不出现
+  - Output 资源的 `path` 与 `file_external_id` 正确扫描；`github_repository` 的两个 nullable 列扫描为空串
+  - 只退休 `files` 行后，该 Output 资源在 `List` 与 `GetSessionResource` 中都不可见（覆盖两次独立查询会返回残缺资源的场景）
+  - `FindByExternalID` 对隐藏资源返回 `ErrNotFound`
+  - 种入 501 个输出文件后 `List` 只返回 500 个，最旧那条被截断，Input 与 `github_repository` 资源不受影响
 - **E2E（真实 sandbox，遵循 `docs/design/be/filestore.md` 的验收方式）**：
   - 起独立服务（`ADDR=127.0.0.1:18080`）+ minio + E2B sandbox
   - 创建 Session → 写入 `/mnt/user-data/outputs/` 生成文件 → `GET /v1/sessions/{id}` 确认输出文件出现在 `resources[]` 且带 `file_id`/`mount_path` → `GET /v1/files/{file_id}/content` 确认 200 → `files.list(scope_id=session.id)` 确认 `f.id` 一致
@@ -206,4 +252,6 @@ CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
 - 不做 `/transcripts`、`/tool_results`、`/skills` 的下载（filestore.md 明确不进入 Files Catalog）
 - 不做前端「可下载」标记与下载入口（另行 sub-issue/sub-PR；前端表格已能展示 `file_id`/`mount_path`）
 - 不做文件预览、分片下载等增强（仅打通下载闭环）
-- **单资源接口返回 Output Resource**（已随本 PR 修复）：`GET /v1/sessions/{id}/resources/{rid}` 曾因 `FindByExternalID` 的 `payload IS NOT NULL` 过滤查不到 Output Resource——本次已改为与 `List` 相同的过滤（含 `expires_at`），`retrieveResourceRoute` 也加载 ownedFiles 映射回填 `file_id`（原 sub-issue #266 已关闭）
+- **单资源接口返回 Output Resource**（已随本 PR 修复）：`GET /v1/sessions/{id}/resources/{rid}` 曾因 `FindByExternalID` 的 `payload IS NOT NULL` 过滤查不到 Output Resource——本次已改为与 `List` 相同的 JOIN 与可见性条件，`file_id` 同批取出（原 sub-issue #266 已关闭）。`PATCH`/`DELETE` 的语义见「改动 3」
+- 不让输出文件计入写入侧的 `MaxFileResources` 配额（会让 agent 写满后 `/outputs/` 写入失败，失败语义需穿过 rclone FUSE，另行设计）；本期改为读取侧截断，见「改动 2」
+- 不给 `resources[]` 加分页（官方 session 对象里 `resources` 是裸数组，分页会偏离官方形状）

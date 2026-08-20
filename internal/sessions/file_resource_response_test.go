@@ -19,7 +19,7 @@ func TestResponseFromResourceHandlesNullPayload(t *testing.T) {
 		UpdatedAt:    now,
 	}
 
-	raw := responseFromResource(resource, nil)
+	raw := responseFromResource(resource)
 
 	var out map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -32,22 +32,16 @@ func TestResponseFromResourceHandlesNullPayload(t *testing.T) {
 func TestResponseFromResourceBackfillsOutputFileID(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	resource := db.SessionResource{
-		ExternalID:   "sesrsc_output_1",
-		ResourceType: "file",
-		Payload:      nil,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ExternalID:     "sesrsc_output_1",
+		ResourceType:   "file",
+		Payload:        nil,
+		Path:           "/outputs/report.pdf",
+		FileExternalID: "file_owned_1",
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
-	ownedFiles := map[string]db.FileRecord{
-		"file_uuid_1": {
-			ExternalID: "file_owned_1",
-			Filename:   "report.pdf",
-		},
-	}
-	resource.FileUUID = "file_uuid_1"
-	resource.Path = "/outputs/report.pdf"
 
-	raw := responseFromResource(resource, ownedFiles)
+	raw := responseFromResource(resource)
 
 	var out map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -75,7 +69,7 @@ func TestResponseFromResourceKeepsInputResourcePayload(t *testing.T) {
 		UpdatedAt: now,
 	}
 
-	raw := responseFromResource(resource, nil)
+	raw := responseFromResource(resource)
 
 	var out map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -94,13 +88,14 @@ func TestResponseFromResourceLeavesNonFileResourcesUntouched(t *testing.T) {
 		ExternalID:   "sesrsc_dir_1",
 		ResourceType: "directory",
 		Payload:      json.RawMessage(`{"id":"sesrsc_dir_1","type":"directory","path":"/outputs"}`),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		// 目录即使位于 /outputs/ 下也不应被当成输出文件回填。
+		Path:           "/outputs/reports",
+		FileExternalID: "file_owned_1",
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
-	raw := responseFromResource(resource, map[string]db.FileRecord{
-		"file_uuid_1": {ExternalID: "file_owned_1", Filename: "report.pdf"},
-	})
+	raw := responseFromResource(resource)
 
 	var out map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &out); err != nil {

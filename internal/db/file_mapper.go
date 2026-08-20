@@ -14,7 +14,6 @@ type FileMapper interface {
 	GetFile(ctx context.Context, workspaceUUID, fileExternalID string) (fileRecordRow, error)
 	GetFileByUUID(ctx context.Context, workspaceUUID, fileUUID string) (fileRecordRow, error)
 	GetFileByUUIDInOrganization(ctx context.Context, organizationUUID, fileUUID string) (fileRecordRow, error)
-	ListFilesByUUIDs(ctx context.Context, params fileMapperFileUUIDsParams) ([]fileRecordRow, error)
 	ListFiles(ctx context.Context, params fileMapperListParams) ([]fileRecordRow, error)
 	ListSessionFiles(ctx context.Context, params fileMapperListParams) ([]fileRecordRow, error)
 	FindPageCursor(ctx context.Context, params fileMapperListParams) (filePageCursorRow, bool, error)
@@ -65,11 +64,6 @@ type fileMapperListParams struct {
 	HasScope         bool
 	HasCursor        bool
 	Before           bool
-}
-
-type fileMapperFileUUIDsParams struct {
-	WorkspaceUUID string
-	FileUUIDs     []string
 }
 
 type objectCleanupJobFailureParams struct {

@@ -619,7 +619,7 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(created, nil))
+	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(created))
 	return nil
 }
 
@@ -633,11 +633,11 @@ func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return err
 	}
-	resources, ownedFiles, err := h.loadSessionResourcesWithOwnedFiles(r.Context(), session.WorkspaceUUID, session.ExternalID)
+	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
-		return internalError("Could not list resources", fmt.Errorf("load session %q resources: %w", sessionID, err))
+		return internalError("Could not list resources", fmt.Errorf("list session %q resources: %w", sessionID, err))
 	}
-	data := resourcesToResponses(resources, ownedFiles)
+	data := resourcesToResponses(resources)
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: data})
 	return nil
 }
@@ -657,11 +657,7 @@ func (h *Handler) retrieveResourceRoute(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
 	}
-	ownedFiles, err := h.loadOwnedFileMapping(r.Context(), session.WorkspaceUUID, []db.SessionResource{resource})
-	if err != nil {
-		return internalError("Could not retrieve resource", fmt.Errorf("load session %q owned files: %w", sessionID, err))
-	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(resource, ownedFiles))
+	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(resource))
 	return nil
 }
 
@@ -696,7 +692,7 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(updated, nil))
+	httpapi.WriteJSON(w, http.StatusOK, responseFromResource(updated))
 	return nil
 }
 

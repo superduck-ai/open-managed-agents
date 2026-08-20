@@ -63,7 +63,8 @@ func requestNeedsPlaceholder(req *http.Request, body []byte, placeholder string,
 }
 
 // EgressSubstitutor loads session vault credentials per outbound MITM request
-// and performs Egress Secret Substitution. Plaintext secrets are never cached.
+// and performs Egress Secret Substitution plus Git Smart HTTP Authorization.
+// Plaintext secrets are never cached.
 type EgressSubstitutor struct {
 	store     credentialStore
 	secretSvc *secrets.Service
@@ -87,7 +88,8 @@ func newEgressSubstitutor(store credentialStore, secretSvc *secrets.Service, log
 }
 
 // SubstituteEnvSecrets rewrites Opaque Placeholders in the outbound request for
-// Environment Variable Credentials attached to the code session.
+// Environment Variable Credentials attached to the code session, then applies
+// Git Smart HTTP Authorization when the request is Git Smart HTTP.
 func (s *EgressSubstitutor) SubstituteEnvSecrets(
 	ctx context.Context,
 	codeSessionExternalID string,
@@ -116,24 +118,48 @@ func (s *EgressSubstitutor) SubstituteEnvSecrets(
 	if err != nil {
 		return substitutionRejected(err)
 	}
-	body, substitutions, err := s.buildSubstitutions(ctx, req, host, port, credentials)
+	plan, err := s.planEnvEgress(ctx, req, host, port, credentials)
 	if err != nil {
 		return err
 	}
-	applyEgressSubstitutions(req, body, substitutions)
+	applyEgressSubstitutions(req, plan.body, plan.substitutions)
+	if plan.gitSecret != "" {
+		setGitSmartHTTPAuthorization(req.Header, plan.gitSecret)
+	}
 	return nil
 }
 
-func (s *EgressSubstitutor) buildSubstitutions(
+type envEgressPlan struct {
+	body          []byte
+	substitutions []egressSubstitution
+	gitSecret     string
+}
+
+func (s *EgressSubstitutor) planEnvEgress(
 	ctx context.Context,
 	req *http.Request,
 	host string,
 	port string,
 	credentials []db.VaultCredential,
-) ([]byte, []egressSubstitution, error) {
+) (envEgressPlan, error) {
 	_, bound, err := uniqueEnvironmentCredentials(credentials)
 	if err != nil {
-		return nil, nil, substitutionRejected(err)
+		return envEgressPlan{}, substitutionRejected(err)
+	}
+	opened := make(map[string]string)
+	var gitSecret string
+	if isGitSmartHTTPRequest(req) {
+		gitCred, err := firstGitAuthorizationCredential(credentials, host, port)
+		if err != nil {
+			return envEgressPlan{}, substitutionRejected(err)
+		}
+		if gitCred != nil {
+			secret, err := s.openBoundSecret(ctx, opened, *gitCred)
+			if err != nil {
+				return envEgressPlan{}, err
+			}
+			gitSecret = secret
+		}
 	}
 	out := make([]egressSubstitution, 0)
 	var body []byte
@@ -141,7 +167,7 @@ func (s *EgressSubstitutor) buildSubstitutions(
 	for _, item := range bound {
 		covers, err := credentialNetworkingCoversHost(item.value.Networking, host, port)
 		if err != nil {
-			return nil, nil, substitutionRejected(err)
+			return envEgressPlan{}, substitutionRejected(err)
 		}
 		if !covers {
 			continue
@@ -149,34 +175,70 @@ func (s *EgressSubstitutor) buildSubstitutions(
 		if item.value.InjectionLocation.Body && !bodyLoaded {
 			body, err = snapshotRequestBody(req)
 			if err != nil {
-				return nil, nil, substitutionRejected(err)
+				return envEgressPlan{}, substitutionRejected(err)
 			}
 			bodyLoaded = true
 		}
 		if !requestNeedsPlaceholder(req, body, item.value.Placeholder, item.value.InjectionLocation) {
 			continue
 		}
-		secretValue, err := s.openEnvironmentSecret(ctx, &item.row)
+		secret, err := s.openBoundSecret(ctx, opened, item)
 		if err != nil {
-			s.logger.WarnContext(ctx, "open environment variable credential failed",
-				"credential_id", item.row.ExternalID,
-				"auth_type", item.row.AuthType,
-				"error", err,
-			)
-			return nil, nil, substitutionRejected(err)
+			return envEgressPlan{}, err
 		}
 		out = append(out, egressSubstitution{
 			placeholder: item.value.Placeholder,
-			secretValue: secretValue,
+			secretValue: secret,
 			header:      item.value.InjectionLocation.Header,
 			body:        item.value.InjectionLocation.Body,
 		})
 	}
-	return body, out, nil
+	return envEgressPlan{body: body, substitutions: out, gitSecret: gitSecret}, nil
+}
+
+func firstGitAuthorizationCredential(credentials []db.VaultCredential, host, port string) (*environmentCredential, error) {
+	for i := range credentials {
+		if credentialAuthType(credentials[i].AuthType) != credentialAuthTypeEnvironmentVariable {
+			continue
+		}
+		value, err := decodeEnvironmentCredentialAuth(credentials[i].Auth)
+		if err != nil {
+			return nil, err
+		}
+		if PlatformReservedSecretName(value.SecretName) || !value.InjectionLocation.Header {
+			continue
+		}
+		covers, err := credentialNetworkingCoversHost(value.Networking, host, port)
+		if err != nil {
+			return nil, err
+		}
+		if !covers {
+			continue
+		}
+		return &environmentCredential{row: credentials[i], value: value}, nil
+	}
+	return nil, nil
+}
+
+func (s *EgressSubstitutor) openBoundSecret(ctx context.Context, opened map[string]string, item environmentCredential) (string, error) {
+	if secret, ok := opened[item.row.ExternalID]; ok {
+		return secret, nil
+	}
+	secret, err := s.openEnvironmentSecret(ctx, &item.row)
+	if err != nil {
+		s.logger.WarnContext(ctx, "open environment variable credential failed",
+			"credential_id", item.row.ExternalID,
+			"auth_type", item.row.AuthType,
+			"error", err,
+		)
+		return "", substitutionRejected(err)
+	}
+	opened[item.row.ExternalID] = secret
+	return secret, nil
 }
 
 // credentialNetworkingCoversHost reports whether Credential Networking allows
-// Egress Secret Substitution for host:port.
+// Egress Secret Substitution or Git Smart HTTP Authorization for host:port.
 func credentialNetworkingCoversHost(networking credentialAuthNetworking, host, port string) (bool, error) {
 	if networking.Type == "unrestricted" {
 		return true, nil

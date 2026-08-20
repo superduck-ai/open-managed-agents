@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
@@ -256,15 +257,26 @@ func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
 
 func mustSessionRecord(t *testing.T, app *testApp, sessionExternalID string) db.Session {
 	t.Helper()
-	session, err := app.db.GetSession(
+	session, found, err := app.db.GetSession(
 		context.Background(),
 		getDefaultDBIDs(t, app.pool).WorkspaceUUID,
 		sessionExternalID,
 	)
-	if err != nil {
-		t.Fatalf("load Session %q: %v", sessionExternalID, err)
+	if err != nil || !found {
+		t.Fatalf("load Session %q = (%t, %v), want found", sessionExternalID, found, err)
 	}
 	return session
+}
+
+func getCodeSession(app *testApp, ctx context.Context, codeSessionID string) (db.CodeSession, error) {
+	record, found, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return db.CodeSession{}, err
+	}
+	if !found {
+		return db.CodeSession{}, db.ErrNotFound
+	}
+	return record, nil
 }
 
 func TestSessionsEnvironmentKeyAccess(t *testing.T) {
@@ -706,7 +718,7 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 		t.Fatalf("set code session initializing: %v", err)
 	}
 
-	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load initializing code session: %v", err)
 	}
@@ -723,7 +735,7 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
 		t.Fatalf("activate with startup history: %v", err)
 	}
-	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err = getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("reload activated code session: %v", err)
 	}
@@ -769,11 +781,11 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 		t.Fatalf("set Code Session initializing: %v", err)
 	}
 
-	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
-	if err != nil {
-		t.Fatalf("load Session: %v", err)
+	session, found, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
+	if err != nil || !found {
+		t.Fatalf("load Session = (%t, %v), want found", found, err)
 	}
-	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load Code Session: %v", err)
 	}
@@ -839,11 +851,11 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 		t.Fatalf("set rollback code session initializing: %v", err)
 	}
 	sendSessionEvents(t, app, sessionResponse.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"history must remain durable"}]}]}`, defaultTestKey)
-	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
-	if err != nil {
-		t.Fatalf("load rollback Session: %v", err)
+	session, found, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, sessionResponse.ID)
+	if err != nil || !found {
+		t.Fatalf("load rollback Session = (%t, %v), want found", found, err)
 	}
-	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load rollback Code Session: %v", err)
 	}
@@ -870,7 +882,7 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	if listErr != nil || len(after) != 1 {
 		t.Fatalf("rollback inbound after delivery = (%#v, %v), want unchanged initialize", after, listErr)
 	}
-	reloaded, err := app.db.GetCodeSession(ctx, codeSessionID)
+	reloaded, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("reload rollback Code Session: %v", err)
 	}
@@ -924,6 +936,17 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		where session_external_id = $1 and thread_external_id = $2
 	`, session.ID, child.ID); err != nil {
 		t.Fatalf("delete child session events before backfill: %v", err)
+	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
+	sessionRecord := mustSessionRecord(t, app, session.ID)
+	storedChildEvents, _, err := app.db.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{
+		WorkspaceUUID:     sessionRecord.WorkspaceUUID,
+		SessionExternalID: session.ID,
+		ThreadExternalID:  child.ID,
+		Limit:             100,
+	})
+	if err != nil || len(storedChildEvents) == 0 {
+		t.Fatalf("child events after worker state reconciliation = (%d, %v), want restored events", len(storedChildEvents), err)
 	}
 
 	childEvents := listThreadEvents(t, app, session.ID, child.ID, defaultTestKey)
@@ -1269,11 +1292,11 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("initial worker read metadata = %+v, want nil", metadata)
 	}
 
-	seedState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"external_metadata":{"pending_action":{"tool_name":"OldTool"},"task_summary":"stale","persisted":true}}`)
+	seedState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"external_metadata":{"pending_action":{"tool_name":"OldTool"},"task_summary":"stale","persisted":true}}`)
 	if _, ok := seedState.Worker.ExternalMetadata["persisted"]; !ok {
 		t.Fatalf("seed worker metadata missing persisted key: %+v", seedState.Worker.ExternalMetadata)
 	}
-	initState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"idle","requires_action_details":null,"external_metadata":{"pending_action":null,"task_summary":null}}`)
+	initState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle","requires_action_details":null,"external_metadata":{"pending_action":null,"task_summary":null}}`)
 	if initState.Worker.WorkerStatus != "idle" {
 		t.Fatalf("init worker status = %q, want idle", initState.Worker.WorkerStatus)
 	}
@@ -1287,12 +1310,16 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("metadata merge did not preserve persisted key: %+v", initState.Worker.ExternalMetadata)
 	}
 
-	requiresState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"requires_action","requires_action_details":{"tool_name":"Bash","action_description":"Running npm test","request_id":"req_worker_state"},"external_metadata":{"pending_action":{"tool_name":"Bash"},"persisted":{"kept":true}}}`)
+	requiresState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"requires_action","requires_action_details":{"tool_name":"Bash","action_description":"Running npm test","tool_use_id":"tool_worker_state","request_id":"req_worker_state","input":{"command":"npm test"}},"external_metadata":{"pending_action":{"tool_name":"Bash"},"persisted":{"kept":true}}}`)
 	if requiresState.Worker.WorkerStatus != "requires_action" {
 		t.Fatalf("requires action worker status = %q, want requires_action", requiresState.Worker.WorkerStatus)
 	}
-	var actionDetails map[string]string
-	if err := json.Unmarshal(requiresState.Worker.RequiresActionDetails, &actionDetails); err != nil || actionDetails["tool_name"] != "Bash" {
+	var actionDetails struct {
+		ToolName  string                     `json:"tool_name"`
+		ToolUseID string                     `json:"tool_use_id"`
+		Input     map[string]json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(requiresState.Worker.RequiresActionDetails, &actionDetails); err != nil || actionDetails.ToolName != "Bash" || actionDetails.ToolUseID != "tool_worker_state" || string(actionDetails.Input["command"]) != `"npm test"` {
 		t.Fatalf("requires_action_details = %s, err=%v", requiresState.Worker.RequiresActionDetails, err)
 	}
 	var pendingAction map[string]string
@@ -1307,7 +1334,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("primary thread status after requires_action = %+v, want idle", threads.Data)
 	}
 
-	runningState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"running","requires_action_details":{"tool_name":"Bash"}}`)
+	runningState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running","requires_action_details":{"tool_name":"Bash"}}`)
 	if runningState.Worker.WorkerStatus != "running" || !rawMessageIsJSONNull(runningState.Worker.RequiresActionDetails) {
 		t.Fatalf("running worker state = %+v, details=%s; want running with cleared details", runningState.Worker, runningState.Worker.RequiresActionDetails)
 	}
@@ -1318,7 +1345,50 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
 		t.Fatalf("primary thread status after running = %+v, want running", threads.Data)
 	}
-	runningDetailsOnlyState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"requires_action_details":{"tool_name":"Bash"}}`)
+	runningEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 1 {
+		t.Fatalf("session.status_running events = %d, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
+	runningEvent := sessionEventObjectByType(t, runningEvents, "session.status_running")
+	if runningEvent["id"] == "" || runningEvent["processed_at"] == "" {
+		t.Fatalf("session.status_running missing persisted fields: %#v", runningEvent)
+	}
+	if _, ok := runningEvent["stop_reason"]; ok {
+		t.Fatalf("session.status_running unexpectedly contains stop_reason: %#v", runningEvent)
+	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 1 {
+		t.Fatalf("duplicate running state produced %d events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
+	codeSession, err := getCodeSession(app, context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("load code session for projection retry: %v", err)
+	}
+	sessionRecord := mustSessionRecord(t, app, session.ID)
+	if err := app.db.SetSessionThreadStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, threads.Data[0].ID, "idle"); err != nil {
+		t.Fatalf("make primary thread projection stale: %v", err)
+	}
+	if err := app.db.SetSessionStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, "idle"); err != nil {
+		t.Fatalf("make session projection stale: %v", err)
+	}
+	retryService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
+	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil)
+	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
+		t.Fatalf("retry existing running event projection: %v", err)
+	}
+	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
+		t.Fatalf("public session status after projection retry = %q, want running", got)
+	}
+	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
+	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
+		t.Fatalf("primary thread status after projection retry = %+v, want running", threads.Data)
+	}
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 1 {
+		t.Fatalf("projection retry produced %d running events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
+	runningDetailsOnlyState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"requires_action_details":{"tool_name":"Bash"}}`)
 	if runningDetailsOnlyState.Worker.WorkerStatus != "running" || !rawMessageIsJSONNull(runningDetailsOnlyState.Worker.RequiresActionDetails) {
 		t.Fatalf("running details-only worker state = %+v, details=%s; want running with cleared details", runningDetailsOnlyState.Worker, runningDetailsOnlyState.Worker.RequiresActionDetails)
 	}
@@ -1330,7 +1400,6 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("primary thread status after details-only update = %+v, want running", threads.Data)
 	}
 
-	sessionRecord := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
 		sessionRecord.WorkspaceUUID,
@@ -1396,7 +1465,8 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("download output = %q, want %q", got, outputContent)
 	}
 
-	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
+	idleEventsBefore := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
 	if idleState.Worker.WorkerStatus != "idle" || !rawMessageIsJSONNull(idleState.Worker.RequiresActionDetails) {
 		t.Fatalf("idle worker state = %+v, details=%s; want idle with cleared details", idleState.Worker, idleState.Worker.RequiresActionDetails)
 	}
@@ -1409,6 +1479,19 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
 	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
 		t.Fatalf("primary thread status after idle = %+v, want idle", threads.Data)
+	}
+	idleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	if len(idleEvents.Data) != len(idleEventsBefore.Data)+1 {
+		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
+	}
+	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
+	if _, ok := idleEvent["stop_reason"]; ok {
+		t.Fatalf("worker session.status_idle unexpectedly contains stop_reason: %#v", idleEvent)
+	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
+	duplicateIdleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	if len(duplicateIdleEvents.Data) != len(idleEvents.Data) {
+		t.Fatalf("duplicate idle state produced %d events, want %d: %+v", len(duplicateIdleEvents.Data), len(idleEvents.Data), duplicateIdleEvents.Data)
 	}
 	afterIdleFiles := listFiles(t, app, "scope_id="+session.ID)
 	var outputFileAfterIdle *metadataResponse
@@ -1467,6 +1550,12 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if eventPageContains(diagEvents, "diag from ccr worker") {
 		t.Fatalf("worker diagnostics leaked into public session events: %+v", diagEvents.Data)
 	}
+
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	if len(runningEvents.Data) != 2 {
+		t.Fatalf("second idle-to-running transition produced %d events, want 2: %+v", len(runningEvents.Data), runningEvents.Data)
+	}
 }
 
 func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
@@ -1483,9 +1572,9 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get api key: %v", err)
 	}
-	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
-	if err != nil {
-		t.Fatalf("get stored session: %v", err)
+	storedSession, found, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
+	if err != nil || !found {
+		t.Fatalf("get stored session = (%t, %v), want found", found, err)
 	}
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	hiddenEventID := "sevt_legacy_env_manager_log_" + eventSuffix
@@ -1754,23 +1843,19 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 	ctx := context.Background()
 
-	beforeKeepAlive, err := app.db.GetCodeSession(ctx, codeSessionID)
+	beforeKeepAlive, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load before keep_alive: %v", err)
 	}
 	time.Sleep(5 * time.Millisecond)
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{"type":"keep_alive"}}]}`)
-	afterKeepAlive, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterKeepAlive, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load after keep_alive: %v", err)
 	}
 	if beforeKeepAlive.LastWorkerActivityAt == nil || afterKeepAlive.LastWorkerActivityAt == nil || !afterKeepAlive.LastWorkerActivityAt.After(*beforeKeepAlive.LastWorkerActivityAt) {
 		t.Fatalf("keep_alive activity before=%v after=%v, want refreshed", beforeKeepAlive.LastWorkerActivityAt, afterKeepAlive.LastWorkerActivityAt)
 	}
-	if got := listCodeSessionOutboundEventsForTest(t, app, codeSessionID); len(got) != 0 {
-		t.Fatalf("keep_alive wrote outbound rows: %+v", got)
-	}
-
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	streamUUID := "stream-worker-" + suffix
 	assistantUUID := "assistant-worker-contract-" + suffix
@@ -1779,23 +1864,6 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 		`{"payload":{"type":"assistant","uuid":` + quoteJSON(assistantUUID) + `,"message":{"role":"assistant","content":"durable assistant contract"},"created_at":"2026-06-16T01:10:00Z"}}` +
 		`]}`
 	postCodeSessionWorkerEvents(t, app, codeSessionID, batch)
-	rows := listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 2 {
-		t.Fatalf("outbound rows len = %d, want 2: %+v", len(rows), rows)
-	}
-	if rows[0].SequenceNum != 1 || rows[0].EventType != "stream_event" || rows[0].PayloadUUID != streamUUID || !rows[0].Ephemeral {
-		t.Fatalf("first outbound row = %+v, want ephemeral stream_event seq 1", rows[0])
-	}
-	if rows[1].SequenceNum != 2 || rows[1].EventType != "assistant" || rows[1].PayloadUUID != assistantUUID || rows[1].Ephemeral {
-		t.Fatalf("second outbound row = %+v, want durable assistant seq 2", rows[1])
-	}
-	var streamPayload map[string]any
-	if err := json.Unmarshal(rows[0].Payload, &streamPayload); err != nil {
-		t.Fatalf("decode stream payload: %v", err)
-	}
-	if streamPayload["session_id"] != codeSessionID || strings.TrimSpace(fmt.Sprint(streamPayload["timestamp"])) == "" {
-		t.Fatalf("normalized stream payload missing session_id/timestamp: %s", rows[0].Payload)
-	}
 	agentMessages := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContainsCount(agentMessages, "durable assistant contract") != 1 {
 		t.Fatalf("durable assistant public projection count != 1: %+v", agentMessages.Data)
@@ -1806,10 +1874,6 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	}
 
 	postCodeSessionWorkerEvents(t, app, codeSessionID, batch)
-	rows = listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 2 {
-		t.Fatalf("duplicate batch wrote outbound rows len = %d, want 2: %+v", len(rows), rows)
-	}
 	agentMessages = listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContainsCount(agentMessages, "durable assistant contract") != 1 {
 		t.Fatalf("duplicate batch republished assistant event: %+v", agentMessages.Data)
@@ -1818,10 +1882,6 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	controlUUID := "control-worker-" + suffix
 	controlBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":{"type":"control_request","uuid":` + quoteJSON(controlUUID) + `,"request_id":"req_` + suffix + `","request":{"subtype":"can_use_tool","tool_use_id":"toolu_` + suffix + `","input":{"ok":true}}}}]}`
 	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
-	rows = listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 3 || rows[2].SequenceNum != 3 || rows[2].EventType != "control_request" || rows[2].PayloadUUID != controlUUID {
-		t.Fatalf("control_request outbound row mismatch: %+v", rows)
-	}
 	var autoApproveCount int
 	if err := app.pool.QueryRow(ctx, `
 		select count(*)
@@ -1874,6 +1934,18 @@ func TestCodeSessionMCPDefaultAllowAutoApprovesWorkerPermissionRequest(t *testin
 		`"request":{"subtype":"can_use_tool","tool_name":"mcp__weather_service__get_weather","tool_use_id":` + quoteJSON(toolUseID) + `,"input":{"location":"Beijing"}}` +
 		`}}]}`
 	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+	var autoApproveCount int
+	if err := app.pool.QueryRow(context.Background(), `
+		select count(*)
+		from code_session_inbound_events
+		where code_session_external_id = $1 and source = 'auto-approve' and deleted_at is null
+	`, codeSessionID).Scan(&autoApproveCount); err != nil {
+		t.Fatalf("count auto-approve inbound events: %v", err)
+	}
+	if autoApproveCount != 1 {
+		t.Fatalf("duplicate control request produced %d auto responses, want 1", autoApproveCount)
+	}
 
 	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "auto-approve")
 	if source != "auto-approve" || eventType != "control_response" {
@@ -1967,6 +2039,9 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if !ok || toolEventID == "" {
 		t.Fatalf("agent.mcp_tool_use id = %#v, want non-empty string: %#v", toolEvent["id"], toolEvent)
 	}
+	if toolEvent["request_id"] != requestID {
+		t.Fatalf("agent.mcp_tool_use request_id = %#v, want %s: %#v", toolEvent["request_id"], requestID, toolEvent)
+	}
 	statusEvent := sessionEventObjectByType(t, publicEvents, "session.status_idle")
 	stopReason, ok := statusEvent["stop_reason"].(map[string]any)
 	if !ok {
@@ -2028,8 +2103,8 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	`, codeSessionID).Scan(&afterCompatCount); err != nil {
 		t.Fatalf("count tool confirmation inbound events after compat send: %v", err)
 	}
-	if afterCompatCount != beforeCompatCount+1 {
-		t.Fatalf("legacy tool confirmation inbound count = %d, want %d", afterCompatCount, beforeCompatCount+1)
+	if afterCompatCount != beforeCompatCount {
+		t.Fatalf("duplicate legacy tool confirmation inbound count = %d, want %d", afterCompatCount, beforeCompatCount)
 	}
 }
 
@@ -2109,6 +2184,9 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	if primaryToolEvent["session_thread_id"] != childThreadID {
 		t.Fatalf("primary blocking tool event session_thread_id = %v, want %s: %#v", primaryToolEvent["session_thread_id"], childThreadID, primaryToolEvent)
 	}
+	if primaryToolEvent["request_id"] != requestID {
+		t.Fatalf("primary blocking tool event request_id = %v, want %s: %#v", primaryToolEvent["request_id"], requestID, primaryToolEvent)
+	}
 	primaryStatusEvent := sessionEventObjectByType(t, primaryEvents, "session.status_idle")
 	primaryStopReason, ok := primaryStatusEvent["stop_reason"].(map[string]any)
 	if !ok {
@@ -2181,7 +2259,7 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	}
 }
 
-func TestCodeSessionWorkerEventsDuplicateRetryPublishesExistingDurableEvent(t *testing.T) {
+func TestCodeSessionWorkerEventsDeduplicateDurableAndDiscardEphemeral(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-events-duplicate-retry-bucket"))
 	defer app.close()
 
@@ -2192,64 +2270,24 @@ func TestCodeSessionWorkerEventsDuplicateRetryPublishesExistingDurableEvent(t *t
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
-	ctx := context.Background()
 
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	payloadUUID := "assistant-worker-duplicate-retry-" + suffix
 	payload := json.RawMessage(`{"type":"assistant","uuid":` + quoteJSON(payloadUUID) + `,"session_id":` + quoteJSON(codeSessionID) + `,"created_at":"2026-06-16T01:10:00Z","timestamp":"2026-06-16T01:10:00Z","message":{"role":"assistant","content":"duplicate retry assistant"}}`)
-	_, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_dup_retry_" + suffix,
-		EventType:      "assistant",
-		PayloadUUID:    &payloadUUID,
-		Payload:        payload,
-		PayloadHash:    "duplicate-retry-" + suffix,
-		IdempotencyKey: codeSessionID + ":outbound:uuid:" + payloadUUID,
-		Source:         "test",
-	})
-	if err != nil || duplicate {
-		t.Fatalf("seed duplicate retry outbound event duplicate=%v err=%v", duplicate, err)
-	}
-	if events := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey); eventPageContains(events, "duplicate retry assistant") {
-		t.Fatalf("seeded raw outbound event unexpectedly published public event: %+v", events.Data)
-	}
-
-	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":`+string(payload)+`,"ephemeral":true}]}`)
-	rows := listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 1 {
-		t.Fatalf("duplicate retry wrote outbound rows len = %d, want 1: %+v", len(rows), rows)
-	}
+	durableBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":` + string(payload) + `}]}`
+	postCodeSessionWorkerEvents(t, app, codeSessionID, durableBody)
+	postCodeSessionWorkerEvents(t, app, codeSessionID, durableBody)
 	agentMessages := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContainsCount(agentMessages, "duplicate retry assistant") != 1 {
-		t.Fatalf("duplicate retry did not publish one public event: %+v", agentMessages.Data)
+		t.Fatalf("duplicate durable event count != 1: %+v", agentMessages.Data)
 	}
 
 	ephemeralPayloadUUID := "assistant-worker-duplicate-retry-ephemeral-" + suffix
 	ephemeralPayload := json.RawMessage(`{"type":"assistant","uuid":` + quoteJSON(ephemeralPayloadUUID) + `,"session_id":` + quoteJSON(codeSessionID) + `,"created_at":"2026-06-16T01:11:00Z","timestamp":"2026-06-16T01:11:00Z","message":{"role":"assistant","content":"ephemeral duplicate retry assistant"}}`)
-	_, duplicate, err = app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_dup_retry_ephemeral_" + suffix,
-		EventType:      "assistant",
-		PayloadUUID:    &ephemeralPayloadUUID,
-		Payload:        ephemeralPayload,
-		PayloadHash:    "duplicate-retry-ephemeral-" + suffix,
-		IdempotencyKey: codeSessionID + ":outbound:uuid:" + ephemeralPayloadUUID,
-		Source:         "test",
-		Ephemeral:      true,
-	})
-	if err != nil || duplicate {
-		t.Fatalf("seed ephemeral duplicate retry outbound event duplicate=%v err=%v", duplicate, err)
-	}
-	if events := listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey); eventPageContains(events, "ephemeral duplicate retry assistant") {
-		t.Fatalf("seeded ephemeral raw outbound event unexpectedly published public event: %+v", events.Data)
-	}
-
-	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":`+string(ephemeralPayload)+`,"ephemeral":false}]}`)
-	rows = listCodeSessionOutboundEventsForTest(t, app, codeSessionID)
-	if len(rows) != 2 || !rows[1].Ephemeral {
-		t.Fatalf("ephemeral duplicate retry row mismatch: %+v", rows)
-	}
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":`+string(ephemeralPayload)+`,"ephemeral":true}]}`)
 	agentMessages = listSessionEvents(t, app, session.ID, "types[]=agent.message", defaultTestKey)
 	if eventPageContains(agentMessages, "ephemeral duplicate retry assistant") {
-		t.Fatalf("ephemeral duplicate retry published public event: %+v", agentMessages.Data)
+		t.Fatalf("ephemeral event was persisted publicly: %+v", agentMessages.Data)
 	}
 	if eventPageContainsCount(agentMessages, "duplicate retry assistant") != 1 {
 		t.Fatalf("durable duplicate retry public event count changed: %+v", agentMessages.Data)
@@ -2273,8 +2311,9 @@ func TestCodeSessionWorkerEventsStaleEpochDoesNotAppend(t *testing.T) {
 		t.Fatalf("epochs = %q/%q, want 1/2", epoch1, epoch2)
 	}
 	assertCodeSessionWorkerWriteStatus(t, app, http.MethodPost, codeSessionID, "events", workerEventBody(session.ID, "stale", epoch1), http.StatusConflict, "conflict_error")
-	if got := listCodeSessionOutboundEventsForTest(t, app, codeSessionID); len(got) != 0 {
-		t.Fatalf("stale epoch wrote outbound rows: %+v", got)
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
+	if eventPageContains(publicEvents, "stale") {
+		t.Fatalf("stale epoch published a public event: %+v", publicEvents.Data)
 	}
 }
 
@@ -2320,7 +2359,7 @@ func TestCodeSessionWorkerRegisterEpochsAreSessionScopedAndConcurrent(t *testing
 	if !seen["2"] || !seen["3"] || len(seen) != 2 {
 		t.Fatalf("concurrent register epochs = %+v, want 2 and 3", seen)
 	}
-	record, err := app.db.GetCodeSession(context.Background(), codeSessionA)
+	record, err := getCodeSession(app, context.Background(), codeSessionA)
 	if err != nil {
 		t.Fatalf("load code session A: %v", err)
 	}
@@ -2369,67 +2408,7 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	postCodeSessionWorkerDiagnostics(t, app, codeSessionID, workerDiagnosticsBody(codeSessionID, epoch2, "current diag"))
 }
 
-func TestCodeSessionWorkerEventAppendChecksEpochInsideTransaction(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-epoch-append-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-epoch-append-agent"}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-worker-epoch-append-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	ctx := context.Background()
-
-	epoch1 := registerCodeSessionWorker(t, app, codeSessionID)
-	if epoch1 != "1" {
-		t.Fatalf("first worker epoch = %q, want 1", epoch1)
-	}
-	if err := app.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, 1); err != nil {
-		t.Fatalf("prevalidate epoch 1 before takeover: %v", err)
-	}
-	epoch2 := registerCodeSessionWorker(t, app, codeSessionID)
-	if epoch2 != "2" {
-		t.Fatalf("second worker epoch = %q, want 2", epoch2)
-	}
-
-	staleEpoch := int64(1)
-	eventSuffix := strings.TrimPrefix(codeSessionID, "cse_")
-	staleID := "csev_epoch_stale_append_" + eventSuffix
-	_, _, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:          staleID,
-		EventType:           "assistant",
-		Payload:             json.RawMessage(`{"type":"assistant","message":{"content":"stale write"}}`),
-		PayloadHash:         "stale-write",
-		Source:              "test",
-		RequiredWorkerEpoch: &staleEpoch,
-	})
-	if !errors.Is(err, db.ErrWorkerEpochMismatch) {
-		t.Fatalf("stale append error = %v, want worker epoch mismatch", err)
-	}
-	var staleCount int
-	if err := app.pool.QueryRow(ctx, `select count(*) from code_session_outbound_events where external_id = $1`, staleID).Scan(&staleCount); err != nil {
-		t.Fatalf("count stale outbound events: %v", err)
-	}
-	if staleCount != 0 {
-		t.Fatalf("stale append inserted %d events, want 0", staleCount)
-	}
-
-	currentEpoch := int64(2)
-	_, _, err = app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:          "csev_epoch_current_append_" + eventSuffix,
-		EventType:           "assistant",
-		Payload:             json.RawMessage(`{"type":"assistant","message":{"content":"current write"}}`),
-		PayloadHash:         "current-write",
-		Source:              "test",
-		RequiredWorkerEpoch: &currentEpoch,
-	})
-	if err != nil {
-		t.Fatalf("current epoch append: %v", err)
-	}
-}
-
-func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *testing.T) {
+func TestCodeSessionInboundEventAppendPreservesIdempotencyAndSequence(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-event-append-sequences-bucket"))
 	defer app.close()
 
@@ -2441,7 +2420,7 @@ func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *test
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	ctx := context.Background()
 
-	before, err := app.db.GetCodeSession(ctx, codeSessionID)
+	before, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load Code Session before append: %v", err)
 	}
@@ -2466,38 +2445,12 @@ func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *test
 		t.Fatalf("duplicate inbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateInbound, duplicate, err, inbound.UUID)
 	}
 
-	outboundInput := db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_outbound_sequence_" + suffix,
-		EventType:      "assistant",
-		Payload:        json.RawMessage(`{"type":"assistant"}`),
-		PayloadHash:    "outbound-sequence",
-		IdempotencyKey: "outbound-sequence:" + suffix,
-		Source:         "test",
-	}
-	outbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
-	if err != nil || duplicate {
-		t.Fatalf("append outbound event = (%+v, duplicate=%v, err=%v)", outbound, duplicate, err)
-	}
-	if outbound.SequenceNum != before.LastOutboundSequenceNum+1 {
-		t.Fatalf("outbound sequence = %d, want %d", outbound.SequenceNum, before.LastOutboundSequenceNum+1)
-	}
-	duplicateOutbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
-	if err != nil || !duplicate || duplicateOutbound.UUID != outbound.UUID {
-		t.Fatalf("duplicate outbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateOutbound, duplicate, err, outbound.UUID)
-	}
-
-	after, err := app.db.GetCodeSession(ctx, codeSessionID)
+	after, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load Code Session after append: %v", err)
 	}
-	if after.LastInboundSequenceNum != inbound.SequenceNum || after.LastOutboundSequenceNum != outbound.SequenceNum {
-		t.Fatalf(
-			"stored sequences = inbound %d/outbound %d, want inbound %d/outbound %d",
-			after.LastInboundSequenceNum,
-			after.LastOutboundSequenceNum,
-			inbound.SequenceNum,
-			outbound.SequenceNum,
-		)
+	if after.LastInboundSequenceNum != inbound.SequenceNum {
+		t.Fatalf("stored inbound sequence = %d, want %d", after.LastInboundSequenceNum, inbound.SequenceNum)
 	}
 }
 
@@ -2533,7 +2486,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get worker without epoch status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
-	afterNoEpoch, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterNoEpoch, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after no-epoch get: %v", err)
 	}
@@ -2543,7 +2496,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 
 	resp = doCodeSessionWorkerRequestWithMethod(t, app, http.MethodGet, codeSessionID, "?worker_epoch="+url.QueryEscape(epoch1), "")
 	assertError(t, resp, http.StatusConflict, "conflict_error")
-	afterStaleGet, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterStaleGet, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after stale get: %v", err)
 	}
@@ -2552,7 +2505,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	}
 
 	getCodeSessionWorkerReadStateResponse(t, app, codeSessionID, epoch2)
-	afterCurrentGet, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterCurrentGet, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after current get: %v", err)
 	}
@@ -2563,7 +2516,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerConnectedForEpoch(ctx, codeSessionID, 1); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("stale epoch connect error = %v, want worker epoch mismatch", err)
 	}
-	afterStaleConnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterStaleConnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after stale connect: %v", err)
 	}
@@ -2573,7 +2526,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerConnectedForEpoch(ctx, codeSessionID, 2); err != nil {
 		t.Fatalf("current epoch connect: %v", err)
 	}
-	afterCurrentConnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterCurrentConnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after current connect: %v", err)
 	}
@@ -2584,7 +2537,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, 1); !errors.Is(err, db.ErrWorkerEpochMismatch) {
 		t.Fatalf("stale epoch disconnect error = %v, want worker epoch mismatch", err)
 	}
-	afterStaleDisconnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterStaleDisconnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after stale disconnect: %v", err)
 	}
@@ -2594,7 +2547,7 @@ func TestCodeSessionWorkerConnectionStateUpdatesAreEpochScoped(t *testing.T) {
 	if err := app.db.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, 2); err != nil {
 		t.Fatalf("current epoch disconnect: %v", err)
 	}
-	afterCurrentDisconnect, err := app.db.GetCodeSession(ctx, codeSessionID)
+	afterCurrentDisconnect, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after current disconnect: %v", err)
 	}
@@ -2631,18 +2584,6 @@ func TestCodeSessionWorkerEpochZeroRejectedAtDBLayer(t *testing.T) {
 		t.Fatalf("touch epoch 0 error = %v, want worker epoch mismatch", err)
 	}
 
-	zero := int64(0)
-	_, _, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:          "csev_epoch_zero_append_" + strings.TrimPrefix(codeSessionID, "cse_"),
-		EventType:           "assistant",
-		Payload:             json.RawMessage(`{"type":"assistant","message":{"content":"zero write"}}`),
-		PayloadHash:         "zero-write",
-		Source:              "test",
-		RequiredWorkerEpoch: &zero,
-	})
-	if !errors.Is(err, db.ErrWorkerEpochMismatch) {
-		t.Fatalf("append epoch 0 error = %v, want worker epoch mismatch", err)
-	}
 }
 
 func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
@@ -2662,8 +2603,9 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 		`[]`,
 		`{`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `}`,
-		`{"session_id":123,"worker_epoch":` + quoteJSON(workerEpoch) + `}`,
-		`{"session_id":"other","worker_epoch":` + quoteJSON(workerEpoch) + `}`,
+		`{"session_id":123,"worker_epoch":` + workerEpoch + `}`,
+		`{"session_id":"other","worker_epoch":` + workerEpoch + `}`,
+		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + quoteJSON(workerEpoch) + `}`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":"abc"}`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":1.2}`,
 		`{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":-1}`,
@@ -2677,15 +2619,20 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
 	badStateBodies := []string{
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"worker_status":"connected"}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"worker_status":123}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"external_metadata":null}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"external_metadata":[]}`,
-		`{"worker_epoch":` + quoteJSON(workerEpoch) + `,"requires_action_details":[]}`,
+		`{"worker_epoch":` + workerEpoch + `,"worker_status":"connected"}`,
+		`{"worker_epoch":` + workerEpoch + `,"worker_status":123}`,
+		`{"worker_epoch":` + workerEpoch + `,"external_metadata":[]}`,
+		`{"worker_epoch":` + workerEpoch + `,"requires_action_details":[]}`,
+		`{"worker_epoch":` + quoteJSON(workerEpoch) + `}`,
 	}
 	for _, body := range badStateBodies {
 		resp := doCodeSessionWorkerRequestWithMethod(t, app, http.MethodPut, codeSessionID, "", body)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	}
+	nullStateResp := doCodeSessionWorkerRequestWithMethod(t, app, http.MethodPut, codeSessionID, "", `{"worker_epoch":`+workerEpoch+`,"worker_status":null,"requires_action_details":null,"external_metadata":null}`)
+	defer nullStateResp.Body.Close()
+	if nullStateResp.StatusCode != http.StatusOK {
+		t.Fatalf("null worker state fields status = %d, want 200: %s", nullStateResp.StatusCode, readAll(t, nullStateResp.Body))
 	}
 
 	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "abc", "application/x-protobuf", nil)
@@ -2702,7 +2649,7 @@ func TestCodeSessionWorkerOTLPAcceptsMissingEpochWithoutWorkerActivity(t *testin
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	before, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	before, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session before OTLP: %v", err)
 	}
@@ -2721,7 +2668,7 @@ func TestCodeSessionWorkerOTLPAcceptsMissingEpochWithoutWorkerActivity(t *testin
 		}
 	}
 
-	after, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	after, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after OTLP: %v", err)
 	}
@@ -2874,7 +2821,7 @@ func TestCodeSessionWorkerHeartbeatReportsSandboxTimeoutFailure(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
-	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"running"}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 	app.sandboxTimeouts.setError(errors.New("provider unavailable"))
 
 	resp := doCodeSessionWorkerRequest(t, app, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, workerEpoch))
@@ -2897,7 +2844,7 @@ func TestCodeSessionWorkerHeartbeatSkipsSandboxTimeoutWhenNotRunning(t *testing.
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 
-	beforeIdle, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	beforeIdle, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before idle heartbeat: %v", err)
 	}
@@ -2910,7 +2857,7 @@ func TestCodeSessionWorkerHeartbeatSkipsSandboxTimeoutWhenNotRunning(t *testing.
 		t.Fatalf("idle heartbeat sandbox timeout calls = %d, want 0", len(calls))
 	}
 
-	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"requires_action"}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"requires_action"}`)
 	time.Sleep(5 * time.Millisecond)
 	requiresActionExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, workerEpoch)
 	if !requiresActionExpiresAt.After(idleExpiresAt) {
@@ -2933,8 +2880,8 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 
 	epoch1 := registerCodeSessionWorker(t, app, codeSessionID)
-	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch1)+`,"worker_status":"running"}`)
-	before, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+epoch1+`,"worker_status":"running"}`)
+	before, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before heartbeat: %v", err)
 	}
@@ -2942,14 +2889,14 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 		t.Fatalf("register did not set worker lease/register timestamps: %+v", before)
 	}
 	time.Sleep(5 * time.Millisecond)
-	stringExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch1)
-	if !stringExpiresAt.After(*before.WorkerLeaseExpiresAt) {
-		t.Fatalf("string heartbeat lease expiry = %s, want after %s", stringExpiresAt, before.WorkerLeaseExpiresAt)
+	firstExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch1)
+	if !firstExpiresAt.After(*before.WorkerLeaseExpiresAt) {
+		t.Fatalf("first heartbeat lease expiry = %s, want after %s", firstExpiresAt, before.WorkerLeaseExpiresAt)
 	}
 	time.Sleep(5 * time.Millisecond)
-	numberExpiresAt := assertCodeSessionWorkerHeartbeatBody(t, app, codeSessionID, `{"session_id":`+quoteJSON(codeSessionID)+`,"worker_epoch":`+epoch1+`}`)
-	if !numberExpiresAt.After(stringExpiresAt) {
-		t.Fatalf("number heartbeat lease expiry = %s, want after %s", numberExpiresAt, stringExpiresAt)
+	secondExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch1)
+	if !secondExpiresAt.After(firstExpiresAt) {
+		t.Fatalf("second heartbeat lease expiry = %s, want after %s", secondExpiresAt, firstExpiresAt)
 	}
 	timeoutCalls := app.sandboxTimeouts.snapshotCalls()
 	if len(timeoutCalls) != 2 {
@@ -2967,7 +2914,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 			t.Fatalf("sandbox timeout call = %+v, want sandbox %q timeout %s", call, *sandbox.ProviderSandboxID, app.cfg.E2B.SandboxTimeout)
 		}
 	}
-	after, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	after, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after heartbeat: %v", err)
 	}
@@ -2978,7 +2925,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 		t.Fatalf("heartbeat lease expiry = %s, want after %s", after.WorkerLeaseExpiresAt, before.WorkerLeaseExpiresAt)
 	}
 
-	beforeFutureMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	beforeFutureMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before future mismatch heartbeat: %v", err)
 	}
@@ -2987,7 +2934,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 2 {
 		t.Fatalf("future epoch sandbox timeout calls = %d, want 2", len(calls))
 	}
-	afterFutureMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	afterFutureMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after future mismatch heartbeat: %v", err)
 	}
@@ -2997,7 +2944,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if epoch2 != "2" {
 		t.Fatalf("second register epoch = %q, want 2", epoch2)
 	}
-	beforeMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	beforeMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before mismatch heartbeat: %v", err)
 	}
@@ -3006,7 +2953,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 2 {
 		t.Fatalf("stale epoch sandbox timeout calls = %d, want 2", len(calls))
 	}
-	afterMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	afterMismatch, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after mismatch heartbeat: %v", err)
 	}
@@ -3015,7 +2962,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if _, err := app.pool.Exec(context.Background(), `update code_sessions set worker_lease_expires_at = now() - interval '5 seconds' where external_id = $1`, codeSessionID); err != nil {
 		t.Fatalf("expire worker lease inside grace: %v", err)
 	}
-	graceBefore, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	graceBefore, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load grace lease record: %v", err)
 	}
@@ -3023,7 +2970,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 3 {
 		t.Fatalf("grace heartbeat sandbox timeout calls = %d, want 3", len(calls))
 	}
-	graceAfter, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	graceAfter, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after grace heartbeat: %v", err)
 	}
@@ -3034,7 +2981,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if _, err := app.pool.Exec(context.Background(), `update code_sessions set worker_lease_expires_at = now() - interval '15 seconds' where external_id = $1`, codeSessionID); err != nil {
 		t.Fatalf("expire worker lease beyond grace: %v", err)
 	}
-	expired, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	expired, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load expired lease record: %v", err)
 	}
@@ -3048,7 +2995,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	}
 	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", epoch2, "application/x-protobuf", nil)
 	assertError(t, resp, http.StatusGone, "session_expired")
-	afterExpiredHeartbeat, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	afterExpiredHeartbeat, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after expired heartbeat: %v", err)
 	}
@@ -3217,7 +3164,7 @@ func TestCodeSessionWorkerEventsStreamRejectsInvalidReplayCursorWithoutConnectin
 	resp := doCodeSessionWorkerRequestWithMethod(t, app, http.MethodGet, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(workerEpoch)+"&from_sequence_num=bad-cursor", "")
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
-	after, err := app.db.GetCodeSession(ctx, codeSessionID)
+	after, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load code session after invalid stream cursor: %v", err)
 	}
@@ -3668,14 +3615,37 @@ func TestSessionsSchemaHasNoForeignKeys(t *testing.T) {
 			and ns.oid = current_schema()::regnamespace
 			and cls.relname in (
 				'sessions', 'session_threads', 'session_events', 'session_resources',
-				'code_sessions', 'code_session_inbound_events', 'code_session_outbound_events',
-				'code_session_internal_events'
+				'code_sessions', 'code_session_inbound_events', 'code_session_internal_events'
 			)
 	`).Scan(&foreignKeyCount); err != nil {
 		t.Fatalf("count sessions foreign keys: %v", err)
 	}
 	if foreignKeyCount != 0 {
 		t.Fatalf("sessions foreign key count = %d, want 0", foreignKeyCount)
+	}
+
+	var outboundTableExists bool
+	if err := app.pool.QueryRow(context.Background(), `
+		select to_regclass(current_schema() || '.code_session_outbound_events') is not null
+	`).Scan(&outboundTableExists); err != nil {
+		t.Fatalf("check outbound event table: %v", err)
+	}
+	if outboundTableExists {
+		t.Fatal("code_session_outbound_events still exists")
+	}
+
+	var outboundSequenceColumnCount int
+	if err := app.pool.QueryRow(context.Background(), `
+		select count(*)
+		from information_schema.columns
+		where table_schema = current_schema()
+		  and table_name = 'code_sessions'
+		  and column_name = 'last_outbound_sequence_num'
+	`).Scan(&outboundSequenceColumnCount); err != nil {
+		t.Fatalf("check outbound sequence column: %v", err)
+	}
+	if outboundSequenceColumnCount != 0 {
+		t.Fatalf("last_outbound_sequence_num column count = %d, want 0", outboundSequenceColumnCount)
 	}
 }
 
@@ -3930,42 +3900,6 @@ func eventPageContainsCount(events sessionEventPageAPIResponse, needle string) i
 	return count
 }
 
-type codeSessionOutboundEventForTest struct {
-	SequenceNum int64
-	EventType   string
-	PayloadUUID string
-	Payload     json.RawMessage
-	Ephemeral   bool
-}
-
-func listCodeSessionOutboundEventsForTest(t *testing.T, app *testApp, codeSessionID string) []codeSessionOutboundEventForTest {
-	t.Helper()
-	rows, err := app.pool.Query(context.Background(), `
-		select sequence_num, event_type, coalesce(payload_uuid, ''), payload, ephemeral
-		from code_session_outbound_events
-		where code_session_external_id = $1 and deleted_at is null
-		order by sequence_num asc
-	`, codeSessionID)
-	if err != nil {
-		t.Fatalf("list code session outbound events: %v", err)
-	}
-	defer rows.Close()
-	events := []codeSessionOutboundEventForTest{}
-	for rows.Next() {
-		var event codeSessionOutboundEventForTest
-		var payload []byte
-		if err := rows.Scan(&event.SequenceNum, &event.EventType, &event.PayloadUUID, &payload, &event.Ephemeral); err != nil {
-			t.Fatalf("scan code session outbound event: %v", err)
-		}
-		event.Payload = json.RawMessage(append([]byte(nil), payload...))
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate code session outbound events: %v", err)
-	}
-	return events
-}
-
 func latestCodeSessionInboundEventForSource(t *testing.T, app *testApp, codeSessionID string, source string) (string, string, json.RawMessage) {
 	t.Helper()
 	var gotSource string
@@ -4041,7 +3975,7 @@ func codeSessionIngressToken(t *testing.T, app *testApp, codeSessionID string) s
 
 func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string, error) {
 	ctx := context.Background()
-	record, err := app.db.GetCodeSession(ctx, codeSessionID)
+	record, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		return "", err
 	}
@@ -4397,7 +4331,7 @@ func codeSessionEventsContainPayloadUUID(events []db.CodeSessionEvent, payloadUU
 
 func assertCodeSessionWorkerHeartbeat(t *testing.T, app *testApp, codeSessionID string, workerEpoch string) time.Time {
 	t.Helper()
-	return assertCodeSessionWorkerHeartbeatBody(t, app, codeSessionID, `{"session_id":`+quoteJSON(codeSessionID)+`,"worker_epoch":`+quoteJSON(workerEpoch)+`}`)
+	return assertCodeSessionWorkerHeartbeatBody(t, app, codeSessionID, `{"session_id":`+quoteJSON(codeSessionID)+`,"worker_epoch":`+workerEpoch+`}`)
 }
 
 func assertCodeSessionWorkerHeartbeatBody(t *testing.T, app *testApp, codeSessionID string, body string) time.Time {
@@ -4522,11 +4456,11 @@ func assertCodeSessionWorkerWriteStatus(t *testing.T, app *testApp, method strin
 }
 
 func workerStateBody(codeSessionID string, workerEpoch string) string {
-	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + quoteJSON(workerEpoch) + `}`
+	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + workerEpoch + `}`
 }
 
 func workerHeartbeatBody(codeSessionID string, workerEpoch string) string {
-	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + quoteJSON(workerEpoch) + `}`
+	return `{"session_id":` + quoteJSON(codeSessionID) + `,"worker_epoch":` + workerEpoch + `}`
 }
 
 func workerDeliveryBody(workerEpoch string) string {

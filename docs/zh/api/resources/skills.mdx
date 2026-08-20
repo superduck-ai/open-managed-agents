@@ -1,0 +1,22 @@
+---
+title: "技能"
+description: "管理自定义技能包和不可变版本。"
+---
+
+技能同时要求 `?beta=true` 和 `anthropic-beta: skills-2025-10-02`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/v1/skills` | 使用 multipart 创建技能 |
+| `GET` | `/v1/skills` | 列表 |
+| `GET` | `/v1/skills/{id}` | 读取 |
+| `DELETE` | `/v1/skills/{id}` | 删除自定义技能 |
+| `POST` | `/v1/skills/{id}/versions` | 创建版本 |
+| `GET` | `/v1/skills/{id}/versions` | 列出版本 |
+| `GET` | `/v1/skills/{id}/versions/{version}` | 读取版本元数据 |
+| `GET` | `/v1/skills/{id}/versions/{version}/content` | 下载 ZIP |
+| `DELETE` | `/v1/skills/{id}/versions/{version}` | 删除自定义版本 |
+
+创建和版本请求使用 multipart，包必须是受大小限制的 ZIP 并包含有效 `SKILL.md`。响应的 `source` 区分 `builtin` 和自定义来源；内置资源只读。
+
+列表使用 `limit` 和不透明的 `page` 游标；`latest` 可以解析最新版本，但智能体生产配置建议固定明确版本。

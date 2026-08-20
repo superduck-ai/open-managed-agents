@@ -1,0 +1,38 @@
+---
+title: "Compatibility and current boundaries"
+description: "Understand OMA's current protocol compatibility and deployment boundaries."
+---
+
+OMA is an open-source, self-hosted agent control plane. It provides stable resource shapes and request conventions for compatible SDKs while keeping deployment and runtime ownership with you.
+
+## Capability matrix
+
+| Area | OMA status | Notes |
+| --- | --- | --- |
+| Agents, versions, archive | Supported | `/v1/agents?beta=true` |
+| Environments | Supported | `cloud` and `self_hosted`; you provide the sandbox infrastructure |
+| Sessions, threads, events | Supported | History, SSE, client events, confirmations, and custom tool results |
+| Files, GitHub, memory | Supported | Mounted as session resources |
+| Tools, MCP, skills | Supported | URL MCP, built-in/custom tools, versioned skill packages |
+| Vaults | Supported | MCP OAuth, static bearer, and environment variable credentials |
+| Multi-agent | Supported | Coordinator with up to 20 resolved agent references |
+| Outcomes | Partial | Definitions and evaluation events are available; runtime behavior is evolving |
+| Scheduled deployments | Supported | Five-field POSIX cron, IANA timezone, and manual runs |
+| Webhooks | Supported | A defined subset of session, thread, outcome, and vault events |
+| Session cost budgets | Not implemented | Use upstream limits, runtime timeouts, and queue concurrency |
+
+## SDK compatibility rules
+
+- Public SDK resources live under `/v1`; `/api`, `/auth`, and `/web-api` are console contracts.
+- Both `Authorization: Bearer` and `X-Api-Key` are accepted.
+- Beta activation differs by resource; `?beta=true` is not a universal replacement for beta headers.
+- `POST /v1/messages` streams to `anthropic_upstream` without forwarding the caller's API key.
+- `anthropic_upstream.model_mappings` maps logical model IDs to upstream IDs.
+
+## Upgrade guidance
+
+Before upgrading OMA, retest agent versioning, session streams, file downloads, vault injection, deployment runs, and webhook verification in a test workspace. Beta contracts may change between project versions.
+
+<Card title="Requests and beta features" href="/docs/en/api/versioning-beta">
+  See the query parameters and headers required by each resource.
+</Card>

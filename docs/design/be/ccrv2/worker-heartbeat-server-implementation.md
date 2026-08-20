@@ -45,8 +45,8 @@ Content-Type: application/json
 字段规则：
 
 - `session_id` 必须存在，必须是非空字符串，并且必须等于 path 中的 `{code_session_id}`。
-- `worker_epoch` 必须存在，接受正整数 JSON number 或数字字符串。
-- `worker_epoch` 拒绝 `0`、负数、浮点、空字符串、非数字、`null` 和 `int64` 溢出值。
+- `worker_epoch` 必须存在，并且必须是正整数 JSON number。
+- `worker_epoch` 拒绝 `0`、负数、浮点、字符串、`null` 和 `int64` 溢出值。
 - 空 body、malformed JSON、数组 body 都返回 `400 invalid_request_error`。
 
 ### 成功响应

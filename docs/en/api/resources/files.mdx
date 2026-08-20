@@ -1,0 +1,23 @@
+---
+title: "Files"
+description: "Upload, list, retrieve, download, and delete workspace files."
+---
+
+Every Files request requires `anthropic-beta: files-api-2025-04-14`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/v1/files` | Multipart upload in the `file` field |
+| `GET` | `/v1/files` | List |
+| `GET` | `/v1/files/{file_id}` | Retrieve metadata |
+| `GET` | `/v1/files/{file_id}/content` | Stream content |
+| `DELETE` | `/v1/files/{file_id}` | Delete |
+
+```bash
+curl 'http://localhost:38080/v1/files' \
+  -H 'X-Api-Key: sk-ant-local-default' \
+  -H 'anthropic-beta: files-api-2025-04-14' \
+  -F 'file=@report.csv;type=text/csv'
+```
+
+Metadata includes ID, filename, MIME type, byte size, creation time, downloadability, and scope. Filenames are limited to 255 characters and cannot contain control or reserved path characters. Deployment storage limits control per-file and workspace capacity.

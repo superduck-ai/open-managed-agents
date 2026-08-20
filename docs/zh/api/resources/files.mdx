@@ -1,0 +1,25 @@
+---
+title: "文件"
+description: "上传、列出、读取、下载和删除工作区文件。"
+---
+
+所有文件请求必须发送 `anthropic-beta: files-api-2025-04-14`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/v1/files` | 使用 multipart 上传，字段名为 `file` |
+| `GET` | `/v1/files` | 列表 |
+| `GET` | `/v1/files/{file_id}` | 读取元数据 |
+| `GET` | `/v1/files/{file_id}/content` | 流式下载 |
+| `DELETE` | `/v1/files/{file_id}` | 删除 |
+
+```bash
+curl 'http://localhost:38080/v1/files' \
+  -H 'X-Api-Key: sk-ant-local-default' \
+  -H 'anthropic-beta: files-api-2025-04-14' \
+  -F 'file=@report.csv;type=text/csv'
+```
+
+元数据包含 `id`、`filename`、`mime_type`、`size_bytes`、`created_at`、`downloadable` 和 `scope`。列表使用 `limit` 和兼容文件 API 的游标字段。
+
+文件名最长 255 字符，不能包含控制字符或保留路径字符。实际容量由 `storage.max_file_bytes` 和 `workspace_limit_bytes` 限制。

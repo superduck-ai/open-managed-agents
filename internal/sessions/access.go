@@ -24,9 +24,12 @@ func (h *Handler) authorizeSession(r *http.Request, sessionID string, access ses
 	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
 		return h.fixtureDBSession(principal), nil
 	}
-	session, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	session, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return db.Session{}, mapSessionLoadError(err, sessionID)
+	}
+	if !found {
+		return db.Session{}, mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
 	if isSessionManagerCredential(principal) {
 		return session, nil

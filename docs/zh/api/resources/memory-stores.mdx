@@ -1,0 +1,29 @@
+---
+title: "记忆存储"
+description: "管理记忆存储、记忆内容、版本历史和历史内容脱敏。"
+---
+
+所有记忆存储请求要求 `?beta=true`。
+
+## 记忆存储
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/memory_stores` | 创建 / 列出 |
+| `GET` / `POST` / `DELETE` | `/v1/memory_stores/{id}` | 读取 / 更新 / 删除 |
+| `POST` | `/v1/memory_stores/{id}/archive` | 归档 |
+
+记忆存储字段包含 `name`、`description` 和字符串 `metadata`。
+
+## 记忆
+
+| 方法 | 子路径 | 用途 |
+| --- | --- | --- |
+| `POST` / `GET` | `/memories` | 创建 / 按路径列出 |
+| `GET` / `POST` / `DELETE` | `/memories/{memory_id}` | 读取 / 更新 / 删除 |
+
+记忆内容最多 102400 字节，路径最多 1024 字节。更新可以提交 `{type: "content_sha256", content_sha256: "..."}` 前置条件；删除使用 `expected_content_sha256` 查询参数。
+
+## 版本
+
+`GET /memory_versions` 列出版本，`GET /memory_versions/{version_id}` 读取版本，`POST .../{version_id}/redact` 对历史内容进行脱敏并保留审计元数据。

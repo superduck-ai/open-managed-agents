@@ -113,10 +113,10 @@ DB 行为：
 
 | 字段 | 类型 | 必填 | 当前实现 |
 |---|---|---:|---|
-| `worker_epoch` | JSON number 或 string integer | 是 | 必须是正 int64；`0`、负数、小数、非数字字符串、`null` 都是 400 |
-| `worker_status` | string | 否 | trim 后必须是 `idle`、`running`、`requires_action` |
-| `requires_action_details` | object 或 `null` | 否 | object 会先作为候选 details；最终 status 不是 `requires_action` 时会被清空 |
-| `external_metadata` | object | 否 | 按一层 merge patch 应用；value 为 JSON `null` 时删除该 key |
+| `worker_epoch` | JSON number | 是 | 必须是正 int64；`0`、负数、小数、字符串、`null` 都是 400 |
+| `worker_status` | string 或 `null` | 否 | 非空时必须精确为 `idle`、`running`、`requires_action`；缺省、空字符串或 `null` 不更新状态 |
+| `requires_action_details` | object 或 `null` | 否 | 按客户端 schema 解析 `tool_name`、`action_description`、`tool_use_id`、`request_id`、`input`；未知字段忽略；最终 status 不是 `requires_action` 时会被清空 |
+| `external_metadata` | object 或 `null` | 否 | object 按一层 merge patch 应用；顶层 `null` 不更新 metadata；object 内的 value 为 JSON `null` 时删除该 key |
 
 未知字段当前会被忽略。
 
@@ -132,7 +132,7 @@ DB 行为：
 
 ### Patch 语义
 
-`worker_status` 未提供时保留当前 `worker_status`。
+`worker_status` 未提供、为空字符串或为 `null` 时保留当前 `worker_status`。`requires_action_details` 和 `external_metadata` 未提供或为顶层 `null` 时也按零值处理，不单独更新对应字段。worker status 最终不是 `requires_action` 时，DB 不变量仍会清空已有 details。
 
 `requires_action_details` 的最终不变量：
 
@@ -187,7 +187,11 @@ final worker_status != requires_action  => 一律保存为 null
 | `idle` | `idle` |
 | `requires_action` | `idle` |
 
-同步发生在 worker state DB 更新提交之后。同步时忽略 `ErrNotFound`；其它 DB 错误会让请求返回 `500 api_error`，此时 worker state 已经持久化，但 handler 不返回成功响应，避免调用方误以为 public status 也同步完成。`requires_action` 不是 public session status enum；阻塞语义由 worker state 和 metadata 表达。
+同步发生在 worker state DB 更新提交之后。`running`、`idle` 和 `requires_action` 都通过同一条 public event 管道同步：先持久化 `session.status_running` 或 `session.status_idle`，再由 session event projection 更新 public session 与 primary thread，随后广播 SSE，并且只为首次创建的事件投递 webhook。同一 public 状态下重复上报不会生成重复事件；状态发生转换后再次上报会生成新的事件。
+
+`requires_action` 不是 public session status enum，因此 worker 状态只映射为不带 `stop_reason` 的普通 `session.status_idle`。工具阻塞语义仍由 worker state、metadata 以及工具权限路径产生的 `session.status_idle.stop_reason` 表达。
+
+如果事件已经持久化但状态 projection 失败，PUT 返回 `500 api_error`。worker 使用相同状态重试时会命中同一个稳定事件 ID；服务端会重新执行已存在事件的 projection，但不会重复广播 SSE 或投递 webhook。Session 状态最后写入，作为 primary thread projection 已完成的标记，避免部分成功让后续重试被提前跳过。
 
 如果请求没有显式 `worker_status`，不会触发 public session/thread 状态同步。details-only update 会保留当前 public status。
 
@@ -316,7 +320,8 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 - `requires_action` 保存 details 和 `external_metadata.pending_action`。
 - `running` / `idle` 清空 `requires_action_details`。
 - 当前 status 为 `running` 时，details-only PUT 不保存 details，且 public session/thread 保持 `running`。
-- `worker_status=running` 同步 public session/thread 为 `running`。
+- `worker_status=running` 持久化一个 `session.status_running`，并通过该事件同步 public session/thread 为 `running`。
+- 同一 running 状态的重复 PUT 不重复生成事件；经过 idle 后的新一轮 running 会生成新事件。
 - `worker_status=idle` 或 `requires_action` 同步 public session/thread 为 `idle`。
 - GET `/worker` 用最小 response 读回 PUT 后的 non-empty `external_metadata`。
 - GET `/worker` metadata 为空时返回 `{ "worker": {} }`，且不刷新 connected/activity。

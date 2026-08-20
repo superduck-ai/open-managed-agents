@@ -865,6 +865,15 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
 export function mockManagedResourceApi() {
   const now = new Date().toISOString();
   const requests: RecordedRequest[] = [];
+  const sessionResources = [
+    {
+      id: 'sesrsc_orders123456',
+      type: 'file',
+      created_at: new Date(Date.now() - 80_000).toISOString(),
+      file_id: 'file_orders123456',
+      mount_path: '/uploads/orders.zip',
+    },
+  ];
   const resources = {
     agents: [
       agentResponse({
@@ -884,16 +893,10 @@ export function mockManagedResourceApi() {
         type: 'session',
         updated_at: now,
         vault_ids: ['vlt_one123456'],
+        resources: sessionResources,
       },
     ],
-    sessionResources: [
-      {
-        id: 'file_orders123456',
-        type: 'file',
-        created_at: new Date(Date.now() - 80_000).toISOString(),
-        filename: 'orders.zip',
-      },
-    ],
+    sessionResources,
     sessionThreads: [
       {
         id: 'sthr_reporter123456',
@@ -1364,6 +1367,20 @@ export function mockManagedResourceApi() {
     if (url.startsWith('/v1/agents?') && method === 'GET') {
       return jsonResponse({ data: resources.agents, next_page: null });
     }
+    const retrieveAgentMatch = url.match(/^\/v1\/agents\/([^/?]+)\?/);
+    if (retrieveAgentMatch && method === 'GET') {
+      const agentId = decodeURIComponent(retrieveAgentMatch[1]);
+      const requestedVersion = Number(new URL(url, 'https://oma.duck.ai').searchParams.get('version'));
+      const agent = resources.agents.find((item) => item.id === agentId);
+      if (!agent) {
+        return jsonResponse({ error: { message: 'not found' } }, 404);
+      }
+      return jsonResponse({
+        ...agent,
+        name: agentId === 'agent_option123456' ? 'Ecommerce Basket Analysis Agent' : agent.name,
+        version: Number.isFinite(requestedVersion) && requestedVersion > 0 ? requestedVersion : agent.version,
+      });
+    }
     if (url.startsWith('/v1/sessions?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;
       const agentId = params.get('agent_id');
@@ -1394,6 +1411,21 @@ export function mockManagedResourceApi() {
       const session = resources.sessions.find((item) => item.id === sessionId);
       return session ? jsonResponse(session) : jsonResponse({ error: { message: 'not found' } }, 404);
     }
+    const fileMetadataMatch = url.match(/^\/v1\/files\/([^/?]+)\?beta=true$/);
+    if (fileMetadataMatch && method === 'GET') {
+      const fileId = decodeURIComponent(fileMetadataMatch[1]);
+      return jsonResponse({
+        id: fileId,
+        type: 'file',
+        filename: 'source-orders.zip',
+        size_bytes: 2_048,
+        mime_type: 'application/zip',
+        created_at: new Date(Date.now() - 100_000).toISOString(),
+        downloadable: true,
+        scope: null,
+        metadata: {},
+      });
+    }
     const sessionResourcesMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/resources\?/);
     if (sessionResourcesMatch && method === 'GET') {
       return jsonResponse({ data: resources.sessionResources, next_page: null });
@@ -1415,6 +1447,16 @@ export function mockManagedResourceApi() {
     const sessionEventsMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/events\?/);
     if (sessionEventsMatch && method === 'GET') {
       return jsonResponse({ data: persistedSessionEvents(resources.sessionEvents), next_page: null });
+    }
+    if (sessionEventsMatch && method === 'POST') {
+      const incomingEvents = Array.isArray(body?.events) ? (body.events as Record<string, unknown>[]) : [];
+      const createdEvents = incomingEvents.map((event, index) => ({
+        ...event,
+        id: `evt_user_action_${resources.sessionEvents.length + index + 1}`,
+        created_at: new Date().toISOString(),
+      }));
+      (resources.sessionEvents as Record<string, unknown>[]).push(...createdEvents);
+      return jsonResponse({ data: createdEvents });
     }
     if (url.startsWith('/v1/deployments?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;

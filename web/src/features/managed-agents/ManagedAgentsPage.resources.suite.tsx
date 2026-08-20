@@ -217,6 +217,7 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('sessions');
 
     const page = await screen.findByTestId('session-detail-page');
+    expect(page.className).not.toContain('max-w-');
     expect(page.firstElementChild?.getAttribute('data-slot')).toBe('breadcrumb');
     const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
     expect(breadcrumb.dataset.slot).toBe('breadcrumb');
@@ -231,16 +232,36 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('tab', { name: 'Transcript' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'All events' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy all' })).toBeTruthy();
+    const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
+    expect(workspaceTabs.parentElement?.className).not.toContain('overflow-x-auto');
+    expect(within(workspaceTabs).getByRole('tab', { name: 'Events' })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: /Resources/ })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: 'Agent' })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: 'Environment' })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: 'Credentials' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop session' })).toBeTruthy();
+    const messageComposer = screen.getByTestId('session-message-composer');
+    expect(messageComposer.className).not.toContain('border-t');
+    expect(messageComposer.querySelector('[data-slot="input-group"]')).toBeTruthy();
+    expect(messageComposer.textContent).not.toContain('Enter to send');
     expect(screen.getByTestId('events-tab')).toBeTruthy();
+    expect(screen.getByTestId('events-tab').dataset.slot).toBe('card');
+    expect(screen.getByTestId('events-tab').hasAttribute('data-session-workspace-card')).toBe(true);
+    expect(screen.getByTestId('events-tab').className).toContain('h-full');
+    expect(screen.getByTestId('events-tab').className).toContain('border-border');
+    expect(screen.getByTestId('events-tab').className).toContain('ring-0');
     expect(screen.getByTestId('events-tab').className).not.toContain('bg-secondary');
-    expect(Array.from(page.children).some((child) => child.getAttribute('data-testid') === 'events-tab')).toBe(true);
+    expect(screen.getByTestId('events-tab').closest('[data-slot="tabs-content"]')).toBeTruthy();
     expect(screen.getByTestId('session-trace-shell').className).not.toContain('bg-card');
+    expect(screen.getByTestId('session-trace-shell').className).toContain('flex-1');
+    expect(screen.getByTestId('session-trace-shell').className).not.toContain('dvh');
     expect(screen.getByTestId('session-trace-list-pane').className).toContain('overflow-x-hidden');
-    expect(screen.getByTestId('session-trace-list-pane').className).toContain('px-0');
+    expect(screen.getByTestId('session-trace-list-pane').className).toContain('px-4');
     expect(screen.getByTestId('events-minimap')).toBeTruthy();
     const laneTabStrip = screen.getByTestId('lane-tab-strip');
     expect(laneTabStrip).toBeTruthy();
-    expect(laneTabStrip.className).toContain('px-0');
+    expect(laneTabStrip.className).toContain('px-4');
     const laneTabList = within(laneTabStrip).getByRole('tablist', { name: 'Session threads' });
     expect(laneTabList.dataset.slot).toBe('tabs-list');
     expect(screen.getByRole('tab', { name: 'reporter' })).toBeTruthy();
@@ -386,7 +407,10 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/sessions/sesn_one123456?beta=true')).toBe(true),
     );
-    expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/resources?'))).toBe(true);
+    expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+    expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/resources?'))).toBe(
+      false,
+    );
     expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/threads?'))).toBe(true);
     expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?'))).toBe(true);
     expect(
@@ -552,6 +576,229 @@ export function registerManagedAgentsResourceTests() {
     expect(deleteDialog.textContent).toContain('Session one will be permanently removed from this workspace.');
     fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete session/i })).toBeNull());
+  });
+
+  test('sends messages and exposes the session resources, agent, environment, and vaults', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    renderManagedAgentsPage('sessions');
+
+    const composer = await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.change(composer, { target: { value: 'Summarize the mounted orders file.' } });
+    fireEvent.keyDown(composer, { key: 'Enter', shiftKey: false });
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) =>
+            request.url === '/v1/sessions/sesn_one123456/events?beta=true' &&
+            request.method === 'POST' &&
+            request.body?.events?.[0]?.type === 'user.message',
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop session' }));
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) =>
+            request.url === '/v1/sessions/sesn_one123456/events?beta=true' &&
+            request.method === 'POST' &&
+            request.body?.events?.[0]?.type === 'user.interrupt',
+        ),
+      ).toBe(true),
+    );
+
+    const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
+    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: /Resources/ }));
+    expect((await screen.findByText('Mounted resources')).closest('[data-session-workspace-card]')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Type' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'File ID' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Mount path' })).toBeTruthy();
+    expect(await screen.findByText('source-orders.zip')).toBeTruthy();
+    expect(screen.getByText('file_orders123456')).toBeTruthy();
+    expect(screen.getByText('/uploads/orders.zip')).toBeTruthy();
+    expect(
+      api.requests.some(
+        (request) => request.url === '/v1/files/file_orders123456?beta=true' && request.method === 'GET',
+      ),
+    ).toBe(true);
+    expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+    expect(
+      api.requests.some(
+        (request) => request.url.startsWith('/v1/sessions/sesn_one123456/resources?') && request.method === 'GET',
+      ),
+    ).toBe(false);
+
+    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: 'Agent' }));
+    const agentHeadings = await screen.findAllByText('Ecommerce Basket Analysis Agent');
+    expect(agentHeadings.length).toBeGreaterThan(0);
+    expect(agentHeadings.some((heading) => heading.closest('[data-session-workspace-card]'))).toBe(true);
+    expect(screen.getByText('v3')).toBeTruthy();
+    expect(screen.getByText('MCPs and tools')).toBeTruthy();
+
+    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: 'Environment' }));
+    const environmentHeadings = await screen.findAllByText('Option environment');
+    expect(environmentHeadings.length).toBeGreaterThan(0);
+    expect(environmentHeadings.some((heading) => heading.closest('[data-session-workspace-card]'))).toBe(true);
+    expect(screen.getByText('Limited')).toBeTruthy();
+
+    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: 'Credentials' }));
+    expect((await screen.findByText('Session credentials')).closest('[data-session-workspace-card]')).toBeTruthy();
+    expect(screen.getByText('Vault one')).toBeTruthy();
+    expect(screen.getByText('Vault credential one')).toBeTruthy();
+    expect(screen.getByText('Static bearer token')).toBeTruthy();
+    expect(screen.getByText(/Secret values are never shown here/)).toBeTruthy();
+  });
+
+  test('refreshes session resources from Get Session only when the Resources tab is clicked', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'idle';
+    api.resources.sessionThreads = [];
+    api.resources.sessionEvents = [
+      {
+        id: 'evt_message_before_send',
+        type: 'user.message',
+        created_at: new Date(Date.now() - 2_000).toISOString(),
+        content: [{ type: 'text', text: 'Existing message.' }],
+      },
+      {
+        id: 'evt_idle_before_send',
+        type: 'session.status_idle',
+        created_at: new Date(Date.now() - 1_000).toISOString(),
+      },
+    ];
+    const staleEvents = api.resources.sessionEvents.map((event) => ({
+      ...event,
+      processed_at: event.created_at,
+    }));
+    const fetchSessionEvents = globalThis.fetch;
+    let staleReadAfterPost = false;
+    let messagePosted = false;
+    let outputAdded = false;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(input, init);
+      if (url === '/v1/sessions/sesn_one123456/events?beta=true' && method === 'POST') {
+        const response = await fetchSessionEvents(input, init);
+        staleReadAfterPost = true;
+        messagePosted = true;
+        return response;
+      }
+      if (messagePosted && url.startsWith('/v1/sessions/sesn_one123456/events/stream?') && method === 'GET') {
+        const now = new Date().toISOString();
+        if (!outputAdded) {
+          api.resources.sessions[0].resources.push({
+            id: 'sesrsc_report123456',
+            type: 'file',
+            created_at: now,
+            file_id: 'file_report123456',
+            mount_path: '/outputs/report.csv',
+          });
+          outputAdded = true;
+        }
+        const frames = [
+          { id: 'evt_running_after_send', type: 'session.status_running', created_at: now },
+          {
+            id: 'evt_agent_reply_after_send',
+            type: 'agent.message',
+            created_at: now,
+            processed_at: now,
+            content: [{ type: 'text', text: 'Agent reply arrived live.' }],
+          },
+          { id: 'evt_idle_after_send', type: 'session.status_idle', created_at: now },
+        ]
+          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+          .join('');
+        return new Response(frames, { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (staleReadAfterPost && url.startsWith('/v1/sessions/sesn_one123456/events?') && method === 'GET') {
+        staleReadAfterPost = false;
+        return new Response(
+          JSON.stringify({
+            data: staleEvents,
+            next_page: null,
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return fetchSessionEvents(input, init);
+    }) as typeof fetch;
+
+    try {
+      renderManagedAgentsPage('sessions');
+
+      expect(await screen.findByText('Existing message.')).toBeTruthy();
+      const sessionURL = '/v1/sessions/sesn_one123456?beta=true';
+      const initialSessionRequestCount = api.requests.filter((request) => request.url === sessionURL).length;
+      const composer = await screen.findByRole('textbox', { name: 'Message' });
+      fireEvent.change(composer, { target: { value: 'Render this message immediately.' } });
+      fireEvent.keyDown(composer, { key: 'Enter', shiftKey: false });
+
+      await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
+      expect(await screen.findByText('Render this message immediately.')).toBeTruthy();
+      expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
+      expect(api.requests.filter((request) => request.url === sessionURL)).toHaveLength(initialSessionRequestCount);
+      const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
+      fireEvent.click(within(workspaceTabs).getByRole('tab', { name: /Resources/ }));
+      expect(await screen.findByText('file_report123456')).toBeTruthy();
+      expect(await screen.findByText('/outputs/report.csv')).toBeTruthy();
+      expect(api.requests.filter((request) => request.url === sessionURL).length).toBeGreaterThan(
+        initialSessionRequestCount,
+      );
+      expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+    } finally {
+      globalThis.fetch = fetchSessionEvents;
+    }
+  });
+
+  test('preserves live session state and reports Get Session failures when refreshing resources', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessionEvents = api.resources.sessionEvents.filter((event) => event.type !== 'session.status_idle');
+    const baseFetch = globalThis.fetch;
+    let failResourceRefresh = false;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (
+        failResourceRefresh &&
+        requestUrl(input) === '/v1/sessions/sesn_one123456?beta=true' &&
+        requestMethod(input, init) === 'GET'
+      ) {
+        return new Response(JSON.stringify({ error: { message: 'resource refresh failed' } }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+
+    try {
+      renderManagedAgentsPage('sessions');
+
+      expect((await screen.findAllByText('Running')).length).toBeGreaterThan(0);
+      api.resources.sessions[0].status = 'idle';
+      api.resources.sessions[0].resources.push({
+        id: 'sesrsc_new_output123456',
+        type: 'file',
+        created_at: new Date().toISOString(),
+        file_id: 'file_new_output123456',
+        mount_path: '/outputs/new-output.txt',
+      });
+      const resourcesTab = screen.getByRole('tab', { name: /Resources/ });
+      fireEvent.click(resourcesTab);
+
+      expect(await screen.findByText('file_new_output123456')).toBeTruthy();
+      expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
+
+      failResourceRefresh = true;
+      fireEvent.click(resourcesTab);
+      expect(await screen.findByText('resource refresh failed')).toBeTruthy();
+    } finally {
+      globalThis.fetch = baseFetch;
+    }
   });
 
   test('renders transcript idle gaps with the original striped separator', async () => {
@@ -1119,6 +1366,13 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('link', { name: '会话' })).toBeTruthy();
     expect(screen.getAllByText('运行中').length).toBeGreaterThan(0);
     expect(screen.getByRole('tab', { name: '转录' })).toBeTruthy();
+    const workspaceTabs = screen.getByRole('tablist', { name: '会话工作区' });
+    expect(within(workspaceTabs).getByRole('tab', { name: '事件' })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: /资源/ })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: '智能体' })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: '环境' })).toBeTruthy();
+    expect(within(workspaceTabs).getByRole('tab', { name: '凭据' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '消息' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '全部事件' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '复制全部' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '刷新' })).toBeTruthy();

@@ -277,6 +277,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_USE_CCR_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
+		startupEnv["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] != "true" ||
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
 	}
@@ -336,11 +337,21 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	for _, want := range []string{
 		"environment-manager binary missing or not executable: /opt/env manager/bin/environment-manager",
 		"Claude binary missing or not executable: /opt/claude path/bin/claude",
-		"task-run --stdin --session 'cse_session with '\"'\"'quote'\"'\"'/and/slash'",
+		"task-run --session 'cse_session with '\"'\"'quote'\"'\"'/and/slash'",
 		"--session-mode resume-cached",
 		"--claude-agent-version 'current'",
 		"--claude-path '/opt/claude path/bin/claude'",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
+		"export GIT_CONFIG_COUNT=3",
+		"export GIT_CONFIG_KEY_0=credential.interactive",
+		"export GIT_CONFIG_VALUE_0=false",
+		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_1=git@github.com:",
+		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
+		"export GIT_EDITOR=true",
+		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
+		"export GIT_TERMINAL_PROMPT=0",
 		"Claude binary version mismatch: expected 2.1.120",
 		"> '/tmp/claude-code-sessions/cse_session_with_'\"'\"'quote'\"'\"'_and_slash/environment-manager.log' 2>&1",
 	} {
@@ -350,6 +361,9 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 	if strings.Contains(allCommands, "sk-ant-test-secret") {
 		t.Fatalf("command leaked anthropic api key:\n%s", allCommands)
+	}
+	if strings.Contains(allCommands, "task-run --stdin") {
+		t.Fatalf("command should use task-run's native clap stdin behavior:\n%s", allCommands)
 	}
 	if strings.Contains(allCommands, "nohup") ||
 		strings.Contains(allCommands, "environment-manager.v0.json") ||

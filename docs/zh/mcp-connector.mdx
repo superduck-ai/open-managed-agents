@@ -1,0 +1,395 @@
+---
+title: "MCP 连接器"
+sidebarTitle: "MCP 连接器"
+description: "将 MCP 服务器连接到您的智能体，以访问外部工具和数据源。"
+---
+
+Open Managed Agents 支持将 [Model Context Protocol (MCP)](https://modelcontextprotocol.io) 服务器连接到您的智能体。这使智能体能够通过标准化协议访问外部工具、数据源和服务。
+
+MCP 配置分为两个步骤：
+
+1. **智能体创建**通过名称和 URL 声明智能体要连接的 MCP 服务器。
+2. **会话创建**通过引用预先注册的密钥库（vault）为这些服务器提供身份验证（请参阅[使用密钥库进行身份验证](/docs/zh/vaults)）。
+
+这种分离使密钥不会出现在可重用的智能体定义中，同时允许每个会话使用自己的凭据进行身份验证。
+
+<Note>
+  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+</Note>
+
+## 在智能体上声明 MCP 服务器
+
+创建智能体时，在 `mcp_servers` 数组中指定 MCP 服务器。每个服务器需要一个 `type`、一个唯一的 `name` 和一个 `url`。此阶段不提供身份验证令牌。
+
+每个声明的服务器还需要在 `tools` 数组中有一个匹配的 `mcp_toolset` 条目。工具集的 `mcp_server_name` 必须与服务器的 `name` 匹配。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  agent_response=$(curl -sS --fail-with-body http://localhost:38080/v1/agents \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<'EOF'
+  {
+    "name": "GitHub Assistant",
+    "model": "claude-opus-5",
+    "mcp_servers": [
+      {
+        "type": "url",
+        "name": "github",
+        "url": "https://api.githubcopilot.com/mcp/"
+      }
+    ],
+    "tools": [
+      {"type": "agent_toolset_20260401"},
+      {"type": "mcp_toolset", "mcp_server_name": "github"}
+    ]
+  }
+  EOF
+  )
+  agent_id=$(jq -r '.id' <<<"$agent_response")
+  ```
+
+  ```bash CLI
+  AGENT_ID=$(ant beta:agents create \
+    --name "GitHub Assistant" \
+    --model '{id: claude-opus-5}' \
+    --mcp-server '{type: url, name: github, url: "https://api.githubcopilot.com/mcp/"}' \
+    --tool '{type: agent_toolset_20260401}' \
+    --tool '{type: mcp_toolset, mcp_server_name: github}' \
+    --transform id --raw-output)
+  ```
+
+  ```python Python
+  agent = client.beta.agents.create(
+      name="GitHub Assistant",
+      model="claude-opus-5",
+      mcp_servers=[
+          {
+              "type": "url",
+              "name": "github",
+              "url": "https://api.githubcopilot.com/mcp/",
+          },
+      ],
+      tools=[
+          {"type": "agent_toolset_20260401"},
+          {"type": "mcp_toolset", "mcp_server_name": "github"},
+      ],
+  )
+  ```
+
+  ```typescript TypeScript
+  const agent = await client.beta.agents.create({
+    name: "GitHub Assistant",
+    model: "claude-opus-5",
+    mcp_servers: [
+      {
+        type: "url",
+        name: "github",
+        url: "https://api.githubcopilot.com/mcp/",
+      },
+    ],
+    tools: [
+      { type: "agent_toolset_20260401" },
+      { type: "mcp_toolset", mcp_server_name: "github" },
+    ],
+  });
+  ```
+
+  ```csharp C#
+  var agent = await client.Beta.Agents.Create(new()
+  {
+      Name = "GitHub Assistant",
+      Model = BetaManagedAgentsModel.ClaudeOpus5,
+      McpServers =
+      [
+          new() { Type = "url", Name = "github", Url = "https://api.githubcopilot.com/mcp/" },
+      ],
+      Tools =
+      [
+          new BetaManagedAgentsAgentToolset20260401Params
+          {
+              Type = "agent_toolset_20260401",
+          },
+          new BetaManagedAgentsMcpToolsetParams { Type = "mcp_toolset", McpServerName = "github" },
+      ],
+  });
+  ```
+
+  ```go Go
+  agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
+      Name: "GitHub Assistant",
+      Model: anthropic.BetaManagedAgentsModelConfigParams{
+          ID: anthropic.BetaManagedAgentsModelClaudeOpus5,
+      },
+      MCPServers: []anthropic.BetaManagedAgentsURLMCPServerParams{{
+          Type: anthropic.BetaManagedAgentsURLMCPServerParamsTypeURL,
+          Name: "github",
+          URL:  "https://api.githubcopilot.com/mcp/",
+      }},
+      Tools: []anthropic.BetaAgentNewParamsToolUnion{
+          {
+              OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
+                  Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
+              },
+          },
+          {
+              OfMCPToolset: &anthropic.BetaManagedAgentsMCPToolsetParams{
+                  Type:          anthropic.BetaManagedAgentsMCPToolsetParamsTypeMCPToolset,
+                  MCPServerName: "github",
+              },
+          },
+      },
+  })
+  if err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var agent = client.beta().agents().create(
+      AgentCreateParams.builder()
+          .name("GitHub Assistant")
+          .model(BetaManagedAgentsModel.CLAUDE_OPUS_5)
+          .addMcpServer(
+              BetaManagedAgentsUrlMcpServerParams.builder()
+                  .type(BetaManagedAgentsUrlMcpServerParams.Type.URL)
+                  .name("github")
+                  .url("https://api.githubcopilot.com/mcp/")
+                  .build()
+          )
+          .addTool(
+              BetaManagedAgentsAgentToolset20260401Params.builder()
+                  .type(BetaManagedAgentsAgentToolset20260401Params.Type.AGENT_TOOLSET_20260401)
+                  .build()
+          )
+          .addTool(
+              BetaManagedAgentsMcpToolsetParams.builder()
+                  .type(BetaManagedAgentsMcpToolsetParams.Type.MCP_TOOLSET)
+                  .mcpServerName("github")
+                  .build()
+          )
+          .build()
+  );
+  ```
+
+  ```php PHP
+  $agent = $client->beta->agents->create(
+      name: 'GitHub Assistant',
+      model: 'claude-opus-5',
+      mcpServers: [
+          BetaManagedAgentsURLMCPServerParams::with(
+              type: 'url',
+              name: 'github',
+              url: 'https://api.githubcopilot.com/mcp/',
+          ),
+      ],
+      tools: [
+          BetaManagedAgentsAgentToolset20260401Params::with(
+              type: 'agent_toolset_20260401',
+          ),
+          BetaManagedAgentsMCPToolsetParams::with(
+              type: 'mcp_toolset',
+              mcpServerName: 'github',
+          ),
+      ],
+  );
+  ```
+
+  ```ruby Ruby
+  agent = client.beta.agents.create(
+    name: "GitHub Assistant",
+    model: "claude-opus-5",
+    mcp_servers: [
+      {
+        type: "url",
+        name: "github",
+        url: "https://api.githubcopilot.com/mcp/"
+      }
+    ],
+    tools: [
+      {type: "agent_toolset_20260401"},
+      {type: "mcp_toolset", mcp_server_name: "github"}
+    ]
+  )
+  ```
+</CodeGroup>
+
+<Tip>
+  MCP 工具集的权限策略默认为 `always_ask`，这要求在每次工具调用之前获得用户批准。请参阅[权限策略](/docs/zh/permission-policies)来配置此行为。
+</Tip>
+
+### `mcp_servers` 字段参考
+
+`mcp_servers` 数组中的每个条目定义一个连接。
+
+| 字段     | 描述                                                                                                                                                                |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type` | 必需。必须为 `"url"`。                                                                                                                                                   |
+| `name` | 必需。此服务器在智能体内的唯一名称（1–255 个字符）。用作 `tools` 数组中的 `mcp_server_name`，并在[会话事件流](/docs/zh/events-and-streaming)的 MCP 工具事件中显示。 |
+| `url`  | 必需。远程 MCP 服务器的端点（最多 2,048 个字符）。有关传输要求，请参阅[支持的 MCP 服务器类型](/docs/zh/reference#supported-mcp-server-types)。             |
+
+约束：
+
+* 一个智能体最多可以声明 20 个 MCP 服务器。服务器名称在数组内必须唯一。
+* 每个 `mcp_servers` 条目都必须被 `tools` 数组中的某个 `mcp_toolset` 引用，并且每个 `mcp_toolset` 都必须引用一个已声明的服务器。API 会拒绝包含未被引用的服务器或悬空工具集的智能体定义。
+
+## 配置可用的 MCP 工具
+
+`mcp_toolset` 条目支持与内置智能体工具集相同的 `default_config` 和 `configs` 结构，应用于 MCP 服务器公开的工具。每个 `configs` 条目中的 `name` 是服务器报告的原始工具名称。
+
+默认情况下，MCP 服务器公开的所有工具都处于启用状态。要仅启用特定工具，请将 `default_config.enabled` 设置为 `false`，并显式启用您需要的工具：
+
+```json
+{
+  "type": "mcp_toolset",
+  "mcp_server_name": "github",
+  "default_config": { "enabled": false },
+  "configs": [
+    { "name": "get_issue", "enabled": true },
+    { "name": "list_issues", "enabled": true },
+    { "name": "add_issue_comment", "enabled": true }
+  ]
+}
+```
+
+当服务器公开许多工具但智能体只需要其中几个时，或者当您希望服务器运营者添加的工具在您审查之前保持关闭状态时，这种模式非常有用。
+
+要禁用特定工具同时保持其余工具启用，请省略 `default_config` 并在各个条目上设置 `enabled: false`：
+
+```json
+{
+  "type": "mcp_toolset",
+  "mcp_server_name": "github",
+  "configs": [{ "name": "delete_repository", "enabled": false }]
+}
+```
+
+有关通用的 `default_config` / `configs` 模式，请参阅[配置工具集](/docs/zh/tools#configuring-the-toolset)；有关在 MCP 工具上设置 `permission_policy` 以及处理确认请求，请参阅 [MCP 工具集权限](/docs/zh/permission-policies#mcp-toolset-permissions)。
+
+### MCP 工具输出处理
+
+当 MCP 工具输出超过 100,000 个字符（约 25,000 个令牌）时，它会自动写入沙盒中的一个文件。模型会收到带有文件路径的截断预览，并可以从该文件读取完整内容。
+
+## 在会话创建时提供身份验证
+
+启动会话时，传递 `vault_ids` 为您的 MCP 服务器提供凭据。密钥库是凭据的集合，您只需注册一次，然后通过 ID 引用。有关如何创建密钥库和管理凭据，请参阅[使用密钥库进行身份验证](/docs/zh/vaults)。
+
+<CodeGroup>
+  ```bash cURL
+  session_response=$(curl -sS --fail-with-body http://localhost:38080/v1/sessions \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<EOF
+  {
+    "agent": "$agent_id",
+    "environment_id": "$environment_id",
+    "vault_ids": ["$vault_id"]
+  }
+  EOF
+  )
+  session_id=$(jq -r '.id' <<<"$session_response")
+  ```
+
+  ```bash CLI
+  SESSION_ID=$(ant beta:sessions create \
+    --agent "$AGENT_ID" \
+    --environment-id "$ENVIRONMENT_ID" \
+    --vault-id "$VAULT_ID" \
+    --transform id --raw-output)
+  ```
+
+  ```python Python
+  session = client.beta.sessions.create(
+      agent=agent.id,
+      environment_id=environment.id,
+      vault_ids=[vault.id],
+  )
+  ```
+
+  ```typescript TypeScript
+  const session = await client.beta.sessions.create({
+    agent: agent.id,
+    environment_id: environment.id,
+    vault_ids: [vault.id],
+  });
+  ```
+
+  ```csharp C#
+  var session = await client.Beta.Sessions.Create(new()
+  {
+      Agent = agent.ID,
+      EnvironmentID = environment.ID,
+      VaultIds = [vault.ID],
+  });
+  ```
+
+  ```go Go
+  session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+      Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+      EnvironmentID: environment.ID,
+      VaultIDs:      []string{vault.ID},
+  })
+  if err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var session = client.beta().sessions().create(
+      SessionCreateParams.builder()
+          .agent(agent.id())
+          .environmentId(environment.id())
+          .addVaultId(vault.id())
+          .build()
+  );
+  ```
+
+  ```php PHP
+  $session = $client->beta->sessions->create(
+      agent: $agent->id,
+      environmentID: $environment->id,
+      vaultIDs: [$vault->id],
+  );
+  ```
+
+  ```ruby Ruby
+  session = client.beta.sessions.create(
+    agent: agent.id,
+    environment_id: environment.id,
+    vault_ids: [vault.id]
+  )
+  ```
+</CodeGroup>
+
+凭据通过 URL 进行匹配，因此密钥库必须包含一个凭据，其 `mcp_server_url` 指向与 `mcp_servers` 中声明的 `url` 相同的服务器。两个 URL 在匹配前都会被规范化（协议和主机名转为小写，去除默认端口和尾部斜杠），因此主机名大小写、默认端口或尾部斜杠的差异不会妨碍匹配；而不同的路径、子域名或非默认端口则会。如果没有匹配项，则会尝试以未经身份验证的方式连接。有关 `static_bearer` 和 `mcp_oauth` 凭据类型，请参阅[添加凭据](/docs/zh/vaults#add-a-credential)。
+
+### 处理连接和身份验证失败
+
+会话创建不会验证 MCP 连接性或凭据。如果 MCP 服务器无法访问或拒绝所提供的凭据，会话仍会启动，并且仍可进行交互。系统会发出一个 [`session.error`](/docs/zh/events-and-streaming) 事件，其中包含受影响服务器的 `mcp_server_name` 和一个 `retry_status`：
+
+| 错误类型                              | 含义                                                                 |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `mcp_connection_failed_error`     | 无法访问 MCP 服务器（网络错误、超时或非身份验证类的 HTTP 失败）。                             |
+| `mcp_authentication_failed_error` | 与 MCP 服务器的身份验证失败：服务器拒绝了来自所附加密钥库的凭据、在未配置匹配凭据时要求身份验证，或 OAuth 令牌刷新失败。 |
+
+您可以决定是在出现此错误时阻止进一步交互、触发凭据轮换，还是让会话在没有受影响服务器工具的情况下继续。连接会在下一次从 `session.status_idle` 到 `session.status_running` 的转换时重试。
+
+## 后续步骤
+
+<CardGroup cols={2}>
+  <Card title="权限策略" href="/docs/zh/permission-policies">
+    控制智能体和 MCP 工具何时运行。
+  </Card>
+
+  <Card title="会话事件流" href="/docs/zh/events-and-streaming">
+    发送事件、流式传输响应，以及在执行过程中中断或重定向您的会话。
+  </Card>
+
+  <Card title="支持的 MCP 服务器类型" href="/docs/zh/reference#supported-mcp-server-types">
+    远程 MCP 服务器的传输要求。
+  </Card>
+</CardGroup>

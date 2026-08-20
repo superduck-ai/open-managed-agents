@@ -1667,6 +1667,9 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
+        ...(values.budgetAmount.trim()
+          ? { budget: { type: 'limit', max_list_cost: { amount: values.budgetAmount.trim(), currency: 'USD' } } }
+          : {}),
         resources: values.fileResources.map((resource) => {
           const mountPath = sessionFileAPIMountPath(resource.mountPath);
           return {
@@ -1714,6 +1717,15 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
   }
 }
 
+export function sessionBudgetUpdate(values: ManagedEntityFormValues) {
+  const amount = values.budgetAmount.trim();
+  if (amount) {
+    return { budget: { type: 'limit', max_list_cost: { amount, currency: 'USD' } } };
+  }
+  // 清空原本有预算的 → 移除（null）；原本无预算 → 不发送（官方禁止给无预算 session 添加）
+  return values.budgetInitiallySet ? { budget: null } : {};
+}
+
 export function updateManagedEntityBody(section: ManagedEntitySection, values: ManagedEntityFormValues) {
   const name = values.name.trim();
   const description = values.description.trim();
@@ -1724,6 +1736,7 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
         vault_ids: values.vaultIds,
+        ...sessionBudgetUpdate(values),
       };
     case 'deployments':
       return {

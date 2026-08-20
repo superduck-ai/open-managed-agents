@@ -1578,5 +1578,7 @@
   "workspace.geoHelp": "Control where your workspace data, including files, conversation history, and workspace artifacts, is stored. This can't be changed after creation.",
   "workspace.loading": "Loading workspaces...",
   "workspace.onlyCostLogs": "Only available on Cost and Logs",
-  "workspace.switcher": "Switch workspace"
+  "workspace.switcher": "Switch workspace",
+  "managedAgents.sessions.budget": "Budget (USD cents)",
+  "managedAgents.sessions.budgetPlaceholder": "e.g. 125 for $1.25"
 }

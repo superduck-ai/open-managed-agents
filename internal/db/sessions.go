@@ -34,6 +34,7 @@ type Session struct {
 	Usage                 json.RawMessage
 	Stats                 json.RawMessage
 	OutcomeEvaluations    json.RawMessage
+	Budget                json.RawMessage
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 	ArchivedAt            *time.Time
@@ -250,6 +251,7 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID
 		AgentSnapshot: agentJSONArg(next.AgentSnapshot),
 		Title:         next.Title,
 		Metadata:      agentJSONArg(next.Metadata),
+		Budget:        agentJSONArg(next.Budget),
 		UpdatedAt:     next.UpdatedAt,
 	})
 	return row.session(), mapNoRows(err)

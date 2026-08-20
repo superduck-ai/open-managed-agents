@@ -410,3 +410,15 @@ describe('vaultOAuthErrorMessage', () => {
     expect(vaultOAuthErrorMessage(' mystery_code ', msgFallback)).toBe('Could not complete OAuth. Try again.');
   });
 });
+
+describe('entityBudgetAmount', () => {
+  it('returns amount from entity budget', () => {
+    const entity = { budget: { max_list_cost: { amount: '125' } } };
+    expect(entityBudgetAmount(entity as never)).toBe('125');
+  });
+
+  it('returns empty when no budget', () => {
+    expect(entityBudgetAmount({} as never)).toBe('');
+    expect(entityBudgetAmount({ budget: null } as never)).toBe('');
+  });
+});

@@ -332,7 +332,16 @@ export function initialFormValues(
     vaultIds: entity ? entityVaultIds(entity) : [],
     memoryStoreIds: entity ? entityMemoryStoreIds(entity) : [],
     fileResources: [],
+    budgetAmount: entityBudgetAmount(entity),
+    budgetInitiallySet: entityBudgetAmount(entity) !== '',
   };
+}
+
+export function entityBudgetAmount(entity?: ManagedEntityApiResponse) {
+  if (!entity || !('budget' in entity) || !entity.budget || !entity.budget.max_list_cost) {
+    return '';
+  }
+  return entity.budget.max_list_cost.amount ?? '';
 }
 
 export function entityDisplayName(section: ManagedEntitySection, entity: ManagedEntityApiResponse) {

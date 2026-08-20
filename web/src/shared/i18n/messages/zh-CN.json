@@ -1578,5 +1578,7 @@
   "workspace.geoHelp": "控制工作区数据的存储位置，包括文件、对话历史和工作区产物。创建后无法更改。",
   "workspace.loading": "正在加载工作区...",
   "workspace.onlyCostLogs": "仅适用于 Cost 和 Logs",
-  "workspace.switcher": "切换工作区"
+  "workspace.switcher": "切换工作区",
+  "managedAgents.sessions.budget": "预算（美分）",
+  "managedAgents.sessions.budgetPlaceholder": "如 125 表示 $1.25"
 }

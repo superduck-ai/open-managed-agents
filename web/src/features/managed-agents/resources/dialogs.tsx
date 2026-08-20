@@ -1025,11 +1025,19 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <SessionFileResourcesField
-                    resources={values.fileResources}
-                    workspaceId={workspaceId}
-                    onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
-                  />
+                  <>
+                    <SessionFileResourcesField
+                      resources={values.fileResources}
+                      workspaceId={workspaceId}
+                      onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
+                    />
+                    <ManagedTextField
+                      label={msg('managedAgents.sessions.budget', 'Budget (USD cents)')}
+                      value={values.budgetAmount}
+                      placeholder={msg('managedAgents.sessions.budgetPlaceholder', 'e.g. 125 for $1.25')}
+                      onChange={(budgetAmount) => setValues((current) => ({ ...current, budgetAmount }))}
+                    />
+                  </>
                 ) : null}
               </>
             ) : null}

@@ -60,13 +60,13 @@ Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 - Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；DOW 接受 `0-7` 且 `7` 等同 Sunday，`L/W/#/?/@` 等扩展语法被拒绝，再由 `robfig/cron/v3` 解析；解析失败时返回参数错误。
 - `upcoming_runs_at` 返回最多五个名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
-- River Job 直接使用名义 occurrence，不增加私有 jitter 算法。
+- River Job 插入时把 Cron 名义 occurrence 写入 Job args；不增加私有 jitter 算法。
 
 每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule`，不保存应用自行推进的下一次游标或额外调度版本。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
 
 每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 schedule 快照跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
 
-River 的 leader election 保证只有 leader 根据 Cron 推进并投递 Periodic Job，应用不计算、持久化或插入“下一条 Job”。worker 使用 River Job 的 `scheduled_at` 作为名义 occurrence；暂停或停机期间不补跑历史 occurrence，恢复注册后直接等待 Cron 的下一次。River 开源 Periodic Jobs 的调度状态主要在 leader 内存中，官方不承诺强持久性，leader 切换的极短窗口可能跳过一次 occurrence；需要严格不漏的调度时应采用 River Pro durable periodic jobs，而不是在应用层恢复一套游标链。
+River 的 leader election 保证只有 leader 根据 Cron 推进并投递 Periodic Job，应用不计算、持久化或插入“下一条 Job”。插入 Periodic Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。暂停或停机期间不补跑历史 occurrence，恢复注册后直接等待 Cron 的下一次。River 开源 Periodic Jobs 的调度状态主要在 leader 内存中，官方不承诺强持久性，leader 切换的极短窗口可能跳过一次 occurrence；需要严格不漏的调度时应采用 River Pro durable periodic jobs，而不是在应用层恢复一套游标链。
 
 ```mermaid
 sequenceDiagram
@@ -79,7 +79,7 @@ sequenceDiagram
     API->>AppDB: 提交 schedule 或状态
     AppDB-->>Registry: 各实例启动加载并每 10 秒同步配置
     Leader->>Registry: 按 Cron 计算下一 occurrence
-    Leader->>Worker: 投递带名义 scheduled_at 的 Job
+    Leader->>Worker: 投递 args 中带名义 occurrence 的 Job
     Worker->>AppDB: 锁定 Deployment，校验 active 与 schedule 快照
     Worker->>AppDB: 同一事务写 Run、Session 与 Deployment 状态
 	Worker-->>Leader: 返回结果，由 River 完成或重试当前 Job

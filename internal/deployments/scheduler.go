@@ -13,6 +13,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -29,9 +30,41 @@ type scheduledDeploymentArgs struct {
 	WorkspaceUUID        string             `json:"workspace_uuid"`
 	DeploymentExternalID string             `json:"deployment_id"`
 	Schedule             deploymentSchedule `json:"schedule"`
+	ScheduledAt          time.Time          `json:"scheduled_at"`
 }
 
 func (scheduledDeploymentArgs) Kind() string { return "scheduled_deployment" }
+
+func (scheduledDeploymentArgs) Hooks() []rivertype.Hook {
+	return []rivertype.Hook{river.HookInsertBeginFunc(stampScheduledDeploymentOccurrence)}
+}
+
+var _ river.JobArgsWithHooks = scheduledDeploymentArgs{}
+
+func stampScheduledDeploymentOccurrence(_ context.Context, params *rivertype.JobInsertParams) error {
+	if params.ScheduledAt == nil {
+		return errors.New("scheduled_deployment job requires scheduled_at")
+	}
+	args, err := jsonx.Decode[scheduledDeploymentArgs](json.RawMessage(params.EncodedArgs))
+	if err != nil {
+		return err
+	}
+	args.ScheduledAt = params.ScheduledAt.UTC()
+	encoded, err := jsonx.Encode(args)
+	if err != nil {
+		return err
+	}
+	params.EncodedArgs = encoded
+	params.Args = args
+	return nil
+}
+
+func occurrenceTime(job *river.Job[scheduledDeploymentArgs]) (time.Time, error) {
+	if job.Args.ScheduledAt.IsZero() {
+		return time.Time{}, errors.New("scheduled_deployment occurrence is missing")
+	}
+	return job.Args.ScheduledAt.UTC(), nil
+}
 
 type DeploymentScheduler struct {
 	database   *db.DB
@@ -168,7 +201,10 @@ type scheduledDeploymentWorker struct {
 
 func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[scheduledDeploymentArgs]) error {
 	args := job.Args
-	scheduledAt := job.ScheduledAt.UTC()
+	scheduledAt, err := occurrenceTime(job)
+	if err != nil {
+		return river.JobCancel(err)
+	}
 	deployment, err := w.database.GetDeployment(ctx, args.WorkspaceUUID, args.DeploymentExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -200,14 +236,14 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		return err
 	}
 	if referenceFailure != nil {
-		return w.recordFailure(ctx, job, deployment, referenceFailure, now)
+		return w.recordFailure(ctx, deployment, referenceFailure, scheduledAt, now)
 	}
 	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err
 		}
-		return w.recordFailure(ctx, job, deployment, runError("session_resource_not_found_error", err.Error()), now)
+		return w.recordFailure(ctx, deployment, runError("session_resource_not_found_error", err.Error()), scheduledAt, now)
 	}
 	err = w.applyOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
 		Deployment: deployment, ScheduledAt: scheduledAt,
@@ -218,25 +254,24 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		Now: now,
 	})
 	if errors.Is(err, db.ErrWorkspaceArchived) {
-		return w.recordFailure(ctx, job, deployment, runError("workspace_archived_error", "Workspace is archived"), now)
+		return w.recordFailure(ctx, deployment, runError("workspace_archived_error", "Workspace is archived"), scheduledAt, now)
 	}
 	if errors.Is(err, db.ErrFileReferenceNotFound) {
-		return w.recordFailure(ctx, job, deployment, runErrorForReference("file", db.ErrNotFound, false), now)
+		return w.recordFailure(ctx, deployment, runErrorForReference("file", db.ErrNotFound, false), scheduledAt, now)
 	}
 	if errors.Is(err, db.ErrFilestorePathExists) {
-		return w.recordFailure(ctx, job, deployment, runError("session_creation_rejected_error", "Session resource paths conflict"), now)
+		return w.recordFailure(ctx, deployment, runError("session_creation_rejected_error", "Session resource paths conflict"), scheduledAt, now)
 	}
 	return err
 }
 
 func (w *scheduledDeploymentWorker) recordFailure(
 	ctx context.Context,
-	job *river.Job[scheduledDeploymentArgs],
 	deployment db.Deployment,
 	failure *deploymentRunError,
+	scheduledAt time.Time,
 	now time.Time,
 ) error {
-	scheduledAt := job.ScheduledAt.UTC()
 	runID, err := ids.New("drun_")
 	if err != nil {
 		return err

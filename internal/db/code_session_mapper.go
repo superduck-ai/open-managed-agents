@@ -57,6 +57,7 @@ type createCodeSessionParams struct {
 	Status                string
 	Metadata              []byte
 	OAuthAccessTokenHash  *string
+	InitialWorkerEpoch    int64
 	CreatedAt             time.Time
 }
 
@@ -91,6 +92,14 @@ type updateCodeSessionConnectionParams struct {
 	Connected     bool
 	RequiredEpoch *int64
 	Now           time.Time
+}
+
+type rotateCodeSessionCredentialsParams struct {
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	SessionExternalID     string
+	CodeSessionExternalID string
+	OAuthAccessTokenHash  string
 }
 
 type codeSessionCredentialContextRow struct {
@@ -137,6 +146,7 @@ type CodeSessionMapper interface {
 	FindNetworkPolicyContext(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionNetworkPolicyContextRow, error)
 	FindVaultIDs(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionVaultIDsRow, bool, error)
 	FindByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
+	FindActiveForEnvironmentWork(ctx context.Context, organizationUUID, workspaceUUID, environmentUUID, sessionUUID string) ([]codeSessionRow, error)
 	FindLatestBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (codeSessionRow, error)
 	LockCodeSessionByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
 	LockInitializingCodeSession(ctx context.Context, workspaceUUID, codeSessionUUID string) (codeSessionRow, bool, error)
@@ -153,6 +163,8 @@ type CodeSessionMapper interface {
 	TouchWorkerActivityForActiveLease(ctx context.Context, codeSessionExternalID string, epoch int64, now time.Time) (int64, error)
 	TouchWorkerActivity(ctx context.Context, codeSessionExternalID string, requiredEpoch *int64, now time.Time) (int64, error)
 	UpdateConnection(ctx context.Context, params updateCodeSessionConnectionParams) (int64, error)
+	CountActiveIngressWorkerEpoch(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string, workerEpoch int64) (int64, error)
+	RotateCredentials(ctx context.Context, params rotateCodeSessionCredentialsParams) (int64, error)
 	TerminateByExternalID(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (int64, error)
 }
 

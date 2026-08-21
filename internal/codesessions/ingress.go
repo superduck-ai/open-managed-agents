@@ -252,19 +252,31 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 
 func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !ok {
 		return
 	}
 	if err := validateCodeSessionWorkerRegisterBody(w, r, codeSessionID); err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	epoch, _, err := h.db.RegisterCodeSessionWorker(r.Context(), codeSessionID, db.CodeSessionWorkerBinding{
+	binding := db.CodeSessionWorkerBinding{
 		TokenSessionID: codeSessionID,
 		AuthMode:       "session_ingress_token",
 		Subject:        codeSessionID,
 		Issuer:         "claude-api-server",
-	}, codeSessionWorkerLeaseTTL)
+	}
+	var epoch int64
+	var err error
+	if claims.WorkerEpoch > 0 {
+		epoch, _, err = h.db.RegisterCodeSessionWorkerAtEpoch(
+			r.Context(), codeSessionID, claims.WorkerEpoch, binding, codeSessionWorkerLeaseTTL,
+		)
+	} else {
+		// Legacy credentials issued before worker epochs were bound to JWT claims
+		// retain the original monotonic register behavior until their next rotation.
+		epoch, _, err = h.db.RegisterCodeSessionWorker(r.Context(), codeSessionID, binding, codeSessionWorkerLeaseTTL)
+	}
 	if err != nil {
 		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not register code session worker")
 		return

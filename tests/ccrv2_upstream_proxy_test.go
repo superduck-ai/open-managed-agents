@@ -344,10 +344,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 			"",
 			"00000000-0000-0000-0000-000000000099",
 		)
-		status := connectViaCCRV2Proxy(t, app, codeSessionID, mismatchedToken, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("mismatched-workspace CONNECT status = %q, want 403", status)
-		}
+		assertCCRV2UpstreamProxyAuthRejected(t, app, mismatchedToken)
 	})
 
 	t.Run("failure signed token with mismatched organization scope fails closed", func(t *testing.T) {
@@ -358,10 +355,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 			"00000000-0000-0000-0000-000000000098",
 			"",
 		)
-		status := connectViaCCRV2Proxy(t, app, codeSessionID, mismatchedToken, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("mismatched-organization CONNECT status = %q, want 403", status)
-		}
+		assertCCRV2UpstreamProxyAuthRejected(t, app, mismatchedToken)
 	})
 
 	t.Run("failure malformed persisted allowlist fails closed as a whole", func(t *testing.T) {
@@ -455,10 +449,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 				t.Errorf("restore code session status: %v", err)
 			}
 		})
-		status := connect(t, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("inactive-code-session CONNECT status = %q, want 403", status)
-		}
+		assertCCRV2UpstreamProxyAuthRejected(t, app, ingressToken)
 	})
 
 	t.Run("failure terminated session fails closed", func(t *testing.T) {
@@ -569,6 +560,7 @@ func codeSessionIngressTokenWithScope(
 		OrganizationUUID: organizationUUID,
 		WorkspaceUUID:    workspaceUUID,
 		AccountEmail:     credentialContext.AccountEmail,
+		WorkerEpoch:      record.CurrentWorkerEpoch,
 	})
 	if err != nil {
 		t.Fatalf("issue mismatched-scope token: %v", err)
@@ -636,6 +628,25 @@ func dialCCRV2UpstreamProxy(t *testing.T, app *testApp, sessionIngressToken stri
 		t.Fatalf("dial upstream proxy websocket: %v", err)
 	}
 	return connection
+}
+
+func assertCCRV2UpstreamProxyAuthRejected(t *testing.T, app *testApp, sessionIngressToken string) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, app.baseURL+"/v1/code/upstreamproxy/ws", nil)
+	if err != nil {
+		t.Fatalf("create upstream proxy authentication request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+sessionIngressToken)
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Connection", "Upgrade")
+	response, err := app.client.Do(request)
+	if err != nil {
+		t.Fatalf("authenticate upstream proxy websocket: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("upstream proxy authentication status = %d, want 401: %s", response.StatusCode, readAll(t, response.Body))
+	}
 }
 
 func encodeCCRV2TestChunk(data []byte) []byte {

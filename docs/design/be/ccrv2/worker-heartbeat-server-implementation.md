@@ -12,7 +12,8 @@
 - 只有通过当前 epoch 与 lease 校验、且 `worker_status=running` 的 heartbeat 才能续期对应的 E2B Sandbox。
 - E2B 续期时长复用 `e2b.sandbox_timeout`，不维护另一套 Sandbox TTL 配置。
 - `idle` 和 `requires_action` heartbeat 仍续 worker lease，但不续 E2B Sandbox，避免常驻 CCRv2 heartbeat 让空闲 Sandbox 永不过期。
-- 使用 OMA 签发的 Ed25519 session-ingress JWT，并将签名 `session_id` 与请求路径绑定；session 与 lease 状态由 heartbeat 数据库状态机判断。
+- E2B Sandbox 超时后进入 `pause` 而不是 `kill`；新的可转发 Session 用户事件持久化后会显式连接 Sandbox、恢复执行并重置 TTL。
+- 使用 OMA 签发的 Ed25519 session-ingress JWT，并将签名 `session_id` 与请求路径绑定；managed-agent JWT 携带的 `worker_epoch` 还会与 active Code Session 的现有 `current_worker_epoch` 比对，session lease 由各 handler 的数据库状态机判断。
 
 相关实现文件：
 
@@ -102,7 +103,7 @@ worker 心跳状态直接使用 `code_sessions` 现有列：
 - `connection_status`
 - `updated_at`
 
-不新增 migration。Code Session 通过受信任的 Session Work 数据关联 `environment_work`，再通过 `work_id` 定位 `environment_sandboxes` 中最新的 `running` Sandbox；查询同时约束 organization、workspace 和 environment，且要求 Code Session 的 `worker_status=running`、`provider_sandbox_id` 非空。未关联活动 Sandbox 的独立 Code Session，以及 `idle`/`requires_action` Code Session，只续 worker lease，不调用 Provider。worker 是否已注册由以下条件判断：
+本流程不增加数据库列或 migration。Code Session 通过受信任的 Session Work 数据关联 `environment_work`，再通过 `work_id` 定位 `environment_sandboxes` 中最新的 `running` Sandbox；查询同时约束 organization、workspace 和 environment，并要求 `provider_sandbox_id` 非空。heartbeat 调用只查询 `worker_status=running`；Session 用户事件唤醒路径允许 `idle`、`running` 和 `requires_action`，从而既不让空闲 heartbeat 无限续期，又能在新工作到达时恢复 Sandbox。未关联活动 Sandbox 的独立 Code Session 只更新自身队列或 worker lease，不调用 Provider。worker 是否已注册由以下条件判断：
 
 - `current_worker_epoch > 0`
 - `worker_lease_expires_at is not null`
@@ -207,7 +208,13 @@ heartbeat 使用 `SELECT ... FOR UPDATE` 锁定目标 `code_sessions` 行，因�
 
 E2B 网络调用不在 PostgreSQL 事务中执行，避免远端延迟占用 `code_sessions` 行锁。worker lease 先提交，再按提交后的 worker 状态解析可续期 Sandbox，因此 running worker 遇到 Provider 临时失败时接口返回 `503`，但已经观测到的 worker heartbeat 仍保留；客户端下一次 heartbeat 会重新尝试 `SetTimeout`。`SetTimeout` 是幂等的相对 TTL 更新，并发成功调用以 E2B 最后处理的请求为准。
 
-E2B SDK 的 `Connect` 也会携带 timeout。Provider 所有 connect 操作显式使用 `e2b.sandbox_timeout`，避免 SDK 默认值覆盖项目配置；running heartbeat 随后显式调用 `SetTimeout`，把 Sandbox 生命周期从本次请求重新延长相同配置时长。worker 切换到 `idle` 或 `requires_action` 后，后续 heartbeat 不再连接 Provider；如果没有其他 Provider 操作，Sandbox 会在最后一次 running 续期后的 `e2b.sandbox_timeout` 内自然过期。`last_worker_activity_at` 会被 heartbeat 自身刷新，不能作为 Sandbox idle 计时来源。
+E2B SDK 的 `Connect` 也会携带 timeout。Provider 所有 connect 操作显式使用 `e2b.sandbox_timeout`，避免 SDK 默认值覆盖项目配置；running heartbeat 随后显式调用 `SetTimeout`，把 Sandbox 生命周期从本次请求重新延长相同配置时长。创建 Sandbox 时显式设置 `onTimeout=pause`，但不启用请求或流量触发的 `autoResume`；恢复统一由 Provider 的显式 `Connect` 完成，因此超时资源可恢复，而不是被销毁。
+
+该配置默认是 `30s`，因此运行态 worker 的 heartbeat 周期必须显著短于 30 秒，并为网络抖动和 Provider 延迟留出余量。worker 切换到 `idle` 或 `requires_action` 后，后续 heartbeat 不再连接 Provider；如果没有其他 Provider 操作，Sandbox 会在最后一次 running 续期后的 `e2b.sandbox_timeout` 内 pause。之后收到 `user.message`、`user.interrupt`、`user.tool_confirmation`、`user.tool_result` 或 `user.custom_tool_result` 时，服务端先将事件写入持久化 Code Session 入站队列，再对关联 Sandbox 调用 `SetTimeout`。E2B Provider 在 `SetTimeout` 前先执行 `Connect`，因此 paused Sandbox 会被恢复，TTL 也从该次事件重新计算。Provider 临时失败不回滚已经持久化的消息；下一条可转发用户事件会再次尝试恢复。`last_worker_activity_at` 会被 heartbeat 自身刷新，不能作为 Sandbox idle 计时来源。
+
+如果 Provider 明确返回 sandbox not found，服务端原子地把旧 `environment_sandboxes` 记录标为 `failed`，并把同一 Work 重新排为 `queued`。Runner 根据 Work 对应的 organization、workspace、environment 和 public Session 查询 active Code Session：没有 active 记录时执行 create，恰好一条时执行 recover，多于一条则按无效状态失败，从而不使用 metadata 旗标或新增恢复列。恢复会创建新的 Provider Sandbox，但复用原 `cse_*` 及其持久化事件和 transcript。
+
+首次创建 managed-agent Code Session 时直接把现有 `current_worker_epoch` 初始化为 `1`。恢复启动在一条数据库更新中替换 OAuth token hash、递增 `current_worker_epoch` 并清空旧 lease。新 session-ingress JWT 携带该预留 epoch；每次 managed-agent ingress 鉴权都会按租户回查 active Code Session，因此携带旧 epoch 的 JWT 立即失效。environment-manager 使用同一 epoch 作为 `CLAUDE_CODE_WORKER_EPOCH` 和 OTLP header，`/worker/register` 对该 epoch 幂等，不会因为重复注册再次递增。旧版不含 `worker_epoch` 的 JWT 维持兼容鉴权，但凭证轮换后不能越过“正 epoch 且 lease 为空”的注册 fence。Provider 创建、manager 启动或 metadata 发布失败时，若仍能从 Work 推导出唯一 active Code Session，则只清理本次 replacement Sandbox 并延迟重新排队，不终止 durable Code Session。
 
 ## 日志
 
@@ -234,7 +241,7 @@ epoch mismatch 和 lease expired 会记录结构化文本日志，字段包括�
 
 ## 测试覆盖
 
-主要覆盖在 `tests/sessions_api_test.go`：
+基础 heartbeat 覆盖在 `tests/sessions_api_test.go`，Sandbox 恢复覆盖在 `tests/session_sandbox_recovery_test.go`：
 
 - invalid auth 返回 `401 authentication_error`。
 - malformed JSON、非 object body、缺失或不匹配 `session_id` 返回 `400 invalid_request_error`。
@@ -246,6 +253,10 @@ epoch mismatch 和 lease expired 会记录结构化文本日志，字段包括�
 - running heartbeat 使用对应 `provider_sandbox_id` 和 `e2b.sandbox_timeout` 调用 Sandbox 续期。
 - idle 和 requires-action heartbeat 续 worker lease，但不调用 Sandbox 续期。
 - running heartbeat 的 E2B Sandbox 续期失败返回 `503`。
+- idle Sandbox 收到可转发用户事件后调用 Provider 恢复，并使用 `e2b.sandbox_timeout` 重置 TTL；Provider 临时失败后下一条事件会重试。
+- Provider Sandbox 已不存在时，旧记录转为 failed、原 Work 重新排队并创建替换 Sandbox；同一 Code Session 以递增 worker epoch 继续运行。
+- replacement 启动失败时原 Code Session 仍为 active、Work 延迟重试，只有失败的 replacement Sandbox 被清理。
+- managed-agent 凭证轮换后携带旧 worker epoch 的 session-ingress JWT 返回 `401`；新 JWT 重复注册都返回预留 worker epoch。
 - 旧 epoch、未来 epoch 和超过 grace 的 heartbeat 不调用 Sandbox 续期。
 - 刚过期但在 `10s` grace 内 heartbeat 返回 `200`。
 - 超过 grace 返回 `410 session_expired`，并断言状态不更新。

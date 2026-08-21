@@ -30,7 +30,7 @@ func defaultConfig() Config {
 		E2B: E2BConfig{
 			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,
-			SandboxTimeout: 5 * time.Minute,
+			SandboxTimeout: 30 * time.Second,
 		},
 		EnvironmentRunner: EnvironmentRunnerConfig{
 			Enabled:                 true,

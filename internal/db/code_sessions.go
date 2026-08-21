@@ -62,6 +62,7 @@ type CreateCodeSessionInput struct {
 	Status                string
 	Metadata              json.RawMessage
 	OAuthAccessTokenHash  string
+	InitialWorkerEpoch    int64
 	CreatedAt             time.Time
 }
 
@@ -260,6 +261,7 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 		Status:                status,
 		Metadata:              input.Metadata,
 		OAuthAccessTokenHash:  oauthAccessTokenHash,
+		InitialWorkerEpoch:    input.InitialWorkerEpoch,
 		CreatedAt:             now,
 	})
 	if err != nil {
@@ -469,6 +471,30 @@ func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organi
 	return row.context(), nil
 }
 
+func (d *DB) ValidateCodeSessionIngressWorkerEpoch(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	codeSessionExternalID string,
+	workerEpoch int64,
+) error {
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	count, err := mapper.CountActiveIngressWorkerEpoch(
+		ctx,
+		organizationUUID,
+		workspaceUUID,
+		codeSessionExternalID,
+		workerEpoch,
+	)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetCodeSessionNetworkPolicyContext 从已验签的租户身份出发，一次性加载并校验
 // Code Session、Environment 与 Session 的策略关系。项目不使用数据库外键，因此
 // 每个 join 都显式约束 organization/workspace 与稳定 UUID；任一关系缺失都 fail closed。
@@ -561,7 +587,57 @@ func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUI
 	return row.session(), nil
 }
 
+func (d *DB) GetActiveCodeSessionForEnvironmentWork(ctx context.Context, work EnvironmentWork, sessionUUID string) (CodeSession, error) {
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	rows, err := mapper.FindActiveForEnvironmentWork(
+		ctx,
+		work.OrganizationUUID,
+		work.WorkspaceUUID,
+		work.EnvironmentUUID,
+		sessionUUID,
+	)
+	if err != nil {
+		return CodeSession{}, err
+	}
+	if len(rows) == 0 {
+		return CodeSession{}, ErrNotFound
+	}
+	if len(rows) != 1 {
+		return CodeSession{}, ErrInvalidState
+	}
+	return rows[0].session(), nil
+}
+
 func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalID string, binding CodeSessionWorkerBinding, leaseTTL time.Duration) (int64, time.Time, error) {
+	return d.registerCodeSessionWorker(ctx, codeSessionExternalID, binding, leaseTTL, nil)
+}
+
+func (d *DB) RegisterCodeSessionWorkerAtEpoch(
+	ctx context.Context,
+	codeSessionExternalID string,
+	workerEpoch int64,
+	binding CodeSessionWorkerBinding,
+	leaseTTL time.Duration,
+) (int64, time.Time, error) {
+	if workerEpoch <= 0 {
+		return 0, time.Time{}, ErrWorkerEpochMismatch
+	}
+	return d.registerCodeSessionWorker(
+		ctx,
+		codeSessionExternalID,
+		binding,
+		leaseTTL,
+		&workerEpoch,
+	)
+}
+
+func (d *DB) registerCodeSessionWorker(
+	ctx context.Context,
+	codeSessionExternalID string,
+	binding CodeSessionWorkerBinding,
+	leaseTTL time.Duration,
+	expectedEpoch *int64,
+) (int64, time.Time, error) {
 	if leaseTTL <= 0 {
 		leaseTTL = time.Minute
 	}
@@ -581,9 +657,21 @@ func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalI
 		if !found {
 			return ErrNotFound
 		}
+		// Credential rotation reserves a positive epoch and clears the lease. A
+		// legacy JWT without worker_epoch must not advance past that fence.
+		if expectedEpoch == nil && row.CurrentWorkerEpoch > 0 && row.WorkerLeaseExpiresAt == nil {
+			return ErrWorkerEpochMismatch
+		}
+		nextEpoch := row.CurrentWorkerEpoch + 1
+		if expectedEpoch != nil {
+			if row.CurrentWorkerEpoch != *expectedEpoch {
+				return ErrWorkerEpochMismatch
+			}
+			nextEpoch = *expectedEpoch
+		}
 		epoch, err = mapper.RegisterWorker(ctx, registerCodeSessionWorkerParams{
 			UUID:                 row.UUID,
-			Epoch:                row.CurrentWorkerEpoch + 1,
+			Epoch:                nextEpoch,
 			ExpiresAt:            expiresAt,
 			Now:                  now,
 			WorkerTokenSessionID: optionalCodeSessionString(binding.TokenSessionID),

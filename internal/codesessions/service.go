@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 
 	"github.com/google/uuid"
 )
@@ -22,10 +23,12 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
-	db          *db.DB
-	credentials *SessionCredentials
-	logger      *slog.Logger
-	sink        PublicEventSink
+	db                     *db.DB
+	credentials            *SessionCredentials
+	logger                 *slog.Logger
+	sink                   PublicEventSink
+	sandboxTimeoutExtender SandboxTimeoutExtender
+	sandboxTimeout         time.Duration
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
@@ -35,6 +38,17 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	}
 	logger = logging.LoggerOrDefault(logger)
 	return &Service{db: database, credentials: credentials, logger: logger}
+}
+
+// WithSandboxTimeoutExtender wires the provider lifecycle operation used to
+// resume a paused sandbox when new public Session events are queued.
+func (s *Service) WithSandboxTimeoutExtender(extender SandboxTimeoutExtender, timeout time.Duration) *Service {
+	if s == nil {
+		return s
+	}
+	s.sandboxTimeoutExtender = extender
+	s.sandboxTimeout = timeout
+	return s
 }
 
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
@@ -72,7 +86,52 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		}
 		payloads = append(payloads, payload)
 	}
-	return s.QueueRawPublicSessionEvents(ctx, codeSession, payloads)
+	if len(payloads) == 0 {
+		return nil
+	}
+	if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
+		return err
+	}
+	return s.resumeSandboxForCodeSession(ctx, codeSession.ExternalID)
+}
+
+func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSessionExternalID string) error {
+	if s.sandboxTimeoutExtender == nil {
+		return nil
+	}
+	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSessionExternalID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if sandbox.ProviderSandboxID == nil || *sandbox.ProviderSandboxID == "" {
+		return nil
+	}
+	providerSandboxID := *sandbox.ProviderSandboxID
+	err = s.sandboxTimeoutExtender.SetTimeout(ctx, providerSandboxID, s.sandboxTimeout)
+	if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
+		return err
+	}
+	scheduled, scheduleErr := s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(
+		ctx,
+		codeSessionExternalID,
+		providerSandboxID,
+		err,
+	)
+	if scheduleErr != nil {
+		return fmt.Errorf("schedule replacement sandbox: %w", scheduleErr)
+	}
+	if scheduled {
+		s.logger.InfoContext(
+			ctx,
+			"managed agent sandbox recovery scheduled",
+			"code_session_id", codeSessionExternalID,
+			"provider_sandbox_id", providerSandboxID,
+		)
+	}
+	return nil
 }
 
 func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {

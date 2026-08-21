@@ -3996,6 +3996,7 @@ func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string,
 		OrganizationUUID: credentialContext.OrganizationUUID,
 		WorkspaceUUID:    credentialContext.WorkspaceUUID,
 		AccountEmail:     credentialContext.AccountEmail,
+		WorkerEpoch:      record.CurrentWorkerEpoch,
 	})
 }
 

@@ -199,6 +199,33 @@
         AND deleted_at IS NULL
     </update>
 
+    <update id="RequeueIfRecoverable" result="rows">
+        UPDATE environment_work
+        SET state = 'queued',
+            claimed_by_worker_id = NULL,
+            claim_expires_at = #{params.RetryAt},
+            latest_heartbeat_at = NULL,
+            heartbeat_ttl_seconds = NULL,
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrganizationUUID}
+          AND workspace_uuid = #{params.WorkspaceUUID}
+          AND environment_uuid = #{params.EnvironmentUUID}
+          AND uuid = #{params.WorkUUID}
+          AND state IN ('starting', 'active')
+          AND deleted_at IS NULL
+          AND data-&gt;&gt;'type' = 'session'
+          AND EXISTS (
+              SELECT 1
+              FROM code_sessions code_session
+              WHERE code_session.organization_uuid = environment_work.organization_uuid
+                AND code_session.workspace_uuid = environment_work.workspace_uuid
+                AND code_session.environment_uuid = environment_work.environment_uuid
+                AND code_session.session_external_id = environment_work.data-&gt;&gt;'id'
+                AND code_session.status = 'active'
+                AND code_session.deleted_at IS NULL
+          )
+    </update>
+
     <update id="Heartbeat" result="returning" resultType="environmentWorkMapperRow">
         UPDATE environment_work
         SET state = #{params.State},

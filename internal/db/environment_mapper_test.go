@@ -141,6 +141,10 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 		WorkspaceUUID: params.WorkspaceUUID, EnvironmentExternalID: params.EnvironmentExternalID,
 		WorkUUID: params.UUID, State: "active", TTLSeconds: 60,
 	}
+	recoveryParams := environmentWorkRecoveryRetryParams{
+		OrganizationUUID: params.OrganizationUUID, WorkspaceUUID: params.WorkspaceUUID,
+		EnvironmentUUID: params.EnvironmentUUID, WorkUUID: params.UUID, RetryAt: now,
+	}
 	stopParams := environmentWorkStopParams{
 		WorkspaceUUID: params.WorkspaceUUID, EnvironmentExternalID: params.EnvironmentExternalID,
 		WorkExternalID: params.ExternalID, State: "stopped",
@@ -227,6 +231,19 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 			},
 			wantSensitiveArgumentNames: []string{"params.Metadata"}, wantSQLFragments: []string{"CAST($1 AS jsonb)", "RETURNING"},
 		}},
+		{"requeue recoverable work", mapperBuilderContract{
+			statement: environmentWorkMapperRequeueIfRecoverableStatement,
+			bound:     buildEnvironmentWorkMapperRequeueIfRecoverable(yourbatis.DialectPostgres, recoveryParams),
+			wantID:    "EnvironmentWorkMapper.RequeueIfRecoverable", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.RetryAt", "params.OrganizationUUID", "params.WorkspaceUUID",
+				"params.EnvironmentUUID", "params.WorkUUID",
+			},
+			wantSQLFragments: []string{
+				"state = 'queued'", "claim_expires_at = $1", "state IN ('starting', 'active')",
+				"EXISTS", "code_session.session_external_id = environment_work.data->>'id'",
+			},
+		}},
 		{"heartbeat", mapperBuilderContract{
 			statement: environmentWorkMapperHeartbeatStatement,
 			bound:     buildEnvironmentWorkMapperHeartbeat(yourbatis.DialectPostgres, heartbeatParams),
@@ -271,6 +288,11 @@ func TestEnvironmentSandboxMapperBuilderContracts(t *testing.T) {
 		WorkspaceUUID: params.WorkspaceUUID, ExternalID: params.ExternalID, State: "running",
 		ProviderSandboxID: params.ProviderSandboxID, LastError: params.LastError, StoppedAt: &now,
 	}
+	recoveryParams := environmentSandboxRecoveryParams{
+		CodeSessionExternalID: "codesession_test",
+		ProviderSandboxID:     "sandbox_test",
+		LastError:             "sandbox not found",
+	}
 	tests := []struct {
 		name     string
 		contract mapperBuilderContract
@@ -304,12 +326,35 @@ func TestEnvironmentSandboxMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"workspaceUUID", "environmentExternalID", "workExternalID"},
 			wantSQLFragments:  []string{"FROM environment_sandboxes", "provider_sandbox_id IS NOT NULL", "LIMIT 1"},
 		}},
-		{"find renewable", mapperBuilderContract{
-			statement: environmentSandboxMapperFindRenewableByCodeSessionExternalIDStatement,
-			bound:     buildEnvironmentSandboxMapperFindRenewableByCodeSessionExternalID(yourbatis.DialectPostgres, "codesession_test"),
-			wantID:    "EnvironmentSandboxMapper.FindRenewableByCodeSessionExternalID", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{"codeSessionExternalID"},
-			wantSQLFragments:  []string{"JOIN environment_work", "JOIN environment_sandboxes", "worker_status = 'running'"},
+		{"find active for code session worker statuses", mapperBuilderContract{
+			statement: environmentSandboxMapperFindActiveByCodeSessionExternalIDAndWorkerStatusesStatement,
+			bound: buildEnvironmentSandboxMapperFindActiveByCodeSessionExternalIDAndWorkerStatuses(
+				yourbatis.DialectPostgres,
+				"codesession_test",
+				[]string{"idle", "running", "requires_action"},
+			),
+			wantID: "EnvironmentSandboxMapper.FindActiveByCodeSessionExternalIDAndWorkerStatuses", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"codeSessionExternalID", "workerStatus", "workerStatus", "workerStatus"},
+			wantSQLFragments: []string{
+				"JOIN environment_work", "JOIN environment_sandboxes", "worker_status IN ( $2 , $3 , $4 )",
+			},
+		}},
+		{"schedule recovery for code session", mapperBuilderContract{
+			statement: environmentSandboxMapperScheduleRecoveryForCodeSessionStatement,
+			bound: buildEnvironmentSandboxMapperScheduleRecoveryForCodeSession(
+				yourbatis.DialectPostgres,
+				recoveryParams,
+			),
+			wantID:   "EnvironmentSandboxMapper.ScheduleRecoveryForCodeSession",
+			wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.ProviderSandboxID", "params.CodeSessionExternalID", "params.LastError",
+			},
+			wantSensitiveArgumentNames: []string{"params.LastError"},
+			wantSQLFragments: []string{
+				"WITH recovery_target AS", "FOR UPDATE OF code_session, work, sandbox",
+				"state = 'failed'", "state = 'queued'",
+			},
 		}},
 	}
 	for _, test := range tests {

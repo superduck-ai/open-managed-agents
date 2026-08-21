@@ -34,8 +34,8 @@ type Handler struct {
 	otlpLogMu                 sync.Mutex
 }
 
-// SandboxTimeoutExtender renews the provider-side lifetime of a managed-agent
-// sandbox after its current worker proves liveness.
+// SandboxTimeoutExtender resumes or renews the provider-side lifetime of a
+// managed-agent sandbox after worker liveness or new queued work is observed.
 type SandboxTimeoutExtender interface {
 	SetTimeout(ctx context.Context, sandboxID string, timeout time.Duration) error
 }

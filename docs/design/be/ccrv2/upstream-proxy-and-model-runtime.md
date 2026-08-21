@@ -64,9 +64,11 @@ CLAUDE_CODE_REMOTE=true
 CCR_UPSTREAM_PROXY_ENABLED=1
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
 CLAUDE_CODE_USE_CCR_V2=1
-CLAUDE_CODE_WORKER_EPOCH=1
+CLAUDE_CODE_WORKER_EPOCH={next_worker_epoch}
 CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 ```
+
+首次启动的 `{next_worker_epoch}` 是 `1`；替换 Sandbox 复用 Code Session 时，它是数据库当前 epoch 加一，并与 environment-manager 随后的 `/worker/register` 返回值一致。
 
 `startup_context.api_base_url` 是 sandbox 可访问的 Open Managed Agents API 地址。payload 不再注入上游 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_API_KEY`；environment-manager 使用 `api_base_url` 作为 Claude 的 `ANTHROPIC_BASE_URL` fallback。
 
@@ -181,7 +183,7 @@ Runner 不再把 Managed Agent MCP URL 改写到该接口。MCP config 保留 Ag
 
 代理执行以下边界：
 
-1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，并将签名 claims 中的 `session_id` 绑定到路径参数。
+1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，将签名 claims 中的 `session_id` 绑定到路径参数；managed-agent JWT 还会按租户回查 active Code Session 的 `current_worker_epoch`，Sandbox 恢复递增 epoch 后旧 JWT 立即失效。
 2. `mcp_url` 必须是唯一、长度不超过 2048 字节、不含 userinfo/fragment 的绝对 HTTP(S) URL，并精确匹配当前 Session Agent Snapshot 的一个远程 MCP URL。
 3. 每次请求新鲜读取 Code Session → Environment / Session 租户关系，并在加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 编译为精确 URL 集合、MCP host 集合以及 Environment host/port matcher。handler 只把未改写的 `mcp_url` 交给 `AuthorizeMCPURL`；策略同时完成精确 URL 与真实 scheme/host/有效端口授权，不使用伪造的 `host:443`，也不在 handler 中重新解析 snapshot。随后解析目标地址并应用与 upstream proxy 相同的公网 IP / DNS rebinding 防护。受控本地排障可复用 `upstream_proxy_disable_ssrf_protection`，生产默认不得关闭。
 4. 删除 OMA 的 `Authorization`、`X-Api-Key`、`Proxy-Authorization` 和 `Proxy-Connection`，保留 MCP 协议与 content negotiation header。真实 MCP 凭证只允许在服务端 header injector 边界按已验签 session claims 和目标 URL 注入；默认实现不注入。

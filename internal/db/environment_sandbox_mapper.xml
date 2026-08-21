@@ -84,7 +84,7 @@
         LIMIT 1
     </select>
 
-    <select id="FindRenewableByCodeSessionExternalID" resultType="environmentSandboxMapperRow">
+    <select id="FindActiveByCodeSessionExternalIDAndWorkerStatuses" resultType="environmentSandboxMapperRow">
         SELECT
         <include refid="columns"/>
         FROM environment_sandboxes
@@ -108,10 +108,60 @@
             AND sandbox.state = 'running'
             WHERE code_session.external_id = #{codeSessionExternalID}
             AND code_session.status = 'active'
-            AND code_session.worker_status = 'running'
+            AND code_session.worker_status IN
+            <foreach collection="workerStatuses" item="workerStatus" open="(" separator="," close=")">
+                #{workerStatus}
+            </foreach>
             AND code_session.deleted_at IS NULL
             ORDER BY sandbox.created_at DESC, sandbox.uuid DESC
             LIMIT 1
         )
     </select>
+
+    <update id="ScheduleRecoveryForCodeSession" result="rows">
+        WITH recovery_target AS (
+            SELECT sandbox.uuid AS sandbox_uuid, work.uuid AS work_uuid
+            FROM code_sessions code_session
+            JOIN environment_work work
+            ON work.organization_uuid = code_session.organization_uuid
+            AND work.workspace_uuid = code_session.workspace_uuid
+            AND work.environment_uuid = code_session.environment_uuid
+            AND work.environment_external_id = code_session.environment_external_id
+            AND work.data-&gt;&gt;'type' = 'session'
+            AND work.data-&gt;&gt;'id' = code_session.session_external_id
+            AND work.state = 'active'
+            AND work.deleted_at IS NULL
+            JOIN environment_sandboxes sandbox
+            ON sandbox.organization_uuid = code_session.organization_uuid
+            AND sandbox.workspace_uuid = code_session.workspace_uuid
+            AND sandbox.environment_uuid = code_session.environment_uuid
+            AND sandbox.work_uuid = work.uuid
+            AND sandbox.provider_sandbox_id = #{params.ProviderSandboxID}
+            AND sandbox.state = 'running'
+            WHERE code_session.external_id = #{params.CodeSessionExternalID}
+            AND code_session.status = 'active'
+            AND code_session.worker_status IN ('idle', 'running', 'requires_action')
+            AND code_session.deleted_at IS NULL
+            FOR UPDATE OF code_session, work, sandbox
+        ), failed_sandbox AS (
+            UPDATE environment_sandboxes sandbox
+            SET state = 'failed',
+                last_error = #{params.LastError,sensitive=true},
+                stopped_at = COALESCE(stopped_at, NOW()),
+                updated_at = NOW()
+            FROM recovery_target target
+            WHERE sandbox.uuid = target.sandbox_uuid
+            RETURNING sandbox.uuid
+        )
+        UPDATE environment_work work
+        SET state = 'queued',
+            claimed_by_worker_id = NULL,
+            claim_expires_at = NULL,
+            latest_heartbeat_at = NULL,
+            heartbeat_ttl_seconds = NULL,
+            updated_at = NOW()
+        FROM recovery_target target
+        WHERE work.uuid = target.work_uuid
+        AND EXISTS (SELECT 1 FROM failed_sandbox)
+    </update>
 </mapper>

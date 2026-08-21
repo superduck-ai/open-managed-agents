@@ -411,6 +411,58 @@ func (d *DB) StopEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 	return row.work(), nil
 }
 
+func (d *DB) RequeueEnvironmentWorkIfRecoverable(ctx context.Context, work EnvironmentWork, retryAt time.Time) (bool, error) {
+	mapper := NewEnvironmentWorkMapper(d.mapperDB)
+	rowsAffected, err := mapper.RequeueIfRecoverable(ctx, environmentWorkRecoveryRetryParams{
+		OrganizationUUID: work.OrganizationUUID,
+		WorkspaceUUID:    work.WorkspaceUUID,
+		EnvironmentUUID:  work.EnvironmentUUID,
+		WorkUUID:         work.UUID,
+		RetryAt:          retryAt,
+	})
+	return rowsAffected == 1, err
+}
+
+func (d *DB) FailEnvironmentSandboxAndRequeueRecovery(
+	ctx context.Context,
+	sandbox EnvironmentSandbox,
+	work EnvironmentWork,
+	providerSandboxID string,
+	cause error,
+	retryAt time.Time,
+) (bool, error) {
+	requeued := false
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		sandboxMapper := NewEnvironmentSandboxMapper(executor)
+		workMapper := NewEnvironmentWorkMapper(executor)
+		now := time.Now().UTC()
+		message := cause.Error()
+		if err := sandboxMapper.UpdateState(ctx, environmentSandboxStateParams{
+			WorkspaceUUID:     sandbox.WorkspaceUUID,
+			ExternalID:        sandbox.ExternalID,
+			State:             "failed",
+			ProviderSandboxID: optionalEnvironmentString(providerSandboxID),
+			LastError:         &message,
+			StoppedAt:         &now,
+		}); err != nil {
+			return err
+		}
+		rowsAffected, err := workMapper.RequeueIfRecoverable(ctx, environmentWorkRecoveryRetryParams{
+			OrganizationUUID: work.OrganizationUUID,
+			WorkspaceUUID:    work.WorkspaceUUID,
+			EnvironmentUUID:  work.EnvironmentUUID,
+			WorkUUID:         work.UUID,
+			RetryAt:          retryAt,
+		})
+		if err != nil {
+			return err
+		}
+		requeued = rowsAffected == 1
+		return nil
+	})
+	return requeued, err
+}
+
 func (d *DB) EnvironmentWorkStats(ctx context.Context, workspaceUUID string, environmentExternalID string) (EnvironmentWorkStats, error) {
 	mapper := NewEnvironmentWorkMapper(d.mapperDB)
 	row, err := mapper.Stats(ctx, workspaceUUID, environmentExternalID)
@@ -455,12 +507,49 @@ func (d *DB) GetActiveEnvironmentSandboxForWork(ctx context.Context, workspaceUU
 // workers intentionally return ErrNotFound so their heartbeats cannot keep the
 // sandbox alive indefinitely.
 func (d *DB) GetRenewableEnvironmentSandboxForCodeSession(ctx context.Context, codeSessionExternalID string) (EnvironmentSandbox, error) {
+	return d.getActiveEnvironmentSandboxForCodeSession(ctx, codeSessionExternalID, []string{"running"})
+}
+
+// GetResumableEnvironmentSandboxForCodeSession resolves the provider sandbox
+// owned by an active managed-agent Code Session. All valid worker states are
+// eligible because a queued user event must wake idle and requires-action
+// workers, while a running worker may also need recovery after a missed lease.
+func (d *DB) GetResumableEnvironmentSandboxForCodeSession(ctx context.Context, codeSessionExternalID string) (EnvironmentSandbox, error) {
+	return d.getActiveEnvironmentSandboxForCodeSession(ctx, codeSessionExternalID, []string{"idle", "running", "requires_action"})
+}
+
+func (d *DB) getActiveEnvironmentSandboxForCodeSession(ctx context.Context, codeSessionExternalID string, workerStatuses []string) (EnvironmentSandbox, error) {
 	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
-	row, err := mapper.FindRenewableByCodeSessionExternalID(ctx, codeSessionExternalID)
+	row, err := mapper.FindActiveByCodeSessionExternalIDAndWorkerStatuses(ctx, codeSessionExternalID, workerStatuses)
 	if err != nil {
 		return EnvironmentSandbox{}, mapNoRows(err)
 	}
 	return row.sandbox(), nil
+}
+
+// ScheduleEnvironmentSandboxRecoveryForCodeSession atomically retires the
+// missing provider sandbox and requeues its active managed-agent work. The
+// provider ID comparison makes repeated or concurrent recovery requests safe.
+func (d *DB) ScheduleEnvironmentSandboxRecoveryForCodeSession(
+	ctx context.Context,
+	codeSessionExternalID string,
+	providerSandboxID string,
+	cause error,
+) (bool, error) {
+	lastError := "provider sandbox not found"
+	if cause != nil {
+		lastError = cause.Error()
+	}
+	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
+	rowsAffected, err := mapper.ScheduleRecoveryForCodeSession(ctx, environmentSandboxRecoveryParams{
+		CodeSessionExternalID: codeSessionExternalID,
+		ProviderSandboxID:     providerSandboxID,
+		LastError:             lastError,
+	})
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 func normalizedHeartbeatTTL(ttlSeconds int) int {
@@ -603,4 +692,11 @@ func nullableWorkerID(workerID string) *string {
 		return nil
 	}
 	return &workerID
+}
+
+func optionalEnvironmentString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

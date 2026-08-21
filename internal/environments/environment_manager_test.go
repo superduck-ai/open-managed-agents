@@ -244,7 +244,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, "/workspace/widgets", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
 		"claude_code_args":{"mcp-config":"/tmp/managed-agent-mcp-config.json"}
 	}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *tes
 		"OTEL_LOGS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *tes
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://collector.example.com/v1/metrics"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t 
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://collector.example.com/v1/logs"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}

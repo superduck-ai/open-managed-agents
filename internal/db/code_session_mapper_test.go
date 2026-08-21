@@ -54,7 +54,7 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 		SessionUUID: "session-uuid", SessionExternalID: "session_test", EnvironmentUUID: "environment-uuid",
 		EnvironmentExternalID: "env_test", WorkDir: "/workspace", PermissionMode: "default",
 		Model: "model", Status: "active", Metadata: []byte(`{"source":"test"}`),
-		OAuthAccessTokenHash: &tokenHash, CreatedAt: now,
+		OAuthAccessTokenHash: &tokenHash, InitialWorkerEpoch: 1, CreatedAt: now,
 	}
 	tests := []struct {
 		name     string
@@ -68,7 +68,8 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 				"params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.SessionUUID",
 				"params.SessionExternalID", "params.EnvironmentUUID", "params.EnvironmentExternalID", "params.WorkDir",
 				"params.PermissionMode", "params.Model", "params.Status", "params.Metadata",
-				"params.OAuthAccessTokenHash", "params.CreatedAt", "params.CreatedAt",
+				"params.OAuthAccessTokenHash", "params.InitialWorkerEpoch",
+				"params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Metadata", "params.OAuthAccessTokenHash"},
 			wantSQLFragments:           []string{"INSERT INTO code_sessions", "CAST($12 AS jsonb)", "RETURNING uuid"},
@@ -82,6 +83,28 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames:          []string{"tokenHash"},
 			wantSensitiveArgumentNames: []string{"tokenHash"},
 			wantSQLFragments:           []string{"JOIN sessions", "oauth_access_token_hash = $1", "worker_lease_expires_at > NOW()"},
+		}},
+		{"find active for environment work", mapperBuilderContract{
+			statement: codeSessionMapperFindActiveForEnvironmentWorkStatement,
+			bound: buildCodeSessionMapperFindActiveForEnvironmentWork(
+				yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "environment-uuid", "session-uuid",
+			),
+			wantID: "CodeSessionMapper.FindActiveForEnvironmentWork", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "environmentUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"FROM code_sessions", "environment_uuid = $3", "session_uuid = $4", "LIMIT 2"},
+		}},
+		{"active ingress worker epoch", mapperBuilderContract{
+			statement: codeSessionMapperCountActiveIngressWorkerEpochStatement,
+			bound: buildCodeSessionMapperCountActiveIngressWorkerEpoch(
+				yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "codeses_test", 1,
+			),
+			wantID: "CodeSessionMapper.CountActiveIngressWorkerEpoch", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{
+				"organizationUUID", "workspaceUUID", "codeSessionExternalID", "workerEpoch",
+			},
+			wantSQLFragments: []string{
+				"SELECT COUNT(*)", "current_worker_epoch = $4", "status = 'active'",
+			},
 		}},
 		{"network policy context", mapperBuilderContract{
 			statement: codeSessionMapperFindNetworkPolicyContextStatement,

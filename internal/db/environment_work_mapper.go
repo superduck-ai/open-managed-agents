@@ -76,6 +76,14 @@ type environmentWorkHeartbeatParams struct {
 	TTLSeconds            int
 }
 
+type environmentWorkRecoveryRetryParams struct {
+	OrganizationUUID string
+	WorkspaceUUID    string
+	EnvironmentUUID  string
+	WorkUUID         string
+	RetryAt          time.Time
+}
+
 type environmentWorkStopParams struct {
 	WorkspaceUUID         string
 	EnvironmentExternalID string
@@ -102,6 +110,7 @@ type EnvironmentWorkMapper interface {
 	AckByExternalID(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentWorkMapperRow, error)
 	UpdateMetadata(ctx context.Context, params environmentWorkMetadataParams) (environmentWorkMapperRow, error)
 	MergeMetadata(ctx context.Context, params environmentWorkMetadataPatchParams) (int64, error)
+	RequeueIfRecoverable(ctx context.Context, params environmentWorkRecoveryRetryParams) (int64, error)
 	Heartbeat(ctx context.Context, params environmentWorkHeartbeatParams) (environmentWorkMapperRow, error)
 	Stop(ctx context.Context, params environmentWorkStopParams) (environmentWorkMapperRow, error)
 	StopForDeletedSession(ctx context.Context, workspaceUUID, environmentExternalID, sessionExternalID string) (int64, error)

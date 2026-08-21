@@ -81,6 +81,7 @@
             status,
             metadata,
             oauth_access_token_hash,
+            current_worker_epoch,
             created_at,
             updated_at
         ) VALUES (
@@ -97,6 +98,7 @@
             #{params.Status},
             CAST(#{params.Metadata,sensitive=true} AS jsonb),
             #{params.OAuthAccessTokenHash,sensitive=true},
+            #{params.InitialWorkerEpoch},
             #{params.CreatedAt},
             #{params.CreatedAt}
         )
@@ -177,6 +179,20 @@
         FROM code_sessions
         WHERE external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL
+    </select>
+
+    <select id="FindActiveForEnvironmentWork" resultType="codeSessionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND environment_uuid = #{environmentUUID}
+          AND session_uuid = #{sessionUUID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT 2
     </select>
 
     <select id="FindLatestBySessionExternalID" resultType="codeSessionRow">
@@ -344,6 +360,33 @@
               AND current_worker_epoch = #{params.RequiredEpoch}
           </if>
           AND deleted_at IS NULL
+    </update>
+
+    <select id="CountActiveIngressWorkerEpoch" result="scalar" resultType="int64">
+        SELECT COUNT(*)
+        FROM code_sessions
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND external_id = #{codeSessionExternalID}
+          AND current_worker_epoch = #{workerEpoch}
+          AND status = 'active'
+          AND deleted_at IS NULL
+    </select>
+
+    <update id="RotateCredentials" result="returning" resultType="int64">
+        UPDATE code_sessions
+        SET oauth_access_token_hash = #{params.OAuthAccessTokenHash,sensitive=true},
+            current_worker_epoch = current_worker_epoch + 1,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrganizationUUID}
+          AND workspace_uuid = #{params.WorkspaceUUID}
+          AND session_external_id = #{params.SessionExternalID}
+          AND external_id = #{params.CodeSessionExternalID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+        RETURNING current_worker_epoch
     </update>
 
     <update id="TerminateByExternalID" result="rows">

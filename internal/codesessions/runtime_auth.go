@@ -14,7 +14,7 @@ func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Requ
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing code session token"))
 		return SessionCredentialClaims{}, "", false
 	}
-	claims, err := h.service.AuthenticateSessionIngress(token, "")
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, "")
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid code session token"))
 		return SessionCredentialClaims{}, "", false
@@ -50,7 +50,7 @@ func (h *Handler) sessionIngressClaims(r *http.Request, codeSessionID string) (S
 	if token == "" {
 		return SessionCredentialClaims{}, sessionIngressTokenRequired()
 	}
-	claims, err := h.service.AuthenticateSessionIngress(token, codeSessionID)
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, codeSessionID)
 	if err != nil {
 		return SessionCredentialClaims{}, sessionIngressTokenInvalid(err)
 	}

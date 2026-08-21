@@ -1,6 +1,7 @@
 package codesessions
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
@@ -124,14 +125,14 @@ func TestAuthenticateSessionIngressUsesSignedIdentityWithoutDatabaseLifecycle(t 
 		t.Fatalf("Issue() error = %v", err)
 	}
 	service := NewServiceWithCredentials(nil, credentials, nil)
-	claims, err := service.AuthenticateSessionIngress(token, "cse_test")
+	claims, err := service.AuthenticateSessionIngress(context.Background(), token, "cse_test")
 	if err != nil {
 		t.Fatalf("AuthenticateSessionIngress() error = %v", err)
 	}
 	if claims.SessionID != "cse_test" {
 		t.Fatalf("session_id = %q, want cse_test", claims.SessionID)
 	}
-	if _, err := service.AuthenticateSessionIngress(token, "cse_other"); err == nil {
+	if _, err := service.AuthenticateSessionIngress(context.Background(), token, "cse_other"); err == nil {
 		t.Fatal("AuthenticateSessionIngress() accepted token for another request path")
 	}
 }

@@ -7,7 +7,7 @@
 CCR v2 下，一个 Claude Code worker 可能因为容器重启、transport 重建或 lease 过期后的重新调度而被替换。服务端需要提供一个强一致的所有权边界：
 
 - epoch 是 code session 级别的单调小整数 counter。
-- 每次 worker register 都递增该 code session 的 epoch。
+- legacy worker register 递增该 code session 的 epoch；managed-agent 凭证在签发时绑定一个已预留 epoch，register 对该 epoch 幂等。
 - worker 写请求必须携带 `worker_epoch`。
 - 请求 epoch 不等于当前 epoch 时返回 `409 conflict_error`，让旧 worker 退出。
 - PostgreSQL 是唯一强一致来源，不使用内存 counter。
@@ -48,7 +48,7 @@ create index if not exists code_sessions_worker_lease_expiry_v1_idx
 | # | 不变量 | 服务端要求 |
 |---|---|---|
 | 1 | epoch 是 per-code-session 的 | 不同 `cse_*` 独立计数，互不影响 |
-| 2 | register 递增 epoch | 每次合法 register 都在事务内 `current_worker_epoch + 1` |
+| 2 | register 获得唯一 epoch | legacy register 在事务内执行 `current_worker_epoch + 1`；managed register 只能提交 JWT 中已预留的 epoch |
 | 3 | epoch 单调递增 | 不回退，不使用 timestamp、UUID 或随机数 |
 | 4 | 只有当前 epoch 可以写 | 不匹配返回 `409 conflict_error` |
 | 5 | lease 过期不自动 bump | 只有下一次 register 才 bump |
@@ -59,7 +59,7 @@ create index if not exists code_sessions_worker_lease_expiry_v1_idx
 
 - `POST /v1/code/sessions/{code_session_id}/worker/register`
 
-`RegisterCodeSessionWorker(ctx, codeSessionID, binding, leaseTTL)` 是唯一 epoch 变更入口。它必须在单个 DB 事务中：
+legacy 客户端使用 `RegisterCodeSessionWorker(ctx, codeSessionID, binding, leaseTTL)`，在单个 DB 事务中递增 epoch：
 
 ```go
 tx := begin()
@@ -93,6 +93,8 @@ return nextEpoch
 - 不同 code session 可以并发 register。
 - 不等待 lease 过期；任何合法新 register 都可以抢占并 bump epoch。
 - 返回 `worker_epoch` 建议用 JSON string，实际值保持在 JS safe integer 范围内。
+
+managed-agent session-ingress JWT 额外携带 `worker_epoch`。首次创建时直接把现有 `current_worker_epoch` 初始化为 `1` 并签发 epoch `1`；Sandbox 恢复时，凭证轮换 SQL 在同一更新中替换 OAuth hash、把 `current_worker_epoch` 加一并清空旧 lease，再把新的 current epoch 写入 JWT。带该 claim 的 register 使用 `RegisterCodeSessionWorkerAtEpoch()`：持有行锁时再次要求数据库 current epoch 等于 JWT claim，然后把 lease/binding 写到该确切 epoch。相同 JWT 重试 register 只刷新同一 epoch，不再次 bump；旧 managed-agent JWT 通常在入口鉴权返回 `401`，即使其请求恰好在轮换前通过入口校验，事务内 worker epoch 复核也会阻止它抢回所有权。旧版不含 `worker_epoch` 的 JWT 可继续使用 legacy register，但凭证轮换预留 epoch 并清空 lease 后，legacy register 不得继续递增越过该 fence。
 
 ## 5. Worker 写请求校验
 
@@ -283,7 +285,8 @@ CCR v2 worker 使用持久化 inbound event 队列和带 epoch 的
 
 需要覆盖：
 
-- 新 code session 第一次 register 返回 `1`，第二次返回 `2`。
+- legacy code session 第一次 register 返回 `1`，第二次返回 `2`。
+- managed-agent 新 JWT 重复 register 返回相同的预留 epoch；恢复轮换后旧 JWT 返回 `401`，新 JWT 返回下一 epoch。
 - 同一 code session 两个并发 register 返回连续不同 epoch。
 - 不同 code session 都从 `1` 开始，互不影响。
 - 旧 epoch 调 worker 写 endpoints 返回 `409`。

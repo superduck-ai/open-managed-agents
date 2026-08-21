@@ -507,6 +507,17 @@ func TestLoadStorageS3ForcePathStyleDefault(t *testing.T) {
 	}
 }
 
+func TestLoadE2BSandboxTimeoutDefault(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.E2B.SandboxTimeout != 30*time.Second {
+		t.Fatalf("E2B.SandboxTimeout = %s, want 30s", cfg.E2B.SandboxTimeout)
+	}
+}
+
 func TestLoadDatabaseAutoMigrateDefaultDevelopment(t *testing.T) {
 	prepareLoadTest(t)
 

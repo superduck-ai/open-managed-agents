@@ -1,6 +1,7 @@
-import { AlertCircle, Box, Plus } from 'lucide-react';
+import { AlertCircle, Archive, Box, KeyRound, MoreVertical, Plus, Webhook } from 'lucide-react';
 import { useState } from 'react';
 import { useI18n } from '../../shared/i18n';
+import { ArchiveWorkspaceDialog } from '../../shared/workspaces/ArchiveWorkspaceDialog';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import {
   buildCreateWorkspaceInput,
@@ -9,19 +10,35 @@ import {
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
-import { Button, ButtonLink } from '../../shared/ui/button';
+import { Button } from '../../shared/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader } from '../../shared/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../shared/ui/dropdown-menu';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 
 export function WorkspacesSettingsPage() {
   const { msg } = useI18n();
-  const { orgUuid, workspaces, activeWorkspaceId, createWorkspace, error, isLoading, refreshWorkspaces } =
-    useWorkspace();
+  const {
+    orgUuid,
+    workspaces,
+    activeWorkspaceId,
+    createWorkspace,
+    archiveWorkspace,
+    error,
+    isLoading,
+    refreshWorkspaces,
+  } = useWorkspace();
   const [createOpen, setCreateOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<Workspace | null>(null);
 
   const handleCreate = async (name: string, displayColor: string) => {
     await createWorkspace(buildCreateWorkspaceInput(name, displayColor));
@@ -158,14 +175,17 @@ export function WorkspacesSettingsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <ButtonLink variant="outline" size="sm" href={workspaceApiKeysPath(workspace.id)}>
-                            {msg('nav.apiKeys', 'API keys')}
-                          </ButtonLink>
-                          <ButtonLink variant="ghost" size="sm" href={workspaceWebhooksPath(workspace.id)}>
-                            {msg('nav.webhooks', 'Webhooks')}
-                          </ButtonLink>
-                        </div>
+                        <WorkspaceRowActions
+                          workspace={workspace}
+                          archiveDisabledReason={
+                            workspace.id === defaultWorkspace.id
+                              ? 'default'
+                              : workspace.id === activeWorkspaceId
+                                ? 'current'
+                                : undefined
+                          }
+                          onArchive={() => setArchiveTarget(workspace)}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -182,7 +202,71 @@ export function WorkspacesSettingsPage() {
           )}
         </CardContent>
       </Card>
+      {archiveTarget ? (
+        <ArchiveWorkspaceDialog
+          workspace={archiveTarget}
+          onClose={() => setArchiveTarget(null)}
+          onArchive={archiveWorkspace}
+        />
+      ) : null}
     </section>
+  );
+}
+
+// WorkspaceRowActions renders the per-row overflow menu. API keys and Webhooks
+// stay as anchor links (matching the previous ButtonLink behavior, which renders
+// a plain <a>); Archive opens the confirmation dialog and is disabled for the
+// default workspace and the workspace the session is currently bound to, to
+// match the backend guards that prevent archiving those two cases.
+function WorkspaceRowActions({
+  workspace,
+  archiveDisabledReason,
+  onArchive,
+}: {
+  workspace: Workspace;
+  archiveDisabledReason?: 'default' | 'current';
+  onArchive: () => void;
+}) {
+  const { msg } = useI18n();
+  const canArchive = archiveDisabledReason === undefined;
+  const disabledHint =
+    archiveDisabledReason === 'default'
+      ? msg('workspace.archive.defaultDisabledHint', 'The default workspace cannot be archived.')
+      : archiveDisabledReason === 'current'
+        ? msg('workspace.archive.currentDisabledHint', 'Switch to another workspace before archiving the current one.')
+        : undefined;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-foreground"
+            aria-label={msg('workspace.archive.moreActionsAria', 'More actions for workspace {name}', {
+              name: workspace.name,
+            })}
+          />
+        }
+      >
+        <MoreVertical className="size-4" aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuItem render={<a href={workspaceApiKeysPath(workspace.id)} />}>
+          <KeyRound className="size-4" aria-hidden />
+          <span>{msg('nav.apiKeys', 'API keys')}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem render={<a href={workspaceWebhooksPath(workspace.id)} />}>
+          <Webhook className="size-4" aria-hidden />
+          <span>{msg('nav.webhooks', 'Webhooks')}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" disabled={!canArchive} title={disabledHint} onClick={onArchive}>
+          <Archive className="size-4" aria-hidden />
+          <span>{msg('workspace.archive.action', 'Archive workspace')}</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

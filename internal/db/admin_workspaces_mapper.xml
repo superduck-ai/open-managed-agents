@@ -10,7 +10,6 @@
         archived_at,
         compartment_id,
         display_color,
-        data_residency,
         external_key_id,
         tags
     </sql>
@@ -25,7 +24,6 @@
             updated_at,
             compartment_id,
             display_color,
-            data_residency,
             external_key_id,
             tags
         ) VALUES (
@@ -37,7 +35,6 @@
             #{params.CreatedAt},
             #{params.CompartmentID},
             #{params.DisplayColor},
-            CAST(#{params.DataResidency} AS jsonb),
             #{params.ExternalKeyID},
             CAST(#{params.Tags} AS jsonb)
         )
@@ -92,7 +89,6 @@
     <update id="UpdateByExternalID" result="returning" resultType="AdminWorkspace">
         UPDATE workspaces
         SET name = #{params.Name},
-            data_residency = CAST(#{params.DataResidency} AS jsonb),
             external_key_id = #{params.ExternalKeyID},
             tags = CAST(#{params.Tags} AS jsonb),
             updated_at = #{params.UpdatedAt}

@@ -16,7 +16,6 @@ type insertAdminWorkspaceParams struct {
 	CreatedAt        time.Time
 	CompartmentID    string
 	DisplayColor     string
-	DataResidency    json.RawMessage
 	ExternalKeyID    *string
 	Tags             json.RawMessage
 }
@@ -25,7 +24,6 @@ type updateAdminWorkspaceParams struct {
 	OrganizationUUID string
 	ExternalID       string
 	Name             string
-	DataResidency    json.RawMessage
 	ExternalKeyID    *string
 	Tags             json.RawMessage
 	UpdatedAt        time.Time

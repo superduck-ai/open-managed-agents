@@ -18,7 +18,6 @@ type AdminWorkspace struct {
 	ArchivedAt       *time.Time      `db:"archived_at"`
 	CompartmentID    string          `db:"compartment_id"`
 	DisplayColor     string          `db:"display_color"`
-	DataResidency    json.RawMessage `db:"data_residency"`
 	ExternalKeyID    *string         `db:"external_key_id"`
 	Tags             json.RawMessage `db:"tags"`
 }
@@ -41,7 +40,6 @@ func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace)
 		CreatedAt:        workspace.CreatedAt,
 		CompartmentID:    workspace.CompartmentID,
 		DisplayColor:     workspace.DisplayColor,
-		DataResidency:    workspace.DataResidency,
 		ExternalKeyID:    workspace.ExternalKeyID,
 		Tags:             workspace.Tags,
 	})
@@ -97,7 +95,6 @@ func (d *DB) UpdateAdminWorkspace(ctx context.Context, organizationUUID, externa
 		OrganizationUUID: organizationUUID,
 		ExternalID:       externalID,
 		Name:             next.Name,
-		DataResidency:    next.DataResidency,
 		ExternalKeyID:    next.ExternalKeyID,
 		Tags:             next.Tags,
 		UpdatedAt:        next.UpdatedAt,

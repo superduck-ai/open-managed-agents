@@ -48,7 +48,6 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			archived_at timestamptz,
 			compartment_id text NOT NULL,
 			display_color text NOT NULL,
-			data_residency jsonb NOT NULL,
 			external_key_id text,
 			tags jsonb NOT NULL
 		) ON COMMIT DROP
@@ -129,13 +128,11 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 				CreatedAt:        baseTime.Add(time.Duration(index) * time.Minute),
 				CompartmentID:    "compartment_mapper",
 				DisplayColor:     "#123456",
-				DataResidency:    json.RawMessage(`{"region":"us"}`),
 				Tags:             json.RawMessage(`[{"key":"team","value":"platform"}]`),
 			})
 			if createErr != nil || created.UUID != id || created.ExternalKeyID != nil {
 				t.Fatalf("Insert() = (%+v, %v)", created, createErr)
 			}
-			assertAdminWorkspaceJSONField(t, created.DataResidency, "region", "us")
 		}
 
 		foundByExternalID, findErr := workspaceMapper.FindByIdentifier(
@@ -183,7 +180,6 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			OrganizationUUID: organizationUUID.String(),
 			ExternalID:       "wrkspc_mapper_a",
 			Name:             "Updated workspace",
-			DataResidency:    json.RawMessage(`{"region":"eu"}`),
 			ExternalKeyID:    &externalKeyID,
 			Tags:             json.RawMessage(`[{"key":"tier","value":"gold"}]`),
 			UpdatedAt:        baseTime.Add(time.Hour),
@@ -191,7 +187,6 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 		if updateErr != nil || updated.ExternalKeyID == nil || *updated.ExternalKeyID != externalKeyID {
 			t.Fatalf("UpdateByExternalID() = (%+v, %v)", updated, updateErr)
 		}
-		assertAdminWorkspaceJSONField(t, updated.DataResidency, "region", "eu")
 		count, countErr := workspaceMapper.CountByExternalKeyID(
 			ctx,
 			organizationUUID.String(),
@@ -326,12 +321,4 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			t.Fatalf("ListPage() after delete = (%+v, %v)", active, listErr)
 		}
 	})
-}
-
-func assertAdminWorkspaceJSONField(t *testing.T, raw json.RawMessage, key, want string) {
-	t.Helper()
-	var value map[string]string
-	if err := json.Unmarshal(raw, &value); err != nil || value[key] != want {
-		t.Fatalf("JSON field %q = %q, want %q (raw: %s, error: %v)", key, value[key], want, raw, err)
-	}
 }

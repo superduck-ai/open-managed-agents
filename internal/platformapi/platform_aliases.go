@@ -13,7 +13,6 @@ type AdminRequest = platform.AdminRequest
 
 type ConsoleWorkspace = platform.ConsoleWorkspace
 type WorkspaceScope = platform.WorkspaceScope
-type ConsoleWorkspaceDataResidency = platform.ConsoleWorkspaceDataResidency
 type CreateConsoleWorkspaceInput = platform.CreateConsoleWorkspaceInput
 type ConsoleAPIKey = platform.ConsoleAPIKey
 type CreateConsoleAPIKeyInput = platform.CreateConsoleAPIKeyInput

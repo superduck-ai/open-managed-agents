@@ -7,7 +7,6 @@
         name,
         display_color AS display_color,
         display_color AS color,
-        data_residency,
         external_key_id,
         tags,
         archived_at,
@@ -29,7 +28,6 @@
             name,
             compartment_id,
             display_color,
-            data_residency,
             tags
         )
         SELECT
@@ -39,12 +37,10 @@
             #{params.Name},
             #{params.ExternalID},
             #{params.DisplayColor},
-            CAST(#{params.DataResidency} AS jsonb),
             CAST('{}' AS jsonb)
         FROM org
         ON CONFLICT (organization_uuid, name) DO UPDATE SET
             display_color = excluded.display_color,
-            data_residency = excluded.data_residency,
             archived_at = NULL,
             updated_at = NOW()
         RETURNING

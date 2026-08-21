@@ -10,12 +10,11 @@ import (
 func TestConsoleWorkspaceMapperBuilders(t *testing.T) {
 	orgUUID := "11111111-1111-4111-8111-111111111111"
 	params := upsertConsoleWorkspaceParams{
-		UUID:          "22222222-2222-4222-8222-222222222222",
-		ExternalID:    "workspace_external",
-		OrgUUID:       orgUUID,
-		Name:          "Console Workspace",
-		DisplayColor:  "#9B87F5",
-		DataResidency: []byte(`{"workspace_geo":"us"}`),
+		UUID:         "22222222-2222-4222-8222-222222222222",
+		ExternalID:   "workspace_external",
+		OrgUUID:      orgUUID,
+		Name:         "Console Workspace",
+		DisplayColor: "#9B87F5",
 	}
 
 	assertMapperBuilderContract(t, mapperBuilderContract{
@@ -23,8 +22,8 @@ func TestConsoleWorkspaceMapperBuilders(t *testing.T) {
 		bound:             buildConsoleWorkspaceMapperUpsert(yourbatis.DialectPostgres, params),
 		wantID:            "ConsoleWorkspaceMapper.Upsert",
 		wantKind:          yourbatis.StatementInsert,
-		wantArgumentNames: []string{"params.OrgUUID", "params.UUID", "params.ExternalID", "params.Name", "params.ExternalID", "params.DisplayColor", "params.DataResidency"},
-		wantSQLFragments:  []string{"WITH org AS", "INSERT INTO workspaces", "CAST($7 AS jsonb)", "ON CONFLICT", "RETURNING"},
+		wantArgumentNames: []string{"params.OrgUUID", "params.UUID", "params.ExternalID", "params.Name", "params.ExternalID", "params.DisplayColor"},
+		wantSQLFragments:  []string{"WITH org AS", "INSERT INTO workspaces", "ON CONFLICT", "RETURNING"},
 	})
 
 	t.Run("active only", func(t *testing.T) {
@@ -49,19 +48,15 @@ func TestConsoleWorkspaceMapperBuilders(t *testing.T) {
 
 func TestConsoleWorkspaceRowMapsJSONFields(t *testing.T) {
 	row := consoleWorkspaceRow{
-		UUID:          "22222222-2222-4222-8222-222222222222",
-		ExternalID:    "workspace_external",
-		OrgUUID:       "11111111-1111-4111-8111-111111111111",
-		DataResidency: []byte(`{"workspace_geo":"us","allowed_inference_geos":"unrestricted","default_inference_geo":"global"}`),
-		Tags:          []byte(`{"team":"platform"}`),
+		UUID:       "22222222-2222-4222-8222-222222222222",
+		ExternalID: "workspace_external",
+		OrgUUID:    "11111111-1111-4111-8111-111111111111",
+		Tags:       []byte(`{"team":"platform"}`),
 	}
 
 	workspace, err := row.workspace()
 	if err != nil {
 		t.Fatalf("workspace(): %v", err)
-	}
-	if workspace.DataResidency == nil || *workspace.DataResidency != "us" {
-		t.Fatalf("data residency = %#v, want us", workspace.DataResidency)
 	}
 	if workspace.UUID != row.UUID || workspace.ExternalID != row.ExternalID {
 		t.Fatalf("workspace identifiers = (%q, %q)", workspace.UUID, workspace.ExternalID)

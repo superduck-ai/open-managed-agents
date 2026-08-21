@@ -172,10 +172,6 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 		return platform.ConsoleWorkspace{}, platform.ErrNotFound
 	}
 	externalID := consolePrefixedID("wrkspc", 18)
-	dataResidency, err := consoleWorkspaceDataResidencyJSON(input.DataResidency)
-	if err != nil {
-		return platform.ConsoleWorkspace{}, err
-	}
 	displayColor := input.DisplayColor
 	if displayColor == "" {
 		displayColor = input.Color
@@ -185,12 +181,11 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 	}
 	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
 	row, err := mapper.Upsert(ctx, upsertConsoleWorkspaceParams{
-		UUID:          uuid.NewString(),
-		ExternalID:    externalID,
-		OrgUUID:       input.OrgUUID,
-		Name:          input.Name,
-		DisplayColor:  displayColor,
-		DataResidency: dataResidency,
+		UUID:         uuid.NewString(),
+		ExternalID:   externalID,
+		OrgUUID:      input.OrgUUID,
+		Name:         strings.TrimSpace(input.Name),
+		DisplayColor: displayColor,
 	})
 	if isUniqueViolation(err) {
 		return platform.ConsoleWorkspace{}, err
@@ -222,31 +217,24 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 }
 
 func (r consoleWorkspaceRow) workspace() (platform.ConsoleWorkspace, error) {
-	dataResidency, settings, err := parseConsoleWorkspaceDataResidencyJSON(r.DataResidency)
-	if err != nil {
-		return platform.ConsoleWorkspace{}, err
-	}
 	tags, err := parseConsoleWorkspaceTagsJSON(r.Tags)
 	if err != nil {
 		return platform.ConsoleWorkspace{}, err
 	}
 	return platform.ConsoleWorkspace{
-		UUID:                  r.UUID,
-		ExternalID:            r.ExternalID,
-		OrgUUID:               r.OrgUUID,
-		Name:                  r.Name,
-		DisplayColor:          r.DisplayColor,
-		Color:                 r.Color,
-		DataResidency:         dataResidency,
-		DataResidencySettings: settings,
-		ExternalKeyID:         r.ExternalKeyID,
-		Tags:                  tags,
-		ArchivedAt:            r.ArchivedAt,
-		CreatedAt:             r.CreatedAt,
-		UpdatedAt:             r.UpdatedAt,
+		UUID:          r.UUID,
+		ExternalID:    r.ExternalID,
+		OrgUUID:       r.OrgUUID,
+		Name:          r.Name,
+		DisplayColor:  r.DisplayColor,
+		Color:         r.Color,
+		ExternalKeyID: r.ExternalKeyID,
+		Tags:          tags,
+		ArchivedAt:    r.ArchivedAt,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
 	}, nil
 }
-
 func (r consoleAPIKeyRow) key() platform.ConsoleAPIKey {
 	var createdByUserUUID *string
 	if r.CreatedByUserUUID.Valid {
@@ -269,55 +257,6 @@ func (r consoleAPIKeyRow) key() platform.ConsoleAPIKey {
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
 	}
-}
-
-func consoleWorkspaceDataResidencyJSON(dataResidency *string) ([]byte, error) {
-	workspaceGeo := ""
-	if dataResidency != nil {
-		workspaceGeo = strings.TrimSpace(*dataResidency)
-	}
-	if workspaceGeo == "" {
-		return []byte("{}"), nil
-	}
-	return json.Marshal(map[string]string{
-		"workspace_geo":          workspaceGeo,
-		"allowed_inference_geos": "unrestricted",
-		"default_inference_geo":  "global",
-	})
-}
-
-func parseConsoleWorkspaceDataResidencyJSON(raw []byte) (*string, *platform.ConsoleWorkspaceDataResidency, error) {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil, nil, nil
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, nil, err
-	}
-	settings := &platform.ConsoleWorkspaceDataResidency{}
-	switch typed := value.(type) {
-	case string:
-		settings.WorkspaceGeo = strings.TrimSpace(typed)
-	case map[string]any:
-		settings.WorkspaceGeo = stringValueFromMap(typed, "workspace_geo")
-		settings.AllowedInferenceGeos = stringValueFromMap(typed, "allowed_inference_geos")
-		settings.DefaultInferenceGeo = stringValueFromMap(typed, "default_inference_geo")
-	}
-	if strings.TrimSpace(settings.WorkspaceGeo) == "" &&
-		strings.TrimSpace(settings.AllowedInferenceGeos) == "" &&
-		strings.TrimSpace(settings.DefaultInferenceGeo) == "" {
-		return nil, nil, nil
-	}
-	var dataResidency *string
-	if workspaceGeo := strings.TrimSpace(settings.WorkspaceGeo); workspaceGeo != "" {
-		dataResidency = &workspaceGeo
-	}
-	return dataResidency, settings, nil
-}
-
-func stringValueFromMap(values map[string]any, key string) string {
-	value, _ := values[key].(string)
-	return strings.TrimSpace(value)
 }
 
 func parseConsoleWorkspaceTagsJSON(raw []byte) (map[string]string, error) {

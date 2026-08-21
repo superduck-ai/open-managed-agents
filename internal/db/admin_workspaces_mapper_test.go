@@ -27,7 +27,6 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 		CreatedAt:        createdAt,
 		CompartmentID:    "compartment_mapper",
 		DisplayColor:     "#123456",
-		DataResidency:    json.RawMessage(`{"region":"us"}`),
 		ExternalKeyID:    &externalKeyID,
 		Tags:             json.RawMessage(`[{"key":"team","value":"platform"}]`),
 	}
@@ -74,12 +73,10 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 				params.CreatedAt,
 				params.CompartmentID,
 				params.DisplayColor,
-				params.DataResidency,
 				params.ExternalKeyID,
 				params.Tags,
 			},
-			"CAST($9 AS jsonb)",
-			"CAST($11 AS jsonb)",
+			"CAST($10 AS jsonb)",
 			"RETURNING",
 		)
 	})
@@ -220,7 +217,6 @@ func TestAdminWorkspaceMapperWritesAndCount(t *testing.T) {
 				OrganizationUUID: organizationUUID,
 				ExternalID:       "wrkspc_missing",
 				Name:             "Missing",
-				DataResidency:    json.RawMessage(`{"region":"us"}`),
 				Tags:             json.RawMessage(`[]`),
 				UpdatedAt:        createdAt,
 			},
@@ -276,7 +272,6 @@ func adminWorkspaceMapperTestColumns() []string {
 		"archived_at",
 		"compartment_id",
 		"display_color",
-		"data_residency",
 		"external_key_id",
 		"tags",
 	}
@@ -293,7 +288,6 @@ func adminWorkspaceMapperTestRow(externalID string, createdAt time.Time) []drive
 		nil,
 		"compartment_mapper",
 		"#123456",
-		[]byte(`{"region":"us"}`),
 		nil,
 		[]byte(`[]`),
 	}

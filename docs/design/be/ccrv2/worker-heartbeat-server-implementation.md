@@ -103,7 +103,7 @@ worker 心跳状态直接使用 `code_sessions` 现有列：
 - `connection_status`
 - `updated_at`
 
-本流程不增加数据库列或 migration。Code Session 通过受信任的 Session Work 数据关联 `environment_work`，再通过 `work_id` 定位 `environment_sandboxes` 中最新的 `running` Sandbox；查询同时约束 organization、workspace 和 environment，并要求 `provider_sandbox_id` 非空。heartbeat 调用只查询 `worker_status=running`；Session 用户事件唤醒路径允许 `idle`、`running` 和 `requires_action`，从而既不让空闲 heartbeat 无限续期，又能在新工作到达时恢复 Sandbox。未关联活动 Sandbox 的独立 Code Session 只更新自身队列或 worker lease，不调用 Provider。worker 是否已注册由以下条件判断：
+heartbeat 状态机本身不增加 `code_sessions` 列。迁移 `00052` 将 Environment Work 的 Session 关联从 `data.id` JSONB 查询改为必填 `environment_work.session_uuid`；Code Session 现在通过同一 organization、workspace、environment 范围内的 `session_uuid` 关联 Work，再通过 `work_uuid` 定位 `environment_sandboxes` 中最新的 `running` Sandbox，并要求 `provider_sandbox_id` 非空。关联不依赖 Session 是否已软删除，也不解析 Work JSON。heartbeat 调用只查询 `worker_status=running`；Session 用户事件唤醒路径允许 `idle`、`running` 和 `requires_action`，从而既不让空闲 heartbeat 无限续期，又能在新工作到达时恢复 Sandbox。未关联活动 Sandbox 的独立 Code Session 只更新自身队列或 worker lease，不调用 Provider。worker 是否已注册由以下条件判断：
 
 - `current_worker_epoch > 0`
 - `worker_lease_expires_at is not null`

@@ -225,6 +225,15 @@ func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID st
 	return row.session(), true, nil
 }
 
+func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, sessionUUID string) (Session, bool, error) {
+	mapper := NewSessionMapper(d.mapperDB)
+	row, found, err := mapper.FindByUUID(ctx, workspaceUUID, sessionUUID)
+	if err != nil || !found {
+		return Session{}, found, err
+	}
+	return row.session(), true, nil
+}
+
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
@@ -318,7 +327,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if _, txErr = eventMapper.SoftDeleteBySession(ctx, workspaceUUID, externalID); txErr != nil {
 			return txErr
 		}
-		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, externalID)
+		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
 		return txErr
 	})
 	return session, err

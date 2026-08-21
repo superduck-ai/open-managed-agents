@@ -307,8 +307,7 @@
                 AND work.workspace_uuid = code_session.workspace_uuid
                 AND work.environment_uuid = code_session.environment_uuid
                 AND work.environment_external_id = code_session.environment_external_id
-                AND work.data-&gt;&gt;'type' = 'session'
-                AND work.data-&gt;&gt;'id' = code_session.session_external_id
+                AND work.session_uuid = code_session.session_uuid
                 AND work.state = 'active'
                 AND work.deleted_at IS NULL
           )

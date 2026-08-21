@@ -59,7 +59,8 @@ type EnvironmentWork struct {
 	WorkspaceUUID         string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
-	Data                  json.RawMessage
+	SessionUUID           string
+	SessionExternalID     string
 	Metadata              json.RawMessage
 	Secret                *string
 	State                 string
@@ -230,12 +231,8 @@ func (d *DB) GetEnvironmentKey(ctx context.Context, keyHash string) (Environment
 
 func (d *DB) CreateEnvironmentWork(ctx context.Context, work EnvironmentWork) (EnvironmentWork, error) {
 	work.State = coalesceWorkState(work.State)
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.Insert(ctx, environmentWorkWriteParamsFrom(work))
-	if err != nil {
-		return EnvironmentWork{}, err
-	}
-	return row.work(), nil
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).Insert(ctx, environmentWorkWriteParamsFrom(work))
+	return row.work(), err
 }
 
 func (d *DB) GetEnvironmentWork(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID string) (EnvironmentWork, error) {
@@ -247,9 +244,9 @@ func (d *DB) GetEnvironmentWork(ctx context.Context, workspaceUUID string, envir
 	return row.work(), nil
 }
 
-func (d *DB) GetLatestEnvironmentWorkByData(ctx context.Context, workspaceUUID string, environmentExternalID, dataType, dataID string) (EnvironmentWork, error) {
+func (d *DB) GetLatestEnvironmentWorkForSession(ctx context.Context, workspaceUUID string, environmentExternalID, sessionUUID string) (EnvironmentWork, error) {
 	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.FindLatestByData(ctx, workspaceUUID, environmentExternalID, dataType, dataID)
+	row, err := mapper.FindLatestBySession(ctx, workspaceUUID, environmentExternalID, sessionUUID)
 	if err != nil {
 		return EnvironmentWork{}, mapNoRows(err)
 	}
@@ -307,15 +304,14 @@ func (d *DB) PollEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 }
 
 func (d *DB) PollNextEnvironmentWork(ctx context.Context, workerID string, claimFor time.Duration) (*EnvironmentWork, error) {
-	return d.PollNextEnvironmentWorkForRunner(ctx, workerID, claimFor, true)
-}
-
-func (d *DB) PollNextEnvironmentWorkForRunner(ctx context.Context, workerID string, claimFor time.Duration, includeSessionWork bool) (*EnvironmentWork, error) {
 	if claimFor <= 0 {
 		claimFor = 5 * time.Second
 	}
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.ClaimNext(ctx, nullableWorkerID(workerID), time.Now().UTC().Add(claimFor), includeSessionWork)
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).ClaimNext(
+		ctx,
+		nullableWorkerID(workerID),
+		time.Now().UTC().Add(claimFor),
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -336,24 +332,21 @@ func (d *DB) GetEnvironmentByUUID(ctx context.Context, workspaceUUID, environmen
 }
 
 func (d *DB) AckEnvironmentWork(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID string) (EnvironmentWork, error) {
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.AckByExternalID(ctx, workspaceUUID, environmentExternalID, workExternalID)
-	if err != nil {
-		return EnvironmentWork{}, mapNoRows(err)
-	}
-	return row.work(), nil
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).AckByExternalID(
+		ctx,
+		workspaceUUID,
+		environmentExternalID,
+		workExternalID,
+	)
+	return row.work(), mapNoRows(err)
 }
 
 func (d *DB) UpdateEnvironmentWorkMetadata(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID string, metadata json.RawMessage) (EnvironmentWork, error) {
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.UpdateMetadata(ctx, environmentWorkMetadataParams{
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).UpdateMetadata(ctx, environmentWorkMetadataParams{
 		WorkspaceUUID: workspaceUUID, EnvironmentExternalID: environmentExternalID,
 		WorkExternalID: workExternalID, Metadata: agentJSONArg(metadata),
 	})
-	if err != nil {
-		return EnvironmentWork{}, mapNoRows(err)
-	}
-	return row.work(), nil
+	return row.work(), mapNoRows(err)
 }
 
 func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID, expectedLastHeartbeat string, ttlSeconds int, format func(time.Time) string) (WorkHeartbeatResult, error) {
@@ -400,15 +393,11 @@ func (d *DB) StopEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 	if !force {
 		nextState = "stopping"
 	}
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.Stop(ctx, environmentWorkStopParams{
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).Stop(ctx, environmentWorkStopParams{
 		WorkspaceUUID: workspaceUUID, EnvironmentExternalID: environmentExternalID,
 		WorkExternalID: workExternalID, State: nextState,
 	})
-	if err != nil {
-		return EnvironmentWork{}, mapNoRows(err)
-	}
-	return row.work(), nil
+	return row.work(), mapNoRows(err)
 }
 
 func (d *DB) RequeueEnvironmentWorkIfRecoverable(ctx context.Context, work EnvironmentWork, retryAt time.Time) (bool, error) {
@@ -598,7 +587,7 @@ func environmentWorkWriteParamsFrom(work EnvironmentWork) environmentWorkWritePa
 		UUID: work.UUID, ExternalID: work.ExternalID, OrganizationUUID: work.OrganizationUUID,
 		WorkspaceUUID: work.WorkspaceUUID, EnvironmentUUID: work.EnvironmentUUID,
 		EnvironmentExternalID: work.EnvironmentExternalID,
-		Data:                  agentJSONArg(work.Data), Metadata: agentJSONArg(work.Metadata),
+		SessionUUID:           work.SessionUUID, Metadata: agentJSONArg(work.Metadata),
 		Secret: work.Secret, State: work.State, CreatedAt: work.CreatedAt,
 	}
 }
@@ -660,8 +649,10 @@ func (r environmentWorkMapperRow) work() EnvironmentWork {
 	return EnvironmentWork{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, EnvironmentUUID: r.EnvironmentUUID,
-		EnvironmentExternalID: r.EnvironmentExternalID, Data: bytes.Clone(r.Data), Metadata: bytes.Clone(r.Metadata),
-		Secret: r.Secret, State: r.State, ClaimedByWorkerID: r.ClaimedByWorkerID,
+		EnvironmentExternalID: r.EnvironmentExternalID,
+		SessionUUID:           r.SessionUUID, SessionExternalID: r.SessionExternalID,
+		Metadata: bytes.Clone(r.Metadata),
+		Secret:   r.Secret, State: r.State, ClaimedByWorkerID: r.ClaimedByWorkerID,
 		ClaimExpiresAt: r.ClaimExpiresAt, AcknowledgedAt: r.AcknowledgedAt, StartedAt: r.StartedAt,
 		LatestHeartbeatAt: r.LatestHeartbeatAt, HeartbeatTTLSeconds: r.HeartbeatTTLSeconds,
 		StopRequestedAt: r.StopRequestedAt, StoppedAt: r.StoppedAt,

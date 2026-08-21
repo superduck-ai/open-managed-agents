@@ -142,7 +142,8 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			},
 			wantSQLFragments: []string{
 				"UPDATE code_sessions", "current_worker_epoch > 0", "worker_lease_expires_at IS NOT NULL",
-				"JOIN environment_sandboxes", "provider_sandbox_id = $6", "work.state = 'active'",
+				"work.session_uuid = code_session.session_uuid", "JOIN environment_sandboxes",
+				"provider_sandbox_id = $6", "work.state = 'active'",
 			},
 		}},
 		{"update worker state", mapperBuilderContract{

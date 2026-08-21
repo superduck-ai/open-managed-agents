@@ -7,6 +7,7 @@ import { AlertCircle, Loader2, Check } from 'lucide-react';
 import Avatar from 'boring-avatars';
 import { useAuth } from '../../../shared/auth/context';
 import { Marker, MarkerContent, MarkerIcon } from '../../../shared/ui/marker';
+import { MarkdownContent } from '../../../shared/ui/markdown-content';
 
 const BOT_AVATAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 const USER_AVATAR_COLORS = ['var(--chart-5)', 'var(--chart-4)', 'var(--chart-3)', 'var(--chart-2)', 'var(--chart-1)'];
@@ -72,7 +73,7 @@ export function QuickstartTextTurn({ content, role }: { content: string; role: '
                 : 'rounded-2xl rounded-tl-sm bg-card',
             )}
           >
-            {content}
+            {isUser ? content : <MarkdownContent value={content} />}
           </BubbleContent>
         </Bubble>
       </MessageContent>

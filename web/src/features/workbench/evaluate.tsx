@@ -24,6 +24,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu';
+import { MarkdownContent } from '@/shared/ui/markdown-content';
 import { Switch } from '@/shared/ui/switch';
 import { Textarea } from '@/shared/ui/textarea';
 
@@ -50,7 +51,7 @@ export function ResponsePreview({
     );
   }
   if (responseText) {
-    return <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{responseText}</div>;
+    return <MarkdownContent value={responseText} className="text-sm leading-6 text-foreground" />;
   }
   return (
     <div className="workbench-empty-response">
@@ -592,7 +593,7 @@ export function EvaluateOutputCell({
       ) : error ? (
         error
       ) : output ? (
-        output
+        <MarkdownContent value={output} className="min-w-0 text-sm leading-5 text-foreground" />
       ) : (
         'Run All to generate model output.'
       )}

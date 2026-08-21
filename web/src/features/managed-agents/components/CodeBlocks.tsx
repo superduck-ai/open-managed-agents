@@ -1,166 +1,31 @@
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
+import { HighlightedCode, SyntaxCodeBlock } from '../../../shared/ui/syntax-code-block';
+import {
+  highlightBashYAMLCommand,
+  highlightCodeHTML,
+  highlightRegisteredLanguage,
+  normalizeHighlightLanguage,
+} from '../../../shared/ui/syntax-highlighting';
 import clsx from 'clsx';
-import hljs from 'highlight.js/lib/core';
-import bash from 'highlight.js/lib/languages/bash';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import python from 'highlight.js/lib/languages/python';
-import typescript from 'highlight.js/lib/languages/typescript';
-import yamlLanguage from 'highlight.js/lib/languages/yaml';
 import { Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { templateBody, templateTitle } from '../labels';
-import { looksLikeJson } from '../sessions/SessionDetailPage';
 import { type AgentTemplate, type CodeFormat, type HighlightLanguage } from '../types';
 import { copyText } from '../utils';
 
-hljs.registerLanguage('bash', bash);
-
-hljs.registerLanguage('shell', bash);
-
-hljs.registerLanguage('javascript', javascript);
-
-hljs.registerLanguage('json', json);
-
-hljs.registerLanguage('python', python);
-
-hljs.registerLanguage('typescript', typescript);
-
-hljs.registerLanguage('yaml', yamlLanguage);
-
-export function SyntaxCodeBlock({
-  value,
-  language,
-  maxHeightClassName,
-}: {
-  value: string;
-  language?: string;
-  maxHeightClassName?: string;
-}) {
-  const highlightLanguage = normalizeHighlightLanguage(language, value);
-  return (
-    <pre
-      data-testid="session-trace-code-block"
-      className={clsx(
-        'rounded-lg border border-border bg-muted p-3 font-mono text-[13px] leading-[19px] text-foreground whitespace-pre-wrap break-words overflow-x-hidden',
-        maxHeightClassName ? 'subtle-scrollbar overflow-y-auto' : 'overflow-visible',
-        maxHeightClassName,
-      )}
-    >
-      <HighlightedCode code={value} language={highlightLanguage} />
-    </pre>
-  );
-}
+export {
+  HighlightedCode,
+  SyntaxCodeBlock,
+  highlightBashYAMLCommand as highlightBashYamlCommand,
+  highlightCodeHTML as highlightCodeHtml,
+  highlightRegisteredLanguage,
+  normalizeHighlightLanguage,
+};
 
 export function codeFormatLanguage(format: CodeFormat): HighlightLanguage {
   return format === 'YAML' ? 'yaml' : 'json';
-}
-
-export function normalizeHighlightLanguage(language: string | undefined, value: string): HighlightLanguage {
-  const normalized = language?.toLowerCase();
-  if (normalized === 'yaml' || normalized === 'yml') {
-    return 'yaml';
-  }
-  if (normalized === 'json') {
-    return 'json';
-  }
-  if (
-    normalized === 'bash' ||
-    normalized === 'shell' ||
-    normalized === 'sh' ||
-    normalized === 'zsh' ||
-    normalized === 'cli' ||
-    normalized === 'curl'
-  ) {
-    return 'bash';
-  }
-  if (normalized === 'py' || normalized === 'python') {
-    return 'python';
-  }
-  if (normalized === 'ts' || normalized === 'tsx' || normalized === 'typescript') {
-    return 'typescript';
-  }
-  if (normalized === 'js' || normalized === 'jsx' || normalized === 'javascript') {
-    return 'javascript';
-  }
-  return looksLikeJson(value) ? 'json' : 'plaintext';
-}
-
-export function HighlightedCode({
-  code,
-  language,
-  className,
-}: {
-  code: string;
-  language: HighlightLanguage;
-  className?: string;
-}) {
-  const codeLanguage = language === 'bash-yaml' ? 'bash' : language;
-  return (
-    <code
-      className={clsx(
-        'whitespace-pre-wrap break-words',
-        className,
-        codeLanguage !== 'plaintext' && `language-${codeLanguage}`,
-      )}
-      dangerouslySetInnerHTML={{ __html: highlightCodeHtml(code, language) }}
-    />
-  );
-}
-
-export function highlightCodeHtml(code: string, language: HighlightLanguage): string {
-  if (language === 'plaintext') {
-    return escapeHtml(code);
-  }
-  if (language === 'bash-yaml') {
-    return highlightBashYamlCommand(code);
-  }
-  return highlightRegisteredLanguage(code, language);
-}
-
-export function highlightBashYamlCommand(code: string): string {
-  const heredocStart = code.indexOf('<<YAML\n');
-  if (heredocStart < 0) {
-    return highlightRegisteredLanguage(code, 'bash');
-  }
-
-  const bodyStart = heredocStart + '<<YAML\n'.length;
-  const beforeYaml = code.slice(0, bodyStart);
-  const rest = code.slice(bodyStart);
-  const closingMatch = rest.match(/([\s\S]*?)(\nYAML)$/);
-  const yamlBody = closingMatch ? (closingMatch[1] ?? '') : rest;
-  const closingYaml = closingMatch?.[2] ?? '';
-
-  return [
-    highlightRegisteredLanguage(beforeYaml, 'bash'),
-    highlightRegisteredLanguage(yamlBody, 'yaml'),
-    closingYaml ? highlightRegisteredLanguage(closingYaml, 'bash') : '',
-  ].join('');
-}
-
-export function highlightRegisteredLanguage(
-  code: string,
-  language: Exclude<HighlightLanguage, 'bash-yaml' | 'plaintext'>,
-): string {
-  if (!hljs.getLanguage(language)) {
-    return escapeHtml(code);
-  }
-  try {
-    return hljs.highlight(code, { language, ignoreIllegals: true }).value;
-  } catch {
-    return escapeHtml(code);
-  }
-}
-
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 export function FormatSelect({

@@ -2004,6 +2004,24 @@ describe('WorkbenchPage', () => {
     expect(screen.queryByLabelText('animal row 6')).toBeNull();
   });
 
+  test('renders Evaluate model outputs as Markdown', async () => {
+    resetTestDom('https://oma.duck.ai/workbench/prompt_1?tab=evaluate');
+    mockWorkbenchApi({
+      initialPromptText: 'Write a haiku about {{animal}}.',
+      completionText: '- **Drafted** response.',
+    });
+    renderWorkbench();
+
+    await screen.findByRole('button', { name: /Run All/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Row' }));
+    fireEvent.change(screen.getByLabelText('animal row 1'), { target: { value: 'otter' } });
+    fireEvent.click(screen.getByRole('button', { name: /Run All/ }));
+
+    const emphasizedOutput = await screen.findByText('Drafted');
+    expect(emphasizedOutput.tagName).toBe('STRONG');
+    expect(emphasizedOutput.closest('.workbench-evaluate-output-cell')?.querySelector('ul')).toBeTruthy();
+  });
+
   test('runs all Evaluate rows through Workbench completions and writes model output', async () => {
     resetTestDom('https://oma.duck.ai/workbench/prompt_1?tab=evaluate');
     const api = mockWorkbenchApi({ initialPromptText: 'Write a haiku about {{animal}}.' });
@@ -2259,6 +2277,18 @@ describe('WorkbenchPage', () => {
     ).toBeNull();
   });
 
+  test('renders Workbench model responses as Markdown', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    mockWorkbenchApi({ completionText: '## Result\n\n**Ready** for review.' });
+    renderWorkbench();
+
+    await screen.findByRole('button', { name: 'Run ⌘ + ⏎' });
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+    expect(await screen.findByRole('heading', { name: 'Result', level: 2 })).toBeTruthy();
+    expect((await screen.findByText('Ready')).tagName).toBe('STRONG');
+  });
+
   test('runs a prompt through the official Workbench completions request and refreshes dependent data', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     const api = mockWorkbenchApi();
@@ -2288,7 +2318,7 @@ describe('WorkbenchPage', () => {
 
   test('renders the standardized response error alert when a run fails', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
-    const api = mockWorkbenchApi({ completionErrorMessage: 'Model request failed.' });
+    const api = mockWorkbenchApi({ completionErrorMessage: '**Model** request failed.' });
     renderWorkbench();
 
     await screen.findByRole('button', { name: 'Run ⌘ + ⏎' });
@@ -2297,7 +2327,8 @@ describe('WorkbenchPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.getAttribute('data-slot')).toBe('alert');
     expect(alert.textContent).toContain('Request failed');
-    expect(alert.textContent).toContain('Model request failed.');
+    expect(alert.textContent).toContain('**Model** request failed.');
+    expect(alert.querySelector('strong')).toBeNull();
     expect(api.requests.some((request) => request.url.endsWith('/workbench/completions'))).toBe(true);
   });
 
@@ -2691,6 +2722,7 @@ function mockWorkbenchApi(
     generatedPromptText?: string;
     generatedPromptDelayMs?: number;
     completionErrorMessage?: string;
+    completionText?: string;
     prepaidCreditsAmount?: number;
   } = {},
 ) {
@@ -2895,7 +2927,11 @@ function mockWorkbenchApi(
           ['message_start', { type: 'message_start', message: { id: 'msg_test', role: 'assistant', content: [] } }],
           [
             'content_block_delta',
-            { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Drafted response.' } },
+            {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: options.completionText ?? 'Drafted response.' },
+            },
           ],
           ['message_stop', { type: 'message_stop' }],
         ],

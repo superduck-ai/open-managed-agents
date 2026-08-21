@@ -4692,10 +4692,15 @@ func sessionWorkData(t *testing.T, app *testApp, sessionID string) (string, stri
 	t.Helper()
 	var workType, workSessionID, state string
 	if err := app.pool.QueryRow(context.Background(), `
-		select data->>'type', data->>'id', state
-		from environment_work
-		where data->>'id' = $1 and deleted_at is null
-		order by created_at desc
+		select 'session', session.external_id, work.state
+		from environment_work work
+		join sessions session
+			on session.organization_uuid = work.organization_uuid
+			and session.workspace_uuid = work.workspace_uuid
+			and session.environment_uuid = work.environment_uuid
+			and session.uuid = work.session_uuid
+		where session.external_id = $1 and work.deleted_at is null
+		order by work.created_at desc
 		limit 1
 	`, sessionID).Scan(&workType, &workSessionID, &state); err != nil {
 		t.Fatalf("load session work: %v", err)

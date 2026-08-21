@@ -202,17 +202,21 @@ func TestEnvironmentsAPI(t *testing.T) {
 		}, auth.HashAPIKey(envKey)); err != nil {
 			t.Fatalf("create environment key: %v", err)
 		}
-		workID := createEnvironmentWork(t, app, record)
+		workID, workSessionID := createEnvironmentWork(t, app, record)
 		defer cleanupEnvironmentWorkRows(t, app.pool, workID)
 
 		polled := pollEnvironmentWork(t, app, configured.ID, envKey)
 		if polled.ID != workID || polled.State != "queued" {
 			t.Fatalf("unexpected polled work: %+v", polled)
 		}
+		assertEnvironmentSessionWorkData(t, polled, workSessionID)
+		retrieved := retrieveEnvironmentWork(t, app, configured.ID, workID, envKey)
+		assertEnvironmentSessionWorkData(t, retrieved, workSessionID)
 		acked := postEnvironmentWork(t, app, configured.ID, workID, "ack", nil, envKey)
 		if acked.State != "starting" || acked.AcknowledgedAt == nil || acked.StartedAt == nil {
 			t.Fatalf("unexpected acked work: %+v", acked)
 		}
+		assertEnvironmentSessionWorkData(t, acked, workSessionID)
 		heartbeat := heartbeatEnvironmentWork(t, app, configured.ID, workID, "NO_HEARTBEAT", envKey)
 		if heartbeat.Type != "work_heartbeat" || heartbeat.State != "active" || heartbeat.LastHeartbeat == "" || heartbeat.TTLSeconds != 60 {
 			t.Fatalf("unexpected heartbeat: %+v", heartbeat)
@@ -222,10 +226,12 @@ func TestEnvironmentsAPI(t *testing.T) {
 
 		updatedWork := updateEnvironmentWork(t, app, configured.ID, workID, `{"metadata":{"state":"seen"}}`, envKey)
 		assertRawContains(t, updatedWork.Metadata, `"state":"seen"`)
+		assertEnvironmentSessionWorkData(t, updatedWork, workSessionID)
 		workPage := listEnvironmentWork(t, app, configured.ID, envKey)
 		if len(workPage.Data) != 1 || workPage.Data[0].ID != workID {
 			t.Fatalf("unexpected work page: %+v", workPage)
 		}
+		assertEnvironmentSessionWorkData(t, workPage.Data[0], workSessionID)
 		stats := environmentWorkStats(t, app, configured.ID, envKey)
 		if stats.Type != "work_queue_stats" || stats.Pending != 1 || stats.WorkersPolling == nil || *stats.WorkersPolling != 1 {
 			t.Fatalf("unexpected work stats: %+v", stats)
@@ -234,6 +240,7 @@ func TestEnvironmentsAPI(t *testing.T) {
 		if stopped.State != "stopped" || stopped.StoppedAt == nil {
 			t.Fatalf("unexpected stopped work: %+v", stopped)
 		}
+		assertEnvironmentSessionWorkData(t, stopped, workSessionID)
 
 		deleteEnvironment(t, app, configured.ID)
 	})
@@ -455,6 +462,18 @@ func pollEnvironmentWork(t *testing.T, app *testApp, envID, envKey string) envir
 	return work
 }
 
+func retrieveEnvironmentWork(t *testing.T, app *testApp, envID, workID, envKey string) environmentWorkAPIResponse {
+	t.Helper()
+	resp := doEnvironmentBearerRequest(t, app, http.MethodGet, "/v1/environments/"+envID+"/work/"+workID+"?beta=true", nil, envKey, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("retrieve work status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+	var work environmentWorkAPIResponse
+	decodeJSON(t, resp.Body, &work)
+	return work
+}
+
 func postEnvironmentWork(t *testing.T, app *testApp, envID, workID, action string, body io.Reader, envKey string) environmentWorkAPIResponse {
 	t.Helper()
 	resp := doEnvironmentBearerRequest(t, app, http.MethodPost, "/v1/environments/"+envID+"/work/"+workID+"/"+action+"?beta=true", body, envKey, true)
@@ -515,27 +534,55 @@ func environmentWorkStats(t *testing.T, app *testApp, envID, envKey string) envi
 	return stats
 }
 
-func createEnvironmentWork(t *testing.T, app *testApp, env db.Environment) string {
+func createEnvironmentWork(t *testing.T, app *testApp, env db.Environment) (string, string) {
 	t.Helper()
+	now := time.Now().UTC()
+	dbIDs := getDefaultDBIDs(t, app.pool)
 	workID, err := ids.New("work_")
 	if err != nil {
 		t.Fatalf("new work id: %v", err)
 	}
-	if _, err := app.db.CreateEnvironmentWork(context.Background(), db.EnvironmentWork{
-		UUID:                  uuid.NewString(),
-		ExternalID:            workID,
-		OrganizationUUID:      env.OrganizationUUID,
-		WorkspaceUUID:         env.WorkspaceUUID,
-		EnvironmentUUID:       env.UUID,
-		EnvironmentExternalID: env.ExternalID,
-		Data:                  json.RawMessage(`{"type":"session","id":"session_test"}`),
-		Metadata:              json.RawMessage(`{}`),
-		State:                 "queued",
-		CreatedAt:             time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("create environment work: %v", err)
+	sessionID := "sesn_environment_work_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	sessionUUID := uuid.NewString()
+	_, _, _, work, err := app.db.CreateSession(context.Background(), db.CreateSessionInput{
+		Session: db.Session{
+			UUID: sessionUUID, ExternalID: sessionID, OrganizationUUID: env.OrganizationUUID,
+			WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: dbIDs.APIKeyUUID,
+			EnvironmentUUID: env.UUID, EnvironmentExternalID: env.ExternalID,
+			AgentUUID: uuid.NewString(), AgentExternalID: "agent_environment_work_test", AgentVersion: 1,
+			AgentSnapshot: json.RawMessage(`{}`), Metadata: json.RawMessage(`{}`), VaultIDs: json.RawMessage(`[]`),
+			Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`),
+			OutcomeEvaluations: json.RawMessage(`[]`), CreatedAt: now, UpdatedAt: now,
+		},
+		Thread: db.SessionThread{
+			UUID: uuid.NewString(), ExternalID: "sthr_environment_work_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+			OrganizationUUID: env.OrganizationUUID, WorkspaceUUID: env.WorkspaceUUID,
+			AgentSnapshot: json.RawMessage(`{}`), Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`), CreatedAt: now,
+		},
+		Work: db.EnvironmentWork{
+			UUID: uuid.NewString(), ExternalID: workID, OrganizationUUID: env.OrganizationUUID,
+			WorkspaceUUID: env.WorkspaceUUID, EnvironmentUUID: env.UUID, EnvironmentExternalID: env.ExternalID,
+			Metadata: json.RawMessage(`{}`), State: "queued", CreatedAt: now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create environment session work: %v", err)
 	}
-	return workID
+	if work.SessionUUID != sessionUUID || work.SessionExternalID != sessionID {
+		t.Fatalf("created environment work session link = (%q, %q), want (%q, %q)", work.SessionUUID, work.SessionExternalID, sessionUUID, sessionID)
+	}
+	return workID, sessionID
+}
+
+func assertEnvironmentSessionWorkData(t *testing.T, work environmentWorkAPIResponse, sessionID string) {
+	t.Helper()
+	var data map[string]string
+	if err := json.Unmarshal(work.Data, &data); err != nil {
+		t.Fatalf("decode environment work data: %v", err)
+	}
+	if len(data) != 2 || data["id"] != sessionID || data["type"] != "session" {
+		t.Fatalf("environment work data = %+v, want session %q", data, sessionID)
+	}
 }
 
 func containsEnvironment(environments []environmentAPIResponse, id string) bool {

@@ -279,10 +279,15 @@ func assertQueuedSandboxRecovery(t *testing.T, app *testApp, sessionID, codeSess
 	t.Helper()
 	var workState string
 	if err := app.pool.QueryRow(context.Background(), `
-		select state
-		from environment_work
-		where data->>'id' = $1 and deleted_at is null
-		order by created_at desc
+		select work.state
+		from environment_work work
+		join sessions session
+			on session.organization_uuid = work.organization_uuid
+			and session.workspace_uuid = work.workspace_uuid
+			and session.environment_uuid = work.environment_uuid
+			and session.uuid = work.session_uuid
+		where session.external_id = $1 and work.deleted_at is null
+		order by work.created_at desc
 		limit 1
 	`, sessionID).Scan(&workState); err != nil {
 		t.Fatalf("load queued recovery work: %v", err)
@@ -418,10 +423,15 @@ func assertRecoveredWorkPublished(t *testing.T, app *testApp, sessionID string) 
 	t.Helper()
 	var state string
 	if err := app.pool.QueryRow(context.Background(), `
-		select state
-		from environment_work
-		where data->>'id' = $1 and deleted_at is null
-		order by created_at desc
+		select work.state
+		from environment_work work
+		join sessions session
+			on session.organization_uuid = work.organization_uuid
+			and session.workspace_uuid = work.workspace_uuid
+			and session.environment_uuid = work.environment_uuid
+			and session.uuid = work.session_uuid
+		where session.external_id = $1 and work.deleted_at is null
+		order by work.created_at desc
 		limit 1
 	`, sessionID).Scan(&state); err != nil {
 		t.Fatalf("load recovered work: %v", err)

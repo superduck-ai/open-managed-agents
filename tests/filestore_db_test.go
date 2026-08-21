@@ -1397,7 +1397,6 @@ func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID str
 			WorkspaceUUID:         workspaceUUID,
 			EnvironmentUUID:       environmentUUID,
 			EnvironmentExternalID: environmentExternalID,
-			Data:                  json.RawMessage(`{"id":"` + sessionExternalID + `","type":"session"}`),
 			Metadata:              json.RawMessage(`{}`),
 			State:                 "queued",
 			CreatedAt:             now,

@@ -23,11 +23,6 @@ type preparedDeploymentExecution struct {
 	Events  []db.SessionEvent
 }
 
-type deploymentSessionWork struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-}
-
 func prepareDeploymentExecution(
 	deployment db.Deployment,
 	createdByAPIKeyUUID string,
@@ -46,10 +41,6 @@ func prepareDeploymentExecution(
 		return preparedDeploymentExecution{}, err
 	}
 	deploymentID := deployment.ExternalID
-	workData, err := jsonx.Encode(deploymentSessionWork{ID: sessionID, Type: "session"})
-	if err != nil {
-		return preparedDeploymentExecution{}, err
-	}
 	return preparedDeploymentExecution{
 		RunID:  runID,
 		Events: events,
@@ -77,7 +68,7 @@ func prepareDeploymentExecution(
 				UUID: uuid.NewString(), ExternalID: workID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
 				EnvironmentUUID: deployment.EnvironmentUUID, EnvironmentExternalID: deployment.EnvironmentExternalID,
-				Data: workData, Metadata: json.RawMessage(`{}`), State: "queued", CreatedAt: now, UpdatedAt: now,
+				Metadata: json.RawMessage(`{}`), State: "queued", CreatedAt: now, UpdatedAt: now,
 			},
 		},
 	}, nil

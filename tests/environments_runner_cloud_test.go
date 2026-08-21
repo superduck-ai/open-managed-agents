@@ -707,7 +707,11 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	ids := getDefaultDBIDs(t, app.pool)
-	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
+	sessionRecord, found, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
+	if err != nil || !found {
+		t.Fatalf("load queued session: found=%v error=%v", found, err)
+	}
+	work, err := app.db.GetLatestEnvironmentWorkForSession(ctx, ids.WorkspaceUUID, environment.ID, sessionRecord.UUID)
 	if err != nil {
 		t.Fatalf("load queued environment work: %v", err)
 	}
@@ -1144,7 +1148,11 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 			ids := getDefaultDBIDs(t, app.pool)
-			work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
+			sessionRecord, found, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
+			if err != nil || !found {
+				t.Fatalf("load environment session: found=%v error=%v", found, err)
+			}
+			work, err := app.db.GetLatestEnvironmentWorkForSession(ctx, ids.WorkspaceUUID, environment.ID, sessionRecord.UUID)
 			if err != nil {
 				t.Fatalf("load environment work: %v", err)
 			}

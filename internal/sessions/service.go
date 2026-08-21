@@ -85,7 +85,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
 	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
 		Session: db.Session{
 			UUID:                  uuid.NewString(),
@@ -129,7 +128,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			WorkspaceUUID:         principal.WorkspaceUUID,
 			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
-			Data:                  workData,
 			Metadata:              json.RawMessage(`{}`),
 			State:                 "queued",
 			CreatedAt:             now,

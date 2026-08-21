@@ -185,7 +185,7 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	// 每次最多领取一条 queued Work。数据库使用 FOR UPDATE SKIP LOCKED
 	// 避免并发 worker 领取同一条记录，并以 5 秒 claim 为 Ack 前的短暂保护。
-	work, err := r.db.PollNextEnvironmentWorkForRunner(ctx, workerID, 5*time.Second, true)
+	work, err := r.db.PollNextEnvironmentWork(ctx, workerID, 5*time.Second)
 	if err != nil || work == nil {
 		// false 表示本轮没有取得 Work：可能是队列为空，也可能是领取 SQL 失败。
 		return false, err
@@ -223,8 +223,8 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	}
 
 	// Cloud Session Work 还要读取 Session、resources、events 和 skills，准备
-	// rclone 与 Environment Manager 的启动数据。普通 Work 返回 nil preparation，
-	// 后续只创建 Sandbox，不进入 Managed Agent 专属分支。
+	// rclone 与 Environment Manager 的启动数据。非 Cloud Environment 不进入
+	// Managed Agent runtime 分支。
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
@@ -326,8 +326,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 
-	// 普通 Work 到这里已经完成。Cloud Session 还需创建 Code Session，并在
-	// Sandbox 内启动 Environment Manager。
+	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
 		launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
 		if err != nil {
@@ -527,11 +526,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if r == nil || work == nil {
 		return nil, nil
 	}
-	sessionID, ok := sessionIDFromEnvironmentWork(*work)
-	if !ok || !cloudEnvironment(env) {
+	if !cloudEnvironment(env) {
 		return nil, nil
 	}
-	session, found, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
+	session, found, err := r.db.GetSessionByUUID(ctx, work.WorkspaceUUID, work.SessionUUID)
 	if err != nil {
 		return nil, fmt.Errorf("load managed agent Session: %w", err)
 	}
@@ -796,11 +794,7 @@ func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.
 	}
 	hosts := []string{}
 	if policyConfig.Type == networkpolicy.TypeLimited && policyConfig.AllowMCPServers {
-		sessionID, ok := sessionIDFromEnvironmentWork(*work)
-		if !ok {
-			return fmt.Errorf("limited managed-agent MCP policy requires session work identity")
-		}
-		session, found, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
+		session, found, err := r.db.GetSessionByUUID(ctx, work.WorkspaceUUID, work.SessionUUID)
 		if err != nil {
 			return err
 		}
@@ -879,20 +873,6 @@ func (r *Runner) replaceRuntimeSkillArchives(
 		return fmt.Errorf("replace managed agent Skill Archive Resources: %w", err)
 	}
 	return nil
-}
-
-func sessionIDFromEnvironmentWork(work db.EnvironmentWork) (string, bool) {
-	var data struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-	}
-	if err := json.Unmarshal(work.Data, &data); err != nil {
-		return "", false
-	}
-	if strings.TrimSpace(data.Type) != "session" || strings.TrimSpace(data.ID) == "" {
-		return "", false
-	}
-	return strings.TrimSpace(data.ID), true
 }
 
 func cloudEnvironment(env db.Environment) bool {

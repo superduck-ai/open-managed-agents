@@ -5,31 +5,19 @@ package tests
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/api"
-	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/environments"
-	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
-	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
 
-func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
+func TestE2BProviderLifecycleIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real E2B integration test in short mode")
 	}
@@ -54,33 +42,6 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		cfg.E2B.SandboxTimeout = time.Minute
 	}
 
-	database, err := db.Open(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	defer database.Close()
-	if err := database.Migrate(ctx); err != nil {
-		t.Fatalf("migrate database: %v", err)
-	}
-	pool := openTestPool(t, cfg)
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
-		t.Fatalf("seed database: %v", err)
-	}
-	credentials, err := codesessions.NewSessionCredentials(cfg)
-	if err != nil {
-		t.Fatalf("create code session credentials: %v", err)
-	}
-	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
-	if err != nil {
-		t.Fatalf("create filestore credentials: %v", err)
-	}
-	objectStore := newFakeStore("e2b-integration-fake")
-
-	apiKey, err := database.GetAPIKey(ctx, auth.HashAPIKey(config.DefaultAPIKey))
-	if err != nil {
-		t.Fatalf("load default api key: %v", err)
-	}
-
 	template := strings.TrimSpace(cfg.E2B.Template)
 	if template == "" {
 		template = config.DefaultE2BTemplate
@@ -93,81 +54,43 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create work id: %v", err)
 	}
-	envConfig := mustJSON(t, map[string]any{
+	envConfig, err := json.Marshal(map[string]any{
 		"type":       "cloud",
 		"runtime":    "self_hosted",
 		"image":      template,
 		"packages":   []any{},
 		"networking": map[string]any{"type": "unrestricted"},
 	})
-	now := time.Now().UTC()
-	env, err := database.CreateEnvironment(ctx, db.Environment{
-		UUID:              uuid.NewString(),
-		ExternalID:        envID,
-		OrganizationID:    apiKey.OrganizationID,
-		WorkspaceID:       apiKey.WorkspaceID,
-		CreatedByAPIKeyID: apiKey.ID,
-		Name:              "e2b-integration-" + envID[len("env_"):len("env_")+8],
-		Description:       "Real E2B integration smoke test",
-		Config:            envConfig,
-		Metadata:          mustJSON(t, map[string]any{"source": "e2b_integration_test"}),
-		Provider:          "e2b",
-		ResolvedTemplate:  template,
-		CreatedAt:         now,
-	})
 	if err != nil {
-		t.Fatalf("create environment: %v", err)
+		t.Fatalf("marshal Environment config: %v", err)
 	}
-	defer cleanupE2BIntegrationRows(t, pool, env.ExternalID, workID)
-
-	work, err := database.CreateEnvironmentWork(ctx, db.EnvironmentWork{
-		UUID:                  uuid.NewString(),
+	env := db.Environment{
+		ExternalID:       envID,
+		WorkspaceUUID:    "e2b-integration-workspace",
+		Config:           envConfig,
+		Provider:         "e2b",
+		ResolvedTemplate: template,
+	}
+	work := db.EnvironmentWork{
 		ExternalID:            workID,
-		OrganizationID:        env.OrganizationID,
-		WorkspaceID:           env.WorkspaceID,
-		EnvironmentID:         env.ID,
-		EnvironmentExternalID: env.ExternalID,
-		Data:                  mustJSON(t, map[string]any{"task": "e2b integration smoke"}),
-		Metadata:              mustJSON(t, map[string]any{"source": "e2b_integration_test"}),
-		State:                 "queued",
-		CreatedAt:             now,
-	})
-	if err != nil {
-		t.Fatalf("create environment work: %v", err)
+		EnvironmentExternalID: envID,
+		Metadata:              json.RawMessage(`{"source":"e2b_integration_test"}`),
 	}
 
 	provider := e2bruntime.NewProvider(cfg.E2B)
-	runner, err := environments.NewRunner(environments.RunnerDependencies{
-		DB:              database,
-		Provider:        provider,
-		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(database, credentials, nil),
-		Skills:          skillsapi.NewRuntimeResolver(database),
-		FilestoreTokens: filestoreCredentials,
-	})
+	resolution, err := provider.Resolve(env, &work)
 	if err != nil {
-		t.Fatalf("create environment runner: %v", err)
+		t.Fatalf("resolve E2B sandbox: %v", err)
 	}
-	processed, err := runner.RunOnce(ctx, "e2b-integration-test")
+	if resolution.Template != template {
+		t.Fatalf("resolved template = %q, want %q", resolution.Template, template)
+	}
+	sandbox, err := provider.Create(ctx, env, &work, resolution)
 	if err != nil {
-		t.Fatalf("run environment runner once: %v", err)
+		t.Fatalf("create E2B sandbox: %v", err)
 	}
-	if !processed {
-		t.Fatal("environment runner did not process queued work")
-	}
-
-	sandboxID, _, sandboxState, sandboxTemplate, sandboxLastError := loadE2BSandboxRow(t, pool, env.ExternalID, work.ExternalID)
-	if sandboxLastError != "" {
-		t.Fatalf("sandbox row has last_error: %s", sandboxLastError)
-	}
-	if sandboxState != "running" {
-		t.Fatalf("sandbox state = %s, want running", sandboxState)
-	}
-	if sandboxTemplate != template {
-		t.Fatalf("sandbox template = %s, want %s", sandboxTemplate, template)
-	}
-	if strings.TrimSpace(sandboxID) == "" {
-		t.Fatal("provider sandbox id was not recorded")
+	if strings.TrimSpace(sandbox.ID) == "" {
+		t.Fatal("created E2B sandbox ID is empty")
 	}
 
 	killed := false
@@ -175,120 +98,31 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		if !killed {
 			killCtx, cancelKill := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancelKill()
-			_ = provider.Kill(killCtx, sandboxID)
+			_ = provider.Kill(killCtx, sandbox.ID)
 		}
 	}()
 
-	connected, err := e2b.Connect(ctx, sandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
+	result, err := provider.RunCommand(ctx, sandbox.ID, e2bruntime.CommandRequest{
+		Command: `printf 'sandbox-ok\n'`,
+		Timeout: 30 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("connect to real sandbox %s: %v", sandboxID, err)
+		t.Fatalf("run command in real sandbox %s: %v", sandbox.ID, err)
 	}
-	commandTimeoutMs := 30_000
-	execution, err := connected.Commands.Run(ctx, `printf 'sandbox-ok\n'`, &e2b.CommandStartOpts{
-		TimeoutMs: &commandTimeoutMs,
-	})
-	if err != nil {
-		t.Fatalf("run command in real sandbox %s: %v", sandboxID, err)
-	}
-	result, ok := execution.(*e2b.CommandResult)
-	if !ok {
-		t.Fatalf("command execution type = %T, want *e2b.CommandResult", execution)
-	}
-	if got := strings.TrimSpace(result.Stdout); got != "sandbox-ok" {
+	if got := strings.TrimSpace(string(result.Stdout)); got != "sandbox-ok" {
 		t.Fatalf("sandbox command stdout = %q, want sandbox-ok; stderr=%q", got, result.Stderr)
 	}
 
-	server := httptest.NewServer(api.NewServer(api.ServerDeps{
-		Config:                 cfg,
-		DB:                     database,
-		ObjectStore:            objectStore,
-		Logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
-		CodeSessionCredentials: credentials,
-		FilestoreCredentials:   filestoreCredentials,
-	}))
-	defer server.Close()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/environments/"+env.ExternalID+"/work/"+work.ExternalID+"/stop?beta=true", strings.NewReader(`{"force":true}`))
-	if err != nil {
-		t.Fatalf("new stop request: %v", err)
-	}
-	req.Header.Set("X-Api-Key", config.DefaultAPIKey)
-	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := server.Client().Do(req)
-	if err != nil {
-		t.Fatalf("stop work request: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("stop work status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	if err := provider.Kill(ctx, sandbox.ID); err != nil {
+		t.Fatalf("kill E2B sandbox %s: %v", sandbox.ID, err)
 	}
 	killed = true
 
-	_, _, stoppedSandboxState, _, stoppedSandboxLastError := loadE2BSandboxRow(t, pool, env.ExternalID, work.ExternalID)
-	if stoppedSandboxLastError != "" {
-		t.Fatalf("stopped sandbox row has last_error: %s", stoppedSandboxLastError)
-	}
-	if stoppedSandboxState != "stopped" {
-		t.Fatalf("sandbox state after stop = %s, want stopped", stoppedSandboxState)
-	}
-	stoppedWork, err := database.GetEnvironmentWork(ctx, env.WorkspaceID, env.ExternalID, work.ExternalID)
-	if err != nil {
-		t.Fatalf("load stopped work: %v", err)
-	}
-	if stoppedWork.State != "stopped" {
-		t.Fatalf("work state after stop = %s, want stopped", stoppedWork.State)
-	}
-
-	_, err = e2b.Connect(ctx, sandboxID, &e2b.SandboxConnectOpts{
+	_, err = e2b.Connect(ctx, sandbox.ID, &e2b.SandboxConnectOpts{
 		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
 	})
 	if err == nil {
-		_ = provider.Kill(context.Background(), sandboxID)
-		t.Fatalf("connect to sandbox %s after kill succeeded, want failure", sandboxID)
-	}
-}
-
-func mustJSON(t *testing.T, value any) json.RawMessage {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal json: %v", err)
-	}
-	return data
-}
-
-func loadE2BSandboxRow(t *testing.T, pool *pgxpool.Pool, envID, workID string) (providerSandboxID, externalID, state, template, lastError string) {
-	t.Helper()
-	var lastErrorPtr *string
-	if err := pool.QueryRow(context.Background(), `
-		select coalesce(provider_sandbox_id, ''), external_id, state, template, last_error
-		from environment_sandboxes
-		where environment_external_id = $1 and work_external_id = $2
-		order by created_at desc, id desc
-		limit 1
-	`, envID, workID).Scan(&providerSandboxID, &externalID, &state, &template, &lastErrorPtr); err != nil {
-		t.Fatalf("load sandbox row: %v", err)
-	}
-	if lastErrorPtr != nil {
-		lastError = *lastErrorPtr
-	}
-	return providerSandboxID, externalID, state, template, lastError
-}
-
-func cleanupE2BIntegrationRows(t *testing.T, pool *pgxpool.Pool, envID, workID string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if _, err := pool.Exec(ctx, `delete from environment_sandboxes where environment_external_id = $1 or work_external_id = $2`, envID, workID); err != nil {
-		t.Fatalf("cleanup integration sandbox rows: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `delete from environment_work where environment_external_id = $1 or external_id = $2`, envID, workID); err != nil {
-		t.Fatalf("cleanup integration work rows: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `delete from environments where external_id = $1`, envID); err != nil {
-		t.Fatalf("cleanup integration environment rows: %v", err)
+		_ = provider.Kill(context.Background(), sandbox.ID)
+		t.Fatalf("connect to sandbox %s after kill succeeded, want failure", sandbox.ID)
 	}
 }

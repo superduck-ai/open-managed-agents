@@ -95,6 +95,7 @@ type sessionPageMapperParams struct {
 type SessionMapper interface {
 	Insert(ctx context.Context, params sessionWriteParams) (sessionRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, bool, error)
+	FindByUUID(ctx context.Context, workspaceUUID, sessionUUID string) (sessionRow, bool, error)
 	UpdateByExternalID(ctx context.Context, params sessionUpdateParams) (sessionRow, error)
 	PatchMetadata(ctx context.Context, workspaceUUID, sessionExternalID string, metadataPatch []byte) (sessionRow, error)
 	SetOutcomeEvaluations(ctx context.Context, workspaceUUID, sessionExternalID string, evaluations []byte) (sessionRow, error)

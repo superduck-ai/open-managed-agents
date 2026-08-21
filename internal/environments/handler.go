@@ -75,11 +75,17 @@ type deleteResponse struct {
 	Type string `json:"type"`
 }
 
+// SessionWorkData is the stable public identity envelope for Session Work.
+type SessionWorkData struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
 type workResponse struct {
 	ID                string          `json:"id"`
 	AcknowledgedAt    *string         `json:"acknowledged_at"`
 	CreatedAt         string          `json:"created_at"`
-	Data              json.RawMessage `json:"data"`
+	Data              SessionWorkData `json:"data"`
 	EnvironmentID     string          `json:"environment_id"`
 	LatestHeartbeatAt *string         `json:"latest_heartbeat_at"`
 	Metadata          json.RawMessage `json:"metadata"`
@@ -778,7 +784,7 @@ func responseFromWork(work db.EnvironmentWork) workResponse {
 		ID:                work.ExternalID,
 		AcknowledgedAt:    optionalTime(work.AcknowledgedAt),
 		CreatedAt:         formatTime(work.CreatedAt),
-		Data:              work.Data,
+		Data:              SessionWorkData{ID: work.SessionExternalID, Type: "session"},
 		EnvironmentID:     work.EnvironmentExternalID,
 		LatestHeartbeatAt: optionalTime(work.LatestHeartbeatAt),
 		Metadata:          work.Metadata,
@@ -955,7 +961,7 @@ func (h *Handler) fixtureWork(environmentID, workID, state string) workResponse 
 	return workResponse{
 		ID:            workID,
 		CreatedAt:     now,
-		Data:          json.RawMessage(`{"type":"session","id":"session_id"}`),
+		Data:          SessionWorkData{ID: "session_id", Type: "session"},
 		EnvironmentID: environmentID,
 		Metadata:      json.RawMessage(`{}`),
 		State:         state,

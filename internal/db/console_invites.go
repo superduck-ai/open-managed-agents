@@ -23,6 +23,9 @@ func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status stri
 	mapper := NewConsoleInviteMapper(d.mapperDB)
 	rows, err := mapper.List(ctx, orgUUID, status, limit)
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return []platform.ConsoleInvite{}, nil
+		}
 		return nil, err
 	}
 

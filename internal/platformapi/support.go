@@ -3,6 +3,7 @@ package platformapi
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -137,6 +138,19 @@ func formatJSISOString(value time.Time) string {
 }
 
 func internalError(w http.ResponseWriter, message string) {
+	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": message})
+}
+
+// internalErrorWithCause logs the underlying error (with request id) before
+// responding 500. Use it from handlers that hold a concrete error so that
+// schema drift, DB failures and similar causes stay diagnosable instead of
+// surfacing as a bare "failed to ..." 500 with no server-side trail. logger
+// is the caller's injected logger; if nil, the default slog logger is used.
+func internalErrorWithCause(w http.ResponseWriter, r *http.Request, logger *slog.Logger, message string, err error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.ErrorContext(r.Context(), message, "err", err, "request_id", httpapi.RequestID(r.Context()))
 	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": message})
 }
 

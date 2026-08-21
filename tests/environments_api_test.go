@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -522,7 +522,7 @@ func createEnvironmentWork(t *testing.T, app *testApp, env db.Environment) strin
 		t.Fatalf("new work id: %v", err)
 	}
 	if _, err := app.db.CreateEnvironmentWork(context.Background(), db.EnvironmentWork{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            workID,
 		OrganizationUUID:      env.OrganizationUUID,
 		WorkspaceUUID:         env.WorkspaceUUID,

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -30,7 +31,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/google/uuid"
 )
 
 type sessionAPIResponse struct {
@@ -791,7 +791,7 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 	}
 	const eventCount = 501
 	createdAt := time.Now().UTC()
-	uuidPrefix := uuid.New()
+	uuidPrefix := uuid.NewV4()
 	eventIDs := make([]string, 0, eventCount)
 	events := make([]db.SessionEvent, 0, eventCount)
 	for i := range eventCount {
@@ -861,7 +861,7 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	}
 	invalidAt := time.Now().UTC().Add(time.Second)
 	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{{
-		UUID:        uuid.NewString(),
+		UUID:        uuid.NewV4().String(),
 		ExternalID:  "sevt_activation_invalid_" + strings.TrimPrefix(codeSessionID, "cse_"),
 		EventType:   "user.interrupt",
 		Payload:     json.RawMessage(`[]`),
@@ -1582,7 +1582,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	now := time.Now().UTC()
 	if _, err := app.db.AppendSessionEvents(ctx, storedSession.WorkspaceUUID, storedSession.ExternalID, []db.SessionEvent{
 		{
-			UUID:        uuid.NewString(),
+			UUID:        uuid.NewV4().String(),
 			ExternalID:  hiddenEventID,
 			EventType:   "env_manager_log",
 			Payload:     json.RawMessage(`{"id":` + quoteJSON(hiddenEventID) + `,"type":"env_manager_log","content":"Using existing Claude Code installation (version 2.1.120)"}`),
@@ -1590,7 +1590,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 			CreatedAt:   now,
 		},
 		{
-			UUID:        uuid.NewString(),
+			UUID:        uuid.NewV4().String(),
 			ExternalID:  visibleEventID,
 			EventType:   "agent.message",
 			Payload:     json.RawMessage(`{"id":` + quoteJSON(visibleEventID) + `,"type":"agent.message","content":[{"type":"text","text":"visible event after legacy env log"}]}`),

@@ -12,13 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const (
@@ -1562,14 +1562,14 @@ func diagLogEvent(line any) (json.RawMessage, error) {
 	if object, ok := line.(map[string]any); ok {
 		if strings.TrimSpace(stringField(object, "type")) == "env_manager_log" {
 			if stringField(object, "uuid") == "" {
-				object["uuid"] = uuid.NewString()
+				object["uuid"] = uuid.NewV4().String()
 			}
 			return marshalRaw(object)
 		}
 	}
 	return marshalRaw(map[string]any{
 		"type": "env_manager_log",
-		"uuid": uuid.NewString(),
+		"uuid": uuid.NewV4().String(),
 		"data": line,
 	})
 }

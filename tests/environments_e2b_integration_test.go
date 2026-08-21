@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -24,7 +25,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
@@ -102,7 +102,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	})
 	now := time.Now().UTC()
 	env, err := database.CreateEnvironment(ctx, db.Environment{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        envID,
 		OrganizationID:    apiKey.OrganizationID,
 		WorkspaceID:       apiKey.WorkspaceID,
@@ -121,7 +121,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	defer cleanupE2BIntegrationRows(t, pool, env.ExternalID, workID)
 
 	work, err := database.CreateEnvironmentWork(ctx, db.EnvironmentWork{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            workID,
 		OrganizationID:        env.OrganizationID,
 		WorkspaceID:           env.WorkspaceID,

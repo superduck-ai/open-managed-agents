@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -377,7 +377,10 @@ func decodeCursor(raw string) (*time.Time, string, error) {
 		CreatedAt string `json:"created_at"`
 		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
+	if err := json.Unmarshal(data, &payload); err != nil || payload.CreatedAt == "" {
+		return nil, "", errors.New("page cursor is invalid")
+	}
+	if _, err := uuid.Parse(payload.UUID); err != nil {
 		return nil, "", errors.New("page cursor is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)

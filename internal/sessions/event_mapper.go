@@ -8,14 +8,13 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-
-	"github.com/google/uuid"
 )
 
 func rawSessionEventType(raw json.RawMessage) string {
@@ -72,7 +71,7 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 		return db.SessionEvent{}, err
 	}
 	return db.SessionEvent{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        eventID,
 		OrganizationUUID:  session.OrganizationUUID,
 		WorkspaceUUID:     session.WorkspaceUUID,
@@ -148,7 +147,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			return nil, err
 		}
 		events = append(events, db.SessionEvent{
-			UUID:              uuid.NewString(),
+			UUID:              uuid.NewV4().String(),
 			ExternalID:        spec.EventID,
 			OrganizationUUID:  session.OrganizationUUID,
 			WorkspaceUUID:     session.WorkspaceUUID,
@@ -400,7 +399,7 @@ func (h *Handler) ensurePrimarySessionThread(ctx context.Context, session db.Ses
 	}
 	now := time.Now().UTC()
 	return h.db.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        threadID,
 		OrganizationUUID:  session.OrganizationUUID,
 		WorkspaceUUID:     session.WorkspaceUUID,
@@ -460,7 +459,7 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 		now = time.Now().UTC()
 	}
 	_, err = h.db.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
-		UUID:                   uuid.NewString(),
+		UUID:                   uuid.NewV4().String(),
 		ExternalID:             threadID,
 		OrganizationUUID:       session.OrganizationUUID,
 		WorkspaceUUID:          session.WorkspaceUUID,

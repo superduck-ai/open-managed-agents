@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -22,7 +23,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const messageBatchesBeta = "message-batches-2024-09-24"
@@ -167,7 +167,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		anthropicVersion = "2023-06-01"
 	}
 	record := db.MessageBatch{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          externalID,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,

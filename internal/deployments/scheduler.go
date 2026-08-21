@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
@@ -250,7 +250,7 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		Deployment: deployment, ScheduledAt: scheduledAt,
 		Session: &preparedRun.Session, Events: preparedRun.Events,
 		Run: db.DeploymentRun{
-			UUID: uuid.NewString(), ExternalID: preparedRun.RunID,
+			UUID: uuid.NewV4().String(), ExternalID: preparedRun.RunID,
 		},
 		Now: now,
 	})
@@ -291,7 +291,7 @@ func (w *scheduledDeploymentWorker) recordFailure(
 	return w.applyOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
 		Deployment: deployment, ScheduledAt: scheduledAt,
 		Run: db.DeploymentRun{
-			UUID: uuid.NewString(), ExternalID: runID, Error: runErrorJSON,
+			UUID: uuid.NewV4().String(), ExternalID: runID, Error: runErrorJSON,
 		},
 		AutoPauseReason: pausedReasonJSON, Now: now,
 	})

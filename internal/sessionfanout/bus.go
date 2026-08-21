@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -122,7 +122,7 @@ func NewRedis(ctx context.Context, client *redis.Client, logger *slog.Logger) (*
 		return nil, errors.New("redis client is required")
 	}
 	listenCtx, cancel := context.WithCancel(ctx)
-	instanceChannel := instanceChannelPrefix + uuid.NewString()
+	instanceChannel := instanceChannelPrefix + uuid.NewV4().String()
 	pubsub := client.Subscribe(listenCtx, instanceChannel)
 	if _, err := pubsub.Receive(listenCtx); err != nil {
 		cancel()

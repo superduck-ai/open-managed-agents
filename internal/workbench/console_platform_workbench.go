@@ -14,13 +14,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/samber/lo"
 )
 
@@ -170,7 +170,7 @@ func (h *workbenchHandler) handleCreateWorkbenchPrompt(w http.ResponseWriter, r 
 		}
 	}
 	if revisionBody, ok := body["latest_revision"].(map[string]any); ok {
-		revision := h.revisionFromBody(r, revisionBody, "workbench-revision-"+uuid.NewString(), true, false)
+		revision := h.revisionFromBody(r, revisionBody, "workbench-revision-"+uuid.NewV4().String(), true, false)
 		if err := h.storeRevision(r, promptID, revision); workbenchWritePersistenceError(w, err) {
 			return
 		}
@@ -310,7 +310,7 @@ func (h *workbenchHandler) handleCreateWorkbenchPromptRevision(w http.ResponseWr
 		writeWorkbenchPromptNotFound(w)
 		return
 	}
-	revision := h.revisionFromBody(r, body, "workbench-revision-"+uuid.NewString(), true, false)
+	revision := h.revisionFromBody(r, body, "workbench-revision-"+uuid.NewV4().String(), true, false)
 	if err := h.storeRevision(r, promptID, revision); workbenchWritePersistenceError(w, err) {
 		return
 	}
@@ -2346,7 +2346,7 @@ func (h *workbenchHandler) storedKV(r *http.Request, promptID string, key string
 func workbenchEvaluationFromBody(r *http.Request, body map[string]any, revisionID string) map[string]any {
 	evaluationID := strings.TrimSpace(workbenchString(body["id"]))
 	if evaluationID == "" {
-		evaluationID = "eval_local_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+		evaluationID = "eval_local_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	}
 	testCaseID := strings.TrimSpace(workbenchString(body["test_case_id"]))
 	if testCaseID == "" {

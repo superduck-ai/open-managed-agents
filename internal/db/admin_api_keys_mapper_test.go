@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -341,7 +341,7 @@ func adminAPIKeyMapperTestRow(externalID string, createdAt time.Time) []driver.V
 func TestListAdminAPIKeysPageRejectsConflictingCursors(t *testing.T) {
 	database := &DB{}
 	_, _, err := database.ListAdminAPIKeysPage(context.Background(), ListAdminAPIKeysParams{
-		OrganizationUUID: uuid.NewString(),
+		OrganizationUUID: uuid.NewV4().String(),
 		AfterID:          "api_key_after",
 		BeforeID:         "api_key_before",
 		Limit:            10,

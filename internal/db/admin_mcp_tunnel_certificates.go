@@ -3,15 +3,13 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type AdminTunnelCertificate struct {
-	UUID             uuid.UUID
+	UUID             string
 	ExternalID       string
-	OrganizationUUID uuid.UUID
-	TunnelUUID       uuid.UUID
+	OrganizationUUID string
+	TunnelUUID       string
 	TunnelExternalID string
 	CACertificatePEM string
 	Fingerprint      string
@@ -32,8 +30,8 @@ func (d *DB) CreateAdminTunnelCertificate(ctx context.Context, cert AdminTunnelC
 	mapper := NewAdminMCPTunnelCertificateMapper(d.mapperDB)
 	row, err := mapper.Insert(ctx, insertAdminTunnelCertificateParams{
 		ExternalID:       cert.ExternalID,
-		OrganizationUUID: cert.OrganizationUUID.String(),
-		TunnelUUID:       cert.TunnelUUID.String(),
+		OrganizationUUID: cert.OrganizationUUID,
+		TunnelUUID:       cert.TunnelUUID,
 		TunnelExternalID: cert.TunnelExternalID,
 		CACertificatePEM: cert.CACertificatePEM,
 		Fingerprint:      cert.Fingerprint,
@@ -86,23 +84,11 @@ func adminTunnelCertificateFromMapperRow(row adminMCPTunnelCertificateRow, err e
 	if err != nil {
 		return AdminTunnelCertificate{}, mapNoRows(err)
 	}
-	certificateUUID, err := uuid.Parse(row.UUID)
-	if err != nil {
-		return AdminTunnelCertificate{}, err
-	}
-	organizationUUID, err := uuid.Parse(row.OrganizationUUID)
-	if err != nil {
-		return AdminTunnelCertificate{}, err
-	}
-	tunnelUUID, err := uuid.Parse(row.TunnelUUID)
-	if err != nil {
-		return AdminTunnelCertificate{}, err
-	}
 	return AdminTunnelCertificate{
-		UUID:             certificateUUID,
+		UUID:             row.UUID,
 		ExternalID:       row.ExternalID,
-		OrganizationUUID: organizationUUID,
-		TunnelUUID:       tunnelUUID,
+		OrganizationUUID: row.OrganizationUUID,
+		TunnelUUID:       row.TunnelUUID,
 		TunnelExternalID: row.TunnelExternalID,
 		CACertificatePEM: row.CACertificatePEM,
 		Fingerprint:      row.Fingerprint,

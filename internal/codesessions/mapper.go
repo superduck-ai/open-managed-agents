@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-
-	"github.com/google/uuid"
 )
 
 func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallback time.Time) (json.RawMessage, error) {
@@ -27,7 +26,7 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 	}
 	switch schema.Type {
 	case "user.message":
-		eventUUID := firstNonEmpty(schema.UUID, schema.ID, uuid.NewString())
+		eventUUID := firstNonEmpty(schema.UUID, schema.ID, uuid.NewV4().String())
 		payload := map[string]any{
 			"type":               "user",
 			"uuid":               eventUUID,
@@ -47,7 +46,7 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 		return marshalRaw(payload)
 	default:
 		if schema.UUID == "" {
-			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewString()))
+			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewV4().String()))
 		}
 		if schema.SessionID == "" {
 			setRawJSONField(fields, "session_id", codeSessionID)
@@ -79,7 +78,7 @@ func normalizeWorkerOutboundPayload(codeSessionID string, raw json.RawMessage, f
 		now = time.Now().UTC()
 	}
 	if schema.Type != "keep_alive" && schema.UUID == "" {
-		setRawJSONField(fields, "uuid", uuid.NewString())
+		setRawJSONField(fields, "uuid", uuid.NewV4().String())
 	}
 	if schema.SessionID == "" {
 		setRawJSONField(fields, "session_id", codeSessionID)
@@ -237,7 +236,7 @@ func normalizePublicInternalSubagentPayload(codeSessionID string, event db.CodeS
 		payload["id"] = stablePublicEventID(codeSessionID, "internal-subagent\x00"+threadID+"\x00"+seed)
 	}
 	if stringField(payload, "uuid") == "" {
-		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewString())
+		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewV4().String())
 	}
 	if stringField(payload, "session_id") == "" {
 		payload["session_id"] = codeSessionID
@@ -289,7 +288,7 @@ func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEven
 		payload["id"] = stablePublicEventID(codeSessionID, seed)
 	}
 	if stringField(payload, "uuid") == "" {
-		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewString())
+		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewV4().String())
 	}
 	createdAt := firstPayloadTime(payload, event.CreatedAt)
 	if createdAt.IsZero() {

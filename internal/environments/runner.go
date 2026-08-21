@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
@@ -20,8 +21,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
-
-	"github.com/google/uuid"
 )
 
 var (
@@ -234,7 +233,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	// 先落一条 creating 状态的本地 Sandbox 记录，再请求 E2B 创建远端 Sandbox。
 	// 这样即使远端创建失败，数据库中仍有可查询的启动尝试和失败状态。
 	record, err := r.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            sandboxID,
 		OrganizationUUID:      work.OrganizationUUID,
 		WorkspaceUUID:         work.WorkspaceUUID,

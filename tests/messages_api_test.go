@@ -11,8 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -55,7 +54,7 @@ func TestMessagesAPIFailures(t *testing.T) {
 		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
 		_, err := app.db.GetCodeSessionCredentialContextForIssue(
 			context.Background(),
-			uuid.NewString(),
+			uuid.NewV4().String(),
 			credential.WorkspaceUUID,
 			credential.CodeSessionID,
 		)
@@ -65,7 +64,7 @@ func TestMessagesAPIFailures(t *testing.T) {
 		_, err = app.db.GetCodeSessionCredentialContextForIssue(
 			context.Background(),
 			credential.OrganizationUUID,
-			uuid.NewString(),
+			uuid.NewV4().String(),
 			credential.CodeSessionID,
 		)
 		if !errors.Is(err, db.ErrNotFound) {

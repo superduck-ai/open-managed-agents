@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -21,7 +22,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const (
@@ -151,7 +151,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateAgent(r.Context(), db.Agent{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          agentID,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,

@@ -10,14 +10,13 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
-
-	"github.com/google/uuid"
 )
 
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
@@ -406,7 +405,7 @@ func transientWorkerEvent(meta EventMetadata, createdAt time.Time) db.CodeSessio
 
 func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSession, configRaw json.RawMessage, now time.Time) error {
 	configObject := rawObject(configRaw)
-	requestID := "initialize_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	requestID := "initialize_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	request := map[string]any{
 		"subtype": "initialize",
 	}
@@ -418,7 +417,7 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 	}
 	payload, err := marshalRaw(map[string]any{
 		"type":       "control_request",
-		"uuid":       uuid.NewString(),
+		"uuid":       uuid.NewV4().String(),
 		"session_id": codeSession.ExternalID,
 		"created_at": formatTime(now),
 		"timestamp":  formatTime(now),

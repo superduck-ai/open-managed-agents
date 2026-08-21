@@ -140,7 +140,7 @@ func TestAdminMCPTunnelCertificateMapperResultSemantics(t *testing.T) {
 	})
 	row, err := NewAdminMCPTunnelCertificateMapper(executor).Insert(ctx, insertAdminTunnelCertificateParams{})
 	certificate, err := adminTunnelCertificateFromMapperRow(row, err)
-	if err != nil || certificate.UUID.String() != row.UUID || certificate.ExpiresAt != nil {
+	if err != nil || certificate.UUID != row.UUID || certificate.ExpiresAt != nil {
 		t.Fatalf("Insert() = (%+v, %v)", certificate, err)
 	}
 
@@ -171,12 +171,6 @@ func TestAdminMCPTunnelCertificateMapperResultSemantics(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid UUID", func(t *testing.T) {
-		_, err := adminTunnelCertificateFromMapperRow(adminMCPTunnelCertificateRow{UUID: "invalid"}, nil)
-		if err == nil {
-			t.Fatal("adminTunnelCertificateFromMapperRow() error = nil, want invalid UUID")
-		}
-	})
 }
 
 func TestAdminMCPTunnelCertificateMapperPropagatesExecutionErrors(t *testing.T) {

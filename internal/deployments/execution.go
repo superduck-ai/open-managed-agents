@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -55,7 +55,7 @@ func prepareDeploymentExecution(
 		Events: events,
 		Session: db.CreateSessionInput{
 			Session: db.Session{
-				UUID: uuid.NewString(), ExternalID: sessionID,
+				UUID: uuid.NewV4().String(), ExternalID: sessionID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
 				CreatedByAPIKeyUUID: createdByAPIKeyUUID,
 				EnvironmentUUID:     deployment.EnvironmentUUID, EnvironmentExternalID: deployment.EnvironmentExternalID,
@@ -67,14 +67,14 @@ func prepareDeploymentExecution(
 				OutcomeEvaluations: outcomes, CreatedAt: now, UpdatedAt: now,
 			},
 			Thread: db.SessionThread{
-				UUID: uuid.NewString(), ExternalID: threadID,
+				UUID: uuid.NewV4().String(), ExternalID: threadID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
 				AgentSnapshot: deployment.AgentSnapshot, Status: "idle",
 				Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now,
 			},
 			Resources: resources,
 			Work: db.EnvironmentWork{
-				UUID: uuid.NewString(), ExternalID: workID,
+				UUID: uuid.NewV4().String(), ExternalID: workID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
 				EnvironmentUUID: deployment.EnvironmentUUID, EnvironmentExternalID: deployment.EnvironmentExternalID,
 				Data: workData, Metadata: json.RawMessage(`{}`), State: "queued", CreatedAt: now, UpdatedAt: now,

@@ -10,12 +10,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
-
-	"github.com/google/uuid"
 )
 
 func TestVaultCredentialEncryptedAtRest(t *testing.T) {
@@ -295,7 +294,7 @@ func insertEnvelopeLessCredential(t *testing.T, app *testApp, vaultID, credentia
 			auth, created_at, updated_at
 		) values ($1, $2, $3::uuid, $4::uuid, $5::uuid, $6, NULL, 'missing envelope', '{}'::jsonb, 'static_bearer', $7,
 			'{"type":"static_bearer","mcp_server_url":"https://mcp.missing-env.example/sse"}'::jsonb, now(), now())
-	`, uuid.NewString(), credentialID, orgUUID, wsUUID, vaultUUID, vaultID, credentialKey)
+	`, uuid.NewV4().String(), credentialID, orgUUID, wsUUID, vaultUUID, vaultID, credentialKey)
 	if err != nil {
 		t.Fatalf("insert envelope-less credential: %v", err)
 	}

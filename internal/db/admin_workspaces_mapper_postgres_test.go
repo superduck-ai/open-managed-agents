@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 

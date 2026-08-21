@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"slices"
 	"strings"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -17,7 +18,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/yourbatis"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 )

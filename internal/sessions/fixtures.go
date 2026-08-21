@@ -5,13 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
-
-	"github.com/google/uuid"
 )
 
 func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {
@@ -73,7 +72,7 @@ func normalizeFixtureEvent(raw json.RawMessage, now time.Time) (json.RawMessage,
 func (h *Handler) fixtureDBSession(principal auth.Principal) db.Session {
 	now := time.Now().UTC()
 	return db.Session{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            h.cfg.SDKFixtures.SessionID,
 		OrganizationUUID:      principal.OrganizationUUID,
 		WorkspaceUUID:         principal.WorkspaceUUID,

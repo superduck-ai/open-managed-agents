@@ -6,13 +6,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"strings"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
-
-	"github.com/google/uuid"
 )
 
 type Store interface {
@@ -88,7 +87,7 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 		return db.PlatformAuthUserContext{}, err
 	}
 
-	userUUID := uuid.NewString()
+	userUUID := uuid.NewV4().String()
 	userExternalID := taggedExternalUserID(userUUID)
 	user, err := tx.InsertUser(ctx, db.PlatformAuthUserInput{
 		UUID:             userUUID,
@@ -103,11 +102,11 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 	}
 
 	workspace, err := tx.InsertWorkspace(ctx, db.PlatformAuthWorkspaceInput{
-		UUID:             uuid.NewString(),
+		UUID:             uuid.NewV4().String(),
 		ExternalID:       workspaceExternalID,
 		OrganizationUUID: org.UUID,
 		Name:             "default",
-		CompartmentID:    uuid.NewString(),
+		CompartmentID:    uuid.NewV4().String(),
 	})
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
@@ -175,7 +174,7 @@ func taggedExternalUserID(userUUID string) string {
 func randomToken(bytes int) string {
 	raw := make([]byte, bytes)
 	if _, err := rand.Read(raw); err != nil {
-		return strings.ReplaceAll(uuid.NewString(), "-", "")
+		return strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
 }

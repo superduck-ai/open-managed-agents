@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 )
@@ -383,7 +383,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		scheduledAt := time.Now().UTC().Truncate(time.Minute)
 		err = applyScheduledOccurrence(ctx, app.db, db.ApplyScheduledOccurrenceInput{
 			Deployment: deployment, ScheduledAt: scheduledAt,
-			Run: db.DeploymentRun{UUID: uuid.NewString(), ExternalID: "drun_stale_" + uuid.NewString()},
+			Run: db.DeploymentRun{UUID: uuid.NewV4().String(), ExternalID: "drun_stale_" + uuid.NewV4().String()},
 			Now: scheduledAt,
 		})
 		if !errors.Is(err, db.ErrStaleSchedule) {
@@ -415,7 +415,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		input := db.ApplyScheduledOccurrenceInput{
 			Deployment: deployment, ScheduledAt: scheduledAt,
 			Run: db.DeploymentRun{
-				UUID: uuid.NewString(), ExternalID: "drun_periodic_" + uuid.NewString(),
+				UUID: uuid.NewV4().String(), ExternalID: "drun_periodic_" + uuid.NewV4().String(),
 				Error: json.RawMessage(`{"type":"unknown_error","message":"test"}`),
 			},
 			Now: scheduledAt,
@@ -423,8 +423,8 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err := applyScheduledOccurrence(ctx, app.db, input); err != nil {
 			t.Fatalf("apply first scheduled occurrence: %v", err)
 		}
-		input.Run.UUID = uuid.NewString()
-		input.Run.ExternalID = "drun_periodic_" + uuid.NewString()
+		input.Run.UUID = uuid.NewV4().String()
+		input.Run.ExternalID = "drun_periodic_" + uuid.NewV4().String()
 		if err := applyScheduledOccurrence(ctx, app.db, input); !errors.Is(err, db.ErrStaleSchedule) {
 			t.Fatalf("apply duplicate scheduled occurrence error = %v, want ErrStaleSchedule", err)
 		}

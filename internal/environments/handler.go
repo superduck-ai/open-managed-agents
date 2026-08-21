@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -23,7 +24,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const maxEnvironmentBodySize = 4 << 20
@@ -188,7 +188,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateEnvironment(r.Context(), db.Environment{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          envID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceUUID:       principal.WorkspaceUUID,

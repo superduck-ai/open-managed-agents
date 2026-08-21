@@ -21,6 +21,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -34,7 +35,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -141,7 +141,7 @@ func TestV1AuthModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	platformSessionKey := "session-auth-modes-" + suffix
 	app := newTestAppWithStore(t, &cfg, newFakeStore("auth-modes-bucket"))
 	defer app.close()
@@ -223,7 +223,7 @@ func TestPlatformUploadB64FilesAPI(t *testing.T) {
 	defaultIDs := getDefaultDBIDs(t, app.pool)
 	workspacePath := "/api/" + defaultIDs.WorkspaceUUID
 	organizationPath := "/api/" + defaultIDs.OrganizationUUID
-	sessionKey := "session-platform-upload-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	sessionKey := "session-platform-upload-" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	cookies := []*http.Cookie{{Name: "sessionKey", Value: sessionKey}}
 	app.seedPlatformSession(t, sessionKey)
 	pngBytes := generatedPNG(t, 800, 600)
@@ -236,7 +236,7 @@ func TestPlatformUploadB64FilesAPI(t *testing.T) {
 	})
 
 	t.Run("failure unknown organization", func(t *testing.T) {
-		resp := app.platformAPIRequest(t, "platform.claude.com", http.MethodPost, "/api/"+uuid.NewString()+"/upload_b64", strings.NewReader(validPayload), cookies)
+		resp := app.platformAPIRequest(t, "platform.claude.com", http.MethodPost, "/api/"+uuid.NewV4().String()+"/upload_b64", strings.NewReader(validPayload), cookies)
 		assertError(t, resp, http.StatusForbidden, "permission_error")
 	})
 
@@ -709,7 +709,7 @@ func TestFilesAPI(t *testing.T) {
 			t.Fatalf("before_id page length = %d, want 1", len(pageBefore.Data))
 		}
 
-		scopeID := "session_scope_" + uuid.NewString()
+		scopeID := "session_scope_" + uuid.NewV4().String()
 		scopedID := createMetadataOnlyFile(t, app, scopeID)
 		defer softDeleteFile(t, app, scopedID)
 		scopedPage := listFiles(t, app, "scope_id="+scopeID)
@@ -723,7 +723,7 @@ func TestFilesAPI(t *testing.T) {
 	})
 
 	t.Run("success before_id returns nearest previous pages", func(t *testing.T) {
-		scopeID := "pagination_" + uuid.NewString()
+		scopeID := "pagination_" + uuid.NewV4().String()
 		fileIDs := make([]string, 6)
 		for index := range fileIDs {
 			fileIDs[index] = createMetadataOnlyFile(t, app, scopeID)
@@ -876,7 +876,7 @@ func TestObjectCleanupJobAttemptsIncrementOnFailure(t *testing.T) {
 
 	ctx := context.Background()
 	defaultIDs := getDefaultDBIDs(t, app.pool)
-	objectKey := "attempts-test/" + uuid.NewString()
+	objectKey := "attempts-test/" + uuid.NewV4().String()
 	if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceUUID, app.store.Name(), objectKey, "file_attempts_test"); err != nil {
 		t.Fatalf("enqueue cleanup job: %v", err)
 	}
@@ -1335,7 +1335,7 @@ func createMetadataOnlyFile(t *testing.T, app *testApp, scopeID string) string {
 	defaultIDs := getDefaultDBIDs(t, app.pool)
 	scopeType := "session"
 	if err := app.db.CreateFile(context.Background(), db.FileRecord{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          fileExternalID,
 		WorkspaceUUID:       defaultIDs.WorkspaceUUID,
 		Filename:            "scoped.txt",
@@ -1361,7 +1361,7 @@ func createDownloadableFile(t *testing.T, app *testApp, filename, contentType st
 	if err != nil {
 		t.Fatalf("new file id: %v", err)
 	}
-	fileUUID := uuid.NewString()
+	fileUUID := uuid.NewV4().String()
 	defaultIDs := getDefaultDBIDs(t, app.pool)
 	objectKey := "workspaces/" + defaultIDs.WorkspaceUUID + "/files/" + fileUUID + "/" + filename
 	if _, err := app.store.Upload(context.Background(), objectKey, bytes.NewReader(content), storage.UploadOptions{Size: int64(len(content)), ContentType: contentType}); err != nil {

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
@@ -360,7 +360,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      principal.OrganizationUUID,
 		WorkspaceUUID:         principal.WorkspaceUUID,
@@ -642,7 +642,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		Session:              preparedRun.Session,
 		Events:               preparedRun.Events,
 		Run: db.DeploymentRun{
-			UUID:                uuid.NewString(),
+			UUID:                uuid.NewV4().String(),
 			ExternalID:          preparedRun.RunID,
 			CreatedByAPIKeyUUID: principal.APIKeyUUID,
 			TriggerType:         "manual",
@@ -701,7 +701,7 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 		return internalError("Could not create deployment run", fmt.Errorf("encode failed deployment run %q error: %w", runID, err))
 	}
 	run, err := h.db.CreateDeploymentRunFailure(r.Context(), deployment, db.DeploymentRun{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          runID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		Error:               runErrorJSON,
@@ -1093,7 +1093,7 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 			return nil, nil, err
 		}
 		events = append(events, db.SessionEvent{
-			UUID:        uuid.NewString(),
+			UUID:        uuid.NewV4().String(),
 			ExternalID:  eventID,
 			EventType:   input.Type,
 			Payload:     payloadRaw,

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -26,7 +27,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const filesBeta = "files-api-2025-04-14"
@@ -130,7 +130,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate file ID"))
 		return
 	}
-	fileUUID := uuid.NewString()
+	fileUUID := uuid.NewV4().String()
 	contentType := detectContentType(header)
 	objectKey := fmt.Sprintf("workspaces/%s/files/%s/%s", principal.WorkspaceUUID, fileUUID, sanitizeForKey(filename))
 

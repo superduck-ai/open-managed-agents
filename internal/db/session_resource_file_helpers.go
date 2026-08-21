@@ -9,11 +9,11 @@ import (
 	"path"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/filestorepath"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -360,7 +360,7 @@ func newSessionResourceIdentity() (resourceUUID, resourceExternalID string, err 
 	if err != nil {
 		return "", "", err
 	}
-	return uuid.NewString(), resourceExternalID, nil
+	return uuid.NewV4().String(), resourceExternalID, nil
 }
 
 // newFileIdentity 在应用层生成真实 File 的 uuid 与 file_ external ID。
@@ -369,7 +369,7 @@ func newFileIdentity() (fileUUID, fileExternalID string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	return uuid.NewString(), fileExternalID, nil
+	return uuid.NewV4().String(), fileExternalID, nil
 }
 
 func filestoreFileWriteMapperParams(filesystem FilestoreFilesystem, input putFilestoreFileTxInput) sessionResourceFileWriteParams {

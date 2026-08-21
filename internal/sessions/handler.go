@@ -43,6 +43,7 @@ type sessionResponse struct {
 	ID                 string            `json:"id"`
 	Agent              json.RawMessage   `json:"agent"`
 	ArchivedAt         *string           `json:"archived_at"`
+	Budget             json.RawMessage   `json:"budget"`
 	CreatedAt          string            `json:"created_at"`
 	DeploymentID       *string           `json:"deployment_id,omitempty"`
 	EnvironmentID      string            `json:"environment_id"`
@@ -84,6 +85,7 @@ type sendEventsResponse struct {
 type sessionMutationRequest struct {
 	Agent         json.RawMessage `json:"agent"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
+	Budget        json.RawMessage `json:"budget"`
 	Metadata      json.RawMessage `json:"metadata"`
 	Resources     json.RawMessage `json:"resources"`
 	Title         json.RawMessage `json:"title"`

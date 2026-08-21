@@ -35,6 +35,7 @@ type sessionRow struct {
 	Usage                 []byte     `db:"usage"`
 	Stats                 []byte     `db:"stats"`
 	OutcomeEvaluations    []byte     `db:"outcome_evaluations"`
+	Budget                []byte     `db:"budget"`
 	CreatedAt             time.Time  `db:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at"`
 	ArchivedAt            *time.Time `db:"archived_at"`
@@ -62,6 +63,7 @@ type sessionWriteParams struct {
 	Usage                 []byte
 	Stats                 []byte
 	OutcomeEvaluations    []byte
+	Budget                []byte
 	CreatedAt             time.Time
 }
 
@@ -71,6 +73,7 @@ type sessionUpdateParams struct {
 	AgentSnapshot []byte
 	Title         *string
 	Metadata      []byte
+	Budget        []byte
 	UpdatedAt     time.Time
 }
 

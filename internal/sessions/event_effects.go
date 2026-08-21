@@ -126,6 +126,7 @@ func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, erro
 	payload, err := httpapi.MarshalRaw(map[string]any{
 		"id":           eventID,
 		"agent":        agentsnapshot.RawJSONValue(session.AgentSnapshot, nil),
+		"budget":       agentsnapshot.RawJSONValue(session.Budget, nil),
 		"created_at":   httpapi.FormatTime(now),
 		"metadata":     agentsnapshot.RawJSONValue(session.Metadata, map[string]any{}),
 		"processed_at": now.Format(time.RFC3339),

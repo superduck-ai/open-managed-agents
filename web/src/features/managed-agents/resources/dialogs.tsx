@@ -623,11 +623,23 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <SessionFileResourcesField
-                    resources={values.fileResources}
-                    workspaceId={workspaceId}
-                    onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
-                  />
+                  <>
+                    <SessionFileResourcesField
+                      resources={values.fileResources}
+                      workspaceId={workspaceId}
+                      onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
+                    />
+                    <label className="text-sm font-medium">
+                      {msg('managedAgents.sessions.budget', 'Budget (USD cents)')}
+                      <input
+                        type="text"
+                        className="mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                        value={values.budgetAmount}
+                        placeholder={msg('managedAgents.sessions.budgetPlaceholder', 'e.g. 125 for $1.25')}
+                        onChange={(event) => setValues((current) => ({ ...current, budgetAmount: event.target.value }))}
+                      />
+                    </label>
+                  </>
                 ) : null}
               </>
             ) : null}

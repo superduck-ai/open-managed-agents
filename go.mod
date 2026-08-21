@@ -2,6 +2,8 @@ module github.com/superduck-ai/open-managed-agents
 
 go 1.27.0
 
+ignore ./web/node_modules
+
 tool github.com/superduck-ai/yourbatis/cmd/sqlmapgen
 
 require (

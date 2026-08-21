@@ -52,7 +52,7 @@ func (s *Service) GetCurrentOrganization(ctx context.Context, principal auth.Pri
 	if err != nil {
 		return organizationResponse{}, mapAdminDBError(err, "Organization not found")
 	}
-	return organizationResponse{ID: org.UUID.String(), Name: org.Name, Type: "organization"}, nil
+	return organizationResponse{ID: org.UUID, Name: org.Name, Type: "organization"}, nil
 }
 
 func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, req createInviteRequest) (inviteResponse, error) {
@@ -74,7 +74,7 @@ func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, re
 	}
 	invite, err := s.db.CreateAdminInvite(ctx, db.AdminInvite{
 		ExternalID:       externalID,
-		OrganizationUUID: organizationUUID,
+		OrganizationUUID: organizationUUID.String(),
 		Email:            email,
 		Role:             req.Role,
 		Status:           "pending",
@@ -205,9 +205,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 		return workspaceResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
 	}
 	record, err := s.db.CreateAdminWorkspace(ctx, db.AdminWorkspace{
-		UUID:             uuid.New(),
+		UUID:             uuid.NewString(),
 		ExternalID:       workspaceID,
-		OrganizationUUID: organizationUUID,
+		OrganizationUUID: organizationUUID.String(),
 		Name:             name,
 		CreatedAt:        now,
 		CompartmentID:    uuid.NewString(),
@@ -371,7 +371,7 @@ func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Princ
 	}
 	records, hasMore, err := s.db.ListAdminWorkspaceMembersPage(ctx, db.ListAdminMembersParams{
 		OrganizationUUID: principal.OrganizationUUID,
-		WorkspaceUUID:    workspace.UUID.String(),
+		WorkspaceUUID:    workspace.UUID,
 		AfterID:          afterID,
 		BeforeID:         beforeID,
 		Limit:            limit,
@@ -493,7 +493,7 @@ func (s *Service) CreateExternalKey(ctx context.Context, principal auth.Principa
 	}
 	key, err := s.db.CreateAdminExternalKey(ctx, db.AdminExternalKey{
 		ExternalID:       externalID,
-		OrganizationUUID: organizationUUID,
+		OrganizationUUID: organizationUUID.String(),
 		DisplayName:      displayName,
 		Geo:              geo,
 		ProviderConfig:   providerConfig,

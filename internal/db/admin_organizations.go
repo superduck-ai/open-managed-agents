@@ -8,7 +8,7 @@ import (
 )
 
 type AdminOrganization struct {
-	UUID      uuid.UUID `db:"uuid"`
+	UUID      string    `db:"uuid"`
 	Name      string    `db:"name"`
 	CreatedAt time.Time `db:"created_at"`
 }

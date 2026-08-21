@@ -166,7 +166,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		return
 	}
 
-	vault, err := s.db.GetVaultByExternalIDOrUUID(r.Context(), workspace.UUID.String(), req.VaultID)
+	vault, err := s.db.GetVaultByExternalIDOrUUID(r.Context(), workspace.UUID, req.VaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			writePlatformMCPVaultAuthError(w, http.StatusNotFound, platformMCPVaultAuthVerificationRequestFailed, "")
@@ -182,7 +182,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 	}
 
 	credentials, _, err := s.db.ListVaultCredentialsPage(r.Context(), db.ListVaultCredentialsPageParams{
-		WorkspaceUUID:   workspace.UUID.String(),
+		WorkspaceUUID:   workspace.UUID,
 		VaultExternalID: vault.ExternalID,
 		Limit:           50,
 		IncludeArchived: false,
@@ -241,7 +241,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		UUID:                      uuid.NewString(),
 		ExternalID:                flowID,
 		OrganizationUUID:          principal.OrganizationUUID,
-		WorkspaceUUID:             workspace.UUID.String(),
+		WorkspaceUUID:             workspace.UUID,
 		VaultUUID:                 vault.UUID,
 		VaultExternalID:           vault.ExternalID,
 		UserUUID:                  principal.UserUUID,

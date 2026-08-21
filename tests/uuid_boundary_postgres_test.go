@@ -16,10 +16,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-// TestTypedUUIDAuthAndAdminPostgres is intentionally backed by PostgreSQL.
-// It exercises Mapper UUID binding/scanning and the string-based HTTP protocol
-// boundary used by API key authentication and Admin responses.
-func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
+// TestUUIDAuthAndStringAdminPostgres is intentionally backed by PostgreSQL.
+// It exercises Mapper UUID binding/string scanning and the string-based HTTP
+// protocol boundary used by API key authentication and Admin responses.
+func TestUUIDAuthAndStringAdminPostgres(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("typed-uuid-auth-admin"))
 	defer app.close()
 
@@ -36,7 +36,7 @@ func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load organization with typed UUID parameter: %v", err)
 	}
-	if organization.UUID != key.OrganizationUUID {
+	if organization.UUID != key.OrganizationUUID.String() {
 		t.Fatalf("organization UUID = %s, want %s", organization.UUID, key.OrganizationUUID)
 	}
 
@@ -51,11 +51,11 @@ func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
 	}
 }
 
-// TestTypedUUIDAdminConsoleWorkbenchPostgres keeps the three phase-two paths in
+// TestStringUUIDAdminConsoleWorkbenchPostgres keeps the three phase-two paths in
 // one PostgreSQL transaction surface while still exercising their public DB
 // methods. The created records use unique protocol IDs so this remains safe
 // against a developer's existing local test database.
-func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
+func TestStringUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("typed-uuid-admin-console-workbench"))
 	defer app.close()
 
@@ -66,8 +66,8 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Admin workspace through typed UUID row: %v", err)
 	}
-	if workspace.UUID == uuid.Nil || workspace.OrganizationUUID == uuid.Nil {
-		t.Fatalf("Admin workspace returned nil UUIDs: %+v", workspace)
+	if workspace.UUID == "" || workspace.OrganizationUUID == "" {
+		t.Fatalf("Admin workspace returned empty UUIDs: %+v", workspace)
 	}
 
 	adminKeys, _, err := app.db.ListAdminAPIKeysPage(ctx, db.ListAdminAPIKeysParams{
@@ -77,8 +77,8 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list Admin API keys through typed UUID rows: %v", err)
 	}
-	if len(adminKeys) == 0 || adminKeys[0].WorkspaceUUID == uuid.Nil {
-		t.Fatalf("Admin API key rows did not include typed workspace UUID: %+v", adminKeys)
+	if len(adminKeys) == 0 || adminKeys[0].WorkspaceUUID == "" {
+		t.Fatalf("Admin API key rows did not include workspace UUID: %+v", adminKeys)
 	}
 
 	consoleWorkspaces, err := app.db.ListConsoleWorkspaces(ctx, ids.OrganizationUUID, false)

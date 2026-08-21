@@ -9,13 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
 func TestAdminOrganizationMapperFindByUUID(t *testing.T) {
 	organizationUUID := "22222222-2222-4222-8222-222222222222"
-	wantUUID := uuid.MustParse(organizationUUID)
 	wantValues := []any{organizationUUID}
 
 	t.Run("query error", func(t *testing.T) {
@@ -42,7 +40,7 @@ func TestAdminOrganizationMapperFindByUUID(t *testing.T) {
 			context.Background(),
 			organizationUUID,
 		)
-		if !errors.Is(err, sql.ErrNoRows) || organization.UUID != uuid.Nil {
+		if !errors.Is(err, sql.ErrNoRows) || organization.UUID != "" {
 			t.Fatalf("FindByUUID() = (%+v, %v), want zero and sql.ErrNoRows", organization, err)
 		}
 		assertMapperTestExecution(
@@ -72,7 +70,7 @@ func TestAdminOrganizationMapperFindByUUID(t *testing.T) {
 			context.Background(),
 			organizationUUID,
 		)
-		if err != nil || organization.UUID != wantUUID || organization.Name != "Mapper organization" {
+		if err != nil || organization.UUID != organizationUUID || organization.Name != "Mapper organization" {
 			t.Fatalf("FindByUUID() = (%+v, %v)", organization, err)
 		}
 		assertMapperTestExecution(

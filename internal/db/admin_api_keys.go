@@ -5,23 +5,21 @@ import (
 	"errors"
 	"slices"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type AdminAPIKey struct {
-	UUID                    uuid.UUID     `db:"uuid"`
-	ExternalID              string        `db:"external_id"`
-	WorkspaceUUID           uuid.UUID     `db:"workspace_uuid"`
-	WorkspaceExternalID     string        `db:"workspace_external_id"`
-	CreatedByUserUUID       uuid.NullUUID `db:"created_by_user_uuid"`
-	CreatedByUserExternalID *string       `db:"created_by_user_external_id"`
-	Name                    string        `db:"name"`
-	PartialKeyHint          string        `db:"partial_key_hint"`
-	Status                  string        `db:"status"`
-	CreatedAt               time.Time     `db:"created_at"`
-	UpdatedAt               time.Time     `db:"updated_at"`
-	ExpiresAt               *time.Time    `db:"expires_at"`
+	UUID                    string     `db:"uuid"`
+	ExternalID              string     `db:"external_id"`
+	WorkspaceUUID           string     `db:"workspace_uuid"`
+	WorkspaceExternalID     string     `db:"workspace_external_id"`
+	CreatedByUserUUID       *string    `db:"created_by_user_uuid"`
+	CreatedByUserExternalID *string    `db:"created_by_user_external_id"`
+	Name                    string     `db:"name"`
+	PartialKeyHint          string     `db:"partial_key_hint"`
+	Status                  string     `db:"status"`
+	CreatedAt               time.Time  `db:"created_at"`
+	UpdatedAt               time.Time  `db:"updated_at"`
+	ExpiresAt               *time.Time `db:"expires_at"`
 }
 
 type ListAdminAPIKeysParams struct {

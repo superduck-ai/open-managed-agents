@@ -454,7 +454,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if workspace.ArchivedAt != nil {
 		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace is archived")
 	}
-	principal.WorkspaceUUID = workspace.UUID.String()
+	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
 	return principal, nil
 }

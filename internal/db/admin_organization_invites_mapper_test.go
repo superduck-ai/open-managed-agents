@@ -92,7 +92,7 @@ func TestAdminInviteMapperFindByExternalID(t *testing.T) {
 			organizationUUID,
 			"invite_mapper",
 		)
-		if !errors.Is(err, sql.ErrNoRows) || invite.UUID != uuid.Nil {
+		if !errors.Is(err, sql.ErrNoRows) || invite.UUID != "" {
 			t.Fatalf("FindByExternalID() = (%+v, %v), want zero and sql.ErrNoRows", invite, err)
 		}
 		assertMapperTestExecution(
@@ -276,7 +276,7 @@ func TestAdminInviteMapperSoftDeleteByExternalID(t *testing.T) {
 			organizationUUID,
 			"invite_mapper",
 		)
-		if !errors.Is(err, sql.ErrNoRows) || invite.UUID != uuid.Nil {
+		if !errors.Is(err, sql.ErrNoRows) || invite.UUID != "" {
 			t.Fatalf("SoftDeleteByExternalID() = (%+v, %v), want zero and sql.ErrNoRows", invite, err)
 		}
 		assertMapperTestExecution(

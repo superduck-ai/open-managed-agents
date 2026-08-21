@@ -24,7 +24,7 @@ func TestAdminAPIKeyMapperFindByExternalID(t *testing.T) {
 			organizationUUID,
 			"api_key_default",
 		)
-		if err != nil || found || key.UUID != uuid.Nil {
+		if err != nil || found || key.UUID != "" {
 			t.Fatalf("FindByExternalID() = (%+v, %t, %v), want zero, false, nil", key, found, err)
 		}
 		assertMapperTestExecution(

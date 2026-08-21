@@ -132,7 +132,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 				DataResidency:    json.RawMessage(`{"region":"us"}`),
 				Tags:             json.RawMessage(`[{"key":"team","value":"platform"}]`),
 			})
-			if createErr != nil || created.UUID != id || created.ExternalKeyID != nil {
+			if createErr != nil || created.UUID != id.String() || created.ExternalKeyID != nil {
 				t.Fatalf("Insert() = (%+v, %v)", created, createErr)
 			}
 			assertAdminWorkspaceJSONField(t, created.DataResidency, "region", "us")
@@ -144,7 +144,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			"wrkspc_mapper_a",
 			"",
 		)
-		if findErr != nil || foundByExternalID.UUID != workspaceUUID {
+		if findErr != nil || foundByExternalID.UUID != workspaceUUID.String() {
 			t.Fatalf("FindByIdentifier(external ID) = (%+v, %v)", foundByExternalID, findErr)
 		}
 		foundByUUID, findErr := workspaceMapper.FindByIdentifier(
@@ -237,7 +237,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 				WorkspaceRole:       "workspace_developer",
 				CreatedAt:           baseTime.Add(time.Duration(index) * time.Minute),
 			})
-			if createErr != nil || created.UserUUID != userUUID {
+			if createErr != nil || created.UserUUID != userUUID.String() {
 				t.Fatalf("Insert() = (%+v, %v)", created, createErr)
 			}
 		}

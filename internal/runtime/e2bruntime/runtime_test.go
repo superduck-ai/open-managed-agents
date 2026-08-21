@@ -223,30 +223,6 @@ func (p *recordingCommandProcess) record(kill bool) int {
 	return p.sequence
 }
 
-func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  config.E2BConfig
-	}{
-		{name: "hosted", cfg: config.E2BConfig{Domain: "e2b.example.test"}},
-		{name: "local endpoint", cfg: config.E2BConfig{APIURL: "http://127.0.0.1:3000"}},
-		{name: "debug", cfg: config.E2BConfig{Debug: true}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := NewProvider(tt.cfg)
-			mounts := provider.sandboxVolumeMounts(nil)
-			if got := mounts[sandboxUserDataMountPath]; got != sandboxUserDataVolumeName {
-				t.Fatalf("mount %s = %v, want %s", sandboxUserDataMountPath, got, sandboxUserDataVolumeName)
-			}
-			if len(mounts) != 1 {
-				t.Fatalf("mounts = %#v, want only user-data", mounts)
-			}
-		})
-	}
-}
-
 func TestResolveLimitedNetworkFailsClosedOnInvalidAllowedHost(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	_, err := provider.Resolve(db.Environment{

@@ -18,11 +18,6 @@ import (
 	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
 
-const (
-	sandboxUserDataVolumeName = "user-data"
-	sandboxUserDataMountPath  = "/mnt/user-data"
-)
-
 type Resolution struct {
 	Template            string
 	Metadata            map[string]string
@@ -134,9 +129,6 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 		TimeoutMs:           &timeoutMs,
 		AllowInternetAccess: &allowInternet,
 		Network:             resolved.Network,
-	}
-	if volumeMounts := p.sandboxVolumeMounts(work); len(volumeMounts) > 0 {
-		opts.VolumeMounts = volumeMounts
 	}
 	sandbox, err := e2b.Create(ctx, resolved.Template, opts)
 	if err != nil {
@@ -491,10 +483,4 @@ func mcpAllowedHostsFromWork(work *db.EnvironmentWork) ([]string, error) {
 		return nil, nil
 	}
 	return networkpolicy.ParseWorkMetadataMCPAllowedHosts(work.Metadata)
-}
-
-func (p *E2BProvider) sandboxVolumeMounts(_ *db.EnvironmentWork) map[string]any {
-	return map[string]any{
-		sandboxUserDataMountPath: sandboxUserDataVolumeName,
-	}
 }

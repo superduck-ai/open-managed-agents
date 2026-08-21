@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,36 +137,16 @@ bootstrap:
 	}
 }
 
-func TestLoadRejectsChainedAnthropicUpstreamModelMappings(t *testing.T) {
+func TestLoadIgnoresLeftoverAnthropicUpstream(t *testing.T) {
 	prepareLoadTest(t)
-	_, err := loadConfigTestYAML(t, `
+	if _, err := loadConfigTestYAML(t, `
 anthropic_upstream:
+  base_url: https://api.anthropic.com
+  api_key: leftover-key
   model_mappings:
-    claude-sonnet-4-6: glm-5-turbo
-    glm-5-turbo: glm-5.2
-`)
-	if err == nil || !strings.Contains(err.Error(), "model_mappings") {
-		t.Fatalf("Load() error = %v, want chained model_mappings error", err)
-	}
-}
-
-func TestLoadYAMLAnthropicUpstreamModelMappings(t *testing.T) {
-	prepareLoadTest(t)
-	cfg, err := loadConfigTestYAML(t, `
-anthropic_upstream:
-  model_mappings:
-    claude-sonnet-4-6: glm-5-turbo
-    claude-opus-4-8: glm-5.2
-`)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	want := map[string]string{
-		"claude-sonnet-4-6": "glm-5-turbo",
-		"claude-opus-4-8":   "glm-5.2",
-	}
-	if !maps.Equal(cfg.AnthropicUpstream.ModelMappings, want) {
-		t.Fatalf("AnthropicUpstream.ModelMappings = %#v, want %#v", cfg.AnthropicUpstream.ModelMappings, want)
+    claude-sonnet-4-6: actual-model
+`); err != nil {
+		t.Fatalf("Load() error = %v, want leftover anthropic_upstream ignored", err)
 	}
 }
 
@@ -389,10 +368,9 @@ func TestDockerComposeKeepsSecretsOutOfTrackedTemplate(t *testing.T) {
 	}
 	cfg := loadValidatedConfigTestFile(t, configPath)
 	secretValues := map[string]string{
-		"anthropic_upstream.api_key": cfg.AnthropicUpstream.APIKey,
-		"e2b.api_key":                cfg.E2B.APIKey,
-		"e2b.access_token":           cfg.E2B.AccessToken,
-		"webhook.signing_key":        cfg.Webhook.SigningKey,
+		"e2b.api_key":         cfg.E2B.APIKey,
+		"e2b.access_token":    cfg.E2B.AccessToken,
+		"webhook.signing_key": cfg.Webhook.SigningKey,
 	}
 	for name, value := range secretValues {
 		if strings.TrimSpace(value) != "" {

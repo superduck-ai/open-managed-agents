@@ -19,7 +19,7 @@ OMA 当前不实现 `budget` 字段和标价成本计量。自托管部署者需
 ## 成本控制层
 
 1. 在上游模型账号配置支出和速率限制。
-2. 用 `anthropic_upstream.model_mappings` 限定可用逻辑模型。
+2. 在工作区 Provider 中只配置允许使用的真实模型 ID。
 3. 设置沙箱 CPU、内存、磁盘和生命周期。
 4. 设置 `environment_runner.concurrency` 与 provider 配额。
 5. 为自动部署配置告警、pause 和人工复核。

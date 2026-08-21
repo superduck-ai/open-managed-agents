@@ -123,7 +123,7 @@ func (h *Handler) fixtureAgentSnapshot() json.RawMessage {
 		"id":          h.cfg.SDKFixtures.AgentID,
 		"description": nil,
 		"mcp_servers": []any{},
-		"model":       map[string]any{"id": "claude-opus-4-6", "speed": "standard"},
+		"model":       map[string]any{},
 		"multiagent":  nil,
 		"name":        "fixture agent",
 		"skills":      []any{},

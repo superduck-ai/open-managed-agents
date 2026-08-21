@@ -1,4 +1,5 @@
 import { useI18n } from '../../../shared/i18n';
+import { LLMProviderRequired } from '../../llm-providers/LLMProviderRequired';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import { Card, CardContent } from '../../../shared/ui/card';
@@ -14,6 +15,7 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
+import { isModelConfigurationUnavailable } from '../../../shared/api/client';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
@@ -27,7 +29,6 @@ import {
 } from '../agentConfig';
 import { ManagedErrorAlert } from '../components/common';
 import { templateBody, templateTitle } from '../labels';
-import { useEffectiveModelMappings } from '../modelMappings';
 import { type AgentApiResponse, type AgentTemplate, type CreateAgentInput } from '../types';
 import { errorMessage, navigateToAgentConfig } from '../utils';
 import { listCreateAgentModels } from './create-dialog-api';
@@ -44,40 +45,42 @@ type CreateAgentDialogProps = {
 
 export function CreateAgentDialog(props: CreateAgentDialogProps) {
   const { orgUuid } = useWorkspace();
-  const modelMappingsQuery = useEffectiveModelMappings(orgUuid);
   const modelsQuery = useQuery({
     queryKey: ['create-agent', 'models', props.workspaceId],
     queryFn: () => listCreateAgentModels(props.workspaceId),
     retry: false,
   });
-  if ((orgUuid && modelMappingsQuery.isPending) || modelsQuery.isPending) {
+  if (modelsQuery.isPending) {
     return <CreateAgentDialogLoading onClose={props.onClose} />;
   }
-  if ((orgUuid && modelMappingsQuery.isError) || modelsQuery.isError) {
+  if (modelsQuery.isError) {
+    const noModels = isModelConfigurationUnavailable(modelsQuery.error);
     return (
       <CreateAgentDialogLoading
         error
+        noModels={noModels}
+        workspaceId={props.workspaceId}
         onClose={props.onClose}
-        onRetry={() => void Promise.all([modelMappingsQuery.refetch(), modelsQuery.refetch()])}
+        onRetry={noModels ? undefined : () => void modelsQuery.refetch()}
       />
     );
   }
-  return (
-    <CreateAgentDialogContent
-      {...props}
-      orgUuid={orgUuid}
-      modelMappings={modelMappingsQuery.data ?? {}}
-      modelOptions={modelsQuery.data ?? []}
-    />
-  );
+  if (!modelsQuery.data?.length) {
+    return <CreateAgentDialogLoading error noModels workspaceId={props.workspaceId} onClose={props.onClose} />;
+  }
+  return <CreateAgentDialogContent {...props} orgUuid={orgUuid} modelOptions={modelsQuery.data ?? []} />;
 }
 
 function CreateAgentDialogLoading({
   error = false,
+  noModels = false,
+  workspaceId,
   onClose,
   onRetry,
 }: {
   error?: boolean;
+  noModels?: boolean;
+  workspaceId?: string;
   onClose: () => void;
   onRetry?: () => void;
 }) {
@@ -91,13 +94,22 @@ function CreateAgentDialogLoading({
       >
         <DialogHeader>
           <DialogTitle>{msg('managedAgents.agents.createLabel', 'Create agent')}</DialogTitle>
-          <DialogDescription>
-            {error
-              ? msg('managedAgents.models.loadFailed', 'Could not load model configuration.')
-              : msg('common.loading', 'Loading...')}
+          <DialogDescription className={noModels ? 'sr-only' : undefined}>
+            {noModels
+              ? msg('llmModels.requiredDescription', 'Configure a model to get started.')
+              : error
+                ? msg('managedAgents.models.loadFailed', 'Could not load model configuration.')
+                : msg('common.loading', 'Loading...')}
           </DialogDescription>
         </DialogHeader>
-        {error ? (
+        {noModels ? (
+          <LLMProviderRequired
+            compact
+            onConfigure={() =>
+              window.location.assign(`/workspaces/${encodeURIComponent(workspaceId ?? '')}/llm-models`)
+            }
+          />
+        ) : error ? (
           <>
             <ManagedErrorAlert>
               {msg(
@@ -120,11 +132,9 @@ function CreateAgentDialogContent({
   onClose,
   onCreate,
   orgUuid,
-  modelMappings,
   modelOptions,
 }: CreateAgentDialogProps & {
   orgUuid?: string;
-  modelMappings: Record<string, string>;
   modelOptions: Awaited<ReturnType<typeof listCreateAgentModels>>;
 }) {
   const { msg, locale } = useI18n();
@@ -133,7 +143,8 @@ function CreateAgentDialogContent({
   const [selectedTemplateId, setSelectedTemplateId] = useState(blankAgentTemplate.id);
   const [description, setDescription] = useState('');
   const [generatedConfig, setGeneratedConfig] = useState<CreateAgentInput | null>(null);
-  const draftState = useCreateAgentDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
+  const modelID = modelOptions[0].id;
+  const draftState = useCreateAgentDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelID));
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -155,9 +166,9 @@ function CreateAgentDialogContent({
     setMode(nextMode);
     if (nextMode === 'describe') {
       setGeneratedConfig(null);
-      draftState.replaceDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
+      draftState.replaceDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelID));
     } else {
-      draftState.replaceDraft(createDialogAgentConfig(selectedTemplate, locale, undefined, modelMappings));
+      draftState.replaceDraft(createDialogAgentConfig(selectedTemplate, locale, undefined, modelID));
     }
     setCreateError(null);
   };
@@ -167,7 +178,7 @@ function CreateAgentDialogContent({
       setSelectedTemplateId(template.id);
       setMode('template');
       setGeneratedConfig(null);
-      draftState.replaceDraft(createDialogAgentConfig(template, locale, undefined, modelMappings));
+      draftState.replaceDraft(createDialogAgentConfig(template, locale, undefined, modelID));
       setStartingPointOpen(false);
     });
   };
@@ -195,7 +206,7 @@ function CreateAgentDialogContent({
         workspaceId,
         description: prompt,
         currentConfig: baseConfig,
-        modelMappings,
+        modelID,
         signal: controller.signal,
         locale,
       });

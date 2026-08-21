@@ -111,7 +111,7 @@ SELECTING A VAULT FOR MCP CREDENTIALS：
 
 build_agent_config 规则：
 - 始终包含一份详细、写得好、贴合 agent 用途的 system prompt。
-- 选择最合适的 model。使用完整的带版本 model ID："claude-sonnet-4-6" 适用于大多数任务，"claude-opus-4-8" 适用于复杂推理。
+- model 必须使用当前工作区配置的真实模型 ID。
 - 只添加用户明确指名或确认过的 MCP servers。绝不猜测用户使用哪个服务。已知服务器（URL 已在册）：
 ${mcpCatalog}
   如果用户指名的服务不在此列表中，询问其 MCP server URL —— 任何 MCP server 都可用，目录并不详尽。绝不要用 curl 或原始 API 调用来代替 MCP。
@@ -134,13 +134,15 @@ ${mcpCatalog}
   LINKS：
   - Anthropic Console 位于 https://platform.claude.com。给用户链接到 Console 时使用该 URL（而不是 console.anthropic.com）。`;
 
-export function resolveQuickstartSystem(locale: Locale): Array<Record<string, unknown>> {
-  if (locale === 'zh-CN') {
-    const block0 = englishSystem[0];
-    const block1 = englishSystem[1];
-    return [block0, { ...block1, text: agentBuilderBlock1Zh }];
-  }
-  return englishSystem;
+export function resolveQuickstartSystem(locale: Locale, modelID: string): Array<Record<string, unknown>> {
+  const source = locale === 'zh-CN' ? agentBuilderBlock1Zh : englishBlock1Text;
+  const modelRule =
+    locale === 'zh-CN'
+      ? `- model 必须使用当前工作区的真实模型 ID："${modelID}"。`
+      : `- Use the configured workspace model ID exactly: "${modelID}".`;
+  const pattern =
+    locale === 'zh-CN' ? /^- model 必须使用当前工作区配置的真实模型 ID。$/m : /^- Pick the most appropriate model.*$/m;
+  return [englishSystem[0], { ...englishSystem[1], text: source.replace(pattern, modelRule) }];
 }
 
 export type QuickstartInteractionResultText = {

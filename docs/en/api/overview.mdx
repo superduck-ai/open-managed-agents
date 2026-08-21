@@ -13,7 +13,7 @@ Public resource endpoints are under `/v1`. Console routes under `/api`, `/auth`,
 
 ## Prerequisites
 
-You need a reachable OMA deployment and workspace API key. Managed-agent execution also needs PostgreSQL, S3-compatible storage, and an available environment runner. Messages requires the operator to configure `anthropic_upstream.api_key`.
+You need a reachable OMA deployment and workspace API key. Managed-agent execution also needs PostgreSQL, S3-compatible storage, and an available environment runner. Before inference, add a Provider and its exact model IDs from the workspace's **LLM models** page.
 
 ## First request
 
@@ -71,7 +71,7 @@ const client = new Anthropic({
 
 <CardGroup cols={2}>
   <Card title="Models" href="/docs/en/api/models/list-models">
-    Inspect the models and capabilities exposed by this deployment.
+    Inspect the model IDs exposed by this workspace.
   </Card>
   <Card title="Messages" href="/docs/en/api/messages/create-a-message">
     Send model requests and run large asynchronous workloads through nested batch operations.

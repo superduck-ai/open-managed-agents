@@ -1,10 +1,10 @@
 ---
 title: "列出模型"
-description: "查询当前 OMA 部署公开的模型和能力。"
+description: "查询当前工作区公开的模型 ID。"
 api: "GET /v1/models"
 ---
 
-返回 OMA 当前配置公开的模型列表。部署者可以通过 `anthropic_upstream.model_mappings` 将逻辑模型 ID 映射到上游模型 ID。
+返回当前工作区配置的模型 ID，API 调用会原样使用这些 ID。
 
 ## 响应
 
@@ -16,39 +16,25 @@ api: "GET /v1/models"
   调用 API 时使用的模型 ID。
 </ResponseField>
 
-<ResponseField name="data[].display_name" type="string">
-  控制台中显示的模型名称。
-</ResponseField>
-
-<ResponseField name="data[].max_input_tokens" type="integer">
-  模型声明的最大输入令牌数。
-</ResponseField>
-
-<ResponseField name="data[].max_tokens" type="integer">
-  模型声明的最大输出令牌数。
-</ResponseField>
-
-<ResponseField name="data[].capabilities" type="object">
-  思考、图像、PDF、结构化输出、代码执行等能力标记。
-</ResponseField>
-
 ```json 响应
 {
   "data": [
     {
       "type": "model",
-      "id": "claude-sonnet-4-6",
-      "display_name": "Sonnet 4.6",
-      "max_input_tokens": 1000000,
-      "max_tokens": 128000,
-      "capabilities": {
-        "code_execution": {"supported": true},
-        "image_input": {"supported": true}
-      }
+      "id": "kimi-k2.5"
     }
-  ],
-  "has_more": false,
-  "first_id": "claude-sonnet-4-6",
-  "last_id": "claude-sonnet-4-6"
+  ]
+}
+```
+
+工作区未配置 LLM Provider 时返回 `503`。客户端应使用稳定的 `error.code` 判断该状态，不依赖可读文案：
+
+```json 503 响应
+{
+  "error": {
+    "type": "api_error",
+    "code": "workspace_llm_provider_not_configured",
+    "message": "This workspace has no LLM provider configured"
+  }
 }
 ```

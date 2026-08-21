@@ -3,9 +3,12 @@ package workbench
 import (
 	"context"
 	"log/slog"
+	"net/http"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -42,15 +45,20 @@ type workbenchWorkspaceLister interface {
 type workbenchHandler struct {
 	store      workbenchPersistenceStore
 	workspaces workbenchWorkspaceLister
-	upstream   config.AnthropicUpstreamConfig
+	database   *db.DB
+	secrets    *secrets.Service
+	client     *http.Client
 	logger     *slog.Logger
 }
 
-func newWorkbenchHandler(store OrganizationStore, upstream config.AnthropicUpstreamConfig, logger *slog.Logger) *workbenchHandler {
+func newWorkbenchHandler(store OrganizationStore, secretService *secrets.Service, logger *slog.Logger) *workbenchHandler {
+	database, _ := store.(*db.DB)
 	return &workbenchHandler{
 		store:      workbenchPersistenceFromStore(store),
 		workspaces: workbenchWorkspaceListerFromStore(store),
-		upstream:   upstream,
+		database:   database,
+		secrets:    secretService,
+		client:     llmproviders.NewHTTPClient(0),
 		logger:     logging.LoggerOrDefault(logger),
 	}
 }

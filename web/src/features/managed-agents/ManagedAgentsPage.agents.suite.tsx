@@ -6,7 +6,6 @@ import {
   act,
   cleanup,
   type CodeMirrorTestElement,
-  codeBlockContaining,
   createAgentRequestFixture,
   fireEvent,
   mockAgentsApi,
@@ -23,17 +22,59 @@ import {
   within,
   workspaceContextValue,
 } from './ManagedAgentsPage.test-utils';
+import type { AuthContextValue } from '../../shared/auth/context';
 
 export function registerManagedAgentsAgentsTests() {
-  test('does not mark the create dialog busy after model configuration loading fails', async () => {
+  test('guides agent creation to LLM configuration when no provider exists', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
-    mockAgentsApi([], { modelMappingsErrorOnce: true });
+    mockAgentsApi([], { modelsNotConfigured: true });
     render(
       <WorkspaceContext.Provider value={workspaceContextValue('default')}>
         <ManagedAgentsPage section="agents" />
       </WorkspaceContext.Provider>,
       undefined,
-      { seedModelMappings: false },
+      { seedModels: false },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const emptyState = await within(dialog).findByTestId('llm-provider-required');
+    expect(emptyState.textContent).toContain('No models configured');
+    expect(emptyState.textContent).toContain('Configure a model to get started.');
+    expect(within(emptyState).getByRole('button', { name: 'Configure models' })).toBeTruthy();
+    expect(within(emptyState).queryByRole('alert')).toBeNull();
+  });
+
+  test('does not send non-administrators from agent creation to model configuration', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([], { modelsNotConfigured: true });
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="agents" />
+      </WorkspaceContext.Provider>,
+      undefined,
+      { auth: managedAgentsAuth('developer'), seedModels: false },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+
+    const emptyState = await within(screen.getByRole('dialog', { name: 'Create agent' })).findByTestId(
+      'llm-provider-required',
+    );
+    expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
+    expect(within(emptyState).queryByRole('button', { name: 'Configure models' })).toBeNull();
+  });
+
+  test('does not mark the create dialog busy after model configuration loading fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([], { modelsErrorOnce: true });
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="agents" />
+      </WorkspaceContext.Provider>,
+      undefined,
+      { seedModels: false },
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
@@ -155,7 +196,7 @@ export function registerManagedAgentsAgentsTests() {
         button: /Incident commander/i,
         yaml: [
           'name: Incident commander',
-          'model: claude-opus-4-8',
+          'model: claude-sonnet-4-6',
           'https://api.githubcopilot.com/mcp/',
           'mcp_server_name: github',
         ],
@@ -2114,4 +2155,18 @@ export function registerManagedAgentsAgentsTests() {
       api.requests.some((request) => request.url === '/v1/agents/agent_archiveerror123456/archive?beta=true'),
     ).toBe(true);
   });
+}
+
+function managedAgentsAuth(role: string): AuthContextValue {
+  return {
+    account: {
+      uuid: 'acct_managed_agents_test',
+      email_address: 'managed-agents-test@example.com',
+      memberships: [{ role, organization: { uuid: 'org_test' } }],
+    },
+    status: 'authenticated',
+    csrfToken: 'csrf_managed_agents_test',
+    refresh: async () => undefined,
+    logout: async () => undefined,
+  };
 }

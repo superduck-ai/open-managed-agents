@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { useMemo, useState, type ReactNode } from 'react';
 import { resetTestDom } from '../../test/setup';
+import type { AuthAccount } from '../../shared/auth/api';
 import { I18nProvider, type Locale } from '../../shared/i18n';
 import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
@@ -18,17 +19,16 @@ describe('ConsoleShell', () => {
   test('renders the complete Open Managed Agents sidebar', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
-      <ConsoleShell
-        currentPath="/dashboard"
-        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
-        onLogout={() => undefined}
-      >
+      <ConsoleShell currentPath="/dashboard" account={testAccount()} onLogout={() => undefined}>
         <div>Dashboard content</div>
       </ConsoleShell>,
     );
 
     expect(getWorkspaceMenuButton(/Default/i)).toBeTruthy();
     expect(screen.getByText('Dashboard')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'LLM models' }).getAttribute('href')).toBe(
+      '/workspaces/default/llm-models',
+    );
     expect(screen.getByText('API keys')).toBeTruthy();
     expect(screen.getByText('Build')).toBeTruthy();
     expect(screen.getByText('Managed Agents')).toBeTruthy();
@@ -50,6 +50,17 @@ describe('ConsoleShell', () => {
     expect(screen.queryByRole('link', { name: /MCP tunnels/i })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Tags' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Feedback' })).toBeNull();
+  });
+
+  test('hides LLM model configuration from non-administrators', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/dashboard" account={testAccount('developer')} onLogout={() => undefined}>
+        <div>Dashboard content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'LLM models' })).toBeNull();
   });
 
   test('keeps the workspace selector outside the sidebar scroll area', () => {
@@ -438,6 +449,15 @@ function matchesName(value: string | null, expected: RegExp | string) {
     return false;
   }
   return typeof expected === 'string' ? value === expected : expected.test(value);
+}
+
+function testAccount(role = 'admin'): AuthAccount {
+  return {
+    uuid: 'acct_test',
+    email_address: 'test@example.com',
+    display_name: 'test',
+    memberships: [{ role, organization: { uuid: 'org_test' } }],
+  };
 }
 
 function renderWithWorkspaces(

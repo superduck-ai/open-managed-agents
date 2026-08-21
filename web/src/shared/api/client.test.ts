@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { consoleApi, filesApi, messageBatchesApi, setConsoleRequestContext, skillsApi, webhooksApi } from './client';
+import {
+  consoleApi,
+  filesApi,
+  isModelConfigurationUnavailable,
+  messageBatchesApi,
+  setConsoleRequestContext,
+  skillsApi,
+  webhooksApi,
+} from './client';
 
 const originalFetch = globalThis.fetch;
 
@@ -9,6 +17,41 @@ afterEach(() => {
 });
 
 describe('consoleApi', () => {
+  test('recognizes only the stable unconfigured-model error', () => {
+    expect(
+      isModelConfigurationUnavailable({
+        status: 503,
+        code: 'workspace_llm_provider_not_configured',
+        message: 'unavailable',
+      }),
+    ).toBe(true);
+    expect(isModelConfigurationUnavailable({ status: 503, code: 'request_failed', message: 'unavailable' })).toBe(
+      false,
+    );
+  });
+
+  test('reads stable console error codes and structured model IDs', async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: 'invalid_request',
+            code: 'model_conflict',
+            message: 'wording can change',
+            model_id: 'glm-4.7',
+          }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as unknown as typeof fetch;
+
+    await expect(consoleApi('/api/test')).rejects.toEqual({
+      status: 409,
+      code: 'model_conflict',
+      message: 'wording can change',
+      modelId: 'glm-4.7',
+    });
+  });
+
   test('adds active console organization and workspace headers', async () => {
     let capturedHeaders = new Headers();
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {

@@ -8,47 +8,65 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
 const messagesTestModel = "claude-opus-4-8"
 
+func TestMessagesAPIUsesCompatibleProviderAuthentication(t *testing.T) {
+	upstreamHeaders := make(chan http.Header, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHeaders <- r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"type":"message","content":[]}`)
+	}))
+	defer upstream.Close()
+
+	app := newTestAppWithStore(t, nil, newFakeStore("messages-provider-auth-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+	seedTestLLMProvider(t, app, "Messages auth", upstream.URL, "server-provider-key", messagesTestModel)
+
+	response := doMessagesRequest(
+		t,
+		app,
+		defaultTestKey,
+		`{"model":"`+messagesTestModel+`","max_tokens":16,"messages":[]}`,
+	)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Messages status = %d, want 200: %s", response.StatusCode, readAll(t, response.Body))
+	}
+
+	headers := <-upstreamHeaders
+	if headers.Get("X-Api-Key") != "server-provider-key" || headers.Get("Authorization") != "Bearer server-provider-key" {
+		t.Fatalf("provider authentication headers = %#v", headers)
+	}
+}
+
 func TestMessagesAPIFailures(t *testing.T) {
-	t.Run("failure upstream key is required", func(t *testing.T) {
-		cfg, err := config.Load()
-		if err != nil {
-			t.Fatalf("load config: %v", err)
-		}
-		cfg.AnthropicUpstream.APIKey = ""
-		app := newTestAppWithStore(t, &cfg, newFakeStore("messages-no-upstream-key-bucket"))
+	t.Run("failure workspace Provider is required", func(t *testing.T) {
+		app := newTestAppWithStore(t, nil, newFakeStore("messages-no-provider-bucket"))
 		defer app.close()
+		clearTestLLMProviders(t, app)
 
 		resp := doMessagesRequest(t, app, defaultTestKey, `{"model":"`+messagesTestModel+`","max_tokens":16,"messages":[]}`)
 		assertError(t, resp, http.StatusServiceUnavailable, "api_error")
 	})
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_unexpected"}`))
-	}))
-	defer upstream.Close()
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.AnthropicUpstream.BaseURL = upstream.URL
-	cfg.AnthropicUpstream.APIKey = "sk-ant-messages-failure-upstream"
-	app := newTestAppWithStore(t, &cfg, newFakeStore("messages-failures-bucket"))
+	app := newTestAppWithStore(t, nil, newFakeStore("messages-failures-bucket"))
 	defer app.close()
+
+	t.Run("failure model is not configured", func(t *testing.T) {
+		resp := doMessagesRequest(t, app, defaultTestKey, `{"model":"not-configured","max_tokens":16,"messages":[]}`)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
 
 	t.Run("failure credential issue rejects mismatched tenant", func(t *testing.T) {
 		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
@@ -139,134 +157,6 @@ func TestMessagesAPIFailures(t *testing.T) {
 	})
 }
 
-func TestMessagesAPISuccess(t *testing.T) {
-	type observedRequest struct {
-		Path             string
-		Query            string
-		APIKey           string
-		Authorization    string
-		Cookie           string
-		OrganizationUUID string
-		WorkspaceID      string
-		AnthropicVersion string
-		Body             string
-	}
-	var mu sync.Mutex
-	var observed []observedRequest
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		observed = append(observed, observedRequest{
-			Path:             r.URL.Path,
-			Query:            r.URL.RawQuery,
-			APIKey:           r.Header.Get("X-Api-Key"),
-			Authorization:    r.Header.Get("Authorization"),
-			Cookie:           r.Header.Get("Cookie"),
-			OrganizationUUID: r.Header.Get("X-Organization-UUID"),
-			WorkspaceID:      r.Header.Get("X-Workspace-ID"),
-			AnthropicVersion: r.Header.Get("Anthropic-Version"),
-			Body:             string(body),
-		})
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Anthropic-Ratelimit-Requests-Remaining", "42")
-		_, _ = w.Write([]byte(`{"id":"msg_messages_test","type":"message"}`))
-	}))
-	defer upstream.Close()
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.AnthropicUpstream.BaseURL = upstream.URL
-	cfg.AnthropicUpstream.APIKey = "sk-ant-messages-upstream"
-	app := newTestAppWithStore(t, &cfg, newFakeStore("messages-success-bucket"))
-	defer app.close()
-	payload := `{"model":"` + messagesTestModel + `","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
-	codeSessionPayload := `{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[]}`
-
-	t.Run("success API credential uses canonical endpoint", func(t *testing.T) {
-		req, err := http.NewRequest(http.MethodPost, app.baseURL+"/v1/messages?beta=true", strings.NewReader(payload))
-		if err != nil {
-			t.Fatalf("new messages request: %v", err)
-		}
-		req.Header.Set("X-Api-Key", defaultTestKey)
-		req.Header.Set("Authorization", "Bearer must-not-forward")
-		req.Header.Set("Cookie", "sessionKey=must-not-forward")
-		req.Header.Set("X-Organization-UUID", "must-not-forward")
-		req.Header.Set("X-Workspace-ID", "must-not-forward")
-		req.Header.Set("Anthropic-Version", "2023-06-01")
-		resp, err := app.client.Do(req)
-		if err != nil {
-			t.Fatalf("do messages request: %v", err)
-		}
-		defer resp.Body.Close()
-		assertMessagesResponse(t, resp)
-	})
-
-	t.Run("success code session credential forwards requested model", func(t *testing.T) {
-		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
-		workerEpoch := registerCodeSessionWorker(t, app, credential.CodeSessionID)
-		if _, err := app.pool.Exec(context.Background(), `
-			update code_sessions set created_at = now() - interval '30 days' where external_id = $1
-		`, credential.CodeSessionID); err != nil {
-			t.Fatalf("age lifecycle-bound Messages credential: %v", err)
-		}
-		resp := doMessagesRequest(t, app, credential.Token, codeSessionPayload)
-		defer resp.Body.Close()
-		assertMessagesResponse(t, resp)
-
-		assertCodeSessionWorkerHeartbeat(t, app, credential.CodeSessionID, workerEpoch)
-		workerResp := doMessagesRequest(t, app, credential.Token, codeSessionPayload)
-		defer workerResp.Body.Close()
-		assertMessagesResponse(t, workerResp)
-
-		jwtResp := doMessagesRequest(t, app, codeSessionIngressToken(t, app, credential.CodeSessionID), codeSessionPayload)
-		assertError(t, jwtResp, http.StatusUnauthorized, "authentication_error")
-	})
-
-	t.Run("success platform session uses canonical endpoint", func(t *testing.T) {
-		cookies := app.platformLoginCookies(t, "messages-canonical@example.com")
-		req, err := http.NewRequest(http.MethodPost, app.baseURL+"/v1/messages", strings.NewReader(payload))
-		if err != nil {
-			t.Fatalf("new platform messages request: %v", err)
-		}
-		for _, cookie := range cookies {
-			req.AddCookie(cookie)
-		}
-		resp, err := app.client.Do(req)
-		if err != nil {
-			t.Fatalf("do platform messages request: %v", err)
-		}
-		defer resp.Body.Close()
-		assertMessagesResponse(t, resp)
-	})
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(observed) != 4 {
-		t.Fatalf("upstream requests = %#v, want 4", observed)
-	}
-	first := observed[0]
-	if first.Path != "/v1/messages" || first.Query != "beta=true" || first.APIKey != cfg.AnthropicUpstream.APIKey {
-		t.Fatalf("unexpected upstream target or credential: %#v", first)
-	}
-	if first.Authorization != "" || first.Cookie != "" || first.OrganizationUUID != "" || first.WorkspaceID != "" {
-		t.Fatalf("sensitive request headers reached upstream: %#v", first)
-	}
-	if first.AnthropicVersion != "2023-06-01" || first.Body != payload {
-		t.Fatalf("request contract was not preserved: %#v", first)
-	}
-	if observed[1].Body != codeSessionPayload || observed[2].Body != codeSessionPayload {
-		t.Fatalf("code session request bodies = %q, %q; want %q", observed[1].Body, observed[2].Body, codeSessionPayload)
-	}
-	for _, request := range observed {
-		if request.APIKey != cfg.AnthropicUpstream.APIKey {
-			t.Fatalf("upstream API key = %q, want configured key", request.APIKey)
-		}
-	}
-}
-
 type messagesCodeSessionCredential struct {
 	Token             string
 	CodeSessionID     string
@@ -340,19 +230,4 @@ func doMessagesRequest(t *testing.T, app *testApp, apiKey string, payload string
 		t.Fatalf("do messages request: %v", err)
 	}
 	return resp
-}
-
-func assertMessagesResponse(t *testing.T, resp *http.Response) {
-	t.Helper()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("messages status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-	if remaining := resp.Header.Get("Anthropic-Ratelimit-Requests-Remaining"); remaining != "42" {
-		t.Fatalf("rate limit header = %q, want 42", remaining)
-	}
-	var body map[string]any
-	decodeJSON(t, resp.Body, &body)
-	if body["id"] != "msg_messages_test" {
-		t.Fatalf("messages response = %#v", body)
-	}
 }

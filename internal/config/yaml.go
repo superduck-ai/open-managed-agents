@@ -152,6 +152,9 @@ func validateYAMLNodeWithAliases(node *yaml.Node, target reflect.Type, prefix []
 		fields := yamlFieldTypes(target)
 		for index := 0; index+1 < len(node.Content); index += 2 {
 			name := node.Content[index].Value
+			if isIgnoredYAMLField(prefix, name) {
+				continue
+			}
 			fieldType, ok := fields[name]
 			if !ok {
 				return fmt.Errorf("field %s not found in type %s", name, target)
@@ -221,6 +224,12 @@ func yamlFieldTypes(target reflect.Type) map[string]reflect.Type {
 		fields[name] = field.Type
 	}
 	return fields
+}
+
+func isIgnoredYAMLField(prefix []string, name string) bool {
+	// Leftover process-level Anthropic upstream is accepted so existing
+	// config.yaml files keep loading. Workspace Providers replace it.
+	return len(prefix) == 0 && name == "anthropic_upstream"
 }
 
 func appendYAMLPath(prefix []string, value string) []string {

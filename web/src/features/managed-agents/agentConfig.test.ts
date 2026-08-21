@@ -7,7 +7,6 @@ import {
   createDialogTemplateConfigsZh,
   jsonForTemplate,
   quickstartBuildAgentConfigInput,
-  resolveAgentModelInput,
   templateSystem,
   yamlForTemplate,
 } from './agentConfig';
@@ -44,33 +43,21 @@ describe('localized create-agent template configs', () => {
     expect(createDialogAgentConfig(blankAgentTemplate, 'zh-CN')).toEqual(createDialogTemplateConfigsZh.blank);
   });
 
-  test('uses the configured effective model id in template configs', () => {
-    const config = createDialogAgentConfig(blankAgentTemplate, 'en', undefined, {
-      'claude-sonnet-4-6': 'glm-5-turbo',
-    });
+  test('uses the configured real model id in template configs', () => {
+    const config = createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'kimi-k2.5');
 
-    expect(config.model).toBe('glm-5-turbo');
+    expect(config.model).toBe('kimi-k2.5');
   });
 
-  test('uses the configured effective model id in template previews', () => {
-    const mappings = {
-      'claude-sonnet-4-6': 'glm-5-turbo',
-    };
-
-    expect(yamlForTemplate(blankAgentTemplate, 'en', mappings)).toContain('model: glm-5-turbo');
-    expect(jsonForTemplate(blankAgentTemplate, 'en', mappings)).toContain('"model": "glm-5-turbo"');
+  test('uses the configured real model id in template previews', () => {
+    expect(yamlForTemplate(blankAgentTemplate, 'en', 'kimi-k2.5')).toContain('model: kimi-k2.5');
+    expect(jsonForTemplate(blankAgentTemplate, 'en', 'kimi-k2.5')).toContain('"model": "kimi-k2.5"');
   });
 
-  test('uses the configured effective model id in generated agent configs', () => {
+  test('uses the selected real model id in generated agent configs', () => {
     const fallback = createDialogAgentConfig(blankAgentTemplate);
-    const mappings = { 'claude-sonnet-4-6': 'glm-5-turbo' };
 
-    expect(quickstartBuildAgentConfigInput({ model: 'claude-sonnet-4-6' }, fallback, mappings).model).toBe(
-      'glm-5-turbo',
-    );
-    expect(
-      quickstartBuildAgentConfigInput({ model: { id: 'claude-sonnet-4-6', speed: 'fast' } }, fallback, mappings).model,
-    ).toEqual({ id: 'glm-5-turbo', speed: 'fast' });
+    expect(quickstartBuildAgentConfigInput({ model: 'ignored-model' }, fallback, 'kimi-k2.5').model).toBe('kimi-k2.5');
   });
 
   test('distinguishes an omitted generated multiagent from an explicit null', () => {
@@ -86,19 +73,9 @@ describe('localized create-agent template configs', () => {
     expect(quickstartBuildAgentConfigInput({ multiagent: null }, fallback).multiagent).toBeUndefined();
   });
 
-  test('trims mapped and unmapped model ids at the configuration boundary', () => {
-    const mappings = { 'claude-sonnet-4-6': ' glm-5-turbo ' };
-
-    expect(resolveAgentModelInput(' claude-sonnet-4-6 ', mappings)).toBe('glm-5-turbo');
-    expect(resolveAgentModelInput(' glm-5 ', mappings)).toBe('glm-5');
-    expect(resolveAgentModelInput({ id: ' claude-sonnet-4-6 ', speed: 'fast' }, mappings)).toEqual({
-      id: 'glm-5-turbo',
-      speed: 'fast',
-    });
-    expect(resolveAgentModelInput({ id: ' glm-5 ', speed: 'standard' }, mappings)).toEqual({
-      id: 'glm-5',
-      speed: 'standard',
-    });
+  test('trims a real model id without mapping it', () => {
+    const fallback = createDialogAgentConfig(blankAgentTemplate);
+    expect(quickstartBuildAgentConfigInput({ model: ' kimi-k2.5 ' }, fallback).model).toBe('kimi-k2.5');
   });
 
   test('uses the localized config table as the system prompt source for every built-in template', () => {

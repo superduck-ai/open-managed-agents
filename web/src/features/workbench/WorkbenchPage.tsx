@@ -19,7 +19,10 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useAuth } from '../../shared/auth/context';
+import { isModelConfigurationUnavailable } from '../../shared/api/client';
+import { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { LLMProviderRequired } from '../llm-providers/LLMProviderRequired';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import {
@@ -90,7 +93,6 @@ import {
   EvaluateTestCase,
   extractGeneratedPromptInstructions,
   extractVariables,
-  fallbackModels,
   generatePromptExamples,
   GeneratePromptStep,
   hasMultipleHumanMessages,
@@ -173,9 +175,9 @@ export function WorkbenchPage() {
   const { orgUuid, activeWorkspaceId } = useWorkspace();
   const workbenchAccess = useMemo(() => workbenchAccessState(account, orgUuid), [account, orgUuid]);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [models, setModels] = useState<WorkbenchModel[]>(fallbackModels);
-  const [defaultModelName, setDefaultModelName] = useState(fallbackModels[0].model_name);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [models, setModels] = useState<WorkbenchModel[]>([]);
+  const [defaultModelName, setDefaultModelName] = useState('');
   const [promptList, setPromptList] = useState<WorkbenchPromptSummary[]>([]);
   const [prompt, setPrompt] = useState<WorkbenchPromptDetail | null>(null);
   const [promptName, setPromptName] = useState('Untitled');
@@ -255,13 +257,13 @@ export function WorkbenchPage() {
   const workbenchLoadSeqRef = useRef(0);
 
   const variables = useMemo(() => extractVariables(draft), [draft]);
-  const selectedModel = models.find((model) => model.model_name === draft.model_name) ?? models[0] ?? fallbackModels[0];
+  const selectedModel = models.find((model) => model.model_name === draft.model_name) ?? models[0];
   const promptTitle = useMemo(() => displayPromptTitle(promptName, draft), [draft, promptName]);
   const hasPromptText = hasRunnableMessage(draft);
   const hasVariables = variables.length > 0;
   const canEvaluate = hasVariables && draft.tools.length === 0;
   const evaluateUnavailableReason = 'Run a prompt with at least one variable and no tools to use ‘Evaluate’.';
-  const canRun = Boolean(orgUuid) && hasPromptText && !isLoading;
+  const canRun = Boolean(orgUuid && draft.model_name) && hasPromptText && !isLoading;
   const hasMissingVariableValues = variables.some((name) => !variableValues[name]?.trim());
   const canRunWithVariables = canRun && !hasMissingVariableValues;
   const currentDraftKey = prompt ? workbenchDraftAutosaveKey(prompt.id, draft) : null;
@@ -493,18 +495,22 @@ export function WorkbenchPage() {
     setLoadError(null);
     try {
       const routeIsWorkbenchIndex = currentRouteIsWorkbenchIndex();
-      const [modelsResponse, availablePrompts] = await Promise.all([
-        getWorkbenchModels(orgUuid),
-        routeIsWorkbenchIndex ? listWorkbenchPrompts(orgUuid) : listWorkspacePrompts(orgUuid, activeWorkspaceId),
-      ]);
+      const modelsResponse = await getWorkbenchModels(orgUuid);
       if (!isCurrentLoad()) {
         return;
       }
-      const nextModels = modelsResponse.models?.length ? modelsResponse.models : fallbackModels;
+      const nextModels = modelsResponse.models ?? [];
       const nextDefaultModelName =
-        modelsResponse.default_prompt_settings?.model_name ?? nextModels[0]?.model_name ?? fallbackModels[0].model_name;
+        modelsResponse.default_prompt_settings?.model_name ?? nextModels[0]?.model_name ?? '';
       setModels(nextModels);
       setDefaultModelName(nextDefaultModelName);
+      if (nextModels.length === 0) {
+        setPromptList([]);
+        return;
+      }
+      const availablePrompts = routeIsWorkbenchIndex
+        ? await listWorkbenchPrompts(orgUuid)
+        : await listWorkspacePrompts(orgUuid, activeWorkspaceId);
 
       const routePromptId = currentRoutePromptId();
       let routeRequestsNewPrompt = currentRouteRequestsNewPrompt();
@@ -567,7 +573,7 @@ export function WorkbenchPage() {
       }
     } catch (error) {
       if (isCurrentLoad()) {
-        setLoadError(errorMessage(error));
+        setLoadError(error);
       }
     } finally {
       if (isCurrentLoad()) {
@@ -1850,9 +1856,9 @@ export function WorkbenchPage() {
             orgUuid,
             workspaceId: activeWorkspaceId,
             body: {
-              ...buildRevisionPayload(draft, { includeEmptyMessages: false }),
-              feedback: improveFeedback,
-              thinking_enabled: improveThinkingEnabled,
+              task: [titleMessageContent(draft), improveFeedback].filter(Boolean).join('\n\nFeedback:\n'),
+              model: draft.model_name,
+              target_thinking_mode: improveThinkingEnabled,
             },
             signal: controller.signal,
             onEvent,
@@ -1916,6 +1922,7 @@ export function WorkbenchPage() {
             workspaceId: activeWorkspaceId,
             body: {
               task,
+              model: draft.model_name,
               target_thinking_mode: promptGeneratorThinkingEnabled,
               isPromptConversion: false,
             },
@@ -1934,7 +1941,7 @@ export function WorkbenchPage() {
         setPromptGeneratorError('Generated prompt is malformed, displaying raw output');
       } else {
         setPromptGeneratorStep('generate');
-        setPromptGeneratorError('Claude did not return a prompt. Try adding more detail.');
+        setPromptGeneratorError('The model did not return a prompt. Try adding more detail.');
       }
     } catch (error) {
       clearPromptGeneratorOutputFallback();
@@ -2097,23 +2104,9 @@ export function WorkbenchPage() {
     );
   }
 
-  if (loadError) {
-    return (
-      <WorkbenchShell>
-        <div className="flex h-full items-center justify-center px-6">
-          <Alert variant="destructive" className="max-w-[520px]">
-            <AlertCircle aria-hidden />
-            <AlertTitle>Workbench could not load</AlertTitle>
-            <AlertDescription className="gap-3">
-              <p className="leading-6">{loadError}</p>
-              <Button type="button" variant="secondary" onClick={loadWorkbench}>
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        </div>
-      </WorkbenchShell>
-    );
+  const unavailable = workbenchUnavailable(loadError, models.length === 0, activeWorkspaceId, loadWorkbench);
+  if (unavailable) {
+    return unavailable;
   }
 
   return (
@@ -2790,6 +2783,52 @@ export function WorkbenchPage() {
           onConfirm={confirmPromptGeneratorAction}
         />
       ) : null}
+    </WorkbenchShell>
+  );
+}
+
+function workbenchUnavailable(loadError: unknown, noModels: boolean, workspaceId: string, retry: () => Promise<void>) {
+  if (!loadError && !noModels) {
+    return null;
+  }
+  return <WorkbenchUnavailable loadError={loadError} workspaceId={workspaceId} retry={retry} />;
+}
+
+function WorkbenchUnavailable({
+  loadError,
+  workspaceId,
+  retry,
+}: {
+  loadError: unknown;
+  workspaceId: string;
+  retry: () => Promise<void>;
+}) {
+  const { msg } = useI18n();
+  if (loadError && !isModelConfigurationUnavailable(loadError)) {
+    return (
+      <WorkbenchShell>
+        <div className="flex h-full items-center justify-center px-6">
+          <Alert variant="destructive" className="max-w-[520px]">
+            <AlertCircle aria-hidden />
+            <AlertTitle>{msg('workbench.loadFailed', 'Workbench could not load')}</AlertTitle>
+            <AlertDescription className="gap-3">
+              <p className="leading-6">{errorMessage(loadError)}</p>
+              <Button type="button" variant="secondary" onClick={retry}>
+                {msg('common.retry', 'Retry')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      </WorkbenchShell>
+    );
+  }
+  return (
+    <WorkbenchShell>
+      <div className="flex h-full items-center justify-center px-6">
+        <LLMProviderRequired
+          onConfigure={() => window.location.assign(`/workspaces/${encodeURIComponent(workspaceId)}/llm-models`)}
+        />
+      </div>
     </WorkbenchShell>
   );
 }

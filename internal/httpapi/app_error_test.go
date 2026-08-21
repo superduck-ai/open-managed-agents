@@ -127,6 +127,29 @@ func TestErrorAdapterMapsApplicationErrors(t *testing.T) {
 	}
 }
 
+func TestErrorAdapterIncludesStableApplicationCode(t *testing.T) {
+	adapter, _ := testErrorAdapter()
+	recorder := httptest.NewRecorder()
+	request := testErrorRequest()
+
+	adapter.Write(recorder, request, apperr.NewCoded(
+		apperr.Unavailable,
+		"workspace_llm_provider_not_configured",
+		"This workspace has no LLM provider configured",
+		errors.New("private cause"),
+	))
+
+	response := decodeAppErrorResponse(t, recorder)
+	assertAppError(t, recorder, response, http.StatusServiceUnavailable, "api_error", "This workspace has no LLM provider configured")
+	var code string
+	if err := json.Unmarshal(response.Error["code"], &code); err != nil {
+		t.Fatalf("decode error.code: %v", err)
+	}
+	if code != "workspace_llm_provider_not_configured" {
+		t.Fatalf("error.code = %q", code)
+	}
+}
+
 func TestErrorAdapterWritesWrappedClientErrorWithoutErrorLog(t *testing.T) {
 	adapter, logs := testErrorAdapter()
 	recorder := httptest.NewRecorder()

@@ -98,9 +98,6 @@ storage:
     secret_access_key: minioadmin
     force_path_style: true
 
-anthropic_upstream:
-  api_key: ""
-
 e2b:
   api_key: ""
   api_url: ""

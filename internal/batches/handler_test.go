@@ -25,8 +25,7 @@ func TestCreatePreservesBodyTooLargeResponse(t *testing.T) {
 
 func newRequestBodyTestHandler(maxBodyBytes int64) *Handler {
 	return &Handler{cfg: config.Config{
-		AnthropicUpstream: config.AnthropicUpstreamConfig{APIKey: "test-key"},
-		Batch:             config.BatchConfig{MaxBodyBytes: maxBodyBytes},
+		Batch: config.BatchConfig{MaxBodyBytes: maxBodyBytes},
 	}}
 }
 

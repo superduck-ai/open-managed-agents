@@ -2,6 +2,7 @@ import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { consoleApi } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { type QueryClient } from '@tanstack/react-query';
+import { endOfDay, parseISO, startOfDay } from 'date-fns';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileAPIMountPath } from './sessions/file-resource-path';
@@ -56,7 +57,7 @@ export function sdkBody(value: object): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export const defaultAgentFilters: AgentListFilters = { created: 'all', status: 'active' };
+export const defaultAgentFilters: AgentListFilters = { created: { kind: 'all' }, status: 'active' };
 
 export const agentsListLimit = 20;
 
@@ -73,15 +74,32 @@ export async function getEffectiveModelMappings(orgUuid: string) {
   return response.model_mappings ?? {};
 }
 
-export function createdFilterStartISOString(filter: AgentCreatedFilter) {
+// Maps an `AgentCreatedFilter` onto inclusive `created_at[gte]`/`[lte]` ISO-8601
+// bounds accepted by the agents list API. Preset windows compute a lower bound
+// from "now"; custom ranges convert the selected local calendar-day bounds to
+// UTC timestamps so the entire days shown to the user are included.
+export function createdFilterRange(filter: AgentCreatedFilter): { gte: string | null; lte: string | null } {
   const now = Date.now();
-  if (filter === 'last7') {
-    return new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+  switch (filter.kind) {
+    case 'last7':
+      return { gte: new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString(), lte: null };
+    case 'last30':
+      return { gte: new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString(), lte: null };
+    case 'custom':
+      return {
+        gte: startOfDay(parseISO(filter.from)).toISOString(),
+        lte: endOfDay(parseISO(filter.to)).toISOString(),
+      };
+    case 'all':
+      return { gte: null, lte: null };
   }
-  if (filter === 'last30') {
-    return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
-  }
-  return null;
+}
+
+// Stable string identity for an `AgentCreatedFilter`, used as part of request
+// cache keys. Custom ranges include their bounds so changing either date
+// invalidates the cache; presets collapse to their kind.
+export function createdFilterRequestKey(filter: AgentCreatedFilter): string {
+  return filter.kind === 'custom' ? `custom:${filter.from}:${filter.to}` : filter.kind;
 }
 
 export function listAgents(workspaceId: string, page?: PageCursor, filters: AgentListFilters = defaultAgentFilters) {
@@ -89,9 +107,12 @@ export function listAgents(workspaceId: string, page?: PageCursor, filters: Agen
     limit: agentsListLimit,
     include_archived: filters.status === 'all',
   };
-  const createdAtGTE = createdFilterStartISOString(filters.created);
-  if (createdAtGTE) {
-    params['created_at[gte]'] = createdAtGTE;
+  const createdRange = createdFilterRange(filters.created);
+  if (createdRange.gte) {
+    params['created_at[gte]'] = createdRange.gte;
+  }
+  if (createdRange.lte) {
+    params['created_at[lte]'] = createdRange.lte;
   }
   if (page) {
     params.page = page;

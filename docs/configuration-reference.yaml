@@ -117,6 +117,13 @@ vault:
       - version: 1
         kek: "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE="
         kek_file: ""
+  # Deployment-owned OAuth clients for vault MCP OAuth enrollment. Exact
+  # mcp_server_url match only. BYO client_id on vault-auth/start overrides.
+  # Inline client_secret is accepted for local/dev; do not commit secrets.
+  platform_oauth_clients:
+    - mcp_server_url: "https://api.githubcopilot.com/mcp/"
+      client_id: "Iv23liEXAMPLE"
+      client_secret: "replace-me"
 
 bootstrap:
   seed_api_keys:

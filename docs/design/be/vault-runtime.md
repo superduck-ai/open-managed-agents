@@ -182,7 +182,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 4. 删掉客户端带给 proxy 的 `Authorization`（session JWT），加 `Authorization: Bearer <token>`，转发真实上游。passthrough 不写上游 Authorization。
 5. 跨 origin redirect：代理不自动跟；客户端新请求重新匹配。
 
-匹配规则：凭证与请求 URL 的 scheme、hostname、effective port 必须一致；凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。
+匹配规则：凭证与请求 URL 的 scheme、hostname、effective port 必须一致；凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。`https://host` 不得匹配 `http://host:443`（避免把 Bearer 注到明文 HTTP）。
 
 后续（非本切片）：
 
@@ -222,6 +222,18 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 > 注：云 KMS 自动轮换 / DisableKey 另议。
 
+## Platform OAuth Client（登记）
+
+部署方可在 `vault.platform_oauth_clients` 配置通用 registry（列表），每项绑定精确 `mcp_server_url` + `client_id` + `client_secret`（本地/dev 可内联；勿提交真实 secret）。
+
+`POST .../mcp/vault-auth/start` 解析 client 顺序：
+
+1. 请求带非空 BYO `client_id` → 用 BYO（覆盖 Platform）
+2. 否则精确匹配 Platform OAuth Client registry → 注入平台 client
+3. 否则走既有 DCR；无 registration endpoint 则失败
+
+Redirect 仍由前端传入 `{origin}/oauth/vault/success`。控制台 Optional Client 字段保留。用户 access/refresh token 仍进个人 Credential 信封。
+
 ## 不做（注入 MVP）
 
 - `mcp_oauth` 注入与 refresh
@@ -238,3 +250,4 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 - https://www.anthropic.com/engineering/managed-agents
 - HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
 - Related: #65、#52、#121、#137、#142
+- Ubiquitous language: `CONTEXT.md`（Secret envelope / Runtime credential injection / Credential URL match / Platform OAuth Client）

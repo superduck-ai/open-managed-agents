@@ -80,7 +80,48 @@ func validate(cfg Config) error {
 	if err := validateVaultMasterKey(cfg.Vault); err != nil {
 		return err
 	}
+	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
+		return err
+	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
+}
+
+// FindPlatformOAuthClient returns the registry entry whose mcp_server_url
+// exactly matches (after TrimSpace) the given MCP server URL.
+func FindPlatformOAuthClient(clients []PlatformOAuthClientConfig, mcpServerURL string) (PlatformOAuthClientConfig, bool) {
+	want := strings.TrimSpace(mcpServerURL)
+	if want == "" {
+		return PlatformOAuthClientConfig{}, false
+	}
+	for _, client := range clients {
+		if strings.TrimSpace(client.MCPServerURL) == want {
+			client.MCPServerURL = want
+			client.ClientID = strings.TrimSpace(client.ClientID)
+			client.ClientSecret = strings.TrimSpace(client.ClientSecret)
+			return client, true
+		}
+	}
+	return PlatformOAuthClientConfig{}, false
+}
+
+func validatePlatformOAuthClients(clients []PlatformOAuthClientConfig) error {
+	seen := make(map[string]struct{}, len(clients))
+	for i, client := range clients {
+		prefix := fmt.Sprintf("vault.platform_oauth_clients[%d]", i)
+		mcpURL := strings.TrimSpace(client.MCPServerURL)
+		clientID := strings.TrimSpace(client.ClientID)
+		if mcpURL == "" {
+			return fmt.Errorf("%s.mcp_server_url is required", prefix)
+		}
+		if clientID == "" {
+			return fmt.Errorf("%s.client_id is required", prefix)
+		}
+		if _, ok := seen[mcpURL]; ok {
+			return fmt.Errorf("%s.mcp_server_url %q is duplicated", prefix, mcpURL)
+		}
+		seen[mcpURL] = struct{}{}
+	}
+	return nil
 }
 
 func (m MasterKeyConfig) inlineKEKSet() bool {

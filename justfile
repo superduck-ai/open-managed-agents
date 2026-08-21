@@ -43,9 +43,8 @@ restart-web:
 test: generate
   go test ./... -count=1
 
-# Regenerate DB mappers with the version pinned by go.mod's tool directive.
-generate-yourbatis-mappers:
-  go generate ./internal/db
+# Same as `generate`. Kept so documented `just generate-yourbatis-mappers` still works.
+generate-yourbatis-mappers: generate
 
 # Run the repository's configured Go static-analysis and formatting checks.
 lint: generate

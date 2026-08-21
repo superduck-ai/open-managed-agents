@@ -15,7 +15,7 @@
 
 ## 配置与执行
 
-- yourbatis 根据 `internal/db/*.xml` 生成的 `*.sqlmap.gen.go` 不提交；`scripts/generate-go.sh` 是统一生成入口。Go lint、死代码、复杂度、测试、开发启动和 Docker 构建在类型检查或编译前调用该入口，避免本地残留的 ignored 文件掩盖干净 checkout 中的缺失生成代码。
+- yourbatis 根据 `internal/db/*.xml` 生成的 `*.sqlmap.gen.go` 不提交；`scripts/generate-go.sh` 是统一生成入口。该脚本会先删除 `internal/db` 下已有的 `*.sqlmap.gen.go`，再执行 `go generate ./internal/db`，避免已删除 Mapper 留下的 ignored 生成文件继续参与编译。Go lint、死代码、复杂度、测试、开发启动和 Docker 构建在类型检查或编译前调用该入口，避免本地残留的 ignored 文件掩盖干净 checkout 中的缺失生成代码。
 - `.golangci.yml` 是常规 Go lint 规则来源；复杂度和死代码等需要不同扫描范围的专项门禁使用独立的固定配置。
 - `just lint` 在本地对所有 Go package（包括测试）运行相同配置。
 - `.golangci-dead-code.yml` 单独启用 golangci-lint 的 `unused` 分析器并覆盖测试代码；`just dead-code` 通过 `scripts/go-dead-code.sh` 枚举当前 Go module 的仓库 package，避免本地前端依赖中的第三方 Go 示例污染结果。

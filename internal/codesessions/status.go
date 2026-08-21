@@ -9,6 +9,9 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
+// usage 与 idle 时间戳至少差 1µs 才能在 timestamptz 落库后保序，见 docs/design/be/session-usage-event.md。
+const publicEventOrderingGap = time.Microsecond
+
 func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
 	if record.SessionExternalID == "" {
 		return nil
@@ -70,7 +73,16 @@ func (s *Service) publicSessionStatusPayloads(ctx context.Context, record db.Cod
 		}
 	}
 	//
-	now := time.Now().UTC()
+	return statusTransitionPayloads(record, session, eventType, status, time.Now().UTC())
+}
+
+func statusTransitionPayloads(
+	record db.CodeSession,
+	session db.Session,
+	eventType string,
+	status string,
+	now time.Time,
+) ([]json.RawMessage, error) {
 	eventID := stablePublicEventID(record.ExternalID, "worker_status_"+status+"\x00"+session.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	payload, err := marshalRaw(map[string]any{
 		"id":           eventID,
@@ -81,5 +93,28 @@ func (s *Service) publicSessionStatusPayloads(ctx context.Context, record db.Cod
 	if err != nil {
 		return nil, err
 	}
-	return []json.RawMessage{payload}, nil
+	if status != "idle" {
+		return []json.RawMessage{payload}, nil
+	}
+	usagePayload, err := sessionUsagePayload(record, session, now.Add(-publicEventOrderingGap))
+	if err != nil {
+		return nil, err
+	}
+	return []json.RawMessage{usagePayload, payload}, nil
+}
+
+func sessionUsagePayload(record db.CodeSession, session db.Session, at time.Time) (json.RawMessage, error) {
+	eventID := stablePublicEventID(record.ExternalID, "session_usage\x00"+session.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	usage := json.RawMessage(`{}`)
+	if len(session.Usage) > 0 {
+		usage = session.Usage
+	}
+	return marshalRaw(map[string]any{
+		"id":           eventID,
+		"type":         "session.usage",
+		"created_at":   formatTime(at),
+		"processed_at": formatTime(at),
+		"usage":        usage,
+		"budget":       json.RawMessage(`null`),
+	})
 }

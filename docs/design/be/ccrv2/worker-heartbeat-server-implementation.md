@@ -210,7 +210,9 @@ E2B 网络调用不在 PostgreSQL 事务中执行，避免远端延迟占用 `co
 
 E2B SDK 的 `Connect` 也会携带 timeout。Provider 所有 connect 操作显式使用 `e2b.sandbox_timeout`，避免 SDK 默认值覆盖项目配置；running heartbeat 随后显式调用 `SetTimeout`，把 Sandbox 生命周期从本次请求重新延长相同配置时长。创建 Sandbox 时显式设置 `onTimeout=pause`，但不启用请求或流量触发的 `autoResume`；恢复统一由 Provider 的显式 `Connect` 完成，因此超时资源可恢复，而不是被销毁。
 
-该配置默认是 `30s`，因此运行态 worker 的 heartbeat 周期必须显著短于 30 秒，并为网络抖动和 Provider 延迟留出余量。worker 切换到 `idle` 或 `requires_action` 后，后续 heartbeat 不再连接 Provider；如果没有其他 Provider 操作，Sandbox 会在最后一次 running 续期后的 `e2b.sandbox_timeout` 内 pause。之后收到 `user.message`、`user.interrupt`、`user.tool_confirmation`、`user.tool_result` 或 `user.custom_tool_result` 时，服务端先将事件写入持久化 Code Session 入站队列，再对关联 Sandbox 调用 `SetTimeout`。E2B Provider 在 `SetTimeout` 前先执行 `Connect`，因此 paused Sandbox 会被恢复，TTL 也从该次事件重新计算。Provider 临时失败不回滚已经持久化的消息；下一条可转发用户事件会再次尝试恢复。`last_worker_activity_at` 会被 heartbeat 自身刷新，不能作为 Sandbox idle 计时来源。
+该配置默认是 `30s`，因此运行态 worker 的 heartbeat 周期必须显著短于 30 秒，并为网络抖动和 Provider 延迟留出余量。worker 切换到 `idle` 或 `requires_action` 后，后续 heartbeat 不再连接 Provider；如果没有其他 Provider 操作，Sandbox 会在最后一次 running 续期后的 `e2b.sandbox_timeout` 内 pause。之后收到 `user.message`、`user.interrupt`、`user.tool_confirmation`、`user.tool_result` 或 `user.custom_tool_result` 时，服务端先将事件写入持久化 Code Session 入站队列，再对关联 Sandbox 调用 `SetTimeout`。E2B Provider 在 `SetTimeout` 前先执行 `Connect`，因此 paused Sandbox 会被恢复，TTL 也从该次事件重新计算。
+
+pause 期间进程不会发送 heartbeat，但数据库 lease 仍按墙钟推进，因而长时间 pause 后 lease 可能已经超过 grace。Provider 成功恢复同一个活动 Sandbox 后，服务端会把已注册的当前 worker lease 重新设为 `now + 60s`，但不修改 `current_worker_epoch`、`worker_last_heartbeat_at` 或 `last_worker_activity_at`。该条件更新同时校验 organization、workspace、Code Session、活动 Work 和精确的 `provider_sandbox_id`；已被 replacement 标记为 failed 的旧 Sandbox 或凭证轮换后 lease 已清空的 worker 都不能借此复活。Provider 临时失败不续租，也不回滚已经持久化的消息；下一条可转发用户事件会再次尝试恢复。
 
 如果 Provider 明确返回 sandbox not found，服务端原子地把旧 `environment_sandboxes` 记录标为 `failed`，并把同一 Work 重新排为 `queued`。Runner 根据 Work 对应的 organization、workspace、environment 和 public Session 查询 active Code Session：没有 active 记录时执行 create，恰好一条时执行 recover，多于一条则按无效状态失败，从而不使用 metadata 旗标或新增恢复列。恢复会创建新的 Provider Sandbox，但复用原 `cse_*` 及其持久化事件和 transcript。
 

@@ -207,7 +207,8 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 
 func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
+	claims, authorized := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	if !authorized {
 		return
 	}
 	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
@@ -217,6 +218,10 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	epoch, hasEpoch, ok := h.validateOptionalWorkerEpochRequest(w, r, codeSessionID)
 	if !ok {
 		return
+	}
+	if !hasEpoch && claims.WorkerEpoch > 0 {
+		epoch = claims.WorkerEpoch
+		hasEpoch = true
 	}
 	fromSequence, err := parseCodeSessionWorkerStreamFromSequence(r)
 	if err != nil {

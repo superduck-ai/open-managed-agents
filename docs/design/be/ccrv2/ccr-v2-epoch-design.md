@@ -213,23 +213,25 @@ returning worker_lease_expires_at;
 
 lease 过期本身不修改 epoch。UI 或观测状态用 `worker_lease_expires_at <= now()` 判断 stale。后台 sweep 在 v1 中不是正确性的必要条件。
 
+同一个 Provider Sandbox 因 idle timeout 被 pause 时，worker ownership 没有变化，因此 resume 也不 bump epoch。用户事件触发显式 `Connect`/`SetTimeout` 并确认同一个活动 Sandbox 恢复成功后，服务端可以把当前已注册 lease 重新设为 `now + leaseTTL`。该写入必须同时匹配租户、Code Session、活动 Work 和精确的 Provider Sandbox ID，并拒绝 lease 已被 credential rotation 清空的记录；Provider 恢复失败时不得续租。replacement 创建新 Sandbox 时仍必须 bump epoch 并清空旧 lease。
+
 ## 8. 读路径兼容
 
 读路径不 bump epoch：
 
 - `GET /worker` 可以可选支持 `worker_epoch` query/header；传了且不匹配返回 `409`，没传则返回当前 worker state。
-- `GET /worker/events/stream` 只做 auth 和 session 存在校验；如果请求带 epoch，可以校验并在 mismatch 时返回 `409`，否则保持兼容。
+- `GET /worker/events/stream` 优先使用 query/header 中的 epoch；没有显式参数时使用已认证 JWT 的正 `worker_epoch`。显式值不匹配返回 `409`；只有旧 JWT 也没有 epoch 时才保持 legacy 兼容。
 - SSE/HTTP poll 读取 queued inbound events 不改变 epoch。
 
 当前实现约束：
 
 - 无 `worker_epoch` 的 `GET /worker` 只读当前 state，不刷新 `connection_status` 或 activity 时间。
 - 带 `worker_epoch` 的 `GET /worker` 可以刷新连接状态，但必须使用 `current_worker_epoch = $epoch` 条件更新。
-- `GET /worker/events/stream` 只有在请求携带当前 epoch 时才写入 connected/disconnected 状态；无 epoch stream 不做状态写入。
+- `GET /worker/events/stream` 在请求参数或 JWT claim 提供当前 epoch 时写入 connected/disconnected 状态；只有两者都无 epoch 时才不做状态写入。
 - 带 `worker_epoch` 的 stream 会先解析 `from_sequence_num` / `Last-Event-ID`；cursor 非法时返回 `400`，不会先把 worker 标记为 connected。
 - 带 `worker_epoch` 的 stream 使用 `ListCodeSessionInboundEventsForWorkerStream(ctx, sessionID, epoch, afterSequence)`，读取 `sequence_num > afterSequence` 且 `delivery_status <> 'processed'` 的 inbound events，并继续约束 `current_worker_epoch = $epoch`。
 - epoch-scoped stream 写出事件后使用 `MarkCodeSessionInboundEventSentForEpoch()` 标记 `sent`、`delivery_worker_epoch` 和 delivery attempt；新 register bump 后，旧 stream 应停止，不能读取或标记新 epoch 的事件。
-- 无 `worker_epoch` 的 legacy stream 仍使用 queued-only 兼容路径，不提供 epoch takeover/replay 语义。
+- 请求参数和 JWT claim 都无 `worker_epoch` 的 legacy stream 仍使用 queued-only 兼容路径，不提供 epoch takeover/replay 语义。managed-agent JWT 带 epoch，因此它即使使用不带 query 的 stream URL，也必须进入 epoch-scoped 路径并在 pause/resume 重连时重放未 processed 的事件。
 - stream 断开时旧 epoch 的 disconnected 更新会被条件 update 拒绝，不能覆盖新 worker 的 connected 状态。
 
 ## 9. 并发与竞态防护

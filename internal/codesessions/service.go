@@ -92,14 +92,14 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
 		return err
 	}
-	return s.resumeSandboxForCodeSession(ctx, codeSession.ExternalID)
+	return s.resumeSandboxForCodeSession(ctx, codeSession)
 }
 
-func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSessionExternalID string) error {
+func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
 	if s.sandboxTimeoutExtender == nil {
 		return nil
 	}
-	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSessionExternalID)
+	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return nil
@@ -111,12 +111,23 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSessionEx
 	}
 	providerSandboxID := *sandbox.ProviderSandboxID
 	err = s.sandboxTimeoutExtender.SetTimeout(ctx, providerSandboxID, s.sandboxTimeout)
+	if err == nil {
+		_, err = s.db.ResumeCodeSessionWorkerLeaseForSandbox(
+			ctx,
+			codeSession.OrganizationUUID,
+			codeSession.WorkspaceUUID,
+			codeSession.ExternalID,
+			providerSandboxID,
+			codeSessionWorkerLeaseTTL,
+		)
+		return err
+	}
 	if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
 		return err
 	}
 	scheduled, scheduleErr := s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(
 		ctx,
-		codeSessionExternalID,
+		codeSession.ExternalID,
 		providerSandboxID,
 		err,
 	)
@@ -127,7 +138,7 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSessionEx
 		s.logger.InfoContext(
 			ctx,
 			"managed agent sandbox recovery scheduled",
-			"code_session_id", codeSessionExternalID,
+			"code_session_id", codeSession.ExternalID,
 			"provider_sandbox_id", providerSandboxID,
 		)
 	}

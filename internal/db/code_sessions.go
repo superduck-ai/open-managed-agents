@@ -805,6 +805,37 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 	return expiresAt, err
 }
 
+// ResumeCodeSessionWorkerLeaseForSandbox re-arms the existing worker lease
+// after the provider has successfully resumed the same sandbox. It preserves
+// the current epoch and only updates a registered worker still associated with
+// the exact active sandbox, so a retired sandbox cannot revive a fenced worker.
+func (d *DB) ResumeCodeSessionWorkerLeaseForSandbox(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	codeSessionExternalID string,
+	providerSandboxID string,
+	leaseTTL time.Duration,
+) (bool, error) {
+	if leaseTTL <= 0 {
+		leaseTTL = time.Minute
+	}
+	now := time.Now().UTC()
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	rowsAffected, err := mapper.ResumeWorkerLeaseForSandbox(ctx, resumeCodeSessionWorkerLeaseParams{
+		OrganizationUUID:      organizationUUID,
+		WorkspaceUUID:         workspaceUUID,
+		CodeSessionExternalID: codeSessionExternalID,
+		ProviderSandboxID:     providerSandboxID,
+		ExpiresAt:             now.Add(leaseTTL),
+		Now:                   now,
+	})
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected == 1, nil
+}
+
 func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExternalID string, input UpdateCodeSessionWorkerStateInput) (CodeSession, error) {
 	if input.WorkerEpoch <= 0 {
 		return CodeSession{}, ErrWorkerEpochMismatch

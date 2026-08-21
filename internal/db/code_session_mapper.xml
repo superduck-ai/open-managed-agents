@@ -281,6 +281,39 @@
         RETURNING worker_lease_expires_at
     </update>
 
+    <update id="ResumeWorkerLeaseForSandbox" result="rows">
+        UPDATE code_sessions code_session
+        SET worker_lease_expires_at = #{params.ExpiresAt},
+            updated_at = #{params.Now}
+        WHERE code_session.organization_uuid = #{params.OrganizationUUID}
+          AND code_session.workspace_uuid = #{params.WorkspaceUUID}
+          AND code_session.external_id = #{params.CodeSessionExternalID}
+          AND code_session.status = 'active'
+          AND code_session.current_worker_epoch &gt; 0
+          AND code_session.worker_lease_expires_at IS NOT NULL
+          AND code_session.worker_status IN ('idle', 'running', 'requires_action')
+          AND code_session.deleted_at IS NULL
+          AND EXISTS (
+              SELECT 1
+              FROM environment_work work
+              JOIN environment_sandboxes sandbox
+                ON sandbox.organization_uuid = work.organization_uuid
+               AND sandbox.workspace_uuid = work.workspace_uuid
+               AND sandbox.environment_uuid = work.environment_uuid
+               AND sandbox.work_uuid = work.uuid
+               AND sandbox.provider_sandbox_id = #{params.ProviderSandboxID}
+               AND sandbox.state = 'running'
+              WHERE work.organization_uuid = code_session.organization_uuid
+                AND work.workspace_uuid = code_session.workspace_uuid
+                AND work.environment_uuid = code_session.environment_uuid
+                AND work.environment_external_id = code_session.environment_external_id
+                AND work.data-&gt;&gt;'type' = 'session'
+                AND work.data-&gt;&gt;'id' = code_session.session_external_id
+                AND work.state = 'active'
+                AND work.deleted_at IS NULL
+          )
+    </update>
+
     <update id="UpdateWorkerState" result="returning" resultType="codeSessionRow">
         UPDATE code_sessions
         SET worker_status = #{params.WorkerStatus},

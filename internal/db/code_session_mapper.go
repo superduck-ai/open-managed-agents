@@ -138,6 +138,15 @@ type codeSessionWorkerExpiryRow struct {
 	WorkerLeaseExpiresAt time.Time `db:"worker_lease_expires_at"`
 }
 
+type resumeCodeSessionWorkerLeaseParams struct {
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	CodeSessionExternalID string
+	ProviderSandboxID     string
+	ExpiresAt             time.Time
+	Now                   time.Time
+}
+
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
@@ -155,6 +164,7 @@ type CodeSessionMapper interface {
 	RegisterWorker(ctx context.Context, params registerCodeSessionWorkerParams) (int64, error)
 	HeartbeatWorkerByExternalID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
 	HeartbeatWorkerByUUID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
+	ResumeWorkerLeaseForSandbox(ctx context.Context, params resumeCodeSessionWorkerLeaseParams) (int64, error)
 	UpdateWorkerState(ctx context.Context, params updateCodeSessionWorkerStateParams) (codeSessionRow, error)
 	UpdateCodeSessionInboundSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) (int64, error)
 	UpdateCodeSessionInternalSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) error

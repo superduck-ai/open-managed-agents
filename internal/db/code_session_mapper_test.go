@@ -129,6 +129,22 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			wantSensitiveArgumentNames: []string{"params.WorkerTokenSessionID", "params.WorkerBinding"},
 			wantSQLFragments:           []string{"UPDATE code_sessions", "CAST($5 AS jsonb)", "RETURNING current_worker_epoch"},
 		}},
+		{"resume worker lease for sandbox", mapperBuilderContract{
+			statement: codeSessionMapperResumeWorkerLeaseForSandboxStatement,
+			bound: buildCodeSessionMapperResumeWorkerLeaseForSandbox(yourbatis.DialectPostgres, resumeCodeSessionWorkerLeaseParams{
+				OrganizationUUID: "org-uuid", WorkspaceUUID: "workspace-uuid", CodeSessionExternalID: "codeses_test",
+				ProviderSandboxID: "sandbox_test", ExpiresAt: expiresAt, Now: now,
+			}),
+			wantID: "CodeSessionMapper.ResumeWorkerLeaseForSandbox", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.ExpiresAt", "params.Now", "params.OrganizationUUID", "params.WorkspaceUUID",
+				"params.CodeSessionExternalID", "params.ProviderSandboxID",
+			},
+			wantSQLFragments: []string{
+				"UPDATE code_sessions", "current_worker_epoch > 0", "worker_lease_expires_at IS NOT NULL",
+				"JOIN environment_sandboxes", "provider_sandbox_id = $6", "work.state = 'active'",
+			},
+		}},
 		{"update worker state", mapperBuilderContract{
 			statement: codeSessionMapperUpdateWorkerStateStatement,
 			bound: buildCodeSessionMapperUpdateWorkerState(yourbatis.DialectPostgres, updateCodeSessionWorkerStateParams{

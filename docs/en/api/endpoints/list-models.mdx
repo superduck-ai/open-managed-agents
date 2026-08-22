@@ -16,14 +16,42 @@ Returns the model IDs configured for the current workspace. IDs are used unchang
   The model ID to use in API calls.
 </ResponseField>
 
+<ResponseField name="data[].display_name" type="string">
+  The configured model ID, used as the display name because Provider configuration does not include catalog metadata.
+</ResponseField>
+
+<ResponseField name="data[].created_at" type="string">
+  The Unix epoch when the Provider does not supply a release date.
+</ResponseField>
+
+<ResponseField name="has_more" type="boolean">
+  Always `false`; the configured workspace catalog is returned as one page.
+</ResponseField>
+
+<ResponseField name="first_id" type="string | null">
+  The first configured model ID, or `null` when the catalog is empty.
+</ResponseField>
+
+<ResponseField name="last_id" type="string | null">
+  The last configured model ID, or `null` when the catalog is empty.
+</ResponseField>
+
 ```json Response
 {
   "data": [
     {
       "type": "model",
-      "id": "kimi-k2.5"
+      "id": "kimi-k2.5",
+      "display_name": "kimi-k2.5",
+      "created_at": "1970-01-01T00:00:00Z",
+      "max_input_tokens": null,
+      "max_tokens": null,
+      "capabilities": null
     }
-  ]
+  ],
+  "has_more": false,
+  "first_id": "kimi-k2.5",
+  "last_id": "kimi-k2.5"
 }
 ```
 

@@ -80,7 +80,7 @@ func errorMappingFor(err *apperr.Error) (errorMapping, bool) {
 	case apperr.PreconditionFailed:
 		return errorMapping{http.StatusPreconditionFailed, "invalid_request_error", "precondition_failed"}, true
 	case apperr.RequestTooLarge:
-		return errorMapping{http.StatusRequestEntityTooLarge, "invalid_request_error", "request_too_large"}, true
+		return errorMapping{http.StatusRequestEntityTooLarge, "request_too_large", "request_too_large"}, true
 	case apperr.Unauthenticated:
 		return errorMapping{http.StatusUnauthorized, "authentication_error", "unauthenticated"}, true
 	case apperr.Billing:

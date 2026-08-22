@@ -1964,6 +1964,7 @@ export function WorkbenchPage() {
   }, [
     activeWorkspaceId,
     clearPromptGeneratorOutputFallback,
+    draft.model_name,
     isPromptReadOnly,
     orgUuid,
     promptGeneratorTask,

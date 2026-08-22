@@ -1,7 +1,10 @@
 package platformapi
 
 import (
+	"errors"
 	"net/http"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 const (
@@ -51,6 +54,15 @@ func writeLLMProviderModelConflict(w http.ResponseWriter, modelID string) {
 		Message: "model_id is already configured by another provider: " + modelID,
 		ModelID: modelID,
 	})
+}
+
+func writeLLMProviderModelConflictError(w http.ResponseWriter, err error) bool {
+	conflict, ok := errors.AsType[*db.LLMProviderModelConflictError](err)
+	if !ok {
+		return false
+	}
+	writeLLMProviderModelConflict(w, conflict.ModelID)
+	return true
 }
 
 func writeLLMProviderPermissionDenied(w http.ResponseWriter) {

@@ -10,10 +10,108 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+
+	"github.com/google/uuid"
 )
+
+func TestWorkspaceLLMProviderModelOwnershipIsAtomic(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-concurrent-model-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+
+	databaseIDs := getDefaultDBIDs(t, app.pool)
+	providers := make([]db.LLMProvider, 0, 2)
+	for index, name := range []string{"Concurrent first", "Concurrent second"} {
+		externalID, err := ids.New("llmprov_concurrent_")
+		if err != nil {
+			t.Fatalf("generate provider ID: %v", err)
+		}
+		now := time.Now().UTC()
+		provider := db.LLMProvider{
+			UUID:             uuid.NewString(),
+			ExternalID:       externalID,
+			OrganizationUUID: databaseIDs.OrganizationUUID,
+			WorkspaceUUID:    databaseIDs.WorkspaceUUID,
+			Name:             name,
+			BaseURL:          fmt.Sprintf("https://concurrent-%d.example.com", index),
+			APIKeyLast4:      fmt.Sprintf("key%d", index),
+			ModelIDs:         []string{"shared-model"},
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		key := []byte(fmt.Sprintf("concurrent-provider-key-%d", index))
+		envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), key)
+		clear(key)
+		if err != nil {
+			t.Fatalf("seal provider key: %v", err)
+		}
+		provider.SecretEnvelope = &envelope
+		providers = append(providers, provider)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, len(providers))
+	for _, provider := range providers {
+		go func() {
+			<-start
+			_, err := app.db.CreateLLMProvider(context.Background(), provider)
+			results <- err
+		}()
+	}
+	close(start)
+	assertSingleLLMProviderModelOwner(t, results, len(providers), "shared-model")
+}
+
+func TestWorkspaceLLMProviderUpdateModelOwnershipIsAtomic(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-concurrent-update-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+
+	providers := []db.LLMProvider{
+		seedTestLLMProvider(t, app, "Update first", "https://update-first.example.com", "update-first-key"),
+		seedTestLLMProvider(t, app, "Update second", "https://update-second.example.com", "update-second-key"),
+	}
+	start := make(chan struct{})
+	results := make(chan error, len(providers))
+	for _, provider := range providers {
+		go func() {
+			<-start
+			provider.ModelIDs = []string{"shared-update-model"}
+			_, err := app.db.UpdateLLMProvider(context.Background(), provider)
+			results <- err
+		}()
+	}
+	close(start)
+	assertSingleLLMProviderModelOwner(t, results, len(providers), "shared-update-model")
+}
+
+func assertSingleLLMProviderModelOwner(t *testing.T, results <-chan error, count int, modelID string) {
+	t.Helper()
+	var successes, conflicts int
+	for range count {
+		err := <-results
+		if err == nil {
+			successes++
+			continue
+		}
+		var conflict *db.LLMProviderModelConflictError
+		if errors.As(err, &conflict) && conflict.ModelID == modelID {
+			conflicts++
+			continue
+		}
+		t.Fatalf("concurrent create error = %v", err)
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent writes successes=%d conflicts=%d, want 1 and 1", successes, conflicts)
+	}
+}
 
 func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-bucket"))
@@ -314,9 +412,9 @@ func TestWorkspaceLLMProviderModelDiscovery(t *testing.T) {
 	clearTestLLMProviders(t, app)
 
 	const liveKey = "live-provider-secret"
-	var requests int
+	var requests atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" || r.Header.Get("X-Api-Key") != liveKey {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -367,7 +465,7 @@ func TestWorkspaceLLMProviderModelDiscovery(t *testing.T) {
 			"model_ids":["kimi-k2.5"]
 		}`)
 		providerID, _ := created["id"].(string)
-		before := requests
+		before := requests.Load()
 		resp := app.platformRequest(t, http.MethodPost, path+"/"+providerID+"/models/sync", nil, cookies)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
@@ -377,8 +475,8 @@ func TestWorkspaceLLMProviderModelDiscovery(t *testing.T) {
 		decodeJSON(t, resp.Body, &body)
 		assertJSONDoesNotContain(t, body, liveKey)
 		modelIDs, _ := body["model_ids"].([]any)
-		if requests <= before || len(modelIDs) != 2 || modelIDs[0] != "kimi-k2.5" || modelIDs[1] != "glm-4.7" {
-			t.Fatalf("sync models = %#v requests=%d before=%d", body, requests, before)
+		if requests.Load() <= before || len(modelIDs) != 2 || modelIDs[0] != "kimi-k2.5" || modelIDs[1] != "glm-4.7" {
+			t.Fatalf("sync models = %#v requests=%d before=%d", body, requests.Load(), before)
 		}
 	})
 }
@@ -406,7 +504,15 @@ func TestWorkspaceLLMProviderSyncPreservesExistingModelsAndFiltersBeforeLimit(t 
 	defer upstream.Close()
 
 	target := seedTestLLMProvider(t, app, "Sync target", upstream.URL, liveKey, "keep-model", "dirty-shared")
-	seedTestLLMProvider(t, app, "Conflicting provider", "https://conflicts.example.com", "conflicting-key", conflicts...)
+	conflicting := seedTestLLMProvider(
+		t,
+		app,
+		"Conflicting provider",
+		"https://conflicts.example.com",
+		"conflicting-key",
+		conflicts[1:]...,
+	)
+	forceTestLLMProviderModels(t, app, conflicting.ExternalID, conflicts)
 	orgUUID := loadDefaultOrganizationUUID(t, app)
 	cookies := app.platformLoginCookies(t, "llm-providers-sync-conflicts@example.com")
 	path := "/api/console/organizations/" + orgUUID + "/workspaces/default/llm_providers/" + target.ExternalID + "/models/sync"
@@ -435,7 +541,8 @@ func TestWorkspaceLLMProviderResolutionFailsClosedOnAmbiguousModel(t *testing.T)
 	defer app.close()
 	clearTestLLMProviders(t, app)
 	seedTestLLMProvider(t, app, "First", "https://first.example.com", "first-test-key", "same-model")
-	seedTestLLMProvider(t, app, "Second", "https://second.example.com", "second-test-key", "same-model")
+	second := seedTestLLMProvider(t, app, "Second", "https://second.example.com", "second-test-key", "other-model")
+	forceTestLLMProviderModels(t, app, second.ExternalID, []string{"same-model"})
 
 	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
 	orgUUID := loadDefaultOrganizationUUID(t, app)
@@ -448,6 +555,33 @@ func TestWorkspaceLLMProviderResolutionFailsClosedOnAmbiguousModel(t *testing.T)
 		context.Background(), app.db, orgUUID, workspaceUUID,
 	); !errors.Is(err, llmproviders.ErrAmbiguousModel) {
 		t.Fatalf("ListModelIDs() error = %v, want ErrAmbiguousModel", err)
+	}
+}
+
+func forceTestLLMProviderModels(t *testing.T, app *testApp, externalID string, modelIDs []string) {
+	t.Helper()
+	encoded, err := json.Marshal(modelIDs)
+	if err != nil {
+		t.Fatalf("encode forced LLM provider models: %v", err)
+	}
+	databaseIDs := getDefaultDBIDs(t, app.pool)
+	result, err := app.pool.Exec(
+		context.Background(),
+		`UPDATE llm_providers
+		 SET model_ids = $1::jsonb
+		 WHERE organization_uuid = $2
+		 AND workspace_uuid = $3
+		 AND external_id = $4`,
+		string(encoded),
+		databaseIDs.OrganizationUUID,
+		databaseIDs.WorkspaceUUID,
+		externalID,
+	)
+	if err != nil {
+		t.Fatalf("force test LLM provider models: %v", err)
+	}
+	if result.RowsAffected() != 1 {
+		t.Fatalf("forced LLM provider rows = %d, want 1", result.RowsAffected())
 	}
 }
 

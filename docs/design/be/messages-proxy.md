@@ -71,7 +71,7 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 
 管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验和 32 MiB 请求上限，也不改写请求体。
 
-`GET /v1/models` 只返回 `{ "data": [{ "type": "model", "id": "..." }] }`。列表内容来自当前 workspace 配置的真实模型 ID，不维护显示名或能力目录；已有 Provider 但尚无模型时返回 `200` 和 `data: []`，未配置 Provider 时返回 `503`。
+`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容来自当前 workspace 配置的真实模型 ID；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标，未配置 Provider 时返回 `503`。
 
 服务端不提供 `/v1/code/sessions/{code_session_id}/bridge`。managed-agent 在创建 code session 时直接获得 OAuth FD、WebSocket FD 和初始 worker epoch；后续 worker 所有权切换统一使用 `/worker/register`。
 
@@ -150,11 +150,10 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 ## 最小实现边界
 
-- 不建独立 Model 表；`model_ids` 直接存 Provider JSON 数组。
+- 不建独立 Model 表；`model_ids` 直接存 Provider JSON 数组。创建和更新 Provider 时通过 workspace 级 PostgreSQL transaction advisory lock 串行化“检查模型归属 + 写入”，保证同一模型不会被并发分配给多个 Provider。
 - Provider 的所有读写都同时绑定 `organization_uuid` 和 `workspace_uuid`。
 - 不加缓存；删除或修改 Provider 立即生效。
 - 不建立只有单实现的 Resolver 接口；调用方直接使用 `internal/llmproviders`。
-- 并发写导致的重复模型由解析阶段检测并失败关闭；只有真实并发编辑成为产品问题时才考虑规范化模型表。
 
 ## 验收覆盖
 

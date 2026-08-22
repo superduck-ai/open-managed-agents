@@ -789,6 +789,11 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     await screen.findByRole('button', { name: 'Get Code' });
+    fireEvent.click(screen.getByRole('button', { name: 'Model settings' }));
+    const modelPanel = screen.getByLabelText('Model');
+    fireEvent.click(within(modelPanel).getByRole('combobox', { name: 'claude-opus-4-8' }));
+    fireEvent.click(screen.getByRole('option', { name: /claude-sonnet-4-6/i }));
+    fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.getAllByRole('button', { name: 'Generate Prompt' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Add message pair' }));
     expect(screen.getAllByRole('button', { name: 'Generate Prompt' })).toHaveLength(1);
@@ -834,6 +839,7 @@ describe('WorkbenchPage', () => {
     const request = api.requests.find((item) => item.url.endsWith('/workbench/generate_prompt'));
     expect(request?.method).toBe('POST');
     expect(request?.body?.task).toBe('Summarize meeting notes into action items.');
+    expect(request?.body?.model).toBe('claude-sonnet-4-6');
     expect(request?.body?.target_thinking_mode).toBe(true);
     expect(request?.body?.isPromptConversion).toBe(false);
     expect(request?.body?.feedback).toBeUndefined();
@@ -850,7 +856,7 @@ describe('WorkbenchPage', () => {
     expect(api.requests[revisionIndex]?.body?.variables).toEqual(['topic']);
     expect(api.requests[titleIndex]?.body).toEqual({
       message_content: generatedPrompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-sonnet-4-6',
     });
     expect(api.requests[updatePromptIndex]?.body).toEqual({ name: 'Cat haiku' });
   });

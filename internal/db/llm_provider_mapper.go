@@ -46,6 +46,7 @@ type llmProviderWriteParams struct {
 }
 
 type LLMProviderMapper interface {
+	LockWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) error
 	Insert(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)
 	ListByWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) ([]llmProviderRow, error)
 	FindByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (llmProviderRow, error)

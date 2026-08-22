@@ -122,6 +122,9 @@ func syncConsoleLLMProviderModels(database *db.DB, secretService *secrets.Servic
 		provider.ModelIDs = modelIDs
 		provider.UpdatedAt = time.Now().UTC()
 		updated, err := database.UpdateLLMProvider(r.Context(), provider)
+		if writeLLMProviderModelConflictError(w, err) {
+			return
+		}
 		if err != nil {
 			internalError(w, "failed to update LLM provider")
 			return

@@ -27,13 +27,19 @@ func TestModelsAPI(t *testing.T) {
 		if !ok || len(data) != len(defaultTestModelIDs) {
 			t.Fatalf("models page = %#v", body)
 		}
-		if len(body) != 1 {
-			t.Fatalf("models response has extra fields: %#v", body)
+		if body["has_more"] != false || body["first_id"] != "kimi-k2.5" || body["last_id"] != "test" {
+			t.Fatalf("models pagination envelope = %#v", body)
 		}
 
 		first, _ := data[0].(map[string]any)
-		if len(first) != 2 || first["type"] != "model" || first["id"] != "kimi-k2.5" {
+		if first["type"] != "model" || first["id"] != "kimi-k2.5" || first["display_name"] != "kimi-k2.5" ||
+			first["created_at"] != "1970-01-01T00:00:00Z" {
 			t.Fatalf("first model = %#v", first)
+		}
+		for _, field := range []string{"capabilities", "max_input_tokens", "max_tokens"} {
+			if value, exists := first[field]; !exists || value != nil {
+				t.Fatalf("first model %s = %#v, want explicit null", field, value)
+			}
 		}
 	})
 
@@ -66,6 +72,9 @@ func TestModelsAPI(t *testing.T) {
 		data, ok := body["data"].([]any)
 		if !ok || len(data) != 0 {
 			t.Fatalf("models page = %#v, want empty data", body)
+		}
+		if body["has_more"] != false || body["first_id"] != nil || body["last_id"] != nil {
+			t.Fatalf("empty models pagination envelope = %#v", body)
 		}
 	})
 }

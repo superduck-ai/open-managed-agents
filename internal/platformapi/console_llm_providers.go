@@ -87,7 +87,7 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		}
 		apiKey := strings.TrimSpace(*body.APIKey)
 		name, baseURL, modelIDs, ok := validateLLMProviderInput(w, body)
-		if !ok || !validateLLMModelConflicts(w, r, database, orgUUID, scope.UUID, "", modelIDs) {
+		if !ok {
 			return
 		}
 		externalID, err := ids.New("llmprov_")
@@ -112,6 +112,9 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			return
 		}
 		created, err := database.CreateLLMProvider(r.Context(), provider)
+		if writeLLMProviderModelConflictError(w, err) {
+			return
+		}
 		if errors.Is(err, db.ErrDuplicate) {
 			writeLLMProviderError(w, http.StatusConflict, llmProviderCodeNameConflict, "provider name already exists")
 			return
@@ -145,7 +148,7 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			return
 		}
 		name, baseURL, modelIDs, ok := validateLLMProviderInput(w, body)
-		if !ok || !validateLLMModelConflicts(w, r, database, orgUUID, scope.UUID, externalID, modelIDs) {
+		if !ok {
 			return
 		}
 		current.Name = name
@@ -160,6 +163,9 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			}
 		}
 		updated, err := database.UpdateLLMProvider(r.Context(), current)
+		if writeLLMProviderModelConflictError(w, err) {
+			return
+		}
 		if errors.Is(err, db.ErrDuplicate) {
 			writeLLMProviderError(w, http.StatusConflict, llmProviderCodeNameConflict, "provider name already exists")
 			return
@@ -281,29 +287,6 @@ func normalizeLLMModelIDs(values []string) ([]string, error) {
 		modelIDs = append(modelIDs, modelID)
 	}
 	return modelIDs, nil
-}
-
-func validateLLMModelConflicts(
-	w http.ResponseWriter,
-	r *http.Request,
-	database *db.DB,
-	organizationUUID, workspaceUUID, excludedProviderID string,
-	modelIDs []string,
-) bool {
-	configured, err := configuredLLMModelIDs(r.Context(), database, organizationUUID, workspaceUUID, excludedProviderID)
-	if err != nil {
-		internalError(w, "failed to validate LLM provider models")
-		return false
-	}
-	for _, modelID := range modelIDs {
-		if _, exists := configured[modelID]; exists {
-			writeLLMProviderModelConflict(w, modelID)
-			return false
-		}
-	}
-	// ponytail: write races fail closed in Resolve; add a normalized model table
-	// only if concurrent provider edits become a real product workflow.
-	return true
 }
 
 func configuredLLMModelIDs(

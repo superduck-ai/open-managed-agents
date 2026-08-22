@@ -1,6 +1,28 @@
 package batches
 
-import "github.com/superduck-ai/open-managed-agents/internal/apperr"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+)
+
+type modelValidationError struct {
+	cause error
+}
+
+func newModelValidationError(cause error) *modelValidationError {
+	return &modelValidationError{cause: cause}
+}
+
+func (e *modelValidationError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *modelValidationError) Unwrap() error {
+	return e.cause
+}
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
@@ -20,6 +42,16 @@ func batchServiceUnavailable(cause error) error {
 		"This workspace has no available LLM provider for Message Batches",
 		cause,
 	)
+}
+
+func configuredModelError(err error) error {
+	if errors.Is(err, llmproviders.ErrNotConfigured) || errors.Is(err, llmproviders.ErrAmbiguousModel) {
+		return batchServiceUnavailable(err)
+	}
+	if _, ok := errors.AsType[*modelValidationError](err); ok {
+		return invalidRequest(err)
+	}
+	return internalError("Could not validate batch models", fmt.Errorf("validate configured batch models: %w", err))
 }
 
 func batchBetaRequired() error {

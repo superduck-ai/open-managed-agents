@@ -94,7 +94,7 @@ func TestErrorAdapterMapsApplicationErrors(t *testing.T) {
 		{name: "invalid argument", kind: apperr.InvalidArgument, status: http.StatusBadRequest, errorType: "invalid_request_error", publicText: "Invalid request"},
 		{name: "invalid state", kind: apperr.InvalidState, status: http.StatusConflict, errorType: "invalid_request_error", publicText: "Resource is not ready"},
 		{name: "precondition failed", kind: apperr.PreconditionFailed, status: http.StatusPreconditionFailed, errorType: "invalid_request_error", publicText: "Precondition failed"},
-		{name: "request too large", kind: apperr.RequestTooLarge, status: http.StatusRequestEntityTooLarge, errorType: "invalid_request_error", publicText: "Request body exceeds maximum size"},
+		{name: "request too large", kind: apperr.RequestTooLarge, status: http.StatusRequestEntityTooLarge, errorType: "request_too_large", publicText: "Request body exceeds maximum size"},
 		{name: "unauthenticated", kind: apperr.Unauthenticated, status: http.StatusUnauthorized, errorType: "authentication_error", publicText: "Missing API key"},
 		{name: "billing", kind: apperr.Billing, status: http.StatusPaymentRequired, errorType: "billing_error", publicText: "Billing issue"},
 		{name: "permission denied", kind: apperr.PermissionDenied, status: http.StatusForbidden, errorType: "permission_error", publicText: "Permission denied"},

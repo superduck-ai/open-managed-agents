@@ -8,9 +8,19 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+
+	"github.com/superduck-ai/yourbatis"
 )
 
 var ErrIncompleteLLMProviderSecret = errors.New("incomplete LLM provider secret envelope")
+
+type LLMProviderModelConflictError struct {
+	ModelID string
+}
+
+func (e *LLMProviderModelConflictError) Error() string {
+	return "LLM provider model is already configured: " + e.ModelID
+}
 
 type LLMProvider struct {
 	UUID             string
@@ -31,14 +41,26 @@ func (d *DB) CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 	if err != nil {
 		return LLMProvider{}, err
 	}
-	row, err := NewLLMProviderMapper(d.mapperDB).Insert(ctx, params)
-	if isUniqueViolation(err) {
-		return LLMProvider{}, ErrDuplicate
-	}
-	if err != nil {
-		return LLMProvider{}, err
-	}
-	return row.provider()
+	var created LLMProvider
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewLLMProviderMapper(executor)
+		if err := mapper.LockWorkspace(ctx, provider.OrganizationUUID, provider.WorkspaceUUID); err != nil {
+			return err
+		}
+		if err := validateLLMProviderModelOwnership(ctx, mapper, provider, ""); err != nil {
+			return err
+		}
+		row, err := mapper.Insert(ctx, params)
+		if isUniqueViolation(err) {
+			return ErrDuplicate
+		}
+		if err != nil {
+			return err
+		}
+		created, err = row.provider()
+		return err
+	})
+	return created, err
 }
 
 func (d *DB) ListLLMProviders(ctx context.Context, organizationUUID, workspaceUUID string) ([]LLMProvider, error) {
@@ -70,14 +92,26 @@ func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 	if err != nil {
 		return LLMProvider{}, err
 	}
-	row, err := NewLLMProviderMapper(d.mapperDB).UpdateByExternalID(ctx, params)
-	if isUniqueViolation(err) {
-		return LLMProvider{}, ErrDuplicate
-	}
-	if err != nil {
-		return LLMProvider{}, mapNoRows(err)
-	}
-	return row.provider()
+	var updated LLMProvider
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewLLMProviderMapper(executor)
+		if err := mapper.LockWorkspace(ctx, provider.OrganizationUUID, provider.WorkspaceUUID); err != nil {
+			return err
+		}
+		if err := validateLLMProviderModelOwnership(ctx, mapper, provider, provider.ExternalID); err != nil {
+			return err
+		}
+		row, err := mapper.UpdateByExternalID(ctx, params)
+		if isUniqueViolation(err) {
+			return ErrDuplicate
+		}
+		if err != nil {
+			return mapNoRows(err)
+		}
+		updated, err = row.provider()
+		return err
+	})
+	return updated, err
 }
 
 func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, workspaceUUID, externalID string) error {
@@ -87,6 +121,49 @@ func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, workspaceU
 	}
 	if rows == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func validateLLMProviderModelOwnership(
+	ctx context.Context,
+	mapper LLMProviderMapper,
+	provider LLMProvider,
+	excludedProviderID string,
+) error {
+	rows, err := mapper.ListByWorkspace(ctx, provider.OrganizationUUID, provider.WorkspaceUUID)
+	if err != nil {
+		return err
+	}
+	existingProviders := make([]LLMProvider, 0, len(rows))
+	previouslyOwned := make(map[string]struct{})
+	for _, row := range rows {
+		existing, err := row.provider()
+		if err != nil {
+			return err
+		}
+		existingProviders = append(existingProviders, existing)
+		if existing.ExternalID == excludedProviderID {
+			for _, modelID := range existing.ModelIDs {
+				previouslyOwned[modelID] = struct{}{}
+			}
+		}
+	}
+	candidates := make(map[string]struct{}, len(provider.ModelIDs))
+	for _, modelID := range provider.ModelIDs {
+		candidates[modelID] = struct{}{}
+	}
+	for _, existing := range existingProviders {
+		if existing.ExternalID == excludedProviderID {
+			continue
+		}
+		for _, modelID := range existing.ModelIDs {
+			_, conflict := candidates[modelID]
+			_, retained := previouslyOwned[modelID]
+			if conflict && !retained {
+				return &LLMProviderModelConflictError{ModelID: modelID}
+			}
+		}
 	}
 	return nil
 }

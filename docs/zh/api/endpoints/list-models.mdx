@@ -16,14 +16,42 @@ api: "GET /v1/models"
   调用 API 时使用的模型 ID。
 </ResponseField>
 
+<ResponseField name="data[].display_name" type="string">
+  由于 Provider 配置不包含目录元数据，因此使用已配置的模型 ID 作为显示名称。
+</ResponseField>
+
+<ResponseField name="data[].created_at" type="string">
+  Provider 未提供发布日期时返回 Unix epoch。
+</ResponseField>
+
+<ResponseField name="has_more" type="boolean">
+  始终为 `false`；当前工作区配置的模型在一页中完整返回。
+</ResponseField>
+
+<ResponseField name="first_id" type="string | null">
+  第一个已配置的模型 ID；目录为空时为 `null`。
+</ResponseField>
+
+<ResponseField name="last_id" type="string | null">
+  最后一个已配置的模型 ID；目录为空时为 `null`。
+</ResponseField>
+
 ```json 响应
 {
   "data": [
     {
       "type": "model",
-      "id": "kimi-k2.5"
+      "id": "kimi-k2.5",
+      "display_name": "kimi-k2.5",
+      "created_at": "1970-01-01T00:00:00Z",
+      "max_input_tokens": null,
+      "max_tokens": null,
+      "capabilities": null
     }
-  ]
+  ],
+  "has_more": false,
+  "first_id": "kimi-k2.5",
+  "last_id": "kimi-k2.5"
 }
 ```
 

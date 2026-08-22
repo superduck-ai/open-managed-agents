@@ -1,5 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="LLMProviderMapper">
+	<update id="LockWorkspace" result="exec">
+		SELECT pg_advisory_xact_lock(
+			hashtextextended(
+				concat(
+					'llm-provider-models',
+					chr(58),
+					CAST(#{organizationUUID} AS text),
+					chr(58),
+					CAST(#{workspaceUUID} AS text)
+				),
+				0
+			)
+		)
+	</update>
+
     <sql id="columns">
         uuid,
         external_id,

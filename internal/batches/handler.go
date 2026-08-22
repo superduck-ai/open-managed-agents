@@ -152,10 +152,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	if err := h.validateConfiguredModels(
 		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body,
 	); err != nil {
-		if errors.Is(err, llmproviders.ErrNotConfigured) || errors.Is(err, llmproviders.ErrAmbiguousModel) {
-			return batchServiceUnavailable(err)
-		}
-		return invalidRequest(err)
+		return configuredModelError(err)
 	}
 
 	externalID, err := ids.New("msgbatch_")
@@ -221,10 +218,14 @@ func (h *Handler) validateConfiguredModels(
 	for _, item := range body.Requests {
 		modelID, err := batchRequestModel(item.Params)
 		if err != nil {
-			return fmt.Errorf("params for custom_id %s: %w", item.CustomID, err)
+			return newModelValidationError(fmt.Errorf("params for custom_id %s: %w", item.CustomID, err))
 		}
 		if _, ok := configured[modelID]; !ok {
-			return fmt.Errorf("params for custom_id %s: model %q is not configured for this workspace", item.CustomID, modelID)
+			return newModelValidationError(fmt.Errorf(
+				"params for custom_id %s: model %q is not configured for this workspace",
+				item.CustomID,
+				modelID,
+			))
 		}
 	}
 	return nil

@@ -130,9 +130,12 @@ func batchRequestModel(body json.RawMessage) (string, error) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		return "", errors.New("params must be a JSON object")
 	}
-	request.Model = strings.TrimSpace(request.Model)
-	if request.Model == "" {
+	trimmed := strings.TrimSpace(request.Model)
+	if trimmed == "" {
 		return "", errors.New("model is required")
+	}
+	if trimmed != request.Model {
+		return "", errors.New("model must not contain leading or trailing whitespace")
 	}
 	return request.Model, nil
 }

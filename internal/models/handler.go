@@ -18,7 +18,10 @@ type Handler struct {
 }
 
 type listResponse struct {
-	Data []modelResponse `json:"data"`
+	Data    []modelResponse `json:"data"`
+	HasMore bool            `json:"has_more"`
+	FirstID *string         `json:"first_id"`
+	LastID  *string         `json:"last_id"`
 }
 
 func NewHandler(database *db.DB) *Handler {
@@ -54,8 +57,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return modelUnavailable(err)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, listResponse{
-		Data: modelResponses(modelIDs),
-	})
+	response := listResponse{Data: modelResponses(modelIDs)}
+	if len(modelIDs) > 0 {
+		response.FirstID = &modelIDs[0]
+		response.LastID = &modelIDs[len(modelIDs)-1]
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
 }

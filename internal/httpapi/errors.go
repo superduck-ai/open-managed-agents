@@ -9,6 +9,7 @@ import (
 type Error struct {
 	Status  int
 	Type    string
+	Code    string
 	Message string
 }
 
@@ -21,13 +22,17 @@ func NewError(status int, typ, message string) *Error {
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, err *Error) {
+	payload := map[string]string{
+		"type":    err.Type,
+		"message": err.Message,
+	}
+	if err.Code != "" {
+		payload["code"] = err.Code
+	}
 	WriteJSON(w, err.Status, map[string]any{
 		"type":       "error",
 		"request_id": RequestID(r.Context()),
-		"error": map[string]string{
-			"type":    err.Type,
-			"message": err.Message,
-		},
+		"error":      payload,
 	})
 }
 

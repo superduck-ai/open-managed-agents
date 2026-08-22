@@ -38,28 +38,53 @@ type agentPageResponse struct {
 	NextPage *string            `json:"next_page"`
 }
 
-func TestAgentsPersistMappedModelIDs(t *testing.T) {
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.AnthropicUpstream.ModelMappings = map[string]string{
-		"claude-sonnet-4-6": "glm-5-turbo",
-		"claude-opus-4-8":   "glm-5.2",
-	}
-	app := newTestAppWithStore(t, &cfg, newFakeStore("agents-model-mappings-bucket"))
+func TestAgentsPersistConfiguredModelIDsUnchanged(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("agents-real-model-ids-bucket"))
 	defer app.close()
 
-	created := createAgent(t, app, `{"model":"claude-sonnet-4-6","name":"mapped-agent"}`)
+	created := createAgent(t, app, `{"model":"kimi-k2.5","name":"real-model-agent"}`)
 	defer cleanupAgentRows(t, app.pool, created.ID)
-	assertRawContains(t, created.Model, `"id":"glm-5-turbo"`)
+	assertRawContains(t, created.Model, `"id":"kimi-k2.5"`)
 
-	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"claude-opus-4-8","speed":"fast"}}`, http.StatusOK)
-	assertRawContains(t, updated.Model, `"id":"glm-5.2"`)
+	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"qwen-max","speed":"fast"}}`, http.StatusOK)
+	assertRawContains(t, updated.Model, `"id":"qwen-max"`)
 	assertRawContains(t, updated.Model, `"speed":"fast"`)
 
 	versionOne := retrieveAgent(t, app, created.ID, "version=1")
-	assertRawContains(t, versionOne.Model, `"id":"glm-5-turbo"`)
+	assertRawContains(t, versionOne.Model, `"id":"kimi-k2.5"`)
+}
+
+func TestAgentCanReplaceModelAfterPreviousProviderModelIsRemoved(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("agents-replace-removed-model-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+	seedTestLLMProvider(t, app, "Old provider", "https://old.example.com", "old-provider-key", "old-model")
+
+	created := createAgent(t, app, `{"model":"old-model","name":"replace-removed-model"}`)
+	defer cleanupAgentRows(t, app.pool, created.ID)
+
+	clearTestLLMProviders(t, app)
+	seedTestLLMProvider(t, app, "New provider", "https://new.example.com", "new-provider-key", "new-model")
+
+	updated := updateAgent(t, app, created.ID, `{"version":1,"model":"new-model"}`, http.StatusOK)
+	assertRawContains(t, updated.Model, `"id":"new-model"`)
+}
+
+func TestAgentCanUpdateNonModelFieldsAfterPreviousProviderModelIsRemoved(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("agents-update-removed-model-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+	seedTestLLMProvider(t, app, "Old provider", "https://old.example.com", "old-provider-key", "old-model")
+
+	created := createAgent(t, app, `{"model":"old-model","name":"update-removed-model"}`)
+	defer cleanupAgentRows(t, app.pool, created.ID)
+	clearTestLLMProviders(t, app)
+
+	updated := updateAgent(t, app, created.ID, `{"version":1,"name":"renamed-agent"}`, http.StatusOK)
+	if updated.Name != "renamed-agent" {
+		t.Fatalf("updated name = %q", updated.Name)
+	}
+	assertRawContains(t, updated.Model, `"id":"old-model"`)
 }
 
 func TestAgentsAPI(t *testing.T) {
@@ -272,7 +297,8 @@ func TestAgentsAPI(t *testing.T) {
 		archiveAgent(t, app, archived.ID)
 
 		otherKey := "sk-ant-search-other-" + suffix
-		seedWorkspaceKey(t, app.pool, "org_agents_search_other_"+suffix, "workspace_agents_search_other_"+suffix, "api_key_agents_search_other_"+suffix, otherKey)
+		otherOrgUUID, otherWorkspaceUUID := seedWorkspaceKey(t, app.pool, "org_agents_search_other_"+suffix, "workspace_agents_search_other_"+suffix, "api_key_agents_search_other_"+suffix, otherKey)
+		seedTestLLMProviderForWorkspace(t, app, otherOrgUUID, otherWorkspaceUUID, "Other workspace provider", "https://llm.example.com", "other-provider-key", "claude-opus-4-6")
 		otherWorkspaceAgent := createAgentWithKey(t, app, `{"model":"claude-opus-4-6","name":"Search Alpha `+suffix+`"}`, otherKey)
 		defer cleanupAgentRows(t, app.pool, otherWorkspaceAgent.ID)
 

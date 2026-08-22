@@ -1,6 +1,6 @@
 ---
 title: "配置"
-description: "配置 OMA Server、存储、上游模型、沙箱和安全密钥。"
+description: "配置 OMA Server、存储、沙箱和安全密钥。"
 ---
 
 OMA 使用严格校验的 YAML 配置。服务会从当前目录向上查找 `config/config.yaml`，直到遇到 `go.mod`；也可以使用 `CONFIG_FILE` 指定文件。
@@ -11,7 +11,7 @@ OMA 使用严格校验的 YAML 配置。服务会从当前目录向上查找 `co
 代码默认值 < YAML 配置
 ```
 
-业务环境变量不会覆盖 YAML。`CONFIG_FILE` 只负责选择配置文件。写错字段名、使用未知字段或提供无效枚举时，服务会拒绝启动。
+业务环境变量不会覆盖 YAML。`CONFIG_FILE` 只负责选择配置文件。写错字段名、使用未知字段或提供无效枚举时，服务会拒绝启动。如果文件里还留着顶层 `anthropic_upstream`，启动会忽略它，不会拒绝加载，也不再生效。
 
 ## 最小开发配置
 
@@ -37,10 +37,9 @@ storage:
     secret_access_key: minioadmin
     force_path_style: true
 
-anthropic_upstream:
-  base_url: https://model-provider.example.com
-  api_key: ""
 ```
+
+LLM Provider 是工作区数据，不属于进程配置。服务启动后，在控制台的 **LLM 模型** 页面为工作区添加一个或多个 Provider。
 
 ## 主要配置分组
 
@@ -50,9 +49,6 @@ anthropic_upstream:
   </Accordion>
   <Accordion title="storage">
     配置 S3 兼容对象存储、bucket、容量限制和 path-style 访问。文件、技能与批处理结果依赖该存储。
-  </Accordion>
-  <Accordion title="anthropic_upstream">
-    配置上游模型服务的基础 URL、API 密钥和可选模型映射。模型调用会通过 OMA 转发到该上游。
   </Accordion>
   <Accordion title="e2b 和 environment_runner">
     配置沙箱 API、模板、超时、并发和智能体运行时路径。

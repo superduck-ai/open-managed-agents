@@ -2,7 +2,19 @@ export type ApiError = {
   status: number;
   code: string;
   message: string;
+  modelId?: string;
 };
+
+export const MODEL_CONFIGURATION_UNAVAILABLE = 'workspace_llm_provider_not_configured';
+
+export function isModelConfigurationUnavailable(error: unknown) {
+  return Boolean(
+    error &&
+    typeof error === 'object' &&
+    (error as Partial<ApiError>).status === 503 &&
+    (error as Partial<ApiError>).code === MODEL_CONFIGURATION_UNAVAILABLE,
+  );
+}
 
 type RequestOptions = RequestInit & {
   csrfToken?: string;
@@ -135,12 +147,16 @@ async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
   if (!response.ok) {
     throw await toApiError(response);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
 async function toApiError(response: Response): Promise<ApiError> {
   let message = response.statusText;
   let code = 'request_failed';
+  let modelId: string | undefined;
 
   try {
     const payload = (await response.json()) as Record<string, unknown>;
@@ -155,13 +171,22 @@ async function toApiError(response: Response): Promise<ApiError> {
       if (typeof typedError.message === 'string') {
         message = typedError.message;
       }
+      if (typeof typedError.code === 'string') {
+        code = typedError.code;
+      }
+    }
+    if (typeof payload.code === 'string') {
+      code = payload.code;
     }
     if (typeof payload.message === 'string') {
       message = payload.message;
+    }
+    if (typeof payload.model_id === 'string') {
+      modelId = payload.model_id;
     }
   } catch {
     // Keep the status text when the backend returned a non-JSON error body.
   }
 
-  return { status: response.status, code, message };
+  return { status: response.status, code, message, ...(modelId ? { modelId } : {}) };
 }

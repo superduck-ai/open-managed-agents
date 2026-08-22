@@ -64,7 +64,7 @@ export function ResponsePreview({
           <span>
             Run prompt to see assistant response from the
             <br />
-            Claude API
+            LLM provider
           </span>
           {showCreatePrompt ? (
             <>
@@ -776,6 +776,7 @@ export function buildGenerateExamplePayload(
   customChainOfThought: string,
 ) {
   return {
+    model_name: draft.model_name,
     system_prompt: draft.system_prompt || '',
     messages: buildGenerateExampleMessages(draft),
     custom_chain_of_thought: customChainOfThought,

@@ -26,8 +26,8 @@ OMA is an open-source, self-hosted agent control plane. It provides stable resou
 - Public SDK resources live under `/v1`; `/api`, `/auth`, and `/web-api` are console contracts.
 - Both `Authorization: Bearer` and `X-Api-Key` are accepted.
 - Beta activation differs by resource; `?beta=true` is not a universal replacement for beta headers.
-- `POST /v1/messages` streams to `anthropic_upstream` without forwarding the caller's API key.
-- `anthropic_upstream.model_mappings` maps logical model IDs to upstream IDs.
+- `POST /v1/messages` resolves a workspace Provider by the exact requested model ID and never forwards the caller's API key.
+- Model IDs are sent unchanged. OMA does not provide Claude-name aliases, mappings, or a default upstream.
 
 ## Upgrade guidance
 

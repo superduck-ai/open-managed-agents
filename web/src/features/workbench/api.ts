@@ -79,13 +79,6 @@ export type WorkbenchModel = {
   model_name: string;
   display_name?: string;
   name?: string;
-  model_group?: string;
-  max_tokens?: number;
-  max_context_window?: number;
-  supports_thinking?: boolean;
-  supports_tool_use?: boolean;
-  supports_vision?: boolean;
-  [key: string]: unknown;
 };
 
 export type WorkbenchUploadedFile = {

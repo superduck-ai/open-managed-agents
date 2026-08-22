@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
@@ -137,10 +138,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress"))
 		return nil
 	}
-	if h.cfg.AnthropicUpstream.APIKey == "" {
-		return batchServiceUnavailable()
-	}
-
 	body, err := httpapi.DecodeObjectBodyAs[createRequest](w, r, h.cfg.Batch.MaxBodyBytes)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -151,6 +148,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	}
 	if err := h.validateCreate(body, betaHeaders); err != nil {
 		return invalidRequest(err)
+	}
+	if err := h.validateConfiguredModels(
+		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body,
+	); err != nil {
+		return configuredModelError(err)
 	}
 
 	externalID, err := ids.New("msgbatch_")
@@ -169,6 +171,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	record := db.MessageBatch{
 		UUID:                uuid.NewV4().String(),
 		ExternalID:          externalID,
+		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		APIVariant:          apiVariant,
@@ -196,6 +199,35 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		return internalError("Could not create message batch", fmt.Errorf("create message batch %q: %w", externalID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromRecord(r, created))
+	return nil
+}
+
+func (h *Handler) validateConfiguredModels(
+	ctx context.Context,
+	organizationUUID, workspaceUUID string,
+	body *createRequest,
+) error {
+	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
+	if err != nil {
+		return err
+	}
+	configured := make(map[string]struct{}, len(modelIDs))
+	for _, modelID := range modelIDs {
+		configured[modelID] = struct{}{}
+	}
+	for _, item := range body.Requests {
+		modelID, err := batchRequestModel(item.Params)
+		if err != nil {
+			return newModelValidationError(fmt.Errorf("params for custom_id %s: %w", item.CustomID, err))
+		}
+		if _, ok := configured[modelID]; !ok {
+			return newModelValidationError(fmt.Errorf(
+				"params for custom_id %s: model %q is not configured for this workspace",
+				item.CustomID,
+				modelID,
+			))
+		}
+	}
 	return nil
 }
 

@@ -61,7 +61,7 @@ export const agentRows: Array<Record<string, ReactNode>> = [
   {
     ID: 'agent_pyFfN...yKtN6c',
     Name: 'Structured extractor',
-    Model: 'claude-sonnet-4-6',
+    Model: '—',
     Status: <StatusPill>Active</StatusPill>,
     Created: '7 minutes ago',
     'Last updated': '7 minutes ago',
@@ -69,7 +69,7 @@ export const agentRows: Array<Record<string, ReactNode>> = [
   {
     ID: 'agent_p5M3v...1Mcu0R',
     Name: 'agent_d7f1f3b8e6a6_1',
-    Model: 'claude-sonnet-4-6',
+    Model: '—',
     Status: <StatusPill>Active</StatusPill>,
     Created: '15 minutes ago',
     'Last updated': '15 minutes ago',
@@ -77,7 +77,7 @@ export const agentRows: Array<Record<string, ReactNode>> = [
   {
     ID: 'agent_jR13P...BHjtj8',
     Name: 'agent_5e2f4a9c0b12_2',
-    Model: 'claude-sonnet-4-6',
+    Model: '—',
     Status: <StatusPill>Active</StatusPill>,
     Created: '34 minutes ago',
     'Last updated': '33 minutes ago',

@@ -218,6 +218,20 @@ func TestPlatformWorkspaceHeaderScopesV1Agents(t *testing.T) {
 	if customWorkspaceID == "" {
 		t.Fatalf("created workspace = %#v, want id", workspace)
 	}
+	customWorkspace, err := app.db.GetAdminWorkspace(context.Background(), orgCookie.Value, customWorkspaceID)
+	if err != nil {
+		t.Fatalf("load custom workspace: %v", err)
+	}
+	seedTestLLMProviderForWorkspace(
+		t,
+		app,
+		customWorkspace.OrganizationUUID,
+		customWorkspace.UUID,
+		"Scoped workspace provider",
+		"https://llm.example.com",
+		"scoped-provider-key",
+		"claude-sonnet-4-6",
+	)
 
 	defaultAgentName := "Default workspace scoped agent"
 	customAgentName := "Custom workspace scoped agent"

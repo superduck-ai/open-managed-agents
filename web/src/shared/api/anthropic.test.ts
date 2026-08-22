@@ -160,4 +160,26 @@ describe('anthropicBetaApi', () => {
       message: 'Workspace is required.',
     });
   });
+
+  test('normalizes an unconfigured model catalog to the stable frontend code', async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              type: 'api_error',
+              code: 'workspace_llm_provider_not_configured',
+              message: 'Provider setup is required.',
+            },
+          }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as unknown as typeof fetch;
+
+    await expect(anthropicApi.models.list({ limit: 1000 }, 'unconfigured')).rejects.toEqual({
+      status: 503,
+      code: 'workspace_llm_provider_not_configured',
+      message: 'Provider setup is required.',
+    });
+  });
 });

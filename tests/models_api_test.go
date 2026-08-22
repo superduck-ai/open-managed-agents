@@ -24,22 +24,57 @@ func TestModelsAPI(t *testing.T) {
 		decodeJSON(t, resp.Body, &body)
 
 		data, ok := body["data"].([]any)
-		if !ok || len(data) != 8 || body["has_more"] != false || body["first_id"] != "claude-fable-5" || body["last_id"] != "claude-sonnet-4-5-20250929" {
+		if !ok || len(data) != len(defaultTestModelIDs) {
 			t.Fatalf("models page = %#v", body)
+		}
+		if body["has_more"] != false || body["first_id"] != "kimi-k2.5" || body["last_id"] != "test" {
+			t.Fatalf("models pagination envelope = %#v", body)
 		}
 
 		first, _ := data[0].(map[string]any)
-		if first["type"] != "model" || first["id"] != "claude-fable-5" || first["display_name"] != "Claude Fable 5" || first["max_input_tokens"] != float64(1000000) || first["max_tokens"] != float64(128000) {
+		if first["type"] != "model" || first["id"] != "kimi-k2.5" || first["display_name"] != "kimi-k2.5" ||
+			first["created_at"] != "1970-01-01T00:00:00Z" {
 			t.Fatalf("first model = %#v", first)
 		}
+		for _, field := range []string{"capabilities", "max_input_tokens", "max_tokens"} {
+			if value, exists := first[field]; !exists || value != nil {
+				t.Fatalf("first model %s = %#v, want explicit null", field, value)
+			}
+		}
+	})
 
-		capabilities, _ := first["capabilities"].(map[string]any)
-		thinking, _ := capabilities["thinking"].(map[string]any)
-		thinkingTypes, _ := thinking["types"].(map[string]any)
-		effort, _ := capabilities["effort"].(map[string]any)
-		xhigh, _ := effort["xhigh"].(map[string]any)
-		if capabilities["image_input"] == nil || thinkingTypes["adaptive"] == nil || xhigh["supported"] != true {
-			t.Fatalf("first model capabilities = %#v", capabilities)
+	t.Run("failure workspace has no provider", func(t *testing.T) {
+		clearTestLLMProviders(t, app)
+		resp := app.do(t, http.MethodGet, "/v1/models", nil, defaultTestKey, false, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var body errorResponse
+		decodeJSON(t, resp.Body, &body)
+		if body.Error.Type != "api_error" || body.Error.Message != "This workspace has no LLM provider configured" {
+			t.Fatalf("error = %#v", body.Error)
+		}
+		if string(body.Error.Code) != `"workspace_llm_provider_not_configured"` {
+			t.Fatalf("error code = %s", body.Error.Code)
+		}
+	})
+
+	t.Run("success provider has no models", func(t *testing.T) {
+		seedTestLLMProvider(t, app, "Empty Provider", "https://empty.example.com", "empty-provider-key")
+		resp := app.do(t, http.MethodGet, "/v1/models", nil, defaultTestKey, false, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var body map[string]any
+		decodeJSON(t, resp.Body, &body)
+		data, ok := body["data"].([]any)
+		if !ok || len(data) != 0 {
+			t.Fatalf("models page = %#v, want empty data", body)
+		}
+		if body["has_more"] != false || body["first_id"] != nil || body["last_id"] != nil {
+			t.Fatalf("empty models pagination envelope = %#v", body)
 		}
 	})
 }

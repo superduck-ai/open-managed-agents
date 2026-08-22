@@ -1,10 +1,52 @@
-# 统一 Messages 代理与 Claude Code 沙箱凭证
+# Workspace BYOK 与 Messages 代理
 
-## 目标
+## 配置模型
 
-服务对外提供 Anthropic 兼容的 `POST /v1/messages`，供普通 SDK/API 调用和 Claude Code 沙箱使用。上游 `anthropic_upstream.api_key` 只存在于服务端配置，不再写入沙箱环境或 `environment-manager` 启动 payload。
+LLM 上游不是进程级 YAML。每个 workspace 可以配置多个 Provider；每个 Provider 保存：
 
-Claude Code 仍要求 OAuth 形态的 Anthropic 凭证。environment-manager 通过 `auth[type=anthropic_oauth]` 和 `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` 向 Claude 传入 OMA 本地签发的 `sk-ant-oat01-...` lifecycle-bound token，并使用 `startup_context.api_base_url` 作为 `ANTHROPIC_BASE_URL` fallback。该 token 只在 OMA 本地代理生效，不是真实 Anthropic OAuth token；payload 不注入 `ANTHROPIC_API_KEY`、真实上游地址或明文 OAuth 环境变量。
+- `name`
+- `base_url`
+- Vault 信封加密的 `api_key`
+- 零个或多个真实 `model_ids`
+
+同一 workspace 内，模型 ID 只能属于一个 Provider。模型 ID 是上游真实 ID，OMA 不映射、不改写，也不提供 `claude-*` 别名或默认 Anthropic 回退。
+
+现有 `config.yaml` 里如果还留着 `anthropic_upstream`，启动时忽略该节点，不拒绝加载，也不再生效。上游地址和 Key 只来自 workspace Provider。
+
+控制台入口为「LLM 模型」，API 为：
+
+```text
+GET    /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers
+POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers
+PUT    /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}
+DELETE /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}
+```
+
+这些 Provider 控制台接口只允许组织管理员访问。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
+
+控制台在「获取模型列表」时可通过下列接口向该网关请求模型列表，而不会把 Key 回写到响应里：
+
+```text
+POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/preview_models
+POST   /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}/models/sync
+```
+
+`preview_models` 用请求里的 `base_url` 和 `api_key` 调用上游 `{base_url}/v1/models`，只返回 `model_ids`。请求同时带 `X-Api-Key`、`Authorization: Bearer` 和 `anthropic-version`，兼容 Anthropic 与智谱等只认 Bearer 的网关。`data: []` 是合法空列表；缺少 `data`、`success:false` 或带 `error` 的信封视为失败。
+
+`models/sync` 解密已保存的 Key，并按以下顺序更新：始终保留该 Provider 已保存的模型；仅从上游新发现的 ID 中过滤已被其他 Provider 占用的项；过滤后再去重、合并并应用 100 个模型的上限。响应通过 `skipped_model_ids` 返回因冲突跳过的 ID。上游失败返回 `502`，不改写现有配置。
+
+Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 `message` 判断错误。模型冲突还返回结构化的 `model_id`。例如：
+
+```json
+{
+  "error": "invalid_request",
+  "code": "model_conflict",
+  "message": "model_id is already configured by another provider: glm-4.7",
+  "model_id": "glm-4.7"
+}
+```
+
+`base_url` 必须是绝对 HTTP 或 HTTPS URL，且不得包含 userinfo、query 或 fragment。允许 localhost、私网地址和自定义端口，因为这是 workspace 管理员配置的网关，不是沙箱选择的任意目标。Code-session CONNECT 代理仍使用独立的公网 SSRF 边界。代理客户端不跟随重定向，避免把 Provider Key 发到另一个主机。
 
 ## HTTP 契约
 
@@ -14,16 +56,22 @@ Claude Code 仍要求 OAuth 形态的 Anthropic 凭证。environment-manager 通
 POST /v1/messages
 ```
 
-handler 不解析 JSON，直接流式转发请求 body、query 和 Anthropic 合同 header，并执行以下边界处理：
+handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发前将这段有界请求体读入内存。完整扫描顶层对象可以确认 `model` 恰好出现一次，避免不同 JSON 解析器对重复键取值不同而绕过 Provider 白名单；校验后仍按原始字节转发，不改写模型 ID 或其他字段。响应 body 继续逐块流式转发，不做整包缓冲。
+
+顶层 `model` 必须是没有首尾空白的非空字符串；服务端不会通过 trim 把另一个输入静默归一化为已配置模型。
+
+同时执行以下边界处理：
 
 - 删除调用方的 `Authorization`、`X-Api-Key`、`Cookie`、组织/workspace 内部 header 和 hop-by-hop header；
-- 由服务端注入 `anthropic_upstream.api_key`；
-- 将请求发往 `anthropic_upstream.base_url/v1/messages`；
+- 解密该模型所属 Provider 的 Key，同时注入为上游 `X-Api-Key` 和 `Authorization: Bearer`；
+- 将请求发往 `{provider.base_url}/v1/messages`；
 - 透传上游状态码、响应 body、SSE 数据和限流等响应 header；
 - SSE 响应逐块 flush，并关闭代理缓冲；
 - 请求 body 上限为 32 MiB。
 
-管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它在 `anthropic_upstream.model_mappings` 命中请求顶层 `model` 时把该逻辑模型 ID 替换为配置的上游模型 ID。Messages 的已知改写字段通过命名 DTO 解析；只有为保留第三方未知字段而使用的 request envelope 在该 HTTP 边界保留 `json.RawMessage`，不会把动态 JSON 结构传入内部领域模型。Quickstart Builder 返回的 Agent config 在前端的命名配置归一化边界解析模型字段，Agent 写入边界再执行防御性解析。未配置、未命中或请求体无法按 JSON object 解析时，请求体保持不变并交给上游处理。公共 `POST /v1/messages` 继续透明流式转发请求体，不应用该 Console 映射。
+管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验和 32 MiB 请求上限，也不改写请求体。
+
+`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容来自当前 workspace 配置的真实模型 ID；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标，未配置 Provider 时返回 `503`。
 
 服务端不提供 `/v1/code/sessions/{code_session_id}/bridge`。managed-agent 在创建 code session 时直接获得 OAuth FD、WebSocket FD 和初始 worker epoch；后续 worker 所有权切换统一使用 `/worker/register`。
 
@@ -44,7 +92,11 @@ code-session token 只有在以下条件全部满足时才通过鉴权：
 
 environment-manager 在启动 Claude Code 前调用 `/worker/register`，建立首个 60 秒 lease；Claude 之后每 20 秒调用 `/worker/heartbeat` 续租。Claude 异常退出时不再续租，OAuth-compatible Messages 凭证最多在最后一个 lease TTL 内继续有效。session-ingress JWT 校验签名、固定 claims 和请求路径绑定；managed-agent JWT 还携带 `worker_epoch`，入口会按租户回查 active Code Session 的 `current_worker_epoch`。heartbeat grace 和 OTLP lease 仍由各自 handler 的状态机判断。
 
-code-session 请求来自受信任的沙箱调用方，handler 不解析或校验 `model`。请求体由上游按照 Anthropic Messages 合同校验；本服务只负责入口鉴权、请求大小限制、header 清洗和流式代理。因此代理不需要为了读取 JSON 字段而将整个 body 放入内存。
+code-session 请求来自受信任的沙箱调用方。公共 Messages 入口完整扫描有界请求体的顶层对象，只读取唯一的 `model` 以选择 Provider；其余字段仍由上游按 Anthropic Messages 合同校验。本服务负责入口鉴权、请求大小限制、header 清洗、Provider 解析和响应流式代理。
+
+Claude Code 所需的 `ANTHROPIC_MODEL` 等变量名保留，但值为 Agent 保存的真实模型 ID；Provider Key 不进入 sandbox。
+
+Agent PATCH 只有在请求显式携带 `model` 时才校验新模型；只修改名称、描述等字段时原样保留旧模型，即使管理员已经从 Provider 删除了该模型。这样旧 Agent 仍可通过后续 PATCH 切换到有效模型；实际运行仍按当前 Provider 配置失败关闭。
 
 ## 凭证生命周期与持久化
 
@@ -64,7 +116,7 @@ sequenceDiagram
     participant API as OMA API
     participant DB as PostgreSQL
     participant Sandbox as Claude Code sandbox
-    participant Upstream as Anthropic upstream
+    participant Upstream as LLM Provider
 
     API->>API: 生成 code session、OAuth-compatible token 与 ingress JWT
     API->>DB: 保存 token hash
@@ -73,7 +125,8 @@ sequenceDiagram
     Sandbox->>API: POST /worker/register<br/>创建首个 60s lease
     Sandbox->>API: POST /v1/messages + lifecycle-bound token
     API->>DB: 校验 session、worker lease 与 token hash
-    API->>Upstream: 注入服务端上游 key 并流式转发
+    API->>DB: 按 workspace 与顶层 model 解析 Provider
+    API->>Upstream: 注入解密后的 Provider Key 并流式转发
     Upstream-->>API: JSON 或 SSE
     API-->>Sandbox: 透明返回
 ```
@@ -82,9 +135,12 @@ sequenceDiagram
 
 Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原样映射为 `systemPrompt`，并通过 `appendSystemPrompt` 追加 OMA 管理的 sandbox 文件合同。追加提示只描述环境，不替代 Agent 角色；它告诉 Claude 使用真实 sandbox 路径访问上传文件、把用户交付物写入输出挂载，并明确禁止根据 `file_id` 猜测或重建文件路径。该合同是所有 Session 共用的静态文本，不拼接资源清单、文件 ID 或其他 Session 数据，以保持稳定的 prompt cache 前缀；它由 OMA 的 Session 启动配置统一注入，不依赖 CCRv2 模式切换。
 
-## 错误语义
+## 失败语义
 
-- 未配置上游 key：`503 api_error`；
+- workspace 没有 Provider：`503 api_error`；
+- `GET /v1/models` 的上述 503 同时返回稳定应用码 `workspace_llm_provider_not_configured`；
+- 请求模型未配置：`400 invalid_request_error`；
+- 重复模型、Key 解密失败或 Provider 数据损坏：失败关闭，不回退；
 - 上游地址或网络不可用：`502 api_error`；
 - 请求超过 32 MiB：`413 request_too_large`；
 - token 无效、session 终止、worker lease 过期或用在其他资源：`401 authentication_error`；
@@ -92,9 +148,19 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 所有本地生成的错误继续通过 `internal/httpapi.WriteError` 返回 Anthropic 兼容结构。
 
+## 最小实现边界
+
+- 不建独立 Model 表；`model_ids` 直接存 Provider JSON 数组。创建和更新 Provider 时通过 workspace 级 PostgreSQL transaction advisory lock 串行化“检查模型归属 + 写入”，保证同一模型不会被并发分配给多个 Provider。
+- Provider 的所有读写都同时绑定 `organization_uuid` 和 `workspace_uuid`。
+- 不加缓存；删除或修改 Provider 立即生效。
+- 不建立只有单实现的 Resolver 接口；调用方直接使用 `internal/llmproviders`。
+
 ## 验收覆盖
 
-- `tests/messages_api_test.go`：缺少上游 key、跨资源使用、未 register、lease 过期、public session 终止、长时间运行、普通 API key、平台 cookie、header 清洗与响应 header 透传；
+- `tests/messages_api_test.go`：缺少 Provider、未配置模型、跨资源使用、未 register、lease 过期、public session 终止、长时间运行、普通 API key、平台 cookie、header 清洗与响应 header 透传；
+- `internal/messages/handler_test.go`：有界缓冲后保留原始请求体，并拒绝重复顶层 `model`；
+- `tests/llm_providers_api_test.go`：workspace Provider CRUD、空模型转换、Key 加密、模型发现、冲突与解析；
+- `tests/models_api_test.go`：`GET /v1/models` 返回已配置的真实模型 ID，并区分空 Provider 列表与空模型列表；
 - `tests/platform_proxy_directory_api_test.go`：管理后台原有独立路径的 JSON 与 SSE 转发；
 - `internal/environments/environment_manager_test.go`：沙箱 payload 不含上游 key 或 Claude 凭证环境变量，api base URL 和 lifecycle-bound token auth 正确，启动 payload 会被删除；
 - `tests/environments_runner_cloud_test.go`：真实 runner 组装出的 runtime payload 使用 session-scoped token，并在 initialize 事件中携带 Agent system prompt 与 OMA append system prompt；

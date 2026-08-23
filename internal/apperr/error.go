@@ -27,21 +27,9 @@ const (
 // Only PublicMessage is safe to expose to clients; Error() is not.
 type Error struct {
 	Kind Kind
-	// Code is an optional stable machine-readable classification for clients.
-	Code string
 	// PublicMessage must be non-empty and safe to expose to clients.
 	PublicMessage string
 	cause         error
-}
-
-// NewCoded creates a client-presentable application error with a stable machine code.
-func NewCoded(kind Kind, code, publicMessage string, cause error) *Error {
-	return &Error{
-		Kind:          kind,
-		Code:          code,
-		PublicMessage: publicMessage,
-		cause:         cause,
-	}
 }
 
 // New creates a client-presentable application error while preserving its

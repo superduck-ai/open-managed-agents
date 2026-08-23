@@ -146,13 +146,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		}
 		return invalidRequest(err)
 	}
-	if err := h.validateCreate(body, betaHeaders); err != nil {
+	requestModels, err := h.validateCreate(body, betaHeaders)
+	if err != nil {
 		return invalidRequest(err)
 	}
 	if err := h.validateConfiguredModels(
-		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body,
+		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body, requestModels,
 	); err != nil {
-		return configuredModelError(err)
+		return err
 	}
 
 	externalID, err := ids.New("msgbatch_")
@@ -206,24 +207,21 @@ func (h *Handler) validateConfiguredModels(
 	ctx context.Context,
 	organizationUUID, workspaceUUID string,
 	body *createRequest,
+	requestModels []string,
 ) error {
 	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
 	if err != nil {
-		return err
+		return configuredModelError(err)
 	}
 	configured := make(map[string]struct{}, len(modelIDs))
 	for _, modelID := range modelIDs {
 		configured[modelID] = struct{}{}
 	}
-	for _, item := range body.Requests {
-		modelID, err := batchRequestModel(item.Params)
-		if err != nil {
-			return newModelValidationError(fmt.Errorf("params for custom_id %s: %w", item.CustomID, err))
-		}
+	for index, modelID := range requestModels {
 		if _, ok := configured[modelID]; !ok {
-			return newModelValidationError(fmt.Errorf(
+			return invalidRequest(fmt.Errorf(
 				"params for custom_id %s: model %q is not configured for this workspace",
-				item.CustomID,
+				body.Requests[index].CustomID,
 				modelID,
 			))
 		}
@@ -231,35 +229,41 @@ func (h *Handler) validateConfiguredModels(
 	return nil
 }
 
-func (h *Handler) validateCreate(body *createRequest, betaHeaders []string) error {
+func (h *Handler) validateCreate(body *createRequest, betaHeaders []string) ([]string, error) {
 	if len(body.Requests) == 0 {
-		return errors.New("requests must contain at least one request")
+		return nil, errors.New("requests must contain at least one request")
 	}
 	if h.cfg.Batch.MaxRequests > 0 && len(body.Requests) > h.cfg.Batch.MaxRequests {
-		return fmt.Errorf("requests must contain at most %d requests", h.cfg.Batch.MaxRequests)
+		return nil, fmt.Errorf("requests must contain at most %d requests", h.cfg.Batch.MaxRequests)
 	}
 	for _, beta := range betaHeaders {
 		if beta == "output-300k-2026-03-24" {
-			return errors.New("output-300k-2026-03-24 is not supported in Local Fan-out Message Batches")
+			return nil, errors.New("output-300k-2026-03-24 is not supported in Local Fan-out Message Batches")
 		}
 	}
 	seen := make(map[string]struct{}, len(body.Requests))
+	requestModels := make([]string, 0, len(body.Requests))
 	for _, item := range body.Requests {
 		if !customIDPattern.MatchString(item.CustomID) {
-			return errors.New("custom_id must match ^[A-Za-z0-9_-]{1,64}$")
+			return nil, errors.New("custom_id must match ^[A-Za-z0-9_-]{1,64}$")
 		}
 		if _, ok := seen[item.CustomID]; ok {
-			return errors.New("custom_id must be unique within a batch")
+			return nil, errors.New("custom_id must be unique within a batch")
 		}
 		seen[item.CustomID] = struct{}{}
 		if !isJSONObject(item.Params) {
-			return errors.New("params must be a JSON object")
+			return nil, errors.New("params must be a JSON object")
 		}
 		if err := validateParams(item.Params); err != nil {
-			return fmt.Errorf("params for custom_id %s: %w", item.CustomID, err)
+			return nil, fmt.Errorf("params for custom_id %s: %w", item.CustomID, err)
 		}
+		modelID, err := llmproviders.MessageRequestModel(item.Params)
+		if err != nil {
+			return nil, fmt.Errorf("params for custom_id %s: %w", item.CustomID, err)
+		}
+		requestModels = append(requestModels, modelID)
 	}
-	return nil
+	return requestModels, nil
 }
 
 func isJSONObject(raw json.RawMessage) bool {

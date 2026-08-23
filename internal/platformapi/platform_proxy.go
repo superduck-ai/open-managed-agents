@@ -64,7 +64,7 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 		}
 		targetURL, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", "")
 		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "proxy_error", "message": "LLM provider is unavailable"})
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "LLM provider is unavailable"})
 			return
 		}
 		upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, targetURL, bytes.NewReader(body))
@@ -135,11 +135,20 @@ func proxyMessagesModel(body []byte) (string, error) {
 func writeProxyProviderError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, llmproviders.ErrModelNotConfigured):
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_request_error", "message": "model is not configured for this workspace"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":   "invalid_request_error",
+			"message": "Model is not configured for this workspace",
+		})
 	case errors.Is(err, llmproviders.ErrNotConfigured):
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "proxy_error", "message": "workspace has no LLM provider configured"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error":   "proxy_error",
+			"message": "This workspace has no LLM provider configured",
+		})
 	default:
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "proxy_error", "message": "workspace LLM provider is unavailable"})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":   "proxy_error",
+			"message": "Workspace model configuration is unavailable",
+		})
 	}
 }
 

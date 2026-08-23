@@ -5,15 +5,8 @@ export type ApiError = {
   modelId?: string;
 };
 
-export const MODEL_CONFIGURATION_UNAVAILABLE = 'workspace_llm_provider_not_configured';
-
 export function isModelConfigurationUnavailable(error: unknown) {
-  return Boolean(
-    error &&
-    typeof error === 'object' &&
-    (error as Partial<ApiError>).status === 503 &&
-    (error as Partial<ApiError>).code === MODEL_CONFIGURATION_UNAVAILABLE,
-  );
+  return Boolean(error && typeof error === 'object' && (error as Partial<ApiError>).status === 503);
 }
 
 type RequestOptions = RequestInit & {

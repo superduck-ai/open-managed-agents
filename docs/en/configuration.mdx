@@ -11,7 +11,7 @@ OMA uses a strictly validated YAML configuration. The service searches upward fo
 Code defaults < YAML configuration
 ```
 
-Business environment variables do not override YAML. `CONFIG_FILE` only selects a file. Unknown fields, misspelled names, and invalid enum values prevent startup. A leftover top-level `anthropic_upstream` block is ignored so existing files keep loading; it no longer supplies upstream credentials.
+Business environment variables do not override YAML. `CONFIG_FILE` only selects a file. Unknown fields, misspelled names, and invalid enum values prevent startup. Process YAML no longer includes `anthropic_upstream`; upstream credentials come from workspace Providers.
 
 ## Minimal development configuration
 

@@ -1,9 +1,11 @@
 package messages
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
 
 func authenticationRequiredError() *httpapi.Error {
@@ -30,6 +32,17 @@ func providerNotConfiguredError() *httpapi.Error {
 	return httpapi.NewError(http.StatusServiceUnavailable, "api_error", "This workspace has no LLM provider configured")
 }
 
-func providerUnavailableError() *httpapi.Error {
-	return httpapi.NewError(http.StatusServiceUnavailable, "api_error", "The workspace LLM provider is unavailable")
+func providerConfigurationUnavailableError() *httpapi.Error {
+	return httpapi.NewError(http.StatusInternalServerError, "api_error", "Workspace model configuration is unavailable")
+}
+
+func providerResolveError(err error) *httpapi.Error {
+	switch {
+	case errors.Is(err, llmproviders.ErrModelNotConfigured):
+		return modelNotConfiguredError()
+	case errors.Is(err, llmproviders.ErrNotConfigured):
+		return providerNotConfiguredError()
+	default:
+		return providerConfigurationUnavailableError()
+	}
 }

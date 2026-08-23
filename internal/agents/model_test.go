@@ -19,7 +19,7 @@ func TestNormalizeModelRejectsInvalidObjectFields(t *testing.T) {
 		},
 		{
 			name:      "empty id",
-			raw:       `{"id":" "}`,
+			raw:       `{"id":""}`,
 			wantError: "model.id must be a non-empty string",
 		},
 		{
@@ -56,14 +56,14 @@ func TestNormalizeModelPreservesRealID(t *testing.T) {
 			want: normalizedAgentModel{ID: "kimi-k2.5", Speed: "fast"},
 		},
 		{
-			name: "string model trims surrounding whitespace",
+			name: "string model keeps surrounding whitespace",
 			raw:  `" kimi-k2.5 "`,
-			want: normalizedAgentModel{ID: "kimi-k2.5", Speed: "standard"},
+			want: normalizedAgentModel{ID: " kimi-k2.5 ", Speed: "standard"},
 		},
 		{
-			name: "object model trims surrounding whitespace",
+			name: "object model keeps surrounding whitespace",
 			raw:  `{"id":" kimi-k2.5 ","speed":"fast"}`,
-			want: normalizedAgentModel{ID: "kimi-k2.5", Speed: "fast"},
+			want: normalizedAgentModel{ID: " kimi-k2.5 ", Speed: "fast"},
 		},
 	}
 

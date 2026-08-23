@@ -133,15 +133,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, llmproviders.ErrModelNotConfigured):
-		httpapi.WriteError(w, r, modelNotConfiguredError())
-	case errors.Is(err, llmproviders.ErrNotConfigured):
-		httpapi.WriteError(w, r, providerNotConfiguredError())
-	default:
+	mapped := providerResolveError(err)
+	if mapped.Status >= http.StatusInternalServerError {
 		h.logger.ErrorContext(r.Context(), "resolve Messages LLM provider", "error", err)
-		httpapi.WriteError(w, r, providerUnavailableError())
 	}
+	httpapi.WriteError(w, r, mapped)
 }
 
 func readRequestModel(body io.Reader) (string, []byte, error) {

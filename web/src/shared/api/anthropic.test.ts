@@ -161,15 +161,14 @@ describe('anthropicBetaApi', () => {
     });
   });
 
-  test('normalizes an unconfigured model catalog to the stable frontend code', async () => {
+  test('normalizes an unconfigured model catalog as HTTP 503', async () => {
     globalThis.fetch = mock(
       async () =>
         new Response(
           JSON.stringify({
             error: {
               type: 'api_error',
-              code: 'workspace_llm_provider_not_configured',
-              message: 'Provider setup is required.',
+              message: 'This workspace has no LLM provider configured',
             },
           }),
           { status: 503, headers: { 'Content-Type': 'application/json' } },
@@ -178,8 +177,8 @@ describe('anthropicBetaApi', () => {
 
     await expect(anthropicApi.models.list({ limit: 1000 }, 'unconfigured')).rejects.toEqual({
       status: 503,
-      code: 'workspace_llm_provider_not_configured',
-      message: 'Provider setup is required.',
+      code: 'api_error',
+      message: 'This workspace has no LLM provider configured',
     });
   });
 });

@@ -76,9 +76,10 @@ describe('LLM model catalog helpers', () => {
 
   test('derives addable IDs, hosts, update payloads, and error text', () => {
     const models = catalogModels([dashScope]);
-    expect(addableModelId('  qwen-max  ', models)).toBe('qwen-max');
+    expect(addableModelId('  qwen-max  ', models)).toBe('  qwen-max  ');
     expect(addableModelId('kimi-k2.5', models)).toBe('');
-    expect(addableModelId('   ', models)).toBe('');
+    expect(addableModelId('   ', models)).toBe('   ');
+    expect(addableModelId('', models)).toBe('');
     expect(providerHost('https://dashscope.aliyuncs.com/apps/anthropic')).toBe('dashscope.aliyuncs.com');
     expect(providerHost('not-a-url')).toBe('not-a-url');
     expect(providerInput(dashScope, ['kimi-k2.5'])).toEqual({

@@ -57,6 +57,9 @@ func Resolve(
 	if selected == nil {
 		return Upstream{}, ErrModelNotConfigured
 	}
+	if selected.SecretEnvelope == nil {
+		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", db.ErrIncompleteLLMProviderSecret)
+	}
 	plaintext, err := secretService.Open(ctx, SecretBinding(*selected), *selected.SecretEnvelope)
 	if err != nil {
 		return Upstream{}, fmt.Errorf("open LLM provider API key: %w", err)
@@ -100,8 +103,7 @@ func SecretBinding(provider db.LLMProvider) secrets.Binding {
 }
 
 func ValidateBaseURL(rawURL string) (string, error) {
-	trimmed := strings.TrimSpace(rawURL)
-	parsed, err := url.Parse(trimmed)
+	parsed, err := url.Parse(rawURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
 		return "", ErrInvalidBaseURL
 	}

@@ -73,9 +73,10 @@ describe('localized create-agent template configs', () => {
     expect(quickstartBuildAgentConfigInput({ multiagent: null }, fallback).multiagent).toBeUndefined();
   });
 
-  test('trims a real model id without mapping it', () => {
+  test('keeps a real model id without mapping or trimming it', () => {
     const fallback = createDialogAgentConfig(blankAgentTemplate);
-    expect(quickstartBuildAgentConfigInput({ model: ' kimi-k2.5 ' }, fallback).model).toBe('kimi-k2.5');
+    expect(quickstartBuildAgentConfigInput({ model: 'kimi-k2.5' }, fallback).model).toBe('kimi-k2.5');
+    expect(quickstartBuildAgentConfigInput({ model: ' kimi-k2.5 ' }, fallback).model).toBe(' kimi-k2.5 ');
   });
 
   test('uses the localized config table as the system prompt source for every built-in template', () => {

@@ -169,7 +169,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 ## 兼容与安全合同
 
 - `CONFIG_FILE` 只选择 YAML 文件；业务环境变量不参与配置合并。
-- LLM Provider 是数据库中的 workspace 业务数据，不属于 `config.Config`。YAML 中如果还留着 `anthropic_upstream`，启动时忽略该节点，不拒绝加载，也不再生效。
+- LLM Provider 是数据库中的 workspace 业务数据，不属于 `config.Config`。进程 YAML 不再包含 `anthropic_upstream`。
 - Provider 可以有多个，每个包含 base URL、Vault 信封加密 Key 和真实模型 ID 列表；模型 ID 原样使用，不做别名、映射或默认回退。
 - Environment Runner 直接使用 Agent Snapshot 保存的真实模型 ID。`environment-manager` v0 仍把该值投射为 Claude Code 所需的 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`；Provider Key 不进入 sandbox。
 - 数据库配置不接受独立的管理员 URL 或管理员凭证；启动回退只能使用 `database.url` 派生的 maintenance DB 连接和当前系统用户候选。

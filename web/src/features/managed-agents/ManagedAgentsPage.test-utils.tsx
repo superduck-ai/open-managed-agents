@@ -327,7 +327,6 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
           {
             error: {
               type: 'api_error',
-              code: 'workspace_llm_provider_not_configured',
               message: 'This workspace has no LLM provider configured',
             },
           },
@@ -336,7 +335,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       }
       if (modelsErrorsRemaining > 0) {
         modelsErrorsRemaining -= 1;
-        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 503);
+        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 500);
       }
       const models = options.models ?? [
         { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },

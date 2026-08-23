@@ -23,35 +23,13 @@ func TestBatchConfiguredModelErrorsPreserveServerFailures(t *testing.T) {
 	}{
 		{name: "database failure", err: errors.New("database unavailable"), kind: apperr.Internal},
 		{name: "provider missing", err: llmproviders.ErrNotConfigured, kind: apperr.Unavailable},
-		{name: "model invalid", err: newModelValidationError(errors.New("model is not configured")), kind: apperr.InvalidArgument},
+		{name: "ambiguous model", err: llmproviders.ErrAmbiguousModel, kind: apperr.Internal},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mapped, ok := errors.AsType[*apperr.Error](configuredModelError(test.err))
 			if !ok || mapped.Kind != test.kind {
 				t.Fatalf("configuredModelError() = %#v, want kind %v", mapped, test.kind)
-			}
-		})
-	}
-}
-
-func TestBatchRequestModelRejectsSurroundingWhitespace(t *testing.T) {
-	tests := []struct {
-		name    string
-		body    string
-		want    string
-		wantErr bool
-	}{
-		{name: "leading whitespace", body: `{"model":" model-a"}`, wantErr: true},
-		{name: "trailing whitespace", body: `{"model":"model-a "}`, wantErr: true},
-		{name: "missing model", body: `{}`, wantErr: true},
-		{name: "valid model unchanged", body: `{"model":"model-a"}`, want: "model-a"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			model, err := batchRequestModel(json.RawMessage(test.body))
-			if (err != nil) != test.wantErr || model != test.want {
-				t.Fatalf("batchRequestModel() = %q, %v", model, err)
 			}
 		})
 	}

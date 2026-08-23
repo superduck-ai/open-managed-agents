@@ -135,32 +135,20 @@ func validateLLMProviderModelOwnership(
 	if err != nil {
 		return err
 	}
-	existingProviders := make([]LLMProvider, 0, len(rows))
-	previouslyOwned := make(map[string]struct{})
+	candidates := make(map[string]struct{}, len(provider.ModelIDs))
+	for _, modelID := range provider.ModelIDs {
+		candidates[modelID] = struct{}{}
+	}
 	for _, row := range rows {
 		existing, err := row.provider()
 		if err != nil {
 			return err
 		}
-		existingProviders = append(existingProviders, existing)
-		if existing.ExternalID == excludedProviderID {
-			for _, modelID := range existing.ModelIDs {
-				previouslyOwned[modelID] = struct{}{}
-			}
-		}
-	}
-	candidates := make(map[string]struct{}, len(provider.ModelIDs))
-	for _, modelID := range provider.ModelIDs {
-		candidates[modelID] = struct{}{}
-	}
-	for _, existing := range existingProviders {
 		if existing.ExternalID == excludedProviderID {
 			continue
 		}
 		for _, modelID := range existing.ModelIDs {
-			_, conflict := candidates[modelID]
-			_, retained := previouslyOwned[modelID]
-			if conflict && !retained {
+			if _, taken := candidates[modelID]; taken {
 				return &LLMProviderModelConflictError{ModelID: modelID}
 			}
 		}

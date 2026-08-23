@@ -399,7 +399,7 @@ OMA forwards SSE frames as they arrive, sets `Cache-Control: no-cache` when the 
 
 - The request body limit is 32 MiB. Larger bodies return `413 request_too_large`.
 - OMA removes caller `Authorization`, `X-Api-Key`, cookie, tenant, and hop-by-hop headers before forwarding.
-- OMA injects the server-side upstream key. A missing configured upstream key returns `503 api_error`.
+- OMA injects the server-side upstream key. A missing configured LLM Provider returns `503 api_error`. A workspace model configuration that cannot be loaded returns `500 api_error`.
 - Query parameters, the request body, compatible feature headers, upstream status, response body, and end-to-end response headers are otherwise preserved.
 - Failure to build or reach the upstream returns `502 api_error`. Error responses returned by the upstream pass through with their original status and body.
 

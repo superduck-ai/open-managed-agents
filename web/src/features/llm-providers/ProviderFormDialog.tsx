@@ -81,7 +81,7 @@ export function ProviderFormDialog({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const modelIds = form.modelIds.map((modelId) => modelId.trim()).filter(Boolean);
+    const modelIds = form.modelIds.filter((modelId) => modelId !== '');
     if (!form.name.trim() || !form.baseUrl.trim() || (!provider && !form.apiKey.trim())) {
       setFormError(msg('llmModels.required', 'Name, base URL, and API key are required.'));
       return;
@@ -247,6 +247,6 @@ function ModelIdFields({
 }
 
 function mergeModelIds(existing: string[], discovered: string[]) {
-  const merged = [...existing, ...discovered].map((modelId) => modelId.trim()).filter(Boolean);
+  const merged = [...existing, ...discovered].filter((modelId) => modelId !== '');
   return [...new Set(merged)];
 }

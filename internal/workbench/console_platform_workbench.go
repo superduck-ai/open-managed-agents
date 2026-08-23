@@ -520,13 +520,13 @@ func (h *workbenchHandler) handleWorkbenchModels(w http.ResponseWriter, r *http.
 }
 
 func writeWorkbenchModelsError(w http.ResponseWriter, err error) {
-	code := "workspace_model_configuration_unavailable"
+	status := http.StatusInternalServerError
 	message := "Workspace model configuration is unavailable"
 	if errors.Is(err, llmproviders.ErrNotConfigured) {
-		code = "workspace_llm_provider_not_configured"
+		status = http.StatusServiceUnavailable
 		message = "This workspace has no LLM provider configured"
 	}
-	writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": code, "message": message})
+	writeJSON(w, status, map[string]any{"error": "api_error", "message": message})
 }
 
 func (h *workbenchHandler) handleWorkbenchRateLimitsV2(w http.ResponseWriter, r *http.Request) {
@@ -702,13 +702,19 @@ func (h *workbenchHandler) anthropicTextFromBody(r *http.Request, upstreamBody m
 }
 
 func writeWorkbenchInferenceError(w http.ResponseWriter, err error) {
+	message := err.Error()
 	switch {
-	case errors.Is(err, llmproviders.ErrModelNotConfigured), strings.Contains(err.Error(), "model is required"):
-		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "model is not configured for this workspace")
+	case errors.Is(err, llmproviders.ErrModelNotConfigured), strings.Contains(message, "model is required"):
+		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Model is not configured for this workspace")
 	case errors.Is(err, llmproviders.ErrNotConfigured):
-		writeProxyMessagesAnthropicError(w, http.StatusServiceUnavailable, "api_error", "workspace has no LLM provider configured")
-	default:
+		writeProxyMessagesAnthropicError(w, http.StatusServiceUnavailable, "api_error", "This workspace has no LLM provider configured")
+	case errors.Is(err, llmproviders.ErrInvalidBaseURL),
+		errors.Is(err, llmproviders.ErrUnsafeBaseURL),
+		message == "LLM provider request failed",
+		strings.HasPrefix(message, "LLM provider returned"):
 		writeProxyMessagesAnthropicError(w, http.StatusBadGateway, "api_error", "workspace LLM provider is unavailable")
+	default:
+		writeProxyMessagesAnthropicError(w, http.StatusInternalServerError, "api_error", "Workspace model configuration is unavailable")
 	}
 }
 
@@ -739,7 +745,6 @@ func (h *workbenchHandler) resolveWorkbenchUpstream(r *http.Request, modelID str
 	if !ok {
 		return llmproviders.Upstream{}, "", errors.New("authentication is required")
 	}
-	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
 		return llmproviders.Upstream{}, "", errors.New("model is required")
 	}

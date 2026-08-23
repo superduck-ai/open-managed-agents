@@ -137,19 +137,6 @@ bootstrap:
 	}
 }
 
-func TestLoadIgnoresLeftoverAnthropicUpstream(t *testing.T) {
-	prepareLoadTest(t)
-	if _, err := loadConfigTestYAML(t, `
-anthropic_upstream:
-  base_url: https://api.anthropic.com
-  api_key: leftover-key
-  model_mappings:
-    claude-sonnet-4-6: actual-model
-`); err != nil {
-		t.Fatalf("Load() error = %v, want leftover anthropic_upstream ignored", err)
-	}
-}
-
 func TestLoadIgnoresBusinessEnvironmentVariables(t *testing.T) {
 	prepareLoadTest(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -216,6 +203,7 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 		wantField string
 	}{
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
+		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
 		{name: "optional list item field", overrides: "bootstrap:\n  seed_api_keys:\n    - external_idd: typo\n      key: secret\n", wantField: "external_idd"},
 	}
 	for _, testCase := range testCases {

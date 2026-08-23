@@ -18,7 +18,7 @@ func TestBatchErrorsPreserveSpecialHTTPContracts(t *testing.T) {
 		{name: "delete before ended", err: messageBatchMustBeEnded(db.ErrInvalidState), kind: apperr.InvalidState, message: "Message batch must be ended before deletion"},
 		{name: "results before ended", err: messageBatchHasNotEnded(), kind: apperr.InvalidArgument, message: "Message batch has not ended"},
 		{name: "results unavailable", err: messageBatchResultsUnavailable(), kind: apperr.NotFound, message: "Message batch results are not available"},
-		{name: "upstream unavailable", err: batchServiceUnavailable(errors.New("not configured")), kind: apperr.Unavailable, message: "This workspace has no available LLM provider for Message Batches"},
+		{name: "upstream unavailable", err: batchServiceUnavailable(errors.New("not configured")), kind: apperr.Unavailable, message: "This workspace has no LLM provider configured"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

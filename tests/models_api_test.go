@@ -55,9 +55,6 @@ func TestModelsAPI(t *testing.T) {
 		if body.Error.Type != "api_error" || body.Error.Message != "This workspace has no LLM provider configured" {
 			t.Fatalf("error = %#v", body.Error)
 		}
-		if string(body.Error.Code) != `"workspace_llm_provider_not_configured"` {
-			t.Fatalf("error code = %s", body.Error.Code)
-		}
 	})
 
 	t.Run("success provider has no models", func(t *testing.T) {

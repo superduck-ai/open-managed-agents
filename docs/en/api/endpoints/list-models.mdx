@@ -55,13 +55,12 @@ Returns the model IDs configured for the current workspace. IDs are used unchang
 }
 ```
 
-Returns `503` when the workspace has no configured LLM Provider. Clients can identify this condition using the stable `error.code` value, independently of the human-readable message:
+Returns `503` when the workspace has no configured LLM Provider:
 
 ```json 503 Response
 {
   "error": {
     "type": "api_error",
-    "code": "workspace_llm_provider_not_configured",
     "message": "This workspace has no LLM provider configured"
   }
 }

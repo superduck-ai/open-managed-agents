@@ -44,9 +44,7 @@ func (a *ErrorAdapter) Write(w http.ResponseWriter, r *http.Request, err error) 
 	if mapping.status >= http.StatusInternalServerError {
 		a.log(r, mapping.kind, err)
 	}
-	transportError := NewError(mapping.status, mapping.errorType, appErr.PublicMessage)
-	transportError.Code = appErr.Code
-	WriteError(w, r, transportError)
+	WriteError(w, r, NewError(mapping.status, mapping.errorType, appErr.PublicMessage))
 }
 
 func (a *ErrorAdapter) log(r *http.Request, kind string, err error) {
@@ -80,7 +78,7 @@ func errorMappingFor(err *apperr.Error) (errorMapping, bool) {
 	case apperr.PreconditionFailed:
 		return errorMapping{http.StatusPreconditionFailed, "invalid_request_error", "precondition_failed"}, true
 	case apperr.RequestTooLarge:
-		return errorMapping{http.StatusRequestEntityTooLarge, "request_too_large", "request_too_large"}, true
+		return errorMapping{http.StatusRequestEntityTooLarge, "invalid_request_error", "request_too_large"}, true
 	case apperr.Unauthenticated:
 		return errorMapping{http.StatusUnauthorized, "authentication_error", "unauthenticated"}, true
 	case apperr.Billing:

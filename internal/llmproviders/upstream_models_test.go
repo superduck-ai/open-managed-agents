@@ -33,7 +33,7 @@ func TestListUpstreamModelsReadsAnthropicModelIDs(t *testing.T) {
 		gotBearer = r.Header.Get("Authorization")
 		gotVersion = r.Header.Get("Anthropic-Version")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"data":[{"type":"model","id":"glm-4.7"},{"id":"kimi-k2.5"},{"id":" glm-4.7 "}]}`)
+		_, _ = io.WriteString(w, `{"data":[{"type":"model","id":"glm-4.7"},{"id":"kimi-k2.5"},{"id":"glm-4.7"}]}`)
 	}))
 	t.Cleanup(server.Close)
 

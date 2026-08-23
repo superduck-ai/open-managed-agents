@@ -2764,7 +2764,7 @@ function mockWorkbenchApi(
 
     if (url.endsWith('/models')) {
       if (options.modelsNotConfigured) {
-        return jsonResponse({ error: 'workspace_llm_provider_not_configured' }, 503);
+        return jsonResponse({ error: 'api_error', message: 'This workspace has no LLM provider configured' }, 503);
       }
       return jsonResponse({
         default_prompt_settings: {
@@ -2793,7 +2793,7 @@ function mockWorkbenchApi(
     if (url.endsWith('/workspaces/default/prompts') && method === 'GET') {
       if (workspacePromptsFailureCount > 0) {
         workspacePromptsFailureCount -= 1;
-        return jsonResponse({ error: { message: 'Prompt list unavailable.' } }, 503);
+        return jsonResponse({ error: { message: 'Prompt list unavailable.' } }, 500);
       }
       const summaries = options.promptSummaries ?? defaultPromptSummaries();
       return jsonResponse(

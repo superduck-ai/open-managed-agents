@@ -11,7 +11,7 @@ LLM 上游不是进程级 YAML。每个 workspace 可以配置多个 Provider；
 
 同一 workspace 内，模型 ID 只能属于一个 Provider。模型 ID 是上游真实 ID，OMA 不映射、不改写，也不提供 `claude-*` 别名或默认 Anthropic 回退。
 
-现有 `config.yaml` 里如果还留着 `anthropic_upstream`，启动时忽略该节点，不拒绝加载，也不再生效。上游地址和 Key 只来自 workspace Provider。
+进程 YAML 不再包含 `anthropic_upstream`。上游地址和 Key 只来自 workspace Provider。
 
 控制台入口为「LLM 模型」，API 为：
 
@@ -71,7 +71,7 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 
 管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验和 32 MiB 请求上限，也不改写请求体。
 
-`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容来自当前 workspace 配置的真实模型 ID；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标，未配置 Provider 时返回 `503`。
+`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容来自当前 workspace 配置的真实模型 ID；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
 
 服务端不提供 `/v1/code/sessions/{code_session_id}/bridge`。managed-agent 在创建 code session 时直接获得 OAuth FD、WebSocket FD 和初始 worker epoch；后续 worker 所有权切换统一使用 `/worker/register`。
 
@@ -137,10 +137,9 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 ## 失败语义
 
-- workspace 没有 Provider：`503 api_error`；
-- `GET /v1/models` 的上述 503 同时返回稳定应用码 `workspace_llm_provider_not_configured`；
+- workspace 没有 Provider：`503 api_error`，英文消息 `This workspace has no LLM provider configured`；
 - 请求模型未配置：`400 invalid_request_error`；
-- 重复模型、Key 解密失败或 Provider 数据损坏：失败关闭，不回退；
+- 重复模型、Key 解密失败、Provider 数据损坏或配置读取失败：`500 api_error`，英文消息 `Workspace model configuration is unavailable`；失败关闭，不回退；
 - 上游地址或网络不可用：`502 api_error`；
 - 请求超过 32 MiB：`413 request_too_large`；
 - token 无效、session 终止、worker lease 过期或用在其他资源：`401 authentication_error`；

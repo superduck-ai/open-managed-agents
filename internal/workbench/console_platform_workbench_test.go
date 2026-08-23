@@ -34,12 +34,23 @@ func TestNewWorkbenchAnthropicRequestUsesCompatibleProviderAuthentication(t *tes
 
 func TestWorkbenchModelsErrorDistinguishesMissingProviderFromLoadFailure(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		wantCode string
+		name        string
+		err         error
+		wantStatus  int
+		wantMessage string
 	}{
-		{name: "missing provider", err: llmproviders.ErrNotConfigured, wantCode: "workspace_llm_provider_not_configured"},
-		{name: "load failure", err: errors.New("database unavailable"), wantCode: "workspace_model_configuration_unavailable"},
+		{
+			name:        "missing provider",
+			err:         llmproviders.ErrNotConfigured,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantMessage: "This workspace has no LLM provider configured",
+		},
+		{
+			name:        "load failure",
+			err:         errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "Workspace model configuration is unavailable",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -49,8 +60,71 @@ func TestWorkbenchModelsErrorDistinguishesMissingProviderFromLoadFailure(t *test
 			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 				t.Fatalf("decode response: %v", err)
 			}
-			if recorder.Code != http.StatusServiceUnavailable || response["error"] != test.wantCode {
+			if recorder.Code != test.wantStatus || response["message"] != test.wantMessage {
 				t.Fatalf("response status=%d body=%#v", recorder.Code, response)
+			}
+		})
+	}
+}
+
+func TestWorkbenchInferenceErrorDistinguishesConfigFromUpstreamFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "model not configured",
+			err:         llmproviders.ErrModelNotConfigured,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "Model is not configured for this workspace",
+		},
+		{
+			name:        "provider missing",
+			err:         llmproviders.ErrNotConfigured,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantMessage: "This workspace has no LLM provider configured",
+		},
+		{
+			name:        "ambiguous model",
+			err:         llmproviders.ErrAmbiguousModel,
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "Workspace model configuration is unavailable",
+		},
+		{
+			name:        "incomplete secret envelope",
+			err:         errors.New("open LLM provider API key: incomplete LLM provider secret envelope"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "Workspace model configuration is unavailable",
+		},
+		{
+			name:        "upstream request failed",
+			err:         errors.New("LLM provider request failed"),
+			wantStatus:  http.StatusBadGateway,
+			wantMessage: "workspace LLM provider is unavailable",
+		},
+		{
+			name:        "upstream returned error",
+			err:         errors.New("LLM provider returned an error"),
+			wantStatus:  http.StatusBadGateway,
+			wantMessage: "workspace LLM provider is unavailable",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeWorkbenchInferenceError(recorder, test.err)
+			var response struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if recorder.Code != test.wantStatus || response.Error.Message != test.wantMessage {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 			}
 		})
 	}

@@ -11,7 +11,7 @@ OMA 使用严格校验的 YAML 配置。服务会从当前目录向上查找 `co
 代码默认值 < YAML 配置
 ```
 
-业务环境变量不会覆盖 YAML。`CONFIG_FILE` 只负责选择配置文件。写错字段名、使用未知字段或提供无效枚举时，服务会拒绝启动。如果文件里还留着顶层 `anthropic_upstream`，启动会忽略它，不会拒绝加载，也不再生效。
+业务环境变量不会覆盖 YAML。`CONFIG_FILE` 只负责选择配置文件。写错字段名、使用未知字段或提供无效枚举时，服务会拒绝启动。进程 YAML 不再包含 `anthropic_upstream`；上游凭据来自 workspace Provider。
 
 ## 最小开发配置
 

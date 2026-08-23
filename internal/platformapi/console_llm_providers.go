@@ -216,7 +216,7 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 
 func requireLLMProviderAdministrator(w http.ResponseWriter, r *http.Request, database *db.DB, orgUUID string) bool {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || strings.TrimSpace(principal.UserExternalID) == "" {
+	if !ok || principal.UserExternalID == "" {
 		writeLLMProviderPermissionDenied(w)
 		return false
 	}
@@ -276,15 +276,14 @@ func normalizeLLMModelIDs(values []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	modelIDs := make([]string, 0, len(values))
 	for _, value := range values {
-		modelID := strings.TrimSpace(value)
-		if modelID == "" || utf8.RuneCountInString(modelID) > 255 {
+		if value == "" || value != strings.TrimSpace(value) || utf8.RuneCountInString(value) > 255 {
 			return nil, newLLMProviderInputError(llmProviderCodeModelIDInvalid, "each model_id must contain 1 to 255 characters")
 		}
-		if _, exists := seen[modelID]; exists {
+		if _, exists := seen[value]; exists {
 			return nil, newLLMProviderInputError(llmProviderCodeModelIDsDuplicate, "model_ids must not contain duplicates")
 		}
-		seen[modelID] = struct{}{}
-		modelIDs = append(modelIDs, modelID)
+		seen[value] = struct{}{}
+		modelIDs = append(modelIDs, value)
 	}
 	return modelIDs, nil
 }
@@ -341,7 +340,7 @@ func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
 }
 
 func lastFour(value string) string {
-	runes := []rune(strings.TrimSpace(value))
+	runes := []rune(value)
 	if len(runes) <= 4 {
 		return string(runes)
 	}

@@ -15,6 +15,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -144,7 +145,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	state, err := h.stateFromCreate(r, principal, agentID, body)
 	if err != nil {
-		return invalidRequest(err)
+		return agentMutationError(err)
 	}
 	versionID, err := ids.New("agentver_")
 	if err != nil {
@@ -324,7 +325,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 	}
 	nextState, err := h.stateFromUpdate(r, principal, current, body)
 	if err != nil {
-		return invalidRequest(err)
+		return agentMutationError(err)
 	}
 	versionID, err := ids.New("agentver_")
 	if err != nil {
@@ -435,7 +436,7 @@ func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, age
 	if err != nil {
 		return agentState{}, err
 	}
-	if state.Model, err = httpapi.MarshalRaw(model); err != nil {
+	if state.Model, err = jsonx.Encode(model); err != nil {
 		return agentState{}, err
 	}
 	if len(body.Description) > 0 {
@@ -475,7 +476,7 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		if err != nil {
 			return agentState{}, err
 		}
-		modelRaw, err = httpapi.MarshalRaw(model)
+		modelRaw, err = jsonx.Encode(model)
 		if err != nil {
 			return agentState{}, err
 		}
@@ -592,7 +593,7 @@ func (h *Handler) normalizeMultiagent(r *http.Request, principal auth.Principal,
 		seen[key] = struct{}{}
 		resolved = append(resolved, ref)
 	}
-	return httpapi.MarshalRaw(map[string]any{"agents": resolved, "type": "coordinator"})
+	return jsonx.Encode(map[string]any{"agents": resolved, "type": "coordinator"})
 }
 
 func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, selfID string, selfVersion int, raw json.RawMessage) (agentReference, bool, error) {
@@ -737,7 +738,6 @@ func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
 	}
 	var modelID string
 	if json.Unmarshal(raw, &modelID) == nil {
-		modelID = strings.TrimSpace(modelID)
 		if modelID == "" {
 			return normalizedAgentModel{}, errors.New("model id must be non-empty")
 		}
@@ -753,7 +753,7 @@ func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
 	if model.ID == nil {
 		return normalizedAgentModel{}, errors.New("model.id is required")
 	}
-	modelID = strings.TrimSpace(*model.ID)
+	modelID = *model.ID
 	if modelID == "" {
 		return normalizedAgentModel{}, errors.New("model.id must be a non-empty string")
 	}
@@ -781,7 +781,7 @@ func (h *Handler) normalizeConfiguredModel(
 	}
 	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
 	if err != nil {
-		return normalizedAgentModel{}, errors.New("workspace model configuration is unavailable")
+		return normalizedAgentModel{}, configuredModelError(err)
 	}
 	for _, modelID := range modelIDs {
 		if modelID == model.ID {
@@ -832,7 +832,7 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		}
 		normalized = append(normalized, map[string]string{"name": name, "type": "url", "url": url})
 	}
-	return httpapi.MarshalRaw(normalized)
+	return jsonx.Encode(normalized)
 }
 
 func validateMetadata(metadata map[string]string) error {
@@ -882,7 +882,7 @@ func normalizeSkills(raw json.RawMessage) (json.RawMessage, error) {
 		}
 		normalized = append(normalized, map[string]string{"skill_id": skillID, "type": skillType, "version": version})
 	}
-	return httpapi.MarshalRaw(normalized)
+	return jsonx.Encode(normalized)
 }
 
 func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMessage, error) {
@@ -950,7 +950,7 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 	if total > 128 {
 		return nil, errors.New("tools must contain at most 128 total tools")
 	}
-	return httpapi.MarshalRaw(normalized)
+	return jsonx.Encode(normalized)
 }
 
 func validateMCPToolReferences(tools json.RawMessage, mcpServers json.RawMessage) error {

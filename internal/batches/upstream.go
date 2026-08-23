@@ -35,10 +35,6 @@ type HTTPUpstreamClient struct {
 	client   *http.Client
 }
 
-type batchMessageParams struct {
-	Model string `json:"model"`
-}
-
 func NewHTTPUpstreamClient(database *db.DB, secretService *secrets.Service, cfg config.BatchConfig) *HTTPUpstreamClient {
 	timeout := cfg.UpstreamTimeout
 	if timeout <= 0 {
@@ -53,7 +49,7 @@ func NewHTTPUpstreamClient(database *db.DB, secretService *secrets.Service, cfg 
 
 func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, req db.MessageBatchRequest) (UpstreamResult, error) {
 	body := normalizeParams(req.Params)
-	modelID, err := batchRequestModel(body)
+	modelID, err := llmproviders.MessageRequestModel(body)
 	if err != nil {
 		return erroredResult("invalid_request_error", err.Error()), nil
 	}
@@ -123,21 +119,6 @@ func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, re
 		return erroredResult("api_error", "could not encode upstream error result"), nil
 	}
 	return UpstreamResult{Status: "errored", Result: result, UpstreamRequestID: requestID, HTTPStatus: resp.StatusCode}, nil
-}
-
-func batchRequestModel(body json.RawMessage) (string, error) {
-	var request batchMessageParams
-	if err := json.Unmarshal(body, &request); err != nil {
-		return "", errors.New("params must be a JSON object")
-	}
-	trimmed := strings.TrimSpace(request.Model)
-	if trimmed == "" {
-		return "", errors.New("model is required")
-	}
-	if trimmed != request.Model {
-		return "", errors.New("model must not contain leading or trailing whitespace")
-	}
-	return request.Model, nil
 }
 
 func normalizeParams(raw json.RawMessage) json.RawMessage {

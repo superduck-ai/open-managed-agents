@@ -8,7 +8,7 @@ import (
 )
 
 func TestValidateBaseURL(t *testing.T) {
-	valid, err := ValidateBaseURL(" https://dashscope.example.com/apps/anthropic/ ")
+	valid, err := ValidateBaseURL("https://dashscope.example.com/apps/anthropic/")
 	if err != nil || valid != "https://dashscope.example.com/apps/anthropic" {
 		t.Fatalf("ValidateBaseURL() = (%q, %v)", valid, err)
 	}
@@ -30,6 +30,7 @@ func TestValidateBaseURL(t *testing.T) {
 		"https://example.com?token=secret",
 		"https://example.com#fragment",
 		"example.com",
+		" https://example.com",
 	} {
 		if _, err := ValidateBaseURL(rawURL); err == nil {
 			t.Fatalf("ValidateBaseURL(%q) succeeded, want error", rawURL)

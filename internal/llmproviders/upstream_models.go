@@ -90,15 +90,14 @@ func MergeModelIDs(existing, incoming []string, max int) []string {
 	seen := make(map[string]struct{}, len(existing)+len(incoming))
 	for _, values := range [][]string{existing, incoming} {
 		for _, value := range values {
-			modelID := strings.TrimSpace(value)
-			if modelID == "" {
+			if value == "" {
 				continue
 			}
-			if _, exists := seen[modelID]; exists {
+			if _, exists := seen[value]; exists {
 				continue
 			}
-			seen[modelID] = struct{}{}
-			merged = append(merged, modelID)
+			seen[value] = struct{}{}
+			merged = append(merged, value)
 			if len(merged) == max {
 				return merged
 			}

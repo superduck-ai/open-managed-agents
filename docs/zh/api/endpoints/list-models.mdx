@@ -55,13 +55,12 @@ api: "GET /v1/models"
 }
 ```
 
-工作区未配置 LLM Provider 时返回 `503`。客户端应使用稳定的 `error.code` 判断该状态，不依赖可读文案：
+工作区未配置 LLM Provider 时返回 `503`：
 
 ```json 503 响应
 {
   "error": {
     "type": "api_error",
-    "code": "workspace_llm_provider_not_configured",
     "message": "This workspace has no LLM provider configured"
   }
 }

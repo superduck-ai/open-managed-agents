@@ -27,11 +27,11 @@ export {
 } from './agentTemplateCatalog';
 
 export const agentModelInputSchema = z.union([
-  z.string().trim().min(1, 'Model is required.'),
+  z.string().min(1, 'Model is required.'),
   z
     .object({
-      id: z.string().trim().min(1, 'Model id is required.'),
-      speed: z.string().trim().optional(),
+      id: z.string().min(1, 'Model id is required.'),
+      speed: z.string().optional(),
     })
     .strict(),
 ]);
@@ -342,7 +342,7 @@ export function createDialogAgentConfig(
     },
   );
   const trimmedDescription = descriptionOverride?.trim();
-  config.model = modelID.trim();
+  config.model = modelID;
 
   if (trimmedDescription) {
     config.description = trimmedDescription;
@@ -365,7 +365,7 @@ export function quickstartBuildAgentConfigInput(
       : rawConfig.description === null
         ? null
         : (fallback.description ?? null);
-  const model = modelID.trim() || quickstartModelInput(rawConfig.model, fallback.model);
+  const model = modelID || quickstartModelInput(rawConfig.model, fallback.model);
   const system =
     typeof rawConfig.system === 'string'
       ? rawConfig.system
@@ -396,14 +396,14 @@ export function quickstartBuildAgentConfigInput(
 }
 
 export function quickstartModelInput(value: unknown, fallback: AgentModelInput): AgentModelInput {
-  if (typeof value === 'string' && value.trim()) {
-    return value.trim();
+  if (typeof value === 'string' && value !== '') {
+    return value;
   }
   const record = toRecord(value);
-  if (record && typeof record.id === 'string' && record.id.trim()) {
+  if (record && typeof record.id === 'string' && record.id !== '') {
     return {
-      id: record.id.trim(),
-      ...(typeof record.speed === 'string' && record.speed.trim() ? { speed: record.speed.trim() } : {}),
+      id: record.id,
+      ...(typeof record.speed === 'string' && record.speed !== '' ? { speed: record.speed } : {}),
     };
   }
   return fallback;
@@ -745,11 +745,11 @@ export function buildAgentUpdateInput(version: number, config: AgentEditConfig):
 
 export function normalizeAgentEditModel(model: AgentModelInput): AgentModelInput {
   if (typeof model === 'string') {
-    return model.trim();
+    return model;
   }
   return {
-    id: model.id.trim(),
-    ...(model.speed?.trim() ? { speed: model.speed.trim() } : {}),
+    id: model.id,
+    ...(model.speed ? { speed: model.speed } : {}),
   };
 }
 

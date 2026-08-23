@@ -135,11 +135,10 @@ export function resolvedProviderSelection(providers: LLMProvider[], providerId: 
 }
 
 export function addableModelId(query: string, models: CatalogModel[]): string {
-  const modelId = query.trim();
-  if (!modelId) {
+  if (query === '') {
     return '';
   }
-  return models.some((model) => model.id === modelId) ? '' : modelId;
+  return models.some((model) => model.id === query) ? '' : query;
 }
 
 export function providerHost(baseUrl: string): string {

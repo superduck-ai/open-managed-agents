@@ -17,16 +17,14 @@ func modelAuthenticationRequired() error {
 
 func modelUnavailable(err error) error {
 	if errors.Is(err, llmproviders.ErrNotConfigured) {
-		return apperr.NewCoded(
+		return apperr.New(
 			apperr.Unavailable,
-			"workspace_llm_provider_not_configured",
 			"This workspace has no LLM provider configured",
 			err,
 		)
 	}
-	return apperr.NewCoded(
-		apperr.Unavailable,
-		"workspace_model_configuration_unavailable",
+	return apperr.New(
+		apperr.Internal,
 		"Workspace model configuration is unavailable",
 		err,
 	)

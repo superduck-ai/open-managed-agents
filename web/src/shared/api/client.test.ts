@@ -17,17 +17,15 @@ afterEach(() => {
 });
 
 describe('consoleApi', () => {
-  test('recognizes only the stable unconfigured-model error', () => {
+  test('recognizes an unconfigured model catalog by HTTP 503', () => {
     expect(
       isModelConfigurationUnavailable({
         status: 503,
-        code: 'workspace_llm_provider_not_configured',
-        message: 'unavailable',
+        code: 'api_error',
+        message: 'This workspace has no LLM provider configured',
       }),
     ).toBe(true);
-    expect(isModelConfigurationUnavailable({ status: 503, code: 'request_failed', message: 'unavailable' })).toBe(
-      false,
-    );
+    expect(isModelConfigurationUnavailable({ status: 500, code: 'api_error', message: 'unavailable' })).toBe(false);
   });
 
   test('reads stable console error codes and structured model IDs', async () => {

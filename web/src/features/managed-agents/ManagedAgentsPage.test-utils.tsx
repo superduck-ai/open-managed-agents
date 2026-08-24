@@ -14,6 +14,7 @@ const { defaultWorkspace } = await import('../../shared/workspaces/api');
 const { setConsoleRequestContext } = await import('../../shared/api/client');
 const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
+const { Toaster } = await import('../../shared/ui/sonner');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
@@ -75,7 +76,10 @@ export function render(
   }
   return testingLibrary.render(
     <AuthContext.Provider value={queryOptions.auth ?? managedAgentsAuthContextValue}>
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <Toaster portal={false} closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
+        {ui}
+      </QueryClientProvider>
     </AuthContext.Provider>,
     options,
   );

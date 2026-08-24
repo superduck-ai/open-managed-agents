@@ -12,7 +12,7 @@ import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
 import { Skeleton } from '../../shared/ui/skeleton';
-import { toast, Toaster } from '../../shared/ui/sonner';
+import { toast } from '../../shared/ui/sonner';
 import {
   createLLMProvider,
   deleteLLMProvider,
@@ -236,13 +236,6 @@ function LLMModelsAdminPage() {
 
   return (
     <section className="w-full max-w-none" data-testid="llm-models-page">
-      <Toaster
-        position="top-right"
-        duration={4000}
-        closeButton
-        containerAriaLabel={msg('common.notifications', 'Notifications')}
-        toastOptions={{ closeButtonAriaLabel: msg('common.close', 'Close') }}
-      />
       <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row">
         <div>
           <div className="flex items-center gap-2">

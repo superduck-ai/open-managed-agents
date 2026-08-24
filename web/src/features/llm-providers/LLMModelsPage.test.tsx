@@ -11,7 +11,7 @@ import { useEffect, type ReactNode } from 'react';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider } from '../../shared/i18n';
 import type { Locale } from '../../shared/i18n';
-import { toast } from '../../shared/ui/sonner';
+import { toast, Toaster } from '../../shared/ui/sonner';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
@@ -371,7 +371,13 @@ describe('LLM models page', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Fetch model list' }));
 
     const toastTitle = await screen.findByText('Could not list models from this provider.', {}, { timeout: 2000 });
-    expect(toastTitle.closest('[data-sonner-toast]')?.getAttribute('data-type')).toBe('error');
+    const toastElement = toastTitle.closest('[data-sonner-toast]');
+    const toaster = toastElement?.closest('[data-sonner-toaster]');
+    const toastRegion = toastElement?.closest('section');
+    expect(toastElement?.getAttribute('data-type')).toBe('error');
+    expect(toastRegion?.parentElement === document.body).toBeTrue();
+    expect(toaster?.getAttribute('data-x-position')).toBe('right');
+    expect(toaster?.getAttribute('data-y-position')).toBe('bottom');
     expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeTruthy();
     expect(within(dialog).queryByText('not found')).toBeNull();
     expect(screen.queryByText('not found')).toBeNull();
@@ -470,6 +476,7 @@ function renderPage(locale: Locale = 'en', role = 'admin') {
         <AuthContext.Provider value={authValue}>
           <WorkspaceContext.Provider value={workspaceValue}>
             <QueryClientProvider client={queryClient}>
+              <Toaster closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
               <LLMModelsPage />
             </QueryClientProvider>
           </WorkspaceContext.Provider>

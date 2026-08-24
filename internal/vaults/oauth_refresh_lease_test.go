@@ -67,12 +67,51 @@ func TestMemoryOAuthRefreshLeaseHoldCanceledWhileWaiting(t *testing.T) {
 	}
 }
 
+func TestMemoryOAuthRefreshLeaseCancelDoesNotPinCredential(t *testing.T) {
+	t.Parallel()
+
+	lease := newMemoryOAuthRefreshLease()
+	const credentialID = "vcrd_race"
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+			defer cancel()
+			release, err := lease.Hold(ctx, credentialID)
+			if err != nil {
+				return
+			}
+			_ = release()
+		}()
+	}
+	wg.Wait()
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	release, err := lease.Hold(ctx, credentialID)
+	if err != nil {
+		t.Fatalf("Hold after cancel storm: %v (credential likely pinned)", err)
+	}
+	_ = release()
+}
+
 func TestNewRedisOAuthRefreshLeaseRequiresClient(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewRedisOAuthRefreshLease(nil)
 	if !errors.Is(err, errOAuthRefreshLeaseRedisRequired) {
 		t.Fatalf("error = %v, want errOAuthRefreshLeaseRedisRequired", err)
+	}
+}
+
+func TestOAuthRefreshLeaseTTLCoversCASHold(t *testing.T) {
+	t.Parallel()
+
+	min := time.Duration(maxOAuthRefreshCASAttempts) * oauthRefreshTimeout
+	if oauthRefreshLeaseTTL <= min {
+		t.Fatalf("oauthRefreshLeaseTTL = %s, want > %s (CAS attempts × token timeout)", oauthRefreshLeaseTTL, min)
 	}
 }
 

@@ -174,7 +174,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 401 重试 body | RoundTrip 前缓冲请求体（上限 32 MiB）；超限 **fail closed**（不静默截断重放），由 `snapshotRequestBody` / `readWithinLimit` 实现。打出的是 clone；`defer closeRequestBody(req)` 保证原始 `req.Body` 在成功/失败路径都关闭（RoundTripper 合同） |
 | Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
 | 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MCP proxy 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
-| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试默认进程内 mutex；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = token 超时 + 5s，nil Redis 拒绝）。持约后重读；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败后重读，**仅当 `SecretVersion` 前进**时再试并复用。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
+| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，覆盖整段 Hold，nil Redis 拒绝）。持约后重读；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败后重读，**仅当 `SecretVersion` 前进**时再试并复用。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
 | 平台 client_secret | 不进用户信封。callback 与 refresh 共用 `ResolveMCPOAuthTokenClientSecret`。公开 `auth.client_credential_source` 为 `platform`（或遗留 confidential 且信封无 secret）时按 `mcp_server_url` 再查 registry；`sealed` 用信封值。reseal 仍不把平台 secret 写回信封 |
 | Credential `networking` | **不做** |
 | 数据加载 | **每个 MCP RoundTrip 查库一次**（`vault_ids` + active credentials）；401 walk / 换凭证不重复加载；不缓存明文 token |

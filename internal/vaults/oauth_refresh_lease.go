@@ -14,64 +14,65 @@ import (
 
 // OAuthRefreshLease serializes one IdP refresh_token exchange per credential.
 // Hold blocks until this caller may exchange. release must be called; it is
-// idempotent. Redis adapters use a TTL longer than oauthRefreshTimeout so a
-// crashed holder cannot pin the key forever.
+// idempotent. Redis adapters pin the key with a TTL that covers the full
+// refresh Hold (CAS loop × token-endpoint timeout + slack) so a live holder
+// cannot lose the lease mid-exchange; crashed holders are reclaimed after TTL.
 type OAuthRefreshLease interface {
 	Hold(ctx context.Context, credentialExternalID string) (release func() error, err error)
 }
 
 var errOAuthRefreshLeaseRedisRequired = errors.New("redis client is required for oauth refresh lease")
 
-const oauthRefreshLeaseTTL = oauthRefreshTimeout + 5*time.Second
+// oauthRefreshLeaseTTL must outlive refreshMCPOAuthCredential's Hold, which
+// wraps up to maxOAuthRefreshCASAttempts token exchanges each bounded by
+// oauthRefreshTimeout. +5s covers seal/CAS/reload around those exchanges.
+const oauthRefreshLeaseTTL = maxOAuthRefreshCASAttempts*oauthRefreshTimeout + 5*time.Second
 
 func oauthRefreshLeaseKey(credentialExternalID string) string {
 	return "vault:mcp_oauth_refresh:" + credentialExternalID
 }
 
 type memoryOAuthRefreshLease struct {
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	mu   sync.Mutex
+	sems map[string]chan struct{}
 }
 
 func newMemoryOAuthRefreshLease() *memoryOAuthRefreshLease {
-	return &memoryOAuthRefreshLease{locks: map[string]*sync.Mutex{}}
+	return &memoryOAuthRefreshLease{sems: map[string]chan struct{}{}}
 }
 
-func (l *memoryOAuthRefreshLease) mutex(credentialExternalID string) *sync.Mutex {
+func (l *memoryOAuthRefreshLease) semaphore(credentialExternalID string) chan struct{} {
 	key := oauthRefreshLeaseKey(credentialExternalID)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	lock, ok := l.locks[key]
+	sem, ok := l.sems[key]
 	if !ok {
-		lock = &sync.Mutex{}
-		l.locks[key] = lock
+		// Cap 1: send acquires, receive releases. No helper goroutine, so ctx
+		// cancel cannot strand a holder that already took the lock.
+		sem = make(chan struct{}, 1)
+		l.sems[key] = sem
 	}
-	return lock
+	return sem
 }
 
 func (l *memoryOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (func() error, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	lock := l.mutex(credentialExternalID)
-	acquired := make(chan struct{})
-	go func() {
-		lock.Lock()
-		select {
-		case acquired <- struct{}{}:
-		case <-ctx.Done():
-			lock.Unlock()
-		}
-	}()
+	sem := l.semaphore(credentialExternalID)
 	select {
-	case <-acquired:
+	case sem <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-sem
+			return nil, err
+		}
 		released := false
 		return func() error {
 			if released {
 				return nil
 			}
 			released = true
-			lock.Unlock()
+			<-sem
 			return nil
 		}, nil
 	case <-ctx.Done():

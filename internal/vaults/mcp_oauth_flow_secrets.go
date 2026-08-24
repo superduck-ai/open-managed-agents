@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -43,19 +42,24 @@ func mcpOAuthFlowSecretBinding(flow db.MCPOAuthFlow) secrets.Binding {
 	}
 }
 
-// ClientSecretForMCPOAuthPersist drops platform secrets before any user-owned
-// seal (pending mcp_oauth_flows or vault_credentials). Deploy-config secrets
-// stay in vault.platform_oauth_clients and are re-resolved at token exchange /
-// future refresh; sealed covers BYO and DCR only.
+// ClientSecretForMCPOAuthPersist returns the client_secret that may enter a
+// user-owned seal (pending mcp_oauth_flows or vault_credentials). Only sealed
+// (BYO / DCR) secrets persist; platform and any other source yield empty so
+// deploy-config secrets stay in vault.platform_oauth_clients.
+//
+// source must already be an exact MCPOAuthClientCredential* value (API/DB
+// seam); this helper does not normalize whitespace.
 func ClientSecretForMCPOAuthPersist(source, clientSecret string) string {
-	if strings.TrimSpace(source) == MCPOAuthClientCredentialPlatform {
-		return ""
+	if source == MCPOAuthClientCredentialSealed {
+		return clientSecret
 	}
-	return clientSecret
+	return ""
 }
 
 // SealMCPOAuthFlowSecrets seals code_verifier and any flow-owned client_secret.
-// Platform flows must pass an empty client_secret (use ClientSecretForMCPOAuthPersist).
+// Platform secrets are dropped using flow.ClientCredentialSource; callers may
+// pass the exchange-time resolved secret.
+// codeVerifier is an internal PKCE value and must be non-empty as generated.
 func SealMCPOAuthFlowSecrets(
 	ctx context.Context,
 	secretSvc *secrets.Service,
@@ -65,12 +69,11 @@ func SealMCPOAuthFlowSecrets(
 	if secretSvc == nil {
 		return secrets.Envelope{}, errMCPOAuthFlowSecretServiceRequired
 	}
-	codeVerifier = strings.TrimSpace(codeVerifier)
 	if codeVerifier == "" {
 		return secrets.Envelope{}, errMCPOAuthFlowCodeVerifierRequired
 	}
 	payload, err := json.Marshal(mcpOAuthFlowSecretPayload{
-		ClientSecret: clientSecret,
+		ClientSecret: ClientSecretForMCPOAuthPersist(flow.ClientCredentialSource, clientSecret),
 		CodeVerifier: codeVerifier,
 	})
 	if err != nil {
@@ -106,7 +109,7 @@ func OpenMCPOAuthFlowSecrets(
 	if err := json.Unmarshal(plaintext, &payload); err != nil {
 		return "", "", fmt.Errorf("decode mcp oauth flow secrets: %w", err)
 	}
-	if strings.TrimSpace(payload.CodeVerifier) == "" {
+	if payload.CodeVerifier == "" {
 		return "", "", errMCPOAuthFlowCodeVerifierRequired
 	}
 	return payload.ClientSecret, payload.CodeVerifier, nil
@@ -115,17 +118,20 @@ func OpenMCPOAuthFlowSecrets(
 // ResolveMCPOAuthTokenClientSecret returns the client_secret used for token
 // exchange. Platform flows re-read deploy config; sealed flows use the opened
 // envelope value (BYO or DCR).
+//
+// source must already be an exact MCPOAuthClientCredential* value (or empty for
+// legacy sealed). Config secret trimming happens in FindPlatformOAuthClient.
 func ResolveMCPOAuthTokenClientSecret(
 	source, mcpServerURL, openedClientSecret string,
 	clients []config.PlatformOAuthClientConfig,
 ) (string, error) {
-	switch strings.TrimSpace(source) {
+	switch source {
 	case MCPOAuthClientCredentialPlatform:
 		entry, ok := config.FindPlatformOAuthClient(clients, mcpServerURL)
 		if !ok {
 			return "", errMCPOAuthPlatformClientMissing
 		}
-		return strings.TrimSpace(entry.ClientSecret), nil
+		return entry.ClientSecret, nil
 	case MCPOAuthClientCredentialSealed, "":
 		return openedClientSecret, nil
 	default:

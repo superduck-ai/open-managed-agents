@@ -277,7 +277,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		r.Context(),
 		s.vaultSecrets,
 		flow,
-		vaultsapi.ClientSecretForMCPOAuthPersist(credentialSource, clientSecret),
+		clientSecret,
 		codeVerifier,
 	)
 	if err != nil {
@@ -980,68 +980,21 @@ func buildPlatformMCPVaultOAuthCredentialPayloads(
 	now time.Time,
 	clientSecret string,
 ) (json.RawMessage, json.RawMessage, error) {
-	// Token exchange may hold a resolved platform secret; never copy it into the
-	// user credential envelope — only BYO/DCR (sealed) secrets persist here.
-	persistClientSecret := vaultsapi.ClientSecretForMCPOAuthPersist(flow.ClientCredentialSource, clientSecret)
-	publicAuth := map[string]any{
-		"type":           "mcp_oauth",
-		"mcp_server_url": flow.MCPServerURL,
-	}
-	if expiresIn := parsePlatformMCPOAuthExpiresIn(token.ExpiresIn); expiresIn > 0 {
-		publicAuth["expires_at"] = now.Add(time.Duration(expiresIn) * time.Second).UTC().Format(time.RFC3339)
-	}
-	secretPayload := map[string]any{
-		"type":         "mcp_oauth",
-		"access_token": token.AccessToken,
-	}
-	if token.RefreshToken != "" {
-		scope := firstNonEmpty(strings.TrimSpace(token.Scope), flow.Scope)
-		publicRefresh := map[string]any{
-			"token_endpoint":      flow.TokenEndpoint,
-			"client_id":           flow.ClientID,
-			"token_endpoint_auth": platformMCPVaultPublicTokenEndpointAuth(flow.TokenEndpointAuthMethod),
-		}
-		if scope != "" {
-			publicRefresh["scope"] = scope
-		}
-		if flow.Resource != "" {
-			publicRefresh["resource"] = flow.Resource
-		}
-		publicAuth["refresh"] = publicRefresh
-		secretPayload["refresh"] = map[string]any{
-			"refresh_token":       token.RefreshToken,
-			"token_endpoint_auth": platformMCPVaultSecretTokenEndpointAuth(flow.TokenEndpointAuthMethod, persistClientSecret),
-		}
-	}
-	publicJSON, err := json.Marshal(publicAuth)
-	if err != nil {
-		return nil, nil, err
-	}
-	secretJSON, err := json.Marshal(secretPayload)
-	if err != nil {
-		return nil, nil, err
-	}
-	return copyJSONRaw(publicJSON), copyJSONRaw(secretJSON), nil
-}
-
-func platformMCPVaultPublicTokenEndpointAuth(method string) map[string]any {
-	method = strings.TrimSpace(method)
-	if method == "" {
-		method = "none"
-	}
-	return map[string]any{"type": method}
-}
-
-func platformMCPVaultSecretTokenEndpointAuth(method, clientSecret string) map[string]any {
-	method = strings.TrimSpace(method)
-	if method == "" {
-		method = "none"
-	}
-	auth := map[string]any{"type": method}
-	if (method == "client_secret_basic" || method == "client_secret_post") && clientSecret != "" {
-		auth["client_secret"] = clientSecret
-	}
-	return auth
+	return vaultsapi.BuildMCPOAuthCredentialPayloads(vaultsapi.MCPOAuthCredentialBuildInput{
+		MCPServerURL:            flow.MCPServerURL,
+		ClientID:                flow.ClientID,
+		ClientCredentialSource:  flow.ClientCredentialSource,
+		TokenEndpoint:           flow.TokenEndpoint,
+		TokenEndpointAuthMethod: flow.TokenEndpointAuthMethod,
+		Resource:                flow.Resource,
+		FlowScope:               flow.Scope,
+		AccessToken:             token.AccessToken,
+		RefreshToken:            token.RefreshToken,
+		TokenScope:              strings.TrimSpace(token.Scope),
+		ExpiresInSeconds:        parsePlatformMCPOAuthExpiresIn(token.ExpiresIn),
+		ResolvedClientSecret:    clientSecret,
+		Now:                     now,
+	})
 }
 
 func parsePlatformMCPOAuthExpiresIn(value any) int64 {

@@ -19,6 +19,9 @@ func TestClientSecretForMCPOAuthPersistDropsPlatformSecret(t *testing.T) {
 	if got := ClientSecretForMCPOAuthPersist(MCPOAuthClientCredentialSealed, "byo-secret"); got != "byo-secret" {
 		t.Fatalf("sealed persist secret = %q, want byo-secret", got)
 	}
+	if got := ClientSecretForMCPOAuthPersist("", "orphan-secret"); got != "" {
+		t.Fatalf("unknown source persist secret = %q, want empty", got)
+	}
 }
 
 func TestResolveMCPOAuthTokenClientSecret(t *testing.T) {
@@ -110,18 +113,20 @@ func TestSealOpenMCPOAuthFlowSecretsRoundTrip(t *testing.T) {
 	})
 
 	t.Run("success platform seals verifier only", func(t *testing.T) {
+		platformFlow := flow
+		platformFlow.ClientCredentialSource = MCPOAuthClientCredentialPlatform
 		envelope, err := SealMCPOAuthFlowSecrets(
 			context.Background(),
 			svc,
-			flow,
-			ClientSecretForMCPOAuthPersist(MCPOAuthClientCredentialPlatform, "platform-secret"),
+			platformFlow,
+			"platform-secret",
 			"verifier-1",
 		)
 		if err != nil {
 			t.Fatalf("SealMCPOAuthFlowSecrets() error = %v", err)
 		}
-		flow.SecretEnvelope = &envelope
-		secret, verifier, err := OpenMCPOAuthFlowSecrets(context.Background(), svc, flow)
+		platformFlow.SecretEnvelope = &envelope
+		secret, verifier, err := OpenMCPOAuthFlowSecrets(context.Background(), svc, platformFlow)
 		if err != nil {
 			t.Fatalf("OpenMCPOAuthFlowSecrets() error = %v", err)
 		}
@@ -134,12 +139,14 @@ func TestSealOpenMCPOAuthFlowSecretsRoundTrip(t *testing.T) {
 	})
 
 	t.Run("success sealed keeps client secret", func(t *testing.T) {
-		envelope, err := SealMCPOAuthFlowSecrets(context.Background(), svc, flow, "byo-secret", "verifier-2")
+		sealedFlow := flow
+		sealedFlow.ClientCredentialSource = MCPOAuthClientCredentialSealed
+		envelope, err := SealMCPOAuthFlowSecrets(context.Background(), svc, sealedFlow, "byo-secret", "verifier-2")
 		if err != nil {
 			t.Fatalf("SealMCPOAuthFlowSecrets() error = %v", err)
 		}
-		flow.SecretEnvelope = &envelope
-		secret, verifier, err := OpenMCPOAuthFlowSecrets(context.Background(), svc, flow)
+		sealedFlow.SecretEnvelope = &envelope
+		secret, verifier, err := OpenMCPOAuthFlowSecrets(context.Background(), svc, sealedFlow)
 		if err != nil {
 			t.Fatalf("OpenMCPOAuthFlowSecrets() error = %v", err)
 		}

@@ -48,7 +48,7 @@ Mount path 输入组固定展示 Sandbox 前缀 `/mnt/session/uploads/`，用户
 }
 ```
 
-Mount path 留空时，前端不发送 `mount_path`；服务端按既有合同默认使用 `/uploads/<filename>`，Sandbox 中对应 `/mnt/session/uploads/<filename>`。
+Mount path 经 `trim()` 后为空时，前端不发送 `mount_path`；服务端按既有合同默认使用 `/uploads/<filename>`，Sandbox 中对应 `/mnt/session/uploads/<filename>`。输入框错误状态、创建按钮校验和提交转换共用这一判断。
 
 `source` 不由前端发送，后端默认为 `/uploads`。
 
@@ -57,7 +57,7 @@ Mount path 留空时，前端不发送 `mount_path`；服务端按既有合同�
 前端只做即时校验：
 
 - 已从当前 Workspace 文件列表中选择 File，且对应 File ID 非空；
-- Mount path 可以留空；留空时使用服务端默认文件名；
+- Mount path 经 `trim()` 后可以为空；为空时使用服务端默认文件名；
 - 自定义 Mount path 使用相对于 `/uploads` 的路径，不以 `/` 开头或结尾，不包含 `//`、`.` 或 `..` 路径段。
 
 File 是否存在、Workspace 隔离、500 个上限、跨卡片路径冲突、Filestore namespace 冲突和完整路径规则均以后端为权威。

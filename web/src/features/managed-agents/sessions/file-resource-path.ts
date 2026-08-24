@@ -1,5 +1,9 @@
 export const SESSION_FILE_UPLOADS_ROOT = '/mnt/session/uploads';
 
+export function hasSessionFileMountPath(value: string) {
+  return value.trim().length > 0;
+}
+
 export function isValidSessionFileMountPath(value: string) {
   const path = value.trim();
   if (path.length === 0 || path.startsWith('/') || path.endsWith('/') || path.includes('//')) {
@@ -15,7 +19,7 @@ export function sessionFileRuntimePath(value: string) {
 
 export function sessionFileAPIMountPath(value: string) {
   const path = value.trim();
-  if (path.length === 0) {
+  if (!hasSessionFileMountPath(value)) {
     return undefined;
   }
   return isValidSessionFileMountPath(path) ? `/${path}` : path;

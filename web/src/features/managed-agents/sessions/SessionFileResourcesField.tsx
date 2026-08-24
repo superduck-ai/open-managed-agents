@@ -17,7 +17,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/
 import { listSessionFileOptions } from '../api';
 import type { FileMetadataApiResponse, SessionFileResourceFormValue } from '../types';
 import { formatBytes } from '../utils';
-import { isValidSessionFileMountPath, SESSION_FILE_UPLOADS_ROOT } from './file-resource-path';
+import { hasSessionFileMountPath, isValidSessionFileMountPath, SESSION_FILE_UPLOADS_ROOT } from './file-resource-path';
 
 export function SessionFileResourcesField({
   resources,
@@ -58,6 +58,8 @@ export function SessionFileResourcesField({
 
       {resources.map((resource, index) => {
         const selectedFilename = files.find((file) => file.id === resource.fileId)?.filename;
+        const mountPathInvalid =
+          hasSessionFileMountPath(resource.mountPath) && !isValidSessionFileMountPath(resource.mountPath);
         return (
           <Card key={index} size="sm" className="mx-px gap-3 py-3">
             <CardHeader className="grid-cols-[1fr_auto] items-center px-3">
@@ -109,7 +111,7 @@ export function SessionFileResourcesField({
                   onChange={(fileId) => updateResource(index, { fileId })}
                 />
               </Field>
-              <Field data-invalid={resource.mountPath.length > 0 && !isValidSessionFileMountPath(resource.mountPath)}>
+              <Field data-invalid={mountPathInvalid}>
                 <FieldLabel htmlFor={`session-file-mount-path-${index}`}>
                   {msg('managedAgents.sessions.resources.mountPathOptional', 'Mount path (optional)')}
                 </FieldLabel>
@@ -123,7 +125,7 @@ export function SessionFileResourcesField({
                     placeholder={
                       selectedFilename ?? msg('managedAgents.sessions.resources.mountPlaceholder', 'filename')
                     }
-                    aria-invalid={resource.mountPath.length > 0 && !isValidSessionFileMountPath(resource.mountPath)}
+                    aria-invalid={mountPathInvalid}
                     onChange={(event) => updateResource(index, { mountPath: event.currentTarget.value })}
                   />
                 </InputGroup>
@@ -234,6 +236,6 @@ export function areSessionFileResourcesValid(resources: SessionFileResourceFormV
   return resources.every(
     (resource) =>
       resource.fileId.trim().length > 0 &&
-      (resource.mountPath.trim().length === 0 || isValidSessionFileMountPath(resource.mountPath)),
+      (!hasSessionFileMountPath(resource.mountPath) || isValidSessionFileMountPath(resource.mountPath)),
   );
 }

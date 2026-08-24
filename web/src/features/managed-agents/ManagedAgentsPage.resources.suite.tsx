@@ -1731,7 +1731,8 @@ export function registerManagedAgentsResourceTests() {
       target: { value: 'input.txt' },
     });
     expect(createSessionButton.hasAttribute('disabled')).toBe(false);
-    fireEvent.change(mountPathInput, { target: { value: '' } });
+    fireEvent.change(mountPathInput, { target: { value: '   ' } });
+    expect(mountPathInput.getAttribute('aria-invalid')).toBe('false');
     expect(createSessionButton.hasAttribute('disabled')).toBe(false);
     expect(within(dialog).getByText('Files are mounted in the container under /mnt/session/uploads/.')).toBeTruthy();
     expect(within(dialog).getByRole('link', { name: 'Manage files' }).getAttribute('href')).toBe(

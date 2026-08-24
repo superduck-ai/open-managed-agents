@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+func TestMemoryOAuthRefreshLeaseHoldCanceledWhileWaiting(t *testing.T) {
+	t.Parallel()
+
+	lease := newMemoryOAuthRefreshLease()
+	first, err := lease.Hold(t.Context(), "vcrd_a")
+	if err != nil {
+		t.Fatalf("Hold() error = %v", err)
+	}
+	defer func() { _ = first() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
+	defer cancel()
+	_, err = lease.Hold(ctx, "vcrd_a")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Hold() error = %v, want context deadline", err)
+	}
+}
+
 func TestMemoryOAuthRefreshLeaseSerializesSameCredential(t *testing.T) {
 	t.Parallel()
 
@@ -49,24 +67,6 @@ func TestMemoryOAuthRefreshLeaseSerializesSameCredential(t *testing.T) {
 	}
 }
 
-func TestMemoryOAuthRefreshLeaseHoldCanceledWhileWaiting(t *testing.T) {
-	t.Parallel()
-
-	lease := newMemoryOAuthRefreshLease()
-	first, err := lease.Hold(t.Context(), "vcrd_a")
-	if err != nil {
-		t.Fatalf("Hold() error = %v", err)
-	}
-	defer func() { _ = first() }()
-
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
-	defer cancel()
-	_, err = lease.Hold(ctx, "vcrd_a")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Hold() error = %v, want context deadline", err)
-	}
-}
-
 func TestMemoryOAuthRefreshLeaseCancelDoesNotPinCredential(t *testing.T) {
 	t.Parallel()
 
@@ -97,24 +97,6 @@ func TestMemoryOAuthRefreshLeaseCancelDoesNotPinCredential(t *testing.T) {
 	_ = release()
 }
 
-func TestNewRedisOAuthRefreshLeaseRequiresClient(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewRedisOAuthRefreshLease(nil)
-	if !errors.Is(err, errOAuthRefreshLeaseRedisRequired) {
-		t.Fatalf("error = %v, want errOAuthRefreshLeaseRedisRequired", err)
-	}
-}
-
-func TestOAuthRefreshLeaseTTLCoversCASHold(t *testing.T) {
-	t.Parallel()
-
-	min := time.Duration(maxOAuthRefreshCASAttempts) * oauthRefreshTimeout
-	if oauthRefreshLeaseTTL <= min {
-		t.Fatalf("oauthRefreshLeaseTTL = %s, want > %s (CAS attempts × token timeout)", oauthRefreshLeaseTTL, min)
-	}
-}
-
 func TestMemoryOAuthRefreshLeaseAllowsDifferentCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -129,6 +111,34 @@ func TestMemoryOAuthRefreshLeaseAllowsDifferentCredentials(t *testing.T) {
 		t.Fatalf("Hold B error = %v", err)
 	}
 	_ = second()
+}
+
+func TestNewRedisOAuthRefreshLeaseRequiresClient(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRedisOAuthRefreshLease(nil)
+	if !errors.Is(err, errOAuthRefreshLeaseRedisRequired) {
+		t.Fatalf("error = %v, want errOAuthRefreshLeaseRedisRequired", err)
+	}
+}
+
+func TestRedisOAuthRefreshLeaseHoldCanceled(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeOAuthRefreshNXStore()
+	lease := newRedisOAuthRefreshLease(store, time.Second, 20*time.Millisecond)
+	first, err := lease.Hold(t.Context(), "vcrd_a")
+	if err != nil {
+		t.Fatalf("Hold() error = %v", err)
+	}
+	defer first()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
+	defer cancel()
+	_, err = lease.Hold(ctx, "vcrd_a")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Hold() error = %v, want context deadline", err)
+	}
 }
 
 func TestRedisOAuthRefreshLeaseWaitsThenAcquiresAfterRelease(t *testing.T) {
@@ -166,22 +176,12 @@ func TestRedisOAuthRefreshLeaseWaitsThenAcquiresAfterRelease(t *testing.T) {
 	}
 }
 
-func TestRedisOAuthRefreshLeaseHoldCanceled(t *testing.T) {
+func TestOAuthRefreshLeaseTTLCoversCASHold(t *testing.T) {
 	t.Parallel()
 
-	store := newFakeOAuthRefreshNXStore()
-	lease := newRedisOAuthRefreshLease(store, time.Second, 20*time.Millisecond)
-	first, err := lease.Hold(t.Context(), "vcrd_a")
-	if err != nil {
-		t.Fatalf("Hold() error = %v", err)
-	}
-	defer first()
-
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
-	defer cancel()
-	_, err = lease.Hold(ctx, "vcrd_a")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Hold() error = %v, want context deadline", err)
+	min := time.Duration(maxOAuthRefreshCASAttempts) * oauthRefreshTimeout
+	if oauthRefreshLeaseTTL <= min {
+		t.Fatalf("oauthRefreshLeaseTTL = %s, want > %s (CAS attempts × token timeout)", oauthRefreshLeaseTTL, min)
 	}
 }
 

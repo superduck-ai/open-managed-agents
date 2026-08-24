@@ -4,6 +4,14 @@ import (
 	"testing"
 )
 
+func TestRequireNonEmptyStringRejectsBlank(t *testing.T) {
+	t.Parallel()
+
+	if _, err := requireNonEmptyString(" \n\t ", "field"); err == nil {
+		t.Fatal("expected blank rejection")
+	}
+}
+
 func TestRequireNonEmptyStringReturnsTrimmed(t *testing.T) {
 	t.Parallel()
 
@@ -16,10 +24,10 @@ func TestRequireNonEmptyStringReturnsTrimmed(t *testing.T) {
 	}
 }
 
-func TestRequireNonEmptyStringRejectsBlank(t *testing.T) {
+func TestRequireNonBlankVerbatimRejectsBlank(t *testing.T) {
 	t.Parallel()
 
-	if _, err := requireNonEmptyString(" \n\t ", "field"); err == nil {
+	if _, err := requireNonBlankVerbatim(" \n\t ", "auth.secret_value"); err == nil {
 		t.Fatal("expected blank rejection")
 	}
 }
@@ -34,13 +42,5 @@ func TestRequireNonBlankVerbatimPreservesWhitespace(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("got %q, want verbatim %q", got, want)
-	}
-}
-
-func TestRequireNonBlankVerbatimRejectsBlank(t *testing.T) {
-	t.Parallel()
-
-	if _, err := requireNonBlankVerbatim(" \n\t ", "auth.secret_value"); err == nil {
-		t.Fatal("expected blank rejection")
 	}
 }

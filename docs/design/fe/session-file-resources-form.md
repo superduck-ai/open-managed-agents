@@ -24,7 +24,7 @@ X-Workspace-ID: <当前 Workspace>
 
 ## Create Session 表单
 
-Resources 区域可以添加多张 File 卡片。每张卡片包含 File 选择器、可选 Mount path、`Manage files` 链接和删除按钮。File 选择器通过 `GET /v1/files?beta=true&limit=1000` 查询当前 Workspace 的文件元数据，支持按文件名或 File ID 过滤，并以“文件名（可读大小）”展示选项；提交时仍只写入所选文件的 `file_id`，不改变现有 Session API 合同。加载中、加载失败和空列表均在选择器弹层中给出明确状态。
+Resources 区域可以添加多张 File 卡片。每张卡片包含 File 选择器、可选 Mount path、`Manage files` 链接和删除按钮。File 选择器通过 `GET /v1/files?beta=true&limit=1000` 查询当前 Workspace 的文件元数据；响应存在 `has_more` 时使用 `last_id` 作为 `after_id` 继续查询，直至加载完整列表。选择器支持按文件名或 File ID 过滤，并以“文件名（可读大小）”展示选项；提交时仍只写入所选文件的 `file_id`，不改变现有 Session API 合同。加载中、加载失败和空列表均在选择器弹层中给出明确状态。
 
 前端、API 与 Sandbox 使用三种路径表示：
 
@@ -71,4 +71,4 @@ File 是否存在、Workspace 隔离、500 个上限、跨卡片路径冲突、F
 - `web/src/features/managed-agents/sessions/file-resource-path.ts`：路径转换；
 - `web/src/features/managed-agents/api.ts`：Create Session 请求体。
 
-测试覆盖上传成功/失败与部分成功、上传后返回第一页、Workspace header、文件列表查询与展示、按文件名过滤和选择、空资源、相对路径转换及非法路径段、非法输入禁用创建、删除草稿卡片、Files 链接和运行时路径预览。
+测试覆盖上传成功/失败与部分成功、上传后返回第一页、Workspace header、文件列表游标分页与完整聚合、查询展示、按文件名过滤和选择、空资源、相对路径转换及非法路径段、非法输入禁用创建、删除草稿卡片、Files 链接和运行时路径预览。

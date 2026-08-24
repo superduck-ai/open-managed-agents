@@ -554,11 +554,29 @@ export function retrieveFileMetadata(fileId: string, workspaceId: string) {
   return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
 }
 
-export function listSessionFileOptions(workspaceId: string) {
-  return anthropicBetaApi.files.list<FileMetadataApiResponse>(
-    { limit: 1000 },
-    workspaceId,
-  ) as Promise<FileMetadataPageResponse>;
+export async function listSessionFileOptions(workspaceId: string): Promise<FileMetadataPageResponse> {
+  const data: FileMetadataApiResponse[] = [];
+  let afterId: string | undefined;
+  let firstId: string | null | undefined;
+  let lastId: string | null | undefined;
+
+  for (;;) {
+    const page = (await anthropicBetaApi.files.list<FileMetadataApiResponse>(
+      { limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
+      workspaceId,
+    )) as FileMetadataPageResponse;
+    data.push(...page.data);
+    firstId ??= page.first_id;
+    lastId = page.last_id;
+
+    if (!page.has_more) {
+      return { data, first_id: firstId, has_more: false, last_id: lastId };
+    }
+    if (!lastId || lastId === afterId) {
+      throw new Error('Files API pagination did not return a new cursor');
+    }
+    afterId = lastId;
+  }
 }
 
 export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;

@@ -33,6 +33,27 @@
         resource.deleted_at AS deleted_at
     </sql>
 
+    <sql id="publicSessionResourceOuterColumns">
+        resource.uuid AS uuid, resource.external_id AS external_id,
+        resource.organization_uuid AS organization_uuid,
+        resource.workspace_uuid AS workspace_uuid, resource.session_uuid AS session_uuid,
+        resource.session_external_id AS session_external_id,
+        resource.resource_type AS resource_type, resource.secret_payload AS secret_payload,
+        resource.file_external_id AS file_external_id, resource.file_path AS file_path,
+        resource.file_ownership AS file_ownership,
+        resource.github_repository_url AS github_repository_url,
+        resource.github_repository_checkout AS github_repository_checkout,
+        resource.mount_path AS mount_path,
+        resource.memory_store_uuid AS memory_store_uuid,
+        resource.memory_store_external_id AS memory_store_external_id,
+        resource.memory_access AS memory_access,
+        resource.memory_description AS memory_description,
+        resource.memory_instructions AS memory_instructions,
+        resource.memory_name AS memory_name,
+        resource.created_at AS created_at, resource.updated_at AS updated_at,
+        resource.deleted_at AS deleted_at
+    </sql>
+
     <sql id="publicSessionResourcePredicate">
         AND (
             (
@@ -102,18 +123,31 @@
     </select>
 
     <select id="List" resultType="sessionResourceRow">
-        SELECT <include refid="publicSessionResourceColumns"/>
-        FROM session_resources resource
-        LEFT JOIN files file
-        ON file.uuid = resource.file_uuid
-        AND file.workspace_uuid = resource.workspace_uuid
-        LEFT JOIN memory_stores memory_store
-        ON memory_store.uuid = resource.memory_store_uuid
-        AND memory_store.workspace_uuid = resource.workspace_uuid
-        WHERE resource.workspace_uuid = #{workspaceUUID}
-        AND resource.session_external_id = #{sessionExternalID}
-        AND resource.deleted_at IS NULL
-        <include refid="publicSessionResourcePredicate"/>
+        SELECT <include refid="publicSessionResourceOuterColumns"/>
+        FROM (
+            SELECT <include refid="publicSessionResourceColumns"/>,
+                row_number() OVER (
+                    PARTITION BY (
+                        resource.resource_type = 'file'
+                        AND resource.file_ownership = 'owned'
+                        AND left(resource.path, char_length('/outputs/')) = '/outputs/'
+                    )
+                    ORDER BY resource.created_at DESC, resource.uuid DESC
+                ) AS output_rank
+            FROM session_resources resource
+            LEFT JOIN files file
+            ON file.uuid = resource.file_uuid
+            AND file.workspace_uuid = resource.workspace_uuid
+            LEFT JOIN memory_stores memory_store
+            ON memory_store.uuid = resource.memory_store_uuid
+            AND memory_store.workspace_uuid = resource.workspace_uuid
+            WHERE resource.workspace_uuid = #{workspaceUUID}
+            AND resource.session_external_id = #{sessionExternalID}
+            AND resource.deleted_at IS NULL
+            <include refid="publicSessionResourcePredicate"/>
+        ) resource
+        WHERE resource.file_ownership IS DISTINCT FROM 'owned'
+        OR resource.output_rank &lt;= #{maxOutputResources}
         ORDER BY resource.created_at DESC, resource.uuid DESC
     </select>
 

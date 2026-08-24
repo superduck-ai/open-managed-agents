@@ -10,7 +10,7 @@ import (
 type SessionResourceMapper interface {
 	Insert(ctx context.Context, params sessionResourceWriteParams) (sessionResourceRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
-	List(ctx context.Context, workspaceUUID, sessionExternalID string) ([]sessionResourceRow, error)
+	List(ctx context.Context, workspaceUUID, sessionExternalID string, maxOutputResources int) ([]sessionResourceRow, error)
 	UpdateGitHubRepositorySecret(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	CountSessionFileResources(ctx context.Context, workspaceUUID, sessionExternalID, resourceType string) (int, error)

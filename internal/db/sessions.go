@@ -67,6 +67,9 @@ const (
 	// MaxSessionFileResources is the write-time limit for active File resources
 	// attached to one Session.
 	MaxSessionFileResources = sessioncontract.MaxFileResources
+	// MaxSessionOutputFileResources 限制 Session resources 响应中最近的 Output File 数量；
+	// 完整输出集合仍通过 files.list(scope_id) 获取。
+	MaxSessionOutputFileResources = sessioncontract.MaxFileResources
 )
 
 type SessionResource struct {
@@ -485,7 +488,7 @@ func (d *DB) GetSessionResource(ctx context.Context, workspaceUUID string, sessi
 
 func (d *DB) ListSessionResources(ctx context.Context, workspaceUUID string, sessionExternalID string) ([]SessionResource, error) {
 	mapper := NewSessionResourceMapper(d.mapperDB)
-	rows, err := mapper.List(ctx, workspaceUUID, sessionExternalID)
+	rows, err := mapper.List(ctx, workspaceUUID, sessionExternalID, MaxSessionOutputFileResources)
 	return sessionResourcesFromRows(rows), err
 }
 

@@ -17,9 +17,9 @@ const (
 	FileSource = "/uploads"
 	// SandboxUploadsMount 是 FileSource 在 Sandbox 中的挂载点。
 	SandboxUploadsMount = "/mnt/session/uploads"
-	// OutputsSource 是用户可下载输出在 Filestore 中的固定 namespace。
-	OutputsSource = "/outputs"
-	// SandboxOutputsMount 是 OutputsSource 在 Sandbox 中的挂载点。
+	// OutputsRoot 是用户可下载输出在 Filestore 中的固定 namespace。
+	OutputsRoot = "/outputs"
+	// SandboxOutputsMount 是 OutputsRoot 在 Sandbox 中的挂载点。
 	SandboxOutputsMount = "/mnt/user-data/outputs"
 )
 
@@ -32,7 +32,7 @@ func SandboxPath(namespacePath string) string {
 		mount     string
 	}{
 		{namespace: FileSource, mount: SandboxUploadsMount},
-		{namespace: OutputsSource, mount: SandboxOutputsMount},
+		{namespace: OutputsRoot, mount: SandboxOutputsMount},
 	} {
 		if namespacePath == mapping.namespace {
 			return mapping.mount

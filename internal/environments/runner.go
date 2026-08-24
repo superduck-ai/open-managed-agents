@@ -22,8 +22,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
-
-	"github.com/google/uuid"
 )
 
 var (

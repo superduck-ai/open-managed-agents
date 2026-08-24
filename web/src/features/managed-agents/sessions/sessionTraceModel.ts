@@ -947,8 +947,16 @@ export function sessionContentBlockEntries(
     return type === 'text';
   });
   const text = contentBlocksText(textBlocks);
-  if (text) {
-    const textEvent = { ...event, content: textBlocks };
+  const attachmentText =
+    view === 'transcript'
+      ? content
+          .map((block) => sessionMessageAttachmentText(block, msg))
+          .filter(Boolean)
+          .join('\n')
+      : '';
+  const messageText = [text, attachmentText].filter(Boolean).join('\n');
+  if (messageText) {
+    const textEvent = { ...event, content: [{ type: 'text', text: messageText }] };
     entries.push(
       sessionTraceEntryFromEvent(textEvent, index, sessionEventFamily(event), undefined, undefined, traceStartMs, msg),
     );
@@ -1042,6 +1050,22 @@ export function sessionContentBlockEntries(
   });
 
   return entries;
+}
+
+function sessionMessageAttachmentText(block: unknown, msg?: I18nMsg) {
+  const record = toRecord(block);
+  if (record?.type !== 'image' && record?.type !== 'document') {
+    return '';
+  }
+  const source = toRecord(record.source);
+  const name =
+    stringValueFromKeys(record, ['filename', 'title', 'name']) ||
+    stringValueFromKeys(source ?? {}, ['file_id', 'url']) ||
+    (record.type === 'image' ? 'image' : 'file');
+  if (record.type === 'image') {
+    return msg ? msg('managedAgents.sessions.trace.imageAttachment', 'Image: {name}', { name }) : `Image: ${name}`;
+  }
+  return msg ? msg('managedAgents.sessions.trace.fileAttachment', 'File: {name}', { name }) : `File: ${name}`;
 }
 
 export function buildSessionThreadHints(events: QuickstartSessionEvent[]) {

@@ -137,6 +137,10 @@ Files API 上传
 → Code Session inbound 持久化 @"绝对路径"
 ```
 
+Console 的 Session 详情页遵循相同顺序：附件选择后先完成上传和挂载，只有已挂载附件才允许进入
+`user.message`。图片生成 `image` content block，其他文件生成 `document` content block；上传或挂载失败
+不会发送不完整事件。
+
 Resource 成功新增后，现有 Sandbox 最迟在固定 `1s` metadata cache 刷新后看到目录变化；Events
 API 不为缓存刷新增加人为延迟。
 

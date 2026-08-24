@@ -578,6 +578,109 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete session/i })).toBeNull());
   });
 
+  test('keeps a failed attachment removable and prevents sending before its resource is mounted', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi({ sessionResourceAddErrorOnce: true });
+    renderManagedAgentsPage('sessions');
+
+    await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Upload file' }));
+    fireEvent.change(screen.getByLabelText('Choose files to upload'), {
+      target: { files: [new File(['broken'], 'broken.pdf', { type: 'application/pdf' })] },
+    });
+
+    expect(await screen.findByText('Attachment failed')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      api.requests.some(
+        (request) => request.url === '/v1/sessions/sesn_one123456/events?beta=true' && request.method === 'POST',
+      ),
+    ).toBe(false);
+    expect(
+      api.requests.some(
+        (request) => request.url === '/v1/sessions/sesn_one123456/resources?beta=true' && request.method === 'POST',
+      ),
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove broken.pdf' }));
+    expect(screen.queryByText('broken.pdf')).toBeNull();
+  });
+
+  test('uploads and mounts image and file references before sending one session message', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    renderManagedAgentsPage('sessions');
+
+    await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Upload image' }));
+    fireEvent.change(screen.getByLabelText('Choose images to upload'), {
+      target: { files: [new File(['image'], 'diagram.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('diagram.png');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Upload file' }));
+    fireEvent.change(screen.getByLabelText('Choose files to upload'), {
+      target: { files: [new File(['document'], 'brief.pdf', { type: 'application/pdf' })] },
+    });
+    await screen.findByText('brief.pdf');
+
+    const sendButton = screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
+    await waitFor(() => expect(sendButton.disabled).toBe(false));
+    fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      const request = api.requests.find(
+        (candidate) => candidate.url === '/v1/sessions/sesn_one123456/events?beta=true' && candidate.method === 'POST',
+      );
+      expect(request?.body?.events).toEqual([
+        {
+          type: 'user.message',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'file', file_id: 'file_uploaded_image123' },
+              filename: 'diagram.png',
+            },
+            {
+              type: 'document',
+              source: { type: 'file', file_id: 'file_uploaded_document123' },
+              title: 'brief.pdf',
+            },
+          ],
+        },
+      ]);
+    });
+
+    const uploadRequests = api.requests.filter(
+      (request) => request.url === '/v1/files?beta=true' && request.method === 'POST',
+    );
+    const resourceRequests = api.requests.filter(
+      (request) => request.url === '/v1/sessions/sesn_one123456/resources?beta=true' && request.method === 'POST',
+    );
+    const eventRequestIndex = api.requests.findIndex(
+      (request) => request.url === '/v1/sessions/sesn_one123456/events?beta=true' && request.method === 'POST',
+    );
+    expect(uploadRequests).toHaveLength(2);
+    expect(resourceRequests.map((request) => request.body?.file_id)).toEqual([
+      'file_uploaded_image123',
+      'file_uploaded_document123',
+    ]);
+    expect(
+      api.requests.every(
+        (request, index) =>
+          request.method !== 'POST' ||
+          !request.url.includes('/resources?') ||
+          (eventRequestIndex >= 0 && index < eventRequestIndex),
+      ),
+    ).toBe(true);
+    await waitFor(() => expect(screen.queryByText('diagram.png')).toBeNull());
+    expect(await screen.findByText(/Image: diagram\.png/)).toBeTruthy();
+    expect(await screen.findByText(/File: brief\.pdf/)).toBeTruthy();
+  });
+
   test('sends messages and exposes the session resources, agent, environment, and vaults', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();

@@ -126,18 +126,21 @@ func normalizeMCPOAuthForCreate(input mcpOAuthCredentialCreateInput) (credential
 	if err != nil {
 		return credentialAuthState{}, err
 	}
+	var expiresAt *string
 	if input.ExpiresAt != nil {
-		if _, err := requireNonEmptyString(*input.ExpiresAt, "auth.expires_at"); err != nil {
+		trimmed, err := requireNonEmptyString(*input.ExpiresAt, "auth.expires_at")
+		if err != nil {
 			return credentialAuthState{}, err
 		}
-		if err := validateRFC3339(*input.ExpiresAt, "auth.expires_at"); err != nil {
+		if err := validateRFC3339(trimmed, "auth.expires_at"); err != nil {
 			return credentialAuthState{}, err
 		}
+		expiresAt = &trimmed
 	}
 	publicAuth := &mcpOAuthCredentialAuth{
 		Type:         credentialAuthTypeMCPOAuth,
 		MCPServerURL: serverURL,
-		ExpiresAt:    input.ExpiresAt,
+		ExpiresAt:    expiresAt,
 	}
 	secretPayload := mcpOAuthCredentialSecret{
 		Type:        credentialAuthTypeMCPOAuth,
@@ -170,30 +173,36 @@ func normalizeMCPOAuthRefreshForCreate(input mcpOAuthRefreshCreateInput) (mcpOAu
 	if err != nil {
 		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
+	var scope *string
 	if input.Scope != nil {
-		if _, err := requireNonEmptyString(*input.Scope, "auth.refresh.scope"); err != nil {
+		trimmed, err := requireNonEmptyString(*input.Scope, "auth.refresh.scope")
+		if err != nil {
 			return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 		}
+		scope = &trimmed
 	}
+	var resource *string
 	if input.Resource != nil {
-		if _, err := requireNonEmptyString(*input.Resource, "auth.refresh.resource"); err != nil {
+		trimmed, err := requireNonEmptyString(*input.Resource, "auth.refresh.resource")
+		if err != nil {
 			return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 		}
+		resource = &trimmed
 	}
 	publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuth(input.TokenEndpointAuth)
 	if err != nil {
 		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
 	return mcpOAuthRefresh{
-		TokenEndpoint:     tokenEndpoint,
-		ClientID:          clientID,
-		TokenEndpointAuth: publicTokenAuth,
-		Scope:             input.Scope,
-		Resource:          input.Resource,
-	}, mcpOAuthRefreshSecret{
-		RefreshToken:      refreshToken,
-		TokenEndpointAuth: &secretTokenAuth,
-	}, nil
+			TokenEndpoint:     tokenEndpoint,
+			ClientID:          clientID,
+			TokenEndpointAuth: publicTokenAuth,
+			Scope:             scope,
+			Resource:          resource,
+		}, mcpOAuthRefreshSecret{
+			RefreshToken:      refreshToken,
+			TokenEndpointAuth: &secretTokenAuth,
+		}, nil
 }
 
 func normalizeTokenEndpointAuth(input *tokenEndpointAuthInput) (tokenEndpointAuth, tokenEndpointAuthSecret, error) {
@@ -467,10 +476,11 @@ func patchMCPOAuthRefreshForUpdate(publicAuth *mcpOAuthCredentialAuth, secretPay
 			if err := json.Unmarshal(input.Scope, &scope); err != nil {
 				return errors.New("auth.refresh.scope must be a string")
 			}
-			if _, err := requireNonEmptyString(scope, "auth.refresh.scope"); err != nil {
+			trimmed, err := requireNonEmptyString(scope, "auth.refresh.scope")
+			if err != nil {
 				return err
 			}
-			publicAuth.Refresh.Scope = &scope
+			publicAuth.Refresh.Scope = &trimmed
 		}
 	}
 	if len(input.TokenEndpointAuth) != 0 {

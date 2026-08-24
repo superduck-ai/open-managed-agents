@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -297,11 +296,10 @@ func (i *Injector) resolveMCPOAuthToken(ctx context.Context, credential *db.Vaul
 			if err != nil {
 				return nil, err
 			}
-			token := strings.TrimSpace(secret.AccessToken)
-			if token == "" {
+			if secret.AccessToken == "" {
 				return nil, incompleteMCPOAuthSecret()
 			}
-			return &resolvedInjection{token: token}, nil
+			return &resolvedInjection{token: secret.AccessToken}, nil
 		}
 	}
 	token, _, err := i.refreshMCPOAuthCredential(ctx, &current, now, forceRefresh)

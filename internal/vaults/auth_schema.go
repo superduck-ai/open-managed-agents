@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 type credentialAuthType string
@@ -123,7 +122,7 @@ func decodeMCPOAuthCredentialAuth(raw []byte) (*mcpOAuthCredentialAuth, error) {
 	if !ok || value == nil {
 		return nil, credentialAuthNotMCPOAuth()
 	}
-	if strings.TrimSpace(value.MCPServerURL) == "" {
+	if value.MCPServerURL == "" {
 		return nil, mcpOAuthServerURLRequired()
 	}
 	return value, nil

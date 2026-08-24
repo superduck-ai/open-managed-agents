@@ -644,7 +644,7 @@ func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return credentialSecretError(err, "Could not validate credential")
 	}
-	hasRefreshToken := secret.Refresh != nil && strings.TrimSpace(secret.Refresh.RefreshToken) != ""
+	hasRefreshToken := secret.Refresh != nil && secret.Refresh.RefreshToken != ""
 	refreshStatus := "no_refresh_token"
 	if hasRefreshToken {
 		refreshStatus = "connect_error"

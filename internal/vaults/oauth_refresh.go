@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -20,7 +19,7 @@ func accessTokenExpired(expiresAt *string, now time.Time) (bool, error) {
 	if expiresAt == nil {
 		return false, nil
 	}
-	value := strings.TrimSpace(*expiresAt)
+	value := *expiresAt
 	if value == "" {
 		return false, nil
 	}
@@ -38,9 +37,9 @@ func hasMCPOAuthRefreshMaterial(auth *mcpOAuthCredentialAuth, secret mcpOAuthCre
 	if auth == nil || auth.Refresh == nil || secret.Refresh == nil {
 		return false
 	}
-	return strings.TrimSpace(auth.Refresh.TokenEndpoint) != "" &&
-		strings.TrimSpace(auth.Refresh.ClientID) != "" &&
-		strings.TrimSpace(secret.Refresh.RefreshToken) != ""
+	return auth.Refresh.TokenEndpoint != "" &&
+		auth.Refresh.ClientID != "" &&
+		secret.Refresh.RefreshToken != ""
 }
 
 func (i *Injector) refreshMCPOAuthCredential(
@@ -97,8 +96,8 @@ func (i *Injector) refreshMCPOAuthAttempt(
 	if err != nil {
 		return "", nil, false, err
 	}
-	if !force && !expired && strings.TrimSpace(secret.AccessToken) != "" {
-		return strings.TrimSpace(secret.AccessToken), current, false, nil
+	if !force && !expired && secret.AccessToken != "" {
+		return secret.AccessToken, current, false, nil
 	}
 	if !hasMCPOAuthRefreshMaterial(publicAuth, secret) {
 		return "", nil, false, errMCPOAuthRefreshUnavailable
@@ -164,8 +163,8 @@ func exchangeMCPOAuthRefresh(
 	publicRefresh := *publicAuth.Refresh
 	secretRefresh := *secret.Refresh
 	authMethod := "none"
-	if secretRefresh.TokenEndpointAuth != nil {
-		authMethod = strings.TrimSpace(secretRefresh.TokenEndpointAuth.Type)
+	if secretRefresh.TokenEndpointAuth != nil && secretRefresh.TokenEndpointAuth.Type != "" {
+		authMethod = secretRefresh.TokenEndpointAuth.Type
 	}
 	source := mcpOAuthRefreshClientCredentialSource(publicAuth, secret)
 	clientSecret, err := resolveMCPOAuthRefreshClientSecret(publicAuth, secret, clients)
@@ -177,15 +176,11 @@ func exchangeMCPOAuthRefresh(
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", secretRefresh.RefreshToken)
 	form.Set("client_id", publicRefresh.ClientID)
-	if publicRefresh.Scope != nil {
-		if scope := strings.TrimSpace(*publicRefresh.Scope); scope != "" {
-			form.Set("scope", scope)
-		}
+	if publicRefresh.Scope != nil && *publicRefresh.Scope != "" {
+		form.Set("scope", *publicRefresh.Scope)
 	}
-	if publicRefresh.Resource != nil {
-		if resource := strings.TrimSpace(*publicRefresh.Resource); resource != "" {
-			form.Set("resource", resource)
-		}
+	if publicRefresh.Resource != nil && *publicRefresh.Resource != "" {
+		form.Set("resource", *publicRefresh.Resource)
 	}
 
 	token, err := ExchangeOAuthTokenEndpoint(ctx, client, OAuthTokenEndpointExchange{
@@ -200,7 +195,8 @@ func exchangeMCPOAuthRefresh(
 	}
 
 	nextRefresh := publicRefresh
-	if scope := strings.TrimSpace(token.Scope); scope != "" {
+	if token.Scope != "" {
+		scope := token.Scope
 		nextRefresh.Scope = &scope
 	}
 	nextAuth := mcpOAuthCredentialAuth{
@@ -211,7 +207,7 @@ func exchangeMCPOAuthRefresh(
 		Refresh:                &nextRefresh,
 	}
 
-	nextRefreshToken := strings.TrimSpace(token.RefreshToken)
+	nextRefreshToken := token.RefreshToken
 	if nextRefreshToken == "" {
 		nextRefreshToken = secretRefresh.RefreshToken
 	}

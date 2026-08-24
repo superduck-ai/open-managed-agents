@@ -6,8 +6,9 @@ import (
 )
 
 func requireNonEmptyString(value, name string) (string, error) {
-	if strings.TrimSpace(value) == "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return "", fmt.Errorf("%s must be non-empty", name)
 	}
-	return value, nil
+	return trimmed, nil
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -102,7 +103,7 @@ func (i *Injector) refreshMCPOAuthAttempt(
 	if !hasMCPOAuthRefreshMaterial(publicAuth, secret) {
 		return "", nil, false, errMCPOAuthRefreshUnavailable
 	}
-	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now)
+	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now, i.platformOAuthClients)
 	if err != nil {
 		// Exchange failed (e.g. invalid_grant after a concurrent winner
 		// consumed the refresh_token). Reload and retry only when the
@@ -155,6 +156,7 @@ func exchangeMCPOAuthRefresh(
 	publicAuth *mcpOAuthCredentialAuth,
 	secret mcpOAuthCredentialSecret,
 	now time.Time,
+	clients []config.PlatformOAuthClientConfig,
 ) (string, json.RawMessage, json.RawMessage, error) {
 	if publicAuth == nil || publicAuth.Refresh == nil || secret.Refresh == nil {
 		return "", nil, nil, errMCPOAuthRefreshUnavailable
@@ -162,10 +164,13 @@ func exchangeMCPOAuthRefresh(
 	publicRefresh := *publicAuth.Refresh
 	secretRefresh := *secret.Refresh
 	authMethod := "none"
-	clientSecret := ""
 	if secretRefresh.TokenEndpointAuth != nil {
 		authMethod = strings.TrimSpace(secretRefresh.TokenEndpointAuth.Type)
-		clientSecret = strings.TrimSpace(secretRefresh.TokenEndpointAuth.ClientSecret)
+	}
+	source := mcpOAuthRefreshClientCredentialSource(publicAuth, secret)
+	clientSecret, err := resolveMCPOAuthRefreshClientSecret(publicAuth, secret, clients)
+	if err != nil {
+		return "", nil, nil, err
 	}
 
 	form := url.Values{}
@@ -199,22 +204,27 @@ func exchangeMCPOAuthRefresh(
 		nextRefresh.Scope = &scope
 	}
 	nextAuth := mcpOAuthCredentialAuth{
-		Type:         credentialAuthTypeMCPOAuth,
-		MCPServerURL: publicAuth.MCPServerURL,
-		ExpiresAt:    resolveExpiresAtAfterRefresh(now, publicAuth.ExpiresAt, token.ExpiresIn),
-		Refresh:      &nextRefresh,
+		Type:                   credentialAuthTypeMCPOAuth,
+		MCPServerURL:           publicAuth.MCPServerURL,
+		ClientCredentialSource: source,
+		ExpiresAt:              resolveExpiresAtAfterRefresh(now, publicAuth.ExpiresAt, token.ExpiresIn),
+		Refresh:                &nextRefresh,
 	}
 
 	nextRefreshToken := strings.TrimSpace(token.RefreshToken)
 	if nextRefreshToken == "" {
 		nextRefreshToken = secretRefresh.RefreshToken
 	}
+	nextTokenAuth := &tokenEndpointAuthSecret{Type: authMethod}
+	if persistSecret := ClientSecretForMCPOAuthPersist(source, clientSecret); persistSecret != "" {
+		nextTokenAuth.ClientSecret = persistSecret
+	}
 	nextSecret := mcpOAuthCredentialSecret{
 		Type:        credentialAuthTypeMCPOAuth,
 		AccessToken: token.AccessToken,
 		Refresh: &mcpOAuthRefreshSecret{
 			RefreshToken:      nextRefreshToken,
-			TokenEndpointAuth: secretRefresh.TokenEndpointAuth,
+			TokenEndpointAuth: nextTokenAuth,
 		},
 	}
 

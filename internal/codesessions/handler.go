@@ -71,11 +71,13 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 
 // WithVaultSecrets wires vault credential injection (static_bearer / mcp_oauth)
 // into the MCP HTTP proxy, including one 401 refresh retry for mcp_oauth.
+// Platform OAuth client secrets are re-resolved from cfg at refresh time.
 func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaults.OAuthRefreshLease) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
 	}
-	injector := vaults.NewInjector(h.db, secretSvc, h.logger)
+	injector := vaults.NewInjector(h.db, secretSvc, h.logger).
+		WithPlatformOAuthClients(h.cfg.Vault.PlatformOAuthClients)
 	if refreshLease != nil {
 		injector = injector.WithRefreshLease(refreshLease)
 	}

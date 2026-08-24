@@ -58,7 +58,8 @@ func TestBuildMCPOAuthStoredCredentialJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode auth: %v", err)
 		}
-		if publicAuth.Refresh == nil ||
+		if publicAuth.ClientCredentialSource != MCPOAuthClientCredentialSealed ||
+			publicAuth.Refresh == nil ||
 			publicAuth.Refresh.TokenEndpoint != "https://auth.example.com/token" ||
 			publicAuth.Refresh.ClientID != "client" ||
 			publicAuth.Refresh.TokenEndpointAuth.Type != "client_secret_post" ||
@@ -80,7 +81,7 @@ func TestBuildMCPOAuthStoredCredentialJSON(t *testing.T) {
 	})
 
 	t.Run("platform omits deploy secret from credential", func(t *testing.T) {
-		_, secretRaw, err := BuildMCPOAuthStoredCredentialJSON(MCPOAuthStoredCredentialInput{
+		publicRaw, secretRaw, err := BuildMCPOAuthStoredCredentialJSON(MCPOAuthStoredCredentialInput{
 			MCPServerURL:            "https://mcp.example.com/mcp",
 			AccessToken:             "access",
 			RefreshToken:            "refresh",
@@ -93,6 +94,13 @@ func TestBuildMCPOAuthStoredCredentialJSON(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("build: %v", err)
+		}
+		publicAuth, err := decodeMCPOAuthCredentialAuth(publicRaw)
+		if err != nil {
+			t.Fatalf("decode auth: %v", err)
+		}
+		if publicAuth.ClientCredentialSource != MCPOAuthClientCredentialPlatform {
+			t.Fatalf("source = %q, want platform", publicAuth.ClientCredentialSource)
 		}
 		secret, err := decodeMCPOAuthCredentialSecret(secretRaw)
 		if err != nil {

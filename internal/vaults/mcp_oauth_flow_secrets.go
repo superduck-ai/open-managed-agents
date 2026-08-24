@@ -116,8 +116,8 @@ func OpenMCPOAuthFlowSecrets(
 }
 
 // ResolveMCPOAuthTokenClientSecret returns the client_secret used for token
-// exchange. Platform flows re-read deploy config; sealed flows use the opened
-// envelope value (BYO or DCR).
+// exchange and refresh. Platform credentials re-read deploy config; sealed
+// credentials use the opened envelope value (BYO or DCR).
 //
 // source must already be an exact MCPOAuthClientCredential* value (or empty for
 // legacy sealed). Config secret trimming happens in FindPlatformOAuthClient.
@@ -137,4 +137,48 @@ func ResolveMCPOAuthTokenClientSecret(
 	default:
 		return "", fmt.Errorf("unknown mcp oauth client credential source %q", source)
 	}
+}
+
+// mcpOAuthRefreshClientCredentialSource is the source Resolve sees at refresh.
+// Stored public auth wins; otherwise infer so credentials created before the
+// field existed still refresh: envelope secret → sealed; confidential method
+// without a persisted secret → platform.
+func mcpOAuthRefreshClientCredentialSource(auth *mcpOAuthCredentialAuth, secret mcpOAuthCredentialSecret) string {
+	if auth != nil && auth.ClientCredentialSource != "" {
+		return auth.ClientCredentialSource
+	}
+	method := "none"
+	opened := ""
+	if secret.Refresh != nil && secret.Refresh.TokenEndpointAuth != nil {
+		method = secret.Refresh.TokenEndpointAuth.Type
+		opened = secret.Refresh.TokenEndpointAuth.ClientSecret
+	}
+	if opened != "" {
+		return MCPOAuthClientCredentialSealed
+	}
+	if method == "client_secret_basic" || method == "client_secret_post" {
+		return MCPOAuthClientCredentialPlatform
+	}
+	return MCPOAuthClientCredentialSealed
+}
+
+func resolveMCPOAuthRefreshClientSecret(
+	auth *mcpOAuthCredentialAuth,
+	secret mcpOAuthCredentialSecret,
+	clients []config.PlatformOAuthClientConfig,
+) (string, error) {
+	opened := ""
+	if secret.Refresh != nil && secret.Refresh.TokenEndpointAuth != nil {
+		opened = secret.Refresh.TokenEndpointAuth.ClientSecret
+	}
+	mcpServerURL := ""
+	if auth != nil {
+		mcpServerURL = auth.MCPServerURL
+	}
+	return ResolveMCPOAuthTokenClientSecret(
+		mcpOAuthRefreshClientCredentialSource(auth, secret),
+		mcpServerURL,
+		opened,
+		clients,
+	)
 }

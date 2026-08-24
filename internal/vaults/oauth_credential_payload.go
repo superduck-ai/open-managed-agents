@@ -11,7 +11,7 @@ import (
 //
 // ClientSecret may be the deploy-config platform secret used for the exchange;
 // ClientCredentialSource decides whether it is copied into the sealed refresh
-// payload (sealed only).
+// payload (sealed only) and is stored on public auth so refresh can re-resolve.
 type MCPOAuthStoredCredentialInput struct {
 	MCPServerURL            string
 	AccessToken             string
@@ -33,6 +33,10 @@ func BuildMCPOAuthStoredCredentialJSON(in MCPOAuthStoredCredentialInput) (json.R
 	publicAuth := mcpOAuthCredentialAuth{
 		Type:         credentialAuthTypeMCPOAuth,
 		MCPServerURL: in.MCPServerURL,
+	}
+	if in.ClientCredentialSource == MCPOAuthClientCredentialPlatform ||
+		in.ClientCredentialSource == MCPOAuthClientCredentialSealed {
+		publicAuth.ClientCredentialSource = in.ClientCredentialSource
 	}
 	if in.ExpiresIn > 0 {
 		expiresAt := in.Now.UTC().Add(time.Duration(in.ExpiresIn) * time.Second).Format(time.RFC3339)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -34,12 +35,13 @@ type credentialStore interface {
 // Injector loads session vault credentials per request and rewrites MCP
 // Authorization for injectable targets. Plaintext tokens are never cached.
 type Injector struct {
-	store        credentialStore
-	secretSvc    *secrets.Service
-	logger       *slog.Logger
-	httpClient   *http.Client
-	now          func() time.Time
-	refreshLease OAuthRefreshLease
+	store                credentialStore
+	secretSvc            *secrets.Service
+	logger               *slog.Logger
+	httpClient           *http.Client
+	now                  func() time.Time
+	refreshLease         OAuthRefreshLease
+	platformOAuthClients []config.PlatformOAuthClientConfig
 }
 
 func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *Injector {
@@ -62,6 +64,16 @@ func (i *Injector) WithRefreshLease(lease OAuthRefreshLease) *Injector {
 		return i
 	}
 	i.refreshLease = lease
+	return i
+}
+
+// WithPlatformOAuthClients supplies vault.platform_oauth_clients so mcp_oauth
+// refresh can re-resolve deploy-config secrets that were never sealed.
+func (i *Injector) WithPlatformOAuthClients(clients []config.PlatformOAuthClientConfig) *Injector {
+	if i == nil {
+		return i
+	}
+	i.platformOAuthClients = clients
 	return i
 }
 
@@ -140,6 +152,10 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	if t.injector == nil {
 		return t.base.RoundTrip(req)
 	}
+	// RoundTripper contract: always close the caller's body. Clones go to base;
+	// snapshot may replace req.Body with a restored buffer — close whichever is
+	// left on req when this returns.
+	defer closeRequestBody(req)
 	body, err := snapshotRequestBody(req)
 	if err != nil {
 		return nil, err
@@ -356,6 +372,14 @@ func readWithinLimit(r io.Reader, max int64) ([]byte, error) {
 		return nil, errSnapshotRequestBodyTooLarge
 	}
 	return data, nil
+}
+
+func closeRequestBody(req *http.Request) {
+	if req == nil || req.Body == nil || req.Body == http.NoBody {
+		return
+	}
+	_ = req.Body.Close()
+	req.Body = http.NoBody
 }
 
 func snapshotRequestBody(req *http.Request) ([]byte, error) {

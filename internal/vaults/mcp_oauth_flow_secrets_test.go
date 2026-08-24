@@ -94,6 +94,48 @@ func TestResolveMCPOAuthTokenClientSecret(t *testing.T) {
 	})
 }
 
+func TestMCPOAuthRefreshClientCredentialSource(t *testing.T) {
+	t.Parallel()
+
+	confidentialSecret := mcpOAuthCredentialSecret{
+		Refresh: &mcpOAuthRefreshSecret{
+			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "client_secret_post"},
+		},
+	}
+	sealedSecret := mcpOAuthCredentialSecret{
+		Refresh: &mcpOAuthRefreshSecret{
+			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "client_secret_post", ClientSecret: "byo"},
+		},
+	}
+	noneSecret := mcpOAuthCredentialSecret{
+		Refresh: &mcpOAuthRefreshSecret{
+			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "none"},
+		},
+	}
+
+	t.Run("stored source wins", func(t *testing.T) {
+		auth := &mcpOAuthCredentialAuth{ClientCredentialSource: MCPOAuthClientCredentialPlatform}
+		if got := mcpOAuthRefreshClientCredentialSource(auth, sealedSecret); got != MCPOAuthClientCredentialPlatform {
+			t.Fatalf("source = %q, want platform", got)
+		}
+	})
+	t.Run("legacy confidential without envelope secret is platform", func(t *testing.T) {
+		if got := mcpOAuthRefreshClientCredentialSource(&mcpOAuthCredentialAuth{}, confidentialSecret); got != MCPOAuthClientCredentialPlatform {
+			t.Fatalf("source = %q, want platform", got)
+		}
+	})
+	t.Run("legacy envelope secret is sealed", func(t *testing.T) {
+		if got := mcpOAuthRefreshClientCredentialSource(&mcpOAuthCredentialAuth{}, sealedSecret); got != MCPOAuthClientCredentialSealed {
+			t.Fatalf("source = %q, want sealed", got)
+		}
+	})
+	t.Run("none without stored source is sealed", func(t *testing.T) {
+		if got := mcpOAuthRefreshClientCredentialSource(&mcpOAuthCredentialAuth{}, noneSecret); got != MCPOAuthClientCredentialSealed {
+			t.Fatalf("source = %q, want sealed", got)
+		}
+	})
+}
+
 func TestSealOpenMCPOAuthFlowSecretsRoundTrip(t *testing.T) {
 	t.Parallel()
 

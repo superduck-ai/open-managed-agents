@@ -376,6 +376,70 @@ func TestSnapshotRequestBodyRejectsOversizedContentLength(t *testing.T) {
 	}
 }
 
+func TestWrapTransportClosesOriginalRequestBody(t *testing.T) {
+	svc := newTestSecretsService(t)
+	store := &fakeCredentialStore{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	injector := newTestInjector(t, svc, store, nil, time.Time{})
+	target, err := url.Parse(testInjectMCPURL)
+	if err != nil {
+		t.Fatalf("parse target: %v", err)
+	}
+	transport := injector.WrapTransport(
+		context.Background(),
+		"cse_test",
+		testInjectOrgUUID,
+		testInjectWsUUID,
+		target,
+		upstream.Client().Transport,
+	)
+
+	t.Run("success closes body", func(t *testing.T) {
+		body := &closeTrackingBody{Reader: bytes.NewReader([]byte(`{"ok":true}`))}
+		req, err := http.NewRequest(http.MethodPost, upstream.URL, body)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := transport.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("RoundTrip: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		if !body.closed.Load() {
+			t.Fatal("expected original request body to be closed")
+		}
+	})
+
+	t.Run("failure oversized ContentLength still closes body", func(t *testing.T) {
+		body := &closeTrackingBody{Reader: bytes.NewReader([]byte(`{"tiny":true}`))}
+		req, err := http.NewRequest(http.MethodPost, upstream.URL, body)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.ContentLength = maxSnapshotRequestBodyBytes + 1
+		_, err = transport.RoundTrip(req)
+		if !errors.Is(err, errSnapshotRequestBodyTooLarge) {
+			t.Fatalf("err = %v, want oversized", err)
+		}
+		if !body.closed.Load() {
+			t.Fatal("expected original request body to be closed on snapshot failure")
+		}
+	})
+}
+
+type closeTrackingBody struct {
+	io.Reader
+	closed atomic.Bool
+}
+
+func (b *closeTrackingBody) Close() error {
+	b.closed.Store(true)
+	return nil
+}
+
 func TestSnapshotRequestBodyBuffersSmallBody(t *testing.T) {
 	payload := []byte(`{"jsonrpc":"2.0","method":"tools/list"}`)
 	req := httptest.NewRequest(http.MethodPost, "https://mcp.example.com/mcp", bytes.NewReader(payload))

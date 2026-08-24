@@ -3,6 +3,7 @@ package vaults
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
@@ -108,6 +110,7 @@ func TestExchangeMCPOAuthRefreshKeepsRefreshTokenWhenOmitted(t *testing.T) {
 		testMCPOAuthPublicAuth(server.URL, strPtr("2020-01-01T00:00:00Z")),
 		testMCPOAuthSecret("old-access", "old-refresh"),
 		oauthRefreshNow(),
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
@@ -200,6 +203,7 @@ func TestExchangeMCPOAuthRefreshExpiresAtPolicy(t *testing.T) {
 			testMCPOAuthPublicAuth(server.URL, expiresAt),
 			secret,
 			now,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("exchange: %v", err)
@@ -224,6 +228,139 @@ func TestExchangeMCPOAuthRefreshExpiresAtPolicy(t *testing.T) {
 			t.Fatalf("expires_at = %v, want %v", savedAuth.ExpiresAt, previous)
 		}
 	})
+}
+
+func TestExchangeMCPOAuthRefreshResolvesClientSecret(t *testing.T) {
+	now := oauthRefreshNow()
+	clients := []config.PlatformOAuthClientConfig{{
+		MCPServerURL: testInjectMCPURL,
+		ClientID:     "client",
+		ClientSecret: "platform-secret",
+	}}
+
+	t.Run("failure platform registry miss", func(t *testing.T) {
+		auth := testMCPOAuthConfidentialAuth("https://auth.example.com/token", strPtr("2020-01-01T00:00:00Z"), "")
+		secret := testMCPOAuthConfidentialSecret("old-access", "old-refresh", "")
+		_, _, _, err := exchangeMCPOAuthRefresh(t.Context(), http.DefaultClient, auth, secret, now, nil)
+		if !errors.Is(err, errMCPOAuthPlatformClientMissing) {
+			t.Fatalf("error = %v, want errMCPOAuthPlatformClientMissing", err)
+		}
+	})
+
+	t.Run("success platform secret from config stays out of envelope", func(t *testing.T) {
+		var sawSecret string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			sawSecret = r.Form.Get("client_secret")
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "new-access", "expires_in": 3600})
+		}))
+		t.Cleanup(server.Close)
+
+		auth := testMCPOAuthConfidentialAuth(server.URL, strPtr("2020-01-01T00:00:00Z"), MCPOAuthClientCredentialPlatform)
+		secret := testMCPOAuthConfidentialSecret("old-access", "old-refresh", "")
+		_, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(t.Context(), server.Client(), auth, secret, now, clients)
+		if err != nil {
+			t.Fatalf("exchange: %v", err)
+		}
+		if sawSecret != "platform-secret" {
+			t.Fatalf("posted client_secret = %q, want platform-secret", sawSecret)
+		}
+		savedAuth, err := decodeMCPOAuthCredentialAuth(nextAuth)
+		if err != nil {
+			t.Fatalf("decode auth: %v", err)
+		}
+		if savedAuth.ClientCredentialSource != MCPOAuthClientCredentialPlatform {
+			t.Fatalf("source = %q, want platform", savedAuth.ClientCredentialSource)
+		}
+		savedSecret, err := decodeMCPOAuthCredentialSecret(nextSecret)
+		if err != nil {
+			t.Fatalf("decode secret: %v", err)
+		}
+		if savedSecret.Refresh == nil || savedSecret.Refresh.TokenEndpointAuth == nil {
+			t.Fatal("expected token_endpoint_auth after refresh")
+		}
+		if savedSecret.Refresh.TokenEndpointAuth.ClientSecret != "" {
+			t.Fatalf("persisted client_secret = %q, want empty", savedSecret.Refresh.TokenEndpointAuth.ClientSecret)
+		}
+	})
+
+	t.Run("success sealed uses envelope secret", func(t *testing.T) {
+		var sawSecret string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			sawSecret = r.Form.Get("client_secret")
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "new-access"})
+		}))
+		t.Cleanup(server.Close)
+
+		auth := testMCPOAuthConfidentialAuth(server.URL, strPtr("2020-01-01T00:00:00Z"), MCPOAuthClientCredentialSealed)
+		secret := testMCPOAuthConfidentialSecret("old-access", "old-refresh", "byo-secret")
+		_, _, nextSecret, err := exchangeMCPOAuthRefresh(t.Context(), server.Client(), auth, secret, now, clients)
+		if err != nil {
+			t.Fatalf("exchange: %v", err)
+		}
+		if sawSecret != "byo-secret" {
+			t.Fatalf("posted client_secret = %q, want byo-secret", sawSecret)
+		}
+		savedSecret, err := decodeMCPOAuthCredentialSecret(nextSecret)
+		if err != nil {
+			t.Fatalf("decode secret: %v", err)
+		}
+		if savedSecret.Refresh.TokenEndpointAuth.ClientSecret != "byo-secret" {
+			t.Fatalf("persisted client_secret = %q, want byo-secret", savedSecret.Refresh.TokenEndpointAuth.ClientSecret)
+		}
+	})
+}
+
+func TestRefreshMCPOAuthCredentialResolvesPlatformClientSecret(t *testing.T) {
+	var sawSecret string
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = r.ParseForm()
+		sawSecret = r.Form.Get("client_secret")
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fresh-access", "expires_in": 3600})
+	}))
+	t.Cleanup(server.Close)
+
+	svc := newTestSecretsService(t)
+	stale := sealedConfidentialMCPOAuthCredential(t, svc, server.URL, "stale-access", "refresh-token", "", strPtr("2020-01-01T00:00:00Z"))
+	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale}}
+	injector := newTestInjector(t, svc, store, server.Client(), oauthRefreshNow()).
+		WithPlatformOAuthClients([]config.PlatformOAuthClientConfig{{
+			MCPServerURL: testInjectMCPURL,
+			ClientID:     "client",
+			ClientSecret: "platform-secret",
+		}})
+
+	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, oauthRefreshNow(), false)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if token != "fresh-access" {
+		t.Fatalf("token = %q", token)
+	}
+	if sawSecret != "platform-secret" {
+		t.Fatalf("posted client_secret = %q, want platform-secret", sawSecret)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1", calls.Load())
+	}
+	if saved == nil {
+		t.Fatal("expected saved credential")
+	}
+}
+
+func TestRefreshMCPOAuthCredentialPlatformSecretMissing(t *testing.T) {
+	svc := newTestSecretsService(t)
+	stale := sealedConfidentialMCPOAuthCredential(t, svc, "https://auth.example.com/token", "stale-access", "refresh-token", "", strPtr("2020-01-01T00:00:00Z"))
+	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale}}
+	injector := newTestInjector(t, svc, store, http.DefaultClient, oauthRefreshNow())
+
+	_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, oauthRefreshNow(), false)
+	if !errors.Is(err, errMCPOAuthPlatformClientMissing) {
+		t.Fatalf("error = %v, want errMCPOAuthPlatformClientMissing", err)
+	}
 }
 
 func TestRefreshMCPOAuthCredentialReusesWinnerAfterCASConflict(t *testing.T) {
@@ -396,6 +533,13 @@ func testMCPOAuthPublicAuth(tokenURL string, expiresAt *string) *mcpOAuthCredent
 	}
 }
 
+func testMCPOAuthConfidentialAuth(tokenURL string, expiresAt *string, source string) *mcpOAuthCredentialAuth {
+	auth := testMCPOAuthPublicAuth(tokenURL, expiresAt)
+	auth.ClientCredentialSource = source
+	auth.Refresh.TokenEndpointAuth = tokenEndpointAuth{Type: "client_secret_post"}
+	return auth
+}
+
 func testMCPOAuthSecret(accessToken, refreshToken string) mcpOAuthCredentialSecret {
 	return mcpOAuthCredentialSecret{
 		Type:        credentialAuthTypeMCPOAuth,
@@ -403,6 +547,20 @@ func testMCPOAuthSecret(accessToken, refreshToken string) mcpOAuthCredentialSecr
 		Refresh: &mcpOAuthRefreshSecret{
 			RefreshToken:      refreshToken,
 			TokenEndpointAuth: &tokenEndpointAuthSecret{Type: "none"},
+		},
+	}
+}
+
+func testMCPOAuthConfidentialSecret(accessToken, refreshToken, clientSecret string) mcpOAuthCredentialSecret {
+	return mcpOAuthCredentialSecret{
+		Type:        credentialAuthTypeMCPOAuth,
+		AccessToken: accessToken,
+		Refresh: &mcpOAuthRefreshSecret{
+			RefreshToken: refreshToken,
+			TokenEndpointAuth: &tokenEndpointAuthSecret{
+				Type:         "client_secret_post",
+				ClientSecret: clientSecret,
+			},
 		},
 	}
 }
@@ -466,11 +624,41 @@ func sealedMCPOAuthCredential(
 	expiresAt *string,
 ) db.VaultCredential {
 	t.Helper()
-	auth, err := json.Marshal(testMCPOAuthPublicAuth(tokenEndpoint, expiresAt))
+	return sealMCPOAuthCredential(t, svc, testMCPOAuthPublicAuth(tokenEndpoint, expiresAt), testMCPOAuthSecret(accessToken, refreshToken), accessToken)
+}
+
+func sealedConfidentialMCPOAuthCredential(
+	t *testing.T,
+	svc *secrets.Service,
+	tokenEndpoint string,
+	accessToken string,
+	refreshToken string,
+	clientSecret string,
+	expiresAt *string,
+) db.VaultCredential {
+	t.Helper()
+	return sealMCPOAuthCredential(
+		t,
+		svc,
+		testMCPOAuthConfidentialAuth(tokenEndpoint, expiresAt, ""),
+		testMCPOAuthConfidentialSecret(accessToken, refreshToken, clientSecret),
+		accessToken,
+	)
+}
+
+func sealMCPOAuthCredential(
+	t *testing.T,
+	svc *secrets.Service,
+	auth *mcpOAuthCredentialAuth,
+	secret mcpOAuthCredentialSecret,
+	accessToken string,
+) db.VaultCredential {
+	t.Helper()
+	authJSON, err := json.Marshal(auth)
 	if err != nil {
 		t.Fatalf("marshal auth: %v", err)
 	}
-	secret, err := json.Marshal(testMCPOAuthSecret(accessToken, refreshToken))
+	secretJSON, err := json.Marshal(secret)
 	if err != nil {
 		t.Fatalf("marshal secret: %v", err)
 	}
@@ -480,8 +668,8 @@ func sealedMCPOAuthCredential(
 		VaultExternalID:  "vlt_test",
 		ExternalID:       "cred_" + accessToken,
 		AuthType:         "mcp_oauth",
-		Auth:             auth,
-		SecretPayload:    secret,
+		Auth:             authJSON,
+		SecretPayload:    secretJSON,
 	}
 	if err := SealCredentialSecret(context.Background(), svc, &credential); err != nil {
 		t.Fatalf("seal: %v", err)

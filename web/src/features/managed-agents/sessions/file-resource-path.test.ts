@@ -18,6 +18,7 @@ describe('session file resource paths', () => {
 
   test('returns safe fallback values for invalid paths', () => {
     expect(sessionFileRuntimePath('')).toBe('');
+    expect(sessionFileAPIMountPath('')).toBeUndefined();
     expect(sessionFileRuntimePath('../secret.txt')).toBe('');
     expect(sessionFileAPIMountPath(' /absolute.txt ')).toBe('/absolute.txt');
   });

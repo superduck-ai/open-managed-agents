@@ -318,6 +318,13 @@ export type FileMetadataApiResponse = {
   type: 'file';
 };
 
+export type FileMetadataPageResponse = {
+  data: FileMetadataApiResponse[];
+  first_id?: string | null;
+  has_more: boolean;
+  last_id?: string | null;
+};
+
 export type SessionThreadApiResponse = {
   id: string;
   archived_at?: string | null;

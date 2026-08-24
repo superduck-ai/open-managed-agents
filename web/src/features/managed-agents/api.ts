@@ -24,6 +24,7 @@ import {
   type EnvironmentApiResponse,
   type EnvironmentWorkApiResponse,
   type FileMetadataApiResponse,
+  type FileMetadataPageResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntityListFilters,
@@ -551,6 +552,13 @@ export function listSessionResources(sessionId: string, workspaceId: string) {
 
 export function retrieveFileMetadata(fileId: string, workspaceId: string) {
   return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
+}
+
+export function listSessionFileOptions(workspaceId: string) {
+  return anthropicBetaApi.files.list<FileMetadataApiResponse>(
+    { limit: 1000 },
+    workspaceId,
+  ) as Promise<FileMetadataPageResponse>;
 }
 
 export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;
@@ -1589,11 +1597,14 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: values.fileResources.map((resource) => ({
-          type: 'file',
-          file_id: resource.fileId.trim(),
-          mount_path: sessionFileAPIMountPath(resource.mountPath),
-        })),
+        resources: values.fileResources.map((resource) => {
+          const mountPath = sessionFileAPIMountPath(resource.mountPath);
+          return {
+            type: 'file',
+            file_id: resource.fileId.trim(),
+            ...(mountPath ? { mount_path: mountPath } : {}),
+          };
+        }),
       };
     case 'deployments':
       return {

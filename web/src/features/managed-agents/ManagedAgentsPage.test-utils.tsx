@@ -859,6 +859,38 @@ export function mockManagedResourceApi() {
     },
   ];
   const resources = {
+    files: [
+      {
+        id: 'file_input123456',
+        type: 'file',
+        filename: 'input.txt',
+        size_bytes: 108,
+        mime_type: 'text/plain',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_image123456',
+        type: 'file',
+        filename: 'image.png',
+        size_bytes: 257_024,
+        mime_type: 'image/png',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_report123456',
+        type: 'file',
+        filename: 'NL2SQL report.md',
+        size_bytes: 30_720,
+        mime_type: 'text/markdown',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+    ],
     agents: [
       agentResponse({
         id: 'agent_option123456',
@@ -1399,6 +1431,14 @@ export function mockManagedResourceApi() {
         return matchesCreatedAtParams(session, params);
       });
       return jsonResponse({ data: filteredSessions, next_page: null });
+    }
+    if (url.startsWith('/v1/files?') && method === 'GET') {
+      return jsonResponse({
+        data: resources.files,
+        has_more: false,
+        first_id: resources.files.at(0)?.id ?? null,
+        last_id: resources.files.at(-1)?.id ?? null,
+      });
     }
     const retrieveSessionMatch = url.match(/^\/v1\/sessions\/([^/?]+)\?beta=true$/);
     if (retrieveSessionMatch && method === 'GET') {

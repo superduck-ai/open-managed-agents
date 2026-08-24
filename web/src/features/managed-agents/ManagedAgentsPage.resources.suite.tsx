@@ -1693,31 +1693,50 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
     const createSessionButton = within(dialog).getByRole('button', { name: 'Create session' });
-    const fileIdInput = within(dialog).getByLabelText('File ID');
-    const mountPathInput = within(dialog).getByLabelText('Mount path');
+    const fileIdInput = within(dialog).getByRole('combobox', { name: 'File ID' });
+    const mountPathInput = within(dialog).getByLabelText('Mount path (optional)');
     expect(fileIdInput.hasAttribute('required')).toBe(true);
-    expect(mountPathInput.hasAttribute('required')).toBe(true);
+    expect(mountPathInput.hasAttribute('required')).toBe(false);
+    expect(within(dialog).getByText('/mnt/session/uploads/').classList.contains('text-foreground')).toBe(true);
     expect(createSessionButton.hasAttribute('disabled')).toBe(true);
 
-    fireEvent.change(fileIdInput, { target: { value: 'file_input123456' } });
-    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
-    fireEvent.change(mountPathInput, {
-      target: { value: '/workspace/input.txt' },
-    });
-    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
-    expect(within(dialog).getByText('Enter a path relative to /uploads')).toBeTruthy();
-
-    fireEvent.change(mountPathInput, {
-      target: { value: 'input.txt' },
-    });
-    expect(within(dialog).getByText('Available at /mnt/session/uploads/input.txt')).toBeTruthy();
-    expect(within(dialog).getByRole('link', { name: 'Manage files' }).getAttribute('href')).toBe(
-      '/workspaces/default/files',
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url === '/v1/files?beta=true&limit=1000')).toBe(true),
     );
+    fireEvent.keyDown(fileIdInput, { key: 'ArrowDown' });
+    expect(await screen.findByRole('option', { name: 'input.txt (108 B)' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'image.png (251 KB)' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'NL2SQL report.md (30 KB)' })).toBeTruthy();
+    expect(fileIdInput.classList.contains('pl-3')).toBe(true);
+    expect(fileIdInput.closest('[data-slot="card"]')?.classList.contains('mx-px')).toBe(true);
+    expect(fileIdInput.closest('[data-slot="input-group"]')?.hasAttribute('data-popup-open')).toBe(true);
+    expect(document.querySelector('[data-slot="combobox-empty"]')?.classList.contains('empty:p-0')).toBe(true);
+    fireEvent.change(fileIdInput, { target: { value: 'file_image' } });
+    expect(screen.getByRole('option', { name: 'image.png (251 KB)' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'input.txt (108 B)' })).toBeNull();
+    fireEvent.change(fileIdInput, { target: { value: 'input' } });
+    fireEvent.click(await screen.findByRole('option', { name: 'input.txt (108 B)' }));
+    expect(mountPathInput.getAttribute('placeholder')).toBe('input.txt');
     await waitFor(() =>
       expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
     );
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
+    expect(createSessionButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.change(mountPathInput, {
+      target: { value: '/workspace/input.txt' },
+    });
+    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
+
+    fireEvent.change(mountPathInput, {
+      target: { value: 'input.txt' },
+    });
+    expect(createSessionButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.change(mountPathInput, { target: { value: '' } });
+    expect(createSessionButton.hasAttribute('disabled')).toBe(false);
+    expect(within(dialog).getByText('Files are mounted in the container under /mnt/session/uploads/.')).toBeTruthy();
+    expect(within(dialog).getByRole('link', { name: 'Manage files' }).getAttribute('href')).toBe(
+      '/workspaces/default/files',
+    );
     expect(within(dialog).getByRole('combobox', { name: 'Environment' }).textContent).toContain('Option environment');
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
@@ -1737,7 +1756,6 @@ export function registerManagedAgentsResourceTests() {
       {
         type: 'file',
         file_id: 'file_input123456',
-        mount_path: '/input.txt',
       },
     ]);
     expect(createRequest?.headers['x-workspace-id']).toBe('default');

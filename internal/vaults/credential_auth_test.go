@@ -275,7 +275,13 @@ func TestNormalizeEnvironmentVariablePreservesSecretValueWhitespace(t *testing.T
 	updateState, err := normalizeCredentialAuthForUpdate(db.VaultCredential{
 		AuthType:      "environment_variable",
 		CredentialKey: "API_KEY",
-		Auth:          json.RawMessage(`{"type":"environment_variable","secret_name":"API_KEY","networking":{"type":"unrestricted"}}`),
+		Auth: json.RawMessage(`{
+			"type":"environment_variable",
+			"secret_name":"API_KEY",
+			"networking":{"type":"unrestricted"},
+			"placeholder":"oma_ph_test",
+			"injection_location":{"header":true,"body":false}
+		}`),
 	}, []byte(`{"type":"environment_variable","secret_value":"old"}`), json.RawMessage(`{
 		"type":"environment_variable",
 		"secret_value":"  rotated\n"

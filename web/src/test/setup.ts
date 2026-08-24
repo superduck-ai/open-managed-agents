@@ -7,6 +7,7 @@ globalScope.window = testWindow;
 globalScope.document = testWindow.document;
 globalScope.Element = testWindow.Element;
 globalScope.Node = testWindow.Node;
+globalScope.NodeFilter = testWindow.NodeFilter;
 globalScope.HTMLElement = testWindow.HTMLElement;
 globalScope.HTMLButtonElement = testWindow.HTMLButtonElement;
 globalScope.HTMLInputElement = testWindow.HTMLInputElement;

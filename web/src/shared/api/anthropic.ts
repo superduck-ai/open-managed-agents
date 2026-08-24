@@ -152,10 +152,11 @@ function normalizeSdkError(error: unknown) {
   const payload = objectRecord(error.error);
   const nestedError = objectRecord(payload.error);
   const code =
+    stringValue(nestedError.code) ??
+    stringValue(payload.code) ??
     error.type ??
     stringValue(nestedError.type) ??
     stringValue(payload.type) ??
-    stringValue(payload.code) ??
     'request_failed';
   const message = stringValue(nestedError.message) ?? stringValue(payload.message) ?? error.message ?? 'Request failed';
 

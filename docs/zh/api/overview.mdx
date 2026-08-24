@@ -13,7 +13,7 @@ http://localhost:38080
 
 ## 前置条件
 
-调用前需要一个可访问的 OMA 部署和工作区 API 密钥。智能体执行还需要 PostgreSQL、S3 兼容对象存储和可用的环境运行器；消息接口需要部署者配置 `anthropic_upstream.api_key`。
+调用前需要一个可访问的 OMA 部署和工作区 API 密钥。智能体执行还需要 PostgreSQL、S3 兼容对象存储和可用的环境运行器。推理前需在工作区的 **LLM 模型** 页面添加 Provider 及其真实模型 ID。
 
 ## 第一个请求
 
@@ -71,7 +71,7 @@ const client = new Anthropic({
 
 <CardGroup cols={2}>
   <Card title="模型" href="/docs/zh/api/models/list-models">
-    查询当前部署暴露的模型及能力。
+    查询当前工作区公开的模型 ID。
   </Card>
   <Card title="消息" href="/docs/zh/api/messages/create-a-message">
     发送模型请求，并通过其下的批处理接口执行大规模异步任务。

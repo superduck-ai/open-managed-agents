@@ -11,6 +11,7 @@ import { useEffect, type ReactNode } from 'react';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider, type Locale } from '../../shared/i18n';
 import { setConsoleRequestContext } from '../../shared/api/client';
+import { Toaster } from '../../shared/ui/sonner';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
@@ -1844,7 +1845,10 @@ function renderDashboardPage(
         <I18nProvider initialLocale={locale}>
           <AuthContext.Provider value={authValue}>
             <WorkspaceContext.Provider value={value}>
-              <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+              <QueryClientProvider client={queryClient}>
+                <Toaster closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
+                {children}
+              </QueryClientProvider>
             </WorkspaceContext.Provider>
           </AuthContext.Provider>
         </I18nProvider>

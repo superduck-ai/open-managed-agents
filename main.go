@@ -115,7 +115,7 @@ func run(logger *slog.Logger) error {
 		database,
 		objectStore,
 		cfg.Batch,
-		batches.NewHTTPUpstreamClient(cfg),
+		batches.NewHTTPUpstreamClient(database, vaultSecrets, cfg.Batch),
 		logger.With("component", "batches"),
 	).Start(ctx)
 	environmentLogger := logger.With("component", "environment_runner")

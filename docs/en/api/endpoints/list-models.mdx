@@ -1,10 +1,10 @@
 ---
 title: "List models"
-description: "Inspect models and capabilities exposed by this OMA deployment."
+description: "Inspect model IDs exposed by this workspace."
 api: "GET /v1/models"
 ---
 
-Returns the model catalog exposed by the current OMA configuration. Operators can use `anthropic_upstream.model_mappings` to map logical model IDs to upstream IDs.
+Returns the model IDs configured for the current workspace. IDs are used unchanged in API calls.
 
 ## Response
 
@@ -17,19 +17,23 @@ Returns the model catalog exposed by the current OMA configuration. Operators ca
 </ResponseField>
 
 <ResponseField name="data[].display_name" type="string">
-  The model name displayed in the console.
+  The configured model ID, used as the display name because Provider configuration does not include catalog metadata.
 </ResponseField>
 
-<ResponseField name="data[].max_input_tokens" type="integer">
-  Declared maximum input tokens.
+<ResponseField name="data[].created_at" type="string">
+  The Unix epoch when the Provider does not supply a release date.
 </ResponseField>
 
-<ResponseField name="data[].max_tokens" type="integer">
-  Declared maximum output tokens.
+<ResponseField name="has_more" type="boolean">
+  Always `false`; the configured workspace catalog is returned as one page.
 </ResponseField>
 
-<ResponseField name="data[].capabilities" type="object">
-  Capability flags for thinking, image and PDF input, structured output, code execution, and more.
+<ResponseField name="first_id" type="string | null">
+  The first configured model ID, or `null` when the catalog is empty.
+</ResponseField>
+
+<ResponseField name="last_id" type="string | null">
+  The last configured model ID, or `null` when the catalog is empty.
 </ResponseField>
 
 ```json Response
@@ -37,18 +41,27 @@ Returns the model catalog exposed by the current OMA configuration. Operators ca
   "data": [
     {
       "type": "model",
-      "id": "claude-sonnet-4-6",
-      "display_name": "Claude Sonnet 4.6",
-      "max_input_tokens": 1000000,
-      "max_tokens": 128000,
-      "capabilities": {
-        "code_execution": {"supported": true},
-        "image_input": {"supported": true}
-      }
+      "id": "kimi-k2.5",
+      "display_name": "kimi-k2.5",
+      "created_at": "1970-01-01T00:00:00Z",
+      "max_input_tokens": null,
+      "max_tokens": null,
+      "capabilities": null
     }
   ],
   "has_more": false,
-  "first_id": "claude-sonnet-4-6",
-  "last_id": "claude-sonnet-4-6"
+  "first_id": "kimi-k2.5",
+  "last_id": "kimi-k2.5"
+}
+```
+
+Returns `503` when the workspace has no configured LLM Provider:
+
+```json 503 Response
+{
+  "error": {
+    "type": "api_error",
+    "message": "This workspace has no LLM provider configured"
+  }
 }
 ```

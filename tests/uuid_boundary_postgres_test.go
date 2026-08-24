@@ -591,6 +591,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	batch, err := app.db.CreateMessageBatch(ctx, db.MessageBatch{
 		UUID:                uuid.NewV4().String(),
 		ExternalID:          "msgbatch_typed_uuid_" + suffix,
+		OrganizationUUID:    ids.OrganizationUUID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
 		CreatedByAPIKeyUUID: ids.APIKeyUUID,
 		APIVariant:          "stable",

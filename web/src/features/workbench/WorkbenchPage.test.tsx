@@ -177,6 +177,28 @@ describe('WorkbenchPage', () => {
     ).toHaveLength(2);
   });
 
+  test('guides Workbench to LLM configuration when no provider exists', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    mockWorkbenchApi({ modelsNotConfigured: true });
+    renderWorkbench();
+
+    const emptyState = await screen.findByTestId('llm-provider-required');
+    expect(emptyState.textContent).toContain('No models configured');
+    expect(emptyState.textContent).toContain('Configure a model to get started.');
+    expect(within(emptyState).getByRole('button', { name: 'Configure models' })).toBeTruthy();
+    expect(within(emptyState).queryByRole('alert')).toBeNull();
+  });
+
+  test('tells non-administrators to contact an administrator when no provider exists', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    mockWorkbenchApi({ modelsNotConfigured: true });
+    renderWorkbench({ auth: authContextValue(defaultAuthAccount('developer')) });
+
+    const emptyState = await screen.findByTestId('llm-provider-required');
+    expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
+    expect(within(emptyState).queryByRole('button', { name: 'Configure models' })).toBeNull();
+  });
+
   test('uses the first prompt message as the visible title for unnamed non-empty prompts', async () => {
     resetTestDom('https://oma.duck.ai/workbench/prompt_1');
     mockWorkbenchApi({
@@ -236,7 +258,6 @@ describe('WorkbenchPage', () => {
     });
     expect(screen.getByRole('combobox', { name: 'Search models…' })).toBeTruthy();
     expect(screen.getByRole('option', { name: /claude-opus-4-8/i })).toBeTruthy();
-    expect(screen.getByText('Powerful, large model for complex challenges')).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole('option', { name: /claude-opus-4-8/i }));
     });
@@ -636,16 +657,17 @@ describe('WorkbenchPage', () => {
       request.url.endsWith('/workbench/evaluations/generate_test_case'),
     );
     expect(Object.keys(generateRequest?.body ?? {})).toEqual([
+      'model_name',
       'system_prompt',
       'messages',
       'custom_chain_of_thought',
       'existing_examples',
     ]);
+    expect(generateRequest?.body?.model_name).toBe('claude-opus-4-8');
     expect(generateRequest?.body?.messages.at(-1)).toEqual({
       role: 'assistant',
       content: [{ type: 'text', text: '' }],
     });
-    expect(generateRequest?.body).not.toHaveProperty('model_name');
     expect(generateRequest?.body).not.toHaveProperty('ideal_output');
     expect(generateRequest?.body).not.toHaveProperty('additional_context');
     await waitFor(() =>
@@ -747,10 +769,11 @@ describe('WorkbenchPage', () => {
     await waitFor(() =>
       expect((screen.getByLabelText('User prompt 1') as HTMLTextAreaElement).value).toBe('Improved prompt.'),
     );
-    const request = api.requests.find((item) => item.url.endsWith('/workbench/generate_prompt'));
+    const request = api.requests.findLast((item) => item.url.endsWith('/workbench/generate_prompt'));
     expect(request?.method).toBe('POST');
-    expect(request?.body?.feedback).toBe('Make it warmer and shorter.');
-    expect(request?.body?.thinking_enabled).toBe(true);
+    expect(request?.body?.model).toBe('claude-opus-4-8');
+    expect(request?.body?.task).toContain('Feedback:\nMake it warmer and shorter.');
+    expect(request?.body?.target_thinking_mode).toBe(true);
   });
 
   test('shows Generate Prompt inside the first empty user message and sends a zero-generation request', async () => {
@@ -766,6 +789,11 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     await screen.findByRole('button', { name: 'Get Code' });
+    fireEvent.click(screen.getByRole('button', { name: 'Model settings' }));
+    const modelPanel = screen.getByLabelText('Model');
+    fireEvent.click(within(modelPanel).getByRole('combobox', { name: 'claude-opus-4-8' }));
+    fireEvent.click(screen.getByRole('option', { name: /claude-sonnet-4-6/i }));
+    fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.getAllByRole('button', { name: 'Generate Prompt' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Add message pair' }));
     expect(screen.getAllByRole('button', { name: 'Generate Prompt' })).toHaveLength(1);
@@ -811,6 +839,7 @@ describe('WorkbenchPage', () => {
     const request = api.requests.find((item) => item.url.endsWith('/workbench/generate_prompt'));
     expect(request?.method).toBe('POST');
     expect(request?.body?.task).toBe('Summarize meeting notes into action items.');
+    expect(request?.body?.model).toBe('claude-sonnet-4-6');
     expect(request?.body?.target_thinking_mode).toBe(true);
     expect(request?.body?.isPromptConversion).toBe(false);
     expect(request?.body?.feedback).toBeUndefined();
@@ -827,7 +856,7 @@ describe('WorkbenchPage', () => {
     expect(api.requests[revisionIndex]?.body?.variables).toEqual(['topic']);
     expect(api.requests[titleIndex]?.body).toEqual({
       message_content: generatedPrompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-sonnet-4-6',
     });
     expect(api.requests[updatePromptIndex]?.body).toEqual({ name: 'Cat haiku' });
   });
@@ -2615,13 +2644,14 @@ function renderWorkbench({
   );
 }
 
-function defaultAuthAccount() {
+function defaultAuthAccount(role = 'admin') {
   return {
     tagged_id: 'user_default',
     uuid: 'user_default',
     email_address: 'admin@example.local',
     full_name: 'Local Admin',
     display_name: 'Local Admin',
+    memberships: [{ role, organization: { uuid: 'org_test', name: 'Claude Platform' } }],
   };
 }
 
@@ -2692,6 +2722,7 @@ function mockWorkbenchApi(
     generatedPromptDelayMs?: number;
     completionErrorMessage?: string;
     prepaidCreditsAmount?: number;
+    modelsNotConfigured?: boolean;
   } = {},
 ) {
   const requests: MockRequest[] = [];
@@ -2732,6 +2763,9 @@ function mockWorkbenchApi(
     }
 
     if (url.endsWith('/models')) {
+      if (options.modelsNotConfigured) {
+        return jsonResponse({ error: 'api_error', message: 'This workspace has no LLM provider configured' }, 503);
+      }
       return jsonResponse({
         default_prompt_settings: {
           model_name: 'claude-opus-4-8',
@@ -2759,7 +2793,7 @@ function mockWorkbenchApi(
     if (url.endsWith('/workspaces/default/prompts') && method === 'GET') {
       if (workspacePromptsFailureCount > 0) {
         workspacePromptsFailureCount -= 1;
-        return jsonResponse({ error: { message: 'Prompt list unavailable.' } }, 503);
+        return jsonResponse({ error: { message: 'Prompt list unavailable.' } }, 500);
       }
       const summaries = options.promptSummaries ?? defaultPromptSummaries();
       return jsonResponse(

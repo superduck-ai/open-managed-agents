@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -66,7 +67,7 @@ func normalizeFixtureEvent(raw json.RawMessage, now time.Time) (json.RawMessage,
 	}
 	payload["id"] = eventID
 	payload["processed_at"] = now.Format(time.RFC3339)
-	return httpapi.MarshalRaw(payload)
+	return jsonx.Encode(payload)
 }
 
 func (h *Handler) fixtureDBSession(principal auth.Principal) db.Session {
@@ -119,11 +120,11 @@ func (h *Handler) fixtureSession(now time.Time, archived bool) sessionResponse {
 }
 
 func (h *Handler) fixtureAgentSnapshot() json.RawMessage {
-	raw, _ := httpapi.MarshalRaw(map[string]any{
+	raw, _ := jsonx.Encode(map[string]any{
 		"id":          h.cfg.SDKFixtures.AgentID,
 		"description": nil,
 		"mcp_servers": []any{},
-		"model":       map[string]any{"id": "claude-opus-4-6", "speed": "standard"},
+		"model":       map[string]any{},
 		"multiagent":  nil,
 		"name":        "fixture agent",
 		"skills":      []any{},
@@ -136,7 +137,7 @@ func (h *Handler) fixtureAgentSnapshot() json.RawMessage {
 }
 
 func (h *Handler) fixtureResource(now time.Time) json.RawMessage {
-	raw, _ := httpapi.MarshalRaw(map[string]any{
+	raw, _ := jsonx.Encode(map[string]any{
 		"id":         h.cfg.SDKFixtures.SessionResourceID,
 		"created_at": httpapi.FormatTime(now),
 		"file_id":    "file_011CNha8iCJcU1wXNR6q4V8w",

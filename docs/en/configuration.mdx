@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-description: "Configure the OMA server, storage, upstream models, sandboxes, and security keys."
+description: "Configure the OMA server, storage, sandboxes, and security keys."
 ---
 
 OMA uses a strictly validated YAML configuration. The service searches upward for `config/config.yaml` until it reaches `go.mod`, or you can select a file with `CONFIG_FILE`.
@@ -11,7 +11,7 @@ OMA uses a strictly validated YAML configuration. The service searches upward fo
 Code defaults < YAML configuration
 ```
 
-Business environment variables do not override YAML. `CONFIG_FILE` only selects a file. Unknown fields, misspelled names, and invalid enum values prevent startup.
+Business environment variables do not override YAML. `CONFIG_FILE` only selects a file. Unknown fields, misspelled names, and invalid enum values prevent startup. Process YAML no longer includes `anthropic_upstream`; upstream credentials come from workspace Providers.
 
 ## Minimal development configuration
 
@@ -37,10 +37,9 @@ storage:
     secret_access_key: minioadmin
     force_path_style: true
 
-anthropic_upstream:
-  base_url: https://model-provider.example.com
-  api_key: ""
 ```
+
+LLM Providers are workspace data, not process configuration. Add one or more Providers from **LLM models** in the console after startup.
 
 ## Main configuration groups
 
@@ -50,9 +49,6 @@ anthropic_upstream:
   </Accordion>
   <Accordion title="storage">
     Configure S3-compatible storage, the bucket, capacity limits, and path-style access. Files, skills, and batch results depend on this storage.
-  </Accordion>
-  <Accordion title="anthropic_upstream">
-    Configure the upstream model base URL, API key, and optional model mappings. OMA forwards model requests to this service.
   </Accordion>
   <Accordion title="e2b and environment_runner">
     Configure sandbox APIs, templates, timeouts, concurrency, and agent runtime paths.

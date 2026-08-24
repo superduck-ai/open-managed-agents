@@ -6,8 +6,30 @@ import (
 	"testing"
 )
 
+func TestMigrationVersionsAreUnique(t *testing.T) {
+	entries, err := fs.ReadDir(embeddedMigrations, "migrations")
+	if err != nil {
+		t.Fatalf("read migrations: %v", err)
+	}
+
+	filesByVersion := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		separator := strings.IndexByte(name, '_')
+		if entry.IsDir() || separator < 1 || !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+
+		version := name[:separator]
+		if existing, found := filesByVersion[version]; found {
+			t.Fatalf("migration version %s is used by both %s and %s", version, existing, name)
+		}
+		filesByVersion[version] = name
+	}
+}
+
 func TestRemoveMCPServerArchivingMigrationKeepsReversibleSchemaChange(t *testing.T) {
-	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00051_remove_mcp_server_archiving.sql")
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00052_remove_mcp_server_archiving.sql")
 	if err != nil {
 		t.Fatalf("read MCP Server archiving removal migration: %v", err)
 	}

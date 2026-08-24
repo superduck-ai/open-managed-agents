@@ -254,7 +254,7 @@ func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCr
 	if err := validateSecretName(secretName); err != nil {
 		return credentialAuthState{}, err
 	}
-	secretValue, err := requireNonEmptyString(input.SecretValue, "auth.secret_value")
+	secretValue, err := requireNonBlankVerbatim(input.SecretValue, "auth.secret_value")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
@@ -420,7 +420,7 @@ func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSe
 		return credentialAuthState{}, errors.New("auth.secret_name is immutable")
 	}
 	if input.SecretValue != nil {
-		secretValue, err := requireNonEmptyString(*input.SecretValue, "auth.secret_value")
+		secretValue, err := requireNonBlankVerbatim(*input.SecretValue, "auth.secret_value")
 		if err != nil {
 			return credentialAuthState{}, err
 		}

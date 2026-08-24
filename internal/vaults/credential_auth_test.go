@@ -240,3 +240,48 @@ func TestNormalizeCredentialAuthForUpdatePreservesMCPOAuthRefresh(t *testing.T) 
 		t.Fatalf("unexpected token endpoint auth secret: %+v", secret.Refresh.TokenEndpointAuth)
 	}
 }
+
+func TestNormalizeEnvironmentVariablePreservesSecretValueWhitespace(t *testing.T) {
+	t.Parallel()
+
+	const createValue = "  line-one\nline-two\n"
+	createState, err := normalizeCredentialAuthForCreate(json.RawMessage(`{
+		"type":"environment_variable",
+		"secret_name":" API_KEY ",
+		"secret_value":"  line-one\nline-two\n",
+		"networking":{"type":"unrestricted"}
+	}`))
+	if err != nil {
+		t.Fatalf("normalize create: %v", err)
+	}
+	createSecret, err := decodeEnvironmentVariableCredentialSecret(createState.SecretPayload)
+	if err != nil {
+		t.Fatalf("decode create secret: %v", err)
+	}
+	if createSecret.SecretValue != createValue {
+		t.Fatalf("create secret_value = %q, want verbatim %q", createSecret.SecretValue, createValue)
+	}
+	if createState.Key != "API_KEY" {
+		t.Fatalf("create credential key = %q, want trimmed secret_name", createState.Key)
+	}
+
+	const updateValue = "  rotated\n"
+	updateState, err := normalizeCredentialAuthForUpdate(db.VaultCredential{
+		AuthType:      "environment_variable",
+		CredentialKey: "API_KEY",
+		Auth:          json.RawMessage(`{"type":"environment_variable","secret_name":"API_KEY","networking":{"type":"unrestricted"}}`),
+	}, []byte(`{"type":"environment_variable","secret_value":"old"}`), json.RawMessage(`{
+		"type":"environment_variable",
+		"secret_value":"  rotated\n"
+	}`))
+	if err != nil {
+		t.Fatalf("normalize update: %v", err)
+	}
+	updateSecret, err := decodeEnvironmentVariableCredentialSecret(updateState.SecretPayload)
+	if err != nil {
+		t.Fatalf("decode update secret: %v", err)
+	}
+	if updateSecret.SecretValue != updateValue {
+		t.Fatalf("update secret_value = %q, want verbatim %q", updateSecret.SecretValue, updateValue)
+	}
+}

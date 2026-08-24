@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"io/fs"
 	"os"
 	"strings"
@@ -159,6 +158,140 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
 }
 
+func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := context.Background()
+	standardDB := newIsolatedMigrationTestDatabase(t, ctx, databaseURL)
+	provider := newMigrationTestProvider(t, standardDB)
+	if _, err := provider.UpTo(ctx, 48); err != nil {
+		t.Fatalf("migrate payload fixture database to 48: %v", err)
+	}
+	if _, err := standardDB.ExecContext(ctx, sessionFileOwnershipMigrationFixtureSQL); err != nil {
+		t.Fatalf("seed payload migration base fixture: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 52); err != nil {
+		t.Fatalf("migrate payload fixture database to 52: %v", err)
+	}
+	if _, err := standardDB.ExecContext(ctx, sessionResourcePayloadMigrationFixtureSQL); err != nil {
+		t.Fatalf("seed explicit Resource payload fixture: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{mount_path}', '"/broken/input.txt"')
+		where external_id = 'sesrsc_input_ownership'
+	`); err != nil {
+		t.Fatalf("break referenced File payload path: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 53); err == nil {
+		t.Fatal("payload removal migration accepted an inconsistent referenced File payload")
+	}
+	assertMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	assertMigrationColumnExists(t, ctx, standardDB, "mount_path", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{mount_path}', '"/uploads/input.txt"')
+		where external_id = 'sesrsc_input_ownership'
+	`); err != nil {
+		t.Fatalf("restore referenced File payload path: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{memory_store_id}', '"mem_missing"')
+		where external_id = 'sesrsc_memory_payload'
+	`); err != nil {
+		t.Fatalf("break Memory Store payload reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 53); err == nil {
+		t.Fatal("payload removal migration accepted a missing Memory Store reference")
+	}
+	assertMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	assertMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{memory_store_id}', '"mem_payload"')
+		where external_id = 'sesrsc_memory_payload'
+	`); err != nil {
+		t.Fatalf("restore Memory Store payload reference: %v", err)
+	}
+
+	if _, err := provider.UpTo(ctx, 53); err != nil {
+		t.Fatalf("migrate payload fixture database to 53: %v", err)
+	}
+	assertMigrationColumnExists(t, ctx, standardDB, "payload", false)
+	assertMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", true)
+
+	var repositoryURL, repositoryMountPath, memoryStoreUUID, memoryAccess string
+	var inputMountPath, outputMountPath string
+	var skillMountPath *string
+	if err := standardDB.QueryRowContext(ctx, `
+		select github_repository_url, mount_path
+		from session_resources
+		where external_id = 'sesrsc_github_payload'
+	`).Scan(&repositoryURL, &repositoryMountPath); err != nil {
+		t.Fatalf("load migrated GitHub Repository fields: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select memory_store_uuid, memory_access
+		from session_resources
+		where external_id = 'sesrsc_memory_payload'
+	`).Scan(&memoryStoreUUID, &memoryAccess); err != nil {
+		t.Fatalf("load migrated Memory Store fields: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select
+			max(mount_path) filter (where external_id = 'sesrsc_input_ownership'),
+			max(mount_path) filter (where external_id = 'sesrsc_output_ownership'),
+			max(mount_path) filter (where external_id = 'sesrsc_skill_ownership')
+		from session_resources
+	`).Scan(&inputMountPath, &outputMountPath, &skillMountPath); err != nil {
+		t.Fatalf("load migrated File mount paths: %v", err)
+	}
+	if repositoryURL != "https://github.com/example/repository" || repositoryMountPath != "/workspace/repository" {
+		t.Fatalf("migrated GitHub fields = (%q, %q)", repositoryURL, repositoryMountPath)
+	}
+	if memoryStoreUUID != "70000000-0000-0000-0000-000000000001" || memoryAccess != "read_write" {
+		t.Fatalf("migrated Memory Store fields = (%q, %q)", memoryStoreUUID, memoryAccess)
+	}
+	if inputMountPath != "/uploads/input.txt" || outputMountPath != "/outputs/output.txt" || skillMountPath != nil {
+		t.Fatalf("migrated File mount paths = (%q, %q, %v)", inputMountPath, outputMountPath, skillMountPath)
+	}
+
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("reverse payload removal migration: %v", err)
+	}
+	assertMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	var restoredRepositoryType, restoredMemoryStoreID, restoredFileMountPath string
+	if err := standardDB.QueryRowContext(ctx, `
+		select payload->>'type' from session_resources
+		where external_id = 'sesrsc_github_payload'
+	`).Scan(&restoredRepositoryType); err != nil {
+		t.Fatalf("load restored GitHub payload: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select payload->>'memory_store_id' from session_resources
+		where external_id = 'sesrsc_memory_payload'
+	`).Scan(&restoredMemoryStoreID); err != nil {
+		t.Fatalf("load restored Memory Store payload: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select payload->>'mount_path' from session_resources
+		where external_id = 'sesrsc_input_ownership'
+	`).Scan(&restoredFileMountPath); err != nil {
+		t.Fatalf("load restored File payload: %v", err)
+	}
+	if restoredRepositoryType != "github_repository" ||
+		restoredMemoryStoreID != "mem_payload" ||
+		restoredFileMountPath != "/uploads/input.txt" {
+		t.Fatalf("restored payload fields = (%q, %q, %q)", restoredRepositoryType, restoredMemoryStoreID, restoredFileMountPath)
+	}
+}
+
 func newIsolatedMigrationTestDatabase(t *testing.T, ctx context.Context, databaseURL string) *sql.DB {
 	t.Helper()
 	adminPool, err := pgxpool.New(ctx, databaseURL)
@@ -282,6 +415,44 @@ const sessionFileOwnershipMigrationFixtureSQL = `
 		 '40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
 		 'skill_archive', null, '/skills/demo', '/skills',
 		 '60000000-0000-0000-0000-000000000003');
+`
+
+const sessionResourcePayloadMigrationFixtureSQL = `
+	insert into memory_stores (
+		uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+		name, description, metadata, created_at, updated_at
+	)
+	values (
+		'70000000-0000-0000-0000-000000000001', 'mem_payload',
+		'10000000-0000-0000-0000-000000000001',
+		'20000000-0000-0000-0000-000000000001',
+		'30000000-0000-0000-0000-000000000001',
+		'payload memory', '', '{}', now(), now()
+	);
+
+	insert into session_resources (
+		uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+		session_external_id, resource_type, payload, secret_payload
+	)
+	values
+		(
+			'50000000-0000-0000-0000-000000000010', 'sesrsc_github_payload',
+			'10000000-0000-0000-0000-000000000001',
+			'20000000-0000-0000-0000-000000000001',
+			'40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+			'github_repository',
+			'{"id":"sesrsc_github_payload","type":"github_repository","url":"https://github.com/example/repository","mount_path":"/workspace/repository","checkout":"main"}',
+			'{"authorization_token":"secret"}'
+		),
+		(
+			'50000000-0000-0000-0000-000000000011', 'sesrsc_memory_payload',
+			'10000000-0000-0000-0000-000000000001',
+			'20000000-0000-0000-0000-000000000001',
+			'40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+			'memory_store',
+			'{"id":"sesrsc_memory_payload","type":"memory_store","memory_store_id":"mem_payload","access":"read_write","mount_path":"/workspace/memory"}',
+			null
+		);
 `
 
 const migrationBackfillFixtureSQL = `
@@ -615,8 +786,11 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 		WorkspaceUUID:     workspaceUUID,
 		SessionExternalID: "sesn_migration_184",
 		ResourceType:      "github_repository",
-		Payload:           json.RawMessage(`{"repository":"example/repository"}`),
-		CreatedAt:         createdAt,
+		GitHubRepository: &SessionResourceGitHubRepository{
+			URL:       "https://github.com/example/repository",
+			MountPath: "/workspace/repository",
+		},
+		CreatedAt: createdAt,
 	})
 	if err != nil {
 		t.Fatalf("create Session Resource after UUID migration: %v", err)

@@ -139,7 +139,9 @@ archive，也不会触发对象回收。
 `resource_type='skill_archive'` 的内部 Resource。迁移 `00048_snapshot_session_skills.sql`
 随后从 catalog version 创建 ZIP File 快照、回填 Resource 的通用 `file_uuid`，并删除 Skill
 Version UUID。迁移 `00052_add_session_resource_file_ownership.sql` 保持 Skill Archive ownership
-为 `NULL`，并拒绝将 Skill File 作为 referenced Input Source。Resource + File 成为 Session 内唯一的 Skill 快照事实；schema 不创建
+为 `NULL`，并拒绝将 Skill File 作为 referenced Input Source。迁移 `00053_remove_session_resource_payload.sql`
+删除通用 Resource payload 后，Skill Archive 仍不携带 GitHub Repository、Memory Store 或 `mount_path`
+显式配置，也不会因此进入普通 Session Resource 响应。Resource + File 成为 Session 内唯一的 Skill 快照事实；schema 不创建
 PostgreSQL 外键。
 
 ## 验收重点

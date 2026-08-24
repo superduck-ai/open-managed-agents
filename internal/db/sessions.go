@@ -77,11 +77,40 @@ type SessionResource struct {
 	SessionUUID       string
 	SessionExternalID string
 	ResourceType      string
-	Payload           json.RawMessage
 	SecretPayload     json.RawMessage
+	File              *SessionResourceFileReference
+	GitHubRepository  *SessionResourceGitHubRepository
+	MemoryStore       *SessionResourceMemoryStore
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	DeletedAt         *time.Time
+}
+
+// SessionResourceFileReference 是公开 File Resource 从显式文件引用投影出的字段。
+// 它不承载对象生命周期策略，ownership 仅用于验证投影来源与公开路径类别。
+type SessionResourceFileReference struct {
+	FileID        string
+	NamespacePath string
+	MountPath     string
+	Ownership     SessionResourceFileOwnership
+}
+
+// SessionResourceGitHubRepository 是 GitHub Repository Resource 的显式配置。
+type SessionResourceGitHubRepository struct {
+	URL       string
+	MountPath string
+	Checkout  json.RawMessage
+}
+
+// SessionResourceMemoryStore 是 Memory Store Resource 的显式配置与稳定引用。
+type SessionResourceMemoryStore struct {
+	UUID         string
+	ExternalID   string
+	Access       *string
+	Description  *string
+	Instructions *string
+	MountPath    *string
+	Name         *string
 }
 
 type SessionEvent struct {
@@ -170,10 +199,12 @@ type CreateSessionResourceInput struct {
 }
 
 // SessionFileMount is the already-normalized database binding for one file
-// resource. Path is the full path inside the Session Filestore namespace.
+// resource. MountPath is the public API path; Path is the full path inside the
+// Session Filestore namespace.
 type SessionFileMount struct {
 	ResourceExternalID string
 	FileExternalID     string
+	MountPath          string
 	Path               string
 }
 
@@ -397,7 +428,7 @@ func (d *DB) CreateSessionResource(
 	ctx context.Context,
 	input CreateSessionResourceInput,
 ) (SessionResource, error) {
-	resource := input.Resource
+	resource := sessionResourceWithFileMount(input.Resource, input.FileMount)
 	var created SessionResource
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
@@ -431,7 +462,7 @@ func (d *DB) CreateSessionResource(
 		if txErr != nil {
 			return txErr
 		}
-		_, txErr = bindSessionFileResourceWithLockedFilesystemTx(ctx, executor, session, filesystem, created, input.FileMount)
+		created, txErr = bindSessionFileResourceWithLockedFilesystemTx(ctx, executor, session, filesystem, created, input.FileMount)
 		return txErr
 	})
 	return created, err
@@ -449,13 +480,12 @@ func (d *DB) ListSessionResources(ctx context.Context, workspaceUUID string, ses
 	return sessionResourcesFromRows(rows), err
 }
 
-func (d *DB) UpdateSessionResource(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string, payload, secretPayload json.RawMessage) (SessionResource, error) {
+func (d *DB) UpdateSessionGitHubRepositorySecret(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string, secretPayload json.RawMessage) (SessionResource, error) {
 	mapper := NewSessionResourceMapper(d.mapperDB)
-	row, err := mapper.Update(ctx, sessionResourceUpdateParams{
+	row, err := mapper.UpdateGitHubRepositorySecret(ctx, sessionResourceUpdateParams{
 		WorkspaceUUID:      workspaceUUID,
 		SessionExternalID:  sessionExternalID,
 		ResourceExternalID: resourceExternalID,
-		Payload:            agentJSONArg(payload),
 		SecretPayload:      agentJSONArg(secretPayload),
 	})
 	return row.resource(), mapNoRows(err)

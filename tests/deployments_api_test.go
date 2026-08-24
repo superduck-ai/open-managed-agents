@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 type deploymentAPIResponse struct {
@@ -301,7 +303,13 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err != nil || len(resources) != 1 {
 			t.Fatalf("deployment run Session resources = %d, error = %v", len(resources), err)
 		}
-		assertSessionFileReference(t, app, *run.SessionID, resources[0].Payload, file.ID, "/uploads/"+file.Filename)
+		if resources[0].File == nil ||
+			resources[0].File.FileID != file.ID ||
+			resources[0].File.NamespacePath != "/uploads/"+file.Filename ||
+			resources[0].File.MountPath != "/uploads/"+file.Filename ||
+			resources[0].File.Ownership != db.SessionResourceFileOwnershipReferenced {
+			t.Fatalf("deployment run File Resource = %+v", resources[0])
+		}
 
 		preserved := updateDeployment(t, app, created.ID, `{"name":"updated name only"}`)
 		if preserved.Description != "preserve me" {
@@ -446,7 +454,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("description = %q, want empty string", created.Description)
 		}
 		assertRawNotContains(t, created.Resources, `"source"`)
-		assertRawContains(t, created.Resources, `"mount_path":"/workspace/deployment.txt"`)
+		assertRawContains(t, created.Resources, `"mount_path":"/uploads/workspace/deployment.txt"`)
 		run := runDeployment(t, app, created.ID)
 		if run.SessionID == nil || *run.SessionID == "" {
 			t.Fatalf("deployment run Session ID = nil: %+v", run)

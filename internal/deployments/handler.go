@@ -1406,7 +1406,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	if strings.TrimSpace(value) == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return "", fmt.Errorf("%s must be non-empty", name)
 	}
 	return value, nil

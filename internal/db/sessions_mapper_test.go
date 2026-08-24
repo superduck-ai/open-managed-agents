@@ -29,6 +29,8 @@ func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
 
 func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
+	githubURL := "https://github.com/example/repository"
+	mountPath := "/workspace/repository"
 	sessionParams := sessionWriteParams{
 		UUID: "session-uuid", ExternalID: "ses_test", OrganizationUUID: "organization-uuid",
 		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: "api-key-uuid",
@@ -46,8 +48,8 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	}
 	resourceParams := sessionResourceWriteParams{
 		UUID: "resource-uuid", ExternalID: "resource_test", OrganizationUUID: "organization-uuid",
-		WorkspaceUUID: "workspace-uuid", SessionExternalID: "ses_test", ResourceType: "file",
-		Payload: []byte(`{"file_id":"file_test"}`), SecretPayload: []byte(`{}`), CreatedAt: now,
+		WorkspaceUUID: "workspace-uuid", SessionExternalID: "ses_test", ResourceType: "github_repository",
+		GitHubURL: &githubURL, MountPath: &mountPath, SecretPayload: []byte(`{}`), CreatedAt: now,
 	}
 	eventParams := sessionEventWriteParams{
 		UUID: "event-uuid", ExternalID: "event_test", OrganizationUUID: "organization-uuid",
@@ -93,10 +95,13 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 			wantID:    "SessionResourceMapper.Insert", wantKind: yourbatis.StatementInsert,
 			wantArgumentNames: []string{
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
-				"params.SessionExternalID", "params.ResourceType", "params.Payload", "params.SecretPayload",
-				"params.CreatedAt", "params.CreatedAt", "params.WorkspaceUUID", "params.SessionExternalID",
+				"params.SessionExternalID", "params.ResourceType", "params.SecretPayload",
+				"params.GitHubURL", "params.GitHubCheckout", "params.MountPath",
+				"params.MemoryAccess", "params.MemoryDescription", "params.MemoryInstructions", "params.MemoryName",
+				"params.CreatedAt", "params.CreatedAt", "params.MemoryStoreID",
+				"params.WorkspaceUUID", "params.SessionExternalID", "params.ResourceType",
 			},
-			wantSensitiveArgumentNames: []string{"params.Payload", "params.SecretPayload"},
+			wantSensitiveArgumentNames: []string{"params.SecretPayload"},
 			wantSQLFragments:           []string{"INSERT INTO session_resources", "FROM sessions s", "RETURNING"},
 		},
 		{

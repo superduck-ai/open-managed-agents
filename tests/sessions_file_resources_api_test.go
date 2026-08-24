@@ -285,7 +285,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if len(created.Resources) != 1 {
 			t.Fatalf("created resources = %d, want 1", len(created.Resources))
 		}
-		assertFileResourcePayload(t, created.Resources[0], file.ID, "/uploads/"+file.Filename)
+		assertFileResourcePayload(t, created.Resources[0], file.ID, "/mnt/session/uploads/"+file.Filename)
 		createdResourceID := assertSessionFileReference(
 			t,
 			app,
@@ -342,7 +342,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		}
 		var added json.RawMessage
 		decodeJSON(t, resp.Body, &added)
-		assertFileResourcePayload(t, added, file.ID, "/uploads/workspace/data.csv")
+		assertFileResourcePayload(t, added, file.ID, "/mnt/session/uploads/workspace/data.csv")
 		addedResourceID := assertSessionFileReference(
 			t,
 			app,
@@ -1043,7 +1043,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	`, entry.Node.UUID); err != nil {
 		t.Fatalf("restore owned Resource after historical owner attach check: %v", err)
 	}
-	hiddenResource := app.do(
+	outputResource := app.do(
 		t,
 		http.MethodGet,
 		"/v1/sessions/"+session.ID+"/resources/"+entry.Node.ExternalID+"?beta=true",
@@ -1052,7 +1052,55 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		true,
 		"",
 	)
-	assertError(t, hiddenResource, http.StatusNotFound, "not_found_error")
+	defer outputResource.Body.Close()
+	if outputResource.StatusCode != http.StatusOK {
+		t.Fatalf("retrieve Output Resource status = %d: %s", outputResource.StatusCode, readAll(t, outputResource.Body))
+	}
+	var outputResourcePayload json.RawMessage
+	decodeJSON(t, outputResource.Body, &outputResourcePayload)
+	assertFileResourcePayload(t, outputResourcePayload, outputFileID, "/mnt/user-data/outputs/reports/result.txt")
+
+	sessionResponse := retrieveSession(t, app, session.ID, defaultTestKey)
+	assertResourceCollectionContainsFile(t, sessionResponse.Resources, outputFileID, "/mnt/user-data/outputs/reports/result.txt")
+	resourceList := app.do(
+		t,
+		http.MethodGet,
+		"/v1/sessions/"+session.ID+"/resources?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	defer resourceList.Body.Close()
+	if resourceList.StatusCode != http.StatusOK {
+		t.Fatalf("list Session Resources status = %d: %s", resourceList.StatusCode, readAll(t, resourceList.Body))
+	}
+	var listedResources struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	decodeJSON(t, resourceList.Body, &listedResources)
+	assertResourceCollectionContainsFile(t, listedResources.Data, outputFileID, "/mnt/user-data/outputs/reports/result.txt")
+
+	rejectedOutputUpdate := app.do(
+		t,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/resources/"+entry.Node.ExternalID+"?beta=true",
+		strings.NewReader(`{"authorization_token":"not-applicable"}`),
+		defaultTestKey,
+		true,
+		"application/json",
+	)
+	assertError(t, rejectedOutputUpdate, http.StatusBadRequest, "invalid_request_error")
+	rejectedOutputDelete := app.do(
+		t,
+		http.MethodDelete,
+		"/v1/sessions/"+session.ID+"/resources/"+entry.Node.ExternalID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	assertError(t, rejectedOutputDelete, http.StatusNotFound, "not_found_error")
 	if allFiles := listFiles(t, app, ""); !containsFile(allFiles.Data, outputFileID) {
 		t.Fatalf("unscoped Files list does not contain active Output %q: %+v", outputFileID, allFiles.Data)
 	}
@@ -1064,18 +1112,6 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	if len(files) != 1 || files[0].ExternalID != outputFileID {
 		t.Fatalf("repeated output listing = %+v, want stable file ID %q", files, outputFileID)
 	}
-	if _, err := app.pool.Exec(context.Background(), `
-		update session_resources
-		set payload = jsonb_build_object(
-			'id', external_id,
-			'type', 'file',
-			'file_id', cast($2 as text)
-		)
-		where uuid = $1 and file_ownership = 'owned'
-	`, entry.Node.UUID, outputFileID); err != nil {
-		t.Fatalf("change owned Resource payload without changing ownership: %v", err)
-	}
-
 	replacement := workspaceStorageBlob(9, nil)
 	replacement.Downloadable = true
 	replaced, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
@@ -1095,26 +1131,19 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		t.Fatalf("overwritten Resource created_at = %s, want stable %s", replaced.Node.CreatedAt, outputResourceCreatedAt)
 	}
 	var persistedOwnership string
-	var payloadPresent bool
 	if err := app.pool.QueryRow(context.Background(), `
-		select file_ownership, payload is not null
+		select file_ownership
 		from session_resources
 		where uuid = $1
-	`, entry.Node.UUID).Scan(&persistedOwnership, &payloadPresent); err != nil {
-		t.Fatalf("load ownership after payload change and overwrite: %v", err)
+	`, entry.Node.UUID).Scan(&persistedOwnership); err != nil {
+		t.Fatalf("load ownership after overwrite: %v", err)
 	}
-	if persistedOwnership != string(db.SessionResourceFileOwnershipOwned) || !payloadPresent || !replaced.Node.OwnsFile() {
+	if persistedOwnership != string(db.SessionResourceFileOwnershipOwned) || !replaced.Node.OwnsFile() {
 		t.Fatalf(
-			"owned Resource after payload change = ownership %q payload %t node %+v",
+			"owned Resource after overwrite = ownership %q node %+v",
 			persistedOwnership,
-			payloadPresent,
 			replaced.Node,
 		)
-	}
-	if _, err := app.pool.Exec(context.Background(), `
-		update session_resources set payload = null where uuid = $1
-	`, entry.Node.UUID); err != nil {
-		t.Fatalf("restore internal Output payload: %v", err)
 	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
@@ -1699,6 +1728,28 @@ func assertFileResourcePayload(t *testing.T, raw json.RawMessage, sourceFileID, 
 	if _, ok := fields["source"]; ok {
 		t.Fatalf("file resource contains non-Anthropic source field: %s", raw)
 	}
+}
+
+func assertResourceCollectionContainsFile(
+	t *testing.T,
+	resources []json.RawMessage,
+	fileID string,
+	mountPath string,
+) {
+	t.Helper()
+	for _, resource := range resources {
+		var payload struct {
+			FileID    string `json:"file_id"`
+			MountPath string `json:"mount_path"`
+		}
+		if json.Unmarshal(resource, &payload) == nil && payload.FileID == fileID {
+			if payload.MountPath != mountPath {
+				t.Fatalf("File Resource mount_path = %q, want %q", payload.MountPath, mountPath)
+			}
+			return
+		}
+	}
+	t.Fatalf("resources do not contain File %q at %q: %s", fileID, mountPath, resources)
 }
 
 func assertSessionFileReference(

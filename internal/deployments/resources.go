@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"strconv"
 	"time"
@@ -285,12 +284,6 @@ func (h *Handler) normalizeResource(
 	return resource, nil
 }
 
-type deploymentResourceEnvelope struct {
-	Type      string `json:"type"`
-	FileID    string `json:"file_id"`
-	MountPath string `json:"mount_path"`
-}
-
 func deploymentResourcesResponse(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return json.RawMessage(`[]`), nil
@@ -328,6 +321,12 @@ func deploymentResourcesResponse(raw json.RawMessage) (json.RawMessage, error) {
 	return response, nil
 }
 
+type deploymentResourceEnvelope struct {
+	Type      string `json:"type"`
+	FileID    string `json:"file_id"`
+	MountPath string `json:"mount_path"`
+}
+
 type resourceReferenceError struct {
 	ResourceType string
 	ResourceID   string
@@ -362,24 +361,24 @@ func sessionResourcesFromDeployment(
 	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
 	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
 	for index, configRaw := range configs {
-		var config map[string]any
-		if err := json.Unmarshal(configRaw, &config); err != nil || config == nil {
+		var config deploymentResourcePayload
+		if err := json.Unmarshal(configRaw, &config); err != nil || config.Type == "" {
 			return nil, errors.New("stored resources are invalid")
 		}
-		resourceType, _ := config["type"].(string)
+		resourceType := config.Type
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
 			return nil, err
 		}
 
-		payload := maps.Clone(config)
 		var fileMount *db.SessionFileMount
+		var githubRepository *db.SessionResourceGitHubRepository
+		var memoryStore *db.SessionResourceMemoryStore
 		if resourceType == sessionresource.FileType {
 			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
 			if err != nil {
 				return nil, err
 			}
-			payload = fileSpec.PayloadFields(resourceID)
 			binding, err := fileSpec.SessionFileBinding(resourceID)
 			if err != nil {
 				return nil, err
@@ -388,15 +387,24 @@ func sessionResourcesFromDeployment(
 			fileMount = &db.SessionFileMount{
 				ResourceExternalID: binding.ResourceID,
 				FileExternalID:     binding.FileID,
+				MountPath:          binding.MountPath,
 				Path:               binding.Path,
 			}
+		} else if resourceType == "github_repository" {
+			githubRepository = &db.SessionResourceGitHubRepository{
+				URL:       config.URL,
+				MountPath: config.MountPath,
+				Checkout:  append(json.RawMessage(nil), config.Checkout...),
+			}
+		} else if resourceType == "memory_store" {
+			memoryStore = &db.SessionResourceMemoryStore{
+				ExternalID:   config.MemoryStoreID,
+				Access:       optionalDeploymentResourceString(config.Access),
+				Instructions: config.Instructions,
+				MountPath:    optionalDeploymentResourceString(config.MountPath),
+			}
 		} else {
-			payload["id"] = resourceID
-			payload["type"] = resourceType
-		}
-		payloadRaw, err := httpapi.MarshalRaw(payload)
-		if err != nil {
-			return nil, err
+			return nil, errors.New("stored resource type is invalid")
 		}
 
 		var secretRaw json.RawMessage
@@ -410,8 +418,9 @@ func sessionResourcesFromDeployment(
 				OrganizationUUID: deployment.OrganizationUUID,
 				WorkspaceUUID:    deployment.WorkspaceUUID,
 				ResourceType:     resourceType,
-				Payload:          payloadRaw,
 				SecretPayload:    secretRaw,
+				GitHubRepository: githubRepository,
+				MemoryStore:      memoryStore,
 				CreatedAt:        now,
 				UpdatedAt:        now,
 			},
@@ -422,4 +431,11 @@ func sessionResourcesFromDeployment(
 		return nil, err
 	}
 	return resources, nil
+}
+
+func optionalDeploymentResourceString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

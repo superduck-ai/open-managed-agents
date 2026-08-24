@@ -185,11 +185,11 @@ Session 与 Deployment File resource 的公开合同固定为：
 }
 ```
 
-公开响应不返回内部 Filestore `source` 字段，并统一将 `mount_path` 规范化为 `/uploads` 前缀。为兼容既有请求，边界仍接受省略的 `source` 并在持久化 payload 中补为 `/uploads`，显式传入 `null` 或其他值均拒绝。显式传入 `/workspace/data.csv` 时，公开响应返回 `/uploads/workspace/data.csv`，对应同名 Filestore 路径和 Sandbox 访问路径 `/mnt/session/uploads/workspace/data.csv`；已有数据库记录即使仍保存旧式 `/workspace/data.csv`，序列化时也会补齐前缀。未传 `mount_path` 时，服务端读取 Files API 记录中的原始文件名，公开响应按 Anthropic 示例返回 `/uploads/<filename>`；仅当旧数据缺少文件名时才回退到 `/uploads/<file_id>`。
+公开响应不返回内部 Filestore `source` 字段。为兼容既有请求，File Resource 写入边界仍接受省略的 `source` 并按 `/uploads` 处理，显式传入 `null` 或其他值均拒绝；请求中的 `mount_path` 仍按 `/uploads` namespace 规范化和持久化。Session 创建、列表、详情、更新以及 Session Resource 添加、列表、详情响应则把 namespace 路径映射为 Sandbox 绝对路径：referenced Input 返回 `/mnt/session/uploads/<relative-path>`，`/outputs` owned File 返回 `/mnt/user-data/outputs/<relative-path>`。显式传入 `/workspace/data.csv` 时，数据库 `path` 为 `/uploads/workspace/data.csv`，Session 响应为 `/mnt/session/uploads/workspace/data.csv`；原始请求路径保存在显式 `mount_path` 列。未传 `mount_path` 时，服务端读取 Files API 记录中的原始文件名，仅当旧数据缺少文件名时才回退到 `file_id`。
 
 GitHub Repository 未传 `mount_path` 时使用 `/workspace/<repo-name>`；仓库名从 URL 最后一个路径段派生并去掉 `.git` 后缀，无法解析时回退到 `/workspace/repository`。Session 与 Deployment 共用同一默认值函数。
 
-Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一规范化合同。边界校验拒绝相对路径、根目录、点路径段、空路径段，并限制初始 Session 或 Deployment 最多 500 个 File Resource。数据库在一只 Yourbatis 事务内锁定活动 Session，统计容量后提交公开 payload、`/uploads` path 与 Source File UUID；两个并发请求不能把 499 个文件增加到 501 个。路径占用由同一 namespace lock、目录实体和活动路径唯一索引裁决：与其他 Input Resource 的重复或祖先/后代冲突映射为 `400`，被普通 resource 占用则映射为 `409`。rclone ready 后整个 `/uploads` namespace 已直接可见，不执行逐文件软链接。
+Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一规范化合同。边界校验拒绝相对路径、根目录、点路径段、空路径段，并限制初始 Session 或 Deployment 最多 500 个 File Resource。数据库在一只 Yourbatis 事务内锁定活动 Session，统计容量后提交显式 `mount_path`、`/uploads` path、Source File UUID 与 `referenced` ownership；两个并发请求不能把 499 个文件增加到 501 个。路径占用由同一 namespace lock、目录实体和活动路径唯一索引裁决：与其他 Input Resource 的重复或祖先/后代冲突映射为 `400`，被普通 resource 占用则映射为 `409`。rclone ready 后整个 `/uploads` namespace 已直接可见，不执行逐文件软链接。
 
 运行中新增或删除 File Resource 直接改变同一 Session 的数据库 namespace；已经挂载的 Sandbox 在 rclone metadata cache 刷新后看到变化，`/uploads` 当前固定为 `1s`。FUSE mount 本身不变。API 成功响应表示 Resource 已提交，不需要等待下一次 Sandbox 启动。
 
@@ -198,9 +198,10 @@ Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一�
 File resource 写入时，服务锁定 Session、filesystem 和当前 workspace 中的活动 Source File，然后只更新已经创建的 `session_resources` 行：
 
 - `path` 与 `parent_path` 表示 `/uploads` namespace 位置；
+- `mount_path` 保存请求侧路径；Session API 按 namespace `path` 返回对应的 Sandbox 绝对路径；
 - `file_uuid` 指向 Source File；
 - `file_ownership='referenced'` 表示该节点只引用 Files API 管理的 Source File；
-- `payload` 保留资源合同与内部 `source` 映射；Session API 在序列化 File Resource 时过滤内部 `source`，`payload is not null` 只表达该行属于公开 Resource 查询面。
+- `session_resources` 不再保存通用 `payload`；Session API 从显式列和关联的 File 直接构造响应。
 
 Input attach 不创建新的 `files` 行，不复制 File 元数据或 S3 对象，也不修改存储账本。请求与响应的 `file_id` 都是 Source File ID。同一 Source File 可以多次 attach，每次保留独立 `sesrsc_` 和 path；Attach 实例的身份由 Resource ID 表达，而不是再生成一个 `file_`。
 
@@ -214,18 +215,19 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 
 迁移 `00047_unify_session_resources_and_files.sql` 完成 namespace 的原子切换，迁移
 `00048_snapshot_session_skills.sql` 将 Skill Archive 从 catalog version 投影转换为 Session File 快照，迁移
-`00052_add_session_resource_file_ownership.sql` 为普通 namespace File 增加显式所有权：
+`00052_add_session_resource_file_ownership.sql` 为普通 namespace File 增加显式所有权，迁移
+`00053_remove_session_resource_payload.sql` 将 File、GitHub Repository 与 Memory Store 配置回填到显式列并删除通用 `payload`：
 
 `00036` 至 `00046` 保持与已发布 main 完全一致；Session Resource/File 迁移只追加到其后，不能通过重编号把新 SQL 塞入已经记录在 `goose_db_version` 的版本。这样从 main `00046` 原地升级与空库顺序执行得到相同 schema，也不会因 force-push 后复用版本号而静默跳过 namespace 切换。
 
 - `filestore_filesystems` 继续只负责将 Filestore external ID 解析到唯一 public Session，不把 filesystem UUID 复制到 Resource。
 - `session_resources` 使用 `path`、`parent_path`、`file_uuid`、`file_ownership` 与 `expires_at` 表达 File、Directory 和 Skill Archive 节点；普通 File 的 ownership 必须为 `referenced` 或 `owned`，Directory 与 Skill Archive 必须为 `NULL`。Skill ZIP 的大小、SHA-256、bucket 与 key 与普通文件一样保存在 `files` 行中。
 - `files` 新增 detected MIME、metadata、authorization metadata、tags、MD5、ETag 与 Version ID，保存所有真实文件元数据和对象事实。
-- 不新增 `attached`、`cataloged`、`namespace_role`、`filesystem_uuid` 或 `files.source_file_uuid`。公开 Resource 仍由 `payload is not null` 判断；普通 File 的对象责任由 `file_ownership` 判断；Catalog 角色由 ownership 与固定根路径共同判断。
+- 不新增 `attached`、`cataloged`、`namespace_role`、`filesystem_uuid` 或 `files.source_file_uuid`。公开 File Resource 由 ownership、固定根路径和活动 File 共同判断；GitHub Repository 与 Memory Store 分别由显式配置和稳定 UUID 引用判断；Catalog 角色由 ownership 与固定根路径共同判断。
 - Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace。
 - schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
-迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。`00049` 在回填前验证活动 File 的租户、payload/path、scope、唯一 owner 和 referenced/owned 不相交不变量，冲突时整体失败；通过后将既有公开 Input 回填为 `referenced`、内部普通 File 回填为 `owned`，Directory 与 Skill Archive 保持 `NULL`。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
+迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。`00052` 在回填前验证活动 File 的租户、payload/path、scope、唯一 owner 和 referenced/owned 不相交不变量，冲突时整体失败；通过后将既有公开 Input 回填为 `referenced`、内部普通 File 回填为 `owned`，Directory 与 Skill Archive 保持 `NULL`。`00053` 再验证 File、GitHub Repository、Memory Store 与秘密字段形状，回填显式配置并删除 `payload`。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 
@@ -346,6 +348,8 @@ cursor 是版本化的 Base64URL JSON，包含 filesystem ID、查询目录、`r
 - `/transcripts`、`/tool_results` 与 `/skills` 不进入 Files Catalog。
 
 同一 Source File 多次 attach 时，Catalog 按 `file_uuid` 去重，只返回一个真实 File；排序位置取该 File 最新的活动 Catalog Resource，再按 Resource 的 `(created_at, id)` 分页。Resource 列表仍保留每次 Attach，因此调用方必须用各自的 `sesrsc_` 删除指定挂载。Output move 只修改 Resource path，File UUID 与 `file_` 保持稳定；移出 `/outputs` 后立即退出 Catalog，移回后恢复同一 File ID。Worker 状态上报不承担刷新职责，成功提交的 Output 在 Session 处于任意运行状态时都可立即列出。
+
+Session 创建、列表、详情、更新响应与 Session Resource 添加、列表、单项读取使用同一显式投影：除 referenced Input 外，也返回活动且未过期的 `/outputs` owned File。响应继续使用 Resource 的 `sesrsc_` 与真实 File 的 `file_`，但 `mount_path` 使用 Sandbox 绝对路径；Input 为 `/mnt/session/uploads/...`，Output 为 `/mnt/user-data/outputs/...`。Directory、Skill Archive、移出固定根的 owned File 与已过期节点不进入公开 Resource 响应。Output 仅新增读取可见性；Sessions Resource API 的 update/delete 仍不获得 Filestore mutation 权限，覆盖、移动和删除继续走 Filestore 接口及 owned 校验。
 
 Files metadata/download 只解析真实 File ID。Input 因而沿用 Source File 的元数据、内容与下载策略。Files delete 在删除真实 File 前检查活动 Resource 引用；删除 Attach 只能使用 Sessions Resource API。
 

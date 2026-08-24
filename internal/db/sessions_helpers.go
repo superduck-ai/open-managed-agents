@@ -59,13 +59,13 @@ func insertSessionTx(
 
 	resources := make([]SessionResource, 0, len(input.Resources))
 	for _, resourceInput := range input.Resources {
-		resource := resourceInput.Resource
+		resource := sessionResourceWithFileMount(resourceInput.Resource, resourceInput.FileMount)
 		resource.SessionExternalID = session.ExternalID
 		created, createErr := createSessionResource(ctx, executor, resource)
 		if createErr != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, createErr
 		}
-		if _, createErr = bindSessionFileResourceWithLockedFilesystemTx(
+		if created, createErr = bindSessionFileResourceWithLockedFilesystemTx(
 			ctx,
 			executor,
 			session,
@@ -95,7 +95,13 @@ func createSessionResource(
 	if err != nil {
 		return SessionResource{}, mapNoRows(err)
 	}
-	return row.resource(), nil
+	created := row.resource()
+	if resource.MemoryStore != nil && row.MemoryStoreUUID != nil {
+		memoryStore := *resource.MemoryStore
+		memoryStore.UUID = *row.MemoryStoreUUID
+		created.MemoryStore = &memoryStore
+	}
+	return created, nil
 }
 
 func insertSessionEventsTx(
@@ -184,12 +190,42 @@ func sessionThreadWriteParameters(thread SessionThread) sessionThreadWriteParams
 }
 
 func sessionResourceWriteParameters(resource SessionResource) sessionResourceWriteParams {
-	return sessionResourceWriteParams{
+	params := sessionResourceWriteParams{
 		UUID: resource.UUID, ExternalID: resource.ExternalID, OrganizationUUID: resource.OrganizationUUID,
 		WorkspaceUUID: resource.WorkspaceUUID, SessionExternalID: resource.SessionExternalID,
-		ResourceType: resource.ResourceType, Payload: agentJSONArg(resource.Payload),
-		SecretPayload: agentJSONArg(resource.SecretPayload), CreatedAt: resource.CreatedAt,
+		ResourceType: resource.ResourceType, SecretPayload: agentJSONArg(resource.SecretPayload),
+		CreatedAt: resource.CreatedAt,
 	}
+	if resource.File != nil {
+		params.MountPath = &resource.File.MountPath
+	}
+	if resource.GitHubRepository != nil {
+		params.GitHubURL = &resource.GitHubRepository.URL
+		params.GitHubCheckout = agentJSONArg(resource.GitHubRepository.Checkout)
+		params.MountPath = &resource.GitHubRepository.MountPath
+	}
+	if resource.MemoryStore != nil {
+		params.MemoryStoreID = &resource.MemoryStore.ExternalID
+		params.MemoryAccess = resource.MemoryStore.Access
+		params.MemoryDescription = resource.MemoryStore.Description
+		params.MemoryInstructions = resource.MemoryStore.Instructions
+		params.MountPath = resource.MemoryStore.MountPath
+		params.MemoryName = resource.MemoryStore.Name
+	}
+	return params
+}
+
+func sessionResourceWithFileMount(resource SessionResource, mount *SessionFileMount) SessionResource {
+	if mount == nil {
+		return resource
+	}
+	resource.File = &SessionResourceFileReference{
+		FileID:        mount.FileExternalID,
+		NamespacePath: mount.Path,
+		MountPath:     mount.MountPath,
+		Ownership:     SessionResourceFileOwnershipReferenced,
+	}
+	return resource
 }
 
 func sessionEventWriteParameters(event SessionEvent) sessionEventWriteParams {
@@ -280,12 +316,39 @@ func (r sessionThreadRow) thread() SessionThread {
 }
 
 func (r sessionResourceRow) resource() SessionResource {
-	return SessionResource{
+	resource := SessionResource{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
-		ResourceType: r.ResourceType, Payload: bytes.Clone(r.Payload), SecretPayload: bytes.Clone(r.SecretPayload),
+		ResourceType: r.ResourceType, SecretPayload: bytes.Clone(r.SecretPayload),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, DeletedAt: r.DeletedAt,
 	}
+	if r.FileExternalID != nil && r.FilePath != nil && r.FileOwnership != nil && r.MountPath != nil {
+		resource.File = &SessionResourceFileReference{
+			FileID:        *r.FileExternalID,
+			NamespacePath: *r.FilePath,
+			MountPath:     *r.MountPath,
+			Ownership:     SessionResourceFileOwnership(*r.FileOwnership),
+		}
+	}
+	if r.GitHubURL != nil && r.MountPath != nil {
+		resource.GitHubRepository = &SessionResourceGitHubRepository{
+			URL:       *r.GitHubURL,
+			MountPath: *r.MountPath,
+			Checkout:  bytes.Clone(r.GitHubCheckout),
+		}
+	}
+	if r.MemoryStoreUUID != nil && r.MemoryStoreID != nil {
+		resource.MemoryStore = &SessionResourceMemoryStore{
+			UUID:         *r.MemoryStoreUUID,
+			ExternalID:   *r.MemoryStoreID,
+			Access:       r.MemoryAccess,
+			Description:  r.MemoryDescription,
+			Instructions: r.MemoryInstructions,
+			MountPath:    r.MountPath,
+			Name:         r.MemoryName,
+		}
+	}
+	return resource
 }
 
 func (r sessionEventRow) event() SessionEvent {

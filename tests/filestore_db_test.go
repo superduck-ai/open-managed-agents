@@ -133,8 +133,6 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 				OrganizationUUID: organizationUUID,
 				WorkspaceUUID:    workspaceUUID,
 				ResourceType:     db.SessionResourceTypeFile,
-				Payload:          json.RawMessage(`{}`),
-				SecretPayload:    json.RawMessage(`{}`),
 				CreatedAt:        input.Session.CreatedAt,
 				UpdatedAt:        input.Session.CreatedAt,
 			},
@@ -829,16 +827,6 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 			entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID,
 			entryAPIKeyUUID, entrySessionUUID, entryCodeSessionUUID)
 	}
-	if _, err := app.pool.Exec(context.Background(), `
-		update session_resources
-		set payload = jsonb_build_object('type', 'file', 'visibility_test', true)
-		where workspace_uuid = $1 and session_uuid = $2
-			and path = '/results/output.txt'
-			and file_ownership = 'owned'
-	`, workspaceUUID, filesystem.SessionUUID); err != nil {
-		t.Fatalf("make owned cleanup Resource publicly visible: %v", err)
-	}
-
 	if _, err := app.db.DeleteSession(context.Background(), workspaceUUID, created.ExternalID); err != nil {
 		t.Fatalf("DeleteSession() error = %v", err)
 	}

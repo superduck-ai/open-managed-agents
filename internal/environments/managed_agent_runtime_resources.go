@@ -12,17 +12,21 @@ type managedAgentRuntimeResources struct {
 	workDir string
 }
 
-type githubRepositoryRuntimePayload struct {
-	URL       string          `json:"url"`
-	MountPath string          `json:"mount_path"`
-	Checkout  json.RawMessage `json:"checkout"`
-}
-
 type gitRepositoryRuntimeSource struct {
 	Type      string          `json:"type"`
 	URL       string          `json:"url"`
 	MountPath string          `json:"mount_path"`
 	Checkout  json.RawMessage `json:"checkout,omitempty"`
+}
+
+type memoryStoreRuntimeSource struct {
+	Type          string  `json:"type"`
+	MemoryStoreID string  `json:"memory_store_id"`
+	Access        *string `json:"access,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Instructions  *string `json:"instructions,omitempty"`
+	MountPath     *string `json:"mount_path,omitempty"`
+	Name          *string `json:"name,omitempty"`
 }
 
 func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managedAgentRuntimeResources {
@@ -35,21 +39,24 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managed
 		resource := &resources[index]
 		switch resource.ResourceType {
 		case "github_repository":
-			payload, ok := parseGitHubRepositoryRuntimePayload(resource.Payload)
-			if !ok {
+			repository := resource.GitHubRepository
+			if repository == nil {
 				continue
 			}
-			if payload.MountPath != "" &&
+			runtimeRepository := *repository
+			runtimeRepository.URL = strings.TrimSpace(runtimeRepository.URL)
+			runtimeRepository.MountPath = strings.TrimSpace(runtimeRepository.MountPath)
+			if runtimeRepository.MountPath != "" &&
 				(workDirResource == nil || repositoryAttachedBefore(*resource, *workDirResource)) {
 				workDirResource = resource
-				resolved.workDir = payload.MountPath
+				resolved.workDir = runtimeRepository.MountPath
 			}
-			source, ok := gitRepositoryRuntimeSourceJSON(payload)
+			source, ok := gitRepositoryRuntimeSourceJSON(runtimeRepository)
 			if ok {
 				resolved.sources = append(resolved.sources, source)
 			}
 		case "memory_store":
-			if source, ok := opaqueRuntimeSourceJSON(resource.Payload); ok {
+			if source, ok := memoryStoreRuntimeSourceJSON(resource.MemoryStore); ok {
 				resolved.sources = append(resolved.sources, source)
 			}
 		}
@@ -57,17 +64,7 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managed
 	return resolved
 }
 
-func parseGitHubRepositoryRuntimePayload(raw json.RawMessage) (githubRepositoryRuntimePayload, bool) {
-	var payload githubRepositoryRuntimePayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return githubRepositoryRuntimePayload{}, false
-	}
-	payload.URL = strings.TrimSpace(payload.URL)
-	payload.MountPath = strings.TrimSpace(payload.MountPath)
-	return payload, true
-}
-
-func gitRepositoryRuntimeSourceJSON(payload githubRepositoryRuntimePayload) (json.RawMessage, bool) {
+func gitRepositoryRuntimeSourceJSON(payload db.SessionResourceGitHubRepository) (json.RawMessage, bool) {
 	if payload.URL == "" || payload.MountPath == "" {
 		return nil, false
 	}
@@ -83,12 +80,20 @@ func gitRepositoryRuntimeSourceJSON(payload githubRepositoryRuntimePayload) (jso
 	return raw, err == nil
 }
 
-func opaqueRuntimeSourceJSON(raw json.RawMessage) (json.RawMessage, bool) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+func memoryStoreRuntimeSourceJSON(memoryStore *db.SessionResourceMemoryStore) (json.RawMessage, bool) {
+	if memoryStore == nil || memoryStore.ExternalID == "" {
 		return nil, false
 	}
-	return append(json.RawMessage(nil), raw...), true
+	raw, err := json.Marshal(memoryStoreRuntimeSource{
+		Type:          "memory_store",
+		MemoryStoreID: memoryStore.ExternalID,
+		Access:        memoryStore.Access,
+		Description:   memoryStore.Description,
+		Instructions:  memoryStore.Instructions,
+		MountPath:     memoryStore.MountPath,
+		Name:          memoryStore.Name,
+	})
+	return raw, err == nil
 }
 
 func repositoryAttachedBefore(candidate, current db.SessionResource) bool {

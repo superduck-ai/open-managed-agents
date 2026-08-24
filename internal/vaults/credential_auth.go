@@ -197,8 +197,13 @@ func normalizeMCPOAuthRefreshForCreate(input mcpOAuthRefreshCreateInput) (mcpOAu
 		TokenEndpoint:     tokenEndpoint,
 		ClientID:          clientID,
 		TokenEndpointAuth: publicTokenAuth,
+<<<<<<< HEAD
 		Scope:             scope,
 		Resource:          resource,
+=======
+		Scope:             input.Scope,
+		Resource:          input.Resource,
+>>>>>>> 824c6a7 (refactor(vaults): 优化凭证认证代码格式)
 	}
 	secretRefresh := mcpOAuthRefreshSecret{
 		RefreshToken:      refreshToken,

@@ -894,7 +894,7 @@
   "managedAgents.sessions.resources.mountHelp": "文件将挂载到容器的 {path} 目录下。",
   "managedAgents.sessions.resources.mountPath": "挂载路径",
   "managedAgents.sessions.resources.mountPathOptional": "挂载路径（可选）",
-  "managedAgents.sessions.resources.mountPlaceholder": "filename",
+  "managedAgents.sessions.resources.mountPlaceholder": "文件名",
   "managedAgents.sessions.resources.noFiles": "没有可用文件",
   "managedAgents.sessions.resources.removeFile": "移除文件资源 {index}",
   "managedAgents.sessions.resources.runtimePath": "可在 {path} 访问",

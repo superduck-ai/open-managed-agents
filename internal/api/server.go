@@ -110,6 +110,14 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
 	}
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
+	var oauthRefreshLease vaultsapi.OAuthRefreshLease
+	if deps.Redis != nil {
+		lease, err := vaultsapi.NewRedisOAuthRefreshLease(deps.Redis)
+		if err != nil {
+			panic("api: oauth refresh lease: " + err.Error())
+		}
+		oauthRefreshLease = lease
+	}
 	s := &Server{
 		cfg:                  deps.Config,
 		db:                   deps.DB,
@@ -120,7 +128,7 @@ func NewServer(deps ServerDeps) *Server {
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
 		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, deps.Redis),
+		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease),
 		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),

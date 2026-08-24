@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -73,11 +71,14 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 
 // WithVaultSecrets wires vault credential injection (static_bearer / mcp_oauth)
 // into the MCP HTTP proxy, including one 401 refresh retry for mcp_oauth.
-func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, redisClient *redis.Client) *Handler {
+func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaults.OAuthRefreshLease) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
 	}
-	injector := vaults.NewInjector(h.db, secretSvc, h.logger).WithRedis(redisClient)
+	injector := vaults.NewInjector(h.db, secretSvc, h.logger)
+	if refreshLease != nil {
+		injector = injector.WithRefreshLease(refreshLease)
+	}
 	h.wrapMCPVaultTransport = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, base http.RoundTripper) http.RoundTripper {
 		return injector.WrapTransport(
 			ctx,

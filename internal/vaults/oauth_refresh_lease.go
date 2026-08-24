@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -11,22 +12,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// oauthRefreshLease serializes one IdP refresh_token exchange per credential.
-// Hold blocks until this caller may exchange, then release must be called.
-// TTL on Redis adapters outlives oauthRefreshTimeout so a crashed holder
-// cannot pin the key forever.
-type oauthRefreshLease interface {
-	Hold(ctx context.Context, credentialExternalID string) (release func(), err error)
+// OAuthRefreshLease serializes one IdP refresh_token exchange per credential.
+// Hold blocks until this caller may exchange. release must be called; it is
+// idempotent. Redis adapters use a TTL longer than oauthRefreshTimeout so a
+// crashed holder cannot pin the key forever.
+type OAuthRefreshLease interface {
+	Hold(ctx context.Context, credentialExternalID string) (release func() error, err error)
 }
+
+var errOAuthRefreshLeaseRedisRequired = errors.New("redis client is required for oauth refresh lease")
 
 const oauthRefreshLeaseTTL = oauthRefreshTimeout + 5*time.Second
 
 func oauthRefreshLeaseKey(credentialExternalID string) string {
-	id := credentialExternalID
-	if id == "" {
-		id = "<anonymous>"
-	}
-	return "vault:mcp_oauth_refresh:" + id
+	return "vault:mcp_oauth_refresh:" + credentialExternalID
 }
 
 type memoryOAuthRefreshLease struct {
@@ -50,20 +49,34 @@ func (l *memoryOAuthRefreshLease) mutex(credentialExternalID string) *sync.Mutex
 	return lock
 }
 
-func (l *memoryOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (func(), error) {
+func (l *memoryOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (func() error, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	lock := l.mutex(credentialExternalID)
-	lock.Lock()
-	released := false
-	return func() {
-		if released {
-			return
+	acquired := make(chan struct{})
+	go func() {
+		lock.Lock()
+		select {
+		case acquired <- struct{}{}:
+		case <-ctx.Done():
+			lock.Unlock()
 		}
-		released = true
-		lock.Unlock()
-	}, nil
+	}()
+	select {
+	case <-acquired:
+		released := false
+		return func() error {
+			if released {
+				return nil
+			}
+			released = true
+			lock.Unlock()
+			return nil
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 type oauthRefreshNXStore interface {
@@ -87,14 +100,16 @@ func newRedisOAuthRefreshLease(store oauthRefreshNXStore, ttl, wait time.Duratio
 	return &redisOAuthRefreshLease{store: store, ttl: ttl, wait: wait}
 }
 
-func newClientOAuthRefreshLease(client *redis.Client) oauthRefreshLease {
+// NewRedisOAuthRefreshLease holds refresh_token exchanges across API instances.
+// A nil client is rejected so production cannot silently fall back to in-process locking.
+func NewRedisOAuthRefreshLease(client *redis.Client) (OAuthRefreshLease, error) {
 	if client == nil {
-		return newMemoryOAuthRefreshLease()
+		return nil, errOAuthRefreshLeaseRedisRequired
 	}
-	return newRedisOAuthRefreshLease(redisOAuthRefreshNXStore{client: client}, oauthRefreshLeaseTTL, 50*time.Millisecond)
+	return newRedisOAuthRefreshLease(redisOAuthRefreshNXStore{client: client}, oauthRefreshLeaseTTL, 50*time.Millisecond), nil
 }
 
-func (l *redisOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (func(), error) {
+func (l *redisOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID string) (func() error, error) {
 	token, err := newOAuthRefreshLeaseToken()
 	if err != nil {
 		return nil, err
@@ -110,12 +125,15 @@ func (l *redisOAuthRefreshLease) Hold(ctx context.Context, credentialExternalID 
 		}
 		if ok {
 			released := false
-			return func() {
+			return func() error {
 				if released {
-					return
+					return nil
 				}
 				released = true
-				_ = l.store.CompareAndDelete(context.WithoutCancel(ctx), key, token)
+				if err := l.store.CompareAndDelete(context.WithoutCancel(ctx), key, token); err != nil {
+					return fmt.Errorf("release mcp oauth refresh lease: %w", err)
+				}
+				return nil
 			}, nil
 		}
 		timer := time.NewTimer(l.wait)

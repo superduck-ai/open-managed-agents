@@ -49,6 +49,33 @@ func TestMemoryOAuthRefreshLeaseSerializesSameCredential(t *testing.T) {
 	}
 }
 
+func TestMemoryOAuthRefreshLeaseHoldCanceledWhileWaiting(t *testing.T) {
+	t.Parallel()
+
+	lease := newMemoryOAuthRefreshLease()
+	first, err := lease.Hold(t.Context(), "vcrd_a")
+	if err != nil {
+		t.Fatalf("Hold() error = %v", err)
+	}
+	defer func() { _ = first() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Millisecond)
+	defer cancel()
+	_, err = lease.Hold(ctx, "vcrd_a")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Hold() error = %v, want context deadline", err)
+	}
+}
+
+func TestNewRedisOAuthRefreshLeaseRequiresClient(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRedisOAuthRefreshLease(nil)
+	if !errors.Is(err, errOAuthRefreshLeaseRedisRequired) {
+		t.Fatalf("error = %v, want errOAuthRefreshLeaseRedisRequired", err)
+	}
+}
+
 func TestMemoryOAuthRefreshLeaseAllowsDifferentCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -57,12 +84,12 @@ func TestMemoryOAuthRefreshLeaseAllowsDifferentCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Hold A error = %v", err)
 	}
-	defer first()
+	defer func() { _ = first() }()
 	second, err := lease.Hold(t.Context(), "vcrd_b")
 	if err != nil {
 		t.Fatalf("Hold B error = %v", err)
 	}
-	second()
+	_ = second()
 }
 
 func TestRedisOAuthRefreshLeaseWaitsThenAcquiresAfterRelease(t *testing.T) {

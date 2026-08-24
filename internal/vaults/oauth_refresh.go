@@ -52,7 +52,11 @@ func (i *Injector) refreshMCPOAuthCredential(
 	if err != nil {
 		return "", nil, err
 	}
-	defer release()
+	defer func() {
+		if releaseErr := release(); releaseErr != nil {
+			i.logger.WarnContext(ctx, "release mcp oauth refresh lease", "credential_id", credential.ExternalID, "error", releaseErr)
+		}
+	}()
 
 	current := *credential
 	// Best-effort re-read under the per-credential lease so a concurrent winner's

@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -41,7 +39,7 @@ type Injector struct {
 	logger       *slog.Logger
 	httpClient   *http.Client
 	now          func() time.Time
-	refreshLease oauthRefreshLease
+	refreshLease OAuthRefreshLease
 }
 
 func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *Injector {
@@ -57,13 +55,13 @@ func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logge
 	}
 }
 
-// WithRedis serializes mcp_oauth refresh_token exchanges across API instances
-// using a short Redis lease. Nil client keeps the in-process lease.
-func (i *Injector) WithRedis(client *redis.Client) *Injector {
-	if i == nil {
+// WithRefreshLease replaces the in-process lease used by tests with a
+// cross-instance adapter built at assembly (typically Redis).
+func (i *Injector) WithRefreshLease(lease OAuthRefreshLease) *Injector {
+	if i == nil || lease == nil {
 		return i
 	}
-	i.refreshLease = newClientOAuthRefreshLease(client)
+	i.refreshLease = lease
 	return i
 }
 

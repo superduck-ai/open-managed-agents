@@ -679,6 +679,29 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(screen.queryByText('diagram.png')).toBeNull());
     expect(await screen.findByText(/Image: diagram\.png/)).toBeTruthy();
     expect(await screen.findByText(/File: brief\.pdf/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));
+    const attachmentDebugRow = document.querySelector(
+      '[data-event-id^="evt_user_action_"][data-entry-kind="debug"]',
+    ) as HTMLElement;
+    expect(attachmentDebugRow).toBeTruthy();
+    fireEvent.click(attachmentDebugRow.querySelector('[data-transcript-header]') as HTMLElement);
+    const attachmentDebugDetail = await screen.findByTestId('session-trace-detail');
+    const attachmentDebugJson = JSON.parse(
+      within(attachmentDebugDetail).getByTestId('session-trace-code-block').textContent ?? '',
+    );
+    expect(attachmentDebugJson.content).toEqual([
+      {
+        type: 'image',
+        source: { type: 'file', file_id: 'file_uploaded_image123' },
+        filename: 'diagram.png',
+      },
+      {
+        type: 'document',
+        source: { type: 'file', file_id: 'file_uploaded_document123' },
+        title: 'brief.pdf',
+      },
+    ]);
   });
 
   test('sends messages and exposes the session resources, agent, environment, and vaults', async () => {

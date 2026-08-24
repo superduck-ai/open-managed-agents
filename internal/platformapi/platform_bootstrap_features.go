@@ -149,7 +149,7 @@ func buildGrowthbookFeatures() map[string]any {
 
 	consoleDefaultModelConfig := map[string]any{
 		"defaultValue": map[string]any{
-			"model":          miscDefaultChatModel,
+			"model":          "",
 			"overrideSticky": true,
 			"nuxId":          nil,
 		},
@@ -158,14 +158,8 @@ func buildGrowthbookFeatures() map[string]any {
 
 	modelConfig := map[string]any{
 		"defaultValue": map[string]any{
-			"allowed_models": []string{
-				miscDefaultChatModel,
-				"claude-fable-5",
-				"claude-opus-4-8",
-				"claude-opus-4-7",
-				"claude-haiku-4-5-20251001",
-			},
-			"model":                    miscDefaultChatModel,
+			"allowed_models":           []string{},
+			"model":                    "",
 			"legacy_models":            []string{},
 			"supports_1m_context":      []string{},
 			"synthetic_allowed_models": map[string]any{},
@@ -174,7 +168,7 @@ func buildGrowthbookFeatures() map[string]any {
 	setGrowthbookFeature(features, "cowork_model", modelConfig)
 	setGrowthbookFeature(features, "ccr_model", modelConfig)
 	setGrowthbookFeature(features, "holdup", map[string]any{
-		"defaultValue": map[string]any{"modelFallbacks": buildHoldupModelFallbacks()},
+		"defaultValue": map[string]any{"modelFallbacks": map[string]any{}},
 	})
 	setGrowthbookFeature(features, "mobile_cowork_worker_types", map[string]any{
 		"defaultValue": map[string]any{"worker_types": []string{"cowork", "claude_code_assistant"}},
@@ -273,14 +267,6 @@ func bootstrapShisoRedactedStringsFeature() map[string]any {
 func bootstrapDefaultWebToolsFeature() map[string]any {
 	tools := []map[string]string{{"name": "repl", "type": "repl_v0"}, {"name": "web_search", "type": "web_search_v0"}}
 	return map[string]any{"defaultValue": map[string]any{"completion": tools, "conversation": tools}}
-}
-
-func buildHoldupModelFallbacks() map[string]map[string]string {
-	fallbacks := make(map[string]map[string]string, len(chatModelFallbacks))
-	for model, fallbackModel := range chatModelFallbacks {
-		fallbacks[model] = map[string]string{"displayName": "Haiku 4.5", "fallbackModelName": fallbackModel}
-	}
-	return fallbacks
 }
 
 func bootstrapGrowthbookHashingAlgorithm(r *http.Request) string {

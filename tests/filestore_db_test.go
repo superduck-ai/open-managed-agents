@@ -12,10 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-
-	"github.com/google/uuid"
 )
 
 func TestSessionNamespaceUsesResourcesAndFiles(t *testing.T) {
@@ -128,7 +127,7 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 		resourceID := fmt.Sprintf("sesrsc_file_limit_%03d", index)
 		input.Resources = append(input.Resources, db.CreateSessionResourceInput{
 			Resource: db.SessionResource{
-				UUID:             uuid.NewString(),
+				UUID:             uuid.NewV4().String(),
 				ExternalID:       resourceID,
 				OrganizationUUID: organizationUUID,
 				WorkspaceUUID:    workspaceUUID,
@@ -164,7 +163,7 @@ func TestCreateSessionRollsBackWhenFilesystemScopeIsInvalid(t *testing.T) {
 	t.Cleanup(app.close)
 	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
-	input.Session.CreatedByAPIKeyUUID = uuid.NewString()
+	input.Session.CreatedByAPIKeyUUID = uuid.NewV4().String()
 
 	if _, _, _, _, err := app.db.CreateSession(context.Background(), input); !errors.Is(err, db.ErrPreconditionFailed) {
 		t.Fatalf("CreateSession() error = %v, want ErrPreconditionFailed", err)
@@ -331,7 +330,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	}
 	for attempt := 1; attempt <= 2; attempt++ {
 		if _, err := app.db.CreateCodeSession(context.Background(), db.CreateCodeSessionInput{
-			ExternalID:            fmt.Sprintf("cse_filestore_retry_%d_%s", attempt, uuid.NewString()),
+			ExternalID:            fmt.Sprintf("cse_filestore_retry_%d_%s", attempt, uuid.NewV4().String()),
 			OrganizationUUID:      organizationUUID,
 			WorkspaceUUID:         workspaceUUID,
 			SessionUUID:           created.UUID,
@@ -340,7 +339,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 			EnvironmentExternalID: created.EnvironmentExternalID,
 			Status:                "active",
 			Metadata:              json.RawMessage(`{}`),
-			OAuthAccessTokenHash:  fmt.Sprintf("filestore-retry-hash-%d-%s", attempt, uuid.NewString()),
+			OAuthAccessTokenHash:  fmt.Sprintf("filestore-retry-hash-%d-%s", attempt, uuid.NewV4().String()),
 		}); err != nil {
 			t.Fatalf("create Code Session attempt %d: %v", attempt, err)
 		}
@@ -354,8 +353,8 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	}
 
 	_, provisioned, err := app.db.ProvisionFilestoreFilesystem(context.Background(), db.ProvisionFilestoreFilesystemInput{
-		UUID:                uuid.NewString(),
-		ExternalID:          "fs_second_" + uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
+		ExternalID:          "fs_second_" + uuid.NewV4().String(),
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		SessionUUID:         created.UUID,
@@ -503,8 +502,8 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 	ctx := context.Background()
 	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
-		UUID:                uuid.NewString(),
-		ExternalID:          "claude_chat_expired_leases_" + uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
+		ExternalID:          "claude_chat_expired_leases_" + uuid.NewV4().String(),
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		SessionUUID:         sessionUUID,
@@ -585,8 +584,8 @@ func TestFilestoreObjectCleanupJobMapperLifecycle(t *testing.T) {
 	ctx := context.Background()
 	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
-		UUID:                uuid.NewString(),
-		ExternalID:          "claude_chat_mapper_" + uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
+		ExternalID:          "claude_chat_mapper_" + uuid.NewV4().String(),
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		SessionUUID:         sessionUUID,
@@ -693,8 +692,8 @@ func TestConcurrentProvisionCreatesOneSessionFilesystem(t *testing.T) {
 			defer workers.Done()
 			<-start
 			_, created, err := app.db.ProvisionFilestoreFilesystem(context.Background(), db.ProvisionFilestoreFilesystemInput{
-				UUID:                uuid.NewString(),
-				ExternalID:          fmt.Sprintf("claude_chat_concurrent_%d_%s", attempt, uuid.NewString()),
+				UUID:                uuid.NewV4().String(),
+				ExternalID:          fmt.Sprintf("claude_chat_concurrent_%d_%s", attempt, uuid.NewV4().String()),
 				OrganizationUUID:    organizationUUID,
 				WorkspaceUUID:       workspaceUUID,
 				SessionUUID:         sessionUUID,
@@ -966,9 +965,9 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		t.Fatalf("legacy archive table still exists: %s", *legacyTable)
 	}
 
-	versionUUID := uuid.NewString()
-	skillUUID := uuid.NewString()
-	skillExternalID := "skill_" + uuid.NewString()
+	versionUUID := uuid.NewV4().String()
+	skillUUID := uuid.NewV4().String()
+	skillExternalID := "skill_" + uuid.NewV4().String()
 	if err := app.pool.QueryRow(context.Background(), `
 		insert into skills (
 			uuid, external_id, workspace_uuid, source, display_title,
@@ -987,7 +986,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		)
 		values ($1, $2, $3, $4, $5, 'v1', 'Demo', 'demo',
 			'filestore-archive-entry', 'catalog/demo.zip', 128, $6, $7)
-	`, versionUUID, "skver_"+uuid.NewString(), workspaceUUID, skillUUID,
+	`, versionUUID, "skver_"+uuid.NewV4().String(), workspaceUUID, skillUUID,
 		skillExternalID, strings.Repeat("a", 64), apiKeyUUID); err != nil {
 		t.Fatalf("insert archive test skill version: %v", err)
 	}
@@ -1159,8 +1158,8 @@ func seedFilestoreSkillVersion(
 	checksum string,
 ) string {
 	t.Helper()
-	skillUUID := uuid.NewString()
-	skillExternalID := "skill_" + uuid.NewString()
+	skillUUID := uuid.NewV4().String()
+	skillExternalID := "skill_" + uuid.NewV4().String()
 	if err := app.pool.QueryRow(context.Background(), `
 		insert into skills (
 			uuid, external_id, workspace_uuid, source, display_title,
@@ -1171,7 +1170,7 @@ func seedFilestoreSkillVersion(
 	`, skillUUID, skillExternalID, workspaceUUID, directory, apiKeyUUID).Scan(&skillUUID); err != nil {
 		t.Fatalf("insert Filestore skill: %v", err)
 	}
-	versionUUID := uuid.NewString()
+	versionUUID := uuid.NewV4().String()
 	if _, err := app.pool.Exec(context.Background(), `
 		insert into skill_versions (
 			uuid, external_id, workspace_uuid, skill_uuid, skill_external_id,
@@ -1179,7 +1178,7 @@ func seedFilestoreSkillVersion(
 			created_by_api_key_uuid
 		)
 		values ($1, $2, $3, $4, $5, 'v1', $6, $6, $7, $8, $9, $10, $11)
-	`, versionUUID, "skver_"+uuid.NewString(), workspaceUUID, skillUUID, skillExternalID,
+	`, versionUUID, "skver_"+uuid.NewV4().String(), workspaceUUID, skillUUID, skillExternalID,
 		directory, bucket, objectKey, sizeBytes, checksum, apiKeyUUID); err != nil {
 		t.Fatalf("insert Filestore skill version: %v", err)
 	}
@@ -1196,12 +1195,12 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 
 	ctx := context.Background()
 	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
-	firstUUID := uuid.NewString()
-	secondUUID := uuid.NewString()
-	firstExternalID := "fs_" + uuid.NewString()
+	firstUUID := uuid.NewV4().String()
+	secondUUID := uuid.NewV4().String()
+	firstExternalID := "fs_" + uuid.NewV4().String()
 	secondExternalID := firstUUID
-	secondSessionUUID := uuid.NewString()
-	secondSessionExternalID := "session_filestore_lookup_second_" + uuid.NewString()
+	secondSessionUUID := uuid.NewV4().String()
+	secondSessionExternalID := "session_filestore_lookup_second_" + uuid.NewV4().String()
 	now := time.Now().UTC()
 	if _, err := app.pool.Exec(ctx, `
 		insert into sessions (
@@ -1211,8 +1210,8 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 		)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, 'idle')
 	`, secondSessionUUID, secondSessionExternalID, organizationUUID, workspaceUUID, apiKeyUUID,
-		uuid.NewString(), "env_filestore_lookup_second",
-		uuid.NewString(), "agent_filestore_lookup_second"); err != nil {
+		uuid.NewV4().String(), "env_filestore_lookup_second",
+		uuid.NewV4().String(), "agent_filestore_lookup_second"); err != nil {
 		t.Fatalf("insert second lookup session: %v", err)
 	}
 
@@ -1259,7 +1258,7 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 	assertExternalID("session", filesystem, err)
 
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          secondExternalID,
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
@@ -1276,7 +1275,7 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string, string, int64, int64, int64, string, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	suffix := uuid.NewString()
+	suffix := uuid.NewV4().String()
 	var organizationID, workspaceID, apiKeyID, sessionID, codeSessionID int64
 	var organizationUUID, workspaceUUID, codeSessionUUID string
 	t.Cleanup(func() {
@@ -1317,7 +1316,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 	`, "wrkspc_filestore_lookup_"+suffix, organizationID, "Filestore lookup "+suffix).Scan(&workspaceID, &workspaceUUID); err != nil {
 		t.Fatalf("insert lookup workspace: %v", err)
 	}
-	apiKeyUUID := uuid.NewString()
+	apiKeyUUID := uuid.NewV4().String()
 	if err := app.pool.QueryRow(ctx, `
 		insert into api_keys (uuid, external_id, workspace_uuid, key_hash, status)
 		values ($1, $2, $3, $4, 'active')
@@ -1325,7 +1324,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 	`, apiKeyUUID, "api_key_filestore_lookup_"+suffix, workspaceUUID, "hash_filestore_lookup_"+suffix).Scan(&apiKeyID); err != nil {
 		t.Fatalf("insert lookup API key: %v", err)
 	}
-	sessionUUID := uuid.NewString()
+	sessionUUID := uuid.NewV4().String()
 	sessionExternalID := "session_filestore_lookup_" + suffix
 	if err := app.pool.QueryRow(ctx, `
 		insert into sessions (
@@ -1336,11 +1335,11 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, 'idle')
 		returning id
 	`, sessionUUID, sessionExternalID, organizationUUID, workspaceUUID, apiKeyUUID,
-		uuid.NewString(), "env_filestore_lookup_"+suffix,
-		uuid.NewString(), "agent_filestore_lookup_"+suffix).Scan(&sessionID); err != nil {
+		uuid.NewV4().String(), "env_filestore_lookup_"+suffix,
+		uuid.NewV4().String(), "agent_filestore_lookup_"+suffix).Scan(&sessionID); err != nil {
 		t.Fatalf("insert lookup session: %v", err)
 	}
-	codeSessionUUID = uuid.NewString()
+	codeSessionUUID = uuid.NewV4().String()
 	codeSessionExternalID := "codesession_filestore_lookup_" + suffix
 	if err := app.pool.QueryRow(ctx, `
 		insert into code_sessions (
@@ -1350,7 +1349,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 		values ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
 		returning id
 	`, codeSessionUUID, codeSessionExternalID, organizationUUID, workspaceUUID, sessionUUID,
-		sessionExternalID, uuid.NewString(), "env_filestore_lookup_"+suffix).Scan(&codeSessionID); err != nil {
+		sessionExternalID, uuid.NewV4().String(), "env_filestore_lookup_"+suffix).Scan(&codeSessionID); err != nil {
 		t.Fatalf("insert lookup code session: %v", err)
 	}
 	return organizationID, workspaceID, organizationUUID, workspaceUUID, apiKeyID, sessionID, codeSessionID, sessionUUID, codeSessionUUID, apiKeyUUID
@@ -1365,8 +1364,8 @@ func insertFilestoreCollisionOwner(
 	filesystemExternalID string,
 ) {
 	t.Helper()
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	sessionUUID := uuid.NewString()
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
+	sessionUUID := uuid.NewV4().String()
 	if _, err := app.pool.Exec(context.Background(), `
 		insert into sessions (
 			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
@@ -1375,8 +1374,8 @@ func insertFilestoreCollisionOwner(
 		)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, 'idle')
 	`, sessionUUID, "sesn_filestore_collision_"+suffix, organizationUUID, workspaceUUID, apiKeyUUID,
-		uuid.NewString(), "env_filestore_collision_"+suffix,
-		uuid.NewString(), "agent_filestore_collision_"+suffix); err != nil {
+		uuid.NewV4().String(), "env_filestore_collision_"+suffix,
+		uuid.NewV4().String(), "agent_filestore_collision_"+suffix); err != nil {
 		t.Fatalf("insert collision owner Session: %v", err)
 	}
 	if _, err := app.pool.Exec(context.Background(), `
@@ -1420,13 +1419,13 @@ func cleanupFilestoreSession(t *testing.T, app *testApp, workspaceUUID string, s
 }
 
 func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID string) db.CreateSessionInput {
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	now := time.Now().UTC()
 	environmentExternalID := "env_filestore_session_" + suffix
-	environmentUUID := uuid.NewString()
-	agentUUID := uuid.NewString()
+	environmentUUID := uuid.NewV4().String()
+	agentUUID := uuid.NewV4().String()
 	sessionExternalID := "sesn_filestore_session_" + suffix
-	sessionUUID := uuid.NewString()
+	sessionUUID := uuid.NewV4().String()
 	return db.CreateSessionInput{
 		Session: db.Session{
 			UUID:                  sessionUUID,
@@ -1450,7 +1449,7 @@ func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID str
 			UpdatedAt:             now,
 		},
 		Thread: db.SessionThread{
-			UUID:              uuid.NewString(),
+			UUID:              uuid.NewV4().String(),
 			ExternalID:        "sthr_filestore_session_" + suffix,
 			OrganizationUUID:  organizationUUID,
 			WorkspaceUUID:     workspaceUUID,
@@ -1463,13 +1462,12 @@ func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID str
 			CreatedAt:         now,
 		},
 		Work: db.EnvironmentWork{
-			UUID:                  uuid.NewString(),
+			UUID:                  uuid.NewV4().String(),
 			ExternalID:            "work_filestore_session_" + suffix,
 			OrganizationUUID:      organizationUUID,
 			WorkspaceUUID:         workspaceUUID,
 			EnvironmentUUID:       environmentUUID,
 			EnvironmentExternalID: environmentExternalID,
-			Data:                  json.RawMessage(`{"id":"` + sessionExternalID + `","type":"session"}`),
 			Metadata:              json.RawMessage(`{}`),
 			State:                 "queued",
 			CreatedAt:             now,

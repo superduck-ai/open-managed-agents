@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -16,8 +17,6 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
-
-	"github.com/google/uuid"
 )
 
 func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw json.RawMessage) (db.Agent, json.RawMessage, error) {
@@ -215,7 +214,7 @@ func (h *Handler) resourceFromRequest(
 	}
 	return normalizedSessionResource{
 		resource: db.SessionResource{
-			UUID:              uuid.NewString(),
+			UUID:              uuid.NewV4().String(),
 			ExternalID:        resourceID,
 			OrganizationUUID:  session.OrganizationUUID,
 			WorkspaceUUID:     session.WorkspaceUUID,
@@ -300,7 +299,7 @@ func normalizeInputEvent(
 		return db.SessionEvent{}, nil, false, err
 	}
 	return db.SessionEvent{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        eventID,
 		OrganizationUUID:  session.OrganizationUUID,
 		WorkspaceUUID:     session.WorkspaceUUID,

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -206,22 +206,26 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 }
 
 func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
+	return eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID)
+}
+
+func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt time.Time, threadID string) json.RawMessage {
 	var payload map[string]any
-	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return event.Payload
+	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+		return payloadRaw
 	}
-	changed := ensureSessionEventTimeField(payload, "created_at", event.CreatedAt)
-	changed = ensureSessionEventTimeField(payload, "processed_at", event.ProcessedAt) || changed
+	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)
+	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
 		payload["session_thread_id"] = strings.TrimSpace(threadID)
 		changed = true
 	}
 	if !changed {
-		return event.Payload
+		return payloadRaw
 	}
 	raw, err := httpapi.MarshalRaw(payload)
 	if err != nil {
-		return event.Payload
+		return payloadRaw
 	}
 	return raw
 }
@@ -364,7 +368,10 @@ func decodeCursor(raw string) (*time.Time, string, error) {
 		CreatedAt string `json:"created_at"`
 		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
+	if err := json.Unmarshal(data, &payload); err != nil || payload.CreatedAt == "" {
+		return nil, "", errors.New("page cursor is invalid")
+	}
+	if _, err := uuid.Parse(payload.UUID); err != nil {
 		return nil, "", errors.New("page cursor is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)

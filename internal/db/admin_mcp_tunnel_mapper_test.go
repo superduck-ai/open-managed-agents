@@ -113,7 +113,7 @@ func TestAdminMCPTunnelMapperResultSemantics(t *testing.T) {
 	})
 	row, err := NewAdminMCPTunnelMapper(executor).FindByExternalID(ctx, "org", "tunnel_test")
 	tunnel, err := adminTunnelFromMapperRow(row, err)
-	if err != nil || tunnel.UUID.String() != row.UUID || !tunnel.WorkspaceUUID.Valid {
+	if err != nil || tunnel.UUID != row.UUID || tunnel.WorkspaceUUID == nil || *tunnel.WorkspaceUUID != "33333333-3333-4333-8333-333333333333" {
 		t.Fatalf("FindByExternalID() = (%+v, %v)", tunnel, err)
 	}
 	if tunnel.TunnelToken == nil || *tunnel.TunnelToken != "secret-token" {
@@ -129,12 +129,6 @@ func TestAdminMCPTunnelMapperResultSemantics(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid UUID", func(t *testing.T) {
-		_, err := adminTunnelFromMapperRow(adminMCPTunnelRow{UUID: "invalid"}, nil)
-		if err == nil {
-			t.Fatal("adminTunnelFromMapperRow() error = nil, want invalid UUID")
-		}
-	})
 }
 
 func TestAdminMCPTunnelMapperPropagatesExecutionErrors(t *testing.T) {

@@ -31,13 +31,6 @@ storage:
   max_file_bytes: 524288000
   workspace_limit_bytes: 536870912000
 
-anthropic_upstream:
-  base_url: https://api.anthropic.com
-  api_key: ""
-  # Optional exact model ID overrides. Mapped IDs are displayed and saved; unmapped IDs keep the original behavior.
-  # Chained mappings are rejected; multiple logical IDs may share one upstream ID.
-  model_mappings: {}
-
 batch:
   worker_enabled: true
   worker_concurrency: 2
@@ -58,7 +51,7 @@ e2b:
   debug: false
   template: managed-agent-sandbox
   request_timeout: 60s
-  sandbox_timeout: 5m
+  sandbox_timeout: 30s
 
 environment_runner:
   enabled: true

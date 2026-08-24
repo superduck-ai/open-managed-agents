@@ -11,12 +11,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
-
-	"github.com/google/uuid"
 )
 
 func newServiceUnderTest(cfg config.Config, database filestoreDatabase, store storage.ObjectStore) *Service {
@@ -91,7 +90,7 @@ func serviceTestFileEntry(filesystem db.FilestoreFilesystem, entryPath string, c
 func serviceTestFileEntryFromBlob(filesystem db.FilestoreFilesystem, externalID, entryPath string, blob db.FilestoreFileBlob) db.SessionResourceFile {
 	return db.SessionResourceFile{
 		ID:                    60,
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            externalID,
 		OrganizationUUID:      serviceTestPrincipal().OrganizationUUID,
 		WorkspaceUUID:         serviceTestPrincipal().WorkspaceUUID,

@@ -14,7 +14,6 @@ type Config struct {
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
 	Storage           StorageConfig           `yaml:"storage"`
-	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
@@ -81,12 +80,6 @@ type S3Config struct {
 	AccessKeyID     string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`
 	ForcePathStyle  bool   `yaml:"force_path_style"`
-}
-
-type AnthropicUpstreamConfig struct {
-	BaseURL       string            `yaml:"base_url"`
-	APIKey        string            `yaml:"api_key"`
-	ModelMappings map[string]string `yaml:"model_mappings"`
 }
 
 type BatchConfig struct {

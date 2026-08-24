@@ -1,0 +1,52 @@
+---
+title: "事件与流式处理"
+description: "发送会话输入，读取历史，并通过 SSE 处理实时事件。"
+---
+
+事件是 OMA 的持久交互协议。客户端输入和运行时输出都会形成历史事件；SSE 用于低延迟通知，列表接口用于断线恢复。
+
+## 输入事件
+
+客户端可发送：
+
+| 类型 | 用途 |
+| --- | --- |
+| `user.message` | 提交用户内容并启动或继续任务 |
+| `system.message` | 发送系统级上下文 |
+| `user.interrupt` | 请求中断当前工作 |
+| `user.tool_confirmation` | 允许或拒绝需要确认的工具 |
+| `user.tool_result` | 返回内置/MCP 工具结果 |
+| `user.custom_tool_result` | 返回自定义工具结果 |
+| `user.define_outcome` | 定义可评估结果 |
+
+```bash
+curl 'http://localhost:38080/v1/sessions/sesn_01.../events?beta=true' \
+  -H 'Authorization: Bearer sk-ant-local-default' \
+  -H 'Content-Type: application/json' \
+  -d '{"events":[{"type":"user.message","content":[{"type":"text","text":"Run the tests"}]}]}'
+```
+
+## 输出事件类别
+
+运行时可以产生智能体消息与思考、工具调用与结果、会话/线程状态、线程协作和 span 事件。`event_start` 与 `event_delta` 只用于实时增量，不进入持久历史。
+
+## 订阅 SSE
+
+```bash
+curl -N 'http://localhost:38080/v1/sessions/sesn_01.../events/stream?beta=true' \
+  -H 'Authorization: Bearer sk-ant-local-default'
+```
+
+每条 SSE 使用事件类型作为 `event:`，JSON 作为 `data:`。线程有独立的 `/threads/{thread_id}/stream`。
+
+## 断线恢复
+
+SSE 不是唯一事实来源。重连后使用 `GET .../events` 按 `created_at`、`types`、`order` 和 `page` 补齐持久事件，再继续订阅流。应用应按事件 ID 去重。
+
+## 处理阻塞事件
+
+工具确认和自定义工具调用会让会话回到 `idle` 或保持等待。返回结果时引用原始调用 ID；多智能体事件还要携带 `session_thread_id`。
+
+<Card title="事件 API" href="/docs/zh/api/session-events/list-events">
+  查看列表、发送和流式端点。
+</Card>

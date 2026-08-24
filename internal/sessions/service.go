@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -16,7 +17,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
@@ -85,10 +85,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
 	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
 		Session: db.Session{
-			UUID:                  uuid.NewString(),
+			UUID:                  uuid.NewV4().String(),
 			ExternalID:            sessionID,
 			OrganizationUUID:      principal.OrganizationUUID,
 			WorkspaceUUID:         principal.WorkspaceUUID,
@@ -110,7 +109,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			UpdatedAt:             now,
 		},
 		Thread: db.SessionThread{
-			UUID:             uuid.NewString(),
+			UUID:             uuid.NewV4().String(),
 			ExternalID:       threadID,
 			OrganizationUUID: principal.OrganizationUUID,
 			WorkspaceUUID:    principal.WorkspaceUUID,
@@ -123,13 +122,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		},
 		Resources: resourceInputs,
 		Work: db.EnvironmentWork{
-			UUID:                  uuid.NewString(),
+			UUID:                  uuid.NewV4().String(),
 			ExternalID:            workID,
 			OrganizationUUID:      principal.OrganizationUUID,
 			WorkspaceUUID:         principal.WorkspaceUUID,
 			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
-			Data:                  workData,
 			Metadata:              json.RawMessage(`{}`),
 			State:                 "queued",
 			CreatedAt:             now,
@@ -376,7 +374,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 			h.appendAndBroadcastInternal(r, sessionID, []db.SessionEvent{deletedEvent})
 		} else {
 			deletedEvent.SessionExternalID = sessionID
-			h.broadcast(deletedEvent)
+			h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
 		}
 	}
 	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
@@ -565,9 +563,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		}
 		return mapSessionLoadError(err, sessionID)
 	}
-	for _, event := range created {
-		h.broadcast(event)
-	}
+	h.publishSessionEvents(r.Context(), created)
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)

@@ -185,15 +185,15 @@ func normalizeMCPOAuthRefreshForCreate(input mcpOAuthRefreshCreateInput) (mcpOAu
 		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
 	return mcpOAuthRefresh{
-			TokenEndpoint:     tokenEndpoint,
-			ClientID:          clientID,
-			TokenEndpointAuth: publicTokenAuth,
-			Scope:             input.Scope,
-			Resource:          input.Resource,
-		}, mcpOAuthRefreshSecret{
-			RefreshToken:      refreshToken,
-			TokenEndpointAuth: &secretTokenAuth,
-		}, nil
+		TokenEndpoint:     tokenEndpoint,
+		ClientID:          clientID,
+		TokenEndpointAuth: publicTokenAuth,
+		Scope:             input.Scope,
+		Resource:          input.Resource,
+	}, mcpOAuthRefreshSecret{
+		RefreshToken:      refreshToken,
+		TokenEndpointAuth: &secretTokenAuth,
+	}, nil
 }
 
 func normalizeTokenEndpointAuth(input *tokenEndpointAuthInput) (tokenEndpointAuth, tokenEndpointAuthSecret, error) {

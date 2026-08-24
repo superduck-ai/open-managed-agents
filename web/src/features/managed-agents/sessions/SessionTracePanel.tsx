@@ -388,7 +388,7 @@ export function SessionTraceSearch({ value, onChange }: { value: string; onChang
       tabIndex={expanded ? undefined : 0}
       aria-label={expanded ? undefined : msg('managedAgents.sessions.trace.openSearchFilter', 'Open search filter')}
       className={clsx(
-        'relative flex h-7 shrink-0 items-center overflow-hidden rounded-md transition-[width,background-color,box-shadow]',
+        'relative flex h-7 shrink-0 items-center overflow-hidden rounded-md transition-[width,background-color,box-shadow] focus-within:ring-2 focus-within:ring-ring/50',
         expanded
           ? 'w-56 bg-secondary ring-1 ring-border'
           : 'w-7 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -406,6 +406,8 @@ export function SessionTraceSearch({ value, onChange }: { value: string; onChang
       </span>
       <Input
         ref={inputRef}
+        type="search"
+        data-custom-clear
         aria-label={msg('managedAgents.sessions.trace.filterEvents', 'Filter events')}
         value={value}
         placeholder={msg('managedAgents.sessions.trace.filterEvents', 'Filter events')}

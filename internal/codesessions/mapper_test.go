@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testing.T) {
@@ -145,6 +146,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 		"type": "assistant",
 		"uuid": "assistant-blocks",
 		"message": map[string]any{
+			"id":   "msg_assistant_blocks",
 			"role": "assistant",
 			"content": []any{
 				map[string]any{"type": "thinking", "thinking": "plan"},
@@ -177,6 +179,12 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 			t.Fatalf("payload[%d] missing normalized fields: %#v", index, objects[index])
 		}
 	}
+	if got, want := objects[0]["id"], maevents.StableAssistantEventID("csev_test", "msg_assistant_blocks", 0, "agent.thinking"); got != want {
+		t.Fatalf("thinking id = %q, want %q", got, want)
+	}
+	if got, want := objects[1]["id"], maevents.StableAssistantEventID("csev_test", "msg_assistant_blocks", 1, "agent.message"); got != want {
+		t.Fatalf("message id = %q, want %q", got, want)
+	}
 	toolPayload := objects[2]
 	if toolPayload["tool_use_id"] != "tool_translate" || toolPayload["name"] != "Agent" || toolPayload["tool_name"] != "Agent" {
 		t.Fatalf("tool payload missing tool fields: %#v", toolPayload)
@@ -184,6 +192,37 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	input, ok := toolPayload["input"].(map[string]any)
 	if !ok || input["description"] != "Translate to Chinese" {
 		t.Fatalf("tool payload input = %#v", toolPayload["input"])
+	}
+}
+
+func TestPublicPayloadsFromWorkerEventMapsScalarAssistantBlockToPreviewID(t *testing.T) {
+	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+		ExternalID:     "csev_scalar_assistant_block",
+		EventType:      "assistant",
+		IdempotencyKey: "scalar_assistant_block",
+		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC),
+	}, mustRawJSON(t, map[string]any{
+		"type": "assistant",
+		"uuid": "scalar-assistant-block",
+		"message": map[string]any{
+			"id":      " msg_scalar_block ",
+			"role":    "assistant",
+			"content": []any{"hello"},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("publicPayloadsFromWorkerEvent returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("publicPayloadsFromWorkerEvent ok = false, want true")
+	}
+	objects := decodePublicPayloads(t, payloads)
+	if len(objects) != 1 || objects[0]["type"] != "agent.message" {
+		t.Fatalf("scalar assistant payloads = %#v, want one agent.message", objects)
+	}
+	wantID := maevents.StableAssistantEventID("csev_test", "msg_scalar_block", 0, "agent.message")
+	if got := objects[0]["id"]; got != wantID {
+		t.Fatalf("scalar assistant id = %q, want preview id %q", got, wantID)
 	}
 }
 

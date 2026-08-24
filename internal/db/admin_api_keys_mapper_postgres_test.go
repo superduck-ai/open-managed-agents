@@ -12,7 +12,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -240,9 +239,9 @@ func seedAdminAPIKeyMapperPostgreSQLFixture(
 			"apikey_mapper_oldest",
 		},
 	}
-	workspaceUUID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
-	otherWorkspaceUUID := uuid.MustParse("44444444-4444-4444-8444-444444444444")
-	userUUID := uuid.MustParse("55555555-5555-4555-8555-555555555555")
+	workspaceUUID := "33333333-3333-4333-8333-333333333333"
+	otherWorkspaceUUID := "44444444-4444-4444-8444-444444444444"
+	userUUID := "55555555-5555-4555-8555-555555555555"
 	execMapperFixtureSQL(t, ctx, executor, `
 		INSERT INTO workspaces (uuid, external_id, organization_uuid)
 		VALUES ($1, $2, $3), ($4, $5, $6)
@@ -253,11 +252,11 @@ func seedAdminAPIKeyMapperPostgreSQLFixture(
 		VALUES ($1, $2)
 	`, userUUID, fixture.userExternalID)
 
-	keyUUIDs := []uuid.UUID{
-		uuid.MustParse("66666666-6666-4666-8666-666666666666"),
-		uuid.MustParse("77777777-7777-4777-8777-777777777777"),
-		uuid.MustParse("88888888-8888-4888-8888-888888888888"),
-		uuid.MustParse("99999999-9999-4999-8999-999999999999"),
+	keyUUIDs := []string{
+		"66666666-6666-4666-8666-666666666666",
+		"77777777-7777-4777-8777-777777777777",
+		"88888888-8888-4888-8888-888888888888",
+		"99999999-9999-4999-8999-999999999999",
 	}
 	baseCreatedAt := time.Date(2026, time.August, 2, 1, 2, 3, 0, time.UTC)
 	for index, externalID := range fixture.keyIDs {

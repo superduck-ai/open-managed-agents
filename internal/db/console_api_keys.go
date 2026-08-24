@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 
-	"github.com/google/uuid"
 	"github.com/samber/lo"
 	"github.com/superduck-ai/yourbatis"
 )
@@ -52,7 +52,7 @@ func (d *DB) CreateConsoleAPIKey(ctx context.Context, input platform.CreateConso
 		keySuffix = keySuffix[len(keySuffix)-6:]
 	}
 	externalID := consolePrefixedID("apikey", 18)
-	workspaceAPIKeyUUID := uuid.NewString()
+	workspaceAPIKeyUUID := uuid.NewV4().String()
 	keyHash := auth.HashAPIKey(rawKey)
 
 	var key platform.ConsoleAPIKey
@@ -185,7 +185,7 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 	}
 	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
 	row, err := mapper.Upsert(ctx, upsertConsoleWorkspaceParams{
-		UUID:          uuid.NewString(),
+		UUID:          uuid.NewV4().String(),
 		ExternalID:    externalID,
 		OrgUUID:       input.OrgUUID,
 		Name:          input.Name,
@@ -338,7 +338,7 @@ func consolePrefixedID(prefix string, bytes int) string {
 func consoleRandomToken(bytes int) string {
 	raw := make([]byte, bytes)
 	if _, err := rand.Read(raw); err != nil {
-		return strings.ReplaceAll(uuid.NewString(), "-", "")
+		return strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
 }

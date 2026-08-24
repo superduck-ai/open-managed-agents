@@ -78,6 +78,7 @@ func insertSessionTx(
 		resources = append(resources, created)
 	}
 
+	input.Work.SessionUUID = session.UUID
 	workRow, err := workMapper.Insert(ctx, environmentWorkWriteParamsFrom(input.Work))
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err

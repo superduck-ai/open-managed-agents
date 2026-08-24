@@ -46,6 +46,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
     uuid: 'acct_managed_agents_test',
     email_address: 'managed-agents-test@example.com',
     display_name: 'Managed Agents Test User',
+    memberships: [{ role: 'admin', organization: { uuid: 'org_test' } }],
   },
   status: 'authenticated',
   csrfToken: 'csrf_managed_agents_test',
@@ -56,7 +57,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
-  queryOptions: { seedModelMappings?: boolean } = {},
+  queryOptions: { auth?: AuthContextValue; seedModels?: boolean } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -64,18 +65,16 @@ export function render(
       mutations: { retry: false },
     },
   });
-  if (queryOptions.seedModelMappings !== false) {
-    queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
+  const models = [
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+  ];
+  if (queryOptions.seedModels !== false) {
+    queryClient.setQueryData(['create-agent', 'models', 'default'], models);
+    queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
   }
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
   return testingLibrary.render(
-    <AuthContext.Provider value={managedAgentsAuthContextValue}>
+    <AuthContext.Provider value={queryOptions.auth ?? managedAgentsAuthContextValue}>
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
     </AuthContext.Provider>,
     options,
@@ -147,14 +146,12 @@ export function renderManagedAgentsPage(
       },
     },
   });
-  queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
+  const models = [
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+  ];
+  queryClient.setQueryData(['create-agent', 'models', 'default'], models);
+  queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
   const history = createBrowserHistory({ window });
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
@@ -246,8 +243,8 @@ export type MockAgentsApiOptions = {
   mcpToolCatalogRefreshWait?: Promise<void>;
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
-  modelMappings?: Record<string, string>;
-  modelMappingsErrorOnce?: boolean;
+  modelsErrorOnce?: boolean;
+  modelsNotConfigured?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
   quickstartStreamErrorOnce?: boolean;
   agentUpdateErrorStatus?: number;
@@ -273,7 +270,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
-  let modelMappingsErrorsRemaining = options.modelMappingsErrorOnce ? 1 : 0;
+  let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
   let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
   let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
@@ -324,15 +321,22 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
 
-    if (url.match(/^\/api\/organizations\/[^/]+\/models$/) && method === 'GET') {
-      if (modelMappingsErrorsRemaining > 0) {
-        modelMappingsErrorsRemaining -= 1;
-        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 503);
-      }
-      return jsonResponse({ model_mappings: options.modelMappings ?? {} });
-    }
-
     if (url.startsWith('/v1/models?') && method === 'GET') {
+      if (options.modelsNotConfigured) {
+        return jsonResponse(
+          {
+            error: {
+              type: 'api_error',
+              message: 'This workspace has no LLM provider configured',
+            },
+          },
+          503,
+        );
+      }
+      if (modelsErrorsRemaining > 0) {
+        modelsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 500);
+      }
       const models = options.models ?? [
         { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
         { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
@@ -1220,6 +1224,17 @@ export function mockManagedResourceApi() {
         vault_ids: [],
       },
     ],
+    deploymentRuns: [
+      {
+        id: 'drun_scheduled123456',
+        created_at: now,
+        deployment_id: 'dep_one123456',
+        error: null,
+        session_id: 'sesn_one123456',
+        trigger_context: { type: 'schedule', scheduled_at: now },
+        type: 'deployment_run',
+      },
+    ],
     environments: [
       {
         id: 'env_one123456',
@@ -1456,6 +1471,19 @@ export function mockManagedResourceApi() {
         return matchesCreatedAtParams(deployment, params);
       });
       return jsonResponse({ data: filteredDeployments, next_page: null });
+    }
+    const retrieveDeploymentMatch = url.match(/^\/v1\/deployments\/([^/?]+)\?beta=true$/);
+    if (retrieveDeploymentMatch && method === 'GET') {
+      const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
+      const deployment = resources.deployments.find((item) => item.id === deploymentId);
+      return deployment ? jsonResponse(deployment) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (url.startsWith('/v1/deployment_runs?') && method === 'GET') {
+      const deploymentId = new URL(url, 'https://oma.duck.ai').searchParams.get('deployment_id');
+      return jsonResponse({
+        data: resources.deploymentRuns.filter((run) => !deploymentId || run.deployment_id === deploymentId),
+        next_page: null,
+      });
     }
     if (url.startsWith('/v1/environments?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;

@@ -236,14 +236,9 @@ func testStringPointer(value string) *string {
 }
 
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
-	// 故意给配置放入可识别的上游密钥，后续断言它不会进入 payload 或 shell 命令。
 	cfg := config.Config{
 		CodeSession: config.CodeSessionConfig{
 			SandboxAPIBaseURL: "http://host.docker.internal:18081/",
-		},
-		AnthropicUpstream: config.AnthropicUpstreamConfig{
-			BaseURL: "https://api.anthropic.test/",
-			APIKey:  "sk-ant-test-secret",
 		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
 			ManagerPath:        "/opt/env manager/bin/environment-manager",
@@ -251,10 +246,10 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			ClaudePath:         "/opt/claude path/bin/claude",
 		},
 	}
-	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
+	sessionConfig := json.RawMessage(`{"model":"kimi-k2.5","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, "/workspace/widgets", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -285,7 +280,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnv[key] != "claude-opus-4-8" {
+		if startupEnv[key] != "kimi-k2.5" {
 			t.Fatalf("%s = %q, want session model", key, startupEnv[key])
 		}
 	}
@@ -323,9 +318,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := environment["environment"]; ok {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
-	if strings.Contains(string(payload), cfg.AnthropicUpstream.APIKey) {
-		t.Fatalf("payload leaked upstream anthropic api key: %s", payload)
-	}
 
 	command := buildEnvironmentManagerCommand("cse_session with 'quote'/and/slash", cfg, payload)
 	if !reflect.DeepEqual(command.Payload, payload) {
@@ -340,15 +332,22 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"--claude-agent-version 'current'",
 		"--claude-path '/opt/claude path/bin/claude'",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
+		"export GIT_CONFIG_COUNT=3",
+		"export GIT_CONFIG_KEY_0=credential.interactive",
+		"export GIT_CONFIG_VALUE_0=false",
+		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_1=git@github.com:",
+		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
+		"export GIT_EDITOR=true",
+		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
+		"export GIT_TERMINAL_PROMPT=0",
 		"Claude binary version mismatch: expected 2.1.120",
 		"> '/tmp/claude-code-sessions/cse_session_with_'\"'\"'quote'\"'\"'_and_slash/environment-manager.log' 2>&1",
 	} {
 		if !strings.Contains(allCommands, want) {
 			t.Fatalf("commands missing %q in:\n%s", want, allCommands)
 		}
-	}
-	if strings.Contains(allCommands, "sk-ant-test-secret") {
-		t.Fatalf("command leaked anthropic api key:\n%s", allCommands)
 	}
 	if strings.Contains(allCommands, "task-run --stdin") {
 		t.Fatalf("command should use task-run's native clap stdin behavior:\n%s", allCommands)
@@ -371,7 +370,7 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
 		"claude_code_args":{"mcp-config":"/tmp/managed-agent-mcp-config.json"}
 	}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -420,7 +419,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -461,7 +460,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *tes
 		"OTEL_LOGS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -497,7 +496,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *tes
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -528,7 +527,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://collector.example.com/v1/metrics"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -557,7 +556,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t 
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://collector.example.com/v1/logs"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}

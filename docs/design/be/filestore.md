@@ -209,14 +209,14 @@ Input attach 不创建新的 `files` 行，不复制 File 元数据或 S3 对象
 
 Environment Manager 不再接收 `type=file` resource。它只在 rclone ready 后看到已经完成的 `/uploads` 文件系统视图；File 的下载、路径投影或内容刷新均不属于 Environment Manager 职责。
 
-Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的身份解析、rclone 启动、ready、heartbeat 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 rclone ready、Sandbox running 和首次 heartbeat 成功之后创建；Environment Manager 启动或运行时 metadata 原子发布失败时，Runner 将 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
+Provider Sandbox 创建前的普通启动失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的身份解析、rclone 启动、ready、heartbeat 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 rclone ready、Sandbox running 和首次 heartbeat 成功之后创建；首次创建时 Environment Manager 启动或运行时 metadata 原子发布失败会将新 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。若 Work 仍能关联到唯一 active durable Code Session，则按丢失 Sandbox 的恢复启动处理：保留该 Code Session、延迟重新排队 Work，只清理本次 replacement Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
 
 ## 数据模型
 
 迁移 `00047_unify_session_resources_and_files.sql` 完成 namespace 的原子切换，迁移
 `00048_snapshot_session_skills.sql` 将 Skill Archive 从 catalog version 投影转换为 Session File 快照，迁移
-`00052_add_session_resource_file_ownership.sql` 为普通 namespace File 增加显式所有权，迁移
-`00053_remove_session_resource_payload.sql` 将 File、GitHub Repository 与 Memory Store 配置回填到显式列并删除通用 `payload`：
+`00054_add_session_resource_file_ownership.sql` 为普通 namespace File 增加显式所有权，迁移
+`00055_remove_session_resource_payload.sql` 将 File、GitHub Repository 与 Memory Store 配置回填到显式列并删除通用 `payload`：
 
 `00036` 至 `00046` 保持与已发布 main 完全一致；Session Resource/File 迁移只追加到其后，不能通过重编号把新 SQL 塞入已经记录在 `goose_db_version` 的版本。这样从 main `00046` 原地升级与空库顺序执行得到相同 schema，也不会因 force-push 后复用版本号而静默跳过 namespace 切换。
 
@@ -227,7 +227,7 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 - Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace。
 - schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
-迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。`00052` 在回填前验证活动 File 的租户、payload/path、scope、唯一 owner 和 referenced/owned 不相交不变量，冲突时整体失败；通过后将既有公开 Input 回填为 `referenced`、内部普通 File 回填为 `owned`，Directory 与 Skill Archive 保持 `NULL`。`00053` 再验证 File、GitHub Repository、Memory Store 与秘密字段形状，回填显式配置并删除 `payload`。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
+迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。`00054` 在回填前验证活动 File 的租户、payload/path、scope、唯一 owner 和 referenced/owned 不相交不变量，冲突时整体失败；通过后将既有公开 Input 回填为 `referenced`、内部普通 File 回填为 `owned`，Directory 与 Skill Archive 保持 `NULL`。`00055` 再验证 File、GitHub Repository、Memory Store 与秘密字段形状，回填显式配置并删除 `payload`。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 

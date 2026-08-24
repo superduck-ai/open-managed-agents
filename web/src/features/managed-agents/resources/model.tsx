@@ -606,11 +606,6 @@ export function deploymentAgentVersion(deployment: DeploymentApiResponse) {
   return typeof version === 'number' ? version : null;
 }
 
-export function triggerLabel(trigger: unknown) {
-  const triggerRecord = objectRecord(trigger);
-  return String(triggerRecord.type || 'manual');
-}
-
 export function deploymentRunStatus(run: DeploymentRunApiResponse, msg?: I18nMsg) {
   if (run.error) {
     return msg ? msg('managedAgents.deployments.runStatus.failed', 'Failed') : 'Failed';

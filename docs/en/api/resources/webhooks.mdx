@@ -1,0 +1,25 @@
+---
+title: "Webhooks"
+description: "Register endpoints, select events, and rotate signing secrets."
+---
+
+Every request requires `anthropic-beta: webhooks-2026-03-01`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/webhooks` | Create / list |
+| `GET` / `POST` / `DELETE` | `/v1/webhooks/{id}` | Retrieve / update / delete |
+| `POST` | `/v1/webhooks/{id}/regenerate_signing_secret` | Rotate signing secret |
+
+```json
+{
+  "url": "https://hooks.example.com/oma",
+  "name": "production-events",
+  "description": "Session and vault lifecycle",
+  "enabled_events": ["session.status_idled", "session.error"]
+}
+```
+
+URLs pass SSRF and HTTPS validation unless the deployment explicitly enables insecure local targets. Events must be in the supported allowlist.
+
+Create returns `signing_secret` once; rotation returns a replacement. List and retrieve never expose it. Consumers verify `X-Webhook-Signature` and handle duplicate delivery idempotently.

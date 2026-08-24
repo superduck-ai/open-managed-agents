@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 
 func TestManagedAgentRuntimeMapperBuilderContracts(t *testing.T) {
 	sessionParams, workParams := managedAgentRuntimeMapperTestParams()
+	rotateParams := managedAgentRuntimeRotateParams(sessionParams)
 	tests := []struct {
 		name     string
 		contract mapperBuilderContract
@@ -24,7 +26,7 @@ func TestManagedAgentRuntimeMapperBuilderContracts(t *testing.T) {
 			wantSensitiveArgumentNames: []string{"params.MetadataPatch"},
 			wantSQLFragments:           []string{"UPDATE sessions", "CAST($1 AS jsonb)", "organization_uuid = $2"},
 		}},
-		{"merge work metadata", mapperBuilderContract{
+		{"merge work runtime metadata", mapperBuilderContract{
 			statement: environmentWorkMapperMergeMetadataStatement,
 			bound:     buildEnvironmentWorkMapperMergeMetadata(yourbatis.DialectPostgres, workParams),
 			wantID:    "EnvironmentWorkMapper.MergeMetadata", wantKind: yourbatis.StatementUpdate,
@@ -46,6 +48,20 @@ func TestManagedAgentRuntimeMapperBuilderContracts(t *testing.T) {
 			wantID: "CodeSessionMapper.TerminateByExternalID", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "codeSessionExternalID"},
 			wantSQLFragments:  []string{"UPDATE code_sessions", "oauth_access_token_hash = NULL", "external_id = $3"},
+		}},
+		{"rotate code session credentials", mapperBuilderContract{
+			statement: codeSessionMapperRotateCredentialsStatement,
+			bound:     buildCodeSessionMapperRotateCredentials(yourbatis.DialectPostgres, rotateParams),
+			wantID:    "CodeSessionMapper.RotateCredentials", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.OAuthAccessTokenHash", "params.OrganizationUUID", "params.WorkspaceUUID",
+				"params.SessionExternalID", "params.CodeSessionExternalID",
+			},
+			wantSensitiveArgumentNames: []string{"params.OAuthAccessTokenHash"},
+			wantSQLFragments: []string{
+				"UPDATE code_sessions", "current_worker_epoch = current_worker_epoch + 1",
+				"worker_lease_expires_at = NULL", "status = 'active'", "RETURNING",
+			},
 		}},
 	}
 	for _, test := range tests {
@@ -111,6 +127,31 @@ func TestManagedAgentRuntimeMapperRowsAffected(t *testing.T) {
 	}
 }
 
+func TestManagedAgentRuntimeMapperRotateCredentials(t *testing.T) {
+	ctx := context.Background()
+	sessionParams, _ := managedAgentRuntimeMapperTestParams()
+	rotateParams := managedAgentRuntimeRotateParams(sessionParams)
+	executor := newMapperTestExecutor(t, mapperTestResponse{
+		columns: []string{"current_worker_epoch"},
+		rows:    [][]driver.Value{{int64(2)}},
+	})
+
+	got, err := NewCodeSessionMapper(executor).RotateCredentials(ctx, rotateParams)
+	if err != nil || got != 2 {
+		t.Fatalf("RotateCredentials() = (%d, %v), want epoch 2", got, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"CodeSessionMapper.RotateCredentials",
+		yourbatis.StatementUpdate,
+		[]any{
+			rotateParams.OAuthAccessTokenHash, rotateParams.OrganizationUUID, rotateParams.WorkspaceUUID,
+			rotateParams.SessionExternalID, rotateParams.CodeSessionExternalID,
+		},
+	)
+}
+
 func TestManagedAgentRuntimeMapperExecutionErrors(t *testing.T) {
 	sessionParams, workParams := managedAgentRuntimeMapperTestParams()
 	tests := []struct {
@@ -148,6 +189,18 @@ func TestManagedAgentRuntimeMapperExecutionErrors(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("rotate credentials", func(t *testing.T) {
+		executionErr := errors.New("execution failed")
+		executor := newMapperTestExecutor(t, mapperTestResponse{queryErr: executionErr})
+		_, err := NewCodeSessionMapper(executor).RotateCredentials(
+			context.Background(),
+			managedAgentRuntimeRotateParams(sessionParams),
+		)
+		if !errors.Is(err, executionErr) {
+			t.Fatalf("mapper error = %v, want %v", err, executionErr)
+		}
+	})
 }
 
 func managedAgentRuntimeMapperTestParams() (sessionMetadataPatchParams, environmentWorkMetadataPatchParams) {
@@ -162,5 +215,15 @@ func managedAgentRuntimeMapperTestParams() (sessionMetadataPatchParams, environm
 		EnvironmentUUID:       "00000000-0000-4000-8000-000000000003",
 		EnvironmentExternalID: "env_test", WorkExternalID: "envwork_test",
 		MetadataPatch: metadataPatch,
+	}
+}
+
+func managedAgentRuntimeRotateParams(sessionParams sessionMetadataPatchParams) rotateCodeSessionCredentialsParams {
+	return rotateCodeSessionCredentialsParams{
+		OrganizationUUID:      sessionParams.OrganizationUUID,
+		WorkspaceUUID:         sessionParams.WorkspaceUUID,
+		SessionExternalID:     sessionParams.SessionExternalID,
+		CodeSessionExternalID: "codeses_test",
+		OAuthAccessTokenHash:  "oauth-hash",
 	}
 }

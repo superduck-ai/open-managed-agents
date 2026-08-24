@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -25,7 +26,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const (
@@ -141,8 +141,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError("Could not generate skill version ID", fmt.Errorf("generate skill version ID: %w", err))
 	}
-	skillUUID := uuid.NewString()
-	versionUUID := uuid.NewString()
+	skillUUID := uuid.NewV4().String()
+	versionUUID := uuid.NewV4().String()
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skillUUID, versionValue, sanitizeForKey(pkg.Directory))
 
@@ -416,7 +416,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	if err != nil {
 		return internalError("Could not generate skill version ID", fmt.Errorf("generate skill version ID: %w", err))
 	}
-	versionUUID := uuid.NewString()
+	versionUUID := uuid.NewV4().String()
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skill.UUID, versionValue, sanitizeForKey(pkg.Directory))
 	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {

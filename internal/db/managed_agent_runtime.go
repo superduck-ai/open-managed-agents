@@ -2,10 +2,37 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+// RotateManagedAgentCodeSessionCredentials replaces the one-way OAuth token
+// hash before a replacement sandbox starts and revokes the dead worker lease.
+func (d *DB) RotateManagedAgentCodeSessionCredentials(
+	ctx context.Context,
+	session Session,
+	codeSessionExternalID string,
+	oauthAccessTokenHash string,
+) (int64, error) {
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	workerEpoch, err := mapper.RotateCredentials(ctx, rotateCodeSessionCredentialsParams{
+		OrganizationUUID:      session.OrganizationUUID,
+		WorkspaceUUID:         session.WorkspaceUUID,
+		SessionExternalID:     session.ExternalID,
+		CodeSessionExternalID: codeSessionExternalID,
+		OAuthAccessTokenHash:  oauthAccessTokenHash,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return workerEpoch, nil
+}
 
 // BindManagedAgentRuntimeMetadata 将已启动的 Managed Agent runtime 信息同时发布到
 // public Session 和调用方指定的 Environment Work。

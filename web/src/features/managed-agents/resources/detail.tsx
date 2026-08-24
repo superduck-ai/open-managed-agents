@@ -103,7 +103,6 @@ import {
   formatKilobytes,
   managedEntityDetailHref,
   managedEntityListHref,
-  titleCase,
 } from '../utils';
 import { CredentialDialog, MemoryDialog } from './dialogs';
 import {
@@ -126,7 +125,6 @@ import {
   removeMemoryFromBranches,
   sortMemoryRows,
   statusPillTone,
-  triggerLabel,
   updateMemoryQueryParam,
   upsertMemoryInBranch,
   upsertMemoryInBranches,
@@ -726,14 +724,10 @@ export function DeploymentRunsPanel({
 }
 
 function localizedRunTrigger(run: DeploymentRunApiResponse, msg: I18nMsg) {
-  const trigger = String(run.trigger_type || triggerLabel(run.trigger)).toLowerCase();
-  if (trigger === 'manual') {
-    return msg('managedAgents.deployments.trigger.manual', 'Manual');
-  }
-  if (trigger === 'schedule' || trigger === 'scheduled' || trigger === 'cron') {
-    return msg('managedAgents.deployments.trigger.scheduled', 'Scheduled');
-  }
-  return titleCase(trigger);
+  if (!run.trigger_context) return '—';
+  return run.trigger_context.type === 'schedule'
+    ? msg('managedAgents.deployments.trigger.scheduled', 'Scheduled')
+    : msg('managedAgents.deployments.trigger.manual', 'Manual');
 }
 
 export function SessionNestedPanel({

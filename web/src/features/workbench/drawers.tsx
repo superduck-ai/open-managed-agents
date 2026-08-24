@@ -419,18 +419,7 @@ export function ModelDrawer({
 }
 
 export function modelDescription(model: WorkbenchModel) {
-  switch (model.model_name) {
-    case 'claude-fable-5':
-      return 'Next generation of intelligence for the hardest knowledge work and coding problems';
-    case 'claude-opus-4-8':
-      return 'Powerful, large model for complex challenges';
-    case 'claude-sonnet-4-6':
-      return 'Smart, efficient model for everyday use';
-    case 'claude-haiku-4-5-20251001':
-      return 'Fastest model for daily tasks';
-    default:
-      return model.display_name ?? model.name ?? 'Available model';
-  }
+  return model.display_name ?? model.name ?? model.model_name;
 }
 
 export function thinkingEffortLabel(value: string) {

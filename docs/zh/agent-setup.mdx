@@ -1,0 +1,621 @@
+---
+title: "定义您的智能体"
+sidebarTitle: "智能体设置"
+description: "创建可复用、带版本控制的智能体配置。"
+---
+
+智能体（agent）是一种可复用、带版本控制的配置，用于定义角色和能力。它将模型、系统提示、工具、MCP 服务器和技能打包在一起，共同塑造智能体在会话期间的行为方式。
+
+只需将智能体创建一次作为可复用资源，之后每次[启动会话](/docs/zh/sessions)时通过 ID 引用它即可。智能体带有版本控制，更易于跨多个会话进行管理。
+
+<Note>
+  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+</Note>
+
+## 智能体配置字段
+
+| 字段            | 描述                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | 必填。智能体的人类可读名称。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `model`       | 必填。驱动智能体的[模型](/docs/zh/api/models/list-models)。接受模型 ID 字符串或对象，例如 `{"id": "claude-opus-5"}`。可用模型由 OMA 部署配置决定。对象形式还接受 `speed`、`effort` 和 `inference_geo` 字段；请参阅[创建智能体](/docs/zh/agent-setup#create-an-agent)下的提示、推理强度级别以及[固定推理地理位置](/docs/zh/agent-setup#pin-the-inference-geo)。 |
+| `system`      | 定义智能体行为和角色的系统提示。系统提示不同于[用户消息](/docs/zh/reference#event-types)，后者应描述要完成的工作。                                                                                                                                                                                                                                                      |
+| `tools`       | 智能体可用的工具。结合了[预构建的智能体工具](/docs/zh/tools)、[MCP 工具](/docs/zh/mcp-connector)和[自定义工具](/docs/zh/tools#custom-tools)。                                                                                                                                                                                                                                                          |
+| `mcp_servers` | 提供标准化第三方能力的 [MCP 服务器](/docs/zh/mcp-connector)。                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `skills`      | 通过渐进式披露提供特定领域上下文的[技能](/docs/zh/skills)。                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `multiagent`  | 协调器声明，列出此智能体可以委派任务的智能体。请参阅[多智能体编排](/docs/zh/multiagent-orchestration)。                                                                                                                                                                                                                                                                                                                                                                                            |
+| `description` | 对智能体功能的描述。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `metadata`    | 用于您自己跟踪的任意键值对。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+
+您还可以为单个会话覆盖 `model`、`system`、`tools`、`mcp_servers` 和 `skills`，而无需更改智能体本身。在单个会话的 `model` 覆盖中设置的 `effort` 不会生效；由于覆盖会完整替换智能体的 `model` 对象，使用 `model` 覆盖创建的会话将以模型的默认推理强度运行。如需使用特定的推理强度，请在智能体上设置 `effort`，并且不要为该会话覆盖 `model`。请参阅[为会话覆盖智能体配置](/docs/zh/sessions#override-agent-configuration-for-a-session)。
+
+## 创建智能体
+
+以下示例定义了一个使用 `claude-opus-5` 并可访问预构建智能体工具集的编码智能体。该工具集使智能体能够编写代码、读取文件、搜索网络等。有关支持的工具的完整列表，请参阅[智能体工具参考](/docs/zh/tools)。
+
+示例使用 curl、`ant` CLI 或其中一个 SDK。如果您尚未设置，[快速入门](/docs/zh/quickstart#install-the-cli)涵盖了安装和客户端设置。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  agent=$(curl -fsSL http://localhost:38080/v1/agents \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d '{
+      "name": "Coding Assistant",
+      "model": "claude-opus-5",
+      "system": "You are a helpful coding agent.",
+      "tools": [{"type": "agent_toolset_20260401"}]
+    }')
+
+  AGENT_ID=$(jq -r '.id' <<< "$agent")
+  AGENT_VERSION=$(jq -r '.version' <<< "$agent")
+  ```
+
+  ```bash CLI
+  agent=$(ant beta:agents create \
+    --name "Coding Assistant" \
+    --model '{id: claude-opus-5}' \
+    --system "You are a helpful coding agent." \
+    --tool '{type: agent_toolset_20260401}' \
+    --format json)
+
+  AGENT_ID=$(jq -r '.id' <<< "$agent")
+  AGENT_VERSION=$(jq -r '.version' <<< "$agent")
+  ```
+
+  ```python Python
+  agent = client.beta.agents.create(
+      name="Coding Assistant",
+      model="claude-opus-5",
+      system="You are a helpful coding agent.",
+      tools=[
+          {"type": "agent_toolset_20260401"},
+      ],
+  )
+  ```
+
+  ```typescript TypeScript
+  const agent = await client.beta.agents.create({
+    name: "Coding Assistant",
+    model: "claude-opus-5",
+    system: "You are a helpful coding agent.",
+    tools: [{ type: "agent_toolset_20260401" }],
+  });
+  ```
+
+  ```csharp C#
+  var agent = await client.Beta.Agents.Create(new()
+  {
+      Name = "Coding Assistant",
+      Model = BetaManagedAgentsModel.ClaudeOpus5,
+      System = "You are a helpful coding agent.",
+      Tools =
+      [
+          new BetaManagedAgentsAgentToolset20260401Params
+          {
+              Type = "agent_toolset_20260401",
+          },
+      ],
+  });
+  ```
+
+  ```go Go
+  agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
+      Name: "Coding Assistant",
+      Model: anthropic.BetaManagedAgentsModelConfigParams{
+          ID: anthropic.BetaManagedAgentsModelClaudeOpus5,
+      },
+      System: anthropic.String("You are a helpful coding agent."),
+      Tools: []anthropic.BetaAgentNewParamsToolUnion{{
+          OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
+              Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
+          },
+      }},
+  })
+  if err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var agent = client.beta().agents().create(
+      AgentCreateParams.builder()
+          .name("Coding Assistant")
+          .model(BetaManagedAgentsModel.CLAUDE_OPUS_5)
+          .system("You are a helpful coding agent.")
+          .addTool(
+              BetaManagedAgentsAgentToolset20260401Params.builder()
+                  .type(BetaManagedAgentsAgentToolset20260401Params.Type.AGENT_TOOLSET_20260401)
+                  .build()
+          )
+          .build()
+  );
+  ```
+
+  ```php PHP
+  $agent = $client->beta->agents->create(
+      name: 'Coding Assistant',
+      model: 'claude-opus-5',
+      system: 'You are a helpful coding agent.',
+      tools: [
+          BetaManagedAgentsAgentToolset20260401Params::with(
+              type: 'agent_toolset_20260401',
+          ),
+      ],
+  );
+  ```
+
+  ```ruby Ruby
+  agent = client.beta.agents.create(
+    name: "Coding Assistant",
+    model: "claude-opus-5",
+    system_: "You are a helpful coding agent.",
+    tools: [{type: "agent_toolset_20260401"}]
+  )
+  ```
+</CodeGroup>
+
+响应会回显您的配置，并添加 `id`、`type`、`version`、`created_at`、`updated_at` 和 `archived_at` 字段，同时为您省略的 `model` 字段（例如 `effort`）填充默认值。`version` 从 1 开始，每次更新更改智能体时递增。
+
+```json
+{
+  "id": "agent_01HqR2k7vXbZ9mNpL3wYcT8f",
+  "type": "agent",
+  "name": "Coding Assistant",
+  "model": {
+    "id": "claude-opus-5",
+    "effort": { "type": "high" },
+    "speed": "standard"
+  },
+  "system": "You are a helpful coding agent.",
+  "description": null,
+  "tools": [
+    {
+      "type": "agent_toolset_20260401",
+      "default_config": {
+        "permission_policy": { "type": "always_allow" }
+      }
+    }
+  ],
+  "skills": [],
+  "mcp_servers": [],
+  "metadata": {},
+  "version": 1,
+  "created_at": "2026-04-03T18:24:10.412Z",
+  "updated_at": "2026-04-03T18:24:10.412Z",
+  "archived_at": null
+}
+```
+
+工具集上的 `default_config` 显示其默认的[权限策略](/docs/zh/permission-policies) `always_allow`，除非您另行配置，否则将应用该策略。
+
+<Tip>
+  要对支持快速模式的模型启用快速模式，请将 `model` 作为对象传递，例如：`{"id": "claude-opus-5", "speed": "fast"}`。请参阅快速模式页面的支持模型列表。
+</Tip>
+
+<Tip>
+  要设置模型的推理强度级别，请将 `model` 作为对象传递，例如：`{"id": "claude-opus-5", "effort": "high"}`。`effort` 字段接受级别字符串（`low`、`medium`、`high`、`xhigh` 或 `max`）或对象，例如 `{"type": "high"}`。
+</Tip>
+
+### 固定推理地理位置
+
+与 `speed` 和 `effort` 一样，`inference_geo` 通过 `model` 的对象形式设置：将 `model` 作为对象传递，并在 `id` 旁边设置 `inference_geo`。该字段接受 `"us"` 或 `"global"`。未设置时，每个模型请求在被处理时遵循工作区的默认推理地理位置。有关工作区级别的地理位置控制和定价，请参阅数据驻留。
+
+以下示例将智能体固定到美国推理，并打印响应的 `model` 对象中回显的 `inference_geo` 值：
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  agent=$(curl -fsSL http://localhost:38080/v1/agents \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d '{
+      "name": "Geo-pinned assistant",
+      "model": {"id": "claude-opus-5", "inference_geo": "us"},
+      "system": "You are a helpful assistant."
+    }')
+
+  echo "Inference geo: $(jq -r '.model.inference_geo' <<< "$agent")"
+  ```
+
+  ```bash CLI
+  agent=$(ant beta:agents create \
+    --name "Geo-pinned assistant" \
+    --model '{id: claude-opus-5, inference_geo: us}' \
+    --system "You are a helpful assistant." \
+    --format json)
+
+  echo "Inference geo: $(jq -r '.model.inference_geo' <<< "$agent")"
+  ```
+
+  ```python Python
+  agent = client.beta.agents.create(
+      name="Geo-pinned assistant",
+      model={
+          "id": "claude-opus-5",
+          "inference_geo": "us",
+      },
+      system="You are a helpful assistant.",
+  )
+
+  print(f"Inference geo: {agent.model.inference_geo}")
+  ```
+
+  ```typescript TypeScript
+  const agent = await client.beta.agents.create({
+    name: "Geo-pinned assistant",
+    model: { id: "claude-opus-5", inference_geo: "us" },
+    system: "You are a helpful assistant.",
+  });
+
+  console.log(`Inference geo: ${agent.model.inference_geo}`);
+  ```
+
+  ```csharp C#
+  var agent = await client.Beta.Agents.Create(new()
+  {
+      Name = "Geo-pinned assistant",
+      Model = new BetaManagedAgentsModelConfigParams
+      {
+          ID = BetaManagedAgentsModel.ClaudeOpus5,
+          InferenceGeo = "us",
+      },
+      System = "You are a helpful assistant.",
+  });
+
+  Console.WriteLine($"Inference geo: {agent.Model.InferenceGeo}");
+  ```
+
+  ```go Go
+  agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
+      Name: "Geo-pinned assistant",
+      Model: anthropic.BetaManagedAgentsModelConfigParams{
+          ID:           anthropic.BetaManagedAgentsModelClaudeOpus5,
+          InferenceGeo: anthropic.String("us"),
+      },
+      System: anthropic.String("You are a helpful assistant."),
+  })
+  if err != nil {
+      panic(err)
+  }
+
+  fmt.Printf("Inference geo: %s\n", agent.Model.InferenceGeo)
+  ```
+
+  ```java Java
+  var agent = client.beta().agents().create(
+      AgentCreateParams.builder()
+          .name("Geo-pinned assistant")
+          .model(
+              BetaManagedAgentsModelConfigParams.builder()
+                  .id(BetaManagedAgentsModel.CLAUDE_OPUS_5)
+                  .inferenceGeo("us")
+                  .build()
+          )
+          .system("You are a helpful assistant.")
+          .build()
+  );
+
+  IO.println("Inference geo: " + agent.model().inferenceGeo().orElseThrow());
+  ```
+
+  ```php PHP
+  $agent = $client->beta->agents->create(
+      name: 'Geo-pinned assistant',
+      model: BetaManagedAgentsModelConfigParams::with(
+          id: 'claude-opus-5',
+          inferenceGeo: 'us',
+      ),
+      system: 'You are a helpful assistant.',
+  );
+
+  echo "Inference geo: {$agent->model->inferenceGeo}\n";
+  ```
+
+  ```ruby Ruby
+  agent = client.beta.agents.create(
+    name: "Geo-pinned assistant",
+    model: {id: "claude-opus-5", inference_geo: "us"},
+    system_: "You are a helpful assistant."
+  )
+
+  puts "Inference geo: #{agent.model.inference_geo}"
+  ```
+</CodeGroup>
+
+`inference_geo` 固定值会在保存智能体时、基于该智能体创建会话时以及会话处理的每个回合时，根据工作区的 `allowed_inference_geos` 进行验证。如果工作区允许列表收窄导致某个固定值不再被允许，则无法基于该智能体创建新会话，正在运行的会话也会拒绝后续回合；固定值永远不会被豁免，因为工作区依赖它们来满足合规性和数据驻留要求。
+
+在不支持地理推理固定的模型上设置 `inference_geo` 会返回 400 错误；有关支持的模型，请参阅模型可用性。在 `multiagent` 配置中，协调器的固定值和每个名册成员的固定值必须全部设置为相同的值，或全部不设置；请参阅[多智能体编排](/docs/zh/multiagent-orchestration)。如需稍后更改或清除固定值，请更新智能体的 `model` 对象；提供不含 `inference_geo` 的 `model` 会清除该固定值，如[更新语义](/docs/zh/agent-setup#update-semantics)中所述。
+
+## 更新智能体
+
+当配置发生更改时，更新智能体会生成一个新版本。`version` 字段是可选的：提供它以实现乐观并发控制（不匹配时返回 409），或省略它以无条件应用更新（最后写入者获胜）。对已归档智能体的更新会被拒绝。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  updated_agent=$(curl -fsSL "http://localhost:38080/v1/agents/$AGENT_ID" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<EOF
+  {
+    "version": $AGENT_VERSION,
+    "system": "You are a helpful coding agent. Always write tests."
+  }
+  EOF
+  )
+
+  echo "New version: $(jq -r '.version' <<< "$updated_agent")"
+  ```
+
+  ```bash CLI
+  ant beta:agents update \
+    --agent-id "$AGENT_ID" \
+    --version "$AGENT_VERSION" \
+    --system "You are a helpful coding agent. Always write tests."
+  ```
+
+  ```python Python
+  updated_agent = client.beta.agents.update(
+      agent.id,
+      version=agent.version,
+      system="You are a helpful coding agent. Always write tests.",
+  )
+
+  print(f"New version: {updated_agent.version}")
+  ```
+
+  ```typescript TypeScript
+  const updatedAgent = await client.beta.agents.update(agent.id, {
+    version: agent.version,
+    system: "You are a helpful coding agent. Always write tests.",
+  });
+
+  console.log(`New version: ${updatedAgent.version}`);
+  ```
+
+  ```csharp C#
+  var updatedAgent = await client.Beta.Agents.Update(agent.ID, new()
+  {
+      Version = agent.Version,
+      System = "You are a helpful coding agent. Always write tests.",
+  });
+
+  Console.WriteLine($"New version: {updatedAgent.Version}");
+  ```
+
+  ```go Go
+  updatedAgent, err := client.Beta.Agents.Update(ctx, agent.ID, anthropic.BetaAgentUpdateParams{
+      Version: anthropic.Int(agent.Version),
+      System:  anthropic.String("You are a helpful coding agent. Always write tests."),
+  })
+  if err != nil {
+      panic(err)
+  }
+
+  fmt.Printf("New version: %d\n", updatedAgent.Version)
+  ```
+
+  ```java Java
+  var updatedAgent = client.beta().agents().update(
+      agent.id(),
+      AgentUpdateParams.builder()
+          .version(agent.version())
+          .system("You are a helpful coding agent. Always write tests.")
+          .build()
+  );
+
+  IO.println("New version: " + updatedAgent.version());
+  ```
+
+  ```php PHP
+  $updatedAgent = $client->beta->agents->update(
+      $agent->id,
+      version: $agent->version,
+      system: 'You are a helpful coding agent. Always write tests.',
+  );
+
+  echo "New version: {$updatedAgent->version}\n";
+  ```
+
+  ```ruby Ruby
+  updated_agent = client.beta.agents.update(
+    agent.id,
+    version: agent.version,
+    system_: "You are a helpful coding agent. Always write tests."
+  )
+
+  puts "New version: #{updated_agent.version}"
+  ```
+</CodeGroup>
+
+前面的示例提供了来自创建响应的 `version`，因此只有在您读取智能体之后没有其他操作更改过它时，更新才会应用。要无条件应用更新，请从请求中省略 `version`：
+
+<CodeGroup defaultLanguage="cURL">
+  ```bash cURL
+  updated_agent=$(curl -fsSL "http://localhost:38080/v1/agents/$AGENT_ID" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d '{
+      "description": "Writes and reviews code."
+    }')
+
+  echo "New version: $(jq -r '.version' <<< "$updated_agent")"
+  ```
+</CodeGroup>
+
+### 更新语义
+
+* **`version`** 是可选的，提供时必须至少为 1。提供时，如果它与智能体的当前版本不匹配，请求将返回 409，即使您发送的字段已经与存储的值匹配；请重新读取智能体并重试。省略时，更新将无条件应用，最近的更新会静默替换任何并发更新，任何调用方都不会收到错误。对于交互式调用方，建议默认提供 `version`；而省略它适用于声明式应用循环，例如同步已签入的智能体定义的 CI 作业，此时该循环拥有智能体的所有权。
+
+* **省略的字段会被保留。** 您只需包含要更改的字段。
+
+* **标量字段**（`model`、`system`、`name`、`description`）会被新值替换。`system` 和 `description` 可以通过传递 `null` 来清除。`model` 和 `name` 是必填的，无法清除。在您提供的 `model` 对象中，`effort` 是唯一的例外：如果模型 `id` 未更改，省略 `effort` 会保持已存储的推理强度级别不变。如果您更改了模型 `id`，省略 `effort` 会重置为新模型的默认值。其他 `model` 字段会随对象一起被替换：提供不含 `inference_geo` 的 `model` 会清除智能体的推理地理位置固定值。
+
+* **数组字段**（`tools`、`mcp_servers`、`skills`）会被新数组完全替换。要完全清除数组字段，请传递 `null` 或空数组。
+
+* **`multiagent`** 会作为整体被替换，包括其 `agents` 名册。传递 `null` 可清除它。
+
+* **元数据**在键级别合并。您提供的键会被添加或更新。您省略的键会被保留。要删除特定键，请将其值设置为 `null`。
+
+* **无操作检测。** 如果更新相对于当前版本没有产生任何更改，则不会创建新版本，并返回现有版本。
+
+* **协调器名册不会被更新。** 在其 `multiagent.agents` 名册中引用此智能体的协调器会保留在协调器创建或上次更新时固定的版本，即使该引用省略了 `version`。要委派给新版本，请[更新协调器](/docs/zh/multiagent-orchestration#configure-the-coordinator)，使其名册引用新版本。
+
+## 智能体生命周期
+
+| 操作       | 行为                           |
+| -------- | ---------------------------- |
+| **更新**   | 当配置更改时生成新的智能体版本。             |
+| **列出版本** | 返回完整的版本历史记录，以便您随时间跟踪更改。      |
+| **归档**   | 使智能体变为只读。新会话无法引用它，但现有会话继续运行。 |
+
+### 列出版本
+
+获取完整的版本历史记录，以跟踪智能体随时间的变化。结果是分页的，SDK 示例会自动获取每一页。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  curl -fsSL "http://localhost:38080/v1/agents/$AGENT_ID/versions" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    | jq -r '.data[] | "Version \(.version): \(.updated_at)"'
+  ```
+
+  ```bash CLI
+  ant beta:agents:versions list --agent-id "$AGENT_ID"
+  ```
+
+  ```python Python
+  for version in client.beta.agents.versions.list(agent.id):
+      print(f"Version {version.version}: {version.updated_at.isoformat()}")
+  ```
+
+  ```typescript TypeScript
+  for await (const version of client.beta.agents.versions.list(agent.id)) {
+    console.log(`Version ${version.version}: ${version.updated_at}`);
+  }
+  ```
+
+  ```csharp C#
+  var versions = await client.Beta.Agents.Versions.List(agent.ID);
+  await foreach (var version in versions.Paginate())
+  {
+      Console.WriteLine($"Version {version.Version}: {version.UpdatedAt:O}");
+  }
+  ```
+
+  ```go Go
+  iter := client.Beta.Agents.Versions.ListAutoPaging(ctx, agent.ID, anthropic.BetaAgentVersionListParams{})
+  for iter.Next() {
+      version := iter.Current()
+      fmt.Printf("Version %d: %s\n", version.Version, version.UpdatedAt.Format(time.RFC3339))
+  }
+  if err := iter.Err(); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  for (var version : client.beta().agents().versions().list(agent.id()).autoPager()) {
+      IO.println("Version " + version.version() + ": " + version.updatedAt());
+  }
+  ```
+
+  ```php PHP
+  foreach ($client->beta->agents->versions->list($agent->id)->pagingEachItem() as $version) {
+      echo "Version {$version->version}: {$version->updatedAt->format(DateTimeInterface::ATOM)}\n";
+  }
+  ```
+
+  ```ruby Ruby
+  client.beta.agents.versions.list(agent.id).auto_paging_each do |agent_version|
+    puts "Version #{agent_version.version}: #{agent_version.updated_at.iso8601}"
+  end
+  ```
+</CodeGroup>
+
+### 归档智能体
+
+归档会使智能体变为只读，且无法撤销。现有会话继续运行，但新会话无法引用该智能体。响应会将 `archived_at` 设置为归档时间戳。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  archived=$(curl -fsSL -X POST "http://localhost:38080/v1/agents/$AGENT_ID/archive" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01")
+
+  echo "Archived at: $(jq -r '.archived_at' <<< "$archived")"
+  ```
+
+  ```bash CLI
+  ant beta:agents archive --agent-id "$AGENT_ID"
+  ```
+
+  ```python Python
+  archived = client.beta.agents.archive(agent.id)
+
+  print(f"Archived at: {archived.archived_at.isoformat()}")
+  ```
+
+  ```typescript TypeScript
+  const archived = await client.beta.agents.archive(agent.id);
+  console.log(`Archived at: ${archived.archived_at}`);
+  ```
+
+  ```csharp C#
+  var archived = await client.Beta.Agents.Archive(agent.ID);
+  Console.WriteLine($"Archived at: {archived.ArchivedAt:O}");
+  ```
+
+  ```go Go
+  archived, err := client.Beta.Agents.Archive(ctx, agent.ID, anthropic.BetaAgentArchiveParams{})
+  if err != nil {
+      panic(err)
+  }
+  fmt.Printf("Archived at: %s\n", archived.ArchivedAt.Format(time.RFC3339))
+  ```
+
+  ```java Java
+  var archived = client.beta().agents().archive(agent.id());
+  IO.println("Archived at: " + archived.archivedAt().orElseThrow());
+  ```
+
+  ```php PHP
+  $archived = $client->beta->agents->archive($agent->id);
+
+  echo "Archived at: {$archived->archivedAt->format(DateTimeInterface::ATOM)}\n";
+  ```
+
+  ```ruby Ruby
+  archived = client.beta.agents.archive(agent.id)
+  puts "Archived at: #{archived.archived_at.iso8601}"
+  ```
+</CodeGroup>
+
+## 后续步骤
+
+<CardGroup cols={2}>
+  <Card title="工具" href="/docs/zh/tools">
+    配置智能体可用的工具。
+  </Card>
+
+  <Card title="技能" href="/docs/zh/skills">
+    为您的智能体附加可复用的、基于文件系统的专业知识，用于特定领域的工作流。
+  </Card>
+
+  <Card title="启动会话" href="/docs/zh/sessions">
+    创建会话以运行您的智能体并开始执行任务。
+  </Card>
+
+  <Card title="参考" href="/docs/zh/reference">
+    Open Managed Agents 的事件类型、自托管 worker CLI 标志、支持的 MCP 服务器类型和速率限制。
+  </Card>
+</CardGroup>

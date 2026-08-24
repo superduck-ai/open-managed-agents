@@ -23,10 +23,16 @@ linters:
     revive:
       rules:
         - name: var-naming
+  exclusions:
+    paths:
+      - web/node_modules/
 
 formatters:
   enable:
     - gofmt
+  exclusions:
+    paths:
+      - web/node_modules/
 
 issues:
   max-issues-per-linter: 0

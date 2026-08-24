@@ -1,0 +1,54 @@
+---
+title: "创建会话"
+description: "将智能体和环境组合为一次有状态任务。"
+api: "POST /v1/sessions?beta=true"
+---
+
+创建会话，并为它创建主线程与排队中的 worker。该资源当前要求 `beta=true`。
+
+<ParamField query="beta" type="boolean" required>
+  必须为 `true`。
+</ParamField>
+
+<ParamField body="agent" type="string | object" required>
+  智能体 ID，或 `{ "type": "agent", "id": "agent_...", "version": 1 }`。
+</ParamField>
+
+<ParamField body="environment_id" type="string" required>
+  未归档的环境 ID。
+</ParamField>
+
+<ParamField body="title" type="string | null">
+  会话标题。
+</ParamField>
+
+<ParamField body="resources" type="array">
+  要挂载的文件、GitHub 仓库或记忆存储资源。
+</ParamField>
+
+<ParamField body="vault_ids" type="array">
+  会话可以使用的密钥库 ID。
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  自定义键值元数据。
+</ParamField>
+
+```json 请求
+{
+  "agent": {
+    "type": "agent",
+    "id": "agent_01...",
+    "version": 1
+  },
+  "environment_id": "env_01...",
+  "title": "Update the installation guide",
+  "resources": [],
+  "vault_ids": [],
+  "metadata": {
+    "source": "docs"
+  }
+}
+```
+
+创建成功后，会话初始状态通常为 `idle`，相关 worker 会进入队列。使用会话事件或线程流观察后续执行。

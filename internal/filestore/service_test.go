@@ -12,12 +12,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
-
-	"github.com/google/uuid"
 )
 
 var serviceTestNow = time.Date(2026, time.July, 21, 12, 30, 0, 123456789, time.UTC)

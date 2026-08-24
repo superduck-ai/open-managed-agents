@@ -38,9 +38,12 @@ func TestSessionResourceMigrationsPreserveMainHistory(t *testing.T) {
 		"00047_unify_session_resources_and_files.sql",
 		"00048_snapshot_session_skills.sql",
 		"00049_add_vault_secret_envelope.sql",
+		"00050_schedule_deployments_with_river.sql",
 		"00051_remove_code_session_outbound_events.sql",
-		"00052_add_session_resource_file_ownership.sql",
-		"00053_remove_session_resource_payload.sql",
+		"00052_use_session_uuid_for_environment_work.sql",
+		"00053_add_workspace_llm_providers.sql",
+		"00054_add_session_resource_file_ownership.sql",
+		"00055_remove_session_resource_payload.sql",
 	}
 
 	entries, err := fs.ReadDir(embeddedMigrations, "migrations")
@@ -50,11 +53,11 @@ func TestSessionResourceMigrationsPreserveMainHistory(t *testing.T) {
 	actual := make([]string, 0, len(expected))
 	for _, entry := range entries {
 		name := entry.Name()
-		if len(name) >= 5 && name[:5] >= "00036" && name[:5] <= "00053" {
+		if len(name) >= 5 && name[:5] >= "00036" && name[:5] <= "00055" {
 			actual = append(actual, name)
 		}
 	}
 	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
-		t.Fatalf("migration history 00036-00053 = %v, want %v", actual, expected)
+		t.Fatalf("migration history 00036-00055 = %v, want %v", actual, expected)
 	}
 }

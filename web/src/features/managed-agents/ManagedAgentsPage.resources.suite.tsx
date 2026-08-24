@@ -2484,6 +2484,17 @@ export function registerManagedAgentsResourceTests() {
     );
   });
 
+  test('renders scheduled deployment runs from the official trigger context', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments/dep_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.deployments[0].schedule = { type: 'cron', cron_expression: '0 * * * *' };
+
+    render(<ManagedAgentsPage section="deployments" />);
+
+    const row = await screen.findByRole('row', { name: /drun_sch/ });
+    expect(within(row).getAllByRole('cell')[2].textContent).toBe('Scheduled');
+  });
+
   test('renders the dreaming loading panel', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/dreams');
     render(<ManagedAgentsPage section="dreams" />);

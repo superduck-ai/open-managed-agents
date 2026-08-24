@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	urlpkg "net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -242,7 +243,7 @@ func modelIDFromAgentSnapshot(raw json.RawMessage) string {
 }
 
 // buildEnvironmentManagerV0Payload 把 code session 映射为 environment-manager v0 合同；relay、runtime API 与 ingress 绑定同一 external ID，真实上游凭证不进入 sandbox。
-func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken string, oauthAccessToken string, workDir string, sessionConfig json.RawMessage, cfg config.Config) ([]byte, error) {
+func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken string, oauthAccessToken string, workerEpoch int64, workDir string, sessionConfig json.RawMessage, cfg config.Config) ([]byte, error) {
 	startupContext := map[string]any{}
 	if len(sessionConfig) > 0 && string(sessionConfig) != "null" {
 		if err := json.Unmarshal(sessionConfig, &startupContext); err != nil {
@@ -261,13 +262,14 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	environmentVariables["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] = "1"
 	delete(environmentVariables, "CLAUDE_CODE_SESSION_ACCESS_TOKEN") // 避免遮蔽 environment-manager 注入的 WebSocket auth FD。
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
-	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
+	workerEpochText := strconv.FormatInt(workerEpoch, 10)
+	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = workerEpochText
 	environmentVariables["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] = "true" // 让 worker 输出包含 streaming 中间消息。
 	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"              // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
-	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, sessionIngressToken, "1")
+	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, sessionIngressToken, workerEpochText)
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
 		startupContext["sources"] = []any{}
@@ -429,6 +431,17 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		"export CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=${CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL:-1}",
 		"export CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH=${CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH:-0}",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
+		// 让 environment-manager 自身及其子进程把 GitHub SSH remote 改写为经受控 HTTPS 出口访问。
+		"export GIT_CONFIG_COUNT=3",
+		"export GIT_CONFIG_KEY_0=credential.interactive",
+		"export GIT_CONFIG_VALUE_0=false",
+		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_1=git@github.com:",
+		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
+		"export GIT_EDITOR=true",
+		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
+		"export GIT_TERMINAL_PROMPT=0",
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
 		"exec " + shellQuote(managerPath) +
 			" task-run" +

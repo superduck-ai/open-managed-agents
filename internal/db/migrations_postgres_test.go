@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"strings"
@@ -23,7 +24,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	standardDB := newIsolatedMigrationTestDatabase(t, ctx, databaseURL)
+	standardDB := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, databaseURL)
 	provider := newMigrationTestProvider(t, standardDB)
 	if _, err := provider.UpTo(ctx, 48); err != nil {
 		t.Fatalf("migrate ownership fixture database to 48: %v", err)
@@ -39,10 +40,10 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced File workspace: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 52); err == nil {
+	if _, err := provider.UpTo(ctx, 54); err == nil {
 		t.Fatal("ownership migration accepted a cross-workspace File reference")
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
 	if _, err := standardDB.ExecContext(ctx, `
 		update files
 		set workspace_uuid = '20000000-0000-0000-0000-000000000001'
@@ -58,10 +59,10 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced Resource backing path: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 52); err == nil {
+	if _, err := provider.UpTo(ctx, 54); err == nil {
 		t.Fatal("ownership migration accepted an inconsistent referenced Resource payload")
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
 	if _, err := standardDB.ExecContext(ctx, `
 		update session_resources
 		set payload = jsonb_set(payload, '{mount_path}', '"/uploads/input.txt"')
@@ -77,10 +78,10 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break owned File Session scope: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 52); err == nil {
+	if _, err := provider.UpTo(ctx, 54); err == nil {
 		t.Fatal("ownership migration accepted an owned File scoped to another Session")
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
 	if _, err := standardDB.ExecContext(ctx, `
 		update files
 		set scope_id = 'sesn_file_ownership'
@@ -106,20 +107,20 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed mixed referenced/owned File: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 52); err == nil {
+	if _, err := provider.UpTo(ctx, 54); err == nil {
 		t.Fatal("ownership migration accepted a File shared by owned and referenced Resources")
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
 	if _, err := standardDB.ExecContext(ctx, `
 		delete from session_resources where external_id = 'sesrsc_mixed_reference_ownership'
 	`); err != nil {
 		t.Fatalf("remove mixed ownership fixture: %v", err)
 	}
 
-	if _, err := provider.UpTo(ctx, 52); err != nil {
-		t.Fatalf("migrate ownership fixture database to 52: %v", err)
+	if _, err := provider.UpTo(ctx, 54); err != nil {
+		t.Fatalf("migrate ownership fixture database to 54: %v", err)
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
 	rows, err := standardDB.QueryContext(ctx, `
 		select path, coalesce(file_ownership, '')
 		from session_resources
@@ -155,7 +156,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	if _, err := provider.Down(ctx); err == nil {
 		t.Fatal("ownership migration allowed an unsafe down migration")
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
 }
 
 func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
@@ -165,7 +166,7 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	standardDB := newIsolatedMigrationTestDatabase(t, ctx, databaseURL)
+	standardDB := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, databaseURL)
 	provider := newMigrationTestProvider(t, standardDB)
 	if _, err := provider.UpTo(ctx, 48); err != nil {
 		t.Fatalf("migrate payload fixture database to 48: %v", err)
@@ -173,8 +174,8 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	if _, err := standardDB.ExecContext(ctx, sessionFileOwnershipMigrationFixtureSQL); err != nil {
 		t.Fatalf("seed payload migration base fixture: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 52); err != nil {
-		t.Fatalf("migrate payload fixture database to 52: %v", err)
+	if _, err := provider.UpTo(ctx, 54); err != nil {
+		t.Fatalf("migrate payload fixture database to 54: %v", err)
 	}
 	if _, err := standardDB.ExecContext(ctx, sessionResourcePayloadMigrationFixtureSQL); err != nil {
 		t.Fatalf("seed explicit Resource payload fixture: %v", err)
@@ -187,11 +188,11 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced File payload path: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 53); err == nil {
+	if _, err := provider.UpTo(ctx, 55); err == nil {
 		t.Fatal("payload removal migration accepted an inconsistent referenced File payload")
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "payload", true)
-	assertMigrationColumnExists(t, ctx, standardDB, "mount_path", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "mount_path", false)
 	if _, err := standardDB.ExecContext(ctx, `
 		update session_resources
 		set payload = jsonb_set(payload, '{mount_path}', '"/uploads/input.txt"')
@@ -207,11 +208,11 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break Memory Store payload reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 53); err == nil {
+	if _, err := provider.UpTo(ctx, 55); err == nil {
 		t.Fatal("payload removal migration accepted a missing Memory Store reference")
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "payload", true)
-	assertMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", false)
 	if _, err := standardDB.ExecContext(ctx, `
 		update session_resources
 		set payload = jsonb_set(payload, '{memory_store_id}', '"mem_payload"')
@@ -220,11 +221,11 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 		t.Fatalf("restore Memory Store payload reference: %v", err)
 	}
 
-	if _, err := provider.UpTo(ctx, 53); err != nil {
-		t.Fatalf("migrate payload fixture database to 53: %v", err)
+	if _, err := provider.UpTo(ctx, 55); err != nil {
+		t.Fatalf("migrate payload fixture database to 55: %v", err)
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "payload", false)
-	assertMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", true)
 
 	var repositoryURL, repositoryMountPath, memoryStoreUUID, memoryAccess string
 	var inputMountPath, outputMountPath string
@@ -265,7 +266,7 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatalf("reverse payload removal migration: %v", err)
 	}
-	assertMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
 	var restoredRepositoryType, restoredMemoryStoreID, restoredFileMountPath string
 	if err := standardDB.QueryRowContext(ctx, `
 		select payload->>'type' from session_resources
@@ -292,7 +293,7 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	}
 }
 
-func newIsolatedMigrationTestDatabase(t *testing.T, ctx context.Context, databaseURL string) *sql.DB {
+func newIsolatedSessionResourceMigrationTestDatabase(t *testing.T, ctx context.Context, databaseURL string) *sql.DB {
 	t.Helper()
 	adminPool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -326,7 +327,7 @@ func newIsolatedMigrationTestDatabase(t *testing.T, ctx context.Context, databas
 	return standardDB
 }
 
-func assertMigrationColumnExists(t *testing.T, ctx context.Context, database *sql.DB, column string, want bool) {
+func assertSessionResourceMigrationColumnExists(t *testing.T, ctx context.Context, database *sql.DB, column string, want bool) {
 	t.Helper()
 	var exists bool
 	if err := database.QueryRowContext(ctx, `
@@ -761,6 +762,270 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 		t.Fatalf("migrate Session runtime tenant references to UUID: %v", err)
 	}
 	assertSessionResourceRuntimeWriteAfterUUIDMigration(t, ctx, standardDB)
+}
+
+func TestEnvironmentWorkSessionUUIDMigration(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+
+	t.Run("backfills active and deleted Sessions and round trips", func(t *testing.T) {
+		ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+		if _, err := provider.UpTo(ctx, 51); err != nil {
+			t.Fatalf("migrate fixture database to 51: %v", err)
+		}
+		seedEnvironmentWorkMigrationSessions(t, ctx, database)
+		if _, err := database.ExecContext(ctx, `
+			insert into environment_work (
+				uuid, external_id, organization_uuid, workspace_uuid,
+				environment_uuid, environment_external_id, data
+			) values
+				(
+					'52000000-0000-0000-0000-000000000101', 'work_migration_active',
+					'52000000-0000-0000-0000-000000000001', '52000000-0000-0000-0000-000000000002',
+					'52000000-0000-0000-0000-000000000003', 'env_migration_work',
+					'{"type":"session","id":"sesn_migration_work_active"}'
+				),
+				(
+					'52000000-0000-0000-0000-000000000102', 'work_migration_deleted',
+					'52000000-0000-0000-0000-000000000001', '52000000-0000-0000-0000-000000000002',
+					'52000000-0000-0000-0000-000000000003', 'env_migration_work',
+					'{"type":"session","id":"sesn_migration_work_deleted"}'
+				)
+		`); err != nil {
+			t.Fatalf("seed Environment Work: %v", err)
+		}
+
+		if _, err := provider.UpTo(ctx, 52); err != nil {
+			t.Fatalf("migrate Environment Work to Session UUID: %v", err)
+		}
+		assertEnvironmentWorkSessionMigrationState(t, ctx, database)
+
+		if _, err := provider.Down(ctx); err != nil {
+			t.Fatalf("roll back Environment Work Session UUID migration: %v", err)
+		}
+		var activeData, deletedData string
+		if err := database.QueryRowContext(ctx, `
+			select cast(data as text) from environment_work where external_id = 'work_migration_active'
+		`).Scan(&activeData); err != nil {
+			t.Fatalf("load restored active Work data: %v", err)
+		}
+		if err := database.QueryRowContext(ctx, `
+			select cast(data as text) from environment_work where external_id = 'work_migration_deleted'
+		`).Scan(&deletedData); err != nil {
+			t.Fatalf("load restored deleted-Session Work data: %v", err)
+		}
+		for name, restored := range map[string]string{"active": activeData, "deleted": deletedData} {
+			var data map[string]string
+			if err := json.Unmarshal([]byte(restored), &data); err != nil {
+				t.Fatalf("decode restored %s Work data: %v", name, err)
+			}
+			if data["type"] != "session" || data["id"] != "sesn_migration_work_"+name {
+				t.Fatalf("restored %s Work data = %#v", name, data)
+			}
+		}
+		assertMigrationColumnExists(t, ctx, database, "environment_work", "data", true)
+		assertMigrationColumnExists(t, ctx, database, "environment_work", "session_uuid", false)
+
+		if _, err := provider.Up(ctx); err != nil {
+			t.Fatalf("reapply Environment Work Session UUID migration: %v", err)
+		}
+		assertEnvironmentWorkSessionMigrationState(t, ctx, database)
+	})
+
+	invalidCases := []struct {
+		name      string
+		data      string
+		wantError string
+	}{
+		{name: "non Session type", data: `{"type":"task","id":"sesn_migration_work_active"}`, wantError: "non-session or unsupported data"},
+		{name: "non string Session ID", data: `{"type":"session","id":42}`, wantError: "non-session or unsupported data"},
+		{name: "extra field", data: `{"type":"session","id":"sesn_migration_work_active","custom":true}`, wantError: "non-session or unsupported data"},
+		{name: "unmapped Session", data: `{"type":"session","id":"sesn_missing"}`, wantError: "cannot be uniquely mapped"},
+		{name: "non object", data: `[]`, wantError: "must be a JSON object"},
+	}
+	for _, test := range invalidCases {
+		t.Run("rejects "+test.name, func(t *testing.T) {
+			ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+			if _, err := provider.UpTo(ctx, 51); err != nil {
+				t.Fatalf("migrate fixture database to 51: %v", err)
+			}
+			seedEnvironmentWorkMigrationSessions(t, ctx, database)
+			if _, err := database.ExecContext(ctx, `
+				insert into environment_work (
+					uuid, external_id, organization_uuid, workspace_uuid,
+					environment_uuid, environment_external_id, data
+				) values (
+					'52000000-0000-0000-0000-000000000103', 'work_migration_invalid',
+					'52000000-0000-0000-0000-000000000001', '52000000-0000-0000-0000-000000000002',
+					'52000000-0000-0000-0000-000000000003', 'env_migration_work', cast($1 as jsonb)
+				)
+			`, test.data); err != nil {
+				t.Fatalf("seed invalid Environment Work: %v", err)
+			}
+			if _, err := provider.UpTo(ctx, 52); err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("migration error = %v, want containing %q", err, test.wantError)
+			}
+			assertMigrationColumnExists(t, ctx, database, "environment_work", "data", true)
+			assertMigrationColumnExists(t, ctx, database, "environment_work", "session_uuid", false)
+		})
+	}
+}
+
+func newIsolatedMigrationTestDatabase(
+	t *testing.T,
+	databaseURL string,
+) (context.Context, *sql.DB, *goose.Provider) {
+	t.Helper()
+	ctx := context.Background()
+	adminPool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open migration administration database: %v", err)
+	}
+	schema := "migration_environment_work_" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	if _, err := adminPool.Exec(ctx, "create schema "+schema); err != nil {
+		adminPool.Close()
+		t.Fatalf("create isolated migration schema: %v", err)
+	}
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		_, _ = adminPool.Exec(ctx, "drop schema "+schema+" cascade")
+		adminPool.Close()
+		t.Fatalf("parse migration database URL: %v", err)
+	}
+	poolConfig.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		_, _ = adminPool.Exec(ctx, "drop schema "+schema+" cascade")
+		adminPool.Close()
+		t.Fatalf("open isolated migration database: %v", err)
+	}
+	standardDB := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() {
+		_ = standardDB.Close()
+		pool.Close()
+		_, _ = adminPool.Exec(context.Background(), "drop schema "+schema+" cascade")
+		adminPool.Close()
+	})
+	return ctx, standardDB, newMigrationTestProvider(t, standardDB)
+}
+
+func seedEnvironmentWorkMigrationSessions(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	if _, err := database.ExecContext(ctx, `
+		insert into sessions (
+			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
+			agent_version, agent_snapshot, deleted_at
+		) values
+			(
+				'52000000-0000-0000-0000-000000000011', 'sesn_migration_work_active',
+				'52000000-0000-0000-0000-000000000001', '52000000-0000-0000-0000-000000000002',
+				'52000000-0000-0000-0000-000000000004', '52000000-0000-0000-0000-000000000003',
+				'env_migration_work', '52000000-0000-0000-0000-000000000005', 'agent_migration_work',
+				1, '{}', null
+			),
+			(
+				'52000000-0000-0000-0000-000000000012', 'sesn_migration_work_deleted',
+				'52000000-0000-0000-0000-000000000001', '52000000-0000-0000-0000-000000000002',
+				'52000000-0000-0000-0000-000000000004', '52000000-0000-0000-0000-000000000003',
+				'env_migration_work', '52000000-0000-0000-0000-000000000005', 'agent_migration_work',
+				1, '{}', now()
+			)
+	`); err != nil {
+		t.Fatalf("seed migration Sessions: %v", err)
+	}
+}
+
+func assertEnvironmentWorkSessionMigrationState(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	rows, err := database.QueryContext(ctx, `
+		select external_id, cast(session_uuid as text)
+		from environment_work
+		order by external_id
+	`)
+	if err != nil {
+		t.Fatalf("load migrated Environment Work: %v", err)
+	}
+	defer rows.Close()
+	got := make(map[string]string)
+	for rows.Next() {
+		var externalID, sessionUUID string
+		if err := rows.Scan(&externalID, &sessionUUID); err != nil {
+			t.Fatalf("scan migrated Environment Work: %v", err)
+		}
+		got[externalID] = sessionUUID
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migrated Environment Work: %v", err)
+	}
+	want := map[string]string{
+		"work_migration_active":  "52000000-0000-0000-0000-000000000011",
+		"work_migration_deleted": "52000000-0000-0000-0000-000000000012",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("migrated Environment Work = %#v, want %#v", got, want)
+	}
+	for externalID, sessionUUID := range want {
+		if got[externalID] != sessionUUID {
+			t.Fatalf("migrated %s Session UUID = %q, want %q", externalID, got[externalID], sessionUUID)
+		}
+	}
+	assertMigrationColumnExists(t, ctx, database, "environment_work", "data", false)
+	assertMigrationColumnExists(t, ctx, database, "environment_work", "session_uuid", true)
+	var nullable string
+	if err := database.QueryRowContext(ctx, `
+		select is_nullable
+		from information_schema.columns
+		where table_schema = current_schema()
+			and table_name = 'environment_work'
+			and column_name = 'session_uuid'
+	`).Scan(&nullable); err != nil {
+		t.Fatalf("check Environment Work Session nullability: %v", err)
+	}
+	if nullable != "NO" {
+		t.Fatalf("environment_work.session_uuid is_nullable = %q, want NO", nullable)
+	}
+	var indexDefinition string
+	if err := database.QueryRowContext(ctx, `
+		select indexdef
+		from pg_indexes
+		where schemaname = current_schema()
+			and indexname = 'environment_work_session_v1_idx'
+	`).Scan(&indexDefinition); err != nil {
+		t.Fatalf("load Environment Work Session index: %v", err)
+	}
+	if !strings.Contains(indexDefinition, "(workspace_uuid, session_uuid)") ||
+		!strings.Contains(indexDefinition, "WHERE (deleted_at IS NULL)") {
+		t.Fatalf("Environment Work Session index = %q", indexDefinition)
+	}
+}
+
+func assertMigrationColumnExists(
+	t *testing.T,
+	ctx context.Context,
+	database *sql.DB,
+	tableName string,
+	columnName string,
+	want bool,
+) {
+	t.Helper()
+	var exists bool
+	if err := database.QueryRowContext(ctx, `
+		select exists (
+			select 1
+			from information_schema.columns
+			where table_schema = current_schema()
+				and table_name = $1
+				and column_name = $2
+		)
+	`, tableName, columnName).Scan(&exists); err != nil {
+		t.Fatalf("check migration column %s.%s: %v", tableName, columnName, err)
+	}
+	if exists != want {
+		t.Fatalf("migration column %s.%s exists = %t, want %t", tableName, columnName, exists, want)
+	}
 }
 
 func assertSessionResourceRuntimeWriteAfterUUIDMigration(

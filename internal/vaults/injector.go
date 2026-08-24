@@ -9,8 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -35,15 +36,12 @@ type credentialStore interface {
 // Injector loads session vault credentials per request and rewrites MCP
 // Authorization for injectable targets. Plaintext tokens are never cached.
 type Injector struct {
-	store      credentialStore
-	secretSvc  *secrets.Service
-	logger     *slog.Logger
-	httpClient *http.Client
-	now        func() time.Time
-	// refreshLocks serializes concurrent mcp_oauth refreshes per credential so
-	// a one-time refresh_token cannot be exchanged twice in-process. Entries
-	// are retained for process lifetime.
-	refreshLocks sync.Map // credential ExternalID -> *sync.Mutex
+	store        credentialStore
+	secretSvc    *secrets.Service
+	logger       *slog.Logger
+	httpClient   *http.Client
+	now          func() time.Time
+	refreshLease oauthRefreshLease
 }
 
 func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *Injector {
@@ -52,10 +50,21 @@ func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logge
 		store = database
 	}
 	return &Injector{
-		store:     store,
-		secretSvc: secretSvc,
-		logger:    logging.LoggerOrDefault(logger),
+		store:        store,
+		secretSvc:    secretSvc,
+		logger:       logging.LoggerOrDefault(logger),
+		refreshLease: newMemoryOAuthRefreshLease(),
 	}
+}
+
+// WithRedis serializes mcp_oauth refresh_token exchanges across API instances
+// using a short Redis lease. Nil client keeps the in-process lease.
+func (i *Injector) WithRedis(client *redis.Client) *Injector {
+	if i == nil {
+		return i
+	}
+	i.refreshLease = newClientOAuthRefreshLease(client)
+	return i
 }
 
 func defaultOAuthHTTPClient() *http.Client {
@@ -72,15 +81,6 @@ func (i *Injector) client() *http.Client {
 		return i.httpClient
 	}
 	return defaultOAuthHTTPClient()
-}
-
-func (i *Injector) refreshLock(credentialID string) *sync.Mutex {
-	key := credentialID
-	if key == "" {
-		key = "<anonymous>"
-	}
-	value, _ := i.refreshLocks.LoadOrStore(key, &sync.Mutex{})
-	return value.(*sync.Mutex)
 }
 
 func (i *Injector) clock() time.Time {

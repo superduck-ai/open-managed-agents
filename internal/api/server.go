@@ -39,6 +39,7 @@ import (
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 type Server struct {
@@ -82,6 +83,7 @@ type ServerDeps struct {
 	FilestoreCredentials   *filestoreapi.TokenCredentials
 	FilestoreService       *filestoreapi.Service
 	VaultSecrets           *secrets.Service
+	Redis                  *redis.Client
 	SessionEventBus        sessionfanout.EventBus
 }
 
@@ -118,7 +120,7 @@ func NewServer(deps ServerDeps) *Server {
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
 		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets),
+		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, deps.Redis),
 		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),

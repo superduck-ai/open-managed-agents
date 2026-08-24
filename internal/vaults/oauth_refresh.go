@@ -48,12 +48,14 @@ func (i *Injector) refreshMCPOAuthCredential(
 	now time.Time,
 	force bool,
 ) (string, *db.VaultCredential, error) {
-	lock := i.refreshLock(credential.ExternalID)
-	lock.Lock()
-	defer lock.Unlock()
+	release, err := i.refreshLease.Hold(ctx, credential.ExternalID)
+	if err != nil {
+		return "", nil, err
+	}
+	defer release()
 
 	current := *credential
-	// Best-effort re-read under the per-credential lock so a concurrent winner's
+	// Best-effort re-read under the per-credential lease so a concurrent winner's
 	// token is visible before we exchange (one-time refresh_token safe). A failed
 	// reload keeps the caller snapshot and continues.
 	if err := reloadCredential(ctx, i.store, &current); err != nil {

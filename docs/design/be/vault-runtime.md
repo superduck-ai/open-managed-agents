@@ -174,7 +174,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 401 重试 body | RoundTrip 前缓冲请求体（上限 32 MiB）；超限 **fail closed**（不静默截断重放），由 `snapshotRequestBody` / `readWithinLimit` 实现 |
 | Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
 | 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MCP proxy 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
-| 并发 refresh | 同 credential 进程内串行 + 重读一次；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败后重读，**仅当 `SecretVersion` 前进**时再试并复用，否则保留原 exchange 错误（避免同 refresh_token 反复换） |
+| 并发 refresh | 同 credential **短租约**串行换票：进程内 mutex；多实例 Redis `SET NX`（TTL = token 超时 + 5s）。持约后重读；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败后重读，**仅当 `SecretVersion` 前进**时再试并复用，否则保留原 exchange 错误。抢约失败则等待租约，不并行打 IdP |
 | Credential `networking` | **不做** |
 | 数据加载 | **每个 MCP RoundTrip 查库一次**（`vault_ids` + active credentials）；401 walk / 换凭证不重复加载；不缓存明文 token |
 | Redirect | **不自动跟随**跨 origin redirect |

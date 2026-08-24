@@ -337,18 +337,46 @@ func TestRefreshMCPOAuthCredentialConcurrentExchangeOnce(t *testing.T) {
 	}
 }
 
-func TestRefreshMCPOAuthCredentialRetainsLock(t *testing.T) {
+func TestRefreshMCPOAuthCredentialUsesLeaseBeforeExchange(t *testing.T) {
 	env := newOAuthRefreshEnv(t, "fresh-access")
 	stale := env.staleCred("refresh-token")
 	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale}}
 	injector := env.injector(store)
+	blocker := &blockingOAuthRefreshLease{
+		held:    make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	injector.refreshLease = blocker
 
-	if _, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, false); err != nil {
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, false)
+		done <- err
+	}()
+	select {
+	case <-blocker.held:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not acquire lease")
+	}
+	if got := env.tokenCalls.Load(); got != 0 {
+		t.Fatalf("token endpoint calls = %d before lease release, want 0", got)
+	}
+	close(blocker.release)
+	if err := <-done; err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if _, ok := injector.refreshLocks.Load(stale.ExternalID); !ok {
-		t.Fatalf("refreshLocks missing %q after refresh (mutex must be retained)", stale.ExternalID)
-	}
+}
+
+type blockingOAuthRefreshLease struct {
+	held    chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (l *blockingOAuthRefreshLease) Hold(context.Context, string) (func(), error) {
+	l.once.Do(func() { close(l.held) })
+	<-l.release
+	return func() {}, nil
 }
 
 func oauthRefreshNow() time.Time {

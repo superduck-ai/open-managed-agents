@@ -165,6 +165,7 @@ func run(logger *slog.Logger) error {
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,
+			Redis:                  redisClient,
 			SessionEventBus:        sessionEventBus,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

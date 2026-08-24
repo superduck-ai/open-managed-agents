@@ -914,12 +914,20 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		TokenEndpoint:           "https://auth.example.test/token",
 		Resource:                "https://mcp.example.test",
 		ClientID:                "typed-uuid",
+		ClientCredentialSource:  "sealed",
 		TokenEndpointAuthMethod: "none",
-		CodeVerifier:            "typed-uuid-verifier",
 		CodeChallengeMethod:     "S256",
-		Status:                  "pending",
-		CreatedAt:               now,
-		ExpiresAt:               now.Add(10 * time.Minute),
+		SecretEnvelope: &secrets.Envelope{
+			Ciphertext:    []byte("typed-uuid-flow-cipher"),
+			Nonce:         []byte("nonce-12byte"),
+			WrappedDEK:    []byte("typed-uuid-flow-wrap"),
+			FormatVersion: 1,
+			KeyProvider:   "local",
+			KeyVersion:    1,
+		},
+		Status:    "pending",
+		CreatedAt: now,
+		ExpiresAt: now.Add(10 * time.Minute),
 	})
 	if err != nil || flow.UserUUID != "" || flow.UUID == "" {
 		t.Fatalf("create MCP OAuth flow with nullable typed user UUID = (%+v, %v)", flow, err)

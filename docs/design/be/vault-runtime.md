@@ -119,7 +119,7 @@ API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析
 
 KEK 版本由 config 管（`version` current + `decrypt_only` 旧列表）。每条凭证用 `key_version` 标明自己用的是哪把。KEK 本身不进库。
 
-`mcp_oauth_flows` 里的 `client_secret` / `code_verifier` 也是明文（15min TTL）。若验收要求“DB 零明文”，同样走 Secret Service（该表加一组精简信封列，两者复用同一 DEK）。生命周期短，也可拆小 issue。
+`mcp_oauth_flows` 的 `code_verifier` 与 flow-owned `client_secret`（BYO / DCR）写入 Secret envelope（与凭证同一 `secrets.Service`）；`client_credential_source` 为 `platform | sealed`。平台 client secret **不落用户 flow 行**，token exchange 时按 `mcp_server_url` 从 `vault.platform_oauth_clients` 再解析。Complete/Fail 清空信封列。
 
 Provider/KMS 调用放在 DB 事务外。
 
@@ -203,7 +203,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 ## 验收（存库加密：已完成）
 
-- DB、日志、trace 不出现明文密码 / DEK；**主密钥只在 `config.yaml` / `kek_file`**（不进 DB/日志）；dev/prod 均须配置，无 ephemeral 兜底。*（注：`mcp_oauth_flows` 的 client_secret/code_verifier 本期仍明文，拆小 issue。）*
+- DB、日志、trace 不出现明文密码 / DEK；**主密钥只在 `config.yaml` / `kek_file`**（不进 DB/日志）；dev/prod 均须配置，无 ephemeral 兜底。`mcp_oauth_flows` 敏感字段走 Secret envelope；平台 client secret 不落 flow 表。
 - 写统一经 Secret Service；读不返回密码；`secret_payload` 列不存在。
 - 篡改密文 / nonce / wrapped_dek / AAD 后解密失败；未知格式或 key 不可用 → fail closed（HTTP 5xx）。
 - 活动凭证缺信封且未带完整替换 secret 的 update/validate（含仅改 metadata/display_name）→ HTTP 400；带完整替换 secret 的 update → 直接 reseal；`version` CAS 冲突 → HTTP 409。
@@ -228,11 +228,11 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 `POST .../mcp/vault-auth/start` 解析 client 顺序：
 
-1. 请求带非空 BYO `client_id` → 用 BYO（覆盖 Platform）
-2. 否则精确匹配 Platform OAuth Client registry → 注入平台 client
-3. 否则走既有 DCR；无 registration endpoint 则失败
+1. 请求带非空 BYO `client_id` → 用 BYO（覆盖 Platform）；`client_credential_source=sealed`，secret 进 flow 信封
+2. 否则精确匹配 Platform OAuth Client registry → 只用平台 `client_id`（secret **不**写入 flow）；`client_credential_source=platform`，callback 再从配置取 secret
+3. 否则走既有 DCR；无 registration endpoint 则失败；DCR secret 进 flow 信封（`sealed`）
 
-Redirect 仍由前端传入 `{origin}/oauth/vault/success`。控制台 Optional Client 字段保留。用户 access/refresh token 仍进个人 Credential 信封。
+`code_verifier` 始终进同一信封。Redirect 仍由前端传入 `{origin}/oauth/vault/success`。控制台 Optional Client 字段保留。用户 access/refresh token 仍进个人 Credential 信封。
 
 ## 不做（注入 MVP）
 

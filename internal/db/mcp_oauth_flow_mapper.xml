@@ -7,8 +7,8 @@
         mcp_server_url, redirect_url, display_name, source, authorization_endpoint, token_endpoint,
         COALESCE(registration_endpoint, '') AS registration_endpoint,
         COALESCE(issuer, '') AS issuer, resource, COALESCE(scope, '') AS scope, client_id,
-        COALESCE(client_secret, '') AS client_secret, token_endpoint_auth_method, code_verifier,
-        code_challenge_method, status,
+        client_credential_source, token_endpoint_auth_method, code_challenge_method,
+        ciphertext, nonce, wrapped_dek, format_version, key_provider, key_version, status,
         COALESCE(credential_external_id, '') AS credential_external_id,
         COALESCE(error_code, '') AS error_code,
         created_at, updated_at, expires_at, completed_at
@@ -19,9 +19,10 @@
             uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
             user_uuid, user_external_id, platform_session_external_id, mcp_server_url,
             redirect_url, display_name, source, authorization_endpoint, token_endpoint,
-            registration_endpoint, issuer, resource, scope, client_id, client_secret,
-            token_endpoint_auth_method, code_verifier, code_challenge_method, status,
-            created_at, updated_at, expires_at
+            registration_endpoint, issuer, resource, scope, client_id, client_credential_source,
+            token_endpoint_auth_method, code_challenge_method,
+            ciphertext, nonce, wrapped_dek, format_version, key_provider, key_version,
+            status, created_at, updated_at, expires_at
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
             #{params.VaultUUID}, #{params.VaultExternalID}, #{params.UserUUID},
@@ -30,8 +31,11 @@
             #{params.AuthorizationEndpoint}, #{params.TokenEndpoint},
             NULLIF(#{params.RegistrationEndpoint}, ''), NULLIF(#{params.Issuer}, ''),
             #{params.Resource}, NULLIF(#{params.Scope}, ''), #{params.ClientID},
-            NULLIF(#{params.ClientSecret,sensitive=true}, ''), #{params.TokenEndpointAuthMethod},
-            #{params.CodeVerifier,sensitive=true}, #{params.CodeChallengeMethod}, #{params.Status},
+            #{params.ClientCredentialSource}, #{params.TokenEndpointAuthMethod},
+            #{params.CodeChallengeMethod},
+            #{params.Ciphertext,sensitive=true}, #{params.Nonce,sensitive=true},
+            #{params.WrappedDEK,sensitive=true}, #{params.FormatVersion}, #{params.KeyProvider},
+            #{params.KeyVersion}, #{params.Status},
             #{params.CreatedAt}, #{params.CreatedAt}, #{params.ExpiresAt}
         )
         RETURNING <include refid="columns"/>
@@ -46,15 +50,19 @@
     <update id="Complete" result="rows">
         UPDATE mcp_oauth_flows
         SET status = 'completed', credential_external_id = #{credentialExternalID}, error_code = NULL,
-            client_secret = NULL, code_verifier = '', completed_at = #{completedAt}, updated_at = #{completedAt}
+            ciphertext = NULL, nonce = NULL, wrapped_dek = NULL,
+            format_version = NULL, key_provider = NULL, key_version = NULL,
+            completed_at = #{completedAt}, updated_at = #{completedAt}
         WHERE external_id = #{externalID}
         AND status = 'pending'
     </update>
 
     <update id="Fail" result="rows">
         UPDATE mcp_oauth_flows
-        SET status = 'failed', error_code = #{errorCode}, client_secret = NULL,
-            code_verifier = '', updated_at = #{failedAt}
+        SET status = 'failed', error_code = #{errorCode},
+            ciphertext = NULL, nonce = NULL, wrapped_dek = NULL,
+            format_version = NULL, key_provider = NULL, key_version = NULL,
+            updated_at = #{failedAt}
         WHERE external_id = #{externalID}
         AND status = 'pending'
     </update>

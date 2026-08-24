@@ -277,7 +277,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		r.Context(),
 		s.vaultSecrets,
 		flow,
-		vaultsapi.ClientSecretForMCPOAuthFlowPersist(credentialSource, clientSecret),
+		vaultsapi.ClientSecretForMCPOAuthPersist(credentialSource, clientSecret),
 		codeVerifier,
 	)
 	if err != nil {
@@ -980,6 +980,9 @@ func buildPlatformMCPVaultOAuthCredentialPayloads(
 	now time.Time,
 	clientSecret string,
 ) (json.RawMessage, json.RawMessage, error) {
+	// Token exchange may hold a resolved platform secret; never copy it into the
+	// user credential envelope — only BYO/DCR (sealed) secrets persist here.
+	persistClientSecret := vaultsapi.ClientSecretForMCPOAuthPersist(flow.ClientCredentialSource, clientSecret)
 	publicAuth := map[string]any{
 		"type":           "mcp_oauth",
 		"mcp_server_url": flow.MCPServerURL,
@@ -1007,7 +1010,7 @@ func buildPlatformMCPVaultOAuthCredentialPayloads(
 		publicAuth["refresh"] = publicRefresh
 		secretPayload["refresh"] = map[string]any{
 			"refresh_token":       token.RefreshToken,
-			"token_endpoint_auth": platformMCPVaultSecretTokenEndpointAuth(flow.TokenEndpointAuthMethod, clientSecret),
+			"token_endpoint_auth": platformMCPVaultSecretTokenEndpointAuth(flow.TokenEndpointAuthMethod, persistClientSecret),
 		}
 	}
 	publicJSON, err := json.Marshal(publicAuth)

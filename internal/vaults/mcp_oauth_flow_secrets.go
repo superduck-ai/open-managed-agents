@@ -43,9 +43,11 @@ func mcpOAuthFlowSecretBinding(flow db.MCPOAuthFlow) secrets.Binding {
 	}
 }
 
-// ClientSecretForMCPOAuthFlowPersist drops platform secrets before sealing so
-// deploy-config credentials never enter user-owned flow rows.
-func ClientSecretForMCPOAuthFlowPersist(source, clientSecret string) string {
+// ClientSecretForMCPOAuthPersist drops platform secrets before any user-owned
+// seal (pending mcp_oauth_flows or vault_credentials). Deploy-config secrets
+// stay in vault.platform_oauth_clients and are re-resolved at token exchange /
+// future refresh; sealed covers BYO and DCR only.
+func ClientSecretForMCPOAuthPersist(source, clientSecret string) string {
 	if strings.TrimSpace(source) == MCPOAuthClientCredentialPlatform {
 		return ""
 	}
@@ -53,7 +55,7 @@ func ClientSecretForMCPOAuthFlowPersist(source, clientSecret string) string {
 }
 
 // SealMCPOAuthFlowSecrets seals code_verifier and any flow-owned client_secret.
-// Platform flows must pass an empty client_secret (use ClientSecretForMCPOAuthFlowPersist).
+// Platform flows must pass an empty client_secret (use ClientSecretForMCPOAuthPersist).
 func SealMCPOAuthFlowSecrets(
 	ctx context.Context,
 	secretSvc *secrets.Service,

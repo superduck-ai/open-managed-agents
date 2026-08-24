@@ -10,13 +10,13 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-func TestClientSecretForMCPOAuthFlowPersistDropsPlatformSecret(t *testing.T) {
+func TestClientSecretForMCPOAuthPersistDropsPlatformSecret(t *testing.T) {
 	t.Parallel()
 
-	if got := ClientSecretForMCPOAuthFlowPersist(MCPOAuthClientCredentialPlatform, "platform-secret"); got != "" {
+	if got := ClientSecretForMCPOAuthPersist(MCPOAuthClientCredentialPlatform, "platform-secret"); got != "" {
 		t.Fatalf("platform persist secret = %q, want empty", got)
 	}
-	if got := ClientSecretForMCPOAuthFlowPersist(MCPOAuthClientCredentialSealed, "byo-secret"); got != "byo-secret" {
+	if got := ClientSecretForMCPOAuthPersist(MCPOAuthClientCredentialSealed, "byo-secret"); got != "byo-secret" {
 		t.Fatalf("sealed persist secret = %q, want byo-secret", got)
 	}
 }
@@ -114,7 +114,7 @@ func TestSealOpenMCPOAuthFlowSecretsRoundTrip(t *testing.T) {
 			context.Background(),
 			svc,
 			flow,
-			ClientSecretForMCPOAuthFlowPersist(MCPOAuthClientCredentialPlatform, "platform-secret"),
+			ClientSecretForMCPOAuthPersist(MCPOAuthClientCredentialPlatform, "platform-secret"),
 			"verifier-1",
 		)
 		if err != nil {

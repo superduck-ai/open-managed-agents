@@ -1,8 +1,9 @@
 -- +goose Up
 -- MCP OAuth pending flows stop storing plaintext client_secret / code_verifier.
 -- Secrets live in a Secret envelope; platform client secrets are not persisted
--- (client_credential_source=platform) and are re-read from deploy config at
--- token exchange. See docs/design/be/vault-runtime.md.
+-- on user-owned rows (flow or vault_credentials; client_credential_source=platform)
+-- and are re-read from deploy config at token exchange / refresh.
+-- See docs/design/be/vault-runtime.md.
 
 alter table mcp_oauth_flows
     add column if not exists client_credential_source text not null default 'sealed',

@@ -250,4 +250,3 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 - https://www.anthropic.com/engineering/managed-agents
 - HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
 - Related: #65、#52、#121、#137、#142
-- Ubiquitous language: `CONTEXT.md`（Secret envelope / Runtime credential injection / Credential URL match / Platform OAuth Client）

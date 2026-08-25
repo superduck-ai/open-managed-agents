@@ -254,6 +254,8 @@ func TestWrapTransportExcludesByPlanCredIDWhenUpdateReturnsEmptyRow(t *testing.T
 
 type fakeCredentialStore struct {
 	updateErr       error
+	updateErrs      []error
+	lastUpdate      db.VaultCredential
 	get             db.VaultCredential
 	getResults      []db.VaultCredential
 	vaultIDs        []string
@@ -267,13 +269,22 @@ type fakeCredentialStore struct {
 func (f *fakeCredentialStore) UpdateVaultCredential(
 	_ context.Context,
 	_, _, _ string,
-	_ db.VaultCredential,
+	next db.VaultCredential,
 ) (db.VaultCredential, error) {
 	f.updateCalls++
+	f.lastUpdate = next
+	if len(f.updateErrs) > 0 {
+		err := f.updateErrs[0]
+		f.updateErrs = f.updateErrs[1:]
+		if err != nil {
+			return db.VaultCredential{}, err
+		}
+		return next, nil
+	}
 	if f.updateErr != nil {
 		return db.VaultCredential{}, f.updateErr
 	}
-	return db.VaultCredential{}, nil
+	return next, nil
 }
 
 func (f *fakeCredentialStore) GetVaultCredential(

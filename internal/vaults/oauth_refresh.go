@@ -65,78 +65,144 @@ func (i *Injector) refreshMCPOAuthCredential(
 	if err := reloadCredential(ctx, i.store, &current); err != nil {
 		i.logger.DebugContext(ctx, "mcp_oauth refresh preload miss", "credential_id", credential.ExternalID, "error", err)
 	}
-	for attempt := 0; attempt < maxOAuthRefreshCASAttempts; attempt++ {
-		token, saved, retry, err := i.refreshMCPOAuthAttempt(ctx, i.store, &current, now, force)
-		if err != nil {
-			return "", nil, err
-		}
-		if retry {
-			force = false
-			continue
-		}
-		return token, saved, nil
-	}
-	return "", nil, errMCPOAuthRefreshUnavailable
+	return i.refreshMCPOAuthAttempt(ctx, i.store, &current, now, force)
 }
 
-// refreshMCPOAuthAttempt runs one open → maybe-exchange → CAS cycle.
-// retry=true means reload already applied and the outer loop should try again.
+// refreshMCPOAuthAttempt opens, exchanges at most once, then persists or reuses.
 func (i *Injector) refreshMCPOAuthAttempt(
 	ctx context.Context,
 	store credentialStore,
 	current *db.VaultCredential,
 	now time.Time,
 	force bool,
-) (token string, saved *db.VaultCredential, retry bool, err error) {
+) (token string, saved *db.VaultCredential, err error) {
 	publicAuth, secret, err := i.openMCPOAuthMaterial(ctx, *current)
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, err
 	}
-	expired, err := accessTokenExpired(publicAuth.ExpiresAt, now)
+	usable, err := mcpOAuthAccessUsable(publicAuth, secret, now)
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, err
 	}
-	if !force && !expired && secret.AccessToken != "" {
-		return secret.AccessToken, current, false, nil
+	if !force && usable {
+		return secret.AccessToken, current, nil
 	}
 	if !hasMCPOAuthRefreshMaterial(publicAuth, secret) {
-		return "", nil, false, errMCPOAuthRefreshUnavailable
+		return "", nil, errMCPOAuthRefreshUnavailable
 	}
 	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now, i.platformOAuthClients)
 	if err != nil {
-		// Exchange failed (e.g. invalid_grant after a concurrent winner
-		// consumed the refresh_token). Reload and retry only when the
-		// persisted envelope advanced; otherwise keep the exchange error.
-		before := current.SecretVersion
-		if reloadErr := reloadCredential(ctx, store, current); reloadErr != nil {
-			return "", nil, false, err
-		}
-		if current.SecretVersion == before {
-			return "", nil, false, err
-		}
-		return "", nil, true, nil
+		return i.finishFailedMCPOAuthExchange(ctx, store, current, secret, now, err)
 	}
-	updated := *current
-	updated.Auth = nextAuth
-	updated.SecretPayload = nextSecret
-	updated.UpdatedAt = now.UTC()
-	if err := SealCredentialSecret(ctx, i.secretSvc, &updated); err != nil {
-		return "", nil, false, err
-	}
-	row, err := store.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)
-	if err == nil {
-		return accessToken, &row, false, nil
-	}
-	if !errors.Is(err, db.ErrVersionConflict) {
-		return "", nil, false, err
-	}
-	// Winner may have already refreshed; reload and reuse unexpired token
-	// instead of forcing another token-endpoint exchange (one-time
-	// refresh_token safe).
+	return i.persistExchangedMCPOAuth(ctx, store, current, secret, accessToken, nextAuth, nextSecret, now)
+}
+
+// finishFailedMCPOAuthExchange reloads after a token-endpoint error. A replaced
+// envelope with a usable access token is reused; an unchanged envelope (including
+// rename) keeps the exchange error. This Hold never exchanges again.
+func (i *Injector) finishFailedMCPOAuthExchange(
+	ctx context.Context,
+	store credentialStore,
+	current *db.VaultCredential,
+	exchangedFrom mcpOAuthCredentialSecret,
+	now time.Time,
+	exchangeErr error,
+) (string, *db.VaultCredential, error) {
 	if reloadErr := reloadCredential(ctx, store, current); reloadErr != nil {
-		return "", nil, false, reloadErr
+		return "", nil, exchangeErr
 	}
-	return "", nil, true, nil
+	token, ok, err := i.usableReloadedMCPOAuth(ctx, current, exchangedFrom, now)
+	if err != nil || !ok {
+		return "", nil, exchangeErr
+	}
+	return token, current, nil
+}
+
+// persistExchangedMCPOAuth writes an already-exchanged token. On version
+// conflict it rebases onto the latest row unless another writer left a usable
+// envelope, which is reused. This Hold never exchanges again.
+func (i *Injector) persistExchangedMCPOAuth(
+	ctx context.Context,
+	store credentialStore,
+	current *db.VaultCredential,
+	exchangedFrom mcpOAuthCredentialSecret,
+	accessToken string,
+	nextAuth, nextSecret json.RawMessage,
+	now time.Time,
+) (string, *db.VaultCredential, error) {
+	for range maxOAuthRefreshCASAttempts {
+		updated := *current
+		updated.Auth = nextAuth
+		updated.SecretPayload = nextSecret
+		updated.UpdatedAt = now.UTC()
+		if err := SealCredentialSecret(ctx, i.secretSvc, &updated); err != nil {
+			return "", nil, err
+		}
+		row, err := store.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)
+		if err == nil {
+			return accessToken, &row, nil
+		}
+		if !errors.Is(err, db.ErrVersionConflict) {
+			return "", nil, err
+		}
+		if reloadErr := reloadCredential(ctx, store, current); reloadErr != nil {
+			return "", nil, reloadErr
+		}
+		token, ok, err := i.usableReloadedMCPOAuth(ctx, current, exchangedFrom, now)
+		if err != nil {
+			return "", nil, err
+		}
+		if ok {
+			return token, current, nil
+		}
+	}
+	return "", nil, errMCPOAuthRefreshUnavailable
+}
+
+func (i *Injector) usableReloadedMCPOAuth(
+	ctx context.Context,
+	current *db.VaultCredential,
+	exchangedFrom mcpOAuthCredentialSecret,
+	now time.Time,
+) (token string, usable bool, err error) {
+	publicAuth, secret, err := i.openMCPOAuthMaterial(ctx, *current)
+	if err != nil {
+		return "", false, err
+	}
+	if mcpOAuthSecretSourceEqual(exchangedFrom, secret) {
+		return "", false, nil
+	}
+	ok, err := mcpOAuthAccessUsable(publicAuth, secret, now)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	return secret.AccessToken, true, nil
+}
+
+func mcpOAuthAccessUsable(auth *mcpOAuthCredentialAuth, secret mcpOAuthCredentialSecret, now time.Time) (bool, error) {
+	if secret.AccessToken == "" {
+		return false, nil
+	}
+	var expiresAt *string
+	if auth != nil {
+		expiresAt = auth.ExpiresAt
+	}
+	expired, err := accessTokenExpired(expiresAt, now)
+	if err != nil {
+		return false, err
+	}
+	return !expired, nil
+}
+
+func mcpOAuthSecretSourceEqual(left, right mcpOAuthCredentialSecret) bool {
+	return left.AccessToken == right.AccessToken && mcpOAuthRefreshToken(left) == mcpOAuthRefreshToken(right)
+}
+
+func mcpOAuthRefreshToken(secret mcpOAuthCredentialSecret) string {
+	if secret.Refresh == nil {
+		return ""
+	}
+	return secret.Refresh.RefreshToken
 }
 
 // reloadCredential fetches the latest persisted credential into *current.

@@ -203,28 +203,26 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 选凭据 | Credential Networking 覆盖该 host 且 Injection Location 含 header；Vault Attachment Order 先到先得 |
 | 未覆盖 | passthrough |
 | Open 失败 | `ErrSubstitutionRejected` → 502 |
-| 与 substitution | 同一请求仍做 Egress Secret Substitution；随后把 Authorization 设为这条 Basic（发生在 `MITMEgress` 的 MCP inject wrap 之前） |
+| 与 substitution | 同一请求仍做 Egress Secret Substitution；随后把 Authorization 设为这条 Basic（均在 `MITMEgress.Prepare` 内、MCP inject wrap 之前；凭证只加载一次） |
 
 ```mermaid
 sequenceDiagram
     participant Git as Sandbox git
-    participant MITM as CONNECT MITM
-    participant Vault as EgressSubstitutor
+    participant MITM as MITMEgress.Prepare
     participant Up as Git host
 
     Git->>MITM: GET /repo.git/info/refs?service=git-upload-pack
-    MITM->>Vault: SubstituteEnvSecrets
-    Vault->>Vault: Egress Secret Substitution
-    Vault->>Vault: Git Smart HTTP Authorization
+    MITM->>MITM: load credentials once
+    MITM->>MITM: Egress Secret Substitution
+    MITM->>MITM: Git Smart HTTP Authorization
     MITM->>Up: Authorization Basic oauth2:secret
 ```
 
 深模块缝：
 
 - `vaults.PrepareEnvCredentialMount` — Session 挂载（env 的 MITM 门闩 + placeholder map；MCP 凭证不挡启动）
-- `vaults.MITMEgress.Prepare` — MITM 每条出站：env 替换（含 Git Smart HTTP Authorization）→ MCP inject wrap
-- `vaults.Injector.WrapTransport` — Credential URL match / open / refresh / 401
-- `vaults.EgressSubstitutor.SubstituteEnvSecrets` — MITM env egress（含 Git Smart HTTP Authorization）
+- `vaults.MITMEgress.Prepare` — MITM 出站深模块：一次加载凭证 → env 替换 → Git Smart HTTP Authorization → MCP inject wrap
+- `vaults.Injector.WrapTransport` — Credential URL match / open / refresh / 401（可与 MCP proxy 共用）
 - `networkpolicy.AllowsHost` — Credential Networking host 匹配
 
 ### 运行时注入决策（MCP 细节）
@@ -247,7 +245,7 @@ sequenceDiagram
 ### 每次 MCP 出站流程
 
 1. CONNECT 已鉴权；MITM 解密出站 HTTP；Environment host allowlist 已在 CONNECT 时校验。
-2. `MITMEgress.Prepare`：先 `SubstituteEnvSecrets`（含 Git Smart HTTP Authorization）；再按 CONNECT authority + path/query 拼绝对 HTTPS URL。
+2. `MITMEgress.Prepare`：一次加载凭证 → env 占位符替换 → Git Smart HTTP Authorization；再按 CONNECT authority + path/query 拼绝对 HTTPS URL。
 3. `Injector` 查 code session → `vault_ids` → 活动凭证（**每个 RoundTrip 一次**）；按绝对 URL 匹配；按 `vault_ids` 顺序 walk **可注入**凭证（`static_bearer` / `mcp_oauth`）。凭证 auth schema 无法解析 → **fail-closed**；同 scheme、host、effective port 无 path 命中 → **fail-closed**；host 不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
 4. Open 信封得到 Transient secret payload。`mcp_oauth` 若已过期则 refresh（CAS reseal）后再取 access token。Open/refresh 失败 → **跳过该条**试下一条。
 5. 命中时 Del 客户端 `Authorization`，加 `Authorization: Bearer <token>`，转发上游。上游 401 时对当前 `mcp_oauth` 再 refresh 一轮并重试；仍失败则排除该凭证继续 walk。

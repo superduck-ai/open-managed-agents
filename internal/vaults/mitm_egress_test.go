@@ -2,7 +2,9 @@ package vaults
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 func TestPrepareSessionVaultMountAllowsMCPCredentialsWithoutMITM(t *testing.T) {
@@ -60,7 +63,7 @@ func TestMITMEgressPrepareInjectsBearerAndStripsClientAuthorization(t *testing.T
 		credentials: []db.VaultCredential{cred},
 	}
 	injector := newTestInjector(t, svc, store, nil, time.Time{})
-	egress := NewMITMEgress(nil, injector)
+	egress := newMITMEgressForTest(nil, injector)
 	recorder := &recordingTransport{}
 
 	req := newHTTPRequest(t, http.MethodPost, "/mcp", strings.NewReader(`{}`))
@@ -107,8 +110,7 @@ func TestMITMEgressPrepareEnvThenInjectOrder(t *testing.T) {
 		credentials: []db.VaultCredential{mcpCred, envCred},
 	}
 	injector := newTestInjector(t, svc, store, nil, time.Time{})
-	substitutor := newEgressSubstitutor(store, svc, nil)
-	egress := NewMITMEgress(substitutor, injector)
+	egress := newMITMEgressForTest(newEgressSubstitutor(store, svc, nil), injector)
 	recorder := &recordingTransport{}
 
 	req := newHTTPRequest(t, http.MethodPost, "/mcp", nil)
@@ -156,4 +158,174 @@ func newHTTPRequest(t *testing.T, method, target string, body io.Reader) *http.R
 		t.Fatalf("NewRequest: %v", err)
 	}
 	return req
+}
+
+func prepareMITMEgress(t *testing.T, store *fakeCredentialStore, svc *secrets.Service, authority string, req *http.Request) error {
+	t.Helper()
+	egress := newMITMEgressForTest(newEgressSubstitutor(store, svc, nil), nil)
+	_, err := egress.Prepare(
+		context.Background(),
+		EgressSession{
+			CodeSessionExternalID: "cse_test",
+			OrganizationUUID:      testInjectOrgUUID,
+			WorkspaceUUID:         testInjectWsUUID,
+		},
+		authority,
+		req,
+		http.DefaultTransport,
+	)
+	return err
+}
+
+func TestMITMEgressPrepareGitSmartHTTPRejectsOpenFailure(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	cred := sealedEnvCredential(t, svc, "GITLAB_TOKEN", "oma_ph_git", "gitlab.example.com", "glpat-real")
+	cred.SecretEnvelope = nil
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{cred.VaultExternalID},
+		credentials: []db.VaultCredential{cred},
+	}
+	req := newHTTPRequest(t, http.MethodGet, "https://gitlab.example.com/group/repo.git/info/refs?service=git-upload-pack", nil)
+	err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req)
+	if !errors.Is(err, ErrSubstitutionRejected) {
+		t.Fatalf("error = %v, want ErrSubstitutionRejected", err)
+	}
+}
+
+func TestMITMEgressPrepareGitSmartHTTPPassthroughWhenHostUncovered(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	cred := sealedEnvCredential(t, svc, "GITLAB_TOKEN", "oma_ph_git", "gitlab.example.com", "glpat-real")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{cred.VaultExternalID},
+		credentials: []db.VaultCredential{cred},
+	}
+	req := newHTTPRequest(t, http.MethodGet, "https://github.com/org/repo.git/info/refs?service=git-upload-pack", nil)
+	if err := prepareMITMEgress(t, store, svc, "github.com:443", req); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want passthrough", got)
+	}
+}
+
+func TestMITMEgressPrepareGitSmartHTTPSkipsNonGit(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	cred := sealedEnvCredential(t, svc, "GITLAB_TOKEN", "oma_ph_git", "gitlab.example.com", "glpat-real")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{cred.VaultExternalID},
+		credentials: []db.VaultCredential{cred},
+	}
+	cases := []string{
+		"https://gitlab.example.com/api/v4/user",
+		"https://gitlab.example.com/group/repo.git/info/lfs/objects/batch",
+		"https://gitlab.example.com/group/repo.git/info/refs",
+	}
+	for _, rawURL := range cases {
+		req := newHTTPRequest(t, http.MethodGet, rawURL, nil)
+		if err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req); err != nil {
+			t.Fatalf("%s: %v", rawURL, err)
+		}
+		if got := req.Header.Get("Authorization"); got != "" {
+			t.Fatalf("%s Authorization = %q, want empty", rawURL, got)
+		}
+	}
+}
+
+func TestMITMEgressPrepareGitSmartHTTPRequiresHeaderLocation(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	bodyOnly := sealedEnvCredentialWithLocation(t, svc, "GITLAB_TOKEN", "oma_ph_git", "gitlab.example.com", "glpat-real", false, true)
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{bodyOnly.VaultExternalID},
+		credentials: []db.VaultCredential{bodyOnly},
+	}
+	req := newHTTPRequest(t, http.MethodGet, "https://gitlab.example.com/group/repo.git/info/refs?service=git-upload-pack", nil)
+	if err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want empty for body-only credential", got)
+	}
+}
+
+func TestMITMEgressPrepareGitSmartHTTPWritesBasic(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	cred := sealedEnvCredential(t, svc, "GITLAB_TOKEN", "oma_ph_git", "gitlab.example.com", "glpat-real")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{cred.VaultExternalID},
+		credentials: []db.VaultCredential{cred},
+	}
+	req := newHTTPRequest(t, http.MethodGet, "https://gitlab.example.com/group/repo.git/info/refs?service=git-upload-pack", nil)
+	if err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != oauth2Basic("glpat-real") {
+		t.Fatalf("Authorization = %q, want oauth2 Basic", got)
+	}
+}
+
+func TestMITMEgressPrepareGitSmartHTTPFirstCoveringWins(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	first := sealedEnvCredential(t, svc, "NOTION_TOKEN", "oma_ph_notion", "gitlab.example.com", "ntn_wrong")
+	second := sealedEnvCredential(t, svc, "GITLAB_TOKEN", "oma_ph_git", "gitlab.example.com", "glpat-real")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{first.VaultExternalID, second.VaultExternalID},
+		credentials: []db.VaultCredential{first, second},
+	}
+	req := newHTTPRequest(t, http.MethodPost, "https://gitlab.example.com/group/repo.git/git-receive-pack", nil)
+	if err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != oauth2Basic("ntn_wrong") {
+		t.Fatalf("Authorization = %q, want first covering secret", got)
+	}
+}
+
+func TestMITMEgressPrepareGitSmartHTTPSameSecretNameLaterVaultCoversHost(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	first := sealedEnvCredential(t, svc, "SHARED", "oma_ph_first", "other.example.com", "secret_other")
+	second := sealedEnvCredential(t, svc, "SHARED", "oma_ph_second", "gitlab.example.com", "glpat-real")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{first.VaultExternalID, second.VaultExternalID},
+		credentials: []db.VaultCredential{first, second},
+	}
+	req := newHTTPRequest(t, http.MethodGet, "https://gitlab.example.com/group/repo.git/info/refs?service=git-upload-pack", nil)
+	if err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != oauth2Basic("glpat-real") {
+		t.Fatalf("Authorization = %q, want later vault covering this host", got)
+	}
+}
+
+func TestMITMEgressPrepareGitSmartHTTPOverwritesAuthorizationAndKeepsSubstitution(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	cred := sealedEnvCredential(t, svc, "GITLAB_TOKEN", "oma_ph_git", "gitlab.example.com", "glpat-real")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{cred.VaultExternalID},
+		credentials: []db.VaultCredential{cred},
+	}
+	req := newHTTPRequest(t, http.MethodGet, "https://gitlab.example.com/group/repo.git/git-upload-pack", nil)
+	req.Header.Set("Authorization", "Bearer oma_ph_git")
+	req.Header.Set("PRIVATE-TOKEN", "oma_ph_git")
+	if err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != oauth2Basic("glpat-real") {
+		t.Fatalf("Authorization = %q, want overwritten Basic", got)
+	}
+	if got := req.Header.Get("PRIVATE-TOKEN"); got != "glpat-real" {
+		t.Fatalf("PRIVATE-TOKEN = %q, want substituted secret", got)
+	}
+}
+
+func oauth2Basic(secret string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte("oauth2:"+secret))
 }

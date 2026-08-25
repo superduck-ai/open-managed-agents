@@ -71,9 +71,10 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 }
 
 // WithVaultSecrets wires vault credential injection (static_bearer / mcp_oauth)
-// into both Session MCP HTTP proxy and CONNECT MITM (via MITMEgress), and
-// environment_variable Egress Secret Substitution on MITM. Platform OAuth
-// client secrets are re-resolved from cfg at refresh time.
+// into Session MCP HTTP proxy and CONNECT MITM, and environment_variable egress
+// rewriting (placeholder substitution + Git Smart HTTP Authorization) on MITM
+// via MITMEgress.Prepare. Platform OAuth client secrets are re-resolved from
+// cfg at refresh time.
 func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaults.OAuthRefreshLease) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
@@ -93,7 +94,6 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 			base,
 		)
 	}
-	substitutor := vaults.NewEgressSubstitutor(h.db, secretSvc, h.logger)
-	h.mitmEgress = vaults.NewMITMEgress(substitutor, injector)
+	h.mitmEgress = vaults.NewMITMEgress(h.db, secretSvc, h.logger, injector)
 	return h
 }

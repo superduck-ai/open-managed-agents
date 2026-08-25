@@ -2,9 +2,14 @@ package vaults
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 // EgressSession identifies the Code Session tenant for MITM outbound rewriting.
@@ -15,27 +20,50 @@ type EgressSession struct {
 }
 
 // MITMEgress is the deep module for Managed Agent CONNECT MITM outbound
-// rewriting: environment_variable substitution then MCP Authorization inject.
+// rewriting. Callers only use Prepare: env placeholder substitution, Git Smart
+// HTTP Authorization, then MCP Authorization inject.
 type MITMEgress struct {
-	sub *EgressSubstitutor
+	env *EgressSubstitutor
 	inj *Injector
 }
 
-// NewMITMEgress wires env substitution and MCP injection for MITM. Either
-// dependency may be nil; nil means that stage is skipped.
-func NewMITMEgress(sub *EgressSubstitutor, inj *Injector) *MITMEgress {
-	if sub == nil && inj == nil {
+// NewMITMEgress wires MITM outbound rewriting. database/secretSvc drive env +
+// Git stages; inj may be shared with Session MCP HTTP proxy. Nil inj skips MCP.
+// Returns nil when neither env/Git nor MCP can run.
+func NewMITMEgress(
+	database *db.DB,
+	secretSvc *secrets.Service,
+	logger *slog.Logger,
+	inj *Injector,
+) *MITMEgress {
+	var store credentialStore
+	if database != nil {
+		store = database
+	}
+	var env *EgressSubstitutor
+	if store != nil && secretSvc != nil {
+		env = newEgressSubstitutor(store, secretSvc, logging.LoggerOrDefault(logger))
+	}
+	if env == nil && inj == nil {
 		return nil
 	}
-	return &MITMEgress{sub: sub, inj: inj}
+	return &MITMEgress{env: env, inj: inj}
 }
 
-// Prepare mutates req for env substitution, then returns a RoundTripper that
-// performs MCP Authorization inject (including mcp_oauth 401 refresh) on base.
+// newMITMEgressForTest builds MITMEgress from package-local doubles.
+func newMITMEgressForTest(env *EgressSubstitutor, inj *Injector) *MITMEgress {
+	if env == nil && inj == nil {
+		return nil
+	}
+	return &MITMEgress{env: env, inj: inj}
+}
+
+// Prepare mutates req for env substitution and Git Smart HTTP Authorization,
+// then returns a RoundTripper that performs MCP Authorization inject on base.
 //
-// Ordering is fixed: env substitute → MCP inject wrap.
-// Absolute URL for credential match is built from CONNECT authority + origin-form path/query.
-// When an injectable credential matches, Injector overwrites Authorization with the vault Bearer.
+// Ordering is fixed: env substitute → Git Basic → MCP inject wrap.
+// Credentials are loaded once for env and Git. Absolute URL for MCP credential
+// match is built from CONNECT authority + origin-form path/query.
 func (e *MITMEgress) Prepare(
 	ctx context.Context,
 	session EgressSession,
@@ -47,18 +75,8 @@ func (e *MITMEgress) Prepare(
 		return base, nil
 	}
 	host, port := splitConnectAuthority(connectAuthority)
-	if e.sub != nil {
-		if err := e.sub.SubstituteEnvSecrets(
-			ctx,
-			session.CodeSessionExternalID,
-			session.OrganizationUUID,
-			session.WorkspaceUUID,
-			req,
-			host,
-			port,
-		); err != nil {
-			return nil, err
-		}
+	if err := e.rewriteOutbound(ctx, session, host, port, req); err != nil {
+		return nil, err
 	}
 	if e.inj == nil {
 		return base, nil
@@ -72,6 +90,35 @@ func (e *MITMEgress) Prepare(
 		abs,
 		base,
 	), nil
+}
+
+func (e *MITMEgress) rewriteOutbound(
+	ctx context.Context,
+	session EgressSession,
+	host string,
+	port string,
+	req *http.Request,
+) error {
+	if e.env == nil {
+		return nil
+	}
+	credentials, err := e.env.loadCredentials(
+		ctx,
+		session.CodeSessionExternalID,
+		session.OrganizationUUID,
+		session.WorkspaceUUID,
+	)
+	if err != nil {
+		return err
+	}
+	if len(credentials) == 0 {
+		return nil
+	}
+	opened := make(map[string]string)
+	if err := e.env.applyEnvSubstitutions(ctx, req, host, port, credentials, opened); err != nil {
+		return err
+	}
+	return authorizeGitSmartHTTP(ctx, e.env, req, host, port, credentials, opened)
 }
 
 func splitConnectAuthority(authority string) (host, port string) {

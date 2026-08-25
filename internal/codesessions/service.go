@@ -50,7 +50,12 @@ func (s *Service) WithSandboxTimeoutExtender(extender SandboxTimeoutExtender, ti
 	return s
 }
 
-func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
+func (s *Service) QueuePublicSessionEvents(
+	ctx context.Context,
+	session db.Session,
+	events []db.SessionEvent,
+	preparedPayloads map[string]json.RawMessage,
+) error {
 	if s == nil || len(events) == 0 {
 		return nil
 	}
@@ -78,10 +83,13 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 				continue
 			}
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt)
+		preparedPayload, ok := preparedPayloads[event.ExternalID]
+		if !ok {
+			return fmt.Errorf("prepared worker payload is missing for event %s", event.ExternalID)
+		}
+		payload, err := workerPayloadFromPublicEvent(codeSession.ExternalID, preparedPayload, event.ProcessedAt)
 		if err != nil {
-			s.logger.ErrorContext(ctx, "convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
-			continue
+			return err
 		}
 		payloads = append(payloads, payload)
 	}

@@ -573,6 +573,35 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("failure manual run rejects initial event file missing from resources", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-unmounted-initial-file-agent"}`)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-unmounted-initial-file-env"}`)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
+		file := uploadFile(t, app, "deployment-unmounted-initial-file.txt", "text/plain", []byte("unmounted initial file"))
+		defer deleteFile(t, app, file.ID)
+
+		created := createDeployment(
+			t,
+			app,
+			deploymentBodyWithExtra(
+				agent.ID,
+				env.ID,
+				`"initial_events":[{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}]}]`,
+			),
+		)
+		defer cleanupDeploymentRows(t, app, created.ID)
+
+		run := runDeployment(t, app, created.ID)
+		if run.SessionID != nil {
+			t.Fatalf("deployment run Session ID = %q, want nil", *run.SessionID)
+		}
+		if !strings.Contains(string(run.Error), `"session_resource_not_found_error"`) ||
+			!strings.Contains(string(run.Error), file.ID) {
+			t.Fatalf("deployment run error = %s, want missing mounted file", run.Error)
+		}
+	})
+
 	t.Run("success manual run binds file resource into session filesystem", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-file-run-agent"}`)
 		defer cleanupAgentRows(t, app.pool, agent.ID)
@@ -587,7 +616,10 @@ func TestDeploymentsAPI(t *testing.T) {
 			deploymentBodyWithExtra(
 				agent.ID,
 				env.ID,
-				`"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/deployment.txt"}]`,
+				`"initial_events":[{"type":"user.message","content":[`+
+					`{"type":"text","text":"summarize deployment file"},`+
+					`{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}]}],`+
+					`"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/deployment.txt"}]`,
 			),
 		)
 		defer cleanupDeploymentRows(t, app, created.ID)
@@ -614,6 +646,16 @@ func TestDeploymentsAPI(t *testing.T) {
 			file.ID,
 			"/uploads/workspace/deployment.txt",
 		)
+		codeSessionID := launchLocalCodeSession(t, app, *run.SessionID)
+		inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+		if err != nil {
+			t.Fatalf("list deployment file-reference inbound: %v", err)
+		}
+		if len(inbound) != 2 ||
+			!strings.Contains(string(inbound[1].Payload), `/mnt/session/uploads/workspace/deployment.txt`) ||
+			strings.Contains(string(inbound[1].Payload), `"file_id"`) {
+			t.Fatalf("deployment file-reference inbound = %#v, want mounted path without file_id", inbound)
+		}
 	})
 
 	t.Run("success initial user messages replay in order", func(t *testing.T) {

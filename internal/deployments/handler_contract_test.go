@@ -7,19 +7,91 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
-func TestSessionResourcesFromDeploymentRejectsInvalidSecrets(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{})
+func TestPlanDeploymentSessionResourcesRejectsInvalidSecrets(t *testing.T) {
+	_, err := planDeploymentSessionResources(
+		db.Deployment{ResourceSecrets: json.RawMessage(`[]`)},
+		nil,
+		time.Time{},
+	)
 	if err == nil {
-		t.Fatal("sessionResourcesFromDeployment() error = nil")
+		t.Fatal("planDeploymentSessionResources() error = nil")
 	}
 }
 
-func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
+func TestParseDeploymentRunResourcesRejectsNullResource(t *testing.T) {
+	_, err := parseDeploymentRunResources(json.RawMessage(`[null]`))
 	if err == nil {
-		t.Fatal("sessionResourcesFromDeployment() error = nil")
+		t.Fatal("parseDeploymentRunResources() error = nil")
+	}
+}
+
+func TestParseDeploymentRunResources(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "top level is not an array", raw: `{"type":"file"}`},
+		{name: "resource is null", raw: `[null]`},
+		{name: "type is not a string", raw: `[{"type":1,"file_id":"file_test"}]`},
+		{name: "unsupported type", raw: `[{"type":"directory"}]`},
+		{name: "file ID is missing", raw: `[{"type":"file"}]`},
+		{name: "file ID is not a string", raw: `[{"type":"file","file_id":1}]`},
+		{name: "memory store ID is missing", raw: `[{"type":"memory_store"}]`},
+		{name: "memory store ID is not a string", raw: `[{"type":"memory_store","memory_store_id":1}]`},
+		{name: "GitHub URL is missing", raw: `[{"type":"github_repository"}]`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseDeploymentRunResources(json.RawMessage(test.raw)); err == nil {
+				t.Fatal("parseDeploymentRunResources() error = nil")
+			}
+		})
+	}
+
+	t.Run("accepts normalized resource references", func(t *testing.T) {
+		resources, err := parseDeploymentRunResources(json.RawMessage(`[
+			{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/uploads/file.txt"},
+			{"type":"memory_store","memory_store_id":"mem_test"},
+			{"type":"github_repository","url":"https://github.com/example/repo.git"}
+		]`))
+		if err != nil {
+			t.Fatalf("parseDeploymentRunResources() error = %v", err)
+		}
+		if len(resources) != 3 || resources[0].fileSpec == nil ||
+			resources[0].fileSpec.FileID() != "file_test" ||
+			resources[1].payload.MemoryStoreID != "mem_test" ||
+			resources[2].payload.Type != "github_repository" {
+			t.Fatalf("parseDeploymentRunResources() = %+v", resources)
+		}
+	})
+}
+
+func TestPlanDeploymentSessionResourcesSharesFileBinding(t *testing.T) {
+	stored, err := parseDeploymentRunResources(json.RawMessage(`[
+		{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}
+	]`))
+	if err != nil {
+		t.Fatalf("parseDeploymentRunResources() error = %v", err)
+	}
+	stored[0].file = db.FileRecord{ExternalID: "file_test", MimeType: "text/csv"}
+	plan, err := planDeploymentSessionResources(
+		db.Deployment{},
+		stored,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		t.Fatalf("planDeploymentSessionResources() error = %v", err)
+	}
+	if len(plan.resources) != 1 || plan.resources[0].FileMount == nil || len(plan.eventBindings) != 1 {
+		t.Fatalf("planDeploymentSessionResources() = %+v", plan)
+	}
+	mount := plan.resources[0].FileMount
+	want := sessioncontract.EventFileBinding{FileID: mount.FileExternalID, Path: mount.Path, MimeType: "text/csv"}
+	if plan.eventBindings[0] != want {
+		t.Fatalf("event binding = %+v, want %+v", plan.eventBindings[0], want)
 	}
 }
 

@@ -135,6 +135,37 @@
         <foreach collection="toolUseIDs" item="toolUseID" open="(" separator="," close=")">#{toolUseID}</foreach>
     </select>
 
+    <select id="HasFileReferenceForResource" result="scalar">
+        SELECT EXISTS (
+            SELECT 1
+            FROM session_events event
+            JOIN session_resources resource
+            ON resource.workspace_uuid = event.workspace_uuid
+            AND resource.session_external_id = event.session_external_id
+            AND resource.external_id = #{resourceExternalID}
+            AND resource.resource_type = 'file'
+            AND resource.deleted_at IS NULL
+            JOIN files file
+            ON file.workspace_uuid = resource.workspace_uuid
+            AND file.uuid = resource.file_uuid
+            AND file.deleted_at IS NULL
+            CROSS JOIN LATERAL jsonb_array_elements(
+                CASE
+                    WHEN jsonb_typeof(event.payload-&gt;'content') = 'array'
+                    THEN event.payload-&gt;'content'
+                    ELSE '[]'::jsonb
+                END
+            ) content_block
+            WHERE event.workspace_uuid = #{workspaceUUID}
+            AND event.session_external_id = #{sessionExternalID}
+            AND event.event_type = 'user.message'
+            AND event.deleted_at IS NULL
+            AND content_block-&gt;&gt;'type' IN ('document', 'image')
+            AND content_block-&gt;'source'-&gt;&gt;'type' = 'file'
+            AND content_block-&gt;'source'-&gt;&gt;'file_id' = file.external_id
+        )
+    </select>
+
     <update id="SoftDeleteBySession" result="rows">
         UPDATE session_events
         SET deleted_at = COALESCE(deleted_at, NOW())

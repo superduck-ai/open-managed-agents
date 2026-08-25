@@ -36,3 +36,37 @@ func TestMapSessionLoadError(t *testing.T) {
 		})
 	}
 }
+
+func TestMapEventProcessingErrorDistinguishesInputAndInternalFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		cause   error
+		kind    apperr.Kind
+		message string
+	}{
+		{
+			name:    "input failure",
+			cause:   markEventProcessingError(markEventInputError(errors.New("content is required"))),
+			kind:    apperr.InvalidArgument,
+			message: "content is required",
+		},
+		{
+			name:    "internal failure",
+			cause:   markEventProcessingError(errors.New("stored outcome evaluations are invalid")),
+			kind:    apperr.Internal,
+			message: "Could not process session events",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mapped := mapEventProcessingError(test.cause, "session_test")
+			appErr, ok := errors.AsType[*apperr.Error](mapped)
+			if !ok {
+				t.Fatalf("error type = %T, want *apperr.Error", mapped)
+			}
+			if appErr.Kind != test.kind || appErr.PublicMessage != test.message {
+				t.Fatalf("error = (%v, %q), want (%v, %q)", appErr.Kind, appErr.PublicMessage, test.kind, test.message)
+			}
+		})
+	}
+}

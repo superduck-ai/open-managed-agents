@@ -9,6 +9,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 )
 
 var errRetryableRunPreparation = errors.New("retryable deployment run preparation")
@@ -26,6 +27,7 @@ type preparedDeploymentExecution struct {
 func prepareDeploymentExecution(
 	deployment db.Deployment,
 	createdByAPIKeyUUID string,
+	storedResources []deploymentRunResource,
 	now time.Time,
 ) (preparedDeploymentExecution, error) {
 	sessionID, threadID, workID, runID, err := newRunIDs()
@@ -36,9 +38,14 @@ func prepareDeploymentExecution(
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
+	resourcePlan, err := planDeploymentSessionResources(deployment, storedResources, now)
 	if err != nil {
 		return preparedDeploymentExecution{}, err
+	}
+	for _, event := range events {
+		if err := sessioneventfiles.ValidateMountedReferences(event.EventType, event.Payload, resourcePlan.eventBindings); err != nil {
+			return preparedDeploymentExecution{}, err
+		}
 	}
 	deploymentID := deployment.ExternalID
 	return preparedDeploymentExecution{
@@ -63,7 +70,7 @@ func prepareDeploymentExecution(
 				AgentSnapshot: deployment.AgentSnapshot, Status: "idle",
 				Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now,
 			},
-			Resources: resources,
+			Resources: resourcePlan.resources,
 			Work: db.EnvironmentWork{
 				UUID: uuid.NewV4().String(), ExternalID: workID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,

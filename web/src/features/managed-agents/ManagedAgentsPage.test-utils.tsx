@@ -850,9 +850,14 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   return { requests };
 }
 
-export function mockManagedResourceApi() {
+export function mockManagedResourceApi(
+  options: { fileUploadErrorOnce?: boolean; sessionResourceAddErrorOnce?: boolean } = {},
+) {
   const now = new Date().toISOString();
   const requests: RecordedRequest[] = [];
+  let fileUploadErrorsRemaining = options.fileUploadErrorOnce ? 1 : 0;
+  let sessionResourceAddErrorsRemaining = options.sessionResourceAddErrorOnce ? 1 : 0;
+  const uploadedFilenames = new Map<string, string>();
   const sessionResources = [
     {
       id: 'sesrsc_orders123456',
@@ -1450,6 +1455,29 @@ export function mockManagedResourceApi() {
       const session = resources.sessions.find((item) => item.id === sessionId);
       return session ? jsonResponse(session) : jsonResponse({ error: { message: 'not found' } }, 404);
     }
+    if (url === '/v1/files?beta=true' && method === 'POST') {
+      if (fileUploadErrorsRemaining > 0) {
+        fileUploadErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'forced attachment upload failure' } }, 500);
+      }
+      const formData = init?.body instanceof FormData ? init.body : null;
+      const file = formData?.get('file');
+      const uploadedFile = file instanceof File ? file : new File([], 'attachment.bin');
+      const image = uploadedFile.type.startsWith('image/');
+      const fileId = image ? 'file_uploaded_image123' : 'file_uploaded_document123';
+      uploadedFilenames.set(fileId, uploadedFile.name);
+      return jsonResponse({
+        id: fileId,
+        type: 'file',
+        filename: uploadedFile.name,
+        size_bytes: uploadedFile.size,
+        mime_type: uploadedFile.type || 'application/octet-stream',
+        created_at: new Date().toISOString(),
+        downloadable: true,
+        scope: null,
+        metadata: {},
+      });
+    }
     const fileMetadataMatch = url.match(/^\/v1\/files\/([^/?]+)\?beta=true$/);
     if (fileMetadataMatch && method === 'GET') {
       const fileId = decodeURIComponent(fileMetadataMatch[1]);
@@ -1466,6 +1494,22 @@ export function mockManagedResourceApi() {
       });
     }
     const sessionResourcesMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/resources\?/);
+    if (sessionResourcesMatch && method === 'POST') {
+      if (sessionResourceAddErrorsRemaining > 0) {
+        sessionResourceAddErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'forced attachment mount failure' } }, 500);
+      }
+      const fileId = typeof body?.file_id === 'string' ? body.file_id : '';
+      const resource = {
+        id: `sesrsc_attachment_${sessionResources.length + 1}`,
+        type: 'file',
+        created_at: new Date().toISOString(),
+        file_id: fileId,
+        mount_path: `/mnt/session/uploads/${uploadedFilenames.get(fileId) ?? fileId}`,
+      };
+      sessionResources.push(resource);
+      return jsonResponse(resource);
+    }
     if (sessionResourcesMatch && method === 'GET') {
       return jsonResponse({ data: resources.sessionResources, next_page: null });
     }

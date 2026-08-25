@@ -18,6 +18,7 @@ type SessionResourceMapper interface {
 	BindSessionFileResource(ctx context.Context, params sessionFileResourceBindingParams) (sessionResourceRow, error)
 	GetSessionResourceForMutation(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
 	SoftDeleteSessionResource(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (int64, error)
+	ListEventFileBindings(ctx context.Context, workspaceUUID, sessionExternalID string) ([]sessionEventFileBindingRow, error)
 
 	InsertDirectory(ctx context.Context, params sessionResourceDirectoryInsertParams) (int64, error)
 	UpdateResourceFile(ctx context.Context, params sessionResourceFileWriteParams) error
@@ -34,6 +35,12 @@ type SessionResourceMapper interface {
 
 	RetireSkillArchiveResources(ctx context.Context, params sessionSkillArchiveRetireParams) error
 	InsertSkillArchiveResource(ctx context.Context, params sessionSkillArchiveInsertParams) error
+}
+
+type sessionEventFileBindingRow struct {
+	FileExternalID string `db:"file_external_id"`
+	Path           string `db:"path"`
+	MimeType       string `db:"mime_type"`
 }
 
 type sessionResourceRow struct {

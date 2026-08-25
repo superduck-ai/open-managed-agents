@@ -3493,6 +3493,9 @@ func TestSessionEventInputValidation(t *testing.T) {
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"done"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
+	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"document","source":{"type":"file"}}]}]}`), defaultTestKey, true)
+	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
 	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
 	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.custom_tool_result"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
 		t.Fatalf("unexpected valid events response: %+v", valid)
@@ -3500,6 +3503,328 @@ func TestSessionEventInputValidation(t *testing.T) {
 	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
 	if !bytes.Contains(retrieved.OutcomeEvaluations, []byte(`"max_iterations":2`)) {
 		t.Fatalf("outcomes after accepted batch = %s, want committed evaluation", retrieved.OutcomeEvaluations)
+	}
+}
+
+func TestSessionEventInternalNormalizationFailureReturnsServerError(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-events-internal-error-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-events-internal-error-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-events-internal-error-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	if _, err := app.pool.Exec(
+		context.Background(),
+		`update sessions set outcome_evaluations = '{"invalid":true}'::jsonb where external_id = $1`,
+		session.ID,
+	); err != nil {
+		t.Fatalf("inject invalid stored outcome evaluations: %v", err)
+	}
+
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"must not persist","rubric":{"type":"text","text":"pass"}}]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusInternalServerError, "api_error")
+	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("internal normalization failure persisted events: %+v", events.Data)
+	}
+}
+
+func TestSessionEventMissingFileResourceRejectsWholeBatch(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-atomicity-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-file-atomicity-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-event-file-atomicity-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[
+			{"type":"user.define_outcome","description":"must roll back","rubric":{"type":"text","text":"pass"}},
+			{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"file_not_attached"}}]}
+		]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("rejected batch persisted events: %+v", events.Data)
+	}
+	if retrieved := retrieveSession(t, app, session.ID, defaultTestKey); string(retrieved.OutcomeEvaluations) != "[]" {
+		t.Fatalf("rejected batch persisted outcome evaluations: %s", retrieved.OutcomeEvaluations)
+	}
+}
+
+func TestCreateSessionInitialEventsRejectThreadID(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-initial-event-thread-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-initial-event-thread-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-initial-event-thread-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions?beta=true",
+		strings.NewReader(`{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"initial_events":[{"type":"user.message","session_thread_id":"sthr_client","content":[{"type":"text","text":"hello"}]}]
+		}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+}
+
+func TestSessionEventReferencedFileResourceCannotBeDeleted(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-delete-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-file-delete-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-event-file-delete-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	file := uploadFile(t, app, "pinned.txt", "text/plain", []byte("pinned"))
+	defer deleteFile(t, app, file.ID)
+	session := createSession(t, app, `{
+		"agent":`+quoteJSON(agent.ID)+`,
+		"environment_id":`+quoteJSON(env.ID)+`,
+		"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/uploads/pinned.txt"}],
+		"initial_events":[{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}]}]
+	}`)
+	defer deleteSession(t, app, session.ID)
+	if len(session.Resources) != 1 {
+		t.Fatalf("session resources = %+v, want one", session.Resources)
+	}
+	resourceID := sessionEventStringField(t, session.Resources[0], "id")
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodDelete,
+		"/v1/sessions/"+session.ID+"/resources/"+resourceID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusConflict, "conflict_error")
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("list pinned resource inbound events: %v", err)
+	}
+	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte(`/mnt/session/uploads/pinned.txt`)) {
+		t.Fatalf("pinned resource inbound = %#v, want mounted path", inbound)
+	}
+}
+
+func TestSessionEventFileReferencesUseMountedResources(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-references-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-file-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-event-file-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	file := uploadFile(t, app, "reference.txt", "text/plain", []byte("mounted file content"))
+	defer deleteFile(t, app, file.ID)
+
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`,"title":"fixed public title"}`)
+	defer deleteSession(t, app, session.ID)
+	addResponse := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/resources?beta=true",
+		strings.NewReader(`{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/uploads/live reference.txt"}`),
+		defaultTestKey,
+		true,
+	)
+	defer addResponse.Body.Close()
+	if addResponse.StatusCode != http.StatusOK {
+		t.Fatalf("add session file resource status = %d, want 200: %s", addResponse.StatusCode, readAll(t, addResponse.Body))
+	}
+	paddedResponse := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[{"type":"user.message","content":[
+			{"type":"document","source":{"type":"file","file_id":`+quoteJSON(" "+file.ID+" ")+`}}
+		]}]}`),
+		defaultTestKey,
+		true,
+	)
+	defer paddedResponse.Body.Close()
+	if paddedResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("padded file ID status = %d, want 400: %s", paddedResponse.StatusCode, readAll(t, paddedResponse.Body))
+	}
+	var paddedError errorResponse
+	decodeJSON(t, paddedResponse.Body, &paddedError)
+	if paddedError.Error.Type != "invalid_request_error" ||
+		!strings.Contains(paddedError.Error.Message, "is not mounted in this session") {
+		t.Fatalf("padded file ID error = %+v, want exact-match resource miss", paddedError)
+	}
+	streamLines, closeStream := openSessionEventStreamForTest(t, app, session.ID)
+	defer closeStream()
+
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[
+		{"type":"text","text":"summarize the reference"},
+		{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}
+	]}]}`, defaultTestKey)
+	if len(sent.Data) != 1 {
+		t.Fatalf("sent events = %+v, want one event", sent.Data)
+	}
+	if !bytes.Contains(sent.Data[0], []byte(file.ID)) || bytes.Contains(sent.Data[0], []byte("/mnt/session/uploads")) {
+		t.Fatalf("public event did not preserve file_id boundary: %s", sent.Data[0])
+	}
+	streamDeadline := time.After(5 * time.Second)
+	for {
+		select {
+		case line, ok := <-streamLines:
+			if !ok {
+				t.Fatal("session event stream closed before file event arrived")
+			}
+			if strings.HasPrefix(line, "data: ") && strings.Contains(line, file.ID) {
+				if strings.Contains(line, "/mnt/session/uploads") {
+					t.Fatalf("session event stream leaked worker path: %s", line)
+				}
+				goto streamVerified
+			}
+		case <-streamDeadline:
+			t.Fatal("timed out waiting for file event on session event stream")
+		}
+	}
+
+streamVerified:
+	eventID := sessionEventStringField(t, sent.Data[0], "id")
+	storedSession, found, err := app.db.GetSession(context.Background(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
+	if err != nil || !found {
+		t.Fatalf("get stored session: found=%v error=%v", found, err)
+	}
+	stored, err := app.db.GetSessionEvent(context.Background(), storedSession.WorkspaceUUID, session.ID, eventID)
+	if err != nil {
+		t.Fatalf("get stored session event: %v", err)
+	}
+	if !bytes.Contains(stored.Payload, []byte(file.ID)) || bytes.Contains(stored.Payload, []byte("/mnt/session/uploads")) {
+		t.Fatalf("stored public event leaked worker path or lost file_id: %s", stored.Payload)
+	}
+	listed := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	if len(listed.Data) != 1 || bytes.Contains(listed.Data[0], []byte("/mnt/session/uploads")) {
+		t.Fatalf("listed public event leaked worker path: %+v", listed.Data)
+	}
+	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
+	if retrieved.Title == nil || *retrieved.Title != "fixed public title" {
+		t.Fatalf("session title changed after file event: %+v", retrieved.Title)
+	}
+
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("list activation replay inbound events: %v", err)
+	}
+	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte("/mnt/session/uploads/live reference.txt")) {
+		t.Fatalf("activation replay inbound = %#v, want initialize plus mounted file path", inbound)
+	}
+	if bytes.Contains(inbound[1].Payload, []byte(`"file_id"`)) {
+		t.Fatalf("activation replay leaked file_id block: %s", inbound[1].Payload)
+	}
+
+	live := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[
+		{"type":"text","text":"read it again"},
+		{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}
+	]}]}`, defaultTestKey)
+	if len(live.Data) != 1 || !bytes.Contains(live.Data[0], []byte(file.ID)) {
+		t.Fatalf("live public event = %+v, want original file_id", live.Data)
+	}
+	inbound, err = app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("list realtime inbound events: %v", err)
+	}
+	if len(inbound) != 3 || !bytes.Contains(inbound[2].Payload, []byte("/mnt/session/uploads/live reference.txt")) {
+		t.Fatalf("realtime inbound = %#v, want mounted file path", inbound)
+	}
+	listed = listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	if len(listed.Data) != 2 {
+		t.Fatalf("listed public event count = %d, want 2", len(listed.Data))
+	}
+	for _, publicEvent := range listed.Data {
+		if bytes.Contains(publicEvent, []byte("/mnt/session/uploads")) {
+			t.Fatalf("public event leaked worker path after realtime delivery: %s", publicEvent)
+		}
+	}
+	retrieved = retrieveSession(t, app, session.ID, defaultTestKey)
+	if retrieved.Title == nil || *retrieved.Title != "fixed public title" {
+		t.Fatalf("session title changed after worker conversion: %+v", retrieved.Title)
+	}
+}
+
+func TestCreateSessionInitialEventCanReferenceCreatedFileResource(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-initial-event-file-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-initial-event-file-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-initial-event-file-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	file := uploadFile(t, app, "initial.pdf", "application/pdf", []byte("%PDF-1.4\ninitial"))
+	defer deleteFile(t, app, file.ID)
+
+	session := createSession(t, app, `{
+		"agent":`+quoteJSON(agent.ID)+`,
+		"environment_id":`+quoteJSON(env.ID)+`,
+		"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/uploads/initial.pdf"}],
+		"initial_events":[{"type":"user.message","content":[
+			{"type":"text","text":"read the initial document"},
+			{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}
+		]}]
+	}`)
+	defer deleteSession(t, app, session.ID)
+
+	events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(file.ID)) {
+		t.Fatalf("initial public events = %+v, want original file reference", events.Data)
+	}
+	eventID := sessionEventStringField(t, events.Data[0], "id")
+	storedSession, found, err := app.db.GetSession(context.Background(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
+	if err != nil || !found {
+		t.Fatalf("get stored session: found=%v error=%v", found, err)
+	}
+	stored, err := app.db.GetSessionEvent(context.Background(), storedSession.WorkspaceUUID, session.ID, eventID)
+	if err != nil {
+		t.Fatalf("get initial session event: %v", err)
+	}
+	if !bytes.Contains(stored.Payload, []byte(file.ID)) || bytes.Contains(stored.Payload, []byte(`/mnt/session/uploads/initial.pdf`)) {
+		t.Fatalf("initial public payload crossed worker boundary: %s", stored.Payload)
+	}
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("list initial inbound events: %v", err)
+	}
+	if len(inbound) != 2 ||
+		!bytes.Contains(inbound[1].Payload, []byte(`/mnt/session/uploads/initial.pdf`)) ||
+		bytes.Contains(inbound[1].Payload, []byte(`"file_id"`)) {
+		t.Fatalf("initial inbound events = %#v, want mounted path", inbound)
 	}
 }
 
@@ -3794,6 +4119,49 @@ func sendSessionEvents(t *testing.T, app *testApp, sessionID, body, key string) 
 	var events sessionEventSendAPIResponse
 	decodeJSON(t, resp.Body, &events)
 	return events
+}
+
+func openSessionEventStreamForTest(t *testing.T, app *testApp, sessionID string) (<-chan string, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		app.baseURL+"/v1/sessions/"+sessionID+"/events/stream?beta=true",
+		nil,
+	)
+	if err != nil {
+		cancel()
+		t.Fatalf("new session event stream request: %v", err)
+	}
+	req.Header.Set("X-Api-Key", defaultTestKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := app.client.Do(req)
+	if err != nil {
+		cancel()
+		t.Fatalf("open session event stream: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body := readAll(t, resp.Body)
+		resp.Body.Close()
+		cancel()
+		t.Fatalf("session event stream status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	lines := make(chan string, 16)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+	}()
+	cleanup := func() {
+		cancel()
+		resp.Body.Close()
+	}
+	return lines, cleanup
 }
 
 func listSessionEvents(t *testing.T, app *testApp, sessionID, query, key string) sessionEventPageAPIResponse {

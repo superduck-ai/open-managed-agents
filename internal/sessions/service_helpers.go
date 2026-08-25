@@ -147,6 +147,7 @@ func (h *Handler) resourceFromRequest(
 	payload := map[string]any{"id": resourceID, "type": resourceType}
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
+	var fileMimeType string
 	switch resourceType {
 	case sessionresource.FileType:
 		fileID, err := sessionresource.ParseFileID(body.FileID)
@@ -171,6 +172,7 @@ func (h *Handler) resourceFromRequest(
 		}
 		payload = fileSpec.PayloadFields(resourceID)
 		normalizedFileSpec = &fileSpec
+		fileMimeType = file.MimeType
 	case "github_repository":
 		url, err := parseRequiredRawString(body.URL, "url")
 		if err != nil {
@@ -227,7 +229,8 @@ func (h *Handler) resourceFromRequest(
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		},
-		fileSpec: normalizedFileSpec,
+		fileSpec:     normalizedFileSpec,
+		fileMimeType: fileMimeType,
 	}, nil
 }
 
@@ -238,14 +241,14 @@ func normalizeInputEvent(
 ) (db.SessionEvent, json.RawMessage, bool, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return db.SessionEvent{}, nil, false, errors.New("event must be an object")
+		return db.SessionEvent{}, nil, false, markEventInputError(errors.New("event must be an object"))
 	}
 	eventType, _ := payload["type"].(string)
 	if !allowedPublicEventType(eventType) {
-		return db.SessionEvent{}, nil, false, errors.New("event type is not accepted by this endpoint")
+		return db.SessionEvent{}, nil, false, markEventInputError(errors.New("event type is not accepted by this endpoint"))
 	}
 	if err := validatePublicInputEvent(eventType, payload); err != nil {
-		return db.SessionEvent{}, nil, false, err
+		return db.SessionEvent{}, nil, false, markEventInputError(err)
 	}
 	eventID, err := ids.New("sevt_")
 	if err != nil {
@@ -274,7 +277,7 @@ func normalizeInputEvent(
 			maxIterations = int(rawMax)
 		}
 		if maxIterations > 20 {
-			return db.SessionEvent{}, nil, false, errors.New("max_iterations must be at most 20")
+			return db.SessionEvent{}, nil, false, markEventInputError(errors.New("max_iterations must be at most 20"))
 		}
 		payload["max_iterations"] = maxIterations
 		outcomes, err := appendOutcomeEvaluation(session.OutcomeEvaluations, outcomeID, maxIterations, now)
@@ -407,8 +410,13 @@ func validateContentBlocks(payload map[string]any, field string, required bool) 
 		if !ok {
 			return fmt.Errorf("%s items must be objects", field)
 		}
-		if requiredStringValue(block, "type") == "" {
+		blockType := requiredStringValue(block, "type")
+		if blockType == "" {
 			return fmt.Errorf("%s item type is required", field)
+		}
+		source, _ := block["source"].(map[string]any)
+		if requiredStringValue(source, "type") == "file" && requiredStringValue(source, "file_id") == "" {
+			return errors.New("file content block source.file_id is required")
 		}
 	}
 	return nil

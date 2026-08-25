@@ -2,6 +2,14 @@
 // shared by API contract and persistence boundaries.
 package sessioncontract
 
+// EventFileBinding maps a Files API ID to one active Session mount. Path is
+// the authoritative Filestore path and MimeType supports image validation.
+type EventFileBinding struct {
+	FileID   string
+	Path     string
+	MimeType string
+}
+
 const (
 	FileResourceType = "file"
 

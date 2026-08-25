@@ -103,12 +103,7 @@ type SessionMapper interface {
 	Archive(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	SoftDelete(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	ListPage(ctx context.Context, params sessionPageMapperParams) ([]sessionRow, error)
-	LockForResourceMutation(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
-	LockSessionForEvents(
-		ctx context.Context,
-		workspaceUUID string,
-		sessionExternalID string,
-	) (sessionRow, bool, error)
+	LockForMutation(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 
 	MergeMetadata(ctx context.Context, params sessionMetadataPatchParams) (int64, error)
 }

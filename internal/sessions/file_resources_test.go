@@ -109,6 +109,23 @@ func TestValidateNormalizedSessionResources(t *testing.T) {
 	})
 }
 
+func TestPlanSessionResourceWritesSharesFileBinding(t *testing.T) {
+	resource := testNormalizedFileResource(t, "/workspace/data.csv")
+	resource.fileMimeType = "text/csv"
+	plan, err := planSessionResourceWrites([]normalizedSessionResource{resource})
+	if err != nil {
+		t.Fatalf("planSessionResourceWrites() error = %v", err)
+	}
+	if len(plan.inputs) != 1 || plan.inputs[0].FileMount == nil || len(plan.eventBindings) != 1 {
+		t.Fatalf("planSessionResourceWrites() = %+v", plan)
+	}
+	mount := plan.inputs[0].FileMount
+	binding := plan.eventBindings[0]
+	if binding.FileID != mount.FileExternalID || binding.Path != mount.Path || binding.MimeType != "text/csv" {
+		t.Fatalf("event binding = %+v, file mount = %+v", binding, mount)
+	}
+}
+
 func testNormalizedFileResource(t *testing.T, mountPath string) normalizedSessionResource {
 	t.Helper()
 	raw, err := json.Marshal(mountPath)

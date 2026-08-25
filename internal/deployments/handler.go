@@ -622,15 +622,15 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 	if deployment.ArchivedAt != nil {
 		return invalidRequest(errors.New("archived deployments cannot be run"))
 	}
-	referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
+	validation, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
 	if err != nil {
-		referenceFailure = runError("unknown_error", "Could not create session")
+		validation.failure = runError("unknown_error", "Could not create session")
 	}
-	if referenceFailure != nil {
-		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
+	if validation.failure != nil {
+		return h.writeRunReferenceFailure(w, r, principal, deployment, validation.failure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, validation.resources, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)
@@ -714,21 +714,41 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	return writeRunResponse(w, run)
 }
 
-func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+type deploymentDependencyValidation struct {
+	resources []deploymentRunResource
+	failure   *deploymentRunError
+}
+
+func dependencyReferenceFailure(resourceType string, err error, archived bool) (deploymentDependencyValidation, error) {
+	failure, classifyErr := classifyReferenceFailure(resourceType, err, archived)
+	return deploymentDependencyValidation{failure: failure}, classifyErr
+}
+
+func validateRunReferences(
+	ctx context.Context,
+	database *db.DB,
+	workspaceUUID string,
+	deployment db.Deployment,
+) (deploymentDependencyValidation, error) {
 	agent, err := database.GetAgent(ctx, workspaceUUID, deployment.AgentExternalID)
 	if err != nil {
-		return classifyReferenceFailure("agent", err, false)
+		return dependencyReferenceFailure("agent", err, false)
 	}
 	if agent.ArchivedAt != nil {
-		return classifyReferenceFailure("agent", nil, true)
+		return dependencyReferenceFailure("agent", nil, true)
 	}
 	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
-func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateRunDependencies(
+	ctx context.Context,
+	database *db.DB,
+	workspaceUUID string,
+	deployment db.Deployment,
+) (deploymentDependencyValidation, error) {
 	var snapshot deploymentAgentSnapshot
 	if err := json.Unmarshal(deployment.AgentSnapshot, &snapshot); err != nil {
-		return runError("unknown_error", "Stored agent snapshot is invalid"), nil
+		return deploymentDependencyValidation{failure: runError("unknown_error", "Stored agent snapshot is invalid")}, nil
 	}
 	if snapshot.Multiagent != nil {
 		for _, reference := range snapshot.Multiagent.Agents {
@@ -737,10 +757,10 @@ func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID
 			}
 			subagent, err := database.GetAgent(ctx, workspaceUUID, reference.ID)
 			if err != nil {
-				return classifyReferenceFailure("agent", err, false)
+				return dependencyReferenceFailure("agent", err, false)
 			}
 			if subagent.ArchivedAt != nil {
-				return classifyReferenceFailure("agent", nil, true)
+				return dependencyReferenceFailure("agent", nil, true)
 			}
 		}
 	}
@@ -755,58 +775,64 @@ func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID
 			_, err = database.GetSkillVersion(ctx, workspaceUUID, skill.ID, skill.Version)
 		}
 		if err != nil {
-			return classifyReferenceFailure("skill", err, false)
+			return dependencyReferenceFailure("skill", err, false)
 		}
 	}
 	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
-func validateSessionDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateSessionDependencies(
+	ctx context.Context,
+	database *db.DB,
+	workspaceUUID string,
+	deployment db.Deployment,
+) (deploymentDependencyValidation, error) {
 	env, err := database.GetEnvironment(ctx, workspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
-		return classifyReferenceFailure("environment", err, false)
+		return dependencyReferenceFailure("environment", err, false)
 	}
 	if env.ArchivedAt != nil {
-		return classifyReferenceFailure("environment", nil, true)
+		return dependencyReferenceFailure("environment", nil, true)
 	}
 	var vaultIDs []string
 	if len(deployment.VaultIDs) > 0 && !jsonx.IsNull(deployment.VaultIDs) {
 		if err := json.Unmarshal(deployment.VaultIDs, &vaultIDs); err != nil {
-			return runError("unknown_error", "Stored vault references are invalid"), nil
+			return deploymentDependencyValidation{failure: runError("unknown_error", "Stored vault references are invalid")}, nil
 		}
 	}
 	for _, vaultID := range vaultIDs {
 		vault, err := database.GetVault(ctx, workspaceUUID, vaultID)
 		if err != nil {
-			return classifyReferenceFailure("vault", err, false)
+			return dependencyReferenceFailure("vault", err, false)
 		}
 		if vault.ArchivedAt != nil {
-			return classifyReferenceFailure("vault", nil, true)
+			return dependencyReferenceFailure("vault", nil, true)
 		}
 	}
-	var resources []deploymentResourcePayload
-	if len(deployment.Resources) > 0 && !jsonx.IsNull(deployment.Resources) {
-		if err := json.Unmarshal(deployment.Resources, &resources); err != nil {
-			return runError("unknown_error", "Stored resources are invalid"), nil
-		}
+	resources, err := parseDeploymentRunResources(deployment.Resources)
+	if err != nil {
+		return deploymentDependencyValidation{failure: runError("unknown_error", "Stored resources are invalid")}, nil
 	}
-	for _, resource := range resources {
-		switch resource.Type {
+	for index := range resources {
+		resource := &resources[index]
+		switch resource.payload.Type {
 		case "file":
-			if _, err := database.GetFile(ctx, workspaceUUID, resource.FileID); err != nil {
-				return classifyReferenceFailure("file", err, false)
-			}
-		case "memory_store":
-			store, err := database.GetMemoryStore(ctx, workspaceUUID, resource.MemoryStoreID)
+			file, err := database.GetFile(ctx, workspaceUUID, resource.fileSpec.FileID())
 			if err != nil {
-				return classifyReferenceFailure("memory_store", err, false)
+				return dependencyReferenceFailure("file", err, false)
+			}
+			resource.file = file
+		case "memory_store":
+			store, err := database.GetMemoryStore(ctx, workspaceUUID, resource.payload.MemoryStoreID)
+			if err != nil {
+				return dependencyReferenceFailure("memory_store", err, false)
 			}
 			if store.ArchivedAt != nil {
-				return classifyReferenceFailure("memory_store", nil, true)
+				return dependencyReferenceFailure("memory_store", nil, true)
 			}
 		}
 	}
-	return nil, nil
+	return deploymentDependencyValidation{resources: resources}, nil
 }
 
 func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {

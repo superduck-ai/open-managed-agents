@@ -163,10 +163,11 @@ type ListSessionThreadsPageParams struct {
 }
 
 type CreateSessionInput struct {
-	Session   Session
-	Thread    SessionThread
-	Resources []CreateSessionResourceInput
-	Work      EnvironmentWork
+	Session       Session
+	Thread        SessionThread
+	Resources     []CreateSessionResourceInput
+	InitialEvents []SessionEvent
+	Work          EnvironmentWork
 }
 
 // CreateSessionResourceInput contains the normalized resource row and its
@@ -418,7 +419,7 @@ func (d *DB) CreateSessionResource(
 	var created SessionResource
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, txErr := sessionMapper.LockForResourceMutation(ctx, resource.WorkspaceUUID, resource.SessionExternalID)
+		row, txErr := sessionMapper.LockForMutation(ctx, resource.WorkspaceUUID, resource.SessionExternalID)
 		if txErr != nil {
 			return mapNoRows(txErr)
 		}
@@ -481,7 +482,7 @@ func (d *DB) UpdateSessionResource(ctx context.Context, workspaceUUID string, se
 func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, err := sessionMapper.LockForResourceMutation(ctx, workspaceUUID, sessionExternalID)
+		row, err := sessionMapper.LockForMutation(ctx, workspaceUUID, sessionExternalID)
 		if err != nil {
 			return mapNoRows(err)
 		}
@@ -492,6 +493,18 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, se
 		resource, err := getSessionResourceForMutation(ctx, executor, workspaceUUID, sessionExternalID, resourceExternalID)
 		if err != nil {
 			return err
+		}
+		referenced, err := NewSessionEventMapper(executor).HasFileReferenceForResource(
+			ctx,
+			workspaceUUID,
+			sessionExternalID,
+			resourceExternalID,
+		)
+		if err != nil {
+			return err
+		}
+		if referenced {
+			return ErrFileInUse
 		}
 		if err = unbindSessionFileResourceTx(ctx, executor, session, resource); err != nil {
 			return err
@@ -508,25 +521,10 @@ func (d *DB) AppendSessionEvents(
 	outcomeEvaluations json.RawMessage,
 ) ([]SessionEvent, error) {
 	var created []SessionEvent
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
-		if txErr != nil {
-			return txErr
-		}
-		if !found {
-			return ErrNotFound
-		}
-		session := row.session()
-		if session.ArchivedAt != nil {
-			return ErrInvalidState
-		}
-		created, txErr = insertSessionEventsTx(ctx, executor, session, events, false)
-		if txErr != nil || len(outcomeEvaluations) == 0 {
-			return txErr
-		}
-		_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
-		return mapNoRows(txErr)
+	err := d.WithSessionEventWriteTx(ctx, workspaceUUID, sessionExternalID, func(tx SessionEventWriteTx, session Session) error {
+		var txErr error
+		created, txErr = tx.AppendEvents(ctx, session, events, outcomeEvaluations)
+		return txErr
 	})
 	return created, err
 }
@@ -535,12 +533,9 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 	var created []SessionEvent
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		row, txErr := sessionMapper.LockForMutation(ctx, workspaceUUID, sessionExternalID)
 		if txErr != nil {
-			return txErr
-		}
-		if !found {
-			return ErrNotFound
+			return mapNoRows(txErr)
 		}
 		session := row.session()
 		if session.ArchivedAt != nil {

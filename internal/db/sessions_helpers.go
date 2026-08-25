@@ -77,6 +77,11 @@ func insertSessionTx(
 		}
 		resources = append(resources, created)
 	}
+	if len(input.InitialEvents) > 0 {
+		if _, err = insertSessionEventsTx(ctx, executor, session, input.InitialEvents, false); err != nil {
+			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
+		}
+	}
 
 	input.Work.SessionUUID = session.UUID
 	workRow, err := workMapper.Insert(ctx, environmentWorkWriteParamsFrom(input.Work))
@@ -108,6 +113,17 @@ func insertSessionEventsTx(
 ) ([]SessionEvent, error) {
 	threadMapper := NewSessionThreadMapper(executor)
 	eventMapper := NewSessionEventMapper(executor)
+	return insertSessionEventsTxWithMappers(ctx, threadMapper, eventMapper, session, events, ignoreExisting)
+}
+
+func insertSessionEventsTxWithMappers(
+	ctx context.Context,
+	threadMapper SessionThreadMapper,
+	eventMapper SessionEventMapper,
+	session Session,
+	events []SessionEvent,
+	ignoreExisting bool,
+) ([]SessionEvent, error) {
 	primaryRow, err := threadMapper.FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return nil, mapNoRows(err)
@@ -304,12 +320,9 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 	workspaceUUID string,
 	sessionExternalID string,
 ) (Session, error) {
-	row, found, err := tx.sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+	row, err := tx.sessionMapper.LockForMutation(ctx, workspaceUUID, sessionExternalID)
 	if err != nil {
-		return Session{}, err
-	}
-	if !found {
-		return Session{}, ErrNotFound
+		return Session{}, mapNoRows(err)
 	}
 	return row.session(), nil
 }

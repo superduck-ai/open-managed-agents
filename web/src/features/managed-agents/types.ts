@@ -336,6 +336,19 @@ export type SessionThreadApiResponse = {
 
 export type QuickstartSessionEvent = Record<string, unknown>;
 
+export type SessionMessageContentBlock =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image';
+      source: { type: 'file'; file_id: string };
+      filename: string;
+    }
+  | {
+      type: 'document';
+      source: { type: 'file'; file_id: string };
+      title: string;
+    };
+
 export type SessionDetailEventCache = {
   events: QuickstartSessionEvent[];
   syncedThrough: PageCursor;

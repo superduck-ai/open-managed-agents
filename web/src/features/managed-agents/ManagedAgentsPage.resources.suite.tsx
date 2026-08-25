@@ -607,12 +607,13 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.queryByText('broken.pdf')).toBeNull();
   });
 
-  test('uploads and mounts image and file references before sending one session message', async () => {
+  test('preserves text, image, and file references in the sent message and Debug event', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     renderManagedAgentsPage('sessions');
 
-    await screen.findByRole('textbox', { name: 'Message' });
+    const composer = await screen.findByRole('textbox', { name: 'Message' });
+    fireEvent.change(composer, { target: { value: 'Summarize these attachments.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add attachment' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Upload image' }));
     fireEvent.change(screen.getByLabelText('Choose images to upload'), {
@@ -639,6 +640,10 @@ export function registerManagedAgentsResourceTests() {
         {
           type: 'user.message',
           content: [
+            {
+              type: 'text',
+              text: 'Summarize these attachments.',
+            },
             {
               type: 'image',
               source: { type: 'file', file_id: 'file_uploaded_image123' },
@@ -691,6 +696,10 @@ export function registerManagedAgentsResourceTests() {
       within(attachmentDebugDetail).getByTestId('session-trace-code-block').textContent ?? '',
     );
     expect(attachmentDebugJson.content).toEqual([
+      {
+        type: 'text',
+        text: 'Summarize these attachments.',
+      },
       {
         type: 'image',
         source: { type: 'file', file_id: 'file_uploaded_image123' },

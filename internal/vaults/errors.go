@@ -14,19 +14,23 @@ import (
 // unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
 
-// ErrInjectionRejected is the MCP proxy fail-closed sentinel: the request host
-// is covered by a vault credential but no injectable credential could be used.
+// ErrInjectionRejected is the MITM MCP inject fail-closed sentinel: the request
+// host is covered by a vault credential but no injectable credential could be used.
 // Transport adapters match with errors.Is and must not invent a second wording
 // for the client-facing message — use InjectionUnavailablePublicMessage.
 var ErrInjectionRejected = errors.New("vault credential injection rejected")
 
-// InjectionUnavailablePublicMessage is the client-safe text for MCP proxy 502
-// when injection rejects.
+// InjectionUnavailablePublicMessage is the client-safe text for MITM 502
+// when MCP credential injection rejects.
 const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavailable"
 
 // ErrMITMRequiredForEnvCredentials is returned at Session mount when active
 // Environment Variable Credentials are attached but upstream proxy MITM is off.
 var ErrMITMRequiredForEnvCredentials = errors.New("upstream proxy MITM is required for environment variable credentials")
+
+// ErrMITMRequiredForMCPCredentials is returned at Session mount when active
+// static_bearer / mcp_oauth credentials are attached but upstream proxy MITM is off.
+var ErrMITMRequiredForMCPCredentials = errors.New("upstream proxy MITM is required for MCP credentials")
 
 // ErrSubstitutionRejected is the upstream-proxy fail-closed sentinel when
 // Egress Secret Substitution cannot proceed.

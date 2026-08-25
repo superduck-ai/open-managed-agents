@@ -160,8 +160,9 @@ func newUpstreamProxyMITMTransport(dialer *upstreamProxyMITMTLSDialer) *http.Tra
 
 func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http.RoundTripper, identity upstreamProxyIdentity, target string, targetHost string) error {
 	targetURL := &url.URL{Scheme: "https", Host: target}
+	baseTransport := transport
 	proxy := &httputil.ReverseProxy{
-		Transport:     transport,
+		Transport:     baseTransport,
 		FlushInterval: -1,
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(targetURL)
@@ -170,8 +171,13 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			request.Out.Header.Del("Proxy-Authorization")
 			request.Out.Header.Del("Proxy-Connection")
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-			http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			status := http.StatusBadGateway
+			message := http.StatusText(status)
+			if errors.Is(err, vaults.ErrInjectionRejected) {
+				message = vaults.InjectionUnavailablePublicMessage
+			}
+			http.Error(w, message, status)
 		},
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -183,9 +189,21 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			http.Error(w, "request host does not match CONNECT target", http.StatusMisdirectedRequest)
 			return
 		}
-		if h.egressSubstitutor != nil {
-			if err := h.substituteUpstreamProxyEnvSecrets(request.Context(), identity, request, target); err != nil {
-				h.logger.WarnContext(request.Context(), "upstream proxy egress substitution rejected",
+		tripper := baseTransport
+		if h.mitmEgress != nil {
+			prepared, err := h.mitmEgress.Prepare(
+				request.Context(),
+				vaults.EgressSession{
+					CodeSessionExternalID: identity.codeSessionExternalID,
+					OrganizationUUID:      identity.organizationUUID,
+					WorkspaceUUID:         identity.workspaceUUID,
+				},
+				target,
+				request,
+				baseTransport,
+			)
+			if err != nil {
+				h.logger.WarnContext(request.Context(), "upstream proxy MITM egress rejected",
 					"code_session_id", identity.codeSessionExternalID,
 					"host", targetHost,
 					"error", err,
@@ -198,7 +216,9 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 				http.Error(w, message, status)
 				return
 			}
+			tripper = prepared
 		}
+		proxy.Transport = tripper
 		logURL := *targetURL
 		logURL.Path = request.URL.Path
 		logURL.RawPath = request.URL.RawPath
@@ -221,24 +241,6 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 		return nil
 	}
 	return err
-}
-
-func (h *Handler) substituteUpstreamProxyEnvSecrets(ctx context.Context, identity upstreamProxyIdentity, request *http.Request, target string) error {
-	host, port, err := net.SplitHostPort(target)
-	if err != nil {
-		host = target
-		port = "443"
-	}
-	host = canonicalUpstreamProxyHostname(host)
-	return h.egressSubstitutor.SubstituteEnvSecrets(
-		ctx,
-		identity.codeSessionExternalID,
-		identity.organizationUUID,
-		identity.workspaceUUID,
-		request,
-		host,
-		port,
-	)
 }
 
 func upstreamProxyHTTPRequestMatchesTarget(request *http.Request, targetHost string) bool {

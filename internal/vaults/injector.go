@@ -182,6 +182,7 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		if result == nil {
 			return t.base.RoundTrip(out)
 		}
+		out.Header.Del("Authorization")
 		out.Header.Set("Authorization", "Bearer "+result.token)
 		resp, err := t.base.RoundTrip(out)
 		if err != nil {

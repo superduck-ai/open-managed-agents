@@ -260,6 +260,51 @@ func TestSubstituteEnvSecretsHeaderAndBody(t *testing.T) {
 	}
 }
 
+func TestSubstituteEnvSecretsDoesNotCascadeWhenSecretEqualsOtherPlaceholder(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	const (
+		placeholderA = "oma_ph_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		placeholderB = "oma_ph_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		secretB      = "secret_b"
+	)
+	first := sealedEnvCredentialWithLocation(t, svc, "TOKEN_A", placeholderA, "api.notion.com", placeholderB, true, true)
+	second := sealedEnvCredentialWithLocation(t, svc, "TOKEN_B", placeholderB, "api.notion.com", secretB, true, true)
+	substitutor := newEgressSubstitutor(&fakeCredentialStore{
+		vaultIDs:    []string{"vlt_a", "vlt_b"},
+		credentials: []db.VaultCredential{first, second},
+	}, svc, nil)
+	original := placeholderA + "|" + placeholderB
+	req, err := http.NewRequest(http.MethodPost, "https://api.notion.com/v1", strings.NewReader(original))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", original)
+
+	if err := substitutor.SubstituteEnvSecrets(
+		context.Background(),
+		"cse_test",
+		first.OrganizationUUID,
+		first.WorkspaceUUID,
+		req,
+		"api.notion.com",
+		"443",
+	); err != nil {
+		t.Fatalf("SubstituteEnvSecrets: %v", err)
+	}
+	want := placeholderB + "|" + secretB
+	if got := req.Header.Get("Authorization"); got != want {
+		t.Fatalf("Authorization = %q, want %q", got, want)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != want {
+		t.Fatalf("body = %q, want %q", body, want)
+	}
+}
+
 func TestSubstituteEnvSecretsFirstSecretNameWins(t *testing.T) {
 	t.Parallel()
 	svc := newTestSecretsService(t)

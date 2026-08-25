@@ -78,8 +78,8 @@ type oauthTokenEndpointWire struct {
 // ExchangeOAuthTokenEndpoint POSTs to an OAuth token endpoint with the shared
 // client-auth and response-decoding rules used by refresh and code exchange.
 func ExchangeOAuthTokenEndpoint(ctx context.Context, client *http.Client, in OAuthTokenEndpointExchange) (OAuthTokenEndpointResult, error) {
-	method := strings.TrimSpace(in.TokenEndpointAuthMethod)
-	clientSecret := strings.TrimSpace(in.ClientSecret)
+	method := in.TokenEndpointAuthMethod
+	clientSecret := in.ClientSecret
 	form := cloneURLValues(in.Form)
 	switch method {
 	case "client_secret_basic":

@@ -1,0 +1,50 @@
+---
+title: "连接 MCP 服务器"
+description: "在智能体上声明远程 MCP 服务器，并通过密钥库提供认证。"
+---
+
+OMA 智能体当前支持通过 HTTPS URL 连接远程 MCP 服务器。每个 Server 都必须同时由一个 `mcp_toolset` 引用，避免声明了连接却没有明确工具权限。
+
+## 声明 Server
+
+```json
+{
+  "mcp_servers": [
+    {
+      "name": "github",
+      "type": "url",
+      "url": "https://example.com/mcp"
+    }
+  ],
+  "tools": [
+    {
+      "type": "mcp_toolset",
+      "mcp_server_name": "github",
+      "default_config": {
+        "enabled": true,
+        "permission_policy": { "type": "always_ask" }
+      },
+      "configs": []
+    }
+  ]
+}
+```
+
+Server 名称必须唯一，最多 20 个；URL 最长 2048 字符。当前不支持在智能体配置中声明 stdio MCP。
+
+## 提供认证
+
+不要把 token 放入 `mcp_servers.url` 或智能体 metadata。创建密钥库凭据后，在会话的 `vault_ids` 中引用密钥库。OMA 运行时会根据 credential 的 `mcp_server_url` 或网络匹配规则注入：
+
+- `mcp_oauth`：Access token，可选 Refresh token
+- `static_bearer`：固定 Bearer token
+- `environment_variable`：受网络策略约束的环境变量 Secret
+
+## 失败处理
+
+连接失败时先检查环境的网络策略。`limited` 网络默认不允许 MCP，必须设置 `allow_mcp_servers: true`。随后检查密钥库是否未归档、credential URL 是否匹配，以及 OAuth Refresh 是否成功。
+
+<CardGroup cols={2}>
+  <Card title="密钥库与凭证" href="/docs/zh/vaults" />
+  <Card title="环境网络" href="/docs/zh/environments" />
+</CardGroup>

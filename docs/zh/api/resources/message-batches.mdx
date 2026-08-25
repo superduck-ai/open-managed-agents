@@ -1,0 +1,38 @@
+---
+title: "消息批处理"
+description: "批量提交消息请求并下载 JSONL 结果。"
+---
+
+消息批处理将多个消息请求持久化并由后台 worker 提交给上游。结果保存在对象存储，下载格式为 `application/x-jsonl`。
+
+## 端点
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/v1/messages/batches` | 创建批处理 |
+| `GET` | `/v1/messages/batches` | 列出批处理 |
+| `GET` | `/v1/messages/batches/{id}` | 读取状态 |
+| `POST` | `/v1/messages/batches/{id}/cancel` | 请求取消 |
+| `GET` | `/v1/messages/batches/{id}/results` | 下载 JSONL 结果 |
+| `DELETE` | `/v1/messages/batches/{id}` | 删除批处理及其结果 |
+
+```json
+{
+  "requests": [
+    {
+      "custom_id": "summary-001",
+      "params": {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 256,
+        "messages": [{ "role": "user", "content": "Summarize the release notes." }]
+      }
+    }
+  ]
+}
+```
+
+`custom_id` 必须在批处理中唯一。创建时保存 `anthropic-version` 和额外的 Beta 请求头，worker 使用同一合同调用上游。
+
+稳定形状不需要 `beta=true`。如果请求 URL 使用 `?beta=true`，还必须发送 `anthropic-beta: message-batches-2024-09-24`；其他 Beta 标识会作为上游功能开关保存。
+
+批处理数量、请求体大小、worker 并发、上游超时和结果保留时间由 `batch` YAML 配置控制。

@@ -535,9 +535,10 @@ export function LogsPage() {
           <div className="flex items-center gap-2">
             <Search className="size-4 text-muted-foreground/70" aria-hidden />
             <Input
+              type="search"
               aria-label={msg('analytics.logs.searchAria', 'Search logs')}
               placeholder={msg('analytics.logs.searchPlaceholder', 'Search request IDs')}
-              className="h-8 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0"
+              className="h-8 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:border-transparent"
             />
             <LogsFiltersMenu
               requestTypeOptions={requestTypeOptions}

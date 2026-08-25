@@ -126,18 +126,21 @@ func normalizeMCPOAuthForCreate(input mcpOAuthCredentialCreateInput) (credential
 	if err != nil {
 		return credentialAuthState{}, err
 	}
+	var expiresAt *string
 	if input.ExpiresAt != nil {
-		if _, err := requireNonEmptyString(*input.ExpiresAt, "auth.expires_at"); err != nil {
+		trimmed, err := requireNonEmptyString(*input.ExpiresAt, "auth.expires_at")
+		if err != nil {
 			return credentialAuthState{}, err
 		}
-		if err := validateRFC3339(*input.ExpiresAt, "auth.expires_at"); err != nil {
+		if err := validateRFC3339(trimmed, "auth.expires_at"); err != nil {
 			return credentialAuthState{}, err
 		}
+		expiresAt = &trimmed
 	}
 	publicAuth := &mcpOAuthCredentialAuth{
 		Type:         credentialAuthTypeMCPOAuth,
 		MCPServerURL: serverURL,
-		ExpiresAt:    input.ExpiresAt,
+		ExpiresAt:    expiresAt,
 	}
 	secretPayload := mcpOAuthCredentialSecret{
 		Type:        credentialAuthTypeMCPOAuth,
@@ -170,30 +173,38 @@ func normalizeMCPOAuthRefreshForCreate(input mcpOAuthRefreshCreateInput) (mcpOAu
 	if err != nil {
 		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
+	var scope *string
 	if input.Scope != nil {
-		if _, err := requireNonEmptyString(*input.Scope, "auth.refresh.scope"); err != nil {
+		trimmed, err := requireNonEmptyString(*input.Scope, "auth.refresh.scope")
+		if err != nil {
 			return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 		}
+		scope = &trimmed
 	}
+	var resource *string
 	if input.Resource != nil {
-		if _, err := requireNonEmptyString(*input.Resource, "auth.refresh.resource"); err != nil {
+		trimmed, err := requireNonEmptyString(*input.Resource, "auth.refresh.resource")
+		if err != nil {
 			return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 		}
+		resource = &trimmed
 	}
 	publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuth(input.TokenEndpointAuth)
 	if err != nil {
 		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
-	return mcpOAuthRefresh{
-			TokenEndpoint:     tokenEndpoint,
-			ClientID:          clientID,
-			TokenEndpointAuth: publicTokenAuth,
-			Scope:             input.Scope,
-			Resource:          input.Resource,
-		}, mcpOAuthRefreshSecret{
-			RefreshToken:      refreshToken,
-			TokenEndpointAuth: &secretTokenAuth,
-		}, nil
+	publicRefresh := mcpOAuthRefresh{
+		TokenEndpoint:     tokenEndpoint,
+		ClientID:          clientID,
+		TokenEndpointAuth: publicTokenAuth,
+		Scope:             scope,
+		Resource:          resource,
+	}
+	secretRefresh := mcpOAuthRefreshSecret{
+		RefreshToken:      refreshToken,
+		TokenEndpointAuth: &secretTokenAuth,
+	}
+	return publicRefresh, secretRefresh, nil
 }
 
 func normalizeTokenEndpointAuth(input *tokenEndpointAuthInput) (tokenEndpointAuth, tokenEndpointAuthSecret, error) {
@@ -240,7 +251,7 @@ func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCr
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	secretValue, err := requireNonEmptyString(input.SecretValue, "auth.secret_value")
+	secretValue, err := requireNonBlankVerbatim(input.SecretValue, "auth.secret_value")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
@@ -356,20 +367,26 @@ func normalizeMCPOAuthForUpdate(current db.VaultCredential, currentSecret []byte
 			return credentialAuthState{}, err
 		}
 	}
-	if secretPayload.AccessToken == "" {
-		return credentialAuthState{}, ErrMissingSecretEnvelope
-	}
-	if publicAuth.Refresh != nil {
-		if secretPayload.Refresh == nil || secretPayload.Refresh.RefreshToken == "" {
-			return credentialAuthState{}, ErrMissingSecretEnvelope
-		}
-		tokenAuthType := publicAuth.Refresh.TokenEndpointAuth.Type
-		if (tokenAuthType == "client_secret_basic" || tokenAuthType == "client_secret_post") &&
-			(secretPayload.Refresh.TokenEndpointAuth == nil || secretPayload.Refresh.TokenEndpointAuth.ClientSecret == "") {
-			return credentialAuthState{}, ErrMissingSecretEnvelope
-		}
+	if err := requireMCPOAuthUpdateSecrets(publicAuth, secretPayload); err != nil {
+		return credentialAuthState{}, err
 	}
 	return credentialAuthStateFromValues(credentialAuthTypeMCPOAuth, current.CredentialKey, publicAuth, secretPayload)
+}
+
+// requireMCPOAuthUpdateSecrets checks post-merge completeness for mcp_oauth
+// update. Access/refresh tokens must be present when refresh is configured.
+// Sealed client_secret is not required: platform OAuth keeps deploy-config
+// secrets out of the user envelope (token_endpoint_auth.type still describes
+// the wire method). BYO/DCR secrets are enforced when create/patch submits
+// token_endpoint_auth.
+func requireMCPOAuthUpdateSecrets(publicAuth *mcpOAuthCredentialAuth, secretPayload mcpOAuthCredentialSecret) error {
+	if secretPayload.AccessToken == "" {
+		return ErrMissingSecretEnvelope
+	}
+	if publicAuth.Refresh != nil && (secretPayload.Refresh == nil || secretPayload.Refresh.RefreshToken == "") {
+		return ErrMissingSecretEnvelope
+	}
+	return nil
 }
 
 func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []byte, input staticBearerCredentialUpdateInput, publicAuth *staticBearerCredentialAuth) (credentialAuthState, error) {
@@ -419,7 +436,7 @@ func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSe
 		return credentialAuthState{}, errors.New("auth.secret_name is immutable")
 	}
 	if input.SecretValue != nil {
-		secretValue, err := requireNonEmptyString(*input.SecretValue, "auth.secret_value")
+		secretValue, err := requireNonBlankVerbatim(*input.SecretValue, "auth.secret_value")
 		if err != nil {
 			return credentialAuthState{}, err
 		}
@@ -485,10 +502,11 @@ func patchMCPOAuthRefreshForUpdate(publicAuth *mcpOAuthCredentialAuth, secretPay
 			if err := json.Unmarshal(input.Scope, &scope); err != nil {
 				return errors.New("auth.refresh.scope must be a string")
 			}
-			if _, err := requireNonEmptyString(scope, "auth.refresh.scope"); err != nil {
+			trimmed, err := requireNonEmptyString(scope, "auth.refresh.scope")
+			if err != nil {
 				return err
 			}
-			publicAuth.Refresh.Scope = &scope
+			publicAuth.Refresh.Scope = &trimmed
 		}
 	}
 	if len(input.TokenEndpointAuth) != 0 {

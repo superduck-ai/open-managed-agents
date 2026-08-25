@@ -1,0 +1,408 @@
+---
+title: "Create a Message"
+description: "Send structured input messages and generate the next message through OMA."
+api: "POST /v1/messages"
+---
+
+Send a structured list of input messages containing text, images, documents, or tool results and generate the next message in the conversation. You can use this endpoint for a single request or a stateless multi-turn conversation.
+
+OMA authenticates the caller and transparently forwards the request to the configured model upstream. It does not parse or persist the Messages request body. The selected model and upstream determine which beta fields, content blocks, tools, and limits are available.
+
+<Info>
+  To use the beta request shape, call `/v1/messages?beta=true`. OMA preserves the query string and compatible feature headers when forwarding the request.
+</Info>
+
+## Example request
+
+<CodeGroup>
+```bash cURL
+curl 'http://localhost:38080/v1/messages?beta=true' \
+  -H 'X-Api-Key: sk-ant-local-default' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'content-type: application/json' \
+  --data '{
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Explain the OMA session lifecycle in three steps."
+      }
+    ]
+  }'
+```
+
+```python Python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-ant-local-default",
+    base_url="http://localhost:38080",
+)
+
+message = client.beta.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    messages=[
+        {
+            "role": "user",
+            "content": "Explain the OMA session lifecycle in three steps.",
+        }
+    ],
+)
+
+print(message.content)
+```
+
+```typescript TypeScript
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  apiKey: "sk-ant-local-default",
+  baseURL: "http://localhost:38080",
+});
+
+const message = await client.beta.messages.create({
+  model: "claude-sonnet-4-6",
+  max_tokens: 1024,
+  messages: [
+    {
+      role: "user",
+      content: "Explain the OMA session lifecycle in three steps.",
+    },
+  ],
+});
+
+console.log(message.content);
+```
+</CodeGroup>
+
+## Request headers
+
+<ParamField header="X-Api-Key" type="string">
+  OMA workspace API key. Required unless you use `Authorization: Bearer`. If both headers are present, `X-Api-Key` takes precedence.
+</ParamField>
+
+<ParamField header="Authorization" type="string">
+  Alternative bearer authentication in the form `Bearer <workspace-api-key>`.
+</ParamField>
+
+<ParamField header="anthropic-version" type="string" required>
+  Messages protocol version. Use `2023-06-01` unless the configured upstream explicitly requires another version.
+</ParamField>
+
+<ParamField header="anthropic-beta" type="string">
+  Comma-separated beta feature identifiers required by optional request fields. OMA forwards this header without interpreting its values.
+</ParamField>
+
+<ParamField header="anthropic-user-profile-id" type="string">
+  Optional user profile attribution supported by some beta upstreams. The corresponding beta feature must also be enabled.
+</ParamField>
+
+## Request body
+
+<ParamField body="model" type="string" required>
+  Model identifier used for this request. Deployments may map a logical identifier to an upstream model. See [List Models](/docs/en/api/endpoints/list-models) for the models exposed by your OMA deployment.
+</ParamField>
+
+<ParamField body="max_tokens" type="integer" required>
+  Absolute maximum number of output tokens. A model may stop before reaching this value. Some upstreams accept `0` to warm the prompt cache without generating output.
+</ParamField>
+
+<ParamField body="messages" type="object[]" required>
+  Conversation turns supplied to the model. Each item contains `role` and `content`. Consecutive turns with the same role may be combined by the upstream. Upstream limits apply to the number and total size of messages.
+</ParamField>
+
+### Message structure
+
+<ParamField body="messages[].role" type="string" required>
+  Conversational role. Use `user` and `assistant` for broadly compatible requests. A beta upstream may also accept `system`; prefer the top-level `system` field for initial system instructions.
+</ParamField>
+
+<ParamField body="messages[].content" type="string | object[]" required>
+  A string or an array of typed content blocks. A string is shorthand for one `{ "type": "text", "text": "..." }` block.
+</ParamField>
+
+Common input content blocks include:
+
+| `type` | Required fields | Purpose |
+| --- | --- | --- |
+| `text` | `text` | Plain text input |
+| `image` | `source` | Base64, URL, or file-backed image input |
+| `document` | `source` | PDF, plain-text, URL, content, or file-backed document |
+| `search_result` | Search result fields | Search content with source metadata |
+| `tool_use` | `id`, `name`, `input` | A prior tool call that is being replayed |
+| `tool_result` | `tool_use_id`, `content` | Result of a client-side tool call |
+| `thinking` | `thinking`, `signature` | A thinking block returned by an earlier response; pass it back unchanged |
+| `redacted_thinking` | `data` | An opaque redacted block; pass it back unchanged |
+| `mcp_tool_result` | `tool_use_id` | Result of an MCP connector tool call |
+
+Additional server-tool, code-execution, context-management, and beta content blocks are forwarded unchanged. Only send block types supported by the selected upstream and activated beta features.
+
+### System and generation controls
+
+<ParamField body="system" type="string | object[]">
+  Initial system instructions. Use a string or an array of text blocks. Do not add a system turn to stable message history.
+</ParamField>
+
+<ParamField body="stop_sequences" type="string[]">
+  Custom strings that stop generation. When a sequence matches, `stop_reason` is `stop_sequence` and `stop_sequence` contains the matched value.
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="false">
+  When `true`, returns server-sent events as content is generated. OMA flushes upstream SSE events without buffering the complete response.
+</ParamField>
+
+<ParamField body="temperature" type="number" deprecated>
+  Sampling control retained for compatibility. Newer models may accept only the default value or reject this field.
+</ParamField>
+
+<ParamField body="top_k" type="integer" deprecated>
+  Top-k sampling control retained for older models. Newer models may reject this field.
+</ParamField>
+
+<ParamField body="top_p" type="number" deprecated>
+  Nucleus sampling control retained for compatibility. Newer models may accept only values close to `1` or reject this field.
+</ParamField>
+
+<ParamField body="service_tier" type="string" default="auto">
+  Capacity preference: `auto` or `standard_only`. Availability depends on the upstream account and model.
+</ParamField>
+
+<ParamField body="speed" type="string" default="standard">
+  Inference speed mode: `standard` or `fast`. Unsupported model and speed combinations are rejected upstream.
+</ParamField>
+
+<ParamField body="inference_geo" type="string">
+  Preferred geographic region for inference. When omitted, the upstream workspace default applies.
+</ParamField>
+
+### Output and reasoning
+
+<ParamField body="output_config" type="object">
+  Output configuration. Supported beta properties include `effort`, structured `format`, and a cross-context `task_budget`.
+</ParamField>
+
+<ParamField body="output_config.effort" type="string">
+  Effort level: `low`, `medium`, `high`, `xhigh`, or `max`, when supported by the selected model.
+</ParamField>
+
+<ParamField body="output_config.format" type="object">
+  Structured output schema. Feature activation and schema constraints depend on the upstream.
+</ParamField>
+
+<ParamField body="output_config.task_budget" type="object">
+  Cross-context token budget with `type: "tokens"`, required `total`, and optional `remaining`.
+</ParamField>
+
+<ParamField body="output_format" type="object" deprecated>
+  Deprecated structured-output schema. Use `output_config.format` instead.
+</ParamField>
+
+<ParamField body="thinking" type="object">
+  Thinking configuration. Supported shapes may include `{ "type": "adaptive" }`, `{ "type": "disabled" }`, or `{ "type": "enabled", "budget_tokens": 2048 }`. An enabled fixed budget must be at least 1,024 and less than `max_tokens`.
+</ParamField>
+
+### Tools and external context
+
+<ParamField body="tools" type="object[]">
+  Tools the model may call. A client tool contains `name`, `input_schema`, and an optional `description`. Server tools and toolsets use versioned beta shapes.
+</ParamField>
+
+<ParamField body="tool_choice" type="object">
+  Tool selection policy. Use `auto`, `any`, `tool` with a `name`, or `none`. `disable_parallel_tool_use` can restrict the response to at most one tool call.
+</ParamField>
+
+<ParamField body="mcp_servers" type="object[]">
+  Remote MCP servers available to this request. Each entry contains `type: "url"`, `name`, `url`, and optional `authorization_token` and `tool_configuration`.
+</ParamField>
+
+<ParamField body="container" type="string | object">
+  Container identifier or container configuration reused across requests, when supported by code-execution features.
+</ParamField>
+
+<ParamField body="cache_control" type="object">
+  Top-level prompt-cache breakpoint. The common ephemeral shape is `{ "type": "ephemeral", "ttl": "5m" }`; some upstreams also support `1h`.
+</ParamField>
+
+<ParamField body="context_management" type="object">
+  Beta context-management edits, such as clearing prior tool uses or thinking blocks, or compacting long context.
+</ParamField>
+
+### Routing, diagnostics, and metadata
+
+<ParamField body="metadata" type="object">
+  Request metadata. `metadata.user_id` should be an opaque identifier rather than a name, email address, or phone number.
+</ParamField>
+
+<ParamField body="diagnostics" type="object">
+  Request-level diagnostic input supported by some beta upstreams, such as a previous response identifier for prompt-cache divergence analysis.
+</ParamField>
+
+<ParamField body="fallbacks" type="string | object">
+  Opt-in fallback model configuration. Use only when the configured upstream supports model fallback routing.
+</ParamField>
+
+<ParamField body="fallback_credit_token" type="string | object">
+  Opaque retry credit returned with an eligible refusal. Preserve the original request shape and follow the upstream retry requirements when redeeming it.
+</ParamField>
+
+## Response
+
+```json Response
+{
+  "id": "msg_01J8Y9QF4W7N6K2M3P5R8T1V0X",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "content": [
+    {
+      "type": "text",
+      "text": "1. Create a session. 2. Stream its events. 3. Read the final outcome."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "stop_details": null,
+  "container": null,
+  "context_management": null,
+  "diagnostics": null,
+  "usage": {
+    "cache_creation": null,
+    "input_tokens": 19,
+    "output_tokens": 31,
+    "cache_creation_input_tokens": null,
+    "cache_read_input_tokens": null,
+    "fallback_credit": null,
+    "inference_geo": null,
+    "iterations": null,
+    "output_tokens_details": null,
+    "server_tool_use": null,
+    "service_tier": "standard",
+    "speed": "standard"
+  }
+}
+```
+
+<ResponseField name="id" type="string" required>
+  Unique message identifier. Treat the format and length as opaque.
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Always `message` for a completed Messages response.
+</ResponseField>
+
+<ResponseField name="role" type="string" required>
+  Always `assistant` for generated output.
+</ResponseField>
+
+<ResponseField name="model" type="string" required>
+  Model that produced the response. This may be the mapped or fallback model selected upstream.
+</ResponseField>
+
+<ResponseField name="content" type="object[]" required>
+  Generated content blocks. Common types are `text`, `thinking`, `redacted_thinking`, `tool_use`, server-tool results, MCP tool blocks, container uploads, compaction, and fallback information.
+</ResponseField>
+
+<ResponseField name="stop_reason" type="string | null" required>
+  Why generation stopped: `end_turn`, `max_tokens`, `stop_sequence`, `tool_use`, `pause_turn`, `compaction`, `refusal`, or `model_context_window_exceeded`.
+</ResponseField>
+
+<ResponseField name="stop_sequence" type="string | null" required>
+  The matched custom stop sequence, otherwise `null`.
+</ResponseField>
+
+<ResponseField name="stop_details" type="object | null" required>
+  Structured refusal information when the upstream returns it, including an optional retry credit token.
+</ResponseField>
+
+<ResponseField name="container" type="object | null" required>
+  Container information for requests that used supported code-execution features.
+</ResponseField>
+
+<ResponseField name="context_management" type="object | null" required>
+  Context-management edits applied during the request.
+</ResponseField>
+
+<ResponseField name="diagnostics" type="object | null" required>
+  Diagnostic response corresponding to the request-level `diagnostics` field.
+</ResponseField>
+
+<ResponseField name="usage" type="object" required>
+  Token, cache, service-tier, speed, inference-region, per-iteration, and server-tool usage reported by the upstream.
+</ResponseField>
+
+<ResponseField name="usage.input_tokens" type="integer" required>
+  Input tokens that were neither written to nor read from the prompt cache.
+</ResponseField>
+
+<ResponseField name="usage.output_tokens" type="integer" required>
+  Total output tokens. This is the authoritative output total even when output details are present.
+</ResponseField>
+
+<ResponseField name="usage.cache_creation_input_tokens" type="integer | null" required>
+  Input tokens used to create prompt-cache entries.
+</ResponseField>
+
+<ResponseField name="usage.cache_read_input_tokens" type="integer | null" required>
+  Input tokens read from prompt-cache entries.
+</ResponseField>
+
+<ResponseField name="usage.cache_creation" type="object | null" required>
+  Breakdown of cache-creation input tokens by supported cache TTL.
+</ResponseField>
+
+<ResponseField name="usage.fallback_credit" type="object | null" required>
+  Outcome of any `fallback_credit_token` supplied with the request.
+</ResponseField>
+
+<ResponseField name="usage.inference_geo" type="string | null" required>
+  Geographic region where inference ran, when reported by the upstream.
+</ResponseField>
+
+<ResponseField name="usage.iterations" type="object | null" required>
+  Per-iteration token and prompt-cache usage for requests that sampled more than once.
+</ResponseField>
+
+<ResponseField name="usage.output_tokens_details" type="object | null" required>
+  Optional decomposition of the authoritative `output_tokens` total, such as thinking tokens.
+</ResponseField>
+
+<ResponseField name="usage.server_tool_use" type="object | null" required>
+  Counts for server-side tool requests made while generating the message.
+</ResponseField>
+
+<ResponseField name="usage.service_tier" type="string | null" required>
+  Capacity tier used: `standard`, `priority`, or `batch`.
+</ResponseField>
+
+<ResponseField name="usage.speed" type="string | null" required>
+  Inference speed used: `standard` or `fast`.
+</ResponseField>
+
+## Streaming response
+
+With `stream: true`, the endpoint returns `text/event-stream`. A stream is composed of these event types:
+
+| Event | Purpose |
+| --- | --- |
+| `message_start` | Initial message envelope and starting usage |
+| `content_block_start` | Begins a content block |
+| `content_block_delta` | Adds text, JSON input, thinking, citations, signatures, or other block deltas |
+| `content_block_stop` | Completes a content block |
+| `message_delta` | Updates stop information and cumulative usage |
+| `message_stop` | Completes the stream |
+
+OMA forwards SSE frames as they arrive, sets `Cache-Control: no-cache` when the upstream omits it, and disables common reverse-proxy buffering with `X-Accel-Buffering: no`.
+
+## OMA gateway behavior
+
+- The request body limit is 32 MiB. Larger bodies return `413 request_too_large`.
+- OMA removes caller `Authorization`, `X-Api-Key`, cookie, tenant, and hop-by-hop headers before forwarding.
+- OMA injects the server-side upstream key. A missing configured LLM Provider returns `503 api_error`. A workspace model configuration that cannot be loaded returns `500 api_error`.
+- Query parameters, the request body, compatible feature headers, upstream status, response body, and end-to-end response headers are otherwise preserved.
+- Failure to build or reach the upstream returns `502 api_error`. Error responses returned by the upstream pass through with their original status and body.
+
+<Warning>
+  Do not put an upstream credential in the request. OMA always replaces caller credentials with the key configured for the deployment.
+</Warning>

@@ -86,7 +86,7 @@ describe('Organization members settings', () => {
     await waitFor(() => expect(api.inviteListRequests).toBe(2));
   });
 
-  test('mounts a shared toaster for invite actions instead of inline status chrome', async () => {
+  test('does not render inline status chrome for invite actions', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     mockMembersApi();
 
@@ -97,7 +97,6 @@ describe('Organization members settings', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Members 3' })).toBeTruthy();
-    expect(screen.getByLabelText('Notifications alt+T')).toBeTruthy();
     expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.querySelector('.text-emerald-600')).toBeNull();
   });

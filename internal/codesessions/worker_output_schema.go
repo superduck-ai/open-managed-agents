@@ -3,6 +3,7 @@ package codesessions
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
 
 // Worker output protocol sources in superduck-code:
@@ -36,6 +37,7 @@ type workerPayloadHeader struct {
 // records. The mapper decodes those fields only in the event-type branch that
 // interprets them.
 type workerOutputMessage struct {
+	ID      string          `json:"id"`
 	Content json.RawMessage `json:"content"`
 }
 
@@ -53,9 +55,19 @@ type workerOutputCommonPayload struct {
 }
 
 type workerAssistantOutputPayload struct {
-	Type    string              `json:"type"`
-	Content json.RawMessage     `json:"content"`
-	Message workerOutputMessage `json:"message"`
+	Type              string              `json:"type"`
+	Content           json.RawMessage     `json:"content"`
+	ContentBlockIndex *int                `json:"content_block_index"`
+	Message           workerOutputMessage `json:"message"`
+}
+
+func decodeWorkerAssistantOutputPayload(raw json.RawMessage) (workerAssistantOutputPayload, error) {
+	var payload workerAssistantOutputPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return workerAssistantOutputPayload{}, err
+	}
+	payload.Message.ID = strings.TrimSpace(payload.Message.ID)
+	return payload, nil
 }
 
 type workerUserOutputPayload struct {

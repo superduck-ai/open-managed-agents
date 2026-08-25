@@ -34,7 +34,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: "api-key-uuid",
 		EnvironmentUUID: "environment-uuid", EnvironmentExternalID: "env_test",
 		AgentUUID: "agent-uuid", AgentExternalID: "agent_test", AgentVersion: 1,
-		AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`), VaultIDs: []byte(`[]`),
+		AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`), VaultIDs: sessionVaultIDs{},
 		Status: "idle", Usage: []byte(`{}`), Stats: []byte(`{}`), OutcomeEvaluations: []byte(`[]`),
 		CreatedAt: now,
 	}
@@ -73,6 +73,13 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.Stats", "params.OutcomeEvaluations",
 			},
 			wantSQLFragments: []string{"INSERT INTO sessions", "CAST($11 AS jsonb)", "RETURNING", "uuid, external_id"},
+		},
+		{
+			statement: sessionMapperFindByUUIDStatement,
+			bound:     buildSessionMapperFindByUUID(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid"),
+			wantID:    "SessionMapper.FindByUUID", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"FROM sessions", "workspace_uuid = $1", "uuid = $2", "deleted_at IS NULL"},
 		},
 		{
 			statement: sessionThreadMapperInsertIfAbsentStatement,
@@ -117,6 +124,53 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.wantID, func(t *testing.T) { assertMapperBuilderContract(t, test) })
 	}
+}
+
+func TestSessionVaultIDsJSONBoundary(t *testing.T) {
+	t.Run("rejects invalid JSON", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan([]byte(`{"not":"an array"}`)); err == nil {
+			t.Fatal("Scan() error = nil")
+		}
+	})
+
+	t.Run("rejects unsupported source", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan(42); err == nil {
+			t.Fatal("Scan() error = nil")
+		}
+	})
+
+	t.Run("scans JSON array", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan([]byte(`["vlt_one","vlt_two"]`)); err != nil {
+			t.Fatalf("Scan(): %v", err)
+		}
+		if len(ids) != 2 || ids[0] != "vlt_one" || ids[1] != "vlt_two" {
+			t.Fatalf("Scan() = %v", ids)
+		}
+	})
+
+	t.Run("canonicalizes null", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan(nil); err != nil {
+			t.Fatalf("Scan(): %v", err)
+		}
+		if ids == nil || len(ids) != 0 {
+			t.Fatalf("Scan() = %#v, want non-nil empty slice", ids)
+		}
+	})
+
+	t.Run("writes JSON array", func(t *testing.T) {
+		value, err := (sessionVaultIDs{"vlt_one", "vlt_two"}).Value()
+		if err != nil {
+			t.Fatalf("Value(): %v", err)
+		}
+		raw, ok := value.([]byte)
+		if !ok || string(raw) != `["vlt_one","vlt_two"]` {
+			t.Fatalf("Value() = %#v", value)
+		}
+	})
 }
 
 func TestSessionTableMappersBuildDynamicPages(t *testing.T) {

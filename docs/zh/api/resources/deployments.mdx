@@ -1,0 +1,33 @@
+---
+title: "部署与运行记录"
+description: "管理定时任务、手动触发和部署运行历史。"
+---
+
+所有请求必须发送：
+
+```http
+anthropic-version: 2023-06-01
+anthropic-beta: managed-agents-2026-04-01
+```
+
+## 部署
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/deployments` | 创建 / 列出 |
+| `GET` / `POST` | `/v1/deployments/{id}` | 读取 / 更新 |
+| `POST` | `/v1/deployments/{id}/archive` | 归档 |
+| `POST` | `/v1/deployments/{id}/pause` | 暂停 |
+| `POST` | `/v1/deployments/{id}/unpause` | 恢复 |
+| `POST` | `/v1/deployments/{id}/run` | 手动触发 |
+
+创建需要 `name`、固定智能体引用、`environment_id` 和 1 到 50 个 `initial_events`。可选 `schedule` 使用 cron；资源与密钥库 ID 在创建时解析并保存。
+
+## 部署运行
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/v1/deployment_runs` | 列出运行记录 |
+| `GET` | `/v1/deployment_runs/{id}` | 读取部署运行 |
+
+部署运行列表支持 `deployment_id`、`agent_id`、`trigger_type`、`status` 和时间范围。成功的部署运行包含 `session_id`；失败的部署运行包含结构化 `error`。

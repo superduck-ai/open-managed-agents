@@ -3,7 +3,22 @@ package codesessions
 import (
 	"encoding/json"
 	"testing"
+	"uuid"
 )
+
+func TestControlResponseUUIDMatchesExistingUUIDv5(t *testing.T) {
+	t.Parallel()
+
+	const want = "f2342556-f950-52b1-9f44-b34130c2bfd5"
+	got := controlResponseUUID("codeses_test", "request_test")
+	if got != want {
+		t.Fatalf("control response UUID = %q, want %q", got, want)
+	}
+	parsed := uuid.MustParse(got)
+	if version := parsed[6] >> 4; version != 5 {
+		t.Fatalf("control response UUID version = %d, want 5", version)
+	}
+}
 
 func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 	t.Parallel()

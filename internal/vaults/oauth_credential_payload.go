@@ -2,13 +2,16 @@ package vaults
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 )
 
 // MCPOAuthStoredCredentialInput is the seam for materializing mcp_oauth public
 // auth + secret JSON after a successful token exchange (e.g. platform OAuth
 // callback). Callers pass primitives; vaults owns the named storage schemas.
+//
+// ClientSecret may be the deploy-config platform secret used for the exchange;
+// ClientCredentialSource decides whether it is copied into the sealed refresh
+// payload (sealed only) and is stored on public auth so refresh can re-resolve.
 type MCPOAuthStoredCredentialInput struct {
 	MCPServerURL            string
 	AccessToken             string
@@ -16,6 +19,7 @@ type MCPOAuthStoredCredentialInput struct {
 	TokenEndpoint           string
 	ClientID                string
 	ClientSecret            string
+	ClientCredentialSource  string
 	TokenEndpointAuthMethod string
 	Scope                   string
 	Resource                string
@@ -30,6 +34,10 @@ func BuildMCPOAuthStoredCredentialJSON(in MCPOAuthStoredCredentialInput) (json.R
 		Type:         credentialAuthTypeMCPOAuth,
 		MCPServerURL: in.MCPServerURL,
 	}
+	if in.ClientCredentialSource == MCPOAuthClientCredentialPlatform ||
+		in.ClientCredentialSource == MCPOAuthClientCredentialSealed {
+		publicAuth.ClientCredentialSource = in.ClientCredentialSource
+	}
 	if in.ExpiresIn > 0 {
 		expiresAt := in.Now.UTC().Add(time.Duration(in.ExpiresIn) * time.Second).Format(time.RFC3339)
 		publicAuth.ExpiresAt = &expiresAt
@@ -40,30 +48,33 @@ func BuildMCPOAuthStoredCredentialJSON(in MCPOAuthStoredCredentialInput) (json.R
 		AccessToken: in.AccessToken,
 	}
 
-	if refreshToken := strings.TrimSpace(in.RefreshToken); refreshToken != "" {
-		method := strings.TrimSpace(in.TokenEndpointAuthMethod)
+	if in.RefreshToken != "" {
+		method := in.TokenEndpointAuthMethod
 		if method == "" {
 			method = "none"
 		}
+		persistSecret := ClientSecretForMCPOAuthPersist(in.ClientCredentialSource, in.ClientSecret)
 		publicRefresh := mcpOAuthRefresh{
 			TokenEndpoint:     in.TokenEndpoint,
 			ClientID:          in.ClientID,
 			TokenEndpointAuth: tokenEndpointAuth{Type: method},
 		}
-		if scope := strings.TrimSpace(in.Scope); scope != "" {
+		if in.Scope != "" {
+			scope := in.Scope
 			publicRefresh.Scope = &scope
 		}
-		if resource := strings.TrimSpace(in.Resource); resource != "" {
+		if in.Resource != "" {
+			resource := in.Resource
 			publicRefresh.Resource = &resource
 		}
 		publicAuth.Refresh = &publicRefresh
 
 		secretAuth := &tokenEndpointAuthSecret{Type: method}
-		if (method == "client_secret_basic" || method == "client_secret_post") && strings.TrimSpace(in.ClientSecret) != "" {
-			secretAuth.ClientSecret = in.ClientSecret
+		if (method == "client_secret_basic" || method == "client_secret_post") && persistSecret != "" {
+			secretAuth.ClientSecret = persistSecret
 		}
 		secretPayload.Refresh = &mcpOAuthRefreshSecret{
-			RefreshToken:      refreshToken,
+			RefreshToken:      in.RefreshToken,
 			TokenEndpointAuth: secretAuth,
 		}
 	}

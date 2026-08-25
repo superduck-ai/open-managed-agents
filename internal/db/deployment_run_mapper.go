@@ -22,7 +22,7 @@ type deploymentRunMapperRow struct {
 	SessionExternalID    *string    `db:"session_external_id"`
 	Error                []byte     `db:"error"`
 	TriggerType          string     `db:"trigger_type"`
-	TriggerContext       []byte     `db:"trigger_context"`
+	ScheduledAt          *time.Time `db:"scheduled_at"`
 	CreatedAt            time.Time  `db:"created_at"`
 	DeletedAt            *time.Time `db:"deleted_at"`
 }
@@ -42,7 +42,7 @@ type deploymentRunWriteParams struct {
 	SessionExternalID    *string
 	Error                []byte
 	TriggerType          string
-	TriggerContext       []byte
+	ScheduledAt          *time.Time
 	CreatedAt            time.Time
 }
 

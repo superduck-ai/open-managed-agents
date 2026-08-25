@@ -1,0 +1,34 @@
+---
+title: "环境"
+description: "管理执行环境和自托管 worker 的 worker 队列。"
+---
+
+所有环境端点要求 `?beta=true`。
+
+## 环境端点
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/v1/environments` | 创建 |
+| `GET` | `/v1/environments` | 列表 |
+| `GET` | `/v1/environments/{id}` | 读取 |
+| `POST` | `/v1/environments/{id}` | 更新 |
+| `POST` | `/v1/environments/{id}/archive` | 归档 |
+| `DELETE` | `/v1/environments/{id}` | 删除 |
+
+创建字段为 `name`、`description`、`scope`、`config` 和 `metadata`。`scope` 为 `organization` 或 `account`。`config.type` 为 `cloud` 或 `self_hosted`。
+
+## worker 端点
+
+| 方法 | 子路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/work` | 列出 worker |
+| `GET` | `/work/poll` | worker 长轮询 |
+| `GET` | `/work/stats` | 队列统计 |
+| `GET` | `/work/{work_id}` | 读取 worker |
+| `POST` | `/work/{work_id}` | 更新元数据 |
+| `POST` | `/work/{work_id}/ack` | 领取 |
+| `POST` | `/work/{work_id}/heartbeat` | 续约 |
+| `POST` | `/work/{work_id}/stop` | 请求停止 |
+
+worker 接口供环境运行器使用。普通应用只需创建环境并在会话中引用。

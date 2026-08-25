@@ -1,0 +1,29 @@
+---
+title: "会话事件与流"
+description: "发送输入事件，分页读取历史，并订阅会话或线程 SSE。"
+---
+
+所有路径要求 `?beta=true`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/v1/sessions/{id}/events` | 列出主线程持久事件 |
+| `POST` | `/v1/sessions/{id}/events` | 批量发送客户端事件 |
+| `GET` | `/v1/sessions/{id}/events/stream` | 主流 SSE |
+| `GET` | `/v1/sessions/{id}/threads/{thread_id}/events` | 线程历史 |
+| `GET` | `/v1/sessions/{id}/threads/{thread_id}/stream` | 线程 SSE |
+
+列表支持 `limit`、`page`、`order`、`types`/`types[]` 和创建时间范围。`event_start` 与 `event_delta` 只出现在实时流，不进入列表历史。
+
+```json
+{
+  "events": [
+    {
+      "type": "user.message",
+      "content": [{ "type": "text", "text": "Run the focused test suite." }]
+    }
+  ]
+}
+```
+
+工具确认使用 `user.tool_confirmation`；自定义工具结果使用 `user.custom_tool_result`。两者都必须引用原始调用 ID；子线程还需 `session_thread_id`。

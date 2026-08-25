@@ -1,0 +1,15 @@
+---
+title: "Session resources"
+description: "Manage files, GitHub repositories, and memory stores on a session."
+---
+
+Every path requires `?beta=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` / `POST` | `/v1/sessions/{id}/resources` | List / add |
+| `GET` / `POST` / `DELETE` | `/v1/sessions/{id}/resources/{resource_id}` | Retrieve / update secret config / remove |
+
+Supported types are `file`, `github_repository`, and `memory_store`. File resources reference `file_id`, fixed source `/uploads`, and an optional mount path. GitHub resources use URL, checkout, and mount path. Memory resources use `memory_store_id` plus optional access, name, description, instructions, and mount path.
+
+All resource types together are limited to 500. File mount paths are checked for duplicates, nesting conflicts, and reserved paths. GitHub authorization tokens are submitted separately through resource update and are not returned in public payloads.

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -17,8 +18,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
-
-	"github.com/google/uuid"
 )
 
 type normalizedDeploymentResource struct {
@@ -369,7 +368,7 @@ func sessionResourcesFromDeployment(
 		resourceType, _ := config["type"].(string)
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
-			return nil, err
+			return nil, markRunPreparationRetryable(err)
 		}
 
 		payload := maps.Clone(config)
@@ -405,7 +404,7 @@ func sessionResourcesFromDeployment(
 		}
 		resources = append(resources, db.CreateSessionResourceInput{
 			Resource: db.SessionResource{
-				UUID:             uuid.NewString(),
+				UUID:             uuid.NewV4().String(),
 				ExternalID:       resourceID,
 				OrganizationUUID: deployment.OrganizationUUID,
 				WorkspaceUUID:    deployment.WorkspaceUUID,

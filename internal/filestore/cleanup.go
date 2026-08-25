@@ -7,12 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -52,7 +51,7 @@ func (w *CleanupWorker) Start(ctx context.Context) {
 	if w == nil || w.database == nil || w.client == nil {
 		return
 	}
-	workerID := fmt.Sprintf("filestore-cleanup-%d-%s", os.Getpid(), uuid.NewString())
+	workerID := fmt.Sprintf("filestore-cleanup-%d-%s", os.Getpid(), uuid.NewV4().String())
 	go w.runLoop(ctx, workerID)
 }
 

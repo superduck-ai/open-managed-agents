@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
@@ -21,8 +22,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
-
-	"github.com/google/uuid"
 )
 
 var (
@@ -37,6 +36,7 @@ var (
 // by Runner without coupling it to the concrete service implementation.
 type CodeSessionRuntime interface {
 	CreateManagedAgentCodeSession(context.Context, codesessions.ManagedAgentCreateInput) (codesessions.ManagedAgentCreateResult, error)
+	RecoverManagedAgentCodeSession(context.Context, codesessions.ManagedAgentRecoverInput) (codesessions.ManagedAgentCreateResult, error)
 	TerminateManagedAgentCodeSession(context.Context, db.Session, string) error
 }
 
@@ -77,11 +77,12 @@ type Runner struct {
 }
 
 type managedAgentLaunchPreparation struct {
-	Session         db.Session
-	SessionConfig   json.RawMessage
-	WorkDir         string
-	Title           string
-	EnvPlaceholders map[string]string
+	Session               db.Session
+	SessionConfig         json.RawMessage
+	WorkDir               string
+	Title                 string
+	RecoveryCodeSessionID string
+	EnvPlaceholders       map[string]string
 }
 
 type managedAgentRuntimeLaunch struct {
@@ -89,7 +90,10 @@ type managedAgentRuntimeLaunch struct {
 	PublicSessionID string
 	SDKURLPath      string
 	Manager         environmentManagerCommand
+	Recovered       bool
 }
+
+const managedAgentRecoveryRetryDelay = 5 * time.Second
 
 // NewRunner constructs a fully usable environment Runner from final runtime
 // collaborators. It rejects incomplete dependency sets before workers start.
@@ -182,7 +186,7 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	// 每次最多领取一条 queued Work。数据库使用 FOR UPDATE SKIP LOCKED
 	// 避免并发 worker 领取同一条记录，并以 5 秒 claim 为 Ack 前的短暂保护。
-	work, err := r.db.PollNextEnvironmentWorkForRunner(ctx, workerID, 5*time.Second, true)
+	work, err := r.db.PollNextEnvironmentWork(ctx, workerID, 5*time.Second)
 	if err != nil || work == nil {
 		// false 表示本轮没有取得 Work：可能是队列为空，也可能是领取 SQL 失败。
 		return false, err
@@ -198,40 +202,40 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	// 此时实际的 E2B Sandbox 尚未创建；失败只需停止 Work，不存在远端资源需要清理。
 	env, err := r.db.GetEnvironmentByUUID(ctx, work.WorkspaceUUID, work.EnvironmentUUID)
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
 	sandboxID, err := ids.New("envsbx_")
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
 
 	// 在 Provider 解析之前固化 Managed Agent 的网络 metadata。这样 Resolve 和
 	// 后续 Create 使用的是同一份 MCP allowlist，避免创建时网络策略发生漂移。
 	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
 	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
 
 	// Cloud Session Work 还要读取 Session、resources、events 和 skills，准备
-	// rclone 与 Environment Manager 的启动数据。普通 Work 返回 nil preparation，
-	// 后续只创建 Sandbox，不进入 Managed Agent 专属分支。
+	// rclone 与 Environment Manager 的启动数据。非 Cloud Environment 不进入
+	// Managed Agent runtime 分支。
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
 
 	// 先落一条 creating 状态的本地 Sandbox 记录，再请求 E2B 创建远端 Sandbox。
 	// 这样即使远端创建失败，数据库中仍有可查询的启动尝试和失败状态。
 	record, err := r.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            sandboxID,
 		OrganizationUUID:      work.OrganizationUUID,
 		WorkspaceUUID:         work.WorkspaceUUID,
@@ -246,7 +250,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		CreatedAt:             time.Now().UTC(),
 	})
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
 
@@ -254,10 +258,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	// 分属远端 Provider 和本服务两个命名空间。
 	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
-		now := time.Now().UTC()
-		message := err.Error()
-		_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "failed", nil, &message, &now)
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failCreatedSandbox(ctx, record, work, "", err)
 		return true, err
 	}
 	providerSandboxID := sandbox.ID
@@ -326,8 +327,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 
-	// 普通 Work 到这里已经完成。Cloud Session 还需创建 Code Session，并在
-	// Sandbox 内启动 Environment Manager。
+	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
 		launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
 		if err != nil {
@@ -343,14 +343,15 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 				errEnvironmentManagerStart,
 				err,
 			)
-			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch.CodeSessionID, publicError)
+			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch, publicError)
 			return true, publicError
 		}
 
 		// 只有 Manager 后台命令成功提交后才发布 runtime metadata，避免把启动失败的
-		// Code Session 暴露为可用。发布失败时同样终止 Code Session 并清理 Sandbox。
+		// Code Session 暴露为可用。新建失败会终止 Code Session；恢复失败则保留其
+		// durable queue 并重新排队，只清理本次 replacement Sandbox。
 		if err := r.publishManagedAgentRuntime(ctx, preparation.Session, *work, launch); err != nil {
-			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch.CodeSessionID, err)
+			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch, err)
 			return true, fmt.Errorf("publish managed-agent runtime metadata: %w", err)
 		}
 	}
@@ -413,21 +414,64 @@ func (r *Runner) failManagedAgentRuntime(
 	work *db.EnvironmentWork,
 	providerSandboxID string,
 	session db.Session,
-	codeSessionID string,
+	launch managedAgentRuntimeLaunch,
 	cause error,
 ) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, codeSessionID); err != nil {
+	if !launch.Recovered {
+		if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, launch.CodeSessionID); err != nil {
+			r.logger.ErrorContext(
+				cleanupCtx,
+				"terminate failed managed agent runtime",
+				"code_session_id", launch.CodeSessionID,
+				"stage_error_type", fmt.Sprintf("%T", cause),
+				"error", err,
+			)
+		}
+	}
+	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
+}
+
+func (r *Runner) failWorkBeforeSandbox(ctx context.Context, work db.EnvironmentWork) {
+	requeued, err := r.db.RequeueEnvironmentWorkIfRecoverable(
+		ctx,
+		work,
+		time.Now().UTC().Add(managedAgentRecoveryRetryDelay),
+	)
+	if err == nil && requeued {
+		return
+	}
+	if err != nil {
+		r.logger.ErrorContext(ctx, "requeue managed agent sandbox recovery", "work_id", work.ExternalID, "error", err)
+	}
+	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, true)
+}
+
+func (r *Runner) requeueFailedRecoverySandbox(
+	ctx context.Context,
+	record db.EnvironmentSandbox,
+	work db.EnvironmentWork,
+	providerSandboxID string,
+	cause error,
+) bool {
+	requeued, err := r.db.FailEnvironmentSandboxAndRequeueRecovery(
+		ctx,
+		record,
+		work,
+		providerSandboxID,
+		cause,
+		time.Now().UTC().Add(managedAgentRecoveryRetryDelay),
+	)
+	if err != nil {
 		r.logger.ErrorContext(
-			cleanupCtx,
-			"terminate failed managed agent runtime",
-			"code_session_id", codeSessionID,
-			"stage_error_type", fmt.Sprintf("%T", cause),
+			ctx,
+			"requeue failed managed agent sandbox recovery",
+			"work_id", work.ExternalID,
 			"error", err,
 		)
 	}
-	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
+	return err == nil && requeued
 }
 
 // failCreatedSandbox returns true when a concurrent user stop already won and
@@ -438,6 +482,17 @@ func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSa
 		*work = currentWork
 		r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
 		return true
+	}
+	if err == nil {
+		*work = currentWork
+	}
+	if r.requeueFailedRecoverySandbox(ctx, record, *work, providerSandboxID, cause) {
+		if strings.TrimSpace(providerSandboxID) != "" {
+			killCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			_ = r.provider.Kill(killCtx, providerSandboxID)
+		}
+		return false
 	}
 	now := time.Now().UTC()
 	message := cause.Error()
@@ -472,11 +527,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if r == nil || work == nil {
 		return nil, nil
 	}
-	sessionID, ok := sessionIDFromEnvironmentWork(*work)
-	if !ok || !cloudEnvironment(env) {
+	if !cloudEnvironment(env) {
 		return nil, nil
 	}
-	session, found, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
+	session, found, err := r.db.GetSessionByUUID(ctx, work.WorkspaceUUID, work.SessionUUID)
 	if err != nil {
 		return nil, fmt.Errorf("load managed agent Session: %w", err)
 	}
@@ -505,24 +559,28 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if session.Title != nil {
 		title = *session.Title
 	}
+	recoveryCodeSessionID := ""
+	codeSession, err := r.db.GetActiveCodeSessionForEnvironmentWork(ctx, *work, session.UUID)
+	if err == nil {
+		recoveryCodeSessionID = codeSession.ExternalID
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return nil, fmt.Errorf("load managed agent recovery Code Session: %w", err)
+	}
 	return &managedAgentLaunchPreparation{
-		Session:         session,
-		SessionConfig:   sessionConfig,
-		WorkDir:         workDir,
-		Title:           title,
-		EnvPlaceholders: envPlaceholders,
+		Session:               session,
+		SessionConfig:         sessionConfig,
+		WorkDir:               workDir,
+		Title:                 title,
+		RecoveryCodeSessionID: recoveryCodeSessionID,
+		EnvPlaceholders:       envPlaceholders,
 	}, nil
 }
 
 func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session db.Session) (map[string]string, error) {
-	vaultIDs, err := decodeSessionVaultIDs(session.VaultIDs)
-	if err != nil {
-		return nil, fmt.Errorf("decode session vault_ids: %w", err)
-	}
-	if len(vaultIDs) == 0 {
+	if len(session.VaultIDs) == 0 {
 		return nil, nil
 	}
-	credentials, err := r.db.ListActiveVaultCredentialsForVaultIDs(ctx, session.WorkspaceUUID, vaultIDs)
+	credentials, err := r.db.ListActiveVaultCredentialsForVaultIDs(ctx, session.WorkspaceUUID, session.VaultIDs)
 	if err != nil {
 		return nil, fmt.Errorf("list vault credentials for env mount: %w", err)
 	}
@@ -533,34 +591,32 @@ func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session d
 	return placeholders, nil
 }
 
-func decodeSessionVaultIDs(raw json.RawMessage) ([]string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var ids []string
-	if err := json.Unmarshal(raw, &ids); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
 func (r *Runner) createManagedAgentRuntimeLaunch(
 	ctx context.Context,
 	env db.Environment,
 	work db.EnvironmentWork,
 	preparation managedAgentLaunchPreparation,
 ) (managedAgentRuntimeLaunch, error) {
-	local, err := r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
-		Session:                    preparation.Session,
-		Environment:                env,
-		EnvironmentWork:            work,
-		Model:                      modelIDFromAgentSnapshot(preparation.Session.AgentSnapshot),
-		Title:                      preparation.Title,
-		WorkDir:                    preparation.WorkDir,
-		PermissionMode:             "bypassPermissions",
-		DangerouslySkipPermissions: true,
-		Config:                     preparation.SessionConfig,
-	})
+	var local codesessions.ManagedAgentCreateResult
+	var err error
+	if preparation.RecoveryCodeSessionID != "" {
+		local, err = r.codeSessions.RecoverManagedAgentCodeSession(ctx, codesessions.ManagedAgentRecoverInput{
+			Session:       preparation.Session,
+			CodeSessionID: preparation.RecoveryCodeSessionID,
+		})
+	} else {
+		local, err = r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
+			Session:                    preparation.Session,
+			Environment:                env,
+			EnvironmentWork:            work,
+			Model:                      modelIDFromAgentSnapshot(preparation.Session.AgentSnapshot),
+			Title:                      preparation.Title,
+			WorkDir:                    preparation.WorkDir,
+			PermissionMode:             "bypassPermissions",
+			DangerouslySkipPermissions: true,
+			Config:                     preparation.SessionConfig,
+		})
+	}
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
 	}
@@ -568,19 +624,22 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		local.CodeSessionID,
 		local.SessionIngressToken,
 		local.OAuthAccessToken,
+		local.WorkerEpoch,
 		preparation.WorkDir,
 		preparation.SessionConfig,
 		r.cfg,
 		preparation.EnvPlaceholders,
 	)
 	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = r.codeSessions.TerminateManagedAgentCodeSession(
-			cleanupCtx,
-			preparation.Session,
-			local.CodeSessionID,
-		)
+		if preparation.RecoveryCodeSessionID == "" {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = r.codeSessions.TerminateManagedAgentCodeSession(
+				cleanupCtx,
+				preparation.Session,
+				local.CodeSessionID,
+			)
+		}
 		return managedAgentRuntimeLaunch{}, err
 	}
 	return managedAgentRuntimeLaunch{
@@ -588,6 +647,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		PublicSessionID: local.PublicSessionID,
 		SDKURLPath:      local.SDKURLPath,
 		Manager:         buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload),
+		Recovered:       preparation.RecoveryCodeSessionID != "",
 	}, nil
 }
 
@@ -756,11 +816,7 @@ func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.
 	}
 	hosts := []string{}
 	if policyConfig.Type == networkpolicy.TypeLimited && policyConfig.AllowMCPServers {
-		sessionID, ok := sessionIDFromEnvironmentWork(*work)
-		if !ok {
-			return fmt.Errorf("limited managed-agent MCP policy requires session work identity")
-		}
-		session, found, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
+		session, found, err := r.db.GetSessionByUUID(ctx, work.WorkspaceUUID, work.SessionUUID)
 		if err != nil {
 			return err
 		}
@@ -839,20 +895,6 @@ func (r *Runner) replaceRuntimeSkillArchives(
 		return fmt.Errorf("replace managed agent Skill Archive Resources: %w", err)
 	}
 	return nil
-}
-
-func sessionIDFromEnvironmentWork(work db.EnvironmentWork) (string, bool) {
-	var data struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-	}
-	if err := json.Unmarshal(work.Data, &data); err != nil {
-		return "", false
-	}
-	if strings.TrimSpace(data.Type) != "session" || strings.TrimSpace(data.ID) == "" {
-		return "", false
-	}
-	return strings.TrimSpace(data.ID), true
 }
 
 func cloudEnvironment(env db.Environment) bool {

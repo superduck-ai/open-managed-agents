@@ -1,9 +1,37 @@
 package agents
 
-import "github.com/superduck-ai/open-managed-agents/internal/apperr"
+import (
+	"errors"
+
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+)
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
+}
+
+func agentMutationError(err error) error {
+	var appErr *apperr.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
+	return invalidRequest(err)
+}
+
+func configuredModelError(err error) error {
+	if errors.Is(err, llmproviders.ErrNotConfigured) {
+		return apperr.New(
+			apperr.Unavailable,
+			"This workspace has no LLM provider configured",
+			err,
+		)
+	}
+	return apperr.New(
+		apperr.Internal,
+		"Workspace model configuration is unavailable",
+		err,
+	)
 }
 
 func internalError(message string, cause error) error {

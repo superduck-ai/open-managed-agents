@@ -18,13 +18,11 @@ import { Terminal } from 'lucide-react';
 import {
   ManagedAgentsPage,
   WorkspaceContext,
-  cleanup,
   codeBlockContaining,
   createAgentRequestFixture,
   expectPageTextToContain,
   fireEvent,
   mockAgentsApi,
-  mockManagedResourceApi,
   quickstartTextAndToolStream,
   quickstartTextServerToolAndToolStream,
   quickstartTextStream,
@@ -34,13 +32,11 @@ import {
   resetTestDom,
   screen,
   selectManagedComboboxOption,
-  serverAgent,
-  sessionStatusValuesFromUrl,
-  setAgentConfigEditorValue,
   waitFor,
   within,
   workspaceContextValue,
 } from './ManagedAgentsPage.test-utils';
+import type { AuthContextValue } from '../../shared/auth/context';
 
 if (typeof globalThis.DOMRect === 'undefined') {
   class TestDOMRect {
@@ -95,6 +91,63 @@ function QuickstartLocaleTestToggle() {
 }
 
 export function registerManagedAgentsQuickstartTests() {
+  test('guides quickstart to LLM configuration when no provider exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    mockAgentsApi([], { modelsNotConfigured: true });
+    render(
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+          <ManagedAgentsPage section="quickstart" />
+        </WorkspaceContext.Provider>
+      </I18nProvider>,
+      undefined,
+      { seedModels: false },
+    );
+
+    const emptyState = await screen.findByTestId('llm-provider-required');
+    expect(emptyState.textContent).toContain('No models configured');
+    expect(emptyState.textContent).toContain('Configure a model to get started.');
+    expect(within(emptyState).getByRole('button', { name: 'Configure models' })).toBeTruthy();
+    expect(within(emptyState).queryByRole('alert')).toBeNull();
+  });
+
+  test('does not send non-administrators from quickstart to model configuration', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    mockAgentsApi([], { modelsNotConfigured: true });
+    render(
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+          <ManagedAgentsPage section="quickstart" />
+        </WorkspaceContext.Provider>
+      </I18nProvider>,
+      undefined,
+      { auth: quickstartAuth('developer'), seedModels: false },
+    );
+
+    const emptyState = await screen.findByTestId('llm-provider-required');
+    expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
+    expect(within(emptyState).queryByRole('button', { name: 'Configure models' })).toBeNull();
+  });
+
+  test('keeps quickstart model loading failures distinct from the provider empty state', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    mockAgentsApi([], { modelsErrorOnce: true });
+    render(
+      <I18nProvider initialLocale="en">
+        <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+          <ManagedAgentsPage section="quickstart" />
+        </WorkspaceContext.Provider>
+      </I18nProvider>,
+      undefined,
+      { seedModels: false },
+    );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Retry before creating an agent');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.queryByTestId('llm-provider-required')).toBeNull();
+  });
+
   test('groups turns from visible transcript entries only', () => {
     const userThenResult = presentQuickstartTranscript([
       { id: 'user', type: 'message', role: 'user', content: 'Create an agent.' },
@@ -865,7 +918,7 @@ export function registerManagedAgentsQuickstartTests() {
       {
         button: /Contract tracker/i,
         yaml: [
-          'model: claude-opus-4-8',
+          'model: claude-sonnet-4-6',
           'https://mcp.box.com',
           'https://mcp.asana.com/sse',
           'urgent ≤30 days / medium 31–90 days',
@@ -2303,4 +2356,18 @@ export function registerManagedAgentsQuickstartTests() {
     expect(within(templateCard).getByText('+1')).toBeTruthy();
     expect(templateCard.getAttribute('aria-label')).toContain('github');
   });
+}
+
+function quickstartAuth(role: string): AuthContextValue {
+  return {
+    account: {
+      uuid: 'acct_managed_agents_test',
+      email_address: 'managed-agents-test@example.com',
+      memberships: [{ role, organization: { uuid: 'org_test' } }],
+    },
+    status: 'authenticated',
+    csrfToken: 'csrf_managed_agents_test',
+    refresh: async () => undefined,
+    logout: async () => undefined,
+  };
 }

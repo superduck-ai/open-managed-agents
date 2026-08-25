@@ -102,23 +102,6 @@ export const thinkingEffortOptions = [
   { value: 'max', label: 'Max' },
 ] as const;
 
-export const fallbackModels: WorkbenchModel[] = [
-  {
-    model_name: 'claude-opus-4-8',
-    display_name: 'Claude Opus Active',
-    supports_thinking: true,
-    supports_tool_use: true,
-  },
-  {
-    model_name: 'claude-sonnet-4-6',
-    display_name: 'Claude Sonnet Active',
-    supports_thinking: true,
-    supports_tool_use: true,
-  },
-  { model_name: 'claude-haiku-4-5-20251001', display_name: 'Claude Haiku 4.5', supports_thinking: false },
-  { model_name: 'claude-fable-5', display_name: 'Claude Fable 5', supports_thinking: true, supports_tool_use: true },
-];
-
 export const defaultSchema = `{
   "type": "object",
   "properties": {
@@ -162,7 +145,7 @@ export function createDefaultRevision(): WorkbenchRevision {
     id: '04977f32-f204-443c-8d3e-ed5aac2673aa',
     created_at: '2026-06-12T02:10:24.382428Z',
     is_latest: true,
-    model_name: 'claude-opus-4-8',
+    model_name: '',
     system_prompt: '',
     messages: [{ role: 'human', content: [{ type: 'text', text: '' }] }],
     variables: [],
@@ -175,10 +158,7 @@ export function createDefaultRevision(): WorkbenchRevision {
   };
 }
 
-export function normalizeRevision(
-  value?: Partial<WorkbenchRevision> | null,
-  fallbackModel = 'claude-opus-4-8',
-): WorkbenchRevision {
+export function normalizeRevision(value?: Partial<WorkbenchRevision> | null, fallbackModel = ''): WorkbenchRevision {
   const base = createDefaultRevision();
   const messages = normalizeMessages(value?.messages);
   return {
@@ -202,7 +182,7 @@ export function normalizeRevision(
 
 export function normalizeNewPromptRevision(
   value?: Partial<WorkbenchRevision> | null,
-  fallbackModel = 'claude-opus-4-8',
+  fallbackModel = '',
 ): WorkbenchRevision {
   return normalizeRevision(
     {
@@ -1102,7 +1082,7 @@ export function textDeltaFromEvent(event: WorkbenchStreamEvent) {
 }
 
 export function modelDisplayName(model?: WorkbenchModel) {
-  return String(model?.display_name || model?.name || model?.model_name || 'Claude');
+  return String(model?.display_name || model?.name || model?.model_name || 'No model');
 }
 
 export function thinkingMode(thinking?: WorkbenchThinking) {

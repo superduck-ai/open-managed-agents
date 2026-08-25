@@ -25,7 +25,6 @@ import {
   DeploymentTextArea,
   DeploymentTextField,
   LockedAgentReferenceField,
-  ManagedComboboxField,
   ManagedSelectField,
   ManagedTextArea,
   ManagedTextField,
@@ -60,6 +59,7 @@ import {
   patchCredentialFormValues,
   vaultOAuthErrorMessage,
 } from './model';
+import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
@@ -177,7 +177,11 @@ export function CredentialDialog({
     () =>
       directoryServers
         .filter((server) => server.url)
-        .map((server) => ({ id: server.url as string, label: server.displayName })),
+        .map((server) => ({
+          id: server.url as string,
+          label: server.displayName,
+          secondary: server.url as string,
+        })),
     [directoryServers],
   );
 
@@ -392,29 +396,14 @@ export function CredentialDialog({
               onChange={(authType) => patchValues({ authType: parseCredentialAuthType(authType) })}
             />
             {showMcpUrl ? (
-              <>
-                {showDirectoryPicker && directoryOptions.length > 0 ? (
-                  <ManagedComboboxField
-                    label={msg('managedAgents.credentialVaults.credentialDialog.mcpServer', 'MCP server')}
-                    value={
-                      directoryOptions.some((option) => option.id === values.mcpServerUrl) ? values.mcpServerUrl : ''
-                    }
-                    placeholder={msg(
-                      'managedAgents.credentialVaults.credentialDialog.mcpDirectoryPlaceholder',
-                      'Choose from directory or enter URL below',
-                    )}
-                    searchPlaceholder={msg(
-                      'managedAgents.credentialVaults.credentialDialog.mcpDirectorySearch',
-                      'Search MCP directory...',
-                    )}
-                    emptyLabel={msg(
-                      'managedAgents.credentialVaults.credentialDialog.mcpDirectoryEmpty',
-                      'No MCP servers found.',
-                    )}
-                    options={directoryOptions}
-                    onChange={(mcpServerUrl) => patchValues({ mcpServerUrl })}
-                  />
-                ) : null}
+              values.authType === 'mcp_oauth' ? (
+                <CredentialMcpServerField
+                  value={values.mcpServerUrl}
+                  directoryOptions={directoryOptions}
+                  readOnly={Boolean(credential)}
+                  onChange={(mcpServerUrl) => patchValues({ mcpServerUrl })}
+                />
+              ) : (
                 <ManagedTextField
                   label={msg('managedAgents.credentialVaults.credentialDialog.mcpServerUrl', 'MCP server URL')}
                   value={values.mcpServerUrl}
@@ -425,7 +414,7 @@ export function CredentialDialog({
                   disabled={Boolean(credential)}
                   onChange={(mcpServerUrl) => patchValues({ mcpServerUrl })}
                 />
-              </>
+              )
             ) : null}
             {values.authType === 'static_bearer' ? (
               <ManagedTextField

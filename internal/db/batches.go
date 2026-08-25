@@ -11,6 +11,7 @@ import (
 type MessageBatch struct {
 	UUID                string
 	ExternalID          string
+	OrganizationUUID    string
 	WorkspaceUUID       string
 	CreatedByAPIKeyUUID string
 	APIVariant          string
@@ -96,6 +97,7 @@ func (d *DB) CreateMessageBatch(ctx context.Context, batch MessageBatch, request
 		created, err = mapper.Insert(ctx, insertMessageBatchParams{
 			UUID:                batch.UUID,
 			ExternalID:          batch.ExternalID,
+			OrganizationUUID:    batch.OrganizationUUID,
 			WorkspaceUUID:       batch.WorkspaceUUID,
 			CreatedByAPIKeyUUID: batch.CreatedByAPIKeyUUID,
 			APIVariant:          batch.APIVariant,
@@ -418,6 +420,7 @@ func (row messageBatchRow) batch() (MessageBatch, error) {
 	return MessageBatch{
 		UUID:                row.UUID,
 		ExternalID:          row.ExternalID,
+		OrganizationUUID:    row.OrganizationUUID,
 		WorkspaceUUID:       row.WorkspaceUUID,
 		CreatedByAPIKeyUUID: row.CreatedByAPIKeyUUID,
 		APIVariant:          row.APIVariant,

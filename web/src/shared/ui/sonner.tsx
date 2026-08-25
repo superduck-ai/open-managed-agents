@@ -1,17 +1,23 @@
 import { CircleCheck, Info, Loader2, OctagonX, TriangleAlert } from 'lucide-react';
 import { type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { Toaster as Sonner, toast, type ToasterProps } from 'sonner';
 import { useTheme } from '../theme/context';
 
 export { toast };
 
-export function Toaster(props: ToasterProps) {
+type SharedToasterProps = ToasterProps & {
+  portal?: boolean;
+};
+
+export function Toaster({ portal = true, ...props }: SharedToasterProps) {
   const { resolvedTheme } = useTheme();
   const { style, ...rest } = props;
 
-  return (
+  const toaster = (
     <Sonner
       theme={resolvedTheme}
+      position="bottom-right"
       className="toaster group"
       icons={{
         success: <CircleCheck className="size-4" />,
@@ -32,4 +38,6 @@ export function Toaster(props: ToasterProps) {
       {...rest}
     />
   );
+
+  return portal ? createPortal(toaster, document.body) : toaster;
 }

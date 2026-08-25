@@ -15,7 +15,7 @@
         session_external_id,
         error,
         trigger_type,
-        trigger_context,
+		scheduled_at,
         created_at,
         deleted_at
     </sql>
@@ -36,7 +36,7 @@
             session_external_id,
             error,
             trigger_type,
-            trigger_context,
+			scheduled_at,
             created_at
         ) VALUES (
             #{params.UUID},
@@ -53,7 +53,7 @@
             #{params.SessionExternalID},
             CAST(#{params.Error,sensitive=true} AS jsonb),
             #{params.TriggerType},
-            CAST(#{params.TriggerContext,sensitive=true} AS jsonb),
+			#{params.ScheduledAt},
             #{params.CreatedAt}
         )
         RETURNING

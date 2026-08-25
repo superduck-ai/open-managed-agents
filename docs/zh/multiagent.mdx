@@ -1,0 +1,40 @@
+---
+title: "多智能体编排"
+description: "使用 coordinator roster 创建多线程托管智能体会话。"
+---
+
+OMA 的多智能体模式由一个 coordinator 智能体管理固定 roster。每个 roster 条目在智能体版本创建时解析为明确的智能体 ID 和版本，避免顾问智能体后续更新改变已验证流程。
+
+## 配置 coordinator
+
+```json
+{
+  "multiagent": {
+    "type": "coordinator",
+    "agents": [
+      { "type": "self" },
+      { "type": "agent", "id": "agent_reviewer", "version": 3 },
+      "agent_researcher"
+    ]
+  }
+}
+```
+
+Roster 必须包含 1 到 20 个不同智能体，最多包含一个 `self`。字符串引用会解析为目标智能体当前版本；生产配置建议使用显式对象和版本。
+
+## 线程
+
+会话创建时有一个主线程。coordinator 委派工作后，OMA 保存子线程、父子关系、状态、usage、stats 和独立事件流。
+
+- 主会话流包含协调事件和需要客户端响应的阻塞工具事件
+- `GET /sessions/{id}/threads` 列出所有线程
+- `GET /sessions/{id}/threads/{thread_id}/events` 获取子线程历史
+- `GET /sessions/{id}/threads/{thread_id}/stream` 订阅子线程 SSE
+
+## 自定义工具和确认
+
+当子线程请求自定义工具或人工确认时，OMA 会把阻塞事件同时投影到主流，方便一个客户端统一处理。回应时带上事件中的 `session_thread_id`。
+
+<Card title="事件与流式处理" href="/docs/zh/events-streaming">
+  了解主流、线程流和断线恢复。
+</Card>

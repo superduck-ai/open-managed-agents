@@ -1,0 +1,34 @@
+---
+title: "Message Batches"
+description: "Submit Messages requests in bulk and download JSONL results."
+---
+
+Message Batches persist multiple Messages requests for a background worker. Results are stored in object storage and downloaded as `application/x-jsonl`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/v1/messages/batches` | Create |
+| `GET` | `/v1/messages/batches` | List |
+| `GET` | `/v1/messages/batches/{id}` | Retrieve state |
+| `POST` | `/v1/messages/batches/{id}/cancel` | Request cancellation |
+| `GET` | `/v1/messages/batches/{id}/results` | Download JSONL results |
+| `DELETE` | `/v1/messages/batches/{id}` | Delete batch and result |
+
+```json
+{
+  "requests": [
+    {
+      "custom_id": "summary-001",
+      "params": {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 256,
+        "messages": [{ "role": "user", "content": "Summarize the release notes." }]
+      }
+    }
+  ]
+}
+```
+
+Each `custom_id` must be unique. The stable shape needs no beta query. If the URL uses `?beta=true`, also send `anthropic-beta: message-batches-2024-09-24`. Additional beta tokens are preserved for upstream requests.
+
+Limits, worker concurrency, upstream timeout, and result retention are configured under `batch`.

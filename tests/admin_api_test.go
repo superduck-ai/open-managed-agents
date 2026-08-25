@@ -16,10 +16,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -876,7 +876,7 @@ func containsAdminObject(items []adminObject, id string) bool {
 }
 
 func uniqueAdminSuffix() string {
-	return strings.ReplaceAll(uuid.NewString(), "-", "")
+	return strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 }
 
 func partialTestKeyHint(key string) string {

@@ -1,0 +1,137 @@
+---
+title: "API 概览"
+description: "使用 OMA 的 `/v1` API 创建和运行智能体。"
+---
+
+OMA 提供以资源为中心的 HTTP API，并为兼容 SDK 保持稳定的请求、响应和错误外观。默认本地地址为：
+
+```text
+http://localhost:38080
+```
+
+所有公开资源接口都位于 `/v1`。控制台使用的 `/api`、`/auth` 和 `/web-api` 路由不是公共 SDK 合同。
+
+## 前置条件
+
+调用前需要一个可访问的 OMA 部署和工作区 API 密钥。智能体执行还需要 PostgreSQL、S3 兼容对象存储和可用的环境运行器。推理前需在工作区的 **LLM 模型** 页面添加 Provider 及其真实模型 ID。
+
+## 第一个请求
+
+```bash
+curl http://localhost:38080/v1/models \
+  -H 'Authorization: Bearer sk-ant-local-default'
+```
+
+也可以使用 `X-Api-Key`：
+
+```bash
+curl http://localhost:38080/v1/models \
+  -H 'X-Api-Key: sk-ant-local-default'
+```
+
+## 客户端 SDK
+
+OMA 支持通过基础 URL 与 API 密钥配置兼容 SDK。当前仓库持续使用 Go、Python 和 TypeScript SDK 测试核心资源；其他语言可以直接使用 HTTP。
+
+<CodeGroup>
+```python Python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-ant-local-default",
+    base_url="http://localhost:38080",
+)
+```
+
+```typescript TypeScript
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  apiKey: "sk-ant-local-default",
+  baseURL: "http://localhost:38080",
+});
+```
+</CodeGroup>
+
+## 通用请求头
+
+| 请求头 | 必需性 | 说明 |
+| --- | --- | --- |
+| `Authorization: Bearer <key>` | 二选一 | Bearer API 密钥 |
+| `X-Api-Key: <key>` | 二选一 | 兼容 SDK 常用 API 密钥请求头 |
+| `Content-Type: application/json` | JSON 请求必需 | 请求体编码 |
+| `anthropic-version: 2023-06-01` | SDK 兼容请求建议 | API 兼容版本 |
+| `anthropic-beta` | 视资源而定 | 部分 Beta 资源要求特定值 |
+
+<Warning>
+  OMA 没有统一的 Beta 请求模板。部分资源要求 `?beta=true`，部分资源还检查自己的 `anthropic-beta` 值。请以资源页面为准。
+</Warning>
+
+## 核心资源
+
+<CardGroup cols={2}>
+  <Card title="模型" href="/docs/zh/api/models/list-models">
+    查询当前工作区公开的模型 ID。
+  </Card>
+  <Card title="消息" href="/docs/zh/api/messages/create-a-message">
+    发送模型请求，并通过其下的批处理接口执行大规模异步任务。
+  </Card>
+  <Card title="智能体" href="/docs/zh/api/agents/create-agent">
+    管理可版本化的模型、工具和提示定义。
+  </Card>
+  <Card title="会话" href="/docs/zh/api/sessions/create-session">
+    创建有状态任务，并管理会话事件、资源、线程和线程事件流。
+  </Card>
+  <Card title="环境" href="/docs/zh/api/environments/create-environment">
+    管理沙箱环境、worker 和运行时配置。
+  </Card>
+  <Card title="文件" href="/docs/zh/api/files/upload-file">
+    管理输入文件和任务产物。
+  </Card>
+  <Card title="技能" href="/docs/zh/api/skills/create-skill">
+    管理可复用技能及其版本。
+  </Card>
+  <Card title="部署" href="/docs/zh/api/deployments/create-deployment">
+    管理可重复运行的部署和部署运行。
+  </Card>
+  <Card title="记忆存储" href="/docs/zh/api/memory-stores/create-a-memory-store">
+    管理记忆存储、记忆条目和记忆版本。
+  </Card>
+  <Card title="密钥库" href="/docs/zh/api/vaults/create-vault">
+    管理密钥库及其凭据。
+  </Card>
+  <Card title="Webhooks" href="/docs/zh/api/webhooks/create-webhook">
+    向外部系统发送状态事件。
+  </Card>
+</CardGroup>
+
+API 参考按资源归属组织：批处理位于消息下，worker 位于环境下；事件、资源、线程和线程事件位于会话下；技能版本、记忆与记忆版本、密钥库凭据也分别位于对应父资源下。`/v1/organizations` 与文件存储服务是管理或运行时合同，不属于面向应用开发者的核心参考。
+
+## 响应和追踪
+
+成功响应使用 JSON。服务会在响应头和错误体中返回 `request-id`，用于关联服务端日志。
+
+```json
+{
+  "type": "error",
+  "request_id": "req_...",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "..."
+  }
+}
+```
+
+## 限制与可用性
+
+OMA 没有一个全局固定的公共速率层级。请求并发、文件容量、批处理 worker、环境运行器、沙箱和上游模型限额由部署配置与基础设施共同决定。客户端仍应处理 `429`、临时 `5xx`、长时间 SSE 和网络中断。
+
+<Note>
+  自托管 OMA 的可用区域、入口地址、服务层级和 SLA 均由你的部署决定。
+</Note>
+
+<CardGroup cols={3}>
+  <Card title="认证" href="/docs/zh/api/authentication" />
+  <Card title="分页" href="/docs/zh/api/pagination" />
+  <Card title="错误" href="/docs/zh/api/errors" />
+</CardGroup>

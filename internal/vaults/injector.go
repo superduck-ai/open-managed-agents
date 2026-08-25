@@ -8,10 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
-	"sync"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -35,15 +34,13 @@ type credentialStore interface {
 // Injector loads session vault credentials per request and rewrites MCP
 // Authorization for injectable targets. Plaintext tokens are never cached.
 type Injector struct {
-	store      credentialStore
-	secretSvc  *secrets.Service
-	logger     *slog.Logger
-	httpClient *http.Client
-	now        func() time.Time
-	// refreshLocks serializes concurrent mcp_oauth refreshes per credential so
-	// a one-time refresh_token cannot be exchanged twice in-process. Entries
-	// are retained for process lifetime.
-	refreshLocks sync.Map // credential ExternalID -> *sync.Mutex
+	store                credentialStore
+	secretSvc            *secrets.Service
+	logger               *slog.Logger
+	httpClient           *http.Client
+	now                  func() time.Time
+	refreshLease         OAuthRefreshLease
+	platformOAuthClients []config.PlatformOAuthClientConfig
 }
 
 func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *Injector {
@@ -52,10 +49,31 @@ func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logge
 		store = database
 	}
 	return &Injector{
-		store:     store,
-		secretSvc: secretSvc,
-		logger:    logging.LoggerOrDefault(logger),
+		store:        store,
+		secretSvc:    secretSvc,
+		logger:       logging.LoggerOrDefault(logger),
+		refreshLease: newMemoryOAuthRefreshLease(),
 	}
+}
+
+// WithRefreshLease replaces the in-process lease used by tests with a
+// cross-instance adapter built at assembly (typically Redis).
+func (i *Injector) WithRefreshLease(lease OAuthRefreshLease) *Injector {
+	if i == nil || lease == nil {
+		return i
+	}
+	i.refreshLease = lease
+	return i
+}
+
+// WithPlatformOAuthClients supplies vault.platform_oauth_clients so mcp_oauth
+// refresh can re-resolve deploy-config secrets that were never sealed.
+func (i *Injector) WithPlatformOAuthClients(clients []config.PlatformOAuthClientConfig) *Injector {
+	if i == nil {
+		return i
+	}
+	i.platformOAuthClients = clients
+	return i
 }
 
 func defaultOAuthHTTPClient() *http.Client {
@@ -72,15 +90,6 @@ func (i *Injector) client() *http.Client {
 		return i.httpClient
 	}
 	return defaultOAuthHTTPClient()
-}
-
-func (i *Injector) refreshLock(credentialID string) *sync.Mutex {
-	key := credentialID
-	if key == "" {
-		key = "<anonymous>"
-	}
-	value, _ := i.refreshLocks.LoadOrStore(key, &sync.Mutex{})
-	return value.(*sync.Mutex)
 }
 
 func (i *Injector) clock() time.Time {
@@ -142,10 +151,6 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	if t.injector == nil {
 		return t.base.RoundTrip(req)
 	}
-	body, err := snapshotRequestBody(req)
-	if err != nil {
-		return nil, err
-	}
 	plan, err := t.injector.loadInjectionPlan(
 		t.ctx,
 		t.codeSessionExternalID,
@@ -153,6 +158,25 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		t.workspaceUUID,
 		t.requestURL,
 	)
+	if err != nil {
+		closeRequestBody(req)
+		return nil, err
+	}
+	// No injectable URL match: stream passthrough (base closes the body). Snapshot
+	// only when inject/401-replay may run — otherwise every MITM outbound would
+	// buffer up to 32 MiB and reject larger uploads even with empty vaults.
+	if len(plan.matches) == 0 {
+		if plan.hostCovered {
+			closeRequestBody(req)
+			return nil, injectionRejected(nil)
+		}
+		return t.base.RoundTrip(req)
+	}
+	// RoundTripper contract: always close the caller's body. Clones go to base;
+	// snapshot may replace req.Body with a restored buffer — close whichever is
+	// left on req when this returns.
+	defer closeRequestBody(req)
+	body, err := snapshotRequestBody(req)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +193,7 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		if result == nil {
 			return t.base.RoundTrip(out)
 		}
+		out.Header.Del("Authorization")
 		out.Header.Set("Authorization", "Bearer "+result.token)
 		resp, err := t.base.RoundTrip(out)
 		if err != nil {
@@ -283,11 +308,10 @@ func (i *Injector) resolveMCPOAuthToken(ctx context.Context, credential *db.Vaul
 			if err != nil {
 				return nil, err
 			}
-			token := strings.TrimSpace(secret.AccessToken)
-			if token == "" {
+			if secret.AccessToken == "" {
 				return nil, incompleteMCPOAuthSecret()
 			}
-			return &resolvedInjection{token: token}, nil
+			return &resolvedInjection{token: secret.AccessToken}, nil
 		}
 	}
 	token, _, err := i.refreshMCPOAuthCredential(ctx, &current, now, forceRefresh)
@@ -340,11 +364,12 @@ func cloneRequestWithBody(req *http.Request, body []byte) *http.Request {
 	return out
 }
 
-// maxSnapshotRequestBodyBytes caps buffered MCP request bodies for 401 retry.
-// Larger bodies fail closed instead of silently truncating the replay.
+// maxSnapshotRequestBodyBytes caps buffered request bodies for MCP 401 retry
+// and Environment Variable body substitution. Larger bodies fail closed
+// instead of silently truncating replay or forwarding an unsubstituted placeholder.
 const maxSnapshotRequestBodyBytes = 32 << 20
 
-var errSnapshotRequestBodyTooLarge = fmt.Errorf("request body exceeds %d-byte MCP retry buffer", maxSnapshotRequestBodyBytes)
+var errSnapshotRequestBodyTooLarge = fmt.Errorf("request body exceeds %d-byte snapshot buffer", maxSnapshotRequestBodyBytes)
 
 func readWithinLimit(r io.Reader, max int64) ([]byte, error) {
 	if max < 0 {
@@ -358,6 +383,14 @@ func readWithinLimit(r io.Reader, max int64) ([]byte, error) {
 		return nil, errSnapshotRequestBodyTooLarge
 	}
 	return data, nil
+}
+
+func closeRequestBody(req *http.Request) {
+	if req == nil || req.Body == nil || req.Body == http.NoBody {
+		return
+	}
+	_ = req.Body.Close()
+	req.Body = http.NoBody
 }
 
 func snapshotRequestBody(req *http.Request) ([]byte, error) {

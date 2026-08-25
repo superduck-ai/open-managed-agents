@@ -207,7 +207,7 @@ Input attach 不创建新的 `files` 行，不复制 File 元数据或 S3 对象
 
 Environment Manager 不再接收 `type=file` resource。它只在 rclone ready 后看到已经完成的 `/uploads` 文件系统视图；File 的下载、路径投影或内容刷新均不属于 Environment Manager 职责。
 
-Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的身份解析、rclone 启动、ready、heartbeat 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 rclone ready、Sandbox running 和首次 heartbeat 成功之后创建；Environment Manager 启动或运行时 metadata 原子发布失败时，Runner 将 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
+Provider Sandbox 创建前的普通启动失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的身份解析、rclone 启动、ready、heartbeat 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 rclone ready、Sandbox running 和首次 heartbeat 成功之后创建；首次创建时 Environment Manager 启动或运行时 metadata 原子发布失败会将新 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。若 Work 仍能关联到唯一 active durable Code Session，则按丢失 Sandbox 的恢复启动处理：保留该 Code Session、延迟重新排队 Work，只清理本次 replacement Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
 
 ## 数据模型
 

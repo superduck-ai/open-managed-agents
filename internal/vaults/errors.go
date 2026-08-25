@@ -14,14 +14,14 @@ import (
 // unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
 
-// ErrInjectionRejected is the MCP proxy fail-closed sentinel: the request host
-// is covered by a vault credential but no injectable credential could be used.
+// ErrInjectionRejected is the MITM MCP inject fail-closed sentinel: the request
+// host is covered by a vault credential but no injectable credential could be used.
 // Transport adapters match with errors.Is and must not invent a second wording
 // for the client-facing message — use InjectionUnavailablePublicMessage.
 var ErrInjectionRejected = errors.New("vault credential injection rejected")
 
-// InjectionUnavailablePublicMessage is the client-safe text for MCP proxy 502
-// when injection rejects.
+// InjectionUnavailablePublicMessage is the client-safe text for MITM 502
+// when MCP credential injection rejects.
 const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavailable"
 
 // ErrMITMRequiredForEnvCredentials is returned at Session mount when active
@@ -35,6 +35,18 @@ var ErrSubstitutionRejected = errors.New("vault environment variable substitutio
 // SubstitutionUnavailablePublicMessage is the client-safe text for MITM 502
 // when Egress Secret Substitution or Git Smart HTTP Authorization rejects a request.
 const SubstitutionUnavailablePublicMessage = "Environment variable credentials are unavailable"
+
+// SubstitutionBodyTooLargePublicMessage is the client-safe text for MITM 502
+// when body injection is enabled but the request body exceeds the snapshot buffer.
+const SubstitutionBodyTooLargePublicMessage = "Request body exceeds 32 MiB; environment variable body substitution cannot be applied"
+
+// SubstitutionPublicMessage returns the MITM 502 text for a substitution rejection.
+func SubstitutionPublicMessage(err error) string {
+	if errors.Is(err, errSnapshotRequestBodyTooLarge) {
+		return SubstitutionBodyTooLargePublicMessage
+	}
+	return SubstitutionUnavailablePublicMessage
+}
 
 var (
 	errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")

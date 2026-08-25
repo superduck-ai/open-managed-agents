@@ -7,20 +7,19 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
-
-	"github.com/google/uuid"
 )
 
-// TestTypedUUIDAuthAndAdminPostgres is intentionally backed by PostgreSQL.
-// It exercises Mapper UUID binding/scanning and the string-based HTTP protocol
-// boundary used by API key authentication and Admin responses.
-func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
+// TestUUIDAuthAndStringAdminPostgres is intentionally backed by PostgreSQL.
+// It exercises Mapper UUID binding/string scanning and the string-based HTTP
+// protocol boundary used by API key authentication and Admin responses.
+func TestUUIDAuthAndStringAdminPostgres(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("typed-uuid-auth-admin"))
 	defer app.close()
 
@@ -29,7 +28,7 @@ func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load API key through typed UUID row: %v", err)
 	}
-	if key.UUID == uuid.Nil || key.OrganizationUUID == uuid.Nil || key.WorkspaceUUID == uuid.Nil {
+	if key.UUID == uuid.Nil() || key.OrganizationUUID == uuid.Nil() || key.WorkspaceUUID == uuid.Nil() {
 		t.Fatalf("GetAPIKey() returned nil UUIDs: %+v", key)
 	}
 
@@ -37,7 +36,7 @@ func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load organization with typed UUID parameter: %v", err)
 	}
-	if organization.UUID != key.OrganizationUUID {
+	if organization.UUID != key.OrganizationUUID.String() {
 		t.Fatalf("organization UUID = %s, want %s", organization.UUID, key.OrganizationUUID)
 	}
 
@@ -52,11 +51,11 @@ func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
 	}
 }
 
-// TestTypedUUIDAdminConsoleWorkbenchPostgres keeps the three phase-two paths in
+// TestStringUUIDAdminConsoleWorkbenchPostgres keeps the three phase-two paths in
 // one PostgreSQL transaction surface while still exercising their public DB
 // methods. The created records use unique protocol IDs so this remains safe
 // against a developer's existing local test database.
-func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
+func TestStringUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("typed-uuid-admin-console-workbench"))
 	defer app.close()
 
@@ -67,8 +66,8 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Admin workspace through typed UUID row: %v", err)
 	}
-	if workspace.UUID == uuid.Nil || workspace.OrganizationUUID == uuid.Nil {
-		t.Fatalf("Admin workspace returned nil UUIDs: %+v", workspace)
+	if workspace.UUID == "" || workspace.OrganizationUUID == "" {
+		t.Fatalf("Admin workspace returned empty UUIDs: %+v", workspace)
 	}
 
 	adminKeys, _, err := app.db.ListAdminAPIKeysPage(ctx, db.ListAdminAPIKeysParams{
@@ -78,8 +77,8 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list Admin API keys through typed UUID rows: %v", err)
 	}
-	if len(adminKeys) == 0 || adminKeys[0].WorkspaceUUID == uuid.Nil {
-		t.Fatalf("Admin API key rows did not include typed workspace UUID: %+v", adminKeys)
+	if len(adminKeys) == 0 || adminKeys[0].WorkspaceUUID == "" {
+		t.Fatalf("Admin API key rows did not include workspace UUID: %+v", adminKeys)
 	}
 
 	consoleWorkspaces, err := app.db.ListConsoleWorkspaces(ctx, ids.OrganizationUUID, false)
@@ -165,8 +164,8 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 		)
 	}
 
-	promptID := "prompt_typed_uuid_" + uuid.NewString()
-	revisionID := "revision_typed_uuid_" + uuid.NewString()
+	promptID := "prompt_typed_uuid_" + uuid.NewV4().String()
+	revisionID := "revision_typed_uuid_" + uuid.NewV4().String()
 	if _, err := app.db.UpsertWorkbenchPrompt(ctx, platform.WorkbenchPromptRecord{
 		OrgUUID:            ids.OrganizationUUID,
 		PromptUUID:         promptID,
@@ -243,7 +242,7 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 		t.Fatalf("get Workbench key value with nullable version = (%+v, %v)", keyValue, err)
 	}
 
-	evaluationID := "evaluation_typed_uuid_" + uuid.NewString()
+	evaluationID := "evaluation_typed_uuid_" + uuid.NewV4().String()
 	if err := app.db.UpsertWorkbenchEvaluation(ctx, platform.WorkbenchEvaluationRecord{
 		OrgUUID:        ids.OrganizationUUID,
 		RevisionUUID:   revisionID,
@@ -306,12 +305,12 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 
 	ctx := context.Background()
 	ids := getDefaultDBIDs(t, app.pool)
-	suffix := uuid.NewString()
+	suffix := uuid.NewV4().String()
 	now := time.Now().UTC()
 
 	agentID := "agent_typed_uuid_" + suffix
 	agent, err := app.db.CreateAgent(ctx, db.Agent{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          agentID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
 		CreatedByAPIKeyUUID: ids.APIKeyUUID,
@@ -370,14 +369,14 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	skillID := "skill_typed_uuid_" + suffix
 	skillTitle := "typed UUID " + suffix
 	skill, skillVersion, err := app.db.CreateSkillWithVersion(ctx, db.Skill{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          skillID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
 		CreatedByAPIKeyUUID: ids.APIKeyUUID,
 		DisplayTitle:        &skillTitle,
 		CreatedAt:           now,
 	}, db.SkillVersion{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          "skillver_typed_uuid_" + suffix,
 		WorkspaceUUID:       ids.WorkspaceUUID,
 		Version:             "1.0.0",
@@ -406,7 +405,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		ids.WorkspaceUUID,
 		skillID,
 		db.SkillVersion{
-			UUID:                uuid.NewString(),
+			UUID:                uuid.NewV4().String(),
 			ExternalID:          "skillver_typed_uuid_second_" + suffix,
 			Version:             "2.0.0",
 			Name:                "typed-uuid-v2",
@@ -432,7 +431,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 
 	environmentID := "env_typed_uuid_" + suffix
 	environment, err := app.db.CreateEnvironment(ctx, db.Environment{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          environmentID,
 		OrganizationUUID:    ids.OrganizationUUID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
@@ -450,7 +449,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		t.Fatalf("create Environment through typed UUID parameters: %v", err)
 	}
 	sandbox, err := app.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            "sbx_typed_uuid_" + suffix,
 		OrganizationUUID:      ids.OrganizationUUID,
 		WorkspaceUUID:         ids.WorkspaceUUID,
@@ -472,7 +471,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 
 	deploymentID := "dep_typed_uuid_" + suffix
 	deployment, err := app.db.CreateDeployment(ctx, db.Deployment{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      ids.OrganizationUUID,
 		WorkspaceUUID:         ids.WorkspaceUUID,
@@ -489,7 +488,6 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		Resources:             []byte(`[]`),
 		ResourceSecrets:       []byte(`[]`),
 		VaultIDs:              []byte(`[]`),
-		Schedule:              []byte(`{}`),
 		Status:                "active",
 		CreatedAt:             now,
 		UpdatedAt:             now,
@@ -503,7 +501,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 
 	vaultID := "vlt_typed_uuid_" + suffix
 	vault, err := app.db.CreateVault(ctx, db.Vault{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          vaultID,
 		OrganizationUUID:    ids.OrganizationUUID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
@@ -517,7 +515,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		t.Fatalf("create Vault through typed UUID parameters: %v", err)
 	}
 	credential, err := app.db.CreateVaultCredential(ctx, db.VaultCredential{
-		UUID:             uuid.NewString(),
+		UUID:             uuid.NewV4().String(),
 		ExternalID:       "vcrd_typed_uuid_" + suffix,
 		OrganizationUUID: ids.OrganizationUUID,
 		WorkspaceUUID:    ids.WorkspaceUUID,
@@ -544,7 +542,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 
 	memoryStoreID := "memstore_typed_uuid_" + suffix
 	memoryStore, err := app.db.CreateMemoryStore(ctx, db.MemoryStore{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          memoryStoreID,
 		OrganizationUUID:    ids.OrganizationUUID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
@@ -563,7 +561,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	memoryBucket := "test"
 	memoryKey := "memory/" + suffix
 	memory, err := app.db.CreateMemory(ctx, db.Memory{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            "mem_typed_uuid_" + suffix,
 		WorkspaceUUID:         ids.WorkspaceUUID,
 		MemoryStoreExternalID: memoryStore.ExternalID,
@@ -575,7 +573,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}, db.MemoryVersion{
-		UUID:             uuid.NewString(),
+		UUID:             uuid.NewV4().String(),
 		ExternalID:       "memver_typed_uuid_" + suffix,
 		Operation:        "created",
 		Path:             &memoryPath,
@@ -591,8 +589,9 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}
 
 	batch, err := app.db.CreateMessageBatch(ctx, db.MessageBatch{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          "msgbatch_typed_uuid_" + suffix,
+		OrganizationUUID:    ids.OrganizationUUID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
 		CreatedByAPIKeyUUID: ids.APIKeyUUID,
 		APIVariant:          "stable",
@@ -614,7 +613,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}
 
 	endpoint, err := app.db.CreateWebhookEndpoint(ctx, db.WebhookEndpoint{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          "wh_typed_uuid_" + suffix,
 		OrganizationUUID:    ids.OrganizationUUID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
@@ -682,7 +681,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	ctx := context.Background()
 	ids := getDefaultDBIDs(t, app.pool)
 	now := time.Now().UTC()
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 
 	input := filestoreSessionCreateInput(ids.OrganizationUUID, ids.WorkspaceUUID, ids.APIKeyUUID)
 	session, thread, _, work, err := app.db.CreateSession(ctx, input)
@@ -701,7 +700,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		Limit:         10,
 		Cursor: &db.SessionPageCursor{
 			CreatedAt: session.CreatedAt.Add(time.Second),
-			UUID:      uuid.NewString(),
+			UUID:      uuid.NewV4().String(),
 		},
 	})
 	if err != nil || len(sessions) == 0 {
@@ -713,7 +712,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		Limit:             10,
 		Cursor: &db.SessionThreadPageCursor{
 			CreatedAt: thread.CreatedAt.Add(time.Second),
-			UUID:      uuid.NewString(),
+			UUID:      uuid.NewV4().String(),
 		},
 	})
 	if err != nil || len(threads) != 1 || threads[0].UUID != thread.UUID {
@@ -722,7 +721,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 
 	eventExternalID := "sevt_typed_uuid_" + suffix
 	events, err := app.db.AppendSessionEvents(ctx, ids.WorkspaceUUID, session.ExternalID, []db.SessionEvent{{
-		UUID:        uuid.NewString(),
+		UUID:        uuid.NewV4().String(),
 		ExternalID:  eventExternalID,
 		EventType:   "typed_uuid.runtime",
 		Payload:     []byte(`{"typed_uuid":true}`),
@@ -738,7 +737,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		Limit:             10,
 		Cursor: &db.SessionEventPageCursor{
 			CreatedAt: now.Add(-time.Second),
-			UUID:      uuid.NewString(),
+			UUID:      uuid.NewV4().String(),
 		},
 	})
 	if err != nil || len(listedEvents) != 1 || listedEvents[0].UUID != events[0].UUID {
@@ -766,7 +765,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	}
 	providerSandboxID := "provider_typed_uuid_" + suffix
 	runningSandbox, err := app.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
-		UUID:                  uuid.NewString(),
+		UUID:                  uuid.NewV4().String(),
 		ExternalID:            "envsbx_typed_uuid_" + suffix,
 		OrganizationUUID:      ids.OrganizationUUID,
 		WorkspaceUUID:         ids.WorkspaceUUID,
@@ -856,7 +855,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		t.Fatalf("find bootstrap platform user: %v", err)
 	}
 	bootstrapUser, err := app.db.GetBootstrapUser(ctx, userExternalID)
-	if err != nil || bootstrapUser == nil || uuid.Validate(bootstrapUser.UUID) != nil {
+	if err != nil || bootstrapUser == nil || !isValidUUID(bootstrapUser.UUID) {
 		t.Fatalf("get bootstrap user through typed UUID row = (%+v, %v)", bootstrapUser, err)
 	}
 	bootstrapOrganization, err := app.db.GetPlatformOrganization(ctx, orgUUID)
@@ -875,7 +874,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ExpiresAt:  &platformExpiresAt,
 	})
 	if err != nil || platformIdentity.OrganizationUUID != orgUUID ||
-		uuid.Validate(platformIdentity.UserUUID) != nil || uuid.Validate(platformIdentity.APIKeyUUID) != nil {
+		!isValidUUID(platformIdentity.UserUUID) || !isValidUUID(platformIdentity.APIKeyUUID) {
 		t.Fatalf("resolve platform identity through typed UUID rows = (%+v, %v)", platformIdentity, err)
 	}
 
@@ -883,12 +882,12 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		Name:        "typed_uuid",
 		Description: "PostgreSQL UUID boundary",
 	}})
-	if err != nil || uuid.Validate(catalog.UUID) != nil {
+	if err != nil || !isValidUUID(catalog.UUID) {
 		t.Fatalf("upsert MCP tool catalog through typed UUID row = (%+v, %v)", catalog, err)
 	}
 
 	vault, err := app.db.CreateVault(ctx, db.Vault{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          "vlt_runtime_typed_uuid_" + suffix,
 		OrganizationUUID:    ids.OrganizationUUID,
 		WorkspaceUUID:       ids.WorkspaceUUID,
@@ -902,7 +901,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		t.Fatalf("create runtime Vault: %v", err)
 	}
 	flow, err := app.db.CreateMCPOAuthFlow(ctx, db.MCPOAuthFlow{
-		UUID:                    uuid.NewString(),
+		UUID:                    uuid.NewV4().String(),
 		ExternalID:              "mcpoauth_typed_uuid_" + suffix,
 		OrganizationUUID:        ids.OrganizationUUID,
 		WorkspaceUUID:           ids.WorkspaceUUID,
@@ -916,12 +915,20 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		TokenEndpoint:           "https://auth.example.test/token",
 		Resource:                "https://mcp.example.test",
 		ClientID:                "typed-uuid",
+		ClientCredentialSource:  "sealed",
 		TokenEndpointAuthMethod: "none",
-		CodeVerifier:            "typed-uuid-verifier",
 		CodeChallengeMethod:     "S256",
-		Status:                  "pending",
-		CreatedAt:               now,
-		ExpiresAt:               now.Add(10 * time.Minute),
+		SecretEnvelope: &secrets.Envelope{
+			Ciphertext:    []byte("typed-uuid-flow-cipher"),
+			Nonce:         []byte("nonce-12byte"),
+			WrappedDEK:    []byte("typed-uuid-flow-wrap"),
+			FormatVersion: 1,
+			KeyProvider:   "local",
+			KeyVersion:    1,
+		},
+		Status:    "pending",
+		CreatedAt: now,
+		ExpiresAt: now.Add(10 * time.Minute),
 	})
 	if err != nil || flow.UserUUID != "" || flow.UUID == "" {
 		t.Fatalf("create MCP OAuth flow with nullable typed user UUID = (%+v, %v)", flow, err)
@@ -943,9 +950,14 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		SHA256:      strings.Repeat("d", 64),
 		CreatedAt:   now,
 	})
-	if err != nil || uuid.Validate(builtin.UUID) != nil || uuid.Validate(builtinVersion.UUID) != nil {
+	if err != nil || !isValidUUID(builtin.UUID) || !isValidUUID(builtinVersion.UUID) {
 		t.Fatalf("upsert builtin Skill through typed UUID rows = (%+v, %+v, %v)", builtin, builtinVersion, err)
 	}
+}
+
+func isValidUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
 }
 
 // TestTypedUUIDFilesAndFilestorePostgres exercises the final UUID migration
@@ -960,10 +972,10 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 		seedFilestoreLookupScope(t, app)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	suffix := uuid.NewString()
+	suffix := uuid.NewV4().String()
 
 	firstFile := db.FileRecord{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          "file_typed_uuid_first_" + suffix,
 		WorkspaceUUID:       workspaceUUID,
 		Filename:            "first.txt",
@@ -977,7 +989,7 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 		CreatedAt:           now,
 	}
 	secondFile := firstFile
-	secondFile.UUID = uuid.NewString()
+	secondFile.UUID = uuid.NewV4().String()
 	secondFile.ExternalID = "file_typed_uuid_second_" + suffix
 	secondFile.Filename = "second.txt"
 	secondFile.SizeBytes = 4
@@ -1009,7 +1021,7 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 		t.Fatalf("Files page with typed UUID cursor = (%+v, %v)", secondPage, err)
 	}
 
-	filesystemUUID := uuid.NewString()
+	filesystemUUID := uuid.NewV4().String()
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
 		UUID:                filesystemUUID,
 		ExternalID:          "claude_chat_typed_uuid_" + strings.ReplaceAll(suffix, "-", ""),
@@ -1065,7 +1077,7 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 		Limit:          1,
 		Cursor: &db.SessionResourceFilePageCursor{
 			Path: "/outputs",
-			UUID: uuid.NewString(),
+			UUID: uuid.NewV4().String(),
 		},
 	})
 	if err != nil || len(page.Entries) != 1 || page.Entries[0].UUID != activeResult.Node.UUID {

@@ -37,7 +37,7 @@ func TestBuildMCPOAuthStoredCredentialJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("success with refresh uses named schemas", func(t *testing.T) {
+	t.Run("success sealed keeps client secret", func(t *testing.T) {
 		publicRaw, secretRaw, err := BuildMCPOAuthStoredCredentialJSON(MCPOAuthStoredCredentialInput{
 			MCPServerURL:            "https://mcp.example.com/mcp",
 			AccessToken:             "access",
@@ -45,6 +45,7 @@ func TestBuildMCPOAuthStoredCredentialJSON(t *testing.T) {
 			TokenEndpoint:           "https://auth.example.com/token",
 			ClientID:                "client",
 			ClientSecret:            "secret",
+			ClientCredentialSource:  MCPOAuthClientCredentialSealed,
 			TokenEndpointAuthMethod: "client_secret_post",
 			Scope:                   "mcp",
 			Resource:                "https://mcp.example.com/mcp",
@@ -57,7 +58,8 @@ func TestBuildMCPOAuthStoredCredentialJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode auth: %v", err)
 		}
-		if publicAuth.Refresh == nil ||
+		if publicAuth.ClientCredentialSource != MCPOAuthClientCredentialSealed ||
+			publicAuth.Refresh == nil ||
 			publicAuth.Refresh.TokenEndpoint != "https://auth.example.com/token" ||
 			publicAuth.Refresh.ClientID != "client" ||
 			publicAuth.Refresh.TokenEndpointAuth.Type != "client_secret_post" ||
@@ -75,6 +77,40 @@ func TestBuildMCPOAuthStoredCredentialJSON(t *testing.T) {
 			secret.Refresh.TokenEndpointAuth.Type != "client_secret_post" ||
 			secret.Refresh.TokenEndpointAuth.ClientSecret != "secret" {
 			t.Fatalf("secret refresh = %#v", secret.Refresh)
+		}
+	})
+
+	t.Run("platform omits deploy secret from credential", func(t *testing.T) {
+		publicRaw, secretRaw, err := BuildMCPOAuthStoredCredentialJSON(MCPOAuthStoredCredentialInput{
+			MCPServerURL:            "https://mcp.example.com/mcp",
+			AccessToken:             "access",
+			RefreshToken:            "refresh",
+			TokenEndpoint:           "https://auth.example.com/token",
+			ClientID:                "client",
+			ClientSecret:            "platform-secret",
+			ClientCredentialSource:  MCPOAuthClientCredentialPlatform,
+			TokenEndpointAuthMethod: "client_secret_post",
+			Now:                     now,
+		})
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		publicAuth, err := decodeMCPOAuthCredentialAuth(publicRaw)
+		if err != nil {
+			t.Fatalf("decode auth: %v", err)
+		}
+		if publicAuth.ClientCredentialSource != MCPOAuthClientCredentialPlatform {
+			t.Fatalf("source = %q, want platform", publicAuth.ClientCredentialSource)
+		}
+		secret, err := decodeMCPOAuthCredentialSecret(secretRaw)
+		if err != nil {
+			t.Fatalf("decode secret: %v", err)
+		}
+		if secret.Refresh == nil || secret.Refresh.TokenEndpointAuth == nil {
+			t.Fatalf("secret refresh missing: %#v", secret.Refresh)
+		}
+		if secret.Refresh.TokenEndpointAuth.ClientSecret != "" {
+			t.Fatalf("platform client_secret = %q, want empty", secret.Refresh.TokenEndpointAuth.ClientSecret)
 		}
 	})
 }

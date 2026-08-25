@@ -4,14 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
 type AdminUser struct {
-	UUID             uuid.UUID `db:"uuid"`
+	UUID             string    `db:"uuid"`
 	ExternalID       string    `db:"external_id"`
-	OrganizationUUID uuid.UUID `db:"organization_uuid"`
+	OrganizationUUID string    `db:"organization_uuid"`
 	Email            string    `db:"email"`
 	Name             string    `db:"name"`
 	Role             string    `db:"role"`
@@ -78,7 +77,7 @@ func (d *DB) DeleteAdminUser(ctx context.Context, organizationUUID, externalID s
 		if deleteErr = mapper.SoftDeleteWorkspaceMembersByUserUUID(
 			ctx,
 			organizationUUID,
-			deleted.UUID.String(),
+			deleted.UUID,
 		); deleteErr != nil {
 			return deleteErr
 		}

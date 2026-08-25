@@ -15,8 +15,6 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 	examplePath := repositoryFilePath(t, "config", "config.example.yaml")
 	got := configDocumentPaths(t, examplePath)
 	want := []string{
-		"anthropic_upstream",
-		"anthropic_upstream.api_key",
 		"database",
 		"database.url",
 		"e2b",
@@ -39,6 +37,7 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"vault",
 		"vault.master_key",
 		"vault.master_key.kek",
+		"vault.master_key.version",
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {

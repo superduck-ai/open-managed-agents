@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const platformEnvironmentTokenExpirySeconds = 60 * 60 * 24 * 365
@@ -76,7 +76,7 @@ func handleCreatePlatformEnvironmentToken(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC()
 	expiresAt := now.Add(time.Duration(platformEnvironmentTokenExpirySeconds) * time.Second)
 	token := platformEnvironmentToken{
-		ID:        uuid.NewString(),
+		ID:        uuid.NewV4().String(),
 		Name:      platformEnvironmentTokenName(body),
 		CreatedAt: formatJSISOString(now),
 		ExpiresAt: formatJSISOString(expiresAt),

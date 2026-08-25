@@ -45,7 +45,7 @@ test: generate
 
 # Regenerate DB mappers with the version pinned by go.mod's tool directive.
 generate-yourbatis-mappers:
-  go generate ./internal/db
+  ./scripts/generate-go.sh
 
 # Run the repository's configured Go static-analysis and formatting checks.
 lint: generate

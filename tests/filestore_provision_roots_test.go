@@ -6,8 +6,7 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -236,8 +235,8 @@ func newFilestoreProvisionInput(
 	apiKeyUUID string,
 ) db.ProvisionFilestoreFilesystemInput {
 	return db.ProvisionFilestoreFilesystemInput{
-		UUID:                uuid.NewString(),
-		ExternalID:          "claude_chat_roots_" + uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
+		ExternalID:          "claude_chat_roots_" + uuid.NewV4().String(),
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		SessionUUID:         sessionUUID,

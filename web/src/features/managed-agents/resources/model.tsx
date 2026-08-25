@@ -606,11 +606,6 @@ export function deploymentAgentVersion(deployment: DeploymentApiResponse) {
   return typeof version === 'number' ? version : null;
 }
 
-export function triggerLabel(trigger: unknown) {
-  const triggerRecord = objectRecord(trigger);
-  return String(triggerRecord.type || 'manual');
-}
-
 export function deploymentRunStatus(run: DeploymentRunApiResponse, msg?: I18nMsg) {
   if (run.error) {
     return msg ? msg('managedAgents.deployments.runStatus.failed', 'Failed') : 'Failed';
@@ -840,7 +835,7 @@ export function credentialFormValues(credential?: VaultCredentialApiResponse): C
   return {
     ...emptyCredentialFormValues(),
     displayName: credential?.display_name || '',
-    authType,
+    authType: parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : ''),
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
     ...(networking ?? {}),

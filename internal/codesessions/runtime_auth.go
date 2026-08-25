@@ -14,7 +14,7 @@ func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Requ
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing code session token"))
 		return SessionCredentialClaims{}, "", false
 	}
-	claims, err := h.service.AuthenticateSessionIngress(token, "")
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, "")
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid code session token"))
 		return SessionCredentialClaims{}, "", false
@@ -23,24 +23,44 @@ func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) authorizeSessionIngress(w http.ResponseWriter, r *http.Request, codeSessionID string) bool {
-	if err := h.authorizeSessionIngressRequest(r, codeSessionID); err != nil {
+	_, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	return ok
+}
+
+func (h *Handler) authorizeSessionIngressClaims(w http.ResponseWriter, r *http.Request, codeSessionID string) (SessionCredentialClaims, bool) {
+	claims, err := h.sessionIngressClaims(r, codeSessionID)
+	if err != nil {
 		h.errorAdapter.Write(w, r, err)
-		return false
+		return SessionCredentialClaims{}, false
 	}
-	return true
+	return claims, true
 }
 
 func (h *Handler) authorizeSessionIngressRequest(r *http.Request, codeSessionID string) error {
+	_, err := h.sessionIngressClaims(r, codeSessionID)
+	return err
+}
+
+func (h *Handler) sessionIngressClaims(r *http.Request, codeSessionID string) (SessionCredentialClaims, error) {
 	// 校验 URL 中的 codeSessionID，为空时返回 404，避免处理没有明确 session 归属的请求。
 	if strings.TrimSpace(codeSessionID) == "" {
-		return codeSessionRouteNotFound()
+		return SessionCredentialClaims{}, codeSessionRouteNotFound()
 	}
 	token := auth.ExtractAPIKey(r)
 	if token == "" {
-		return sessionIngressTokenRequired()
+		return SessionCredentialClaims{}, sessionIngressTokenRequired()
 	}
-	if _, err := h.service.AuthenticateSessionIngress(token, codeSessionID); err != nil {
-		return sessionIngressTokenInvalid(err)
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, codeSessionID)
+	if err != nil {
+		return SessionCredentialClaims{}, sessionIngressTokenInvalid(err)
 	}
-	return nil
+	return claims, nil
+}
+
+func codeSessionStreamRouteFromClaims(claims SessionCredentialClaims) CodeSessionStreamRoute {
+	return CodeSessionStreamRoute{
+		CodeSessionID:     claims.SessionID,
+		WorkspaceUUID:     claims.WorkspaceUUID,
+		SessionExternalID: claims.PublicSessionID,
+	}
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 type credentialAuthType string
@@ -27,10 +26,11 @@ type credentialAuthVariant interface {
 }
 
 type mcpOAuthCredentialAuth struct {
-	Type         credentialAuthType `json:"type"`
-	MCPServerURL string             `json:"mcp_server_url"`
-	ExpiresAt    *string            `json:"expires_at,omitempty"`
-	Refresh      *mcpOAuthRefresh   `json:"refresh,omitempty"`
+	Type                   credentialAuthType `json:"type"`
+	MCPServerURL           string             `json:"mcp_server_url"`
+	ClientCredentialSource string             `json:"client_credential_source,omitempty"`
+	ExpiresAt              *string            `json:"expires_at,omitempty"`
+	Refresh                *mcpOAuthRefresh   `json:"refresh,omitempty"`
 }
 
 func (*mcpOAuthCredentialAuth) credentialAuthVariant() {}
@@ -124,7 +124,7 @@ func decodeMCPOAuthCredentialAuth(raw []byte) (*mcpOAuthCredentialAuth, error) {
 	if !ok || value == nil {
 		return nil, credentialAuthNotMCPOAuth()
 	}
-	if strings.TrimSpace(value.MCPServerURL) == "" {
+	if value.MCPServerURL == "" {
 		return nil, mcpOAuthServerURLRequired()
 	}
 	return value, nil

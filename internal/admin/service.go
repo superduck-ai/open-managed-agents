@@ -7,13 +7,12 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
-
-	"github.com/google/uuid"
 )
 
 type Service struct {
@@ -37,8 +36,8 @@ func NewService(cfg config.Config, database *db.DB) *Service {
 
 func principalOrganizationUUID(principal auth.Principal) (uuid.UUID, error) {
 	organizationUUID, err := uuid.Parse(strings.TrimSpace(principal.OrganizationUUID))
-	if err != nil || organizationUUID == uuid.Nil {
-		return uuid.Nil, db.ErrNotFound
+	if err != nil || organizationUUID == uuid.Nil() {
+		return uuid.Nil(), db.ErrNotFound
 	}
 	return organizationUUID, nil
 }
@@ -52,7 +51,7 @@ func (s *Service) GetCurrentOrganization(ctx context.Context, principal auth.Pri
 	if err != nil {
 		return organizationResponse{}, mapAdminDBError(err, "Organization not found")
 	}
-	return organizationResponse{ID: org.UUID.String(), Name: org.Name, Type: "organization"}, nil
+	return organizationResponse{ID: org.UUID, Name: org.Name, Type: "organization"}, nil
 }
 
 func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, req createInviteRequest) (inviteResponse, error) {
@@ -74,7 +73,7 @@ func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, re
 	}
 	invite, err := s.db.CreateAdminInvite(ctx, db.AdminInvite{
 		ExternalID:       externalID,
-		OrganizationUUID: organizationUUID,
+		OrganizationUUID: organizationUUID.String(),
 		Email:            email,
 		Role:             req.Role,
 		Status:           "pending",
@@ -205,12 +204,12 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 		return workspaceResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
 	}
 	record, err := s.db.CreateAdminWorkspace(ctx, db.AdminWorkspace{
-		UUID:             uuid.New(),
+		UUID:             uuid.NewV4().String(),
 		ExternalID:       workspaceID,
-		OrganizationUUID: organizationUUID,
+		OrganizationUUID: organizationUUID.String(),
 		Name:             name,
 		CreatedAt:        now,
-		CompartmentID:    uuid.NewString(),
+		CompartmentID:    uuid.NewV4().String(),
 		DisplayColor:     "#6C5BB9",
 		DataResidency:    residencyJSON,
 		ExternalKeyID:    normalizedOptionalString(req.ExternalKeyID),
@@ -371,7 +370,7 @@ func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Princ
 	}
 	records, hasMore, err := s.db.ListAdminWorkspaceMembersPage(ctx, db.ListAdminMembersParams{
 		OrganizationUUID: principal.OrganizationUUID,
-		WorkspaceUUID:    workspace.UUID.String(),
+		WorkspaceUUID:    workspace.UUID,
 		AfterID:          afterID,
 		BeforeID:         beforeID,
 		Limit:            limit,
@@ -493,7 +492,7 @@ func (s *Service) CreateExternalKey(ctx context.Context, principal auth.Principa
 	}
 	key, err := s.db.CreateAdminExternalKey(ctx, db.AdminExternalKey{
 		ExternalID:       externalID,
-		OrganizationUUID: organizationUUID,
+		OrganizationUUID: organizationUUID.String(),
 		DisplayName:      displayName,
 		Geo:              geo,
 		ProviderConfig:   providerConfig,
@@ -704,7 +703,7 @@ func (s *Service) CreateTunnelCertificate(ctx context.Context, principal auth.Pr
 	if tunnel.ArchivedAt != nil {
 		return tunnelCertificateResponse{}, conflict("Tunnel is archived")
 	}
-	count, err := s.db.CountActiveAdminTunnelCertificates(ctx, principal.OrganizationUUID, tunnel.UUID.String())
+	count, err := s.db.CountActiveAdminTunnelCertificates(ctx, principal.OrganizationUUID, tunnel.UUID)
 	if err != nil {
 		return tunnelCertificateResponse{}, err
 	}
@@ -750,7 +749,7 @@ func (s *Service) ListTunnelCertificates(ctx context.Context, principal auth.Pri
 	}
 	records, hasMore, err := s.db.ListAdminTunnelCertificatesPage(ctx, db.ListAdminTunnelCertificatesParams{
 		OrganizationUUID: principal.OrganizationUUID,
-		TunnelUUID:       tunnel.UUID.String(),
+		TunnelUUID:       tunnel.UUID,
 		IncludeArchived:  includeArchived,
 		Limit:            limit,
 		Offset:           offset,

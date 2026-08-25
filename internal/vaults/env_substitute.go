@@ -3,6 +3,7 @@ package vaults
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -23,28 +24,44 @@ type egressSubstitution struct {
 }
 
 // applyEgressSubstitutions rewrites an already snapshotted request. Matching
-// and replacement use the same bounded body bytes.
+// and replacement use the same bounded body bytes. Header and body each get
+// one pass from the original text so a secret that equals another credential's
+// placeholder is not substituted again.
 func applyEgressSubstitutions(req *http.Request, body []byte, substitutions []egressSubstitution) {
 	if len(substitutions) == 0 {
 		return
 	}
-	for _, rule := range substitutions {
-		if rule.header {
-			for key, values := range req.Header {
-				for i, value := range values {
-					if strings.Contains(value, rule.placeholder) {
-						req.Header[key][i] = strings.ReplaceAll(value, rule.placeholder, rule.secretValue)
-					}
-				}
+	if headerReplacer := substitutionReplacer(substitutions, true); headerReplacer != nil {
+		for key, values := range req.Header {
+			for i, value := range values {
+				req.Header[key][i] = headerReplacer.Replace(value)
 			}
 		}
-		if rule.body && strings.Contains(string(body), rule.placeholder) {
-			body = []byte(strings.ReplaceAll(string(body), rule.placeholder, rule.secretValue))
-		}
+	}
+	if bodyReplacer := substitutionReplacer(substitutions, false); bodyReplacer != nil && len(body) > 0 {
+		body = []byte(bodyReplacer.Replace(string(body)))
 	}
 	if len(body) > 0 {
 		restoreRequestBody(req, body)
 	}
+}
+
+func substitutionReplacer(substitutions []egressSubstitution, header bool) *strings.Replacer {
+	pairs := make([]string, 0, len(substitutions)*2)
+	for _, rule := range substitutions {
+		enabled := rule.body
+		if header {
+			enabled = rule.header
+		}
+		if !enabled {
+			continue
+		}
+		pairs = append(pairs, rule.placeholder, rule.secretValue)
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+	return strings.NewReplacer(pairs...)
 }
 
 // requestNeedsPlaceholder reports whether placeholder appears in locations the
@@ -175,7 +192,7 @@ func (s *EgressSubstitutor) planEnvEgress(
 		if item.value.InjectionLocation.Body && !bodyLoaded {
 			body, err = snapshotRequestBody(req)
 			if err != nil {
-				return envEgressPlan{}, substitutionRejected(err)
+				return envEgressPlan{}, substitutionRejected(fmt.Errorf("environment variable body substitution: %w", err))
 			}
 			bodyLoaded = true
 		}

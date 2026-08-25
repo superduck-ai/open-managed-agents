@@ -428,7 +428,7 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		"export CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH=${CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH:-0}",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
 		// 让 environment-manager 自身及其子进程把 GitHub SSH remote 改写为经受控 HTTPS 出口访问。
-		"export GIT_CONFIG_COUNT=5",
+		"export GIT_CONFIG_COUNT=3",
 		"export GIT_CONFIG_KEY_0=credential.interactive",
 		"export GIT_CONFIG_VALUE_0=false",
 		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",

@@ -312,7 +312,7 @@ func TestMITMEgressPrepareGitSmartHTTPOverwritesAuthorizationAndKeepsSubstitutio
 		vaultIDs:    []string{cred.VaultExternalID},
 		credentials: []db.VaultCredential{cred},
 	}
-	req := newHTTPRequest(t, http.MethodGet, "https://gitlab.example.com/group/repo.git/git-upload-pack", nil)
+	req := newHTTPRequest(t, http.MethodPost, "https://gitlab.example.com/group/repo.git/git-upload-pack", nil)
 	req.Header.Set("Authorization", "Bearer oma_ph_git")
 	req.Header.Set("PRIVATE-TOKEN", "oma_ph_git")
 	if err := prepareMITMEgress(t, store, svc, "gitlab.example.com:443", req); err != nil {

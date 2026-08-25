@@ -197,8 +197,8 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 | 项 | 决定 |
 |---|---|
-| 匹配 | **Git Smart HTTP 协议**，不按 GitLab/GitHub 产品。路径为 `…/info/refs?service=git-upload-pack\|git-receive-pack`、`…/git-upload-pack`、`…/git-receive-pack` |
-| 范围 | 仅已是 HTTPS 的 remote。**不**改写 `git@` SSH、不覆盖 Git LFS / dumb HTTP / Git REST |
+| 匹配 | **Git Smart HTTP 协议**，不按 GitLab/GitHub 产品。`GET …/info/refs?service=git-upload-pack\|git-receive-pack`；`POST …/git-upload-pack` 或 `…/git-receive-pack`。错误 method、LFS、dumb HTTP、REST 不匹配 |
+| 范围 | Vault/MITM **只**处理已是 HTTPS 的 Smart HTTP；**不**覆盖 Git LFS / dumb HTTP / Git REST，也**不**在 MITM 层改写 `git@` / `ssh://`。GitHub SSH→HTTPS 由 environment-manager `insteadOf` 完成（见 [upstream-proxy-and-model-runtime](./ccrv2/upstream-proxy-and-model-runtime.md#git-私有仓库出站)），改写后再走本注入 |
 | 写入 | 第一次转发前写 `Authorization: Basic`；用户名固定 `oauth2`；密码为 Environment Variable Credential secret。已有 Authorization 一律覆盖 |
 | 选凭据 | Credential Networking 覆盖该 host 且 Injection Location 含 header；Vault Attachment Order 先到先得 |
 | 未覆盖 | passthrough |
@@ -298,7 +298,7 @@ sequenceDiagram
 - create 签发 `oma_ph_` placeholder；响应含 `injection_location`；不回显 `secret_value`。
 - Session 挂载：MITM 关且存在活跃 env → 失败；仅 MCP 凭证不挡启动；否则 `startup_context.environment_variables` 灌入 placeholder（先到先得，不覆盖平台保留名）。
 - MITM egress：host/location 匹配时替换；未覆盖透传；Open 失败 → 502。
-- Git Smart HTTP：HTTPS `info/refs` / `git-upload-pack` / `git-receive-pack` 在第一次转发前写入 `Authorization: Basic oauth2:<secret>`；未覆盖透传；Open 失败 → 502；REST 与 SSH 不改。
+- Git Smart HTTP：`GET` `info/refs?service=…` 与 `POST` `git-upload-pack` / `git-receive-pack` 在第一次转发前写入 `Authorization: Basic oauth2:<secret>`；错误 method / 未覆盖透传；Open 失败 → 502；LFS / dumb HTTP / REST 不注票。SSH→HTTPS（GitHub）属 Runner/environment-manager，不在本模块。
 - 旧凭证缺 placeholder / injection_location → update/挂载拒绝（archive 重建）。
 
 > 注：云 KMS 自动轮换 / DisableKey 另议。
@@ -319,7 +319,7 @@ sequenceDiagram
 
 - `mcp_oauth_validate` 真 refresh / live MCP probe
 - `vault_credential.refresh_failed` webhook 发出
-- Git LFS、dumb HTTP、git SSH、把 `git@` remote 改写成 HTTPS
+- Git LFS、dumb HTTP、原生 git SSH 隧道、非 GitHub 的通用 `git@`→HTTPS 改写；GitHub `insteadOf` 见 CCRv2 upstream-proxy 文档（已实现，不在本 vault 切片）
 - GitHub App `x-access-token` Basic 用户名
 - Expand/Backfill、`backfill_secrets`
 - Shamir / 云 KMS provider 实现

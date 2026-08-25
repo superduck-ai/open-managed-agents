@@ -11,8 +11,10 @@ import (
 
 const gitSmartHTTPBasicUsername = "oauth2"
 
-// isGitSmartHTTPRequest reports whether req is Git Smart HTTP object transfer.
-// Git LFS, dumb HTTP (info/refs without a git service), and Git REST APIs are not.
+// isGitSmartHTTPRequest reports whether req is a valid Git Smart HTTP transfer:
+// GET …/info/refs?service=git-upload-pack|git-receive-pack, or
+// POST …/git-upload-pack|git-receive-pack.
+// Git LFS, dumb HTTP, wrong methods, and Git REST APIs are not.
 func isGitSmartHTTPRequest(req *http.Request) bool {
 	if req == nil || req.URL == nil {
 		return false
@@ -20,8 +22,11 @@ func isGitSmartHTTPRequest(req *http.Request) bool {
 	path := strings.TrimRight(req.URL.Path, "/")
 	switch {
 	case strings.HasSuffix(path, "/git-upload-pack"), strings.HasSuffix(path, "/git-receive-pack"):
-		return true
+		return req.Method == http.MethodPost
 	case strings.HasSuffix(path, "/info/refs"):
+		if req.Method != http.MethodGet {
+			return false
+		}
 		service := req.URL.Query().Get("service")
 		return service == "git-upload-pack" || service == "git-receive-pack"
 	default:

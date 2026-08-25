@@ -254,6 +254,8 @@ func TestWrapTransportExcludesByPlanCredIDWhenUpdateReturnsEmptyRow(t *testing.T
 
 type fakeCredentialStore struct {
 	updateErr       error
+	updateErrs      []error
+	lastUpdate      db.VaultCredential
 	get             db.VaultCredential
 	getResults      []db.VaultCredential
 	vaultIDs        []string
@@ -267,13 +269,22 @@ type fakeCredentialStore struct {
 func (f *fakeCredentialStore) UpdateVaultCredential(
 	_ context.Context,
 	_, _, _ string,
-	_ db.VaultCredential,
+	next db.VaultCredential,
 ) (db.VaultCredential, error) {
 	f.updateCalls++
+	f.lastUpdate = next
+	if len(f.updateErrs) > 0 {
+		err := f.updateErrs[0]
+		f.updateErrs = f.updateErrs[1:]
+		if err != nil {
+			return db.VaultCredential{}, err
+		}
+		return next, nil
+	}
 	if f.updateErr != nil {
 		return db.VaultCredential{}, f.updateErr
 	}
-	return db.VaultCredential{}, nil
+	return next, nil
 }
 
 func (f *fakeCredentialStore) GetVaultCredential(
@@ -397,22 +408,6 @@ func TestWrapTransportClosesOriginalRequestBody(t *testing.T) {
 		upstream.Client().Transport,
 	)
 
-	t.Run("success closes body", func(t *testing.T) {
-		body := &closeTrackingBody{Reader: bytes.NewReader([]byte(`{"ok":true}`))}
-		req, err := http.NewRequest(http.MethodPost, upstream.URL, body)
-		if err != nil {
-			t.Fatalf("new request: %v", err)
-		}
-		resp, err := transport.RoundTrip(req)
-		if err != nil {
-			t.Fatalf("RoundTrip: %v", err)
-		}
-		t.Cleanup(func() { _ = resp.Body.Close() })
-		if !body.closed.Load() {
-			t.Fatal("expected original request body to be closed")
-		}
-	})
-
 	t.Run("failure oversized ContentLength still closes body", func(t *testing.T) {
 		body := &closeTrackingBody{Reader: bytes.NewReader([]byte(`{"tiny":true}`))}
 		req, err := http.NewRequest(http.MethodPost, upstream.URL, body)
@@ -426,6 +421,22 @@ func TestWrapTransportClosesOriginalRequestBody(t *testing.T) {
 		}
 		if !body.closed.Load() {
 			t.Fatal("expected original request body to be closed on snapshot failure")
+		}
+	})
+
+	t.Run("success closes body", func(t *testing.T) {
+		body := &closeTrackingBody{Reader: bytes.NewReader([]byte(`{"ok":true}`))}
+		req, err := http.NewRequest(http.MethodPost, upstream.URL, body)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := transport.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("RoundTrip: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		if !body.closed.Load() {
+			t.Fatal("expected original request body to be closed")
 		}
 	})
 }

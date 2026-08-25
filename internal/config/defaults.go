@@ -13,9 +13,6 @@ func defaultConfig() Config {
 				ForcePathStyle: true,
 			},
 		},
-		AnthropicUpstream: AnthropicUpstreamConfig{
-			BaseURL: "https://api.anthropic.com",
-		},
 		Batch: BatchConfig{
 			WorkerEnabled:             true,
 			WorkerConcurrency:         2,

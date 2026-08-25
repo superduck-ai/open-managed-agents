@@ -363,6 +363,104 @@ func TestRefreshMCPOAuthCredentialPlatformSecretMissing(t *testing.T) {
 	}
 }
 
+func TestRefreshMCPOAuthCredentialDoesNotReexchangeAfterNonSecretCASConflict(t *testing.T) {
+	env := newOAuthRefreshEnv(t, "fresh-access")
+	stale := env.staleCred("refresh-token")
+	store := &fakeCredentialStore{
+		updateErr:  db.ErrVersionConflict,
+		getResults: []db.VaultCredential{stale, stale, stale, stale},
+	}
+	injector := env.injector(store)
+
+	_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, false)
+	if !errors.Is(err, errMCPOAuthRefreshUnavailable) {
+		t.Fatalf("error = %v, want errMCPOAuthRefreshUnavailable", err)
+	}
+	if env.tokenCalls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1 (CAS conflict must not re-exchange)", env.tokenCalls.Load())
+	}
+}
+
+func TestRefreshMCPOAuthCredentialPersistsExchangeAfterRenameCASConflict(t *testing.T) {
+	env := newOAuthRefreshEnv(t, "fresh-access")
+	stale := env.staleCred("refresh-token")
+	renamed := stale
+	renamed.SecretVersion = stale.SecretVersion + 1
+	renamed.DisplayName = "renamed"
+	store := &fakeCredentialStore{
+		updateErrs: []error{db.ErrVersionConflict, nil},
+		getResults: []db.VaultCredential{stale, renamed},
+	}
+	injector := env.injector(store)
+
+	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, false)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if token != "fresh-access" {
+		t.Fatalf("token = %q", token)
+	}
+	if env.tokenCalls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1", env.tokenCalls.Load())
+	}
+	if store.updateCalls != 2 {
+		t.Fatalf("updateCalls=%d, want 2 (retry persist onto renamed version)", store.updateCalls)
+	}
+	if saved == nil || saved.DisplayName != "renamed" {
+		t.Fatalf("saved display_name = %+v, want renamed", saved)
+	}
+	if saved.SecretVersion != renamed.SecretVersion {
+		t.Fatalf("persisted SecretVersion = %d, want %d", saved.SecretVersion, renamed.SecretVersion)
+	}
+}
+
+func TestRefreshMCPOAuthCredentialKeepsExchangeErrorWhenRenameBumpsVersion(t *testing.T) {
+	env := newOAuthRefreshEnv(t, "")
+	stale := env.staleCred("bad-refresh")
+	renamed := stale
+	renamed.SecretVersion = stale.SecretVersion + 1
+	renamed.DisplayName = "renamed"
+	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale, renamed}}
+	injector := env.injector(store)
+
+	_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, true)
+	if err == nil {
+		t.Fatal("expected exchange error when envelope tokens are unchanged")
+	}
+	if env.tokenCalls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1 (rename must not retry exchange)", env.tokenCalls.Load())
+	}
+}
+
+func TestRefreshMCPOAuthCredentialPersistsExchangeWhenReloadedTokenUnusable(t *testing.T) {
+	env := newOAuthRefreshEnv(t, "fresh-access")
+	stale := env.staleCred("refresh-token")
+	otherExpired := sealedMCPOAuthCredential(t, env.svc, env.tokenURL, "other-access", "refresh-token", strPtr("2020-01-01T00:00:00Z"))
+	otherExpired.SecretVersion = stale.SecretVersion + 1
+	store := &fakeCredentialStore{
+		updateErrs: []error{db.ErrVersionConflict, nil},
+		getResults: []db.VaultCredential{stale, otherExpired},
+	}
+	injector := env.injector(store)
+
+	token, saved, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, false)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if token != "fresh-access" {
+		t.Fatalf("token = %q, want persisted exchange result", token)
+	}
+	if env.tokenCalls.Load() != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1 (must not re-exchange after CAS)", env.tokenCalls.Load())
+	}
+	if store.updateCalls != 2 {
+		t.Fatalf("updateCalls=%d, want 2", store.updateCalls)
+	}
+	if saved == nil {
+		t.Fatal("expected saved credential")
+	}
+}
+
 func TestRefreshMCPOAuthCredentialReusesWinnerAfterCASConflict(t *testing.T) {
 	env := newOAuthRefreshEnv(t, "loser-should-not-persist")
 	stale, winner := env.staleWinner("refresh-token", false)
@@ -433,7 +531,7 @@ func TestRefreshMCPOAuthCredentialKeepsExchangeErrorWhenVersionUnchanged(t *test
 
 	_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, env.now, true)
 	if err == nil {
-		t.Fatal("expected exchange error when reload does not advance SecretVersion")
+		t.Fatal("expected exchange error when reload does not change envelope tokens")
 	}
 	if env.tokenCalls.Load() != 1 {
 		t.Fatalf("token endpoint calls = %d, want 1 (no retry exchange)", env.tokenCalls.Load())

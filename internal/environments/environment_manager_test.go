@@ -226,14 +226,9 @@ func TestManagedAgentRuntimeResourcesSkipInvalidSources(t *testing.T) {
 }
 
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
-	// 故意给配置放入可识别的上游密钥，后续断言它不会进入 payload 或 shell 命令。
 	cfg := config.Config{
 		CodeSession: config.CodeSessionConfig{
 			SandboxAPIBaseURL: "http://host.docker.internal:18081/",
-		},
-		AnthropicUpstream: config.AnthropicUpstreamConfig{
-			BaseURL: "https://api.anthropic.test/",
-			APIKey:  "sk-ant-test-secret",
 		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
 			ManagerPath:        "/opt/env manager/bin/environment-manager",
@@ -241,7 +236,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			ClaudePath:         "/opt/claude path/bin/claude",
 		},
 	}
-	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
+	sessionConfig := json.RawMessage(`{"model":"kimi-k2.5","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg, nil)
@@ -275,7 +270,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnv[key] != "claude-opus-4-8" {
+		if startupEnv[key] != "kimi-k2.5" {
 			t.Fatalf("%s = %q, want session model", key, startupEnv[key])
 		}
 	}
@@ -313,9 +308,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := environment["environment"]; ok {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
-	if strings.Contains(string(payload), cfg.AnthropicUpstream.APIKey) {
-		t.Fatalf("payload leaked upstream anthropic api key: %s", payload)
-	}
 
 	command := buildEnvironmentManagerCommand("cse_session with 'quote'/and/slash", cfg, payload)
 	if !reflect.DeepEqual(command.Payload, payload) {
@@ -346,9 +338,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		if !strings.Contains(allCommands, want) {
 			t.Fatalf("commands missing %q in:\n%s", want, allCommands)
 		}
-	}
-	if strings.Contains(allCommands, "sk-ant-test-secret") {
-		t.Fatalf("command leaked anthropic api key:\n%s", allCommands)
 	}
 	if strings.Contains(allCommands, "task-run --stdin") {
 		t.Fatalf("command should use task-run's native clap stdin behavior:\n%s", allCommands)

@@ -31,6 +31,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -1085,7 +1086,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		FilestoreCredentials:   filestoreCredentials,
 		VaultSecrets:           vaultSecrets,
 	}))
-	return &testApp{
+	app := &testApp{
 		cfg:                  cfg,
 		db:                   database,
 		pool:                 pool,
@@ -1098,6 +1099,88 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		server:               server,
 		baseURL:              server.URL,
 		client:               server.Client(),
+	}
+	clearTestLLMProviders(t, app)
+	seedTestLLMProvider(t, app, "Default test provider", "https://llm.example.com", "test-provider-key", defaultTestModelIDs...)
+	return app
+}
+
+var defaultTestModelIDs = []string{
+	"kimi-k2.5",
+	"qwen-max",
+	"claude-opus-4-6",
+	"claude-opus-4-8",
+	"claude-sonnet-4-5",
+	"claude-sonnet-4-6",
+	"test",
+}
+
+func seedTestLLMProvider(t *testing.T, app *testApp, name, baseURL, apiKey string, modelIDs ...string) db.LLMProvider {
+	t.Helper()
+	defaultIDs := getDefaultDBIDs(t, app.pool)
+	return seedTestLLMProviderForWorkspace(
+		t,
+		app,
+		defaultIDs.OrganizationUUID,
+		defaultIDs.WorkspaceUUID,
+		name,
+		baseURL,
+		apiKey,
+		modelIDs...,
+	)
+}
+
+func seedTestLLMProviderForWorkspace(
+	t *testing.T,
+	app *testApp,
+	organizationUUID, workspaceUUID, name, baseURL, apiKey string,
+	modelIDs ...string,
+) db.LLMProvider {
+	t.Helper()
+	externalID, err := ids.New("llmprov_test_")
+	if err != nil {
+		t.Fatalf("generate test LLM provider ID: %v", err)
+	}
+	now := time.Now().UTC()
+	provider := db.LLMProvider{
+		UUID:             uuid.NewV4().String(),
+		ExternalID:       externalID,
+		OrganizationUUID: organizationUUID,
+		WorkspaceUUID:    workspaceUUID,
+		Name:             name,
+		BaseURL:          baseURL,
+		APIKeyLast4:      apiKey[len(apiKey)-4:],
+		ModelIDs:         append([]string(nil), modelIDs...),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	plaintext := []byte(apiKey)
+	envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), plaintext)
+	clear(plaintext)
+	if err != nil {
+		t.Fatalf("seal test LLM provider key: %v", err)
+	}
+	provider.SecretEnvelope = &envelope
+	created, err := app.db.CreateLLMProvider(context.Background(), provider)
+	if err != nil {
+		t.Fatalf("create test LLM provider: %v", err)
+	}
+	return created
+}
+
+func clearTestLLMProviders(t *testing.T, app *testApp) {
+	t.Helper()
+	ids := getDefaultDBIDs(t, app.pool)
+	providers, err := app.db.ListLLMProviders(context.Background(), ids.OrganizationUUID, ids.WorkspaceUUID)
+	if err != nil {
+		t.Fatalf("list test LLM providers: %v", err)
+	}
+	for _, provider := range providers {
+		if err := app.db.DeleteLLMProvider(
+			context.Background(), ids.OrganizationUUID, ids.WorkspaceUUID, provider.ExternalID,
+		); err != nil {
+			t.Fatalf("delete test LLM provider %s: %v", provider.ExternalID, err)
+		}
 	}
 }
 
@@ -1292,7 +1375,7 @@ func containsFile(files []metadataResponse, id string) bool {
 	return false
 }
 
-func seedWorkspaceKey(t *testing.T, pool *pgxpool.Pool, organizationName, workspaceID, keyID, apiKey string) {
+func seedWorkspaceKey(t *testing.T, pool *pgxpool.Pool, organizationName, workspaceID, keyID, apiKey string) (string, string) {
 	t.Helper()
 	ctx := context.Background()
 	var organizationUUID string
@@ -1324,6 +1407,7 @@ func seedWorkspaceKey(t *testing.T, pool *pgxpool.Pool, organizationName, worksp
 	`, keyID, workspaceUUID, auth.HashAPIKey(apiKey)); err != nil {
 		t.Fatalf("seed api key: %v", err)
 	}
+	return organizationUUID, workspaceUUID
 }
 
 func createMetadataOnlyFile(t *testing.T, app *testApp, scopeID string) string {

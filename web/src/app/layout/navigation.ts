@@ -8,6 +8,7 @@ import {
   CircleDollarSign,
   Code2,
   Copy,
+  Cpu,
   Database,
   FileText,
   Gauge,
@@ -62,6 +63,7 @@ export type NavItem = NavLinkItem | NavGroupItem;
 
 export const consoleNavigation: NavItem[] = [
   { type: 'link', href: '/dashboard', label: 'Dashboard', labelId: 'nav.dashboard', icon: LayoutDashboard },
+  { type: 'link', href: '/llm-models', label: 'LLM models', labelId: 'nav.llmModels', icon: Cpu },
   { type: 'link', href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys', icon: KeyRound },
   {
     type: 'group',
@@ -146,6 +148,7 @@ export const settingsNavigation = [
 ] as const;
 
 export const placeholderIcons = {
+  '/llm-models': Cpu,
   '/api-keys': KeyRound,
   '/workbench': Code2,
   '/playground': Braces,

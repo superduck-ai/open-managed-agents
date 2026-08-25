@@ -9,12 +9,13 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 type UpstreamClient interface {
@@ -29,24 +30,41 @@ type UpstreamResult struct {
 }
 
 type HTTPUpstreamClient struct {
-	cfg    config.Config
-	client *http.Client
+	database *db.DB
+	secrets  *secrets.Service
+	client   *http.Client
 }
 
-func NewHTTPUpstreamClient(cfg config.Config) *HTTPUpstreamClient {
-	timeout := cfg.Batch.UpstreamTimeout
+func NewHTTPUpstreamClient(database *db.DB, secretService *secrets.Service, cfg config.BatchConfig) *HTTPUpstreamClient {
+	timeout := cfg.UpstreamTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
 	}
 	return &HTTPUpstreamClient{
-		cfg:    cfg,
-		client: &http.Client{Timeout: timeout},
+		database: database,
+		secrets:  secretService,
+		client:   llmproviders.NewHTTPClient(timeout),
 	}
 }
 
 func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, req db.MessageBatchRequest) (UpstreamResult, error) {
 	body := normalizeParams(req.Params)
-	endpoint, err := url.JoinPath(c.cfg.AnthropicUpstream.BaseURL, "/v1/messages")
+	modelID, err := llmproviders.MessageRequestModel(body)
+	if err != nil {
+		return erroredResult("invalid_request_error", err.Error()), nil
+	}
+	upstream, err := llmproviders.Resolve(
+		ctx,
+		c.database,
+		c.secrets,
+		batch.OrganizationUUID,
+		req.WorkspaceUUID,
+		modelID,
+	)
+	if err != nil {
+		return erroredResult("api_error", "workspace LLM provider is unavailable"), nil
+	}
+	endpoint, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", "")
 	if err != nil {
 		return erroredResult("api_error", "invalid upstream base URL"), nil
 	}
@@ -57,7 +75,7 @@ func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, re
 	if err != nil {
 		return erroredResult("api_error", "could not create upstream request"), nil
 	}
-	httpReq.Header.Set("x-api-key", c.cfg.AnthropicUpstream.APIKey)
+	llmproviders.ApplyAPIKey(httpReq.Header, upstream.APIKey)
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("anthropic-version", batch.AnthropicVersion)
 	if batch.APIVariant == "beta" && len(batch.BetaHeaders) > 0 {

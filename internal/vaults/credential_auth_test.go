@@ -208,6 +208,44 @@ func TestNormalizeCredentialAuthForUpdateAppliesTypedNullPatch(t *testing.T) {
 	}
 }
 
+func TestNormalizeCredentialAuthForUpdateAllowsPlatformOAuthWithoutSealedClientSecret(t *testing.T) {
+	t.Parallel()
+
+	state, err := normalizeCredentialAuthForUpdate(db.VaultCredential{
+		AuthType:      "mcp_oauth",
+		CredentialKey: "https://mcp.example.com/mcp",
+		Auth: json.RawMessage(`{
+			"type":"mcp_oauth",
+			"mcp_server_url":"https://mcp.example.com/mcp",
+			"refresh":{
+				"token_endpoint":"https://auth.example.com/token",
+				"client_id":"platform-client",
+				"token_endpoint_auth":{"type":"client_secret_post"}
+			}
+		}`),
+	}, []byte(`{
+		"type":"mcp_oauth",
+		"access_token":"access-token",
+		"refresh":{
+			"refresh_token":"refresh-token",
+			"token_endpoint_auth":{"type":"client_secret_post"}
+		}
+	}`), json.RawMessage(`{"type":"mcp_oauth"}`))
+	if err != nil {
+		t.Fatalf("normalize update: %v", err)
+	}
+	secret, err := decodeMCPOAuthCredentialSecret(state.SecretPayload)
+	if err != nil {
+		t.Fatalf("decode secret: %v", err)
+	}
+	if secret.AccessToken != "access-token" || secret.Refresh == nil || secret.Refresh.RefreshToken != "refresh-token" {
+		t.Fatalf("unexpected secret: %+v", secret)
+	}
+	if secret.Refresh.TokenEndpointAuth == nil || secret.Refresh.TokenEndpointAuth.ClientSecret != "" {
+		t.Fatalf("platform sealed client_secret = %#v, want empty", secret.Refresh.TokenEndpointAuth)
+	}
+}
+
 func TestNormalizeCredentialAuthForUpdatePreservesMCPOAuthRefresh(t *testing.T) {
 	t.Parallel()
 

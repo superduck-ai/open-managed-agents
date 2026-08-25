@@ -28,7 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
-import { toast, Toaster } from '../../shared/ui/sonner';
+import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
@@ -266,7 +266,6 @@ export function OrganizationMembersPage() {
 
   return (
     <section className="mx-auto w-full max-w-[1180px]" data-testid="organization-members-page">
-      <Toaster position="top-right" duration={2200} closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
       <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
         <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
           <span>Members</span>

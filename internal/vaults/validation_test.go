@@ -4,6 +4,22 @@ import (
 	"testing"
 )
 
+func TestRequireNonEmptyStringRejectsBlank(t *testing.T) {
+	t.Parallel()
+
+	if _, err := requireNonEmptyString(" \n\t ", "field"); err == nil {
+		t.Fatal("expected blank rejection")
+	}
+}
+
+func TestRequireNonBlankVerbatimRejectsBlank(t *testing.T) {
+	t.Parallel()
+
+	if _, err := requireNonBlankVerbatim(" \n\t ", "auth.secret_value"); err == nil {
+		t.Fatal("expected blank rejection")
+	}
+}
+
 func TestRequireNonEmptyStringReturnsTrimmed(t *testing.T) {
 	t.Parallel()
 
@@ -13,14 +29,6 @@ func TestRequireNonEmptyStringReturnsTrimmed(t *testing.T) {
 	}
 	if got != "name" {
 		t.Fatalf("got %q, want trimmed identifier", got)
-	}
-}
-
-func TestRequireNonEmptyStringRejectsBlank(t *testing.T) {
-	t.Parallel()
-
-	if _, err := requireNonEmptyString(" \n\t ", "field"); err == nil {
-		t.Fatal("expected blank rejection")
 	}
 }
 
@@ -34,13 +42,5 @@ func TestRequireNonBlankVerbatimPreservesWhitespace(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("got %q, want verbatim %q", got, want)
-	}
-}
-
-func TestRequireNonBlankVerbatimRejectsBlank(t *testing.T) {
-	t.Parallel()
-
-	if _, err := requireNonBlankVerbatim(" \n\t ", "auth.secret_value"); err == nil {
-		t.Fatal("expected blank rejection")
 	}
 }

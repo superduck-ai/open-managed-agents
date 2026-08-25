@@ -367,20 +367,26 @@ func normalizeMCPOAuthForUpdate(current db.VaultCredential, currentSecret []byte
 			return credentialAuthState{}, err
 		}
 	}
-	if secretPayload.AccessToken == "" {
-		return credentialAuthState{}, ErrMissingSecretEnvelope
-	}
-	if publicAuth.Refresh != nil {
-		if secretPayload.Refresh == nil || secretPayload.Refresh.RefreshToken == "" {
-			return credentialAuthState{}, ErrMissingSecretEnvelope
-		}
-		tokenAuthType := publicAuth.Refresh.TokenEndpointAuth.Type
-		if (tokenAuthType == "client_secret_basic" || tokenAuthType == "client_secret_post") &&
-			(secretPayload.Refresh.TokenEndpointAuth == nil || secretPayload.Refresh.TokenEndpointAuth.ClientSecret == "") {
-			return credentialAuthState{}, ErrMissingSecretEnvelope
-		}
+	if err := requireMCPOAuthUpdateSecrets(publicAuth, secretPayload); err != nil {
+		return credentialAuthState{}, err
 	}
 	return credentialAuthStateFromValues(credentialAuthTypeMCPOAuth, current.CredentialKey, publicAuth, secretPayload)
+}
+
+// requireMCPOAuthUpdateSecrets checks post-merge completeness for mcp_oauth
+// update. Access/refresh tokens must be present when refresh is configured.
+// Sealed client_secret is not required: platform OAuth keeps deploy-config
+// secrets out of the user envelope (token_endpoint_auth.type still describes
+// the wire method). BYO/DCR secrets are enforced when create/patch submits
+// token_endpoint_auth.
+func requireMCPOAuthUpdateSecrets(publicAuth *mcpOAuthCredentialAuth, secretPayload mcpOAuthCredentialSecret) error {
+	if secretPayload.AccessToken == "" {
+		return ErrMissingSecretEnvelope
+	}
+	if publicAuth.Refresh != nil && (secretPayload.Refresh == nil || secretPayload.Refresh.RefreshToken == "") {
+		return ErrMissingSecretEnvelope
+	}
+	return nil
 }
 
 func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []byte, input staticBearerCredentialUpdateInput, publicAuth *staticBearerCredentialAuth) (credentialAuthState, error) {

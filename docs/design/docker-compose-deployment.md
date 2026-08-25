@@ -162,7 +162,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    just init-compose-config
    ```
 
-   如需调用真实上游，只编辑 `deploy/docker-compose/oma-server.local.yaml` 的 `anthropic_upstream.api_key`。不要把真实密钥写入 `deploy/docker-compose/oma-server.yaml` 模板。
+   启动后在控制台的「LLM 模型」页面为工作区配置 Provider。不要把 Provider API Key 写入 Compose YAML。
 
 > **平台要求**：`e2b-local` 使用 `network_mode: host`，支持 Linux Docker Engine 20.10+ 和 OrbStack（macOS）。Docker Desktop for Mac/Windows 不支持 host 网络模式。
 

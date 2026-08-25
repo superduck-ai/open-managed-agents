@@ -22,6 +22,7 @@ type messageBatchPageAnchor struct {
 type messageBatchRow struct {
 	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
+	OrganizationUUID    string     `db:"organization_uuid"`
 	WorkspaceUUID       string     `db:"workspace_uuid"`
 	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
 	APIVariant          string     `db:"api_variant"`
@@ -78,6 +79,7 @@ type messageBatchJobRow struct {
 type insertMessageBatchParams struct {
 	UUID                string
 	ExternalID          string
+	OrganizationUUID    string
 	WorkspaceUUID       string
 	CreatedByAPIKeyUUID string
 	APIVariant          string

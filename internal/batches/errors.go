@@ -2,8 +2,10 @@ package batches
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
 
 func invalidRequest(err error) error {
@@ -18,12 +20,19 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
-func batchServiceUnavailable() error {
+func batchServiceUnavailable(cause error) error {
 	return apperr.New(
 		apperr.Unavailable,
-		"anthropic_upstream.api_key is required for Message Batches",
-		errors.New("anthropic_upstream.api_key is empty"),
+		"This workspace has no LLM provider configured",
+		cause,
 	)
+}
+
+func configuredModelError(err error) error {
+	if errors.Is(err, llmproviders.ErrNotConfigured) {
+		return batchServiceUnavailable(err)
+	}
+	return internalError("Could not validate batch models", fmt.Errorf("validate configured batch models: %w", err))
 }
 
 func batchBetaRequired() error {

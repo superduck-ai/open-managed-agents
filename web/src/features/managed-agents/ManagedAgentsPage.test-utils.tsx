@@ -14,6 +14,7 @@ const { defaultWorkspace } = await import('../../shared/workspaces/api');
 const { setConsoleRequestContext } = await import('../../shared/api/client');
 const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
+const { Toaster } = await import('../../shared/ui/sonner');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
@@ -46,6 +47,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
     uuid: 'acct_managed_agents_test',
     email_address: 'managed-agents-test@example.com',
     display_name: 'Managed Agents Test User',
+    memberships: [{ role: 'admin', organization: { uuid: 'org_test' } }],
   },
   status: 'authenticated',
   csrfToken: 'csrf_managed_agents_test',
@@ -56,7 +58,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
-  queryOptions: { seedModelMappings?: boolean } = {},
+  queryOptions: { auth?: AuthContextValue; seedModels?: boolean } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -64,19 +66,20 @@ export function render(
       mutations: { retry: false },
     },
   });
-  if (queryOptions.seedModelMappings !== false) {
-    queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
+  const models = [
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+  ];
+  if (queryOptions.seedModels !== false) {
+    queryClient.setQueryData(['create-agent', 'models', 'default'], models);
+    queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
   }
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
   return testingLibrary.render(
-    <AuthContext.Provider value={managedAgentsAuthContextValue}>
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    <AuthContext.Provider value={queryOptions.auth ?? managedAgentsAuthContextValue}>
+      <QueryClientProvider client={queryClient}>
+        <Toaster portal={false} closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
+        {ui}
+      </QueryClientProvider>
     </AuthContext.Provider>,
     options,
   );
@@ -147,14 +150,12 @@ export function renderManagedAgentsPage(
       },
     },
   });
-  queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
+  const models = [
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+  ];
+  queryClient.setQueryData(['create-agent', 'models', 'default'], models);
+  queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
   const history = createBrowserHistory({ window });
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
@@ -246,8 +247,8 @@ export type MockAgentsApiOptions = {
   mcpToolCatalogRefreshWait?: Promise<void>;
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
-  modelMappings?: Record<string, string>;
-  modelMappingsErrorOnce?: boolean;
+  modelsErrorOnce?: boolean;
+  modelsNotConfigured?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
   quickstartStreamErrorOnce?: boolean;
   agentUpdateErrorStatus?: number;
@@ -273,7 +274,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
-  let modelMappingsErrorsRemaining = options.modelMappingsErrorOnce ? 1 : 0;
+  let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
   let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
   let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
@@ -324,15 +325,22 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
 
-    if (url.match(/^\/api\/organizations\/[^/]+\/models$/) && method === 'GET') {
-      if (modelMappingsErrorsRemaining > 0) {
-        modelMappingsErrorsRemaining -= 1;
-        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 503);
-      }
-      return jsonResponse({ model_mappings: options.modelMappings ?? {} });
-    }
-
     if (url.startsWith('/v1/models?') && method === 'GET') {
+      if (options.modelsNotConfigured) {
+        return jsonResponse(
+          {
+            error: {
+              type: 'api_error',
+              message: 'This workspace has no LLM provider configured',
+            },
+          },
+          503,
+        );
+      }
+      if (modelsErrorsRemaining > 0) {
+        modelsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 500);
+      }
       const models = options.models ?? [
         { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
         { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
@@ -855,6 +863,38 @@ export function mockManagedResourceApi() {
     },
   ];
   const resources = {
+    files: [
+      {
+        id: 'file_input123456',
+        type: 'file',
+        filename: 'input.txt',
+        size_bytes: 108,
+        mime_type: 'text/plain',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_image123456',
+        type: 'file',
+        filename: 'image.png',
+        size_bytes: 257_024,
+        mime_type: 'image/png',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_report123456',
+        type: 'file',
+        filename: 'NL2SQL report.md',
+        size_bytes: 30_720,
+        mime_type: 'text/markdown',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+    ],
     agents: [
       agentResponse({
         id: 'agent_option123456',
@@ -1395,6 +1435,14 @@ export function mockManagedResourceApi() {
         return matchesCreatedAtParams(session, params);
       });
       return jsonResponse({ data: filteredSessions, next_page: null });
+    }
+    if (url.startsWith('/v1/files?') && method === 'GET') {
+      return jsonResponse({
+        data: resources.files,
+        has_more: false,
+        first_id: resources.files.at(0)?.id ?? null,
+        last_id: resources.files.at(-1)?.id ?? null,
+      });
     }
     const retrieveSessionMatch = url.match(/^\/v1\/sessions\/([^/?]+)\?beta=true$/);
     if (retrieveSessionMatch && method === 'GET') {

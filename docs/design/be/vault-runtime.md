@@ -116,7 +116,7 @@ API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析
 
 `ArchiveVault` / `DeleteVault` / `CreateVaultCredential` 在同一 Yourbatis 事务内分别构造两个 Mapper，不再使用 `sqlx.Tx`。
 运行时凭证加载先通过 `VaultMapper` 批量筛选当前 workspace 中未归档的 Vault，再通过 `VaultCredentialMapper` 按 Vault UUID 批量加载活动凭证；Go 层按原始 `vault_ids` 顺序组装结果，最多执行两次查询。
-**Credential secret update（preserve-on-omit）**：更新请求省略 secret 时，Open 现有信封 → merge 非秘密字段 → 用新 DEK reseal，并用 `version` CAS（冲突 → HTTP 409）。缺信封时无法 merge：metadata-only 或未带完整替换 secret → HTTP 400；带完整替换 secret → 直接 reseal。
+**Credential secret update（preserve-on-omit）**：更新请求省略 secret 时，Open 现有信封 → merge 非秘密字段 → 用新 DEK reseal，并用 `version` CAS（冲突 → HTTP 409）。缺信封时无法 merge：metadata-only 或未带完整替换 secret → HTTP 400；带完整替换 secret → 直接 reseal。mcp_oauth 合并后完整性只要求 `access_token`，以及配置了 refresh 时的 `refresh_token`；**不**因公开 `token_endpoint_auth.type` 为 `client_secret_*` 而强制信封内有 `client_secret`（平台 OAuth 合法地省略；BYO/DCR 的 secret 在 create / patch `token_endpoint_auth` 时校验）。
 
 KEK 版本由 config 管（`version` current + `decrypt_only` 旧列表）。每条凭证用 `key_version` 标明自己用的是哪把。KEK 本身不进库。
 
@@ -201,7 +201,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 401 重试 body | RoundTrip 前缓冲请求体（上限 32 MiB）；超限 **fail closed**（不静默截断重放），由 `snapshotRequestBody` / `readWithinLimit` 实现。打出的是 clone；`defer closeRequestBody(req)` 保证原始 `req.Body` 在成功/失败路径都关闭（RoundTripper 合同） |
 | Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
 | 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MCP proxy 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
-| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，覆盖整段 Hold，nil Redis 拒绝）。持约后重读；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败后重读，**仅当 `SecretVersion` 前进**时再试并复用。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
+| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，覆盖整段 Hold，nil Redis 拒绝）。持约后重读。每次 Hold **最多一次** token-endpoint exchange。exchange 成功后必须落盘：`version` CAS 冲突时重读，信封仍是换票前那份或重读 token 不可用则 rebase 再写 R1；重读已有未过期 token 则复用。exchange 失败后重读，仅当信封 token 已变且 access 未过期时复用，否则保留换票错误（改名导致的 version +1 不再触发二次换票）。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
 | 平台 client_secret | 不进用户信封。callback 与 refresh 共用 `ResolveMCPOAuthTokenClientSecret`。公开 `auth.client_credential_source` 为 `platform`（或遗留 confidential 且信封无 secret）时按 `mcp_server_url` 再查 registry；`sealed` 用信封值。reseal 仍不把平台 secret 写回信封 |
 | 数据加载 | **每个 MCP RoundTrip 查库一次**（`vault_ids` + active credentials）；401 walk / 换凭证不重复加载；不缓存明文 token |
 | Redirect | **不自动跟随**跨 origin redirect |

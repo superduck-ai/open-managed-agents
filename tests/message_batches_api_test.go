@@ -39,12 +39,19 @@ func TestMessageBatchesAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-test"
 	cfg.Batch.WorkerConcurrency = 1
 	cfg.Batch.JobLeaseDuration = time.Minute
 	cfg.Batch.JobLeaseHeartbeatInterval = time.Hour
 	app := newTestAppWithStore(t, &cfg, store)
 	defer app.close()
+
+	t.Run("failure model is not configured", func(t *testing.T) {
+		body := strings.Replace(minimalBatchBody("unknown-model"), "claude-opus-4-6", "not-configured", 1)
+		resp := doBatchRequest(
+			t, app, http.MethodPost, "/v1/messages/batches", strings.NewReader(body), defaultTestKey, "application/json",
+		)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
 
 	t.Run("failure delete in_progress", func(t *testing.T) {
 		created := createBatch(t, app, defaultTestKey, minimalBatchBody("delete-pending-1"))
@@ -56,7 +63,6 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 	t.Run("failure official sdk fixture create bypasses real validation", func(t *testing.T) {
 		fixtureCfg := app.cfg
-		fixtureCfg.AnthropicUpstream.APIKey = ""
 		fixtureApp := newTestAppWithStore(t, &fixtureCfg, newFakeStore("fixture-bucket"))
 		defer fixtureApp.close()
 
@@ -176,6 +182,23 @@ func TestMessageBatchesAPI(t *testing.T) {
 			t.Fatalf("delete status = %d, want 200: %s", deleteResp.StatusCode, readAll(t, deleteResp.Body))
 		}
 	})
+}
+
+func TestMessageBatchesRequireConfiguredProvider(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("batch-no-provider-bucket"))
+	defer app.close()
+	clearTestLLMProviders(t, app)
+
+	resp := doBatchRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/messages/batches",
+		strings.NewReader(minimalBatchBody("no-provider")),
+		defaultTestKey,
+		"application/json",
+	)
+	assertError(t, resp, http.StatusServiceUnavailable, "api_error")
 }
 
 type fakeBatchUpstream struct {

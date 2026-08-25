@@ -26,8 +26,8 @@ OMA 是开源、自托管的智能体控制面。它为兼容 SDK 提供稳定�
 - 公共资源位于 `/v1`；控制台的 `/api`、`/auth` 和 `/web-api` 不属于 SDK 合同。
 - OMA 接受 `Authorization: Bearer` 和 `X-Api-Key`。
 - beta 激活方式按资源不同，不能把 `?beta=true` 当作通用替代品。
-- `POST /v1/messages` 会把请求流式转发给 `anthropic_upstream`，客户端凭证不会透传给上游。
-- 部署者可以用 `anthropic_upstream.model_mappings` 将逻辑模型 ID 映射到实际上游 ID。
+- `POST /v1/messages` 按请求中的精确模型 ID 选择当前工作区的 Provider，客户端凭证不会透传给上游。
+- 模型 ID 原样发送；OMA 不提供 Claude 名称别名、模型映射或默认上游。
 
 ## 版本升级建议
 

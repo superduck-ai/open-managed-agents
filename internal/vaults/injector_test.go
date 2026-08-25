@@ -387,9 +387,48 @@ func TestSnapshotRequestBodyRejectsOversizedContentLength(t *testing.T) {
 	}
 }
 
+func TestWrapTransportSkipsSnapshotWhenNoInjectableMatch(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestSecretsService(t)
+	base := &recordingTransport{}
+	injector := newTestInjector(t, svc, &fakeCredentialStore{}, nil, time.Time{})
+	target, err := url.Parse(testInjectMCPURL)
+	if err != nil {
+		t.Fatalf("parse target: %v", err)
+	}
+	transport := injector.WrapTransport(
+		context.Background(),
+		"cse_test",
+		testInjectOrgUUID,
+		testInjectWsUUID,
+		target,
+		base,
+	)
+
+	req, err := http.NewRequest(http.MethodPost, "https://mcp.example.com/mcp", bytes.NewReader([]byte(`{"tiny":true}`)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	// Claim a body larger than the inject snapshot limit; passthrough must not snapshot.
+	req.ContentLength = maxSnapshotRequestBodyBytes + 1
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v (should stream passthrough without snapshot)", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if base.calls != 1 {
+		t.Fatalf("base RoundTrip calls = %d, want 1", base.calls)
+	}
+}
+
 func TestWrapTransportClosesOriginalRequestBody(t *testing.T) {
 	svc := newTestSecretsService(t)
-	store := &fakeCredentialStore{}
+	cred := sealedStaticBearerCredential(t, svc, testInjectMCPURL, "tok", "cred_snap")
+	store := &fakeCredentialStore{
+		vaultIDs:    []string{"vlt_test"},
+		credentials: []db.VaultCredential{cred},
+	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

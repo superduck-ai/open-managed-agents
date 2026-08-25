@@ -5,8 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 // EgressSession identifies the Code Session tenant for MITM outbound rewriting.
@@ -105,15 +103,4 @@ func absoluteMITMRequestURL(connectAuthority string, req *http.Request) *url.URL
 		RawPath:  rawPath,
 		RawQuery: rawQuery,
 	}
-}
-
-// hasInjectableMCPCredential reports whether any credential is static_bearer or mcp_oauth.
-func hasInjectableMCPCredential(credentials []db.VaultCredential) bool {
-	for i := range credentials {
-		switch credentialAuthType(credentials[i].AuthType) {
-		case credentialAuthTypeStaticBearer, credentialAuthTypeMCPOAuth:
-			return true
-		}
-	}
-	return false
 }

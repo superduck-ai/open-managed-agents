@@ -3,7 +3,6 @@ package vaults
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -13,16 +12,20 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestPrepareSessionVaultMountRequiresMITMForMCPCredentials(t *testing.T) {
+func TestPrepareSessionVaultMountAllowsMCPCredentialsWithoutMITM(t *testing.T) {
 	t.Parallel()
 
 	cred := db.VaultCredential{
 		AuthType: "static_bearer",
 		Auth:     json.RawMessage(`{"type":"static_bearer","mcp_server_url":"https://mcp.example.com/mcp"}`),
 	}
-	_, err := PrepareEnvCredentialMount(false, []db.VaultCredential{cred})
-	if !errors.Is(err, ErrMITMRequiredForMCPCredentials) {
-		t.Fatalf("error = %v, want ErrMITMRequiredForMCPCredentials", err)
+	// MITM off: Session still mounts; MCP injection stays on the explicit /mcp path.
+	got, err := PrepareEnvCredentialMount(false, []db.VaultCredential{cred})
+	if err != nil {
+		t.Fatalf("MITM off should allow MCP credentials: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("placeholders = %#v, want empty (MCP creds do not provision env placeholders)", got)
 	}
 
 	_, err = PrepareEnvCredentialMount(true, []db.VaultCredential{cred})

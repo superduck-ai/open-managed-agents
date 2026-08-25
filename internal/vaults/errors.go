@@ -28,10 +28,6 @@ const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavaila
 // Environment Variable Credentials are attached but upstream proxy MITM is off.
 var ErrMITMRequiredForEnvCredentials = errors.New("upstream proxy MITM is required for environment variable credentials")
 
-// ErrMITMRequiredForMCPCredentials is returned at Session mount when active
-// static_bearer / mcp_oauth credentials are attached but upstream proxy MITM is off.
-var ErrMITMRequiredForMCPCredentials = errors.New("upstream proxy MITM is required for MCP credentials")
-
 // ErrSubstitutionRejected is the upstream-proxy fail-closed sentinel when
 // Egress Secret Substitution cannot proceed.
 var ErrSubstitutionRejected = errors.New("vault environment variable substitution rejected")

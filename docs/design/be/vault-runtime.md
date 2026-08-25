@@ -168,7 +168,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 |---|---|
 | 凭证类型 | **static_bearer** + **mcp_oauth**（MITM MCP 注入）；**environment_variable**（Opaque Placeholder + Egress Secret Substitution） |
 | 注入落点 | Managed Agent：CONNECT MITM（`MITMEgress` → `Injector` + `EgressSubstitutor`）。显式：Session MCP HTTP proxy（`WithVaultSecrets` → `wrapMCPVaultTransport` → 同一 `Injector`）。Runner **不**自动改写 `mcp_config`。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan。`WithPlatformOAuthClients` 接入 `vault.platform_oauth_clients`。Env：Session 挂载时经 `startup_context.environment_variables` 灌入 Opaque Placeholder |
-| MITM 硬门闩 | Session 挂载时若有活跃 `environment_variable` **或** 可注入 MCP 凭证（`static_bearer` / `mcp_oauth`）且 `upstream_proxy_mitm_enabled=false` → 失败 |
+| MITM 硬门闩 | Session 挂载时若有活跃 `environment_variable` 且 `upstream_proxy_mitm_enabled=false` → 失败。`static_bearer` / `mcp_oauth` **不**挡启动：MITM 关时 Session 仍可起来，MCP 注入只走显式 `/mcp`；Managed Agent 自动注入仍需 MITM |
 | Credential `networking` | MCP 注入仍不按 credential networking 门控。`environment_variable` **要求**显式 `networking`；limited 的 `allowed_hosts` 复用 Environment host 语义，仅约束是否可替换，不授予可达性 |
 | host 未覆盖 | MCP：passthrough。Env：未覆盖 host / 关闭的 Injection Location → 占位符原文透传 |
 | Snapshot URL | MITM 注入不额外卡 Agent Snapshot 精确 URL（对齐 CMA）；可达性仍由 Environment host allowlist 约束 |
@@ -181,7 +181,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 项 | 决定 |
 |---|---|
 | 模型 | Opaque Placeholder + Egress Secret Substitution（真值不下发沙箱） |
-| MITM | **硬前置**：Session 挂载时若有活跃 env 凭证且 `upstream_proxy_mitm_enabled=false` → 失败（`ErrMITMRequiredForEnvCredentials`）；可注入 MCP 凭证同理（`ErrMITMRequiredForMCPCredentials`） |
+| MITM | **硬前置（仅 env）**：Session 挂载时若有活跃 env 凭证且 `upstream_proxy_mitm_enabled=false` → 失败（`ErrMITMRequiredForEnvCredentials`）。MCP 凭证不要求 MITM 才能挂载 |
 | Placeholder | 创建时随机持久化（`oma_ph_` 前缀）；轮换 `secret_value` 不改 placeholder；缺 placeholder / injection_location 的旧凭证作废（archive 重建，无惰性补齐） |
 | Egress 替换 | header / body 各对原始文本单次扫描；密钥若等于另一凭证 placeholder，不再二次替换 |
 | Injection Location | API + runtime 支持 header 与 body；省略 → header-only；全关 → 400 |
@@ -193,7 +193,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 深模块缝：
 
-- `vaults.PrepareEnvCredentialMount` — Session 挂载（env + MCP 的 MITM 门闩 + placeholder map）
+- `vaults.PrepareEnvCredentialMount` — Session 挂载（env 的 MITM 门闩 + placeholder map；MCP 凭证不挡启动）
 - `vaults.MITMEgress.Prepare` — MITM 每条出站：env 替换 → MCP inject wrap
 - `vaults.Injector.WrapTransport` — Credential URL match / open / refresh / 401
 - `vaults.EgressSubstitutor.SubstituteEnvSecrets` — MITM env egress
@@ -206,7 +206,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | token endpoint 错误 | 非 2xx 只上报 HTTP status（`token endpoint status N`），不把 IdP `error` 原文带进 error/日志 |
 | `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
 | 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk。`excluded` / `forceRefresh` 按 **plan 凭证 ExternalID**（`planCredID`）记账，不依赖 refresh CAS 返回行是否带齐字段 |
-| 401 重试 body | RoundTrip 前缓冲请求体（上限 32 MiB）；超限 **fail closed**（不静默截断重放），由 `snapshotRequestBody` / `readWithinLimit` 实现。打出的是 clone；`defer closeRequestBody(req)` 保证原始 `req.Body` 在成功/失败路径都关闭（RoundTripper 合同） |
+| 401 重试 body | **仅当** injection plan 有可注入 URL 匹配时才缓冲请求体（上限 32 MiB）以支持 inject/401 重放；无匹配 → 流式 passthrough，不触发 32 MiB 门闩。超限 **fail closed**（不静默截断重放）。打出的是 clone；snapshot 路径用 `defer closeRequestBody(req)` 关闭原始 body；passthrough 由 base RoundTripper 关闭 |
 | Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
 | 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MITM ErrorHandler / Prepare 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
 | 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，覆盖整段 Hold，nil Redis 拒绝）。持约后重读。每次 Hold **最多一次** token-endpoint exchange。exchange 成功后必须落盘：`version` CAS 冲突时重读，信封仍是换票前那份或重读 token 不可用则 rebase 再写 R1；重读已有未过期 token 则复用。exchange 失败后重读，仅当信封 token 已变且 access 未过期时复用，否则保留换票错误（改名导致的 version +1 不再触发二次换票）。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
@@ -259,7 +259,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 - Managed Agent MCP 经 CONNECT MITM；vault 注入接在 `MITMEgress` / `Injector`。显式 `/v2/ccr-sessions/{id}/mcp` 保留并共用同一 `Injector`；Runner 不自动改写 MCP URL。
 - `static_bearer` / `mcp_oauth`：path 前缀命中后注入 Bearer；沙箱 / `mcp_config` / 日志不见 token。Runner 保留原始 MCP URL。
-- Session 挂载：MITM 关且存在活跃 env 或可注入 MCP 凭证 → 失败。
+- Session 挂载：MITM 关且存在活跃 env → 失败；仅挂 MCP 凭证时仍可启动（注入走显式 `/mcp` 或 MITM 开时的 CONNECT）。
 - `mcp_oauth`：无 `expires_at` 直接注入；过期则 refresh + CAS reseal；上游 401 再 refresh 一轮。
 - Open / refresh / 401 重试失败 → 跳过该凭证继续 walk；全部失败 → 502。
 - host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）。
@@ -270,7 +270,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 ## 验收（environment_variable：本切片）
 
 - create 签发 `oma_ph_` placeholder；响应含 `injection_location`；不回显 `secret_value`。
-- Session 挂载：MITM 关且存在活跃 env 或可注入 MCP 凭证 → 失败；否则 `startup_context.environment_variables` 灌入 placeholder（先到先得，不覆盖平台保留名）。
+- Session 挂载：MITM 关且存在活跃 env → 失败；仅 MCP 凭证不挡启动；否则 `startup_context.environment_variables` 灌入 placeholder（先到先得，不覆盖平台保留名）。
 - MITM egress：host/location 匹配时替换；未覆盖透传；Open 失败 → 502。
 - 旧凭证缺 placeholder / injection_location → update/挂载拒绝（archive 重建）。
 

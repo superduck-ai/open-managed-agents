@@ -340,7 +340,6 @@ func TestSubstituteEnvSecretsFirstSecretNameWins(t *testing.T) {
 	}
 }
 
-
 func sealedEnvCredential(t *testing.T, svc *secrets.Service, secretName, placeholder, host, secretValue string) db.VaultCredential {
 	t.Helper()
 	return sealedEnvCredentialWithLocation(t, svc, secretName, placeholder, host, secretValue, true, false)

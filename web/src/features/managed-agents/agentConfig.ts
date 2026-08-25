@@ -27,11 +27,11 @@ export {
 } from './agentTemplateCatalog';
 
 export const agentModelInputSchema = z.union([
-  z.string().trim().min(1, 'Model is required.'),
+  z.string().min(1, 'Model is required.'),
   z
     .object({
-      id: z.string().trim().min(1, 'Model id is required.'),
-      speed: z.string().trim().optional(),
+      id: z.string().min(1, 'Model id is required.'),
+      speed: z.string().optional(),
     })
     .strict(),
 ]);
@@ -52,35 +52,16 @@ export const agentEditConfigSchema = z
   })
   .strict();
 
-export function yamlForTemplate(
-  template: AgentTemplate,
-  locale: Locale = 'en',
-  modelMappings: Record<string, string> = {},
-) {
-  return yamlStringify(displayAgentConfig(createDialogAgentConfig(template, locale, undefined, modelMappings)));
+export function yamlForTemplate(template: AgentTemplate, locale: Locale = 'en', modelID = '') {
+  return yamlStringify(displayAgentConfig(createDialogAgentConfig(template, locale, undefined, modelID)));
 }
 
-export function jsonForTemplate(
-  template: AgentTemplate,
-  locale: Locale = 'en',
-  modelMappings: Record<string, string> = {},
-) {
-  return JSON.stringify(
-    displayAgentConfig(createDialogAgentConfig(template, locale, undefined, modelMappings)),
-    null,
-    2,
-  );
+export function jsonForTemplate(template: AgentTemplate, locale: Locale = 'en', modelID = '') {
+  return JSON.stringify(displayAgentConfig(createDialogAgentConfig(template, locale, undefined, modelID)), null, 2);
 }
 
-export function codeForTemplate(
-  template: AgentTemplate,
-  format: CodeFormat,
-  locale: Locale = 'en',
-  modelMappings: Record<string, string> = {},
-) {
-  return format === 'YAML'
-    ? yamlForTemplate(template, locale, modelMappings)
-    : jsonForTemplate(template, locale, modelMappings);
+export function codeForTemplate(template: AgentTemplate, format: CodeFormat, locale: Locale = 'en', modelID = '') {
+  return format === 'YAML' ? yamlForTemplate(template, locale, modelID) : jsonForTemplate(template, locale, modelID);
 }
 
 export function createAgentToolset() {
@@ -113,7 +94,7 @@ export const createDialogTemplateConfigs: Record<string, CreateAgentInput> = {
   blank: {
     name: 'Untitled agent',
     description: 'A blank starting point with the core toolset.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system:
       "You are a general-purpose agent that can research, write code, run commands, and use connected tools to complete the user's task end to end.",
     mcp_servers: [],
@@ -123,7 +104,7 @@ export const createDialogTemplateConfigs: Record<string, CreateAgentInput> = {
   'deep-researcher': {
     name: 'Deep researcher',
     description: 'Conducts multi-step web research with source synthesis and citations.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system: `You are a research agent. Given a question or topic:
 
 1. Decompose it into 3-5 concrete sub-questions that, answered together, cover the topic.
@@ -140,7 +121,7 @@ Be skeptical. If sources conflict, say so and explain which you find more credib
   'structured-extractor': {
     name: 'Structured extractor',
     description: 'Parses unstructured text into a typed JSON schema.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system: `You extract structured data from unstructured text. Given raw input (emails, PDFs, logs, transcripts, scraped HTML) and a target JSON schema:
 
 1. Read the schema first. Note required vs optional fields, enums, and format constraints (dates, currencies, IDs). The schema is the contract — never emit a key it doesn't define.
@@ -157,7 +138,7 @@ When the input is ambiguous, pick the most conservative interpretation and note 
   'field-monitor': {
     name: 'Field monitor',
     description: 'Scans software blogs for a topic and writes a weekly what-changed brief.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system: `You track a fast-moving technical field. Given a topic and a lookback window (default 7 days):
 
 1. Search arXiv, Hacker News, lobste.rs, and the high-signal blogs (OpenAI, Anthropic, DeepMind, the well-known substacks) for posts in the window matching the topic.
@@ -175,7 +156,7 @@ Be ruthless about signal. A paper that restates a known result with a new benchm
   'support-agent': {
     name: 'Support agent',
     description: 'Answers customer questions from your docs and knowledge base, and escalates when needed.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system: `You are a customer support agent. For each inbound question:
 
 1. Search the product docs and knowledge base in Notion for an answer. Quote the relevant passage and link to the source — never paraphrase policy from memory.
@@ -194,7 +175,7 @@ Match the customer's tone. Be warm but don't pad. One emoji max.`,
   'incident-commander': {
     name: 'Incident commander',
     description: 'Triages a Sentry alert, opens a Linear incident ticket, and runs the Slack war room.',
-    model: 'claude-opus-4-8',
+    model: '',
     system: `You are an on-call incident commander. When handed a Sentry issue ID or an error fingerprint:
 
 1. Pull the full event payload, stack trace, release tag, and affected-user count from Sentry.
@@ -224,7 +205,7 @@ Be decisive. If you're >70% confident it's a specific deploy, say so and recomme
     name: 'Contract tracker',
     description:
       'Extracts clauses, sets deadline reminders, and tracks obligations in Asana when given a Box file ID or link.',
-    model: 'claude-opus-4-8',
+    model: '',
     system: `You are a contract lifecycle assistant. Given a Box file ID or link:
 
 1. Read the file and extract key metadata: parties, effective date, expiration date, contract value, type, and obligations.
@@ -241,7 +222,7 @@ Rules: always quote the original clause text — never paraphrase without it. If
   'retro-facilitator': {
     name: 'Sprint retro facilitator',
     description: 'Pulls a closed sprint from Linear, synthesizes themes, and writes the retro doc before the meeting.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system: `You prep sprint retros. For the sprint just closed:
 
 1. Pull all issues from Linear: what shipped, what slipped, cycle time per ticket, anything re-scoped mid-sprint.
@@ -261,7 +242,7 @@ Be specific. "Communication was bad" is useless; "three tickets were re-assigned
   'support-escalator': {
     name: 'Support-to-eng escalator',
     description: 'Reads an Intercom conversation, reproduces the bug, and files a linked Jira issue with repro steps.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system: `You bridge support and engineering. Given an Intercom conversation ID:
 
 1. Pull the conversation: customer, plan tier, environment details, any attached logs or screenshots, and the support rep's notes.
@@ -288,7 +269,7 @@ If you can't repro, say so explicitly and list what you tried — don't file a v
   'data-analyst': {
     name: 'Data analyst',
     description: 'Load, explore, and visualize data; build reports and answer questions from datasets.',
-    model: 'claude-sonnet-4-6',
+    model: '',
     system: `You analyze data. Given a dataset (file path, URL, or query) and a question:
 
 1. Load the data and print its shape, column names, dtypes, and a small sample. Always look before you compute.
@@ -344,7 +325,7 @@ export function createDialogAgentConfig(
   template: AgentTemplate,
   locale: Locale = 'en',
   descriptionOverride?: string | null,
-  modelMappings: Record<string, string> = {},
+  modelID = '',
 ): CreateAgentInput {
   const zh = locale === 'zh-CN';
   const configuredTemplate = templateConfigsForLocale(locale)[template.id];
@@ -352,7 +333,7 @@ export function createDialogAgentConfig(
     configuredTemplate ?? {
       name: template.id === 'blank' ? (zh ? '未命名 Agent' : 'Untitled agent') : template.title,
       description: template.body,
-      model: 'claude-sonnet-4-6',
+      model: '',
       system: fallbackTemplateSystem(template, locale),
       mcp_servers: [],
       tools: [createAgentToolset()],
@@ -361,7 +342,7 @@ export function createDialogAgentConfig(
     },
   );
   const trimmedDescription = descriptionOverride?.trim();
-  config.model = resolveAgentModelInput(config.model, modelMappings);
+  config.model = modelID;
 
   if (trimmedDescription) {
     config.description = trimmedDescription;
@@ -374,7 +355,7 @@ export function createDialogAgentConfig(
 export function quickstartBuildAgentConfigInput(
   input: Record<string, unknown>,
   fallback: CreateAgentInput,
-  modelMappings: Record<string, string> = {},
+  modelID = '',
 ): CreateAgentInput {
   const rawConfig = toRecord(input.config) ?? input;
   const name = typeof rawConfig.name === 'string' && rawConfig.name.trim() ? rawConfig.name.trim() : fallback.name;
@@ -384,7 +365,7 @@ export function quickstartBuildAgentConfigInput(
       : rawConfig.description === null
         ? null
         : (fallback.description ?? null);
-  const model = resolveAgentModelInput(quickstartModelInput(rawConfig.model, fallback.model), modelMappings);
+  const model = modelID || quickstartModelInput(rawConfig.model, fallback.model);
   const system =
     typeof rawConfig.system === 'string'
       ? rawConfig.system
@@ -414,22 +395,15 @@ export function quickstartBuildAgentConfigInput(
   };
 }
 
-export function resolveAgentModelInput(model: AgentModelInput, modelMappings: Record<string, string>): AgentModelInput {
-  const modelID = typeof model === 'string' ? model : model.id;
-  const sourceID = modelID.trim();
-  const effectiveID = modelMappings[sourceID]?.trim() || sourceID;
-  return typeof model === 'string' ? effectiveID : { ...model, id: effectiveID };
-}
-
 export function quickstartModelInput(value: unknown, fallback: AgentModelInput): AgentModelInput {
-  if (typeof value === 'string' && value.trim()) {
-    return value.trim();
+  if (typeof value === 'string' && value !== '') {
+    return value;
   }
   const record = toRecord(value);
-  if (record && typeof record.id === 'string' && record.id.trim()) {
+  if (record && typeof record.id === 'string' && record.id !== '') {
     return {
-      id: record.id.trim(),
-      ...(typeof record.speed === 'string' && record.speed.trim() ? { speed: record.speed.trim() } : {}),
+      id: record.id,
+      ...(typeof record.speed === 'string' && record.speed !== '' ? { speed: record.speed } : {}),
     };
   }
   return fallback;
@@ -493,7 +467,7 @@ export async function generateCreateAgentConfig({
   workspaceId,
   description,
   currentConfig,
-  modelMappings = {},
+  modelID,
   signal,
   locale = 'en',
 }: {
@@ -501,7 +475,7 @@ export async function generateCreateAgentConfig({
   workspaceId: string;
   description: string;
   currentConfig: CreateAgentInput;
-  modelMappings?: Record<string, string>;
+  modelID: string;
   signal: AbortSignal;
   locale?: Locale;
 }) {
@@ -511,6 +485,7 @@ export async function generateCreateAgentConfig({
       deploymentSchedulePlanned: false,
       agentDescription: description,
       agentConfig: currentConfig,
+      modelID,
       locale,
     }),
     tool_choice: { type: 'tool', name: 'build_agent_config', disable_parallel_tool_use: true },
@@ -546,7 +521,7 @@ export async function generateCreateAgentConfig({
       if (type === 'content_block_stop' && currentTool) {
         const input = parseToolInput(currentTool.inputJson, currentTool.input);
         if (currentTool.name === 'build_agent_config') {
-          generatedConfig = quickstartBuildAgentConfigInput(input, currentConfig, modelMappings);
+          generatedConfig = quickstartBuildAgentConfigInput(input, currentConfig, modelID);
         }
         currentTool = null;
       }
@@ -560,7 +535,7 @@ export async function generateCreateAgentConfig({
 }
 
 export function displayAgentConfig(config: CreateAgentInput | AgentApiResponse) {
-  const model = 'model' in config ? config.model : 'claude-sonnet-4-6';
+  const model = config.model;
   const displayConfig: Record<string, unknown> = {
     name: config.name,
     description: config.description,
@@ -770,11 +745,11 @@ export function buildAgentUpdateInput(version: number, config: AgentEditConfig):
 
 export function normalizeAgentEditModel(model: AgentModelInput): AgentModelInput {
   if (typeof model === 'string') {
-    return model.trim();
+    return model;
   }
   return {
-    id: model.id.trim(),
-    ...(model.speed?.trim() ? { speed: model.speed.trim() } : {}),
+    id: model.id,
+    ...(model.speed ? { speed: model.speed } : {}),
   };
 }
 

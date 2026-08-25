@@ -1,19 +1,16 @@
 package codesessions
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
-
-	"github.com/google/uuid"
 )
 
 func workerPayloadForPublicEvent(
@@ -45,7 +42,7 @@ func workerPayloadFromPublicEvent(
 	}
 	switch schema.Type {
 	case "user.message":
-		eventUUID := firstNonEmpty(schema.UUID, schema.ID, uuid.NewString())
+		eventUUID := firstNonEmpty(schema.UUID, schema.ID, uuid.NewV4().String())
 		payload := map[string]any{
 			"type":               "user",
 			"uuid":               eventUUID,
@@ -69,7 +66,7 @@ func workerPayloadFromPublicEvent(
 			return nil, err
 		}
 		if schema.UUID == "" {
-			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewString()))
+			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewV4().String()))
 		}
 		if schema.SessionID == "" {
 			setRawJSONField(fields, "session_id", codeSessionID)
@@ -101,7 +98,7 @@ func normalizeWorkerOutboundPayload(codeSessionID string, raw json.RawMessage, f
 		now = time.Now().UTC()
 	}
 	if schema.Type != "keep_alive" && schema.UUID == "" {
-		setRawJSONField(fields, "uuid", uuid.NewString())
+		setRawJSONField(fields, "uuid", uuid.NewV4().String())
 	}
 	if schema.SessionID == "" {
 		setRawJSONField(fields, "session_id", codeSessionID)
@@ -156,11 +153,11 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 	object := materializePublicPayload(fields)
 	switch event.EventType {
 	case "assistant":
-		var payload workerAssistantOutputPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
+		payload, err := decodeWorkerAssistantOutputPayload(raw)
+		if err != nil {
 			return nil, false, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
-		return assistantPublicPayloadCandidates(object, payload), true, nil
+		return assistantPublicPayloadCandidates(codeSessionID, object, payload), true, nil
 	case "user":
 		var payload workerUserOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
@@ -205,7 +202,7 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	if err := json.Unmarshal(event.Payload, &schema); err != nil {
 		return nil, fmt.Errorf("%w: invalid internal subagent payload: %w", ErrProtocol, err)
 	}
-	candidates, err := publicPayloadCandidatesFromInternalSubagentEvent(event.Payload, schema.Type, object)
+	candidates, err := publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID, event.Payload, schema.Type, object)
 	if err != nil {
 		return nil, err
 	}
@@ -223,14 +220,14 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	return payloads, nil
 }
 
-func publicPayloadCandidatesFromInternalSubagentEvent(raw json.RawMessage, eventType string, object map[string]any) ([]publicPayloadCandidate, error) {
+func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw json.RawMessage, eventType string, object map[string]any) ([]publicPayloadCandidate, error) {
 	switch eventType {
 	case "assistant":
-		var payload workerAssistantOutputPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
+		payload, err := decodeWorkerAssistantOutputPayload(raw)
+		if err != nil {
 			return nil, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
-		return assistantPublicPayloadCandidates(object, payload), nil
+		return assistantPublicPayloadCandidates(codeSessionID, object, payload), nil
 	case "user":
 		var payload workerUserOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
@@ -259,7 +256,7 @@ func normalizePublicInternalSubagentPayload(codeSessionID string, event db.CodeS
 		payload["id"] = stablePublicEventID(codeSessionID, "internal-subagent\x00"+threadID+"\x00"+seed)
 	}
 	if stringField(payload, "uuid") == "" {
-		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewString())
+		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewV4().String())
 	}
 	if stringField(payload, "session_id") == "" {
 		payload["session_id"] = codeSessionID
@@ -311,7 +308,7 @@ func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEven
 		payload["id"] = stablePublicEventID(codeSessionID, seed)
 	}
 	if stringField(payload, "uuid") == "" {
-		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewString())
+		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewV4().String())
 	}
 	createdAt := firstPayloadTime(payload, event.CreatedAt)
 	if createdAt.IsZero() {
@@ -470,18 +467,28 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 	return candidates
 }
 
-func assistantPublicPayloadCandidates(object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+func assistantPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+	delete(object, "content_block_index")
 	content := publicContentBlocks(workerOutputContent(schema.Content, schema.Message.Content))
 	blocks, ok := content.([]any)
 	if !ok || len(blocks) == 0 {
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "agent.message")}}
+		payload := publicPayloadWithType(object, "agent.message")
+		if schema.Message.ID != "" {
+			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, assistantContentBlockIndex(schema, 0, 1), "agent.message")
+		}
+		return []publicPayloadCandidate{{payload: payload}}
 	}
 	candidates := make([]publicPayloadCandidate, 0, len(blocks))
 	for index, value := range blocks {
+		contentBlockIndex := assistantContentBlockIndex(schema, index, len(blocks))
 		block, ok := value.(map[string]any)
 		if !ok {
+			payload := publicPayloadWithSingleContentBlock(object, "agent.message", value)
+			if schema.Message.ID != "" {
+				payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, "agent.message")
+			}
 			candidates = append(candidates, publicPayloadCandidate{
-				payload:    publicPayloadWithSingleContentBlock(object, "agent.message", value),
+				payload:    payload,
 				seedSuffix: fmt.Sprintf("content:%d", index),
 				timeOffset: time.Duration(index) * time.Millisecond,
 			})
@@ -496,6 +503,9 @@ func assistantPublicPayloadCandidates(object map[string]any, schema workerAssist
 			eventType = "agent.tool_use"
 		}
 		payload := publicPayloadWithSingleContentBlock(object, eventType, block)
+		if schema.Message.ID != "" && (eventType == "agent.message" || eventType == "agent.thinking") {
+			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
+		}
 		if eventType == "agent.tool_use" {
 			if toolUseID := stringField(block, "id"); toolUseID != "" {
 				payload["tool_use_id"] = toolUseID
@@ -515,6 +525,13 @@ func assistantPublicPayloadCandidates(object map[string]any, schema workerAssist
 		})
 	}
 	return candidates
+}
+
+func assistantContentBlockIndex(schema workerAssistantOutputPayload, fallback, blockCount int) int {
+	if blockCount == 1 && schema.ContentBlockIndex != nil && *schema.ContentBlockIndex >= 0 {
+		return *schema.ContentBlockIndex
+	}
+	return fallback
 }
 
 func publicPayloadWithSingleContentBlock(object map[string]any, eventType string, block any) map[string]any {
@@ -644,12 +661,7 @@ func claudeTaskThreadIDFromFields(codeSessionID, toolUseID, taskID string) strin
 }
 
 func claudeTaskThreadIDFromKey(codeSessionID string, key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(codeSessionID) + "\x00claude-task\x00" + key))
-	return "sthr_" + hex.EncodeToString(sum[:16])
+	return maevents.ClaudeTaskThreadID(codeSessionID, key)
 }
 
 func claudeToolResultContent(block map[string]any) []any {

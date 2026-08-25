@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -28,7 +29,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const (
@@ -127,7 +127,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate file ID"))
 		return
 	}
-	fileUUID := uuid.NewString()
+	fileUUID := uuid.NewV4().String()
 	contentType := detectBase64ContentType(filename, content)
 	imageWidth, imageHeight, primaryColor := imageAssetInfoFromBytes(content)
 	thumbnail, hasThumbnail, thumbnailErr := buildPlatformThumbnail(contentType, content)

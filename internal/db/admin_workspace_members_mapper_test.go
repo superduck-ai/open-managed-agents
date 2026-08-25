@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/superduck-ai/yourbatis"
 )
@@ -53,7 +52,7 @@ func TestAdminWorkspaceMemberMapperInsert(t *testing.T) {
 			rows:    [][]driver.Value{adminWorkspaceMemberMapperTestRow(params.UserExternalID, createdAt)},
 		})
 		member, err := NewAdminWorkspaceMemberMapper(executor).Insert(context.Background(), params)
-		if err != nil || member.UserExternalID != params.UserExternalID || member.UUID == uuid.Nil {
+		if err != nil || member.UserExternalID != params.UserExternalID || member.UUID == "" {
 			t.Fatalf("Insert() = (%+v, %v)", member, err)
 		}
 		assertMapperTestExecution(
@@ -89,7 +88,7 @@ func TestAdminWorkspaceMemberMapperFindByUserExternalID(t *testing.T) {
 			"wrkspc_mapper",
 			"user_mapper",
 		)
-		if !errors.Is(err, sql.ErrNoRows) || member.UUID != uuid.Nil {
+		if !errors.Is(err, sql.ErrNoRows) || member.UUID != "" {
 			t.Fatalf("FindByUserExternalID() = (%+v, %v), want zero and sql.ErrNoRows", member, err)
 		}
 		assertMapperTestExecution(

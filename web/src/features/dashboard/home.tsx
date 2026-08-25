@@ -19,8 +19,15 @@ import { useI18n } from '../../shared/i18n';
 import { PanelCard } from './frame';
 import { useDashboardWorkspaceScope, type IconComponent } from './model';
 
-const docsHref = 'https://docs.anthropic.com/';
-const modelDocsHref = 'https://docs.anthropic.com/en/docs/about-claude/models/overview';
+const docsHrefByLocale = {
+  en: 'https://oma.mintlify.site/docs/en/overview',
+  'zh-CN': 'https://oma.mintlify.site/docs/zh/overview',
+} as const;
+
+const modelDocsHrefByLocale = {
+  en: 'https://oma.mintlify.site/docs/en/api/models/list-models',
+  'zh-CN': 'https://oma.mintlify.site/docs/zh/api/models/list-models',
+} as const;
 
 const modelCards = [
   {
@@ -90,7 +97,7 @@ const resourceCards = [
   },
 ];
 export function DashboardHome() {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const { workspaceId } = useDashboardWorkspaceScope();
   const apiKeysHref = `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/keys`;
 
@@ -106,7 +113,7 @@ export function DashboardHome() {
               <TooltipTrigger
                 render={
                   <ButtonLink
-                    href={docsHref}
+                    href={docsHrefByLocale[locale]}
                     target="_blank"
                     rel="noreferrer"
                     variant="outline"
@@ -218,7 +225,7 @@ export function DashboardHome() {
           <div className="flex items-center justify-between px-1">
             <h2 className="text-lg font-semibold text-foreground">{msg('dashboard.models.title', 'Models')}</h2>
             <ButtonLink
-              href={modelDocsHref}
+              href={modelDocsHrefByLocale[locale]}
               target="_blank"
               rel="noreferrer"
               variant="link"

@@ -606,11 +606,6 @@ export function deploymentAgentVersion(deployment: DeploymentApiResponse) {
   return typeof version === 'number' ? version : null;
 }
 
-export function triggerLabel(trigger: unknown) {
-  const triggerRecord = objectRecord(trigger);
-  return String(triggerRecord.type || 'manual');
-}
-
 export function deploymentRunStatus(run: DeploymentRunApiResponse, msg?: I18nMsg) {
   if (run.error) {
     return msg ? msg('managedAgents.deployments.runStatus.failed', 'Failed') : 'Failed';
@@ -725,56 +720,223 @@ export function environmentMetadataBody(values: EnvironmentEditValues) {
   return metadata;
 }
 
+export function emptyCredentialFormValues(): CredentialFormValues {
+  return {
+    displayName: '',
+    authType: 'static_bearer',
+    mcpServerUrl: '',
+    token: '',
+    secretName: '',
+    secretValue: '',
+    refreshToken: '',
+    refreshTokenEndpoint: '',
+    refreshClientId: '',
+    refreshClientSecret: '',
+    refreshAuthType: 'none',
+    oauthClientId: '',
+    oauthClientSecret: '',
+  };
+}
+
+const emptyCredentialRefreshFields = {
+  refreshToken: '',
+  refreshTokenEndpoint: '',
+  refreshClientId: '',
+  refreshClientSecret: '',
+  refreshAuthType: 'none' as const,
+};
+
+/** Apply a form patch; clearing the access token also drops paste-path refresh fields. */
+export function patchCredentialFormValues(
+  current: CredentialFormValues,
+  patch: Partial<CredentialFormValues>,
+): CredentialFormValues {
+  const next = { ...current, ...patch };
+  if (next.token.trim()) {
+    return next;
+  }
+  return { ...next, ...emptyCredentialRefreshFields };
+}
+
+export function parseCredentialAuthType(value: string): CredentialFormValues['authType'] {
+  if (value === 'environment_variable' || value === 'mcp_oauth') {
+    return value;
+  }
+  return 'static_bearer';
+}
+
 export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
   const auth = objectRecord(credential?.auth);
-  const authType = auth.type === 'environment_variable' ? 'environment_variable' : 'static_bearer';
   return {
+    ...emptyCredentialFormValues(),
     displayName: credential?.display_name || '',
-    authType,
+    authType: parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : ''),
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
-    token: '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
-    secretValue: '',
+  };
+}
+
+function credentialRefreshStarted(values: CredentialFormValues) {
+  return (
+    Boolean(values.refreshToken.trim()) ||
+    Boolean(values.refreshTokenEndpoint.trim()) ||
+    Boolean(values.refreshClientId.trim()) ||
+    Boolean(values.refreshClientSecret.trim()) ||
+    values.refreshAuthType !== 'none'
+  );
+}
+
+function credentialRefreshBody(values: CredentialFormValues) {
+  const refreshToken = values.refreshToken.trim();
+  const tokenEndpoint = values.refreshTokenEndpoint.trim();
+  const clientId = values.refreshClientId.trim();
+  if (!refreshToken || !tokenEndpoint || !clientId) {
+    return undefined;
+  }
+  const authType = values.refreshAuthType;
+  return {
+    token_endpoint: tokenEndpoint,
+    client_id: clientId,
+    refresh_token: refreshToken,
+    token_endpoint_auth:
+      authType === 'none'
+        ? { type: 'none' as const }
+        : { type: authType, client_secret: values.refreshClientSecret.trim() },
   };
 }
 
 export function credentialAuthBody(values: CredentialFormValues, mode: 'create' | 'update') {
   if (values.authType === 'environment_variable') {
+    // Keep secret_value verbatim; env values may intentionally include whitespace.
+    const secretValue = values.secretValue;
     const body: Record<string, unknown> = {
       type: 'environment_variable',
       networking: { type: 'unrestricted' },
     };
     if (mode === 'create') {
       body.secret_name = values.secretName.trim();
-      body.secret_value = values.secretValue;
-    } else if (values.secretValue.trim()) {
-      body.secret_value = values.secretValue;
+      body.secret_value = secretValue;
+    } else if (secretValue.trim()) {
+      body.secret_value = secretValue;
     }
     return body;
   }
+  if (values.authType === 'mcp_oauth') {
+    const accessToken = values.token.trim();
+    const refresh = mode === 'create' ? credentialRefreshBody(values) : undefined;
+    return {
+      type: 'mcp_oauth',
+      ...(mode === 'create' ? { mcp_server_url: values.mcpServerUrl.trim() } : {}),
+      ...(accessToken ? { access_token: accessToken } : {}),
+      ...(refresh ? { refresh } : {}),
+    };
+  }
+  const token = values.token.trim();
   const body: Record<string, unknown> = {
     type: 'static_bearer',
     mcp_server_url: values.mcpServerUrl.trim(),
   };
-  if (mode === 'create' || values.token.trim()) {
-    body.token = values.token;
+  if (mode === 'create' || token) {
+    body.token = token;
   }
   return body;
 }
 
+function credentialRefreshComplete(values: CredentialFormValues) {
+  if (!credentialRefreshStarted(values)) {
+    return true;
+  }
+  if (!values.refreshToken.trim() || !values.refreshTokenEndpoint.trim() || !values.refreshClientId.trim()) {
+    return false;
+  }
+  if (values.refreshAuthType !== 'none' && !values.refreshClientSecret.trim()) {
+    return false;
+  }
+  return true;
+}
+
+export function credentialFormReady(values: CredentialFormValues, mode: 'create' | 'edit', acknowledged: boolean) {
+  if (!acknowledged || !values.displayName.trim()) {
+    return false;
+  }
+  if (values.authType === 'environment_variable') {
+    // Edit: secret value optional (sealed secrets are not returned; rotate only when provided).
+    if (mode === 'edit') {
+      return true;
+    }
+    return Boolean(values.secretName.trim() && values.secretValue.trim());
+  }
+  if (values.authType === 'static_bearer') {
+    // Edit: token optional for the same sealed-secret reason (matches main canSubmit).
+    if (mode === 'edit') {
+      return Boolean(values.mcpServerUrl.trim());
+    }
+    return Boolean(values.mcpServerUrl.trim() && values.token.trim());
+  }
+  if (mode === 'create' && !values.mcpServerUrl.trim()) {
+    return false;
+  }
+  if (!credentialRefreshComplete(values)) {
+    return false;
+  }
+  if (mode === 'edit' || values.token.trim()) {
+    return true;
+  }
+  // Connect path: refresh fields belong to paste-token create; client_secret needs client_id
+  if (credentialRefreshStarted(values)) {
+    return false;
+  }
+  return !values.oauthClientSecret.trim() || Boolean(values.oauthClientId.trim());
+}
+
 export function credentialAuthLabel(auth: unknown, msg?: I18nMsg) {
   const record = objectRecord(auth);
-  if (record.type === 'environment_variable') {
+  return credentialAuthTypeLabel(typeof record.type === 'string' ? record.type : '', msg);
+}
+
+export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
+  if (authType === 'environment_variable') {
     return msg
       ? msg('managedAgents.credentialVaults.credentialDialog.environmentVariable', 'Environment variable')
       : 'Environment variable';
   }
-  if (record.type === 'mcp_oauth') {
-    return 'MCP OAuth';
+  if (authType === 'mcp_oauth') {
+    return msg ? msg('managedAgents.credentialVaults.credentialDialog.mcpOAuth', 'MCP OAuth') : 'MCP OAuth';
   }
   return msg
     ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Static bearer token')
     : 'Static bearer';
+}
+
+/** Map platform vault OAuth error_code wire values to localized user copy. */
+export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string {
+  switch (errorCode.trim()) {
+    case 'already_exists':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.alreadyExists',
+        'A credential for this MCP server already exists in the vault.',
+      );
+    case 'oauth_discovery_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.discoveryFailed',
+        'Could not discover OAuth settings for this MCP server.',
+      );
+    case 'token_exchange_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.tokenExchangeFailed',
+        'OAuth token exchange failed. Try connecting again.',
+      );
+    case 'verification_request_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.verificationFailed',
+        'OAuth verification failed. Check the MCP server URL and try again.',
+      );
+    default:
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.generic',
+        'Could not complete OAuth. Try again.',
+      );
+  }
 }
 
 export function columnWidth(section: ManagedEntitySection, column: string) {

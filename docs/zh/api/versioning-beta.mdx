@@ -1,0 +1,34 @@
+---
+title: "版本与 Beta 功能"
+description: "为每种 OMA API 资源发送正确的版本请求头和 Beta 激活参数。"
+---
+
+OMA 的 `/v1` 同时包含稳定兼容接口和多个来源不同的 Beta 合同。激活方式属于资源合同，不能统一替换。
+
+## 资源要求
+
+| 资源 | 查询参数 | 请求头 |
+| --- | --- | --- |
+| 模型、稳定版消息 | 无 | 消息建议 `anthropic-version: 2023-06-01` |
+| Beta 消息 | `beta=true` | `anthropic-version: 2023-06-01`；把所选字段要求的 Beta 功能标识加入 `anthropic-beta` |
+| 消息批处理稳定形状 | 无 | `anthropic-version` |
+| 消息批处理 Beta 形状 | `beta=true` | `anthropic-beta: message-batches-2024-09-24` |
+| 智能体、环境、会话、记忆存储、密钥库 | `beta=true` | 无额外 Beta 请求头 |
+| 文件 | 无 | `anthropic-beta: files-api-2025-04-14` |
+| 技能 | `beta=true` | `anthropic-beta: skills-2025-10-02` |
+| 部署、部署运行 | 无 | `anthropic-version: 2023-06-01` 和 `anthropic-beta: managed-agents-2026-04-01` |
+| Webhooks | 无 | `anthropic-beta: webhooks-2026-03-01` |
+
+<Warning>
+  控制台 Cookie 会话在部分托管智能体路由上使用 `?beta=true` 快捷方式。API 密钥客户端必须使用上表要求的正式请求头，不要复制浏览器请求。
+</Warning>
+
+## 多个 Beta 值
+
+`anthropic-beta` 可以出现多次，也可以使用逗号分隔。OMA 会按资源查找所需标识。
+
+```http
+anthropic-beta: managed-agents-2026-04-01, another-preview
+```
+
+部署合同当前严格要求 `anthropic-version: 2023-06-01`。消息接口会把查询字符串和调用方的兼容请求头转发给配置的上游。升级前，请在测试环境验证 SDK 实际发送的请求头。

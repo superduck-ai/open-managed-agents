@@ -5,7 +5,7 @@ import { type AgentModelOption, type AgentSkillOption } from './create-dialog-mo
 import { loadMcpDirectoryServers } from './tools/api';
 
 type ModelsResponse = {
-  data?: Array<{ id?: string; display_name?: string }>;
+  data?: Array<{ id?: string }>;
 };
 
 type SkillsResponse = {
@@ -24,7 +24,7 @@ export async function listCreateAgentModels(workspaceId: string): Promise<AgentM
     if (!model.id) {
       return [];
     }
-    return [{ id: model.id, displayName: model.display_name || model.id }];
+    return [{ id: model.id, displayName: model.id }];
   });
 }
 

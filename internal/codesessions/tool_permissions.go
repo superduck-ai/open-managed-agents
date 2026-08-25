@@ -2,14 +2,14 @@ package codesessions
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-
-	"github.com/google/uuid"
 )
 
 type resolvedToolPermission string
@@ -327,7 +327,7 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 	now := time.Now().UTC()
 	payloadObject := map[string]any{
 		"type":       "control_response",
-		"uuid":       uuid.NewSHA1(uuid.NameSpaceOID, []byte(codeSessionID+"\x00control_response\x00"+request.RequestID)).String(),
+		"uuid":       controlResponseUUID(codeSessionID, request.RequestID),
 		"session_id": codeSessionID,
 		"created_at": formatTime(now),
 		"timestamp":  formatTime(now),
@@ -351,6 +351,23 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 		return err
 	}
 	return nil
+}
+
+// controlResponseUUID preserves the UUIDv5 output previously produced with the
+// OID namespace. SHA-1 is required by UUIDv5 and is not used for security here.
+func controlResponseUUID(codeSessionID, requestID string) string {
+	namespace := uuid.UUID{0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8}
+	name := codeSessionID + "\x00control_response\x00" + requestID
+	payload := make([]byte, 0, len(namespace)+len(name))
+	payload = append(payload, namespace[:]...)
+	payload = append(payload, name...)
+	digest := sha1.Sum(payload)
+
+	var result uuid.UUID
+	copy(result[:], digest[:])
+	result[6] = (result[6] & 0x0f) | 0x50
+	result[8] = (result[8] & 0x3f) | 0x80
+	return result.String()
 }
 
 func (s *Service) publishToolPermissionRequiresAction(ctx context.Context, codeSessionID string, payload *workerControlRequestPayload, meta EventMetadata, identity toolIdentity) error {

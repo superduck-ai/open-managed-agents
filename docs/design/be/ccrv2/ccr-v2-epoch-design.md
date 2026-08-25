@@ -7,7 +7,7 @@
 CCR v2 下，一个 Claude Code worker 可能因为容器重启、transport 重建或 lease 过期后的重新调度而被替换。服务端需要提供一个强一致的所有权边界：
 
 - epoch 是 code session 级别的单调小整数 counter。
-- 每次 worker register 都递增该 code session 的 epoch。
+- legacy worker register 递增该 code session 的 epoch；managed-agent 凭证在签发时绑定一个已预留 epoch，register 对该 epoch 幂等。
 - worker 写请求必须携带 `worker_epoch`。
 - 请求 epoch 不等于当前 epoch 时返回 `409 conflict_error`，让旧 worker 退出。
 - PostgreSQL 是唯一强一致来源，不使用内存 counter。
@@ -48,7 +48,7 @@ create index if not exists code_sessions_worker_lease_expiry_v1_idx
 | # | 不变量 | 服务端要求 |
 |---|---|---|
 | 1 | epoch 是 per-code-session 的 | 不同 `cse_*` 独立计数，互不影响 |
-| 2 | register 递增 epoch | 每次合法 register 都在事务内 `current_worker_epoch + 1` |
+| 2 | register 获得唯一 epoch | legacy register 在事务内执行 `current_worker_epoch + 1`；managed register 只能提交 JWT 中已预留的 epoch |
 | 3 | epoch 单调递增 | 不回退，不使用 timestamp、UUID 或随机数 |
 | 4 | 只有当前 epoch 可以写 | 不匹配返回 `409 conflict_error` |
 | 5 | lease 过期不自动 bump | 只有下一次 register 才 bump |
@@ -59,7 +59,7 @@ create index if not exists code_sessions_worker_lease_expiry_v1_idx
 
 - `POST /v1/code/sessions/{code_session_id}/worker/register`
 
-`RegisterCodeSessionWorker(ctx, codeSessionID, binding, leaseTTL)` 是唯一 epoch 变更入口。它必须在单个 DB 事务中：
+legacy 客户端使用 `RegisterCodeSessionWorker(ctx, codeSessionID, binding, leaseTTL)`，在单个 DB 事务中递增 epoch：
 
 ```go
 tx := begin()
@@ -93,6 +93,8 @@ return nextEpoch
 - 不同 code session 可以并发 register。
 - 不等待 lease 过期；任何合法新 register 都可以抢占并 bump epoch。
 - 返回 `worker_epoch` 建议用 JSON string，实际值保持在 JS safe integer 范围内。
+
+managed-agent session-ingress JWT 额外携带 `worker_epoch`。首次创建时直接把现有 `current_worker_epoch` 初始化为 `1` 并签发 epoch `1`；Sandbox 恢复时，凭证轮换 SQL 在同一更新中替换 OAuth hash、把 `current_worker_epoch` 加一并清空旧 lease，再把新的 current epoch 写入 JWT。带该 claim 的 register 使用 `RegisterCodeSessionWorkerAtEpoch()`：持有行锁时再次要求数据库 current epoch 等于 JWT claim，然后把 lease/binding 写到该确切 epoch。相同 JWT 重试 register 只刷新同一 epoch，不再次 bump；旧 managed-agent JWT 通常在入口鉴权返回 `401`，即使其请求恰好在轮换前通过入口校验，事务内 worker epoch 复核也会阻止它抢回所有权。旧版不含 `worker_epoch` 的 JWT 可继续使用 legacy register，但凭证轮换预留 epoch 并清空 lease 后，legacy register 不得继续递增越过该 fence。
 
 ## 5. Worker 写请求校验
 
@@ -181,6 +183,10 @@ batch 中可公开的 durable output 直接以稳定 public event ID 幂等写�
 去重。internal transcript 仍按原有事务在 code session 行锁内校验 epoch 后写入
 `code_session_internal_events`。
 
+其中 ephemeral `stream_event` 会在 epoch gate 之后通过 Redis Pub/Sub 实时扇出到各
+API 实例，但仍不落 PostgreSQL；协议转换、稳定 ID 与故障语义见
+[`ccr-v2-worker-sse-fanout.md`](ccr-v2-worker-sse-fanout.md)。
+
 legacy ingress 路径如果继续使用无 epoch 的 `AppendWorkerEvent()`，必须被明确归类为兼容路径；如果要纳入 CCR v2 所有权保证，也需要改造成 register/epoch 模型。
 
 ## 7. Heartbeat 与 Lease
@@ -207,23 +213,25 @@ returning worker_lease_expires_at;
 
 lease 过期本身不修改 epoch。UI 或观测状态用 `worker_lease_expires_at <= now()` 判断 stale。后台 sweep 在 v1 中不是正确性的必要条件。
 
+同一个 Provider Sandbox 因 idle timeout 被 pause 时，worker ownership 没有变化，因此 resume 也不 bump epoch。用户事件触发显式 `Connect`/`SetTimeout` 并确认同一个活动 Sandbox 恢复成功后，服务端可以把当前已注册 lease 重新设为 `now + leaseTTL`。该写入必须同时匹配租户、Code Session、活动 Work 和精确的 Provider Sandbox ID，并拒绝 lease 已被 credential rotation 清空的记录；Provider 恢复失败时不得续租。replacement 创建新 Sandbox 时仍必须 bump epoch 并清空旧 lease。
+
 ## 8. 读路径兼容
 
 读路径不 bump epoch：
 
 - `GET /worker` 可以可选支持 `worker_epoch` query/header；传了且不匹配返回 `409`，没传则返回当前 worker state。
-- `GET /worker/events/stream` 只做 auth 和 session 存在校验；如果请求带 epoch，可以校验并在 mismatch 时返回 `409`，否则保持兼容。
+- `GET /worker/events/stream` 优先使用 query/header 中的 epoch；没有显式参数时使用已认证 JWT 的正 `worker_epoch`。显式值不匹配返回 `409`；只有旧 JWT 也没有 epoch 时才保持 legacy 兼容。
 - SSE/HTTP poll 读取 queued inbound events 不改变 epoch。
 
 当前实现约束：
 
 - 无 `worker_epoch` 的 `GET /worker` 只读当前 state，不刷新 `connection_status` 或 activity 时间。
 - 带 `worker_epoch` 的 `GET /worker` 可以刷新连接状态，但必须使用 `current_worker_epoch = $epoch` 条件更新。
-- `GET /worker/events/stream` 只有在请求携带当前 epoch 时才写入 connected/disconnected 状态；无 epoch stream 不做状态写入。
+- `GET /worker/events/stream` 在请求参数或 JWT claim 提供当前 epoch 时写入 connected/disconnected 状态；只有两者都无 epoch 时才不做状态写入。
 - 带 `worker_epoch` 的 stream 会先解析 `from_sequence_num` / `Last-Event-ID`；cursor 非法时返回 `400`，不会先把 worker 标记为 connected。
 - 带 `worker_epoch` 的 stream 使用 `ListCodeSessionInboundEventsForWorkerStream(ctx, sessionID, epoch, afterSequence)`，读取 `sequence_num > afterSequence` 且 `delivery_status <> 'processed'` 的 inbound events，并继续约束 `current_worker_epoch = $epoch`。
 - epoch-scoped stream 写出事件后使用 `MarkCodeSessionInboundEventSentForEpoch()` 标记 `sent`、`delivery_worker_epoch` 和 delivery attempt；新 register bump 后，旧 stream 应停止，不能读取或标记新 epoch 的事件。
-- 无 `worker_epoch` 的 legacy stream 仍使用 queued-only 兼容路径，不提供 epoch takeover/replay 语义。
+- 请求参数和 JWT claim 都无 `worker_epoch` 的 legacy stream 仍使用 queued-only 兼容路径，不提供 epoch takeover/replay 语义。managed-agent JWT 带 epoch，因此它即使使用不带 query 的 stream URL，也必须进入 epoch-scoped 路径并在 pause/resume 重连时重放未 processed 的事件。
 - stream 断开时旧 epoch 的 disconnected 更新会被条件 update 拒绝，不能覆盖新 worker 的 connected 状态。
 
 ## 9. 并发与竞态防护
@@ -279,7 +287,8 @@ CCR v2 worker 使用持久化 inbound event 队列和带 epoch 的
 
 需要覆盖：
 
-- 新 code session 第一次 register 返回 `1`，第二次返回 `2`。
+- legacy code session 第一次 register 返回 `1`，第二次返回 `2`。
+- managed-agent 新 JWT 重复 register 返回相同的预留 epoch；恢复轮换后旧 JWT 返回 `401`，新 JWT 返回下一 epoch。
 - 同一 code session 两个并发 register 返回连续不同 epoch。
 - 不同 code session 都从 `1` 开始，互不影响。
 - 旧 epoch 调 worker 写 endpoints 返回 `409`。

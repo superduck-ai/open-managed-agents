@@ -67,6 +67,10 @@ const (
 	// MaxSessionFileResources is the write-time limit for active File resources
 	// attached to one Session.
 	MaxSessionFileResources = sessioncontract.MaxFileResources
+	// MaxSessionOutputFileResources caps the output files ListSessionResources
+	// returns. Output files bypass the write-time limit, so without this cap the
+	// resources array would grow unbounded. files.list(scope_id) stays complete.
+	MaxSessionOutputFileResources = sessioncontract.MaxFileResources
 )
 
 type SessionResource struct {
@@ -79,9 +83,13 @@ type SessionResource struct {
 	ResourceType      string
 	Payload           json.RawMessage
 	SecretPayload     json.RawMessage
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	DeletedAt         *time.Time
+	// Path 是 Filestore namespace 中的公开路径；FileExternalID 是 Owned File 的
+	// `file_...` ID，只在读取路径同批 JOIN 出 File 行时才有值。
+	Path           string
+	FileExternalID string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	DeletedAt      *time.Time
 }
 
 type SessionEvent struct {
@@ -226,6 +234,15 @@ func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID st
 	return row.session(), true, nil
 }
 
+func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, sessionUUID string) (Session, bool, error) {
+	mapper := NewSessionMapper(d.mapperDB)
+	row, found, err := mapper.FindByUUID(ctx, workspaceUUID, sessionUUID)
+	if err != nil || !found {
+		return Session{}, found, err
+	}
+	return row.session(), true, nil
+}
+
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
@@ -319,7 +336,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if _, txErr = eventMapper.SoftDeleteBySession(ctx, workspaceUUID, externalID); txErr != nil {
 			return txErr
 		}
-		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, externalID)
+		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
 		return txErr
 	})
 	return session, err
@@ -446,7 +463,7 @@ func (d *DB) GetSessionResource(ctx context.Context, workspaceUUID string, sessi
 
 func (d *DB) ListSessionResources(ctx context.Context, workspaceUUID string, sessionExternalID string) ([]SessionResource, error) {
 	mapper := NewSessionResourceMapper(d.mapperDB)
-	rows, err := mapper.List(ctx, workspaceUUID, sessionExternalID)
+	rows, err := mapper.List(ctx, workspaceUUID, sessionExternalID, MaxSessionOutputFileResources)
 	return sessionResourcesFromRows(rows), err
 }
 

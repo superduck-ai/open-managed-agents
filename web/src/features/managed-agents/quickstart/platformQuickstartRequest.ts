@@ -13,6 +13,7 @@ export type QuickstartRequestInput = {
   step: QuickstartStep;
   deploymentSchedulePlanned: boolean;
   agentConfig: Record<string, unknown>;
+  modelID: string;
   agentDescription?: string | null;
   messages?: QuickstartMessage[];
   locale?: Locale;
@@ -28,7 +29,6 @@ export type PlatformQuickstartRequest = {
   stream: boolean;
 };
 
-export const platformQuickstartModel = platformQuickstartOfficialRequest.model;
 export const platformQuickstartMaxTokens = platformQuickstartOfficialRequest.max_tokens;
 export const platformQuickstartSystem = platformQuickstartOfficialRequest.system;
 export const platformQuickstartTools = platformQuickstartOfficialRequest.tools;
@@ -41,13 +41,33 @@ export const platformQuickstartToolNames = platformQuickstartTools.map((tool) =>
 export function buildPlatformQuickstartRequest(input: QuickstartRequestInput): PlatformQuickstartRequest {
   return {
     messages: input.messages?.length ? input.messages : [buildInitialQuickstartMessage(input)],
-    system: resolveQuickstartSystem(input.locale ?? 'en'),
-    model: platformQuickstartModel,
+    system: resolveQuickstartSystem(input.locale ?? 'en', input.modelID),
+    model: input.modelID,
     max_tokens: platformQuickstartMaxTokens,
-    tools: platformQuickstartTools,
+    tools: quickstartToolsForModel(input.modelID),
     tool_choice: platformQuickstartToolChoice,
     stream: true,
   };
+}
+
+function quickstartToolsForModel(modelID: string) {
+  return platformQuickstartTools.map((tool) => {
+    if (tool.name !== 'build_agent_config') {
+      return tool;
+    }
+    const inputSchema = isPlainObject(tool.input_schema) ? tool.input_schema : {};
+    const properties = isPlainObject(inputSchema.properties) ? inputSchema.properties : {};
+    return {
+      ...tool,
+      input_schema: {
+        ...inputSchema,
+        properties: {
+          ...properties,
+          model: { type: 'string', const: modelID, description: 'Configured workspace model ID' },
+        },
+      },
+    };
+  });
 }
 
 export function buildInitialQuickstartMessage(input: QuickstartRequestInput): QuickstartMessage {

@@ -3,11 +3,10 @@ package db
 import (
 	"context"
 	"strings"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/yourbatis"
-
-	"github.com/google/uuid"
 )
 
 type PlatformAuthUserContext struct {
@@ -181,7 +180,7 @@ func (d *DB) ResolvePlatformSessionIdentity(ctx context.Context, input platforms
 		return platformsession.Session{}, mapNoRows(err)
 	}
 	session := row.session()
-	sessionUUID := uuid.NewString()
+	sessionUUID := uuid.NewV4().String()
 	session.ExternalID = "platform_session_" + strings.ReplaceAll(sessionUUID, "-", "")
 	session.ExpiresAt = input.ExpiresAt
 	return session, nil

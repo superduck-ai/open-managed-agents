@@ -4,15 +4,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
 type AdminTunnel struct {
-	UUID                uuid.UUID
+	UUID                string
 	ExternalID          string
-	OrganizationUUID    uuid.UUID
-	WorkspaceUUID       uuid.NullUUID
+	OrganizationUUID    string
+	WorkspaceUUID       *string
 	WorkspaceExternalID *string
 	DisplayName         *string
 	Domain              string
@@ -89,23 +88,11 @@ func adminTunnelFromMapperRow(row adminMCPTunnelRow, err error) (AdminTunnel, er
 	if err != nil {
 		return AdminTunnel{}, mapNoRows(err)
 	}
-	tunnelUUID, err := uuid.Parse(row.UUID)
-	if err != nil {
-		return AdminTunnel{}, err
-	}
-	organizationUUID, err := uuid.Parse(row.OrganizationUUID)
-	if err != nil {
-		return AdminTunnel{}, err
-	}
-	workspaceUUID, err := nullableAdminTunnelUUID(row.WorkspaceUUID)
-	if err != nil {
-		return AdminTunnel{}, err
-	}
 	return AdminTunnel{
-		UUID:                tunnelUUID,
+		UUID:                row.UUID,
 		ExternalID:          row.ExternalID,
-		OrganizationUUID:    organizationUUID,
-		WorkspaceUUID:       workspaceUUID,
+		OrganizationUUID:    row.OrganizationUUID,
+		WorkspaceUUID:       row.WorkspaceUUID,
 		WorkspaceExternalID: row.WorkspaceExternalID,
 		DisplayName:         row.DisplayName,
 		Domain:              row.Domain,
@@ -127,15 +114,4 @@ func adminTunnelsFromMapperRows(rows []adminMCPTunnelRow) ([]AdminTunnel, error)
 		tunnels[index] = tunnel
 	}
 	return tunnels, nil
-}
-
-func nullableAdminTunnelUUID(value *string) (uuid.NullUUID, error) {
-	if value == nil {
-		return uuid.NullUUID{}, nil
-	}
-	parsed, err := uuid.Parse(*value)
-	if err != nil {
-		return uuid.NullUUID{}, err
-	}
-	return uuid.NullUUID{UUID: parsed, Valid: true}, nil
 }

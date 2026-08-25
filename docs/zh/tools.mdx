@@ -1,0 +1,490 @@
+---
+title: "工具"
+sidebarTitle: "工具"
+description: "配置您的智能体可用的工具。"
+---
+
+Open Managed Agents 提供了一组内置工具，智能体可以在[会话](/docs/zh/sessions)中自主使用这些工具。您可以通过在智能体配置中指定工具来控制哪些工具可用。
+
+Open Managed Agents 还支持自定义的用户定义工具。您的应用程序单独执行这些工具并将结果返回给智能体，智能体使用这些结果继续执行任务。要为智能体提供来自 MCP 服务器的工具，请改用 [MCP 连接器](/docs/zh/mcp-connector)。
+
+<Note>
+  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+</Note>
+
+## 可用工具
+
+智能体工具集包括以下工具。当您在智能体配置中包含该工具集时，所有工具默认启用。使用"名称"列中的值在 `configs` 数组中引用工具。
+
+| 工具         | 名称           | 描述                    |
+| ---------- | ------------ | --------------------- |
+| Bash       | `bash`       | 在 shell 会话中执行 bash 命令 |
+| Read       | `read`       | 从沙箱文件系统读取文件           |
+| Write      | `write`      | 向沙箱文件系统写入文件           |
+| Edit       | `edit`       | 在文件中执行字符串替换           |
+| Glob       | `glob`       | 使用 glob 模式进行快速文件模式匹配  |
+| Grep       | `grep`       | 使用正则表达式模式进行文本搜索       |
+| Web fetch  | `web_fetch`  | 从 URL 获取内容            |
+| Web search | `web_search` | 在网络上搜索信息              |
+
+当工具输出超过 100,000 个字符（约 25,000 个令牌）时，它会自动写入[沙箱](/docs/zh/environments)中的文件。模型会收到带有文件路径的截断预览，并可以从该文件中读取完整内容。
+
+## 配置工具集
+
+在创建智能体时使用 `agent_toolset_20260401` 启用完整工具集。使用 `configs` 数组禁用特定工具或覆盖其设置。每个配置条目还可以设置 `permission_policy`，用于控制该工具的调用是自动批准还是需要确认。有关可用的策略类型，请参阅[权限策略](/docs/zh/permission-policies)。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  agent=$(curl -fsSL http://localhost:38080/v1/agents \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<'EOF'
+  {
+    "name": "Coding Assistant",
+    "model": "claude-opus-5",
+    "tools": [
+      {
+        "type": "agent_toolset_20260401",
+        "configs": [
+          {"name": "web_fetch", "enabled": false}
+        ]
+      }
+    ]
+  }
+  EOF
+  )
+  ```
+
+  ```bash CLI
+  ant beta:agents create <<'YAML'
+  name: Coding Assistant
+  model: claude-opus-5
+  tools:
+    - type: agent_toolset_20260401
+      configs:
+        - name: web_fetch
+          enabled: false
+  YAML
+  ```
+
+  ```python Python
+  agent = client.beta.agents.create(
+      name="Coding Assistant",
+      model="claude-opus-5",
+      tools=[
+          {
+              "type": "agent_toolset_20260401",
+              "configs": [
+                  {"name": "web_fetch", "enabled": False},
+              ],
+          },
+      ],
+  )
+  ```
+
+  ```typescript TypeScript
+  const agent = await client.beta.agents.create({
+    name: "Coding Assistant",
+    model: "claude-opus-5",
+    tools: [
+      {
+        type: "agent_toolset_20260401",
+        configs: [{ name: "web_fetch", enabled: false }]
+      }
+    ]
+  });
+  ```
+
+  ```csharp C#
+  using Anthropic.Models.Beta.Agents;
+
+  var agent = await client.Beta.Agents.Create(new()
+  {
+      Name = "Coding Assistant",
+      Model = new("claude-opus-5"),
+      Tools =
+      [
+          new BetaManagedAgentsAgentToolset20260401Params
+          {
+              Type = "agent_toolset_20260401",
+              Configs =
+              [
+                  new() { Name = "web_fetch", Enabled = false },
+              ],
+          },
+      ],
+  });
+  ```
+
+  ```go Go
+  agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
+      Name: "Coding Assistant",
+      Model: anthropic.BetaManagedAgentsModelConfigParams{
+          ID: "claude-opus-5",
+      },
+      Tools: []anthropic.BetaAgentNewParamsToolUnion{{
+          OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
+              Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
+              Configs: []anthropic.BetaManagedAgentsAgentToolConfigParams{{
+                  Name:    anthropic.BetaManagedAgentsAgentToolConfigParamsNameWebFetch,
+                  Enabled: anthropic.Bool(false),
+              }},
+          },
+      }},
+  })
+  if err != nil {
+      panic(err)
+  }
+  _ = agent
+  ```
+
+  ```java Java
+  import com.anthropic.models.beta.agents.*;
+
+  var agent = client.beta().agents().create(AgentCreateParams.builder()
+      .name("Coding Assistant")
+      .model(BetaManagedAgentsModel.CLAUDE_OPUS_5)
+      .addTool(BetaManagedAgentsAgentToolset20260401Params.builder()
+          .type(BetaManagedAgentsAgentToolset20260401Params.Type.AGENT_TOOLSET_20260401)
+          .addConfig(BetaManagedAgentsAgentToolConfigParams.builder()
+              .name(BetaManagedAgentsAgentToolConfigParams.Name.WEB_FETCH)
+              .enabled(false)
+              .build())
+          .build())
+      .build());
+  ```
+
+  ```php PHP
+  use Anthropic\Beta\Agents\BetaManagedAgentsAgentToolConfigParams;
+  use Anthropic\Beta\Agents\BetaManagedAgentsAgentToolset20260401Params;
+
+  $agent = $client->beta->agents->create(
+      name: 'Coding Assistant',
+      model: 'claude-opus-5',
+      tools: [
+          BetaManagedAgentsAgentToolset20260401Params::with(
+              type: 'agent_toolset_20260401',
+              configs: [
+                  BetaManagedAgentsAgentToolConfigParams::with(name: 'web_fetch', enabled: false),
+              ],
+          ),
+      ],
+  );
+  ```
+
+  ```ruby Ruby
+  agent = client.beta.agents.create(
+    name: "Coding Assistant",
+    model: "claude-opus-5",
+    tools: [
+      {
+        type: :agent_toolset_20260401,
+        configs: [
+          {name: :web_fetch, enabled: false}
+        ]
+      }
+    ]
+  )
+  ```
+</CodeGroup>
+
+### 禁用特定工具
+
+要禁用某个工具，请在智能体的 `tools` 数组的工具集对象中，在该工具的配置条目中设置 `enabled: false`：
+
+```json
+{
+  "type": "agent_toolset_20260401",
+  "configs": [
+    { "name": "web_fetch", "enabled": false },
+    { "name": "web_search", "enabled": false }
+  ]
+}
+```
+
+### 仅启用特定工具
+
+`default_config` 对象为工具集中的每个工具设置基线，而每个工具的 `configs` 条目会覆盖它。要从全部关闭开始并仅启用您需要的工具，请将 `default_config.enabled` 设置为 `false`：
+
+```json
+{
+  "type": "agent_toolset_20260401",
+  "default_config": { "enabled": false },
+  "configs": [
+    { "name": "bash", "enabled": true },
+    { "name": "read", "enabled": true },
+    { "name": "write", "enabled": true }
+  ]
+}
+```
+
+## 自定义工具
+
+除了内置工具之外，您还可以定义自定义工具。自定义工具类似于消息 API 中的[用户定义的客户端工具](/docs/zh/tools)。
+
+每个自定义工具定义了一个契约：您指定可用的操作及其返回内容，智能体决定何时以及如何调用它们。模型本身从不执行任何操作。它发出一个结构化请求，您的代码运行该操作，结果流回到对话中。有关如何在会话期间接收自定义工具调用并返回结果，请参阅[会话事件流](/docs/zh/events-and-streaming#handling-custom-tool-calls)。
+
+如果您的会话在自托管沙箱中运行，环境工作进程可以[从您的沙箱提供自定义工具](/docs/zh/self-hosted-sandboxes#serve-custom-tools-from-your-sandbox)，包括封装您网络内 MCP 服务器的工具。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  agent=$(curl -fsSL http://localhost:38080/v1/agents \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<'EOF'
+  {
+    "name": "Weather Agent",
+    "model": "claude-opus-5",
+    "tools": [
+      {
+        "type": "agent_toolset_20260401"
+      },
+      {
+        "type": "custom",
+        "name": "get_weather",
+        "description": "Get current weather for a location",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string", "description": "City name"}
+          },
+          "required": ["location"]
+        }
+      }
+    ]
+  }
+  EOF
+  )
+  ```
+
+  ```bash CLI
+  ant beta:agents create <<'YAML'
+  name: Weather Agent
+  model: claude-opus-5
+  tools:
+    - type: agent_toolset_20260401
+    - type: custom
+      name: get_weather
+      description: Get current weather for a location
+      input_schema:
+        type: object
+        properties:
+          location:
+            type: string
+            description: City name
+        required:
+          - location
+  YAML
+  ```
+
+  ```python Python
+  agent = client.beta.agents.create(
+      name="Weather Agent",
+      model="claude-opus-5",
+      tools=[
+          {
+              "type": "agent_toolset_20260401",
+          },
+          {
+              "type": "custom",
+              "name": "get_weather",
+              "description": "Get current weather for a location",
+              "input_schema": {
+                  "type": "object",
+                  "properties": {
+                      "location": {"type": "string", "description": "City name"},
+                  },
+                  "required": ["location"],
+              },
+          },
+      ],
+  )
+  ```
+
+  ```typescript TypeScript
+  const agent = await client.beta.agents.create({
+    name: "Weather Agent",
+    model: "claude-opus-5",
+    tools: [
+      { type: "agent_toolset_20260401" },
+      {
+        type: "custom",
+        name: "get_weather",
+        description: "Get current weather for a location",
+        input_schema: {
+          type: "object",
+          properties: { location: { type: "string", description: "City name" } },
+          required: ["location"]
+        }
+      }
+    ]
+  });
+  ```
+
+  ```csharp C#
+  using System.Text.Json;
+  using Anthropic.Models.Beta.Agents;
+
+  var agent = await client.Beta.Agents.Create(new()
+  {
+      Name = "Weather Agent",
+      Model = new("claude-opus-5"),
+      Tools =
+      [
+          new BetaManagedAgentsAgentToolset20260401Params
+          {
+              Type = "agent_toolset_20260401",
+          },
+          new BetaManagedAgentsCustomToolParams
+          {
+              Type = "custom",
+              Name = "get_weather",
+              Description = "Get current weather for a location",
+              InputSchema = new()
+              {
+                  Properties = new Dictionary<string, JsonElement>
+                  {
+                      ["location"] = JsonSerializer.SerializeToElement(
+                          new { type = "string", description = "City name" }
+                      ),
+                  },
+                  Required = ["location"],
+              },
+          },
+      ],
+  });
+  ```
+
+  ```go Go
+  agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
+      Name: "Weather Agent",
+      Model: anthropic.BetaManagedAgentsModelConfigParams{
+          ID: "claude-opus-5",
+      },
+      Tools: []anthropic.BetaAgentNewParamsToolUnion{{
+          OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
+              Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
+          },
+      }, {
+          OfCustom: &anthropic.BetaManagedAgentsCustomToolParams{
+              Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
+              Name:        "get_weather",
+              Description: "Get current weather for a location",
+              InputSchema: anthropic.BetaManagedAgentsCustomToolInputSchemaParam{
+                  Properties: map[string]any{
+                      "location": map[string]any{
+                          "type":        "string",
+                          "description": "City name",
+                      },
+                  },
+                  Required: []string{"location"},
+              },
+          },
+      }},
+  })
+  if err != nil {
+      panic(err)
+  }
+  _ = agent
+  ```
+
+  ```java Java
+  import com.anthropic.models.beta.agents.*;
+  import java.util.Map;
+
+  var agent = client.beta().agents().create(AgentCreateParams.builder()
+      .name("Weather Agent")
+      .model(BetaManagedAgentsModel.CLAUDE_OPUS_5)
+      .addTool(BetaManagedAgentsAgentToolset20260401Params.builder()
+          .type(BetaManagedAgentsAgentToolset20260401Params.Type.AGENT_TOOLSET_20260401)
+          .build())
+      .addTool(BetaManagedAgentsCustomToolParams.builder()
+          .type(BetaManagedAgentsCustomToolParams.Type.CUSTOM)
+          .name("get_weather")
+          .description("Get current weather for a location")
+          .inputSchema(BetaManagedAgentsCustomToolInputSchema.builder()
+              .properties(BetaManagedAgentsCustomToolInputSchema.Properties.builder()
+                  .putAdditionalProperty("location", JsonValue.from(Map.of(
+                      "type", "string",
+                      "description", "City name")))
+                  .build())
+              .addRequired("location")
+              .build())
+          .build())
+      .build());
+  ```
+
+  ```php PHP
+  use Anthropic\Beta\Agents\BetaManagedAgentsAgentToolset20260401Params;
+  use Anthropic\Beta\Agents\BetaManagedAgentsCustomToolInputSchema;
+  use Anthropic\Beta\Agents\BetaManagedAgentsCustomToolParams;
+
+  $agent = $client->beta->agents->create(
+      name: 'Weather Agent',
+      model: 'claude-opus-5',
+      tools: [
+          BetaManagedAgentsAgentToolset20260401Params::with(
+              type: 'agent_toolset_20260401',
+          ),
+          BetaManagedAgentsCustomToolParams::with(
+              type: 'custom',
+              name: 'get_weather',
+              description: 'Get current weather for a location',
+              inputSchema: BetaManagedAgentsCustomToolInputSchema::with(
+                  properties: ['location' => ['type' => 'string', 'description' => 'City name']],
+                  required: ['location'],
+              ),
+          ),
+      ],
+  );
+  ```
+
+  ```ruby Ruby
+  agent = client.beta.agents.create(
+    name: "Weather Agent",
+    model: "claude-opus-5",
+    tools: [
+      {type: :agent_toolset_20260401},
+      {
+        type: :custom,
+        name: "get_weather",
+        description: "Get current weather for a location",
+        input_schema: {
+          type: :object,
+          properties: {location: {type: "string", description: "City name"}},
+          required: ["location"]
+        }
+      }
+    ]
+  )
+  ```
+</CodeGroup>
+
+在智能体上定义自定义工具后，智能体会在会话期间调用它们。
+
+### 自定义工具定义的最佳实践
+
+* **提供极其详细的描述。** 这是影响工具性能的最重要因素。您的描述应该解释工具的功能以及何时使用它（以及何时不使用）。解释每个参数的含义以及它如何影响工具的行为。指出任何重要的注意事项或限制。您能为智能体提供的工具上下文越多，它就越能准确判断何时以及如何使用工具。每个工具描述应力求三到四句话，如果工具较复杂则应更多。
+* **将相关操作合并为更少的工具。** 与其为每个操作创建单独的工具（`create_pr`、`review_pr`、`merge_pr`），不如将它们组合成一个带有 `action` 参数的单一工具。更少但功能更强大的工具可以减少选择歧义，并使工具界面更容易被智能体使用。
+* **在工具名称中使用有意义的命名空间。** 当您的工具跨越多个服务或资源时，请在名称前加上资源前缀（例如 `db_query` 或 `storage_read`）。随着您的工具库不断增长，这可以使工具选择变得明确无误。
+* **设计工具响应以仅返回高信号信息。** 返回语义化、稳定的标识符（例如 slug 或 UUID），而不是不透明的内部引用，并且仅包含智能体确定下一步所需的字段。臃肿的响应会浪费上下文，并使智能体更难提取重要信息。
+
+## 后续步骤
+
+<CardGroup cols={2}>
+  <Card title="MCP 连接器" href="/docs/zh/mcp-connector">
+    将 MCP 服务器连接到您的智能体，以访问外部工具和数据源。
+  </Card>
+
+  <Card title="权限策略" href="/docs/zh/permission-policies">
+    控制智能体和 MCP 工具何时执行。
+  </Card>
+
+  <Card title="会话事件流" href="/docs/zh/events-and-streaming">
+    发送事件、流式传输响应，以及在执行过程中中断或重定向您的会话。
+  </Card>
+</CardGroup>

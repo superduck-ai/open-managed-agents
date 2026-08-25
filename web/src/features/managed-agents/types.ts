@@ -284,8 +284,7 @@ export type DeploymentRunApiResponse = {
   deployment_id: string;
   error?: unknown;
   session_id?: string | null;
-  trigger?: unknown;
-  trigger_type?: string | null;
+  trigger_context?: { type: 'manual' } | { type: 'schedule'; scheduled_at: string } | null;
   type: 'deployment_run';
 };
 
@@ -317,6 +316,13 @@ export type FileMetadataApiResponse = {
   scope?: unknown;
   size_bytes: number;
   type: 'file';
+};
+
+export type FileMetadataPageResponse = {
+  data: FileMetadataApiResponse[];
+  first_id?: string | null;
+  has_more: boolean;
+  last_id?: string | null;
 };
 
 export type SessionThreadApiResponse = {
@@ -679,13 +685,22 @@ export type QuickstartDeploymentInput = {
   initial_message?: string;
 };
 
+export type CredentialTokenEndpointAuthType = 'none' | 'client_secret_post' | 'client_secret_basic';
+
 export type CredentialFormValues = {
   displayName: string;
-  authType: 'static_bearer' | 'environment_variable';
+  authType: 'static_bearer' | 'environment_variable' | 'mcp_oauth';
   mcpServerUrl: string;
   token: string;
   secretName: string;
   secretValue: string;
+  refreshToken: string;
+  refreshTokenEndpoint: string;
+  refreshClientId: string;
+  refreshClientSecret: string;
+  refreshAuthType: CredentialTokenEndpointAuthType;
+  oauthClientId: string;
+  oauthClientSecret: string;
 };
 
 export type MemoryFormValues = {

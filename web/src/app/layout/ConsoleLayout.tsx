@@ -69,6 +69,7 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { useAuth } from '../../shared/auth/context';
 import type { AuthAccount } from '../../shared/auth/api';
+import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import type { Workspace } from '../../shared/workspaces/api';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
@@ -204,7 +205,7 @@ export function SettingsShell({
 
 function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
-  const { activeWorkspaceId, selectWorkspace, workspaces } = useWorkspace();
+  const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
   const { setOpen, state } = useSidebar();
   const collapsed = state === 'collapsed';
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -215,6 +216,9 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
     Manage: true,
   });
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
+  const navigationItems = canManageLLMProviders(account, orgUuid)
+    ? consoleNavigation
+    : consoleNavigation.filter((item) => item.type !== 'link' || item.href !== '/llm-models');
 
   useEffect(() => {
     if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) {
@@ -237,7 +241,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
           <SidebarGroupContent>
             <nav aria-label={msg('nav.consoleNavigation', 'Console navigation')}>
               <SidebarMenu>
-                {consoleNavigation.map((item) => {
+                {navigationItems.map((item) => {
                   if (item.type === 'link') {
                     return (
                       <SidebarLink
@@ -611,7 +615,7 @@ function SidebarFooter({
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            render={<a href="https://docs.anthropic.com/" target="_blank" rel="noreferrer" />}
+            render={<a href="https://oma.mintlify.site/" target="_blank" rel="noreferrer" />}
             tooltip={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
             aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}
@@ -831,6 +835,7 @@ const managedAgentPathByHref: Record<string, string> = {
 };
 
 const workspaceBuildPathByHref: Record<string, string> = {
+  '/llm-models': 'llm-models',
   '/playground': 'playground',
   '/files': 'files',
   '/skills': 'skills',
@@ -885,7 +890,10 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   nextPath ??= currentPath
     .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
     .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
-    .replace(/^\/workspaces\/[^/]+\/(playground|files|skills|batches)/, `/workspaces/${encodedWorkspaceId}/$1`)
+    .replace(
+      /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|batches)/,
+      `/workspaces/${encodedWorkspaceId}/$1`,
+    )
     .replace(
       /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)/,
       `/workspaces/${encodedWorkspaceId}/$1`,
@@ -972,9 +980,9 @@ function isWideConsolePath(currentPath: string) {
 
 function isBuildPath(currentPath: string) {
   return (
-    ['/workbench', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
     currentPath.startsWith('/workbench/') ||
-    /^\/workspaces\/[^/]+\/(?:playground|files|skills|batches)(\/|$)/.test(currentPath)
+    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|batches)(\/|$)/.test(currentPath)
   );
 }
 

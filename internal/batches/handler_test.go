@@ -2,15 +2,38 @@ package batches
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 )
+
+func TestBatchConfiguredModelErrorsPreserveServerFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		kind apperr.Kind
+	}{
+		{name: "database failure", err: errors.New("database unavailable"), kind: apperr.Internal},
+		{name: "provider missing", err: llmproviders.ErrNotConfigured, kind: apperr.Unavailable},
+		{name: "ambiguous model", err: llmproviders.ErrAmbiguousModel, kind: apperr.Internal},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mapped, ok := errors.AsType[*apperr.Error](configuredModelError(test.err))
+			if !ok || mapped.Kind != test.kind {
+				t.Fatalf("configuredModelError() = %#v, want kind %v", mapped, test.kind)
+			}
+		})
+	}
+}
 
 func TestCreatePreservesBodyTooLargeResponse(t *testing.T) {
 	handler := newRequestBodyTestHandler(1)
@@ -25,8 +48,7 @@ func TestCreatePreservesBodyTooLargeResponse(t *testing.T) {
 
 func newRequestBodyTestHandler(maxBodyBytes int64) *Handler {
 	return &Handler{cfg: config.Config{
-		AnthropicUpstream: config.AnthropicUpstreamConfig{APIKey: "test-key"},
-		Batch:             config.BatchConfig{MaxBodyBytes: maxBodyBytes},
+		Batch: config.BatchConfig{MaxBodyBytes: maxBodyBytes},
 	}}
 }
 

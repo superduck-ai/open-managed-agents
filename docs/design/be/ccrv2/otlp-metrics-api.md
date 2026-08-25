@@ -70,7 +70,7 @@ POST /v1/code/sessions/{code_session_id}/worker/otlp/logs
 
 | Header | 必需 | 描述 |
 |--------|------|------|
-| `Authorization: Bearer sk-ant-si-<JWT>` | 是 | session-ingress JWT，必须通过签名和标准 claims 校验，且 `session_id` 必须与 path 一致 |
+| `Authorization: Bearer sk-ant-si-<JWT>` | 是 | session-ingress JWT，必须通过签名和标准 claims 校验，`session_id` 必须与 path 一致；managed-agent JWT 的 worker epoch 必须仍匹配 active Code Session |
 | `X-Worker-Epoch: {epoch}` | 否 | 当前 worker epoch；携带时用于拒绝旧 worker 写入并检查 lease，不携带时按 session-scoped telemetry 接收 |
 | `Content-Type` | 是 | `application/x-protobuf` 或 `application/json` |
 | `Accept` | 否 | 如果包含 `application/json`，即使请求是 protobuf，成功响应也会返回 JSON |
@@ -241,7 +241,7 @@ function getOTLPExporterConfig() {
 ```bash
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
 CLAUDE_CODE_USE_CCR_V2=1
-CLAUDE_CODE_WORKER_EPOCH=1
+CLAUDE_CODE_WORKER_EPOCH={next_worker_epoch}
 CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 ```
 
@@ -251,8 +251,10 @@ CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 OTEL_METRICS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/metrics
-OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {session_ingress_token},x-worker-epoch=1
+OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {session_ingress_token},x-worker-epoch={next_worker_epoch}
 ```
+
+首次启动时 `{next_worker_epoch}` 为 `1`。Sandbox 丢失后的替换启动复用原 Code Session，并注入 `current_worker_epoch + 1`；environment-manager 注册成功后使用同一递增 epoch，避免恢复 worker 被旧 epoch fencing。
 
 如果没有显式配置 `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_ENDPOINT`，并且 `OTEL_LOGS_EXPORTER` 未设置或包含 `otlp`，后端会默认注入：
 

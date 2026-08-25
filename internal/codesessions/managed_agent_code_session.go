@@ -32,8 +32,14 @@ type ManagedAgentCreateResult struct {
 	CodeSessionID       string
 	PublicSessionID     string
 	SDKURLPath          string
+	WorkerEpoch         int64
 	OAuthAccessToken    string
 	SessionIngressToken string
+}
+
+type ManagedAgentRecoverInput struct {
+	Session       db.Session
+	CodeSessionID string
 }
 
 // CreateManagedAgentCodeSession 原子地建立 code-session 身份上下文，并为 sandbox
@@ -70,6 +76,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 		Metadata:              metadata,
 		// OAuth-compatible token 只落 SHA-256 hash；明文仅存在于当前返回值中。
 		OAuthAccessTokenHash: auth.HashAPIKey(oauthAccessToken),
+		InitialWorkerEpoch:   1,
 		CreatedAt:            now,
 	})
 	if err != nil {
@@ -102,25 +109,75 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err := s.ActivateManagedAgentCodeSession(ctx, record); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
+	result, err := s.managedAgentCreateResult(
 		ctx,
-		input.Session.OrganizationUUID,
-		input.Session.WorkspaceUUID,
+		input.Session,
 		record.ExternalID,
+		oauthAccessToken,
+		record.CurrentWorkerEpoch,
 	)
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	// 重新从数据库读取签发上下文，保证 JWT claims 与实际持久化的租户和 agent 一致。
-	sessionIngressToken, err := s.issueSessionIngressToken(credentialContext)
+	needsCleanup = false
+	return result, nil
+}
+
+// RecoverManagedAgentCodeSession rotates both sandbox credentials while
+// preserving the Code Session identity and its durable inbound queue.
+func (s *Service) RecoverManagedAgentCodeSession(
+	ctx context.Context,
+	input ManagedAgentRecoverInput,
+) (ManagedAgentCreateResult, error) {
+	oauthAccessToken, err := newOAuthCompatibleToken()
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	needsCleanup = false
+	workerEpoch, err := s.db.RotateManagedAgentCodeSessionCredentials(
+		ctx,
+		input.Session,
+		input.CodeSessionID,
+		auth.HashAPIKey(oauthAccessToken),
+	)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
+	return s.managedAgentCreateResult(
+		ctx,
+		input.Session,
+		input.CodeSessionID,
+		oauthAccessToken,
+		workerEpoch,
+	)
+}
+
+func (s *Service) managedAgentCreateResult(
+	ctx context.Context,
+	session db.Session,
+	codeSessionID string,
+	oauthAccessToken string,
+	workerEpoch int64,
+) (ManagedAgentCreateResult, error) {
+	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
+		ctx,
+		session.OrganizationUUID,
+		session.WorkspaceUUID,
+		codeSessionID,
+	)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
+	// 重新从数据库读取签发上下文，保证 JWT claims 与实际持久化的租户、agent
+	// 和已预留 worker epoch 一致。
+	sessionIngressToken, err := s.issueSessionIngressToken(credentialContext, workerEpoch)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
 	return ManagedAgentCreateResult{
-		CodeSessionID:       record.ExternalID,
-		PublicSessionID:     record.SessionExternalID,
-		SDKURLPath:          "/v1/code/sessions/" + record.ExternalID,
+		CodeSessionID:       credentialContext.CodeSessionExternalID,
+		PublicSessionID:     credentialContext.PublicSessionExternalID,
+		SDKURLPath:          "/v1/code/sessions/" + credentialContext.CodeSessionExternalID,
+		WorkerEpoch:         workerEpoch,
 		OAuthAccessToken:    oauthAccessToken,
 		SessionIngressToken: sessionIngressToken,
 	}, nil

@@ -3,6 +3,7 @@
     <sql id="messageBatchColumns">
         mb.uuid,
         mb.external_id,
+        mb.organization_uuid,
         mb.workspace_uuid,
         mb.created_by_api_key_uuid,
         mb.api_variant,
@@ -51,6 +52,7 @@
         INSERT INTO message_batches (
             uuid,
             external_id,
+            organization_uuid,
             workspace_uuid,
             created_by_api_key_uuid,
             api_variant,
@@ -63,6 +65,7 @@
         ) VALUES (
             #{params.UUID},
             #{params.ExternalID},
+            #{params.OrganizationUUID},
             #{params.WorkspaceUUID},
             #{params.CreatedByAPIKeyUUID},
             #{params.APIVariant},

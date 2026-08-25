@@ -6,10 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-
-	"github.com/google/uuid"
 )
 
 func TestWorkspaceStorageUsageLedger(t *testing.T) {
@@ -278,12 +277,12 @@ type workspaceStorageFixture struct {
 
 func newWorkspaceStorageFixture(t *testing.T) workspaceStorageFixture {
 	t.Helper()
-	app := newTestAppWithStore(t, nil, newFakeStore("workspace-storage-"+uuid.NewString()))
+	app := newTestAppWithStore(t, nil, newFakeStore("workspace-storage-"+uuid.NewV4().String()))
 	t.Cleanup(app.close)
 	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(context.Background(), db.ProvisionFilestoreFilesystemInput{
-		UUID:                uuid.NewString(),
-		ExternalID:          "fs_storage_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		UUID:                uuid.NewV4().String(),
+		ExternalID:          "fs_storage_" + strings.ReplaceAll(uuid.NewV4().String(), "-", ""),
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		SessionUUID:         sessionUUID,
@@ -306,9 +305,9 @@ func newWorkspaceStorageFixture(t *testing.T) workspaceStorageFixture {
 }
 
 func workspaceStorageFile(workspaceUUID, apiKeyUUID string, sizeBytes int64) db.FileRecord {
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	return db.FileRecord{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          "file_storage_" + suffix,
 		WorkspaceUUID:       workspaceUUID,
 		Filename:            "storage.txt",
@@ -324,7 +323,7 @@ func workspaceStorageFile(workspaceUUID, apiKeyUUID string, sizeBytes int64) db.
 }
 
 func workspaceStorageBlob(sizeBytes int64, expiresAt *time.Time) db.FilestoreFileBlob {
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	return db.FilestoreFileBlob{
 		SizeBytes: sizeBytes,
 		MediaType: "text/plain",

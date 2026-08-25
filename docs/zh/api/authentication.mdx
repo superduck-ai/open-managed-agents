@@ -1,0 +1,58 @@
+---
+title: "认证"
+description: "使用 Bearer 令牌或 X-Api-Key 调用 OMA。"
+---
+
+OMA 的公共 `/v1` 资源接受工作区 API 密钥。每个 API 密钥都关联一个组织和工作区，资源访问会在该租户范围内执行。
+
+## Bearer 认证
+
+```bash
+curl http://localhost:38080/v1/models \
+  -H 'Authorization: Bearer sk-ant-local-default'
+```
+
+## X-Api-Key 认证
+
+```bash
+curl http://localhost:38080/v1/models \
+  -H 'X-Api-Key: sk-ant-local-default'
+```
+
+如果两个请求头同时出现，OMA 优先读取 `X-Api-Key`。
+
+## SDK 配置
+
+将兼容 SDK 的基础 URL 指向 OMA，并通过标准 API 密钥参数提供密钥。
+
+<CodeGroup>
+```python Python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-ant-local-default",
+    base_url="http://localhost:38080",
+)
+```
+
+```typescript TypeScript
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  apiKey: "sk-ant-local-default",
+  baseURL: "http://localhost:38080",
+});
+```
+</CodeGroup>
+
+## 安全建议
+
+- 开发环境默认密钥仅用于本地验证，不要用于生产。
+- 不要把密钥放在 URL、日志、截图或前端静态代码中。
+- 为不同工作区和用途创建独立密钥，以便撤销和审计。
+- 通过 TLS 调用远程 OMA 实例。
+- 控制台 Cookie 会话和 `/v1` API 密钥是不同的认证边界。
+
+<Warning>
+  文件存储服务和代码会话运行时使用各自的协议凭证。不要把这些内部凭证当作普通 `/v1` API 密钥使用。
+</Warning>

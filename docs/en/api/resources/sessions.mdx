@@ -1,0 +1,24 @@
+---
+title: "Session lifecycle"
+description: "List, update, archive, and delete sessions and retrieve their threads."
+---
+
+Every session endpoint requires `?beta=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/sessions` | Create / list |
+| `GET` / `POST` / `DELETE` | `/v1/sessions/{id}` | Retrieve / update / delete |
+| `POST` | `/v1/sessions/{id}/archive` | Archive |
+| `GET` | `/v1/sessions/{id}/threads` | List threads |
+| `GET` | `/v1/sessions/{id}/threads/{thread_id}` | Retrieve thread |
+| `POST` | `/v1/sessions/{id}/threads/{thread_id}/archive` | Archive thread |
+
+List filters cover agent, version, deployment, memory store, status, and created time. A session response contains its agent reference, environment, resources, vault IDs, status, usage, stats, and outcome evaluations.
+
+Only an unarchived idle session can be updated. Running or rescheduling sessions cannot be archived or deleted.
+
+<CardGroup cols={2}>
+  <Card title="Create session" href="/docs/en/api/endpoints/create-session" />
+  <Card title="Retrieve session" href="/docs/en/api/endpoints/retrieve-session" />
+</CardGroup>

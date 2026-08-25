@@ -214,6 +214,7 @@ describe('Analytics pages', () => {
     renderWithWorkspace(<LogsPage />);
 
     expect(screen.getByRole('heading', { name: 'Logs' })).toBeTruthy();
+    expect(screen.getByRole('searchbox', { name: 'Search logs' }).getAttribute('type')).toBe('search');
     expect(screen.getByText('June 18, 2026 at 11:34 PM GMT+8')).toBeTruthy();
     for (const heading of ['Time', 'ID', 'Model', 'Input Tokens', 'Output Tokens', 'Type', 'Service Tier', 'Request']) {
       expect(screen.getAllByText(heading).length).toBeGreaterThan(0);

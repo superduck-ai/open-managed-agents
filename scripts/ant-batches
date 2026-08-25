@@ -50,7 +50,7 @@ Examples:
   scripts/ant-batches poll "$BATCH_ID"
   scripts/ant-batches results "$BATCH_ID"
 
-For real batch processing, set anthropic_upstream.api_key in config/config.yaml, then run:
+For real batch processing, configure the workspace Provider in the LLM models console page, then run:
   go run .
 EOF
 }

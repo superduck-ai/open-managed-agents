@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -16,8 +17,6 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
-
-	"github.com/google/uuid"
 )
 
 func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw json.RawMessage) (db.Agent, json.RawMessage, error) {
@@ -219,7 +218,7 @@ func (h *Handler) resourceFromRequest(
 	}
 	return normalizedSessionResource{
 		resource: db.SessionResource{
-			UUID:              uuid.NewString(),
+			UUID:              uuid.NewV4().String(),
 			ExternalID:        resourceID,
 			OrganizationUUID:  session.OrganizationUUID,
 			WorkspaceUUID:     session.WorkspaceUUID,
@@ -293,7 +292,7 @@ func normalizeInputEvent(
 		return db.SessionEvent{}, nil, false, err
 	}
 	return db.SessionEvent{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        eventID,
 		OrganizationUUID:  session.OrganizationUUID,
 		WorkspaceUUID:     session.WorkspaceUUID,
@@ -497,14 +496,20 @@ func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {
 
 func responseFromResource(resource db.SessionResource) json.RawMessage {
 	var payload map[string]any
-	if err := json.Unmarshal(resource.Payload, &payload); err != nil || payload == nil {
-		payload = map[string]any{"id": resource.ExternalID, "type": resource.ResourceType}
+	if resource.ResourceType == sessionresource.FileType && isOutputResource(resource) {
+		payload = map[string]any{}
+	} else if err := json.Unmarshal(resource.Payload, &payload); err != nil || payload == nil {
+		payload = map[string]any{}
 	}
 	payload["id"] = resource.ExternalID
 	payload["type"] = resource.ResourceType
 	if resource.ResourceType == sessionresource.FileType {
 		delete(payload, "source")
-		if mountPath, ok := payload["mount_path"].(string); ok {
+		if isOutputResource(resource) {
+			// 读取路径与 Owned File 同批 JOIN，可见的输出资源必然带 file_id。
+			payload["file_id"] = resource.FileExternalID
+			payload["mount_path"] = resource.Path
+		} else if mountPath, ok := payload["mount_path"].(string); ok {
 			if publicMountPath, err := sandboxmount.FileBackingPath(mountPath); err == nil {
 				payload["mount_path"] = publicMountPath
 			}
@@ -514,4 +519,8 @@ func responseFromResource(resource db.SessionResource) json.RawMessage {
 	payload["updated_at"] = httpapi.FormatTime(resource.UpdatedAt)
 	raw, _ := json.Marshal(payload)
 	return raw
+}
+
+func isOutputResource(resource db.SessionResource) bool {
+	return strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")
 }

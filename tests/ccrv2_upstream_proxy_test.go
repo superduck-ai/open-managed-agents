@@ -5,13 +5,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
-	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -21,15 +18,6 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-type capturedRuntimeModelRequest struct {
-	path          string
-	apiKey        string
-	authorization string
-	version       string
-	body          string
-	contentLength int64
-}
-
 type repeatedRuntimeModelByteReader struct{}
 
 func (repeatedRuntimeModelByteReader) Read(buffer []byte) (int, error) {
@@ -38,42 +26,10 @@ func (repeatedRuntimeModelByteReader) Read(buffer []byte) (int, error) {
 }
 
 func TestCCRV2RuntimeEndpoints(t *testing.T) {
-	upstreamRequests := make(chan capturedRuntimeModelRequest, 1)
-	upstreamStartedReading := make(chan struct{}, 1)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body []byte
-		if r.Header.Get("X-Test-Streaming") == "true" {
-			firstByte := make([]byte, 1)
-			if _, err := io.ReadFull(r.Body, firstByte); err == nil {
-				upstreamStartedReading <- struct{}{}
-			}
-			rest, _ := io.ReadAll(r.Body)
-			body = append(body, firstByte...)
-			body = append(body, rest...)
-		} else {
-			body, _ = io.ReadAll(r.Body)
-		}
-		upstreamRequests <- capturedRuntimeModelRequest{
-			path:          r.URL.Path,
-			apiKey:        r.Header.Get("X-Api-Key"),
-			authorization: r.Header.Get("Authorization"),
-			version:       r.Header.Get("anthropic-version"),
-			body:          string(body),
-			contentLength: r.ContentLength,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Upstream-Test", "reached")
-		_, _ = w.Write([]byte(`{"id":"msg_test","type":"message"}`))
-	}))
-	defer upstream.Close()
-
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	// 真实上游配置只存在于 API server；测试通过捕获请求验证 sandbox token 会被替换。
-	cfg.AnthropicUpstream.BaseURL = upstream.URL + "/coding"
-	cfg.AnthropicUpstream.APIKey = "upstream-secret"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("ccrv2-upstream-proxy-bucket"))
 	defer app.close()
 
@@ -223,72 +179,6 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 		}
 	})
 
-	t.Run("success model proxy streams request body", func(t *testing.T) {
-		firstChunk := strings.Repeat("x", 64<<10)
-		secondChunk := "tail"
-		bodyReader, bodyWriter := io.Pipe()
-		writeResult := make(chan error, 1)
-		go func() {
-			if _, err := bodyWriter.Write([]byte(firstChunk)); err != nil {
-				writeResult <- err
-				return
-			}
-			select {
-			case <-upstreamStartedReading:
-				_, err := bodyWriter.Write([]byte(secondChunk))
-				if closeErr := bodyWriter.Close(); err == nil {
-					err = closeErr
-				}
-				writeResult <- err
-			case <-time.After(3 * time.Second):
-				err := errors.New("upstream did not start reading streamed request body")
-				_ = bodyWriter.CloseWithError(err)
-				writeResult <- err
-			}
-		}()
-
-		request, err := http.NewRequest(http.MethodPost, app.baseURL+"/v1/messages", bodyReader)
-		if err != nil {
-			t.Fatalf("new streaming model request: %v", err)
-		}
-		request.ContentLength = int64(len(firstChunk) + len(secondChunk))
-		request.Header.Set("X-Api-Key", messagesToken)
-		request.Header.Set("X-Test-Streaming", "true")
-		response, err := app.client.Do(request)
-		if err != nil {
-			t.Fatalf("streaming model request: %v", err)
-		}
-		defer response.Body.Close()
-		if err := <-writeResult; err != nil {
-			t.Fatal(err)
-		}
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("streaming model proxy status = %d, want 200: %s", response.StatusCode, readAll(t, response.Body))
-		}
-		captured := <-upstreamRequests
-		if captured.body != firstChunk+secondChunk || captured.contentLength != request.ContentLength {
-			t.Fatalf("unexpected streamed request: body bytes=%d content-length=%d", len(captured.body), captured.contentLength)
-		}
-	})
-
-	t.Run("success model proxy keeps upstream secret server-side", func(t *testing.T) {
-		body := `{"model":"claude-opus-4-6","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
-		response := postRuntimeModelRequest(t, app, messagesToken, body)
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("model proxy status = %d, want 200: %s", response.StatusCode, readAll(t, response.Body))
-		}
-		if response.Header.Get("X-Upstream-Test") != "reached" {
-			t.Fatalf("missing upstream response header: %#v", response.Header)
-		}
-		captured := <-upstreamRequests
-		if captured.path != "/coding/v1/messages" || captured.apiKey != "upstream-secret" {
-			t.Fatalf("unexpected upstream target/auth: %+v", captured)
-		}
-		if captured.authorization != "" || captured.version != "2023-06-01" || captured.body != body || captured.contentLength != int64(len(body)) {
-			t.Fatalf("unexpected forwarded request: %+v", captured)
-		}
-	})
 }
 
 // TestCCRV2UpstreamProxyPolicyChainFailures 覆盖策略解析链的失败语义：
@@ -344,10 +234,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 			"",
 			"00000000-0000-0000-0000-000000000099",
 		)
-		status := connectViaCCRV2Proxy(t, app, codeSessionID, mismatchedToken, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("mismatched-workspace CONNECT status = %q, want 403", status)
-		}
+		assertCCRV2UpstreamProxyAuthRejected(t, app, mismatchedToken)
 	})
 
 	t.Run("failure signed token with mismatched organization scope fails closed", func(t *testing.T) {
@@ -358,10 +245,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 			"00000000-0000-0000-0000-000000000098",
 			"",
 		)
-		status := connectViaCCRV2Proxy(t, app, codeSessionID, mismatchedToken, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("mismatched-organization CONNECT status = %q, want 403", status)
-		}
+		assertCCRV2UpstreamProxyAuthRejected(t, app, mismatchedToken)
 	})
 
 	t.Run("failure malformed persisted allowlist fails closed as a whole", func(t *testing.T) {
@@ -455,10 +339,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 				t.Errorf("restore code session status: %v", err)
 			}
 		})
-		status := connect(t, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("inactive-code-session CONNECT status = %q, want 403", status)
-		}
+		assertCCRV2UpstreamProxyAuthRejected(t, app, ingressToken)
 	})
 
 	t.Run("failure terminated session fails closed", func(t *testing.T) {
@@ -569,6 +450,7 @@ func codeSessionIngressTokenWithScope(
 		OrganizationUUID: organizationUUID,
 		WorkspaceUUID:    workspaceUUID,
 		AccountEmail:     credentialContext.AccountEmail,
+		WorkerEpoch:      record.CurrentWorkerEpoch,
 	})
 	if err != nil {
 		t.Fatalf("issue mismatched-scope token: %v", err)
@@ -636,6 +518,25 @@ func dialCCRV2UpstreamProxy(t *testing.T, app *testApp, sessionIngressToken stri
 		t.Fatalf("dial upstream proxy websocket: %v", err)
 	}
 	return connection
+}
+
+func assertCCRV2UpstreamProxyAuthRejected(t *testing.T, app *testApp, sessionIngressToken string) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, app.baseURL+"/v1/code/upstreamproxy/ws", nil)
+	if err != nil {
+		t.Fatalf("create upstream proxy authentication request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+sessionIngressToken)
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Connection", "Upgrade")
+	response, err := app.client.Do(request)
+	if err != nil {
+		t.Fatalf("authenticate upstream proxy websocket: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("upstream proxy authentication status = %d, want 401: %s", response.StatusCode, readAll(t, response.Body))
+	}
 }
 
 func encodeCCRV2TestChunk(data []byte) []byte {

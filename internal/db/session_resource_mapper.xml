@@ -6,6 +6,48 @@
         created_at, updated_at, deleted_at
     </sql>
 
+    <sql id="sessionResourceCoreColumns">
+        resource.uuid, resource.external_id, resource.organization_uuid, resource.workspace_uuid,
+        resource.session_uuid, resource.session_external_id, resource.resource_type,
+        resource.payload, resource.secret_payload,
+        resource.created_at, resource.updated_at, resource.deleted_at,
+        resource.path
+    </sql>
+
+    <!-- Owned File 的 external_id 必须与 Session Resource 同批读出：Resource 与 File 的
+         退休发生在同一个事务里，分两次查询会在事务提交的间隙返回缺少 file_id 的输出资源。 -->
+    <sql id="sessionResourceListColumns">
+        <include refid="sessionResourceCoreColumns"/>, file.external_id AS file_external_id
+    </sql>
+
+    <sql id="sessionResourceRankedColumns">
+        <include refid="sessionResourceCoreColumns"/>, resource.file_external_id
+    </sql>
+
+    <sql id="sessionResourceOutputPredicate">
+        resource.resource_type = 'file'
+        AND left(resource.path, char_length('/outputs/')) = '/outputs/'
+        AND (resource.expires_at IS NULL OR resource.expires_at > now())
+        AND file.uuid IS NOT NULL
+    </sql>
+
+    <!-- 可见资源 = 用户资源（payload 非空）+ 活动的 /outputs/ Owned File。
+         输出资源要求 File 行仍然存在，避免返回没有 file_id 的残缺资源。 -->
+    <sql id="sessionResourceVisibleSource">
+        FROM session_resources resource
+        LEFT JOIN files file
+            ON file.uuid = resource.file_uuid
+            AND file.workspace_uuid = resource.workspace_uuid
+            AND file.deleted_at IS NULL
+        WHERE resource.workspace_uuid = #{workspaceUUID}
+        AND resource.session_external_id = #{sessionExternalID}
+        AND resource.deleted_at IS NULL
+        AND (
+            resource.payload IS NOT NULL
+            OR (<include refid="sessionResourceOutputPredicate"/>)
+        )
+    </sql>
+
     <insert id="Insert" result="returning" resultType="sessionResourceRow">
         INSERT INTO session_resources (
             uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
@@ -25,23 +67,29 @@
     </insert>
 
     <select id="FindByExternalID" resultType="sessionResourceRow">
-        SELECT <include refid="sessionResourceColumns"/>
-        FROM session_resources
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND external_id = #{resourceExternalID}
-        AND payload IS NOT NULL
-        AND deleted_at IS NULL
+        SELECT <include refid="sessionResourceListColumns"/>
+        <include refid="sessionResourceVisibleSource"/>
+        AND resource.external_id = #{resourceExternalID}
     </select>
 
+    <!-- 输出文件不占用写入侧的 MaxFileResources 配额（CountSessionFileResources 只数
+         payload 非空的行），Filestore 也只限制字节数，因此这里必须自己截断，否则
+         Get Session 的 resources[] 长度无上限，并会被 List Sessions 的分页放大。
+         用户资源不受截断；输出文件保留最近的 maxOutputResources 条，完整集合以
+         files.list(scope_id) 为准。 -->
     <select id="List" resultType="sessionResourceRow">
-        SELECT <include refid="sessionResourceColumns"/>
-        FROM session_resources
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND payload IS NOT NULL
-        AND deleted_at IS NULL
-        ORDER BY created_at DESC, uuid DESC
+        SELECT <include refid="sessionResourceRankedColumns"/>
+        FROM (
+            SELECT <include refid="sessionResourceListColumns"/>,
+                row_number() OVER (
+                    PARTITION BY (resource.payload IS NULL)
+                    ORDER BY resource.created_at DESC, resource.uuid DESC
+                ) AS output_rank
+            <include refid="sessionResourceVisibleSource"/>
+        ) resource
+        WHERE resource.payload IS NOT NULL
+        OR resource.output_rank &lt;= #{maxOutputResources}
+        ORDER BY resource.created_at DESC, resource.uuid DESC
     </select>
 
     <update id="Update" result="returning" resultType="sessionResourceRow">

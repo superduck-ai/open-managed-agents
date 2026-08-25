@@ -74,8 +74,8 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			t.Fatalf("bootstrap app_start organization = %#v, want uuid %s", membership["organization"], orgUUID)
 		}
 		modelsConfig, ok := organization["claude_ai_bootstrap_models_config"].([]any)
-		if !ok || len(modelsConfig) == 0 {
-			t.Fatalf("bootstrap app_start models config = %#v, want non-empty config", organization["claude_ai_bootstrap_models_config"])
+		if !ok || len(modelsConfig) != 0 {
+			t.Fatalf("bootstrap app_start models config = %#v, want empty config", organization["claude_ai_bootstrap_models_config"])
 		}
 
 		missingOrgAppStartResp := app.platformRequest(t, http.MethodGet, "/api/bootstrap/7482d00f-2e42-478b-b2db-07c3d056a3b6/app_start", nil, cookies)

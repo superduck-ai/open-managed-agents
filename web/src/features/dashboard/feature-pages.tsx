@@ -83,7 +83,7 @@ export function WorkbenchPage() {
           <CardContent className="p-0">
             <Textarea
               aria-label="Prompt"
-              className="mt-4 min-h-[360px] resize-none border-0 bg-transparent px-0 py-0 text-sm leading-6 shadow-none placeholder:text-muted-foreground/70 focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+              className="mt-4 min-h-[360px] resize-none border-0 bg-transparent px-0 py-0 text-sm leading-6 shadow-none placeholder:text-muted-foreground/70 focus-visible:border-transparent dark:bg-transparent"
               placeholder="Write a prompt..."
             />
           </CardContent>

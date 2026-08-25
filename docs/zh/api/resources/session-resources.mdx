@@ -1,0 +1,22 @@
+---
+title: "会话资源"
+description: "在会话上管理文件、GitHub 仓库和记忆存储。"
+---
+
+所有路径要求 `?beta=true`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/v1/sessions/{id}/resources` | 列出资源 |
+| `POST` | `/v1/sessions/{id}/resources` | 添加资源 |
+| `GET` | `/v1/sessions/{id}/resources/{resource_id}` | 读取资源 |
+| `POST` | `/v1/sessions/{id}/resources/{resource_id}` | 更新敏感配置 |
+| `DELETE` | `/v1/sessions/{id}/resources/{resource_id}` | 删除挂载 |
+
+支持类型：
+
+- `file`：`file_id`、固定 `source: /uploads`、可选 `mount_path`
+- `github_repository`：`url`、可选 `checkout` 和 `mount_path`
+- `memory_store`：`memory_store_id`、`access`、`name`、`description`、`instructions`、`mount_path`
+
+资源总数最多 500。文件挂载路径会检查重复、祖先/子孙冲突和保留路径。GitHub 授权令牌通过资源更新接口单独提交，不会出现在公开载荷中。

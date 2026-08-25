@@ -105,7 +105,7 @@ export function AgentConfigRenderedEditor({
         )}
       >
         <div className="space-y-4">
-          <label className="block space-y-1.5 text-sm font-medium">
+          <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.common.name', 'Name')}</span>
             <Input
               className="h-10"
@@ -114,7 +114,7 @@ export function AgentConfigRenderedEditor({
               onChange={(event) => onChange({ ...draft, name: event.target.value })}
             />
           </label>
-          <label className="block space-y-1.5 text-sm font-medium">
+          <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.common.model', 'Model')}</span>
             <ModelPicker
               options={modelOptions}
@@ -122,7 +122,7 @@ export function AgentConfigRenderedEditor({
               onChange={(id) => onChange({ ...draft, model: updateDraftModelID(draft.model, id) })}
             />
           </label>
-          <label className="block space-y-1.5 text-sm font-medium">
+          <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.agents.createDialog.optionalDescription', 'Description (optional)')}</span>
             <Textarea
               className="min-h-20 resize-y"
@@ -130,7 +130,7 @@ export function AgentConfigRenderedEditor({
               onChange={(event) => onChange({ ...draft, description: event.target.value || null })}
             />
           </label>
-          <label className="block space-y-1.5 text-sm font-medium">
+          <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.agents.createDialog.optionalSystemPrompt', 'System prompt (optional)')}</span>
             <Textarea
               className="min-h-28 resize-y"

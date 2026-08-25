@@ -55,6 +55,14 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="FindByUUID" resultType="sessionRow">
+        SELECT <include refid="columns"/>
+        FROM sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{sessionUUID}
+        AND deleted_at IS NULL
+    </select>
+
     <update id="UpdateByExternalID" result="returning" resultType="sessionRow">
         UPDATE sessions
         SET agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),

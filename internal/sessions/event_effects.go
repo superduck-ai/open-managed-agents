@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-
-	"github.com/google/uuid"
 )
 
 func (h *Handler) applySessionEventProjection(ctx context.Context, event db.SessionEvent) error {
@@ -136,7 +135,7 @@ func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, erro
 		return db.SessionEvent{}, err
 	}
 	return db.SessionEvent{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        eventID,
 		OrganizationUUID:  session.OrganizationUUID,
 		WorkspaceUUID:     session.WorkspaceUUID,
@@ -169,7 +168,7 @@ func (h *Handler) simpleSessionEvent(eventType, sessionID string, threadID *stri
 		return db.SessionEvent{}, err
 	}
 	return db.SessionEvent{
-		UUID:             uuid.NewString(),
+		UUID:             uuid.NewV4().String(),
 		ExternalID:       eventID,
 		ThreadExternalID: threadID,
 		EventType:        eventType,

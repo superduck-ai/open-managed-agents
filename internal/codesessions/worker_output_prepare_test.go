@@ -8,34 +8,49 @@ import (
 	"time"
 )
 
-func TestPrepareSingleWorkerEventRejectsInvalidControlRequest(t *testing.T) {
-	prepared, err := prepareSingleWorkerEvent(
+func TestPrepareWorkerOutputEventRejectsInvalidControlRequest(t *testing.T) {
+	prepared, err := prepareWorkerOutputEvent(
 		"cse_test",
-		json.RawMessage(`{"type":"control_request","uuid":"control-uuid","request_id":"request-id","request":42}`),
+		workerOutputEvent{Payload: json.RawMessage(`{"type":"control_request","uuid":"control-uuid","request_id":"request-id","request":42}`)},
 		time.Unix(1, 0).UTC(),
 	)
 	if !errors.Is(err, ErrProtocol) {
-		t.Fatalf("prepareSingleWorkerEvent() error = %v, want ErrProtocol", err)
+		t.Fatalf("prepareWorkerOutputEvent() error = %v, want ErrProtocol", err)
 	}
-	if prepared.eventType != "" || prepared.controlRequest != nil || len(prepared.publicPayloads) != 0 {
-		t.Fatalf("prepared event = %#v, want zero value", prepared)
+	if prepared != nil {
+		t.Fatalf("prepared action = %#v, want nil", prepared)
 	}
 }
 
-func TestPrepareSingleWorkerEventBuildsKeepAliveAction(t *testing.T) {
-	prepared, err := prepareSingleWorkerEvent(
+func TestPrepareWorkerOutputEventBuildsKeepAliveAction(t *testing.T) {
+	prepared, err := prepareWorkerOutputEvent(
 		"cse_test",
-		json.RawMessage(`{"type":"keep_alive"}`),
+		workerOutputEvent{Payload: json.RawMessage(`{"type":"keep_alive"}`)},
 		time.Unix(1, 0).UTC(),
 	)
 	if err != nil {
-		t.Fatalf("prepareSingleWorkerEvent() error = %v", err)
+		t.Fatalf("prepareWorkerOutputEvent() error = %v", err)
 	}
-	if prepared.eventType != "keep_alive" {
-		t.Fatalf("event type = %q, want keep_alive", prepared.eventType)
+	if _, ok := prepared.(preparedKeepAliveAction); !ok {
+		t.Fatalf("prepared action = %T, want preparedKeepAliveAction", prepared)
 	}
-	if prepared.controlRequest != nil || len(prepared.publicPayloads) != 0 {
-		t.Fatalf("keep-alive action = %#v, want no event application", prepared)
+}
+
+func TestPrepareWorkerOutputEventIgnoresNonEphemeralStream(t *testing.T) {
+	prepared, err := prepareWorkerOutputEvent(
+		"cse_test",
+		workerOutputEvent{Payload: json.RawMessage(`{
+			"type":"stream_event",
+			"uuid":"stream-uuid",
+			"event":{"type":"message_start","message":{"id":"msg_test"}}
+		}`)},
+		time.Unix(1, 0).UTC(),
+	)
+	if err != nil {
+		t.Fatalf("prepareWorkerOutputEvent() error = %v", err)
+	}
+	if _, ok := prepared.(preparedNoopAction); !ok {
+		t.Fatalf("prepared action = %T, want preparedNoopAction", prepared)
 	}
 }
 
@@ -68,6 +83,11 @@ func TestPrepareWorkerOutputEventsRejectsBatchBeforeApply(t *testing.T) {
 func TestPrepareWorkerOutputEventsBuildsActions(t *testing.T) {
 	events := []workerOutputEvent{
 		{Payload: json.RawMessage(`{"type":"keep_alive"}`)},
+		{Ephemeral: true, Payload: json.RawMessage(`{
+			"type":"stream_event",
+			"uuid":"stream-uuid",
+			"event":{"type":"message_start","message":{"id":"msg_test"}}
+		}`)},
 		{Payload: json.RawMessage(`{
 			"type":"control_request",
 			"uuid":"control-uuid",
@@ -88,13 +108,43 @@ func TestPrepareWorkerOutputEventsBuildsActions(t *testing.T) {
 	if len(prepared) != len(events) {
 		t.Fatalf("prepared event count = %d, want %d", len(prepared), len(events))
 	}
-	if prepared[0].controlRequest != nil || len(prepared[0].publicPayloads) != 0 {
-		t.Fatalf("keep-alive action = %#v, want empty", prepared[0])
+	if _, ok := prepared[0].(preparedKeepAliveAction); !ok {
+		t.Fatalf("prepared[0] = %T, want preparedKeepAliveAction", prepared[0])
 	}
-	if prepared[1].controlRequest == nil || prepared[1].metadata.EventType != "control_request" {
-		t.Fatalf("control action = %#v", prepared[1])
+	stream, ok := prepared[1].(preparedStreamAction)
+	if !ok || len(stream.payload) == 0 {
+		t.Fatalf("prepared[1] = %#v, want preparedStreamAction", prepared[1])
 	}
-	if len(prepared[2].publicPayloads) == 0 {
-		t.Fatalf("public action = %#v, want payloads", prepared[2])
+	var streamPayload workerOutputCommonPayload
+	if err := json.Unmarshal(stream.payload, &streamPayload); err != nil {
+		t.Fatalf("decode stream payload: %v", err)
+	}
+	if streamPayload.UUID != "stream-uuid" || streamPayload.SessionID != "cse_test" {
+		t.Fatalf("normalized stream identity = %#v, want original uuid and code session id", streamPayload)
+	}
+	if streamPayload.CreatedAt == "" || streamPayload.Timestamp != streamPayload.CreatedAt {
+		t.Fatalf("normalized stream timestamps = %#v, want matching created_at and timestamp", streamPayload)
+	}
+	control, ok := prepared[2].(preparedControlAction)
+	if !ok || control.metadata.EventType != "control_request" {
+		t.Fatalf("prepared[2] = %#v, want preparedControlAction", prepared[2])
+	}
+	public, ok := prepared[3].(preparedPublicAction)
+	if !ok || len(public.payloads) == 0 {
+		t.Fatalf("prepared[3] = %#v, want preparedPublicAction", prepared[3])
+	}
+}
+
+func TestLeadingWorkerStreamPayloadsStopsAtNonStreamEvent(t *testing.T) {
+	actions := []preparedWorkerOutputEvent{
+		preparedStreamAction{payload: json.RawMessage(`{"sequence":1}`)},
+		preparedStreamAction{payload: json.RawMessage(`{"sequence":2}`)},
+		preparedPublicAction{payloads: []json.RawMessage{json.RawMessage(`{"type":"agent.message"}`)}},
+		preparedStreamAction{payload: json.RawMessage(`{"sequence":3}`)},
+	}
+
+	payloads := leadingWorkerStreamPayloads(actions)
+	if len(payloads) != 2 || string(payloads[0]) != `{"sequence":1}` || string(payloads[1]) != `{"sequence":2}` {
+		t.Fatalf("leadingWorkerStreamPayloads() = %q, want first two stream payloads", payloads)
 	}
 }

@@ -66,7 +66,14 @@ import {
   type ResourceConfig,
   type SessionApiResponse,
 } from '../types';
-import { compactEntityId, copyText, errorMessage, handleInternalLinkClick, managedEntityDetailHref } from '../utils';
+import {
+  compactEntityId,
+  copyText,
+  errorMessage,
+  handleInternalLinkClick,
+  managedEntityDetailHref,
+  navigateToInternalHref,
+} from '../utils';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
@@ -657,6 +664,11 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     const created = await createManagedEntity(config.section, values, activeWorkspaceId);
     setEntities((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     toast.success(managedToastMessage(config.section, 'created', msg));
+    if (config.section === 'credential-vaults') {
+      navigateToInternalHref(
+        `${managedEntityDetailHref(activeWorkspaceId, config.section, created.id)}?addCredential=1`,
+      );
+    }
   };
 
   const handleConfirm = async () => {

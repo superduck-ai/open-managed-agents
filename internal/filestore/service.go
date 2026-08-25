@@ -13,12 +13,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -506,7 +505,7 @@ func (s *Service) stageFilestoreObject(
 	now time.Time,
 	write func(string) (objectWriteResult, *apiError),
 ) (stagedFilestoreObject, *apiError) {
-	blobUUID := uuid.NewString()
+	blobUUID := uuid.NewV4().String()
 	key := filestoreObjectKey(principal.WorkspaceUUID, filesystem.UUID, blobUUID)
 	cleanupJob, apiErr := s.enqueueOrphanCleanup(ctx, principal, filesystem, blobUUID, key, now)
 	if apiErr != nil {

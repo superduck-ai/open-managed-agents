@@ -1,171 +1,149 @@
 package platformapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 
 	"github.com/go-chi/chi/v5"
 )
 
-func TestRewriteMappedModelOnlyUpdatesTopLevelModel(t *testing.T) {
-	body := []byte(`{
-		"model":"claude-sonnet-4-6",
-		"tools":[{
-			"name":"build_agent_config",
-			"input_schema":{"properties":{"model":{"anyOf":[
-				{"type":"string","enum":["claude-sonnet-4-6"]}
-			]}}}
-		}]
-	}`)
-	got, err := rewriteMappedModel(body, map[string]string{
-		"claude-sonnet-4-6": "glm-5-turbo",
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestProxyMessagesHeadersAllowOnlyProtocolHeaders(t *testing.T) {
+	source := http.Header{
+		"Accept":              {"text/event-stream"},
+		"Content-Type":        {"application/json"},
+		"Anthropic-Version":   {"2023-06-01"},
+		"Anthropic-Beta":      {"test-beta"},
+		"Authorization":       {"Bearer browser-secret"},
+		"Cookie":              {"sessionKey=browser-secret"},
+		"X-Api-Key":           {"browser-api-key"},
+		"X-Csrf-Token":        {"browser-csrf"},
+		"X-Organization-Uuid": {"browser-org"},
+		"X-Workspace-Id":      {"browser-workspace"},
+		"Connection":          {"X-Connection-Only"},
+		"X-Connection-Only":   {"browser-connection-secret"},
 	}
-	var request struct {
-		Model string            `json:"model"`
-		Tools []json.RawMessage `json:"tools"`
+
+	headers := proxyMessagesHeaders(source, "server-provider-key")
+	if headers.Get("X-API-Key") != "server-provider-key" ||
+		headers.Get("Authorization") != "Bearer server-provider-key" ||
+		headers.Get("Accept") != "text/event-stream" ||
+		headers.Get("Content-Type") != "application/json" ||
+		headers.Get("Anthropic-Version") != "2023-06-01" ||
+		headers.Get("Anthropic-Beta") != "test-beta" {
+		t.Fatalf("protocol headers = %#v", headers)
 	}
-	if err := json.Unmarshal(got, &request); err != nil {
-		t.Fatalf("decode rewritten request: %v", err)
-	}
-	if request.Model != "glm-5-turbo" {
-		t.Fatalf("model = %q, want glm-5-turbo", request.Model)
-	}
-	var schema struct {
-		InputSchema json.RawMessage `json:"input_schema"`
-	}
-	if err := json.Unmarshal(request.Tools[0], &schema); err != nil {
-		t.Fatalf("decode preserved tool: %v", err)
-	}
-	if !bytes.Contains(schema.InputSchema, []byte(`claude-sonnet-4-6`)) {
-		t.Fatalf("tool schema was unexpectedly rewritten: %s", schema.InputSchema)
+	if len(headers) != 6 {
+		t.Fatalf("unexpected outbound headers = %#v", headers)
 	}
 }
 
-func TestRewriteMappedModelTrimsRequestModelID(t *testing.T) {
-	got, err := rewriteMappedModel(
-		[]byte(`{"model":" claude-sonnet-4-6 ","max_tokens":16}`),
-		map[string]string{"claude-sonnet-4-6": "glm-5-turbo"},
-	)
+func TestProxyMessagesModelUsesRealIDUnchanged(t *testing.T) {
+	modelID, err := proxyMessagesModel([]byte(`{"model":"kimi-k2.5","max_tokens":16}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var request struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(got, &request); err != nil {
-		t.Fatal(err)
-	}
-	if request.Model != "glm-5-turbo" {
-		t.Fatalf("model = %q, want glm-5-turbo", request.Model)
+	if modelID != "kimi-k2.5" {
+		t.Fatalf("model = %q, want kimi-k2.5", modelID)
 	}
 }
 
-func TestRewriteMappedModelPreservesInvalidJSONForUpstream(t *testing.T) {
-	body := []byte(`not-json`)
+func TestProxyMessagesRejectsOversizedChunkedBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/organizations/org_test/proxy/v1/messages", nil)
+	request.Body = io.NopCloser(io.LimitReader(repeatedByteReader(' '), llmproviders.MaxMessagesRequestBodyBytes+1))
+	request.ContentLength = -1
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("orgUuid", "org_test")
+	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, routeContext)
+	ctx = auth.WithPrincipal(ctx, auth.Principal{OrganizationUUID: "org_test"})
+	request = request.WithContext(ctx)
+	recorder := httptest.NewRecorder()
 
-	got, err := rewriteMappedModel(body, map[string]string{
-		"claude-sonnet-4-6": "glm-5-turbo",
-	})
-	if err != nil {
-		t.Fatalf("rewriteMappedModel() error = %v", err)
-	}
-	if !bytes.Equal(got, body) {
-		t.Fatalf("rewriteMappedModel() = %q, want original body %q", got, body)
+	handleProxyMessages(nil, nil, http.DefaultClient)(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413: %s", recorder.Code, recorder.Body.String())
 	}
 }
 
-func TestOrganizationProxyModelMappings(t *testing.T) {
-	testCases := []struct {
-		name           string
-		mappings       map[string]string
-		requestedModel string
-		wantModel      string
+type repeatedByteReader byte
+
+func (r repeatedByteReader) Read(buffer []byte) (int, error) {
+	for index := range buffer {
+		buffer[index] = byte(r)
+	}
+	return len(buffer), nil
+}
+
+func TestProxyMessagesModelRejectsMissingModel(t *testing.T) {
+	if _, err := proxyMessagesModel([]byte(`{"max_tokens":16}`)); err == nil {
+		t.Fatal("proxyMessagesModel() error = nil")
+	}
+}
+
+func TestProxyMessagesModelRejectsDuplicateModel(t *testing.T) {
+	if _, err := proxyMessagesModel([]byte(`{"model":"configured","model":"not-configured"}`)); err == nil || err.Error() != "model must appear exactly once" {
+		t.Fatalf("proxyMessagesModel() error = %v", err)
+	}
+}
+
+func TestProxyProviderErrorDistinguishesMissingProviderFromLoadFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantError  string
+		wantMsg    string
 	}{
 		{
-			name: "mapped model",
-			mappings: map[string]string{
-				"claude-sonnet-4-6": "glm-5-turbo",
-			},
-			requestedModel: "claude-sonnet-4-6",
-			wantModel:      "glm-5-turbo",
+			name:       "model not configured",
+			err:        llmproviders.ErrModelNotConfigured,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "invalid_request_error",
+			wantMsg:    "Model is not configured for this workspace",
 		},
 		{
-			name: "unmapped model",
-			mappings: map[string]string{
-				"claude-opus-4-8": "glm-5.2",
-			},
-			requestedModel: "claude-sonnet-4-6",
-			wantModel:      "claude-sonnet-4-6",
+			name:       "provider missing",
+			err:        llmproviders.ErrNotConfigured,
+			wantStatus: http.StatusServiceUnavailable,
+			wantError:  "proxy_error",
+			wantMsg:    "This workspace has no LLM provider configured",
+		},
+		{
+			name:       "ambiguous model",
+			err:        llmproviders.ErrAmbiguousModel,
+			wantStatus: http.StatusInternalServerError,
+			wantError:  "proxy_error",
+			wantMsg:    "Workspace model configuration is unavailable",
+		},
+		{
+			name:       "load failure",
+			err:        errors.New("database unavailable"),
+			wantStatus: http.StatusInternalServerError,
+			wantError:  "proxy_error",
+			wantMsg:    "Workspace model configuration is unavailable",
 		},
 	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			var upstreamBody []byte
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var err error
-				upstreamBody, err = io.ReadAll(r.Body)
-				if err != nil {
-					t.Fatalf("read upstream body: %v", err)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"id":"msg_model_mapping","type":"message"}`))
-			}))
-			defer upstream.Close()
-
-			cfg := config.Config{
-				AnthropicUpstream: config.AnthropicUpstreamConfig{
-					BaseURL:       upstream.URL,
-					APIKey:        "upstream-key",
-					ModelMappings: testCase.mappings,
-				},
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeProxyProviderError(recorder, test.err)
+			var response struct {
+				Error   string `json:"error"`
+				Message string `json:"message"`
 			}
-			requestBody := `{"model":"` + testCase.requestedModel + `","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
-			req := httptest.NewRequest(
-				http.MethodPost,
-				"/api/organizations/org_test/proxy/v1/messages",
-				strings.NewReader(requestBody),
-			)
-			routeContext := chi.NewRouteContext()
-			routeContext.URLParams.Add("orgUuid", "org_test")
-			ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
-			ctx = auth.WithPrincipal(ctx, auth.Principal{OrganizationUUID: "org_test"})
-			req = req.WithContext(ctx)
-			rec := httptest.NewRecorder()
-
-			handleProxyMessages(cfg).ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("proxy status = %d, want 200: %s", rec.Code, rec.Body.String())
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
 			}
-			var payload struct {
-				Model     string `json:"model"`
-				MaxTokens int    `json:"max_tokens"`
-				Messages  []struct {
-					Role    string `json:"role"`
-					Content string `json:"content"`
-				} `json:"messages"`
-			}
-			if err := json.Unmarshal(upstreamBody, &payload); err != nil {
-				t.Fatalf("decode upstream body: %v", err)
-			}
-			if payload.Model != testCase.wantModel {
-				t.Fatalf("upstream model = %v, want %s", payload.Model, testCase.wantModel)
-			}
-			if payload.MaxTokens != 16 || len(payload.Messages) != 1 {
-				t.Fatalf("upstream body lost request fields: %#v", payload)
+			if recorder.Code != test.wantStatus || response.Error != test.wantError || response.Message != test.wantMsg {
+				t.Fatalf("status=%d body=%#v", recorder.Code, response)
 			}
 		})
 	}

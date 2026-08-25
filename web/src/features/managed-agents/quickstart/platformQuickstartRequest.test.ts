@@ -7,10 +7,12 @@ import {
 } from './platformQuickstartRequest';
 import { quickstartToolResultText } from './quickstartPromptText';
 
+const configuredModelID = 'kimi-k2.5';
+
 const blankAgentConfig = {
   name: 'Untitled agent',
   description: 'A blank starting point with the core toolset.',
-  model: 'claude-sonnet-4-6',
+  model: configuredModelID,
   system:
     "You are a general-purpose agent that can research, write code, run commands, and use connected tools to complete the user's task end to end.",
   mcp_servers: [],
@@ -28,6 +30,7 @@ describe('platform quickstart request builder', () => {
       step: 'environment',
       deploymentSchedulePlanned: false,
       agentConfig: blankAgentConfig,
+      modelID: configuredModelID,
     });
 
     expect(Object.keys(request)).toEqual([
@@ -39,16 +42,25 @@ describe('platform quickstart request builder', () => {
       'tool_choice',
       'stream',
     ]);
-    expect(request.model).toBe(platformQuickstartOfficialRequest.model);
+    expect(request.model).toBe(configuredModelID);
     expect(request.max_tokens).toBe(platformQuickstartOfficialRequest.max_tokens);
     expect(request.stream).toBe(true);
     expect(request.tool_choice).toEqual({
       type: 'auto',
       disable_parallel_tool_use: true,
     });
-    expect(request.system).toEqual(platformQuickstartOfficialRequest.system);
-    expect(request.tools).toEqual(platformQuickstartOfficialRequest.tools);
-    expect(request.messages[0]).toEqual(platformQuickstartOfficialRequest.messages[0]);
+    expect(request.system[0]).toEqual(platformQuickstartOfficialRequest.system[0]);
+    expect(request.system[1]?.text).toContain(`Use the configured workspace model ID exactly: "${configuredModelID}".`);
+    expect(request.system[1]?.text).not.toContain('claude-sonnet-4-6');
+    expect(request.system[1]?.text).not.toContain('claude-opus-4-8');
+    const buildAgentConfig = request.tools.find((tool) => tool.name === 'build_agent_config');
+    expect(buildAgentConfig?.input_schema?.properties?.model).toEqual({
+      type: 'string',
+      const: configuredModelID,
+      description: 'Configured workspace model ID',
+    });
+    expect(request.messages[0]?.role).toBe('user');
+    expect(request.messages[0]?.content).toContain(`"model": "${configuredModelID}"`);
     expect(request.system.map((block) => block.cache_control)).toEqual([{ type: 'ephemeral' }, { type: 'ephemeral' }]);
     expect(platformQuickstartToolNames).toEqual([
       'ask_user_questions',
@@ -75,6 +87,7 @@ describe('platform quickstart request builder', () => {
       step: 'session',
       deploymentSchedulePlanned: true,
       agentConfig: blankAgentConfig,
+      modelID: configuredModelID,
     });
 
     expect(text).toContain(
@@ -82,7 +95,7 @@ describe('platform quickstart request builder', () => {
     );
     expect(text).toContain('[Deployment schedule planned: yes.]');
     expect(text).toContain("Here's the current config:");
-    expect(text).toContain('"model": "claude-sonnet-4-6"');
+    expect(text).toContain(`"model": "${configuredModelID}"`);
     expect(text.endsWith('Start from the current quickstart step (see turn context).')).toBe(true);
   });
 
@@ -92,6 +105,7 @@ describe('platform quickstart request builder', () => {
       deploymentSchedulePlanned: false,
       agentDescription: 'Build an invoice tracker that summarizes inbound invoice emails.',
       agentConfig: blankAgentConfig,
+      modelID: configuredModelID,
     });
 
     expect(text).toContain("I'm building an agent. Here's my description:");
@@ -105,6 +119,7 @@ describe('platform quickstart request builder', () => {
       step: 'environment',
       deploymentSchedulePlanned: false,
       agentConfig: blankAgentConfig,
+      modelID: configuredModelID,
       locale: 'zh-CN',
     });
 
@@ -120,8 +135,9 @@ describe('platform quickstart request builder', () => {
     expect(builderText).toContain('build_agent_config 规则');
     // Technical tokens must survive translation.
     expect(builderText).toContain('agent_toolset_20260401');
-    expect(builderText).toContain('claude-sonnet-4-6');
-    expect(builderText).toContain('claude-opus-4-8');
+    expect(builderText).toContain(configuredModelID);
+    expect(builderText).not.toContain('claude-sonnet-4-6');
+    expect(builderText).not.toContain('claude-opus-4-8');
     expect(builderText).toContain('build_agent_config');
     expect(builderText).toContain('https://platform.claude.com');
     // User-visible choices must follow the Builder language instead of leaking
@@ -155,6 +171,7 @@ describe('platform quickstart request builder', () => {
       step: 'session',
       deploymentSchedulePlanned: true,
       agentConfig: blankAgentConfig,
+      modelID: configuredModelID,
       locale: 'zh-CN',
     });
 
@@ -163,7 +180,7 @@ describe('platform quickstart request builder', () => {
     );
     expect(text).toContain('[Deployment schedule planned: yes.]');
     expect(text).toContain('这是当前的配置：');
-    expect(text).toContain('"model": "claude-sonnet-4-6"');
+    expect(text).toContain(`"model": "${configuredModelID}"`);
     expect(text.endsWith('请从当前 quickstart 步骤开始（见 turn context）。')).toBe(true);
   });
 
@@ -173,6 +190,7 @@ describe('platform quickstart request builder', () => {
       deploymentSchedulePlanned: false,
       agentDescription: '构建一个汇总收件箱发票邮件的发票跟踪器。',
       agentConfig: blankAgentConfig,
+      modelID: configuredModelID,
       locale: 'zh-CN',
     });
 

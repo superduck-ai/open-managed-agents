@@ -83,6 +83,7 @@ func insertSessionTx(
 		}
 	}
 
+	input.Work.SessionUUID = session.UUID
 	workRow, err := workMapper.Insert(ctx, environmentWorkWriteParamsFrom(input.Work))
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
@@ -300,6 +301,7 @@ func (r sessionResourceRow) resource() SessionResource {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ResourceType: r.ResourceType, Payload: bytes.Clone(r.Payload), SecretPayload: bytes.Clone(r.SecretPayload),
+		Path: filestoreString(r.Path), FileExternalID: filestoreString(r.FileExternalID),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, DeletedAt: r.DeletedAt,
 	}
 }

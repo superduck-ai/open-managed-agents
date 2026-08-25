@@ -9,11 +9,11 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 type CodeConfiguration struct {
@@ -125,7 +125,7 @@ func handleVerifyMagicLink(store OrganizationStore, authService platformMagicLin
 		}
 
 		created := true
-		sessionKey := "sk-ant-sid-session-key-" + uuid.NewString()
+		sessionKey := "sk-ant-sid-session-key-" + uuid.NewV4().String()
 		expiresAt := time.Now().UTC().Add(time.Duration(25920000) * time.Second)
 		session, err := authService.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
 			SessionKey: sessionKey,

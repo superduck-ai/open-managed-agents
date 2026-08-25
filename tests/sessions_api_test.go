@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -30,7 +31,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/google/uuid"
 )
 
 type sessionAPIResponse struct {
@@ -791,7 +791,7 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 	}
 	const eventCount = 501
 	createdAt := time.Now().UTC()
-	uuidPrefix := uuid.New()
+	uuidPrefix := uuid.NewV4()
 	eventIDs := make([]string, 0, eventCount)
 	events := make([]db.SessionEvent, 0, eventCount)
 	for i := range eventCount {
@@ -861,7 +861,7 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	}
 	invalidAt := time.Now().UTC().Add(time.Second)
 	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{{
-		UUID:        uuid.NewString(),
+		UUID:        uuid.NewV4().String(),
 		ExternalID:  "sevt_activation_invalid_" + strings.TrimPrefix(codeSessionID, "cse_"),
 		EventType:   "user.interrupt",
 		Payload:     json.RawMessage(`[]`),
@@ -1373,7 +1373,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("make session projection stale: %v", err)
 	}
 	retryService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil)
+	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, nil)
 	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
 		t.Fatalf("retry existing running event projection: %v", err)
 	}
@@ -1582,7 +1582,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	now := time.Now().UTC()
 	if _, err := app.db.AppendSessionEvents(ctx, storedSession.WorkspaceUUID, storedSession.ExternalID, []db.SessionEvent{
 		{
-			UUID:        uuid.NewString(),
+			UUID:        uuid.NewV4().String(),
 			ExternalID:  hiddenEventID,
 			EventType:   "env_manager_log",
 			Payload:     json.RawMessage(`{"id":` + quoteJSON(hiddenEventID) + `,"type":"env_manager_log","content":"Using existing Claude Code installation (version 2.1.120)"}`),
@@ -1590,7 +1590,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 			CreatedAt:   now,
 		},
 		{
-			UUID:        uuid.NewString(),
+			UUID:        uuid.NewV4().String(),
 			ExternalID:  visibleEventID,
 			EventType:   "agent.message",
 			Payload:     json.RawMessage(`{"id":` + quoteJSON(visibleEventID) + `,"type":"agent.message","content":[{"type":"text","text":"visible event after legacy env log"}]}`),
@@ -4364,6 +4364,7 @@ func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string,
 		OrganizationUUID: credentialContext.OrganizationUUID,
 		WorkspaceUUID:    credentialContext.WorkspaceUUID,
 		AccountEmail:     credentialContext.AccountEmail,
+		WorkerEpoch:      record.CurrentWorkerEpoch,
 	})
 }
 
@@ -5059,10 +5060,15 @@ func sessionWorkData(t *testing.T, app *testApp, sessionID string) (string, stri
 	t.Helper()
 	var workType, workSessionID, state string
 	if err := app.pool.QueryRow(context.Background(), `
-		select data->>'type', data->>'id', state
-		from environment_work
-		where data->>'id' = $1 and deleted_at is null
-		order by created_at desc
+		select 'session', session.external_id, work.state
+		from environment_work work
+		join sessions session
+			on session.organization_uuid = work.organization_uuid
+			and session.workspace_uuid = work.workspace_uuid
+			and session.environment_uuid = work.environment_uuid
+			and session.uuid = work.session_uuid
+		where session.external_id = $1 and work.deleted_at is null
+		order by work.created_at desc
 		limit 1
 	`, sessionID).Scan(&workType, &workSessionID, &state); err != nil {
 		t.Fatalf("load session work: %v", err)

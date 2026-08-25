@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/superduck-ai/yourbatis"
 )
@@ -94,7 +93,7 @@ func TestAdminExternalKeyMapperFindByExternalID(t *testing.T) {
 			organizationUUID,
 			"key_external",
 		)
-		if !errors.Is(err, sql.ErrNoRows) || key.UUID != uuid.Nil {
+		if !errors.Is(err, sql.ErrNoRows) || key.UUID != "" {
 			t.Fatalf("FindByExternalID() = (%+v, %v), want zero and sql.ErrNoRows", key, err)
 		}
 		assertMapperTestExecution(

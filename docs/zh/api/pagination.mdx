@@ -1,0 +1,45 @@
+---
+title: "分页"
+description: "使用分页游标遍历 OMA 列表资源。"
+---
+
+OMA 的列表接口通常使用不透明游标分页。
+
+## 请求参数
+
+<ParamField query="limit" type="integer">
+  本页最多返回的对象数量。每种资源有自己的默认值和上限。
+</ParamField>
+
+<ParamField query="page" type="string">
+  上一页响应返回的 `next_page`。不要解析或修改该值。
+</ParamField>
+
+## 响应结构
+
+```json
+{
+  "data": [
+    {"id": "agent_...", "type": "agent"}
+  ],
+  "next_page": "opaque-cursor"
+}
+```
+
+当 `next_page` 为 `null` 或缺失时，表示没有下一页。
+
+## 遍历示例
+
+```bash
+curl 'http://localhost:38080/v1/agents?beta=true&limit=20' \
+  -H 'Authorization: Bearer sk-ant-local-default'
+
+curl 'http://localhost:38080/v1/agents?beta=true&limit=20&page=<next_page>' \
+  -H 'Authorization: Bearer sk-ant-local-default'
+```
+
+<Note>
+  游标与创建时间、资源 ID 或数据库主键没有稳定的公开对应关系。请始终把它当作不透明字符串保存和回传。
+</Note>
+
+不同资源支持不同筛选字段，例如 `created_at[gte]`、`status`、`agent_id` 或 `include_archived`。未知或无效筛选值会返回 `invalid_request_error`。

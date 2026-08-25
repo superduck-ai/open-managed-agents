@@ -87,6 +87,13 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 			wantSQLFragments: []string{"INSERT INTO sessions", "CAST($11 AS jsonb)", "RETURNING", "uuid, external_id"},
 		},
 		{
+			statement: sessionMapperFindByUUIDStatement,
+			bound:     buildSessionMapperFindByUUID(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid"),
+			wantID:    "SessionMapper.FindByUUID", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"FROM sessions", "workspace_uuid = $1", "uuid = $2", "deleted_at IS NULL"},
+		},
+		{
 			statement: sessionThreadMapperInsertIfAbsentStatement,
 			bound:     buildSessionThreadMapperInsertIfAbsent(yourbatis.DialectPostgres, threadParams),
 			wantID:    "SessionThreadMapper.InsertIfAbsent", wantKind: yourbatis.StatementSelect,

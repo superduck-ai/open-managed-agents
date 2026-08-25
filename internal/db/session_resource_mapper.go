@@ -10,7 +10,7 @@ import (
 type SessionResourceMapper interface {
 	Insert(ctx context.Context, params sessionResourceWriteParams) (sessionResourceRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
-	List(ctx context.Context, workspaceUUID, sessionExternalID string) ([]sessionResourceRow, error)
+	List(ctx context.Context, workspaceUUID, sessionExternalID string, maxOutputResources int) ([]sessionResourceRow, error)
 	Update(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	CountSessionFileResources(ctx context.Context, workspaceUUID, sessionExternalID, resourceType string) (int, error)
@@ -53,6 +53,8 @@ type sessionResourceRow struct {
 	ResourceType      string     `db:"resource_type"`
 	Payload           []byte     `db:"payload"`
 	SecretPayload     []byte     `db:"secret_payload"`
+	Path              *string    `db:"path"`
+	FileExternalID    *string    `db:"file_external_id"`
 	CreatedAt         time.Time  `db:"created_at"`
 	UpdatedAt         time.Time  `db:"updated_at"`
 	DeletedAt         *time.Time `db:"deleted_at"`

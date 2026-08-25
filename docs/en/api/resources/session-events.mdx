@@ -1,0 +1,28 @@
+---
+title: "Session events and streams"
+description: "Send input, page through history, and subscribe to session or thread SSE."
+---
+
+Every path requires `?beta=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` / `POST` | `/v1/sessions/{id}/events` | List history / send client events |
+| `GET` | `/v1/sessions/{id}/events/stream` | Primary SSE stream |
+| `GET` | `/v1/sessions/{id}/threads/{thread_id}/events` | Thread history |
+| `GET` | `/v1/sessions/{id}/threads/{thread_id}/stream` | Thread SSE |
+
+History supports limit, cursor, order, type, and created-time filters. `event_start` and `event_delta` appear only in live streams.
+
+```json
+{
+  "events": [
+    {
+      "type": "user.message",
+      "content": [{ "type": "text", "text": "Run the focused test suite." }]
+    }
+  ]
+}
+```
+
+Tool confirmation uses `user.tool_confirmation`; custom tool output uses `user.custom_tool_result`. Both reference the original call ID, and child-thread replies include `session_thread_id`.

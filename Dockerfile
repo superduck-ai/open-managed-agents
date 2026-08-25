@@ -12,7 +12,7 @@
 ARG REGISTRY=docker.io/library
 
 # ---- Go 后端编译 ------------------------------------------------------------
-FROM ${REGISTRY}/golang:1.26.2 AS go-builder
+FROM ${REGISTRY}/golang:1.27.0 AS go-builder
 
 ARG GOPROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GOPROXY}

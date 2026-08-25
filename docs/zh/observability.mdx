@@ -1,0 +1,31 @@
+---
+title: "可观测性与故障排查"
+description: "使用 request ID、结构化日志、事件、队列统计和指标定位问题。"
+---
+
+OMA 的控制面请求、worker、沙箱运行和上游模型调用是不同阶段。排障时先确定失败发生在哪个边界。
+
+## 请求追踪
+
+每个 HTTP 响应包含 `request-id`；错误 body 也包含同一 ID。服务端结构化日志使用 `request_id`、`workspace_id`、`session_id` 等字段关联请求。
+
+## 运行状态
+
+- `/healthz`：进程健康
+- 会话/线程状态与事件：任务生命周期
+- worker 列表和 stats：队列、poller 与 heartbeat
+- 部署运行：自动化触发和引用解析错误
+- Webhook endpoint 状态：投递失败导致的禁用信息
+- OTLP 文件日志：开发环境代码会话诊断（按配置启用）
+
+## 常见定位顺序
+
+1. 使用 `request-id` 找到 API 边界错误。
+2. 确认会话和 worker 的当前状态。
+3. 从持久事件找到最后一个状态或工具事件。
+4. 检查 Runner heartbeat、沙箱 provider ID 和 package provisioning 结果。
+5. 检查上游模型、MCP、密钥库 Refresh 和网络策略。
+
+<Warning>
+  不要把请求 body、文件内容、Authorization、Cookie、API 密钥、OAuth token 或 Secret 写入日志。排障信息应使用有长度上限的分类、ID 和状态。
+</Warning>

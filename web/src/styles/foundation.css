@@ -409,9 +409,16 @@ select {
   -webkit-tap-highlight-color: transparent;
 }
 
-:where(a, button, input, textarea, select, [role='button'], [role='combobox'], [tabindex]):focus-visible {
+:where(a, button, input, textarea, select, [role='button'], [role='combobox'], [tabindex]):focus-visible:not(
+    :where([data-slot='input'], [data-slot='textarea'], [data-slot='command-input'])
+  ) {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+input[type='search'][data-custom-clear]::-webkit-search-cancel-button {
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 :where([data-slot='input-group-control']):focus-visible {

@@ -107,11 +107,13 @@ export function ManagedSearchField({
       ) : null}
       <Input
         ref={inputRef}
+        type="search"
+        data-custom-clear
         id={id}
         value={value}
         placeholder={placeholder}
         className={clsx(
-          'h-9 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border focus-visible:ring-0',
+          'h-9 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border',
           prefix ? 'pl-[64px]' : 'pl-9',
           value ? 'pr-9' : 'pr-3',
         )}
@@ -648,6 +650,7 @@ export function ManagedTextField({
   placeholder,
   disabled = false,
   autoFocus = false,
+  type = 'text',
   onChange,
 }: {
   label: string;
@@ -655,6 +658,7 @@ export function ManagedTextField({
   placeholder?: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  type?: 'text' | 'password';
   onChange: (value: string) => void;
 }) {
   const id = `managed-field-${useId()}`;
@@ -665,10 +669,12 @@ export function ManagedTextField({
       </Label>
       <Input
         id={id}
+        type={type}
         value={value}
         placeholder={placeholder}
         disabled={disabled}
         autoFocus={autoFocus}
+        autoComplete={type === 'password' ? 'off' : undefined}
         className="managed-resource-field mt-2 h-10 border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:shadow-none focus-visible:shadow-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:text-muted-foreground"
         onChange={(event) => onChange(event.target.value)}
       />

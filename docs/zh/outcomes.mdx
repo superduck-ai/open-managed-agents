@@ -1,0 +1,41 @@
+---
+title: "定义结果"
+description: "使用 user.define_outcome 描述交付目标并跟踪评估状态。"
+---
+
+Outcome 让客户端把“完成”的标准作为结构化事件发送给会话。OMA 保存结果评估状态，并公开相关 span 与 Webhook 事件。
+
+## 定义结果
+
+```json
+{
+  "events": [
+    {
+      "type": "user.define_outcome",
+      "description": "The installation guide works on a clean machine.",
+      "rubric": {
+        "type": "text",
+        "content": "Commands are complete, reproducible, and do not require undocumented credentials."
+      },
+      "max_iterations": 3
+    }
+  ]
+}
+```
+
+`description` 和 `rubric` 必需；`max_iterations` 必须是正整数。部署的 `initial_events` 也可以包含 Outcome，使每次定时或手动运行使用同一评分标准。
+
+## 观察评估
+
+会话响应的 `outcome_evaluations` 保存 ID、状态、最大迭代次数和更新时间。事件流可出现：
+
+- `span.outcome_evaluation_start`
+- `span.outcome_evaluation_ongoing`
+- `span.outcome_evaluation_end`
+- `session.outcome_evaluation_ended`
+
+最后一个事件也可以作为 Webhook 订阅类型。
+
+<Info>
+  OMA 的 Outcome 运行时仍在演进。调用方应把评估结果作为自动化信号之一，而不是唯一的安全或合规批准。
+</Info>

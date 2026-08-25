@@ -57,6 +57,7 @@ type createCodeSessionParams struct {
 	Status                string
 	Metadata              []byte
 	OAuthAccessTokenHash  *string
+	InitialWorkerEpoch    int64
 	CreatedAt             time.Time
 }
 
@@ -91,6 +92,14 @@ type updateCodeSessionConnectionParams struct {
 	Connected     bool
 	RequiredEpoch *int64
 	Now           time.Time
+}
+
+type rotateCodeSessionCredentialsParams struct {
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	SessionExternalID     string
+	CodeSessionExternalID string
+	OAuthAccessTokenHash  string
 }
 
 type codeSessionCredentialContextRow struct {
@@ -129,6 +138,15 @@ type codeSessionWorkerExpiryRow struct {
 	WorkerLeaseExpiresAt time.Time `db:"worker_lease_expires_at"`
 }
 
+type resumeCodeSessionWorkerLeaseParams struct {
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	CodeSessionExternalID string
+	ProviderSandboxID     string
+	ExpiresAt             time.Time
+	Now                   time.Time
+}
+
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
@@ -137,6 +155,7 @@ type CodeSessionMapper interface {
 	FindNetworkPolicyContext(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionNetworkPolicyContextRow, error)
 	FindVaultIDs(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionVaultIDsRow, bool, error)
 	FindByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
+	FindActiveForEnvironmentWork(ctx context.Context, organizationUUID, workspaceUUID, environmentUUID, sessionUUID string) ([]codeSessionRow, error)
 	FindLatestBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (codeSessionRow, error)
 	LockCodeSessionByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
 	LockInitializingCodeSession(ctx context.Context, workspaceUUID, codeSessionUUID string) (codeSessionRow, bool, error)
@@ -145,6 +164,7 @@ type CodeSessionMapper interface {
 	RegisterWorker(ctx context.Context, params registerCodeSessionWorkerParams) (int64, error)
 	HeartbeatWorkerByExternalID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
 	HeartbeatWorkerByUUID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
+	ResumeWorkerLeaseForSandbox(ctx context.Context, params resumeCodeSessionWorkerLeaseParams) (int64, error)
 	UpdateWorkerState(ctx context.Context, params updateCodeSessionWorkerStateParams) (codeSessionRow, error)
 	UpdateCodeSessionInboundSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) (int64, error)
 	UpdateCodeSessionInternalSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) error
@@ -153,6 +173,8 @@ type CodeSessionMapper interface {
 	TouchWorkerActivityForActiveLease(ctx context.Context, codeSessionExternalID string, epoch int64, now time.Time) (int64, error)
 	TouchWorkerActivity(ctx context.Context, codeSessionExternalID string, requiredEpoch *int64, now time.Time) (int64, error)
 	UpdateConnection(ctx context.Context, params updateCodeSessionConnectionParams) (int64, error)
+	CountActiveIngressWorkerEpoch(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string, workerEpoch int64) (int64, error)
+	RotateCredentials(ctx context.Context, params rotateCodeSessionCredentialsParams) (int64, error)
 	TerminateByExternalID(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (int64, error)
 }
 

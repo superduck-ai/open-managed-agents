@@ -631,7 +631,7 @@ MCP 工具集默认为 `always_ask`。这可确保添加到 MCP 服务器的新�
 
 在以下示例中，工具使用事件 ID 来自 `session.status_idle` 事件的 `stop_reason.event_ids` 数组。请在[会话事件流](/docs/zh-CN/managed-agents/events-and-streaming#integrating-events)指南中了解有关接收事件的更多信息，或[订阅 Webhook](/docs/zh-CN/managed-agents/webhooks) 以在会话暂停等待输入时收到通知。
 
-本仓库实现说明：`stop_reason` 遵循 SDK union shape，`requires_action` 时只暴露官方字段 `type` / `event_ids`。`event_ids` 保存的是阻塞 `agent.tool_use` / `agent.mcp_tool_use` public event 的 `id`（`sevt_...`），不是 Claude Code worker 的原始 `request.tool_use_id`（`tool_...`）。为兼容早期客户端，`user.tool_confirmation.tool_use_id` 仍接受旧 worker `tool_use_id`，但新客户端应按官方契约使用 `event_ids` 中的 public event id；兼容诊断字段只保留在 `requires_action_details`。
+本仓库实现说明：`stop_reason` 遵循 SDK union shape，`requires_action` 时只暴露官方字段 `type` / `event_ids`。`event_ids` 保存的是阻塞 `agent.tool_use` / `agent.mcp_tool_use` public event 的 `id`（`sevt_...`），不是 Claude Code worker 的原始 `request.tool_use_id`（`tool_...`）。为兼容早期客户端，`user.tool_confirmation.tool_use_id` 仍接受旧 worker `tool_use_id`，但新客户端应按官方契约使用 `event_ids` 中的 public event id；兼容诊断字段只保留在 `requires_action_details`。`AskUserQuestion` 等需要把选项写回模型的工具：`user.tool_confirmation` 可额外携带 `updated_input`（对象，替换原始 tool input）和 `answers`（对象，写入 Claude Code `updatedInput.answers`）。`result=deny` 时忽略这两项。
 
 <CodeGroup defaultLanguage="CLI">
   ```bash curl

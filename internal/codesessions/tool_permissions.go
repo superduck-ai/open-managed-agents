@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"time"
 	"uuid"
@@ -280,6 +281,9 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	}
 	denyMessage := stringField(payload, "deny_message")
 	sessionThreadID := firstNonEmpty(toolPermissionSessionThreadID(payload), request.SessionThreadID)
+	if behavior == resolvedToolPermissionAllow {
+		request.Input = toolConfirmationUpdatedInput(request.Input, payload)
+	}
 	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, request, behavior, "tool-confirmation", denyMessage, sessionThreadID); err != nil {
 		return false, err
 	}
@@ -296,6 +300,27 @@ func (s *Service) toolPermissionRequestForConfirmation(ctx context.Context, code
 		return toolPermissionRequest{}, db.ErrNotFound
 	}
 	return request, nil
+}
+
+func toolConfirmationUpdatedInput(original map[string]any, confirmation map[string]any) map[string]any {
+	input := cloneStringAnyMap(original)
+	if updated := objectField(confirmation, "updated_input"); len(updated) > 0 {
+		input = cloneStringAnyMap(updated)
+	}
+	if confirmation != nil {
+		if answers, ok := confirmation["answers"].(map[string]any); ok && answers != nil {
+			input["answers"] = cloneStringAnyMap(answers)
+		}
+	}
+	return input
+}
+
+func cloneStringAnyMap(value map[string]any) map[string]any {
+	cloned := maps.Clone(value)
+	if cloned == nil {
+		return map[string]any{}
+	}
+	return cloned
 }
 
 func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessionID string, request toolPermissionRequest, behavior resolvedToolPermission, source string, denyMessage string, sessionThreadID string) error {

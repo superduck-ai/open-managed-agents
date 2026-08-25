@@ -344,6 +344,20 @@ func validateToolConfirmationPayload(payload map[string]any) error {
 			return errors.New("deny_message must be a string")
 		}
 	}
+	if err := validateOptionalObjectField(payload, "updated_input"); err != nil {
+		return err
+	}
+	return validateOptionalObjectField(payload, "answers")
+}
+
+func validateOptionalObjectField(payload map[string]any, field string) error {
+	value, ok := payload[field]
+	if !ok || value == nil {
+		return nil
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return fmt.Errorf("%s must be an object", field)
+	}
 	return nil
 }
 

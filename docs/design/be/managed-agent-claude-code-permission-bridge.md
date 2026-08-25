@@ -232,13 +232,20 @@ agent toolset：
 {
   "type": "user.tool_confirmation",
   "tool_use_id": "sevt_...",
-  "result": "allow"
+  "result": "allow",
+  "updated_input": {
+    "questions": [{"header": "Color", "question": "Favorite color?"}],
+    "answers": {"Color": "Blue"}
+  },
+  "answers": {"Color": "Blue"}
 }
 ```
 
+`updated_input` 和 `answers` 是本仓库扩展，用于 `AskUserQuestion` 等需要把用户选择写回 Claude Code `can_use_tool` `updatedInput` 的工具。官方 Managed Agents HTTP 合同只有 `result` / `tool_use_id` / `deny_message` / `session_thread_id`；缺少这两项时，`updatedInput` 保持原始 `request.input`，Write/Bash 等行为不变。若字段出现，则必须是 JSON object。
+
 4. 收到 confirmation 后，server 按 public event id 或 payload 中的 worker `tool_use_id` 查找对应的 `agent.tool_use` / `agent.mcp_tool_use`，直接从该 public event 的 payload 恢复 `request_id`、`tool_use_id`、`input` 和 thread 信息，再生成 Claude Code inbound `control_response`：
-   - `result=allow` -> `behavior=allow`
-   - `result=deny` -> `behavior=deny`，携带 `deny_message`
+   - `result=allow` -> `behavior=allow`。若 confirmation 带非空 `updated_input` 对象，将其作为 Claude Code `updatedInput`；若带 `answers` 对象，再写入 `updatedInput.answers`。两者都缺省时，`updatedInput` 保持原始 `request.input`。
+   - `result=deny` -> `behavior=deny`，携带 `deny_message`；不应用 `updated_input` / `answers`。
 5. 为兼容已有客户端，`user.tool_confirmation.tool_use_id` 仍接受旧 worker `request.tool_use_id`（`tool_...`），并用同一个 public event 查询完成路由。
 6. 子线程工具确认使用相同语义：cross-post 到 primary 的阻塞 public event 带 `session_thread_id`，`stop_reason.event_ids` 指向该 public event id；确认时即使只传 public event id，server 也应把 `session_thread_id` 保留到 worker `control_response`。
 7. `user.tool_confirmation` 本身保留为 public session event，用于审计和 Session Detail 只读回放。

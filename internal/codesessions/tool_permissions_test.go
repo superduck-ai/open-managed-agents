@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"uuid"
 )
@@ -113,5 +114,95 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	identity = parseClaudeToolIdentity("MultiEdit")
 	if identity.Kind != "agent_toolset" || identity.ToolName != "edit" {
 		t.Fatalf("identity = %+v", identity)
+	}
+}
+
+func TestToolConfirmationUpdatedInput(t *testing.T) {
+	t.Parallel()
+
+	questions := []any{
+		map[string]any{"header": "Color", "question": "Favorite color?"},
+	}
+	original := map[string]any{"questions": questions}
+
+	tests := []struct {
+		name         string
+		original     map[string]any
+		confirmation map[string]any
+		want         map[string]any
+	}{
+		{
+			name:         "nil original and confirmation returns empty object",
+			original:     nil,
+			confirmation: nil,
+			want:         map[string]any{},
+		},
+		{
+			name:         "non-object extras are ignored",
+			original:     map[string]any{"path": "/tmp/example.txt"},
+			confirmation: map[string]any{"result": "allow", "updated_input": "not-an-object", "answers": "Blue"},
+			want:         map[string]any{"path": "/tmp/example.txt"},
+		},
+		{
+			name:         "allow without extras copies original input",
+			original:     map[string]any{"path": "/tmp/example.txt", "contents": "hello"},
+			confirmation: map[string]any{"result": "allow"},
+			want:         map[string]any{"path": "/tmp/example.txt", "contents": "hello"},
+		},
+		{
+			name:     "updated_input replaces original input",
+			original: original,
+			confirmation: map[string]any{
+				"updated_input": map[string]any{
+					"questions": questions,
+					"answers":   map[string]any{"Color": "Blue"},
+				},
+			},
+			want: map[string]any{
+				"questions": questions,
+				"answers":   map[string]any{"Color": "Blue"},
+			},
+		},
+		{
+			name:     "answers overlay original questions",
+			original: original,
+			confirmation: map[string]any{
+				"answers": map[string]any{"Color": "Blue"},
+			},
+			want: map[string]any{
+				"questions": questions,
+				"answers":   map[string]any{"Color": "Blue"},
+			},
+		},
+		{
+			name:     "answers overlay updated_input",
+			original: original,
+			confirmation: map[string]any{
+				"updated_input": map[string]any{
+					"questions": questions,
+					"answers":   map[string]any{"Color": "Green"},
+				},
+				"answers": map[string]any{"Color": "Blue"},
+			},
+			want: map[string]any{
+				"questions": questions,
+				"answers":   map[string]any{"Color": "Blue"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := toolConfirmationUpdatedInput(tt.original, tt.confirmation)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("updated input = %#v, want %#v", got, tt.want)
+			}
+			if _, ok := tt.original["answers"]; ok {
+				t.Fatalf("original input was mutated with answers: %#v", tt.original)
+			}
+		})
 	}
 }

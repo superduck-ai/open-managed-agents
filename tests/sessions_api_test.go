@@ -2081,6 +2081,10 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if nested["behavior"] != "allow" || nested["toolUseID"] != toolUseID {
 		t.Fatalf("confirmation response nested = %#v, want allow for %s; payload=%s", nested, toolUseID, payload)
 	}
+	updatedInput, ok := nested["updatedInput"].(map[string]any)
+	if !ok || updatedInput["location"] != "Beijing" {
+		t.Fatalf("confirmation updatedInput = %#v, want original input; payload=%s", nested["updatedInput"], payload)
+	}
 
 	var beforeCompatCount int
 	if err := app.pool.QueryRow(context.Background(), `
@@ -2105,6 +2109,77 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	}
 	if afterCompatCount != beforeCompatCount {
 		t.Fatalf("duplicate legacy tool confirmation inbound count = %d, want %d", afterCompatCount, beforeCompatCount)
+	}
+}
+
+func TestCodeSessionAskUserQuestionConfirmationForwardsUpdatedInput(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-worker-ask-user-question-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	suffix := strings.TrimPrefix(session.ID, "sesn_")
+	toolUseID := "toolu_ask_color_" + suffix
+	requestID := "req_ask_color_" + suffix
+	questionsJSON := `[{"header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]`
+
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
+		`"type":"control_request",`+
+		`"uuid":"control-ask-color-`+suffix+`",`+
+		`"request_id":`+quoteJSON(requestID)+`,`+
+		`"request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":`+quoteJSON(toolUseID)+`,"input":{"questions":`+questionsJSON+`}}`+
+		`}}]}`)
+
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	toolEvent := sessionEventObjectByType(t, publicEvents, "agent.tool_use")
+	toolEventID, ok := toolEvent["id"].(string)
+	if !ok || toolEventID == "" {
+		t.Fatalf("agent.tool_use id = %#v, want non-empty string: %#v", toolEvent["id"], toolEvent)
+	}
+	if toolEvent["name"] != "AskUserQuestion" || toolEvent["evaluated_permission"] != "ask" {
+		t.Fatalf("agent.tool_use = %#v, want AskUserQuestion ask", toolEvent)
+	}
+
+	resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{`+
+		`"type":"user.tool_confirmation",`+
+		`"tool_use_id":`+quoteJSON(toolEventID)+`,`+
+		`"result":"allow",`+
+		`"updated_input":{"questions":`+questionsJSON+`,"answers":{"Color":"Blue"}},`+
+		`"answers":{"Color":"Blue"}`+
+		`}]}`), defaultTestKey, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send AskUserQuestion confirmation status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+
+	_, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "tool-confirmation")
+	if eventType != "control_response" {
+		t.Fatalf("confirmation event_type = %q, want control_response payload=%s", eventType, payload)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatalf("decode confirmation response payload: %v", err)
+	}
+	response := object["response"].(map[string]any)
+	if response["request_id"] != requestID {
+		t.Fatalf("confirmation response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
+	}
+	nested := response["response"].(map[string]any)
+	updatedInput, ok := nested["updatedInput"].(map[string]any)
+	if !ok {
+		t.Fatalf("confirmation updatedInput = %#v, want object; payload=%s", nested["updatedInput"], payload)
+	}
+	if _, ok := updatedInput["questions"]; !ok {
+		t.Fatalf("confirmation updatedInput missing questions: %#v", updatedInput)
+	}
+	answers, ok := updatedInput["answers"].(map[string]any)
+	if !ok || answers["Color"] != "Blue" {
+		t.Fatalf("confirmation updatedInput.answers = %#v, want Color=Blue; payload=%s", updatedInput["answers"], payload)
 	}
 }
 
@@ -3488,6 +3563,12 @@ func TestSessionEventInputValidation(t *testing.T) {
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","result":"allow"}]}`), defaultTestKey, true)
+	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":"sevt_ask","result":"allow","updated_input":[]}]}`), defaultTestKey, true)
+	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":"sevt_ask","result":"allow","answers":"Blue"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"done"}]}`), defaultTestKey, true)

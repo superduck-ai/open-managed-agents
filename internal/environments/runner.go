@@ -577,14 +577,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 }
 
 func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session db.Session) (map[string]string, error) {
-	vaultIDs, err := decodeSessionVaultIDs(session.VaultIDs)
-	if err != nil {
-		return nil, fmt.Errorf("decode session vault_ids: %w", err)
-	}
-	if len(vaultIDs) == 0 {
+	if len(session.VaultIDs) == 0 {
 		return nil, nil
 	}
-	credentials, err := r.db.ListActiveVaultCredentialsForVaultIDs(ctx, session.WorkspaceUUID, vaultIDs)
+	credentials, err := r.db.ListActiveVaultCredentialsForVaultIDs(ctx, session.WorkspaceUUID, session.VaultIDs)
 	if err != nil {
 		return nil, fmt.Errorf("list vault credentials for env mount: %w", err)
 	}
@@ -593,17 +589,6 @@ func (r *Runner) prepareEnvCredentialPlaceholders(ctx context.Context, session d
 		return nil, err
 	}
 	return placeholders, nil
-}
-
-func decodeSessionVaultIDs(raw json.RawMessage) ([]string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var ids []string
-	if err := json.Unmarshal(raw, &ids); err != nil {
-		return nil, err
-	}
-	return ids, nil
 }
 
 func (r *Runner) createManagedAgentRuntimeLaunch(

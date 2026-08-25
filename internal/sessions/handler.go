@@ -55,7 +55,7 @@ type sessionResponse struct {
 	Type               string            `json:"type"`
 	UpdatedAt          string            `json:"updated_at"`
 	Usage              json.RawMessage   `json:"usage"`
-	VaultIDs           json.RawMessage   `json:"vault_ids"`
+	VaultIDs           []string          `json:"vault_ids"`
 }
 
 type threadResponse struct {

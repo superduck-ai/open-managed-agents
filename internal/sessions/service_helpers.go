@@ -71,9 +71,9 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	return agent, snapshot, nil
 }
 
-func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, raw json.RawMessage) (json.RawMessage, error) {
+func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, raw json.RawMessage) ([]string, error) {
 	if httpapi.IsJSONNull(raw) {
-		return json.RawMessage(`[]`), nil
+		return []string{}, nil
 	}
 	var ids []string
 	if err := json.Unmarshal(raw, &ids); err != nil {
@@ -94,7 +94,7 @@ func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, r
 			return nil, fmt.Errorf("vault is archived: %s", id)
 		}
 	}
-	return httpapi.MarshalRaw(ids)
+	return ids, nil
 }
 
 func (h *Handler) resourcesFromCreate(
@@ -458,7 +458,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		Type:               "session",
 		UpdatedAt:          httpapi.FormatTime(session.UpdatedAt),
 		Usage:              httpapi.RawOr(session.Usage, `{}`),
-		VaultIDs:           httpapi.RawOr(session.VaultIDs, `[]`),
+		VaultIDs:           append([]string{}, session.VaultIDs...),
 	}, nil
 }
 

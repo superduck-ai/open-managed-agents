@@ -29,7 +29,7 @@ type Session struct {
 	DeploymentID          *string
 	Title                 *string
 	Metadata              json.RawMessage
-	VaultIDs              json.RawMessage
+	VaultIDs              []string
 	Status                string
 	Usage                 json.RawMessage
 	Stats                 json.RawMessage

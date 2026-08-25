@@ -83,7 +83,7 @@ func (h *Handler) fixtureDBSession(principal auth.Principal) db.Session {
 		AgentVersion:          1,
 		AgentSnapshot:         h.fixtureAgentSnapshot(),
 		Metadata:              json.RawMessage(`{"foo":"string"}`),
-		VaultIDs:              json.RawMessage(`["string"]`),
+		VaultIDs:              []string{"string"},
 		Status:                "idle",
 		Usage:                 json.RawMessage(`{}`),
 		Stats:                 json.RawMessage(`{}`),
@@ -115,7 +115,7 @@ func (h *Handler) fixtureSession(now time.Time, archived bool) sessionResponse {
 		Type:               "session",
 		UpdatedAt:          httpapi.FormatTime(now),
 		Usage:              json.RawMessage(`{}`),
-		VaultIDs:           json.RawMessage(`["string"]`),
+		VaultIDs:           []string{"string"},
 	}
 }
 

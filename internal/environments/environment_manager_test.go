@@ -617,7 +617,7 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 				]
 			}]
 		}`),
-		VaultIDs: json.RawMessage(`["vault_cred_123"]`),
+		VaultIDs: []string{"vault_cred_123"},
 	}
 
 	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))

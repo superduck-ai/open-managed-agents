@@ -1368,7 +1368,7 @@ func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID str
 			AgentVersion:          1,
 			AgentSnapshot:         json.RawMessage(`{}`),
 			Metadata:              json.RawMessage(`{}`),
-			VaultIDs:              json.RawMessage(`[]`),
+			VaultIDs:              []string{},
 			Status:                "idle",
 			Usage:                 json.RawMessage(`{}`),
 			Stats:                 json.RawMessage(`{}`),

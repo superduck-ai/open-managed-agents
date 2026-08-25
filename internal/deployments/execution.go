@@ -40,6 +40,10 @@ func prepareDeploymentExecution(
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
+	vaultIDs, err := jsonx.Decode[[]string](jsonx.Default(deployment.VaultIDs, `[]`))
+	if err != nil {
+		return preparedDeploymentExecution{}, fmt.Errorf("decode deployment vault_ids: %w", err)
+	}
 	deploymentID := deployment.ExternalID
 	return preparedDeploymentExecution{
 		RunID:  runID,
@@ -53,7 +57,7 @@ func prepareDeploymentExecution(
 				AgentUUID: deployment.AgentUUID, AgentExternalID: deployment.AgentExternalID,
 				AgentVersion: deployment.AgentVersion, AgentSnapshot: deployment.AgentSnapshot,
 				DeploymentUUID: &deployment.UUID, DeploymentID: &deploymentID,
-				Metadata: jsonx.Default(deployment.Metadata, `{}`), VaultIDs: jsonx.Default(deployment.VaultIDs, `[]`),
+				Metadata: jsonx.Default(deployment.Metadata, `{}`), VaultIDs: vaultIDs,
 				Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`),
 				OutcomeEvaluations: outcomes, CreatedAt: now, UpdatedAt: now,
 			},

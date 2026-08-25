@@ -550,7 +550,7 @@ func createEnvironmentWork(t *testing.T, app *testApp, env db.Environment) (stri
 			WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: dbIDs.APIKeyUUID,
 			EnvironmentUUID: env.UUID, EnvironmentExternalID: env.ExternalID,
 			AgentUUID: uuid.NewV4().String(), AgentExternalID: "agent_environment_work_test", AgentVersion: 1,
-			AgentSnapshot: json.RawMessage(`{}`), Metadata: json.RawMessage(`{}`), VaultIDs: json.RawMessage(`[]`),
+			AgentSnapshot: json.RawMessage(`{}`), Metadata: json.RawMessage(`{}`), VaultIDs: []string{},
 			Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`),
 			OutcomeEvaluations: json.RawMessage(`[]`), CreatedAt: now, UpdatedAt: now,
 		},

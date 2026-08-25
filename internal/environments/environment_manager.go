@@ -70,8 +70,8 @@ func managedAgentSessionConfig(
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	if vaultIDs := rawJSONArray(session.VaultIDs); len(vaultIDs) > 0 {
-		body["vault_ids"] = vaultIDs
+	if len(session.VaultIDs) > 0 {
+		body["vault_ids"] = session.VaultIDs
 	}
 	raw, _ := json.Marshal(body)
 	return raw
@@ -199,17 +199,6 @@ func rawJSONObject(raw json.RawMessage) map[string]any {
 		return map[string]any{}
 	}
 	return object
-}
-
-func rawJSONArray(raw json.RawMessage) []any {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil
-	}
-	var values []any
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil
-	}
-	return values
 }
 
 func mapStringAnyValue(value any) map[string]any {

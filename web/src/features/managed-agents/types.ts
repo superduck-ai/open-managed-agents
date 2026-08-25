@@ -336,6 +336,15 @@ export type SessionThreadApiResponse = {
 
 export type QuickstartSessionEvent = Record<string, unknown>;
 
+export type SessionToolConfirmationInput = {
+  toolUseId: string;
+  result: 'allow' | 'deny';
+  denyMessage?: string | null;
+  answers?: Record<string, unknown>;
+  updatedInput?: Record<string, unknown>;
+  sessionThreadId?: string;
+};
+
 export type SessionDetailEventCache = {
   events: QuickstartSessionEvent[];
   syncedThrough: PageCursor;

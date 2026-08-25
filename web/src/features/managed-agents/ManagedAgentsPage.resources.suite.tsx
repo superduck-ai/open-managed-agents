@@ -1191,6 +1191,107 @@ export function registerManagedAgentsResourceTests() {
     expect(confirmationDebugRow.textContent).toContain('Tool confirmation submitted.');
   });
 
+  test('allows approving and denying tool permissions from session detail action card and disables composer', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'idle';
+    const base = Date.now() - 60_000;
+    api.resources.sessionEvents = [
+      {
+        id: 'evt_user_action_msg',
+        type: 'user.message',
+        created_at: new Date(base).toISOString(),
+        content: [{ type: 'text', text: 'Please write file' }],
+      },
+      {
+        id: 'evt_tool_write_ask',
+        type: 'agent.tool_use',
+        created_at: new Date(base + 1_000).toISOString(),
+        name: 'Write',
+        evaluated_permission: 'ask',
+        input: { file_path: '/workspace/demo.ts', content: 'console.log("hello");' },
+      },
+    ];
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
+    expect(screen.getByTestId('tool-allow-button')).toBeTruthy();
+    expect(screen.getByTestId('tool-deny-button')).toBeTruthy();
+    expect(screen.queryByLabelText('Message')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('tool-allow-button'));
+
+    await waitFor(() => {
+      const confirmationEvent = api.resources.sessionEvents.find(
+        (e) => e.type === 'user.tool_confirmation' && (e as any).tool_use_id === 'evt_tool_write_ask',
+      );
+      expect(confirmationEvent).toBeTruthy();
+      expect((confirmationEvent as any).result).toBe('allow');
+    });
+  });
+
+  test('renders AskUserQuestion questionnaire in session detail and sends answers with question keys', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'idle';
+    const base = Date.now() - 60_000;
+    api.resources.sessionEvents = [
+      {
+        id: 'evt_user_ask_start',
+        type: 'user.message',
+        created_at: new Date(base).toISOString(),
+        content: [{ type: 'text', text: 'Ask me a question' }],
+      },
+      {
+        id: 'evt_tool_ask_question',
+        type: 'agent.tool_use',
+        created_at: new Date(base + 1_000).toISOString(),
+        name: 'AskUserQuestion',
+        evaluated_permission: 'ask',
+        input: {
+          questions: [
+            {
+              header: 'Color',
+              question: 'Which verification color should I use?',
+              options: [
+                { label: 'Blue', description: 'Sky blue' },
+                { label: 'Green', description: 'Grass green' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      },
+    ];
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    expect(await screen.findByTestId('session-questionnaire-card')).toBeTruthy();
+    expect(screen.getByText('Which verification color should I use?')).toBeTruthy();
+    expect(screen.getByText('Blue')).toBeTruthy();
+    expect(screen.getByText('Green')).toBeTruthy();
+
+    const blueOption = screen.getByText('Blue');
+    fireEvent.click(blueOption);
+
+    const confirmButton = screen.getByRole('button', { name: 'Confirm' });
+    expect(confirmButton).toBeTruthy();
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      const confirmationEvent = api.resources.sessionEvents.find(
+        (e) => e.type === 'user.tool_confirmation' && (e as any).tool_use_id === 'evt_tool_ask_question',
+      );
+      expect(confirmationEvent).toBeTruthy();
+      expect((confirmationEvent as any).result).toBe('allow');
+      expect((confirmationEvent as any).answers['Which verification color should I use?']).toBe('Blue');
+      expect((confirmationEvent as any).updated_input.answers['Which verification color should I use?']).toBe('Blue');
+    });
+  });
+
   test('keeps transcript tool batches scoped to each lane', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();

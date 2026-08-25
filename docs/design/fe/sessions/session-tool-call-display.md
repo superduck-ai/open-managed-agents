@@ -31,8 +31,6 @@ Session Detail 的 tool 调用展示不是简单地把 event stream 原样逐条
 ### 2.2 不包含
 
 - 后端 session event 存储 schema。
-- Web 端 Allow / Deny 审批按钮。
-- Claude Code runtime permission bridge。
 - Minimap lane 坐标算法。详见 [session-detail-lane-timeline-design.md](session-detail-lane-timeline-design.md)。
 - Tool result 内容的业务级解释或特定 MCP server 的自定义渲染。
 

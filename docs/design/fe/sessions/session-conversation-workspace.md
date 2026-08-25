@@ -31,14 +31,14 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 
 进入资源页签时重新请求 Session retrieve，以获取后端最新的 `resources`。文件资源再按 `file_id` 请求 File metadata 获取文件名；不从 `mount_path` 推断名称，也不调用 Session resources list 或 Files list。事件流不触发资源刷新。
 
-## 对话和停止行为
+## 对话、停止与权限审批行为
 
 - 输入框位于事件列表底部；选中事件后仍与右侧详情面板并存。
 - 事件区在桌面宽度下固定为左侧事件列表、右侧详情；未选中事件时右侧保留空状态，避免布局跳变。
 - `Enter` 发送，`Shift+Enter` 换行；输入法合成中和键盘长按不会触发发送。
 - 空消息、发送中、已归档、已终止或已删除的 Session 不能发送。
 - idle Session 仍允许发送新消息；running、queued 或 rescheduled Session 同时显示停止按钮。
-- 发送使用既有 `user.message` 事件合同，停止使用 `user.interrupt`，不增加新的 API 合同。
+- 发送普通消息使用既有 `user.message` 事件合同，停止使用 `user.interrupt`；当检测到处于 `awaiting_approval` 的 tool call 时，在输入框上方渲染 Action Card，通过 `user.tool_confirmation` 提交普通工具 Allow/Deny 或 AskUserQuestion 问卷答案，并在等待期间禁用普通消息输入框。
 - 成功发送后清空草稿，将响应中的已创建事件合并进现有缓存并恢复 SSE；响应未返回事件时才回退到刷新事件历史。失败保留草稿并使用详情页现有错误提示。
 - Session 状态最终以 SSE/后端响应为准；发送后的临时 running 状态只用于恢复实时订阅，前端禁用状态只用于交互反馈，不替代后端权限检查。
 

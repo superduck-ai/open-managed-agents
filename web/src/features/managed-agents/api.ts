@@ -44,6 +44,7 @@ import {
   type SessionEventCachePatch,
   type SessionResourceApiResponse,
   type SessionThreadApiResponse,
+  type SessionToolConfirmationInput,
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from './types';
@@ -840,6 +841,37 @@ export function postQuickstartSessionMessage(sessionId: string, message: string,
     sessionId,
     {
       events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
+    },
+    workspaceId,
+  );
+}
+
+export function postSessionToolConfirmation(
+  sessionId: string,
+  input: SessionToolConfirmationInput,
+  workspaceId: string,
+) {
+  const confirmationEvent: Record<string, unknown> = {
+    type: 'user.tool_confirmation',
+    tool_use_id: input.toolUseId,
+    result: input.result,
+  };
+  if (typeof input.denyMessage === 'string' && input.denyMessage.trim()) {
+    confirmationEvent.deny_message = input.denyMessage.trim();
+  }
+  if (input.updatedInput && typeof input.updatedInput === 'object') {
+    confirmationEvent.updated_input = input.updatedInput;
+  }
+  if (input.answers && typeof input.answers === 'object') {
+    confirmationEvent.answers = input.answers;
+  }
+  if (typeof input.sessionThreadId === 'string' && input.sessionThreadId.trim()) {
+    confirmationEvent.session_thread_id = input.sessionThreadId.trim();
+  }
+  return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
+    sessionId,
+    {
+      events: [confirmationEvent],
     },
     workspaceId,
   );

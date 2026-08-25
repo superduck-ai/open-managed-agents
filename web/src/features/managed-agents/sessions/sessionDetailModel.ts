@@ -1002,3 +1002,19 @@ export function formatRelativeFromNow(value: string, formatters: ReturnType<type
   }
   return formatters.relativeTime(Math.round(seconds / 86400), 'day');
 }
+
+export function findActiveAwaitingToolCall(entries: SessionEventListEntry[]): ToolCallEntry | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.kind === 'tool_call' && entry.lifecycle === 'awaiting_approval') {
+      return entry;
+    }
+    if (entry.kind === 'tool_batch' && entry.lifecycle === 'awaiting_approval') {
+      const call = entry.calls.find((item) => item.lifecycle === 'awaiting_approval');
+      if (call) {
+        return call;
+      }
+    }
+  }
+  return null;
+}

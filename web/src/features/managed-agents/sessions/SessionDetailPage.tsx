@@ -16,6 +16,7 @@ import {
   archiveManagedEntity,
   deleteManagedEntity,
   listAllSessionThreads,
+  postSessionToolConfirmation,
   retrieveSessionDetailSession,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
   sessionThreadListSignature,
@@ -31,6 +32,7 @@ import {
   type SessionDebugDetailTab,
   type SessionEventListEntry,
   type SessionThreadApiResponse,
+  type SessionToolConfirmationInput,
   type SessionTraceFilterOption,
   type SessionTraceView,
 } from '../types';
@@ -45,6 +47,7 @@ import {
   buildSessionEventsByLane,
   buildSessionTimeline,
   buildSessionTimelineVisibleIds,
+  findActiveAwaitingToolCall,
   flattenSessionEntriesByLane,
   nearestSessionEventEntry,
   readSessionArchivedLanePreference,
@@ -92,6 +95,7 @@ import {
 import { DebugRow, TranscriptRow } from './sessionTraceRows';
 import { SessionEntityPanels } from './SessionEntityPanels';
 import { SessionMessageComposer } from './SessionMessageComposer';
+import { SessionRequiresActionCard } from './SessionRequiresActionCard';
 import { SessionWorkspaceCard } from './SessionWorkspaceCard';
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
@@ -374,6 +378,32 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     [formatters, msg, session, sortedEvents],
   );
   const copyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries, view), [filteredEntries, view]);
+  const activeAwaitingToolCall = useMemo(() => findActiveAwaitingToolCall(entries), [entries]);
+
+  const handleToolConfirmation = useCallback(
+    async (input: SessionToolConfirmationInput) => {
+      if (!session?.id) {
+        return;
+      }
+      setMutationError(null);
+      try {
+        const response = await postSessionToolConfirmation(session.id, input, activeWorkspaceId);
+        if (response.data?.length) {
+          eventData.appendPrimaryEvents(response.data);
+        }
+        setSession((currentSession) =>
+          currentSession && currentSession.id === session.id
+            ? { ...currentSession, status: 'running' }
+            : currentSession,
+        );
+        setEventRefreshKey((value) => value + 1);
+      } catch (error) {
+        setMutationError(errorMessage(error));
+        throw error;
+      }
+    },
+    [activeWorkspaceId, eventData, session?.id],
+  );
 
   useEffect(() => {
     setSelectedTypes([]);
@@ -730,7 +760,36 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
               <EventsTab
                 activeLane={activeLane}
+                archivedLaneCount={archivedLaneCount}
                 childLoading={eventsLoading}
+                composer={
+                  activeAwaitingToolCall ? (
+                    <div className="px-3 pb-3 pt-2">
+                      <SessionRequiresActionCard
+                        toolCall={activeAwaitingToolCall}
+                        onConfirm={handleToolConfirmation}
+                        disabled={conversationState.disabled}
+                      />
+                    </div>
+                  ) : (
+                    <SessionMessageComposer
+                      disabled={conversationState.disabled}
+                      live={conversationState.live}
+                      onError={setMutationError}
+                      onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
+                      onMessageSent={(sentEvents) => {
+                        eventData.appendPrimaryEvents(sentEvents);
+                        setSession((currentSession) =>
+                          currentSession && currentSession.id === session.id
+                            ? { ...currentSession, status: 'running' }
+                            : currentSession,
+                        );
+                      }}
+                      sessionId={session.id}
+                      workspaceId={activeWorkspaceId}
+                    />
+                  )
+                }
                 copyPayload={copyPayload}
                 detailPanelRef={detailPanelRef}
                 entries={entries}
@@ -738,6 +797,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 filteredEntries={filteredEntries}
                 filterOptions={filterOptions}
                 hasFilter={hasFilter}
+                isMultiAgent={isMultiAgent}
                 lanes={lanes}
                 onClearFilters={() => {
                   setSelectedTypes([]);
@@ -750,11 +810,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                     msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
                   )
                 }
-                onQueryChange={setQuery}
+                onDetailTabChange={setSelectedDetailTab}
                 onOpenDeltas={(entryId) => {
                   setSelectedEntryId(entryId);
                   setSelectedDetailTab('deltas');
                 }}
+                onQueryChange={setQuery}
                 onSelectEntry={(entryId) => {
                   setSelectedEntryId(entryId);
                   setSelectedDetailTab('content');
@@ -763,40 +824,19 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 onThreadClick={handleThreadClick}
                 onSelectedTypesChange={setSelectedTypes}
                 onTimelineSeek={handleTimelineSeek}
+                onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
                 onViewChange={setView}
                 query={query}
                 scrollerRef={scrollerRef}
-                selectedEntry={selectedEntry}
                 selectedDetailTab={selectedDetailTab}
+                selectedEntry={selectedEntry}
                 selectedEntryId={selectedEntryId}
                 selectedTypes={selectedTypes}
-                suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
-                archivedLaneCount={archivedLaneCount}
-                composer={
-                  <SessionMessageComposer
-                    disabled={conversationState.disabled}
-                    live={conversationState.live}
-                    onError={setMutationError}
-                    onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
-                    onMessageSent={(sentEvents) => {
-                      eventData.appendPrimaryEvents(sentEvents);
-                      setSession((currentSession) =>
-                        currentSession && currentSession.id === session.id
-                          ? { ...currentSession, status: 'running' }
-                          : currentSession,
-                      );
-                    }}
-                    sessionId={session.id}
-                    workspaceId={activeWorkspaceId}
-                  />
-                }
-                isMultiAgent={isMultiAgent}
                 showArchivedLanes={showArchivedLanes}
+                suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
+                threadNameById={threadNameById}
                 timeline={timeline}
                 timelineVisibleIds={timelineVisibleIds}
-                threadNameById={threadNameById}
-                onDetailTabChange={setSelectedDetailTab}
-                onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
                 view={view}
               />
             </SessionDetailDeltaFramesContext.Provider>
@@ -1020,3 +1060,4 @@ export * from './sessionDetailData';
 export * from './sessionTimeline';
 export * from './sessionTraceRows';
 export * from './sessionDetailModel';
+export * from './SessionRequiresActionCard';

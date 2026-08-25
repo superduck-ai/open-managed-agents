@@ -12,6 +12,7 @@ import {
 import { errorMessage } from '../utils';
 
 export function SessionMessageComposer({
+  awaitingAction = false,
   disabled,
   live,
   onError,
@@ -20,6 +21,7 @@ export function SessionMessageComposer({
   sessionId,
   workspaceId,
 }: {
+  awaitingAction?: boolean;
   disabled: boolean;
   live: boolean;
   onError: (error: string | null) => void;
@@ -38,9 +40,10 @@ export function SessionMessageComposer({
   const sendingRef = useRef(false);
   const interruptingRef = useRef(false);
   const trimmedDraft = draft.trim();
+  const composerDisabled = disabled || awaitingAction;
 
   const submit = async () => {
-    if (!trimmedDraft || disabled || sendingRef.current) {
+    if (!trimmedDraft || composerDisabled || sendingRef.current) {
       return;
     }
     sendingRef.current = true;
@@ -80,7 +83,7 @@ export function SessionMessageComposer({
   return (
     <div className="px-3 pb-3 pt-2" data-testid="session-message-composer">
       <InputGroup
-        data-disabled={disabled || sending ? 'true' : undefined}
+        data-disabled={composerDisabled || sending ? 'true' : undefined}
         className={`${quickstartComposerFrameClassName} items-stretch gap-0 p-0 pl-0 shadow-none`}
       >
         <InputGroupTextarea
@@ -90,10 +93,15 @@ export function SessionMessageComposer({
           placeholder={
             disabled
               ? msg('managedAgents.sessions.detail.messageDisabled', 'This session can no longer receive messages.')
-              : msg('managedAgents.sessions.detail.messagePlaceholder', 'Send a message to this session...')
+              : awaitingAction
+                ? msg(
+                    'managedAgents.sessions.detail.awaitingActionComposerPlaceholder',
+                    'Please respond to the pending tool permission or questionnaire above...',
+                  )
+                : msg('managedAgents.sessions.detail.messagePlaceholder', 'Send a message to this session...')
           }
           className={`${quickstartComposerTextareaClassName} subtle-scrollbar-auto block max-h-40 min-h-[52px] overflow-y-auto px-4 pb-2 pt-3 text-[15px] leading-6`}
-          disabled={disabled || sending}
+          disabled={composerDisabled || sending}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (
@@ -101,7 +109,7 @@ export function SessionMessageComposer({
               event.shiftKey ||
               event.repeat ||
               event.nativeEvent.isComposing ||
-              disabled ||
+              composerDisabled ||
               sending
             ) {
               return;
@@ -139,7 +147,7 @@ export function SessionMessageComposer({
                   ? msg('managedAgents.sessions.detail.sending', 'Sending message')
                   : msg('managedAgents.sessions.detail.send', 'Send message')
               }
-              disabled={disabled || sending || !trimmedDraft}
+              disabled={composerDisabled || sending || !trimmedDraft}
               onClick={() => void submit()}
             >
               <ArrowUp className="size-4" aria-hidden />

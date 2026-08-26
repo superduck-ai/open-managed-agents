@@ -50,6 +50,7 @@ export function buildSessionTraceEntries(
   const displayEvents = events.map(sessionCanonicalDisplayEvent);
   const requiresActionEventIDs = latestRequiresActionEventIDs(displayEvents);
   const threadHints = buildSessionThreadHints(displayEvents);
+  let latestAgentMessageText = '';
   // Transcript 使用只读回放模型：result / confirmation 先按 tool use id 建索引，
   // 之后折回对应 tool_call；Debug 仍保留原始事件用于审计。
   displayEvents.forEach((event) => {
@@ -69,6 +70,17 @@ export function buildSessionTraceEntries(
   });
 
   return displayEvents.flatMap((event, index) => {
+    const type = sessionEventType(event);
+    const agentMessageText =
+      type === 'agent.message' || type === 'assistant.message' ? sessionEventTranscriptText(event).trim() : '';
+    if (view === 'transcript' && sessionIsResultEvent(event) && sessionResultText(event) === latestAgentMessageText) {
+      return [];
+    }
+    if (agentMessageText) {
+      latestAgentMessageText = agentMessageText;
+    } else if (type === 'user.message') {
+      latestAgentMessageText = '';
+    }
     let enrichedEvent = sessionEventWithThreadHint(event, threadHints.byThreadId);
     if (requiresActionEventIDs.has(sessionEventKey(enrichedEvent))) {
       enrichedEvent = { ...enrichedEvent, requires_action: true };

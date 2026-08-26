@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { QueryClient } from '@tanstack/react-query';
 import { setAnthropicClientForTest } from '@/shared/api/anthropic';
-import { listSessionFileOptions } from './api';
+import { listSessionFileOptions, mergeSessionStreamFrame, sessionDetailScopeEvents } from './api';
+import { buildSessionEventEntries } from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
 
@@ -10,6 +12,77 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('preserves preview time and removes an orphaned preview when the session idles', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const createdAt = '2026-08-26T13:13:00Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: createdAt,
+      processed_at: createdAt,
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toMatchObject({
+      id: 'sevt_preview',
+      created_at: createdAt,
+      processed_at: null,
+      is_streaming: true,
+    });
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_final',
+      type: 'agent.message',
+      created_at: createdAt,
+      processed_at: createdAt,
+      content: [{ type: 'text', text: 'Final answer' }],
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_idle',
+      type: 'session.status_idle',
+      created_at: createdAt,
+      processed_at: createdAt,
+      result: 'Final answer',
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_final',
+      'sevt_idle',
+    ]);
+  });
+
+  test('omits an idle result that duplicates the preceding agent message from the transcript', () => {
+    const createdAt = '2026-08-26T13:13:00Z';
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_agent',
+          type: 'agent.message',
+          created_at: createdAt,
+          processed_at: createdAt,
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+        {
+          id: 'sevt_idle',
+          type: 'session.status_idle',
+          created_at: createdAt,
+          processed_at: createdAt,
+          result: 'Final answer',
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent',
+    ]);
+  });
+
   test('loads every workspace file page for session resource options', async () => {
     const firstPage = Array.from({ length: 1000 }, (_, index) => fileMetadata(index));
     const finalFile = fileMetadata(1000);

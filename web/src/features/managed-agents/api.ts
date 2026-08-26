@@ -1199,6 +1199,9 @@ export function mergeSessionStreamFrame(
   }
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
   queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => mergeSessionEventCache(cache, [event]));
+  if (eventType.endsWith('status_idle') || eventType.endsWith('status_terminated')) {
+    cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
+  }
 }
 
 export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEvent[], threadId: string) {
@@ -1294,6 +1297,8 @@ export function sessionStreamingMessageFromStart(
       ...started,
       type: type === 'agent.thinking' ? 'agent.thinking' : 'agent.message',
       content,
+      created_at: started.created_at ?? event.created_at,
+      processed_at: started.processed_at ?? event.processed_at,
     },
     threadId || undefined,
   );

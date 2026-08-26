@@ -297,7 +297,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       return;
     }
     setSession((currentSession) => {
-      if (!currentSession || currentSession.id !== session.id || currentSession.status.toLowerCase() === 'terminated') {
+      const currentStatus = currentSession?.status.toLowerCase();
+      if (
+        !currentSession ||
+        currentSession.id !== session.id ||
+        ((currentStatus === 'terminated' || currentStatus === 'deleted') && next.status !== 'deleted')
+      ) {
         return currentSession;
       }
       // Mirror the live-frame path: a cached session.deleted must also archive,

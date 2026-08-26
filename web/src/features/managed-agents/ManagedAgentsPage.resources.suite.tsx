@@ -19,6 +19,8 @@ import {
   serverAgent,
   sessionStatusValuesFromUrl,
   setAgentConfigEditorValue,
+  sseFrame,
+  streamResponse,
   waitFor,
   within,
   workspaceContextValue,
@@ -1470,6 +1472,36 @@ export function registerManagedAgentsResourceTests() {
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
     api.resources.sessions[0].updated_at = new Date(Date.now() - 40_000).toISOString();
+    const fetchSessionEvents = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const response = await fetchSessionEvents(input, init);
+      if (url.startsWith('/v1/sessions/sesn_one123456/events/stream?') && requestMethod(input, init) === 'GET') {
+        const createdAt = new Date().toISOString();
+        return streamResponse(
+          [
+            sseFrame('session.status_running', {
+              id: 'evt_idle_live_running',
+              type: 'session.status_running',
+              created_at: createdAt,
+            }),
+            sseFrame('agent.message', {
+              id: 'evt_idle_live_agent',
+              type: 'agent.message',
+              created_at: createdAt,
+              processed_at: createdAt,
+              content: [{ type: 'text', text: 'Agent reply arrived live.' }],
+            }),
+            sseFrame('session.status_idle', {
+              id: 'evt_idle_live_idle',
+              type: 'session.status_idle',
+              created_at: createdAt,
+            }),
+          ].join(''),
+        );
+      }
+      return response;
+    });
 
     renderManagedAgentsPage('sessions');
 
@@ -1489,6 +1521,7 @@ export function registerManagedAgentsResourceTests() {
         true,
       ),
     );
+    expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
   });
 
   test('does not subscribe to session streams after a terminated session detail loads', async () => {
@@ -1511,6 +1544,39 @@ export function registerManagedAgentsResourceTests() {
       ).toBe(true),
     );
     expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
+  });
+
+  test('keeps deleted session metadata terminal when cached history is stale', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'deleted';
+    api.resources.sessions[0].archived_at = null;
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?'))).toBe(true),
+    );
+    expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  test('allows a cached deleted event to archive terminated session metadata', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'terminated';
+    api.resources.sessions[0].archived_at = null;
+    api.resources.sessionEvents.push({
+      id: 'evt_session_deleted',
+      type: 'session.deleted',
+      created_at: new Date(Date.now() + 1000).toISOString(),
+    });
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    expect(await screen.findByText('Archived')).toBeTruthy();
   });
 
   test('renders session detail controls in Chinese', async () => {

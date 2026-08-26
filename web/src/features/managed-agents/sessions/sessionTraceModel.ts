@@ -48,6 +48,9 @@ export function buildSessionTraceEntries(
   const toolResults = new Map<string, QuickstartSessionEvent[]>();
   const toolConfirmations = new Map<string, QuickstartSessionEvent[]>();
   const displayEvents = events.map(sessionCanonicalDisplayEvent);
+  if (view === 'transcript') {
+    displayEvents.sort(compareSessionTranscriptEvents);
+  }
   const requiresActionEventIDs = latestRequiresActionEventIDs(displayEvents);
   const threadHints = buildSessionThreadHints(displayEvents);
   let latestAgentMessageText = '';
@@ -71,14 +74,20 @@ export function buildSessionTraceEntries(
 
   return displayEvents.flatMap((event, index) => {
     const type = sessionEventType(event);
+    const eventFamily = sessionEventFamily(event);
     const agentMessageText =
-      type === 'agent.message' || type === 'assistant.message' ? sessionEventTranscriptText(event).trim() : '';
-    if (view === 'transcript' && sessionIsResultEvent(event) && sessionResultText(event) === latestAgentMessageText) {
+      eventFamily === 'agent' && !sessionEventIsThinking(event) ? sessionEventTranscriptText(event).trim() : '';
+    if (
+      view === 'transcript' &&
+      type === 'session.status_idle' &&
+      sessionIsResultEvent(event) &&
+      sessionResultText(event) === latestAgentMessageText
+    ) {
       return [];
     }
     if (agentMessageText) {
       latestAgentMessageText = agentMessageText;
-    } else if (type === 'user.message') {
+    } else if (eventFamily === 'user') {
       latestAgentMessageText = '';
     }
     let enrichedEvent = sessionEventWithThreadHint(event, threadHints.byThreadId);
@@ -103,7 +112,7 @@ export function buildSessionTraceEntries(
       return contentEntries;
     }
 
-    const family = sessionEventFamily(enrichedEvent);
+    const family = eventFamily;
     const toolUseId = sessionToolUseId(enrichedEvent);
     const matchedByPublicEventId = typeof enrichedEvent.id === 'string' && toolUseId === enrichedEvent.id;
     const resultEvent =
@@ -128,6 +137,21 @@ export function buildSessionTraceEntries(
       sessionTraceEntryFromEvent(enrichedEvent, index, family, resultEvent, confirmationEvent, traceStartMs, msg),
     ];
   });
+}
+
+function compareSessionTranscriptEvents(left: QuickstartSessionEvent, right: QuickstartSessionEvent) {
+  const chronologicalOrder = compareSessionEvents(left, right);
+  if (chronologicalOrder !== 0) {
+    return chronologicalOrder;
+  }
+  return sessionTranscriptTieRank(left) - sessionTranscriptTieRank(right);
+}
+
+function sessionTranscriptTieRank(event: QuickstartSessionEvent) {
+  if (sessionEventFamily(event) === 'agent' && !sessionEventIsThinking(event)) {
+    return 0;
+  }
+  return sessionEventType(event) === 'session.status_idle' && sessionIsResultEvent(event) ? 2 : 1;
 }
 
 export function latestRequiresActionEventIDs(events: QuickstartSessionEvent[]) {

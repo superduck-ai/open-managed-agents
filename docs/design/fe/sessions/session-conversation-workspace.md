@@ -41,6 +41,7 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 - 发送普通消息使用既有 `user.message` 事件合同，停止使用 `user.interrupt`；当最新 `session.status_idle.stop_reason` 为 `requires_action` 时，按 `event_ids` 在右侧详情区域渲染可滚动的 Action Card。普通工具 Allow/Deny 发送 `user.tool_confirmation`，AskUserQuestion 问卷答案发送 `user.custom_tool_result`；等待期间保留并禁用左侧普通消息输入框。
 - 成功发送后清空草稿，将响应中的已创建事件合并进现有缓存并恢复 SSE；响应未返回事件时才回退到刷新事件历史。失败保留草稿并使用详情页现有错误提示。
 - Session 状态最终以 SSE/后端响应为准；发送后的临时 running 状态只用于恢复实时订阅，前端禁用状态只用于交互反馈，不替代后端权限检查。
+- 未归档且未进入 terminated/deleted 终态的 Session（包括 idle 工具等待）保持 primary SSE；归档或进入终态后停止订阅。回归验收必须覆盖 idle 建流后的事件到达与实时渲染，以及终态不建流。
 - 流式预览继承 SSE envelope 的事件时间；Session 或 thread 进入 idle/terminated 时清理未完成预览，避免临时消息残留。
 - 转录视图不重复展示与上一条 Agent 消息文本完全相同的 `session.status_idle.result`；Debug 视图仍保留两条原始事件。
 

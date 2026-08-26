@@ -33,6 +33,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
@@ -102,6 +103,11 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open worker event broker: %w", err)
 	}
 	logger.Info("nats messaging ready", "jetstream", true)
+	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel)
+	if err != nil {
+		return fmt.Errorf("open tunnel broker: %w", err)
+	}
+	defer tunnelBroker.Close()
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
@@ -200,6 +206,7 @@ func run(logger *slog.Logger) error {
 			Redis:                  redisClient,
 			SessionEventBus:        sessionEventBus,
 			WorkerEventBroker:      workerEventBroker,
+			TunnelBroker:           tunnelBroker,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

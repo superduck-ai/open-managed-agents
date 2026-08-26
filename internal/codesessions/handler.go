@@ -28,11 +28,33 @@ type Handler struct {
 	mcpProxyTransport      http.RoundTripper
 	wrapMCPVaultTransport  mcpProxyTransportWrapper
 	mitmEgress             *vaults.MITMEgress
+	tunnelInvoker          TunnelInvoker
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
 	otlpSink                  otlpSink
 	otlpAdmission             *otlpAdmission
+}
+
+// TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway
+// routes never fall back to ordinary MCP proxying when this boundary declines a
+// target. The implementation owns tunnel lookup, broker dispatch, and protocol
+// response mapping.
+type TunnelInvoker interface {
+	ServeTunnel(
+		w http.ResponseWriter,
+		r *http.Request,
+		organizationUUID string,
+		workspaceUUID string,
+		target *url.URL,
+	) bool
+	ServeTunnelOAuthDiscovery(
+		w http.ResponseWriter,
+		r *http.Request,
+		organizationUUID string,
+		workspaceUUID string,
+		target *url.URL,
+	) bool
 }
 
 // SandboxTimeoutExtender resumes or renews the provider-side lifetime of a
@@ -97,5 +119,13 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 		)
 	}
 	h.mitmEgress = vaults.NewMITMEgress(h.db, secretSvc, h.logger, injector)
+	return h
+}
+
+// WithTunnelInvoker enables in-process dispatch for configured Tunnel URLs.
+func (h *Handler) WithTunnelInvoker(invoker TunnelInvoker) *Handler {
+	if h != nil {
+		h.tunnelInvoker = invoker
+	}
 	return h
 }

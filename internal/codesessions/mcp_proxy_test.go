@@ -60,6 +60,348 @@ func TestMCPProxyAuthorizationRejectsURLNotInSession(t *testing.T) {
 	}
 }
 
+func TestNamedMCPProxyDispatchesOnlyThroughTunnelInvokerAndSeparatesCredentials(t *testing.T) {
+	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
+	handler, mcpToken, sessionToken := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
+	var tunnelRequest *http.Request
+	var tunnelTarget *url.URL
+	handler.tunnelInvoker = tunnelInvokerFuncs{
+		serve: func(w http.ResponseWriter, request *http.Request, _, _ string, target *url.URL) bool {
+			tunnelRequest = request.Clone(request.Context())
+			tunnelTarget = target
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","result":{}}`))
+			return true
+		},
+	}
+	handler.mcpProxyTransport = mcpRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("named Tunnel request reached ordinary MCP outbound transport")
+		return nil, nil
+	})
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+
+	request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/local_tunnel", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+sessionToken)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("named MCP proxy accepted session token: status = %d", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/missing", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing named MCP server status = %d, want 404", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/%20local_tunnel%20", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("non-canonical named MCP server status = %d, want 404", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/local_tunnel", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("named MCP Tunnel status = %d body = %s", response.Code, response.Body.String())
+	}
+	if tunnelTarget == nil || tunnelTarget.String() != targetURL {
+		t.Fatalf("named MCP Tunnel target = %#v", tunnelTarget)
+	}
+	if tunnelRequest == nil || tunnelRequest.Header.Get("Authorization") != "" {
+		t.Fatalf("MCP capability leaked to TunnelInvoker: %#v", tunnelRequest)
+	}
+}
+
+func TestNamedMCPProxyRejectsOrdinaryMCPWithoutOutboundRequest(t *testing.T) {
+	handler, mcpToken, _ := newNamedMCPTestHandler(t, "docs", "https://mcp.example.test/api/mcp")
+	handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(http.ResponseWriter, *http.Request, string, string, *url.URL) bool {
+		return false
+	}}
+	handler.mcpProxyTransport = mcpRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("ordinary MCP named Gateway request reached outbound transport")
+		return nil, nil
+	})
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+	request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/docs", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("ordinary named MCP status = %d, want 404: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestNamedMCPProxySupportsEscapedServerNamePath(t *testing.T) {
+	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
+	handler, mcpToken, _ := newNamedMCPTestHandler(t, "team/tools", targetURL)
+	var tunnelTarget *url.URL
+	handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(w http.ResponseWriter, _ *http.Request, _, _ string, target *url.URL) bool {
+		tunnelTarget = target
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}}
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+	request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/team%2Ftools", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("escaped named MCP server status = %d, want 204: %s", response.Code, response.Body.String())
+	}
+	if tunnelTarget == nil || tunnelTarget.String() != targetURL {
+		t.Fatalf("escaped named MCP Tunnel target = %#v", tunnelTarget)
+	}
+}
+
+func TestMCPProxyQueryPreservesTunnelDispatch(t *testing.T) {
+	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
+	handler, _, sessionToken := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
+	var tunnelTarget *url.URL
+	handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(w http.ResponseWriter, _ *http.Request, _, _ string, target *url.URL) bool {
+		tunnelTarget = target
+		w.WriteHeader(http.StatusAccepted)
+		return true
+	}}
+	handler.mcpProxyTransport = mcpRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("query-based Tunnel request reached ordinary MCP outbound transport")
+		return nil, nil
+	})
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v2/ccr-sessions/cse_test/mcp?"+url.Values{"mcp_url": {targetURL}}.Encode(),
+		strings.NewReader(`{}`),
+	)
+	request.Header.Set("Authorization", "Bearer "+sessionToken)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("query-based MCP Tunnel status = %d, want 202: %s", response.Code, response.Body.String())
+	}
+	if tunnelTarget == nil || tunnelTarget.String() != targetURL {
+		t.Fatalf("query-based MCP Tunnel target = %#v", tunnelTarget)
+	}
+}
+
+func TestRuntimeMCPURLsSeparateResourceAndMetadata(t *testing.T) {
+	t.Parallel()
+	request := httptest.NewRequest(http.MethodGet, "http://host.docker.internal:38080/request", nil)
+	resourceURL := runtimeMCPResourceURL(request, "cse_test", "local_tunnel")
+	if resourceURL != "http://host.docker.internal:38080/v2/ccr-sessions/cse_test/mcp/local_tunnel" {
+		t.Fatalf("runtime MCP resource URL = %q", resourceURL)
+	}
+	metadataURL := runtimeMCPMetadataURL(request, "cse_test", "local_tunnel")
+	if metadataURL != "http://host.docker.internal:38080/.well-known/oauth-protected-resource/v2/ccr-sessions/cse_test/mcp/local_tunnel" {
+		t.Fatalf("runtime MCP metadata URL = %q", metadataURL)
+	}
+}
+
+func TestMCPGatewayResponseWriterRewritesOnlyChallengeMetadataURL(t *testing.T) {
+	t.Parallel()
+	recorder := httptest.NewRecorder()
+	writer := newMCPGatewayResponseWriter(recorder, "https://runtime.example/metadata")
+	writer.Header().Set("WWW-Authenticate", `Bearer realm="mcp", resource_metadata="http://private/metadata"`)
+	writer.WriteHeader(http.StatusUnauthorized)
+	if got := recorder.Header().Get("WWW-Authenticate"); got != `Bearer realm="mcp", resource_metadata="https://runtime.example/metadata"` {
+		t.Fatalf("WWW-Authenticate = %q", got)
+	}
+}
+
+func TestWriteCapturedMCPDiscoveryRewritesUnauthorizedRuntimeURLs(t *testing.T) {
+	t.Parallel()
+	captured := newMCPDiscoveryCapture()
+	captured.Header().Set("WWW-Authenticate", `Bearer realm="mcp", resource_metadata="http://private.example/metadata"`)
+	captured.WriteHeader(http.StatusUnauthorized)
+	_, _ = captured.Write([]byte(`{"resource":"http://private.example/mcp","authorization_servers":["https://auth.example"]}`))
+
+	request := httptest.NewRequest(http.MethodGet, "https://runtime.example/discovery", nil)
+	recorder := httptest.NewRecorder()
+	writeCapturedMCPDiscovery(
+		recorder,
+		request,
+		captured,
+		"https://runtime.example/v2/ccr-sessions/cse_test/mcp/local_tunnel",
+		"https://runtime.example/.well-known/oauth-protected-resource/v2/ccr-sessions/cse_test/mcp/local_tunnel",
+	)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if got := recorder.Header().Get("WWW-Authenticate"); got != `Bearer realm="mcp", resource_metadata="https://runtime.example/.well-known/oauth-protected-resource/v2/ccr-sessions/cse_test/mcp/local_tunnel"` {
+		t.Fatalf("WWW-Authenticate = %q", got)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if got := metadata["resource"]; got != "https://runtime.example/v2/ccr-sessions/cse_test/mcp/local_tunnel" {
+		t.Fatalf("resource = %#v", got)
+	}
+}
+
+func TestNamedMCPProtectedResourceUsesTunnelCapabilityAndPublicResourceURL(t *testing.T) {
+	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
+	handler, token, _ := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
+	var tunnelRequest *http.Request
+	var tunnelTarget *url.URL
+	handler.tunnelInvoker = tunnelInvokerFuncs{discovery: func(w http.ResponseWriter, request *http.Request, _, _ string, target *url.URL) bool {
+		tunnelRequest = request.Clone(request.Context())
+		tunnelTarget = target
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"resource":"https://private.example/mcp","authorization_servers":["https://auth.example"]}`))
+		return true
+	}}
+	handler.mcpProxyTransport = mcpRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("Tunnel metadata request reached ordinary MCP outbound transport")
+		return nil, nil
+	})
+	router := chi.NewRouter()
+	router.Get(
+		"/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/{server_name}",
+		handler.HandleMCPProtectedResource,
+	)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"http://host.docker.internal:38080/.well-known/oauth-protected-resource/v2/ccr-sessions/cse_test/mcp/local_tunnel",
+		nil,
+	)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("metadata status = %d body = %s", response.Code, response.Body.String())
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	wantResource := "http://host.docker.internal:38080/v2/ccr-sessions/cse_test/mcp/local_tunnel"
+	if metadata["resource"] != wantResource {
+		t.Fatalf("metadata resource = %#v, want %q", metadata["resource"], wantResource)
+	}
+	if tunnelTarget == nil || tunnelTarget.String() != targetURL {
+		t.Fatalf("Tunnel metadata target = %#v", tunnelTarget)
+	}
+	if tunnelRequest == nil || tunnelRequest.Header.Get("Authorization") != "" {
+		t.Fatalf("MCP capability leaked to Tunnel metadata request: %#v", tunnelRequest)
+	}
+}
+
+func TestNamedMCPProtectedResourceRejectsOrdinaryMCPWithoutOutboundRequest(t *testing.T) {
+	handler, token, _ := newNamedMCPTestHandler(t, "docs", "https://mcp.example.test/api/mcp")
+	handler.tunnelInvoker = tunnelInvokerFuncs{discovery: func(http.ResponseWriter, *http.Request, string, string, *url.URL) bool {
+		return false
+	}}
+	handler.mcpProxyTransport = mcpRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("ordinary named metadata request reached outbound transport")
+		return nil, nil
+	})
+	router := chi.NewRouter()
+	router.Get(
+		"/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/{server_name}",
+		handler.HandleMCPProtectedResource,
+	)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"http://host.docker.internal:38080/.well-known/oauth-protected-resource/v2/ccr-sessions/cse_test/mcp/docs",
+		nil,
+	)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("ordinary named metadata status = %d, want 404: %s", response.Code, response.Body.String())
+	}
+}
+
+type mcpRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f mcpRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type tunnelInvokerFuncs struct {
+	serve     func(http.ResponseWriter, *http.Request, string, string, *url.URL) bool
+	discovery func(http.ResponseWriter, *http.Request, string, string, *url.URL) bool
+}
+
+func (f tunnelInvokerFuncs) ServeTunnel(
+	w http.ResponseWriter,
+	r *http.Request,
+	organizationUUID string,
+	workspaceUUID string,
+	target *url.URL,
+) bool {
+	if f.serve == nil {
+		return false
+	}
+	return f.serve(w, r, organizationUUID, workspaceUUID, target)
+}
+
+func (f tunnelInvokerFuncs) ServeTunnelOAuthDiscovery(
+	w http.ResponseWriter,
+	r *http.Request,
+	organizationUUID string,
+	workspaceUUID string,
+	target *url.URL,
+) bool {
+	if f.discovery == nil {
+		return false
+	}
+	return f.discovery(w, r, organizationUUID, workspaceUUID, target)
+}
+
+func newNamedMCPTestHandler(t *testing.T, serverName, targetURL string) (*Handler, string, string) {
+	t.Helper()
+	snapshot, err := json.Marshal(map[string]any{"mcp_servers": []any{map[string]any{
+		"name": serverName, "type": "http", "url": targetURL,
+	}}})
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	policy, err := networkpolicy.ParseMCPProxyPolicy(json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`), snapshot)
+	if err != nil {
+		t.Fatalf("parse policy: %v", err)
+	}
+	credentials, err := NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatalf("create credentials: %v", err)
+	}
+	identity := SessionCredentialIdentity{
+		SessionID: "cse_test", PublicSessionID: "sesn_test", AgentID: "agent_test", AgentVersion: 1,
+		OrganizationUUID: "00000000-0000-0000-0000-000000000001",
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000002",
+	}
+	mcpToken, err := credentials.IssueMCPProxy(identity)
+	if err != nil {
+		t.Fatalf("issue MCP proxy token: %v", err)
+	}
+	sessionToken, err := credentials.Issue(identity)
+	if err != nil {
+		t.Fatalf("issue session ingress token: %v", err)
+	}
+	handler := NewHandler(config.Config{
+		Tunnel: config.TunnelConfig{PublicBaseURL: "https://oma.example", DomainSuffix: "tunnel.example"},
+	}, NewServiceWithCredentials(nil, credentials, nil), nil, slog.Default())
+	handler.loadMCPPolicyContext = func(context.Context, upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
+		return mcpProxyPolicyContext{policy: policy}, nil
+	}
+	return handler, mcpToken, sessionToken
+}
+
 func TestMCPProxyVaultInjectionRejectedReturns502(t *testing.T) {
 	targetURL := "https://mcp.example.com/mcp"
 	handler, token := newMCPProxyTestHandler(t, targetURL, slog.Default())
@@ -125,6 +467,11 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 	var logOutput bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
 	handler := NewHandler(config.Config{}, service, nil, logger)
+	var tunnelCandidate *url.URL
+	handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(_ http.ResponseWriter, _ *http.Request, _, _ string, target *url.URL) bool {
+		tunnelCandidate = target
+		return false
+	}}
 	handler.mcpProxyTransport = http.DefaultTransport
 	handler.loadMCPPolicyContext = func(context.Context, upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
 		return mcpProxyPolicyContext{
@@ -184,6 +531,9 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 	}
 	if response.StatusCode != http.StatusAccepted || response.Header.Get("Mcp-Session-Id") != "upstream-session" || !strings.Contains(string(responseBody), `"result"`) {
 		t.Fatalf("proxy response = status %d headers %#v body %s", response.StatusCode, response.Header, responseBody)
+	}
+	if tunnelCandidate == nil || tunnelCandidate.String() != targetURL {
+		t.Fatalf("legacy query-based MCP Tunnel candidate = %#v", tunnelCandidate)
 	}
 
 	got := <-captured

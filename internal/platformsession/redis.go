@@ -14,6 +14,8 @@ type RedisStore struct {
 	client *redis.Client
 }
 
+// NewRedisStore binds platform sessions to the process-owned Redis client.
+// The store never closes the shared client.
 func NewRedisStore(client *redis.Client) *RedisStore {
 	if client == nil {
 		panic("platformsession: redis client is required")

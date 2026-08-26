@@ -32,6 +32,10 @@ temp/
 coverage.out
 coverage.html
 
+# Python acceptance helpers
+__pycache__/
+*.pyc
+
 # Frontend dependencies and build artifacts
 node_modules/
 web/node_modules/

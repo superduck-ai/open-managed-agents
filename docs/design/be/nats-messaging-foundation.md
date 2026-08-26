@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-应用在组装层创建一条全局 NATS 连接，确认目标账号已启用 JetStream，并在进程退出时 drain。Session SSE 的实时 fanout 固定使用这条连接上的 Core NATS Pub/Sub；code-session worker 入站事件使用同一连接上的 JetStream。River job、最终事件和 worker delivery 状态的 PostgreSQL 持久化，以及 Redis 平台登录会话保持不变。后续 producer 和 consumer 应复用这条连接，不得在 handler 或每次请求内重新连接。
+应用在组装层创建一条全局 NATS 连接，确认目标账号已启用 JetStream，并在进程退出时 drain。Session SSE 的实时 fanout 固定使用这条连接上的 Core NATS Pub/Sub；code-session worker 入站事件使用同一连接上的 JetStream。MCP Tunnel 也复用此连接：命令使用 R3 WorkQueue，控制/终态使用独立 KV，原等待进程通知使用 Core NATS。River job、最终事件和 worker delivery 状态由 PostgreSQL 持久化；平台登录会话使用 Redis。后续 producer 和 consumer 应复用这条连接，不得在 handler 或每次请求内重新连接。
 
 ```mermaid
 flowchart LR
@@ -37,7 +37,7 @@ Docker Compose 使用 `docker.io/library/nats:2.14.6-alpine` 启动三个 JetStr
 
 应用启动时创建或校验固定 stream `OMA_WORKER_INBOUND`：subject 为 `oma.worker.inbound.v1.>`，file storage，3 replicas，`LimitsPolicy + DiscardOld`，`MaxAge=1h`，`MaxBytes=1GiB`，duplicate window 为 1 小时。该 subject 不与 Core NATS 的 `oma.s.>` 重叠。无法满足 3 副本时应用 fail closed，单节点和双节点 JetStream 不属于受支持部署。
 
-每条 `event` 消息使用版本 1 的完整 JSON 信封，包含 code session ID、数据库 event ID、payload event ID、sequence、event type/subtype 和完整 payload。信封可能包含用户内容，只允许存留在上述短期 stream 中，不得写入运行日志。NATS Server 的默认 `max_payload` 保持不变；合法 HTTP payload 超过该限制时，PostgreSQL 写入仍成功，JetStream 发布只记录不含 payload 的 Warn。
+每条 `event` 消息使用版本 1 的完整 JSON 信封，包含 code session ID、数据库 event ID、payload event ID、sequence、event type/subtype 和完整 payload。信封可能包含用户内容，只允许存留在上述短期 stream 中，不得写入运行日志。Compose 的 NATS 节点通过 `deploy/docker-compose/nats.conf` 将 `max_payload` 设为 2 MiB；合法 HTTP payload 超过节点配置的限制时，PostgreSQL 写入仍成功，JetStream 发布只记录不含 payload 的 Warn。
 
 PostgreSQL 是权威账本。写路径先提交 PostgreSQL，再发布 JetStream；publish 失败不回滚请求，不使用 outbox、后台 republish、DLQ 或周期性数据库扫描。worker 重连时从 PostgreSQL 补历史；健康连接若从后续 JetStream 消息发现 sequence 缺口，也会按 cursor 从 PostgreSQL 顺序补齐。若失败消息之后没有新消息，则等下一次 worker 重连恢复。
 
@@ -60,3 +60,5 @@ curl --fail 'http://127.0.0.1:8224/healthz?js-enabled-only=true'
 just generate
 TEST_NATS_URL=nats://127.0.0.1:4222,nats://127.0.0.1:4223,nats://127.0.0.1:4224 go test ./internal/sessions -run TestNATSFanout -count=1 -v
 ```
+
+MCP Tunnel 的 stream/KV、2 MiB payload、容量和故障合同详见 [MCP Tunnels](mcp-tunnels.md)。Broker 仅关闭自身订阅，不 drain 共享连接。

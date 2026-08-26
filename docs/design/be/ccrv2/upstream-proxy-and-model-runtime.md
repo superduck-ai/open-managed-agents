@@ -96,7 +96,7 @@ GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf
 GIT_CONFIG_VALUE_2=ssh://git@github.com/
 ```
 
-`environment_runner.git_ssh_to_https_hosts` 可追加其它 host（例如 `gitlab.xxxx.cn`，仅允许 `[a-z0-9.-]` 裸 hostname）；每个 host 再增加两条 `insteadOf`（`git@host:` 与 `ssh://git@host/` → `https://host/`）。动态条目的 `GIT_CONFIG_KEY_*` / `VALUE_*` 经 shell 引号后再写入启动脚本；`GIT_CONFIG_COUNT` 由条目总数计算，无需手写。
+`environment_runner.git_ssh_to_https_hosts` 可追加其它 host（例如 `gitlab.xxxx.cn`，仅允许合法裸 DNS hostname：label 为 `[a-z0-9-]` 且首尾非连字符）；每个 host 再增加两条 `insteadOf`（`git@host:` 与 `ssh://git@host/` → `https://host/`）。动态条目的 `GIT_CONFIG_KEY_*` / `VALUE_*` 经 shell 引号后再写入启动脚本；`GIT_CONFIG_COUNT` 由条目总数计算，无需手写。
 
 内置 github.com 改写把 `git@github.com:team/repo.git` 和 `ssh://git@github.com/team/repo.git` 变成 `https://github.com/team/repo.git`。变量在 environment-manager 启动环境中，其子进程（Claude、Bash、Git）都会继承。改写后的 HTTPS 继续走 `HTTPS_PROXY`；`GIT_SSL_CAINFO` 指向 runtime 合并 CA bundle。关闭 credential 交互、terminal prompt 和 editor，避免无人值守沙箱阻塞。
 

@@ -61,7 +61,7 @@ environment_runner:
   claude_agent_version: 2.1.120
   claude_path: /opt/claude-code/bin/claude
   # Extra hosts rewritten from SSH remotes to HTTPS (in addition to built-in github.com).
-  # Bare DNS hostnames only ([a-z0-9.-]); each adds git@host: and ssh://git@host/ → https://host/.
+  # Bare DNS hostnames only (labels [a-z0-9-], no leading/trailing hyphen); each adds git@host: and ssh://git@host/ → https://host/.
   git_ssh_to_https_hosts: []
   # Example:
   # git_ssh_to_https_hosts:

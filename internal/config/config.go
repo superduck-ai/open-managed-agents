@@ -144,16 +144,30 @@ func validateGitSSHtoHTTPSHosts(hosts []string) error {
 	return nil
 }
 
-// validateGitSSHtoHTTPSHost accepts only bare DNS hostnames ([a-z0-9.-]).
+// validateGitSSHtoHTTPSHost accepts only bare DNS hostnames: dot-separated
+// labels of [a-z0-9-], each starting and ending with an alphanumeric.
 // Callers must pass already lower-cased hostnames.
 func validateGitSSHtoHTTPSHost(host string) error {
-	if host == "" || strings.Contains(host, "..") || host[0] == '.' || host[len(host)-1] == '.' {
+	if host == "" {
 		return errors.New("must be a bare hostname")
 	}
-	for i := 0; i < len(host); i++ {
-		c := host[i]
+	for _, label := range strings.Split(host, ".") {
+		if err := validateGitSSHtoHTTPSHostLabel(label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateGitSSHtoHTTPSHostLabel(label string) error {
+	if label == "" {
+		return errors.New("must be a bare hostname")
+	}
+	for i := 0; i < len(label); i++ {
+		c := label[i]
 		switch {
-		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '.', c == '-':
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' && i > 0 && i < len(label)-1:
 		default:
 			return errors.New("must be a bare hostname")
 		}

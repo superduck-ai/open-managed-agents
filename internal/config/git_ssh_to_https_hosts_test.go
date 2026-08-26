@@ -57,6 +57,20 @@ func TestValidateGitSSHtoHTTPSHosts(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects hyphen-edged labels", func(t *testing.T) {
+		t.Parallel()
+		for _, host := range []string{
+			"-gitlab.example.com",
+			"gitlab-.example.com",
+			"gitlab.-example.com",
+			"gitlab.example.com-",
+		} {
+			if err := validateGitSSHtoHTTPSHosts([]string{host}); err == nil {
+				t.Fatalf("expected error for %q", host)
+			}
+		}
+	})
+
 	t.Run("rejects duplicate", func(t *testing.T) {
 		t.Parallel()
 		err := validateGitSSHtoHTTPSHosts([]string{"gitlab.xxxx.cn", "GITLAB.XXXX.CN"})

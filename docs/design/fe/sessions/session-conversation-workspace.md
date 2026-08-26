@@ -38,7 +38,7 @@ Session 详情页同时承担两个职责：继续与运行中的智能体对话
 - `Enter` 发送，`Shift+Enter` 换行；输入法合成中和键盘长按不会触发发送。
 - 空消息、发送中、已归档、已终止或已删除的 Session 不能发送。
 - idle Session 仍允许发送新消息；running、queued 或 rescheduled Session 同时显示停止按钮。
-- 发送普通消息使用既有 `user.message` 事件合同，停止使用 `user.interrupt`；当最新 `session.status_idle.stop_reason` 为 `requires_action` 时，按 `event_ids` 在输入框上方渲染 Action Card。普通工具 Allow/Deny 发送 `user.tool_confirmation`，AskUserQuestion 问卷答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
+- 发送普通消息使用既有 `user.message` 事件合同，停止使用 `user.interrupt`；当最新 `session.status_idle.stop_reason` 为 `requires_action` 时，按 `event_ids` 在右侧详情区域渲染可滚动的 Action Card。普通工具 Allow/Deny 发送 `user.tool_confirmation`，AskUserQuestion 问卷答案发送 `user.custom_tool_result`；等待期间保留并禁用左侧普通消息输入框。
 - 成功发送后清空草稿，将响应中的已创建事件合并进现有缓存并恢复 SSE；响应未返回事件时才回退到刷新事件历史。失败保留草稿并使用详情页现有错误提示。
 - Session 状态最终以 SSE/后端响应为准；发送后的临时 running 状态只用于恢复实时订阅，前端禁用状态只用于交互反馈，不替代后端权限检查。
 

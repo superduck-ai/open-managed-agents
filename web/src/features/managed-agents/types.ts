@@ -753,6 +753,7 @@ export type EventsTabProps = {
   hasFilter: boolean;
   isMultiAgent: boolean;
   lanes: SessionDetailLane[];
+  pendingAction?: ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
   onDetailTabChange: (tab: SessionDebugDetailTab) => void;

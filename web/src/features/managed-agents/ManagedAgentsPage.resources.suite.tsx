@@ -1226,8 +1226,12 @@ export function registerManagedAgentsResourceTests() {
       renderManagedAgentsPage('sessions');
 
       expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
-      expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
-      expect(screen.queryByLabelText('Message')).toBeNull();
+      const detailPanel = screen.getByTestId('session-event-detail-panel');
+      const actionPanel = await screen.findByTestId('session-requires-action-panel');
+      expect(detailPanel.contains(actionPanel)).toBe(true);
+      expect(within(actionPanel).getByTestId('session-tool-approval-card')).toBeTruthy();
+      expect(actionPanel.className).toContain('overflow-y-auto');
+      expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
 
       fireEvent.click(screen.getByTestId(result === 'allow' ? 'tool-allow-button' : 'tool-deny-button'));
 
@@ -1286,7 +1290,12 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('sessions');
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
-    expect(await screen.findByTestId('session-questionnaire-card')).toBeTruthy();
+    const detailPanel = screen.getByTestId('session-event-detail-panel');
+    const actionPanel = await screen.findByTestId('session-requires-action-panel');
+    expect(detailPanel.contains(actionPanel)).toBe(true);
+    expect(within(actionPanel).getByTestId('session-questionnaire-card')).toBeTruthy();
+    expect(actionPanel.className).toContain('overflow-y-auto');
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.getByText('Which verification color should I use?')).toBeTruthy();
     expect(screen.getByText('Blue')).toBeTruthy();
     expect(screen.getByText('Green')).toBeTruthy();

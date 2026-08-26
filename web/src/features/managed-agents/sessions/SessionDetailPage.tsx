@@ -768,32 +768,23 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 archivedLaneCount={archivedLaneCount}
                 childLoading={eventsLoading}
                 composer={
-                  activeAwaitingToolCall ? (
-                    <div className="px-3 pb-3 pt-2">
-                      <SessionRequiresActionCard
-                        toolCall={activeAwaitingToolCall}
-                        onConfirm={handleToolConfirmation}
-                        disabled={conversationState.disabled}
-                      />
-                    </div>
-                  ) : (
-                    <SessionMessageComposer
-                      disabled={conversationState.disabled}
-                      live={conversationState.live}
-                      onError={setMutationError}
-                      onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
-                      onMessageSent={(sentEvents) => {
-                        eventData.appendPrimaryEvents(sentEvents);
-                        setSession((currentSession) =>
-                          currentSession && currentSession.id === session.id
-                            ? { ...currentSession, status: 'running' }
-                            : currentSession,
-                        );
-                      }}
-                      sessionId={session.id}
-                      workspaceId={activeWorkspaceId}
-                    />
-                  )
+                  <SessionMessageComposer
+                    awaitingAction={Boolean(activeAwaitingToolCall)}
+                    disabled={conversationState.disabled}
+                    live={conversationState.live}
+                    onError={setMutationError}
+                    onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
+                    onMessageSent={(sentEvents) => {
+                      eventData.appendPrimaryEvents(sentEvents);
+                      setSession((currentSession) =>
+                        currentSession && currentSession.id === session.id
+                          ? { ...currentSession, status: 'running' }
+                          : currentSession,
+                      );
+                    }}
+                    sessionId={session.id}
+                    workspaceId={activeWorkspaceId}
+                  />
                 }
                 copyPayload={copyPayload}
                 detailPanelRef={detailPanelRef}
@@ -804,6 +795,15 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 hasFilter={hasFilter}
                 isMultiAgent={isMultiAgent}
                 lanes={lanes}
+                pendingAction={
+                  activeAwaitingToolCall ? (
+                    <SessionRequiresActionCard
+                      toolCall={activeAwaitingToolCall}
+                      onConfirm={handleToolConfirmation}
+                      disabled={conversationState.disabled}
+                    />
+                  ) : undefined
+                }
                 onClearFilters={() => {
                   setSelectedTypes([]);
                   setQuery('');
@@ -884,6 +884,7 @@ export function EventsTabInner({
   hasFilter,
   isMultiAgent,
   lanes,
+  pendingAction,
   onClearFilters,
   onCopyAll,
   onDetailTabChange,
@@ -1016,10 +1017,19 @@ export function EventsTabInner({
             ref={detailPanelRef}
             data-testid="session-event-detail-panel"
             className={`min-h-0 border-t border-border bg-muted/20 xl:border-l xl:border-t-0 ${
-              selectedEntry ? 'block' : 'hidden xl:block'
+              selectedEntry || pendingAction ? 'block' : 'hidden xl:block'
             }`}
           >
-            {selectedEntry ? (
+            {pendingAction ? (
+              <div
+                data-testid="session-requires-action-panel"
+                className="subtle-scrollbar h-full min-h-80 overflow-y-auto xl:min-h-0"
+              >
+                <Empty className="min-h-full rounded-none border-0">
+                  <div className="w-full text-left">{pendingAction}</div>
+                </Empty>
+              </div>
+            ) : selectedEntry ? (
               <EventDetailPanel
                 entry={selectedEntry}
                 view={view}

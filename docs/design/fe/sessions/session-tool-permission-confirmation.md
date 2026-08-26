@@ -268,7 +268,7 @@ Debug 模式是事件审计视图，必须保留：
 - 拒绝时 `is_error=true`，无需 `content`。
 - 后端从私有映射恢复原始 input，将答案写入 Claude Code `updatedInput.answers`；不扩展公开 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
 
-控制台 Session Detail 详情页只在最新 `session.status_idle.stop_reason.type=requires_action` 时，按 `event_ids` 找到对应 tool call 并展示 Action Card；等待处理期间禁用消息输入框，避免用户将回复误发为普通 `user.message`。
+控制台 Session Detail 详情页只在最新 `session.status_idle.stop_reason.type=requires_action` 时，按 `event_ids` 找到对应 tool call，并在右侧详情区域优先展示可滚动的 Action Card；等待处理期间保留并禁用左侧消息输入框，避免用户将回复误发为普通 `user.message`。
 
 ---
 
@@ -282,7 +282,7 @@ Debug 模式是事件审计视图，必须保留：
 - `sessionToolLifecycle` 支持字符串与对象形态的 `evaluated_permission` / `permission`，并按 `deny > result > ask-without-confirmation > running` 的顺序派生 lifecycle。
 - `ask + allow confirmation + no result` 显示为 `running`；`ask + deny confirmation` 或策略 `deny` 显示为 `denied`；`ask + no confirmation` 显示为 `awaiting_approval`。
 - tool 详情面板展示 confirmation JSON；拒绝事件会显示 `deny_message`。
-- 在页面检测到待确认工具时，呈现 `SessionRequiresActionCard` 并提供 Allow/Deny 或问卷交互，禁用普通输入框并引导确认。
+- 在页面检测到待确认工具时，右侧详情区域呈现 `SessionRequiresActionCard` 并提供 Allow/Deny 或问卷交互，左侧普通输入框保持可见但禁用。
 - 页面待处理集合来自最新 `session.status_idle.stop_reason.event_ids`，历史 lifecycle 不会继续显示操作卡。
 - 普通工具提交 `user.tool_confirmation`；`agent.custom_tool_use`（包括 `AskUserQuestion`）提交 `user.custom_tool_result`。
 
@@ -292,7 +292,7 @@ Debug 模式是事件审计视图，必须保留：
 
 | 场景 | 输入事件 | 期望展示 |
 |---|---|---|
-| 等待确认 | `tool_use(evaluated_permission=ask)`，无 confirmation/result | Transcript tool row 显示 `awaiting approval`，页面上方出现操作卡片，输入框禁用。 |
+| 等待确认 | `tool_use(evaluated_permission=ask)`，无 confirmation/result | Transcript tool row 显示 `awaiting approval`，右侧详情区域出现操作卡片，左侧输入框保持可见但禁用。 |
 | 允许执行 | 点击 Allow 按钮 | 发送 `result=allow` 的 confirmation，tool row 转为 running spinner。 |
 | 拒绝执行 | 点击 Deny 按钮 | 发送 `result=deny` 的 confirmation，tool row 显示 `denied`。 |
 | 问卷交互 | `AskUserQuestion` custom tool 被最新 `event_ids` 引用 | 渲染问卷选项与输入框，确认后以 `question` 文本为 key 发送 `user.custom_tool_result`。 |

@@ -83,6 +83,35 @@ describe('managed agents API', () => {
     ]);
   });
 
+  test('orders a non-duplicate idle result after an agent message with the same timestamp', () => {
+    const createdAt = '2026-08-26T13:13:00Z';
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_idle',
+          type: 'session.status_idle',
+          created_at: createdAt,
+          result: 'Run completed',
+        },
+        {
+          id: 'sevt_agent',
+          type: 'agent.message',
+          created_at: createdAt,
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent',
+      'sevt_idle',
+    ]);
+  });
+
   test('keeps a generic result that matches the preceding agent message', () => {
     const createdAt = '2026-08-26T13:13:00Z';
     const entries = buildSessionEventEntries(

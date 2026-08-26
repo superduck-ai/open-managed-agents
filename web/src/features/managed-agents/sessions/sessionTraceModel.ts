@@ -283,7 +283,7 @@ export function buildSessionEventEntries(
   const entries: SessionEventListEntry[] = [];
   let lastIdleAt = 0;
   let queuedBoundaryInserted = false;
-  const sortedRawEvents = [...events.map(sessionCanonicalDisplayEvent)].sort(compareSessionEvents);
+  const sortedRawEvents = [...events.map(sessionCanonicalDisplayEvent)].sort(compareSessionTranscriptEvents);
   const rawCursorByKey = new Map<string, number>();
   sortedRawEvents.forEach((event, index) => {
     rawCursorByKey.set(sessionEventKey(event), index);

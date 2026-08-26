@@ -117,6 +117,36 @@ func TestSessionCredentialsClaimsAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestSessionCredentialsSeparateMCPProxyCapability(t *testing.T) {
+	now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.UTC)
+	credentials := newTestSessionCredentials(t, &now)
+	identity := testSessionCredentialIdentity()
+	sessionToken, err := credentials.Issue(identity)
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	mcpToken, err := credentials.IssueMCPProxy(identity)
+	if err != nil {
+		t.Fatalf("IssueMCPProxy() error = %v", err)
+	}
+	if !strings.HasPrefix(mcpToken, mcpProxyTokenPrefix) {
+		t.Fatalf("MCP token = %q, want %q prefix", mcpToken, mcpProxyTokenPrefix)
+	}
+	claims, err := credentials.VerifyMCPProxy(mcpToken)
+	if err != nil {
+		t.Fatalf("VerifyMCPProxy() error = %v", err)
+	}
+	if claims.Issuer != mcpProxyIssuer || len(claims.Audience) != 1 || claims.Audience[0] != mcpProxyAudience || claims.Application != "oma" || claims.Role != "mcp_proxy" {
+		t.Fatalf("unexpected MCP proxy claims: %#v", claims)
+	}
+	if _, err := credentials.VerifyMCPProxy(sessionToken); err == nil {
+		t.Fatal("VerifyMCPProxy() accepted session-ingress token")
+	}
+	if _, err := credentials.Verify(mcpToken); err == nil {
+		t.Fatal("Verify() accepted MCP proxy token")
+	}
+}
+
 func TestAuthenticateSessionIngressUsesSignedIdentityWithoutDatabaseLifecycle(t *testing.T) {
 	now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.UTC)
 	credentials := newTestSessionCredentials(t, &now)

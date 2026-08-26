@@ -175,7 +175,7 @@ Proxy-Authorization: Basic base64(code_session_id:session_ingress_jwt)
 
 ### `GET|POST|DELETE /v2/ccr-sessions/{code_session_id}/mcp`
 
-Runner 不再把 Managed Agent MCP URL 改写到该接口。MCP config 保留 Agent Snapshot 中的原始 URL，Claude 主进程通过 `HTTPS_PROXY` 将请求交给 CCRv2 CONNECT relay；配置中也不再为该接口注入 session-ingress header。
+Runner 不再把普通 Managed Agent MCP URL 改写到该接口。普通 MCP config 保留 Agent Snapshot 中的原始 URL，Claude 主进程通过 `HTTPS_PROXY` 将请求交给 CCRv2 CONNECT relay；配置中也不再为该接口注入 session-ingress header。canonical Tunnel 使用的是独立的 `/mcp/{server_name}` named Runtime Gateway 和 MCP capability，不改变本接口合同。
 
 该接口作为显式调用的兼容入口继续保留，其边界如下：
 

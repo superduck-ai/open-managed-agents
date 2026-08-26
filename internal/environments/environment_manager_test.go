@@ -1,6 +1,7 @@
 package environments
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
@@ -28,6 +29,147 @@ func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
 
 	if baseURL := codeSessionSandboxAPIBaseURL(cfg); baseURL != "http://sandbox-api.example.test" {
 		t.Fatalf("codeSessionSandboxAPIBaseURL() = %q, want configured value", baseURL)
+	}
+}
+
+func TestProjectManagedAgentRuntimeMCPConfigPreservesOrdinaryMCPBytes(t *testing.T) {
+	source := json.RawMessage(`{
+		"mcp_servers":[{"name":"docs","type":"url","url":"https://mcp.example/mcp"}],
+		"mcp_config":{"mcpServers":{"docs":{"type":"http","url":"https://mcp.example/mcp","headers":{"X-Existing":"value"}}}},
+		"mcp_config_file":{"path":"/tmp/existing.json","content":"existing","mode":384}
+	}`)
+	projected, err := projectManagedAgentRuntimeMCPConfig(source, "", "", config.Config{})
+	if err != nil {
+		t.Fatalf("projectManagedAgentRuntimeMCPConfig() error = %v", err)
+	}
+	if !bytes.Equal(projected, source) {
+		t.Fatalf("ordinary MCP config changed:\n got: %s\nwant: %s", projected, source)
+	}
+}
+
+func TestProjectManagedAgentRuntimeMCPConfigRequiresSandboxReachableBaseURLForTunnel(t *testing.T) {
+	source := json.RawMessage(`{"mcp_config":{"mcpServers":{"local":{"type":"http","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}}}}`)
+	cfg := config.Config{Tunnel: config.TunnelConfig{PublicBaseURL: "https://oma.example", DomainSuffix: "tunnel.example"}}
+	if _, err := projectManagedAgentRuntimeMCPConfig(source, "cse_test", "sk-ant-mcp-secret", cfg); err == nil {
+		t.Fatal("projectManagedAgentRuntimeMCPConfig() accepted an empty sandbox API base URL for a Tunnel")
+	}
+}
+
+func TestProjectManagedAgentRuntimeMCPConfigProjectsOnlyTunnel(t *testing.T) {
+	source := json.RawMessage(`{
+		"mcp_servers":[
+			{"name":"docs","type":"url","url":"https://mcp.example/mcp"},
+			{"name":"local_tunnel","type":"url","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}
+		],
+		"mcp_config":{"mcpServers":{
+			"docs":{"type":"http","url":"https://mcp.example/mcp","headers":{"X-Existing":"value"},"tools":[{"name":"search","enabled":true}]},
+			"local_tunnel":{"type":"http","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef","tools":[{"name":"echo","enabled":true}]}
+		}},
+		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
+		"claude_code_args":{"mcp-config":"/tmp/stale.json"}
+	}`)
+	projected, err := projectManagedAgentRuntimeMCPConfig(
+		source,
+		"cse_test",
+		"sk-ant-mcp-secret",
+		config.Config{
+			Tunnel:      config.TunnelConfig{PublicBaseURL: "https://oma.example", DomainSuffix: "tunnel.example"},
+			CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:38080/"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("projectManagedAgentRuntimeMCPConfig() error = %v", err)
+	}
+	var startup map[string]any
+	if err := json.Unmarshal(projected, &startup); err != nil {
+		t.Fatalf("decode projected config: %v", err)
+	}
+	mcpServers := startup["mcp_servers"].([]any)
+	if len(mcpServers) != 2 || mcpServers[0].(map[string]any)["name"] != "docs" || mcpServers[1].(map[string]any)["name"] != "local_tunnel" {
+		t.Fatalf("projected top-level mcp_servers = %#v", mcpServers)
+	}
+	mcpConfig := startup["mcp_config"].(map[string]any)
+	servers := mcpConfig["mcpServers"].(map[string]any)
+	docs := servers["docs"].(map[string]any)
+	if docs["url"] != "https://mcp.example/mcp" || docs["type"] != "http" {
+		t.Fatalf("ordinary MCP server changed = %#v", docs)
+	}
+	docsHeaders := docs["headers"].(map[string]any)
+	if docsHeaders["X-Existing"] != "value" || docsHeaders["Authorization"] != nil {
+		t.Fatalf("ordinary MCP headers changed = %#v", docsHeaders)
+	}
+	server := servers["local_tunnel"].(map[string]any)
+	wantURL := "http://host.docker.internal:38080/v2/ccr-sessions/cse_test/mcp/local_tunnel"
+	if server["url"] != wantURL || server["type"] != "http" {
+		t.Fatalf("projected MCP server = %#v", server)
+	}
+	headers := server["headers"].(map[string]any)
+	if headers["Authorization"] != "Bearer sk-ant-mcp-secret" {
+		t.Fatalf("projected MCP headers = %#v", headers)
+	}
+	if !strings.Contains(string(projected), "https://mcp.example/mcp") {
+		t.Fatalf("projected config lost ordinary MCP target: %s", projected)
+	}
+	if strings.Contains(string(source), "sk-ant-mcp-secret") {
+		t.Fatal("projection mutated the persisted source config")
+	}
+	file := startup["mcp_config_file"].(map[string]any)
+	if file["path"] != managedAgentMCPConfigPath || file["mode"] != float64(0o600) {
+		t.Fatalf("projected MCP config file = %#v", file)
+	}
+	content, err := base64.StdEncoding.DecodeString(file["content"].(string))
+	if err != nil {
+		t.Fatalf("decode projected MCP config file: %v", err)
+	}
+	if !strings.Contains(string(content), wantURL) || !strings.Contains(string(content), "sk-ant-mcp-secret") || !strings.Contains(string(content), "https://mcp.example/mcp") || !strings.Contains(string(content), "X-Existing") {
+		t.Fatalf("projected MCP config file content = %s", content)
+	}
+}
+
+func TestProjectManagedAgentRuntimeMCPConfigEscapesServerNamePath(t *testing.T) {
+	source := json.RawMessage(`{"mcp_config":{"mcpServers":{"team/tools":{"type":"http","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}}}}`)
+	projected, err := projectManagedAgentRuntimeMCPConfig(
+		source,
+		"cse_test",
+		"sk-ant-mcp-secret",
+		config.Config{
+			Tunnel:      config.TunnelConfig{PublicBaseURL: "https://oma.example", DomainSuffix: "tunnel.example"},
+			CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:38080"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("projectManagedAgentRuntimeMCPConfig() error = %v", err)
+	}
+	if !strings.Contains(string(projected), `/v2/ccr-sessions/cse_test/mcp/team%2Ftools`) {
+		t.Fatalf("projected config did not escape the server name path: %s", projected)
+	}
+}
+
+func TestManagedAgentMCPURLTunnelRecognition(t *testing.T) {
+	t.Parallel()
+	cfg := config.TunnelConfig{PublicBaseURL: "https://oma.example", DomainSuffix: "tunnel.example"}
+	for _, test := range []struct {
+		name       string
+		url        string
+		recognized bool
+		wantError  bool
+	}{
+		{name: "malformed URL escape", url: "https://oma.example/v1/mcp/%zz", wantError: true},
+		{name: "invalid canonical query", url: "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef?x=1", recognized: true, wantError: true},
+		{name: "canonical", url: "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef", recognized: true},
+		{name: "hostname alias", url: "https://abc.tunnel.example/main", recognized: true},
+		{name: "third party matching path", url: "https://third-party.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef", recognized: false},
+		{name: "ordinary", url: "https://mcp.example/mcp", recognized: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recognized, err := managedAgentMCPURLIsTunnel(test.url, cfg)
+			if (err != nil) != test.wantError {
+				t.Fatalf("managedAgentMCPURLIsTunnel() error = %v, wantError %v", err, test.wantError)
+			}
+			if recognized != test.recognized {
+				t.Fatalf("managedAgentMCPURLIsTunnel() = %v, want %v", recognized, test.recognized)
+			}
+		})
 	}
 }
 

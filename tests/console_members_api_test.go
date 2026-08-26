@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 )
 
 func TestConsoleMembersAPI(t *testing.T) {
@@ -106,6 +108,9 @@ func (a *testApp) doPlatformConsole(t *testing.T, method string, path string, bo
 	}
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
+	}
+	if sessionCookie := responseCookie(cookies, "sessionKey"); sessionCookie != nil {
+		req.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(sessionCookie.Value))
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {

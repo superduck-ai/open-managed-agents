@@ -19,6 +19,10 @@ redis:
 # Optional SMTP configuration is omitted, so this local template accepts any
 # non-empty email verification code. See docs/configuration-reference.yaml.
 
+tunnel:
+  # Change this to the externally reachable HTTPS origin in production.
+  public_base_url: http://localhost:38080
+
 storage:
   type: s3
   s3:

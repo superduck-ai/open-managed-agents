@@ -123,6 +123,12 @@ Caddy 配置更简洁，与项目技术栈一致（都是 Go），Caddyfile 仅 
 
 oma-server 在容器内监听 `:8080`，Compose 通过 `38080:8080` 发布到宿主机。本地 sandbox 位于该容器网络之外，因此回调地址显式配置为 `code_session.sandbox_api_base_url: http://host.docker.internal:38080`。这里不能从 `server.addr` 推导：前者是 sandbox 可达的宿主机地址和发布端口，后者只是进程在容器内的监听地址。配置合同测试会同时校验监听端口、Compose 端口映射和回调 URL，防止三者漂移。
 
+Tunnel 的 public 地址是相反方向的部署合同：模板使用 `tunnel.public_base_url: http://localhost:38080`，
+供宿主机 MCP 客户端访问；生产必须改为外部 HTTPS origin。`code_session.sandbox_api_base_url` 供 sandbox
+回调 Runtime Gateway，`tunnel.public_base_url` 供 MCP 客户端保存 canonical URL，两者不能互换。
+Compose healthcheck 调用 `/readyz`，只有 PostgreSQL 与共享 Redis 都可用时才让 Caddy 继续启动；
+`/healthz` 仍只用于进程存活检查。
+
 ### 4.7 明确采用本地开发凭证姿态
 
 默认 Compose 拓扑只面向本地开发，而不是生产部署：模板显式使用 `env: dev` 和 `database.auto_migrate: true`，且不配置 `code_session.jwt_signing_private_key_file`。`NewSessionCredentials` 因此在 oma-server 进程内生成并复用临时 Ed25519 密钥；容器重启会生成新的信任锚，重启前签发的 session-ingress JWT 无法再通过验证。对于随整套本地环境一起重启的开发 sandbox，这是预期的生命周期边界，而不是持久凭证保证。
@@ -132,6 +138,7 @@ oma-server 在容器内监听 `:8080`，Compose 通过 `38080:8080` 发布到宿
 1. 将本地运行 YAML 改为 `env: prod`，并设置 `database.auto_migrate: false`。
 2. 生成或从 Secret Manager 提供稳定的 PKCS#8 Ed25519 私钥，将其只读挂载到 oma-server 容器，例如 `/run/secrets/code-session-jwt-ed25519.pem`。
 3. 在完整运行 YAML 中设置 `code_session.jwt_signing_private_key_file: /run/secrets/code-session-jwt-ed25519.pem`。生产模式缺少该字段时服务必须拒绝启动。
+4. 将 `tunnel.public_base_url` 改为 MCP 客户端实际访问的外部 HTTPS origin，并确保该 origin 的 `/v1/mcp/*` 与 `/.well-known/oauth-protected-resource/*` 都路由到 OMA。
 
 稳定私钥不得写入受跟踪模板或 `oma-server.local.yaml` 正文；YAML 只保存容器内只读 Secret 路径。私钥轮换属于会主动失效既有 session-ingress JWT 的运维操作，必须显式安排。
 

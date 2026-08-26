@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ExternalLink, X } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
@@ -18,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../../../shared/ui/popo
 import { Separator } from '../../../shared/ui/separator';
 import { Textarea } from '../../../shared/ui/textarea';
 import { type CreateAgentInput } from '../types';
+import { listMcpTunnels, probeMcpTunnel } from '../../mcp-tunnels/api';
 import { listCreateAgentSkills, loadMcpDirectoryServers, searchCreateAgentSubagents } from './create-dialog-api';
 import {
   type AgentModelOption,
@@ -31,17 +33,24 @@ import { CreateDialogPicker } from './create-dialog-picker';
 import { CreateDialogToolsEditor } from './create-dialog-tools-editor';
 
 export function AgentConfigRenderedEditor({
+  orgUuid,
   workspaceId,
   draft,
   modelOptions,
+  onPendingTunnelChange,
+  tunnelSelectionResetKey,
   onChange,
 }: {
+  orgUuid?: string;
   workspaceId: string;
   draft: CreateAgentInput;
   modelOptions: AgentModelOption[];
+  onPendingTunnelChange?: (pending: boolean) => void;
+  tunnelSelectionResetKey?: number;
   onChange: (next: CreateAgentInput) => void;
 }) {
   const { msg } = useI18n();
+  const csrfToken = useContext(AuthContext)?.csrfToken;
   const [agentSearch, setAgentSearch] = useState('');
   const [debouncedAgentSearch, setDebouncedAgentSearch] = useState('');
   useEffect(() => {
@@ -61,6 +70,12 @@ export function AgentConfigRenderedEditor({
   const directoryQuery = useQuery({
     queryKey: ['managed-agents', 'mcp-directory', 'agent-config'],
     queryFn: loadMcpDirectoryServers,
+    retry: false,
+  });
+  const tunnelsQuery = useQuery({
+    queryKey: ['console-mcp-tunnels', orgUuid, workspaceId, false],
+    queryFn: () => listMcpTunnels(orgUuid ?? '', workspaceId, false),
+    enabled: Boolean(orgUuid && workspaceId),
     retry: false,
   });
   const refetchAgents = agentsQuery.refetch;
@@ -94,6 +109,29 @@ export function AgentConfigRenderedEditor({
     description: `${skill.id} · ${skill.source}`,
     disabled: selectedSkills.length >= 20 && !selectedSkills.some((reference) => reference.skill_id === skill.id),
   }));
+  const mcpServers = [
+    ...(tunnelsQuery.data ?? []).map((tunnel) => ({
+      slug: tunnel.id,
+      displayName: tunnel.display_name || tunnel.id,
+      url: tunnel.mcp_url,
+      toolNames: [],
+      source: 'tunnel' as const,
+      group: msg('managedAgents.agents.createDialog.privateTunnels', 'Private tunnels'),
+      tunnel: {
+        id: tunnel.id,
+        connectionState: tunnel.connection.state,
+        channels: tunnel.connection.channels.map((channel) => channel.name),
+      },
+    })),
+    ...(directoryQuery.data ?? []).map((server) => ({
+      ...server,
+      source: 'directory' as const,
+      group: msg('managedAgents.agents.createDialog.mcpDirectory', 'MCP directory'),
+    })),
+  ];
+  const mcpSourcesLoading = mcpServers.length === 0 && (directoryQuery.isLoading || tunnelsQuery.isLoading);
+  const mcpSourcesUnavailable =
+    mcpServers.length === 0 && !mcpSourcesLoading && (directoryQuery.isError || tunnelsQuery.isError);
 
   return (
     <div className="space-y-0">
@@ -259,10 +297,19 @@ export function AgentConfigRenderedEditor({
       >
         <CreateDialogToolsEditor
           draft={draft}
-          directoryServers={directoryQuery.data ?? []}
-          directoryLoading={directoryQuery.isLoading}
-          directoryError={directoryQuery.isError}
-          onRetryDirectory={() => void directoryQuery.refetch()}
+          directoryServers={mcpServers}
+          directoryLoading={mcpSourcesLoading}
+          directoryError={mcpSourcesUnavailable}
+          onRetryDirectory={() => {
+            void directoryQuery.refetch();
+            void tunnelsQuery.refetch();
+          }}
+          onProbeTunnel={async (tunnelId, channel) => {
+            const result = await probeMcpTunnel(orgUuid ?? '', workspaceId, tunnelId, channel, csrfToken);
+            return result.tools.map((tool) => ({ name: tool.name, description: tool.description }));
+          }}
+          onPendingTunnelChange={onPendingTunnelChange}
+          selectionResetKey={tunnelSelectionResetKey}
           onChange={onChange}
         />
       </CreateDialogSection>

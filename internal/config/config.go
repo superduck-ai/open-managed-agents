@@ -7,12 +7,15 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	DefaultAPIKey             = "sk-ant-local-default"
 	OfficialSDKResourceAPIKey = "my-anthropic-api-key"
+	MaxTunnelPendingRequests  = 512
 )
 
 func Load() (Config, error) {
@@ -84,6 +87,12 @@ func validate(cfg Config) error {
 		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
 	}
 	if err := validatePositiveValues(cfg); err != nil {
+		return err
+	}
+	if err := validateTunnelDomainSuffix(cfg.Tunnel.DomainSuffix); err != nil {
+		return err
+	}
+	if err := validateTunnelPublicBaseURL(cfg.Tunnel.PublicBaseURL); err != nil {
 		return err
 	}
 	if err := validateVaultMasterKey(cfg.Vault); err != nil {
@@ -213,6 +222,49 @@ func validateGitSSHtoHTTPSHostLabel(label string) error {
 	return nil
 }
 
+func validateTunnelPublicBaseURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return errors.New("tunnel.public_base_url must not contain surrounding whitespace")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.Hostname() == "" {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(value, "#") || (parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if port := parsed.Port(); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return errors.New("tunnel.public_base_url port must be between 1 and 65535")
+		}
+	}
+	return nil
+}
+
+func validateTunnelDomainSuffix(value string) error {
+	if value == "" {
+		return errors.New("tunnel.domain_suffix is required")
+	}
+	if value != strings.ToLower(value) || strings.TrimSpace(value) != value || len(value) > 253 {
+		return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+			}
+		}
+	}
+	return nil
+}
+
 func (m MasterKeyConfig) inlineKEKSet() bool {
 	return strings.TrimSpace(m.Kek) != ""
 }
@@ -306,6 +358,15 @@ func validatePositiveValues(cfg Config) error {
 	}{
 		{name: "storage.max_file_bytes", valid: cfg.Storage.MaxFileBytes > 0},
 		{name: "storage.workspace_limit_bytes", valid: cfg.Storage.WorkspaceLimitBytes > 0},
+		{name: "tunnel.poll_timeout", valid: cfg.Tunnel.PollTimeout > 0 && cfg.Tunnel.PollTimeout <= 30*time.Second},
+		{name: "tunnel.request_timeout", valid: cfg.Tunnel.RequestTimeout >= time.Second && cfg.Tunnel.RequestTimeout <= 10*time.Minute},
+		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
+		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
+		{name: "tunnel.max_pending_requests", valid: cfg.Tunnel.MaxPendingRequests > 0 && cfg.Tunnel.MaxPendingRequests <= MaxTunnelPendingRequests},
+		{name: "tunnel.max_pending_bytes", valid: cfg.Tunnel.MaxPendingBytes > 0},
+		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
+		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
+		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},
 		{name: "batch.worker_concurrency", valid: cfg.Batch.WorkerConcurrency > 0},
 		{name: "batch.max_requests", valid: cfg.Batch.MaxRequests > 0},
 		{name: "batch.max_body_bytes", valid: cfg.Batch.MaxBodyBytes > 0},
@@ -326,6 +387,9 @@ func validatePositiveValues(cfg Config) error {
 	}
 	for _, check := range checks {
 		if !check.valid {
+			if check.name == "tunnel.max_pending_requests" {
+				return fmt.Errorf("%s must be between 1 and %d", check.name, MaxTunnelPendingRequests)
+			}
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
 	}

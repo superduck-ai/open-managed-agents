@@ -237,6 +237,16 @@ func TestAuthorizeMCPURLDeniesURLNotConfiguredForSession(t *testing.T) {
 	}
 }
 
+func TestParseMCPProxyPolicyRejectsDuplicateServerNames(t *testing.T) {
+	_, err := ParseMCPProxyPolicy(
+		[]byte(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
+		[]byte(`{"mcp_servers":[{"name":"duplicate","type":"url","url":"https://one.example/mcp"},{"name":"duplicate","type":"url","url":"https://two.example/mcp"}]}`),
+	)
+	if err == nil {
+		t.Fatal("ParseMCPProxyPolicy() accepted duplicate MCP server names")
+	}
+}
+
 func TestAuthorizeMCPURLDeniesDifferentActualPort(t *testing.T) {
 	for _, target := range []string{
 		"http://api.example.com/mcp",
@@ -254,6 +264,25 @@ func TestAuthorizeMCPURLDeniesDifferentActualPort(t *testing.T) {
 }
 
 // ---- 成功场景 ----
+
+func TestMCPProxyPolicyResolvesConfiguredServerName(t *testing.T) {
+	policy, err := ParseMCPProxyPolicy(
+		[]byte(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
+		[]byte(`{"mcp_servers":[{"name":"local_tunnel","type":"url","url":"https://mcp.example.test/mcp"}]}`),
+	)
+	if err != nil {
+		t.Fatalf("ParseMCPProxyPolicy() error = %v", err)
+	}
+	if target, ok := policy.MCPServerURL("local_tunnel"); !ok || target != "https://mcp.example.test/mcp" {
+		t.Fatalf("MCPServerURL() = %q, %v", target, ok)
+	}
+	if _, ok := policy.MCPServerURL("other"); ok {
+		t.Fatal("MCPServerURL() resolved an unconfigured server")
+	}
+	if _, ok := policy.MCPServerURL(" local_tunnel "); ok {
+		t.Fatal("MCPServerURL() resolved a non-canonical server name")
+	}
+}
 
 func TestAuthorizeHTTPSAllowsExplicitHost(t *testing.T) {
 	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}

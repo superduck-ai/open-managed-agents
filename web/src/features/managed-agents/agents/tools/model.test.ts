@@ -276,13 +276,18 @@ describe('agent tool display model', () => {
       },
     ]);
 
-    const [tunnel] = buildAgentToolDisplayCards(
+    const [currentTunnel] = buildAgentToolDisplayCards(
       agentFixture({
-        mcp_servers: [{ name: 'tunnel:fallback-id', url: 'https://wiki.example.com/mcp' }],
+        mcp_servers: [
+          {
+            name: 'tunnel_0123456789abcdef0123456789abcdef__main',
+            url: 'https://oma.example.com/v1/mcp/tunnel_0123456789abcdef0123456789abcdef',
+          },
+        ],
       }),
     );
-    expect(tunnel.title).toBe('wiki.example.com');
-    expect(tunnel.tools).toEqual([]);
+    expect(currentTunnel.title).toBe('oma.example.com');
+    expect(currentTunnel.tools).toEqual([]);
   });
 
   test('uses a directory URL option when the canonical remote URL is absent', () => {

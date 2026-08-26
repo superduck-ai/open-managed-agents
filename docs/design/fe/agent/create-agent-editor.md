@@ -36,6 +36,15 @@ flowchart LR
 ### MCP 与 Tools
 
 - 添加 Directory MCP 必须原子添加 `mcp_servers` 和同名 `mcp_toolset`；删除时原子删除二者。
+- Tunnel 在 Picker 中仍以一个 Tunnel 一个候选项展示。选择后在 MCP 工具卡中固定展示 Channel Combobox 和连接状态，
+  Channel 下方以无独立边框的弱提示行展示解析后的 canonical MCP URL，再展示工具权限；不使用独立
+  Channel Dialog，也不按实时 Channel 拆成多个 Picker 候选。
+- Tunnel 恰好一个实时 Channel 时自动选择实际值；多于一个或没有实时 Channel 时生成不进入 Draft 的待确认卡片，
+  Channel 初始为空并自动聚焦。`main` 在没有实时 Channel 时仅作为 placeholder/建议，不作为默认值。
+- 待确认 Tunnel Channel 会阻止创建和切换 Raw；取消不修改 Draft，模板或 Describe 整体替换 Draft 时清除待确认状态。
+  同一 Tunnel 可以配置多个不同 Channel，同一 Tunnel + Channel 不得重复。
+- 已配置 Tunnel 的 Channel 使用本地编辑缓冲；Apply 或选择有效建议后，原子更新 `mcp_server` 的名称和 URL 以及
+  `mcp_toolset.mcp_server_name`，保留权限与顺序，并在已连接时重新发现工具。
 - 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API。
 - MCP 候选项优先展示 Directory `icon_url`。若该字段是网页地址，则改用同源 favicon；加载失败后依次尝试 MCP 服务域名 favicon、公开 favicon 服务，全部失败才回退到统一的 Server 图标。图标使用懒加载，避免展开选择器时同时请求全部候选资源。
 - “添加 MCP 服务器”与“添加自定义工具”使用相同的 `36px` 高度、`14px` 字号、常规字重、间距和 Plus 图标规格。
@@ -59,6 +68,7 @@ flowchart LR
 
 - YAML 与 JSON 可往返全部支持字段，未知顶层字段和 `model.effort` 被拒绝。
 - Rendered 可完成 General、Multiagent、Skills、内置/MCP/Custom Tools 配置并创建 Agent。
-- MCP 与 toolset 始终成对，权限聚合和 deny 序列化与运行时一致。
+- MCP 与 toolset 始终成对；Tunnel Channel 的待确认状态不会污染 Draft，Channel 迁移不会丢失权限；权限聚合和 deny
+  序列化与运行时一致。
 - 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
 - 弹窗支持键盘导航、浅深主题和窄屏单列布局。

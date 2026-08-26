@@ -620,13 +620,27 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
 	}
+	runtimeSessionConfig, err := projectManagedAgentRuntimeMCPConfig(
+		preparation.SessionConfig,
+		local.CodeSessionID,
+		local.MCPProxyToken,
+		r.cfg,
+	)
+	if err != nil {
+		if preparation.RecoveryCodeSessionID == "" {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, preparation.Session, local.CodeSessionID)
+		}
+		return managedAgentRuntimeLaunch{}, err
+	}
 	payload, err := buildEnvironmentManagerV0Payload(
 		local.CodeSessionID,
 		local.SessionIngressToken,
 		local.OAuthAccessToken,
 		local.WorkerEpoch,
 		preparation.WorkDir,
-		preparation.SessionConfig,
+		runtimeSessionConfig,
 		r.cfg,
 		preparation.EnvPlaceholders,
 	)

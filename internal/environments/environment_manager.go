@@ -3,6 +3,8 @@ package environments
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	urlpkg "net/url"
 	"path"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 )
 
 const (
@@ -117,6 +120,105 @@ func managedAgentMCPConfigFile(mcpConfig map[string]any) map[string]any {
 		"content": base64.StdEncoding.EncodeToString(content),
 		"mode":    0o600,
 	}
+}
+
+// projectManagedAgentRuntimeMCPConfig replaces only canonical Tunnel targets
+// with a session-scoped OMA Runtime Gateway endpoint. Ordinary remote MCP
+// targets retain their original URL and existing Vault/MITM runtime path.
+func projectManagedAgentRuntimeMCPConfig(
+	sessionConfig json.RawMessage,
+	codeSessionID string,
+	mcpProxyToken string,
+	cfg config.Config,
+) (json.RawMessage, error) {
+	startupContext := map[string]any{}
+	if len(sessionConfig) > 0 && strings.TrimSpace(string(sessionConfig)) != "null" {
+		if err := json.Unmarshal(sessionConfig, &startupContext); err != nil {
+			return nil, err
+		}
+	}
+	mcpConfig := mapStringAnyValue(startupContext["mcp_config"])
+	servers := mapStringAnyValue(mcpConfig["mcpServers"])
+	if len(servers) == 0 {
+		hasTunnel, err := managedAgentMCPServerListHasTunnel(arrayValue(startupContext["mcp_servers"]), cfg.Tunnel)
+		if err != nil {
+			return nil, err
+		}
+		if hasTunnel {
+			return nil, errors.New("managed-agent MCP config does not contain any launchable remote servers")
+		}
+		return sessionConfig, nil
+	}
+	tunnelServers, err := managedAgentTunnelServerNames(servers, cfg.Tunnel)
+	if err != nil {
+		return nil, err
+	}
+	if len(tunnelServers) == 0 {
+		return sessionConfig, nil
+	}
+	apiBaseURL := codeSessionSandboxAPIBaseURL(cfg)
+	if apiBaseURL == "" {
+		return nil, errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
+	}
+	if strings.TrimSpace(codeSessionID) == "" || strings.TrimSpace(mcpProxyToken) == "" {
+		return nil, errors.New("managed-agent MCP Tunnel runtime identity is incomplete")
+	}
+	for _, serverName := range tunnelServers {
+		value := servers[serverName]
+		server := mapStringAnyValue(value)
+		gatewayURL := apiBaseURL + "/v2/ccr-sessions/" + urlpkg.PathEscape(codeSessionID) + "/mcp/" + urlpkg.PathEscape(serverName)
+		server["url"] = gatewayURL
+		server["headers"] = map[string]any{"Authorization": "Bearer " + mcpProxyToken}
+		servers[serverName] = server
+	}
+	mcpConfig["mcpServers"] = servers
+	startupContext["mcp_config"] = mcpConfig
+	startupContext["mcp_config_file"] = managedAgentMCPConfigFile(mcpConfig)
+	claudeCodeArgs := mapStringAnyValue(startupContext["claude_code_args"])
+	claudeCodeArgs["mcp-config"] = managedAgentMCPConfigPath
+	startupContext["claude_code_args"] = claudeCodeArgs
+	return json.Marshal(startupContext)
+}
+
+func managedAgentTunnelServerNames(servers map[string]any, cfg config.TunnelConfig) ([]string, error) {
+	names := make([]string, 0, len(servers))
+	for serverName, value := range servers {
+		server := mapStringAnyValue(value)
+		recognized, err := managedAgentMCPURLIsTunnel(stringFromMap(server, "url"), cfg)
+		if err != nil {
+			return nil, err
+		}
+		if recognized {
+			names = append(names, serverName)
+		}
+	}
+	return names, nil
+}
+
+func managedAgentMCPServerListHasTunnel(servers []any, cfg config.TunnelConfig) (bool, error) {
+	for _, value := range servers {
+		server := mapStringAnyValue(value)
+		recognized, err := managedAgentMCPURLIsTunnel(stringFromMap(server, "url"), cfg)
+		if err != nil {
+			return false, err
+		}
+		if recognized {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func managedAgentMCPURLIsTunnel(rawURL string, cfg config.TunnelConfig) (bool, error) {
+	if rawURL == "" {
+		return false, nil
+	}
+	target, err := urlpkg.Parse(rawURL)
+	if err != nil {
+		return false, fmt.Errorf("parse managed-agent MCP server URL: %w", err)
+	}
+	_, recognized, err := tunnels.RecognizeTarget(target, cfg)
+	return recognized, err
 }
 
 func mcpToolsetsByServer(tools []any) map[string]map[string]any {

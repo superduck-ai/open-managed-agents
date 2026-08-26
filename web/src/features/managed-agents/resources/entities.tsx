@@ -18,6 +18,7 @@ import {
 } from '../../../shared/ui/dropdown-menu';
 import { toast } from '../../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, ChevronLeft, ChevronRight, Copy, Pencil, Play, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -33,14 +34,7 @@ import {
   unpauseDeployment,
   updateManagedEntity,
 } from '../api';
-import {
-  AgentFilterDropdown,
-  AgentSelectionCheckbox,
-  ConfirmEntityDialog,
-  EmptyState,
-  ManagedErrorAlert,
-  ManagedSearchField,
-} from '../components/common';
+import { AgentSelectionCheckbox, ConfirmEntityDialog, EmptyState, ManagedErrorAlert } from '../components/common';
 import {
   entityActionLabel,
   entityKindLabel,
@@ -542,7 +536,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     switch (filter) {
       case 'Created  All time':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-created`}
             label={msg('managedAgents.filters.created', 'Created')}
             valueLabel={createdFilterValueLabel}
@@ -557,7 +551,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         );
       case 'Agent  All':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-agent`}
             label={msg('managedAgents.common.agent', 'Agent')}
             valueLabel={config.section === 'sessions' ? sessionAgentValueLabel : deploymentAgentValueLabel}
@@ -574,7 +568,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         );
       case 'Deployment  All':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-deployment`}
             label={msg('managedAgents.deployments.kind', 'Deployment')}
             valueLabel={sessionDeploymentValueLabel}
@@ -590,7 +584,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       case 'Status  Active':
         if (config.section === 'sessions') {
           return (
-            <AgentFilterDropdown
+            <ResourceFilterDropdown
               key={`${config.section}-status`}
               label={msg('managedAgents.filters.status', 'Status')}
               valueLabel={sessionStatusValueLabel}
@@ -605,7 +599,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           );
         }
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-status`}
             label={msg('managedAgents.filters.status', 'Status')}
             valueLabel={genericStatusValueLabel}
@@ -621,7 +615,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       case 'Status  All':
         if (config.section === 'deployments') {
           return (
-            <AgentFilterDropdown
+            <ResourceFilterDropdown
               key={`${config.section}-status`}
               label={msg('managedAgents.filters.status', 'Status')}
               valueLabel={deploymentStatusValueLabel}
@@ -636,7 +630,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           );
         }
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-status`}
             label={msg('managedAgents.filters.status', 'Status')}
             valueLabel={genericStatusValueLabel}
@@ -799,7 +793,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       </header>
 
       <div className={cn('flex flex-wrap items-center gap-2', config.section === 'sessions' ? 'mb-2' : 'mb-7')}>
-        <ManagedSearchField
+        <ResourceSearchField
           id={`${config.section}-search`}
           value={search}
           placeholder={searchPlaceholder}

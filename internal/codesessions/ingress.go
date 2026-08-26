@@ -357,10 +357,6 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
-	if pretty, marshalErr := json.MarshalIndent(workerReq, "", "  "); marshalErr == nil {
-		h.logger.ErrorContext(r.Context(), "code session worker events request", "code_session_id", codeSessionID)
-		println(string(pretty))
-	}
 	if workerReq.WorkerEpoch <= 0 {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "worker_epoch must be a positive integer"))
 		return

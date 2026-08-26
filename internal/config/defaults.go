@@ -13,6 +13,18 @@ func defaultConfig() Config {
 				ForcePathStyle: true,
 			},
 		},
+		Tunnel: TunnelConfig{
+			DomainSuffix:        "tunnel.invalid",
+			PollTimeout:         30 * time.Second,
+			RequestTimeout:      2 * time.Minute,
+			PresenceTTL:         60 * time.Second,
+			TombstoneTTL:        5 * time.Minute,
+			MaxPendingRequests:  256,
+			MaxPendingBytes:     32 * 1024 * 1024,
+			MaxBodyBytes:        1024 * 1024,
+			MaxHeaderBytes:      32 * 1024,
+			MaxHeaderValueBytes: 8 * 1024,
+		},
 		Batch: BatchConfig{
 			WorkerEnabled:             true,
 			WorkerConcurrency:         2,

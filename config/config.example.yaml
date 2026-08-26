@@ -14,6 +14,11 @@ database:
 redis:
   url: redis://localhost:6379
 
+# Stable origin used in locally generated MCP Tunnel URLs. Keep this aligned
+# with the browser-reachable server address when changing server.addr.
+tunnel:
+  public_base_url: http://127.0.0.1:38080
+
 # Optional SMTP email verification. When omitted, any non-empty verification
 # code is accepted. Configure all three fields together for real email delivery.
 # auth:

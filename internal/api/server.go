@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
@@ -36,6 +38,7 @@ import (
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	tunnelsapi "github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
 	webhooksapi "github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
@@ -57,6 +60,8 @@ type Server struct {
 	agents               *agents.Handler
 	batch                *batches.Handler
 	codeSessions         *codesessions.Handler
+	connector            *tunnelsapi.ConnectorHandler
+	consoleTunnels       *tunnelsapi.ConsoleHandler
 	deployments          *deploymentsapi.Handler
 	deploymentRuns       *deploymentsapi.RunsHandler
 	envs                 *environments.Handler
@@ -67,6 +72,9 @@ type Server struct {
 	models               *modelsapi.Handler
 	sessions             *sessionsapi.Handler
 	skills               *skillsapi.Handler
+	tunnels              *tunnelsapi.Handler
+	tunnelIngress        *tunnelsapi.IngressHandler
+	tunnelBroker         *tunnelsapi.Broker
 	vaults               *vaultsapi.Handler
 	webhooks             *webhooksapi.Handler
 }
@@ -89,6 +97,7 @@ type ServerDeps struct {
 	VaultSecrets           *secrets.Service
 	Redis                  *redis.Client
 	SessionEventBus        sessionfanout.EventBus
+	TunnelBroker           *tunnelsapi.Broker
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -146,6 +155,57 @@ func NewServer(deps ServerDeps) *Server {
 		skills:               skillsapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("skills")),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")),
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
+		tunnelBroker:         deps.TunnelBroker,
+	}
+	if deps.DB != nil {
+		tunnelService := tunnelsapi.NewService(deps.Config.Tunnel, deps.DB, deps.VaultSecrets).WithBroker(deps.TunnelBroker)
+		mcpCatalogHandler.WithTunnelProber(func(
+			ctx context.Context,
+			organizationUUID string,
+			workspaceUUID string,
+			endpoint string,
+		) (bool, error) {
+			_, recognized, resolveErr := tunnelService.ResolveProbeTarget(ctx, tunnelsapi.ConsoleScope{
+				OrganizationUUID: organizationUUID,
+				WorkspaceUUID:    workspaceUUID,
+			}, endpoint)
+			return recognized, resolveErr
+		}, func(
+			ctx context.Context,
+			organizationUUID string,
+			workspaceUUID string,
+			endpoint string,
+		) ([]mcpcatalogs.CatalogTool, bool, error) {
+			result, recognized, probeErr := tunnelService.ProbeTarget(ctx, tunnelsapi.ConsoleScope{
+				OrganizationUUID: organizationUUID,
+				WorkspaceUUID:    workspaceUUID,
+			}, endpoint)
+			tools := make([]mcpcatalogs.CatalogTool, 0, len(result.Tools))
+			for _, tool := range result.Tools {
+				tools = append(tools, mcpcatalogs.CatalogTool{
+					Name: tool.Name, Title: tool.Title, Description: tool.Description,
+				})
+			}
+			return tools, recognized, probeErr
+		})
+		s.tunnels = tunnelsapi.NewHandler(tunnelService, componentLogger("tunnels"))
+		s.consoleTunnels = tunnelsapi.NewConsoleHandler(
+			tunnelService,
+			deps.TunnelBroker,
+			func(w http.ResponseWriter, r *http.Request) (tunnelsapi.ConsoleScope, bool) {
+				scope, ok := platformapi.ResolveConsoleWorkspaceRequest(w, r, deps.DB)
+				return tunnelsapi.ConsoleScope{
+					OrganizationUUID: scope.OrganizationUUID,
+					WorkspaceUUID:    scope.WorkspaceUUID,
+				}, ok
+			},
+			componentLogger("console_mcp_tunnels"),
+		)
+	}
+	if deps.DB != nil && deps.TunnelBroker != nil {
+		s.connector = tunnelsapi.NewConnectorHandler(deps.Config.Tunnel, deps.DB, deps.TunnelBroker, componentLogger("tunnel_connector"))
+		s.tunnelIngress = tunnelsapi.NewIngressHandler(deps.Config.Tunnel, deps.DB, deps.TunnelBroker, componentLogger("tunnel_ingress"))
+		s.codeSessions.WithTunnelInvoker(s.tunnelIngress)
 	}
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -156,10 +216,41 @@ func NewServer(deps ServerDeps) *Server {
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	router.Get("/readyz", s.handleReadiness)
+	if s.connector != nil {
+		router.Mount("/connector", s.connector)
+	}
+	if s.tunnelIngress != nil {
+		router.With(s.v1AuthMiddleware).Get("/.well-known/oauth-protected-resource/v1/mcp/{tunnel_id}", s.tunnelIngress.HandleOAuthProtectedResource)
+		router.With(s.v1AuthMiddleware).Get("/.well-known/oauth-protected-resource/v1/mcp/{tunnel_id}/{channel}", s.tunnelIngress.HandleOAuthProtectedResource)
+	}
+	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", s.codeSessions.HandleMCPProtectedResource)
 	s.registerVersionedAPIRoutes(router)
 	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler)
 	s.router = router
 	return s
+}
+
+func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	checks := map[string]string{"database": "ok", "redis": "ok"}
+	ready := true
+	if s.db == nil || s.db.SQLDB().PingContext(ctx) != nil {
+		checks["database"] = "unavailable"
+		ready = false
+	}
+	if s.tunnelBroker == nil || s.tunnelBroker.Ping(ctx) != nil {
+		checks["redis"] = "unavailable"
+		ready = false
+	}
+	status := http.StatusOK
+	state := "ready"
+	if !ready {
+		status = http.StatusServiceUnavailable
+		state = "not_ready"
+	}
+	httpapi.WriteJSON(w, status, map[string]any{"status": state, "checks": checks})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -248,11 +339,30 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
+			if s.consoleTunnels != nil {
+				r.With(platformCSRFMiddleware).Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
+			}
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
 			s.files.RegisterPlatformRoutes(r)
 		})
 		r.Get("/web-api/sessions/{sessionId}/stream", s.handlePlatformWebSessionStream)
+	})
+}
+
+func platformCSRFMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		sessionKey := auth.ExtractPlatformSessionKey(r)
+		if sessionKey == "" || !auth.ValidatePlatformCSRFToken(sessionKey, r.Header.Get("X-CSRF-Token")) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Invalid CSRF token"))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -264,12 +374,18 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/environments", s.envs)
 	r.Mount("/files", s.files)
 	r.Mount("/memory_stores", s.memory)
+	if s.tunnelIngress != nil {
+		r.Mount("/mcp", s.tunnelIngress)
+	}
 	r.Post("/messages", s.messages.Create)
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)
 	r.Mount("/sessions", s.sessions)
 	r.Mount("/skills", s.skills)
+	if s.tunnels != nil {
+		r.Mount("/tunnels", s.tunnels)
+	}
 	r.Mount("/vaults", s.vaults)
 	r.Mount("/webhooks", s.webhooks)
 }

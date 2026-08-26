@@ -22,6 +22,20 @@ func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Requ
 	return claims, token, true
 }
 
+func (h *Handler) authenticateMCPProxyRequest(w http.ResponseWriter, r *http.Request, codeSessionID string) (SessionCredentialClaims, bool) {
+	token := auth.ExtractAPIKey(r)
+	if token == "" {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing MCP proxy token"))
+		return SessionCredentialClaims{}, false
+	}
+	claims, err := h.service.AuthenticateMCPProxy(r.Context(), token, codeSessionID)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid MCP proxy token"))
+		return SessionCredentialClaims{}, false
+	}
+	return claims, true
+}
+
 func (h *Handler) authorizeSessionIngress(w http.ResponseWriter, r *http.Request, codeSessionID string) bool {
 	_, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
 	return ok

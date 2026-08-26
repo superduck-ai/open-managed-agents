@@ -3,7 +3,6 @@ package environments
 import (
 	"fmt"
 	"strconv"
-	"strings"
 )
 
 type gitConfigEntry struct {
@@ -22,16 +21,13 @@ func gitHTTPSInsteadOfEntries(host string) []gitConfigEntry {
 }
 
 // configuredGitSSHtoHTTPSEntries expands environment_runner.git_ssh_to_https_hosts.
+// Callers must pass Load/validate-normalized hosts (trimmed, lower-cased).
 // github.com is omitted — it stays as the literal KEY_1/KEY_2 exports in
 // buildEnvironmentManagerCommand.
 func configuredGitSSHtoHTTPSEntries(hosts []string) []gitConfigEntry {
 	seen := map[string]struct{}{"github.com": {}}
 	var entries []gitConfigEntry
-	for _, raw := range hosts {
-		host := strings.ToLower(strings.TrimSpace(raw))
-		if host == "" {
-			continue
-		}
+	for _, host := range hosts {
 		if _, ok := seen[host]; ok {
 			continue
 		}
@@ -41,7 +37,7 @@ func configuredGitSSHtoHTTPSEntries(hosts []string) []gitConfigEntry {
 	return entries
 }
 
-// gitConfigExportLinesFrom writes KEY_i/VALUE_i starting at startIndex.
+// gitConfigExportLinesFrom writes shell-quoted KEY_i/VALUE_i starting at startIndex.
 func gitConfigExportLinesFrom(startIndex int, entries []gitConfigEntry) []string {
 	if len(entries) == 0 {
 		return nil
@@ -50,8 +46,8 @@ func gitConfigExportLinesFrom(startIndex int, entries []gitConfigEntry) []string
 	for i, entry := range entries {
 		n := strconv.Itoa(startIndex + i)
 		lines = append(lines,
-			fmt.Sprintf("export GIT_CONFIG_KEY_%s=%s", n, entry.key),
-			fmt.Sprintf("export GIT_CONFIG_VALUE_%s=%s", n, entry.value),
+			fmt.Sprintf("export GIT_CONFIG_KEY_%s=%s", n, shellQuote(entry.key)),
+			fmt.Sprintf("export GIT_CONFIG_VALUE_%s=%s", n, shellQuote(entry.value)),
 		)
 	}
 	return lines

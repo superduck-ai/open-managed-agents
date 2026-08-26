@@ -122,6 +122,8 @@ func validatePlatformOAuthClients(clients []PlatformOAuthClientConfig) error {
 	return nil
 }
 
+// validateGitSSHtoHTTPSHosts validates and normalizes hosts in place (trim + lower-case).
+// The slice header is shared with Config after YAML load, so Load observes the rewrite.
 func validateGitSSHtoHTTPSHosts(hosts []string) error {
 	seen := make(map[string]struct{}, len(hosts))
 	for i, raw := range hosts {
@@ -137,23 +139,26 @@ func validateGitSSHtoHTTPSHosts(hosts []string) error {
 			return fmt.Errorf("%s %q is duplicated", prefix, host)
 		}
 		seen[host] = struct{}{}
+		hosts[i] = host
 	}
 	return nil
 }
 
+// validateGitSSHtoHTTPSHost accepts only bare DNS hostnames ([a-z0-9.-]).
+// Callers must pass already lower-cased hostnames.
 func validateGitSSHtoHTTPSHost(host string) error {
-	switch {
-	case strings.Contains(host, "://"):
-		return errors.New("must be a bare hostname, not a URL")
-	case strings.ContainsAny(host, "@/\\ :"):
-		return errors.New("must be a bare hostname without userinfo, path, or port")
-	case strings.Contains(host, ".."):
+	if host == "" || strings.Contains(host, "..") || host[0] == '.' || host[len(host)-1] == '.' {
 		return errors.New("must be a bare hostname")
-	case host[0] == '.' || host[len(host)-1] == '.':
-		return errors.New("must be a bare hostname")
-	default:
-		return nil
 	}
+	for i := 0; i < len(host); i++ {
+		c := host[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '.', c == '-':
+		default:
+			return errors.New("must be a bare hostname")
+		}
+	}
+	return nil
 }
 
 func (m MasterKeyConfig) inlineKEKSet() bool {

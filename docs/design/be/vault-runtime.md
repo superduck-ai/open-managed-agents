@@ -298,7 +298,7 @@ sequenceDiagram
 - create 签发 `oma_ph_` placeholder；响应含 `injection_location`；不回显 `secret_value`。
 - Session 挂载：MITM 关且存在活跃 env → 失败；仅 MCP 凭证不挡启动；否则 `startup_context.environment_variables` 灌入 placeholder（先到先得，不覆盖平台保留名）。
 - MITM egress：host/location 匹配时替换；未覆盖透传；Open 失败 → 502。
-- Git Smart HTTP：`GET` `info/refs?service=…` 与 `POST` `git-upload-pack` / `git-receive-pack` 在第一次转发前写入 `Authorization: Basic oauth2:<secret>`；错误 method / 未覆盖透传；Open 失败 → 502；LFS / dumb HTTP / REST 不注票。SSH→HTTPS（GitHub）属 Runner/environment-manager，不在本模块。
+- Git Smart HTTP：`GET` `info/refs?service=…` 与 `POST` `git-upload-pack` / `git-receive-pack` 在第一次转发前写入 `Authorization: Basic oauth2:<secret>`；错误 method / 未覆盖透传；Open 失败 → 502；LFS / dumb HTTP / REST 不注票。SSH→HTTPS（内置 `github.com` + `environment_runner.git_ssh_to_https_hosts`）属 Runner/environment-manager，不在本模块。
 - 旧凭证缺 placeholder / injection_location → update/挂载拒绝（archive 重建）。
 
 > 注：云 KMS 自动轮换 / DisableKey 另议。

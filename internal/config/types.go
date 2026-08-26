@@ -127,6 +127,7 @@ type EnvironmentRunnerConfig struct {
 	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
 	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
 	// github.com is always included by the environment-manager launcher.
+	// After config Load/validate, entries are trimmed and lower-cased in place.
 	GitSSHtoHTTPSHosts []string `yaml:"git_ssh_to_https_hosts"`
 }
 

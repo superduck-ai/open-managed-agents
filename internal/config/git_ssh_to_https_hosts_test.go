@@ -15,10 +15,14 @@ func TestValidateGitSSHtoHTTPSHosts(t *testing.T) {
 		}
 	})
 
-	t.Run("accepts host", func(t *testing.T) {
+	t.Run("normalizes in place", func(t *testing.T) {
 		t.Parallel()
-		if err := validateGitSSHtoHTTPSHosts([]string{" gitlab.xxxx.cn "}); err != nil {
+		hosts := []string{" GitLab.XXXX.CN "}
+		if err := validateGitSSHtoHTTPSHosts(hosts); err != nil {
 			t.Fatalf("valid host: %v", err)
+		}
+		if hosts[0] != "gitlab.xxxx.cn" {
+			t.Fatalf("hosts[0] = %q, want gitlab.xxxx.cn", hosts[0])
 		}
 	})
 
@@ -35,6 +39,21 @@ func TestValidateGitSSHtoHTTPSHosts(t *testing.T) {
 		err := validateGitSSHtoHTTPSHosts([]string{"https://gitlab.xxxx.cn"})
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("rejects shell metacharacters", func(t *testing.T) {
+		t.Parallel()
+		for _, host := range []string{
+			"example.com;id",
+			"example.com$(id)",
+			"example.com`id`",
+			"example.com|id",
+			"example.com&id",
+		} {
+			if err := validateGitSSHtoHTTPSHosts([]string{host}); err == nil {
+				t.Fatalf("expected error for %q", host)
+			}
 		}
 	})
 

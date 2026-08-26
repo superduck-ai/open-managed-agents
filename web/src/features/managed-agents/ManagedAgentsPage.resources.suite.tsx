@@ -920,7 +920,17 @@ export function registerManagedAgentsResourceTests() {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
-    api.resources.sessionThreads = [];
+    api.resources.sessionThreads = [
+      {
+        id: 'sthr_root_worker123456',
+        type: 'session_thread',
+        role: 'orchestrator',
+        parent_thread_id: null,
+        archived_at: null,
+        created_at: new Date(Date.now() - 45_000).toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
     api.resources.sessionThreadEvents = {};
     const base = Date.now() - 60_000;
     api.resources.sessionEvents = [
@@ -958,9 +968,17 @@ export function registerManagedAgentsResourceTests() {
       {
         id: 'evt_tool_allow_confirmation',
         type: 'user.tool_confirmation',
+        session_thread_id: 'sthr_root_worker123456',
         created_at: new Date(base + 2_500).toISOString(),
         tool_use_id: 'evt_tool_allow',
         result: 'allow',
+      },
+      {
+        id: 'evt_tool_allow_result',
+        type: 'agent.tool_result',
+        created_at: new Date(base + 2_750).toISOString(),
+        tool_use_id: 'evt_tool_allow',
+        content: 'Build completed',
       },
       {
         id: 'evt_tool_denied',

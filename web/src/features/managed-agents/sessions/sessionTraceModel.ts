@@ -93,9 +93,15 @@ export function buildSessionTraceEntries(
 
     const family = sessionEventFamily(enrichedEvent);
     const toolUseId = sessionToolUseId(enrichedEvent);
+    const matchedByPublicEventId = typeof enrichedEvent.id === 'string' && toolUseId === enrichedEvent.id;
     const resultEvent =
       family === 'tool_use' && toolUseId
-        ? selectSessionToolCompanionEvent(toolResults.get(toolUseId), enrichedEvent, threadHints.byToolUseId)
+        ? selectSessionToolCompanionEvent(
+            toolResults.get(toolUseId),
+            enrichedEvent,
+            threadHints.byToolUseId,
+            matchedByPublicEventId,
+          )
         : undefined;
     const confirmationEvent =
       family === 'tool_use' && toolUseId
@@ -103,6 +109,7 @@ export function buildSessionTraceEntries(
             toolConfirmations.get(toolUseId) ?? toolConfirmations.get(sessionEventKey(enrichedEvent)),
             enrichedEvent,
             threadHints.byToolUseId,
+            matchedByPublicEventId,
           )
         : undefined;
     return [
@@ -164,9 +171,13 @@ function selectSessionToolCompanionEvent(
   events: QuickstartSessionEvent[] | undefined,
   toolEvent: QuickstartSessionEvent,
   threadHintsByToolUseId: Map<string, SessionThreadHint>,
+  matchedByPublicEventId = false,
 ): QuickstartSessionEvent | undefined {
   if (!events?.length) {
     return undefined;
+  }
+  if (matchedByPublicEventId) {
+    return events[events.length - 1];
   }
   const toolThreadId = sessionToolCompanionThreadId(toolEvent, threadHintsByToolUseId);
   if (!toolThreadId) {

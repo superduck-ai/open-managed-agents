@@ -1217,7 +1217,7 @@ export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEve
     if (type === 'user.message') {
       return false;
     }
-    if (type === 'session.status_idle' || type === 'session.status_terminated' || type === 'session.deleted') {
+    if (type === 'session.status_terminated' || type === 'session.deleted') {
       return true;
     }
     if (type === 'session.status_running' || type === 'session.status_rescheduled') {

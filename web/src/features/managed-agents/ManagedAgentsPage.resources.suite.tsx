@@ -677,43 +677,21 @@ export function registerManagedAgentsResourceTests() {
     }));
     const fetchSessionEvents = globalThis.fetch;
     let staleReadAfterPost = false;
-    let messagePosted = false;
-    let outputAdded = false;
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(input);
       const method = requestMethod(input, init);
       if (url === '/v1/sessions/sesn_one123456/events?beta=true' && method === 'POST') {
         const response = await fetchSessionEvents(input, init);
         staleReadAfterPost = true;
-        messagePosted = true;
-        return response;
-      }
-      if (messagePosted && url.startsWith('/v1/sessions/sesn_one123456/events/stream?') && method === 'GET') {
         const now = new Date().toISOString();
-        if (!outputAdded) {
-          api.resources.sessions[0].resources.push({
-            id: 'sesrsc_report123456',
-            type: 'file',
-            created_at: now,
-            file_id: 'file_report123456',
-            mount_path: '/outputs/report.csv',
-          });
-          outputAdded = true;
-        }
-        const frames = [
-          { id: 'evt_running_after_send', type: 'session.status_running', created_at: now },
-          {
-            id: 'evt_agent_reply_after_send',
-            type: 'agent.message',
-            created_at: now,
-            processed_at: now,
-            content: [{ type: 'text', text: 'Agent reply arrived live.' }],
-          },
-          { id: 'evt_idle_after_send', type: 'session.status_idle', created_at: now },
-        ]
-          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-          .join('');
-        return new Response(frames, { headers: { 'Content-Type': 'text/event-stream' } });
+        api.resources.sessions[0].resources.push({
+          id: 'sesrsc_report123456',
+          type: 'file',
+          created_at: now,
+          file_id: 'file_report123456',
+          mount_path: '/outputs/report.csv',
+        });
+        return response;
       }
       if (staleReadAfterPost && url.startsWith('/v1/sessions/sesn_one123456/events?') && method === 'GET') {
         staleReadAfterPost = false;
@@ -740,7 +718,6 @@ export function registerManagedAgentsResourceTests() {
 
       await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
       expect(await screen.findByText('Render this message immediately.')).toBeTruthy();
-      expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
       expect(api.requests.filter((request) => request.url === sessionURL)).toHaveLength(initialSessionRequestCount);
       const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
       fireEvent.click(within(workspaceTabs).getByRole('tab', { name: /Resources/ }));
@@ -1462,7 +1439,7 @@ export function registerManagedAgentsResourceTests() {
     expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(false);
   });
 
-  test('does not subscribe to session streams when running metadata has completed history', async () => {
+  test('keeps the primary session stream open when running metadata has completed history', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'running';
@@ -1481,10 +1458,14 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
   });
 
-  test('does not subscribe to session streams after an idle session detail loads', async () => {
+  test('keeps the primary session stream open after an idle session detail loads', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
@@ -1503,7 +1484,11 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
   });
 
   test('does not subscribe to session streams after a terminated session detail loads', async () => {

@@ -702,7 +702,7 @@ export function sessionShouldStreamEvents(session: Pick<SessionApiResponse, 'arc
   if (!session || session.archived_at) {
     return false;
   }
-  return sessionStatusIsLive(session.status);
+  return session.status.toLowerCase() !== 'terminated';
 }
 
 export function sessionElapsedMs(session: SessionApiResponse, events: QuickstartSessionEvent[]) {

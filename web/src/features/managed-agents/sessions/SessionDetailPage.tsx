@@ -297,7 +297,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       return;
     }
     setSession((currentSession) => {
-      if (!currentSession || currentSession.id !== session.id) {
+      if (!currentSession || currentSession.id !== session.id || currentSession.status.toLowerCase() === 'terminated') {
         return currentSession;
       }
       // Mirror the live-frame path: a cached session.deleted must also archive,

@@ -1020,6 +1020,8 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     expect(await screen.findByText('npm test -- --watch=false')).toBeTruthy();
+    expect(screen.queryByTestId('session-tool-approval-card')).toBeNull();
+    expect(screen.queryByTestId('session-questionnaire-card')).toBeNull();
     const singleLaneMinimap = screen.getByTestId('events-minimap');
     expect(singleLaneMinimap.querySelectorAll('[data-lane-index]').length).toBe(0);
     const singleLaneTrack = singleLaneMinimap.querySelector<HTMLElement>('.oma-session-timeline-track-active');
@@ -1192,44 +1194,54 @@ export function registerManagedAgentsResourceTests() {
   });
 
   test('allows approving and denying tool permissions from session detail action card and disables composer', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
-    const api = mockManagedResourceApi();
-    api.resources.sessions[0].status = 'idle';
-    const base = Date.now() - 60_000;
-    api.resources.sessionEvents = [
-      {
-        id: 'evt_user_action_msg',
-        type: 'user.message',
-        created_at: new Date(base).toISOString(),
-        content: [{ type: 'text', text: 'Please write file' }],
-      },
-      {
-        id: 'evt_tool_write_ask',
-        type: 'agent.tool_use',
-        created_at: new Date(base + 1_000).toISOString(),
-        name: 'Write',
-        evaluated_permission: 'ask',
-        input: { file_path: '/workspace/demo.ts', content: 'console.log("hello");' },
-      },
-    ];
+    for (const result of ['allow', 'deny'] as const) {
+      cleanup();
+      resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+      const api = mockManagedResourceApi();
+      api.resources.sessions[0].status = 'idle';
+      const base = Date.now() - 60_000;
+      api.resources.sessionEvents = [
+        {
+          id: 'evt_user_action_msg',
+          type: 'user.message',
+          created_at: new Date(base).toISOString(),
+          content: [{ type: 'text', text: 'Please write file' }],
+        },
+        {
+          id: 'evt_tool_write_ask',
+          type: 'agent.tool_use',
+          created_at: new Date(base + 1_000).toISOString(),
+          name: 'Write',
+          evaluated_permission: 'ask',
+          input: { file_path: '/workspace/demo.ts', content: 'console.log("hello");' },
+        },
+        {
+          id: 'evt_tool_write_idle',
+          type: 'session.status_idle',
+          created_at: new Date(base + 1_001).toISOString(),
+          stop_reason: { type: 'requires_action', event_ids: ['evt_tool_write_ask'] },
+        },
+      ];
 
-    renderManagedAgentsPage('sessions');
+      renderManagedAgentsPage('sessions');
 
-    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
-    expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
-    expect(screen.getByTestId('tool-allow-button')).toBeTruthy();
-    expect(screen.getByTestId('tool-deny-button')).toBeTruthy();
-    expect(screen.queryByLabelText('Message')).toBeNull();
+      expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+      expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
+      expect(screen.queryByLabelText('Message')).toBeNull();
 
-    fireEvent.click(screen.getByTestId('tool-allow-button'));
+      fireEvent.click(screen.getByTestId(result === 'allow' ? 'tool-allow-button' : 'tool-deny-button'));
 
-    await waitFor(() => {
-      const confirmationEvent = api.resources.sessionEvents.find(
-        (e) => e.type === 'user.tool_confirmation' && (e as any).tool_use_id === 'evt_tool_write_ask',
-      );
-      expect(confirmationEvent).toBeTruthy();
-      expect((confirmationEvent as any).result).toBe('allow');
-    });
+      await waitFor(() => {
+        const confirmationEvent = api.resources.sessionEvents.find(
+          (event) =>
+            event.type === 'user.tool_confirmation' &&
+            (event as any).tool_use_id === 'evt_tool_write_ask' &&
+            (event as any).result === result,
+        );
+        expect(confirmationEvent).toBeTruthy();
+      });
+      await waitFor(() => expect(screen.queryByTestId('session-tool-approval-card')).toBeNull());
+    }
   });
 
   test('renders AskUserQuestion questionnaire in session detail and sends answers with question keys', async () => {
@@ -1246,10 +1258,9 @@ export function registerManagedAgentsResourceTests() {
       },
       {
         id: 'evt_tool_ask_question',
-        type: 'agent.tool_use',
+        type: 'agent.custom_tool_use',
         created_at: new Date(base + 1_000).toISOString(),
         name: 'AskUserQuestion',
-        evaluated_permission: 'ask',
         input: {
           questions: [
             {
@@ -1263,6 +1274,12 @@ export function registerManagedAgentsResourceTests() {
             },
           ],
         },
+      },
+      {
+        id: 'evt_tool_ask_idle',
+        type: 'session.status_idle',
+        created_at: new Date(base + 1_001).toISOString(),
+        stop_reason: { type: 'requires_action', event_ids: ['evt_tool_ask_question'] },
       },
     ];
 
@@ -1282,13 +1299,35 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(confirmButton);
 
     await waitFor(() => {
-      const confirmationEvent = api.resources.sessionEvents.find(
-        (e) => e.type === 'user.tool_confirmation' && (e as any).tool_use_id === 'evt_tool_ask_question',
+      const resultEvent = api.resources.sessionEvents.find(
+        (e) => e.type === 'user.custom_tool_result' && (e as any).custom_tool_use_id === 'evt_tool_ask_question',
       );
-      expect(confirmationEvent).toBeTruthy();
-      expect((confirmationEvent as any).result).toBe('allow');
-      expect((confirmationEvent as any).answers['Which verification color should I use?']).toBe('Blue');
-      expect((confirmationEvent as any).updated_input.answers['Which verification color should I use?']).toBe('Blue');
+      expect(resultEvent).toBeTruthy();
+      expect((resultEvent as any).is_error).toBe(false);
+      expect(JSON.parse((resultEvent as any).content[0].text)).toEqual({
+        'Which verification color should I use?': 'Blue',
+      });
+    });
+    await waitFor(() => expect(screen.queryByTestId('session-questionnaire-card')).toBeNull());
+
+    cleanup();
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const denyApi = mockManagedResourceApi();
+    denyApi.resources.sessions[0].status = 'idle';
+    denyApi.resources.sessionEvents = structuredClone(api.resources.sessionEvents).filter(
+      (event) => event.type !== 'user.custom_tool_result',
+    );
+    renderManagedAgentsPage('sessions');
+    expect(await screen.findByTestId('session-questionnaire-card')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('questionnaire-deny-button'));
+    await waitFor(() => {
+      const resultEvent = denyApi.resources.sessionEvents.find(
+        (event) =>
+          event.type === 'user.custom_tool_result' && (event as any).custom_tool_use_id === 'evt_tool_ask_question',
+      );
+      expect(resultEvent).toBeTruthy();
+      expect((resultEvent as any).is_error).toBe(true);
+      expect((resultEvent as any).content).toBeUndefined();
     });
   });
 

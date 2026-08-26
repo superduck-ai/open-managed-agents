@@ -341,7 +341,7 @@ export type SessionToolConfirmationInput = {
   result: 'allow' | 'deny';
   denyMessage?: string | null;
   answers?: Record<string, unknown>;
-  updatedInput?: Record<string, unknown>;
+  customTool?: boolean;
   sessionThreadId?: string;
 };
 

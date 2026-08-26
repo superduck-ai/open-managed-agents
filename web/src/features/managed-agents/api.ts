@@ -851,28 +851,27 @@ export function postSessionToolConfirmation(
   input: SessionToolConfirmationInput,
   workspaceId: string,
 ) {
-  const confirmationEvent: Record<string, unknown> = {
-    type: 'user.tool_confirmation',
-    tool_use_id: input.toolUseId,
-    result: input.result,
-  };
-  if (typeof input.denyMessage === 'string' && input.denyMessage.trim()) {
-    confirmationEvent.deny_message = input.denyMessage.trim();
-  }
-  if (input.updatedInput && typeof input.updatedInput === 'object') {
-    confirmationEvent.updated_input = input.updatedInput;
-  }
-  if (input.answers && typeof input.answers === 'object') {
-    confirmationEvent.answers = input.answers;
-  }
-  if (typeof input.sessionThreadId === 'string' && input.sessionThreadId.trim()) {
-    confirmationEvent.session_thread_id = input.sessionThreadId.trim();
+  const denyMessage = input.denyMessage?.trim();
+  const event: Record<string, unknown> = input.customTool
+    ? {
+        type: 'user.custom_tool_result',
+        custom_tool_use_id: input.toolUseId,
+        is_error: input.result === 'deny',
+        ...(input.result === 'allow' ? { content: [{ type: 'text', text: JSON.stringify(input.answers ?? {}) }] } : {}),
+      }
+    : {
+        type: 'user.tool_confirmation',
+        tool_use_id: input.toolUseId,
+        result: input.result,
+        ...(denyMessage ? { deny_message: denyMessage } : {}),
+      };
+  const sessionThreadId = input.sessionThreadId?.trim();
+  if (sessionThreadId) {
+    event.session_thread_id = sessionThreadId;
   }
   return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
-    {
-      events: [confirmationEvent],
-    },
+    { events: [event] },
     workspaceId,
   );
 }

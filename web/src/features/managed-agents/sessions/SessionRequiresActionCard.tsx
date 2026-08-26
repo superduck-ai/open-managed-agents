@@ -19,7 +19,7 @@ import { type SessionToolConfirmationInput, type ToolCallEntry } from '../types'
 import { parseQuestionInput } from '../quickstart/questionModel';
 import { objectRecord } from '../utils';
 import { sessionEventStringField } from '../api';
-import { sessionToolUseInput } from './sessionTraceModel';
+import { sessionEventType, sessionToolUseInput } from './sessionTraceModel';
 import { Check, HelpCircle, ShieldAlert, X } from 'lucide-react';
 import { type FormEvent, useMemo, useState } from 'react';
 
@@ -83,6 +83,7 @@ export function SessionToolApprovalActionCard({
       await onConfirm({
         toolUseId,
         result,
+        ...(sessionEventType(toolCall.event) === 'agent.custom_tool_use' ? { customTool: true } : {}),
         sessionThreadId,
       });
     } finally {
@@ -197,16 +198,11 @@ export function SessionQuestionnaireActionCard({
         }
       });
 
-      const updatedInput = {
-        ...(Array.isArray(rawInput.questions) ? { questions: rawInput.questions } : { questions }),
-        answers,
-      };
-
       await onConfirm({
         toolUseId,
         result: 'allow',
         answers,
-        updatedInput,
+        customTool: true,
         sessionThreadId,
       });
     } finally {
@@ -223,6 +219,7 @@ export function SessionQuestionnaireActionCard({
       await onConfirm({
         toolUseId,
         result: 'deny',
+        customTool: true,
         sessionThreadId,
       });
     } finally {

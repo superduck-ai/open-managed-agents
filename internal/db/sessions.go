@@ -562,16 +562,6 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionE
 	return row.event(), mapNoRows(err)
 }
 
-func (d *DB) GetSessionToolPermissionRequest(ctx context.Context, workspaceUUID string, sessionExternalID string, toolUseID string) (SessionEvent, error) {
-	toolUseID = strings.TrimSpace(toolUseID)
-	if toolUseID == "" {
-		return SessionEvent{}, ErrNotFound
-	}
-	mapper := NewSessionEventMapper(d.mapperDB)
-	row, err := mapper.FindLatestToolPermissionRequest(ctx, workspaceUUID, sessionExternalID, toolUseID)
-	return row.event(), mapNoRows(err)
-}
-
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

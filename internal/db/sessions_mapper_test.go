@@ -158,14 +158,6 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	assertMapperSQLContains(t, toolUseBound, "e.event_type IN ( $3 , $4 )")
 	assertMapperSQLContains(t, toolUseBound, ") IN ( $5 , $6 )")
 
-	permissionRequestBound := buildSessionEventMapperFindLatestToolPermissionRequest(
-		yourbatis.DialectPostgres,
-		"workspace-uuid",
-		"ses_test",
-		"tool-use-id",
-	)
-	assertMapperSQLContains(t, permissionRequestBound, "event_type IN ('agent.tool_use', 'agent.mcp_tool_use')")
-	assertMapperSQLContains(t, permissionRequestBound, "external_id = $3 OR payload->>'tool_use_id' = $4")
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {

@@ -100,8 +100,9 @@ Claude Code 执行工具前发出内部事件：
 
 - 直接解析 `control_request`，不保存私有 outbound event log。
 - 调用统一 permission handler 计算 effective policy。
-- 对 `allow` / `deny` 生成 inbound `control_response`，响应 UUID 由原始 `request_id` 稳定派生以保证重试幂等。
-- 对 `ask` 将后续确认所需的 `request_id`、`tool_use_id`、`input` 和 thread 信息保存在 public tool event，等待客户端发送 `user.tool_confirmation`。
+- `can_use_tool` 是唯一 public tool-use event 生产入口；`allow` / `ask` / `deny` 都先发布同一扁平事件。
+- 对 `allow` / `deny` 再生成 inbound `control_response`，响应 UUID 由原始 `request_id` 稳定派生以保证重试幂等。
+- 对 `ask` 将后续确认所需的 public event id、provider tool id、`request_id`、`input` 和 thread 信息保存在 Code Session 私有 worker metadata，等待客户端发送确认事件。
 
 ---
 
@@ -186,7 +187,7 @@ agent toolset：
 
 当 permission handler 解析为 `allow`：
 
-1. 不把内部 `control_request` 投影到 public session events。
+1. 不公开内部 `control_request`；先发布 `evaluated_permission=allow` 的扁平 canonical tool-use event。
 2. 生成 inbound `control_response`：
 
 ```json
@@ -211,7 +212,7 @@ agent toolset：
 
 当 permission handler 解析为 `deny`：
 
-1. 不把内部 `control_request` 投影到 public session events。
+1. 不公开内部 `control_request`；先发布 `evaluated_permission=deny` 的扁平 canonical tool-use event。
 2. 生成 inbound `control_response`，`behavior` 为 `deny`。
 3. 如果 Claude Code control protocol 需要 message 字段，使用稳定、非敏感文案，例如 `Tool is disabled by the agent permission policy.`
 4. 只持久化需要投递给 worker 的 inbound `control_response`；原始 `control_request` 不落库。
@@ -223,32 +224,29 @@ agent toolset：
 1. 不自动发送 Claude Code `control_response`。
 2. 将该阻塞请求投影成 Managed Agents public event 契约：
    - `agent.tool_use` 或 `agent.mcp_tool_use` 带 `evaluated_permission=ask`。
+   - 一次工具调用只产生一条 public tool use 事件；assistant 原始 `tool_use` block 不做 public 投影，事件统一由 `can_use_tool` 产生。
+   - public event 只保留 `id`、`type`、`name`、`input`、`evaluated_permission`、`processed_at` 及可选 thread/MCP 字段，不公开 provider tool id、worker `request_id`、`content` 或 `message`。
+   - 事件 id 由 `code_session_id + provider tool id` 稳定派生；provider tool id、`request_id`、原始 input 和 thread 信息只保存在 Code Session 私有 worker metadata。
    - session 进入 idle / requires_action 状态。
    - `stop_reason.event_ids` 包含阻塞 tool use public event 的 `id`，例如 `agent.tool_use.id` 或 `agent.mcp_tool_use.id`（`sevt_...`），不是 Claude Code worker `request.tool_use_id`。
-   - `stop_reason` 遵循 SDK union shape，只包含官方字段 `type` / `event_ids`；`tool_use_id`、`tool_name`、`request_id`、`session_thread_id` 等兼容诊断字段保留在同事件的 `requires_action_details`。
+   - `stop_reason` 遵循 SDK union shape，只包含官方字段 `type` / `event_ids`；public status 不返回 `requires_action_details`。
 3. 等待 API client 使用 `stop_reason.event_ids` 中的 public event id 发送：
 
 ```json
 {
   "type": "user.tool_confirmation",
   "tool_use_id": "sevt_...",
-  "result": "allow",
-  "updated_input": {
-    "questions": [{"header": "Color", "question": "Favorite color?"}],
-    "answers": {"Color": "Blue"}
-  },
-  "answers": {"Color": "Blue"}
+  "result": "allow"
 }
 ```
 
-`updated_input` 和 `answers` 是本仓库扩展，用于 `AskUserQuestion` 等需要把用户选择写回 Claude Code `can_use_tool` `updatedInput` 的工具。官方 Managed Agents HTTP 合同只有 `result` / `tool_use_id` / `deny_message` / `session_thread_id`；缺少这两项时，`updatedInput` 保持原始 `request.input`，Write/Bash 等行为不变。若字段出现，则必须是 JSON object。
+4. 收到 confirmation 后，server 以 public event id 从私有 worker metadata 恢复 provider tool id、`request_id`、原始 input 和 thread 信息，再生成 Claude Code inbound `control_response`：
+   - `result=allow` -> `behavior=allow`，`updatedInput` 保持原始 `request.input`。
+   - `result=deny` -> `behavior=deny`，携带 `deny_message`。
+5. 子线程工具确认使用相同语义：cross-post 到 primary 的阻塞 public event 带 `session_thread_id`，`stop_reason.event_ids` 指向该 public event id；server 把私有映射中的 `session_thread_id` 保留到 worker `control_response`。
+6. `user.tool_confirmation` 本身保留为 public session event，用于审计和 Session Detail 只读回放。
 
-4. 收到 confirmation 后，server 按 public event id 或 payload 中的 worker `tool_use_id` 查找对应的 `agent.tool_use` / `agent.mcp_tool_use`，直接从该 public event 的 payload 恢复 `request_id`、`tool_use_id`、`input` 和 thread 信息，再生成 Claude Code inbound `control_response`：
-   - `result=allow` -> `behavior=allow`。若 confirmation 带非空 `updated_input` 对象，将其作为 Claude Code `updatedInput`；若带 `answers` 对象，再写入 `updatedInput.answers`。两者都缺省时，`updatedInput` 保持原始 `request.input`。
-   - `result=deny` -> `behavior=deny`，携带 `deny_message`；不应用 `updated_input` / `answers`。
-5. 为兼容已有客户端，`user.tool_confirmation.tool_use_id` 仍接受旧 worker `request.tool_use_id`（`tool_...`），并用同一个 public event 查询完成路由。
-6. 子线程工具确认使用相同语义：cross-post 到 primary 的阻塞 public event 带 `session_thread_id`，`stop_reason.event_ids` 指向该 public event id；确认时即使只传 public event id，server 也应把 `session_thread_id` 保留到 worker `control_response`。
-7. `user.tool_confirmation` 本身保留为 public session event，用于审计和 Session Detail 只读回放。
+`AskUserQuestion` 按 custom tool 合同发布 `agent.custom_tool_use`；客户端使用同一个 public event id 发送 `user.custom_tool_result`，将答案对象编码为单个 text content block。server 从私有映射恢复原始 input，把该 JSON 对象写入 Claude Code `updatedInput.answers` 后发送 `control_response`。不扩展 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
 
 ### 4.4 Batch 与单事件一致性
 
@@ -291,7 +289,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 - Managed Agent session config 继续生成 MCP config file 和 `claude_code_args["mcp-config"]`；environment-manager payload 边界保留其中的真实 URL。
 - Code Session handler 负责 MCP proxy 的 JWT/path 绑定；加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 的精确 URL set 与 Environment host/port policy 编译为单一授权对象，handler 只调用 `AuthorizeMCPURL`，不保存或重解析原始 snapshot。授权后再执行拨号期 SSRF 防护、流式转发和凭证 header 注入边界。
 - Code session service 新增 policy-aware permission handler。
-- Session events 接收 `user.tool_confirmation` 后，从 public blocking event 恢复生成 Claude Code `control_response` 所需的请求上下文；旧 worker `tool_use_id` 作为兼容输入继续支持。
+- Session events 接收 `user.tool_confirmation` / `user.custom_tool_result` 后，从 Code Session 私有 worker metadata 恢复生成 Claude Code `control_response` 所需的请求上下文。
 - 日志只记录 tool name、server name、resolved permission、code session id、request id 等诊断字段；不要记录 secret、header value 或完整 tool input。
 
 非目标：
@@ -330,7 +328,10 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 - `always_ask` 不 auto approve。
 - `enabled=false` 生成 deny response。
 - internal `control_request` 不出现在 public session events。
-- `always_ask` 生成的 `session.status_idle.stop_reason` 遵循 SDK union shape，`event_ids` 包含阻塞 `agent.tool_use` / `agent.mcp_tool_use` 的 public event id，兼容诊断字段只出现在 `requires_action_details`。
+- `always_ask` 生成的 `session.status_idle.stop_reason` 遵循 SDK union shape，`event_ids` 包含阻塞 `agent.tool_use` / `agent.mcp_tool_use` 的 public event id，public status 不含 `requires_action_details`。
+- assistant 原始 `tool_use` 不做 public 投影；`can_use_tool` 产生唯一扁平 tool-use event，`stop_reason.event_ids` 指向这条事件，用该 id 发送 confirmation 仍能生成 Claude Code `control_response`。
+- tool result 的关联 ID 会从 provider tool id 转换为对应 public event id，public 响应不出现 provider tool id 或 worker `request_id`。
+- `AskUserQuestion` 使用 `agent.custom_tool_use` / `user.custom_tool_result` 并恢复为 Claude Code `updatedInput.answers`。
 
 ### 7.3 Confirmation 测试
 
@@ -338,8 +339,6 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 - `always_ask` tool call 暂停后，用 `stop_reason.event_ids` 中的 public event id 发送 `user.tool_confirmation(result=allow)` 会生成 Claude Code allow response。
 - 用 public event id 发送 `user.tool_confirmation(result=deny, deny_message=...)` 会生成 Claude Code deny response。
-- 继续用旧 worker `request.tool_use_id` 发送 confirmation 仍会生成对应 Claude Code response。
-- confirmation 找不到 pending tool use 时返回 Anthropic-compatible validation error。
 - subagent cross-post 的 permission request 能通过 public blocking event id 路由回原 code session，并在 worker response 中保留 `session_thread_id`。
 
 ### 7.4 集成验收
@@ -392,6 +391,6 @@ tools:
 
 旧 snapshot 中如果存在 `mcp_servers` 但缺少对应 `mcp_toolset`，按 MCP 默认 `always_ask` 处理，避免无意放行。
 
-为兼容早期实现，`user.tool_confirmation.tool_use_id` 仍可传 Claude Code worker `request.tool_use_id`；官方契约和新客户端应使用 `session.status_idle.stop_reason.event_ids` 中的 public event id。
+`user.tool_confirmation.tool_use_id` 只使用 `session.status_idle.stop_reason.event_ids` 中的 public event id；Claude Code worker `request.tool_use_id` 不属于 public 合同。
 
 如果后续 Claude Code MCP config 正式支持 server-level default permission policy，可以把静态提示层扩展为写入该字段；runtime permission handler 仍应保留为最终裁决和审计路径。

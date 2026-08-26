@@ -65,18 +65,25 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		return nil
 	}
 	payloads := make([]json.RawMessage, 0, len(events))
+	queued := false
 	for _, event := range events {
 		if !shouldForwardPublicEventToWorker(event.EventType) {
 			continue
 		}
-		if event.EventType == "user.tool_confirmation" {
-			handled, err := s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
-			if err != nil {
-				return err
-			}
-			if handled {
-				continue
-			}
+		handled := false
+		var controlErr error
+		switch event.EventType {
+		case "user.tool_confirmation":
+			handled, controlErr = s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
+		case "user.custom_tool_result":
+			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, codeSession, event)
+		}
+		if controlErr != nil {
+			return controlErr
+		}
+		if handled {
+			queued = true
+			continue
 		}
 		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt)
 		if err != nil {
@@ -85,11 +92,13 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		}
 		payloads = append(payloads, payload)
 	}
-	if len(payloads) == 0 {
+	if len(payloads) == 0 && !queued {
 		return nil
 	}
-	if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
-		return err
+	if len(payloads) > 0 {
+		if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
+			return err
+		}
 	}
 	return s.resumeSandboxForCodeSession(ctx, codeSession)
 }
@@ -346,7 +355,7 @@ func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSession
 			index += len(payloads)
 			continue
 		}
-		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerOutputEvents[index]); err != nil {
+		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerEpoch, workerOutputEvents[index]); err != nil {
 			return err
 		}
 		index++
@@ -366,14 +375,14 @@ func leadingWorkerStreamPayloads(workerOutputEvents []preparedWorkerOutputEvent)
 	return payloads
 }
 
-func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerOutputEvent preparedWorkerOutputEvent) error {
+func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerEpoch int64, workerOutputEvent preparedWorkerOutputEvent) error {
 	switch prepared := workerOutputEvent.(type) {
 	case preparedNoopAction:
 		return nil
 	case preparedKeepAliveAction:
 		return nil
 	case preparedControlAction:
-		return s.handleToolPermissionRequest(ctx, codeSessionID, &prepared.request, prepared.metadata)
+		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
 	case preparedPublicAction:
 		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	default:

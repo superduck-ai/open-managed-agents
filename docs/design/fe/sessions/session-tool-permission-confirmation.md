@@ -8,7 +8,7 @@
 权限策略有两层含义：
 
 - **配置层**：Agent 的 `tools` 配置决定预构建 agent toolset 与 MCP toolset 是自动执行还是等待确认。详见 [权限策略](../permission-policies.md)。
-- **回放与交互层**：Session Detail 页面读取已经写入事件流的 tool use、tool confirmation 和 tool result，还原本次工具调用处于等待、运行、完成、失败或拒绝状态；当进入 `requires_action` / 存在处于 `awaiting_approval` 的 tool call 时，控制台 Session 详情页提供 Allow/Deny 按钮以及 AskUserQuestion 问卷填写交互，通过 `POST /v1/sessions/{id}/events` 发送 `user.tool_confirmation`。
+- **回放与交互层**：Session Detail 页面读取已经写入事件流的 tool use、tool confirmation 和 tool result，还原本次工具调用处于等待、运行、完成、失败或拒绝状态；最新 `session.status_idle.stop_reason` 为 `requires_action` 时，控制台按其中的 `event_ids` 提供普通工具 Allow/Deny 或 AskUserQuestion 问卷交互，分别发送 `user.tool_confirmation` 与 `user.custom_tool_result`。
 
 后端事件输出必须先遵守 Anthropic multi-agent 线程契约，再由前端做归一化回放与交互：
 
@@ -168,6 +168,7 @@ function toolLifecycle(toolUse, resultEvent, confirmationEvent): ToolLifecycle {
 - `ask + allow confirmation + no result` 必须是 `running`，不是 `awaiting_approval`。
 - `ask + no confirmation + no result` 才是 `awaiting_approval`。
 - 缺少 `evaluated_permission` 时按 `allow` 兼容处理，除非事件显式带有 `requires_action=true`。
+- lifecycle 用于回放；当前可操作卡片必须额外由最新 `session.status_idle.stop_reason.event_ids` 决定，并扣除该 status 之后已经出现 confirmation/result 的 ID，避免新 status 到达前重复提交；不能让历史 ask tool 长期阻塞 composer。
 
 ---
 
@@ -251,15 +252,23 @@ Debug 模式是事件审计视图，必须保留：
 
 ## 7. 后端与事件发送边界
 
-后端继续按 session events 契约接受合法 client input events，其中 `user.tool_confirmation` 的校验规则为：
+后端继续按 session events 契约接受合法 client input events。
+
+普通 `agent.tool_use` / `agent.mcp_tool_use` 使用 `user.tool_confirmation`：
 
 - `tool_use_id` 必填且非空（必须是公开 `agent.tool_use` / `agent.mcp_tool_use` 的 `id`，例如 `sevt_...`）。
 - `result` 必须是 `allow` 或 `deny`。
 - `deny_message` 如存在，必须是 string 或 null。
-- `updated_input` 与 `answers`：当确认 `AskUserQuestion` 时，若 `result=allow` 可携带以 `question` 完整文本为 key 的 `answers` map，以及完整的 `updated_input`。
 - `session_thread_id`：若所确认的阻塞 tool use 来源于子线程 cross-post，则原样带回 `session_thread_id`。
 
-控制台 Session Detail 详情页在检测到 `awaiting_approval` 的 tool call 时展示 Action Card（普通工具提供 Allow/Deny 操作，AskUserQuestion 工具提供问卷卡片），并通过 `postSessionToolConfirmation` 发送 `user.tool_confirmation` 事件；在等待确认期间禁用消息输入框以避免用户将回复误发为普通 `user.message`。
+`AskUserQuestion` 作为 `agent.custom_tool_use` 发布，使用 `user.custom_tool_result`：
+
+- `custom_tool_use_id` 必须是最新 `stop_reason.event_ids` 引用的公开 custom tool event id。
+- 接受答案时 `is_error=false`，`content` 中单个 text block 保存以完整 `question` 文本为 key 的答案对象 JSON。
+- 拒绝时 `is_error=true`，无需 `content`。
+- 后端从私有映射恢复原始 input，将答案写入 Claude Code `updatedInput.answers`；不扩展公开 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
+
+控制台 Session Detail 详情页只在最新 `session.status_idle.stop_reason.type=requires_action` 时，按 `event_ids` 找到对应 tool call 并展示 Action Card；等待处理期间禁用消息输入框，避免用户将回复误发为普通 `user.message`。
 
 ---
 
@@ -274,6 +283,8 @@ Debug 模式是事件审计视图，必须保留：
 - `ask + allow confirmation + no result` 显示为 `running`；`ask + deny confirmation` 或策略 `deny` 显示为 `denied`；`ask + no confirmation` 显示为 `awaiting_approval`。
 - tool 详情面板展示 confirmation JSON；拒绝事件会显示 `deny_message`。
 - 在页面检测到待确认工具时，呈现 `SessionRequiresActionCard` 并提供 Allow/Deny 或问卷交互，禁用普通输入框并引导确认。
+- 页面待处理集合来自最新 `session.status_idle.stop_reason.event_ids`，历史 lifecycle 不会继续显示操作卡。
+- 普通工具提交 `user.tool_confirmation`；`agent.custom_tool_use`（包括 `AskUserQuestion`）提交 `user.custom_tool_result`。
 
 相关测试在 `web/src/features/managed-agents/ManagedAgentsPage.test.tsx` 及 `SessionRequiresActionCard.test.tsx` 中覆盖。
 
@@ -284,7 +295,7 @@ Debug 模式是事件审计视图，必须保留：
 | 等待确认 | `tool_use(evaluated_permission=ask)`，无 confirmation/result | Transcript tool row 显示 `awaiting approval`，页面上方出现操作卡片，输入框禁用。 |
 | 允许执行 | 点击 Allow 按钮 | 发送 `result=allow` 的 confirmation，tool row 转为 running spinner。 |
 | 拒绝执行 | 点击 Deny 按钮 | 发送 `result=deny` 的 confirmation，tool row 显示 `denied`。 |
-| 问卷交互 | `AskUserQuestion` 工具等待确认 | 渲染问卷选项与输入框，确认后以 `question` 文本为 key 发送 `answers`。 |
+| 问卷交互 | `AskUserQuestion` custom tool 被最新 `event_ids` 引用 | 渲染问卷选项与输入框，确认后以 `question` 文本为 key 发送 `user.custom_tool_result`。 |
 | 用户拒绝 | `ask` + `user.tool_confirmation(result=deny, deny_message=...)` | tool row 显示 `denied`，详情可看到拒绝原因。 |
 | 策略拒绝 | `tool_use(evaluated_permission=deny)` | 即使没有 confirmation，也显示 `denied`。 |
 | 执行失败 | 有 result 且 `is_error=true` | tool row 显示 error badge，lifecycle 为 `failed`。 |

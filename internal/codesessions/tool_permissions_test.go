@@ -2,7 +2,6 @@ package codesessions
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 	"uuid"
 )
@@ -117,92 +116,52 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	}
 }
 
-func TestToolConfirmationUpdatedInput(t *testing.T) {
+func TestToolPermissionPublicPayloadsUseCanonicalPublicID(t *testing.T) {
 	t.Parallel()
 
-	questions := []any{
-		map[string]any{"header": "Color", "question": "Favorite color?"},
-	}
-	original := map[string]any{"questions": questions}
-
-	tests := []struct {
-		name         string
-		original     map[string]any
-		confirmation map[string]any
-		want         map[string]any
-	}{
-		{
-			name:         "nil original and confirmation returns empty object",
-			original:     nil,
-			confirmation: nil,
-			want:         map[string]any{},
-		},
-		{
-			name:         "non-object extras are ignored",
-			original:     map[string]any{"path": "/tmp/example.txt"},
-			confirmation: map[string]any{"result": "allow", "updated_input": "not-an-object", "answers": "Blue"},
-			want:         map[string]any{"path": "/tmp/example.txt"},
-		},
-		{
-			name:         "allow without extras copies original input",
-			original:     map[string]any{"path": "/tmp/example.txt", "contents": "hello"},
-			confirmation: map[string]any{"result": "allow"},
-			want:         map[string]any{"path": "/tmp/example.txt", "contents": "hello"},
-		},
-		{
-			name:     "updated_input replaces original input",
-			original: original,
-			confirmation: map[string]any{
-				"updated_input": map[string]any{
-					"questions": questions,
-					"answers":   map[string]any{"Color": "Blue"},
-				},
-			},
-			want: map[string]any{
-				"questions": questions,
-				"answers":   map[string]any{"Color": "Blue"},
-			},
-		},
-		{
-			name:     "answers overlay original questions",
-			original: original,
-			confirmation: map[string]any{
-				"answers": map[string]any{"Color": "Blue"},
-			},
-			want: map[string]any{
-				"questions": questions,
-				"answers":   map[string]any{"Color": "Blue"},
-			},
-		},
-		{
-			name:     "answers overlay updated_input",
-			original: original,
-			confirmation: map[string]any{
-				"updated_input": map[string]any{
-					"questions": questions,
-					"answers":   map[string]any{"Color": "Green"},
-				},
-				"answers": map[string]any{"Color": "Blue"},
-			},
-			want: map[string]any{
-				"questions": questions,
-				"answers":   map[string]any{"Color": "Blue"},
-			},
+	requestID := "request-weather"
+	payload := workerControlRequestPayload{
+		Request: workerPermissionRequest{
+			ToolName:  "mcp__weather_service__get_weather",
+			ToolUseID: "toolu_weather",
+			Input:     map[string]any{"location": "Beijing"},
 		},
 	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := toolConfirmationUpdatedInput(tt.original, tt.confirmation)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("updated input = %#v, want %#v", got, tt.want)
-			}
-			if _, ok := tt.original["answers"]; ok {
-				t.Fatalf("original input was mutated with answers: %#v", tt.original)
-			}
-		})
+	request, publicPayloads, err := toolPermissionPublicPayloads(
+		"cse_test",
+		&payload,
+		EventMetadata{RequestID: &requestID},
+		parseClaudeToolIdentity(payload.Request.ToolName),
+		resolvedToolPermissionAsk,
+	)
+	if err != nil {
+		t.Fatalf("build public payloads: %v", err)
+	}
+	if len(publicPayloads) != 2 {
+		t.Fatalf("public payload count = %d, want 2", len(publicPayloads))
+	}
+	var toolEvent map[string]any
+	if err := json.Unmarshal(publicPayloads[0], &toolEvent); err != nil {
+		t.Fatalf("decode tool event: %v", err)
+	}
+	if toolEvent["id"] != request.PublicEventID || toolEvent["type"] != "agent.mcp_tool_use" || toolEvent["name"] != "get_weather" || toolEvent["evaluated_permission"] != "ask" {
+		t.Fatalf("canonical tool event = %#v", toolEvent)
+	}
+	for _, privateField := range []string{"content", "message", "tool_use_id", "request_id", "requires_action_details"} {
+		if _, ok := toolEvent[privateField]; ok {
+			t.Fatalf("canonical tool event leaked %s: %#v", privateField, toolEvent)
+		}
+	}
+	var statusEvent map[string]any
+	if err := json.Unmarshal(publicPayloads[1], &statusEvent); err != nil {
+		t.Fatalf("decode status event: %v", err)
+	}
+	stopReason, _ := statusEvent["stop_reason"].(map[string]any)
+	eventIDs, _ := stopReason["event_ids"].([]any)
+	if len(eventIDs) != 1 || eventIDs[0] != request.PublicEventID {
+		t.Fatalf("stop_reason.event_ids = %#v, want [%s]", eventIDs, request.PublicEventID)
+	}
+	if _, ok := statusEvent["requires_action_details"]; ok {
+		t.Fatalf("status event leaked private action details: %#v", statusEvent)
 	}
 }

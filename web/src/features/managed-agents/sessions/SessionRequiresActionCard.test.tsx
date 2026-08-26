@@ -81,7 +81,7 @@ describe('SessionRequiresActionCard', () => {
       name: 'Ask User Question',
       event: {
         id: 'sevt_ask_456',
-        type: 'agent.tool_use',
+        type: 'agent.custom_tool_use',
         name: 'AskUserQuestion',
       },
     };
@@ -143,7 +143,7 @@ describe('SessionRequiresActionCard', () => {
       name: 'Ask User Question',
       event: {
         id: 'sevt_ask_789',
-        type: 'agent.tool_use',
+        type: 'agent.custom_tool_use',
         name: 'AskUserQuestion',
         session_thread_id: 'sthr_subagent_1',
         input: {
@@ -198,11 +198,10 @@ describe('SessionRequiresActionCard', () => {
       const payload = confirmations[0];
       expect(payload.toolUseId).toBe('sevt_ask_789');
       expect(payload.result).toBe('allow');
+      expect(payload.customTool).toBe(true);
       expect(payload.sessionThreadId).toBe('sthr_subagent_1');
       expect(payload.answers['Which ice cream flavors do you want?']).toEqual(['Vanilla', 'Chocolate']);
       expect(payload.answers['Select a topping']).toBe('Sprinkles');
-      expect(payload.updatedInput.answers['Which ice cream flavors do you want?']).toEqual(['Vanilla', 'Chocolate']);
-      expect(payload.updatedInput.answers['Select a topping']).toBe('Sprinkles');
     });
   });
 
@@ -217,7 +216,7 @@ describe('SessionRequiresActionCard', () => {
       name: 'Ask User Question',
       event: {
         id: 'sevt_ask_deny',
-        type: 'agent.tool_use',
+        type: 'agent.custom_tool_use',
         name: 'AskUserQuestion',
         input: {
           questions: [
@@ -240,6 +239,7 @@ describe('SessionRequiresActionCard', () => {
       expect(confirmations[0]).toEqual({
         toolUseId: 'sevt_ask_deny',
         result: 'deny',
+        customTool: true,
         sessionThreadId: undefined,
       });
     });

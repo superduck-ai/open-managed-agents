@@ -167,10 +167,10 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 		t.Fatal("publicPayloadsFromWorkerEvent ok = false, want true")
 	}
 	objects := decodePublicPayloads(t, payloads)
-	if got, want := len(objects), 3; got != want {
+	if got, want := len(objects), 2; got != want {
 		t.Fatalf("payload count = %d, want %d: %#v", got, want, objects)
 	}
-	wantTypes := []string{"agent.thinking", "agent.message", "agent.tool_use"}
+	wantTypes := []string{"agent.thinking", "agent.message"}
 	for index, wantType := range wantTypes {
 		if objects[index]["type"] != wantType {
 			t.Fatalf("payload[%d] type = %q, want %q; payload=%#v", index, objects[index]["type"], wantType, objects[index])
@@ -184,14 +184,6 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	}
 	if got, want := objects[1]["id"], maevents.StableAssistantEventID("csev_test", "msg_assistant_blocks", 1, "agent.message"); got != want {
 		t.Fatalf("message id = %q, want %q", got, want)
-	}
-	toolPayload := objects[2]
-	if toolPayload["tool_use_id"] != "tool_translate" || toolPayload["name"] != "Agent" || toolPayload["tool_name"] != "Agent" {
-		t.Fatalf("tool payload missing tool fields: %#v", toolPayload)
-	}
-	input, ok := toolPayload["input"].(map[string]any)
-	if !ok || input["description"] != "Translate to Chinese" {
-		t.Fatalf("tool payload input = %#v", toolPayload["input"])
 	}
 }
 
@@ -358,8 +350,11 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 	if len(toolObjects) != 1 {
 		t.Fatalf("plain tool_result payload count = %d, want 1: %#v", len(toolObjects), toolObjects)
 	}
-	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != "tool_bash" {
+	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != toolUsePublicEventID("csev_test", "tool_bash") {
 		t.Fatalf("plain tool_result mapped payload = %#v", toolObjects[0])
+	}
+	if _, ok := toolObjects[0]["raw_tool_result"]; ok {
+		t.Fatalf("plain tool_result leaked provider payload: %#v", toolObjects[0])
 	}
 	if _, ok := toolObjects[0]["from_session_thread_id"]; ok {
 		t.Fatalf("plain tool_result should not carry subagent thread id: %#v", toolObjects[0])

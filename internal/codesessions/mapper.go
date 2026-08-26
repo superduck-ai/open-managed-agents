@@ -475,28 +475,17 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 			continue
 		}
 		blockType := stringField(block, "type")
+		if blockType == "tool_use" {
+			continue
+		}
 		eventType := "agent.message"
 		switch blockType {
 		case "thinking":
 			eventType = "agent.thinking"
-		case "tool_use":
-			eventType = "agent.tool_use"
 		}
 		payload := publicPayloadWithSingleContentBlock(object, eventType, block)
 		if schema.Message.ID != "" && (eventType == "agent.message" || eventType == "agent.thinking") {
 			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
-		}
-		if eventType == "agent.tool_use" {
-			if toolUseID := stringField(block, "id"); toolUseID != "" {
-				payload["tool_use_id"] = toolUseID
-			}
-			if name := stringField(block, "name"); name != "" {
-				payload["name"] = name
-				payload["tool_name"] = name
-			}
-			if input, ok := block["input"]; ok {
-				payload["input"] = input
-			}
 		}
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    payload,
@@ -536,21 +525,21 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		if !ok || stringField(block, "type") != "tool_result" {
 			continue
 		}
-		toolUseID := stringField(block, "tool_use_id")
-		if toolUseID == "" {
+		providerToolUseID := stringField(block, "tool_use_id")
+		if providerToolUseID == "" {
 			continue
 		}
+		toolUseID := toolUsePublicEventID(codeSessionID, providerToolUseID)
 		eventType := "agent.tool_result"
 		if claudeToolResultIsAgentThreadMessage(block) {
 			eventType = "agent.thread_message_received"
 		}
 		payload := publicPayloadWithType(object, eventType)
 		if eventType == "agent.thread_message_received" {
-			payload["from_session_thread_id"] = claudeTaskThreadIDFromKey(codeSessionID, toolUseID)
+			payload["from_session_thread_id"] = claudeTaskThreadIDFromKey(codeSessionID, providerToolUseID)
 		}
 		payload["tool_use_id"] = toolUseID
 		payload["content"] = claudeToolResultContent(block)
-		payload["raw_tool_result"] = block
 		if isError, ok := block["is_error"]; ok {
 			payload["is_error"] = isError
 		}
@@ -558,7 +547,7 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		delete(payload, "parent_tool_use_id")
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    payload,
-			seedSuffix: fmt.Sprintf("user_tool_result:%d:%s", index, toolUseID),
+			seedSuffix: fmt.Sprintf("user_tool_result:%d:%s", index, providerToolUseID),
 			timeOffset: time.Duration(index) * time.Millisecond,
 		})
 	}

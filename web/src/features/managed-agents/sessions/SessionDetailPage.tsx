@@ -82,6 +82,7 @@ import {
   compareSessionEvents,
   sessionEventTimestamp,
   sessionEventType,
+  latestRequiresActionEventIDs,
   sessionStatusFromEvents,
 } from './sessionTraceModel';
 import {
@@ -378,7 +379,11 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     [formatters, msg, session, sortedEvents],
   );
   const copyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries, view), [filteredEntries, view]);
-  const activeAwaitingToolCall = useMemo(() => findActiveAwaitingToolCall(entries), [entries]);
+  const requiresActionEventIDs = useMemo(() => latestRequiresActionEventIDs(sortedEvents), [sortedEvents]);
+  const activeAwaitingToolCall = useMemo(
+    () => findActiveAwaitingToolCall(allEntries, requiresActionEventIDs),
+    [allEntries, requiresActionEventIDs],
+  );
 
   const handleToolConfirmation = useCallback(
     async (input: SessionToolConfirmationInput) => {

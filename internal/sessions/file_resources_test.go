@@ -141,6 +141,6 @@ func testNormalizedFileResource(t *testing.T, mountPath string) normalizedSessio
 			ExternalID:   "sesrsc_test",
 			ResourceType: sessionresource.FileType,
 		},
-		fileSpec: &spec,
+		fileSpec: new(spec),
 	}
 }

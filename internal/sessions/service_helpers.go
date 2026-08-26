@@ -171,7 +171,7 @@ func (h *Handler) resourceFromRequest(
 			return normalizedSessionResource{}, err
 		}
 		payload = fileSpec.PayloadFields(resourceID)
-		normalizedFileSpec = &fileSpec
+		normalizedFileSpec = new(fileSpec)
 		fileMimeType = file.MimeType
 	case "github_repository":
 		url, err := parseRequiredRawString(body.URL, "url")

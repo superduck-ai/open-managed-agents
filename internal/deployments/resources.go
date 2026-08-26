@@ -203,7 +203,7 @@ func (h *Handler) normalizeResource(
 			Source:    sandboxmount.FileSource,
 			MountPath: fileSpec.MountPath(),
 		}
-		resource.fileSpec = &fileSpec
+		resource.fileSpec = new(fileSpec)
 	case "github_repository":
 		repoURL, err := parseRequiredRawString(fields.URL, "url")
 		if err != nil {
@@ -361,7 +361,7 @@ func parseDeploymentRunResources(raw json.RawMessage) ([]deploymentRunResource, 
 			if err != nil {
 				return nil, errors.New("stored file resource is invalid")
 			}
-			resource.fileSpec = &fileSpec
+			resource.fileSpec = new(fileSpec)
 		case "memory_store":
 			if payload.MemoryStoreID == "" {
 				return nil, errors.New("stored memory store resource reference is invalid")

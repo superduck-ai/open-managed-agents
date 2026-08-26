@@ -110,8 +110,8 @@ func markEventInputError(err error) error {
 }
 
 func isEventInputError(err error) bool {
-	var inputErr *eventInputError
-	return errors.As(err, &inputErr)
+	_, ok := errors.AsType[*eventInputError](err)
+	return ok
 }
 
 func markEventProcessingError(err error) error {
@@ -119,8 +119,8 @@ func markEventProcessingError(err error) error {
 }
 
 func isEventProcessingError(err error) bool {
-	var processingErr *eventProcessingError
-	return errors.As(err, &processingErr)
+	_, ok := errors.AsType[*eventProcessingError](err)
+	return ok
 }
 
 func mapEventProcessingError(err error, sessionID string) error {

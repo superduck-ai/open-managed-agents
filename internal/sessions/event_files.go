@@ -1,7 +1,8 @@
 package sessions
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 func prepareEventWorkerContent(
 	event db.SessionEvent,
 	bindings []sessioncontract.EventFileBinding,
-) (json.RawMessage, error) {
+) (jsonv1.RawMessage, error) {
 	payload, err := sessioneventfiles.WorkerPayload(event.EventType, event.Payload, bindings)
 	if err == nil {
 		return payload, nil
@@ -27,14 +28,14 @@ func prepareEventWorkerContent(
 
 func normalizeInitialSessionEvents(
 	session db.Session,
-	raw json.RawMessage,
+	raw jsonv1.RawMessage,
 	bindings []sessioncontract.EventFileBinding,
 	now time.Time,
-) ([]db.SessionEvent, json.RawMessage, error) {
+) ([]db.SessionEvent, jsonv1.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, session.OutcomeEvaluations, nil
 	}
-	var inputs []json.RawMessage
+	var inputs []jsonv1.RawMessage
 	if err := json.Unmarshal(raw, &inputs); err != nil {
 		return nil, nil, markEventInputError(errors.New("initial_events must be an array"))
 	}

@@ -647,7 +647,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			"/uploads/workspace/deployment.txt",
 		)
 		codeSessionID := launchLocalCodeSession(t, app, *run.SessionID)
-		inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+		inbound, err := app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSessionID)
 		if err != nil {
 			t.Fatalf("list deployment file-reference inbound: %v", err)
 		}

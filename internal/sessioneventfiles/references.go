@@ -3,7 +3,8 @@
 package sessioneventfiles
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,8 +16,8 @@ import (
 const userMessageType = "user.message"
 
 type contentBlock struct {
-	Type   string          `json:"type"`
-	Source json.RawMessage `json:"source"`
+	Type   string            `json:"type"`
+	Source jsonv1.RawMessage `json:"source"`
 }
 
 type fileSource struct {
@@ -31,12 +32,12 @@ type reference struct {
 }
 
 type parsedContentBlock struct {
-	raw           json.RawMessage
+	raw           jsonv1.RawMessage
 	fileReference bool
 }
 
 type resolvedEvent struct {
-	object     map[string]json.RawMessage
+	object     map[string]jsonv1.RawMessage
 	blocks     []parsedContentBlock
 	references []reference
 	bindings   []sessioncontract.EventFileBinding
@@ -50,8 +51,8 @@ func (e *validationError) Unwrap() error { return e.cause }
 
 // IsValidationError 判断错误是否来自公开事件输入。
 func IsValidationError(err error) bool {
-	var validationErr *validationError
-	return errors.As(err, &validationErr)
+	_, ok := errors.AsType[*validationError](err)
+	return ok
 }
 
 func markValidationError(err error) error {
@@ -61,7 +62,7 @@ func markValidationError(err error) error {
 // ValidateMountedReferences 校验所有文件引用都已挂载到当前 Session。
 func ValidateMountedReferences(
 	eventType string,
-	raw json.RawMessage,
+	raw jsonv1.RawMessage,
 	bindings []sessioncontract.EventFileBinding,
 ) error {
 	_, err := resolveEvent(eventType, raw, bindings)
@@ -73,7 +74,7 @@ func ValidateMountedReferences(
 
 // WorkerPayload replaces public file-source blocks with Claude Code @ path
 // mentions while preserving the original public event outside this function.
-func WorkerPayload(eventType string, raw json.RawMessage, bindings []sessioncontract.EventFileBinding) (json.RawMessage, error) {
+func WorkerPayload(eventType string, raw jsonv1.RawMessage, bindings []sessioncontract.EventFileBinding) (jsonv1.RawMessage, error) {
 	event, err := resolveEvent(eventType, raw, bindings)
 	if err != nil {
 		return nil, markValidationError(err)
@@ -81,7 +82,7 @@ func WorkerPayload(eventType string, raw json.RawMessage, bindings []sessioncont
 	if len(event.references) == 0 {
 		return raw, nil
 	}
-	workerContent := make([]json.RawMessage, 0, len(event.blocks)+1)
+	workerContent := make([]jsonv1.RawMessage, 0, len(event.blocks)+1)
 	for _, block := range event.blocks {
 		if !block.fileReference {
 			workerContent = append(workerContent, block.raw)
@@ -118,7 +119,7 @@ func WorkerPayload(eventType string, raw json.RawMessage, bindings []sessioncont
 
 func resolveEvent(
 	eventType string,
-	raw json.RawMessage,
+	raw jsonv1.RawMessage,
 	bindings []sessioncontract.EventFileBinding,
 ) (resolvedEvent, error) {
 	event, err := parseEvent(eventType, raw)
@@ -132,12 +133,12 @@ func resolveEvent(
 	return event, nil
 }
 
-func parseEvent(eventType string, raw json.RawMessage) (resolvedEvent, error) {
-	var object map[string]json.RawMessage
+func parseEvent(eventType string, raw jsonv1.RawMessage) (resolvedEvent, error) {
+	var object map[string]jsonv1.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return resolvedEvent{}, errors.New("event payload is invalid")
 	}
-	var content []json.RawMessage
+	var content []jsonv1.RawMessage
 	if contentRaw, exists := object["content"]; exists {
 		if err := json.Unmarshal(contentRaw, &content); err != nil {
 			return resolvedEvent{}, errors.New("event payload is invalid")
@@ -176,7 +177,7 @@ func parseEvent(eventType string, raw json.RawMessage) (resolvedEvent, error) {
 	return event, nil
 }
 
-func decodeFileCapableBlock(raw json.RawMessage) (*contentBlock, *fileSource, error) {
+func decodeFileCapableBlock(raw jsonv1.RawMessage) (*contentBlock, *fileSource, error) {
 	var block contentBlock
 	if err := json.Unmarshal(raw, &block); err != nil {
 		return nil, nil, errors.New("content items must be objects")

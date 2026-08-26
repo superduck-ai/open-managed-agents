@@ -65,10 +65,11 @@ func SandboxFilePath(backingPath string) (string, error) {
 	if err := validateBackingPath("file backing path", backingPath); err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(backingPath, FileSource+"/") {
+	relativePath, ok := strings.CutPrefix(backingPath, FileSource+"/")
+	if !ok {
 		return "", fmt.Errorf("file backing path must be under %q", FileSource)
 	}
-	return SandboxUploadsMount + strings.TrimPrefix(backingPath, FileSource), nil
+	return SandboxUploadsMount + "/" + relativePath, nil
 }
 
 func validateBackingPath(label, value string) error {

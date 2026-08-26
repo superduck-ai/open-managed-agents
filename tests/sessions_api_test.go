@@ -3518,7 +3518,7 @@ func TestSessionEventInternalNormalizationFailureReturnsServerError(t *testing.T
 	defer deleteSession(t, app, session.ID)
 
 	if _, err := app.pool.Exec(
-		context.Background(),
+		t.Context(),
 		`update sessions set outcome_evaluations = '{"invalid":true}'::jsonb where external_id = $1`,
 		session.ID,
 	); err != nil {
@@ -3628,7 +3628,7 @@ func TestSessionEventReferencedFileResourceCannotBeDeleted(t *testing.T) {
 	)
 	assertError(t, response, http.StatusConflict, "conflict_error")
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSessionID)
 	if err != nil {
 		t.Fatalf("list pinned resource inbound events: %v", err)
 	}
@@ -3717,11 +3717,11 @@ func TestSessionEventFileReferencesUseMountedResources(t *testing.T) {
 
 streamVerified:
 	eventID := sessionEventStringField(t, sent.Data[0], "id")
-	storedSession, found, err := app.db.GetSession(context.Background(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
+	storedSession, found, err := app.db.GetSession(t.Context(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
 	if err != nil || !found {
 		t.Fatalf("get stored session: found=%v error=%v", found, err)
 	}
-	stored, err := app.db.GetSessionEvent(context.Background(), storedSession.WorkspaceUUID, session.ID, eventID)
+	stored, err := app.db.GetSessionEvent(t.Context(), storedSession.WorkspaceUUID, session.ID, eventID)
 	if err != nil {
 		t.Fatalf("get stored session event: %v", err)
 	}
@@ -3738,7 +3738,7 @@ streamVerified:
 	}
 
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSessionID)
 	if err != nil {
 		t.Fatalf("list activation replay inbound events: %v", err)
 	}
@@ -3756,7 +3756,7 @@ streamVerified:
 	if len(live.Data) != 1 || !bytes.Contains(live.Data[0], []byte(file.ID)) {
 		t.Fatalf("live public event = %+v, want original file_id", live.Data)
 	}
-	inbound, err = app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	inbound, err = app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSessionID)
 	if err != nil {
 		t.Fatalf("list realtime inbound events: %v", err)
 	}
@@ -3805,11 +3805,11 @@ func TestCreateSessionInitialEventCanReferenceCreatedFileResource(t *testing.T) 
 		t.Fatalf("initial public events = %+v, want original file reference", events.Data)
 	}
 	eventID := sessionEventStringField(t, events.Data[0], "id")
-	storedSession, found, err := app.db.GetSession(context.Background(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
+	storedSession, found, err := app.db.GetSession(t.Context(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
 	if err != nil || !found {
 		t.Fatalf("get stored session: found=%v error=%v", found, err)
 	}
-	stored, err := app.db.GetSessionEvent(context.Background(), storedSession.WorkspaceUUID, session.ID, eventID)
+	stored, err := app.db.GetSessionEvent(t.Context(), storedSession.WorkspaceUUID, session.ID, eventID)
 	if err != nil {
 		t.Fatalf("get initial session event: %v", err)
 	}
@@ -3817,7 +3817,7 @@ func TestCreateSessionInitialEventCanReferenceCreatedFileResource(t *testing.T) 
 		t.Fatalf("initial public payload crossed worker boundary: %s", stored.Payload)
 	}
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSessionID)
 	if err != nil {
 		t.Fatalf("list initial inbound events: %v", err)
 	}
@@ -4123,7 +4123,7 @@ func sendSessionEvents(t *testing.T, app *testApp, sessionID, body, key string) 
 
 func openSessionEventStreamForTest(t *testing.T, app *testApp, sessionID string) (<-chan string, func()) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,

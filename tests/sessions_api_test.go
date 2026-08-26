@@ -2078,6 +2078,12 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if _, ok := statusEvent["requires_action_details"]; ok {
 		t.Fatalf("session.status_idle leaked private requires_action_details: %#v", statusEvent)
 	}
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
+		`"type":"control_request",`+
+		`"uuid":"control-weather-ask-second-`+suffix+`",`+
+		`"request_id":"req_weather_ask_second_`+suffix+`",`+
+		`"request":{"subtype":"can_use_tool","tool_name":"mcp__weather_service__get_weather","tool_use_id":"toolu_weather_ask_second_`+suffix+`","input":{"location":"Shanghai"}}`+
+		`}}]}`)
 
 	resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(toolEventID)+`,"result":"allow"}]}`), defaultTestKey, true)
 	defer resp.Body.Close()

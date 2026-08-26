@@ -55,7 +55,14 @@ export function SessionRequiresActionCard({
 }) {
   const isQuestionnaire = isAskUserQuestionCall(toolCall);
   if (isQuestionnaire) {
-    return <SessionQuestionnaireActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+    return (
+      <SessionQuestionnaireActionCard
+        key={sessionToolConfirmationPublicId(toolCall)}
+        toolCall={toolCall}
+        onConfirm={onConfirm}
+        disabled={disabled}
+      />
+    );
   }
   return <SessionToolApprovalActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
 }

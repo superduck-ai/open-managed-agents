@@ -379,10 +379,19 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     [formatters, msg, session, sortedEvents],
   );
   const copyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries, view), [filteredEntries, view]);
+  const actionEntries = useMemo(
+    () =>
+      view === 'transcript'
+        ? allEntries
+        : buildSessionEventEntries(sortedEvents, 'transcript', traceStartMs, msg, {
+            platformTranscriptFiltering: true,
+          }),
+    [allEntries, msg, sortedEvents, traceStartMs, view],
+  );
   const requiresActionEventIDs = useMemo(() => latestRequiresActionEventIDs(sortedEvents), [sortedEvents]);
   const activeAwaitingToolCall = useMemo(
-    () => findActiveAwaitingToolCall(allEntries, requiresActionEventIDs),
-    [allEntries, requiresActionEventIDs],
+    () => findActiveAwaitingToolCall(actionEntries, requiresActionEventIDs),
+    [actionEntries, requiresActionEventIDs],
   );
 
   const handleToolConfirmation = useCallback(

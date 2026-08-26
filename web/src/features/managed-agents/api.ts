@@ -1397,9 +1397,7 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
     if (existingIndex === undefined) {
       indexByKey.set(canonicalKey, output.length);
       output.push(event);
-      return;
     }
-    output[existingIndex] = event;
   });
   return output;
 }

@@ -99,7 +99,11 @@ export function buildSessionTraceEntries(
         : undefined;
     const confirmationEvent =
       family === 'tool_use' && toolUseId
-        ? selectSessionToolCompanionEvent(toolConfirmations.get(toolUseId), enrichedEvent, threadHints.byToolUseId)
+        ? selectSessionToolCompanionEvent(
+            toolConfirmations.get(toolUseId) ?? toolConfirmations.get(sessionEventKey(enrichedEvent)),
+            enrichedEvent,
+            threadHints.byToolUseId,
+          )
         : undefined;
     return [
       sessionTraceEntryFromEvent(enrichedEvent, index, family, resultEvent, confirmationEvent, traceStartMs, msg),

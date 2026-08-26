@@ -244,4 +244,36 @@ describe('SessionRequiresActionCard', () => {
       });
     });
   });
+
+  test('resets questionnaire drafts when the pending tool changes', () => {
+    const firstCall: ToolCallEntry = {
+      ...baseToolCall,
+      name: 'Ask User Question',
+      event: {
+        id: 'sevt_ask_first',
+        type: 'agent.custom_tool_use',
+        name: 'AskUserQuestion',
+        input: {
+          questions: [{ question: 'Pick a color', options: [{ label: 'Blue' }, { label: 'Green' }] }],
+        },
+      },
+    };
+    const secondCall: ToolCallEntry = {
+      ...firstCall,
+      event: {
+        id: 'sevt_ask_second',
+        type: 'agent.custom_tool_use',
+        name: 'AskUserQuestion',
+        input: {
+          questions: [{ question: 'Pick an animal', options: [{ label: 'Cat' }, { label: 'Dog' }] }],
+        },
+      },
+    };
+    const { rerender } = render(<SessionRequiresActionCard toolCall={firstCall} onConfirm={async () => {}} />);
+
+    fireEvent.click(screen.getByText('Blue'));
+    rerender(<SessionRequiresActionCard toolCall={secondCall} onConfirm={async () => {}} />);
+
+    expect((screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });

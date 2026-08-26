@@ -102,7 +102,7 @@ Claude Code 执行工具前发出内部事件：
 - 调用统一 permission handler 计算 effective policy。
 - `can_use_tool` 是唯一 public tool-use event 生产入口；`allow` / `ask` / `deny` 都先发布同一扁平事件。
 - 对 `allow` / `deny` 再生成 inbound `control_response`，响应 UUID 由原始 `request_id` 稳定派生以保证重试幂等。
-- 对 `ask` 将后续确认所需的 public event id、provider tool id、`request_id`、`input` 和 thread 信息保存在 Code Session 私有 worker metadata，等待客户端发送确认事件。
+- 对 `ask` 将后续确认所需的 provider tool id、`request_id`、`input` 和 thread 信息按 public event id 分别保存在 Code Session 私有 worker metadata，等待客户端发送确认事件。
 
 ---
 

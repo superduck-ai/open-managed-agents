@@ -1133,7 +1133,7 @@ export function registerManagedAgentsResourceTests() {
         id: 'evt_reporter_shared_confirmation',
         type: 'user.tool_confirmation',
         session_thread_id: 'sthr_reporter123456',
-        tool_use_id: 'toolu_shared_permission',
+        tool_use_id: 'evt_reporter_shared_permission',
         created_at: new Date(base + 2_500).toISOString(),
         result: 'deny',
         deny_message: 'Reporter cannot call external weather',
@@ -1231,6 +1231,10 @@ export function registerManagedAgentsResourceTests() {
       expect(detailPanel.contains(actionPanel)).toBe(true);
       expect(within(actionPanel).getByTestId('session-tool-approval-card')).toBeTruthy();
       expect(actionPanel.className).toContain('overflow-y-auto');
+      expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));
+      expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
       expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
 
       fireEvent.click(screen.getByTestId(result === 'allow' ? 'tool-allow-button' : 'tool-deny-button'));

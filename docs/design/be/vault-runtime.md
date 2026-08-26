@@ -198,7 +198,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 项 | 决定 |
 |---|---|
 | 匹配 | **Git Smart HTTP 协议**，不按 GitLab/GitHub 产品。`GET …/info/refs?service=git-upload-pack\|git-receive-pack`；`POST …/git-upload-pack` 或 `…/git-receive-pack`。错误 method、LFS、dumb HTTP、REST 不匹配 |
-| 范围 | Vault/MITM **只**处理已是 HTTPS 的 Smart HTTP；**不**覆盖 Git LFS / dumb HTTP / Git REST，也**不**在 MITM 层改写 `git@` / `ssh://`。GitHub SSH→HTTPS 由 environment-manager `insteadOf` 完成（见 [upstream-proxy-and-model-runtime](./ccrv2/upstream-proxy-and-model-runtime.md#git-私有仓库出站)），改写后再走本注入 |
+| 范围 | Vault/MITM **只**处理已是 HTTPS 的 Smart HTTP；**不**覆盖 Git LFS / dumb HTTP / Git REST，也**不**在 MITM 层改写 `git@` / `ssh://`。SSH→HTTPS：内置 `github.com`，另可通过 `environment_runner.git_ssh_to_https_hosts` 追加（见 [upstream-proxy-and-model-runtime](./ccrv2/upstream-proxy-and-model-runtime.md#git-私有仓库出站)），改写后再走本注入 |
 | 写入 | 第一次转发前写 `Authorization: Basic`；用户名固定 `oauth2`；密码为 Environment Variable Credential secret。已有 Authorization 一律覆盖 |
 | 选凭据 | Credential Networking 覆盖该 host 且 Injection Location 含 header；Vault Attachment Order 先到先得 |
 | 未覆盖 | passthrough |
@@ -319,7 +319,7 @@ sequenceDiagram
 
 - `mcp_oauth_validate` 真 refresh / live MCP probe
 - `vault_credential.refresh_failed` webhook 发出
-- Git LFS、dumb HTTP、原生 git SSH 隧道、非 GitHub 的通用 `git@`→HTTPS 改写；GitHub `insteadOf` 见 CCRv2 upstream-proxy 文档（已实现，不在本 vault 切片）
+- Git LFS、dumb HTTP、原生 git SSH 隧道；通用任意 `git@`→HTTPS 不在 Vault 切片。内置 github.com + `environment_runner.git_ssh_to_https_hosts` 的 insteadOf 见 CCRv2 upstream-proxy 文档
 - GitHub App `x-access-token` Basic 用户名
 - Expand/Backfill、`backfill_secrets`
 - Shamir / 云 KMS provider 实现

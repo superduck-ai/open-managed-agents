@@ -78,6 +78,9 @@ func validate(cfg Config) error {
 	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
 		return err
 	}
+	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
+		return err
+	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
 }
 
@@ -117,6 +120,40 @@ func validatePlatformOAuthClients(clients []PlatformOAuthClientConfig) error {
 		seen[mcpURL] = struct{}{}
 	}
 	return nil
+}
+
+func validateGitSSHtoHTTPSHosts(hosts []string) error {
+	seen := make(map[string]struct{}, len(hosts))
+	for i, raw := range hosts {
+		prefix := fmt.Sprintf("environment_runner.git_ssh_to_https_hosts[%d]", i)
+		host := strings.ToLower(strings.TrimSpace(raw))
+		if host == "" {
+			return fmt.Errorf("%s is empty", prefix)
+		}
+		if err := validateGitSSHtoHTTPSHost(host); err != nil {
+			return fmt.Errorf("%s: %w", prefix, err)
+		}
+		if _, ok := seen[host]; ok {
+			return fmt.Errorf("%s %q is duplicated", prefix, host)
+		}
+		seen[host] = struct{}{}
+	}
+	return nil
+}
+
+func validateGitSSHtoHTTPSHost(host string) error {
+	switch {
+	case strings.Contains(host, "://"):
+		return errors.New("must be a bare hostname, not a URL")
+	case strings.ContainsAny(host, "@/\\ :"):
+		return errors.New("must be a bare hostname without userinfo, path, or port")
+	case strings.Contains(host, ".."):
+		return errors.New("must be a bare hostname")
+	case host[0] == '.' || host[len(host)-1] == '.':
+		return errors.New("must be a bare hostname")
+	default:
+		return nil
+	}
 }
 
 func (m MasterKeyConfig) inlineKEKSet() bool {

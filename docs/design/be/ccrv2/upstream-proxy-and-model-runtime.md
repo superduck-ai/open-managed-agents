@@ -85,22 +85,20 @@ payload 不再包含 `anthropic_api` 或 `CLAUDE_CODE_SESSION_ACCESS_TOKEN`。�
 
 ### Git 私有仓库出站
 
-Runner 在执行 `environment-manager task-run` 前向其进程环境注入以下 Git 配置：
+Runner 在执行 `environment-manager task-run` 前向其进程环境注入 Git 配置。**内置**条目始终包含：
 
 ```text
-GIT_CONFIG_COUNT=3
 GIT_CONFIG_KEY_0=credential.interactive
 GIT_CONFIG_VALUE_0=false
 GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf
 GIT_CONFIG_VALUE_1=git@github.com:
 GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf
 GIT_CONFIG_VALUE_2=ssh://git@github.com/
-GIT_EDITOR=true
-GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt
-GIT_TERMINAL_PROMPT=0
 ```
 
-两条 `insteadOf` 在 Git 建连前把 `git@github.com:team/repo.git` 和 `ssh://git@github.com/team/repo.git` 改写为 `https://github.com/team/repo.git`。因为这些变量存在于 environment-manager 的启动环境，其自身执行的源码拉取以及后续 Claude、Bash 和 Git 子进程都会继承，不需要修改 Agent 生成的 `git clone` / `git fetch` 命令。改写后的 HTTPS 请求继续使用 runtime 注入的 `HTTPS_PROXY`；`GIT_SSL_CAINFO` 指向 runtime 合并 CA bundle，以验证 Gateway 动态签发的证书。关闭 credential 交互、terminal prompt 和 editor 可保证凭证失败时快速返回，不在无人值守的 Sandbox 中阻塞。
+`environment_runner.git_ssh_to_https_hosts` 可追加其它 host（例如 `gitlab.xxxx.cn`）；每个 host 再增加两条 `insteadOf`（`git@host:` 与 `ssh://git@host/` → `https://host/`）。`GIT_CONFIG_COUNT` 由条目总数计算，无需手写。
+
+内置 github.com 改写把 `git@github.com:team/repo.git` 和 `ssh://git@github.com/team/repo.git` 变成 `https://github.com/team/repo.git`。变量在 environment-manager 启动环境中，其子进程（Claude、Bash、Git）都会继承。改写后的 HTTPS 继续走 `HTTPS_PROXY`；`GIT_SSL_CAINFO` 指向 runtime 合并 CA bundle。关闭 credential 交互、terminal prompt 和 editor，避免无人值守沙箱阻塞。
 
 Runner 把 environment-manager 作为 E2B 后台进程启动。包含双凭证的 payload 通过进程 PID 直接写入 stdin，随后显式关闭 EOF；payload 不写入沙箱文件系统。stdin 发送或关闭失败时，Runner 终止尚未完整初始化的后台进程并按沙箱启动失败处理。
 

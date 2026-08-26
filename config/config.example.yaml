@@ -28,6 +28,12 @@ e2b:
   api_key: ""
   api_url: ""
 
+# Optional: extra hosts for SSH→HTTPS rewrite in environment-manager
+# (github.com is always built-in). See docs/configuration-reference.yaml.
+# environment_runner:
+#   git_ssh_to_https_hosts:
+#     - gitlab.xxxxx.cn
+
 vault:
   master_key:
     # Required in every env. Example:

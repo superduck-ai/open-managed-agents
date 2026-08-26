@@ -124,6 +124,10 @@ type EnvironmentRunnerConfig struct {
 	ManagerPath             string        `yaml:"manager_path"`
 	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
 	ClaudePath              string        `yaml:"claude_path"`
+	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
+	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
+	// github.com is always included by the environment-manager launcher.
+	GitSSHtoHTTPSHosts []string `yaml:"git_ssh_to_https_hosts"`
 }
 
 type CodeSessionConfig struct {

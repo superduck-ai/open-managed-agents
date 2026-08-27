@@ -624,10 +624,10 @@ export function AgentsResourcePage({
                 <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>
                   {managedColumnLabel('ID', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-auto')}>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'min-w-[140px] w-[22%] overflow-hidden')}>
                   {managedColumnLabel('Name', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[210px]')}>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[210px] overflow-hidden')}>
                   {managedColumnLabel('Model', msg)}
                 </TableHead>
                 <TableHead className={cn(dataTableHeaderCellClassName, 'w-[120px]')}>

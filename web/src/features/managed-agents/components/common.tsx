@@ -268,12 +268,20 @@ export function NestedRows({
   loading,
   error,
   emptyTitle,
+  emptyBody,
+  emptyIcon: EmptyIcon,
+  emptyActionLabel,
+  onEmptyAction,
   columns,
   rows,
 }: {
   loading: boolean;
   error: string | null;
   emptyTitle: string;
+  emptyBody?: string;
+  emptyIcon?: IconComponent;
+  emptyActionLabel?: string;
+  onEmptyAction?: () => void;
   columns: string[];
   rows: ReactNode[][];
 }) {
@@ -289,6 +297,23 @@ export function NestedRows({
     );
   }
   if (!rows.length) {
+    if (emptyBody && EmptyIcon) {
+      return (
+        <div className="grid min-h-[280px] place-items-center text-center">
+          <div className="max-w-[360px]">
+            <EmptyIcon className="mx-auto mb-4 size-12 stroke-[1.3] text-foreground" aria-hidden />
+            <div className="text-sm font-semibold text-foreground">{emptyTitle}</div>
+            <p className="mt-3 text-sm leading-5 text-muted-foreground">{emptyBody}</p>
+            {emptyActionLabel && onEmptyAction ? (
+              <Button type="button" variant="outline" className="mt-4" onClick={onEmptyAction}>
+                <Plus className="size-4" aria-hidden />
+                {emptyActionLabel}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
         {emptyTitle}
@@ -555,7 +580,7 @@ export function DeploymentSelectField({
   );
 }
 
-export function DeploymentAddSelectField({
+export function ManagedAddSelectField({
   label,
   optional = false,
   valueLabel,
@@ -563,6 +588,9 @@ export function DeploymentAddSelectField({
   options,
   manageHref,
   manageLabel,
+  tone = 'managed',
+  placeholder,
+  showPlus = true,
   onChange,
 }: {
   label: string;
@@ -572,19 +600,24 @@ export function DeploymentAddSelectField({
   options: EntityOption[];
   manageHref: string;
   manageLabel: string;
+  tone?: 'managed' | 'deployment';
+  /** When set, replaces the default “Add {label}” trigger copy while options remain. */
+  placeholder?: string;
+  showPlus?: boolean;
   onChange: (value: string[]) => void;
 }) {
   const { msg } = useI18n();
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `managed-add-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   const availableOptions = options.filter((option) => !selectedIds.includes(option.id));
   const selectedOptions = options.filter((option) => selectedIds.includes(option.id));
-  const placeholder = availableOptions.length
-    ? msg('managedAgents.common.addValue', 'Add {label}', { label: valueLabel })
+  const triggerPlaceholder = availableOptions.length
+    ? (placeholder ?? msg('managedAgents.common.addValue', 'Add {label}', { label: valueLabel }))
     : msg('managedAgents.common.noValuesAvailable', 'No {label}s available', { label: valueLabel });
   const items = [
-    { value: '', label: placeholder },
+    { value: '', label: triggerPlaceholder },
     ...availableOptions.map((option) => ({ value: option.id, label: option.label })),
   ];
+  const deploymentTone = tone === 'deployment';
 
   return (
     <div>
@@ -607,18 +640,29 @@ export function DeploymentAddSelectField({
       >
         <SelectTrigger
           id={id}
-          className="h-8 w-full border-0 bg-white/10 pl-3 pr-2 text-sm text-muted-foreground ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground"
+          className={
+            deploymentTone
+              ? 'h-8 w-full border-0 bg-white/10 pl-3 pr-2 text-sm text-muted-foreground ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground'
+              : 'managed-resource-field mt-0 h-10 w-full border-border bg-secondary px-3 text-sm text-muted-foreground focus-visible:border-ring focus-visible:ring-0 disabled:cursor-not-allowed'
+          }
         >
-          <Plus className="size-4 text-muted-foreground" aria-hidden />
-          <SelectValue className="text-muted-foreground">{placeholder}</SelectValue>
+          {showPlus ? <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden /> : null}
+          <SelectValue className="text-muted-foreground">{triggerPlaceholder}</SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
-          <SelectItem value="" label={placeholder} disabled>
-            {placeholder}
+          <SelectItem value="" label={triggerPlaceholder} disabled>
+            {triggerPlaceholder}
           </SelectItem>
           {availableOptions.map((option) => (
             <SelectItem key={option.id} value={option.id} label={option.label}>
-              {option.label}
+              <span className="flex min-w-0 flex-col gap-0.5 text-left">
+                <span className="truncate">{option.label}</span>
+                {option.secondary ? (
+                  <span className="truncate text-xs text-muted-foreground" aria-hidden>
+                    {option.secondary}
+                  </span>
+                ) : null}
+              </span>
             </SelectItem>
           ))}
         </SelectContent>
@@ -631,7 +675,11 @@ export function DeploymentAddSelectField({
               type="button"
               variant="outline"
               size="xs"
-              className="h-7 bg-white/10 text-xs text-foreground ring-1 ring-white/10 hover:bg-white/15"
+              className={
+                deploymentTone
+                  ? 'h-7 bg-white/10 text-xs text-foreground ring-1 ring-white/10 hover:bg-white/15'
+                  : 'h-7 bg-secondary text-xs text-foreground'
+              }
               onClick={() => onChange(selectedIds.filter((idValue) => idValue !== option.id))}
             >
               {option.label}
@@ -644,12 +692,17 @@ export function DeploymentAddSelectField({
   );
 }
 
+export function DeploymentAddSelectField(props: Omit<Parameters<typeof ManagedAddSelectField>[0], 'tone'>) {
+  return <ManagedAddSelectField {...props} tone="deployment" />;
+}
+
 export function ManagedTextField({
   label,
   value,
   placeholder,
   disabled = false,
   autoFocus = false,
+  optional = false,
   type = 'text',
   onChange,
 }: {
@@ -658,14 +711,21 @@ export function ManagedTextField({
   placeholder?: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  optional?: boolean;
   type?: 'text' | 'password';
   onChange: (value: string) => void;
 }) {
+  const { msg } = useI18n();
   const id = `managed-field-${useId()}`;
   return (
     <div>
-      <Label htmlFor={id} className="text-sm font-medium text-foreground">
-        {label}
+      <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
+        {label}{' '}
+        {optional ? (
+          <span className="font-normal text-muted-foreground">
+            {msg('managedAgents.common.optionalParen', '(optional)')}
+          </span>
+        ) : null}
       </Label>
       <Input
         id={id}
@@ -763,60 +823,6 @@ export function ManagedSelectField({
           ))}
         </SelectContent>
       </Select>
-    </div>
-  );
-}
-
-export function VaultMultiSelect({
-  vaults,
-  selectedIds,
-  onChange,
-}: {
-  vaults: EntityOption[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-}) {
-  const { msg } = useI18n();
-  const toggle = (id: string) => {
-    if (selectedIds.includes(id)) {
-      onChange(selectedIds.filter((item) => item !== id));
-    } else {
-      onChange([...selectedIds, id]);
-    }
-  };
-
-  return (
-    <div>
-      <div className="text-sm font-medium text-foreground">
-        {msg('managedAgents.credentialVaults.title', 'Credential vaults')}
-      </div>
-      <div className="mt-2 rounded-lg border border-border bg-secondary p-2">
-        {vaults.length ? (
-          vaults.map((vault) => {
-            const selected = selectedIds.includes(vault.id);
-            const checkboxId = `vault-option-${vault.id}`;
-            return (
-              <Label
-                key={vault.id}
-                htmlFor={checkboxId}
-                className="flex h-9 w-full cursor-pointer items-center gap-3 rounded-md px-2 text-left text-sm font-normal text-foreground transition hover:bg-accent"
-              >
-                <Checkbox
-                  id={checkboxId}
-                  checked={selected}
-                  className="size-5 rounded-[5px] border-border data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground"
-                  onCheckedChange={() => toggle(vault.id)}
-                />
-                <span className="truncate">{vault.label}</span>
-              </Label>
-            );
-          })
-        ) : (
-          <div className="px-2 py-2 text-sm text-muted-foreground">
-            {msg('managedAgents.credentialVaults.selectOneOrMore', 'Select one or more vaults')}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

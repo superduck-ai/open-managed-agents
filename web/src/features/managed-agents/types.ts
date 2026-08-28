@@ -574,6 +574,10 @@ export type EntityOption = {
   id: string;
   label: string;
   secondary?: string;
+  /** Absolute created timestamp for vault pickers (CMA-aligned). */
+  createdAt?: string;
+  /** Credential display names for vault picker trailing summary / tooltip. */
+  credentialNames?: string[];
 };
 
 export type AgentModelInput =

@@ -18,7 +18,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, localTimezone, startMCPVaultAuth } from '../api';
+import { listAgents, listManagedEntities, listVaultCredentials, localTimezone, startMCPVaultAuth } from '../api';
 import {
   DeploymentAddSelectField,
   DeploymentSelectField,
@@ -28,7 +28,6 @@ import {
   ManagedSelectField,
   ManagedTextArea,
   ManagedTextField,
-  VaultMultiSelect,
 } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
@@ -57,12 +56,15 @@ import {
   initialFormValues,
   parseCredentialAuthType,
   patchCredentialFormValues,
+  vaultCredentialNames,
+  vaultCredentialSummaryFromNames,
   vaultOAuthErrorMessage,
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
+import { ManagedVaultSelectField } from './vault-select-field';
 
 type VaultOAuthCompleteMessage = {
   type: 'vault_oauth_complete';
@@ -371,13 +373,13 @@ export function CredentialDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && dismissDialog()}>
-      <DialogContent className="sm:max-w-[560px]">
-        <form onSubmit={submitDirect}>
-          <DialogHeader>
+      <DialogContent className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]">
+        <form className="relative flex min-h-0 flex-col" onSubmit={submitDirect}>
+          <DialogHeader className="shrink-0">
             <DialogTitle>{dialogTitle}</DialogTitle>
             <DialogDescription>{dialogDescription}</DialogDescription>
           </DialogHeader>
-          <div className="mt-5 space-y-4">
+          <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <ManagedTextField
               label={msg('managedAgents.credentialVaults.credentialDialog.displayName', 'Display name')}
               value={values.displayName}
@@ -549,8 +551,8 @@ export function CredentialDialog({
               </Label>
             </div>
           </div>
-          {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
-          <DialogFooter className="mt-5">
+          {error ? <p className="mt-4 shrink-0 text-sm text-destructive">{error}</p> : null}
+          <DialogFooter className="mt-5 shrink-0">
             {firstCredential ? (
               <Button type="button" variant="ghost" disabled={submitting && !waitingForOAuth} onClick={dismissDialog}>
                 {msg('managedAgents.quickstart.skip', 'Skip')}
@@ -710,6 +712,7 @@ function GenericManagedEntityDialog({
   const [environments, setEnvironments] = useState<EntityOption[]>([]);
   const [vaults, setVaults] = useState<EntityOption[]>([]);
   const [memoryStores, setMemoryStores] = useState<EntityOption[]>([]);
+  const [vaultAcknowledged, setVaultAcknowledged] = useState(false);
   const [loadingOptions, setLoadingOptions] = useState(section === 'sessions' || section === 'deployments');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -758,11 +761,31 @@ function GenericManagedEntityDialog({
           label: environment.name || environment.id,
           secondary: environment.id,
         }));
-        const vaultOptions = (vaultPage.data as VaultApiResponse[]).map((vault) => ({
-          id: vault.id,
-          label: vault.display_name || vault.id,
-          secondary: vault.id,
-        }));
+        const vaultRecords = (vaultPage.data as VaultApiResponse[]) ?? [];
+        const credentialPages = await Promise.all(
+          vaultRecords.map(async (vault) => {
+            try {
+              const page = await listVaultCredentials(vault.id, workspaceId);
+              return { vaultId: vault.id, items: page.data ?? [] };
+            } catch {
+              return { vaultId: vault.id, items: [] as VaultCredentialApiResponse[] };
+            }
+          }),
+        );
+        if (!active) {
+          return;
+        }
+        const credentialsByVault = new Map(credentialPages.map((entry) => [entry.vaultId, entry.items]));
+        const vaultOptions = vaultRecords.map((vault) => {
+          const credentialNames = vaultCredentialNames(credentialsByVault.get(vault.id) ?? [], msg);
+          return {
+            id: vault.id,
+            label: vault.display_name || vault.id,
+            createdAt: vault.created_at,
+            credentialNames,
+            secondary: vaultCredentialSummaryFromNames(credentialNames, msg),
+          };
+        });
         const memoryStoreOptions = (memoryStorePage.data as MemoryStoreApiResponse[]).map((memoryStore) => ({
           id: memoryStore.id,
           label: memoryStore.name || memoryStore.id,
@@ -789,7 +812,7 @@ function GenericManagedEntityDialog({
     return () => {
       active = false;
     };
-  }, [lockedAgent, needsReferences, section, workspaceId]);
+  }, [lockedAgent, msg, needsReferences, section, workspaceId]);
 
   const canSubmit =
     section === 'deployments'
@@ -806,6 +829,7 @@ function GenericManagedEntityDialog({
       : section === 'sessions'
         ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
           areSessionFileResourcesValid(values.fileResources) &&
+          (!values.vaultIds.length || vaultAcknowledged) &&
           !submitting &&
           !loadingOptions
         : values.name.trim().length > 0 &&
@@ -978,6 +1002,7 @@ function GenericManagedEntityDialog({
                   ? msg('managedAgents.sessions.titlePlaceholder', 'Optional - name this run')
                   : msg('managedAgents.common.namePlaceholder', 'Enter a name')
               }
+              optional={section === 'sessions'}
               onChange={(name) => setValues((current) => ({ ...current, name }))}
               autoFocus
             />
@@ -1019,9 +1044,15 @@ function GenericManagedEntityDialog({
                   options={environments}
                   onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
                 />
-                <VaultMultiSelect
-                  vaults={vaults}
+                <ManagedVaultSelectField
+                  label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
+                  optional
                   selectedIds={values.vaultIds}
+                  options={vaults}
+                  manageHref={`/workspaces/${workspaceId}/vaults`}
+                  manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
+                  acknowledged={vaultAcknowledged}
+                  onAcknowledgedChange={setVaultAcknowledged}
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (

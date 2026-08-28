@@ -14,6 +14,7 @@ import {
   Folder,
   FolderOpen,
   Loader2,
+  LockKeyhole,
   MoreVertical,
   Pencil,
   Plus,
@@ -953,6 +954,13 @@ export function VaultCredentialsPanel({
           loading={state.loading}
           error={state.error}
           emptyTitle={msg('managedAgents.credentialVaults.credentials.empty', 'No credentials yet')}
+          emptyBody={msg(
+            'managedAgents.credentialVaults.credentials.emptyBody',
+            'Add a credential to give agents access through this vault.',
+          )}
+          emptyIcon={LockKeyhole}
+          emptyActionLabel={msg('managedAgents.credentialVaults.credentialDialog.add', 'Add credential')}
+          onEmptyAction={() => setDialog({ mode: 'create' })}
           columns={['ID', 'Name', 'Auth', 'Created', 'Actions'].map((column) => managedColumnLabel(column, msg))}
           rows={state.data.map((credential) => [
             compactEntityId(credential.id),

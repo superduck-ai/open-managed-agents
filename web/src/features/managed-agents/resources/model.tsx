@@ -979,6 +979,83 @@ export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
     : 'Static bearer';
 }
 
+/** Credential display names for vault pickers (CMA-aligned). */
+export function vaultCredentialNames(credentials: VaultCredentialApiResponse[], msg: I18nMsg): string[] {
+  return credentials.map((credential) => {
+    if (typeof credential.display_name === 'string' && credential.display_name.trim()) {
+      return credential.display_name.trim();
+    }
+    const auth = objectRecord(credential.auth);
+    if (typeof auth.secret_name === 'string' && auth.secret_name.trim()) {
+      return auth.secret_name.trim();
+    }
+    return credentialAuthLabel(credential.auth, msg);
+  });
+}
+
+/** Trailing summary for vault pickers: joined names, or “No credentials”. */
+export function vaultCredentialSummary(credentials: VaultCredentialApiResponse[], msg: I18nMsg): string {
+  const names = vaultCredentialNames(credentials, msg);
+  if (!names.length) {
+    return msg('managedAgents.credentialVaults.emptyCredentialSummary', 'No credentials');
+  }
+  return names.join(', ');
+}
+
+export function vaultCredentialSummaryFromNames(names: string[], msg: I18nMsg): string {
+  if (!names.length) {
+    return msg('managedAgents.credentialVaults.emptyCredentialSummary', 'No credentials');
+  }
+  return names.join(', ');
+}
+
+/** CMA-style created label: relative when recent, short calendar date when older. */
+export function vaultCreatedLabel(
+  createdAt: string,
+  formatRelative: (value: number, unit: Intl.RelativeTimeFormatUnit) => string,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return '—';
+  }
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  if (Math.abs(seconds) < 60) {
+    return formatRelative(0, 'second');
+  }
+  const minutes = Math.round(seconds / 60);
+  if (Math.abs(minutes) < 60) {
+    return formatRelative(minutes, 'minute');
+  }
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) {
+    return formatRelative(hours, 'hour');
+  }
+  const days = Math.round(hours / 24);
+  if (Math.abs(days) < 7) {
+    return formatRelative(days, 'day');
+  }
+  return formatDate(createdAt, { month: 'short', day: 'numeric' });
+}
+
+export function vaultCreatedAbsoluteLabel(
+  createdAt: string,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return '—';
+  }
+  return formatDate(createdAt, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
 /** Map platform vault OAuth error_code wire values to localized user copy. */
 export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string {
   switch (errorCode.trim()) {

@@ -18,6 +18,11 @@ import {
   patchCredentialFormValues,
   statusPillTone,
   vaultOAuthErrorMessage,
+  vaultCredentialNames,
+  vaultCreatedAbsoluteLabel,
+  vaultCreatedLabel,
+  vaultCredentialSummary,
+  vaultCredentialSummaryFromNames,
 } from './model';
 
 const msgFallback: I18nMsg = ((_key, fallback) => fallback) as I18nMsg;
@@ -408,5 +413,110 @@ describe('vaultOAuthErrorMessage', () => {
     expect(vaultOAuthErrorMessage('verification_request_failed', msgFallback)).toContain('verification failed');
     expect(vaultOAuthErrorMessage('mystery_code', msgFallback)).toBe('Could not complete OAuth. Try again.');
     expect(vaultOAuthErrorMessage(' mystery_code ', msgFallback)).toBe('Could not complete OAuth. Try again.');
+  });
+});
+
+describe('vaultCreatedLabel', () => {
+  test('uses relative time for recent vaults and short date for older ones', () => {
+    const formatRelative = (value: number, unit: Intl.RelativeTimeFormatUnit) => `${value}:${unit}`;
+    const formatDate = (_value: string | number | Date, options?: Intl.DateTimeFormatOptions) =>
+      options?.month === 'short' && options.day === 'numeric' && !options.year ? 'Aug 6' : 'Aug 6, 2026, 4:56 PM GMT+8';
+
+    expect(vaultCreatedLabel(new Date().toISOString(), formatRelative, formatDate)).toBe('0:second');
+    expect(
+      vaultCreatedLabel(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), formatRelative, formatDate),
+    ).toBe('-3:day');
+    expect(
+      vaultCreatedLabel(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), formatRelative, formatDate),
+    ).toBe('Aug 6');
+    expect(vaultCreatedAbsoluteLabel('2026-08-06T08:56:00Z', formatDate)).toBe('Aug 6, 2026, 4:56 PM GMT+8');
+  });
+});
+
+describe('vaultCredentialSummary', () => {
+  const msgInterpolate: I18nMsg = ((_, fallback, vars) => {
+    let out = fallback;
+    if (vars) {
+      for (const [key, value] of Object.entries(vars)) {
+        out = out.replaceAll(`{${key}}`, String(value));
+      }
+    }
+    return out;
+  }) as I18nMsg;
+
+  test('summarizes empty and named credentials for vault pickers', () => {
+    expect(vaultCredentialSummary([], msgInterpolate)).toBe('No credentials');
+    expect(vaultCredentialSummaryFromNames([], msgInterpolate)).toBe('No credentials');
+    expect(
+      vaultCredentialNames(
+        [
+          {
+            id: 'vcrd_1',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'GitLab',
+            auth: { type: 'environment_variable', secret_name: 'GITLAB_TOKEN' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+        ],
+        msgInterpolate,
+      ),
+    ).toEqual(['GitLab']);
+    expect(
+      vaultCredentialSummary(
+        [
+          {
+            id: 'vcrd_1',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'GitLab',
+            auth: { type: 'environment_variable', secret_name: 'GITLAB_TOKEN' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+        ],
+        msgInterpolate,
+      ),
+    ).toBe('GitLab');
+    expect(
+      vaultCredentialSummary(
+        [
+          {
+            id: 'vcrd_1',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'A',
+            auth: { type: 'static_bearer' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+          {
+            id: 'vcrd_2',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'B',
+            auth: { type: 'static_bearer' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+          {
+            id: 'vcrd_3',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'C',
+            auth: { type: 'static_bearer' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+        ],
+        msgInterpolate,
+      ),
+    ).toBe('A, B, C');
   });
 });

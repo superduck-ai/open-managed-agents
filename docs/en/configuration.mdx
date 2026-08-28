@@ -69,9 +69,15 @@ For production, mount stable private keys through read-only secrets. Never bake 
 just generate-code-session-jwt-key \
   config/secrets/code-session-jwt-ed25519.pem
 
+# Export only the public key to add to GitHub SSH Signing Keys
+just print-code-session-signing-public-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
 just generate-vault-kek \
   config/secrets/vault-kek
 ```
+
+The Code Session JWT key also signs CCRv2 Git commits. For GitHub to display `Verified`, keep this private key stable, add the command output as a GitHub SSH Signing Key, and ensure the environment's existing Git commit email is verified by the same account. After rotating the private key, update the GitHub Signing Key as well.
 
 <Note>
   `docs/configuration-reference.yaml` contains every accepted field with safe example values. `config/config.example.yaml` is the smaller template for daily development.

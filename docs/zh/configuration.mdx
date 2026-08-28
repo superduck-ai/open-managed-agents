@@ -69,9 +69,15 @@ LLM Provider 是工作区数据，不属于进程配置。服务启动后，在�
 just generate-code-session-jwt-key \
   config/secrets/code-session-jwt-ed25519.pem
 
+# 只导出需要添加到 GitHub SSH Signing Keys 的公钥
+just print-code-session-signing-public-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
 just generate-vault-kek \
   config/secrets/vault-kek
 ```
+
+Code Session JWT 私钥同时用于 CCRv2 Git 提交签名。要让 GitHub 显示 `Verified`，请保持该私钥稳定，将上述命令输出添加为 GitHub SSH Signing Key，并确保环境现有的 Git 提交邮箱已在同一账号验证。私钥轮换后需要同步更新 GitHub Signing Key。
 
 <Note>
   仓库中的 `docs/configuration-reference.yaml` 记录全部已接受字段和安全示例值；`config/config.example.yaml` 是日常开发使用的最小示例。

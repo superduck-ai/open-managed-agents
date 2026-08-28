@@ -452,6 +452,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		ID:                 session.ExternalID,
 		Agent:              httpapi.RawOr(session.AgentSnapshot, `{}`),
 		ArchivedAt:         httpapi.OptionalTime(session.ArchivedAt),
+		Budget:             httpapi.RawOr(session.Budget, `null`),
 		CreatedAt:          httpapi.FormatTime(session.CreatedAt),
 		DeploymentID:       session.DeploymentID,
 		EnvironmentID:      session.EnvironmentExternalID,
@@ -521,4 +522,56 @@ func responseFromResource(resource db.SessionResource) json.RawMessage {
 
 func isOutputResource(resource db.SessionResource) bool {
 	return strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")
+}
+
+type sessionBudgetMaxListCost struct {
+	Amount   string `json:"amount"`
+	Currency string `json:"currency"`
+}
+
+type sessionBudgetRequest struct {
+	Type        string                   `json:"type"`
+	MaxListCost sessionBudgetMaxListCost `json:"max_list_cost"`
+}
+
+func normalizeBudget(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
+		return nil, nil
+	}
+	var budget sessionBudgetRequest
+	if err := json.Unmarshal(raw, &budget); err != nil {
+		return nil, errors.New("budget must be an object")
+	}
+	if budget.Type != "limit" {
+		return nil, errors.New("budget.type must be limit")
+	}
+	if budget.MaxListCost.Currency != "USD" {
+		return nil, errors.New("budget.max_list_cost.currency must be USD")
+	}
+	amount := strings.TrimSpace(budget.MaxListCost.Amount)
+	if !validBudgetAmount(amount) {
+		return nil, errors.New("budget.max_list_cost.amount must be a whole number of cents as a string, greater than zero")
+	}
+	return httpapi.MarshalRaw(map[string]any{
+		"type": "limit",
+		"max_list_cost": map[string]string{
+			"amount":   amount,
+			"currency": "USD",
+		},
+	})
+}
+
+func validBudgetAmount(amount string) bool {
+	if amount == "" {
+		return false
+	}
+	if len(amount) > 1 && amount[0] == '0' {
+		return false
+	}
+	for _, ch := range amount {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return amount != "0"
 }

@@ -173,6 +173,7 @@ export type SessionApiResponse = {
   stats?: unknown;
   status: string;
   title?: string | null;
+  budget?: { max_list_cost?: { amount?: string } } | null;
   type: 'session';
   updated_at: string;
   usage?: unknown;
@@ -566,6 +567,8 @@ export type ManagedEntityFormValues = {
   vaultIds: string[];
   memoryStoreIds: string[];
   fileResources: SessionFileResourceFormValue[];
+  budgetAmount: string;
+  budgetInitiallySet: boolean;
 };
 
 export type SessionFileResourceFormValue = {

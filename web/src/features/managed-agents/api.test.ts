@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { QueryClient } from '@tanstack/react-query';
 import { setAnthropicClientForTest } from '@/shared/api/anthropic';
-import { listSessionFileOptions, mergeSessionStreamFrame, sessionDetailScopeEvents } from './api';
+import { listSessionFileOptions, mergeSessionStreamFrame, sessionBudgetUpdate, sessionDetailScopeEvents } from './api';
 import { buildSessionEventEntries } from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
@@ -231,3 +231,22 @@ function fileMetadata(index: number) {
     type: 'file' as const,
   };
 }
+
+describe('sessionBudgetUpdate', () => {
+  test('sends new budget when amount provided', () => {
+    const values = { budgetAmount: '125', budgetInitiallySet: false } as never;
+    expect(sessionBudgetUpdate(values)).toEqual({
+      budget: { type: 'limit', max_list_cost: { amount: '125', currency: 'USD' } },
+    });
+  });
+
+  test('removes budget when cleared and was set', () => {
+    const values = { budgetAmount: '', budgetInitiallySet: true } as never;
+    expect(sessionBudgetUpdate(values)).toEqual({ budget: null });
+  });
+
+  test('omits budget when empty and was never set', () => {
+    const values = { budgetAmount: '', budgetInitiallySet: false } as never;
+    expect(sessionBudgetUpdate(values)).toEqual({});
+  });
+});

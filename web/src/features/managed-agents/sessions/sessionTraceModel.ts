@@ -23,7 +23,6 @@ import {
   type ToolBatchEntry,
   type ToolCallEntry,
   type ToolLifecycle,
-  type TranscriptMarkdownBlock,
 } from '../types';
 import { compactEntityId, objectRecord, toRecord } from '../utils';
 import {
@@ -2267,131 +2266,6 @@ export function prettyCode(value: string) {
   } catch {
     return value;
   }
-}
-
-export function parseTranscriptMarkdownBlocks(value: string): TranscriptMarkdownBlock[] {
-  const lines = value.replace(/\r\n/g, '\n').split('\n');
-  const blocks: TranscriptMarkdownBlock[] = [];
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (!trimmed) {
-      index += 1;
-      continue;
-    }
-
-    const fence = trimmed.match(/^```([a-zA-Z0-9_-]+)?\s*$/);
-    if (fence) {
-      const codeLines: string[] = [];
-      index += 1;
-      while (index < lines.length && !lines[index].trim().startsWith('```')) {
-        codeLines.push(lines[index]);
-        index += 1;
-      }
-      if (index < lines.length) {
-        index += 1;
-      }
-      blocks.push({ type: 'code', language: fence[1]?.toLowerCase(), value: codeLines.join('\n') });
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
-    if (heading) {
-      blocks.push({ type: 'heading', level: heading[1].length, text: heading[2].trim() });
-      index += 1;
-      continue;
-    }
-
-    if (isTranscriptMarkdownTableStart(lines, index)) {
-      const headers = splitTranscriptMarkdownTableRow(lines[index]);
-      index += 2;
-      const rows: string[][] = [];
-      while (index < lines.length && isTranscriptMarkdownTableRow(lines[index])) {
-        rows.push(splitTranscriptMarkdownTableRow(lines[index]));
-        index += 1;
-      }
-      blocks.push({ type: 'table', headers, rows });
-      continue;
-    }
-
-    const listItem = trimmed.match(/^[-*]\s+(.+)$/);
-    if (listItem) {
-      const items: string[] = [];
-      while (index < lines.length) {
-        const current = lines[index].trim().match(/^[-*]\s+(.+)$/);
-        if (!current) {
-          break;
-        }
-        items.push(current[1].trim());
-        index += 1;
-      }
-      blocks.push({ type: 'list', items });
-      continue;
-    }
-
-    const paragraphLines: string[] = [];
-    while (index < lines.length) {
-      const current = lines[index];
-      const currentTrimmed = current.trim();
-      if (
-        !currentTrimmed ||
-        currentTrimmed.startsWith('```') ||
-        currentTrimmed.match(/^(#{1,4})\s+/) ||
-        currentTrimmed.match(/^[-*]\s+/) ||
-        isTranscriptMarkdownTableStart(lines, index)
-      ) {
-        break;
-      }
-      paragraphLines.push(currentTrimmed);
-      index += 1;
-    }
-    blocks.push({ type: 'paragraph', text: paragraphLines.join(' ') });
-  }
-  return blocks.length ? blocks : [{ type: 'paragraph', text: value }];
-}
-
-export function isTranscriptMarkdownTableStart(lines: string[], index: number) {
-  if (index + 1 >= lines.length || !isTranscriptMarkdownTableRow(lines[index])) {
-    return false;
-  }
-  const separator = splitTranscriptMarkdownTableRow(lines[index + 1]);
-  return separator.length >= 2 && separator.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
-}
-
-export function isTranscriptMarkdownTableRow(line: string) {
-  const trimmed = line.trim();
-  return trimmed.startsWith('|') && trimmed.endsWith('|') && splitTranscriptMarkdownTableRow(trimmed).length >= 2;
-}
-
-export function splitTranscriptMarkdownTableRow(line: string) {
-  return line
-    .trim()
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim());
-}
-
-export function isSafeTranscriptMarkdownHref(value: string) {
-  return /^(https?:|mailto:|\/|#)/i.test(value);
-}
-
-export function parseTranscriptCode(value: string): { value: string; language?: string } | null {
-  const trimmed = value.trim();
-  const fenced = trimmed.match(/^```([a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
-  if (fenced) {
-    const language = fenced[1]?.toLowerCase();
-    const body = fenced[2].trim();
-    return {
-      value: language === 'json' && !body.includes('\n') ? prettyCode(body) : body,
-      language,
-    };
-  }
-  if (looksLikeJson(trimmed)) {
-    return { value: trimmed.includes('\n') ? trimmed : prettyCode(trimmed), language: 'json' };
-  }
-  return null;
 }
 
 export function looksLikeJson(value: string) {

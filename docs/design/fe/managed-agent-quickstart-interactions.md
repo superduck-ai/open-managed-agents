@@ -28,6 +28,28 @@ Transcript 由 `MessageScroller` 的 `autoScroll` 跟随底部；单条消息、
 
 原始 `chatItems` 不直接参与分组。`transcriptModel` 先把它们归一化为可见 presentation，过滤没有可见文本的消息，并从 `toolPresentation` 读取工具是否占用发言方；随后只在这份可见序列上计算 `continued`。renderer 消费同一份 presentation，不再单独通过返回 `null` 改变可见性。
 
+助手文本在气泡展示边界按 CommonMark 与 GitHub Flavored Markdown 渲染，支持各级标题、粗体、斜体、删除线、有序与无序列表、任务列表、引用、链接、自动链接、行内代码、代码围栏、表格和分隔线。已标注语言的代码围栏复用共享的 highlight.js 核心和显式注册语言，不额外引入整包语言自动检测。流式增量仍以原始文本进入 transcript，不在状态层保存 HTML。
+
+Markdown 组件跳过原始 HTML，只允许 HTTP、HTTPS、邮件、站内路径和锚点链接，并且不展示远程图片。数学公式、MDX 与任意 HTML 不属于当前合同。用户消息保持纯文本，用户输入的 Markdown 标记不会改变气泡结构。
+
+### Mermaid 图表
+
+语言标记为 `mermaid` 的代码围栏由独立的共享组件异步渲染，不经过普通代码高亮路径。只有实际出现 Mermaid 围栏时才动态加载渲染库，避免增加 Quickstart 首屏同步依赖。渲染器使用稳定的唯一 ID，并把全局 Mermaid 初始化与渲染放入串行队列，防止多个图表或主题切换互相覆盖配置。
+
+流式消息每次变化后等待短暂稳定窗口再渲染；组件卸载或源码变化时，旧异步结果不得覆盖新内容。浅色与深色主题分别使用 Mermaid 对应主题，主题变化会重新生成图表。
+
+LLM 输出属于不可信输入。Mermaid 固定使用 `securityLevel: strict`、`startOnLoad: false` 和 `suppressErrorRendering: true`，不绑定 Mermaid 返回的交互函数；应用层把所有图表的单段源码限制为 20,000 字符，并为 flowchart 设置 200 条边上限。非法语法、超限内容或动态加载失败都必须保留原始源码，同时展示简短的本地化失败状态。
+
+```mermaid
+flowchart LR
+  Fence["mermaid 代码围栏"] --> Limit{"长度是否超限"}
+  Limit -->|是| Fallback["状态说明与源码回退"]
+  Limit -->|否| Delay["等待流式内容短暂稳定"]
+  Delay --> Queue["按主题串行解析与渲染"]
+  Queue -->|成功| Diagram["可访问的响应式 SVG 图表"]
+  Queue -->|失败| Fallback
+```
+
 流式 `Thinking` 和请求错误是临时的 assistant turn，也参与相同的分组规则：如果前一个可归属项已经是 assistant，它们复用该组的头像和名称；如果前一个可归属项是 user，它们开启新的 assistant 组。请求错误只有这一份临时 turn，不再同时写入永久 status item。普通状态行以及 `list_environments`、`list_vaults`、`flag_schedule_intent` 这类紧凑状态工具不占用发言方，也不切断前后的视觉消息组。
 
 ```mermaid
@@ -115,6 +137,9 @@ flowchart LR
   Components --> Transcript["transcriptModel：可见 presentation 与 continued"]
   Transcript --> TurnGroup["QuickstartTurnGroup：视觉消息分组 interface"]
   TurnGroup --> ChatLayout["chatLayout：头像、名称、间距与状态 turn"]
+  ChatLayout --> Markdown["shared/ui/markdown-content：安全 Markdown 呈现"]
+  Markdown --> Highlight["shared/ui/syntax-code-block：显式语言高亮"]
+  Markdown --> Mermaid["shared/ui/mermaid-diagram：异步图表与源码回退"]
   Components --> Chat["chatModel：文本与聊天状态"]
   Components --> Questions["questions/：问题集状态、编辑与回看"]
   Questions --> QuestionModel["questionModel：问题 payload 解析"]
@@ -148,6 +173,8 @@ flowchart LR
 - 待回答与已完成的问题卡都位于 transcript 内，不存在独立 pinned interaction 容器。
 - 连续同一发言方的消息只在组首显示头像和名称。
 - 流式与错误 turn 遵循同一分组规则，不重复显示连续 assistant 组的头像和名称。
+- 助手消息正确渲染 CommonMark、GFM 与显式语言代码高亮，原始 HTML 和危险 URL 不产生可执行或可点击内容；用户消息仍按纯文本展示。
+- 合法 Mermaid 围栏在真实浏览器中产生非空且适配主题的图表；非法、超限或加载失败时展示本地化状态并保留源码，且 Mermaid 不进入首屏同步 chunk。
 - 新消息、流式状态和问题卡跟随 transcript 底部，消息列表末尾不保留锚定 spacer。
 - `flag_schedule_intent` 以紧凑状态行保留在 transcript 中；未知工具保持既有的人类可读 fallback 和 Terminal 图标。
 - 窄屏模式隐藏可见步骤名称、缩短连接线、无横向溢出，进度条仍居中且完整名称可被辅助技术读取。

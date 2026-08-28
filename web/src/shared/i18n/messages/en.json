@@ -1,4 +1,7 @@
 {
+  "common.markdown.mermaidDiagram": "Mermaid diagram",
+  "common.markdown.mermaidInvalid": "Mermaid diagram could not be rendered; showing source.",
+  "common.markdown.mermaidTooLong": "Mermaid diagram is too large; showing source.",
   "account.apiPlan": "API plan",
   "account.logout": "Log out",
   "account.loggingOut": "Logging out...",

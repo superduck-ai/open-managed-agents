@@ -9,6 +9,9 @@ globalScope.Element = testWindow.Element;
 globalScope.Node = testWindow.Node;
 globalScope.NodeFilter = testWindow.NodeFilter;
 globalScope.HTMLElement = testWindow.HTMLElement;
+globalScope.CSSStyleSheet = testWindow.CSSStyleSheet;
+globalScope.SVGElement = testWindow.SVGElement;
+globalScope.SVGGraphicsElement = testWindow.SVGGraphicsElement;
 globalScope.HTMLButtonElement = testWindow.HTMLButtonElement;
 globalScope.HTMLInputElement = testWindow.HTMLInputElement;
 globalScope.HTMLSelectElement = testWindow.HTMLSelectElement;
@@ -18,6 +21,13 @@ globalScope.navigator = testWindow.navigator;
 globalScope.requestAnimationFrame = testWindow.requestAnimationFrame.bind(testWindow);
 globalScope.cancelAnimationFrame = testWindow.cancelAnimationFrame.bind(testWindow);
 globalScope.getComputedStyle = testWindow.getComputedStyle.bind(testWindow);
+
+const svgElementPrototype = testWindow.SVGElement.prototype as typeof testWindow.SVGElement.prototype & {
+  getBBox?: () => DOMRect;
+};
+if (!svgElementPrototype.getBBox) {
+  svgElementPrototype.getBBox = () => new testWindow.DOMRect(0, 0, 100, 20) as unknown as DOMRect;
+}
 
 export function resetTestDom(url: string) {
   testWindow.history.replaceState(null, '', url);

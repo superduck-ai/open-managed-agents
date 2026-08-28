@@ -1,4 +1,7 @@
 {
+  "common.markdown.mermaidDiagram": "Mermaid 图表",
+  "common.markdown.mermaidInvalid": "Mermaid 图表无法渲染，已显示源码。",
+  "common.markdown.mermaidTooLong": "Mermaid 图表内容过大，已显示源码。",
   "account.apiPlan": "API 方案",
   "account.logout": "退出登录",
   "account.loggingOut": "正在退出...",

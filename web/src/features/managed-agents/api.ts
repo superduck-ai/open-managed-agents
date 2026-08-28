@@ -3,7 +3,7 @@ import { consoleApi } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
-import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
+import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileAPIMountPath } from './sessions/file-resource-path';
 import { sessionEventType } from './sessions/sessionTraceModel';
 import {
@@ -1736,7 +1736,11 @@ export function listVaultCredentials(vaultId: string, workspaceId: string) {
 export function createVaultCredential(vaultId: string, values: CredentialFormValues, workspaceId: string) {
   return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
     vaultId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'create'), metadata: {} },
+    {
+      display_name: credentialDisplayName(values),
+      auth: credentialAuthBody(values, 'create'),
+      metadata: {},
+    },
     workspaceId,
   );
 }

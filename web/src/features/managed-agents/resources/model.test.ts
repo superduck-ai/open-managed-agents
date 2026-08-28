@@ -234,6 +234,11 @@ describe('credentialAuthBody environment_variable', () => {
     });
   });
 
+  test('credentialFormValues defaults create forms to MCP OAuth', () => {
+    expect(credentialFormValues().authType).toBe('mcp_oauth');
+    expect(emptyCredentialFormValues().authType).toBe('mcp_oauth');
+  });
+
   test('credentialFormValues round-trips networking and injection_location', () => {
     expect(
       credentialFormValues({
@@ -262,7 +267,8 @@ describe('credentialAuthBody environment_variable', () => {
   });
 
   test('credentialFormReady requires hosts for limited and at least one injection location', () => {
-    expect(credentialFormReady(envValues({ displayName: '' }), 'create', true)).toBe(false);
+    expect(credentialFormReady(envValues({ authType: '' }), 'create', true)).toBe(false);
+    expect(credentialFormReady(envValues({ displayName: '' }), 'create', true)).toBe(true);
     expect(credentialFormReady(envValues({ allowedHostsText: '' }), 'create', true)).toBe(false);
     expect(credentialFormReady(envValues({ networkType: 'unrestricted', allowedHostsText: '' }), 'create', true)).toBe(
       true,

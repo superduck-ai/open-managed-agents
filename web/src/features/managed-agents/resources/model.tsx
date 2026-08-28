@@ -781,7 +781,7 @@ export function environmentMetadataBody(values: EnvironmentEditValues) {
 export function emptyCredentialFormValues(): CredentialFormValues {
   return {
     displayName: '',
-    authType: 'static_bearer',
+    authType: 'mcp_oauth',
     mcpServerUrl: '',
     token: '',
     secretName: '',
@@ -821,21 +821,57 @@ export function patchCredentialFormValues(
 }
 
 export function parseCredentialAuthType(value: string): CredentialFormValues['authType'] {
-  if (value === 'environment_variable' || value === 'mcp_oauth') {
+  if (value === 'environment_variable' || value === 'mcp_oauth' || value === 'static_bearer') {
     return value;
   }
-  return 'static_bearer';
+  return '';
+}
+
+/** Resolved auth type for existing credentials; defaults to static_bearer when missing. */
+export function parseExistingCredentialAuthType(value: string): Exclude<CredentialFormValues['authType'], ''> {
+  const parsed = parseCredentialAuthType(value);
+  return parsed || 'static_bearer';
+}
+
+/** API display_name when the optional Name field is left blank. */
+export function credentialDisplayName(values: CredentialFormValues): string {
+  if (values.displayName.trim()) {
+    return values.displayName.trim();
+  }
+  if (values.authType === 'environment_variable' && values.secretName.trim()) {
+    return values.secretName.trim();
+  }
+  if (values.mcpServerUrl.trim()) {
+    try {
+      return new URL(values.mcpServerUrl.trim()).hostname;
+    } catch {
+      return values.mcpServerUrl.trim();
+    }
+  }
+  if (values.authType === 'mcp_oauth') {
+    return 'MCP OAuth credential';
+  }
+  if (values.authType === 'environment_variable') {
+    return 'Environment variable';
+  }
+  if (values.authType === 'static_bearer') {
+    return 'Static bearer credential';
+  }
+  return 'Credential';
 }
 
 export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
-  const auth = objectRecord(credential?.auth);
-  const authType = parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : '');
+  if (!credential) {
+    return emptyCredentialFormValues();
+  }
+  const auth = objectRecord(credential.auth);
+  const authType = parseExistingCredentialAuthType(typeof auth.type === 'string' ? auth.type : '');
   const networking = authType === 'environment_variable' ? credentialNetworkingFromAuth(auth) : null;
   const injection = authType === 'environment_variable' ? credentialInjectionLocationFromAuth(auth) : null;
   return {
     ...emptyCredentialFormValues(),
-    displayName: credential?.display_name || '',
-    authType: parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : ''),
+    displayName: credential.display_name || '',
+    authType,
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
     ...(networking ?? {}),
@@ -873,6 +909,9 @@ function credentialRefreshBody(values: CredentialFormValues) {
 }
 
 export function credentialAuthBody(values: CredentialFormValues, mode: 'create' | 'update') {
+  if (!values.authType) {
+    throw new Error('Credential auth type is required');
+  }
   if (values.authType === 'environment_variable') {
     // Keep secret_value verbatim; env values may intentionally include whitespace.
     const secretValue = values.secretValue;
@@ -924,7 +963,7 @@ function credentialRefreshComplete(values: CredentialFormValues) {
 }
 
 export function credentialFormReady(values: CredentialFormValues, mode: 'create' | 'edit', acknowledged: boolean) {
-  if (!acknowledged || !values.displayName.trim()) {
+  if (!acknowledged || !values.authType) {
     return false;
   }
   if (values.authType === 'environment_variable') {
@@ -974,9 +1013,7 @@ export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
   if (authType === 'mcp_oauth') {
     return msg ? msg('managedAgents.credentialVaults.credentialDialog.mcpOAuth', 'MCP OAuth') : 'MCP OAuth';
   }
-  return msg
-    ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Static bearer token')
-    : 'Static bearer';
+  return msg ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Bearer token') : 'Bearer token';
 }
 
 /** Credential display names for vault pickers (CMA-aligned). */

@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { QueryClient } from '@tanstack/react-query';
 import { setAnthropicClientForTest } from '@/shared/api/anthropic';
-import { listSessionFileOptions, mergeSessionStreamFrame, sessionDetailScopeEvents } from './api';
+import {
+  addSessionFileResource,
+  listSessionFileOptions,
+  mergeSessionEventCache,
+  mergeSessionEventsById,
+  mergeSessionStreamFrame,
+  sessionDetailDeltaFrames,
+  sessionDetailScopeEvents,
+} from './api';
 import { buildSessionEventEntries } from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
@@ -12,7 +20,7 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
-  test('preserves preview time and removes an orphaned preview when the session idles', () => {
+  test('replaces an orphaned stream preview as soon as the final agent message arrives', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -39,6 +47,19 @@ describe('managed agents API', () => {
       processed_at: createdAt,
       content: [{ type: 'text', text: 'Final answer' }],
     });
+
+    const visibleBeforeIdle = buildSessionEventEntries(
+      sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']),
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    expect(visibleBeforeIdle.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_final',
+    ]);
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       id: 'sevt_idle',
       type: 'session.status_idle',
@@ -51,6 +72,207 @@ describe('managed agents API', () => {
       'sevt_final',
       'sevt_idle',
     ]);
+  });
+
+  test('keeps a streaming message in its turn when idle arrives before the final event', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const startAt = '2026-08-26T13:13:00Z';
+    const messageAt = '2026-08-26T13:13:01Z';
+    const idleAt = '2026-08-26T13:13:05Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_model_start',
+      type: 'span.model_request_start',
+      created_at: startAt,
+      processed_at: startAt,
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: messageAt,
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_idle',
+      type: 'session.status_idle',
+      created_at: idleAt,
+      processed_at: idleAt,
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_model_start',
+      'sevt_preview',
+      'sevt_idle',
+    ]);
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_final',
+      type: 'agent.message',
+      created_at: messageAt,
+      processed_at: idleAt,
+      content: [{ type: 'text', text: 'Final answer' }],
+    });
+
+    const events = sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']);
+    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_final', 'sevt_idle']);
+
+    const entries = buildSessionEventEntries(events, 'transcript', Date.parse(startAt), undefined, {
+      platformTranscriptFiltering: true,
+    });
+    const message = entries.find((entry) => entry.kind === 'message');
+    expect(message?.bracketStartMs).toBe(Date.parse(startAt));
+    expect(message?.bracketEndMs).toBe(Date.parse(idleAt));
+  });
+
+  test('does not reconcile a thinking preview with a final agent message', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const createdAt = '2026-08-26T13:13:00Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: createdAt,
+      processed_at: createdAt,
+      event: { id: 'sevt_thinking_preview', type: 'agent.thinking' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_final',
+      type: 'agent.message',
+      created_at: createdAt,
+      processed_at: createdAt,
+      content: [{ type: 'text', text: 'Final answer' }],
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_thinking_preview',
+      'sevt_final',
+    ]);
+  });
+
+  test('preserves a same-timestamp user turn before its agent error', () => {
+    const createdAt = '2026-08-28T01:01:29Z';
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_3qzvoDj1lEhf4xsGJoTHSxjA',
+          type: 'user.message',
+          created_at: createdAt,
+          processed_at: createdAt,
+          content: [{ type: 'text', text: '帮我把这个信息写成一个txt文件。' }],
+        },
+        {
+          id: 'sevt_7ab0bf46aa79a2d26bfdce33c3e2e400',
+          type: 'agent.message',
+          created_at: createdAt,
+          processed_at: createdAt,
+          content: [{ type: 'text', text: 'An error occurred while executing Claude Code.' }],
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_3qzvoDj1lEhf4xsGJoTHSxjA',
+      'sevt_7ab0bf46aa79a2d26bfdce33c3e2e400',
+    ]);
+  });
+
+  test('preserves backend event order when timestamps run backwards', () => {
+    const events = [
+      {
+        id: 'sevt_user_inserted_first',
+        type: 'user.message',
+        created_at: '2026-08-28T01:01:30Z',
+        content: [{ type: 'text', text: 'First by database id' }],
+      },
+      {
+        id: 'sevt_agent_inserted_second',
+        type: 'agent.message',
+        created_at: '2026-08-28T01:01:29Z',
+        content: [{ type: 'text', text: 'Second by database id' }],
+      },
+    ];
+
+    expect(mergeSessionEventsById(events).map((event) => event.id)).toEqual([
+      'sevt_user_inserted_first',
+      'sevt_agent_inserted_second',
+    ]);
+    expect(
+      buildSessionEventEntries(events, 'transcript', Date.parse('2026-08-28T01:01:29Z'), undefined, {
+        platformTranscriptFiltering: true,
+      }).map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id)),
+    ).toEqual(['sevt_user_inserted_first', 'sevt_agent_inserted_second']);
+  });
+
+  test('keeps content-block entries at their source event position', () => {
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_user_first',
+          type: 'user.message',
+          created_at: '2026-08-28T01:01:30Z',
+          content: [{ type: 'text', text: 'First' }],
+        },
+        {
+          id: 'sevt_agent_blocks',
+          type: 'agent.message',
+          created_at: '2026-08-28T01:01:31Z',
+          content: [
+            { type: 'thinking', thinking: 'Working' },
+            { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { path: '/workspace/file.txt' } },
+          ],
+        },
+        {
+          id: 'sevt_user_second',
+          type: 'user.message',
+          created_at: '2026-08-28T01:01:32Z',
+          content: [{ type: 'text', text: 'Second' }],
+        },
+      ],
+      'transcript',
+      Date.parse('2026-08-28T01:01:30Z'),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_user_first',
+      'sevt_agent_blocks-thinking-0',
+      'toolu_read',
+      'sevt_user_second',
+    ]);
+  });
+
+  test('replaces cached events without moving them and appends new events in arrival order', () => {
+    const first = mergeSessionEventCache(undefined, [
+      {
+        id: 'sevt_first',
+        type: 'user.message',
+        created_at: '2026-08-28T01:01:30Z',
+        processed_at: null,
+        is_streaming: true,
+        content: 'draft',
+      },
+      { id: 'sevt_second', type: 'agent.message', created_at: '2026-08-28T01:01:29Z', content: 'second' },
+    ]);
+    const updated = mergeSessionEventCache(first, [
+      {
+        id: 'sevt_first',
+        type: 'user.message',
+        created_at: '2026-08-28T01:01:30Z',
+        processed_at: '2026-08-28T01:01:30Z',
+        content: 'final',
+      },
+      { id: 'sevt_third', type: 'session.status_idle', created_at: '2026-08-28T01:01:28Z' },
+    ]);
+
+    expect(updated.events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_second', 'sevt_third']);
+    expect(updated.events[0]?.content).toBe('final');
   });
 
   test('omits an idle result that duplicates an agent message with the same timestamp', () => {
@@ -83,7 +305,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('orders a non-duplicate idle result after an agent message with the same timestamp', () => {
+  test('does not reorder a non-duplicate idle result around an agent message', () => {
     const createdAt = '2026-08-26T13:13:00Z';
     const entries = buildSessionEventEntries(
       [
@@ -107,8 +329,52 @@ describe('managed agents API', () => {
     );
 
     expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
-      'sevt_agent',
       'sevt_idle',
+      'sevt_agent',
+    ]);
+  });
+
+  test('keeps a tool batch at the position of its first tool call', () => {
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'sevt_model_start', type: 'span.model_request_start', created_at: '2026-08-28T01:01:29Z' },
+        {
+          id: 'sevt_tool_first',
+          type: 'agent.tool_use',
+          created_at: '2026-08-28T01:01:30Z',
+          name: 'Read',
+          input: { path: '/workspace/first.txt' },
+        },
+        {
+          id: 'sevt_agent_between_tools',
+          type: 'agent.message',
+          created_at: '2026-08-28T01:01:31Z',
+          content: [{ type: 'text', text: 'Between tool calls' }],
+        },
+        {
+          id: 'sevt_tool_second',
+          type: 'agent.tool_use',
+          created_at: '2026-08-28T01:01:32Z',
+          name: 'Read',
+          input: { path: '/workspace/second.txt' },
+        },
+        {
+          id: 'sevt_model_end',
+          type: 'span.model_request_end',
+          created_at: '2026-08-28T01:01:33Z',
+          model_request_start_id: 'sevt_model_start',
+        },
+      ],
+      'transcript',
+      Date.parse('2026-08-28T01:01:29Z'),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => entry.kind)).toEqual(['tool_batch', 'message']);
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_tool_first',
+      'sevt_agent_between_tools',
     ]);
   });
 
@@ -214,6 +480,40 @@ describe('managed agents API', () => {
     expect(page.data).toHaveLength(1001);
     expect(page.data.at(-1)?.id).toBe('file_1000');
     expect(page).toMatchObject({ first_id: 'file_0', has_more: false, last_id: 'file_1000' });
+  });
+
+  test('adds a file through the session resource endpoint', async () => {
+    let capturedInput: RequestInfo | URL = '';
+    let capturedInit: RequestInit | undefined;
+    globalThis.fetch = (async (input, init) => {
+      capturedInput = input;
+      capturedInit = init;
+      return new Response(
+        JSON.stringify({
+          id: 'sesrsc_123',
+          created_at: '2026-08-30T00:00:00Z',
+          file_id: 'file_123',
+          mount_path: '/reports/input.csv',
+          type: 'file',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    setAnthropicClientForTest(null);
+
+    await addSessionFileResource(
+      'sesn_123',
+      { fileId: ' file_123 ', mountPath: ' reports/input.csv ' },
+      'workspace_123',
+    );
+
+    expect(requestURL(capturedInput)).toBe('/v1/sessions/sesn_123/resources?beta=true');
+    expect(JSON.parse(String(capturedInit?.body))).toEqual({
+      file_id: 'file_123',
+      mount_path: '/reports/input.csv',
+      type: 'file',
+    });
+    expect(new Headers(capturedInit?.headers).get('x-workspace-id')).toBe('workspace_123');
   });
 });
 

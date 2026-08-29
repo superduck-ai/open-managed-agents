@@ -154,12 +154,20 @@ export function ConsoleLayout() {
 
 export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
+  const isSessionWorkspace = isSessionDetailPath(currentPath);
+  const isSessionsRoute = isSessionsPath(currentPath);
   const { msg } = useI18n();
 
   return (
     <SidebarProvider defaultOpen>
       <ConsoleSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
-      <SidebarInset className="min-h-screen text-foreground">
+      <SidebarInset
+        className={clsx(
+          'text-foreground',
+          isSessionsRoute && 'session-route-theme',
+          isSessionWorkspace ? 'h-svh min-h-0 overflow-hidden' : 'min-h-screen',
+        )}
+      >
         <ShellMobileBar
           title={msg('app.productName', 'Open Managed Agents')}
           toggleLabel={msg('common.expand', 'Expand')}
@@ -167,7 +175,16 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
           href="/dashboard"
           onNavigate={onNavigate}
         />
-        <div className={clsx(isWide ? 'px-6 py-6 lg:px-8' : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0')}>
+        <div
+          data-session-workspace-shell={isSessionWorkspace ? '' : undefined}
+          className={clsx(
+            isSessionWorkspace
+              ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [&>[data-testid=session-detail-page]]:!overflow-hidden'
+              : isWide
+                ? 'min-w-0 px-6 py-6 lg:px-8'
+                : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
+          )}
+        >
           {children}
         </div>
       </SidebarInset>
@@ -236,7 +253,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
+      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <nav aria-label={msg('nav.consoleNavigation', 'Console navigation')}>
@@ -345,7 +362,7 @@ function SettingsSidebar({
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
+      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <SidebarMenu>
@@ -419,7 +436,7 @@ function ShellMobileBar({
   }
 
   return (
-    <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
+    <div className="sticky top-0 z-20 flex shrink-0 items-center gap-3 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
       <Button
         type="button"
         variant="ghost"
@@ -976,6 +993,14 @@ function isWideConsolePath(currentPath: string) {
     isAnalyticsPath(currentPath) ||
     isManagedAgentsPath(currentPath)
   );
+}
+
+function isSessionDetailPath(currentPath: string) {
+  return /^\/workspaces\/[^/]+\/sessions\/[^/]+\/?$/.test(currentPath);
+}
+
+function isSessionsPath(currentPath: string) {
+  return currentPath === '/sessions' || /^\/workspaces\/[^/]+\/sessions(?:\/|$)/.test(currentPath);
 }
 
 function isBuildPath(currentPath: string) {

@@ -8,6 +8,14 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 
 const Combobox = ComboboxPrimitive.Root;
 
+function ComboboxTrigger(props: ComboboxPrimitive.Trigger.Props) {
+  return <ComboboxPrimitive.Trigger data-slot="combobox-trigger" {...props} />;
+}
+
+function ComboboxValue(props: ComboboxPrimitive.Value.Props) {
+  return <ComboboxPrimitive.Value {...props} />;
+}
+
 function ComboboxInput({
   className,
   disabled = false,
@@ -117,4 +125,33 @@ function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   );
 }
 
-export { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList };
+function ComboboxGroup({ className, ...props }: ComboboxPrimitive.Group.Props) {
+  return <ComboboxPrimitive.Group className={cn('py-1', className)} {...props} />;
+}
+
+function ComboboxGroupLabel({ className, ...props }: ComboboxPrimitive.GroupLabel.Props) {
+  return (
+    <ComboboxPrimitive.GroupLabel
+      className={cn('px-2 py-1 text-xs font-medium text-muted-foreground', className)}
+      {...props}
+    />
+  );
+}
+
+function ComboboxClear(props: ComboboxPrimitive.Clear.Props) {
+  return <ComboboxPrimitive.Clear data-slot="combobox-clear" {...props} />;
+}
+
+export {
+  Combobox,
+  ComboboxClear,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxGroupLabel,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
+};

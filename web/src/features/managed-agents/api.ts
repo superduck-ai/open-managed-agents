@@ -5,7 +5,7 @@ import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileAPIMountPath } from './sessions/file-resource-path';
-import { compareSessionEvents, sessionEventType } from './sessions/SessionDetailPage';
+import { sessionEventType } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
   type AgentCreatedFilter,
@@ -42,6 +42,7 @@ import {
   type SessionDetailDeltaFrames,
   type SessionDetailEventCache,
   type SessionEventCachePatch,
+  type SessionFileResourceFormValue,
   type SessionResourceApiResponse,
   type SessionThreadApiResponse,
   type SessionToolConfirmationInput,
@@ -549,6 +550,19 @@ export function listSessionResources(sessionId: string, workspaceId: string) {
   return anthropicBetaApi.sessions.resources.list<SessionResourceApiResponse>(sessionId, {}, workspaceId) as Promise<
     PageResponse<SessionResourceApiResponse>
   >;
+}
+
+export function addSessionFileResource(sessionId: string, resource: SessionFileResourceFormValue, workspaceId: string) {
+  const mountPath = sessionFileAPIMountPath(resource.mountPath);
+  return anthropicBetaApi.sessions.resources.add<SessionResourceApiResponse>(
+    sessionId,
+    {
+      type: 'file',
+      file_id: resource.fileId.trim(),
+      ...(mountPath ? { mount_path: mountPath } : {}),
+    },
+    workspaceId,
+  );
 }
 
 export function retrieveFileMetadata(fileId: string, workspaceId: string) {
@@ -1198,16 +1212,113 @@ export function mergeSessionStreamFrame(
     return;
   }
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
-  queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => mergeSessionEventCache(cache, [event]));
-  if (eventType.endsWith('status_idle') || eventType.endsWith('status_terminated')) {
+  let replacedPreviewId: string | null = null;
+  queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
+    replacedPreviewId = sessionStreamPreviewIdForFinalEvent(cache, event);
+    return replacedPreviewId
+      ? sessionEventCacheReplacingId(cache, replacedPreviewId, event)
+      : mergeSessionEventCache(cache, [event]);
+  });
+  if (replacedPreviewId) {
+    removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, replacedPreviewId);
+  }
+  if (eventType.endsWith('status_terminated')) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
   }
 }
 
+function sessionStreamPreviewIdForFinalEvent(
+  cache: SessionDetailEventCache | undefined,
+  incoming: QuickstartSessionEvent,
+) {
+  const incomingId = sessionStableEventId(incoming);
+  const incomingType = sessionEventType(incoming);
+  if (
+    !cache ||
+    !incomingId ||
+    (incomingType !== 'agent.message' && incomingType !== 'agent.thinking') ||
+    sessionNullableProcessedAt(incoming) === null
+  ) {
+    return null;
+  }
+
+  const candidates = cache.events.filter((event) => {
+    const id = sessionStableEventId(event);
+    return (
+      id !== null &&
+      id !== incomingId &&
+      sessionEventType(event) === incomingType &&
+      sessionNullableProcessedAt(event) === null &&
+      event.is_streaming === true
+    );
+  });
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const incomingCreatedAt = sessionEventCreatedAtMs(incoming);
+  const timestampMatches =
+    incomingCreatedAt === null
+      ? []
+      : candidates.filter((candidate) => sessionEventCreatedAtMs(candidate) === incomingCreatedAt);
+  const matchedCandidate =
+    timestampMatches.length === 1 ? timestampMatches[0] : candidates.length === 1 ? candidates[0] : null;
+  return matchedCandidate ? sessionStableEventId(matchedCandidate) : null;
+}
+
+function sessionEventCreatedAtMs(event: QuickstartSessionEvent) {
+  if (typeof event.created_at !== 'string' || !event.created_at) {
+    return null;
+  }
+  const createdAtMs = Date.parse(event.created_at);
+  return Number.isFinite(createdAtMs) ? createdAtMs : null;
+}
+
+function sessionEventCacheReplacingId(
+  cache: SessionDetailEventCache | undefined,
+  previewId: string,
+  finalEvent: QuickstartSessionEvent,
+) {
+  if (!cache) {
+    return mergeSessionEventCache(cache, [finalEvent]);
+  }
+  const finalId = sessionStableEventId(finalEvent);
+  const events: QuickstartSessionEvent[] = [];
+  cache.events.forEach((event) => {
+    const eventId = sessionStableEventId(event);
+    if (eventId === previewId) {
+      events.push(finalEvent);
+      return;
+    }
+    if (finalId && eventId === finalId) {
+      return;
+    }
+    events.push(event);
+  });
+  return { ...cache, events };
+}
+
+function removeSessionDeltaFrame(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId: string,
+  eventId: string,
+) {
+  const deltaKey = sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId);
+  queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
+    if (!cache?.[eventId]) {
+      return cache;
+    }
+    const next = { ...cache };
+    delete next[eventId];
+    return next;
+  });
+}
+
 export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEvent[], threadId: string) {
-  const orderedEvents = [...events].sort(compareSessionEvents);
-  for (let index = orderedEvents.length - 1; index >= 0; index -= 1) {
-    const type = sessionEventType(orderedEvents[index]);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const type = sessionEventType(events[index]);
     if (threadId) {
       if (type === 'session.thread_status_idle' || type === 'session.thread_status_terminated') {
         return true;
@@ -1386,7 +1497,7 @@ export function sessionDetailDeltaFrames(
 
 export function mergeSessionEventsById(events: QuickstartSessionEvent[]) {
   const cache = mergeSessionEventCache(undefined, events);
-  return coalesceSessionCrossPostedToolEvents(cache.events).sort(compareSessionEvents);
+  return coalesceSessionCrossPostedToolEvents(cache.events);
 }
 
 export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEvent[]) {

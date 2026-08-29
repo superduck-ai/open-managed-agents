@@ -1,7 +1,6 @@
 import { type ReactNode } from 'react';
 import { createdFilterStartISOString } from '../api';
 import { StatusPill } from '../components/common';
-import { numericValueFromKeys } from '../sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
   type AgentDetailCreatedFilter,
@@ -13,7 +12,7 @@ import {
   type AnalyticsMetricBucket,
   type SessionApiResponse,
 } from '../types';
-import { objectRecord } from '../utils';
+import { numericValueFromKeys, objectRecord } from '../utils';
 
 export const emptyAgents: AgentApiResponse[] = [];
 

@@ -23,20 +23,69 @@ import {
   type ToolBatchEntry,
   type ToolCallEntry,
   type ToolLifecycle,
-  type TranscriptMarkdownBlock,
 } from '../types';
-import { compactEntityId, objectRecord, toRecord } from '../utils';
+import { compactEntityId, numericValueFromKeys, objectRecord, stringValueFromKeys, toRecord } from '../utils';
 import {
   addSessionEventUsage,
   emptySessionEventUsage,
   extractSessionEventUsage,
-  numericValueFromKeys,
   sessionEventDurationMs,
   sessionStatusFromEventType,
-  stringValueFromKeys,
 } from './sessionDetailModel';
-import { sessionCanonicalDisplayEvent } from './SessionTracePanel';
 import { sessionOutcomeIteration, sessionOutcomeStatus } from './sessionTraceRows';
+
+export function sessionCanonicalDisplayEvent(event: QuickstartSessionEvent): QuickstartSessionEvent {
+  const currentType = sessionEventType(event);
+  if (!sessionIsToolResultEvent(event) && currentType !== 'event' && currentType !== 'system.message') {
+    return event;
+  }
+  const payload = sessionSerializedCanonicalPayload(event);
+  if (!payload) return event;
+  return {
+    ...payload,
+    created_at: payload.created_at ?? event.created_at,
+    processed_at: payload.processed_at ?? event.processed_at,
+    session_id: payload.session_id ?? event.session_id,
+    session_thread_id: payload.session_thread_id ?? event.session_thread_id,
+    thread_id: payload.thread_id ?? event.thread_id,
+    _wrapped_event_id: event.id,
+  };
+}
+
+function sessionSerializedCanonicalPayload(event: QuickstartSessionEvent) {
+  const text = sessionSingleTextPayload(event);
+  if (!text || text.length > 200_000) return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  try {
+    const record = toRecord(JSON.parse(trimmed));
+    const type = typeof record?.type === 'string' ? record.type : '';
+    return type && sessionSerializedTypeIsCanonical(type) ? (record as QuickstartSessionEvent) : null;
+  } catch {
+    return null;
+  }
+}
+
+function sessionSingleTextPayload(event: QuickstartSessionEvent) {
+  if (typeof event.content === 'string') return event.content;
+  if (Array.isArray(event.content) && event.content.length === 1) {
+    const block = toRecord(event.content[0]);
+    if (typeof block?.text === 'string') return block.text;
+    if (typeof block?.content === 'string') return block.content;
+  }
+  return typeof event.message === 'string' ? event.message : '';
+}
+
+function sessionSerializedTypeIsCanonical(type: string) {
+  return (
+    type.startsWith('session.') ||
+    type.startsWith('span.') ||
+    type === 'system.message' ||
+    type === 'agent.thread_message_received' ||
+    type === 'agent.thread_message_sent' ||
+    type === 'agent.thread_context_compacted'
+  );
+}
 
 export function buildSessionTraceEntries(
   events: QuickstartSessionEvent[],
@@ -48,9 +97,6 @@ export function buildSessionTraceEntries(
   const toolResults = new Map<string, QuickstartSessionEvent[]>();
   const toolConfirmations = new Map<string, QuickstartSessionEvent[]>();
   const displayEvents = events.map(sessionCanonicalDisplayEvent);
-  if (view === 'transcript') {
-    displayEvents.sort(compareSessionTranscriptEvents);
-  }
   const requiresActionEventIDs = latestRequiresActionEventIDs(displayEvents);
   const threadHints = buildSessionThreadHints(displayEvents);
   let latestAgentMessageText = '';
@@ -81,7 +127,8 @@ export function buildSessionTraceEntries(
       view === 'transcript' &&
       type === 'session.status_idle' &&
       sessionIsResultEvent(event) &&
-      sessionResultText(event) === latestAgentMessageText
+      (sessionResultText(event) === latestAgentMessageText ||
+        sessionResultText(event) === sessionFollowingAgentMessageText(displayEvents, index))
     ) {
       return [];
     }
@@ -139,31 +186,29 @@ export function buildSessionTraceEntries(
   });
 }
 
-function compareSessionTranscriptEvents(left: QuickstartSessionEvent, right: QuickstartSessionEvent) {
-  const chronologicalOrder = compareSessionEvents(left, right);
-  if (chronologicalOrder !== 0) {
-    return chronologicalOrder;
+function sessionFollowingAgentMessageText(events: QuickstartSessionEvent[], startIndex: number) {
+  for (let index = startIndex + 1; index < events.length; index += 1) {
+    const event = events[index];
+    const family = sessionEventFamily(event);
+    if (family === 'user') {
+      return '';
+    }
+    if (family === 'agent' && !sessionEventIsThinking(event)) {
+      return sessionEventTranscriptText(event).trim();
+    }
   }
-  return sessionTranscriptTieRank(left) - sessionTranscriptTieRank(right);
-}
-
-function sessionTranscriptTieRank(event: QuickstartSessionEvent) {
-  if (sessionEventFamily(event) === 'agent' && !sessionEventIsThinking(event)) {
-    return 0;
-  }
-  return sessionEventType(event) === 'session.status_idle' && sessionIsResultEvent(event) ? 2 : 1;
+  return '';
 }
 
 export function latestRequiresActionEventIDs(events: QuickstartSessionEvent[]) {
-  const sortedEvents = [...events].sort(compareSessionEvents);
   let latestStatusIndex = -1;
-  for (let index = sortedEvents.length - 1; index >= 0; index -= 1) {
-    if (sessionStatusFromEventType(sessionEventType(sortedEvents[index]))) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (sessionStatusFromEventType(sessionEventType(events[index]))) {
       latestStatusIndex = index;
       break;
     }
   }
-  const latestStatus = sortedEvents[latestStatusIndex];
+  const latestStatus = events[latestStatusIndex];
   if (!latestStatus || sessionEventType(latestStatus) !== 'session.status_idle') {
     return new Set<string>();
   }
@@ -176,7 +221,7 @@ export function latestRequiresActionEventIDs(events: QuickstartSessionEvent[]) {
       .filter((eventID): eventID is string => typeof eventID === 'string' && Boolean(eventID.trim()))
       .map((eventID) => eventID.trim()),
   );
-  sortedEvents.slice(latestStatusIndex + 1).forEach((event) => {
+  events.slice(latestStatusIndex + 1).forEach((event) => {
     const handledEventID =
       sessionEventType(event) === 'user.tool_confirmation'
         ? sessionToolConfirmationToolUseId(event)
@@ -283,20 +328,17 @@ export function buildSessionEventEntries(
   const entries: SessionEventListEntry[] = [];
   let lastIdleAt = 0;
   let queuedBoundaryInserted = false;
-  const sortedRawEvents = [...events.map(sessionCanonicalDisplayEvent)].sort(compareSessionTranscriptEvents);
-  const rawCursorByKey = new Map<string, number>();
-  sortedRawEvents.forEach((event, index) => {
-    rawCursorByKey.set(sessionEventKey(event), index);
-  });
+  const rawEvents = events.map(sessionCanonicalDisplayEvent);
+  const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const traceEntriesByRawKey = new Map<string, SessionTraceEntry[]>();
   traceEntries.forEach((entry) => {
-    const rawKey = sessionEventKey(entry.event);
+    const rawKey = sessionTraceEntrySourceKey(entry, rawEventKeys);
     const list = traceEntriesByRawKey.get(rawKey) ?? [];
     list.push(entry);
     traceEntriesByRawKey.set(rawKey, list);
   });
 
-  sortedRawEvents.forEach((event, eventIndex) => {
+  rawEvents.forEach((event, eventIndex) => {
     const type = sessionEventType(event);
     if (type === 'session.status_idle' && !sessionIsResultEvent(event)) {
       lastIdleAt = sessionEventTimestamp(event);
@@ -305,7 +347,7 @@ export function buildSessionEventEntries(
     const isQueuedUserMessage = sessionEventIsQueuedUserMessage(event);
     if (!queuedBoundaryInserted && isQueuedUserMessage) {
       queuedBoundaryInserted = true;
-      const queuedCount = sortedRawEvents.slice(eventIndex).filter(sessionEventIsQueuedUserMessage).length;
+      const queuedCount = rawEvents.slice(eventIndex).filter(sessionEventIsQueuedUserMessage).length;
       entries.push(queuedBoundaryEntry(queuedCount, sessionEventTimestamp(event) || traceStartMs, traceStartMs, msg));
     }
 
@@ -327,8 +369,17 @@ export function buildSessionEventEntries(
     entries.push(transcriptEntryFromTraceEntry(entry, traceStartMs, msg));
   });
 
-  const entriesWithModelMetadata = applyModelRequestBrackets(entries, sortedRawEvents);
-  return mergeToolCallBatches(entriesWithModelMetadata).sort((left, right) => left.createdAtMs - right.createdAtMs);
+  const entriesWithModelMetadata = applyModelRequestBrackets(entries, rawEvents);
+  return mergeToolCallBatches(entriesWithModelMetadata);
+}
+
+function sessionTraceEntrySourceKey(entry: SessionTraceEntry, rawEventKeys: Set<string>) {
+  const eventKey = sessionEventKey(entry.event);
+  if (rawEventKeys.has(eventKey)) {
+    return eventKey;
+  }
+  const parentEventId = normalizedStringValue(entry.event.parent_event_id);
+  return parentEventId && rawEventKeys.has(parentEventId) ? parentEventId : eventKey;
 }
 
 export function applyModelRequestBrackets(
@@ -340,70 +391,88 @@ export function applyModelRequestBrackets(
     return entries;
   }
 
-  type ModelTimelineItem =
-    | { kind: 'model_start' | 'model_end'; event: QuickstartSessionEvent; time: number; order: number }
-    | { kind: 'entry'; entry: SessionEventListEntry; time: number; order: number };
-
-  const items: ModelTimelineItem[] = [
-    ...modelEvents.map((event, index) => ({
-      kind: sessionEventType(event) === 'span.model_request_start' ? ('model_start' as const) : ('model_end' as const),
-      event,
-      time: sessionEventTimestamp(event),
-      order: index,
-    })),
-    ...entries.map((entry, index) => ({
-      kind: 'entry' as const,
-      entry,
-      time: entry.createdAtMs,
-      order: index,
-    })),
-  ].sort((left, right) => {
-    const byTime = left.time - right.time;
-    if (byTime) {
-      return byTime;
-    }
-    const priority = (item: ModelTimelineItem) => (item.kind === 'model_start' ? 0 : item.kind === 'entry' ? 1 : 2);
-    return priority(left) - priority(right) || left.order - right.order;
-  });
-
+  const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const bracketsByStartId = new Map<string, ModelRequestBracket>();
+  const entriesByRawEventId = new Map<string, SessionEventListEntry[]>();
+  entries.forEach((entry) => {
+    if (!('event' in entry)) {
+      return;
+    }
+    const eventId = sessionTraceEntrySourceKey(entry.traceEntry, rawEventKeys);
+    const matchingEntries = entriesByRawEventId.get(eventId) ?? [];
+    matchingEntries.push(entry);
+    entriesByRawEventId.set(eventId, matchingEntries);
+  });
   let activeBracket: ModelRequestBracket | null = null;
+  let activeTurnId: string | null = null;
   let pendingBracketMeta: ModelRequestBracketMeta | null = null;
 
-  items.forEach((item) => {
-    if (item.kind === 'model_start') {
-      const startId = sessionEventKey(item.event);
+  rawEvents.forEach((event) => {
+    if (sessionEventType(event) === 'span.model_request_start') {
+      const startId = sessionEventKey(event);
+      const startMs = sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event);
+      if (activeBracket) {
+        closeModelRequestBracket(activeBracket, startMs);
+      }
       activeBracket = {
         startId,
-        startMs: item.time,
+        startMs,
         entries: [],
       };
       bracketsByStartId.set(startId, activeBracket);
+      activeTurnId ??= startId;
       return;
     }
 
-    if (item.kind === 'entry') {
-      const targetEntry = sessionModelBracketTargetEntry(item.entry);
+    const matchingEntries = entriesByRawEventId.get(sessionEventKey(event)) ?? [];
+    matchingEntries.forEach((entry) => {
+      const targetEntry = sessionModelBracketTargetEntry(entry);
       if (activeBracket && targetEntry) {
-        if (targetEntry.kind === 'tool_call' && !targetEntry.bracketId) {
+        if (targetEntry.kind === 'message') {
+          activeBracket.entries.forEach((candidate) => {
+            if (candidate.bracketOpen) {
+              candidate.bracketOpen = false;
+              candidate.bracketEndMs ??= targetEntry.processedAtMs;
+            }
+          });
+          targetEntry.bracketOpen = true;
+        }
+        if (!targetEntry.bracketId) {
           targetEntry.bracketId = activeBracket.startId;
         }
+        targetEntry.bracketStartMs ??= activeBracket.startMs;
+        targetEntry.turnId ??= activeTurnId ?? activeBracket.startId;
         activeBracket.entries.push(targetEntry);
         return;
       }
-      if (pendingBracketMeta && sessionIsSubagentSentDisplayEntry(item.entry)) {
-        applyModelBracketMetaToDisplayEntry(item.entry, pendingBracketMeta);
+      if (pendingBracketMeta && sessionIsSubagentSentDisplayEntry(entry)) {
+        applyModelBracketMetaToDisplayEntry(entry, pendingBracketMeta);
         pendingBracketMeta = null;
       }
+    });
+
+    if (sessionEventEndsTranscriptTurn(event)) {
+      if (activeBracket) {
+        closeModelRequestBracket(
+          activeBracket,
+          sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event) || activeBracket.startMs,
+        );
+      }
+      activeTurnId = null;
+      activeBracket = null;
+    }
+
+    if (sessionEventType(event) !== 'span.model_request_end') {
       return;
     }
 
-    const startId = sessionModelRequestStartRef(item.event);
+    const startId = sessionModelRequestStartRef(event);
     const bracket = (startId ? bracketsByStartId.get(startId) : null) ?? activeBracket;
     if (!bracket) {
       return;
     }
-    const meta = modelRequestBracketMeta(bracket, item.event);
+    const meta = modelRequestBracketMeta(bracket, event);
+    closeModelRequestBracket(bracket, meta.startMs + meta.inferenceMs);
     const agentMessage = bracket.entries.find(sessionIsAgentMessageDisplayEntry);
     const firstTool = bracket.entries.find((entry): entry is ToolCallEntry => entry.kind === 'tool_call');
     if (agentMessage) {
@@ -428,8 +497,44 @@ export function applyModelRequestBrackets(
   return entries;
 }
 
+function closeModelRequestBracket(bracket: ModelRequestBracket, endMs: number) {
+  bracket.entries.forEach((entry) => {
+    entry.bracketStartMs ??= bracket.startMs;
+    entry.bracketEndMs ??= Math.max(bracket.startMs, endMs);
+    entry.bracketOpen = false;
+  });
+}
+
+function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
+  const type = sessionEventType(event);
+  return (
+    type === 'user.message' ||
+    sessionEventIsQueuedUserMessage(event) ||
+    sessionStatusFromEventType(type) !== null ||
+    sessionEventFamily(event) === 'outcome'
+  );
+}
+
+export function latestOpenModelRequest(events: QuickstartSessionEvent[]) {
+  let open: QuickstartSessionEvent | null = null;
+  events.forEach((event) => {
+    const type = sessionEventType(event);
+    if (type === 'span.model_request_start') {
+      open = event;
+      return;
+    }
+    if (type === 'span.model_request_end') {
+      const startId = sessionModelRequestStartRef(event);
+      if (open && (!startId || startId === sessionEventKey(open))) open = null;
+      return;
+    }
+    if (open && sessionEventEndsTranscriptTurn(event)) open = null;
+  });
+  return open;
+}
+
 export function sessionModelBracketTargetEntry(entry: SessionEventListEntry): ModelBracketTargetEntry | null {
-  if (entry.kind === 'message' && entry.displayEvent.type === 'agent') {
+  if (entry.kind === 'message' && (entry.displayEvent.type === 'agent' || entry.displayEvent.type === 'thinking')) {
     return entry;
   }
   if (entry.kind === 'tool_call') {
@@ -450,7 +555,7 @@ export function modelRequestBracketMeta(
   bracket: ModelRequestBracket,
   endEvent: QuickstartSessionEvent,
 ): ModelRequestBracketMeta {
-  const endMs = sessionEventTimestamp(endEvent) || bracket.startMs;
+  const endMs = sessionEventProcessedTimestamp(endEvent) || sessionEventTimestamp(endEvent) || bracket.startMs;
   return {
     startId: bracket.startId,
     startMs: bracket.startMs,
@@ -464,6 +569,8 @@ export function applyModelBracketMetaToDisplayEntry(entry: DisplayEventEntry, me
     entry.bracketId = meta.startId;
   }
   entry.bracketStartMs = meta.startMs;
+  entry.bracketEndMs = meta.startMs + meta.inferenceMs;
+  entry.bracketOpen = false;
   entry.usage = meta.usage;
   entry.inferenceMs = meta.inferenceMs;
   entry.processedAtMs = Math.max(entry.processedAtMs, meta.startMs);
@@ -474,6 +581,8 @@ export function applyModelBracketMetaToToolEntry(entry: ToolCallEntry, meta: Mod
     entry.bracketId = meta.startId;
   }
   entry.bracketStartMs = meta.startMs;
+  entry.bracketEndMs = meta.startMs + meta.inferenceMs;
+  entry.bracketOpen = false;
   entry.usage = meta.usage;
   entry.inferenceMs = meta.inferenceMs;
 }
@@ -704,7 +813,7 @@ export function idleGapEntry(idleAtMs: number, nextAtMs: number, traceStartMs: n
     kind: 'idle_gap',
     durationMs,
     createdAtMs: idleAtMs,
-    processedAtMs: idleAtMs,
+    processedAtMs: nextAtMs,
     relativeTime: sessionEventElapsedTime({ created_at: new Date(idleAtMs).toISOString() }, traceStartMs),
     searchText: `idle gap ${durationMs}`,
     isError: false,
@@ -757,9 +866,18 @@ export function mergeToolCallBatches(entries: SessionEventListEntry[]): SessionE
       index = nextIndex - 1;
       continue;
     }
-    // 官方 Console 在同一个 model request 片段内允许 message 和 tool_call 混排：
-    // message 仍保持独立行，只有多个 tool_call 被折叠成一个 tool_batch。
-    merged.push(...segment.filter((item) => item.kind !== 'tool_call'), toolBatchEntry(calls));
+    const batch = toolBatchEntry(calls);
+    let batchInserted = false;
+    segment.forEach((item) => {
+      if (item.kind !== 'tool_call') {
+        merged.push(item);
+        return;
+      }
+      if (!batchInserted) {
+        merged.push(batch);
+        batchInserted = true;
+      }
+    });
     index = nextIndex - 1;
   }
   return merged;
@@ -819,8 +937,7 @@ export function toolBatchEntry(calls: ToolCallEntry[]): ToolBatchEntry {
 }
 
 export function sessionEventProcessedTimestamp(event: QuickstartSessionEvent) {
-  const processedAt = typeof event.processed_at === 'string' ? Date.parse(event.processed_at) : NaN;
-  return Number.isFinite(processedAt) ? processedAt : 0;
+  return sessionTimestampMs(event.processed_at);
 }
 
 export function sessionEventInferenceMs(event: QuickstartSessionEvent) {
@@ -1276,37 +1393,6 @@ export function sessionTraceEntryFromEvent(
   };
 }
 
-export function sessionTraceFilterValue(entry: SessionTraceEntry, view: SessionTraceView) {
-  if (view === 'debug') {
-    return entry.type;
-  }
-  if (entry.family === 'tool_use' || entry.family === 'tool_result') {
-    return 'tool';
-  }
-  if (entry.family === 'model') {
-    return 'model';
-  }
-  if (entry.family === 'outcome') {
-    return 'system';
-  }
-  if (entry.family === 'thread') {
-    return 'status';
-  }
-  if (entry.family === 'result') {
-    return 'result';
-  }
-  if (entry.family === 'subagent') {
-    return 'subagent';
-  }
-  if (entry.family === 'status') {
-    return 'status';
-  }
-  if (entry.family === 'system' || entry.family === 'env' || entry.family === 'span') {
-    return 'system';
-  }
-  return entry.family;
-}
-
 export function sessionTraceDisplayKind(
   event: QuickstartSessionEvent,
   family: SessionTraceFamily,
@@ -1625,45 +1711,37 @@ export function sessionRawToolResult(event: QuickstartSessionEvent) {
 }
 
 export function sessionToolUseId(event: QuickstartSessionEvent) {
-  const id = firstStringField(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id', 'id']);
+  const id = stringValueFromKeys(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id', 'id']);
   if (id) {
     return id;
   }
   const message = toRecord(event.message);
-  return firstStringField(message, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id', 'id']);
+  return message ? stringValueFromKeys(message, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id', 'id']) : '';
 }
 
 export function sessionToolConfirmationToolUseId(event: QuickstartSessionEvent) {
-  return firstStringField(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
-}
-
-export function firstStringField(record: Record<string, unknown> | null, keys: string[]) {
-  if (!record) {
-    return '';
-  }
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return '';
+  return stringValueFromKeys(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
 }
 
 export function sessionToolResultToolUseId(event: QuickstartSessionEvent) {
-  const direct = firstStringField(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
+  const direct = stringValueFromKeys(event, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
   if (direct) {
     return direct;
   }
   const rawToolResult = sessionRawToolResult(event);
-  const raw = firstStringField(rawToolResult, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
+  const raw = rawToolResult
+    ? stringValueFromKeys(rawToolResult, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id'])
+    : '';
   if (raw) {
     return raw;
   }
   const content = event.content;
   if (Array.isArray(content)) {
     for (const block of content) {
-      const blockId = firstStringField(toRecord(block), ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id']);
+      const blockRecord = toRecord(block);
+      const blockId = blockRecord
+        ? stringValueFromKeys(blockRecord, ['tool_use_id', 'mcp_tool_use_id', 'custom_tool_use_id'])
+        : '';
       if (blockId) {
         return blockId;
       }
@@ -1982,7 +2060,7 @@ export function sessionThinkingLabel(msg?: I18nMsg) {
 }
 
 export function sessionThinkingPreview(msg?: I18nMsg) {
-  return msg ? msg('managedAgents.sessions.trace.thinkingInProgress', 'Thinking...') : 'Thinking...';
+  return msg ? msg('managedAgents.sessions.trace.thinkingInProgress', 'Thinking…') : 'Thinking…';
 }
 
 export function sessionEventLabel(event: QuickstartSessionEvent, family: SessionTraceFamily, msg?: I18nMsg) {
@@ -2269,114 +2347,6 @@ export function prettyCode(value: string) {
   }
 }
 
-export function parseTranscriptMarkdownBlocks(value: string): TranscriptMarkdownBlock[] {
-  const lines = value.replace(/\r\n/g, '\n').split('\n');
-  const blocks: TranscriptMarkdownBlock[] = [];
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (!trimmed) {
-      index += 1;
-      continue;
-    }
-
-    const fence = trimmed.match(/^```([a-zA-Z0-9_-]+)?\s*$/);
-    if (fence) {
-      const codeLines: string[] = [];
-      index += 1;
-      while (index < lines.length && !lines[index].trim().startsWith('```')) {
-        codeLines.push(lines[index]);
-        index += 1;
-      }
-      if (index < lines.length) {
-        index += 1;
-      }
-      blocks.push({ type: 'code', language: fence[1]?.toLowerCase(), value: codeLines.join('\n') });
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
-    if (heading) {
-      blocks.push({ type: 'heading', level: heading[1].length, text: heading[2].trim() });
-      index += 1;
-      continue;
-    }
-
-    if (isTranscriptMarkdownTableStart(lines, index)) {
-      const headers = splitTranscriptMarkdownTableRow(lines[index]);
-      index += 2;
-      const rows: string[][] = [];
-      while (index < lines.length && isTranscriptMarkdownTableRow(lines[index])) {
-        rows.push(splitTranscriptMarkdownTableRow(lines[index]));
-        index += 1;
-      }
-      blocks.push({ type: 'table', headers, rows });
-      continue;
-    }
-
-    const listItem = trimmed.match(/^[-*]\s+(.+)$/);
-    if (listItem) {
-      const items: string[] = [];
-      while (index < lines.length) {
-        const current = lines[index].trim().match(/^[-*]\s+(.+)$/);
-        if (!current) {
-          break;
-        }
-        items.push(current[1].trim());
-        index += 1;
-      }
-      blocks.push({ type: 'list', items });
-      continue;
-    }
-
-    const paragraphLines: string[] = [];
-    while (index < lines.length) {
-      const current = lines[index];
-      const currentTrimmed = current.trim();
-      if (
-        !currentTrimmed ||
-        currentTrimmed.startsWith('```') ||
-        currentTrimmed.match(/^(#{1,4})\s+/) ||
-        currentTrimmed.match(/^[-*]\s+/) ||
-        isTranscriptMarkdownTableStart(lines, index)
-      ) {
-        break;
-      }
-      paragraphLines.push(currentTrimmed);
-      index += 1;
-    }
-    blocks.push({ type: 'paragraph', text: paragraphLines.join(' ') });
-  }
-  return blocks.length ? blocks : [{ type: 'paragraph', text: value }];
-}
-
-export function isTranscriptMarkdownTableStart(lines: string[], index: number) {
-  if (index + 1 >= lines.length || !isTranscriptMarkdownTableRow(lines[index])) {
-    return false;
-  }
-  const separator = splitTranscriptMarkdownTableRow(lines[index + 1]);
-  return separator.length >= 2 && separator.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
-}
-
-export function isTranscriptMarkdownTableRow(line: string) {
-  const trimmed = line.trim();
-  return trimmed.startsWith('|') && trimmed.endsWith('|') && splitTranscriptMarkdownTableRow(trimmed).length >= 2;
-}
-
-export function splitTranscriptMarkdownTableRow(line: string) {
-  return line
-    .trim()
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim());
-}
-
-export function isSafeTranscriptMarkdownHref(value: string) {
-  return /^(https?:|mailto:|\/|#)/i.test(value);
-}
-
 export function parseTranscriptCode(value: string): { value: string; language?: string } | null {
   const trimmed = value.trim();
   const fenced = trimmed.match(/^```([a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
@@ -2400,60 +2370,46 @@ export function looksLikeJson(value: string) {
 }
 
 export function mergeSessionEvents(current: QuickstartSessionEvent[], incoming: QuickstartSessionEvent[]) {
-  const byKey = new Map<string, QuickstartSessionEvent>();
-  const canonicalToKey = new Map<string, string>();
+  const merged: QuickstartSessionEvent[] = [];
+  const indexByKey = new Map<string, number>();
+  const indexByCanonicalKey = new Map<string, number>();
+  const putAt = (index: number, event: QuickstartSessionEvent) => {
+    const previous = merged[index];
+    if (previous) {
+      indexByKey.delete(sessionEventKey(previous));
+      const previousCanonicalKey = sessionEventCanonicalKey(previous);
+      if (previousCanonicalKey && indexByCanonicalKey.get(previousCanonicalKey) === index) {
+        indexByCanonicalKey.delete(previousCanonicalKey);
+      }
+    }
+    merged[index] = event;
+    indexByKey.set(sessionEventKey(event), index);
+    const canonicalKey = sessionEventCanonicalKey(event);
+    if (canonicalKey) {
+      indexByCanonicalKey.set(canonicalKey, index);
+    }
+  };
+
   [...current, ...incoming].forEach((event) => {
     const key = sessionEventKey(event);
     const canonicalKey = sessionEventCanonicalKey(event);
-    const existingByKey = byKey.get(key);
-    if (existingByKey) {
-      byKey.set(key, preferSessionEvent(existingByKey, event));
-      if (canonicalKey) {
-        canonicalToKey.set(canonicalKey, key);
-      }
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex !== undefined) {
+      putAt(existingIndex, preferSessionEvent(merged[existingIndex], event));
       return;
     }
 
     if (canonicalKey) {
-      const existingKey = canonicalToKey.get(canonicalKey);
-      if (!existingKey) {
-        byKey.set(key, event);
-        canonicalToKey.set(canonicalKey, key);
-        return;
-      }
-
-      const existing = byKey.get(existingKey);
-      if (existing && sessionEventsShouldCoalesce(existing, event)) {
-        const preferred = preferSessionEvent(existing, event);
-        const preferredKey = sessionEventKey(preferred);
-        byKey.delete(existingKey);
-        byKey.set(preferredKey, preferred);
-        canonicalToKey.set(canonicalKey, preferredKey);
+      const canonicalIndex = indexByCanonicalKey.get(canonicalKey);
+      if (canonicalIndex !== undefined && sessionEventsShouldCoalesce(merged[canonicalIndex], event)) {
+        putAt(canonicalIndex, preferSessionEvent(merged[canonicalIndex], event));
         return;
       }
     }
 
-    byKey.set(key, event);
-    if (canonicalKey) {
-      canonicalToKey.set(canonicalKey, key);
-    }
+    putAt(merged.length, event);
   });
-  return [...byKey.values()].sort(compareSessionEvents);
-}
-
-export function compareSessionEvents(left: QuickstartSessionEvent, right: QuickstartSessionEvent) {
-  const leftTimestamp = sessionEventTimestamp(left);
-  const rightTimestamp = sessionEventTimestamp(right);
-  if (leftTimestamp && rightTimestamp && leftTimestamp !== rightTimestamp) {
-    return leftTimestamp - rightTimestamp;
-  }
-  if (leftTimestamp && !rightTimestamp) {
-    return -1;
-  }
-  if (!leftTimestamp && rightTimestamp) {
-    return 1;
-  }
-  return 0;
+  return merged;
 }
 
 // Latest status implied by the event cache: the newest status event wins, unless
@@ -2464,15 +2420,14 @@ export function sessionStatusFromEvents(events: QuickstartSessionEvent[]): {
   status: string;
   event: QuickstartSessionEvent;
 } | null {
-  const ordered = [...events].sort(compareSessionEvents);
-  for (let index = ordered.length - 1; index >= 0; index -= 1) {
-    const type = sessionEventType(ordered[index]);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const type = sessionEventType(events[index]);
     if (type === 'user.message') {
       return null;
     }
     const status = sessionStatusFromEventType(type);
     if (status) {
-      return { status, event: ordered[index] };
+      return { status, event: events[index] };
     }
   }
   return null;
@@ -2526,8 +2481,15 @@ export function sessionEventType(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventTimestamp(event: QuickstartSessionEvent) {
-  const createdAt = typeof event.created_at === 'string' ? Date.parse(event.created_at) : NaN;
-  return Number.isFinite(createdAt) ? createdAt : 0;
+  return sessionTimestampMs(event.created_at);
+}
+
+export function sessionTimestampMs(value: unknown) {
+  if (typeof value !== 'string') return 0;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return 0;
+  const subMillisecond = /\.\d{3}(\d+)/.exec(value)?.[1];
+  return subMillisecond ? parsed + Number(`0.${subMillisecond}`) : parsed;
 }
 
 export function sessionEventElapsedTime(event: QuickstartSessionEvent, traceStartMs: number) {
@@ -2564,7 +2526,7 @@ export function compactSessionEventId(value: string) {
 
 export function sessionEventSummary(event: QuickstartSessionEvent) {
   if (sessionEventIsThinking(event)) {
-    return 'Thinking...';
+    return 'Thinking…';
   }
   const text = sessionEventTranscriptText(event);
   if (text) {

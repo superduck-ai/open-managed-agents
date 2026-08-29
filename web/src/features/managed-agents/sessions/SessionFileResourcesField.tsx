@@ -21,10 +21,12 @@ import { hasSessionFileMountPath, isValidSessionFileMountPath, SESSION_FILE_UPLO
 
 export function SessionFileResourcesField({
   resources,
+  showAddButton = true,
   workspaceId,
   onChange,
 }: {
   resources: SessionFileResourceFormValue[];
+  showAddButton?: boolean;
   workspaceId: string;
   onChange: (resources: SessionFileResourceFormValue[]) => void;
 }) {
@@ -144,23 +146,25 @@ export function SessionFileResourcesField({
         );
       })}
 
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button type="button" variant="secondary">
-              <Plus aria-hidden />
-              {msg('managedAgents.sessions.resources.add', 'Add resource')}
-              <ChevronDown aria-hidden />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="start">
-          <DropdownMenuItem onClick={() => onChange([...resources, { fileId: '', mountPath: '' }])}>
-            <FileText aria-hidden />
-            {msg('managedAgents.sessions.resources.typeFile', 'File')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {showAddButton ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button type="button" variant="secondary">
+                <Plus aria-hidden />
+                {msg('managedAgents.sessions.resources.add', 'Add resource')}
+                <ChevronDown aria-hidden />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => onChange([...resources, { fileId: '', mountPath: '' }])}>
+              <FileText aria-hidden />
+              {msg('managedAgents.sessions.resources.typeFile', 'File')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     </section>
   );
 }

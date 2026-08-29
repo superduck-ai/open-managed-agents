@@ -850,7 +850,11 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   return { requests };
 }
 
-export function mockManagedResourceApi() {
+type MockManagedResourceApiOptions = {
+  agent?: Pick<AgentFixture, 'tools' | 'version'>;
+};
+
+export function mockManagedResourceApi(options: MockManagedResourceApiOptions = {}) {
   const now = new Date().toISOString();
   const requests: RecordedRequest[] = [];
   const sessionResources = [
@@ -899,6 +903,8 @@ export function mockManagedResourceApi() {
       agentResponse({
         id: 'agent_option123456',
         name: 'Option agent',
+        version: 3,
+        ...options.agent,
       }),
     ],
     sessions: [
@@ -912,6 +918,7 @@ export function mockManagedResourceApi() {
         title: 'Session one',
         type: 'session',
         updated_at: now,
+        usage: { input_tokens: 1234, output_tokens: 56, list_cost: 0.0123 },
         vault_ids: ['vlt_one123456'],
         resources: sessionResources,
       },

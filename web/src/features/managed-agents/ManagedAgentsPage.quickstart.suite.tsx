@@ -38,49 +38,6 @@ import {
 } from './ManagedAgentsPage.test-utils';
 import type { AuthContextValue } from '../../shared/auth/context';
 
-if (typeof globalThis.DOMRect === 'undefined') {
-  class TestDOMRect {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    top: number;
-    right: number;
-    bottom: number;
-    left: number;
-
-    constructor(x = 0, y = 0, width = 0, height = 0) {
-      this.x = x;
-      this.y = y;
-      this.width = width;
-      this.height = height;
-      this.top = y;
-      this.right = x + width;
-      this.bottom = y + height;
-      this.left = x;
-    }
-
-    static fromRect(rect: Partial<DOMRectInit> = {}) {
-      return new TestDOMRect(rect.x ?? 0, rect.y ?? 0, rect.width ?? 0, rect.height ?? 0);
-    }
-
-    toJSON() {
-      return {
-        x: this.x,
-        y: this.y,
-        width: this.width,
-        height: this.height,
-        top: this.top,
-        right: this.right,
-        bottom: this.bottom,
-        left: this.left,
-      };
-    }
-  }
-
-  Object.assign(globalThis, { DOMRect: TestDOMRect });
-}
-
 function QuickstartLocaleTestToggle() {
   const { locale, setLocale } = useI18n();
   return (
@@ -1067,9 +1024,11 @@ export function registerManagedAgentsQuickstartTests() {
 
     expect(await screen.findByText('Agent created')).toBeTruthy();
     const panelTabs = screen.getByRole('tablist', { name: 'Agent panel views' });
-    fireEvent.click(within(panelTabs).getByRole('tab', { name: 'Preview', selected: false }));
-    const previewPanel = screen.getByRole('tabpanel');
-    fireEvent.click(within(previewPanel).getByRole('button', { name: /^Configure environment$/i }));
+    const previewTab = within(panelTabs).getByRole('tab', { name: 'Preview', selected: false });
+    fireEvent.click(previewTab);
+    const previewPanel = document.getElementById(previewTab.getAttribute('aria-controls') ?? '');
+    expect(previewPanel).toBeTruthy();
+    fireEvent.click(within(previewPanel as HTMLElement).getByRole('button', { name: /^Configure environment$/i }));
 
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')).toBe(
@@ -1961,55 +1920,19 @@ export function registerManagedAgentsQuickstartTests() {
       },
       { timeout: 3000 },
     );
-    expect(screen.getByRole('tab', { name: 'Transcript' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.queryByRole('button', { name: /^Env / })).toBeNull();
-    expect(await screen.findByRole('button', { name: /^System System message/ })).toBeTruthy();
-    expect(await screen.findByRole('button', { name: /^Idle Session idle/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));
-    expect(screen.getByRole('tab', { name: 'Debug' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.queryByRole('button', { name: /^Env / })).toBeNull();
-    expect(await screen.findByRole('button', { name: /^System System message/ })).toBeTruthy();
-    expect(await screen.findByRole('button', { name: /^Idle Session idle/ })).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: /^User / }).length).toBe(2);
-    fireEvent.click(screen.getByRole('button', { name: 'All events' }));
-    expect(await screen.findByRole('menuitemcheckbox', { name: /agent\.message/ })).toBeTruthy();
-    expect(screen.queryByRole('menuitemcheckbox', { name: /env_manager_log/ })).toBeNull();
-    expect(screen.getByRole('menuitemcheckbox', { name: /session\.status_idle/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /system\.message/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /user\.message/ })).toBeTruthy();
-    fireEvent.pointerDown(document.body);
-    fireEvent.click(screen.getAllByRole('button', { name: /^User / })[0]);
+    const sessionEvents = screen.getByRole('region', { name: 'Session events' });
+    expect(within(sessionEvents).getByTestId('session-transcript-view')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Transcript' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Debug' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'All events' })).toBeNull();
+    expect(await within(sessionEvents).findByText('System message')).toBeTruthy();
+    fireEvent.click(within(sessionEvents).getAllByRole('button', { name: 'Select User event' })[0]);
     let detail = await screen.findByTestId('session-trace-detail');
     expect(within(detail).getByText('Message')).toBeTruthy();
-    expect(detail.textContent).toContain('"type": "user.message"');
-    const debugCode = within(detail).getByTestId('session-trace-code-block');
-    expect(debugCode.className).toContain('overflow-visible');
-    expect(debugCode.className).not.toContain('overflow-y-auto');
-    expect(debugCode.className).not.toContain('max-h-');
+    expect(detail.textContent).toContain('Say hello from the test run.');
     fireEvent.click(screen.getByRole('button', { name: 'Close detail panel' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
-    expect(screen.getByRole('tab', { name: 'Transcript' }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'All events' }));
-    expect(await screen.findByRole('menuitemcheckbox', { name: /All events/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /User/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /Agent/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /Tool/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /Error/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /Status/ })).toBeTruthy();
-    expect(screen.getByRole('menuitemcheckbox', { name: /System/ })).toBeTruthy();
-    expect(screen.queryByRole('menuitemcheckbox', { name: /session\.status_idle/ })).toBeNull();
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole('button', { name: /^Env / })).toBeNull();
-    expect(await screen.findByRole('button', { name: /^System System message/ })).toBeTruthy();
-    expect(await screen.findByRole('button', { name: /^Idle Session idle/ })).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: /^User / }).length).toBe(2);
-    const transcriptRows = screen
-      .getAllByRole('button')
-      .map((button) => button.getAttribute('aria-label') || '')
-      .filter((label) => /^(Env|User|System|Agent|Thinking) /.test(label));
-    expect(transcriptRows.map((label) => label.split(' ')[0])).toEqual(['User', 'User', 'System', 'Thinking', 'Agent']);
-    expect(screen.getByRole('button', { name: /^Thinking Thinking\.\.\./ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /^Agent ```json/ }));
+    expect(sessionEvents.querySelector('[data-transcript-thinking-row]')).toBeTruthy();
+    fireEvent.click(sessionEvents.querySelector('[data-event-id^="evt_sesn_created123456_agent_1"]') as HTMLElement);
     detail = await screen.findByTestId('session-trace-detail');
     expect(within(detail).getByText('Message')).toBeTruthy();
     expect(await within(detail).findByText('Content')).toBeTruthy();
@@ -2114,8 +2037,10 @@ export function registerManagedAgentsQuickstartTests() {
       ).toBe(true),
     );
     expect(
-      (await screen.findAllByRole('button', { name: /^User Extract structured data from this email\./ })).length,
-    ).toBeGreaterThan(1);
+      within(screen.getByRole('region', { name: 'Session events' })).getAllByText(
+        'Extract structured data from this email.',
+      ).length,
+    ).toBeGreaterThan(0);
   });
 
   test('creates vault credentials through the real vault credential endpoint', async () => {

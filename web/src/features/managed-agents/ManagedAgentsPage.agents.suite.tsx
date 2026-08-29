@@ -1289,21 +1289,17 @@ export function registerManagedAgentsAgentsTests() {
     const turnsCard = screen.getByText('Turns').closest('[data-slot="card"]');
     expect(turnsCard).toBeTruthy();
     expect(turnsCard?.querySelector('[data-slot="tabs-list"]')?.getAttribute('data-slot')).toBe('tabs-list');
-    expect(
-      within(turnsCard as HTMLElement)
-        .getByRole('tab', { name: 'p50' })
-        .getAttribute('aria-selected'),
-    ).toBe('true');
-    expect(within(turnsCard as HTMLElement).getByRole('tabpanel').textContent).toContain('2');
+    const p50Tab = within(turnsCard as HTMLElement).getByRole('tab', { name: 'p50' });
+    expect(p50Tab.getAttribute('aria-selected')).toBe('true');
+    const p50Panel = document.getElementById(p50Tab.getAttribute('aria-controls') ?? '');
+    expect(p50Panel?.textContent).toContain('2');
 
-    fireEvent.click(within(turnsCard as HTMLElement).getByRole('tab', { name: 'p95' }));
+    const p95Tab = within(turnsCard as HTMLElement).getByRole('tab', { name: 'p95' });
+    fireEvent.click(p95Tab);
 
-    expect(
-      within(turnsCard as HTMLElement)
-        .getByRole('tab', { name: 'p95' })
-        .getAttribute('aria-selected'),
-    ).toBe('true');
-    expect(within(turnsCard as HTMLElement).getByRole('tabpanel').textContent).toContain('4');
+    expect(p95Tab.getAttribute('aria-selected')).toBe('true');
+    const p95Panel = document.getElementById(p95Tab.getAttribute('aria-controls') ?? '');
+    expect(p95Panel?.textContent).toContain('4');
     expect(
       api.requests.some(
         (request) =>

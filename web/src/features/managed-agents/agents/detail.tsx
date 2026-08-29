@@ -71,7 +71,6 @@ import {
   localizedEntityStatusLabel,
   ManagedEntityDialog,
 } from '../resources/ManagedResources';
-import { numericValueFromKeys, stringValueFromKeys } from '../sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
   type AgentDetailCreatedFilter,
@@ -91,7 +90,9 @@ import {
   copyText,
   errorMessage,
   managedEntityDetailHref,
+  numericValueFromKeys,
   objectRecord,
+  stringValueFromKeys,
   titleCase,
 } from '../utils';
 import {

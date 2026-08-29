@@ -3,6 +3,7 @@ import { type AgentApiResponse } from '../../types';
 import {
   aggregateToolPermissions,
   buildAgentToolDisplayCards,
+  configuredAgentToolPermission,
   effectiveToolPermission,
   hasConfiguredAgentTools,
   normalizeMcpDirectoryServers,
@@ -80,6 +81,32 @@ describe('agent tool display model', () => {
     expect(cards[0].tools.find((tool) => tool.name === 'read')?.permission).toBe('always_deny');
     expect(cards[0].tools.find((tool) => tool.name === 'bash')?.permission).toBe('always_ask');
     expect(cards[1].tools[0].permission).toBe('always_ask');
+  });
+
+  test('resolves runtime tool permissions from the pinned agent configuration', () => {
+    const agent = agentFixture({
+      mcp_servers: [{ name: 'private_docs', url: 'https://docs.example.com/mcp' }],
+      tools: [
+        {
+          type: 'agent_toolset_20260401',
+          default_config: { permission_policy: { type: 'always_ask' } },
+          configs: [{ name: 'read', enabled: false }],
+        },
+        {
+          type: 'mcp_toolset',
+          mcp_server_name: 'private_docs',
+          default_config: { permission_policy: { type: 'always_allow' } },
+          configs: [{ name: 'delete_page', enabled: false }],
+        },
+        { type: 'custom', name: 'lookup_customer' },
+      ],
+    });
+
+    expect(configuredAgentToolPermission(agent, 'Bash')).toBe('always_ask');
+    expect(configuredAgentToolPermission(agent, 'Read')).toBe('always_deny');
+    expect(configuredAgentToolPermission(agent, 'mcp__private_docs__search')).toBe('always_allow');
+    expect(configuredAgentToolPermission(agent, 'mcp__private_docs__delete_page')).toBe('always_deny');
+    expect(configuredAgentToolPermission(agent, 'lookup_customer')).toBeUndefined();
   });
 
   test('uses the MCP runtime default when directory tools have no matching toolset', () => {

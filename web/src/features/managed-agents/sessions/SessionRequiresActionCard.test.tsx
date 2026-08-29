@@ -95,7 +95,7 @@ describe('SessionRequiresActionCard', () => {
     expect(sessionToolConfirmationPublicId(fallbackCall)).toBe('evt_bash_123');
   });
 
-  test('renders tool approval card and calls onConfirm with allow and deny', async () => {
+  test('renders inline tool approval actions and calls onConfirm with allow and deny', async () => {
     const confirmations: unknown[] = [];
     const handleConfirm = async (input: unknown) => {
       confirmations.push(input);
@@ -104,8 +104,8 @@ describe('SessionRequiresActionCard', () => {
     const { rerender } = render(<SessionRequiresActionCard toolCall={baseToolCall} onConfirm={handleConfirm} />);
 
     expect(screen.getByTestId('session-tool-approval-card')).toBeTruthy();
-    expect(screen.getByText('Bash')).toBeTruthy();
-    expect(screen.getByText('npm test')).toBeTruthy();
+    expect(screen.getByText('Requires approval')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
 
     const allowBtn = screen.getByTestId('tool-allow-button');
     const denyBtn = screen.getByTestId('tool-deny-button');

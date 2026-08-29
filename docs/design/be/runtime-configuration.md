@@ -55,7 +55,7 @@ flowchart LR
     componentLoggers --> workers
 ```
 
-该边界让配置比较、序列化和测试保持确定性，也让日志级别、输出 handler 与公共字段由进程入口统一控制。领域代码不能通过把 logger 塞进 `Config` 来绕过依赖声明，也不能自行创建另一套全局 handler。
+该边界让配置比较、序列化和测试保持确定性，也让日志级别、输出 handler 与公共字段由进程入口统一控制。进程入口使用的 console handler 始终输出不含 ANSI 控制字符的纯文本，终端、文件、管道和日志采集器采用相同格式。领域代码不能通过把 logger 塞进 `Config` 来绕过依赖声明，也不能自行创建另一套全局 handler。
 
 Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业务字段，也不做 YAML merge。本地 Compose 从受跟踪的无密钥模板 `deploy/docker-compose/oma-server.yaml` 初始化 gitignored 的 `deploy/docker-compose/oma-server.local.yaml`，并只读挂载后者；密码、API key 和私钥路径只能写入本地文件。生产环境应由容器平台或 Secret Manager 将受权限保护的完整 YAML 只读挂载到同一目标路径。
 

@@ -1,5 +1,5 @@
 // Package logging provides logging helpers, including a console slog
-// handler that renders human-friendly, ANSI-colored output for local/dev use.
+// handler that renders human-friendly output for local/dev use.
 package logging
 
 import (
@@ -9,15 +9,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-)
-
-const (
-	ansiReset  = "\033[0m"
-	ansiRed    = "\033[31m"
-	ansiGreen  = "\033[32m"
-	ansiYellow = "\033[33m"
-	ansiCyan   = "\033[36m"
-	ansiGray   = "\033[90m"
 )
 
 // LoggerOrDefault normalizes optional logger dependencies at component
@@ -30,7 +21,7 @@ func LoggerOrDefault(logger *slog.Logger) *slog.Logger {
 	return slog.Default()
 }
 
-// ConsoleHandler writes colored, single-line logs. HTTP access logs
+// ConsoleHandler writes plain-text, single-line logs. HTTP access logs
 // (component=http) are rendered as "[clientKind] METHOD STATUS durationMs URL".
 type ConsoleHandler struct {
 	mu     *sync.Mutex
@@ -118,16 +109,8 @@ func (h *ConsoleHandler) Handle(_ context.Context, r slog.Record) error {
 }
 
 func formatHTTPLine(r slog.Record, values map[string]string, order []string) string {
-	base := ""
-	if r.Level >= slog.LevelError || statusIsError(values["status"]) {
-		base = ansiRed
-	}
-
 	var b strings.Builder
-	b.WriteString(base)
-	b.WriteString(ansiGray)
 	b.WriteString(r.Time.Format("15:04:05.000"))
-	b.WriteString(resetTo(base))
 	b.WriteString(" [")
 	b.WriteString(values["clientKind"])
 	b.WriteString("] ")
@@ -149,26 +132,14 @@ func formatHTTPLine(r slog.Record, values map[string]string, order []string) str
 		"method": true, "status": true, "durationMs": true, "url": true,
 	}
 	appendRest(&b, values, order, skip)
-
-	b.WriteString(ansiReset)
 	return b.String()
 }
 
 func formatGenericLine(r slog.Record, values map[string]string, order []string) string {
-	base := ""
-	if r.Level >= slog.LevelError {
-		base = ansiRed
-	}
-
 	var b strings.Builder
-	b.WriteString(base)
-	b.WriteString(ansiGray)
 	b.WriteString(r.Time.Format("15:04:05.000"))
-	b.WriteString(resetTo(base))
 	b.WriteString(" ")
-	b.WriteString(levelColor(r.Level))
 	b.WriteString(levelLabel(r.Level))
-	b.WriteString(resetTo(base))
 	if component := values["component"]; component != "" {
 		b.WriteString(" [")
 		b.WriteString(component)
@@ -179,16 +150,7 @@ func formatGenericLine(r slog.Record, values map[string]string, order []string) 
 
 	skip := map[string]bool{"component": true}
 	appendRest(&b, values, order, skip)
-
-	b.WriteString(ansiReset)
 	return b.String()
-}
-
-func resetTo(base string) string {
-	if base == "" {
-		return ansiReset
-	}
-	return ansiReset + base
 }
 
 func appendRest(b *strings.Builder, values map[string]string, order []string, skip map[string]bool) {
@@ -218,23 +180,6 @@ func levelLabel(level slog.Level) string {
 	default:
 		return "DEBUG"
 	}
-}
-
-func levelColor(level slog.Level) string {
-	switch {
-	case level >= slog.LevelError:
-		return ansiRed
-	case level >= slog.LevelWarn:
-		return ansiYellow
-	case level >= slog.LevelInfo:
-		return ansiGreen
-	default:
-		return ansiCyan
-	}
-}
-
-func statusIsError(status string) bool {
-	return len(status) > 0 && (status[0] == '4' || status[0] == '5')
 }
 
 func attrValueString(v slog.Value) string {

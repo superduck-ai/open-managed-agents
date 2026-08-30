@@ -12,7 +12,7 @@
   - 当前只实现邮箱验证码登录；配置完整的 `auth.smtp` 时真实发信，完全省略时接受任意非空验证码且不发送邮件。部分 SMTP 配置拒绝启动，避免误降级。
   - 负责 email 归一化和校验、验证码签发/验证、默认用户名/组织名、外部 ID 生成、默认 workspace/member/API key 创建流程、API key raw token/hash/hint 生成。
   - `LoginCodeSender` 保留为测试 seam，使验证码流程可以在测试中避开真实发信。
-  - 真实发信模式下，Redis challenge 只保存 HMAC 摘要，不保存邮箱或验证码明文；HMAC key 由 SMTP 密码做域隔离派生，不需要额外配置 secret。验证码固定 10 分钟有效，邮件使用相对有效期文案；同一邮箱每小时最多发送 5 次、1 分钟重发冷却、最多错误 5 次。验证码先校验但不删除，账号和 session 准备成功后再原子核销；并发请求只有一个能核销成功。
+  - 真实发信模式下，Redis challenge 只保存 HMAC 摘要，不保存邮箱或验证码明文；HMAC key 由 SMTP 密码做域隔离派生，不需要额外配置 secret。验证码固定 10 分钟有效，邮件使用中英双语的相对有效期文案；同一邮箱每小时最多发送 5 次、1 分钟重发冷却、最多错误 5 次。验证码先校验但不删除，账号和 session 准备成功后再原子核销；并发请求只有一个能核销成功。
   - 当前不按客户端 IP 限流，避免默认反向代理把所有用户折叠到同一额度；只有建立可信代理边界后才可重新引入客户端 IP 限流。
   - 通过 `db.WithPlatformAuthTx` 保持默认 organization、user、workspace、workspace member 和 API key 的事务一致性。
 - `internal/platformapi`

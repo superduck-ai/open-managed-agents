@@ -104,8 +104,19 @@ func (s *smtpSender) deadline(ctx context.Context) time.Time {
 }
 
 func (s *smtpSender) message(recipient, code string) []byte {
-	subject := mime.QEncoding.Encode("UTF-8", "Open Managed Agents 登录验证码")
-	body := fmt.Sprintf("你的登录验证码是：%s\r\n\r\n验证码将在 %d 分钟内失效，请勿转发给任何人。\r\n如果不是你本人操作，请忽略此邮件。\r\n", code, emailCodeTTL/time.Minute)
+	subject := mime.QEncoding.Encode("UTF-8", "Open Managed Agents login verification code / 登录验证码")
+	body := fmt.Sprintf(
+		"Your login verification code is: %s\r\n\r\n"+
+			"This code expires in %d minutes. Do not share it with anyone.\r\n"+
+			"If you did not request this code, you can ignore this email.\r\n\r\n"+
+			"你的登录验证码是：%s\r\n\r\n"+
+			"验证码将在 %d 分钟内失效，请勿转发给任何人。\r\n"+
+			"如果不是你本人操作，请忽略此邮件。\r\n",
+		code,
+		emailCodeTTL/time.Minute,
+		code,
+		emailCodeTTL/time.Minute,
+	)
 	return fmt.Appendf(nil,
 		"From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n%s",
 		s.username,

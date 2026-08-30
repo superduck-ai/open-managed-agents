@@ -278,31 +278,71 @@ body:has(.session-route-theme)
     [data-slot='sheet-content'],
     [data-slot='tooltip-content']
   ) {
-  --background: light-dark(#f9f9f7, #0b0b0b);
-  --foreground: light-dark(#0b0b0b, #f0efec);
-  --card: light-dark(#ffffff, #1a1a19);
-  --card-foreground: light-dark(#0b0b0b, #f0efec);
-  --popover: light-dark(#ffffff, #20201f);
-  --popover-foreground: light-dark(#0b0b0b, #f0efec);
-  --primary: light-dark(#0b0b0b, #f0efec);
-  --primary-foreground: light-dark(#ffffff, #0b0b0b);
-  --secondary: light-dark(#efefec, #20201f);
-  --secondary-foreground: light-dark(#0b0b0b, #f0efec);
-  --muted: light-dark(#f0f0ed, #1a1a19);
+  --background: #f9f9f7;
+  --foreground: #0b0b0b;
+  --card: #ffffff;
+  --card-foreground: #0b0b0b;
+  --popover: #ffffff;
+  --popover-foreground: #0b0b0b;
+  --primary: #0b0b0b;
+  --primary-foreground: #ffffff;
+  --secondary: #efefec;
+  --secondary-foreground: #0b0b0b;
+  --muted: #f0f0ed;
   --muted-foreground: #898781;
-  --accent: light-dark(rgb(11 11 11 / 5%), rgb(255 255 255 / 7.5%));
-  --accent-foreground: light-dark(#0b0b0b, #f0efec);
-  --border: light-dark(rgb(11 11 11 / 10%), rgb(255 255 255 / 10%));
-  --input: light-dark(rgb(11 11 11 / 15%), rgb(255 255 255 / 15%));
-  --ring: light-dark(#2a78d6, #6da7ec);
-  --session-link: light-dark(#184f95, #6da7ec);
-  --session-event-span: light-dark(oklch(0.541 0.281 293.009), oklch(0.702 0.183 293.541));
-  --session-secondary-foreground: light-dark(#52514e, #c3c2b7);
-  --code: light-dark(#f0f0ed, #20201f);
-  --session-surface: light-dark(#ffffff, #1a1a19);
-  --session-border: light-dark(rgb(11 11 11 / 10%), rgb(255 255 255 / 10%));
-  --session-hover: light-dark(rgb(11 11 11 / 5%), rgb(255 255 255 / 7.5%));
-  --session-selected: light-dark(rgb(11 11 11 / 10%), rgb(255 255 255 / 15%));
+  --accent: rgb(11 11 11 / 5%);
+  --accent-foreground: #0b0b0b;
+  --border: rgb(11 11 11 / 10%);
+  --input: rgb(11 11 11 / 15%);
+  --ring: #2a78d6;
+  --session-link: #184f95;
+  --session-event-span: oklch(0.541 0.281 293.009);
+  --session-secondary-foreground: #52514e;
+  --code: #f0f0ed;
+  --session-surface: #ffffff;
+  --session-border: rgb(11 11 11 / 10%);
+  --session-hover: rgb(11 11 11 / 5%);
+  --session-selected: rgb(11 11 11 / 10%);
+}
+
+.dark .session-route-theme,
+.dark
+  body:has(.session-route-theme)
+  :is(
+    [data-slot='alert-dialog-content'],
+    [data-slot='combobox-content'],
+    [data-slot='dialog-content'],
+    [data-slot='dropdown-menu-content'],
+    [data-slot='dropdown-menu-sub-content'],
+    [data-slot='popover-content'],
+    [data-slot='select-content'],
+    [data-slot='sheet-content'],
+    [data-slot='tooltip-content']
+  ) {
+  --background: #0b0b0b;
+  --foreground: #f0efec;
+  --card: #1a1a19;
+  --card-foreground: #f0efec;
+  --popover: #20201f;
+  --popover-foreground: #f0efec;
+  --primary: #f0efec;
+  --primary-foreground: #0b0b0b;
+  --secondary: #20201f;
+  --secondary-foreground: #f0efec;
+  --muted: #1a1a19;
+  --accent: rgb(255 255 255 / 7.5%);
+  --accent-foreground: #f0efec;
+  --border: rgb(255 255 255 / 10%);
+  --input: rgb(255 255 255 / 15%);
+  --ring: #6da7ec;
+  --session-link: #6da7ec;
+  --session-event-span: oklch(0.702 0.183 293.541);
+  --session-secondary-foreground: #c3c2b7;
+  --code: #20201f;
+  --session-surface: #1a1a19;
+  --session-border: rgb(255 255 255 / 10%);
+  --session-hover: rgb(255 255 255 / 7.5%);
+  --session-selected: rgb(255 255 255 / 15%);
 }
 
 @keyframes shimmer-text-shine {

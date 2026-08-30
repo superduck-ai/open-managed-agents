@@ -39,6 +39,7 @@ import {
   type SessionFileResourceFormValue,
   type SessionThreadApiResponse,
   type SessionToolConfirmationInput,
+  type ToolCallEntry,
 } from '../types';
 import { compactEntityId, copyText, errorMessage, managedEntityListHref } from '../utils';
 import { Archive, ArrowDown, ChevronDown, Copy, PanelRightOpen, RotateCcw, X } from 'lucide-react';
@@ -108,6 +109,15 @@ import { SessionTraceWorkspaceLayout } from './SessionTraceWorkspaceLayout';
 import { sessionTraceKeyboardTarget } from './sessionTraceInteractions';
 
 const SESSION_CHROME_GUTTER_CLASS_NAME = 'px-4 @min-[640px]:px-6 @min-[1024px]:px-8';
+
+function sessionPendingAction(
+  toolCall: ToolCallEntry | null,
+  onConfirm: (input: SessionToolConfirmationInput) => Promise<void>,
+  disabled: boolean,
+) {
+  if (!toolCall) return undefined;
+  return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+}
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
   const { activeWorkspaceId } = useWorkspace();
@@ -776,15 +786,11 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               isMultiAgent={isMultiAgent}
               lanes={lanes}
               openModelRequest={openModelRequest}
-              renderToolApproval={(toolCall) =>
-                activeAwaitingToolCall?.id === toolCall.id ? (
-                  <SessionRequiresActionCard
-                    toolCall={toolCall}
-                    onConfirm={handleToolConfirmation}
-                    disabled={conversationState.disabled}
-                  />
-                ) : undefined
-              }
+              pendingAction={sessionPendingAction(
+                activeAwaitingToolCall,
+                handleToolConfirmation,
+                conversationState.disabled,
+              )}
               onClearFilters={() => {
                 setQuery('');
                 handleSelectLane(SESSION_MAIN_LANE_ID, null);
@@ -885,7 +891,7 @@ export function EventsTab({
   isMultiAgent,
   lanes,
   openModelRequest,
-  renderToolApproval,
+  pendingAction,
   onClearFilters,
   onCopyAll,
   onCloseInspector,
@@ -1072,7 +1078,6 @@ export function EventsTab({
                           onSelectEntry={onSelectEntry}
                           threadNameById={threadNameById}
                           onThreadClick={onThreadClick}
-                          renderToolApproval={renderToolApproval}
                           traceStartMs={traceStartMs}
                         />
                       ) : (
@@ -1104,6 +1109,11 @@ export function EventsTab({
                   </MessageScrollerButton>
                 </MessageScroller>
               </MessageScrollerProvider>
+              {pendingAction ? (
+                <div className="flex-none px-4 pt-2" data-testid="session-pending-action">
+                  <div className="mx-auto w-full max-w-[720px]">{pendingAction}</div>
+                </div>
+              ) : null}
               {composer}
             </div>
           }

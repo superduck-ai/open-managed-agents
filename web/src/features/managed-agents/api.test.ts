@@ -164,6 +164,12 @@ describe('managed agents API', () => {
       created_at: createdAt,
       event: { id: 'sevt_preview', type: 'agent.message' },
     });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_idle',
+      type: 'session.status_idle',
+      created_at: createdAt,
+      processed_at: createdAt,
+    });
     globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
@@ -175,6 +181,12 @@ describe('managed agents API', () => {
               processed_at: createdAt,
               content: [{ type: 'text', text: 'Final answer' }],
             },
+            {
+              id: 'sevt_idle',
+              type: 'session.status_idle',
+              created_at: createdAt,
+              processed_at: createdAt,
+            },
           ],
           next_page: null,
         }),
@@ -185,6 +197,7 @@ describe('managed agents API', () => {
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
       'sevt_final',
+      'sevt_idle',
     ]);
     expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
   });

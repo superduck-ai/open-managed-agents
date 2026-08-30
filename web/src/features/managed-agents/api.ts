@@ -1184,14 +1184,26 @@ export async function syncSessionEventHistory({
       const nextPage = response.next_page ?? null;
       sawTerminated =
         sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
-      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
-        mergeSessionEventCache(
-          cache,
-          response.data,
+      const replacedPreviewIds: string[] = [];
+      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
+        let mergedCache = cache;
+        const remainingEvents = response.data.filter((event) => {
+          const previewId = sessionStreamPreviewIdForFinalEvent(mergedCache, event);
+          if (!previewId) return true;
+          replacedPreviewIds.push(previewId);
+          mergedCache = sessionEventCacheReplacingId(mergedCache, previewId, event);
+          return false;
+        });
+        return mergeSessionEventCache(
+          mergedCache,
+          remainingEvents,
           nextPage
             ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
             : { historyComplete: true, sawTerminated },
-        ),
+        );
+      });
+      replacedPreviewIds.forEach((previewId) =>
+        removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, previewId),
       );
       page = nextPage;
     } while (page && !signal?.aborted);

@@ -379,18 +379,15 @@ export function ToolCallRow({
   selected,
   onSelect,
   presentation = 'standalone',
-  renderToolApproval,
 }: {
   entry: ToolCallEntry;
   selected: boolean;
   onSelect: () => void;
   presentation?: 'standalone' | 'iteration';
-  renderToolApproval?: (entry: ToolCallEntry) => ReactNode;
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
   const duration = formatSessionDuration(entry.executionMs, formatters, msg);
-  const approval = renderToolApproval?.(entry);
   return (
     <div
       data-event-id={entry.traceEntry.id}
@@ -418,7 +415,6 @@ export function ToolCallRow({
           lifecycle={entry.lifecycle}
         />
       </button>
-      {approval ? <div className="pb-1.5 pl-6 pr-1.5 pt-0.5">{approval}</div> : null}
     </div>
   );
 }
@@ -428,13 +424,11 @@ export function ToolBatchRow({
   selected,
   onSelect,
   presentation = 'standalone',
-  renderToolApproval,
 }: {
   entry: ToolBatchEntry;
   selected: boolean;
   onSelect: () => void;
   presentation?: 'standalone' | 'iteration';
-  renderToolApproval?: (entry: ToolCallEntry) => ReactNode;
 }) {
   return (
     <div
@@ -444,14 +438,7 @@ export function ToolBatchRow({
       className={clsx('w-full rounded-md', presentation === 'standalone' && 'my-0.5 bg-transparent')}
     >
       {entry.calls.map((call) => (
-        <ToolCallRow
-          key={call.id}
-          entry={call}
-          selected={selected}
-          onSelect={onSelect}
-          presentation={presentation}
-          renderToolApproval={renderToolApproval}
-        />
+        <ToolCallRow key={call.id} entry={call} selected={selected} onSelect={onSelect} presentation={presentation} />
       ))}
     </div>
   );
@@ -816,7 +803,6 @@ export function TranscriptRow({
   threadNameById,
   onThreadClick,
   presentation = 'standalone',
-  renderToolApproval,
 }: {
   entry: SessionEventListEntry;
   selected: boolean;
@@ -824,7 +810,6 @@ export function TranscriptRow({
   threadNameById: Map<string, string>;
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
   presentation?: 'standalone' | 'iteration';
-  renderToolApproval?: (entry: ToolCallEntry) => ReactNode;
 }) {
   switch (entry.kind) {
     case 'idle_gap':
@@ -834,25 +819,9 @@ export function TranscriptRow({
     case 'outcome':
       return <OutcomeRow entry={entry} selected={selected} onSelect={onSelect} />;
     case 'tool_call':
-      return (
-        <ToolCallRow
-          entry={entry}
-          selected={selected}
-          onSelect={onSelect}
-          presentation={presentation}
-          renderToolApproval={renderToolApproval}
-        />
-      );
+      return <ToolCallRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
     case 'tool_batch':
-      return (
-        <ToolBatchRow
-          entry={entry}
-          selected={selected}
-          onSelect={onSelect}
-          presentation={presentation}
-          renderToolApproval={renderToolApproval}
-        />
-      );
+      return <ToolBatchRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
     case 'message':
     case 'status':
     case 'passthrough':

@@ -1252,6 +1252,7 @@ export function registerManagedAgentsResourceTests() {
         id: 'evt_subagent_approval_idle',
         type: 'session.status_idle',
         created_at: new Date(base + 3_000).toISOString(),
+        stop_reason: { type: 'requires_action', event_ids: ['evt_main_shared_permission'] },
       },
     ];
 
@@ -1267,6 +1268,8 @@ export function registerManagedAgentsResourceTests() {
     });
     expect(mainRow?.textContent).toContain('/workspace/main.txt');
     expect(mainRow?.textContent).toContain('awaiting approval');
+    expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.queryByText('Paris')).toBeNull();
     expect(screen.queryByText('Reporter cannot call external weather')).toBeNull();
 
@@ -1282,6 +1285,8 @@ export function registerManagedAgentsResourceTests() {
     });
     expect(reporterRow?.textContent).toContain('Paris');
     expect(reporterRow?.textContent).toContain('denied');
+    expect(screen.getByTestId('session-tool-approval-card')).toBeTruthy();
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(
       Array.from(document.querySelectorAll<HTMLElement>('[data-entry-kind="tool_call"]')).filter((row) =>
         row.textContent?.includes('Paris'),
@@ -1342,8 +1347,16 @@ export function registerManagedAgentsResourceTests() {
       expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
       const approval = await screen.findByTestId('session-tool-approval-card');
       expect(approval.closest('[data-slot="collapsible-content"]')).toBeNull();
-      expect(approval.closest('[data-entry-kind="tool_call"]')).toBeTruthy();
+      expect(approval.closest('[data-testid="session-pending-action"]')).toBeTruthy();
+      expect(approval.closest('[data-entry-kind="tool_call"]')).toBeNull();
       expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
+
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Filter events' }), {
+        target: { value: 'no matching event' },
+      });
+      expect(await screen.findByText('No events match the current filters.')).toBeTruthy();
+      expect(screen.getByTestId('session-tool-approval-card')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
 
       fireEvent.click(screen.getByTestId(result === 'allow' ? 'tool-allow-button' : 'tool-deny-button'));
 

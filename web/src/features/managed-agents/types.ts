@@ -749,7 +749,7 @@ export type EventsTabProps = {
   isMultiAgent: boolean;
   lanes: SessionDetailLane[];
   openModelRequest: QuickstartSessionEvent | null;
-  renderToolApproval?: (entry: ToolCallEntry) => ReactNode;
+  pendingAction?: ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
   onCloseInspector: () => void;

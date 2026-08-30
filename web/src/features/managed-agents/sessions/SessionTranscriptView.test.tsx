@@ -111,19 +111,14 @@ describe('SessionTranscriptView', () => {
     expect(container.querySelector('[data-transcript-tool-row]')?.className).toContain('h-6');
   });
 
-  test('keeps approval lifecycle status visible in compact tool rows', () => {
+  test('keeps approval lifecycle status visible without expanding compact tool rows', () => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const answer = displayEntry('answer', 'agent', 'I need permission.', 'bracket-1');
     const tool = toolEntry('tool', 'bracket-1', 'awaiting_approval');
 
-    const { container } = renderTranscript(
-      [answer, tool],
-      () => {},
-      () => <div data-testid="inline-tool-approval">Approval controls</div>,
-    );
+    const { container } = renderTranscript([answer, tool], () => {});
 
     expect(screen.getAllByText('awaiting approval').length).toBeGreaterThan(0);
-    expect(screen.getByTestId('inline-tool-approval')).toBeTruthy();
     expect(container.querySelector('[data-slot="collapsible-content"]')).toBeNull();
     expect(container.querySelector('[data-transcript-tool-row]')?.getAttribute('aria-expanded')).toBeNull();
   });
@@ -273,15 +268,13 @@ describe('SessionTranscriptView', () => {
 function renderTranscript(
   entries: Array<DisplayEventEntry | ToolCallEntry>,
   onSelectEntry: (id: string | null) => void,
-  renderToolApproval?: Parameters<typeof SessionTranscriptView>[0]['renderToolApproval'],
 ) {
-  return render(transcriptTree(entries, onSelectEntry, renderToolApproval));
+  return render(transcriptTree(entries, onSelectEntry));
 }
 
 function transcriptTree(
   entries: Array<DisplayEventEntry | ToolCallEntry>,
   onSelectEntry: (id: string | null) => void = () => {},
-  renderToolApproval?: Parameters<typeof SessionTranscriptView>[0]['renderToolApproval'],
 ) {
   return transcriptScrollerTree(
     <SessionTranscriptView
@@ -291,7 +284,6 @@ function transcriptTree(
       onSelectEntry={onSelectEntry}
       threadNameById={new Map()}
       onThreadClick={() => {}}
-      renderToolApproval={renderToolApproval}
     />,
   );
 }

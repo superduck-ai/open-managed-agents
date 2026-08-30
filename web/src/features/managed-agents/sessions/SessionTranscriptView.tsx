@@ -1,4 +1,4 @@
-import { type QuickstartSessionEvent, type SessionEventListEntry, type ToolCallEntry } from '../types';
+import { type QuickstartSessionEvent, type SessionEventListEntry } from '../types';
 import { useI18n } from '../../../shared/i18n';
 import { Message, MessageContent } from '../../../shared/ui/message';
 import { MessageScrollerItem } from '../../../shared/ui/message-scroller';
@@ -31,7 +31,6 @@ export function SessionTranscriptView({
   threadNameById,
   onThreadClick,
   openModelRequest = null,
-  renderToolApproval,
   traceStartMs = 0,
 }: {
   entries: SessionEventListEntry[];
@@ -43,7 +42,6 @@ export function SessionTranscriptView({
   threadNameById: Map<string, string>;
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
   openModelRequest?: QuickstartSessionEvent | null;
-  renderToolApproval?: (entry: ToolCallEntry) => ReactNode;
   traceStartMs?: number;
 }) {
   const { msg } = useI18n();
@@ -76,7 +74,6 @@ export function SessionTranscriptView({
           threadNameById={threadNameById}
           onThreadClick={onThreadClick}
           presentation={presentation}
-          renderToolApproval={renderToolApproval}
         />
       </div>
     );

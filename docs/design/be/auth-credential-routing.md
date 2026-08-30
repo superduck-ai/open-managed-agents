@@ -114,15 +114,15 @@ Filestore 是显式例外：`/v1/filestore` 通过独立中间件验证 `Authori
 
 ### 3.1 认证中间件中的 `isPlatformHost` 残留
 
-入口鉴权已改为凭证驱动，但认证中间件内部仍按 `isPlatformHost(r.Host)` 判断是否清除无效 session cookie 或恢复 mirror session。这导致非 platform host 上的无效 session 不会被清理，mirror session 也无法恢复。
+入口鉴权改为凭证驱动前，认证中间件内部仍按 `isPlatformHost(r.Host)` 判断是否清除无效 session cookie。清理这些 host 分支后，无效 session 在任意入口都返回 `401` 并清理 cookie；原有 mirror recovery 也一并删除，避免把未知 session cookie 映射到组织的 bootstrap 用户。
 
-清理了4处残留检查：
+处理了4处相关鉴权逻辑：
 
 | 函数 | 变更 |
 |------|------|
 | `platformAuthMiddleware` | 移除 `isPlatformHost`，只要有 `sessionKey` cookie 就清理 |
 | `authenticated` | 同上 |
-| `recoverPlatformMirrorSession` | 移除 `!isPlatformHost(r.Host)` 前置条件 |
+| `recoverPlatformMirrorSession` | 删除；session store 中不存在或已过期的 cookie 必须重新登录，不再按组织 bootstrap 用户重建 session |
 | `platformMirrorOrganizationAlias` | 移除 `!isPlatformHost(r.Host)` 前置条件 |
 
 ### 3.2 死代码删除
@@ -136,6 +136,8 @@ func isExternalPlatformHost(host string) bool
 func isLocalFrontendPlatformHost(host string) bool
 func normalizedRequestHost(host string) string
 func normalizedRequestHostParts(host string) (string, string)
+func platformSessionRecoveryOrgID(r *http.Request) string
+func isPlatformAPIRequestPath(path string) bool
 ```
 
 同时移除 `net` 包导入（`normalizedRequestHostParts` 中 `net.SplitHostPort` 的唯一使用者）。
@@ -167,7 +169,7 @@ http.SetCookie(w, &http.Cookie{
 
 1. **`/v1/*` 以外的路由** — 不受影响。
 2. **workspace API key 逻辑** — 原验证、权限和 scope 不变；`POST /v1/messages` 额外接受受路径、active session 与 CCR worker lease 约束的 OAuth-compatible token。`/v1/filestore` 不接受上述凭证，只接受绑定单个 filesystem 的 Filestore JWT；Code Session Ingress 与 `/v1/messages` 的既有鉴权不受影响。
-3. **platform session 解析逻辑** — 不变。session 验证、组织上下文注入均无变化。
+3. **platform session 持久化结构** — 不变。session cookie 仍保存登录时解析出的默认 workspace 身份，不写回请求级 workspace。请求携带 `X-Workspace-ID` 或 `workspace_id` 时，鉴权层把客户端值解析为本次请求的 workspace scope：组织管理员可以访问组织内 workspace，普通用户必须具有有效的 `workspace_members` 记录；授权通过后再使用现有 API-key 查询选择目标 workspace 的 active、未过期 key，并只更新本次请求的 principal。目标 workspace 不存在、已归档、用户无权访问或没有可用 key 时返回 `403`。该流程不新增表、列或 Mapper，也不使用资源的 `created_by_user_uuid` 判断权限。
 
 ---
 
@@ -193,6 +195,10 @@ http.SetCookie(w, &http.Cookie{
 - `success api key works on any host` — API key 在 platform host 上也返回 200（旧语义下预期 401）
 - `success session cookie works on any host` — session cookie 在 API host 上也返回 200（旧语义下预期 401）
 
+`tests/platform_email_login_api_test.go` — 验证受保护路由不会恢复 session store 中不存在的 cookie，并由 `TestPlatformWorkspaceHeaderScopesV1Resources` 验证普通用户在没有 workspace membership 时被拒绝；获得 membership 后，agent、environment 和 session 请求均落在目标 workspace，创建出的 session 记录使用目标 workspace 的 API key。
+
+`tests/console_invites_api_test.go` — mirrored official organization alias 仍可配合有效 session 使用，不再依赖删除 session 后的隐式恢复。
+
 ---
 
 ## 6. 与 docker-compose 部署的关系
@@ -207,10 +213,12 @@ http.SetCookie(w, &http.Cookie{
 
 | 文件 | 变更 |
 |------|------|
-| `internal/api/server.go` | `/v1` 资源统一注册到 `registerVersionedAPIRoutes`；持有 `codesessions.Handler`，并把同一个底层 `codesessions.Service` 注入 sessions handler；`v1AuthMiddleware` 按凭证选择鉴权链并保护 NotFound/MethodNotAllowed fallback；移除双 router 入口分流；移除中间件中4处 `isPlatformHost` 检查；删除 Host 判断相关死函数 |
+| `internal/api/server.go` | `/v1` 资源统一注册到 `registerVersionedAPIRoutes`；持有 `codesessions.Handler`，并把同一个底层 `codesessions.Service` 注入 sessions handler；`v1AuthMiddleware` 按凭证选择鉴权链并保护 NotFound/MethodNotAllowed fallback；platform 请求从客户端 workspace ID 解析并授权 workspace scope，同时选择目标 workspace 的可用 API key；移除双 router 入口分流；移除中间件中4处 `isPlatformHost` 检查；删除 Host 判断相关死函数 |
 | `internal/api/service_auth.go` | 对 `/v1/filestore` 资源命名空间启用独立 Filestore JWT，并把 claims 绑定到 organization/account/workspace/filesystem 数据库范围 |
 | `internal/api/filestore_auth_test.go` | 覆盖 Filestore 路径边界、扁平鉴权错误、Bearer-only 入口、JWT/DB identity 绑定和跨凭证/跨资源拒绝 |
 | `internal/api/auth_test.go` | 测试用例从 host 驱动改为凭证驱动，覆盖 API key、session cookie、双凭证、无凭证场景及两个 `/v1` 鉴权 fallback |
 | `tests/files_api_test.go` | 更新2个集成测试用例：api key 在任意 host 返回 200，session cookie 在任意 host 返回 200 |
+| `tests/platform_email_login_api_test.go` | 覆盖 platform session 的请求级 workspace/API-key 同步切换，并验证自定义 workspace 可以创建 session |
+| `tests/console_invites_api_test.go` | 保留有效 session 下的 organization alias 兼容测试，移除 session 自动恢复预期 |
 | `internal/platformapi/platform_auth_routes.go` | `sessionKey` cookie 添加 `HttpOnly: true` 和 `SameSite: Lax` |
 | `docs/design/be/auth-credential-routing.md` | 本设计文档 |

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
@@ -323,22 +324,7 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, err := s.authenticatePlatformSession(r)
 		if err != nil {
-			if recovered, recoveredOrgAlias, recoveredErr, ok := s.recoverPlatformMirrorSession(r); ok {
-				if recoveredErr == nil {
-					setPlatformRecoveredSessionCookies(w, recovered)
-					ctx := auth.WithPrincipal(r.Context(), recovered)
-					if recoveredOrgAlias != "" {
-						ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, recoveredOrgAlias)
-					}
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-				if recoveredErr.Status >= http.StatusInternalServerError {
-					httpapi.WriteError(w, r, recoveredErr)
-					return
-				}
-			}
-			if auth.ExtractPlatformSessionKey(r) != "" {
+			if err.Status == http.StatusUnauthorized && auth.ExtractPlatformSessionKey(r) != "" {
 				clearPlatformSessionCookies(w)
 			}
 			httpapi.WriteError(w, r, err)
@@ -398,19 +384,6 @@ func clearPlatformSessionCookies(w http.ResponseWriter) {
 	}
 }
 
-func setPlatformRecoveredSessionCookies(w http.ResponseWriter, principal auth.Principal) {
-	orgUUID := strings.TrimSpace(principal.OrganizationUUID)
-	if orgUUID == "" {
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:   "lastActiveOrg",
-		Value:  orgUUID,
-		Path:   "/",
-		MaxAge: int(platformsession.DefaultTTL.Seconds()),
-	})
-}
-
 func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *httpapi.Error) {
 	sessionKey := auth.ExtractPlatformSessionKey(r)
 	if sessionKey == "" {
@@ -450,75 +423,99 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if orgErr != nil {
 		return auth.Principal{}, orgErr
 	}
-	workspaceID := platformWorkspaceOverrideID(r)
-	if workspaceID == "" || workspaceID == "default" || workspaceID == principal.WorkspaceExternalID || workspaceID == principal.WorkspaceUUID {
+	return s.resolvePlatformWorkspaceScope(r, principal)
+}
+
+func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
+	workspaceID := platformRequestWorkspaceID(r)
+	if workspaceID == "" {
 		return principal, nil
+	}
+	if workspaceID == "default" {
+		workspaceID = principal.WorkspaceExternalID
 	}
 	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not found")
 		}
-		s.logger.ErrorContext(r.Context(), "load platform workspace override", "error", err)
+		s.logger.ErrorContext(r.Context(), "load requested platform workspace", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if workspace.ArchivedAt != nil {
 		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace is archived")
 	}
+	if accessErr := s.authorizePlatformWorkspaceAccess(r, principal, workspace); accessErr != nil {
+		return auth.Principal{}, accessErr
+	}
+	apiKey, err := s.findActivePlatformWorkspaceAPIKey(r, principal.OrganizationUUID, workspace.ExternalID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace has no active API key")
+		}
+		s.logger.ErrorContext(r.Context(), "load platform workspace API key", "error", err)
+		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+	}
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
+	principal.APIKeyUUID = apiKey.UUID
+	principal.APIKeyExternalID = apiKey.ExternalID
 	return principal, nil
 }
 
-func (s *Server) recoverPlatformMirrorSession(r *http.Request) (auth.Principal, string, *httpapi.Error, bool) {
-	sessionKey := auth.ExtractPlatformSessionKey(r)
-	if sessionKey == "" || s.db == nil || s.platformStore == nil {
-		return auth.Principal{}, "", nil, false
+func (s *Server) authorizePlatformWorkspaceAccess(r *http.Request, principal auth.Principal, workspace db.AdminWorkspace) *httpapi.Error {
+	user, err := s.db.GetAdminUser(r.Context(), principal.OrganizationUUID, principal.UserExternalID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
+		}
+		s.logger.ErrorContext(r.Context(), "load platform user workspace access", "error", err)
+		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	preferredOrgID := platformSessionRecoveryOrgID(r)
-	if preferredOrgID == "" && isPlatformAPIRequestPath(r.URL.Path) {
-		return auth.Principal{}, "", nil, false
+	if strings.EqualFold(user.Role, "admin") {
+		return nil
 	}
+	if _, err := s.db.GetAdminWorkspaceMember(
+		r.Context(),
+		principal.OrganizationUUID,
+		workspace.ExternalID,
+		principal.UserExternalID,
+	); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
+		}
+		s.logger.ErrorContext(r.Context(), "load platform workspace membership", "error", err)
+		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+	}
+	return nil
+}
 
-	recoveredOrgAlias := ""
-	userExternalID, orgUUID, err := s.db.FindBootstrapUserContext(r.Context(), preferredOrgID)
-	if err != nil {
-		if preferredOrgID != "" {
-			userExternalID, orgUUID, err = s.db.FindBootstrapUserContext(r.Context(), "")
-			if err == nil {
-				recoveredOrgAlias = preferredOrgID
-			}
-		}
+func (s *Server) findActivePlatformWorkspaceAPIKey(r *http.Request, organizationUUID, workspaceExternalID string) (db.AdminAPIKey, error) {
+	const pageSize = 100
+
+	now := time.Now()
+	afterID := ""
+	for {
+		keys, hasMore, err := s.db.ListAdminAPIKeysPage(r.Context(), db.ListAdminAPIKeysParams{
+			OrganizationUUID:    organizationUUID,
+			WorkspaceExternalID: workspaceExternalID,
+			Status:              "active",
+			AfterID:             afterID,
+			Limit:               pageSize,
+		})
 		if err != nil {
-			if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
-				return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
+			return db.AdminAPIKey{}, err
+		}
+		for _, key := range keys {
+			if key.ExpiresAt == nil || key.ExpiresAt.After(now) {
+				return key, nil
 			}
-			s.logger.ErrorContext(r.Context(), "recover platform session context", "error", err)
-			return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
 		}
-	}
-	session, err := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
-		SessionKey: sessionKey,
-		UserUUID:   userExternalID,
-		OrgUUID:    orgUUID,
-	})
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
-			return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
+		if !hasMore || len(keys) == 0 {
+			return db.AdminAPIKey{}, db.ErrNotFound
 		}
-		s.logger.ErrorContext(r.Context(), "recover platform session identity", "error", err)
-		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
+		afterID = keys[len(keys)-1].ExternalID
 	}
-	if err := s.platformStore.Save(r.Context(), sessionKey, session); err != nil {
-		s.logger.ErrorContext(r.Context(), "save recovered platform session", "error", err)
-		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
-	}
-	principal := session.Principal()
-	principal, orgErr := s.applyPlatformOrganizationOverride(r, principal)
-	if orgErr != nil {
-		return auth.Principal{}, "", orgErr, true
-	}
-	return principal, recoveredOrgAlias, nil, true
 }
 
 func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
@@ -575,19 +572,6 @@ func platformOrganizationOverrideID(r *http.Request) string {
 	return ""
 }
 
-func platformSessionRecoveryOrgID(r *http.Request) string {
-	if segment := platformAPIPathOrganizationID(r.URL.Path); segment != "" {
-		return segment
-	}
-	if value := platformOrganizationOverrideID(r); value != "" {
-		return value
-	}
-	if cookie, err := r.Cookie("lastActiveOrg"); err == nil {
-		return strings.TrimSpace(cookie.Value)
-	}
-	return ""
-}
-
 func platformAPIPathOrganizationID(path string) string {
 	for _, prefix := range []string{
 		"/api/console/organizations/",
@@ -620,7 +604,7 @@ func platformGenericAPIOrgSegment(segment string) bool {
 	return len(segment) == 36 && strings.Count(segment, "-") == 4
 }
 
-func platformWorkspaceOverrideID(r *http.Request) string {
+func platformRequestWorkspaceID(r *http.Request) string {
 	for _, value := range []string{
 		r.Header.Get("X-Workspace-ID"),
 		r.URL.Query().Get("workspace_id"),
@@ -630,15 +614,6 @@ func platformWorkspaceOverrideID(r *http.Request) string {
 		}
 	}
 	return ""
-}
-
-func isPlatformAPIRequestPath(path string) bool {
-	for _, prefix := range []string{"/api", "/v1", "/auth", "/oauth", "/web-api"} {
-		if path == prefix || strings.HasPrefix(path, prefix+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func isEnvironmentWorkPath(path string) bool {

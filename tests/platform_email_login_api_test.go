@@ -8,8 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 func TestPlatformEmailLoginRoutes(t *testing.T) {
@@ -119,16 +121,20 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 		t.Fatalf("default workspace count = %d, want 1", defaultWorkspaceCount)
 	}
 
-	if err := app.sessions.Delete(context.Background(), sessionCookie.Value); err != nil {
-		t.Fatalf("delete platform session: %v", err)
+	missingSessionCookies := []*http.Cookie{
+		{Name: "sessionKey", Value: "missing-session"},
+		{Name: "lastActiveOrg", Value: orgCookie.Value},
 	}
-	recoveredWorkspacesResp := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgCookie.Value+"/workspaces", nil, []*http.Cookie{sessionCookie, orgCookie})
-	defer recoveredWorkspacesResp.Body.Close()
-	if recoveredWorkspacesResp.StatusCode != http.StatusOK {
-		t.Fatalf("recovered workspaces status = %d, want 200: %s", recoveredWorkspacesResp.StatusCode, readAll(t, recoveredWorkspacesResp.Body))
+	missingSessionResp := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgCookie.Value+"/workspaces", nil, missingSessionCookies)
+	defer missingSessionResp.Body.Close()
+	if missingSessionResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing protected session status = %d, want 401: %s", missingSessionResp.StatusCode, readAll(t, missingSessionResp.Body))
 	}
-	if _, err := app.sessions.Get(context.Background(), sessionCookie.Value); err != nil {
-		t.Fatalf("recovered platform session was not saved: %v", err)
+	if cookie := responseCookie(missingSessionResp.Cookies(), "sessionKey"); cookie == nil || cookie.MaxAge >= 0 {
+		t.Fatalf("missing protected session cookies = %#v, want expired sessionKey", missingSessionResp.Cookies())
+	}
+	if cookie := responseCookie(missingSessionResp.Cookies(), "lastActiveOrg"); cookie == nil || cookie.MaxAge >= 0 {
+		t.Fatalf("missing protected session cookies = %#v, want expired lastActiveOrg", missingSessionResp.Cookies())
 	}
 
 	envResp := app.platformRequest(t, http.MethodGet, "/v1/environments?beta=true&include_archived=false&limit=20", nil, []*http.Cookie{sessionCookie, orgCookie})
@@ -193,7 +199,7 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 	}
 }
 
-func TestPlatformWorkspaceHeaderScopesV1Agents(t *testing.T) {
+func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -201,27 +207,19 @@ func TestPlatformWorkspaceHeaderScopesV1Agents(t *testing.T) {
 	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-workspace-agents-bucket"))
 	defer app.close()
 
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	cookies := app.platformLoginCookies(t, "workspace-scope@example.com")
 	orgCookie := responseCookie(cookies, "lastActiveOrg")
 	if orgCookie == nil || orgCookie.Value == "" {
 		t.Fatalf("platform login cookies = %#v, want lastActiveOrg", cookies)
 	}
 
-	workspaceResp := app.platformRequest(t, http.MethodPost, "/api/console/organizations/"+orgCookie.Value+"/workspaces", strings.NewReader(`{"name":"Scoped agents","display_color":"#9B87F5","data_residency":{"workspace_geo":"us"}}`), cookies)
-	defer workspaceResp.Body.Close()
-	if workspaceResp.StatusCode != http.StatusOK {
-		t.Fatalf("create workspace status = %d, want 200: %s", workspaceResp.StatusCode, readAll(t, workspaceResp.Body))
-	}
-	var workspace map[string]any
-	decodeJSON(t, workspaceResp.Body, &workspace)
-	customWorkspaceID := stringValue(workspace["id"])
-	if customWorkspaceID == "" {
-		t.Fatalf("created workspace = %#v, want id", workspace)
-	}
+	customWorkspaceID := createPlatformWorkspace(t, app, cookies, orgCookie.Value, "Scoped agents "+suffix)
 	customWorkspace, err := app.db.GetAdminWorkspace(context.Background(), orgCookie.Value, customWorkspaceID)
 	if err != nil {
 		t.Fatalf("load custom workspace: %v", err)
 	}
+	customAPIKeyUUID := createPlatformWorkspaceAPIKey(t, app, cookies, orgCookie.Value, customWorkspaceID)
 	seedTestLLMProviderForWorkspace(
 		t,
 		app,
@@ -232,11 +230,42 @@ func TestPlatformWorkspaceHeaderScopesV1Agents(t *testing.T) {
 		"scoped-provider-key",
 		"claude-sonnet-4-6",
 	)
+	platformSessionCookie := responseCookie(cookies, "sessionKey")
+	if platformSessionCookie == nil {
+		t.Fatal("platform login did not return sessionKey")
+	}
+	platformSession, err := app.sessions.Get(context.Background(), platformSessionCookie.Value)
+	if err != nil {
+		t.Fatalf("load platform session: %v", err)
+	}
+	if _, err := app.db.UpdateAdminUserRole(context.Background(), orgCookie.Value, platformSession.UserExternalID, "user"); err != nil {
+		t.Fatalf("set platform user role: %v", err)
+	}
+	deniedResp := app.platformRequestWithHeaders(t, http.MethodGet, "/v1/agents?beta=true&limit=1", nil, cookies, map[string]string{
+		"X-Organization-UUID": orgCookie.Value,
+		"X-Workspace-ID":      customWorkspaceID,
+	})
+	defer deniedResp.Body.Close()
+	if deniedResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("workspace without membership status = %d, want 403: %s", deniedResp.StatusCode, readAll(t, deniedResp.Body))
+	}
+	if _, err := app.db.CreateAdminWorkspaceMember(context.Background(), db.AdminWorkspaceMember{
+		ExternalID:          "wmem_scope_" + suffix,
+		OrganizationUUID:    orgCookie.Value,
+		WorkspaceUUID:       customWorkspace.UUID,
+		WorkspaceExternalID: customWorkspace.ExternalID,
+		UserUUID:            platformSession.UserUUID,
+		UserExternalID:      platformSession.UserExternalID,
+		WorkspaceRole:       "workspace_developer",
+		CreatedAt:           time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create custom workspace membership: %v", err)
+	}
 
-	defaultAgentName := "Default workspace scoped agent"
-	customAgentName := "Custom workspace scoped agent"
+	defaultAgentName := "Default workspace scoped agent " + suffix
+	customAgentName := "Custom workspace scoped agent " + suffix
 	createPlatformAgentInWorkspace(t, app, cookies, orgCookie.Value, "default", defaultAgentName)
-	createPlatformAgentInWorkspace(t, app, cookies, orgCookie.Value, customWorkspaceID, customAgentName)
+	customAgentID := createPlatformAgentInWorkspace(t, app, cookies, orgCookie.Value, customWorkspaceID, customAgentName)
 
 	defaultAgents := listPlatformAgentsInWorkspace(t, app, cookies, orgCookie.Value, "default")
 	if !hasPlatformAgentName(defaultAgents, defaultAgentName) {
@@ -252,6 +281,26 @@ func TestPlatformWorkspaceHeaderScopesV1Agents(t *testing.T) {
 	}
 	if hasPlatformAgentName(customAgents, defaultAgentName) {
 		t.Fatalf("custom workspace agents = %#v, should not include %q", customAgents, defaultAgentName)
+	}
+
+	customEnvironmentID := createPlatformEnvironmentInWorkspace(t, app, cookies, orgCookie.Value, customWorkspaceID)
+	createSessionBody := `{"title":"Custom workspace session","environment_id":` + strconv.Quote(customEnvironmentID) + `,"agent":{"type":"agent","id":` + strconv.Quote(customAgentID) + `}}`
+	createSessionResp := app.platformRequestWithHeaders(t, http.MethodPost, "/v1/sessions?beta=true", strings.NewReader(createSessionBody), cookies, map[string]string{
+		"X-Organization-UUID": orgCookie.Value,
+		"X-Workspace-ID":      customWorkspaceID,
+	})
+	defer createSessionResp.Body.Close()
+	if createSessionResp.StatusCode != http.StatusOK {
+		t.Fatalf("create session in workspace %q status = %d, want 200: %s", customWorkspaceID, createSessionResp.StatusCode, readAll(t, createSessionResp.Body))
+	}
+	var session map[string]any
+	decodeJSON(t, createSessionResp.Body, &session)
+	createdSession, found, err := app.db.GetSession(context.Background(), customWorkspace.UUID, stringValue(session["id"]))
+	if err != nil || !found {
+		t.Fatalf("load custom workspace session = (%t, %v), want found", found, err)
+	}
+	if createdSession.CreatedByAPIKeyUUID != customAPIKeyUUID {
+		t.Fatalf("custom workspace session API key UUID = %q, want %q", createdSession.CreatedByAPIKeyUUID, customAPIKeyUUID)
 	}
 }
 
@@ -437,7 +486,41 @@ func stringValue(value any) string {
 	return text
 }
 
-func createPlatformAgentInWorkspace(t *testing.T, app *testApp, cookies []*http.Cookie, orgUUID, workspaceID, name string) {
+func createPlatformWorkspace(t *testing.T, app *testApp, cookies []*http.Cookie, orgUUID, name string) string {
+	t.Helper()
+	body := strings.NewReader(`{"name":` + strconv.Quote(name) + `,"display_color":"#9B87F5","data_residency":{"workspace_geo":"us"}}`)
+	resp := app.platformRequest(t, http.MethodPost, "/api/console/organizations/"+orgUUID+"/workspaces", body, cookies)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create workspace status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+	var workspace map[string]any
+	decodeJSON(t, resp.Body, &workspace)
+	workspaceID := stringValue(workspace["id"])
+	if workspaceID == "" {
+		t.Fatalf("created workspace = %#v, want id", workspace)
+	}
+	return workspaceID
+}
+
+func createPlatformWorkspaceAPIKey(t *testing.T, app *testApp, cookies []*http.Cookie, orgUUID, workspaceID string) string {
+	t.Helper()
+	path := "/api/console/organizations/" + orgUUID + "/workspaces/" + workspaceID + "/api_keys"
+	resp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"name":"Platform session test key"}`), cookies)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create workspace API key status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+	var key map[string]any
+	decodeJSON(t, resp.Body, &key)
+	stored, err := app.db.GetAdminAPIKey(context.Background(), orgUUID, stringValue(key["id"]))
+	if err != nil {
+		t.Fatalf("load workspace API key: %v", err)
+	}
+	return stored.UUID
+}
+
+func createPlatformAgentInWorkspace(t *testing.T, app *testApp, cookies []*http.Cookie, orgUUID, workspaceID, name string) string {
 	t.Helper()
 	body := strings.NewReader(`{"name":` + strconv.Quote(name) + `,"model":"claude-sonnet-4-6"}`)
 	resp := app.platformRequestWithHeaders(t, http.MethodPost, "/v1/agents?beta=true", body, cookies, map[string]string{
@@ -453,6 +536,26 @@ func createPlatformAgentInWorkspace(t *testing.T, app *testApp, cookies []*http.
 	if stringValue(agent["name"]) != name || stringValue(agent["id"]) == "" {
 		t.Fatalf("created agent = %#v, want named agent %q", agent, name)
 	}
+	return stringValue(agent["id"])
+}
+
+func createPlatformEnvironmentInWorkspace(t *testing.T, app *testApp, cookies []*http.Cookie, orgUUID, workspaceID string) string {
+	t.Helper()
+	resp := app.platformRequestWithHeaders(t, http.MethodPost, "/v1/environments?beta=true", strings.NewReader(`{"name":"Custom workspace environment"}`), cookies, map[string]string{
+		"X-Organization-UUID": orgUUID,
+		"X-Workspace-ID":      workspaceID,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create environment in workspace %q status = %d, want 200: %s", workspaceID, resp.StatusCode, readAll(t, resp.Body))
+	}
+	var environment map[string]any
+	decodeJSON(t, resp.Body, &environment)
+	environmentID := stringValue(environment["id"])
+	if environmentID == "" {
+		t.Fatalf("created environment = %#v, want id", environment)
+	}
+	return environmentID
 }
 
 func listPlatformAgentsInWorkspace(t *testing.T, app *testApp, cookies []*http.Cookie, orgUUID, workspaceID string) []map[string]any {

@@ -76,7 +76,11 @@ func (acceptingEmailCodeStore) Issue(context.Context, platformauth.EmailCodeIssu
 	return nil
 }
 
-func (acceptingEmailCodeStore) Verify(context.Context, string, string) error {
+func (acceptingEmailCodeStore) Check(context.Context, string, string) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Consume(context.Context, string, string) error {
 	return nil
 }
 

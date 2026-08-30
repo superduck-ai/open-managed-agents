@@ -80,6 +80,7 @@ type loginMethodsResponse struct {
 type emailLoginService interface {
 	RequestEmailLogin(ctx context.Context, email string) error
 	VerifyEmailLogin(ctx context.Context, email, code string) (userID string, orgUUID string, err error)
+	CompleteEmailLogin(ctx context.Context, email, code string) error
 }
 
 type platformMagicLinkStore interface {
@@ -155,6 +156,17 @@ func handleVerifyMagicLink(store platformMagicLinkStore, authProvider emailLogin
 		}
 		if err := sessions.Save(r.Context(), sessionKey, session); err != nil {
 			internalError(w, "failed to create session")
+			return
+		}
+		if err := authProvider.CompleteEmailLogin(r.Context(), verifyMagicLinkEmail(*request), verifyMagicLinkCode(*request)); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+			cleanupErr := sessions.Delete(cleanupCtx, sessionKey)
+			cancel()
+			if cleanupErr != nil {
+				internalError(w, "failed to clean up incomplete session")
+				return
+			}
+			writeEmailLoginError(w, r, err)
 			return
 		}
 

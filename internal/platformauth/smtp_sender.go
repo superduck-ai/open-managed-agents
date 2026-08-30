@@ -91,9 +91,7 @@ func (s *smtpSender) SendLoginCode(ctx context.Context, recipient, code string) 
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("close SMTP message: %w", err)
 	}
-	if err := client.Quit(); err != nil {
-		return fmt.Errorf("quit SMTP client: %w", err)
-	}
+	_ = client.Quit()
 	return nil
 }
 

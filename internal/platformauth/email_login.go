@@ -22,6 +22,7 @@ const (
 	emailCodeMaxAttempts    = 5
 	emailSendLimit          = 5
 	sendRateWindow          = time.Hour
+	emailCodeCleanupTimeout = 5 * time.Second
 	loginCodeUpperBound     = 1_000_000
 )
 
@@ -37,7 +38,8 @@ type EmailCodeIssue struct {
 
 type EmailCodeStore interface {
 	Issue(ctx context.Context, issue EmailCodeIssue) error
-	Verify(ctx context.Context, emailHash, digest string) error
+	Check(ctx context.Context, emailHash, digest string) error
+	Consume(ctx context.Context, emailHash, digest string) error
 	Revoke(ctx context.Context, emailHash, challengeID string) error
 }
 
@@ -67,7 +69,7 @@ redis.call("SET", KEYS[2], "1", "PX", ARGV[6])
 return 0
 `)
 
-var verifyEmailCodeScript = redis.NewScript(`
+var checkEmailCodeScript = redis.NewScript(`
 local digest = redis.call("HGET", KEYS[1], "digest")
 if not digest then
   return 1
@@ -84,13 +86,28 @@ if digest ~= ARGV[1] then
   end
   return 1
 end
+return 0
+`)
+
+var consumeEmailCodeScript = redis.NewScript(`
+local digest = redis.call("HGET", KEYS[1], "digest")
+if not digest or digest ~= ARGV[1] then
+  return 1
+end
 redis.call("DEL", KEYS[1])
 return 0
 `)
 
 var revokeEmailCodeScript = redis.NewScript(`
 if redis.call("HGET", KEYS[1], "id") == ARGV[1] then
-  return redis.call("DEL", KEYS[1], KEYS[2])
+  redis.call("DEL", KEYS[1], KEYS[2])
+  if redis.call("EXISTS", KEYS[3]) == 1 then
+    local remaining = redis.call("DECR", KEYS[3])
+    if remaining <= 0 then
+      redis.call("DEL", KEYS[3])
+    end
+  end
+  return 1
 end
 return 0
 `)
@@ -118,8 +135,19 @@ func (s *redisEmailCodeStore) Issue(ctx context.Context, issue EmailCodeIssue) e
 	return nil
 }
 
-func (s *redisEmailCodeStore) Verify(ctx context.Context, emailHash, digest string) error {
-	result, err := verifyEmailCodeScript.Run(ctx, s.client, []string{authKey("email-code", emailHash)}, digest, emailCodeMaxAttempts).Int64()
+func (s *redisEmailCodeStore) Check(ctx context.Context, emailHash, digest string) error {
+	result, err := checkEmailCodeScript.Run(ctx, s.client, []string{authKey("email-code", emailHash)}, digest, emailCodeMaxAttempts).Int64()
+	if err != nil {
+		return err
+	}
+	if result != 0 {
+		return errEmailLoginCodeInvalid
+	}
+	return nil
+}
+
+func (s *redisEmailCodeStore) Consume(ctx context.Context, emailHash, digest string) error {
+	result, err := consumeEmailCodeScript.Run(ctx, s.client, []string{authKey("email-code", emailHash)}, digest).Int64()
 	if err != nil {
 		return err
 	}
@@ -130,7 +158,11 @@ func (s *redisEmailCodeStore) Verify(ctx context.Context, emailHash, digest stri
 }
 
 func (s *redisEmailCodeStore) Revoke(ctx context.Context, emailHash, challengeID string) error {
-	keys := []string{authKey("email-code", emailHash), authKey("email-code-cooldown", emailHash)}
+	keys := []string{
+		authKey("email-code", emailHash),
+		authKey("email-code-cooldown", emailHash),
+		authKey("email-code-rate", emailHash),
+	}
 	return revokeEmailCodeScript.Run(ctx, s.client, keys, challengeID).Err()
 }
 
@@ -166,7 +198,10 @@ func (s *EmailProvider) RequestEmailLogin(ctx context.Context, rawEmail string) 
 	}
 
 	if err := s.sender.SendLoginCode(ctx, email, code); err != nil {
-		if revokeErr := s.codes.Revoke(context.WithoutCancel(ctx), emailHash, challengeID); revokeErr != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), emailCodeCleanupTimeout)
+		revokeErr := s.codes.Revoke(cleanupCtx, emailHash, challengeID)
+		cancel()
+		if revokeErr != nil {
 			s.logger.ErrorContext(ctx, "revoke unsent email login code", "error", revokeErr)
 		}
 		s.logger.ErrorContext(ctx, "send email login code", "error", err)
@@ -176,27 +211,13 @@ func (s *EmailProvider) RequestEmailLogin(ctx context.Context, rawEmail string) 
 }
 
 func (s *EmailProvider) VerifyEmailLogin(ctx context.Context, rawEmail, code string) (string, string, error) {
-	email, err := normalizeLoginEmail(rawEmail)
+	email, emailHash, digest, err := s.prepareEmailLoginCode(rawEmail, code)
 	if err != nil {
-		return "", "", invalidEmail(err)
+		return "", "", err
 	}
-	if s != nil && s.acceptAnyCode {
-		if strings.TrimSpace(code) == "" {
-			return "", "", invalidLoginCode(errEmailLoginCodeInvalid)
-		}
-	} else {
-		if !validLoginCode(code) {
-			return "", "", invalidLoginCode(errEmailLoginCodeInvalid)
-		}
-		if s == nil || s.codes == nil || len(s.codeHMACKey) == 0 {
-			return "", "", emailLoginUnavailable("Could not verify that code. Try again", errors.New("email login is not configured"))
-		}
-		if err := s.codes.Verify(ctx, s.digest("email", email), s.digest("code", email, code)); err != nil {
-			if errors.Is(err, errEmailLoginCodeInvalid) {
-				return "", "", invalidLoginCode(err)
-			}
-			s.logger.ErrorContext(ctx, "verify email login code", "error", err)
-			return "", "", emailLoginUnavailable("Could not verify that code. Try again", err)
+	if digest != "" {
+		if err := s.codes.Check(ctx, emailHash, digest); err != nil {
+			return "", "", s.loginCodeStoreError(ctx, "check email login code", err)
 		}
 	}
 	userID, orgUUID, err := s.findOrCreateUserContextByEmail(ctx, email)
@@ -205,6 +226,45 @@ func (s *EmailProvider) VerifyEmailLogin(ctx context.Context, rawEmail, code str
 		return "", "", emailLoginUnavailable("Could not complete sign in. Try again", err)
 	}
 	return userID, orgUUID, nil
+}
+
+func (s *EmailProvider) CompleteEmailLogin(ctx context.Context, rawEmail, code string) error {
+	_, emailHash, digest, err := s.prepareEmailLoginCode(rawEmail, code)
+	if err != nil || digest == "" {
+		return err
+	}
+	if err := s.codes.Consume(ctx, emailHash, digest); err != nil {
+		return s.loginCodeStoreError(ctx, "consume email login code", err)
+	}
+	return nil
+}
+
+func (s *EmailProvider) prepareEmailLoginCode(rawEmail, code string) (string, string, string, error) {
+	email, err := normalizeLoginEmail(rawEmail)
+	if err != nil {
+		return "", "", "", invalidEmail(err)
+	}
+	if s != nil && s.acceptAnyCode {
+		if strings.TrimSpace(code) == "" {
+			return "", "", "", invalidLoginCode(errEmailLoginCodeInvalid)
+		}
+		return email, "", "", nil
+	}
+	if !validLoginCode(code) {
+		return "", "", "", invalidLoginCode(errEmailLoginCodeInvalid)
+	}
+	if s == nil || s.codes == nil || len(s.codeHMACKey) == 0 {
+		return "", "", "", emailLoginUnavailable("Could not verify that code. Try again", errors.New("email login is not configured"))
+	}
+	return email, s.digest("email", email), s.digest("code", email, code), nil
+}
+
+func (s *EmailProvider) loginCodeStoreError(ctx context.Context, operation string, err error) error {
+	if errors.Is(err, errEmailLoginCodeInvalid) {
+		return invalidLoginCode(err)
+	}
+	s.logger.ErrorContext(ctx, operation, "error", err)
+	return emailLoginUnavailable("Could not verify that code. Try again", err)
 }
 
 func normalizeLoginEmail(raw string) (string, error) {

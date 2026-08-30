@@ -35,6 +35,9 @@ func TestServiceEmailLogin(t *testing.T) {
 		if codes.issue == nil || codes.revokedChallengeID != codes.issue.ChallengeID {
 			t.Fatalf("revoked challenge = %q, want issued challenge", codes.revokedChallengeID)
 		}
+		if !codes.revokeHasDeadline {
+			t.Fatal("Revoke() context has no deadline")
+		}
 	})
 
 	t.Run("fallback accepts any non-empty code when SMTP is omitted", func(t *testing.T) {
@@ -50,6 +53,27 @@ func TestServiceEmailLogin(t *testing.T) {
 		if _, _, err := service.VerifyEmailLogin(t.Context(), "user@example.com", ""); applicationErrorKind(err) != apperr.Unauthenticated {
 			t.Fatalf("VerifyEmailLogin(empty code) error = %v, want unauthenticated", err)
 		}
+		if err := service.CompleteEmailLogin(t.Context(), "user@example.com", "anything"); err != nil {
+			t.Fatalf("CompleteEmailLogin() error = %v", err)
+		}
+	})
+
+	t.Run("failure provisioning leaves verified code retryable", func(t *testing.T) {
+		findErr := errors.New("database unavailable")
+		tx := &fakePlatformAuthTx{findErr: findErr}
+		service, _, sender := newEmailLoginTestService(&fakePlatformAuthStore{tx: tx})
+		if err := service.RequestEmailLogin(t.Context(), "user@example.com"); err != nil {
+			t.Fatalf("RequestEmailLogin() error = %v", err)
+		}
+		if _, _, err := service.VerifyEmailLogin(t.Context(), "user@example.com", sender.code); applicationErrorKind(err) != apperr.Unavailable {
+			t.Fatalf("VerifyEmailLogin() error = %v, want unavailable", err)
+		}
+		tx.findErr = nil
+		tx.findContext = db.PlatformAuthUserContext{UserExternalID: "user_existing", OrgUUID: "org-existing"}
+		userID, orgUUID, err := service.VerifyEmailLogin(t.Context(), "user@example.com", sender.code)
+		if err != nil || userID != "user_existing" || orgUUID != "org-existing" {
+			t.Fatalf("VerifyEmailLogin(retry) = (%q, %q, %v), want same code accepted", userID, orgUUID, err)
+		}
 	})
 
 	t.Run("failure wrong and reused code cannot provision", func(t *testing.T) {
@@ -64,6 +88,9 @@ func TestServiceEmailLogin(t *testing.T) {
 		userID, orgUUID, err := service.VerifyEmailLogin(t.Context(), "ada@example.com", sender.code)
 		if err != nil || userID != "user_existing" || orgUUID != "org-existing" {
 			t.Fatalf("VerifyEmailLogin() = (%q, %q, %v), want existing user", userID, orgUUID, err)
+		}
+		if err := service.CompleteEmailLogin(t.Context(), "ada@example.com", sender.code); err != nil {
+			t.Fatalf("CompleteEmailLogin() error = %v", err)
 		}
 		if _, _, err := service.VerifyEmailLogin(t.Context(), "ada@example.com", sender.code); applicationErrorKind(err) != apperr.Unauthenticated {
 			t.Fatalf("VerifyEmailLogin(reused) error = %v, want unauthenticated", err)
@@ -103,6 +130,7 @@ type fakeEmailCodeStore struct {
 	issueErr           error
 	used               bool
 	revokedChallengeID string
+	revokeHasDeadline  bool
 }
 
 func (s *fakeEmailCodeStore) Issue(_ context.Context, issue EmailCodeIssue) error {
@@ -113,16 +141,24 @@ func (s *fakeEmailCodeStore) Issue(_ context.Context, issue EmailCodeIssue) erro
 	return nil
 }
 
-func (s *fakeEmailCodeStore) Verify(_ context.Context, emailHash, digest string) error {
+func (s *fakeEmailCodeStore) Check(_ context.Context, emailHash, digest string) error {
 	if s.issue == nil || s.used || s.issue.EmailHash != emailHash || s.issue.Digest != digest {
 		return errEmailLoginCodeInvalid
+	}
+	return nil
+}
+
+func (s *fakeEmailCodeStore) Consume(_ context.Context, emailHash, digest string) error {
+	if err := s.Check(context.Background(), emailHash, digest); err != nil {
+		return err
 	}
 	s.used = true
 	return nil
 }
 
-func (s *fakeEmailCodeStore) Revoke(_ context.Context, _ string, challengeID string) error {
+func (s *fakeEmailCodeStore) Revoke(ctx context.Context, _ string, challengeID string) error {
 	s.revokedChallengeID = challengeID
+	_, s.revokeHasDeadline = ctx.Deadline()
 	return nil
 }
 

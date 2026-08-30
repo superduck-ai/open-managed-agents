@@ -16,6 +16,10 @@ type emailLoginServiceStub struct {
 	requestErr     error
 	verifyErr      error
 	requestedEmail string
+	verifiedUserID string
+	verifiedOrgID  string
+	completeErr    error
+	completeCalls  int
 }
 
 func (s *emailLoginServiceStub) RequestEmailLogin(_ context.Context, email string) error {
@@ -24,7 +28,12 @@ func (s *emailLoginServiceStub) RequestEmailLogin(_ context.Context, email strin
 }
 
 func (s *emailLoginServiceStub) VerifyEmailLogin(context.Context, string, string) (string, string, error) {
-	return "", "", s.verifyErr
+	return s.verifiedUserID, s.verifiedOrgID, s.verifyErr
+}
+
+func (s *emailLoginServiceStub) CompleteEmailLogin(context.Context, string, string) error {
+	s.completeCalls++
+	return s.completeErr
 }
 
 type emailLoginStoreStub struct{}
@@ -43,6 +52,32 @@ func (emailLoginStoreStub) GetBootstrapUser(context.Context, string) (*UserRecor
 
 func (emailLoginStoreStub) ListBootstrapUserOrganizations(context.Context, string, string) ([]UserOrganizationRecord, error) {
 	return nil, errors.New("unexpected bootstrap lookup")
+}
+
+type successfulEmailLoginStoreStub struct{}
+
+func (successfulEmailLoginStoreStub) ResolvePlatformSessionIdentity(_ context.Context, input platformsession.CreateInput) (platformsession.Session, error) {
+	return platformsession.Session{ExternalID: "platform_session_test", UserUUID: input.UserUUID, OrganizationUUID: input.OrgUUID, ExpiresAt: input.ExpiresAt}, nil
+}
+
+func (successfulEmailLoginStoreStub) FindBootstrapUserContext(context.Context, string) (string, string, error) {
+	return "user_existing", "org-existing", nil
+}
+
+func (successfulEmailLoginStoreStub) GetBootstrapUser(context.Context, string) (*UserRecord, error) {
+	return &UserRecord{UUID: "user-uuid", ExternalID: "user_existing", Email: "user@example.com"}, nil
+}
+
+func (successfulEmailLoginStoreStub) ListBootstrapUserOrganizations(context.Context, string, string) ([]UserOrganizationRecord, error) {
+	return []UserOrganizationRecord{{OrganizationRecord: OrganizationRecord{UUID: "org-existing", Name: "Test"}, Role: "admin"}}, nil
+}
+
+type failingPlatformSessionStore struct {
+	*platformsession.MemoryStore
+}
+
+func (failingPlatformSessionStore) Save(context.Context, string, platformsession.Session) error {
+	return errors.New("session store unavailable")
 }
 
 func TestSendMagicLinkHTTPContract(t *testing.T) {
@@ -80,6 +115,28 @@ func TestVerifyMagicLinkInvalidCodeReturnsUnauthorized(t *testing.T) {
 	response := serveEmailLoginRequest(handler, `{"credentials":{"email_address":"user@example.com","code":"000000"}}`)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
+	}
+}
+
+func TestVerifyMagicLinkConsumesCodeOnlyAfterSessionSave(t *testing.T) {
+	service := &emailLoginServiceStub{verifiedUserID: "user_existing", verifiedOrgID: "org-existing"}
+	failingSessions := failingPlatformSessionStore{MemoryStore: platformsession.NewMemoryStore()}
+	handler := handleVerifyMagicLink(successfulEmailLoginStoreStub{}, service, failingSessions, false)
+	response := serveEmailLoginRequest(handler, `{"credentials":{"email_address":"user@example.com","code":"123456"}}`)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("failed save status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
+	}
+	if service.completeCalls != 0 {
+		t.Fatalf("CompleteEmailLogin() calls after failed save = %d, want 0", service.completeCalls)
+	}
+
+	handler = handleVerifyMagicLink(successfulEmailLoginStoreStub{}, service, platformsession.NewMemoryStore(), false)
+	response = serveEmailLoginRequest(handler, `{"credentials":{"email_address":"user@example.com","code":"123456"}}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.completeCalls != 1 {
+		t.Fatalf("CompleteEmailLogin() calls after successful save = %d, want 1", service.completeCalls)
 	}
 }
 

@@ -56,25 +56,28 @@ func TestRedisEmailCodeStoreIntegration(t *testing.T) {
 	if err := store.Issue(t.Context(), issue); !errors.Is(err, errEmailLoginRateLimited) {
 		t.Fatalf("Issue(during cooldown) error = %v, want rate limited", err)
 	}
-	if err := store.Verify(t.Context(), emailHash, "wrong-digest"); !errors.Is(err, errEmailLoginCodeInvalid) {
-		t.Fatalf("Verify(wrong) error = %v, want invalid", err)
+	if err := store.Check(t.Context(), emailHash, "wrong-digest"); !errors.Is(err, errEmailLoginCodeInvalid) {
+		t.Fatalf("Check(wrong) error = %v, want invalid", err)
 	}
-	if err := store.Verify(t.Context(), emailHash, issue.Digest); err != nil {
-		t.Fatalf("Verify() error = %v", err)
+	if err := store.Check(t.Context(), emailHash, issue.Digest); err != nil {
+		t.Fatalf("Check() error = %v", err)
 	}
-	if err := store.Verify(t.Context(), emailHash, issue.Digest); !errors.Is(err, errEmailLoginCodeInvalid) {
-		t.Fatalf("Verify(reused) error = %v, want invalid", err)
+	if err := store.Consume(t.Context(), emailHash, issue.Digest); err != nil {
+		t.Fatalf("Consume() error = %v", err)
+	}
+	if err := store.Check(t.Context(), emailHash, issue.Digest); !errors.Is(err, errEmailLoginCodeInvalid) {
+		t.Fatalf("Check(consumed) error = %v, want invalid", err)
 	}
 
 	issue.EmailHash = revokeEmailHash
-	if err := store.Issue(t.Context(), issue); err != nil {
-		t.Fatalf("Issue(revoke challenge) error = %v", err)
-	}
-	if err := store.Revoke(t.Context(), revokeEmailHash, issue.ChallengeID); err != nil {
-		t.Fatalf("Revoke() error = %v", err)
-	}
-	if err := store.Issue(t.Context(), issue); err != nil {
-		t.Fatalf("Issue(after revoke) error = %v, want cooldown removed", err)
+	for attempt := range emailSendLimit + 1 {
+		issue.ChallengeID = strconv.Itoa(attempt) + "-" + suffix
+		if err := store.Issue(t.Context(), issue); err != nil {
+			t.Fatalf("Issue(revoke attempt %d) error = %v, want failed sends not rate limited", attempt, err)
+		}
+		if err := store.Revoke(t.Context(), revokeEmailHash, issue.ChallengeID); err != nil {
+			t.Fatalf("Revoke(attempt %d) error = %v", attempt, err)
+		}
 	}
 
 	for i := range 21 {

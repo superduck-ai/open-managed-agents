@@ -19,6 +19,8 @@ database:
 redis:
   url: redis://localhost:6379
 
+# Optional. Omit the entire auth.smtp block to accept any non-empty verification
+# code without sending email. Configure every SMTP field together for real email.
 auth:
   smtp:
     # Required host:port. Surrounding whitespace is removed during loading.

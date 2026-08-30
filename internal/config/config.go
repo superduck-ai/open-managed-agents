@@ -92,6 +92,9 @@ func validate(cfg Config) error {
 }
 
 func validateAuthConfig(cfg AuthConfig) error {
+	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
+		return nil
+	}
 	host, port, err := net.SplitHostPort(cfg.SMTP.Addr)
 	if err != nil || host == "" || port == "" {
 		return errors.New("auth.smtp.addr must include a host and port")

@@ -197,6 +197,16 @@ auth:
 	}
 }
 
+func TestValidateAuthConfigAllowsOmittedSMTP(t *testing.T) {
+	if err := validateAuthConfig(AuthConfig{}); err != nil {
+		t.Fatalf("validateAuthConfig() error = %v, want omitted SMTP accepted", err)
+	}
+	partial := AuthConfig{SMTP: EmailSMTPConfig{Addr: "smtp.example.com:587"}}
+	if err := validateAuthConfig(partial); err == nil {
+		t.Fatal("validateAuthConfig() error = nil, want partial SMTP rejected")
+	}
+}
+
 func TestLoadYAMLExplicitDynamicDefaults(t *testing.T) {
 	prepareLoadTest(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

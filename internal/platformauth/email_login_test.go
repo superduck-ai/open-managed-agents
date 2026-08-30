@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -33,6 +34,21 @@ func TestServiceEmailLogin(t *testing.T) {
 		}
 		if codes.issue == nil || codes.revokedChallengeID != codes.issue.ChallengeID {
 			t.Fatalf("revoked challenge = %q, want issued challenge", codes.revokedChallengeID)
+		}
+	})
+
+	t.Run("fallback accepts any non-empty code when SMTP is omitted", func(t *testing.T) {
+		tx := &fakePlatformAuthTx{findContext: db.PlatformAuthUserContext{UserExternalID: "user_existing", OrgUUID: "org-existing"}}
+		service := New(config.AuthConfig{}, &fakePlatformAuthStore{tx: tx}, nil, nil)
+		if err := service.RequestEmailLogin(t.Context(), "user@example.com"); err != nil {
+			t.Fatalf("RequestEmailLogin() error = %v", err)
+		}
+		userID, orgUUID, err := service.VerifyEmailLogin(t.Context(), "user@example.com", "anything")
+		if err != nil || userID != "user_existing" || orgUUID != "org-existing" {
+			t.Fatalf("VerifyEmailLogin() = (%q, %q, %v), want fake-code login", userID, orgUUID, err)
+		}
+		if _, _, err := service.VerifyEmailLogin(t.Context(), "user@example.com", ""); applicationErrorKind(err) != apperr.Unauthenticated {
+			t.Fatalf("VerifyEmailLogin(empty code) error = %v, want unauthenticated", err)
 		}
 	})
 

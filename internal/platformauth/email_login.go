@@ -139,6 +139,9 @@ func (s *EmailProvider) RequestEmailLogin(ctx context.Context, rawEmail string) 
 	if err != nil {
 		return invalidEmail(err)
 	}
+	if s != nil && s.acceptAnyCode {
+		return nil
+	}
 	if s == nil || s.codes == nil || s.sender == nil || len(s.codeHMACKey) == 0 {
 		return emailLoginUnavailable("Could not send a code. Try again", errors.New("email login is not configured"))
 	}
@@ -177,18 +180,24 @@ func (s *EmailProvider) VerifyEmailLogin(ctx context.Context, rawEmail, code str
 	if err != nil {
 		return "", "", invalidEmail(err)
 	}
-	if !validLoginCode(code) {
-		return "", "", invalidLoginCode(errEmailLoginCodeInvalid)
-	}
-	if s == nil || s.codes == nil || len(s.codeHMACKey) == 0 {
-		return "", "", emailLoginUnavailable("Could not verify that code. Try again", errors.New("email login is not configured"))
-	}
-	if err := s.codes.Verify(ctx, s.digest("email", email), s.digest("code", email, code)); err != nil {
-		if errors.Is(err, errEmailLoginCodeInvalid) {
-			return "", "", invalidLoginCode(err)
+	if s != nil && s.acceptAnyCode {
+		if strings.TrimSpace(code) == "" {
+			return "", "", invalidLoginCode(errEmailLoginCodeInvalid)
 		}
-		s.logger.ErrorContext(ctx, "verify email login code", "error", err)
-		return "", "", emailLoginUnavailable("Could not verify that code. Try again", err)
+	} else {
+		if !validLoginCode(code) {
+			return "", "", invalidLoginCode(errEmailLoginCodeInvalid)
+		}
+		if s == nil || s.codes == nil || len(s.codeHMACKey) == 0 {
+			return "", "", emailLoginUnavailable("Could not verify that code. Try again", errors.New("email login is not configured"))
+		}
+		if err := s.codes.Verify(ctx, s.digest("email", email), s.digest("code", email, code)); err != nil {
+			if errors.Is(err, errEmailLoginCodeInvalid) {
+				return "", "", invalidLoginCode(err)
+			}
+			s.logger.ErrorContext(ctx, "verify email login code", "error", err)
+			return "", "", emailLoginUnavailable("Could not verify that code. Try again", err)
+		}
 	}
 	userID, orgUUID, err := s.findOrCreateUserContextByEmail(ctx, email)
 	if err != nil {

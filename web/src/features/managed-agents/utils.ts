@@ -193,6 +193,20 @@ export function optionalNumericValueFromKeys(record: Record<string, unknown>, ke
   return undefined;
 }
 
+export function sessionListCost(value: unknown) {
+  const usage = toRecord(value) ?? {};
+  const money = toRecord(usage.list_cost) ?? {};
+  const cents = optionalNumericValueFromKeys(money, ['amount']);
+  if (cents !== undefined) {
+    return {
+      amount: cents / 100,
+      currency: typeof money.currency === 'string' && money.currency ? money.currency : 'USD',
+    };
+  }
+  const amount = optionalNumericValueFromKeys(usage, ['list_cost', 'cost', 'total_cost']);
+  return amount === undefined ? null : { amount, currency: 'USD' };
+}
+
 export function numericValueFromKeys(record: Record<string, unknown>, keys: string[]) {
   return optionalNumericValueFromKeys(record, keys) ?? 0;
 }

@@ -2,7 +2,7 @@ import { useFormatters, useI18n } from '../../../shared/i18n';
 import { type ReactNode } from 'react';
 import { StatusPill } from '../components/common';
 import { type ManagedEntityApiResponse, type ManagedEntitySection, type SessionApiResponse } from '../types';
-import { objectRecord, optionalNumericValueFromKeys } from '../utils';
+import { objectRecord, optionalNumericValueFromKeys, sessionListCost } from '../utils';
 import { cellsForEntity, entityDisplayName, statusPillTone } from './model';
 import { localizedRelativeTime } from './environment-model';
 
@@ -15,7 +15,7 @@ export function useManagedEntityCells(
   if (section === 'sessions') {
     const session = entity as SessionApiResponse;
     const tokens = sessionListTokens(session);
-    const cost = sessionListCost(session);
+    const cost = sessionListCost(session.usage) ?? sessionListCost(session.stats);
     return {
       ...cellsForEntity(section, entity, msg, formatters.relativeTime),
       'Tokens in / out': tokens ? (
@@ -79,23 +79,6 @@ function sessionCacheCreationTokens(usage: Record<string, unknown>) {
     (optionalNumericValueFromKeys(cacheCreation, ['ephemeral_5m_input_tokens']) ?? 0) +
     (optionalNumericValueFromKeys(cacheCreation, ['ephemeral_1h_input_tokens']) ?? 0)
   );
-}
-
-function sessionListCost(session: SessionApiResponse) {
-  const usage = objectRecord(session.usage);
-  const stats = objectRecord(session.stats);
-  const money = objectRecord(usage.list_cost ?? stats.list_cost);
-  const cents = optionalNumericValueFromKeys(money, ['amount']);
-  if (cents !== undefined) {
-    return {
-      amount: cents / 100,
-      currency: typeof money.currency === 'string' && money.currency ? money.currency : 'USD',
-    };
-  }
-  const amount =
-    optionalNumericValueFromKeys(usage, ['list_cost', 'cost', 'total_cost']) ??
-    optionalNumericValueFromKeys(stats, ['list_cost', 'cost', 'total_cost']);
-  return amount === undefined ? null : { amount, currency: 'USD' };
 }
 
 function formatSessionListTokenCount(value: number, formatters: ReturnType<typeof useFormatters>) {

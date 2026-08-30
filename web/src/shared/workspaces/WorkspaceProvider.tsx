@@ -14,7 +14,7 @@ import { getPrimaryOrganizationUuid, WorkspaceContext, type WorkspaceContextValu
 const activeWorkspaceStorageKey = 'oma.activeWorkspaceId';
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const { account, status } = useAuth();
+  const { account, csrfToken, status } = useAuth();
   const queryClient = useQueryClient();
   const orgUuid = getPrimaryOrganizationUuid(account);
   const [preferredWorkspaceId, setPreferredWorkspaceId] = useState(readStoredWorkspaceId);
@@ -47,9 +47,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setConsoleRequestContext({
       organizationUuid: status === 'authenticated' ? orgUuid : undefined,
       workspaceId: status === 'authenticated' ? activeWorkspaceId : undefined,
+      csrfToken: status === 'authenticated' ? csrfToken : undefined,
     });
     return () => setConsoleRequestContext({});
-  }, [activeWorkspaceId, orgUuid, status]);
+  }, [activeWorkspaceId, csrfToken, orgUuid, status]);
 
   const selectWorkspace = useCallback((workspaceId: string) => {
     const nextWorkspaceId = workspaceId || defaultWorkspace.id;

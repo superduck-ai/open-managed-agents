@@ -10,6 +10,7 @@ import {
   reconcileIncompleteSessionStreamEvents,
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
+  sessionIncompleteStreamEventIds,
 } from './api';
 import { buildSessionEventEntries } from './sessions/sessionTraceModel';
 
@@ -186,6 +187,50 @@ describe('managed agents API', () => {
       'sevt_final',
     ]);
     expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+  });
+
+  test('keeps incomplete previews when idle history sync fails', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    globalThis.fetch = (async () => new Response('Unavailable', { status: 503 })) as typeof fetch;
+
+    await expect(reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId)).rejects.toBeDefined();
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_preview',
+    ]);
+  });
+
+  test('only reconciles previews that existed when idle arrived', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_stale', type: 'agent.message' },
+    });
+    const stalePreviewIds = sessionIncompleteStreamEventIds(queryClient, workspaceId, sessionId);
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_new', type: 'agent.message' },
+    });
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [], next_page: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+
+    await reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '', undefined, stalePreviewIds);
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_new',
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_new']);
   });
 
   test('preserves a same-timestamp user turn before its agent error', () => {
@@ -439,9 +484,9 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('deduplicates idle results across either legal arrival order', () => {
+  test('deduplicates idle results only within the current turn across either arrival order', () => {
     const createdAt = '2026-08-26T13:13:00Z';
-    const agentEntries = buildSessionEventEntries(
+    const agentThenIdle = buildSessionEventEntries(
       [
         { id: 'sevt_agent', type: 'agent', created_at: createdAt, content: [{ type: 'text', text: 'Final answer' }] },
         {
@@ -456,7 +501,27 @@ describe('managed agents API', () => {
       undefined,
       { platformTranscriptFiltering: true },
     );
-    const userEntries = buildSessionEventEntries(
+    const idleThenAgent = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_idle_first',
+          type: 'session.status_idle',
+          created_at: createdAt,
+          result: 'Final answer',
+        },
+        {
+          id: 'sevt_agent_after_idle',
+          type: 'agent.message',
+          created_at: createdAt,
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    const separateTurns = buildSessionEventEntries(
       [
         {
           id: 'sevt_agent_message',
@@ -478,12 +543,16 @@ describe('managed agents API', () => {
       { platformTranscriptFiltering: true },
     );
 
-    expect(agentEntries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+    expect(agentThenIdle.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
       'sevt_agent',
     ]);
-    expect(userEntries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+    expect(idleThenAgent.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent_after_idle',
+    ]);
+    expect(separateTurns.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
       'sevt_agent_message',
       'sevt_user',
+      'sevt_idle_after_user',
     ]);
   });
 

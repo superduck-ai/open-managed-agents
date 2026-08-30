@@ -24,7 +24,7 @@ import {
   type SessionTimelineLane,
   type ToolCallEntry,
 } from '../types';
-import { compactEntityId, numericValueFromKeys, optionalNumericValueFromKeys, toRecord } from '../utils';
+import { compactEntityId, numericValueFromKeys, sessionListCost, toRecord } from '../utils';
 import { Bot, Clock3, Cloud, LockKeyhole, ReceiptText, Timer } from 'lucide-react';
 import { SESSION_ARCHIVED_LANES_STORAGE_KEY, SESSION_MAIN_LANE_ID } from './sessionTimeline';
 import {
@@ -73,13 +73,13 @@ export function buildSessionDetailSummary(
   if (elapsedMs > 0) {
     chips.push({ key: 'duration', icon: Timer, value: formatSessionDuration(elapsedMs, formatters, msg) });
   }
-  const usageRecord = toRecord(session.usage) ?? {};
-  const statsRecord = toRecord(session.stats) ?? {};
-  const listCost =
-    optionalNumericValueFromKeys(usageRecord, ['list_cost', 'cost', 'total_cost']) ??
-    optionalNumericValueFromKeys(statsRecord, ['list_cost', 'cost', 'total_cost']);
-  if (listCost !== undefined) {
-    chips.push({ key: 'cost', icon: ReceiptText, value: formatters.currency(listCost) });
+  const listCost = sessionListCost(session.usage) ?? sessionListCost(session.stats);
+  if (listCost) {
+    chips.push({
+      key: 'cost',
+      icon: ReceiptText,
+      value: formatters.currency(listCost.amount, listCost.currency),
+    });
   }
   chips.push({
     key: 'created',

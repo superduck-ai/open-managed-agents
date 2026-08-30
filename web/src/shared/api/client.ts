@@ -16,6 +16,7 @@ type RequestOptions = RequestInit & {
 type ConsoleRequestContext = {
   organizationUuid?: string;
   workspaceId?: string;
+  csrfToken?: string;
 };
 
 let consoleRequestContext: ConsoleRequestContext = {};

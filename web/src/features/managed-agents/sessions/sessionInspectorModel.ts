@@ -5,7 +5,7 @@ import {
   type SessionEventListEntry,
   type ToolCallEntry,
 } from '../types';
-import { objectRecord, optionalNumericValueFromKeys, stringValueFromKeys } from '../utils';
+import { objectRecord, optionalNumericValueFromKeys, sessionListCost, stringValueFromKeys } from '../utils';
 import { extractSessionEventUsage, sessionEventEntrySourceIds, sessionEventThreadId } from './sessionDetailModel';
 import {
   buildSessionEventEntries,
@@ -379,13 +379,7 @@ export function buildInspectorCostPoints(events: QuickstartSessionEvent[]) {
   return points;
 }
 
-export function inspectorSessionListCost(value: unknown) {
-  const usage = objectRecord(value);
-  const money = inspectorMoneyInCents(usage.list_cost);
-  if (money) return { amount: money.cents / 100, currency: money.currency };
-  const amount = optionalNumericValueFromKeys(usage, ['list_cost', 'cost', 'total_cost']);
-  return amount === undefined ? null : { amount, currency: 'USD' };
-}
+export const inspectorSessionListCost = sessionListCost;
 
 function inspectorMoneyInCents(value: unknown) {
   const money = objectRecord(value);

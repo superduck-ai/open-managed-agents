@@ -7,7 +7,7 @@ import {
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
   sessionEventHistoryShouldSkipStream,
-  sessionHasIncompleteStreamEvents,
+  sessionIncompleteStreamEventIds,
   sessionPrimaryHistoryShouldSkipStream,
   sessionStreamBackoff,
   sessionStreamShouldStop,
@@ -253,13 +253,13 @@ export async function runSessionEventStreamLoop({
     }
     signal.removeEventListener('abort', cancelIdleReconciliation);
   };
-  const scheduleIdleReconciliation = () => {
+  const scheduleIdleReconciliation = (eventIds: ReadonlySet<string>) => {
     cancelIdleReconciliation();
     signal.addEventListener('abort', cancelIdleReconciliation, { once: true });
     idleReconciliationTimer = window.setTimeout(() => {
       idleReconciliationTimer = null;
       signal.removeEventListener('abort', cancelIdleReconciliation);
-      void reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, signal)
+      void reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, signal, eventIds)
         .catch(() => undefined)
         .finally(() => {
           if (!signal.aborted) onCacheChange();
@@ -310,10 +310,10 @@ export async function runSessionEventStreamLoop({
         },
         onEvent: (event) => {
           mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, event);
-          const hasIncompletePreview = sessionHasIncompleteStreamEvents(queryClient, workspaceId, sessionId, threadId);
-          if (sessionEventType(event).endsWith('status_idle') && hasIncompletePreview) {
-            scheduleIdleReconciliation();
-          } else if (!hasIncompletePreview) {
+          const incompletePreviewIds = sessionIncompleteStreamEventIds(queryClient, workspaceId, sessionId, threadId);
+          if (sessionEventType(event).endsWith('status_idle') && incompletePreviewIds.size) {
+            scheduleIdleReconciliation(incompletePreviewIds);
+          } else if (!incompletePreviewIds.size) {
             cancelIdleReconciliation();
           }
           if (!threadId) {

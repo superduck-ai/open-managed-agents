@@ -117,6 +117,7 @@ describe('anthropicBetaApi', () => {
     setConsoleRequestContext({
       organizationUuid: 'org_test_uuid',
       workspaceId: 'wrkspc_test_uuid',
+      csrfToken: 'csrf_test_token',
     });
 
     const file = new File(['skill archive'], 'emoji-translator.zip', { type: 'application/zip' });
@@ -133,6 +134,7 @@ describe('anthropicBetaApi', () => {
     expect(headers.get('anthropic-beta')).toBe('skills-2025-10-02');
     expect(headers.get('x-organization-uuid')).toBe('org_test_uuid');
     expect(headers.get('x-workspace-id')).toBe('wrkspc_test_uuid');
+    expect(headers.get('x-csrf-token')).toBe('csrf_test_token');
     expect(headers.get('x-api-key')).toBeNull();
     expect(headers.get('authorization')).toBeNull();
     expect(version.skill_id).toBe('skill_123');

@@ -51,4 +51,23 @@ describe('Claude session header summary', () => {
       ['created', session.created_at],
     ]);
   });
+
+  test('formats structured list cost in the header', () => {
+    const session: SessionApiResponse = {
+      id: 'sesn_test',
+      agent: { id: 'agent_test', name: 'Research agent', version: 3 },
+      archived_at: null,
+      created_at: '2026-08-29T00:00:00.000Z',
+      environment_id: 'env_test',
+      status: 'idle',
+      title: 'Session title',
+      type: 'session',
+      updated_at: '2026-08-29T00:01:00.000Z',
+      usage: { list_cost: { amount: '125', currency: 'USD' } },
+    };
+
+    const summary = buildSessionDetailSummary(session, [], formatters, msg, Date.parse(session.updated_at));
+
+    expect(summary.chips.find((chip) => chip.key === 'cost')?.value).toBe('$1.25');
+  });
 });

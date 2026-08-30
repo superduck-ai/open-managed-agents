@@ -99,12 +99,6 @@ export function buildSessionTraceEntries(
   const displayEvents = events.map(sessionCanonicalDisplayEvent);
   const requiresActionEventIDs = latestRequiresActionEventIDs(displayEvents);
   const threadHints = buildSessionThreadHints(displayEvents);
-  const agentMessageTexts = new Set(
-    displayEvents
-      .filter((event) => sessionEventFamily(event) === 'agent' && !sessionEventIsThinking(event))
-      .map((event) => sessionComparableTranscriptText(sessionEventTranscriptText(event)))
-      .filter(Boolean),
-  );
   // Transcript 使用只读回放模型：result / confirmation 先按 tool use id 建索引，
   // 之后折回对应 tool_call；Debug 仍保留原始事件用于审计。
   displayEvents.forEach((event) => {
@@ -130,7 +124,7 @@ export function buildSessionTraceEntries(
       view === 'transcript' &&
       type === 'session.status_idle' &&
       sessionIsResultEvent(event) &&
-      agentMessageTexts.has(sessionComparableTranscriptText(sessionResultText(event)))
+      sessionIdleResultDuplicatesAgentMessage(displayEvents, index)
     ) {
       return [];
     }
@@ -185,6 +179,34 @@ export function buildSessionTraceEntries(
 
 function sessionComparableTranscriptText(value: string) {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function sessionIdleResultDuplicatesAgentMessage(events: QuickstartSessionEvent[], index: number) {
+  const result = sessionComparableTranscriptText(sessionResultText(events[index]));
+  if (!result) return false;
+  for (let candidateIndex = index - 1; candidateIndex >= 0; candidateIndex -= 1) {
+    const candidate = events[candidateIndex];
+    if (sessionEventEndsTranscriptTurn(candidate)) break;
+    if (
+      sessionEventFamily(candidate) === 'agent' &&
+      !sessionEventIsThinking(candidate) &&
+      sessionComparableTranscriptText(sessionEventTranscriptText(candidate)) === result
+    ) {
+      return true;
+    }
+  }
+  for (let candidateIndex = index + 1; candidateIndex < events.length; candidateIndex += 1) {
+    const candidate = events[candidateIndex];
+    if (sessionEventEndsTranscriptTurn(candidate)) break;
+    if (
+      sessionEventFamily(candidate) === 'agent' &&
+      !sessionEventIsThinking(candidate) &&
+      sessionComparableTranscriptText(sessionEventTranscriptText(candidate)) === result
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function latestRequiresActionEventIDs(events: QuickstartSessionEvent[]) {
@@ -446,6 +468,7 @@ export function applyModelRequestBrackets(
       const endMs = sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event) || activeBracket.startMs;
       activeBracket.softEndMs = endMs;
       closeModelRequestBracket(activeBracket, endMs);
+      activeTurnId = null;
     }
 
     if (sessionEventEndsModelBracket(event)) {
@@ -505,7 +528,7 @@ function closeModelRequestBracket(bracket: ModelRequestBracket, endMs: number) {
 function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
   const type = sessionEventType(event);
   return (
-    type === 'user.message' ||
+    sessionEventFamily(event) === 'user' ||
     sessionEventIsQueuedUserMessage(event) ||
     sessionStatusFromEventType(type) !== null ||
     sessionEventFamily(event) === 'outcome'

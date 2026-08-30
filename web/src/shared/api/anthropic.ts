@@ -107,6 +107,9 @@ export function anthropicRequestHeaders(context: AnthropicRequestContext = {}): 
   if (activeContext.workspaceId) {
     headers['x-workspace-id'] = activeContext.workspaceId;
   }
+  if (activeContext.csrfToken) {
+    headers['x-csrf-token'] = activeContext.csrfToken;
+  }
   return headers;
 }
 

@@ -1448,6 +1448,7 @@ export function cleanupIncompleteSessionStreamEvents(
   workspaceId: string,
   sessionId: string,
   threadId = '',
+  eventIds?: ReadonlySet<string>,
 ) {
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
   const removedEventIds = new Set<string>();
@@ -1460,6 +1461,9 @@ export function cleanupIncompleteSessionStreamEvents(
         return true;
       }
       const eventId = sessionStableEventId(event);
+      if (eventIds && (!eventId || !eventIds.has(eventId))) {
+        return true;
+      }
       if (eventId) removedEventIds.add(eventId);
       return false;
     });
@@ -1481,7 +1485,7 @@ function sessionEventIsIncompleteStreamPreview(event: QuickstartSessionEvent) {
   return (type === 'agent.message' || type === 'agent.thinking') && sessionNullableProcessedAt(event) === null;
 }
 
-export function sessionHasIncompleteStreamEvents(
+export function sessionIncompleteStreamEventIds(
   queryClient: QueryClient,
   workspaceId: string,
   sessionId: string,
@@ -1490,7 +1494,12 @@ export function sessionHasIncompleteStreamEvents(
   const cache = queryClient.getQueryData<SessionDetailEventCache>(
     sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
   );
-  return cache?.events.some(sessionEventIsIncompleteStreamPreview) === true;
+  return new Set(
+    cache?.events
+      .filter(sessionEventIsIncompleteStreamPreview)
+      .map(sessionStableEventId)
+      .filter((eventId): eventId is string => Boolean(eventId)),
+  );
 }
 
 export async function reconcileIncompleteSessionStreamEvents(
@@ -1499,13 +1508,11 @@ export async function reconcileIncompleteSessionStreamEvents(
   sessionId: string,
   threadId = '',
   signal?: AbortSignal,
+  eventIds?: ReadonlySet<string>,
 ) {
-  try {
-    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, force: true });
-  } finally {
-    if (!signal?.aborted) {
-      cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
-    }
+  await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, force: true });
+  if (!signal?.aborted) {
+    cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, eventIds);
   }
 }
 

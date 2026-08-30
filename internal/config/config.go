@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/mail"
 	"os"
 	"strings"
 )
@@ -25,6 +27,8 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
+	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err
@@ -50,6 +54,9 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Redis.URL) == "" {
 		return errors.New("redis.url is required")
+	}
+	if err := validateAuthConfig(cfg.Auth); err != nil {
+		return err
 	}
 	if strings.TrimSpace(cfg.Storage.Type) == "" {
 		return errors.New("storage.type is required")
@@ -82,6 +89,21 @@ func validate(cfg Config) error {
 		return err
 	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
+}
+
+func validateAuthConfig(cfg AuthConfig) error {
+	host, port, err := net.SplitHostPort(cfg.SMTP.Addr)
+	if err != nil || host == "" || port == "" {
+		return errors.New("auth.smtp.addr must include a host and port")
+	}
+	address, err := mail.ParseAddress(cfg.SMTP.Username)
+	if err != nil || address.Address != cfg.SMTP.Username {
+		return errors.New("auth.smtp.username must be a valid email address")
+	}
+	if strings.TrimSpace(cfg.SMTP.Password) == "" {
+		return errors.New("auth.smtp.password is required")
+	}
+	return nil
 }
 
 // FindPlatformOAuthClient returns the registry entry whose mcp_server_url

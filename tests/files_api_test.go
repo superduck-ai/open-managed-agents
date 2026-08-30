@@ -32,6 +32,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -67,6 +68,26 @@ type recordingSandboxTimeoutExtender struct {
 	mu    sync.Mutex
 	calls []sandboxTimeoutCall
 	err   error
+}
+
+type acceptingEmailCodeStore struct{}
+
+func (acceptingEmailCodeStore) Issue(context.Context, platformauth.EmailCodeIssue) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Verify(context.Context, string, string) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Revoke(context.Context, string, string) error {
+	return nil
+}
+
+type discardLoginCodeSender struct{}
+
+func (discardLoginCodeSender) SendLoginCode(context.Context, string, string) error {
+	return nil
 }
 
 func (e *recordingSandboxTimeoutExtender) SetTimeout(_ context.Context, sandboxID string, timeout time.Duration) error {
@@ -1049,6 +1070,13 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		t.Fatalf("seed database: %v", err)
 	}
 	platformSessions := platformsession.NewMemoryStore()
+	platformAuth := platformauth.NewEmailProvider(
+		database,
+		acceptingEmailCodeStore{},
+		discardLoginCodeSender{},
+		[]byte("01234567890123456789012345678901"),
+		logger.With("component", "platform_auth"),
+	)
 	credentials, err := codesessions.NewSessionCredentials(cfg)
 	if err != nil {
 		database.Close()
@@ -1081,6 +1109,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		ObjectStore:            store,
 		Logger:                 logger,
 		PlatformStore:          platformSessions,
+		PlatformAuth:           platformAuth,
 		CodeSessionCredentials: credentials,
 		SandboxTimeoutExtender: sandboxTimeouts,
 		FilestoreCredentials:   filestoreCredentials,

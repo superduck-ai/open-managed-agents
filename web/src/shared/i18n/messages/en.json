@@ -183,6 +183,7 @@
   "auth.login.heroCardTitle": "Built for the managed agent console",
   "auth.login.heroEyebrow": "Passwordless sign-in",
   "auth.login.invalidEmail": "Enter a valid email address.",
+  "auth.login.invalidOrExpiredCode": "Verification code is invalid or expired",
   "auth.login.privacyPolicy": "Privacy Policy",
   "auth.login.resendCode": "Resend code",
   "auth.login.resendFailed": "Could not resend the code. Try again.",

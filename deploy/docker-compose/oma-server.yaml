@@ -16,6 +16,12 @@ database:
 redis:
   url: redis://redis:6379
 
+auth:
+  smtp:
+    addr: smtp.example.com:587
+    username: sender@example.com
+    password: replace-me
+
 storage:
   type: s3
   s3:

@@ -48,6 +48,7 @@ type Server struct {
 	logger               *slog.Logger
 	router               chi.Router
 	platformStore        platformsession.Store
+	platformAuth         *platformauth.EmailProvider
 	filestoreCredentials *filestoreapi.TokenCredentials
 	vaultSecrets         *secrets.Service
 	admin                *adminapi.Handler
@@ -78,6 +79,7 @@ type ServerDeps struct {
 	ObjectStore            storage.ObjectStore
 	Logger                 *slog.Logger
 	PlatformStore          platformsession.Store
+	PlatformAuth           *platformauth.EmailProvider
 	CodeSessionCredentials *codesessions.SessionCredentials
 	SandboxTimeoutExtender codesessions.SandboxTimeoutExtender
 	FilestoreCredentials   *filestoreapi.TokenCredentials
@@ -123,6 +125,7 @@ func NewServer(deps ServerDeps) *Server {
 		db:                   deps.DB,
 		logger:               componentLogger("api"),
 		platformStore:        platformStore,
+		platformAuth:         deps.PlatformAuth,
 		filestoreCredentials: deps.FilestoreCredentials,
 		vaultSecrets:         deps.VaultSecrets,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
@@ -208,7 +211,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
 		platformapi.RegisterPlatformAccountRoutes(r, s.db)
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, platformauth.New(s.db), s.platformStore)
+		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)

@@ -19,6 +19,16 @@ database:
 redis:
   url: redis://localhost:6379
 
+auth:
+  smtp:
+    # Required host:port. Surrounding whitespace is removed during loading.
+    addr: smtp.example.com:587
+    # Required email address used for SMTP authentication and as the sender.
+    username: sender@example.com
+    # Required. The verification-code HMAC key is derived from this password,
+    # so there is no separate email-login secret to configure.
+    password: replace-me
+
 storage:
   type: s3
   s3:

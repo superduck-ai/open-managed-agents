@@ -21,6 +21,11 @@ database:
   url: postgresql://test/database
 redis:
   url: redis://test:6379
+auth:
+  smtp:
+    addr: smtp.example.com:587
+    username: sender@example.com
+    password: test-password
 storage:
   type: s3
   s3:
@@ -75,6 +80,11 @@ database:
   url: postgresql://yaml/database
 redis:
   url: redis://yaml:6379
+auth:
+  smtp:
+    addr: smtp.example.com:587
+    username: sender@example.com
+    password: test-password
 storage:
   type: s3
   s3:
@@ -171,6 +181,22 @@ webhook:
 	}
 }
 
+func TestLoadNormalizesSMTPConfig(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `
+auth:
+  smtp:
+    addr: " smtp.example.com:587 "
+    username: " sender@example.com "
+`)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Auth.SMTP.Addr != "smtp.example.com:587" || cfg.Auth.SMTP.Username != "sender@example.com" {
+		t.Fatalf("SMTP config was not normalized: addr=%q username=%q", cfg.Auth.SMTP.Addr, cfg.Auth.SMTP.Username)
+	}
+}
+
 func TestLoadYAMLExplicitDynamicDefaults(t *testing.T) {
 	prepareLoadTest(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -227,6 +253,10 @@ func TestLoadYAMLRequiresDeploymentFields(t *testing.T) {
 		{name: "server address", overrides: "server:\n  addr: \"\"", wantError: "server.addr is required"},
 		{name: "database URL", overrides: "database:\n  url: \"\"", wantError: "database.url is required"},
 		{name: "Redis URL", overrides: "redis:\n  url: \"\"", wantError: "redis.url is required"},
+		{name: "email SMTP address", overrides: "auth:\n  smtp:\n    addr: smtp.example.com", wantError: "auth.smtp.addr must include a host and port"},
+		{name: "email SMTP host", overrides: "auth:\n  smtp:\n    addr: :465", wantError: "auth.smtp.addr must include a host and port"},
+		{name: "email SMTP port", overrides: "auth:\n  smtp:\n    addr: 'smtp.example.com:'", wantError: "auth.smtp.addr must include a host and port"},
+		{name: "email SMTP password", overrides: "auth:\n  smtp:\n    password: \"\"", wantError: "auth.smtp.password is required"},
 		{name: "storage type", overrides: "storage:\n  type: \"\"", wantError: "storage.type is required"},
 		{name: "S3 endpoint", overrides: "storage:\n  s3:\n    endpoint: \"\"", wantError: "storage.s3.endpoint is required"},
 		{name: "S3 bucket", overrides: "storage:\n  s3:\n    bucket: \"\"", wantError: "storage.s3.bucket is required"},

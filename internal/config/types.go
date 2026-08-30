@@ -13,6 +13,7 @@ type Config struct {
 	Server            ServerConfig            `yaml:"server"`
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
+	Auth              AuthConfig              `yaml:"auth"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
@@ -75,6 +76,16 @@ type DatabaseConfig struct {
 
 type RedisConfig struct {
 	URL string `yaml:"url"`
+}
+
+type AuthConfig struct {
+	SMTP EmailSMTPConfig `yaml:"smtp"`
+}
+
+type EmailSMTPConfig struct {
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 type StorageConfig struct {

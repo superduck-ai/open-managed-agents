@@ -14,6 +14,13 @@ database:
 redis:
   url: redis://localhost:6379
 
+auth:
+  # Replace this placeholder in the gitignored config/config.yaml.
+  smtp:
+    addr: smtp.example.com:587
+    username: sender@example.com
+    password: replace-me
+
 storage:
   type: s3
   s3:

@@ -7,12 +7,11 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
 func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 	t.Run("failure nil store", func(t *testing.T) {
-		_, _, err := New(nil).FindOrCreateUserContextByEmail(context.Background(), "user@example.com")
+		_, _, err := newTestService(nil).findOrCreateUserContextByEmail(t.Context(), "user@example.com")
 		if !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
@@ -21,7 +20,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 	t.Run("failure find error", func(t *testing.T) {
 		wantErr := errors.New("query failed")
 		store := &fakePlatformAuthStore{tx: &fakePlatformAuthTx{findErr: wantErr}}
-		_, _, err := New(store).FindOrCreateUserContextByEmail(context.Background(), "user@example.com")
+		_, _, err := newTestService(store).findOrCreateUserContextByEmail(t.Context(), "user@example.com")
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("err = %v, want %v", err, wantErr)
 		}
@@ -31,7 +30,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 		tx := &fakePlatformAuthTx{
 			findContext: db.PlatformAuthUserContext{UserExternalID: "user_existing", OrgUUID: "org-existing"},
 		}
-		userID, orgUUID, err := New(&fakePlatformAuthStore{tx: tx}).FindOrCreateUserContextByEmail(context.Background(), "Ada.Lovelace@example.com")
+		userID, orgUUID, err := newTestService(&fakePlatformAuthStore{tx: tx}).findOrCreateUserContextByEmail(t.Context(), "ada.lovelace@example.com")
 		if err != nil {
 			t.Fatalf("FindOrCreateUserContextByEmail() error = %v", err)
 		}
@@ -45,7 +44,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 
 	t.Run("success missing user creates default context", func(t *testing.T) {
 		tx := &fakePlatformAuthTx{findErr: db.ErrNotFound}
-		userID, orgUUID, err := New(&fakePlatformAuthStore{tx: tx}).FindOrCreateUserContextByEmail(context.Background(), "new-user@example.com")
+		userID, orgUUID, err := newTestService(&fakePlatformAuthStore{tx: tx}).findOrCreateUserContextByEmail(t.Context(), "new-user@example.com")
 		if err != nil {
 			t.Fatalf("FindOrCreateUserContextByEmail() error = %v", err)
 		}
@@ -70,16 +69,16 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 	})
 }
 
+func newTestService(store Store) *EmailProvider {
+	return &EmailProvider{store: store}
+}
+
 type fakePlatformAuthStore struct {
 	tx *fakePlatformAuthTx
 }
 
 func (s *fakePlatformAuthStore) WithPlatformAuthTx(ctx context.Context, fn func(db.PlatformAuthTxStore) error) error {
 	return fn(s.tx)
-}
-
-func (s *fakePlatformAuthStore) ResolvePlatformSessionIdentity(context.Context, platformsession.CreateInput) (platformsession.Session, error) {
-	return platformsession.Session{}, nil
 }
 
 type fakePlatformAuthTx struct {

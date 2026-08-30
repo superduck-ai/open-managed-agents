@@ -183,6 +183,7 @@
   "auth.login.heroCardTitle": "为托管 Agent 控制台设计",
   "auth.login.heroEyebrow": "无密码登录",
   "auth.login.invalidEmail": "请输入有效的邮箱地址。",
+  "auth.login.invalidOrExpiredCode": "验证码无效或已过期",
   "auth.login.privacyPolicy": "隐私政策",
   "auth.login.resendCode": "重新发送验证码",
   "auth.login.resendFailed": "无法重新发送验证码。请重试。",

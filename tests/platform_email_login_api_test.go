@@ -31,7 +31,7 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 		t.Fatalf("login methods = %#v, want google and magic_link", methods)
 	}
 
-	sendResp := app.platformRequest(t, http.MethodPost, "/api/auth/send_magic_link", strings.NewReader(`{"email_address":"ada@example.com"}`), nil)
+	sendResp := app.platformRequest(t, http.MethodPost, "/api/auth/send_magic_link", strings.NewReader(`{"email_address":"Ada.Login@Example.com"}`), nil)
 	defer sendResp.Body.Close()
 	if sendResp.StatusCode != http.StatusOK {
 		t.Fatalf("send magic link status = %d, want 200: %s", sendResp.StatusCode, readAll(t, sendResp.Body))
@@ -264,7 +264,7 @@ func TestPlatformEmailLoginAndroidRoutes(t *testing.T) {
 	defer app.close()
 
 	encodedEmail := base64.RawURLEncoding.EncodeToString([]byte("Mobile.Login@Example.com"))
-	verifyResp := app.platformRequest(t, http.MethodPost, "/auth/verify_magic_link", strings.NewReader(`{"credentials":{"method":"nonce","nonce":"nonce-1","encoded_email_address":"`+encodedEmail+`"}}`), nil)
+	verifyResp := app.platformRequest(t, http.MethodPost, "/auth/verify_magic_link", strings.NewReader(`{"credentials":{"method":"code","code":"123456","encoded_email_address":"`+encodedEmail+`"}}`), nil)
 	defer verifyResp.Body.Close()
 	if verifyResp.StatusCode != http.StatusOK {
 		t.Fatalf("android verify status = %d, want 200: %s", verifyResp.StatusCode, readAll(t, verifyResp.Body))

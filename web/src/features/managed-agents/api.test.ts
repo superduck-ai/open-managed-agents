@@ -7,6 +7,7 @@ import {
   mergeSessionEventCache,
   mergeSessionEventsById,
   mergeSessionStreamFrame,
+  reconcileIncompleteSessionStreamEvents,
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
 } from './api';
@@ -149,6 +150,42 @@ describe('managed agents API', () => {
       'sevt_thinking_preview',
       'sevt_final',
     ]);
+  });
+
+  test('reconciles an incomplete preview after idle history sync', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const createdAt = '2026-08-26T13:13:00Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: createdAt,
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'sevt_final',
+              type: 'agent.message',
+              created_at: createdAt,
+              processed_at: createdAt,
+              content: [{ type: 'text', text: 'Final answer' }],
+            },
+          ],
+          next_page: null,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+
+    await reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId);
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_final',
+    ]);
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
   });
 
   test('preserves a same-timestamp user turn before its agent error', () => {
@@ -402,7 +439,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('uses canonical agent and user families as duplicate-result boundaries', () => {
+  test('deduplicates idle results across either legal arrival order', () => {
     const createdAt = '2026-08-26T13:13:00Z';
     const agentEntries = buildSessionEventEntries(
       [
@@ -447,7 +484,6 @@ describe('managed agents API', () => {
     expect(userEntries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
       'sevt_agent_message',
       'sevt_user',
-      'sevt_idle_after_user',
     ]);
   });
 

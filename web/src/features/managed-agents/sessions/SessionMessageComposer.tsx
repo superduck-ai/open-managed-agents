@@ -142,9 +142,9 @@ export function SessionMessageComposer({
               ) : null}
               <InputGroupButton
                 type="submit"
-                variant="ghost"
+                variant="default"
                 size="icon-sm"
-                className="size-7 rounded-md border-transparent bg-primary text-primary-foreground shadow-none transition-colors hover:bg-primary/85 hover:text-primary-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/40 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+                className="size-7 rounded-md shadow-none focus-visible:ring-1 focus-visible:ring-ring/40 disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
                 aria-label={
                   sending
                     ? msg('managedAgents.sessions.detail.sending', 'Sending message')

@@ -1078,6 +1078,7 @@
   "managedAgents.sessions.inspector.noMatchingEvents": "没有匹配的事件。",
   "managedAgents.sessions.inspector.noMatchingEventTypes": "没有匹配的事件类型。",
   "managedAgents.sessions.inspector.noMatchingTools": "没有匹配的工具。",
+  "managedAgents.sessions.inspector.none": "无",
   "managedAgents.sessions.inspector.noModelRequests": "尚无模型请求。",
   "managedAgents.sessions.inspector.overview": "概览",
   "managedAgents.sessions.inspector.path": "路径",

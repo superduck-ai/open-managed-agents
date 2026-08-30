@@ -94,7 +94,7 @@ describe('Claude minimap geometry', () => {
   });
 
   test('uses the official default, min, max, and resize thresholds', () => {
-    expect(sessionMinimapLayout(1, 0, 800)).toEqual({
+    expect(sessionMinimapLayout(1, 800)).toEqual({
       contentHeight: 40,
       defaultHeight: 40,
       laneContentHeight: 28,
@@ -103,7 +103,7 @@ describe('Claude minimap geometry', () => {
       resizable: false,
     });
 
-    const manyLanes = sessionMinimapLayout(10, 4, 800);
+    const manyLanes = sessionMinimapLayout(10, 800);
     expect(manyLanes).toEqual({
       contentHeight: 282,
       defaultHeight: 280,
@@ -112,7 +112,7 @@ describe('Claude minimap geometry', () => {
       minHeight: 100,
       resizable: true,
     });
-    expect(sessionMinimapLayout(10, 4, 300).defaultHeight).toBe(180);
+    expect(sessionMinimapLayout(10, 300).defaultHeight).toBe(180);
   });
 
   test('clamps zoom to the official 1x–4x range', () => {

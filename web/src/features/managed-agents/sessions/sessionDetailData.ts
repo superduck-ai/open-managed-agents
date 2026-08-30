@@ -1,11 +1,13 @@
 import {
   cleanupIncompleteSessionStreamEvents,
   mergeSessionStreamFrame,
+  reconcileIncompleteSessionStreamEvents,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
   SESSION_DETAIL_STREAM_FALLBACK_LIMIT,
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
   sessionEventHistoryShouldSkipStream,
+  sessionHasIncompleteStreamEvents,
   sessionPrimaryHistoryShouldSkipStream,
   sessionStreamBackoff,
   sessionStreamShouldStop,
@@ -16,10 +18,13 @@ import {
 } from '../api';
 import { type QuickstartSessionEvent, type SessionDetailDeltaFrames, type SessionThreadApiResponse } from '../types';
 import { errorMessage } from '../utils';
+import { sessionEventType } from './sessionTraceModel';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export const SessionDetailDeltaFramesContext = createContext<SessionDetailDeltaFrames>({});
+
+const SESSION_IDLE_RECONCILIATION_GRACE_MS = 1500;
 
 export function useSessionDetailEventData({
   sessionId,
@@ -240,6 +245,27 @@ export async function runSessionEventStreamLoop({
   let fallbackCount = 0;
   let backoff = 0;
   let historySynced = false;
+  let idleReconciliationTimer: number | null = null;
+  const cancelIdleReconciliation = () => {
+    if (idleReconciliationTimer !== null) {
+      window.clearTimeout(idleReconciliationTimer);
+      idleReconciliationTimer = null;
+    }
+    signal.removeEventListener('abort', cancelIdleReconciliation);
+  };
+  const scheduleIdleReconciliation = () => {
+    cancelIdleReconciliation();
+    signal.addEventListener('abort', cancelIdleReconciliation, { once: true });
+    idleReconciliationTimer = window.setTimeout(() => {
+      idleReconciliationTimer = null;
+      signal.removeEventListener('abort', cancelIdleReconciliation);
+      void reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, signal)
+        .catch(() => undefined)
+        .finally(() => {
+          if (!signal.aborted) onCacheChange();
+        });
+    }, SESSION_IDLE_RECONCILIATION_GRACE_MS);
+  };
   while (!signal.aborted) {
     const isFallback =
       !everConnected && fallbackCount < SESSION_DETAIL_STREAM_FALLBACK_LIMIT && consecutiveFailures >= 3;
@@ -284,6 +310,12 @@ export async function runSessionEventStreamLoop({
         },
         onEvent: (event) => {
           mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, event);
+          const hasIncompletePreview = sessionHasIncompleteStreamEvents(queryClient, workspaceId, sessionId, threadId);
+          if (sessionEventType(event).endsWith('status_idle') && hasIncompletePreview) {
+            scheduleIdleReconciliation();
+          } else if (!hasIncompletePreview) {
+            cancelIdleReconciliation();
+          }
           if (!threadId) {
             onPrimaryEvent?.(event);
           }
@@ -295,6 +327,7 @@ export async function runSessionEventStreamLoop({
       backoff = 0;
       return;
     } catch (streamError) {
+      cancelIdleReconciliation();
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
       onCacheChange();
       if (signal.aborted || sessionStreamShouldStop(streamError)) {

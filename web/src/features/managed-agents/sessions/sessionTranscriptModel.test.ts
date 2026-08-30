@@ -7,7 +7,12 @@ import {
   type ToolCallEntry,
 } from '../types';
 import { buildSessionTranscriptBlocks, filterSessionTranscriptBlocks } from './sessionTranscriptModel';
-import { applyModelRequestBrackets, latestOpenModelRequest, sessionTimestampMs } from './sessionTraceModel';
+import {
+  applyModelRequestBrackets,
+  buildSessionEventEntries,
+  latestOpenModelRequest,
+  sessionTimestampMs,
+} from './sessionTraceModel';
 
 const EMPTY_USAGE: SessionEventUsage = {
   input: 0,
@@ -149,6 +154,47 @@ describe('sessionTranscriptModel', () => {
     );
 
     expect(thinking.bracketStartMs).toBe(Date.parse('2026-01-01T08:00:01.000Z'));
+  });
+
+  test('keeps a model bracket available when idle arrives before its final message', () => {
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'model-start',
+          type: 'span.model_request_start',
+          processed_at: '2026-01-01T08:00:01.000Z',
+        },
+        {
+          id: 'idle',
+          type: 'session.status_idle',
+          processed_at: '2026-01-01T08:00:04.000Z',
+        },
+        {
+          id: 'answer',
+          type: 'agent.message',
+          processed_at: '2026-01-01T08:00:04.500Z',
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+        {
+          id: 'model-end',
+          type: 'span.model_request_end',
+          model_request_start_id: 'model-start',
+          processed_at: '2026-01-01T08:00:05.000Z',
+          usage: { input_tokens: 12, output_tokens: 4 },
+        },
+      ],
+      'transcript',
+      Date.parse('2026-01-01T08:00:01.000Z'),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    const answer = entries.find((entry) => entry.kind === 'message');
+
+    expect(answer).toMatchObject({
+      bracketId: 'model-start',
+      inferenceMs: 4_000,
+      usage: { input_tokens: 12, output_tokens: 4 },
+    });
   });
 });
 

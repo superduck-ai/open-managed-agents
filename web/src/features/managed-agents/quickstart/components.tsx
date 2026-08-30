@@ -2289,7 +2289,10 @@ function QuickstartSessionTranscript({
     const sessionStart = sessionStartedAt ? Date.parse(sessionStartedAt) : NaN;
     return Number.isFinite(sessionStart) ? sessionStart : (events.map(sessionEventTimestamp).find(Boolean) ?? 0);
   }, [events, sessionStartedAt]);
-  const entries = useMemo(() => buildSessionEventEntries(events, 'transcript', traceStartMs), [events, traceStartMs]);
+  const entries = useMemo(
+    () => buildSessionEventEntries(events, 'transcript', traceStartMs, msg),
+    [events, msg, traceStartMs],
+  );
   const selectedEntry = resolveSelectedSessionEventEntry(entries, selectedEntryId);
   const openModelRequest = useMemo(() => latestOpenModelRequest(events), [events]);
 

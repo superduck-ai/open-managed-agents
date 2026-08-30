@@ -182,7 +182,9 @@ export function optionalNumericValueFromKeys(record: Record<string, unknown>, ke
       return value;
     }
     if (typeof value === 'string') {
-      const parsed = Number(value.trim());
+      const normalized = value.trim();
+      if (!normalized) continue;
+      const parsed = Number(normalized);
       if (Number.isFinite(parsed)) {
         return parsed;
       }

@@ -1450,16 +1450,63 @@ export function cleanupIncompleteSessionStreamEvents(
   threadId = '',
 ) {
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
+  const removedEventIds = new Set<string>();
   queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
     if (!cache) {
       return cache;
     }
     const events = cache.events.filter((event) => {
-      const type = sessionEventType(event);
-      return (type !== 'agent.message' && type !== 'agent.thinking') || sessionNullableProcessedAt(event) !== null;
+      if (!sessionEventIsIncompleteStreamPreview(event)) {
+        return true;
+      }
+      const eventId = sessionStableEventId(event);
+      if (eventId) removedEventIds.add(eventId);
+      return false;
     });
     return events.length === cache.events.length ? cache : { ...cache, events };
   });
+  if (!removedEventIds.size) {
+    return;
+  }
+  const deltaKey = sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId);
+  queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
+    if (!cache) return cache;
+    const frames = Object.fromEntries(Object.entries(cache).filter(([eventId]) => !removedEventIds.has(eventId)));
+    return Object.keys(frames).length === Object.keys(cache).length ? cache : frames;
+  });
+}
+
+function sessionEventIsIncompleteStreamPreview(event: QuickstartSessionEvent) {
+  const type = sessionEventType(event);
+  return (type === 'agent.message' || type === 'agent.thinking') && sessionNullableProcessedAt(event) === null;
+}
+
+export function sessionHasIncompleteStreamEvents(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId = '',
+) {
+  const cache = queryClient.getQueryData<SessionDetailEventCache>(
+    sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
+  );
+  return cache?.events.some(sessionEventIsIncompleteStreamPreview) === true;
+}
+
+export async function reconcileIncompleteSessionStreamEvents(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId = '',
+  signal?: AbortSignal,
+) {
+  try {
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, force: true });
+  } finally {
+    if (!signal?.aborted) {
+      cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
+    }
+  }
 }
 
 export function sessionDetailScopeEvents(

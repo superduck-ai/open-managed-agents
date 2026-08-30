@@ -537,6 +537,7 @@ export type ModelBracketTargetEntry = DisplayEventEntry | ToolCallEntry;
 export type ModelRequestBracket = {
   startId: string;
   startMs: number;
+  softEndMs?: number;
   entries: ModelBracketTargetEntry[];
 };
 
@@ -827,13 +828,6 @@ export type TimelinePickOptions = {
   includeIdle?: boolean;
   maxDistancePct?: number;
   visibleIds?: Set<string>;
-};
-
-export type LaneTabGroup = {
-  key: string;
-  label: string;
-  lanes: SessionDetailLane[];
-  collapsed: boolean;
 };
 
 export type EnvironmentPackageRow = {

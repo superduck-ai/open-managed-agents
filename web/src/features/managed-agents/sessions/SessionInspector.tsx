@@ -92,6 +92,9 @@ import { EventDetailPanel } from './SessionTracePanel';
 import { areSessionFileResourcesValid, SessionFileResourcesField } from './SessionFileResourcesField';
 import { sessionEventProcessedTimestamp, sessionEventTimestamp } from './sessionTraceModel';
 
+const SESSION_INSPECTOR_DETAIL_DEFAULT_HEIGHT = 360;
+const SESSION_INSPECTOR_DETAIL_MIN_HEIGHT = 120;
+
 export function SessionInspector({
   activeTab,
   activeLane,
@@ -856,14 +859,18 @@ function InspectorListDetailSplit({
       orientation="vertical"
       className="h-full min-h-0 min-w-0 overflow-hidden"
     >
-      <ResizablePanel id={`session-inspector-${id}-list-panel`} minSize={120} className="min-h-0">
+      <ResizablePanel
+        id={`session-inspector-${id}-list-panel`}
+        minSize={SESSION_INSPECTOR_DETAIL_MIN_HEIGHT}
+        className="min-h-0"
+      >
         {list}
       </ResizablePanel>
-      <ResizableHandle aria-label={resizeLabel} className="relative -my-[2px] z-30 bg-transparent" />
+      <ResizableHandle aria-label={resizeLabel} className="-my-[2px] z-30 cursor-row-resize" />
       <ResizablePanel
         id={`session-inspector-${id}-detail-panel`}
-        defaultSize={320}
-        minSize={120}
+        defaultSize={SESSION_INSPECTOR_DETAIL_DEFAULT_HEIGHT}
+        minSize={SESSION_INSPECTOR_DETAIL_MIN_HEIGHT}
         groupResizeBehavior="preserve-pixel-size"
         className="min-h-0"
       >
@@ -1190,6 +1197,8 @@ function InspectorToolsPanel({
 function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildInspectorToolTotals> }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
+  const noneLabel = msg('managedAgents.sessions.inspector.none', 'none');
+  const failedRate = totals.failed === totals.calls ? 1 : Math.min(Math.max(totals.failed / totals.calls, 0.01), 0.99);
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
       <InspectorDetailHeading
@@ -1198,31 +1207,40 @@ function InspectorToolsOverview({ totals }: { totals: ReturnType<typeof buildIns
       />
       <ScrollArea>
         <div className="px-4 py-3 text-sm">
-          <div className="flex items-center gap-5">
+          <div className="flex items-center gap-4">
             <ToolOutcomeRing totals={totals} />
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
               <dt className="flex items-center gap-1.5 text-muted-foreground">
                 <span className="inline-block size-2 rounded-full bg-destructive" aria-hidden />
                 {msg('managedAgents.sessions.inspector.failed', 'Failed')}
               </dt>
-              <dd className="font-mono">{totals.failed || 'none'}</dd>
+              <dd className={cn('font-mono tabular-nums', totals.failed > 0 && 'text-destructive')}>
+                {totals.failed > 0
+                  ? `${formatters.number(totals.failed)} (${formatters.number(failedRate, {
+                      style: 'percent',
+                      maximumFractionDigits: 0,
+                    })})`
+                  : noneLabel}
+              </dd>
               <dt className="flex items-center gap-1.5 text-muted-foreground">
                 <span className="inline-block size-2 rounded-full bg-chart-4" aria-hidden />
                 {msg('managedAgents.sessions.inspector.denied', 'Denied')}
               </dt>
-              <dd className="font-mono">{totals.denied || 'none'}</dd>
+              <dd className="font-mono tabular-nums">
+                {totals.denied > 0 ? formatters.number(totals.denied) : noneLabel}
+              </dd>
               <dt className="flex items-center gap-1.5 text-muted-foreground">
                 <span className="inline-block size-2 rounded-full bg-chart-2" aria-hidden />
                 {msg('managedAgents.sessions.inspector.completed', 'Completed')}
               </dt>
-              <dd className="font-mono">{totals.completed}</dd>
+              <dd className="font-mono tabular-nums">{formatters.number(totals.completed)}</dd>
               {totals.inFlight > 0 ? (
                 <>
                   <dt className="flex items-center gap-1.5 text-muted-foreground">
                     <span className="inline-block size-2 rounded-full border border-foreground/30" aria-hidden />
                     {msg('managedAgents.sessions.inspector.inFlight', 'In flight')}
                   </dt>
-                  <dd className="font-mono">{totals.inFlight}</dd>
+                  <dd className="font-mono tabular-nums">{formatters.number(totals.inFlight)}</dd>
                 </>
               ) : null}
             </dl>
@@ -1688,7 +1706,7 @@ function InspectorFacts({ rows }: { rows: Array<[string, React.ReactNode]> }) {
       {rows.map(([label, value]) => (
         <div key={label} className="contents">
           <dt className="text-muted-foreground">{label}</dt>
-          <dd className="min-w-0 break-words">{value || '—'}</dd>
+          <dd className="min-w-0 break-words">{value ?? '—'}</dd>
         </div>
       ))}
     </dl>

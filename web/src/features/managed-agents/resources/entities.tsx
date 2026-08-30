@@ -812,7 +812,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       {loadError ? <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert> : null}
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
-      <div className={config.section === 'sessions' ? 'subtle-scrollbar overflow-x-auto' : 'overflow-visible'}>
+      <div>
         <Table className={cn(dataTableClassName, config.section === 'sessions' && 'min-w-[1080px]')}>
           <TableHeader>
             <TableRow className={dataTableHeaderRowClassName}>

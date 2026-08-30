@@ -13,9 +13,12 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function renderInspector(overrides: Partial<Parameters<typeof SessionInspector>[0]> = {}) {
+function renderInspector(
+  overrides: Partial<Parameters<typeof SessionInspector>[0]> = {},
+  initialLocale: 'en' | 'zh-CN' = 'en',
+) {
   return render(
-    <I18nProvider initialLocale="en">
+    <I18nProvider initialLocale={initialLocale}>
       <TooltipProvider>
         <SessionInspector
           activeTab="session"
@@ -282,6 +285,8 @@ describe('SessionInspector', () => {
     expect(outcomeRing.querySelector('svg')).toBeNull();
     expect(screen.getByText('In flight')).toBeTruthy();
     expect(screen.getByText('Executing')).toBeTruthy();
+    const failedLegend = screen.getAllByText('Failed').find((element) => element.tagName === 'DT');
+    expect(failedLegend?.nextElementSibling?.textContent).toBe('1 (33%)');
     expect(screen.getByRole('separator', { name: 'Resize tool detail' })).toBeTruthy();
 
     const bashRow = screen.getByText('bash').closest('tr')!;
@@ -305,6 +310,26 @@ describe('SessionInspector', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter tools' }), { target: { value: 'write' } });
     expect(screen.queryByText('bash')).toBeNull();
     expect(screen.getByText('write')).toBeTruthy();
+  });
+
+  test('localizes empty exceptional tool outcomes while keeping completed numeric', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    renderInspector(
+      {
+        activeTab: 'tools',
+        events: [toolUseEvent('tool_write_running', 'Write', '2026-08-27T08:00:00.000Z')],
+      },
+      'zh-CN',
+    );
+    await act(async () => Promise.resolve());
+
+    const failed = screen.getAllByText('失败').find((element) => element.tagName === 'DT');
+    const denied = screen.getByText('已拒绝');
+    const completed = screen.getByText('已完成');
+    expect(failed?.nextElementSibling?.textContent).toBe('无');
+    expect(denied.nextElementSibling?.textContent).toBe('无');
+    expect(completed.nextElementSibling?.textContent).toBe('0');
+    expect(completed.closest('dl')?.parentElement?.className).toContain('gap-4');
   });
 
   test('shows Waited and Thread only when the selected calls need them', async () => {

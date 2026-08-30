@@ -851,10 +851,6 @@ function SessionDetailAlerts({
   );
 }
 
-export function EventsTab(props: EventsTabProps) {
-  return <EventsTabInner {...props} />;
-}
-
 function mergeSessionResources(currentSession: SessionApiResponse | null, updatedSession: SessionApiResponse) {
   return currentSession?.id === updatedSession.id
     ? { ...currentSession, resources: updatedSession.resources }
@@ -874,7 +870,7 @@ function sessionConversationState(session: SessionApiResponse) {
   };
 }
 
-export function EventsTabInner({
+export function EventsTab({
   activeLane,
   archivedLaneCount,
   childLoading,
@@ -956,12 +952,11 @@ export function EventsTabInner({
       className="flex h-full min-h-0 flex-col overflow-hidden bg-background [container-type:inline-size]"
       data-testid="events-tab"
     >
-      <KeyboardShortcutsModal />
       <div
         className={`grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 py-1.5 ${SESSION_CHROME_GUTTER_CLASS_NAME}`}
         data-testid="session-trace-toolbar"
       >
-        <ExpandingSearch className="w-44 min-w-0 @min-[640px]:w-56" value={query} onChange={onQueryChange} />
+        <SessionTraceSearch className="w-44 min-w-0 @min-[640px]:w-56" value={query} onChange={onQueryChange} />
         <div className="flex shrink-0 items-center gap-2">
           <span ref={setMinimapControlsSlot} className="flex items-center" />
           <Tooltip>
@@ -1117,12 +1112,4 @@ export function EventsTabInner({
       </div>
     </div>
   );
-}
-
-export function ExpandingSearch(props: { className?: string; value: string; onChange: (value: string) => void }) {
-  return <SessionTraceSearch {...props} />;
-}
-
-export function KeyboardShortcutsModal() {
-  return null;
 }

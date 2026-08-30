@@ -1,8 +1,15 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { I18nProvider } from '../../../shared/i18n';
+import {
+  MessageScroller,
+  MessageScrollerContent,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from '../../../shared/ui/message-scroller';
 import { resetTestDom } from '../../../test/setup';
 import { type DisplayEventEntry, type IdleGapEntry, type SessionEventUsage, type ToolCallEntry } from '../types';
 import { SessionTranscriptView } from './SessionTranscriptView';
+import { type ReactNode } from 'react';
 
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 
@@ -61,15 +68,9 @@ describe('SessionTranscriptView', () => {
     expect(agentIteration?.className).toContain('border-[0.5px]');
     expect(agentIteration?.className).toContain('border-session-border');
     expect(agentIteration?.className).toContain('bg-session-surface');
-  });
-
-  test('leaves bottom spacing to the message scroller instead of stacking another transcript spacer', () => {
-    resetTestDom('https://oma.duck.ai/sessions/test');
-    const answer = displayEntry('answer', 'agent', 'A short final answer.', 'bracket-1');
-
-    const { container } = renderTranscript([answer], () => {});
-
-    expect(container.querySelector('[data-testid="session-transcript-view"]')?.className).not.toContain('pb-4');
+    const userItem = userMessage?.closest('[data-slot="message-scroller-item"]');
+    expect(userItem?.getAttribute('data-scroll-anchor')).toBe('true');
+    expect(userItem?.parentElement?.getAttribute('data-slot')).toBe('message-scroller-content');
   });
 
   test('keeps unbracketed agent prose left-aligned and system boundaries full width', () => {
@@ -230,7 +231,7 @@ describe('SessionTranscriptView', () => {
     };
 
     const view = render(
-      <I18nProvider initialLocale="en">
+      transcriptScrollerTree(
         <SessionTranscriptView
           entries={[]}
           openModelRequest={openModelRequest}
@@ -239,8 +240,8 @@ describe('SessionTranscriptView', () => {
           onSelectEntry={() => {}}
           threadNameById={new Map()}
           onThreadClick={() => {}}
-        />
-      </I18nProvider>,
+        />,
+      ),
     );
 
     expect(screen.getAllByText('Generating…')).toHaveLength(2);
@@ -282,17 +283,29 @@ function transcriptTree(
   onSelectEntry: (id: string | null) => void = () => {},
   renderToolApproval?: Parameters<typeof SessionTranscriptView>[0]['renderToolApproval'],
 ) {
+  return transcriptScrollerTree(
+    <SessionTranscriptView
+      entries={entries}
+      visibleEntries={entries}
+      selectedEntryId={null}
+      onSelectEntry={onSelectEntry}
+      threadNameById={new Map()}
+      onThreadClick={() => {}}
+      renderToolApproval={renderToolApproval}
+    />,
+  );
+}
+
+function transcriptScrollerTree(children: ReactNode) {
   return (
     <I18nProvider initialLocale="en">
-      <SessionTranscriptView
-        entries={entries}
-        visibleEntries={entries}
-        selectedEntryId={null}
-        onSelectEntry={onSelectEntry}
-        threadNameById={new Map()}
-        onThreadClick={() => {}}
-        renderToolApproval={renderToolApproval}
-      />
+      <MessageScrollerProvider>
+        <MessageScroller>
+          <MessageScrollerViewport>
+            <MessageScrollerContent>{children}</MessageScrollerContent>
+          </MessageScrollerViewport>
+        </MessageScroller>
+      </MessageScrollerProvider>
     </I18nProvider>
   );
 }

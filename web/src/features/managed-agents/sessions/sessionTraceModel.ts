@@ -99,7 +99,12 @@ export function buildSessionTraceEntries(
   const displayEvents = events.map(sessionCanonicalDisplayEvent);
   const requiresActionEventIDs = latestRequiresActionEventIDs(displayEvents);
   const threadHints = buildSessionThreadHints(displayEvents);
-  let latestAgentMessageText = '';
+  const agentMessageTexts = new Set(
+    displayEvents
+      .filter((event) => sessionEventFamily(event) === 'agent' && !sessionEventIsThinking(event))
+      .map((event) => sessionComparableTranscriptText(sessionEventTranscriptText(event)))
+      .filter(Boolean),
+  );
   // Transcript 使用只读回放模型：result / confirmation 先按 tool use id 建索引，
   // 之后折回对应 tool_call；Debug 仍保留原始事件用于审计。
   displayEvents.forEach((event) => {
@@ -121,21 +126,13 @@ export function buildSessionTraceEntries(
   return displayEvents.flatMap((event, index) => {
     const type = sessionEventType(event);
     const eventFamily = sessionEventFamily(event);
-    const agentMessageText =
-      eventFamily === 'agent' && !sessionEventIsThinking(event) ? sessionEventTranscriptText(event).trim() : '';
     if (
       view === 'transcript' &&
       type === 'session.status_idle' &&
       sessionIsResultEvent(event) &&
-      (sessionResultText(event) === latestAgentMessageText ||
-        sessionResultText(event) === sessionFollowingAgentMessageText(displayEvents, index))
+      agentMessageTexts.has(sessionComparableTranscriptText(sessionResultText(event)))
     ) {
       return [];
-    }
-    if (agentMessageText) {
-      latestAgentMessageText = agentMessageText;
-    } else if (eventFamily === 'user') {
-      latestAgentMessageText = '';
     }
     let enrichedEvent = sessionEventWithThreadHint(event, threadHints.byThreadId);
     if (requiresActionEventIDs.has(sessionEventKey(enrichedEvent))) {
@@ -186,18 +183,8 @@ export function buildSessionTraceEntries(
   });
 }
 
-function sessionFollowingAgentMessageText(events: QuickstartSessionEvent[], startIndex: number) {
-  for (let index = startIndex + 1; index < events.length; index += 1) {
-    const event = events[index];
-    const family = sessionEventFamily(event);
-    if (family === 'user') {
-      return '';
-    }
-    if (family === 'agent' && !sessionEventIsThinking(event)) {
-      return sessionEventTranscriptText(event).trim();
-    }
-  }
-  return '';
+function sessionComparableTranscriptText(value: string) {
+  return value.trim().replace(/\s+/g, ' ');
 }
 
 export function latestRequiresActionEventIDs(events: QuickstartSessionEvent[]) {
@@ -442,6 +429,10 @@ export function applyModelRequestBrackets(
         }
         targetEntry.bracketStartMs ??= activeBracket.startMs;
         targetEntry.turnId ??= activeTurnId ?? activeBracket.startId;
+        if (activeBracket.softEndMs !== undefined) {
+          targetEntry.bracketEndMs ??= Math.max(activeBracket.startMs, activeBracket.softEndMs);
+          targetEntry.bracketOpen = false;
+        }
         activeBracket.entries.push(targetEntry);
         return;
       }
@@ -451,7 +442,13 @@ export function applyModelRequestBrackets(
       }
     });
 
-    if (sessionEventEndsTranscriptTurn(event)) {
+    if (sessionStatusFromEventType(sessionEventType(event)) === 'idle' && activeBracket) {
+      const endMs = sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event) || activeBracket.startMs;
+      activeBracket.softEndMs = endMs;
+      closeModelRequestBracket(activeBracket, endMs);
+    }
+
+    if (sessionEventEndsModelBracket(event)) {
       if (activeBracket) {
         closeModelRequestBracket(
           activeBracket,
@@ -513,6 +510,11 @@ function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
     sessionStatusFromEventType(type) !== null ||
     sessionEventFamily(event) === 'outcome'
   );
+}
+
+function sessionEventEndsModelBracket(event: QuickstartSessionEvent) {
+  const status = sessionStatusFromEventType(sessionEventType(event));
+  return sessionEventEndsTranscriptTurn(event) && status !== 'idle';
 }
 
 export function latestOpenModelRequest(events: QuickstartSessionEvent[]) {

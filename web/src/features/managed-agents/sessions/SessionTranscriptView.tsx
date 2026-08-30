@@ -1,6 +1,7 @@
 import { type QuickstartSessionEvent, type SessionEventListEntry, type ToolCallEntry } from '../types';
 import { useI18n } from '../../../shared/i18n';
 import { Message, MessageContent } from '../../../shared/ui/message';
+import { MessageScrollerItem } from '../../../shared/ui/message-scroller';
 import { sessionEventEntryMatchesSelectedId, sessionEventEntrySelectionId } from './sessionDetailModel';
 import { TranscriptRow, TranscriptSpeakerHeader } from './sessionTraceRows';
 import { InProgressChip, MetaStrip, SynchronizedShimmerText } from './sessionTimeline';
@@ -82,39 +83,43 @@ export function SessionTranscriptView({
   };
 
   return (
-    <div className="flex w-full flex-col" data-testid="session-transcript-view">
-      {blocks.map((block) => {
+    <>
+      {blocks.map((block, index) => {
         if (block.kind === 'user') {
           return (
-            <Message key={block.id} align="end" data-transcript-block="user" className="mt-3 items-start first:mt-1.5">
-              <MessageContent className="w-auto max-w-[92%] gap-0 sm:max-w-[80%]">
-                {renderEntry(block.entry, 'standalone')}
-              </MessageContent>
-            </Message>
+            <MessageScrollerItem
+              key={block.id}
+              messageId={block.id}
+              scrollAnchor
+              className={index === 0 ? 'mt-1.5' : 'mt-3'}
+            >
+              <Message align="end" data-transcript-block="user" className="items-start">
+                <MessageContent className="w-auto max-w-[92%] gap-0 sm:max-w-[80%]">
+                  {renderEntry(block.entry, 'standalone')}
+                </MessageContent>
+              </Message>
+            </MessageScrollerItem>
           );
         }
         if (block.kind === 'standalone') {
           const alignment = sessionTranscriptStandaloneMessageAlignment(block.entry);
           if (alignment) {
             return (
-              <Message
-                key={block.id}
-                align={alignment}
-                data-transcript-block="standalone-message"
-                className="mt-3 items-start first:mt-1.5"
-              >
-                <MessageContent
-                  className={clsx('gap-0', alignment === 'end' ? 'w-auto max-w-[92%] sm:max-w-[80%]' : 'w-full')}
-                >
-                  {renderEntry(block.entry, 'standalone')}
-                </MessageContent>
-              </Message>
+              <MessageScrollerItem key={block.id} messageId={block.id} className={index === 0 ? 'mt-1.5' : 'mt-3'}>
+                <Message align={alignment} data-transcript-block="standalone-message" className="items-start">
+                  <MessageContent
+                    className={clsx('gap-0', alignment === 'end' ? 'w-auto max-w-[92%] sm:max-w-[80%]' : 'w-full')}
+                  >
+                    {renderEntry(block.entry, 'standalone')}
+                  </MessageContent>
+                </Message>
+              </MessageScrollerItem>
             );
           }
           return (
-            <div key={block.id} className="mt-1.5 py-0.5">
+            <MessageScrollerItem key={block.id} messageId={block.id} className="mt-1.5 py-0.5">
               {renderEntry(block.entry, 'standalone')}
-            </div>
+            </MessageScrollerItem>
           );
         }
         const selected = block.iterations.some((iteration) =>
@@ -122,43 +127,49 @@ export function SessionTranscriptView({
         );
         const open = sessionTranscriptBlockIsOpen(block);
         return (
-          <Message
-            key={block.id}
-            align="start"
-            data-transcript-block="agent"
-            data-open={open || undefined}
-            data-entering={open || undefined}
-            className="-mx-[10px] mt-[6px] w-[calc(100%+20px)] items-start px-[10px] py-[2px] first:mt-0"
-          >
-            <MessageContent className="w-full gap-0">
-              <TranscriptSpeakerHeader
-                label={block.speakerLabel}
-                speaker="agent"
-                processedAtMs={block.headerEntry.processedAtMs}
-                relativeTime={block.headerEntry.relativeTime}
-                selected={selected}
-                onSelect={() => onSelectEntry(sessionEventEntrySelectionId(block.headerEntry))}
-              />
-              <div className="mt-[3px]">
-                {block.iterations.map((iteration) => (
-                  <TranscriptIteration key={iteration.id} iteration={iteration} generatingLabel={generatingLabel}>
-                    {iteration.entries.map((entry) => renderEntry(entry, 'iteration'))}
-                  </TranscriptIteration>
-                ))}
-              </div>
-            </MessageContent>
-          </Message>
+          <MessageScrollerItem key={block.id} messageId={block.id} className={index === 0 ? undefined : 'mt-[6px]'}>
+            <Message
+              align="start"
+              data-transcript-block="agent"
+              data-open={open || undefined}
+              data-entering={open || undefined}
+              className="-mx-[10px] w-[calc(100%+20px)] items-start px-[10px] py-[2px]"
+            >
+              <MessageContent className="w-full gap-0">
+                <TranscriptSpeakerHeader
+                  label={block.speakerLabel}
+                  speaker="agent"
+                  processedAtMs={block.headerEntry.processedAtMs}
+                  relativeTime={block.headerEntry.relativeTime}
+                  selected={selected}
+                  onSelect={() => onSelectEntry(sessionEventEntrySelectionId(block.headerEntry))}
+                />
+                <div className="mt-[3px]">
+                  {block.iterations.map((iteration) => (
+                    <TranscriptIteration key={iteration.id} iteration={iteration} generatingLabel={generatingLabel}>
+                      {iteration.entries.map((entry) => renderEntry(entry, 'iteration'))}
+                    </TranscriptIteration>
+                  ))}
+                </div>
+              </MessageContent>
+            </Message>
+          </MessageScrollerItem>
         );
       })}
       {showEmptyOpenTurn ? (
-        <PendingModelRequestTurn
-          event={openModelRequest}
-          generatingLabel={generatingLabel}
-          traceStartMs={traceStartMs}
-          onSelectEntry={onSelectEntry}
-        />
+        <MessageScrollerItem
+          messageId={`pending-${sessionEventKey(openModelRequest)}`}
+          className={blocks.length === 0 ? undefined : 'mt-[6px]'}
+        >
+          <PendingModelRequestTurn
+            event={openModelRequest}
+            generatingLabel={generatingLabel}
+            traceStartMs={traceStartMs}
+            onSelectEntry={onSelectEntry}
+          />
+        </MessageScrollerItem>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -182,7 +193,7 @@ function PendingModelRequestTurn({
       data-transcript-block="agent"
       data-open="true"
       data-entering="true"
-      className="-mx-[10px] mt-[6px] w-[calc(100%+20px)] items-start px-[10px] py-[2px] first:mt-0"
+      className="-mx-[10px] w-[calc(100%+20px)] items-start px-[10px] py-[2px]"
     >
       <MessageContent className="w-full gap-0">
         <TranscriptSpeakerHeader

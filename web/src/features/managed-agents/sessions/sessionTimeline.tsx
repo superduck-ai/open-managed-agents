@@ -8,7 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tool
 import {
   type DisplayEventType,
   type IconComponent,
-  type LaneTabGroup,
   type SessionDetailLane,
   type SessionEventUsage,
   type SessionTimelineLane,
@@ -83,8 +82,8 @@ export function sessionTimelineLaneContentHeight(laneCount: number, activeLaneIn
   return height;
 }
 
-export function sessionMinimapLayout(laneCount: number, activeLaneIndex: number, viewportHeight: number) {
-  const laneContentHeight = sessionTimelineLaneContentHeight(laneCount, activeLaneIndex);
+export function sessionMinimapLayout(laneCount: number, viewportHeight: number) {
+  const laneContentHeight = sessionTimelineLaneContentHeight(laneCount, laneCount > 1 ? 1 : 0);
   const contentHeight =
     Math.max(laneContentHeight, SESSION_TIMELINE_SINGLE_LANE_HEIGHT_PX) + SESSION_TIMELINE_VERTICAL_PADDING_PX;
   const minHeight = Math.min(contentHeight, SESSION_TIMELINE_MINIMAP_MIN_HEIGHT_PX);
@@ -221,8 +220,8 @@ export function EventsMinimap({
   );
   const [viewportHeight, setViewportHeight] = useState(sessionTimelineViewportHeight);
   const minimapLayout = useMemo(
-    () => sessionMinimapLayout(lanes.length, activeLaneIndex, viewportHeight),
-    [activeLaneIndex, lanes.length, viewportHeight],
+    () => sessionMinimapLayout(lanes.length, viewportHeight),
+    [lanes.length, viewportHeight],
   );
   const [minimapHeight, setMinimapHeight] = useState(minimapLayout.defaultHeight);
   const [zoom, setZoom] = useState(SESSION_TIMELINE_MIN_ZOOM);
@@ -712,12 +711,12 @@ export function EventsMinimap({
       <div
         ref={viewportRef}
         className={clsx(
-          'scroll-fade-y scroll-fade-size-4 scrollbar-none relative -mx-[3px] flex-none overscroll-x-contain px-[3px]',
+          'scrollbar-none relative -mx-[3px] flex-none overscroll-x-contain px-[3px]',
+          minimapLayout.contentHeight > minimapHeight && 'session-minimap-bottom-fade',
           sessionMinimapViewportOverflowClassName(zoom),
         )}
         style={
           {
-            '--cds-scroll-fade-top': '0px',
             height: `${minimapHeight}px`,
             maxHeight: `min(60vh, ${minimapLayout.contentHeight}px)`,
             minHeight: `${minimapLayout.minHeight}px`,
@@ -1440,7 +1439,6 @@ export function LaneTabStrip({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollState, setScrollState] = useState({ canScroll: false, left: false, right: false });
   const timelineTicks = useMemo(() => buildTimelineTicks(timeline ?? []), [timeline]);
-  const laneGroups = useMemo(() => buildLaneTabGroups(lanes, activeLane), [activeLane, lanes]);
   const selectedTick = selectedEntryId ? (timelineTicks.find((tick) => tick.id === selectedEntryId) ?? null) : null;
   const activeTick =
     selectedTick ??
@@ -1476,11 +1474,11 @@ export function LaneTabStrip({
       scroller.removeEventListener('scroll', refreshScrollState);
       window.removeEventListener('resize', refreshScrollState);
     };
-  }, [refreshScrollState, laneGroups.length]);
+  }, [refreshScrollState, lanes.length]);
 
   useEffect(() => {
-    const activeTab = scrollerRef.current?.querySelector<HTMLElement>(
-      `[data-lane-tab-id="${cssEscape(activeLane || 'main')}"]`,
+    const activeTab = Array.from(scrollerRef.current?.querySelectorAll<HTMLElement>('[data-lane-tab-id]') ?? []).find(
+      (tab) => tab.dataset.laneTabId === (activeLane || 'main'),
     );
     activeTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     refreshScrollState();
@@ -1544,23 +1542,9 @@ export function LaneTabStrip({
             aria-label={msg('managedAgents.sessions.detail.laneTabs', 'Session threads')}
             className="h-auto flex-nowrap gap-1 rounded-none bg-transparent p-0"
           >
-            {laneGroups.map((group) =>
-              group.collapsed ? (
-                <TimelineTooltip key={group.key} label={group.label}>
-                  <TabsTrigger
-                    value={laneTabValue(group.lanes[0]?.id ?? SESSION_MAIN_LANE_ID)}
-                    className="h-8 shrink-0 gap-2 rounded-md bg-transparent px-2 text-sm font-medium text-muted-foreground shadow-none after:hidden hover:bg-accent hover:text-foreground data-active:bg-accent data-active:text-foreground data-active:hover:bg-accent"
-                  >
-                    <span className="max-w-[88px] truncate">{truncateLaneLabel(group.label)}</span>
-                    <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-secondary-foreground">
-                      {group.lanes.length}
-                    </span>
-                  </TabsTrigger>
-                </TimelineTooltip>
-              ) : (
-                group.lanes.map((lane) => <LaneTabLabel key={lane.id || 'main'} lane={lane} />)
-              ),
-            )}
+            {lanes.map((lane) => (
+              <LaneTabLabel key={lane.id || 'main'} lane={lane} />
+            ))}
           </TabsList>
         </Tabs>
         {archivedLaneCount > 0 ? (
@@ -1622,34 +1606,6 @@ export function LaneTabLabel({ lane }: { lane: SessionDetailLane }) {
       </TabsTrigger>
     </TimelineTooltip>
   );
-}
-
-export function buildLaneTabGroups(lanes: SessionDetailLane[], activeLane: string): LaneTabGroup[] {
-  const groups: LaneTabGroup[] = [];
-  lanes.forEach((lane) => {
-    const key = lane.group || lane.label || lane.id || 'main';
-    const existing = groups.find((group) => group.key === key);
-    if (existing) {
-      existing.lanes.push(lane);
-    } else {
-      groups.push({ key, label: key, lanes: [lane], collapsed: false });
-    }
-  });
-  return groups.map((group) => {
-    const activeInGroup = group.lanes.some((lane) => lane.id === activeLane);
-    return {
-      ...group,
-      collapsed: group.lanes.length > 8 && !activeInGroup,
-    };
-  });
-}
-
-export function cssEscape(value: string) {
-  const css = typeof CSS !== 'undefined' ? CSS : undefined;
-  if (css && typeof css.escape === 'function') {
-    return css.escape(value);
-  }
-  return value.replace(/["\\]/g, '\\$&');
 }
 
 export function HeaderRow({

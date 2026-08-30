@@ -58,15 +58,12 @@ describe('EventsMinimap', () => {
     expect(minimap.className).toContain('overflow:clip_visible');
     expect(viewport.className).toContain('-mx-[3px]');
     expect(viewport.className).toContain('px-[3px]');
-    expect(viewport.className).toContain('scroll-fade-y');
-    expect(viewport.className).toContain('scroll-fade-size-4');
     expect(viewport.className).toContain('flex-none');
     expect(viewport.className).toContain('overflow-x-hidden');
     expect(viewport.className).toContain('overflow-y-auto');
     expect(viewport.className).not.toContain('overflow-auto');
     expect(viewport.style.minHeight).toBe('100px');
     expect(viewport.style.maxHeight).toBe('min(60vh, 282px)');
-    expect(viewport.style.getPropertyValue('--cds-scroll-fade-top')).toBe('0px');
     expect(
       screen.getByTestId('session-minimap-message-links').querySelectorAll('path[data-timeline-message-link]'),
     ).toHaveLength(1);
@@ -91,6 +88,44 @@ describe('EventsMinimap', () => {
     fireEvent.pointerMove(separator, { clientY: 140, pointerId: 1 });
     fireEvent.pointerUp(separator, { clientY: 140, pointerId: 1 });
     expect(separator.getAttribute('aria-valuenow')).toBe('282');
+  });
+
+  test('reserves the expanded child lane height without resizing the minimap on lane change', async () => {
+    const lanes = minimapLanes().slice(0, 2);
+    const view = render(
+      <I18nProvider initialLocale="en">
+        <EventsMinimap
+          lanes={lanes}
+          activeLane=""
+          selectedEntryId={null}
+          scrollerRef={createRef<HTMLDivElement>()}
+          suppressScrollSeekUntilRef={{ current: 0 }}
+          onLaneChange={() => {}}
+          onSeek={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    const viewport = screen.getByTestId('session-minimap-viewport');
+    expect(viewport.style.height).toBe('74px');
+    expect(document.querySelector('[data-lane-index="1"]')?.className).toContain('h-5');
+
+    view.rerender(
+      <I18nProvider initialLocale="en">
+        <EventsMinimap
+          lanes={lanes}
+          activeLane="thread-1"
+          selectedEntryId={null}
+          scrollerRef={createRef<HTMLDivElement>()}
+          suppressScrollSeekUntilRef={{ current: 0 }}
+          onLaneChange={() => {}}
+          onSeek={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => expect(viewport.style.height).toBe('74px'));
+    expect(document.querySelector('[data-lane-index="1"]')?.className).toContain('h-7');
   });
 
   test('pans an overflowing minimap with a pointer drag', async () => {

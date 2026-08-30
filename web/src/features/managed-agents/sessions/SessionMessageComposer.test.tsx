@@ -33,6 +33,8 @@ describe('SessionMessageComposer', () => {
     const send = screen.getByRole('button', { name: 'Send message' });
     const frame = form.querySelector('[data-slot="input-group"]');
     expect(send.getAttribute('type')).toBe('submit');
+    expect(send.className).toContain('hover:bg-primary/80');
+    expect(send.className).not.toContain('dark:hover:bg-muted/50');
     expect(frame?.className).toContain('min-h-14');
     expect(frame?.className).toContain('rounded-[22px]');
     expect(frame?.className).toContain('border-session-border');

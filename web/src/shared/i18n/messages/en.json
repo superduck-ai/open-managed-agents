@@ -1078,6 +1078,7 @@
   "managedAgents.sessions.inspector.noMatchingEvents": "No matching events.",
   "managedAgents.sessions.inspector.noMatchingEventTypes": "No matching event types.",
   "managedAgents.sessions.inspector.noMatchingTools": "No matching tools.",
+  "managedAgents.sessions.inspector.none": "none",
   "managedAgents.sessions.inspector.noModelRequests": "No model requests yet.",
   "managedAgents.sessions.inspector.overview": "Overview",
   "managedAgents.sessions.inspector.path": "Path",

@@ -1921,7 +1921,7 @@ export function registerManagedAgentsQuickstartTests() {
       { timeout: 3000 },
     );
     const sessionEvents = screen.getByRole('region', { name: 'Session events' });
-    expect(within(sessionEvents).getByTestId('session-transcript-view')).toBeTruthy();
+    expect(sessionEvents.querySelector('[data-slot="message-scroller-content"]')).toBeTruthy();
     expect(screen.queryByRole('tab', { name: 'Transcript' })).toBeNull();
     expect(screen.queryByRole('tab', { name: 'Debug' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'All events' })).toBeNull();

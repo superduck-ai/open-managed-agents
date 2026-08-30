@@ -12,6 +12,9 @@ import { ArrowDownIcon } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { Button } from '@/shared/ui/button';
 
+const MESSAGE_SCROLLER_SCROLL_KEYS = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ']);
+const MESSAGE_SCROLLER_END_EPSILON = 2;
+
 function MessageScrollerProvider(props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>) {
   return <MessageScrollerPrimitive.Provider {...props} />;
 }
@@ -28,12 +31,42 @@ function MessageScroller({ className, ...props }: React.ComponentProps<typeof Me
 
 function MessageScrollerViewport({
   className,
+  onKeyDown,
+  onTouchMove,
+  onWheel,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
+  const { scrollToEnd } = useMessageScroller();
+  const restoreFollowIfStillAtEnd = React.useCallback(
+    (viewport: HTMLDivElement) => {
+      // @shadcn/react 0.3.0 releases follow on no-op gestures; strict end geometry safely re-arms it.
+      window.requestAnimationFrame(() => {
+        const distanceToEnd = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+        if (viewport.isConnected && distanceToEnd <= MESSAGE_SCROLLER_END_EPSILON) {
+          scrollToEnd({ behavior: 'auto' });
+        }
+      });
+    },
+    [scrollToEnd],
+  );
   return (
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
       className={cn('subtle-scrollbar-auto size-full min-h-0 min-w-0 overflow-y-auto overscroll-contain', className)}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (MESSAGE_SCROLLER_SCROLL_KEYS.has(event.key)) {
+          restoreFollowIfStillAtEnd(event.currentTarget);
+        }
+      }}
+      onTouchMove={(event) => {
+        onTouchMove?.(event);
+        restoreFollowIfStillAtEnd(event.currentTarget);
+      }}
+      onWheel={(event) => {
+        onWheel?.(event);
+        restoreFollowIfStillAtEnd(event.currentTarget);
+      }}
       {...props}
     />
   );

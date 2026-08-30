@@ -315,10 +315,10 @@ export function EventDetailPanel({
   placement?: 'overlay' | 'side';
   onClose: () => void;
 }) {
+  const { msg } = useI18n();
   if (!('traceEntry' in entry)) {
     return null;
   }
-  const { msg } = useI18n();
   const traceEntry = entry.traceEntry;
   const title = sessionTraceDetailTitle(traceEntry);
   const eventIdLabel = compactSessionEventId(entry.rawEventId);

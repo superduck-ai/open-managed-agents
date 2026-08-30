@@ -50,7 +50,7 @@ const transcriptMarkdownComponents: Components = {
     />
   ),
   input: ({ node: _node, ...props }) => <input {...props} className="mt-0.5 size-4 accent-primary" />,
-  li: ({ node: _node, ...props }) => <li {...props} className="my-1 pl-1 marker:text-muted-foreground" />,
+  li: ({ node: _node, ...props }) => <li {...props} className="pl-1 marker:text-muted-foreground" />,
   ol: ({ node: _node, ...props }) => <ol {...props} className="list-decimal pl-5" />,
   p: ({ node: _node, ...props }) => <p {...props} className="break-words text-sm leading-5 text-foreground" />,
   pre: ({ node: _node, children, ...props }) => {
@@ -101,7 +101,10 @@ export function MarkdownTranscriptContent({ value }: { value: string }) {
   const truncated = value.length > TRANSCRIPT_TEXT_LIMIT;
   const displayedValue = truncated ? value.slice(0, TRANSCRIPT_TEXT_LIMIT) : value;
   return (
-    <div data-testid="session-trace-markdown" className="space-y-2 text-sm leading-5 text-foreground">
+    <div
+      data-testid="session-trace-markdown"
+      className="flex flex-col gap-1.5 whitespace-normal text-sm leading-5 text-foreground"
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml

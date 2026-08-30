@@ -43,6 +43,30 @@ describe('SessionTranscriptContent', () => {
     expect(container.textContent).not.toContain('---');
   });
 
+  test('keeps loose Markdown lists compact', () => {
+    resetTestDom();
+    render(
+      <MarkdownTranscriptContent
+        value={[
+          '- **Three traits:**',
+          '',
+          '  - Encapsulation',
+          '',
+          '  - Inheritance',
+          '',
+          '  - Polymorphism',
+          '',
+          '- **Access modifiers:** public, private, protected',
+        ].join('\n')}
+      />,
+    );
+
+    const markdown = screen.getByTestId('session-trace-markdown');
+    expect(markdown.classList.contains('gap-1.5')).toBe(true);
+    expect(markdown.classList.contains('whitespace-normal')).toBe(true);
+    expect([...markdown.querySelectorAll('li')].every((item) => !item.classList.contains('my-1'))).toBe(true);
+  });
+
   test('keeps links and code safe while ignoring raw HTML', () => {
     resetTestDom();
     const { container } = render(

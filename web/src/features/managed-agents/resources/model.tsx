@@ -1046,6 +1046,40 @@ export function vaultCredentialSummaryFromNames(names: string[], msg: I18nMsg): 
   return names.join(', ');
 }
 
+/** Set equality for vault id selections (order-insensitive). */
+export function vaultSelectionEquals(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
+export type VaultCredentialSummaryLoadState =
+  { status: 'idle' | 'loading' | 'error'; names?: string[] } | { status: 'ready'; names: string[] };
+
+/** Trailing label + tooltip body for a vault row credential summary. */
+export function vaultCredentialSummaryPresentation(
+  state: VaultCredentialSummaryLoadState | undefined,
+  loadingLabel: string,
+  msg: I18nMsg,
+): { trailing: string; detail: string } {
+  const status = state?.status ?? 'idle';
+  if (status === 'loading' || status === 'idle') {
+    return { trailing: loadingLabel, detail: loadingLabel };
+  }
+  if (status === 'error') {
+    const trailing = vaultCredentialSummaryFromNames([], msg);
+    return { trailing, detail: trailing };
+  }
+  const names = state?.names ?? [];
+  const trailing = vaultCredentialSummaryFromNames(names, msg);
+  return {
+    trailing,
+    detail: names.length ? names.join('\n') : trailing,
+  };
+}
+
 /** CMA-style created label: relative when recent, short calendar date when older. */
 export function vaultCreatedLabel(
   createdAt: string,

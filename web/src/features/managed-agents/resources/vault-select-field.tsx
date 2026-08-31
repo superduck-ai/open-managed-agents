@@ -14,14 +14,16 @@ import { Label } from '../../../shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../shared/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../shared/ui/tooltip';
 import { Check, ChevronsUpDown, X } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { DeploymentFieldHeader } from '../components/common';
 import { type EntityOption } from '../types';
-import { vaultCreatedAbsoluteLabel, vaultCreatedLabel, vaultCredentialSummaryFromNames } from './model';
+import { vaultCreatedAbsoluteLabel, vaultCreatedLabel, vaultSelectionEquals } from './model';
+import { useVaultCredentialSummaries } from './use-vault-credential-summaries';
 
 export function ManagedVaultSelectField({
   label,
   optional = false,
+  workspaceId,
   selectedIds,
   options,
   manageHref,
@@ -32,6 +34,7 @@ export function ManagedVaultSelectField({
 }: {
   label: string;
   optional?: boolean;
+  workspaceId: string;
   selectedIds: string[];
   options: EntityOption[];
   manageHref: string;
@@ -43,6 +46,13 @@ export function ManagedVaultSelectField({
   const { msg } = useI18n();
   const formatters = useFormatters();
   const [open, setOpen] = useState(false);
+  const vaultIds = useMemo(() => options.map((option) => option.id), [options]);
+  const { presentationFor } = useVaultCredentialSummaries({
+    workspaceId,
+    vaultIds,
+    enabled: open,
+    msg,
+  });
   const id = `managed-vault-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   const ackId = `${id}-ack`;
   const selectedOptions = options.filter((option) => selectedIds.includes(option.id));
@@ -64,10 +74,12 @@ export function ManagedVaultSelectField({
     'managedAgents.credentialVaults.sessionAck.description',
     'I understand this means this agent can assume the identity granted by this vault.',
   );
+  const loadingSummary = msg('common.loading', 'Loading...');
 
   const updateSelection = (nextIds: string[]) => {
+    const selectionChanged = !vaultSelectionEquals(selectedIds, nextIds);
     onChange(nextIds);
-    if (!nextIds.length && acknowledged) {
+    if (selectionChanged && acknowledged) {
       onAcknowledgedChange?.(false);
     }
   };
@@ -126,8 +138,7 @@ export function ManagedVaultSelectField({
                         ? vaultCreatedLabel(createdAt, formatters.relativeTime, formatters.date)
                         : '';
                       const createdAbsolute = createdAt ? vaultCreatedAbsoluteLabel(createdAt, formatters.date) : '';
-                      const names = option.credentialNames ?? [];
-                      const trailing = vaultCredentialSummaryFromNames(names, msg);
+                      const { trailing, detail } = presentationFor(option.id, loadingSummary);
                       return (
                         <CommandItem
                           key={option.id}
@@ -173,9 +184,7 @@ export function ManagedVaultSelectField({
                                 </span>
                               }
                             />
-                            <TooltipContent className="max-w-xs whitespace-pre-line">
-                              {names.length ? names.join('\n') : trailing}
-                            </TooltipContent>
+                            <TooltipContent className="max-w-xs whitespace-pre-line">{detail}</TooltipContent>
                           </Tooltip>
                         </CommandItem>
                       );

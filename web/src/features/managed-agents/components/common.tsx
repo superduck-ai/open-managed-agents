@@ -268,20 +268,12 @@ export function NestedRows({
   loading,
   error,
   emptyTitle,
-  emptyBody,
-  emptyIcon: EmptyIcon,
-  emptyActionLabel,
-  onEmptyAction,
   columns,
   rows,
 }: {
   loading: boolean;
   error: string | null;
   emptyTitle: string;
-  emptyBody?: string;
-  emptyIcon?: IconComponent;
-  emptyActionLabel?: string;
-  onEmptyAction?: () => void;
   columns: string[];
   rows: ReactNode[][];
 }) {
@@ -297,23 +289,6 @@ export function NestedRows({
     );
   }
   if (!rows.length) {
-    if (emptyBody && EmptyIcon) {
-      return (
-        <div className="grid min-h-[280px] place-items-center text-center">
-          <div className="max-w-[360px]">
-            <EmptyIcon className="mx-auto mb-4 size-12 stroke-[1.3] text-foreground" aria-hidden />
-            <div className="text-sm font-semibold text-foreground">{emptyTitle}</div>
-            <p className="mt-3 text-sm leading-5 text-muted-foreground">{emptyBody}</p>
-            {emptyActionLabel && onEmptyAction ? (
-              <Button type="button" variant="outline" className="mt-4" onClick={onEmptyAction}>
-                <Plus className="size-4" aria-hidden />
-                {emptyActionLabel}
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      );
-    }
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
         {emptyTitle}

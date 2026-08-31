@@ -23,6 +23,8 @@ import {
   vaultCreatedLabel,
   vaultCredentialSummary,
   vaultCredentialSummaryFromNames,
+  vaultCredentialSummaryPresentation,
+  vaultSelectionEquals,
 } from './model';
 
 const msgFallback: I18nMsg = ((_key, fallback) => fallback) as I18nMsg;
@@ -524,5 +526,36 @@ describe('vaultCredentialSummary', () => {
         msgInterpolate,
       ),
     ).toBe('A, B, C');
+  });
+
+  test('vaultSelectionEquals is order-insensitive', () => {
+    expect(vaultSelectionEquals(['a', 'b'], ['b', 'a'])).toBe(true);
+    expect(vaultSelectionEquals(['a'], ['a', 'b'])).toBe(false);
+    expect(vaultSelectionEquals(['a'], ['b'])).toBe(false);
+  });
+
+  test('vaultCredentialSummaryPresentation maps load states', () => {
+    expect(vaultCredentialSummaryPresentation({ status: 'idle' }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'Loading...',
+      detail: 'Loading...',
+    });
+    expect(vaultCredentialSummaryPresentation({ status: 'loading' }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'Loading...',
+      detail: 'Loading...',
+    });
+    expect(vaultCredentialSummaryPresentation({ status: 'error' }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'No credentials',
+      detail: 'No credentials',
+    });
+    expect(
+      vaultCredentialSummaryPresentation({ status: 'ready', names: ['A', 'B'] }, 'Loading...', msgInterpolate),
+    ).toEqual({
+      trailing: 'A, B',
+      detail: 'A\nB',
+    });
+    expect(vaultCredentialSummaryPresentation({ status: 'ready', names: [] }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'No credentials',
+      detail: 'No credentials',
+    });
   });
 });

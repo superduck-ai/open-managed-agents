@@ -18,7 +18,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, listVaultCredentials, localTimezone, startMCPVaultAuth } from '../api';
+import { listAgents, listManagedEntities, localTimezone, startMCPVaultAuth } from '../api';
 import {
   DeploymentAddSelectField,
   DeploymentSelectField,
@@ -57,8 +57,6 @@ import {
   initialFormValues,
   parseCredentialAuthType,
   patchCredentialFormValues,
-  vaultCredentialNames,
-  vaultCredentialSummaryFromNames,
   vaultOAuthErrorMessage,
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
@@ -795,30 +793,11 @@ function GenericManagedEntityDialog({
           secondary: environment.id,
         }));
         const vaultRecords = (vaultPage.data as VaultApiResponse[]) ?? [];
-        const credentialPages = await Promise.all(
-          vaultRecords.map(async (vault) => {
-            try {
-              const page = await listVaultCredentials(vault.id, workspaceId);
-              return { vaultId: vault.id, items: page.data ?? [] };
-            } catch {
-              return { vaultId: vault.id, items: [] as VaultCredentialApiResponse[] };
-            }
-          }),
-        );
-        if (!active) {
-          return;
-        }
-        const credentialsByVault = new Map(credentialPages.map((entry) => [entry.vaultId, entry.items]));
-        const vaultOptions = vaultRecords.map((vault) => {
-          const credentialNames = vaultCredentialNames(credentialsByVault.get(vault.id) ?? [], msg);
-          return {
-            id: vault.id,
-            label: vault.display_name || vault.id,
-            createdAt: vault.created_at,
-            credentialNames,
-            secondary: vaultCredentialSummaryFromNames(credentialNames, msg),
-          };
-        });
+        const vaultOptions = vaultRecords.map((vault) => ({
+          id: vault.id,
+          label: vault.display_name || vault.id,
+          createdAt: vault.created_at,
+        }));
         const memoryStoreOptions = (memoryStorePage.data as MemoryStoreApiResponse[]).map((memoryStore) => ({
           id: memoryStore.id,
           label: memoryStore.name || memoryStore.id,
@@ -845,7 +824,7 @@ function GenericManagedEntityDialog({
     return () => {
       active = false;
     };
-  }, [lockedAgent, msg, needsReferences, section, workspaceId]);
+  }, [lockedAgent, needsReferences, section, workspaceId]);
 
   const canSubmit =
     section === 'deployments'
@@ -1080,6 +1059,7 @@ function GenericManagedEntityDialog({
                 <ManagedVaultSelectField
                   label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
                   optional
+                  workspaceId={workspaceId}
                   selectedIds={values.vaultIds}
                   options={vaults}
                   manageHref={`/workspaces/${workspaceId}/vaults`}

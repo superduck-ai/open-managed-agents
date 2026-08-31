@@ -1329,6 +1329,14 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         type: 'vault',
         updated_at: now,
       },
+      {
+        id: 'vlt_two123456',
+        archived_at: null,
+        created_at: now,
+        display_name: 'Vault two',
+        type: 'vault',
+        updated_at: now,
+      },
     ],
     vaultCredentials: {
       vlt_one123456: [
@@ -1341,6 +1349,18 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
           type: 'vault_credential',
           updated_at: now,
           vault_id: 'vlt_one123456',
+        },
+      ],
+      vlt_two123456: [
+        {
+          id: 'vcrd_two123456',
+          archived_at: null,
+          auth: { type: 'mcp_oauth' },
+          created_at: now,
+          display_name: 'Vault credential two',
+          type: 'vault_credential',
+          updated_at: now,
+          vault_id: 'vlt_two123456',
         },
       ],
     },

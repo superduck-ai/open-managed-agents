@@ -31,7 +31,7 @@ import { compactEntityId, errorMessage } from '../utils';
 import { CredentialDialog } from './dialogs';
 import { credentialAuthLabel } from './model';
 
-type CredentialStatusFilter = 'all' | 'active' | 'archived';
+type CredentialStatusFilter = 'all' | 'active';
 
 function vaultCredentialDateLabel(
   value: string,
@@ -50,16 +50,6 @@ function credentialMatchesSearch(credential: VaultCredentialApiResponse, search:
     return true;
   }
   return credential.id.toLowerCase().includes(needle);
-}
-
-function credentialMatchesStatus(credential: VaultCredentialApiResponse, status: CredentialStatusFilter): boolean {
-  if (status === 'all') {
-    return true;
-  }
-  if (status === 'archived') {
-    return Boolean(credential.archived_at);
-  }
-  return !credential.archived_at;
 }
 
 export function VaultCredentialsPanel({
@@ -144,7 +134,6 @@ export function VaultCredentialsPanel({
     () => [
       { value: 'all' as const, label: msg('common.all', 'All') },
       { value: 'active' as const, label: msg('common.active', 'Active') },
-      { value: 'archived' as const, label: msg('common.archived', 'Archived') },
     ],
     [msg],
   );
@@ -152,11 +141,9 @@ export function VaultCredentialsPanel({
 
   const visibleCredentials = useMemo(
     () =>
-      state.data.filter(
-        (credential) =>
-          credentialMatchesSearch(credential, search) && credentialMatchesStatus(credential, statusFilter),
-      ),
-    [search, state.data, statusFilter],
+      // listVaultCredentials always uses include_archived: false, so All/Active are equivalent today.
+      state.data.filter((credential) => !credential.archived_at && credentialMatchesSearch(credential, search)),
+    [search, state.data],
   );
 
   const columns = ['ID', 'Name', 'Auth', 'Status', 'Last used', 'Updated'].map((column) =>

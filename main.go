@@ -21,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
@@ -80,6 +81,21 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
+	if cfg.NATS.Enabled {
+		natsConnection, err := natsclient.Open(ctx, cfg.NATS, logger.With("component", "nats"))
+		if err != nil {
+			return fmt.Errorf("open nats client: %w", err)
+		}
+		defer func() {
+			if err := natsConnection.Drain(); err != nil {
+				logger.Warn("drain nats connection", "error", err)
+				natsConnection.Close()
+			}
+		}()
+		logger.Info("nats messaging ready", "jetstream", true)
+	} else {
+		logger.Info("nats messaging disabled")
+	}
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {

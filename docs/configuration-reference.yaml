@@ -19,6 +19,13 @@ database:
 redis:
   url: redis://localhost:6379
 
+nats:
+  # Defaults to true when url is set. Set false to keep a configured endpoint dormant.
+  enabled: true
+  url: nats://localhost:4222
+  connect_timeout: 5s
+  drain_timeout: 10s
+
 storage:
   type: s3
   s3:

@@ -21,6 +21,8 @@ database:
   url: postgresql://test/database
 redis:
   url: redis://test:6379
+nats:
+  url: nats://test:4222
 storage:
   type: s3
   s3:
@@ -46,6 +48,15 @@ type dockerComposeTestFile struct {
 			Ports   []string                  `yaml:"ports"`
 			Volumes []dockerComposeTestVolume `yaml:"volumes"`
 		} `yaml:"oma-server"`
+		NATS struct {
+			Image       string   `yaml:"image"`
+			Command     []string `yaml:"command"`
+			Ports       []string `yaml:"ports"`
+			Volumes     []string `yaml:"volumes"`
+			Healthcheck struct {
+				Test []string `yaml:"test"`
+			} `yaml:"healthcheck"`
+		} `yaml:"nats"`
 	} `yaml:"services"`
 }
 
@@ -227,6 +238,7 @@ func TestLoadYAMLRequiresDeploymentFields(t *testing.T) {
 		{name: "server address", overrides: "server:\n  addr: \"\"", wantError: "server.addr is required"},
 		{name: "database URL", overrides: "database:\n  url: \"\"", wantError: "database.url is required"},
 		{name: "Redis URL", overrides: "redis:\n  url: \"\"", wantError: "redis.url is required"},
+		{name: "NATS URL", overrides: "nats:\n  enabled: true\n  url: \"\"", wantError: "nats.url is required when nats is enabled"},
 		{name: "storage type", overrides: "storage:\n  type: \"\"", wantError: "storage.type is required"},
 		{name: "S3 endpoint", overrides: "storage:\n  s3:\n    endpoint: \"\"", wantError: "storage.s3.endpoint is required"},
 		{name: "S3 bucket", overrides: "storage:\n  s3:\n    bucket: \"\"", wantError: "storage.s3.bucket is required"},
@@ -252,6 +264,30 @@ func TestLoadYAMLRejectsUnsupportedStorageType(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `storage.type must be "s3"`) {
 		t.Fatalf("Load() error = %v, want unsupported object storage type error", err)
 	}
+}
+
+func TestLoadYAMLNATSEnabledDefault(t *testing.T) {
+	t.Run("URL enables NATS", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "")
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if !cfg.NATS.Enabled {
+			t.Fatal("NATS.Enabled = false, want URL-derived true")
+		}
+	})
+
+	t.Run("explicit false keeps configured NATS dormant", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "nats:\n  enabled: false\n")
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.NATS.Enabled {
+			t.Fatal("NATS.Enabled = true, want explicit false")
+		}
+	})
 }
 
 func TestLoadYAMLRejectsMultipleDocuments(t *testing.T) {
@@ -435,6 +471,38 @@ func TestDockerComposeSandboxCallbackUsesPublishedAPIPort(t *testing.T) {
 	compose := loadDockerComposeTestFile(t)
 	if !slices.Contains(compose.Services.OMAServer.Ports, "38080:8080") {
 		t.Fatalf("Compose oma-server ports = %v, want 38080:8080 callback mapping", compose.Services.OMAServer.Ports)
+	}
+}
+
+func TestDockerComposeNATSJetStreamTopology(t *testing.T) {
+	configPath, err := filepath.Abs(filepath.Join("..", "..", dockerComposeTemplatePath))
+	if err != nil {
+		t.Fatalf("resolve Docker Compose config path: %v", err)
+	}
+	cfg := loadValidatedConfigTestFile(t, configPath)
+	if !cfg.NATS.Enabled || cfg.NATS.URL != "nats://nats:4222" {
+		t.Fatalf("Compose NATS config = enabled:%t url:%q, want enabled service URL", cfg.NATS.Enabled, cfg.NATS.URL)
+	}
+
+	natsService := loadDockerComposeTestFile(t).Services.NATS
+	if natsService.Image != "docker.io/library/nats:2.14.6-alpine" {
+		t.Fatalf("Compose NATS image = %q, want pinned official image", natsService.Image)
+	}
+	for _, option := range []string{"--jetstream", "--store_dir", "/data", "--http_port", "8222"} {
+		if !slices.Contains(natsService.Command, option) {
+			t.Fatalf("Compose NATS command = %v, missing %q", natsService.Command, option)
+		}
+	}
+	for _, port := range []string{"127.0.0.1:4222:4222", "127.0.0.1:8222:8222"} {
+		if !slices.Contains(natsService.Ports, port) {
+			t.Fatalf("Compose NATS ports = %v, missing loopback mapping %q", natsService.Ports, port)
+		}
+	}
+	if !slices.Contains(natsService.Volumes, "natsdata:/data") {
+		t.Fatalf("Compose NATS volumes = %v, want persistent JetStream storage", natsService.Volumes)
+	}
+	if !strings.Contains(strings.Join(natsService.Healthcheck.Test, " "), "js-enabled-only=true") {
+		t.Fatalf("Compose NATS healthcheck = %v, want JetStream readiness check", natsService.Healthcheck.Test)
 	}
 }
 

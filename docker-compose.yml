@@ -17,6 +17,7 @@
 #   oma API:    http://localhost:38080
 #   e2b-local:  http://localhost:3099
 #   MinIO Web:  http://localhost:9001
+#   NATS 监控:  http://localhost:8222
 #
 # Caddy 使用 28080 端口（非特权端口）。
 # oma-server 只读挂载 gitignored 的 oma-server.local.yaml；受跟踪的 oma-server.yaml 仅作为无密钥模板。
@@ -99,6 +100,22 @@ services:
       retries: 10
     restart: unless-stopped
 
+  nats:
+    image: docker.io/library/nats:2.14.6-alpine
+    command: ["--jetstream", "--store_dir", "/data", "--http_port", "8222"]
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz?js-enabled-only=true"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
   minio:
     image: docker.io/pgsty/minio:latest
     command: server /data --console-address ":9001"
@@ -150,6 +167,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      nats:
+        condition: service_healthy
       minio:
         condition: service_healthy
     ports:
@@ -196,5 +215,6 @@ volumes:
   #   pgdata:   driver: local  →  - ./data/postgres:/var/lib/postgresql/data
   pgdata:
   redisdata:
+  natsdata:
   miniodata:
   webdist:

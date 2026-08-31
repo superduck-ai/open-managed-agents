@@ -7,14 +7,14 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 - **API 兼容层**：`/v1/*` 提供面向 Anthropic SDK 的资源接口，使用 `Authorization: Bearer ...` 或 `X-Api-Key` 鉴权，默认开发 API key 为 `sk-ant-local-default`。
 - **控制台后端**：`/api/*`、`/auth/*`、`/web-api/*` 等路由服务于前端控制台，使用 cookie session。
 - **托管 Agent 资源**：支持 agent 定义、session 事件流、deployment 手动运行、environment work、credential vault、memory store、skills 等资源。
-- **本地基础设施**：PostgreSQL 存储元数据，Redis 存储平台会话，S3 兼容对象存储保存文件、skills 和 batch 结果，默认本地使用 MinIO。
+- **本地基础设施**：PostgreSQL 存储元数据，Redis 存储平台会话，NATS JetStream 提供消息队列基础设施，S3 兼容对象存储保存文件、skills 和 batch 结果，默认本地使用 MinIO。
 - **前端控制台**：`web/` 是 Vite + React + TypeScript + Bun 应用，使用 TanStack Router/Query/Table 和 shadcn 风格组件。
 
 ## 技术栈
 
-- 后端：Go `1.27.0`、`chi`、`pgx`、`goose`、AWS SDK for Go v2、Redis、Anthropic Go SDK。
+- 后端：Go `1.27.0`、`chi`、`pgx`、`goose`、AWS SDK for Go v2、Redis、NATS、Anthropic Go SDK。
 - 前端：Bun、Vite、React、TypeScript、Tailwind CSS、TanStack Router/Query/Table、Base UI、shadcn/ui 风格组件。
-- 存储：PostgreSQL、Redis、S3 兼容对象存储，默认本地使用 MinIO。
+- 存储与消息：PostgreSQL、Redis、NATS JetStream、S3 兼容对象存储，默认本地使用 MinIO。
 - 沙箱：E2B 相关能力通过 `config/config.yaml` 的 `e2b` 节点启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。
 
 ## 目录结构
@@ -38,7 +38,7 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 
 ## Docker Compose 一键部署
 
-项目支持通过 Docker Compose 启动完整环境（PostgreSQL、Redis、MinIO、e2b-local 沙箱网关、oma-server 以及前端 Caddy 反代）。首次启动先从无密钥模板创建本地运行配置：
+项目支持通过 Docker Compose 启动完整环境（PostgreSQL、Redis、NATS、MinIO、e2b-local 沙箱网关、oma-server 以及前端 Caddy 反代）。首次启动先从无密钥模板创建本地运行配置：
 
 ```bash
 just init-compose-config
@@ -62,6 +62,7 @@ docker compose up -d
 - Bun，用于前端开发、测试和构建。
 - PostgreSQL，默认连接串是 `postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable`。
 - Redis，默认 `redis://localhost:6379`。
+- NATS JetStream，默认 `nats://localhost:4222`；仅在配置 `nats.url` 时启用。
 - MinIO 或其他 S3 兼容存储，默认 `http://localhost:9000`、bucket `claude-files`、账号密码 `minioadmin/minioadmin`。
 
 启动服务前通常应确保 `database.url` 指向的 PostgreSQL 数据库和角色已经可用。首次连接失败时，应用只会尝试使用该 URL 派生的 `postgres`/`template1` 连接以及当前系统用户完成本地初始化，不再接受独立的管理员连接串。
@@ -87,6 +88,9 @@ database:
 
 redis:
   url: redis://localhost:6379
+
+nats:
+  url: nats://localhost:4222
 
 storage:
   type: s3
@@ -147,7 +151,7 @@ code_session:
 ./scripts/restart-server.sh
 ```
 
-需要调试 Managed Agent Sandbox、Filestore FUSE 挂载或 Environment Runner 时，推荐让 Docker Compose 只运行 PostgreSQL、Redis、MinIO，并从源码在宿主机分别启动 e2b-local、oma-server 和 Vite。完整启动顺序与必要配置见[本地开发模式](docs/design/docker-compose-deployment.md#8-本地开发模式)。
+需要调试 Managed Agent Sandbox、Filestore FUSE 挂载或 Environment Runner 时，推荐让 Docker Compose 只运行 PostgreSQL、Redis、NATS、MinIO，并从源码在宿主机分别启动 e2b-local、oma-server 和 Vite。完整启动顺序与必要配置见[本地开发模式](docs/design/docker-compose-deployment.md#8-本地开发模式)。
 
 脚本要求存在 `config/config.yaml`，并在释放端口前完成检查；缺失时会直接退出。首次运行先执行 `cp config/config.example.yaml config/config.yaml`。
 

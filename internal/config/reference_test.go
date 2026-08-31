@@ -21,6 +21,8 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"e2b.api_key",
 		"e2b.api_url",
 		"env",
+		"nats",
+		"nats.url",
 		"redis",
 		"redis.url",
 		"server",

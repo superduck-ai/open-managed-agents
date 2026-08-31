@@ -11,7 +11,7 @@ flowchart LR
     loader --> paths["路径展开与标准化"]
     paths --> validation["跨字段校验"]
     validation --> resolved["Resolved Config"]
-    resolved --> infrastructure["Database / Redis / Object Storage"]
+    resolved --> infrastructure["Database / Redis / NATS / Object Storage"]
     resolved --> workers["Batch / EnvironmentRunner / Webhook"]
     resolved --> runtime["E2B / CodeSession"]
     resolved --> compatibility["Bootstrap / SDKFixtures"]
@@ -25,7 +25,7 @@ flowchart LR
 
 未设置 `CONFIG_FILE` 时，`config.Load` 从当前目录向上查找 `config/config.yaml`，最多查找到 `go.mod` 所在目录。设置 `CONFIG_FILE` 后只读取指定文件；未找到配置文件、路径不存在、不是普通文件或内容无效时都拒绝启动。
 
-`env`、`server.addr`、`database.url`、`redis.url`、`storage.type` 以及 S3 endpoint、bucket、region 和静态凭证属于部署必填项，不提供代码默认值。Batch、Webhook、Environment Runner、超时、容量限制等运行策略继续使用稳定代码默认值，因此正常启动无需在最小 YAML 中逐项配置。
+`env`、`server.addr`、`database.url`、`redis.url`、`storage.type` 以及 S3 endpoint、bucket、region 和静态凭证属于部署必填项，不提供代码默认值。NATS 是可选基础设施：配置 `nats.url` 时默认启用，也可以用 `nats.enabled: false` 保留但停用端点；启用后 URL 必填。Batch、Webhook、Environment Runner、NATS 连接/排空超时和容量限制等运行策略继续使用稳定代码默认值，因此正常启动无需在最小 YAML 中逐项配置。
 
 本地 `scripts/restart-server.sh` 在清理监听端口前要求存在 `config/config.yaml`，并显式将该路径作为 `CONFIG_FILE` 传给服务。这样脚本不会在缺少配置时按 `PORT=38080` 清理端口、却启动一个没有有效配置的进程。
 
@@ -142,6 +142,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `ServerConfig` | `server` | HTTP 监听地址 |
 | `DatabaseConfig` | `database` | PostgreSQL 运行连接和自动迁移开关 |
 | `RedisConfig` | `redis` | 平台会话 Redis 连接 |
+| `NATSConfig` | `nats` | 可选的 NATS JetStream 连接、启动开关和生命周期超时 |
 | `StorageConfig` | `storage` | 对象存储类型选择和文件容量限制 |
 | `S3Config` | `storage.s3` | S3 兼容对象存储连接、bucket 和寻址方式 |
 | `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |

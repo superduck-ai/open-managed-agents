@@ -6,6 +6,10 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
+		NATS: NATSConfig{
+			ConnectTimeout: 5 * time.Second,
+			DrainTimeout:   10 * time.Second,
+		},
 		Storage: StorageConfig{
 			MaxFileBytes:        500 * 1024 * 1024,
 			WorkspaceLimitBytes: 500 * 1024 * 1024 * 1024,

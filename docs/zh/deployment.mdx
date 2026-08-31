@@ -13,6 +13,7 @@ OMA 提供 Docker Compose 拓扑，包含运行托管智能体所需的控制面
 | `caddy` | Web 控制台和反向代理 | `28080` |
 | `postgres` | 资源元数据 | `5432` |
 | `redis` | 平台会话 | `6379` |
+| `nats` | JetStream 消息队列 | `4222` / `8222` |
 | `minio` | 文件、技能和批处理产物 | `9000` / `9001` |
 | `e2b-local` | 本地沙箱网关 | `3099` |
 
@@ -28,7 +29,7 @@ docker compose ps
 
 ## 本地开发模式
 
-调试后端或沙箱时，可以只在 Compose 中运行 PostgreSQL、Redis、MinIO 和 e2b-local，然后在宿主机运行 Go Server 与 Vite。沙箱回调地址必须从容器内部可达，通常使用：
+调试后端或沙箱时，可以只在 Compose 中运行 PostgreSQL、Redis、NATS、MinIO 和 e2b-local，然后在宿主机运行 Go Server 与 Vite。沙箱回调地址必须从容器内部可达，通常使用：
 
 ```yaml
 code_session:
@@ -47,7 +48,7 @@ code_session:
 - 关闭自动数据库迁移，并在发布流程中显式执行 migration
 - 为代码会话挂载稳定的 Ed25519 私钥
 - 为密钥库配置稳定的 KEK，并建立轮换与备份流程
-- 使用独立的 PostgreSQL、Redis 和对象存储凭证
+- 使用独立的 PostgreSQL、Redis、NATS 和对象存储凭证
 - 为 API 和控制台配置 TLS、网络边界与访问控制
 - 配置日志、指标、备份和恢复验证
 

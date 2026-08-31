@@ -13,6 +13,7 @@ type Config struct {
 	Server            ServerConfig            `yaml:"server"`
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
+	NATS              NATSConfig              `yaml:"nats"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
@@ -75,6 +76,13 @@ type DatabaseConfig struct {
 
 type RedisConfig struct {
 	URL string `yaml:"url"`
+}
+
+type NATSConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	URL            string        `yaml:"url"`
+	ConnectTimeout time.Duration `yaml:"connect_timeout"`
+	DrainTimeout   time.Duration `yaml:"drain_timeout"`
 }
 
 type StorageConfig struct {

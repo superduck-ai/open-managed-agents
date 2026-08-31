@@ -16,6 +16,9 @@ database:
 redis:
   url: redis://redis:6379
 
+nats:
+  url: nats://nats:4222
+
 storage:
   type: s3
   s3:

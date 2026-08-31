@@ -39,6 +39,7 @@ type yamlConfig struct {
 	Server            ServerConfig            `yaml:"server"`
 	Database          yamlDatabaseConfig      `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
+	NATS              yamlNATSConfig          `yaml:"nats"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
@@ -53,6 +54,13 @@ type yamlConfig struct {
 type yamlDatabaseConfig struct {
 	URL         string         `yaml:"url"`
 	AutoMigrate optional[bool] `yaml:"auto_migrate"`
+}
+
+type yamlNATSConfig struct {
+	Enabled        optional[bool] `yaml:"enabled"`
+	URL            string         `yaml:"url"`
+	ConnectTimeout time.Duration  `yaml:"connect_timeout"`
+	DrainTimeout   time.Duration  `yaml:"drain_timeout"`
 }
 
 type yamlCodeSessionConfig struct {
@@ -88,10 +96,15 @@ type yamlBootstrapConfig struct {
 func newYAMLConfig() yamlConfig {
 	defaults := defaultConfig()
 	return yamlConfig{
-		Env:               defaults.Env,
-		Server:            defaults.Server,
-		Database:          yamlDatabaseConfig{URL: defaults.Database.URL},
-		Redis:             defaults.Redis,
+		Env:      defaults.Env,
+		Server:   defaults.Server,
+		Database: yamlDatabaseConfig{URL: defaults.Database.URL},
+		Redis:    defaults.Redis,
+		NATS: yamlNATSConfig{
+			URL:            defaults.NATS.URL,
+			ConnectTimeout: defaults.NATS.ConnectTimeout,
+			DrainTimeout:   defaults.NATS.DrainTimeout,
+		},
 		Storage:           defaults.Storage,
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
@@ -127,10 +140,15 @@ func newYAMLConfig() yamlConfig {
 
 func (input yamlConfig) resolve() Config {
 	cfg := Config{
-		Env:               input.Env,
-		Server:            input.Server,
-		Database:          DatabaseConfig{URL: input.Database.URL},
-		Redis:             input.Redis,
+		Env:      input.Env,
+		Server:   input.Server,
+		Database: DatabaseConfig{URL: input.Database.URL},
+		Redis:    input.Redis,
+		NATS: NATSConfig{
+			URL:            input.NATS.URL,
+			ConnectTimeout: input.NATS.ConnectTimeout,
+			DrainTimeout:   input.NATS.DrainTimeout,
+		},
 		Storage:           input.Storage,
 		Batch:             input.Batch,
 		E2B:               input.E2B,
@@ -163,6 +181,7 @@ func (input yamlConfig) resolve() Config {
 		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
+	cfg.NATS.Enabled = input.NATS.Enabled.valueOr(cfg.NATS.URL != "")
 	cfg.CodeSession.OTLPFileLogEnabled = input.CodeSession.OTLPFileLogEnabled.valueOr(defaultCodeSessionOTLPFileLogEnabled(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")
 	if input.Bootstrap.SeedAPIKeys.set {

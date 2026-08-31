@@ -1737,8 +1737,30 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByRole('heading', { name: 'Vault one' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '凭据保险库' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '添加凭据' })).toBeTruthy();
-    expect(screen.getByText('供关联此保险库的 Agent 使用的凭据。')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: '添加凭据' }).length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText('按 ID 查找凭据')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '认证' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '概览' })).toBeNull();
+    expect(screen.queryByText('供关联此保险库的 Agent 使用的凭据。')).toBeNull();
+  });
+
+  test('renders CMA-style vault credential detail chrome', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('credential-vaults');
+
+    const heading = await screen.findByRole('heading', { name: 'Vault one' });
+    const header = heading.closest('header') as HTMLElement;
+    expect(within(header).getByText('Active')).toBeTruthy();
+    expect(within(header).getByText('vlt_one123456')).toBeTruthy();
+    expect(within(header).getByRole('button', { name: 'Add credential' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Overview' })).toBeNull();
+    expect(screen.getByPlaceholderText('Find credential by ID')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Status All' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Auth' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Last used' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Updated' })).toBeTruthy();
+    expect(await screen.findByText('Vault credential one')).toBeTruthy();
   });
 
   test('renders memory store details in natural Chinese', async () => {

@@ -109,6 +109,60 @@ describe('useVaultCredentialSummaries', () => {
     expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('vlt_a');
   });
 
+  test('keeps in-flight loads alive when vaultIds only change order', async () => {
+    resetTestDom('https://oma.duck.ai/resources');
+    let releaseFetch: (() => void) | undefined;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const listCredentials = mock(async (vaultId: string) => {
+      await fetchGate;
+      return {
+        data: [
+          {
+            id: `vcrd_${vaultId}`,
+            type: 'vault_credential' as const,
+            vault_id: vaultId,
+            display_name: vaultId,
+            auth: { type: 'static_bearer' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+        ],
+      };
+    });
+
+    const { result, rerender } = renderHook(
+      ({ vaultIds }) =>
+        useVaultCredentialSummaries({
+          workspaceId: 'ws_1',
+          vaultIds,
+          enabled: true,
+          msg: msgFallback,
+          listCredentials,
+        }),
+      { initialProps: { vaultIds: ['vlt_b', 'vlt_a'] } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('Loading...');
+    });
+    expect(listCredentials.mock.calls.length).toBe(2);
+
+    await act(async () => {
+      rerender({ vaultIds: ['vlt_a', 'vlt_b'] });
+    });
+    expect(listCredentials.mock.calls.length).toBe(2);
+
+    releaseFetch?.();
+    await waitFor(() => {
+      expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('vlt_a');
+      expect(result.current.presentationFor('vlt_b', 'Loading...').trailing).toBe('vlt_b');
+    });
+    expect(listCredentials.mock.calls.length).toBe(2);
+  });
+
   test('retries loading summaries after the picker closes mid-fetch and reopens', async () => {
     resetTestDom('https://oma.duck.ai/resources');
     let releaseFetch: (() => void) | undefined;
@@ -163,5 +217,97 @@ describe('useVaultCredentialSummaries', () => {
       expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('Name vlt_a');
     });
     expect(listCredentials.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('hides prior workspace names on the first render after a live workspace switch', async () => {
+    resetTestDom('https://oma.duck.ai/resources');
+    const listCredentials = mock(async (vaultId: string, workspaceId: string) => ({
+      data: [
+        {
+          id: `vcrd_${vaultId}`,
+          type: 'vault_credential' as const,
+          vault_id: vaultId,
+          display_name: `${workspaceId}:${vaultId}`,
+          auth: { type: 'static_bearer' },
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          archived_at: null,
+        },
+      ],
+    }));
+
+    const { result, rerender } = renderHook(
+      ({ workspaceId }) =>
+        useVaultCredentialSummaries({
+          workspaceId,
+          vaultIds: ['vlt_a'],
+          enabled: true,
+          msg: msgFallback,
+          listCredentials,
+        }),
+      { initialProps: { workspaceId: 'ws_1' } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('ws_1:vlt_a');
+    });
+
+    rerender({ workspaceId: 'ws_2' });
+    expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('Loading...');
+
+    await waitFor(() => {
+      expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('ws_2:vlt_a');
+    });
+  });
+
+  test('does not leak closed-picker summaries across workspace switches', async () => {
+    resetTestDom('https://oma.duck.ai/resources');
+    const listCredentials = mock(async (vaultId: string, workspaceId: string) => ({
+      data: [
+        {
+          id: `vcrd_${vaultId}`,
+          type: 'vault_credential' as const,
+          vault_id: vaultId,
+          display_name: `${workspaceId}:${vaultId}`,
+          auth: { type: 'static_bearer' },
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          archived_at: null,
+        },
+      ],
+    }));
+
+    const { result, rerender } = renderHook(
+      ({ workspaceId, enabled }) =>
+        useVaultCredentialSummaries({
+          workspaceId,
+          vaultIds: ['vlt_a'],
+          enabled,
+          msg: msgFallback,
+          listCredentials,
+        }),
+      { initialProps: { workspaceId: 'ws_1', enabled: true } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('ws_1:vlt_a');
+    });
+
+    await act(async () => {
+      rerender({ workspaceId: 'ws_1', enabled: false });
+    });
+    await act(async () => {
+      rerender({ workspaceId: 'ws_2', enabled: false });
+    });
+    expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('Loading...');
+
+    await act(async () => {
+      rerender({ workspaceId: 'ws_2', enabled: true });
+    });
+
+    await waitFor(() => {
+      expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).toBe('ws_2:vlt_a');
+    });
+    expect(result.current.presentationFor('vlt_a', 'Loading...').trailing).not.toBe('ws_1:vlt_a');
   });
 });

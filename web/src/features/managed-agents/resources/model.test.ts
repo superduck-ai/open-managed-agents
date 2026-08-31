@@ -25,6 +25,7 @@ import {
   vaultCredentialSummary,
   vaultCredentialSummaryFromNames,
   vaultCredentialSummaryCacheKey,
+  vaultCredentialSummariesForWorkspace,
   vaultCredentialSummaryPendingIds,
   vaultCredentialSummaryPresentation,
   vaultSelectionEquals,
@@ -573,6 +574,18 @@ describe('vaultCredentialSummary', () => {
       }),
     ).toEqual(['b', 'c']);
     expect(vaultCredentialSummaryPendingIds(['d'], {})).toEqual(['d']);
+  });
+
+  test('vaultCredentialSummariesForWorkspace hides foreign workspace cache', () => {
+    const cache = {
+      workspaceId: 'ws_1',
+      summaries: { vlt_a: { status: 'ready' as const, names: ['Secret'] } },
+    };
+    expect(vaultCredentialSummariesForWorkspace(cache, 'ws_1').vlt_a).toEqual({
+      status: 'ready',
+      names: ['Secret'],
+    });
+    expect(vaultCredentialSummariesForWorkspace(cache, 'ws_2')).toEqual({});
   });
 
   test('vaultCredentialSummaryPresentation maps load states', () => {

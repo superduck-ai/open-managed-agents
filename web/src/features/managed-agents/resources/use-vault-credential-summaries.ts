@@ -2,23 +2,36 @@ import { useEffect, useRef, useState } from 'react';
 import { listVaultCredentials } from '../api';
 import { type I18nMsg, type VaultCredentialApiResponse } from '../types';
 import {
+  type VaultCredentialSummaryCache,
   type VaultCredentialSummaryLoadState,
   vaultCredentialNames,
+  vaultCredentialSummariesForWorkspace,
   vaultCredentialSummaryCacheKey,
   vaultCredentialSummaryPendingIds,
   vaultCredentialSummaryPresentation,
 } from './model';
-
-type SummaryMap = Record<string, VaultCredentialSummaryLoadState>;
 
 type ListVaultCredentials = (
   vaultId: string,
   workspaceId: string,
 ) => Promise<{ data?: VaultCredentialApiResponse[] | null }>;
 
+function patchSummaryCache(
+  current: VaultCredentialSummaryCache,
+  workspaceId: string,
+  patch: Record<string, VaultCredentialSummaryLoadState>,
+): VaultCredentialSummaryCache {
+  const base = current.workspaceId === workspaceId ? current.summaries : {};
+  return {
+    workspaceId,
+    summaries: { ...base, ...patch },
+  };
+}
+
 /**
  * Lazy-load vault credential name summaries when the picker opens.
  * Callers only need presentationFor(vaultId) — fetch/cache/retry stay inside.
+ * Cache is workspace-scoped: a mismatched workspace reads as empty (loading).
  */
 export function useVaultCredentialSummaries({
   workspaceId,
@@ -35,20 +48,21 @@ export function useVaultCredentialSummaries({
 }): {
   presentationFor: (vaultId: string, loadingLabel: string) => { trailing: string; detail: string };
 } {
-  const [summaries, setSummaries] = useState<SummaryMap>({});
-  const summariesRef = useRef(summaries);
-  summariesRef.current = summaries;
-  const workspaceIdRef = useRef(workspaceId);
+  const [cache, setCache] = useState<VaultCredentialSummaryCache>(() => ({
+    workspaceId,
+    summaries: {},
+  }));
+  const activeSummaries = vaultCredentialSummariesForWorkspace(cache, workspaceId);
+  const summariesRef = useRef(activeSummaries);
+  summariesRef.current = activeSummaries;
   const vaultIdsKey = vaultCredentialSummaryCacheKey(vaultIds);
 
   useEffect(() => {
+    // Drop foreign-workspace rows even while the picker is closed.
+    setCache((current) => (current.workspaceId === workspaceId ? current : { workspaceId, summaries: {} }));
+
     if (!enabled || !vaultIdsKey) {
       return;
-    }
-    if (workspaceIdRef.current !== workspaceId) {
-      workspaceIdRef.current = workspaceId;
-      summariesRef.current = {};
-      setSummaries({});
     }
 
     const ids = vaultIdsKey.split('\0');
@@ -58,13 +72,11 @@ export function useVaultCredentialSummaries({
     }
 
     let active = true;
-    setSummaries((current) => {
-      const next = { ...current };
-      for (const vaultId of pendingIds) {
-        next[vaultId] = { status: 'loading', names: current[vaultId]?.names ?? [] };
-      }
-      return next;
-    });
+    const loadingPatch: Record<string, VaultCredentialSummaryLoadState> = {};
+    for (const vaultId of pendingIds) {
+      loadingPatch[vaultId] = { status: 'loading', names: summariesRef.current[vaultId]?.names ?? [] };
+    }
+    setCache((current) => patchSummaryCache(current, workspaceId, loadingPatch));
 
     void Promise.all(
       pendingIds.map(async (vaultId) => {
@@ -74,18 +86,12 @@ export function useVaultCredentialSummaries({
             return;
           }
           const names = vaultCredentialNames(page.data ?? [], msg);
-          setSummaries((current) => ({
-            ...current,
-            [vaultId]: { status: 'ready', names },
-          }));
+          setCache((current) => patchSummaryCache(current, workspaceId, { [vaultId]: { status: 'ready', names } }));
         } catch {
           if (!active) {
             return;
           }
-          setSummaries((current) => ({
-            ...current,
-            [vaultId]: { status: 'error', names: [] },
-          }));
+          setCache((current) => patchSummaryCache(current, workspaceId, { [vaultId]: { status: 'error', names: [] } }));
         }
       }),
     );
@@ -97,6 +103,6 @@ export function useVaultCredentialSummaries({
 
   return {
     presentationFor: (vaultId, loadingLabel) =>
-      vaultCredentialSummaryPresentation(summaries[vaultId], loadingLabel, msg),
+      vaultCredentialSummaryPresentation(activeSummaries[vaultId], loadingLabel, msg),
   };
 }

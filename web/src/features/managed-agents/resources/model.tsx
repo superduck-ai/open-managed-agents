@@ -1063,6 +1063,22 @@ export function vaultCredentialSummaryCacheKey(vaultIds: string[]): string {
   return [...vaultIds].sort().join('\0');
 }
 
+export type VaultCredentialSummaryLoadState =
+  { status: 'idle' | 'loading' | 'error'; names?: string[] } | { status: 'ready'; names: string[] };
+
+export type VaultCredentialSummaryCache = {
+  workspaceId: string;
+  summaries: Record<string, VaultCredentialSummaryLoadState>;
+};
+
+/** Active summary map for the current workspace; foreign caches read as empty. */
+export function vaultCredentialSummariesForWorkspace(
+  cache: VaultCredentialSummaryCache,
+  workspaceId: string,
+): Record<string, VaultCredentialSummaryLoadState> {
+  return cache.workspaceId === workspaceId ? cache.summaries : {};
+}
+
 /**
  * Vaults that still need a credential-summary fetch.
  * Includes cancelled in-flight `loading` entries so a restarted effect can recover.
@@ -1076,9 +1092,6 @@ export function vaultCredentialSummaryPendingIds(
     return !current || current.status !== 'ready';
   });
 }
-
-export type VaultCredentialSummaryLoadState =
-  { status: 'idle' | 'loading' | 'error'; names?: string[] } | { status: 'ready'; names: string[] };
 
 /** Trailing label + tooltip body for a vault row credential summary. */
 export function vaultCredentialSummaryPresentation(

@@ -549,7 +549,6 @@
   "managedAgents.common.agent": "Agent",
   "managedAgents.common.archiveEntity": "Archive {label}",
   "managedAgents.common.auth": "Auth",
-  "managedAgents.common.lastUsed": "Last used",
   "managedAgents.common.updated": "Updated",
   "managedAgents.common.confirmArchiveBody": "{name} will be hidden from active lists.",
   "managedAgents.common.confirmDeleteBody": "{name} will be permanently removed from this workspace.",

@@ -549,7 +549,6 @@
   "managedAgents.common.agent": "Agent",
   "managedAgents.common.archiveEntity": "归档{label}",
   "managedAgents.common.auth": "认证",
-  "managedAgents.common.lastUsed": "上次使用",
   "managedAgents.common.updated": "更新",
   "managedAgents.common.confirmArchiveBody": "{name} 将从活跃列表中隐藏。",
   "managedAgents.common.confirmDeleteBody": "{name} 将从此工作区永久移除。",

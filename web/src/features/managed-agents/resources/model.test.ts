@@ -24,6 +24,8 @@ import {
   vaultCreatedLabel,
   vaultCredentialSummary,
   vaultCredentialSummaryFromNames,
+  vaultCredentialSummaryCacheKey,
+  vaultCredentialSummaryPendingIds,
   vaultCredentialSummaryPresentation,
   vaultSelectionEquals,
 } from './model';
@@ -555,6 +557,22 @@ describe('vaultCredentialSummary', () => {
     expect(vaultSelectionEquals(['a', 'b'], ['b', 'a'])).toBe(true);
     expect(vaultSelectionEquals(['a'], ['a', 'b'])).toBe(false);
     expect(vaultSelectionEquals(['a'], ['b'])).toBe(false);
+  });
+
+  test('vaultCredentialSummaryCacheKey ignores order', () => {
+    expect(vaultCredentialSummaryCacheKey(['b', 'a'])).toBe(vaultCredentialSummaryCacheKey(['a', 'b']));
+    expect(vaultCredentialSummaryCacheKey([])).toBe('');
+  });
+
+  test('vaultCredentialSummaryPendingIds retries cancelled loading and skips ready', () => {
+    expect(
+      vaultCredentialSummaryPendingIds(['a', 'b', 'c'], {
+        a: { status: 'ready', names: ['A'] },
+        b: { status: 'loading' },
+        c: { status: 'error' },
+      }),
+    ).toEqual(['b', 'c']);
+    expect(vaultCredentialSummaryPendingIds(['d'], {})).toEqual(['d']);
   });
 
   test('vaultCredentialSummaryPresentation maps load states', () => {

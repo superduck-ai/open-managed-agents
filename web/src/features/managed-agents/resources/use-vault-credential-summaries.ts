@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { listVaultCredentials } from '../api';
-import { type I18nMsg } from '../types';
+import { type I18nMsg, type VaultCredentialApiResponse } from '../types';
 import {
   type VaultCredentialSummaryLoadState,
   vaultCredentialNames,
+  vaultCredentialSummaryCacheKey,
+  vaultCredentialSummaryPendingIds,
   vaultCredentialSummaryPresentation,
 } from './model';
 
 type SummaryMap = Record<string, VaultCredentialSummaryLoadState>;
+
+type ListVaultCredentials = (
+  vaultId: string,
+  workspaceId: string,
+) => Promise<{ data?: VaultCredentialApiResponse[] | null }>;
 
 /**
  * Lazy-load vault credential name summaries when the picker opens.
@@ -18,28 +25,34 @@ export function useVaultCredentialSummaries({
   vaultIds,
   enabled,
   msg,
+  listCredentials = listVaultCredentials,
 }: {
   workspaceId: string;
   vaultIds: string[];
   enabled: boolean;
   msg: I18nMsg;
+  listCredentials?: ListVaultCredentials;
 }): {
   presentationFor: (vaultId: string, loadingLabel: string) => { trailing: string; detail: string };
 } {
   const [summaries, setSummaries] = useState<SummaryMap>({});
   const summariesRef = useRef(summaries);
   summariesRef.current = summaries;
-  const vaultIdsKey = vaultIds.join('\0');
+  const workspaceIdRef = useRef(workspaceId);
+  const vaultIdsKey = vaultCredentialSummaryCacheKey(vaultIds);
 
   useEffect(() => {
     if (!enabled || !vaultIdsKey) {
       return;
     }
+    if (workspaceIdRef.current !== workspaceId) {
+      workspaceIdRef.current = workspaceId;
+      summariesRef.current = {};
+      setSummaries({});
+    }
+
     const ids = vaultIdsKey.split('\0');
-    const pendingIds = ids.filter((vaultId) => {
-      const current = summariesRef.current[vaultId];
-      return !current || current.status === 'idle' || current.status === 'error';
-    });
+    const pendingIds = vaultCredentialSummaryPendingIds(ids, summariesRef.current);
     if (!pendingIds.length) {
       return;
     }
@@ -56,7 +69,7 @@ export function useVaultCredentialSummaries({
     void Promise.all(
       pendingIds.map(async (vaultId) => {
         try {
-          const page = await listVaultCredentials(vaultId, workspaceId);
+          const page = await listCredentials(vaultId, workspaceId);
           if (!active) {
             return;
           }
@@ -80,7 +93,7 @@ export function useVaultCredentialSummaries({
     return () => {
       active = false;
     };
-  }, [enabled, msg, vaultIdsKey, workspaceId]);
+  }, [enabled, listCredentials, msg, vaultIdsKey, workspaceId]);
 
   return {
     presentationFor: (vaultId, loadingLabel) =>

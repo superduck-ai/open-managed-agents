@@ -1055,6 +1055,28 @@ export function vaultSelectionEquals(left: string[], right: string[]): boolean {
   return left.every((id) => rightIds.has(id));
 }
 
+/** Order-insensitive cache key so vault list reshuffles do not restart loads. */
+export function vaultCredentialSummaryCacheKey(vaultIds: string[]): string {
+  if (!vaultIds.length) {
+    return '';
+  }
+  return [...vaultIds].sort().join('\0');
+}
+
+/**
+ * Vaults that still need a credential-summary fetch.
+ * Includes cancelled in-flight `loading` entries so a restarted effect can recover.
+ */
+export function vaultCredentialSummaryPendingIds(
+  vaultIds: string[],
+  summaries: Record<string, VaultCredentialSummaryLoadState | undefined>,
+): string[] {
+  return vaultIds.filter((vaultId) => {
+    const current = summaries[vaultId];
+    return !current || current.status !== 'ready';
+  });
+}
+
 export type VaultCredentialSummaryLoadState =
   { status: 'idle' | 'loading' | 'error'; names?: string[] } | { status: 'ready'; names: string[] };
 

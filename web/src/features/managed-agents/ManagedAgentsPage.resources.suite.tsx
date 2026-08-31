@@ -1758,7 +1758,6 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByPlaceholderText('Find credential by ID')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Status All' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Auth' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Last used' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Updated' })).toBeTruthy();
     expect(await screen.findByText('Vault credential one')).toBeTruthy();
   });

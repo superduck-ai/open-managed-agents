@@ -146,9 +146,7 @@ export function VaultCredentialsPanel({
     [search, state.data],
   );
 
-  const columns = ['ID', 'Name', 'Auth', 'Status', 'Last used', 'Updated'].map((column) =>
-    managedColumnLabel(column, msg),
-  );
+  const columns = ['ID', 'Name', 'Auth', 'Status', 'Updated'].map((column) => managedColumnLabel(column, msg));
 
   const submit = async (values: CredentialFormValues, credential?: VaultCredentialApiResponse) => {
     const updated = credential
@@ -241,7 +239,6 @@ export function VaultCredentialsPanel({
                   column === managedColumnLabel('Name', msg) && 'w-[220px]',
                   column === managedColumnLabel('Auth', msg) && 'w-[180px]',
                   column === managedColumnLabel('Status', msg) && 'w-[110px]',
-                  column === managedColumnLabel('Last used', msg) && 'w-[120px]',
                   column === managedColumnLabel('Updated', msg) && 'w-[120px]',
                 )}
               >
@@ -308,9 +305,6 @@ export function VaultCredentialsPanel({
                 <TableCell className="h-11 truncate px-3">{credentialAuthLabel(credential.auth, msg)}</TableCell>
                 <TableCell className="h-11 px-3">
                   <AgentStatusBadge archived={Boolean(credential.archived_at)} />
-                </TableCell>
-                <TableCell className="h-11 truncate px-3 text-muted-foreground">
-                  {msg('common.never', 'Never')}
                 </TableCell>
                 <TableCell className="h-11 truncate px-3">
                   {vaultCredentialDateLabel(credential.updated_at, formatters.date)}

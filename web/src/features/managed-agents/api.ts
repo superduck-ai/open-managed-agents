@@ -1772,7 +1772,7 @@ export function updateVaultCredential(
   return anthropicBetaApi.vaults.credentials.update<VaultCredentialApiResponse>(
     vaultId,
     credentialId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'update'), metadata: {} },
+    { display_name: credentialDisplayName(values), auth: credentialAuthBody(values, 'update'), metadata: {} },
     workspaceId,
   );
 }

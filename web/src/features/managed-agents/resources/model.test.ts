@@ -9,6 +9,7 @@ import {
 } from '../types';
 import {
   credentialAuthBody,
+  credentialDisplayName,
   credentialEnvInjectionMissing,
   credentialFormReady,
   credentialFormValues,
@@ -281,6 +282,28 @@ describe('credentialAuthBody environment_variable', () => {
     expect(credentialFormReady(envValues({ injectHeader: false, injectBody: true }), 'create', true)).toBe(true);
     expect(credentialFormReady(envValues({ secretValue: '' }), 'edit', true)).toBe(true);
     expect(credentialFormReady(envValues({ secretName: '', secretValue: 'x' }), 'create', true)).toBe(false);
+  });
+
+  test('credentialDisplayName falls back when Name is blank', () => {
+    expect(credentialDisplayName(envValues({ displayName: '  Named  ' }))).toBe('Named');
+    expect(credentialDisplayName(envValues({ displayName: '   ' }))).toBe('API_KEY');
+    expect(credentialDisplayName(envValues({ displayName: '', secretName: '' }))).toBe('Environment variable');
+    expect(
+      credentialDisplayName({
+        ...emptyCredentialFormValues(),
+        displayName: '',
+        authType: 'mcp_oauth',
+        mcpServerUrl: 'https://mcp.example.com/path',
+      }),
+    ).toBe('mcp.example.com');
+    expect(
+      credentialDisplayName({
+        ...emptyCredentialFormValues(),
+        displayName: '',
+        authType: 'static_bearer',
+        mcpServerUrl: '',
+      }),
+    ).toBe('Static bearer credential');
   });
 });
 

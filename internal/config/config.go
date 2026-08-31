@@ -3,11 +3,11 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"strings"
-
-	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 )
 
 const (
@@ -28,6 +28,8 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
+	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err
@@ -54,6 +56,9 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Redis.URL) == "" {
 		return errors.New("redis.url is required")
 	}
+	if err := validateAuthConfig(cfg.Auth); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.Storage.Type) == "" {
 		return errors.New("storage.type is required")
 	}
@@ -72,9 +77,6 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Storage.S3.AccessKeyID) == "" || strings.TrimSpace(cfg.Storage.S3.SecretAccessKey) == "" {
 		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
 	}
-	if err := modelmapping.Validate(cfg.AnthropicUpstream.ModelMappings); err != nil {
-		return fmt.Errorf("anthropic_upstream.model_mappings: %w", err)
-	}
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
 	}
@@ -87,7 +89,122 @@ func validate(cfg Config) error {
 	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession, cfg.Observability.Enabled); err != nil {
 		return err
 	}
+	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
+		return err
+	}
+	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
+		return err
+	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
+}
+
+func validateAuthConfig(cfg AuthConfig) error {
+	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(cfg.SMTP.Addr)
+	if err != nil || host == "" || port == "" {
+		return errors.New("auth.smtp.addr must include a host and port")
+	}
+	address, err := mail.ParseAddress(cfg.SMTP.Username)
+	if err != nil || address.Address != cfg.SMTP.Username {
+		return errors.New("auth.smtp.username must be a valid email address")
+	}
+	if strings.TrimSpace(cfg.SMTP.Password) == "" {
+		return errors.New("auth.smtp.password is required")
+	}
+	return nil
+}
+
+// FindPlatformOAuthClient returns the registry entry whose mcp_server_url
+// exactly matches (after TrimSpace) the given MCP server URL.
+func FindPlatformOAuthClient(clients []PlatformOAuthClientConfig, mcpServerURL string) (PlatformOAuthClientConfig, bool) {
+	want := strings.TrimSpace(mcpServerURL)
+	if want == "" {
+		return PlatformOAuthClientConfig{}, false
+	}
+	for _, client := range clients {
+		if strings.TrimSpace(client.MCPServerURL) == want {
+			client.MCPServerURL = want
+			client.ClientID = strings.TrimSpace(client.ClientID)
+			client.ClientSecret = strings.TrimSpace(client.ClientSecret)
+			return client, true
+		}
+	}
+	return PlatformOAuthClientConfig{}, false
+}
+
+func validatePlatformOAuthClients(clients []PlatformOAuthClientConfig) error {
+	seen := make(map[string]struct{}, len(clients))
+	for i, client := range clients {
+		prefix := fmt.Sprintf("vault.platform_oauth_clients[%d]", i)
+		mcpURL := strings.TrimSpace(client.MCPServerURL)
+		clientID := strings.TrimSpace(client.ClientID)
+		if mcpURL == "" {
+			return fmt.Errorf("%s.mcp_server_url is required", prefix)
+		}
+		if clientID == "" {
+			return fmt.Errorf("%s.client_id is required", prefix)
+		}
+		if _, ok := seen[mcpURL]; ok {
+			return fmt.Errorf("%s.mcp_server_url %q is duplicated", prefix, mcpURL)
+		}
+		seen[mcpURL] = struct{}{}
+	}
+	return nil
+}
+
+// validateGitSSHtoHTTPSHosts validates and normalizes hosts in place (trim + lower-case).
+// The slice header is shared with Config after YAML load, so Load observes the rewrite.
+func validateGitSSHtoHTTPSHosts(hosts []string) error {
+	seen := make(map[string]struct{}, len(hosts))
+	for i, raw := range hosts {
+		prefix := fmt.Sprintf("environment_runner.git_ssh_to_https_hosts[%d]", i)
+		host := strings.ToLower(strings.TrimSpace(raw))
+		if host == "" {
+			return fmt.Errorf("%s is empty", prefix)
+		}
+		if err := validateGitSSHtoHTTPSHost(host); err != nil {
+			return fmt.Errorf("%s: %w", prefix, err)
+		}
+		if _, ok := seen[host]; ok {
+			return fmt.Errorf("%s %q is duplicated", prefix, host)
+		}
+		seen[host] = struct{}{}
+		hosts[i] = host
+	}
+	return nil
+}
+
+// validateGitSSHtoHTTPSHost accepts only bare DNS hostnames: dot-separated
+// labels of [a-z0-9-], each starting and ending with an alphanumeric.
+// Callers must pass already lower-cased hostnames.
+func validateGitSSHtoHTTPSHost(host string) error {
+	if host == "" {
+		return errors.New("must be a bare hostname")
+	}
+	for _, label := range strings.Split(host, ".") {
+		if err := validateGitSSHtoHTTPSHostLabel(label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateGitSSHtoHTTPSHostLabel(label string) error {
+	if label == "" {
+		return errors.New("must be a bare hostname")
+	}
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' && i > 0 && i < len(label)-1:
+		default:
+			return errors.New("must be a bare hostname")
+		}
+	}
+	return nil
 }
 
 func (m MasterKeyConfig) inlineKEKSet() bool {

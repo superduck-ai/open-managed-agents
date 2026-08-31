@@ -1,0 +1,27 @@
+---
+title: "会话生命周期"
+description: "列出、更新、归档、删除会话，并读取线程。"
+---
+
+所有会话端点要求 `?beta=true`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/v1/sessions` | 创建 |
+| `GET` | `/v1/sessions` | 列表和筛选 |
+| `GET` | `/v1/sessions/{id}` | 读取 |
+| `POST` | `/v1/sessions/{id}` | 更新 `idle` 状态的会话 |
+| `POST` | `/v1/sessions/{id}/archive` | 归档 |
+| `DELETE` | `/v1/sessions/{id}` | 删除 |
+| `GET` | `/v1/sessions/{id}/threads` | 列出线程 |
+| `GET` | `/v1/sessions/{id}/threads/{thread_id}` | 读取线程 |
+| `POST` | `/v1/sessions/{id}/threads/{thread_id}/archive` | 归档线程 |
+
+列表支持智能体、版本、部署、记忆存储、状态和创建时间筛选。会话响应包含 `agent`、`environment_id`、`resources`、`vault_ids`、`status`、`usage`、`stats` 和 `outcome_evaluations`。
+
+只有未归档的 `idle` 会话可更新；运行中或重新调度中的会话不能归档或删除。
+
+<CardGroup cols={2}>
+  <Card title="创建会话" href="/docs/zh/api/endpoints/create-session" />
+  <Card title="读取会话" href="/docs/zh/api/endpoints/retrieve-session" />
+</CardGroup>

@@ -1,0 +1,16 @@
+---
+title: "Environments"
+description: "Manage execution environments and self-hosted worker queues."
+---
+
+Every environment endpoint requires `?beta=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/environments` | Create / list |
+| `GET` / `POST` / `DELETE` | `/v1/environments/{id}` | Retrieve / update / delete |
+| `POST` | `/v1/environments/{id}/archive` | Archive |
+
+Creation accepts `name`, `description`, `scope`, `config`, and `metadata`. Scope is `organization` or `account`; configuration is `cloud` or `self_hosted`.
+
+Worker subpaths under `/work` provide list, long poll, stats, retrieve, metadata update, acknowledge, heartbeat, and stop operations. They are runtime contracts for environment workers; normal applications create environments and reference them from sessions.

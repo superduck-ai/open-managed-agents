@@ -19,34 +19,29 @@ import {
   type SessionDetailSummaryChip,
   type SessionEventListEntry,
   type SessionEventUsage,
-  type SessionResourceApiResponse,
   type SessionThreadApiResponse,
   type SessionTimelineItem,
   type SessionTimelineLane,
-  type SessionTraceFilterOption,
-  type SessionTraceView,
-  type SessionDetailSegment,
-  type ToolBatchEntry,
   type ToolCallEntry,
 } from '../types';
-import { compactEntityId, toRecord } from '../utils';
-import { Bot, CalendarClock, Cloud, Database, FileText, LockKeyhole } from 'lucide-react';
+import { compactEntityId, numericValueFromKeys, sessionListCost, toRecord } from '../utils';
+import { Bot, Clock3, Cloud, LockKeyhole, ReceiptText, Timer } from 'lucide-react';
 import { SESSION_ARCHIVED_LANES_STORAGE_KEY, SESSION_MAIN_LANE_ID } from './sessionTimeline';
 import {
   sessionEventSummary,
   sessionEventTimestamp,
   sessionEventType,
-  sessionTraceFilterValue,
+  sessionSubagentThreadId,
 } from './sessionTraceModel';
 
 export function buildSessionDetailSummary(
   session: SessionApiResponse,
-  resources: SessionResourceApiResponse[],
   events: QuickstartSessionEvent[],
   formatters: ReturnType<typeof useFormatters>,
   msg: I18nMsg,
+  nowMs = Date.now(),
 ) {
-  const title = session.title || sessionAgentDisplayName(session.agent) || session.id;
+  const title = session.title || compactEntityId(session.id);
   const statusLabel = localizedEntityStatusLabel('sessions', session, msg);
   const chips: SessionDetailSummaryChip[] = [];
   const agentLabel = sessionAgentDisplayName(session.agent) || entityAgentId(session);
@@ -54,106 +49,45 @@ export function buildSessionDetailSummary(
     chips.push({ key: 'agent', icon: Bot, value: agentLabel });
   }
   if (session.environment_id) {
-    chips.push({ key: 'environment', icon: Cloud, value: session.environment_id });
-  }
-  const resourceLabel = sessionResourcesLabel(resources, msg);
-  if (resourceLabel) {
-    chips.push({ key: 'resources', icon: FileText, value: resourceLabel });
+    const value = compactEntityId(session.environment_id);
+    chips.push({
+      key: 'environment',
+      icon: Cloud,
+      tooltip: value === session.environment_id ? undefined : session.environment_id,
+      value,
+    });
   }
   const vaults = entityVaultIds(session);
   if (vaults.length) {
     chips.push({
       key: 'vaults',
       icon: LockKeyhole,
+      tooltip: vaults.length === 1 && compactEntityId(vaults[0]) === vaults[0] ? undefined : vaults.join(', '),
       value:
         vaults.length === 1
-          ? vaults[0]
+          ? compactEntityId(vaults[0])
           : msg('managedAgents.sessions.detail.vaultCount', '{count} vaults', { count: vaults.length }),
+    });
+  }
+  const elapsedMs = sessionElapsedMs(session, events, nowMs);
+  if (elapsedMs > 0) {
+    chips.push({ key: 'duration', icon: Timer, value: formatSessionDuration(elapsedMs, formatters, msg) });
+  }
+  const listCost = sessionListCost(session.usage) ?? sessionListCost(session.stats);
+  if (listCost) {
+    chips.push({
+      key: 'cost',
+      icon: ReceiptText,
+      value: formatters.currency(listCost.amount, listCost.currency),
     });
   }
   chips.push({
     key: 'created',
-    icon: CalendarClock,
-    value: formatRelativeFromNow(session.created_at, formatters, msg),
+    icon: Clock3,
+    tooltip: formatters.date(session.created_at, { dateStyle: 'medium', timeStyle: 'medium' }),
+    value: formatRelativeFromNow(session.created_at, formatters, msg, nowMs),
   });
-  const elapsedMs = sessionElapsedMs(session, events);
-  if (elapsedMs > 0) {
-    chips.push({ key: 'duration', icon: CalendarClock, value: formatSessionDuration(elapsedMs, formatters, msg) });
-  }
-  const usage = events.reduce<{ input: number; output: number }>(
-    (total, event) => {
-      const current = extractSessionEventUsage(event);
-      total.input += current.input;
-      total.output += current.output;
-      return total;
-    },
-    { input: 0, output: 0 },
-  );
-  if (usage.input || usage.output) {
-    chips.push({
-      key: 'tokens',
-      icon: Database,
-      value: msg('managedAgents.sessions.detail.tokensInOut', '{input} in / {output} out', {
-        input: formatCompactTokenCount(usage.input, formatters),
-        output: formatCompactTokenCount(usage.output, formatters),
-      }),
-    });
-  }
   return { title, statusLabel, chips };
-}
-
-export function buildSessionDetailFilterOptions(
-  entries: SessionEventListEntry[],
-  view: SessionTraceView,
-  msg: I18nMsg,
-): SessionTraceFilterOption[] {
-  if (view === 'transcript') {
-    return localizedTranscriptFilterOptions(msg);
-  }
-  const seen = new Set<string>();
-  return entries
-    .filter((entry): entry is DisplayEventEntry | ToolCallEntry | ToolBatchEntry => 'traceEntry' in entry)
-    .map((entry) => entry.type)
-    .filter((type) => {
-      if (seen.has(type)) {
-        return false;
-      }
-      seen.add(type);
-      return true;
-    })
-    .sort((left, right) => left.localeCompare(right))
-    .map((type) => ({ value: type, label: type }));
-}
-
-export function localizedTranscriptFilterOptions(msg: I18nMsg): SessionTraceFilterOption[] {
-  return [
-    { value: 'user', label: msg('managedAgents.sessions.trace.user', 'User') },
-    { value: 'agent', label: msg('managedAgents.sessions.trace.agent', 'Agent') },
-    { value: 'subagent', label: msg('managedAgents.sessions.trace.subagent', 'Subagent') },
-    { value: 'tool', label: msg('managedAgents.sessions.trace.tool', 'Tool') },
-    { value: 'model', label: msg('managedAgents.sessions.trace.model', 'Model') },
-    { value: 'result', label: msg('managedAgents.sessions.trace.result', 'Result') },
-    { value: 'status', label: msg('managedAgents.sessions.trace.status', 'Status') },
-    { value: 'system', label: msg('managedAgents.sessions.trace.system', 'System') },
-    { value: 'error', label: msg('managedAgents.sessions.trace.error', 'Error') },
-  ];
-}
-
-export function sessionEventListFilterValue(entry: SessionEventListEntry, view: SessionTraceView) {
-  if (!('traceEntry' in entry)) {
-    return entry.kind;
-  }
-  if (entry.kind === 'tool_batch') {
-    return view === 'debug' ? entry.type : 'tool';
-  }
-  return sessionTraceFilterValue(entry.traceEntry, view);
-}
-
-export function sessionEventEntryLaneId(entry: SessionEventListEntry, laneIdByThreadId: Map<string, string>) {
-  if (!('event' in entry)) {
-    return SESSION_MAIN_LANE_ID;
-  }
-  return sessionEventLaneId(entry.event, laneIdByThreadId);
 }
 
 export function buildSessionEventsByLane(
@@ -262,7 +196,7 @@ export function sessionTimelineItemFromEntry(entry: SessionEventListEntry): Sess
       label: '',
       preview: '',
       relativeTime: entry.relativeTime,
-      processedAtMs: entry.processedAtMs,
+      processedAtMs: entry.createdAtMs,
       durationMs: entry.durationMs,
     };
   }
@@ -313,6 +247,7 @@ export function sessionTimelineItemFromEntry(entry: SessionEventListEntry): Sess
   }
 
   const startMs = entry.kind === 'message' && entry.bracketStartMs ? entry.bracketStartMs : entry.processedAtMs;
+  const timing = sessionTimelineDisplayTiming(entry);
   return {
     id: entry.id,
     rowId: entry.traceEntry.id,
@@ -321,13 +256,42 @@ export function sessionTimelineItemFromEntry(entry: SessionEventListEntry): Sess
     preview: entry.traceEntry.preview || entry.traceEntry.displayText || entry.displayEvent.content,
     relativeTime: entry.relativeTime,
     processedAtMs: startMs,
-    durationMs:
-      entry.kind === 'message'
-        ? Math.max(0, entry.inferenceMs ?? 0)
-        : entry.kind === 'outcome'
+    durationMs: timing.durationMs,
+    open: timing.open,
+    threadMessage: sessionTimelineThreadMessage(entry.event),
+  };
+}
+
+function sessionTimelineDisplayTiming(entry: DisplayEventEntry) {
+  if (entry.kind !== 'message') {
+    return {
+      durationMs:
+        entry.kind === 'outcome'
           ? Math.max(0, entry.durationMs ?? 0)
           : Math.max(0, entry.executionMs ?? entry.durationMs ?? 0),
+      open: false,
+    };
+  }
+  const bracketDurationMs =
+    entry.bracketStartMs === undefined || entry.bracketEndMs === undefined
+      ? 0
+      : Math.max(0, entry.bracketEndMs - entry.bracketStartMs);
+  return {
+    durationMs: Math.max(0, entry.inferenceMs ?? 0, bracketDurationMs),
+    open: entry.bracketOpen === true && entry.bracketStartMs !== undefined,
   };
+}
+
+function sessionTimelineThreadMessage(event: QuickstartSessionEvent): SessionTimelineItem['threadMessage'] {
+  const type = sessionEventType(event);
+  if (type !== 'agent.thread_message_sent' && type !== 'agent.thread_message_received') {
+    return undefined;
+  }
+  const laneId = sessionSubagentThreadId(event);
+  if (!laneId) {
+    return undefined;
+  }
+  return { direction: type === 'agent.thread_message_received' ? 'received' : 'sent', laneId };
 }
 
 export function sessionTimelineItemType(type: DisplayEventType): DisplayEventType {
@@ -338,32 +302,16 @@ export function sessionTimelineItemType(type: DisplayEventType): DisplayEventTyp
 }
 
 export function buildSessionTimelineVisibleIds(
-  entriesByLaneId: Map<string, SessionEventListEntry[]>,
   filteredActiveEntries: SessionEventListEntry[],
   timeline: SessionTimelineLane[],
   activeLane: string,
-  selectedTypes: string[],
   query: string,
-  view: SessionTraceView,
 ) {
-  const selected = new Set(selectedTypes);
   const needle = query.trim().toLowerCase();
-  if (selected.size === 0 && !needle) {
+  if (!needle) {
     return undefined;
   }
   const ids = new Set<string>();
-  if (view === 'debug') {
-    entriesByLaneId.forEach((entries) => {
-      entries.forEach((entry) => {
-        const matchesType = selected.size === 0 || selected.has(sessionEventListFilterValue(entry, view));
-        const matchesQuery = !needle || entry.searchText.includes(needle);
-        if (matchesType && matchesQuery) {
-          ids.add(entry.id);
-        }
-      });
-    });
-    return ids;
-  }
   filteredActiveEntries.forEach((entry) => ids.add(entry.id));
   timeline.forEach((lane) => {
     if (lane.id === activeLane) {
@@ -374,17 +322,10 @@ export function buildSessionTimelineVisibleIds(
   return ids;
 }
 
-export function sessionDetailEventCopyPayload(entries: SessionEventListEntry[], view: SessionTraceView) {
+export function sessionDetailEventCopyPayload(entries: SessionEventListEntry[]) {
   const selectableEntries = entries.filter(
     (entry): entry is Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry> => 'traceEntry' in entry,
   );
-  if (view === 'debug') {
-    return JSON.stringify(
-      selectableEntries.map((entry) => entry.event),
-      null,
-      2,
-    );
-  }
   return selectableEntries
     .map((entry) => {
       if (entry.kind === 'tool_batch') {
@@ -489,23 +430,6 @@ export function sessionAgentDisplayName(agent: unknown) {
   return '';
 }
 
-export function sessionResourcesLabel(resources: SessionResourceApiResponse[], msg: I18nMsg) {
-  if (!resources.length) {
-    return '';
-  }
-  const fileCount = resources.filter((resource) =>
-    String(resource.type || resource.resource_type || '').includes('file'),
-  ).length;
-  if (fileCount > 0 && fileCount === resources.length) {
-    return msg('managedAgents.sessions.detail.fileCount', '{count, plural, one {# file} other {# files}}', {
-      count: fileCount,
-    });
-  }
-  return msg('managedAgents.sessions.detail.resourceCount', '{count, plural, one {# resource} other {# resources}}', {
-    count: resources.length,
-  });
-}
-
 export function sessionThreadBaseName(thread: SessionThreadApiResponse) {
   const record = thread as unknown as Record<string, unknown>;
   const metadata = toRecord(record.metadata);
@@ -588,17 +512,6 @@ export function truncateLaneLabel(label: string) {
   return `${value.slice(0, 11)}...${value.slice(-4)}`;
 }
 
-export function readSessionDetailInitialView(): SessionDetailSegment {
-  if (typeof window === 'undefined') {
-    return 'transcript';
-  }
-  const segment = new URLSearchParams(window.location.search).get('segment');
-  if (segment === 'debug' || segment === 'trace') {
-    return segment;
-  }
-  return 'transcript';
-}
-
 export function readSessionDetailInitialEventId() {
   if (typeof window === 'undefined') {
     return null;
@@ -615,24 +528,12 @@ export function readSessionDetailInitialLaneId() {
   return laneId && laneId.trim() ? laneId.trim() : SESSION_MAIN_LANE_ID;
 }
 
-export function writeSessionDetailUrlState(
-  view: SessionDetailSegment,
-  eventId: string | null,
-  laneId: string,
-  showArchivedLanes: boolean,
-) {
+export function writeSessionDetailUrlState(eventId: string | null, laneId: string, showArchivedLanes: boolean) {
   if (typeof window === 'undefined') {
     return;
   }
   const url = new URL(window.location.href);
-  if (view === 'debug' || view === 'trace') {
-    url.searchParams.set('segment', view);
-  } else {
-    url.searchParams.delete('segment');
-  }
-  if (view !== 'trace') {
-    url.searchParams.delete('trace_id');
-  }
+  url.searchParams.delete('segment');
   if (eventId) {
     url.searchParams.set('event', eventId);
   } else {
@@ -711,19 +612,18 @@ export function sessionShouldStreamEvents(session: Pick<SessionApiResponse, 'arc
   if (!session || session.archived_at) {
     return false;
   }
-  return sessionStatusIsLive(session.status);
+  const status = session.status.toLowerCase();
+  return status !== 'terminated' && status !== 'deleted';
 }
 
-export function sessionElapsedMs(session: SessionApiResponse, events: QuickstartSessionEvent[]) {
+export function sessionElapsedMs(session: SessionApiResponse, events: QuickstartSessionEvent[], nowMs = Date.now()) {
   const start = Date.parse(session.created_at);
   if (!Number.isFinite(start)) {
     return 0;
   }
   const eventEnd = Math.max(...events.map(sessionEventTimestamp).filter(Boolean), 0);
   const end =
-    sessionStatusIsLive(session.status) && !session.archived_at
-      ? Date.now()
-      : eventEnd || Date.parse(session.updated_at);
+    sessionStatusIsLive(session.status) && !session.archived_at ? nowMs : eventEnd || Date.parse(session.updated_at);
   return Number.isFinite(end) ? Math.max(0, end - start) : 0;
 }
 
@@ -890,32 +790,6 @@ export function aggregateSessionModelUsage(value: unknown) {
     : null;
 }
 
-export function numericValueFromKeys(record: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === 'string') {
-      const parsed = Number(value.trim());
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  }
-  return 0;
-}
-
-export function stringValueFromKeys(record: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return '';
-}
-
 export function sessionEventDurationMs(event: QuickstartSessionEvent) {
   return numericValueFromKeys(event, [
     'duration_ms',
@@ -993,12 +867,17 @@ export function formatSessionDuration(ms: number, formatters: ReturnType<typeof 
       });
 }
 
-export function formatRelativeFromNow(value: string, formatters: ReturnType<typeof useFormatters>, msg: I18nMsg) {
+export function formatRelativeFromNow(
+  value: string,
+  formatters: ReturnType<typeof useFormatters>,
+  msg: I18nMsg,
+  nowMs = Date.now(),
+) {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     return msg('managedAgents.sessions.detail.unknownTime', 'Unknown time');
   }
-  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  const seconds = Math.round((timestamp - nowMs) / 1000);
   const absSeconds = Math.abs(seconds);
   if (absSeconds < 45) {
     return msg('managedAgents.sessions.detail.justNow', 'just now');
@@ -1010,4 +889,32 @@ export function formatRelativeFromNow(value: string, formatters: ReturnType<type
     return formatters.relativeTime(Math.round(seconds / 3600), 'hour');
   }
   return formatters.relativeTime(Math.round(seconds / 86400), 'day');
+}
+
+export function findActiveAwaitingToolCall(
+  entries: SessionEventListEntry[],
+  requiresActionEventIDs: Set<string>,
+): ToolCallEntry | null {
+  if (!requiresActionEventIDs.size) {
+    return null;
+  }
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.kind === 'tool_call' && requiresActionEventIDs.has(sessionToolCallPublicID(entry))) {
+      return entry;
+    }
+    if (entry.kind === 'tool_batch') {
+      const call = entry.calls.find((item) => requiresActionEventIDs.has(sessionToolCallPublicID(item)));
+      if (call) {
+        return call;
+      }
+    }
+  }
+  return null;
+}
+
+function sessionToolCallPublicID(toolCall: ToolCallEntry) {
+  return typeof toolCall.event.id === 'string' && toolCall.event.id.trim()
+    ? toolCall.event.id.trim()
+    : toolCall.rawEventId;
 }

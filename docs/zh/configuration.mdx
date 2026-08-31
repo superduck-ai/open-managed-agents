@@ -1,0 +1,84 @@
+---
+title: "配置"
+description: "配置 OMA Server、存储、沙箱和安全密钥。"
+---
+
+OMA 使用严格校验的 YAML 配置。服务会从当前目录向上查找 `config/config.yaml`，直到遇到 `go.mod`；也可以使用 `CONFIG_FILE` 指定文件。
+
+## 加载规则
+
+```text
+代码默认值 < YAML 配置
+```
+
+业务环境变量不会覆盖 YAML。`CONFIG_FILE` 只负责选择配置文件。写错字段名、使用未知字段或提供无效枚举时，服务会拒绝启动。进程 YAML 不再包含 `anthropic_upstream`；上游凭据来自 workspace Provider。
+
+## 最小开发配置
+
+```yaml
+env: dev
+
+server:
+  addr: 127.0.0.1:38080
+
+database:
+  url: postgresql://oma:123456@localhost:5432/oma?sslmode=disable
+
+redis:
+  url: redis://localhost:6379
+
+storage:
+  type: s3
+  s3:
+    endpoint: http://localhost:9000
+    bucket: oma-files
+    region: us-east-1
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    force_path_style: true
+
+```
+
+LLM Provider 是工作区数据，不属于进程配置。服务启动后，在控制台的 **LLM 模型** 页面为工作区添加一个或多个 Provider。
+
+## 主要配置分组
+
+<AccordionGroup>
+  <Accordion title="server、database 和 redis">
+    配置监听地址、PostgreSQL 连接和平台会话存储。生产环境默认不自动迁移数据库。
+  </Accordion>
+  <Accordion title="storage">
+    配置 S3 兼容对象存储、bucket、容量限制和 path-style 访问。文件、技能与批处理结果依赖该存储。
+  </Accordion>
+  <Accordion title="e2b 和 environment_runner">
+    配置沙箱 API、模板、超时、并发和智能体运行时路径。
+  </Accordion>
+  <Accordion title="code_session">
+    配置沙箱回调 URL、OTLP 文件日志、JWT 签名私钥和可选的上游代理 CA。
+  </Accordion>
+  <Accordion title="vault 和 webhook">
+    配置密钥库主 KEK，以及 Webhook 端点、签名密钥、重试和 worker 行为。
+  </Accordion>
+</AccordionGroup>
+
+## 密钥文件
+
+生产环境优先通过只读 Secret 文件挂载稳定私钥，不要把密钥写入镜像或仓库。
+
+```bash
+just generate-code-session-jwt-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
+# 只导出需要添加到 GitHub SSH Signing Keys 的公钥
+just print-code-session-signing-public-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
+just generate-vault-kek \
+  config/secrets/vault-kek
+```
+
+Code Session JWT 私钥同时用于 CCRv2 Git 提交签名。要让 GitHub 显示 `Verified`，请保持该私钥稳定，将上述命令输出添加为 GitHub SSH Signing Key，并确保环境现有的 Git 提交邮箱已在同一账号验证。私钥轮换后需要同步更新 GitHub Signing Key。
+
+<Note>
+  仓库中的 `docs/configuration-reference.yaml` 记录全部已接受字段和安全示例值；`config/config.example.yaml` 是日常开发使用的最小示例。
+</Note>

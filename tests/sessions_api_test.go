@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -28,7 +29,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/google/uuid"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -670,8 +670,6 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 
 	events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
 	for _, want := range []string{
-		`"type":"agent.tool_use"`,
-		`"tool_name":"Agent"`,
 		`Translate to Chinese`,
 		`"type":"session.thread_created"`,
 		`"type":"session.thread_status_running"`,
@@ -686,6 +684,9 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 		if !eventPageContains(events, want) {
 			t.Fatalf("Claude Code task mapped events missing %q: %+v", want, events.Data)
 		}
+	}
+	if eventPageContains(events, `"type":"agent.tool_use"`) {
+		t.Fatalf("Claude Code assistant tool_use leaked instead of using can_use_tool as the canonical public event source: %+v", events.Data)
 	}
 	if eventPageContains(events, `"type":"system.message"`) {
 		t.Fatalf("Claude Code task lifecycle leaked raw system.message instead of canonical events: %+v", events.Data)
@@ -792,7 +793,7 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 	}
 	const eventCount = 501
 	createdAt := time.Now().UTC()
-	uuidPrefix := uuid.New()
+	uuidPrefix := uuid.NewV4()
 	eventIDs := make([]string, 0, eventCount)
 	events := make([]db.SessionEvent, 0, eventCount)
 	for i := range eventCount {
@@ -862,7 +863,7 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	}
 	invalidAt := time.Now().UTC().Add(time.Second)
 	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{{
-		UUID:        uuid.NewString(),
+		UUID:        uuid.NewV4().String(),
 		ExternalID:  "sevt_activation_invalid_" + strings.TrimPrefix(codeSessionID, "cse_"),
 		EventType:   "user.interrupt",
 		Payload:     json.RawMessage(`[]`),
@@ -972,7 +973,6 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 
 	primaryEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
 	for _, want := range []string{
-		`"type":"agent.tool_use"`,
 		`"type":"session.thread_created"`,
 		`"type":"session.thread_status_running"`,
 		`"type":"agent.thread_message_sent"`,
@@ -980,6 +980,9 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		if !eventPageContains(primaryEvents, want) {
 			t.Fatalf("primary coordination missing %q: %+v", want, primaryEvents.Data)
 		}
+	}
+	if eventPageContains(primaryEvents, `"type":"agent.tool_use"`) {
+		t.Fatalf("subagent assistant tool_use leaked instead of using can_use_tool as the canonical public event source: %+v", primaryEvents.Data)
 	}
 	for _, blocked := range []string{"private child prompt only in child stream", "private child thinking only in child stream", "private child answer only in child stream"} {
 		if eventPageContains(primaryEvents, blocked) {
@@ -1374,7 +1377,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("make session projection stale: %v", err)
 	}
 	retryService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil)
+	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, nil)
 	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
 		t.Fatalf("retry existing running event projection: %v", err)
 	}
@@ -1583,7 +1586,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	now := time.Now().UTC()
 	if _, err := app.db.AppendSessionEvents(ctx, storedSession.WorkspaceUUID, storedSession.ExternalID, []db.SessionEvent{
 		{
-			UUID:        uuid.NewString(),
+			UUID:        uuid.NewV4().String(),
 			ExternalID:  hiddenEventID,
 			EventType:   "env_manager_log",
 			Payload:     json.RawMessage(`{"id":` + quoteJSON(hiddenEventID) + `,"type":"env_manager_log","content":"Using existing Claude Code installation (version 2.1.120)"}`),
@@ -1591,7 +1594,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 			CreatedAt:   now,
 		},
 		{
-			UUID:        uuid.NewString(),
+			UUID:        uuid.NewV4().String(),
 			ExternalID:  visibleEventID,
 			EventType:   "agent.message",
 			Payload:     json.RawMessage(`{"id":` + quoteJSON(visibleEventID) + `,"type":"agent.message","content":[{"type":"text","text":"visible event after legacy env log"}]}`),
@@ -1969,6 +1972,26 @@ func TestCodeSessionMCPDefaultAllowAutoApprovesWorkerPermissionRequest(t *testin
 	if eventPageContains(allPublicEvents, "control-weather-"+suffix) {
 		t.Fatalf("control_request leaked into public session events: %+v", allPublicEvents.Data)
 	}
+	toolEvent := sessionEventObjectByType(t, allPublicEvents, "agent.mcp_tool_use")
+	toolEventID, _ := toolEvent["id"].(string)
+	if toolEventID == "" || toolEvent["name"] != "get_weather" || toolEvent["mcp_server_name"] != "weather_service" || toolEvent["evaluated_permission"] != "allow" {
+		t.Fatalf("canonical allow tool event = %#v", toolEvent)
+	}
+	assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
+
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
+		`"type":"user",`+
+		`"uuid":"result-weather-`+suffix+`",`+
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":`+quoteJSON(toolUseID)+`,"content":[{"type":"text","text":"Sunny"}]}]}`+
+		`}}]}`)
+	allPublicEvents = listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
+	resultEvent := sessionEventObjectByType(t, allPublicEvents, "agent.tool_result")
+	if resultEvent["tool_use_id"] != toolEventID {
+		t.Fatalf("tool result tool_use_id = %#v, want public event id %s: %#v", resultEvent["tool_use_id"], toolEventID, resultEvent)
+	}
+	if eventPageContains(allPublicEvents, toolUseID) {
+		t.Fatalf("provider tool id leaked into public events: %+v", allPublicEvents.Data)
+	}
 }
 
 func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t *testing.T) {
@@ -2021,12 +2044,11 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
 	for _, want := range []string{
 		`"type":"agent.mcp_tool_use"`,
-		`"tool_name":"mcp__weather_service__get_weather"`,
+		`"name":"get_weather"`,
+		`"mcp_server_name":"weather_service"`,
 		`"evaluated_permission":"ask"`,
-		`"tool_use_id":"` + toolUseID + `"`,
 		`"type":"session.status_idle"`,
 		`"type":"requires_action"`,
-		`"request_id":"` + requestID + `"`,
 	} {
 		if !eventPageContains(publicEvents, want) {
 			t.Fatalf("always_ask public events missing %q: %+v", want, publicEvents.Data)
@@ -2035,14 +2057,15 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if eventPageContains(publicEvents, "control-weather-ask-"+suffix) {
 		t.Fatalf("control_request leaked into public session events: %+v", publicEvents.Data)
 	}
+	if count := toolUseEventCount(t, publicEvents); count != 1 {
+		t.Fatalf("tool use public event count = %d, want 1: %+v", count, publicEvents.Data)
+	}
 	toolEvent := sessionEventObjectByType(t, publicEvents, "agent.mcp_tool_use")
 	toolEventID, ok := toolEvent["id"].(string)
 	if !ok || toolEventID == "" {
 		t.Fatalf("agent.mcp_tool_use id = %#v, want non-empty string: %#v", toolEvent["id"], toolEvent)
 	}
-	if toolEvent["request_id"] != requestID {
-		t.Fatalf("agent.mcp_tool_use request_id = %#v, want %s: %#v", toolEvent["request_id"], requestID, toolEvent)
-	}
+	assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
 	statusEvent := sessionEventObjectByType(t, publicEvents, "session.status_idle")
 	stopReason, ok := statusEvent["stop_reason"].(map[string]any)
 	if !ok {
@@ -2053,13 +2076,15 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 		t.Fatalf("stop_reason.event_ids = %#v, want [%s]; status=%#v tool=%#v", eventIDs, toolEventID, statusEvent, toolEvent)
 	}
 	assertRequiresActionStopReasonSDKShape(t, stopReason)
-	requiresActionDetails, ok := statusEvent["requires_action_details"].(map[string]any)
-	if !ok {
-		t.Fatalf("session.status_idle requires_action_details = %#v, want object: %#v", statusEvent["requires_action_details"], statusEvent)
+	if _, ok := statusEvent["requires_action_details"]; ok {
+		t.Fatalf("session.status_idle leaked private requires_action_details: %#v", statusEvent)
 	}
-	if requiresActionDetails["tool_use_id"] != toolUseID || requiresActionDetails["request_id"] != requestID || requiresActionDetails["tool_name"] != "mcp__weather_service__get_weather" {
-		t.Fatalf("requires_action_details = %#v, want compatibility tool_use_id/request_id/tool_name", requiresActionDetails)
-	}
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
+		`"type":"control_request",`+
+		`"uuid":"control-weather-ask-second-`+suffix+`",`+
+		`"request_id":"req_weather_ask_second_`+suffix+`",`+
+		`"request":{"subtype":"can_use_tool","tool_name":"mcp__weather_service__get_weather","tool_use_id":"toolu_weather_ask_second_`+suffix+`","input":{"location":"Shanghai"}}`+
+		`}}]}`)
 
 	resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(toolEventID)+`,"result":"allow"}]}`), defaultTestKey, true)
 	defer resp.Body.Close()
@@ -2082,30 +2107,89 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if nested["behavior"] != "allow" || nested["toolUseID"] != toolUseID {
 		t.Fatalf("confirmation response nested = %#v, want allow for %s; payload=%s", nested, toolUseID, payload)
 	}
+	updatedInput, ok := nested["updatedInput"].(map[string]any)
+	if !ok || updatedInput["location"] != "Beijing" {
+		t.Fatalf("confirmation updatedInput = %#v, want original input; payload=%s", nested["updatedInput"], payload)
+	}
 
-	var beforeCompatCount int
-	if err := app.pool.QueryRow(context.Background(), `
-		select count(*)
-		from code_session_inbound_events
-		where code_session_external_id = $1 and source = 'tool-confirmation' and deleted_at is null
-	`, codeSessionID).Scan(&beforeCompatCount); err != nil {
-		t.Fatalf("count tool confirmation inbound events before compat send: %v", err)
+}
+
+func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-worker-ask-user-question-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	suffix := strings.TrimPrefix(session.ID, "sesn_")
+	toolUseID := "toolu_ask_color_" + suffix
+	requestID := "req_ask_color_" + suffix
+	questionsJSON := `[{"header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]`
+
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
+		`"type":"control_request",`+
+		`"uuid":"control-ask-color-`+suffix+`",`+
+		`"request_id":`+quoteJSON(requestID)+`,`+
+		`"request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":`+quoteJSON(toolUseID)+`,"input":{"questions":`+questionsJSON+`}}`+
+		`}}]}`)
+
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	toolEvent := sessionEventObjectByType(t, publicEvents, "agent.custom_tool_use")
+	toolEventID, ok := toolEvent["id"].(string)
+	if !ok || toolEventID == "" {
+		t.Fatalf("agent.custom_tool_use id = %#v, want non-empty string: %#v", toolEvent["id"], toolEvent)
 	}
-	compatResp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(toolUseID)+`,"result":"allow"}]}`), defaultTestKey, true)
-	defer compatResp.Body.Close()
-	if compatResp.StatusCode != http.StatusOK {
-		t.Fatalf("send legacy tool confirmation status = %d, want 200: %s", compatResp.StatusCode, readAll(t, compatResp.Body))
+	if toolEvent["name"] != "AskUserQuestion" {
+		t.Fatalf("agent.custom_tool_use = %#v, want AskUserQuestion", toolEvent)
 	}
-	var afterCompatCount int
-	if err := app.pool.QueryRow(context.Background(), `
-		select count(*)
-		from code_session_inbound_events
-		where code_session_external_id = $1 and source = 'tool-confirmation' and deleted_at is null
-	`, codeSessionID).Scan(&afterCompatCount); err != nil {
-		t.Fatalf("count tool confirmation inbound events after compat send: %v", err)
+	if _, ok := toolEvent["evaluated_permission"]; ok {
+		t.Fatalf("agent.custom_tool_use should not expose evaluated_permission: %#v", toolEvent)
 	}
-	if afterCompatCount != beforeCompatCount {
-		t.Fatalf("duplicate legacy tool confirmation inbound count = %d, want %d", afterCompatCount, beforeCompatCount)
+	assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
+	statusEvent := sessionEventObjectByType(t, publicEvents, "session.status_idle")
+	stopReason, _ := statusEvent["stop_reason"].(map[string]any)
+	eventIDs := stringArrayField(stopReason, "event_ids")
+	if len(eventIDs) != 1 || eventIDs[0] != toolEventID {
+		t.Fatalf("AskUserQuestion stop_reason.event_ids = %#v, want [%s]", eventIDs, toolEventID)
+	}
+
+	resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{`+
+		`"type":"user.custom_tool_result",`+
+		`"custom_tool_use_id":`+quoteJSON(toolEventID)+`,`+
+		`"content":[{"type":"text","text":`+quoteJSON(`{"Color":"Blue"}`)+`}]`+
+		`}]}`), defaultTestKey, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send AskUserQuestion custom result status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+
+	_, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "custom-tool-result")
+	if eventType != "control_response" {
+		t.Fatalf("confirmation event_type = %q, want control_response payload=%s", eventType, payload)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatalf("decode confirmation response payload: %v", err)
+	}
+	response := object["response"].(map[string]any)
+	if response["request_id"] != requestID {
+		t.Fatalf("confirmation response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
+	}
+	nested := response["response"].(map[string]any)
+	updatedInput, ok := nested["updatedInput"].(map[string]any)
+	if !ok {
+		t.Fatalf("confirmation updatedInput = %#v, want object; payload=%s", nested["updatedInput"], payload)
+	}
+	if _, ok := updatedInput["questions"]; !ok {
+		t.Fatalf("confirmation updatedInput missing questions: %#v", updatedInput)
+	}
+	answers, ok := updatedInput["answers"].(map[string]any)
+	if !ok || answers["Color"] != "Blue" {
+		t.Fatalf("confirmation updatedInput.answers = %#v, want Color=Blue; payload=%s", updatedInput["answers"], payload)
 	}
 }
 
@@ -2169,9 +2253,7 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	for _, want := range []string{
 		`"type":"agent.mcp_tool_use"`,
 		`"session_thread_id":"` + childThreadID + `"`,
-		`"tool_use_id":"` + toolUseID + `"`,
 		`"type":"requires_action"`,
-		`"request_id":"` + requestID + `"`,
 	} {
 		if !eventPageContains(primaryEvents, want) {
 			t.Fatalf("primary events missing %q: %+v", want, primaryEvents.Data)
@@ -2185,8 +2267,9 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	if primaryToolEvent["session_thread_id"] != childThreadID {
 		t.Fatalf("primary blocking tool event session_thread_id = %v, want %s: %#v", primaryToolEvent["session_thread_id"], childThreadID, primaryToolEvent)
 	}
-	if primaryToolEvent["request_id"] != requestID {
-		t.Fatalf("primary blocking tool event request_id = %v, want %s: %#v", primaryToolEvent["request_id"], requestID, primaryToolEvent)
+	assertCanonicalToolEventHasNoPrivateFields(t, primaryToolEvent)
+	if count := toolUseEventCount(t, primaryEvents); count != 1 {
+		t.Fatalf("primary tool use public event count = %d, want 1: %+v", count, primaryEvents.Data)
 	}
 	primaryStatusEvent := sessionEventObjectByType(t, primaryEvents, "session.status_idle")
 	primaryStopReason, ok := primaryStatusEvent["stop_reason"].(map[string]any)
@@ -2198,19 +2281,14 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 		t.Fatalf("primary stop_reason.event_ids = %#v, want [%s]; status=%#v tool=%#v", primaryEventIDs, primaryToolEventID, primaryStatusEvent, primaryToolEvent)
 	}
 	assertRequiresActionStopReasonSDKShape(t, primaryStopReason)
-	primaryRequiresActionDetails, ok := primaryStatusEvent["requires_action_details"].(map[string]any)
-	if !ok {
-		t.Fatalf("primary status requires_action_details = %#v, want object: %#v", primaryStatusEvent["requires_action_details"], primaryStatusEvent)
-	}
-	if primaryRequiresActionDetails["tool_use_id"] != toolUseID || primaryRequiresActionDetails["request_id"] != requestID || primaryRequiresActionDetails["session_thread_id"] != childThreadID {
-		t.Fatalf("primary requires_action_details = %#v, want compatibility tool_use_id/request_id/session_thread_id", primaryRequiresActionDetails)
+	if _, ok := primaryStatusEvent["requires_action_details"]; ok {
+		t.Fatalf("primary status leaked private requires_action_details: %#v", primaryStatusEvent)
 	}
 
 	childEvents := listThreadEvents(t, app, session.ID, childThreadID, defaultTestKey)
 	for _, want := range []string{
 		`"type":"agent.mcp_tool_use"`,
 		`"session_thread_id":"` + childThreadID + `"`,
-		`"tool_use_id":"` + toolUseID + `"`,
 		`"evaluated_permission":"ask"`,
 	} {
 		if !eventPageContains(childEvents, want) {
@@ -3417,6 +3495,12 @@ func TestSessionEventInputValidation(t *testing.T) {
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","result":"allow"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
+	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":"sevt_ask","result":"allow","updated_input":{}}]}`), defaultTestKey, true)
+	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":"sevt_ask","result":"allow","answers":{"Color":"Blue"}}]}`), defaultTestKey, true)
+	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"done"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
@@ -3817,6 +3901,33 @@ func assertRequiresActionStopReasonSDKShape(t *testing.T, stopReason map[string]
 	}
 }
 
+func assertCanonicalToolEventHasNoPrivateFields(t *testing.T, event map[string]any) {
+	t.Helper()
+	for _, field := range []string{"content", "message", "tool_use_id", "request_id", "requires_action_details", "tool_name", "mcp_tool_name"} {
+		if _, ok := event[field]; ok {
+			t.Fatalf("canonical tool event leaked %s: %#v", field, event)
+		}
+	}
+	if event["id"] == "" || event["name"] == "" || event["input"] == nil || event["processed_at"] == "" {
+		t.Fatalf("canonical tool event missing public fields: %#v", event)
+	}
+}
+
+func toolUseEventCount(t *testing.T, events sessionEventPageAPIResponse) int {
+	t.Helper()
+	count := 0
+	for _, raw := range events.Data {
+		var object map[string]any
+		if err := json.Unmarshal(raw, &object); err != nil {
+			t.Fatalf("decode session event %s: %v", raw, err)
+		}
+		if object["type"] == "agent.tool_use" || object["type"] == "agent.mcp_tool_use" || object["type"] == "agent.custom_tool_use" {
+			count++
+		}
+	}
+	return count
+}
+
 func eventPageContainsCount(events sessionEventPageAPIResponse, needle string) int {
 	count := 0
 	for _, event := range events.Data {
@@ -3923,6 +4034,7 @@ func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string,
 		OrganizationUUID: credentialContext.OrganizationUUID,
 		WorkspaceUUID:    credentialContext.WorkspaceUUID,
 		AccountEmail:     credentialContext.AccountEmail,
+		WorkerEpoch:      record.CurrentWorkerEpoch,
 	})
 }
 
@@ -3946,20 +4058,15 @@ func postCodeSessionIngressEvents(t *testing.T, app *testApp, codeSessionID stri
 
 func registerCodeSessionWorker(t *testing.T, app *testApp, codeSessionID string) string {
 	t.Helper()
-	resp := doCodeSessionWorkerRequest(t, app, codeSessionID, "register", `{"session_id":`+quoteJSON(codeSessionID)+`}`)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("register worker status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	epoch, err := registerCodeSessionWorkerNoFatal(app, codeSessionID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var response struct {
-		WorkerEpoch string `json:"worker_epoch"`
-	}
-	decodeJSON(t, resp.Body, &response)
-	return response.WorkerEpoch
+	return epoch
 }
 
 func registerCodeSessionWorkerNoFatal(app *testApp, codeSessionID string) (string, error) {
-	token, err := codeSessionIngressTokenNoFatal(app, codeSessionID)
+	token, err := legacyCodeSessionIngressTokenNoFatal(app, codeSessionID)
 	if err != nil {
 		return "", err
 	}
@@ -3991,6 +4098,41 @@ func registerCodeSessionWorkerNoFatal(app *testApp, codeSessionID string) (strin
 		return "", fmt.Errorf("empty worker_epoch in response: %s", body)
 	}
 	return response.WorkerEpoch, nil
+}
+
+func legacyCodeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string, error) {
+	ctx := context.Background()
+	if _, err := app.pool.Exec(ctx, `
+		update code_sessions
+		set current_worker_epoch = 0
+		where external_id = $1
+		  and current_worker_epoch = 1
+		  and worker_lease_expires_at is null
+	`, codeSessionID); err != nil {
+		return "", err
+	}
+	record, err := getCodeSession(app, ctx, codeSessionID)
+	if err != nil {
+		return "", err
+	}
+	credentialContext, err := app.db.GetCodeSessionCredentialContextForIssue(
+		ctx,
+		record.OrganizationUUID,
+		record.WorkspaceUUID,
+		codeSessionID,
+	)
+	if err != nil {
+		return "", err
+	}
+	return app.credentials.Issue(codesessions.SessionCredentialIdentity{
+		SessionID:        credentialContext.CodeSessionExternalID,
+		PublicSessionID:  credentialContext.PublicSessionExternalID,
+		AgentID:          credentialContext.AgentExternalID,
+		AgentVersion:     credentialContext.AgentVersion,
+		OrganizationUUID: credentialContext.OrganizationUUID,
+		WorkspaceUUID:    credentialContext.WorkspaceUUID,
+		AccountEmail:     credentialContext.AccountEmail,
+	})
 }
 
 type codeSessionWorkerStateAPIResponse struct {
@@ -4634,10 +4776,15 @@ func sessionWorkData(t *testing.T, app *testApp, sessionID string) (string, stri
 	t.Helper()
 	var workType, workSessionID, state string
 	if err := app.pool.QueryRow(context.Background(), `
-		select data->>'type', data->>'id', state
-		from environment_work
-		where data->>'id' = $1 and deleted_at is null
-		order by created_at desc
+		select 'session', session.external_id, work.state
+		from environment_work work
+		join sessions session
+			on session.organization_uuid = work.organization_uuid
+			and session.workspace_uuid = work.workspace_uuid
+			and session.environment_uuid = work.environment_uuid
+			and session.uuid = work.session_uuid
+		where session.external_id = $1 and work.deleted_at is null
+		order by work.created_at desc
 		limit 1
 	`, sessionID).Scan(&workType, &workSessionID, &state); err != nil {
 		t.Fatalf("load session work: %v", err)

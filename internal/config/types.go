@@ -14,8 +14,8 @@ type Config struct {
 	Server            ServerConfig            `yaml:"server"`
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
+	Auth              AuthConfig              `yaml:"auth"`
 	Storage           StorageConfig           `yaml:"storage"`
-	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
@@ -27,9 +27,20 @@ type Config struct {
 	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
 }
 
-// VaultConfig configures at-rest encryption for vault credential secrets.
+// VaultConfig configures at-rest encryption for vault credential secrets and
+// optional Platform OAuth Clients used during vault MCP OAuth enrollment.
 type VaultConfig struct {
-	MasterKey MasterKeyConfig `yaml:"master_key"`
+	MasterKey            MasterKeyConfig             `yaml:"master_key"`
+	PlatformOAuthClients []PlatformOAuthClientConfig `yaml:"platform_oauth_clients"`
+}
+
+// PlatformOAuthClientConfig is one deployment-owned OAuth client bound to an
+// exact mcp_server_url. When vault-auth/start has no BYO client_id, a matching
+// entry supplies client_id/client_secret before falling back to DCR.
+type PlatformOAuthClientConfig struct {
+	MCPServerURL string `yaml:"mcp_server_url"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
 }
 
 // MasterKeyConfig supplies the key-encryption key (KEK) that wraps per-secret
@@ -69,6 +80,16 @@ type RedisConfig struct {
 	URL string `yaml:"url"`
 }
 
+type AuthConfig struct {
+	SMTP EmailSMTPConfig `yaml:"smtp"`
+}
+
+type EmailSMTPConfig struct {
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
 type StorageConfig struct {
 	Type                string   `yaml:"type"`
 	S3                  S3Config `yaml:"s3"`
@@ -83,12 +104,6 @@ type S3Config struct {
 	AccessKeyID     string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`
 	ForcePathStyle  bool   `yaml:"force_path_style"`
-}
-
-type AnthropicUpstreamConfig struct {
-	BaseURL       string            `yaml:"base_url"`
-	APIKey        string            `yaml:"api_key"`
-	ModelMappings map[string]string `yaml:"model_mappings"`
 }
 
 type BatchConfig struct {
@@ -122,6 +137,11 @@ type EnvironmentRunnerConfig struct {
 	ManagerPath             string        `yaml:"manager_path"`
 	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
 	ClaudePath              string        `yaml:"claude_path"`
+	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
+	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
+	// github.com is always included by the environment-manager launcher.
+	// After config Load/validate, entries are trimmed and lower-cased in place.
+	GitSSHtoHTTPSHosts []string `yaml:"git_ssh_to_https_hosts"`
 }
 
 type CodeSessionConfig struct {

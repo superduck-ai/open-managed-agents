@@ -50,6 +50,8 @@
     "react-is": "19.2.7",
     "react-resizable-panels": "^4.12.1",
     "recharts": "^3.10.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "yaml": "^2.9.0",

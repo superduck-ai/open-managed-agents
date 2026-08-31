@@ -1,0 +1,30 @@
+---
+title: "Define outcomes"
+description: "Describe delivery criteria with user.define_outcome and track evaluation state."
+---
+
+Outcomes let a client send structured completion criteria to a session.
+
+```json
+{
+  "events": [
+    {
+      "type": "user.define_outcome",
+      "description": "The installation guide works on a clean machine.",
+      "rubric": {
+        "type": "text",
+        "content": "Commands are complete, reproducible, and require no undocumented credentials."
+      },
+      "max_iterations": 3
+    }
+  ]
+}
+```
+
+`description` and `rubric` are required; `max_iterations` must be positive. Deployment `initial_events` can use the same definition.
+
+Read evaluation state from `outcome_evaluations`. Streams can include `span.outcome_evaluation_start`, `span.outcome_evaluation_ongoing`, `span.outcome_evaluation_end`, and `session.outcome_evaluation_ended`. The final event is also available as a webhook subscription.
+
+<Info>
+  OMA outcome execution is evolving. Treat an evaluation as one automation signal, not the only security or compliance approval.
+</Info>

@@ -34,7 +34,7 @@ function usage(): string {
     '  --environment-id <id>        Existing environment ID. Defaults to ENVIRONMENT_ID/ANTHROPIC_ENVIRONMENT_ID',
     '  --base-url <url>             API base URL. Defaults to TEST_API_BASE_URL/ANTHROPIC_BASE_URL/http://127.0.0.1:18080',
     '  --api-key <key>              API key. Defaults to TEST_API_KEY/ANTHROPIC_API_KEY/sk-ant-local-default',
-    '  --model <model>              Model used when creating the temporary agent. Defaults to claude-sonnet-4-6',
+    '  --model <model>              Configured workspace model ID. Defaults to AGENT_MODEL/ANTHROPIC_AGENT_MODEL',
     '  --mount-path <path>          File mount_path to test. Defaults to /data.csv',
     '  --title <title>              Session title. Defaults to Files smoke session',
     '  --keep-resources             Keep the temporary uploaded files, agent, environment, and session',
@@ -55,7 +55,7 @@ function parseArgs(argv: string[]): CliOptions {
   let baseURL = readEnv('TEST_API_BASE_URL', 'ANTHROPIC_BASE_URL') ?? 'http://127.0.0.1:18080';
   let environmentID = readEnv('ENVIRONMENT_ID', 'ANTHROPIC_ENVIRONMENT_ID');
   let keepResources = false;
-  let model = readEnv('AGENT_MODEL', 'ANTHROPIC_AGENT_MODEL') ?? 'claude-sonnet-4-6';
+  let model = readEnv('AGENT_MODEL', 'ANTHROPIC_AGENT_MODEL') ?? '';
   let mountPath = readEnv('SESSION_FILE_MOUNT_PATH') ?? '/data.csv';
   let title = readEnv('SESSION_TITLE') ?? 'Files smoke session';
 
@@ -101,6 +101,9 @@ function parseArgs(argv: string[]): CliOptions {
 
   if (!mountPath.startsWith('/')) {
     throw new Error(`mount_path must be absolute, got ${mountPath}`);
+  }
+  if (!model) {
+    throw new Error(`Missing model. Pass --model with a configured workspace model ID.`);
   }
 
   return {

@@ -1,0 +1,25 @@
+---
+title: "Agent lifecycle"
+description: "Retrieve, search, update, version, and archive agents."
+---
+
+Every agent endpoint requires `?beta=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/v1/agents` | Create |
+| `GET` | `/v1/agents` | List current versions |
+| `POST` | `/v1/agents:search` | Search by name |
+| `GET` | `/v1/agents/{id}` | Retrieve current or requested `version` |
+| `POST` | `/v1/agents/{id}` | Update and create a version |
+| `POST` | `/v1/agents/{id}/archive` | Archive |
+| `GET` | `/v1/agents/{id}/versions` | List versions |
+
+Updates require the current integer `version`. Success increments it; a concurrent edit returns `409 conflict_error`. Archived agents cannot be updated.
+
+List filters include limit, cursor, archive status, and created-time range. Search sends `name`, `limit`, `page`, and `include_archived` in a JSON body.
+
+<CardGroup cols={2}>
+  <Card title="Create agent" href="/docs/en/api/endpoints/create-agent" />
+  <Card title="List agents" href="/docs/en/api/endpoints/list-agents" />
+</CardGroup>

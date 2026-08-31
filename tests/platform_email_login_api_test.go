@@ -31,7 +31,7 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 		t.Fatalf("login methods = %#v, want google and magic_link", methods)
 	}
 
-	sendResp := app.platformRequest(t, http.MethodPost, "/api/auth/send_magic_link", strings.NewReader(`{"email_address":"ada@example.com"}`), nil)
+	sendResp := app.platformRequest(t, http.MethodPost, "/api/auth/send_magic_link", strings.NewReader(`{"email_address":"Ada.Login@Example.com"}`), nil)
 	defer sendResp.Body.Close()
 	if sendResp.StatusCode != http.StatusOK {
 		t.Fatalf("send magic link status = %d, want 200: %s", sendResp.StatusCode, readAll(t, sendResp.Body))
@@ -218,6 +218,20 @@ func TestPlatformWorkspaceHeaderScopesV1Agents(t *testing.T) {
 	if customWorkspaceID == "" {
 		t.Fatalf("created workspace = %#v, want id", workspace)
 	}
+	customWorkspace, err := app.db.GetAdminWorkspace(context.Background(), orgCookie.Value, customWorkspaceID)
+	if err != nil {
+		t.Fatalf("load custom workspace: %v", err)
+	}
+	seedTestLLMProviderForWorkspace(
+		t,
+		app,
+		customWorkspace.OrganizationUUID,
+		customWorkspace.UUID,
+		"Scoped workspace provider",
+		"https://llm.example.com",
+		"scoped-provider-key",
+		"claude-sonnet-4-6",
+	)
 
 	defaultAgentName := "Default workspace scoped agent"
 	customAgentName := "Custom workspace scoped agent"
@@ -250,7 +264,7 @@ func TestPlatformEmailLoginAndroidRoutes(t *testing.T) {
 	defer app.close()
 
 	encodedEmail := base64.RawURLEncoding.EncodeToString([]byte("Mobile.Login@Example.com"))
-	verifyResp := app.platformRequest(t, http.MethodPost, "/auth/verify_magic_link", strings.NewReader(`{"credentials":{"method":"nonce","nonce":"nonce-1","encoded_email_address":"`+encodedEmail+`"}}`), nil)
+	verifyResp := app.platformRequest(t, http.MethodPost, "/auth/verify_magic_link", strings.NewReader(`{"credentials":{"method":"code","code":"123456","encoded_email_address":"`+encodedEmail+`"}}`), nil)
 	defer verifyResp.Body.Close()
 	if verifyResp.StatusCode != http.StatusOK {
 		t.Fatalf("android verify status = %d, want 200: %s", verifyResp.StatusCode, readAll(t, verifyResp.Body))

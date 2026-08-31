@@ -64,11 +64,15 @@ CLAUDE_CODE_REMOTE=true
 CCR_UPSTREAM_PROXY_ENABLED=1
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
 CLAUDE_CODE_USE_CCR_V2=1
-CLAUDE_CODE_WORKER_EPOCH=1
+CLAUDE_CODE_WORKER_EPOCH={next_worker_epoch}
 CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 ```
 
-`startup_context.api_base_url` 是 sandbox 可访问的 Open Managed Agents API 地址。payload 不再注入上游 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_API_KEY`；environment-manager 使用 `api_base_url` 作为 Claude 的 `ANTHROPIC_BASE_URL` fallback。OMA 不注入额外 `--settings` 文件；Agent 配置已有的 `mcp-config` 等参数保持不变。
+首次启动的 `{next_worker_epoch}` 是 `1`；替换 Sandbox 复用 Code Session 时，它是数据库当前 epoch 加一，并与 environment-manager 随后的 `/worker/register` 返回值一致。
+
+`startup_context.api_base_url` 是 sandbox 可访问的 Open Managed Agents API 地址。payload 不再注入上游 `ANTHROPIC_BASE_URL` 或 `ANTHROPIC_API_KEY`；environment-manager 使用 `api_base_url` 作为 Claude 的 `ANTHROPIC_BASE_URL` fallback。
+
+payload 始终在 `startup_context.claude_code_args` 中设置 `settings=/root/.claude/launcher-settings.json`，由 environment-manager 展开为 Claude Code 的 `--settings /root/.claude/launcher-settings.json` 启动参数；已有的 `mcp-config` 等参数保持不变。
 
 environment-manager 启动 Claude 时还会根据 executor 的 session ID 设置 `CLAUDE_CODE_SESSION_ID` 与 `CLAUDE_CODE_REMOTE_SESSION_ID`。后者是 relay 的必要条件；缺失时 Claude 会记录 `CLAUDE_CODE_REMOTE_SESSION_ID unset; proxy disabled`，即使 token 文件和其他开关都存在也不会注入代理环境。
 
@@ -78,6 +82,23 @@ payload 同时提供两种用途独立的 auth：
 - `anthropic_oauth`：使用只保存 hash、由 CCR worker lease 决定生命周期的 `sk-ant-oat01-...` token，通过 `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` 访问本地 `/v1/messages` 模型代理。
 
 payload 不再包含 `anthropic_api` 或 `CLAUDE_CODE_SESSION_ACCESS_TOKEN`。后者会优先于 WebSocket FD，被删除是为了保证 Claude 实际读取签名 ingress JWT。`cse_...` 只作为 URL 和 session 标识，不再作为 OTLP Bearer 凭证。
+
+### Git 私有仓库出站
+
+Runner 在执行 `environment-manager task-run` 前向其进程环境注入 Git 配置。**内置**条目始终包含：
+
+```text
+GIT_CONFIG_KEY_0=credential.interactive
+GIT_CONFIG_VALUE_0=false
+GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf
+GIT_CONFIG_VALUE_1=git@github.com:
+GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf
+GIT_CONFIG_VALUE_2=ssh://git@github.com/
+```
+
+`environment_runner.git_ssh_to_https_hosts` 可追加其它 host（例如 `gitlab.xxxx.cn`，仅允许合法裸 DNS hostname：label 为 `[a-z0-9-]` 且首尾非连字符）；每个 host 再增加两条 `insteadOf`（`git@host:` 与 `ssh://git@host/` → `https://host/`）。动态条目的 `GIT_CONFIG_KEY_*` / `VALUE_*` 经 shell 引号后再写入启动脚本；`GIT_CONFIG_COUNT` 由条目总数计算，无需手写。
+
+内置 github.com 改写把 `git@github.com:team/repo.git` 和 `ssh://git@github.com/team/repo.git` 变成 `https://github.com/team/repo.git`。变量在 environment-manager 启动环境中，其子进程（Claude、Bash、Git）都会继承。改写后的 HTTPS 继续走 `HTTPS_PROXY`；`GIT_SSL_CAINFO` 指向 runtime 合并 CA bundle。关闭 credential 交互、terminal prompt 和 editor，避免无人值守沙箱阻塞。
 
 Runner 把 environment-manager 作为 E2B 后台进程启动。包含双凭证的 payload 通过进程 PID 直接写入 stdin，随后显式关闭 EOF；payload 不写入沙箱文件系统。stdin 发送或关闭失败时，Runner 终止尚未完整初始化的后台进程并按沙箱启动失败处理。
 
@@ -97,10 +118,10 @@ Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handl
 
 1. workspace API key、platform `sessionKey` cookie 按原鉴权链处理；lifecycle-bound code-session token 只在此 `POST` 路径被接受。
 2. code-session token 按 hash 查询，且 code session 必须 active、public session 未 terminated、`worker_lease_expires_at > now()`；失败返回 `401 authentication_error`。
-3. 请求体通过 `http.MaxBytesReader` 边计数边流式转发，超过 32 MiB 返回 `413`；不预读、不落盘，也不解析或校验 `model`。
-4. 目标为 `{anthropic_upstream.base_url}/v1/messages`。
+3. 请求体通过 `http.MaxBytesReader` 限制为 32 MiB；只偷看顶层 `model` 后按当前 workspace 精确解析 Provider，剩余请求体继续流式转发。模型未配置返回 `400`，workspace 无 Provider 返回 `503`。
+4. 目标为该 Provider 的 `{base_url}/v1/messages`；请求 body 原样转发，不改写模型 ID。
 5. 删除下游 `Authorization`、`X-Api-Key` 和所有 hop-by-hop headers。
-6. 设置服务端 `anthropic_upstream.api_key` 为上游 `X-Api-Key`。
+6. 解密 Provider Key，并设置为上游 `X-Api-Key`；Key 不进入 sandbox。
 7. 原样转发上游状态、end-to-end headers 和响应流；提交状态后立即 flush，之后每次写入继续 flush，以支持 SSE。响应一旦提交，流错误只记录并终止连接，不再尝试改写 HTTP 状态。
 
 ### `GET /v1/code/upstreamproxy/ca-cert`
@@ -160,7 +181,7 @@ Runner 不再把 Managed Agent MCP URL 改写到该接口。MCP config 保留 Ag
 
 代理执行以下边界：
 
-1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，并将签名 claims 中的 `session_id` 绑定到路径参数。
+1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，将签名 claims 中的 `session_id` 绑定到路径参数；managed-agent JWT 还会按租户回查 active Code Session 的 `current_worker_epoch`，Sandbox 恢复递增 epoch 后旧 JWT 立即失效。
 2. `mcp_url` 必须是唯一、长度不超过 2048 字节、不含 userinfo/fragment 的绝对 HTTP(S) URL，并精确匹配当前 Session Agent Snapshot 的一个远程 MCP URL。
 3. 每次请求新鲜读取 Code Session → Environment / Session 租户关系，并在加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 编译为精确 URL 集合、MCP host 集合以及 Environment host/port matcher。handler 只把未改写的 `mcp_url` 交给 `AuthorizeMCPURL`；策略同时完成精确 URL 与真实 scheme/host/有效端口授权，不使用伪造的 `host:443`，也不在 handler 中重新解析 snapshot。随后解析目标地址并应用与 upstream proxy 相同的公网 IP / DNS rebinding 防护。受控本地排障可复用 `upstream_proxy_disable_ssrf_protection`，生产默认不得关闭。
 4. 删除 OMA 的 `Authorization`、`X-Api-Key`、`Proxy-Authorization` 和 `Proxy-Connection`，保留 MCP 协议与 content negotiation header。真实 MCP 凭证只允许在服务端 header injector 边界按已验签 session claims 和目标 URL 注入；默认实现不注入。

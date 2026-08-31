@@ -14,7 +14,7 @@ func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Requ
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing code session token"))
 		return SessionCredentialClaims{}, "", false
 	}
-	claims, err := h.service.AuthenticateSessionIngress(token, "")
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, "")
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid code session token"))
 		return SessionCredentialClaims{}, "", false
@@ -23,11 +23,17 @@ func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) authorizeSessionIngress(w http.ResponseWriter, r *http.Request, codeSessionID string) bool {
-	if err := h.authorizeSessionIngressRequest(r, codeSessionID); err != nil {
+	_, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
+	return ok
+}
+
+func (h *Handler) authorizeSessionIngressClaims(w http.ResponseWriter, r *http.Request, codeSessionID string) (SessionCredentialClaims, bool) {
+	claims, err := h.sessionIngressClaims(r, codeSessionID)
+	if err != nil {
 		h.errorAdapter.Write(w, r, err)
-		return false
+		return SessionCredentialClaims{}, false
 	}
-	return true
+	return claims, true
 }
 
 func (h *Handler) authorizeSessionIngressRequest(r *http.Request, codeSessionID string) error {
@@ -46,9 +52,17 @@ func (h *Handler) sessionIngressClaims(r *http.Request, codeSessionID string) (S
 	if token == "" {
 		return SessionCredentialClaims{}, sessionIngressTokenRequired()
 	}
-	claims, err := h.service.AuthenticateSessionIngress(token, codeSessionID)
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, codeSessionID)
 	if err != nil {
 		return SessionCredentialClaims{}, sessionIngressTokenInvalid(err)
 	}
 	return claims, nil
+}
+
+func codeSessionStreamRouteFromClaims(claims SessionCredentialClaims) CodeSessionStreamRoute {
+	return CodeSessionStreamRoute{
+		CodeSessionID:     claims.SessionID,
+		WorkspaceUUID:     claims.WorkspaceUUID,
+		SessionExternalID: claims.PublicSessionID,
+	}
 }

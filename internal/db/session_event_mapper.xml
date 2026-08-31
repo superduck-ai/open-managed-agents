@@ -58,19 +58,6 @@
         AND deleted_at IS NULL
     </select>
 
-    <select id="FindLatestToolPermissionRequest" resultType="sessionEventRow">
-        SELECT <include refid="columns"/>
-        FROM session_events
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND event_type IN ('agent.tool_use', 'agent.mcp_tool_use')
-        AND (external_id = #{toolUseID} OR payload-&gt;&gt;'tool_use_id' = #{toolUseID})
-        AND deleted_at IS NULL
-        ORDER BY CASE WHEN external_id = #{toolUseID} THEN 0 ELSE 1 END,
-        created_at DESC, uuid DESC
-        LIMIT 1
-    </select>
-
     <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events

@@ -6,7 +6,6 @@ import {
   act,
   cleanup,
   type CodeMirrorTestElement,
-  codeBlockContaining,
   createAgentRequestFixture,
   fireEvent,
   mockAgentsApi,
@@ -23,17 +22,59 @@ import {
   within,
   workspaceContextValue,
 } from './ManagedAgentsPage.test-utils';
+import type { AuthContextValue } from '../../shared/auth/context';
 
 export function registerManagedAgentsAgentsTests() {
-  test('does not mark the create dialog busy after model configuration loading fails', async () => {
+  test('guides agent creation to LLM configuration when no provider exists', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
-    mockAgentsApi([], { modelMappingsErrorOnce: true });
+    mockAgentsApi([], { modelsNotConfigured: true });
     render(
       <WorkspaceContext.Provider value={workspaceContextValue('default')}>
         <ManagedAgentsPage section="agents" />
       </WorkspaceContext.Provider>,
       undefined,
-      { seedModelMappings: false },
+      { seedModels: false },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const emptyState = await within(dialog).findByTestId('llm-provider-required');
+    expect(emptyState.textContent).toContain('No models configured');
+    expect(emptyState.textContent).toContain('Configure a model to get started.');
+    expect(within(emptyState).getByRole('button', { name: 'Configure models' })).toBeTruthy();
+    expect(within(emptyState).queryByRole('alert')).toBeNull();
+  });
+
+  test('does not send non-administrators from agent creation to model configuration', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([], { modelsNotConfigured: true });
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="agents" />
+      </WorkspaceContext.Provider>,
+      undefined,
+      { auth: managedAgentsAuth('developer'), seedModels: false },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+
+    const emptyState = await within(screen.getByRole('dialog', { name: 'Create agent' })).findByTestId(
+      'llm-provider-required',
+    );
+    expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
+    expect(within(emptyState).queryByRole('button', { name: 'Configure models' })).toBeNull();
+  });
+
+  test('does not mark the create dialog busy after model configuration loading fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([], { modelsErrorOnce: true });
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="agents" />
+      </WorkspaceContext.Provider>,
+      undefined,
+      { seedModels: false },
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
@@ -82,6 +123,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(dialog).getByRole('tab', { name: 'Rendered' }).getAttribute('aria-selected')).toBe('true');
     expect(within(dialog).getByText('General')).toBeTruthy();
     expect(within(dialog).getByDisplayValue('Untitled agent')).toBeTruthy();
+    expect(within(dialog).getByText('Description (optional)').closest('label')?.className).toContain('grid gap-2');
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
     expect(dialog.textContent).toContain('name: Untitled agent');
     expect(dialog.textContent).toContain('mcp_servers: []');
@@ -154,7 +196,7 @@ export function registerManagedAgentsAgentsTests() {
         button: /Incident commander/i,
         yaml: [
           'name: Incident commander',
-          'model: claude-opus-4-8',
+          'model: claude-sonnet-4-6',
           'https://api.githubcopilot.com/mcp/',
           'mcp_server_name: github',
         ],
@@ -382,7 +424,17 @@ export function registerManagedAgentsAgentsTests() {
     const githubCard = within(dialog).getByText('GitHub').closest('[data-slot="card"]') as HTMLElement;
     expect(githubCard).toBeTruthy();
     fireEvent.click(within(githubCard).getByRole('button', { name: 'Tool permissions' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Always allow' }));
+    const alwaysAllowItem = screen.getByRole('menuitemradio', { name: 'Always allow' });
+    expect(alwaysAllowItem.className).toContain('whitespace-nowrap');
+    for (const label of ['Always allow', 'Always ask', 'Always deny']) {
+      expect(
+        screen.getByRole('menuitemradio', { name: label }).querySelector('[data-slot="permission-option-icon"]'),
+      ).toBeTruthy();
+    }
+    const permissionMenu = alwaysAllowItem.closest('[data-slot="dropdown-menu-content"]');
+    expect(permissionMenu?.className).toContain('w-max');
+    expect(permissionMenu?.className).toContain('min-w-40');
+    fireEvent.click(alwaysAllowItem);
 
     const addMcpButton = within(dialog).getByRole('combobox', { name: 'Add MCP server' });
     const addCustomToolButton = within(dialog).getByRole('button', { name: 'Add custom tool' });
@@ -1356,7 +1408,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(dialog).getByText('General')).toBeTruthy();
     expect(within(dialog).getByDisplayValue('Editable agent')).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'Save new version' }).hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true);
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
 
@@ -1401,7 +1453,10 @@ export function registerManagedAgentsAgentsTests() {
     const nameInput = within(dialog).getByDisplayValue('Historical config');
     expect(within(dialog).getByDisplayValue('Historical description')).toBeTruthy();
     fireEvent.change(nameInput, { target: { value: 'Historical config revised' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+    const saveButton = within(dialog).getByRole('button', { name: 'Save' });
+    expect(saveButton.className).toContain('hover:bg-foreground/90');
+    expect(saveButton.className).not.toContain('hover:bg-muted');
+    fireEvent.click(saveButton);
 
     await waitFor(() =>
       expect(
@@ -1464,7 +1519,7 @@ export function registerManagedAgentsAgentsTests() {
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
     expect(within(dialog).getByText(/Name is required/i)).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'Save new version' }).hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true);
   });
 
   test('validates JSON edit config and saves a canonicalized new version body', async () => {
@@ -1494,7 +1549,7 @@ export function registerManagedAgentsAgentsTests() {
     setAgentConfigEditorValue(dialog, '{', 'Agent config JSON');
 
     expect(within(dialog).getByText(/JSON is not valid/i)).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'Save new version' }).hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true);
 
     setAgentConfigEditorValue(
       dialog,
@@ -1517,7 +1572,7 @@ export function registerManagedAgentsAgentsTests() {
     );
     expect(within(dialog).queryByText(/JSON is not valid/i)).toBeNull();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
       expect(
@@ -1570,7 +1625,7 @@ export function registerManagedAgentsAgentsTests() {
       fireEvent.change(within(dialog).getByDisplayValue(`Editable agent ${status}`), {
         target: { value: `Updated agent ${status}` },
       });
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
       expect(await within(dialog).findByText(message)).toBeTruthy();
       expect(within(dialog).getByDisplayValue(`Updated agent ${status}`)).toBeTruthy();
@@ -1644,7 +1699,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(await within(dialog).findByText('Worker')).toBeTruthy();
 
     fireEvent.change(within(dialog).getByDisplayValue('Coordinator'), { target: { value: 'Coordinator updated' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
       expect(
@@ -2088,4 +2143,18 @@ export function registerManagedAgentsAgentsTests() {
       api.requests.some((request) => request.url === '/v1/agents/agent_archiveerror123456/archive?beta=true'),
     ).toBe(true);
   });
+}
+
+function managedAgentsAuth(role: string): AuthContextValue {
+  return {
+    account: {
+      uuid: 'acct_managed_agents_test',
+      email_address: 'managed-agents-test@example.com',
+      memberships: [{ role, organization: { uuid: 'org_test' } }],
+    },
+    status: 'authenticated',
+    csrfToken: 'csrf_managed_agents_test',
+    refresh: async () => undefined,
+    logout: async () => undefined,
+  };
 }

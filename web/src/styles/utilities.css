@@ -98,153 +98,78 @@
   background: color-mix(in srgb, var(--muted-foreground) 42%, transparent);
 }
 
-.sidebar-scroll-area {
+.scrollbar-none {
   scrollbar-width: none;
 }
 
-.sidebar-scroll-area::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
-.oma-session-idle-gap {
-  --oma-session-idle-gap-border-300: 30 3.3% 11.8%;
-  --oma-session-idle-gap-text-500: 51 3.1% 43.7%;
-  border-color: hsl(var(--oma-session-idle-gap-border-300) / 8%);
-  color: hsl(var(--oma-session-idle-gap-text-500));
+.session-minimap-bottom-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
 }
 
-.dark .oma-session-idle-gap,
-:root[data-theme='dark'] .oma-session-idle-gap {
-  --oma-session-idle-gap-border-300: 51 16.5% 84.5%;
-  --oma-session-idle-gap-text-500: 48 4.8% 59.2%;
+.session-trace-layout {
+  position: relative;
+  display: flex;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .oma-session-idle-gap {
-    --oma-session-idle-gap-border-300: 51 16.5% 84.5%;
-    --oma-session-idle-gap-text-500: 48 4.8% 59.2%;
+.session-trace-layout[data-layout-mode='overlay'] .session-inspector-shell {
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.session-trace-layout[data-layout-mode='split'] .session-trace-resize-handle {
+  background: color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.session-inspector-event-row:focus-visible {
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--ring) 24%, transparent);
+}
+
+.session-inspector-open-label {
+  display: none;
+}
+
+@keyframes session-turn-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
   }
 }
 
-.oma-session-idle-gap-stripes {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    transparent 0 8px,
-    hsl(var(--oma-session-idle-gap-border-300)) 8px 16px
-  );
-  opacity: 0.04;
+[data-transcript-block='agent'][data-entering] {
+  animation: session-turn-enter 180ms ease-out;
 }
 
-.oma-session-timeline {
-  --oma-session-timeline-accent-100: 210 70.9% 51.6%;
-  --oma-session-timeline-accent-200: 210 70.9% 51.6%;
-  --oma-session-timeline-bg-000: 0 0% 100%;
-  --oma-session-timeline-bg-200: 53 28.6% 94.5%;
-  --oma-session-timeline-bg-300: 48 25% 92.2%;
-  --oma-session-timeline-danger-100: 0 56.2% 45.4%;
-  --oma-session-timeline-text-300: 60 2.5% 23.3%;
-  --oma-session-timeline-text-400: 51 3.1% 43.7%;
-  --oma-session-timeline-text-500: 51 3.1% 43.7%;
-}
-
-.dark .oma-session-timeline,
-:root[data-theme='dark'] .oma-session-timeline {
-  --oma-session-timeline-accent-100: 210 70.9% 51.6%;
-  --oma-session-timeline-accent-200: 210 70.9% 51.6%;
-  --oma-session-timeline-bg-000: 60 2.1% 18.4%;
-  --oma-session-timeline-bg-200: 30 3.3% 11.8%;
-  --oma-session-timeline-bg-300: 60 2.6% 7.6%;
-  --oma-session-timeline-danger-100: 0 67% 59.6%;
-  --oma-session-timeline-text-300: 50 9% 73.7%;
-  --oma-session-timeline-text-400: 48 4.8% 59.2%;
-  --oma-session-timeline-text-500: 48 4.8% 59.2%;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .oma-session-timeline {
-    --oma-session-timeline-accent-100: 210 70.9% 51.6%;
-    --oma-session-timeline-accent-200: 210 70.9% 51.6%;
-    --oma-session-timeline-bg-000: 60 2.1% 18.4%;
-    --oma-session-timeline-bg-200: 30 3.3% 11.8%;
-    --oma-session-timeline-bg-300: 60 2.6% 7.6%;
-    --oma-session-timeline-danger-100: 0 67% 59.6%;
-    --oma-session-timeline-text-300: 50 9% 73.7%;
-    --oma-session-timeline-text-400: 48 4.8% 59.2%;
-    --oma-session-timeline-text-500: 48 4.8% 59.2%;
+@keyframes session-inspector-detail-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
 }
 
-.oma-session-timeline-track-active {
-  background-color: hsl(var(--oma-session-timeline-bg-300));
+.session-inspector-detail-card {
+  border-top: 0.5px solid color-mix(in srgb, var(--border) 82%, transparent);
+  box-shadow: 0 -12px 28px -24px color-mix(in oklch, var(--foreground) 45%, transparent);
+  animation: session-inspector-detail-enter 180ms ease-out;
 }
 
-.oma-session-timeline-track-hover {
-  background-color: hsl(var(--oma-session-timeline-bg-300) / 50%);
-  opacity: 1;
+@media (prefers-reduced-motion: reduce) {
+  [data-transcript-block='agent'][data-entering],
+  .session-inspector-detail-card {
+    animation: none;
+  }
 }
 
-.oma-session-timeline-track-inactive {
-  background-color: hsl(var(--oma-session-timeline-bg-300) / 40%);
-  opacity: 0.85;
-}
+@container (min-width: 1056px) {
+  .session-inspector-open-trigger {
+    width: auto;
+    padding-inline: 0.75rem;
+  }
 
-.oma-session-timeline-playhead-dot {
-  background-color: hsl(var(--oma-session-timeline-text-300));
-}
-
-.oma-session-timeline-playhead-label {
-  background-color: hsl(var(--oma-session-timeline-bg-300));
-  color: hsl(var(--oma-session-timeline-text-300));
-  --tw-ring-color: hsl(var(--oma-session-timeline-text-300));
-}
-
-.oma-session-timeline-tooltip {
-  background-color: hsl(var(--oma-session-timeline-bg-000));
-  border: 0.5px solid color-mix(in srgb, hsl(var(--oma-session-timeline-text-500)) 28%, transparent);
-  color: hsl(var(--oma-session-timeline-text-300));
-}
-
-.oma-session-timeline-tooltip-title {
-  color: hsl(var(--oma-session-timeline-text-300));
-}
-
-.oma-session-timeline-tooltip-time {
-  color: hsl(var(--oma-session-timeline-text-500));
-}
-
-.oma-session-timeline-tick-neutral {
-  background-color: hsl(var(--oma-session-timeline-text-500) / 40%);
-}
-
-.oma-session-timeline-tick-user {
-  background-color: rgb(196 102 134 / 80%);
-}
-
-.oma-session-timeline-tick-agent {
-  background-color: hsl(var(--oma-session-timeline-accent-200) / 80%);
-}
-
-.oma-session-timeline-tick-tool {
-  background-color: hsl(var(--oma-session-timeline-text-400) / 70%);
-}
-
-.oma-session-timeline-tick-subagent {
-  background-color: rgb(98 153 135 / 80%);
-}
-
-.oma-session-timeline-tick-error {
-  background-color: hsl(var(--oma-session-timeline-danger-100));
-}
-
-.oma-session-timeline-tick-selected {
-  opacity: 1;
-  outline: 1.5px solid hsl(var(--oma-session-timeline-accent-100));
-  outline-offset: 1px;
-}
-
-.oma-session-timeline-tick-hovered {
-  opacity: 1;
-  outline: 1.5px solid hsl(var(--oma-session-timeline-accent-200) / 50%);
-  outline-offset: 1px;
+  .session-inspector-open-label {
+    display: inline;
+  }
 }

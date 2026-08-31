@@ -19,6 +19,18 @@ database:
 redis:
   url: redis://localhost:6379
 
+# Optional. Omit the entire auth.smtp block to accept any non-empty verification
+# code without sending email. Configure every SMTP field together for real email.
+auth:
+  smtp:
+    # Required host:port. Surrounding whitespace is removed during loading.
+    addr: smtp.example.com:587
+    # Required email address used for SMTP authentication and as the sender.
+    username: sender@example.com
+    # Required. The verification-code HMAC key is derived from this password,
+    # so there is no separate email-login secret to configure.
+    password: replace-me
+
 storage:
   type: s3
   s3:
@@ -30,13 +42,6 @@ storage:
     force_path_style: true
   max_file_bytes: 524288000
   workspace_limit_bytes: 536870912000
-
-anthropic_upstream:
-  base_url: https://api.anthropic.com
-  api_key: ""
-  # Optional exact model ID overrides. Mapped IDs are displayed and saved; unmapped IDs keep the original behavior.
-  # Chained mappings are rejected; multiple logical IDs may share one upstream ID.
-  model_mappings: {}
 
 batch:
   worker_enabled: true
@@ -58,7 +63,7 @@ e2b:
   debug: false
   template: managed-agent-sandbox
   request_timeout: 60s
-  sandbox_timeout: 5m
+  sandbox_timeout: 30s
 
 environment_runner:
   enabled: true
@@ -67,6 +72,12 @@ environment_runner:
   manager_path: /usr/local/bin/environment-manager
   claude_agent_version: 2.1.120
   claude_path: /opt/claude-code/bin/claude
+  # Extra hosts rewritten from SSH remotes to HTTPS (in addition to built-in github.com).
+  # Bare DNS hostnames only (labels [a-z0-9-], no leading/trailing hyphen); each adds git@host: and ssh://git@host/ → https://host/.
+  git_ssh_to_https_hosts: []
+  # Example:
+  # git_ssh_to_https_hosts:
+  #   - gitlab.xxxx.cn
 
 code_session:
   # Set when a sandbox must call this service through a specific reachable URL.
@@ -74,7 +85,7 @@ code_session:
   # export endpoints from this URL, so telemetry silently stops without it.
   sandbox_api_base_url: ""
   # Derived default: true for dev and false for prod.
-  # Required in prod; dev creates an in-memory key when this is empty.
+  # Required in prod; also signs CCRv2 Git commits. Dev creates an in-memory key when empty.
   jwt_signing_private_key_file: ""
   upstream_proxy_mitm_enabled: false
   # Required only when upstream_proxy_mitm_enabled is true.
@@ -140,6 +151,13 @@ vault:
       - version: 1
         kek: "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE="
         kek_file: ""
+  # Deployment-owned OAuth clients for vault MCP OAuth enrollment. Exact
+  # mcp_server_url match only. BYO client_id on vault-auth/start overrides.
+  # Inline client_secret is accepted for local/dev; do not commit secrets.
+  platform_oauth_clients:
+    - mcp_server_url: "https://api.githubcopilot.com/mcp/"
+      client_id: "Iv23liEXAMPLE"
+      client_secret: "replace-me"
 
 bootstrap:
   seed_api_keys:

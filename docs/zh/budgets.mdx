@@ -1,0 +1,181 @@
+---
+title: "会话预算"
+sidebarTitle: "会话预算"
+description: "通过按公开标价强制执行的硬性美元预算来限制会话的支出。"
+---
+
+<Warning>
+  OMA 当前版本尚未实现按公开标价计算的美元会话硬预算。本页保留与上游兼容的目标合同；部署者目前应通过模型配额、基础设施限制和外部计费告警控制成本。
+</Warning>
+
+"会话 budget"（会话预算）是您在[创建会话](/docs/zh/sessions)时设置的可选硬性支出上限。平台会持续按公开标价对会话消耗的所有内容进行计价（即会话的**标价成本**），一旦该成本达到预算，便停止发出新的模型请求。超过上限时正在进行的请求仍会完成，因此最终的标价成本可能会[略微超出预算](/docs/zh/budgets#when-a-session-reaches-its-budget)。达到预算的会话会暂停并进入[空闲](/docs/zh/session-operations#session-statuses)状态，而不是终止；更改或移除预算会自动恢复其工作。部署接受相同的预算，并将其应用于它们启动的每个会话；请参阅[部署上的预算](/docs/zh/budgets#budgets-on-deployments)。
+
+<Note>
+  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+</Note>
+
+## 在创建会话时设置预算
+
+创建会话时传递可选的 `budget` 字段：
+
+<CodeGroup>
+  ```bash cURL
+  session=$(curl -fsSL http://localhost:38080/v1/sessions \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<EOF
+  {
+    "agent": "$AGENT_ID",
+    "environment_id": "$ENVIRONMENT_ID",
+    "budget": {
+      "type": "limit",
+      "max_list_cost": {"amount": "2500", "currency": "USD"}
+    }
+  }
+  EOF
+  )
+  SESSION_ID=$(jq -r '.id' <<< "$session")
+  ```
+</CodeGroup>
+
+`budget` 对象有两个字段：
+
+* `type` 始终为 `"limit"`。
+* `max_list_cost` 是上限本身：`amount` 是以字符串形式表示的美分整数，不带前导零（`"2500"` 表示 25.00 美元，`"50"` 表示 50 美分），且必须大于零。诸如 `"25.00"` 之类的小数形式会被拒绝。金额使用字符串而非数字，以确保不会对其应用任何浮点舍入。`currency` 是大写的 ISO-4217 货币代码；`USD` 是唯一支持的货币。
+
+预算只能在创建会话时附加。向没有预算的现有会话添加预算会被拒绝，并返回 400 错误。已设置预算的会话可以随时[更改](/docs/zh/budgets#change-the-budget)或[移除](/docs/zh/budgets#remove-the-budget)其上限。
+
+## 标价成本的计量方式
+
+平台会持续按公开标价对会话消耗的内容进行计价：
+
+* **模型令牌**，按每个所用模型的标价计算
+* **网络搜索**，每 1,000 次搜索 10 美元
+* **会话运行时间**，每小时 0.08 美元
+
+这个持续累计的美元总额即为会话的**标价成本**（list cost），也是预算所比对的对象。标价成本并非您的合同价格：如果您的组织已协商折扣，会话会在标价总额达到上限时触及上限，而您的实际账单支出可能低于该上限。
+
+强制执行使用的是精确的、未舍入的标价成本。会话及其事件上报告的 `list_cost` 数值是四舍五入到最接近美分的整数美分，因此报告的数值可能与强制执行所使用的精确金额相差最多半美分。
+
+## 当会话达到其预算时
+
+上限是在模型请求之间强制执行的，而非在请求进行中。在每次模型请求之前，平台会检查会话已消耗的标价成本，一旦该总额达到上限，每个线程都会在其下一次请求之前暂停。使总额超过上限的那个请求是在会话仍低于上限时被接受的，并会运行至完成，因此暂停的会话所记录的 `list_cost` 会等于或略微超过 `max_list_cost`：上限设为 `"50"`（50 美分）的会话可能在 `list_cost` 为 `"53"` 时暂停。这是预期行为，而非计费错误，且超出部分以每个线程一次模型请求为界。请将预算视为对新工作的限制，而非精确的停止点，并在设定上限时考虑这一次请求的余量。
+
+达到预算的会话会进入空闲状态，其 `stop_reason` 为 `budget_reached`；它不会被终止，其历史记录和沙箱会像任何其他空闲会话一样被保留。在[事件流](/docs/zh/events-and-streaming)上，您将依次看到：
+
+1. 每个线程暂停时，一个 `stop_reason` 为 `budget_reached` 的 `session.thread_status_idle` 事件。
+2. 一个包含会话累计使用量和标价成本的 [`session.usage`](/docs/zh/budgets#monitor-spend) 事件。
+3. 一个 `stop_reason` 为 `budget_reached` 的 `session.status_idle` 事件。使用量事件始终紧接在此空闲事件之前。
+
+如果某个线程的最后一个请求既超过了上限又完成了其轮次，则该线程自己的 `session.thread_status_idle` 事件会报告 `end_turn`，而会话仍报告 `budget_reached`；请将会话级别的 `stop_reason` 视为会话因达到预算而暂停的信号。
+
+### 达到上限时接受的事件
+
+当会话处于或超过其预算时，它仅接受用于结算已在进行中的工作的事件：
+
+* `user.tool_confirmation`
+* `user.tool_result`
+* `user.custom_tool_result`
+* `user.interrupt`
+
+任何会启动新工作的事件（例如 `user.message`）都会被拒绝，并返回列出上述事件的 400 错误。已结算的结果会被记录，但不会触发新的模型请求；会话保持在其预算处暂停。
+
+当会话因达到预算而暂停（所有线程都在上限处暂停）时发送的 `user.interrupt` 会被接受并忽略：它不会出现在事件列表中，也不会改变任何内容。请更改或移除预算以继续。
+
+## 恢复达到预算的会话
+
+通过会话更新来更改或移除预算。被接受的更新会自动恢复会话已暂停的工作；无需客户端进一步操作。
+
+### 更改预算
+
+使用新的 `max_list_cost` 更新会话。新值可以高于或低于当前上限，但必须严格大于会话已消耗的标价成本；否则更新会被拒绝，并返回 400 错误：`budget.max_list_cost must be greater than the session's consumed list cost`。由于会话暂停时已消耗的成本通常[略微超过旧上限](/docs/zh/budgets#when-a-session-reaches-its-budget)，请基于会话报告的 `usage.list_cost` 而非旧的 `max_list_cost` 来设定新值。将其设置为比该数值高出一美分或更多：报告的值是经过舍入的，可能略低于检查所使用的精确已消耗成本。
+
+<CodeGroup>
+  ```bash cURL
+  curl -sS --fail-with-body "http://localhost:38080/v1/sessions/$SESSION_ID" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<'EOF'
+  {
+    "budget": {
+      "type": "limit",
+      "max_list_cost": {"amount": "4000", "currency": "USD"}
+    }
+  }
+  EOF
+  ```
+</CodeGroup>
+
+### 移除预算
+
+将 `budget` 设置为 `null` 以完全移除上限。会话已暂停的工作会恢复，随后产生的 `session.updated` 事件中 `budget` 会被设置为 `null`。
+
+<CodeGroup>
+  ```bash cURL
+  curl -sS --fail-with-body "http://localhost:38080/v1/sessions/$SESSION_ID" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d '{"budget": null}'
+  ```
+</CodeGroup>
+
+<Warning>
+  移除会话的预算是单向操作：已移除预算的会话无法再被赋予新的预算。如需保留对会话的上限，请改为更改预算。
+</Warning>
+
+## 监控支出
+
+会话对象包含其 `budget` 以及一个带有已跟踪支出的 `usage` 对象：`usage.list_cost` 是会话已消耗的标价成本，`usage.active_seconds` 是其运行时成本所基于的运行时间。对于因 `budget_reached` 而暂停的会话，预期 `usage.list_cost` 会等于或略微超过 `max_list_cost`：[超过上限的那个请求](/docs/zh/budgets#when-a-session-reaches-its-budget)在暂停之前已完成。会话级别的 `active_seconds` 对并发线程的重叠活动只计算一次。线程检索响应在线程自己的 `usage` 上包含相同的两个字段，按线程计价。每个线程的数值是独立舍入的，且不包括会话的运行时成本，因此它们的总和不会精确等于会话的 `list_cost`；预算强制执行所依据的是会话级别的数值。
+
+`session.usage` 事件是会话累计使用量和已跟踪标价成本的快照。它包含会话的令牌总数、`list_cost`、`active_seconds`、`server_tool_use` 请求计数（`web_search_requests` 按每次请求计入标价成本；`web_fetch_requests` 读数为 `0`，因为网络抓取请求不收取每次请求费用且不计量），以及会话 `budget` 的回显（当会话没有预算时为 `null`）。它会出现在事件列表和会话流中。无论停止原因为何，会话都会在进入空闲状态之前立即发出一个此类事件，因此达到预算的会话总会在因达到预算而产生的空闲事件之前立即发出一个。
+
+有关从流和会话对象读取使用量的信息，请参阅[跟踪使用量](/docs/zh/events-and-streaming#tracking-usage)。
+
+## 多智能体会话中的预算
+
+[多智能体](/docs/zh/multiagent-orchestration)（multiagent）会话在其所有线程之间共享单一预算；没有每线程上限。每个线程的消耗按其自己所用的模型计价，当达到共享上限时，各线程独立暂停。[顾问](/docs/zh/multiagent-orchestration#give-the-session-an-advisor)（advisor）咨询计入同一预算，按顾问模型的费率计价。一个线程可能在 `budget_reached` 处暂停，而另一个线程正在完成其进行中的请求。
+
+待处理的询问优先于上限：如果会话中一个线程正在等待 `requires_action`，而另一个线程在 `budget_reached` 处暂停，则会话级别报告 `requires_action`。待处理的请求仍需要回应，而回应它属于预算不会阻止的[结算事件](/docs/zh/budgets#events-accepted-at-the-cap)。
+
+## 部署上的预算
+
+[部署](/docs/zh/scheduled-deployments)（deployment）在创建或更新时接受相同的 `budget` 对象：
+
+```json
+{
+  "budget": {
+    "type": "limit",
+    "max_list_cost": { "amount": "2000", "currency": "USD" }
+  }
+}
+```
+
+该上限会被复制到部署启动的每个会话上，因此它分别限制每次运行，而非部署的累计支出。更改部署的预算会应用于部署此后启动的会话，而不会应用于已在运行的会话。与会话不同，部署的预算可以用 `null` 清除，之后可以再次设置。请参阅[为每次运行设置预算](/docs/zh/scheduled-deployments#set-a-budget-on-each-run)。
+
+## 没有标价的模型
+
+预算只能跟踪平台能够计价的消耗。如果创建的带预算会话的智能体，或其[多智能体名单](/docs/zh/multiagent-orchestration)上的任何智能体或顾问，使用了没有公开标价的模型，则创建请求会被拒绝，并返回说明该模型没有可用标价的 400 错误。
+
+如果带预算会话的使用量开始包含没有标价的模型，预算将无法再衡量会话的支出：会话可能会以 `stop_reason` 为 `budget_reached` 暂停，且更改预算会被拒绝。请移除预算以恢复会话。
+
+## 错误参考
+
+在以下情况下，与预算相关的请求会被拒绝：
+
+| 条件                                                                                                                                                | 状态  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| 在会话处于或超过其预算时发送启动工作的事件（例如 `user.message`）；错误会列出[接受的结算事件](/docs/zh/budgets#events-accepted-at-the-cap) | 400 |
+| 预算被设置为等于或低于会话已消耗标价成本的值                                                                                                                            | 400 |
+| 向创建时没有预算的会话添加预算，或在移除后重新添加                                                                                                                         | 400 |
+| `amount` 不是整数美分（例如 `"25.00"`）、为零或负数，或 `currency` 不是 `USD`                                                                                         | 400 |
+| 带预算的创建请求引用了[没有公开标价](/docs/zh/budgets#models-without-a-list-price)的模型                                 | 400 |
+
+<Note>
+  会话预算是针对单个会话的美元硬性上限（以美分表示），由平台强制执行。它们不同于消息 API 的任务预算，后者是建议性的、以令牌计量的预算，模型使用它在单个智能体循环内进行自我调节。
+</Note>

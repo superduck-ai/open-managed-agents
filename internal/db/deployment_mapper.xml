@@ -85,6 +85,15 @@
         <include refid="columns"/>
     </insert>
 
+	<select id="CountScheduledByOrganization" result="scalar">
+		SELECT COUNT(*)
+		FROM deployments
+		WHERE organization_uuid = #{organizationUUID}
+		AND schedule IS NOT NULL
+		AND archived_at IS NULL
+		AND deleted_at IS NULL
+	</select>
+
     <select id="FindByExternalID" resultType="deploymentMapperRow">
         SELECT
         <include refid="columns"/>
@@ -119,7 +128,9 @@
             resources = CAST(#{params.Resources,sensitive=true} AS jsonb),
             resource_secrets = CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
             vault_ids = CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
-            schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
+            <if test="params.ScheduleChanged">
+                schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
+            </if>
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
@@ -139,6 +150,16 @@
         <include refid="columns"/>
     </update>
 
+	<update id="ArchiveByRootAgent" result="exec">
+		UPDATE deployments
+		SET archived_at = COALESCE(archived_at, NOW()),
+			updated_at = NOW()
+		WHERE workspace_uuid = #{workspaceUUID}
+		AND agent_external_id = #{agentExternalID}
+		AND archived_at IS NULL
+		AND deleted_at IS NULL
+	</update>
+
     <update id="PauseByExternalID" result="returning" resultType="deploymentMapperRow">
         UPDATE deployments
         SET status = 'paused',
@@ -157,13 +178,32 @@
         SET status = 'active',
             paused_reason = NULL,
             updated_at = NOW()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND external_id = #{externalID}
+		WHERE workspace_uuid = #{workspaceUUID}
+		AND external_id = #{externalID}
         AND deleted_at IS NULL
         AND archived_at IS NULL
         RETURNING
         <include refid="columns"/>
     </update>
+
+	<select id="ListActiveSchedules" resultType="DeploymentSchedule">
+		SELECT workspace_uuid, external_id, schedule
+		FROM deployments
+		WHERE status = 'active'
+		AND archived_at IS NULL
+		AND deleted_at IS NULL
+		AND schedule IS NOT NULL
+	</select>
+
+	<update id="PauseAfterScheduledRun" result="rows">
+		UPDATE deployments
+		SET last_run_at = #{params.LastRunAt},
+			status = 'paused',
+			paused_reason = CAST(#{params.PausedReason,sensitive=true} AS jsonb),
+			updated_at = #{params.LastRunAt}
+		WHERE workspace_uuid = #{params.WorkspaceUUID}
+		AND external_id = #{params.ExternalID}
+	</update>
 
     <select id="ListPage" resultType="deploymentMapperRow">
         SELECT

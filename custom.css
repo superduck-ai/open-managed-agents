@@ -1,0 +1,156 @@
+/* OMA documentation chrome: quiet surfaces, clear hierarchy, no decorative
+   navigation icons, and one consistent selection language in both themes. */
+:root {
+  --oma-active-fg: #18181b;
+  --oma-hover-bg: rgba(24, 24, 27, 0.035);
+  --oma-divider: rgba(24, 24, 27, 0.085);
+  --oma-focus: rgba(24, 24, 27, 0.32);
+  --oma-header-bg: rgba(255, 255, 255, 0.9);
+  --oma-sidebar-bg: rgba(250, 250, 250, 0.42);
+  --oma-sidebar-width: 16.5rem;
+}
+
+html.dark {
+  --oma-active-fg: #fafafa;
+  --oma-hover-bg: rgba(255, 255, 255, 0.045);
+  --oma-divider: rgba(255, 255, 255, 0.09);
+  --oma-focus: rgba(250, 250, 250, 0.4);
+  --oma-header-bg: rgba(12, 12, 14, 0.9);
+  --oma-sidebar-bg: rgba(16, 16, 18, 0.42);
+}
+
+header.is-not-custom {
+  background: var(--oma-header-bg);
+  border-bottom: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(20px) saturate(135%);
+  -webkit-backdrop-filter: blur(20px) saturate(135%);
+}
+
+header.is-not-custom [class~="border-b"] {
+  border-bottom-width: 0 !important;
+  border-bottom-color: transparent !important;
+}
+
+header.is-not-custom > div[class*="bg-background"] {
+  background: var(--oma-header-bg) !important;
+}
+
+nav[aria-label="Pages"] {
+  background: var(--oma-sidebar-bg);
+  border-right: 1px solid var(--oma-divider);
+}
+
+nav[aria-label="Main"] a,
+nav[aria-label="Pages"] a {
+  outline: none;
+}
+
+nav[aria-label="Main"] a:focus-visible,
+nav[aria-label="Pages"] a:focus-visible,
+button[aria-label="打开搜索"]:focus-visible,
+button[aria-label="Open search"]:focus-visible,
+button[aria-label="Change theme preference"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--oma-focus) !important;
+}
+
+nav[aria-label="Main"] a[class~="text-gray-950"] {
+  position: relative;
+  color: var(--oma-active-fg) !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-weight: 600;
+}
+
+nav[aria-label="Main"] a[class~="text-gray-950"]::after {
+  position: absolute;
+  right: 1rem;
+  bottom: 0.12rem;
+  left: 1rem;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+  opacity: 0.72;
+}
+
+nav[aria-label="Pages"] a {
+  border-radius: 0.3rem;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+nav[aria-label="Pages"] a:hover {
+  background: var(--oma-hover-bg);
+}
+
+nav[aria-label="Pages"] a[class~="text-primary"] {
+  position: relative;
+  border-left: 0 !important;
+  color: var(--oma-active-fg) !important;
+  background: transparent;
+  box-shadow: none !important;
+  font-weight: 600;
+}
+
+nav[aria-label="Pages"] a[class~="text-primary"]::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 3px;
+  height: 1rem;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+  opacity: 0.68;
+  transform: translateY(-50%);
+}
+
+nav[aria-label="Pages"] a > svg,
+nav[aria-label="Main"] a > svg {
+  display: none;
+}
+
+button[aria-label="打开搜索"],
+button[aria-label="Open search"],
+button[aria-label="Change theme preference"] {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+@media (min-width: 1024px) {
+  nav[aria-label="Pages"] {
+    width: var(--oma-sidebar-width) !important;
+  }
+
+  header.is-not-custom ~ #body-content {
+    padding-left: var(--oma-sidebar-width) !important;
+  }
+}
+
+@media (min-width: 1651px) {
+  main:has(> [data-api-example]) #content-area {
+    margin-left: max(
+      0px,
+      calc(50vw - 348px - var(--oma-sidebar-width))
+    ) !important;
+  }
+}
+
+@media (min-width: 1280px) {
+  main:not(:has(> [data-api-example])) #content-area {
+    width: min(
+      calc(100% - 4rem),
+      clamp(54.5rem, 60vw, 80rem)
+    ) !important;
+    max-width: none !important;
+    margin-right: auto !important;
+    margin-left: auto !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  nav[aria-label="Pages"] a {
+    transition: none;
+  }
+}

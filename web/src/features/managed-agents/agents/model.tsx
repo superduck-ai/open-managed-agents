@@ -1,7 +1,6 @@
 import { type ReactNode } from 'react';
 import { createdFilterStartISOString } from '../api';
 import { StatusPill } from '../components/common';
-import { numericValueFromKeys } from '../sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
   type AgentDetailCreatedFilter,
@@ -11,7 +10,7 @@ import {
   type AgentListFilters,
   type SessionApiResponse,
 } from '../types';
-import { objectRecord } from '../utils';
+import { numericValueFromKeys, objectRecord } from '../utils';
 
 export const emptyAgents: AgentApiResponse[] = [];
 
@@ -37,7 +36,7 @@ export function agentModelName(model: AgentApiResponse['model']) {
   if (typeof model === 'string') {
     return model;
   }
-  return model?.id || 'claude-sonnet-4-6';
+  return model?.id || '—';
 }
 
 export function relativeTime(value: string, format?: (value: number, unit: Intl.RelativeTimeFormatUnit) => string) {

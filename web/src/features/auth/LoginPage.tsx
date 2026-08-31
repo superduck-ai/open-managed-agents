@@ -21,10 +21,10 @@ type LoginFlowProps = {
 };
 
 const topNavItems = [
-  { id: 'auth.login.topNav.developerDocs', label: 'Developer Docs', href: 'https://docs.anthropic.com/' },
-  { id: 'auth.login.topNav.apiReference', label: 'API Reference', href: 'https://docs.anthropic.com/' },
-  { id: 'auth.login.topNav.cookbooks', label: 'Cookbooks', href: 'https://docs.anthropic.com/' },
-  { id: 'auth.login.topNav.quickstarts', label: 'Quickstarts', href: 'https://docs.anthropic.com/' },
+  { id: 'auth.login.topNav.developerDocs', label: 'Developer Docs', path: 'overview' },
+  { id: 'auth.login.topNav.apiReference', label: 'API Reference', path: 'api/overview' },
+  { id: 'auth.login.topNav.cookbooks', label: 'Cookbooks', path: 'quickstart' },
+  { id: 'auth.login.topNav.quickstarts', label: 'Quickstarts', path: 'quickstart' },
 ] as const;
 
 export function LoginPage() {
@@ -118,7 +118,12 @@ export function LoginFlow({
       await onVerifyMagicLink(submittedEmail, code);
       await onAuthenticated();
     } catch (err) {
-      setError(errorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')));
+      const apiError = err as { status?: unknown; code?: unknown } | undefined;
+      setError(
+        apiError?.status === 401 && apiError.code === 'authentication_error'
+          ? msg('auth.login.invalidOrExpiredCode', 'Verification code is invalid or expired')
+          : errorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')),
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -272,7 +277,8 @@ export function LoginFlow({
 }
 
 function LoginShell({ children }: { children: ReactNode }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
+  const docsLocale = locale === 'zh-CN' ? 'zh' : 'en';
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -283,7 +289,14 @@ function LoginShell({ children }: { children: ReactNode }) {
           </a>
           <nav className="hidden items-center gap-1 md:flex">
             {topNavItems.map((item) => (
-              <ButtonLink key={item.id} href={item.href} rel="noreferrer" size="sm" target="_blank" variant="ghost">
+              <ButtonLink
+                key={item.id}
+                href={`https://oma.mintlify.site/docs/${docsLocale}/${item.path}`}
+                rel="noreferrer"
+                size="sm"
+                target="_blank"
+                variant="ghost"
+              >
                 {msg(item.id, item.label)}
               </ButtonLink>
             ))}

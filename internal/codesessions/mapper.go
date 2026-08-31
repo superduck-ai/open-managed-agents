@@ -1,17 +1,14 @@
 package codesessions
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-
-	"github.com/google/uuid"
 )
 
 func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallback time.Time) (json.RawMessage, error) {
@@ -29,7 +26,7 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 	}
 	switch schema.Type {
 	case "user.message":
-		eventUUID := firstNonEmpty(schema.UUID, schema.ID, uuid.NewString())
+		eventUUID := firstNonEmpty(schema.UUID, schema.ID, uuid.NewV4().String())
 		payload := map[string]any{
 			"type":               "user",
 			"uuid":               eventUUID,
@@ -49,7 +46,7 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 		return marshalRaw(payload)
 	default:
 		if schema.UUID == "" {
-			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewString()))
+			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewV4().String()))
 		}
 		if schema.SessionID == "" {
 			setRawJSONField(fields, "session_id", codeSessionID)
@@ -81,7 +78,7 @@ func normalizeWorkerOutboundPayload(codeSessionID string, raw json.RawMessage, f
 		now = time.Now().UTC()
 	}
 	if schema.Type != "keep_alive" && schema.UUID == "" {
-		setRawJSONField(fields, "uuid", uuid.NewString())
+		setRawJSONField(fields, "uuid", uuid.NewV4().String())
 	}
 	if schema.SessionID == "" {
 		setRawJSONField(fields, "session_id", codeSessionID)
@@ -136,11 +133,11 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 	object := materializePublicPayload(fields)
 	switch event.EventType {
 	case "assistant":
-		var payload workerAssistantOutputPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
+		payload, err := decodeWorkerAssistantOutputPayload(raw)
+		if err != nil {
 			return nil, false, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
-		return assistantPublicPayloadCandidates(object, payload), true, nil
+		return assistantPublicPayloadCandidates(codeSessionID, object, payload), true, nil
 	case "user":
 		var payload workerUserOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
@@ -185,7 +182,7 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	if err := json.Unmarshal(event.Payload, &schema); err != nil {
 		return nil, fmt.Errorf("%w: invalid internal subagent payload: %w", ErrProtocol, err)
 	}
-	candidates, err := publicPayloadCandidatesFromInternalSubagentEvent(event.Payload, schema.Type, object)
+	candidates, err := publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID, event.Payload, schema.Type, object)
 	if err != nil {
 		return nil, err
 	}
@@ -203,14 +200,14 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	return payloads, nil
 }
 
-func publicPayloadCandidatesFromInternalSubagentEvent(raw json.RawMessage, eventType string, object map[string]any) ([]publicPayloadCandidate, error) {
+func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw json.RawMessage, eventType string, object map[string]any) ([]publicPayloadCandidate, error) {
 	switch eventType {
 	case "assistant":
-		var payload workerAssistantOutputPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
+		payload, err := decodeWorkerAssistantOutputPayload(raw)
+		if err != nil {
 			return nil, fmt.Errorf("%w: invalid assistant payload: %w", ErrProtocol, err)
 		}
-		return assistantPublicPayloadCandidates(object, payload), nil
+		return assistantPublicPayloadCandidates(codeSessionID, object, payload), nil
 	case "user":
 		var payload workerUserOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
@@ -239,7 +236,7 @@ func normalizePublicInternalSubagentPayload(codeSessionID string, event db.CodeS
 		payload["id"] = stablePublicEventID(codeSessionID, "internal-subagent\x00"+threadID+"\x00"+seed)
 	}
 	if stringField(payload, "uuid") == "" {
-		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewString())
+		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewV4().String())
 	}
 	if stringField(payload, "session_id") == "" {
 		payload["session_id"] = codeSessionID
@@ -291,7 +288,7 @@ func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEven
 		payload["id"] = stablePublicEventID(codeSessionID, seed)
 	}
 	if stringField(payload, "uuid") == "" {
-		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewString())
+		payload["uuid"] = firstNonEmpty(stringField(payload, "id"), uuid.NewV4().String())
 	}
 	createdAt := firstPayloadTime(payload, event.CreatedAt)
 	if createdAt.IsZero() {
@@ -450,43 +447,45 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 	return candidates
 }
 
-func assistantPublicPayloadCandidates(object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+func assistantPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+	delete(object, "content_block_index")
 	content := publicContentBlocks(workerOutputContent(schema.Content, schema.Message.Content))
 	blocks, ok := content.([]any)
 	if !ok || len(blocks) == 0 {
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "agent.message")}}
+		payload := publicPayloadWithType(object, "agent.message")
+		if schema.Message.ID != "" {
+			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, assistantContentBlockIndex(schema, 0, 1), "agent.message")
+		}
+		return []publicPayloadCandidate{{payload: payload}}
 	}
 	candidates := make([]publicPayloadCandidate, 0, len(blocks))
 	for index, value := range blocks {
+		contentBlockIndex := assistantContentBlockIndex(schema, index, len(blocks))
 		block, ok := value.(map[string]any)
 		if !ok {
+			payload := publicPayloadWithSingleContentBlock(object, "agent.message", value)
+			if schema.Message.ID != "" {
+				payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, "agent.message")
+			}
 			candidates = append(candidates, publicPayloadCandidate{
-				payload:    publicPayloadWithSingleContentBlock(object, "agent.message", value),
+				payload:    payload,
 				seedSuffix: fmt.Sprintf("content:%d", index),
 				timeOffset: time.Duration(index) * time.Millisecond,
 			})
 			continue
 		}
 		blockType := stringField(block, "type")
+		if blockType == "tool_use" {
+			continue
+		}
 		eventType := "agent.message"
 		switch blockType {
 		case "thinking":
 			eventType = "agent.thinking"
-		case "tool_use":
-			eventType = "agent.tool_use"
 		}
 		payload := publicPayloadWithSingleContentBlock(object, eventType, block)
-		if eventType == "agent.tool_use" {
-			if toolUseID := stringField(block, "id"); toolUseID != "" {
-				payload["tool_use_id"] = toolUseID
-			}
-			if name := stringField(block, "name"); name != "" {
-				payload["name"] = name
-				payload["tool_name"] = name
-			}
-			if input, ok := block["input"]; ok {
-				payload["input"] = input
-			}
+		if schema.Message.ID != "" && (eventType == "agent.message" || eventType == "agent.thinking") {
+			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
 		}
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    payload,
@@ -495,6 +494,13 @@ func assistantPublicPayloadCandidates(object map[string]any, schema workerAssist
 		})
 	}
 	return candidates
+}
+
+func assistantContentBlockIndex(schema workerAssistantOutputPayload, fallback, blockCount int) int {
+	if blockCount == 1 && schema.ContentBlockIndex != nil && *schema.ContentBlockIndex >= 0 {
+		return *schema.ContentBlockIndex
+	}
+	return fallback
 }
 
 func publicPayloadWithSingleContentBlock(object map[string]any, eventType string, block any) map[string]any {
@@ -519,21 +525,21 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		if !ok || stringField(block, "type") != "tool_result" {
 			continue
 		}
-		toolUseID := stringField(block, "tool_use_id")
-		if toolUseID == "" {
+		providerToolUseID := stringField(block, "tool_use_id")
+		if providerToolUseID == "" {
 			continue
 		}
+		toolUseID := toolUsePublicEventID(codeSessionID, providerToolUseID)
 		eventType := "agent.tool_result"
 		if claudeToolResultIsAgentThreadMessage(block) {
 			eventType = "agent.thread_message_received"
 		}
 		payload := publicPayloadWithType(object, eventType)
 		if eventType == "agent.thread_message_received" {
-			payload["from_session_thread_id"] = claudeTaskThreadIDFromKey(codeSessionID, toolUseID)
+			payload["from_session_thread_id"] = claudeTaskThreadIDFromKey(codeSessionID, providerToolUseID)
 		}
 		payload["tool_use_id"] = toolUseID
 		payload["content"] = claudeToolResultContent(block)
-		payload["raw_tool_result"] = block
 		if isError, ok := block["is_error"]; ok {
 			payload["is_error"] = isError
 		}
@@ -541,7 +547,7 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		delete(payload, "parent_tool_use_id")
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    payload,
-			seedSuffix: fmt.Sprintf("user_tool_result:%d:%s", index, toolUseID),
+			seedSuffix: fmt.Sprintf("user_tool_result:%d:%s", index, providerToolUseID),
 			timeOffset: time.Duration(index) * time.Millisecond,
 		})
 	}
@@ -624,12 +630,7 @@ func claudeTaskThreadIDFromFields(codeSessionID, toolUseID, taskID string) strin
 }
 
 func claudeTaskThreadIDFromKey(codeSessionID string, key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(codeSessionID) + "\x00claude-task\x00" + key))
-	return "sthr_" + hex.EncodeToString(sum[:16])
+	return maevents.ClaudeTaskThreadID(codeSessionID, key)
 }
 
 func claudeToolResultContent(block map[string]any) []any {

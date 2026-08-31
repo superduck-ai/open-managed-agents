@@ -20,7 +20,7 @@ import { ObservabilityToolbar } from '../toolbar';
 import { TraceDetailView } from './TraceDetailView';
 import { TraceListView } from './TraceListView';
 
-export function SessionTraceObservability({ sessionId }: { sessionId: string }) {
+export function SessionTraceObservability({ sessionId, compact = false }: { sessionId: string; compact?: boolean }) {
   const { msg } = useI18n();
   const { activeWorkspaceId, orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
@@ -66,7 +66,7 @@ export function SessionTraceObservability({ sessionId }: { sessionId: string }) 
     return (
       <ObservabilityStatus
         tone={disabled ? 'empty' : 'error'}
-        size="page"
+        size={compact ? 'compact' : 'page'}
         icon={disabled ? Ban : undefined}
         title={
           disabled
@@ -88,7 +88,7 @@ export function SessionTraceObservability({ sessionId }: { sessionId: string }) 
   }
   return (
     <TooltipProvider>
-      <div className="flex flex-col gap-5 py-3">
+      <div className={compact ? 'flex min-w-0 flex-col gap-3 px-3 py-3' : 'flex flex-col gap-5 py-3'}>
         {openTraceId ? (
           <TraceDetailView
             orgUuid={orgUuid}

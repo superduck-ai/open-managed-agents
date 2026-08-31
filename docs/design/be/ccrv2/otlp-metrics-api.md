@@ -73,13 +73,15 @@ POST /v1/code/sessions/{code_session_id}/worker/otlp/logs
 
 | Header | 必需 | 描述 |
 |--------|------|------|
-| `Authorization: Bearer sk-ant-si-<JWT>` | 是 | session-ingress JWT，必须通过签名和标准 claims 校验，且 `session_id` 必须与 path 一致 |
+| `Authorization: Bearer sk-ant-si-<JWT>` | 是 | session-ingress JWT，必须通过签名和标准 claims 校验，`session_id` 必须与 path 一致；managed-agent JWT 的 worker epoch 必须仍匹配 active Code Session |
 | `Content-Type` | 是 | `application/x-protobuf` 或 `application/json` |
 | `Accept` | 否 | 当前实现忽略该字段；响应编码始终跟随请求 `Content-Type` |
 
 成功响应编码与请求 `Content-Type` 一致：JSON 请求返回 OTLP JSON 响应，Protobuf 请求返回 OTLP Protobuf 响应。`Accept` 不改变响应编码。
 
 OMA 在启动 payload 中直接注入 signal-specific endpoint 与 SessionIngress Authorization header，旧版 Environment Manager 只需按既有合同把环境变量传给 Claude Code。Environment Manager 仍需先完成 `/worker/register` 并维持 heartbeat lease，但 OTLP 请求不携带 worker epoch。
+
+这里的“不携带 worker epoch”是指 OTLP header 不再单独发送 `X-Worker-Epoch`；managed-agent 的 session-ingress JWT 本身仍绑定启动时计算的 worker epoch，通用鉴权会拒绝已失效 epoch，OTLP handler 还会独立校验 active lease。
 
 ---
 
@@ -241,10 +243,20 @@ OMA 在 `startup_context.environment_variables` 写入 Claude Code 的 telemetry
 ```bash
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
 CLAUDE_CODE_USE_CCR_V2=1
+CLAUDE_CODE_WORKER_EPOCH={next_worker_epoch}
 CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES=true
 ```
 
 `observability.enabled=true` 时，OMA 无条件注入 metrics、logs 和 detailed tracing 的全套静态变量（含 `ENABLE_BETA_TRACING_DETAILED=1`），不再按信号拆分开关。内容采集由 `observability.content_capture_enabled`（默认 true）单独控制：开启时 OMA 默认补齐 `OTEL_LOG_USER_PROMPTS=1`、`OTEL_LOG_TOOL_DETAILS=1`、`OTEL_LOG_TOOL_CONTENT=1`，授权 prompt 原文、工具输入/输出正文上报（可能包含源码、命令输出和密钥）；关闭时平台不补这些变量。Runner 启动 environment-manager 时仍会默认带上 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 以跳过 marketplace 和自动更新；可观测开启时 OMA 会在 Claude 的 startup env 里把它覆盖成空字符串，否则 Claude Code 会把非空值当成 essential-traffic，从而不导出 OTEL。
+
+首次启动时 `{next_worker_epoch}` 为 `1`。Sandbox 丢失后的替换启动复用原 Code Session，并注入 `current_worker_epoch + 1`；environment-manager 注册成功后使用同一递增 epoch，避免恢复 worker 被旧 epoch fencing。该变量服务于 CCRv2 worker 生命周期，不会拼入 OTLP header。
+
+```bash
+OTEL_METRICS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/metrics
+OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {session_ingress_token}
+```
 
 Console Agent 可观测不再从 PostgreSQL 读取 Active Time / Token 看板。写入端仍把 OTLP 转发到 OpenObserve（凭据键为 `observability.openobserve.ingestion.*`）；查询走 `observability.openobserve.query.*` 与 `POST /api/organizations/{org}/observability/panels/query`。默认 Claude Code 版本保持 `2.1.120`。
 

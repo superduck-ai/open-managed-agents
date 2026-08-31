@@ -1,0 +1,1835 @@
+---
+title: "自托管沙箱"
+sidebarTitle: "集成指南"
+description: "在自托管沙箱中运行 Open Managed Agents 会话，将工具执行、文件和网络出口保留在您自己的基础设施中。"
+---
+
+默认情况下，托管智能体在 [OMA 托管的云沙箱](/docs/zh/cloud-sandboxes-reference)中执行工具和代码。自托管沙箱将编排保留在 OMA 一侧，但将工具执行移至您控制的基础设施中，因此智能体的代码、文件系统和网络出口永远不会离开您的环境。
+
+工具执行保留在您的主机上：智能体读写的文件系统、它派生的进程以及它可以访问的网络都在您的控制之下。工具输入和输出仍会流向 OMA 的控制平面，以便模型能够查看结果并决定下一步操作。有关完整的数据流边界，请参阅[安全模型](/docs/zh/self-hosted-sandboxes-security)。
+
+<Note>
+  自托管沙箱支持 OMA 部署公开的模型。模型在[智能体](/docs/zh/agent-setup)上配置，而非在环境上配置。
+</Note>
+
+## 与云环境的区别
+
+|                 | 云环境             | 自托管沙箱  |
+| --------------- | --------------- | ------ |
+| 工具运行位置          | OMA 托管的沙箱 | 您的基础设施 |
+| 网络访问范围          | OMA 的出口控制 | 您的网络策略 |
+| 文件和 GitHub 仓库挂载 | 由 OMA 管理  | 由您管理   |
+| 生命周期            | 由 OMA 管理  | 由您管理   |
+
+当智能体需要操作不能离开您网络边界的数据、访问无法公开路由的内部服务，或在您组织自己的合规和审计控制下运行时，自托管是一个很好的选择。
+
+有关零数据保留（Zero Data Retention）和 HIPAA BAA 资格，请参阅 API 和数据保留。
+
+## 何时与 MCP 隧道结合使用
+
+自托管控制的是*智能体代码的执行位置*。[MCP 隧道](/docs/zh/mcp-connector)控制的是 *OMA 如何访问您网络中的 MCP 服务器*。两者相互独立：在 OMA 云沙箱中运行的会话仍可通过隧道访问私有 MCP 服务器，而自托管会话可以使用隧道式或公共 MCP 服务器。当您希望执行和工具访问都保留在您的边界内时，可同时使用两者。如果要让智能体使用您网络内 MCP 服务器的工具而不运行隧道，您也可以[将服务器封装为自定义工具](/docs/zh/self-hosted-sandboxes#wrap-an-mcp-server-as-custom-tools)，由您的 worker 提供服务。
+
+## 环境 worker
+
+<Tip>
+  本指南介绍如何使用任何通用沙箱平台构建 worker。此外还提供了针对特定平台的指南：AWS Lambda MicroVMs、Blaxel、Cloudflare、Daytona、E2B、Fly.io、GKE Agent Sandbox、Modal、Namespace、Superserve 和 Vercel。
+</Tip>
+
+环境 worker 是您在自己的基础设施上运行的进程。它从 OMA 接收工具执行请求并在本地运行。`self_hosted` 环境充当工作队列：当[会话](/docs/zh/sessions)被分配到该环境时，OMA 会将该会话作为 worker 加入队列。您的 worker 从该队列中认领 worker，为每个 worker 派生一个执行上下文，下载智能体的[技能](/docs/zh/skills)（可复用的、基于文件系统的资源，为智能体提供特定领域的专业知识），运行工具调用，并将结果回传。
+
+worker 通过轮询环境的队列来认领：可以使用持续轮询的**常驻 worker**，也可以使用在 `session.status_run_started` 时唤醒并开始轮询的 **webhook 触发式处理程序**。
+
+CLI 和 SDK 都附带了预构建的 worker。`ant` CLI 仅支持常驻模式；SDK 同时支持常驻和 webhook 触发两种模式。两者均可配置：有关 CLI 标志，请参阅参考文档中的[自托管 worker](/docs/zh/reference#self-hosted-worker)；有关 SDK 选项，请参阅本页的 [SDK 辅助工具](/docs/zh/self-hosted-sandboxes#sdk-helpers)。如需更多控制，可直接调用[环境 worker 端点](/docs/zh/api/environment-work/list-work-items)并实现您自己的 worker。
+
+### 沙箱文件系统
+
+* **`/workspace`：** 工具执行和技能下载的系统默认工作目录。CLI 的 `--workdir` 标志默认为当前目录；传递 `--workdir /workspace` 以匹配系统默认值。技能会下载到 `<workdir>/skills/<name>/`。如果您使用不同的工作目录，请更新智能体的系统提示，以便智能体能够找到技能文件。
+* **输出：** 在自托管环境中，会话的系统提示会省略 OMA 托管沙箱上使用的 `/mnt/session/outputs` 指令，因此最终交付物会落在智能体在您的沙箱文件系统中写入的任何位置，通常在工作目录下。
+
+## 开始之前
+
+您需要：
+
+* **一个现有的智能体。** 如果您还没有，请先完成[快速入门](/docs/zh/quickstart)并记下其智能体 ID。
+* **一台 Linux 主机**，且 `/bin/bash` 位于该确切路径。worker 的 bash 工具会直接调用它，而不查询 `PATH`。TypeScript SDK 还需要 `PATH` 中有 `unzip` 和 `tar`，以及 Node.js 22 或更高版本；Python 和 Go SDK 使用其标准库进行归档提取，没有额外的二进制文件要求。
+* worker 主机上安装有 **`ant` CLI 或 OMA SDK**（Python、TypeScript 或 Go）。
+* **两个凭据：** 环境密钥（在后续步骤中通过 OMA 控制台 生成）用于向队列验证 worker 身份；您的 OMA API 密钥用于从 worker 主机外部创建会话和读取队列统计信息。密钥生成仅限 OMA 控制台。
+
+<Note>
+  环境 worker 使用 OMA 生成的环境密钥向队列认证。如果在 AWS 等云平台上运行 worker，请继续使用部署自身的 IAM、AWS Secrets Manager 和网络策略保护主机；OMA 不依赖第三方托管策略。
+</Note>
+
+<Steps>
+  <Step title="创建自托管环境">
+    在 OMA 控制台 中：**工作区 > 环境 > New > Self-hosted**
+
+    或通过 API：
+
+    <CodeGroup>
+      ```bash cURL
+      curl -sS --fail-with-body http://localhost:38080/v1/environments \
+        -H "x-api-key: $OMA_API_KEY" \
+        -H "anthropic-version: 2023-06-01" \
+        -H "anthropic-beta: managed-agents-2026-04-01" \
+        -H "content-type: application/json" \
+        -d '{
+          "name": "self-hosted",
+          "config": {"type": "self_hosted"}
+        }'
+      ```
+
+      ```bash CLI
+      ant beta:environments create \
+        --name self-hosted \
+        --config '{"type": "self_hosted"}'
+      ```
+
+      ```python Python
+      client = anthropic.Anthropic()
+
+      environment = client.beta.environments.create(
+          name="self-hosted", config={"type": "self_hosted"}
+      )
+      print(environment.id)
+      ```
+
+      ```typescript TypeScript
+      const client = new Anthropic();
+
+      const environment = await client.beta.environments.create({
+        name: "self-hosted",
+        config: { type: "self_hosted" }
+      });
+      console.log(environment.id);
+      ```
+
+      ```csharp C#
+      using Anthropic.Models.Beta.Environments;
+
+      var client = new AnthropicClient();
+
+      var environment = await client.Beta.Environments.Create(
+          new EnvironmentCreateParams
+          {
+              Name = "self-hosted",
+              Config = new BetaSelfHostedConfigParams(),
+          }
+      );
+      Console.WriteLine(environment.ID);
+      ```
+
+      ```go Go
+      client := anthropic.NewClient()
+
+      environment, err := client.Beta.Environments.New(context.Background(), anthropic.BetaEnvironmentNewParams{
+          Name: "self-hosted",
+          Config: anthropic.BetaEnvironmentNewParamsConfigUnion{
+              OfSelfHosted: &anthropic.BetaSelfHostedConfigParams{},
+          },
+      })
+      if err != nil {
+          panic(err)
+      }
+      fmt.Println(environment.ID)
+      ```
+
+      ```java Java
+      import com.anthropic.models.beta.environments.BetaSelfHostedConfigParams;
+      import com.anthropic.models.beta.environments.EnvironmentCreateParams;
+
+      void main() {
+          var client = AnthropicOkHttpClient.fromEnv();
+
+          var environment = client.beta().environments().create(
+              EnvironmentCreateParams.builder()
+                  .name("self-hosted")
+                  .config(BetaSelfHostedConfigParams.builder().build())
+                  .build()
+          );
+          IO.println(environment.id());
+      }
+      ```
+
+      ```php PHP
+      $client = new Anthropic\Client();
+
+      $environment = $client->beta->environments->create(
+          name: 'self-hosted',
+          config: ['type' => 'self_hosted'],
+      );
+      echo $environment->id, PHP_EOL;
+      ```
+
+      ```ruby Ruby
+      client = Anthropic::Client.new
+
+      environment = client.beta.environments.create(
+        name: "self-hosted",
+        config: {type: :self_hosted}
+      )
+      puts environment.id
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="生成环境密钥">
+    在 OMA 控制台 中，打开该环境并点击 **Generate environment key**。无论您是通过 OMA 控制台 还是 API 创建的环境，密钥生成都仅限 OMA 控制台。然后在 worker 主机上导出环境 ID 和密钥：
+
+    ```bash
+    export ANTHROPIC_ENVIRONMENT_KEY="sk-ant-oat01-..."
+    export ANTHROPIC_ENVIRONMENT_ID="env_..."
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  技能可以包含智能体可能直接运行的可执行文件。CLI 和 SDK worker 在提取技能包时会保留其中记录的可执行权限。如果您手动实现技能下载，则需要自行负责设置可执行权限。
+</Note>
+
+## 运行 worker
+
+选择**常驻**模式以获得最简单的设置：一个长期运行的进程持续轮询队列，只需要出站 HTTPS。选择 **webhook 触发**模式可避免运行空闲的轮询器；它需要一个 OMA 可以访问的 webhook 端点（有关端点设置和签名验证，请参阅 [Webhooks](/docs/zh/webhooks)）。
+
+<Tabs>
+  <Tab title="常驻（ant CLI）">
+    <Steps>
+      <Step title="安装 ant CLI">
+        在 worker 主机上运行此命令。
+
+        <Tabs>
+          <Tab title="curl（Linux/WSL）">
+            对于 Linux 环境，直接下载发布的二进制文件。
+
+            ```bash
+            VERSION=1.22.1
+            OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+            case $(uname -m) in
+              x86_64) ARCH=amd64 ;;
+              aarch64) ARCH=arm64 ;;
+            esac
+            curl -fsSL "https://github.com/anthropics/anthropic-cli/releases/download/v${VERSION}/ant_${VERSION}_${OS}_${ARCH}.tar.gz" \
+              | sudo tar -xz -C /usr/local/bin ant
+            ```
+
+            您可以在 GitHub 发布页面上找到所有版本。
+          </Tab>
+
+          <Tab title="Homebrew（macOS）">
+            ```bash
+            brew install anthropics/tap/ant
+            ```
+          </Tab>
+        </Tabs>
+      </Step>
+
+      <Step title="运行 worker">
+        **进程内运行**
+
+        `ant beta:worker poll` 认领分配给该环境的 worker，下载技能，在工作目录中执行工具调用，并将结果回传。它从环境变量中读取 `ANTHROPIC_ENVIRONMENT_KEY` 和 `ANTHROPIC_ENVIRONMENT_ID`。
+
+        ```bash
+        ant beta:worker poll \
+          --workdir "/workspace"
+        ```
+
+        worker 在收到 SIGTERM 或 SIGINT 时会干净退出：它会取消任何正在进行的工具调用，发布其错误结果，并在停止前释放 worker。
+
+        **每个会话一个沙箱**
+
+        如果您需要更强的隔离（全新的文件系统、资源限制或按会话的网络控制），请在每个会话自己的沙箱中运行。构建一个安装了 `ant` 并以 `ant beta:worker run` 作为入口点的镜像。基础镜像必须提供 `/bin/bash`；`curl` 仅在构建时使用。当沙箱启动时，它从环境变量中读取会话详细信息，处理该会话，然后退出：
+
+        ```text
+        FROM your-base-image
+        ARG ANT_VERSION=1.22.1
+        ARG TARGETARCH
+        RUN ARCH=$([ "$TARGETARCH" = "arm64" ] && echo arm64 || echo amd64) && \
+            curl -fsSL "https://github.com/anthropics/anthropic-cli/releases/download/v${ANT_VERSION}/ant_${ANT_VERSION}_linux_${ARCH}.tar.gz" \
+              | tar -xz -C /usr/local/bin ant
+        WORKDIR /workspace
+        VOLUME /workspace
+        ENTRYPOINT ["ant", "beta:worker", "run"]
+        ```
+
+        然后编写一个派生脚本，将会话详细信息转发到新的沙箱中。轮询器会将 `ANTHROPIC_SESSION_ID`、`ANTHROPIC_WORK_ID`、`ANTHROPIC_ENVIRONMENT_ID` 和 `ANTHROPIC_ENVIRONMENT_KEY` 注入到脚本的环境中。`ANTHROPIC_BASE_URL` 是可选的，仅当它在轮询器主机上已设置时才会传递；它会覆盖默认的 API 端点。在示例中，`/host/outputs` 是您选择的主机目录；它被绑定挂载到沙箱的工作目录（`/workspace`），以便您在沙箱退出后检索会话交付物。在自托管环境中，智能体将交付物写入工作目录下而非 `/mnt/session/outputs`（参见[沙箱文件系统](/docs/zh/self-hosted-sandboxes#sandbox-filesystem)），因此挂载工作目录才能捕获它们；该挂载还会获取下载的 `skills/` 目录树以及智能体创建的任何中间文件。
+
+        ```bash
+        #!/bin/bash
+        # spawn.sh：每个已认领的 worker 调用一次
+        mkdir -p "/host/outputs/$ANTHROPIC_SESSION_ID"
+        exec docker run --rm \
+          -e ANTHROPIC_SESSION_ID -e ANTHROPIC_ENVIRONMENT_KEY \
+          -e ANTHROPIC_WORK_ID -e ANTHROPIC_ENVIRONMENT_ID -e ANTHROPIC_BASE_URL \
+          -v "/host/outputs/$ANTHROPIC_SESSION_ID":/workspace \
+          your-image
+        ```
+
+        启动指向该脚本的轮询器：
+
+        ```bash
+        ant beta:worker poll \
+          --on-work ./spawn.sh
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="常驻（SDK）">
+    <Steps>
+      <Step title="运行 worker">
+        `EnvironmentWorker` 认领分配给该环境的 worker，下载技能，在工作目录中执行工具调用，并将结果回传。使用您在[开始之前](/docs/zh/self-hosted-sandboxes#before-you-begin)中生成的环境密钥进行身份验证。
+
+        <CodeGroup exclude="shell">
+          ```python Python
+          import asyncio
+          import os
+          from anthropic import AsyncAnthropic
+          from anthropic.lib.environments import EnvironmentWorker
+
+
+          async def main() -> None:
+              environment_key = os.environ["ANTHROPIC_ENVIRONMENT_KEY"]
+              environment_id = os.environ["ANTHROPIC_ENVIRONMENT_ID"]
+              async with AsyncAnthropic(auth_token=environment_key) as client:
+                  await EnvironmentWorker(
+                      client,
+                      environment_id=environment_id,
+                      environment_key=environment_key,
+                      workdir="/workspace",
+                  ).run()
+
+
+          asyncio.run(main())
+          ```
+
+          ```typescript TypeScript
+          import Anthropic from "@anthropic-ai/sdk";
+          import { EnvironmentWorker } from "@anthropic-ai/sdk/helpers/beta/environments";
+
+          const environmentKey = process.env.ANTHROPIC_ENVIRONMENT_KEY!;
+          const environmentId = process.env.ANTHROPIC_ENVIRONMENT_ID!;
+          const client = new Anthropic({ authToken: environmentKey });
+          const controller = new AbortController();
+          process.once("SIGTERM", () => controller.abort());
+
+          await new EnvironmentWorker({
+            client,
+            environmentId,
+            environmentKey,
+            workdir: "/workspace",
+            signal: controller.signal
+          }).run();
+          ```
+
+          ```csharp C#
+          // EnvironmentWorker 目前在 C# SDK 中不可用。请参阅 Always-on (ant CLI) 选项卡。
+          ```
+
+          ```go Go
+          package main
+
+          import (
+              "context"
+              "log"
+              "os"
+              "os/signal"
+              "syscall"
+
+              "github.com/anthropics/anthropic-sdk-go"
+              "github.com/anthropics/anthropic-sdk-go/lib/environments"
+              "github.com/anthropics/anthropic-sdk-go/option"
+          )
+
+          func main() {
+              environmentKey := os.Getenv("ANTHROPIC_ENVIRONMENT_KEY")
+              environmentID := os.Getenv("ANTHROPIC_ENVIRONMENT_ID")
+
+              ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+              defer stop()
+
+              client := anthropic.NewClient(option.WithAuthToken(environmentKey))
+
+              worker := environments.NewEnvironmentWorker(client, environments.EnvironmentWorkerOptions{
+                  EnvironmentID:  environmentID,
+                  EnvironmentKey: environmentKey,
+                  Workdir:        "/workspace",
+              })
+              if err := worker.Run(ctx); err != nil {
+                  log.Fatalf("worker: %v", err)
+              }
+          }
+
+          ```
+
+          ```java Java
+          // EnvironmentWorker 目前在 Java SDK 中不可用。请参阅 Always-on (ant CLI) 选项卡。
+          ```
+
+          ```php PHP
+          // EnvironmentWorker 目前在 PHP SDK 中不可用。请参阅 Always-on (ant CLI) 选项卡。
+          ```
+
+          ```ruby Ruby
+          # EnvironmentWorker 目前在 Ruby SDK 中不可用。请参阅 Always-on (ant CLI) 选项卡。
+          ```
+        </CodeGroup>
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Webhook 触发（SDK）">
+    <Steps>
+      <Step title="订阅会话 webhook">
+        在 OMA 控制台 中，定义一个监听 `session.status_run_started` 事件的 webhook 端点。详情请参阅 [Webhooks](/docs/zh/webhooks)。
+      </Step>
+
+      <Step title="导出 webhook 签名密钥">
+        除了[开始之前](/docs/zh/self-hosted-sandboxes#before-you-begin)中的环境 ID 和密钥外，还需在处理程序主机上导出 webhook 签名密钥，以便处理程序可以验证传入的负载。Python 处理程序中的签名验证需要 webhooks 额外依赖：`pip install "anthropic[webhooks]"`。
+
+        ```bash
+        export ANTHROPIC_WEBHOOK_SIGNING_KEY="whsec_..."
+        ```
+      </Step>
+
+      <Step title="实现 webhook 处理程序">
+        `EnvironmentWorker` 认领 worker，下载技能，在工作目录中执行工具调用，将结果回传，然后退出。在 `session.status_run_started` 触发时调用它。
+
+        <CodeGroup exclude="shell">
+          ```python Python
+          import os
+          import anthropic
+
+          environment_key = os.environ["ANTHROPIC_ENVIRONMENT_KEY"]
+          environment_id = os.environ["ANTHROPIC_ENVIRONMENT_ID"]
+          client = anthropic.AsyncAnthropic(
+              auth_token=environment_key,
+          )
+
+
+          async def handle(raw: bytes, headers: dict[str, str]) -> dict:
+              event = client.beta.webhooks.unwrap(raw.decode(), headers=headers)
+              if event.data.type != "session.status_run_started":
+                  return {"status": "ignored"}
+              async for work in client.beta.environments.work.poller(
+                  environment_id=environment_id,
+                  environment_key=environment_key,
+                  block_ms=None,
+                  reclaim_older_than_ms=2000,
+                  drain=True,
+                  auto_stop=False,
+              ):
+                  await client.beta.environments.work.worker(workdir="/workspace").handle_item(
+                      work_id=work.id,
+                      environment_id=environment_id,
+                      session_id=work.data.id,
+                      environment_key=environment_key,
+                  )
+              return {"status": "ok"}
+          ```
+
+          ```typescript TypeScript
+          import Anthropic from "@anthropic-ai/sdk";
+
+          const environmentKey = process.env.ANTHROPIC_ENVIRONMENT_KEY!;
+          const environmentId = process.env.ANTHROPIC_ENVIRONMENT_ID!;
+          const client = new Anthropic({
+            authToken: environmentKey
+          });
+
+          export async function handle(req: Request): Promise<Response> {
+            const body = await req.text();
+            let event;
+            try {
+              event = client.beta.webhooks.unwrap(body, { headers: Object.fromEntries(req.headers) });
+            } catch {
+              return new Response("signature verification failed", { status: 401 });
+            }
+            if (event.data.type !== "session.status_run_started") {
+              return Response.json({ status: "ignored" });
+            }
+
+            for await (const work of client.beta.environments.work.poller({
+              environmentId,
+              environmentKey,
+              blockMs: null,
+              reclaimOlderThanMs: 2000,
+              drain: true,
+              autoStop: false
+            })) {
+              await client.beta.environments.work.worker({ workdir: "/workspace" }).handleItem({
+                workId: work.id,
+                environmentId,
+                sessionId: work.data.id,
+                environmentKey
+              });
+            }
+            return Response.json({ status: "ok" });
+          }
+          ```
+
+          ```csharp C#
+          // EnvironmentWorker 目前在 C# SDK 中不可用。
+          // 如需直接处理 worker，请参阅环境 worker 端点。
+          ```
+
+          ```go Go
+          package main
+
+          import (
+              "context"
+              "encoding/json"
+              "io"
+              "log/slog"
+              "net/http"
+              "os"
+
+              "github.com/anthropics/anthropic-sdk-go"
+              "github.com/anthropics/anthropic-sdk-go/lib/environments"
+              "github.com/anthropics/anthropic-sdk-go/option"
+              "github.com/anthropics/anthropic-sdk-go/packages/param"
+          )
+
+          var (
+              environmentKey = os.Getenv("ANTHROPIC_ENVIRONMENT_KEY")
+              environmentID  = os.Getenv("ANTHROPIC_ENVIRONMENT_ID")
+              client         = anthropic.NewClient(
+                  option.WithAuthToken(environmentKey),
+                  option.WithWebhookKey(os.Getenv("ANTHROPIC_WEBHOOK_SIGNING_KEY")),
+              )
+              worker = environments.NewEnvironmentWorker(client, environments.EnvironmentWorkerOptions{
+                  Workdir: "/workspace",
+              })
+          )
+
+          func handle(w http.ResponseWriter, r *http.Request) {
+              body, err := io.ReadAll(r.Body)
+              if err != nil {
+                  http.Error(w, "bad request", http.StatusBadRequest)
+                  return
+              }
+              event, err := client.Beta.Webhooks.Unwrap(body, r.Header)
+              if err != nil {
+                  http.Error(w, "signature verification failed", http.StatusUnauthorized)
+                  return
+              }
+              if event.Data.Type != "session.status_run_started" {
+                  json.NewEncoder(w).Encode(map[string]string{"status": "ignored"})
+                  return
+              }
+
+              // Go SDK 未提供 RunOne 便捷方法：请使用 WorkPoller 取出待处理项，
+              // 并用 HandleItem 逐个运行。
+              // 与 r.Context() 分离：会话的存续时间可能超过 webhook 投递超时。
+              ctx := context.Background()
+              poller := environments.NewWorkPoller(ctx, client, environments.WorkPollerOptions{
+                  EnvironmentID:      environmentID,
+                  EnvironmentKey:     environmentKey,
+                  BlockMs:            param.Null[int64](),
+                  ReclaimOlderThanMs: param.NewOpt[int64](2000),
+                  Drain:              true,
+              })
+              defer poller.Close()
+              for poller.Next() {
+                  item := poller.Current()
+                  if err := worker.HandleItem(ctx, environments.HandleItemOptions{
+                      WorkID:         item.ID,
+                      EnvironmentID:  item.EnvironmentID,
+                      SessionID:      item.Data.ID,
+                      EnvironmentKey: environmentKey,
+                  }); err != nil {
+                      slog.Error("handle work item", "work_id", item.ID, "err", err)
+                      http.Error(w, "internal error", http.StatusInternalServerError)
+                      return
+                  }
+              }
+              if err := poller.Err(); err != nil {
+                  slog.Error("poll work queue", "err", err)
+                  http.Error(w, "internal error", http.StatusInternalServerError)
+                  return
+              }
+              json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+          }
+
+          func main() {
+              http.HandleFunc("POST /webhook", handle)
+              if err := http.ListenAndServe(":8080", nil); err != nil {
+                  slog.Error("http server", "err", err)
+                  os.Exit(1)
+              }
+          }
+
+          ```
+
+          ```java Java
+          // EnvironmentWorker 目前在 Java SDK 中不可用。
+          // 如需直接处理 worker，请参阅环境 worker 端点。
+          ```
+
+          ```php PHP
+          // EnvironmentWorker 目前在 PHP SDK 中不可用。
+          // 如需直接处理 worker，请参阅环境 worker 端点。
+          ```
+
+          ```ruby Ruby
+          # EnvironmentWorker 目前在 Ruby SDK 中不可用。
+          # 如需直接处理 worker，请参阅环境 worker 端点。
+          ```
+        </CodeGroup>
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+### SDK 辅助工具
+
+SDK 提供了三个不同控制级别的辅助工具。`EnvironmentWorker` 涵盖了大多数用例；当您需要启动自己的按会话进程或针对已认领的会话运行工具时，可降级使用较低级别的辅助工具。
+
+* **`EnvironmentWorker`：** 开箱即用的 worker。端到端处理轮询、设置和执行。
+
+  * `.run()`：无限期运行，在会话到达时拾取它们。
+  * `.handle_item()`：处理单个已认领的 worker 并退出。显式传递工作、会话和环境标识符，或让它读取 `ant beta:worker poll --on-work` 为其派生的进程设置的 `ANTHROPIC_*` 变量。
+
+* **`work.poller()`：** 代表您轮询工作队列，并将每个已认领的会话交给您。当您想要决定每个会话的处理方式时使用此方法，例如启动沙箱而不是在进程内运行工具。
+
+  * `drain`：是否在队列为空后停止轮询，而不是等待新工作。
+  * `block_ms`：等待工作到达的时长（毫秒），超时后返回。必须在 1 到 999 之间（单次轮询等待；辅助工具会自动重新轮询）。传递 `null`（Python 中为 `None`，Go 中为 `param.Null[int64]()`）进行非阻塞检查；省略该参数则使用默认的 999 毫秒长轮询。
+  * `reclaim_older_than_ms`：重新认领在此毫秒数内已被认领但从未确认的 worker。
+  * `auto_stop`：是否在您的循环体处理完每个 worker 后为其发布停止信号。Go 轮询器没有退出选项，始终会发布停止信号，因此请在循环体中阻塞直到会话完成，而不是分离。
+
+* **`client.beta.sessions.events.tool_runner()`：** 给定会话 ID 和工具列表，为单个会话运行工具调用。当您已经认领了工作且只需要执行层时使用。
+
+当您想要启动自己的按会话进程时（例如为每个已认领的会话启动一个沙箱），直接使用工作轮询器：
+
+<CodeGroup>
+  ```bash cURL
+  # 工作轮询器是一个 SDK 辅助工具（Python、TypeScript、Go），而非原始
+  # 端点。在 shell 中，请改用 `ant beta:worker poll --on-work`；
+  # 参见 Always-on（ant CLI）选项卡。
+  ```
+
+  ```bash CLI
+  # 工作轮询器是一个 SDK 辅助工具（Python、TypeScript、Go），而非原始
+  # 端点。在 shell 中，请改用 `ant beta:worker poll --on-work`；
+  # 参见 Always-on（ant CLI）选项卡。
+  ```
+
+  ```python Python
+  import asyncio
+  import os
+
+  from anthropic import AsyncAnthropic
+  from anthropic.types.beta.environments import BetaSelfHostedWork
+
+
+  async def launch_container(work: BetaSelfHostedWork) -> None:
+      # 替换为您自己的每会话沙箱启动器。将
+      # ANTHROPIC_ENVIRONMENT_KEY 传入启动的沙箱，切勿传入
+      # 您的 API 密钥。
+      print(f"claimed session {work.data.id}")
+
+
+  async def main() -> None:
+      environment_key = os.environ["ANTHROPIC_ENVIRONMENT_KEY"]
+      environment_id = os.environ["ANTHROPIC_ENVIRONMENT_ID"]
+      async with AsyncAnthropic(auth_token=environment_key) as client:
+          async for work in client.beta.environments.work.poller(
+              environment_id=environment_id,
+              environment_key=environment_key,
+              auto_stop=False,  # the launched sandbox owns the stop call
+          ):
+              await launch_container(work)
+
+
+  asyncio.run(main())
+  ```
+
+  ```typescript TypeScript
+  import Anthropic from "@anthropic-ai/sdk";
+  import { WorkPoller } from "@anthropic-ai/sdk/helpers/beta/environments";
+  import type { BetaSelfHostedWork } from "@anthropic-ai/sdk/resources/beta/environments";
+
+  const environmentKey = process.env.ANTHROPIC_ENVIRONMENT_KEY!;
+  const environmentId = process.env.ANTHROPIC_ENVIRONMENT_ID!;
+  const client = new Anthropic({ authToken: environmentKey });
+
+  async function launchContainer(work: BetaSelfHostedWork): Promise<void> {
+    // 替换为您自己的每会话沙箱启动器。将
+    // ANTHROPIC_ENVIRONMENT_KEY 传入启动的沙箱，切勿传入
+    // 您的 API 密钥。
+    console.log(`claimed session ${work.data.id}`);
+  }
+
+  const poller = new WorkPoller({
+    client,
+    environmentId,
+    environmentKey,
+    autoStop: false // the launched sandbox owns the stop call
+  });
+
+  for await (const work of poller) {
+    await launchContainer(work);
+  }
+  ```
+
+  ```csharp C#
+  // C# SDK 目前不提供工作轮询辅助工具。
+  // 如需直接认领 worker，请参阅环境 worker 端点。
+  ```
+
+  ```go Go
+  package main
+
+  import (
+      "context"
+      "fmt"
+      "log"
+      "os"
+
+      "github.com/anthropics/anthropic-sdk-go"
+      "github.com/anthropics/anthropic-sdk-go/lib/environments"
+      "github.com/anthropics/anthropic-sdk-go/option"
+  )
+
+  func launchContainer(work *anthropic.BetaSelfHostedWork) {
+      // 请替换为您自己的每会话沙箱启动器。Go 轮询器
+      // 会在此函数返回时调用 work.Stop（它没有禁用自动停止的
+      // 选项），因此请在此处阻塞直到会话完成，而不是像
+      // Python 和 TypeScript 标签页那样分离运行。
+      fmt.Printf("claimed session %s\n", work.Data.ID)
+  }
+
+  func main() {
+      environmentID := os.Getenv("ANTHROPIC_ENVIRONMENT_ID")
+      environmentKey := os.Getenv("ANTHROPIC_ENVIRONMENT_KEY")
+
+      client := anthropic.NewClient(option.WithAuthToken(environmentKey))
+
+      ctx := context.Background()
+
+      poller := environments.NewWorkPoller(ctx, client, environments.WorkPollerOptions{
+          EnvironmentID:  environmentID,
+          EnvironmentKey: environmentKey,
+      })
+      defer poller.Close()
+
+      for work, err := range poller.All() {
+          if err != nil {
+              log.Fatal(err)
+          }
+          launchContainer(work)
+      }
+  }
+  ```
+
+  ```java Java
+  // Java SDK 目前不提供工作轮询辅助工具。
+  // 如需直接认领 worker，请参阅环境 worker 端点。
+  ```
+
+  ```php PHP
+  // PHP SDK 目前不提供工作轮询辅助工具。
+  // 如需直接认领 worker，请参阅环境 worker 端点。
+  ```
+
+  ```ruby Ruby
+  # Ruby SDK 目前尚未提供工作轮询辅助工具。
+  # 如需直接认领 worker，请参阅环境 worker 端点。
+  ```
+</CodeGroup>
+
+**`AgentToolContext`** 是工具调用的执行上下文。它定义了工作目录和路径策略，并可以下载会话的技能。**`beta_agent_toolset_20260401(env)`** 接受一个 `AgentToolContext` 并返回标准工具实现（`bash`、`read`、`write`、`edit`、`glob`、`grep`）。
+
+**使用 `EnvironmentWorker` 时：** 两者都会自动管理。传递 `tools` 工厂以自定义工具列表：
+
+<CodeGroup exclude="shell">
+  ```python Python
+  EnvironmentWorker(client, ..., tools=lambda env: [beta_bash_tool(env), my_custom_tool])
+  ```
+
+  ```typescript TypeScript
+  new EnvironmentWorker({
+    client,
+    environmentId,
+    environmentKey,
+    tools: (ctx) => [betaBashTool(ctx), myCustomTool]
+  });
+  ```
+
+  ```csharp C#
+  // EnvironmentWorker 目前在 C# SDK 中不可用。
+  // 如需直接响应自定义工具调用，请参阅会话事件流。
+  ```
+
+  ```go Go
+  worker := environments.NewEnvironmentWorker(client, environments.EnvironmentWorkerOptions{
+      EnvironmentID:  environmentID,
+      EnvironmentKey: environmentKey,
+      ToolsFunc: func(env *agenttoolset.AgentToolContext) []anthropic.BetaTool {
+          return []anthropic.BetaTool{agenttoolset.BetaBashTool(env), myCustomTool}
+      },
+  })
+  ```
+
+  ```java Java
+  // EnvironmentWorker 目前在 Java SDK 中不可用。
+  // 如需直接响应自定义工具调用，请参阅会话事件流。
+  ```
+
+  ```php PHP
+  // EnvironmentWorker 目前在 PHP SDK 中不可用。
+  // 如需直接响应自定义工具调用，请参阅会话事件流。
+  ```
+
+  ```ruby Ruby
+  # EnvironmentWorker 目前在 Ruby SDK 中不可用。
+  # 如需直接响应自定义工具调用，请参阅会话事件流。
+  ```
+</CodeGroup>
+
+**使用 `work.poller()` 和 `tool_runner()` 时：** 将工具列表作为 `tools` 传递给 `client.beta.sessions.events.tool_runner()`。要构建该列表，请自行设置 `AgentToolContext` 并调用 `beta_agent_toolset_20260401(env)`：
+
+<CodeGroup exclude="shell">
+  ```python Python
+  from anthropic.lib.tools.agent_toolset import (
+      AgentToolContext,
+      beta_agent_toolset_20260401,
+  )
+
+  async with AgentToolContext(
+      workdir="/workspace", client=client, session_id=work.data.id
+  ) as env:
+      # skills 已下载到 /workspace/skills/<name>/
+      tools = beta_agent_toolset_20260401(env)
+  ```
+
+  ```typescript TypeScript
+  import {
+    setupSkills,
+    betaAgentToolset20260401
+  } from "@anthropic-ai/sdk/tools/agent-toolset/node";
+
+  const ctx = { workdir: "/workspace", client, sessionId: work.data.id };
+  await setupSkills(ctx);
+  const tools = betaAgentToolset20260401(ctx);
+  ```
+
+  ```csharp C#
+  // AgentToolContext 目前在 C# SDK 中不可用。
+  ```
+
+  ```go Go
+  env := &agenttoolset.AgentToolContext{Workdir: "/workspace"}
+  if err := env.SetupSkills(ctx, client, work.Data.ID); err != nil {
+      panic(err)
+  }
+  // skills 已下载到 /workspace/skills/<name>/
+  tools := agenttoolset.BetaAgentToolset20260401(env)
+  ```
+
+  ```java Java
+  // AgentToolContext 目前在 Java SDK 中不可用。
+  ```
+
+  ```php PHP
+  // AgentToolContext 目前在 PHP SDK 中不可用。
+  ```
+
+  ```ruby Ruby
+  # AgentToolContext 目前在 Ruby SDK 中不可用。
+  ```
+</CodeGroup>
+
+### 验证 worker 已连接
+
+在另一个 shell 中，将 `OMA_API_KEY` 设置为您的 OMA API 密钥（而非环境密钥），确认 `workers_polling` 至少为 1：
+
+```bash
+ant beta:environments:work stats --environment-id "$ANTHROPIC_ENVIRONMENT_ID"
+```
+
+如果 `workers_polling` 保持为 0，则表示 worker 未连接到队列：请确认 worker 主机上已设置 `ANTHROPIC_ENVIRONMENT_KEY` 和 `ANTHROPIC_ENVIRONMENT_ID`。有关完整的统计响应和其他语言示例，请参阅[读取队列深度](/docs/zh/self-hosted-sandboxes#read-queue-depth)。
+
+## 启动会话
+
+worker 运行后，创建一个指向该环境的会话。将 `AGENT_ID` 设置为您在[开始之前](/docs/zh/self-hosted-sandboxes#before-you-begin)中记下的智能体 ID。会话进入环境的工作队列并在那里等待，直到有 worker 认领它；如果没有 worker 连接，会话会保持排队状态而不会失败。
+
+OMA 不会将文件或 GitHub 仓库挂载到自托管沙箱中。要使会话特定的文件可用，请在会话的 `metadata` 字段中传递文件引用（例如 S3 路径或提交 SHA）。已认领的 worker 不携带会话的元数据，但携带会话 ID：您的派生脚本或 `--on-work` 处理程序检索会话（`GET /v1/sessions/{session_id}`）以读取 `metadata` 字段，然后在工具执行开始之前将文件暂存到工作目录中。
+
+<CodeGroup>
+  ```bash cURL
+  curl -sS --fail-with-body http://localhost:38080/v1/sessions \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "content-type: application/json" \
+    -d @- <<EOF
+  {
+    "agent": "$AGENT_ID",
+    "environment_id": "$ANTHROPIC_ENVIRONMENT_ID",
+    "metadata": {"input_file": "s3://my-bucket/data.csv"}
+  }
+  EOF
+  ```
+
+  ```bash CLI
+  ant beta:sessions create \
+    --agent "$AGENT_ID" \
+    --environment-id "$ANTHROPIC_ENVIRONMENT_ID" \
+    --metadata '{"input_file": "s3://my-bucket/data.csv"}'
+  ```
+
+  ```python Python
+  session = client.beta.sessions.create(
+      agent=agent.id,
+      environment_id=environment.id,
+      metadata={"input_file": "s3://my-bucket/data.csv"},
+  )
+  ```
+
+  ```typescript TypeScript
+  const session = await client.beta.sessions.create({
+    agent: agent.id,
+    environment_id: environment.id,
+    metadata: { input_file: "s3://my-bucket/data.csv" }
+  });
+  ```
+
+  ```csharp C#
+  var session = await client.Beta.Sessions.Create(new()
+  {
+      Agent = agent.ID,
+      EnvironmentID = environment.ID,
+      Metadata = new Dictionary<string, string> { ["input_file"] = "s3://my-bucket/data.csv" },
+  });
+  ```
+
+  ```go Go
+  session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+      Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+      EnvironmentID: environment.ID,
+      Metadata: map[string]string{
+          "input_file": "s3://my-bucket/data.csv",
+      },
+  })
+  if err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var session = client.beta().sessions().create(SessionCreateParams.builder()
+      .agent(agent.id())
+      .environmentId(environment.id())
+      .metadata(SessionCreateParams.Metadata.builder()
+          .putAdditionalProperty("input_file", JsonValue.from("s3://my-bucket/data.csv"))
+          .build())
+      .build());
+  ```
+
+  ```php PHP
+  $session = $client->beta->sessions->create(
+      agent: $agent->id,
+      environmentID: $environment->id,
+      metadata: ['input_file' => 's3://my-bucket/data.csv'],
+  );
+  ```
+
+  ```ruby Ruby
+  session = client.beta.sessions.create(
+    agent: agent.id,
+    environment_id: environment.id,
+    metadata: {input_file: "s3://my-bucket/data.csv"}
+  )
+  ```
+</CodeGroup>
+
+<Note>
+  自托管沙箱不支持 `resources` 条目；在自托管环境中包含任何资源的会话将被拒绝。
+</Note>
+
+有关 CLI 标志的完整列表，请参阅参考文档中的[自托管 worker](/docs/zh/reference#self-hosted-worker)；有关 SDK 辅助工具选项，请参阅 [SDK 辅助工具](/docs/zh/self-hosted-sandboxes#sdk-helpers)。
+
+## 从您的沙箱提供自定义工具
+
+[自定义工具](/docs/zh/tools#custom-tools)是由您自己的代码执行的工具：智能体发出 `agent.custom_tool_use` 事件并等待匹配的 `user.custom_tool_result`。worker 可以充当该代码，并且由于它在您的沙箱内运行，该工具可以访问您为沙箱配置的内部服务、凭据和网络出口，仅此而已。环境密钥授权发布自定义工具结果，因此您的 OMA API 密钥无需存放在 worker 主机上。
+
+<Note>
+  提供自定义工具需要 SDK worker：`ant` CLI worker 无法注册自定义工具实现。在每个会话一个沙箱的模式中，在沙箱内运行 `EnvironmentWorker` 并使用 `handle_item()`（TypeScript 中为 `handleItem`，Go 中为 `HandleItem`）代替 `ant beta:worker run`。
+</Note>
+
+<Steps>
+  <Step title="在智能体上声明工具">
+    向智能体的 `tools` 添加一个 `custom` 条目，其 `name` 与您的 worker 注册的工具匹配。有关完整的声明格式，请参阅[自定义工具](/docs/zh/tools#custom-tools)。
+
+    ```json
+    {
+      "type": "custom",
+      "name": "get_order_status",
+      "description": "Look up an order in the internal fulfillment system by order ID.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": { "type": "string", "description": "The order ID" }
+        },
+        "required": ["order_id"]
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="向 worker 注册实现">
+    通过 worker 的 `tools` 工厂（参见 [SDK 辅助工具](/docs/zh/self-hosted-sandboxes#sdk-helpers)）传递该工具，与内置工具集一起：
+
+    <CodeGroup exclude="shell">
+      ```python Python
+      import asyncio
+      import os
+      from anthropic import AsyncAnthropic, beta_async_tool
+      from anthropic.lib.environments import EnvironmentWorker
+      from anthropic.lib.tools.agent_toolset import beta_agent_toolset_20260401
+
+
+      @beta_async_tool
+      async def get_order_status(order_id: str) -> str:
+          """Look up an order in the internal fulfillment system by order ID."""
+          # 在 worker 主机上运行：可调用沙箱能够访问的任何内容。
+          return f"Order {order_id}: shipped"
+
+
+      async def main() -> None:
+          environment_key = os.environ["ANTHROPIC_ENVIRONMENT_KEY"]
+          environment_id = os.environ["ANTHROPIC_ENVIRONMENT_ID"]
+          async with AsyncAnthropic(auth_token=environment_key) as client:
+              await EnvironmentWorker(
+                  client,
+                  environment_id=environment_id,
+                  environment_key=environment_key,
+                  workdir="/workspace",
+                  tools=lambda env: [*beta_agent_toolset_20260401(env), get_order_status],
+              ).run()
+
+
+      asyncio.run(main())
+      ```
+
+      ```typescript TypeScript
+      import Anthropic from "@anthropic-ai/sdk";
+      import { EnvironmentWorker } from "@anthropic-ai/sdk/helpers/beta/environments";
+      import { betaTool } from "@anthropic-ai/sdk/helpers/beta/json-schema";
+      import { betaAgentToolset20260401 } from "@anthropic-ai/sdk/tools/agent-toolset/node";
+
+      const getOrderStatus = betaTool({
+        name: "get_order_status",
+        description: "Look up an order in the internal fulfillment system by order ID.",
+        inputSchema: {
+          type: "object",
+          properties: { order_id: { type: "string", description: "The order ID" } },
+          required: ["order_id"]
+        },
+        // 在 worker 主机上运行：可调用沙箱能访问的任何内容。
+        run: async ({ order_id }) => `Order ${order_id}: shipped`
+      });
+
+      const environmentKey = process.env.ANTHROPIC_ENVIRONMENT_KEY!;
+      const environmentId = process.env.ANTHROPIC_ENVIRONMENT_ID!;
+      const client = new Anthropic({ authToken: environmentKey });
+      const controller = new AbortController();
+      process.once("SIGTERM", () => controller.abort());
+
+      await new EnvironmentWorker({
+        client,
+        environmentId,
+        environmentKey,
+        workdir: "/workspace",
+        signal: controller.signal,
+        tools: (ctx) => [...betaAgentToolset20260401(ctx), getOrderStatus]
+      }).run();
+      ```
+
+      ```csharp C#
+      // EnvironmentWorker 目前在 C# SDK 中不可用。
+      // 如需直接响应自定义工具调用，请参阅会话事件流。
+      ```
+
+      ```go Go
+      package main
+
+      import (
+          "context"
+          "log"
+          "os"
+          "os/signal"
+          "syscall"
+
+          "github.com/anthropics/anthropic-sdk-go"
+          "github.com/anthropics/anthropic-sdk-go/lib/environments"
+          "github.com/anthropics/anthropic-sdk-go/option"
+          "github.com/anthropics/anthropic-sdk-go/toolrunner"
+          "github.com/anthropics/anthropic-sdk-go/tools/agenttoolset"
+      )
+
+      type orderStatusInput struct {
+          OrderID string `json:"order_id"`
+      }
+
+      func main() {
+          environmentKey := os.Getenv("ANTHROPIC_ENVIRONMENT_KEY")
+          environmentID := os.Getenv("ANTHROPIC_ENVIRONMENT_ID")
+
+          ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+          defer stop()
+
+          getOrderStatus := toolrunner.NewBetaTool(
+              "get_order_status",
+              "Look up an order in the internal fulfillment system by order ID.",
+              anthropic.BetaToolInputSchemaParam{
+                  Properties: map[string]any{
+                      "order_id": map[string]any{"type": "string", "description": "The order ID"},
+                  },
+                  Required: []string{"order_id"},
+              },
+              // 在工作进程主机上运行：可调用沙箱能够访问的任何内容。
+              func(ctx context.Context, input orderStatusInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+                  return anthropic.BetaToolResultBlockParamContentUnion{
+                      OfText: &anthropic.BetaTextBlockParam{Text: "Order " + input.OrderID + ": shipped"},
+                  }, nil
+              },
+          )
+
+          client := anthropic.NewClient(option.WithAuthToken(environmentKey))
+
+          worker := environments.NewEnvironmentWorker(client, environments.EnvironmentWorkerOptions{
+              EnvironmentID:  environmentID,
+              EnvironmentKey: environmentKey,
+              Workdir:        "/workspace",
+              ToolsFunc: func(env *agenttoolset.AgentToolContext) []anthropic.BetaTool {
+                  return append(agenttoolset.BetaAgentToolset20260401(env), getOrderStatus)
+              },
+          })
+          if err := worker.Run(ctx); err != nil {
+              log.Fatalf("worker: %v", err)
+          }
+      }
+
+      ```
+
+      ```java Java
+      // EnvironmentWorker 目前在 Java SDK 中不可用。
+      // 如需直接响应自定义工具调用，请参阅会话事件流。
+      ```
+
+      ```php PHP
+      // EnvironmentWorker 目前在 PHP SDK 中不可用。
+      // 如需直接响应自定义工具调用，请参阅会话事件流。
+      ```
+
+      ```ruby Ruby
+      # EnvironmentWorker 目前在 Ruby SDK 中不可用。
+      # 如需直接响应自定义工具调用，请参阅会话事件流。
+      ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+worker 只响应向其注册的工具。如果某个自定义工具在智能体上声明了但未向任何 worker 或客户端注册，会话将以 `requires_action` 停止原因暂停，直到有某个组件发布其结果；有关事件流程，请参阅[处理自定义工具调用](/docs/zh/events-and-streaming#handling-custom-tool-calls)。
+
+### 将 MCP 服务器封装为自定义工具
+
+[MCP 连接器](/docs/zh/mcp-connector)从 OMA 一侧连接到 MCP 服务器，因此服务器必须暴露一个 OMA 可以访问的 HTTP 端点，无论是直接访问还是通过 [MCP 隧道](/docs/zh/mcp-connector)。要使用只有您的网络可以访问的服务器，请让 worker 充当 MCP 客户端，并将服务器的工具声明为自定义工具。MCP 服务器不需要来自您网络外部的入站连接；OMA 接收您在智能体上声明的工具定义、每次调用的输入以及您的 worker 回传的结果。在运行时，模型像调用任何其他自定义工具一样调用封装的工具：
+
+1. 智能体发出 `agent.custom_tool_use` 事件。
+2. worker 在您的沙箱内，通过其与您网络上服务器之间已打开的 MCP 会话转发该调用。
+3. worker 将服务器的响应作为 `user.custom_tool_result` 发布。
+
+SDK 的[客户端 MCP 辅助工具](/docs/zh/mcp-connector)将服务器的工具转换为 worker 接受的可运行工具；请在 OMA SDK 之外安装 MCP SDK（`pip install "anthropic[mcp]" "mcp>=1.24"`、`npm install @modelcontextprotocol/sdk`、`go get github.com/modelcontextprotocol/go-sdk`）。示例在不进行身份验证的情况下连接；要发送凭据，请配置您传递给 MCP 传输层的 HTTP 客户端或请求选项（Python 中为 `http_client`，TypeScript 中为 `requestInit`，Go 中为 `HTTPClient`）。
+
+<Steps>
+  <Step title="在智能体上声明服务器的工具">
+    列出 MCP 服务器的工具，并将每个工具声明为 `custom` 工具；MCP 的 `name`、`description` 和 `inputSchema` 一一对应到自定义工具的字段。如果服务器对其工具列表进行分页，请声明每一页；worker 必须列出相同的页面。
+
+    <CodeGroup exclude="shell">
+      ```python Python
+      import asyncio
+      from typing import Any, cast
+      from anthropic import AsyncAnthropic
+      from anthropic.types.beta import BetaManagedAgentsCustomToolParams
+      from mcp import ClientSession, types
+      # 需要 mcp >= 1.24，该版本将 streamablehttp_client 重命名为 streamable_http_client。
+      from mcp.client.streamable_http import streamable_http_client
+
+      MCP_SERVER_URL = "http://mcp.internal.example.com:8000/mcp"
+
+
+      def to_custom_tool(tool: types.Tool) -> BetaManagedAgentsCustomToolParams:
+          # MCP 字段与自定义工具声明一一对应。cast
+          # 将 schema 字典原样传递给 SDK 的类型化参数。
+          return {
+              "type": "custom",
+              "name": tool.name,
+              "description": tool.description or tool.name,
+              "input_schema": cast(Any, tool.inputSchema),
+          }
+
+
+      async def main() -> None:
+          # 请在您创建智能体的位置运行此代码，而不是在工作主机上：
+          # 它使用您的 OMA API 密钥（OMA_API_KEY）进行身份验证。
+          async with (
+              streamable_http_client(MCP_SERVER_URL) as (read, write, _),
+              ClientSession(read, write) as mcp_session,
+              AsyncAnthropic() as client,
+          ):
+              await mcp_session.initialize()
+              listed = await mcp_session.list_tools()
+              agent = await client.beta.agents.create(
+                  name="Internal tools agent",
+                  model="claude-opus-5",
+                  tools=[
+                      {"type": "agent_toolset_20260401"},
+                      *[to_custom_tool(tool) for tool in listed.tools],
+                  ],
+              )
+              print(agent.id)
+
+
+      asyncio.run(main())
+      ```
+
+      ```typescript TypeScript
+      import Anthropic from "@anthropic-ai/sdk";
+      import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+      import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+      const MCP_SERVER_URL = "http://mcp.internal.example.com:8000/mcp";
+
+      // 请在您创建智能体的位置运行此代码，而不是在工作主机上：它
+      // 使用您的 OMA API 密钥（OMA_API_KEY）进行身份验证。
+      const client = new Anthropic();
+
+      const mcpClient = new Client({ name: "declare-agent-tools", version: "1.0.0" });
+      await mcpClient.connect(new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL)));
+      const { tools } = await mcpClient.listTools();
+
+      const agent = await client.beta.agents.create({
+        name: "Internal tools agent",
+        model: "claude-opus-5",
+        tools: [
+          { type: "agent_toolset_20260401" },
+          // MCP 字段与自定义工具声明一一对应。
+          ...tools.map((tool) => ({
+            type: "custom" as const,
+            name: tool.name,
+            description: tool.description || tool.name,
+            input_schema: tool.inputSchema
+          }))
+        ]
+      });
+      console.log(agent.id);
+
+      await mcpClient.close();
+      ```
+
+      ```csharp C#
+      // 请参阅 Python、TypeScript 和 Go 选项卡。在 C# 中声明自定义工具的
+      // 方式相同，只需先使用 MCP 客户端列出服务器的工具即可。
+      ```
+
+      ```go Go
+      package main
+
+      import (
+          "context"
+          "encoding/json"
+          "fmt"
+          "log"
+
+          "github.com/anthropics/anthropic-sdk-go"
+          mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+      )
+
+      const mcpServerURL = "http://mcp.internal.example.com:8000/mcp"
+
+      // toCustomTool 将一个 MCP 工具定义映射为一个自定义工具声明。
+      // 字段一一对应：类型化参数承载 `properties` 和
+      // `required`，服务器输出的其他所有 JSON Schema 关键字都放入
+      // ExtraFields，以便声明的 schema 与服务器的 schema 保持一致。
+      func toCustomTool(tool *mcpsdk.Tool) (anthropic.BetaAgentNewParamsToolUnion, error) {
+          raw, err := json.Marshal(tool.InputSchema)
+          if err != nil {
+              return anthropic.BetaAgentNewParamsToolUnion{}, err
+          }
+          var schema map[string]any
+          if err := json.Unmarshal(raw, &schema); err != nil {
+              return anthropic.BetaAgentNewParamsToolUnion{}, err
+          }
+
+          inputSchema := anthropic.BetaManagedAgentsCustomToolInputSchemaParam{ExtraFields: map[string]any{}}
+          for keyword, value := range schema {
+              switch keyword {
+              case "type":
+                  // 该参数类型始终序列化为 "type": "object"。
+              case "properties":
+                  properties, _ := value.(map[string]any)
+                  inputSchema.Properties = properties
+              case "required":
+                  entries, _ := value.([]any)
+                  for _, entry := range entries {
+                      if name, isString := entry.(string); isString {
+                          inputSchema.Required = append(inputSchema.Required, name)
+                      }
+                  }
+              default:
+                  inputSchema.ExtraFields[keyword] = value
+              }
+          }
+
+          description := tool.Description
+          if description == "" {
+              description = tool.Name
+          }
+          return anthropic.BetaAgentNewParamsToolUnion{
+              OfCustom: &anthropic.BetaManagedAgentsCustomToolParams{
+                  Type:        anthropic.BetaManagedAgentsCustomToolParamsTypeCustom,
+                  Name:        tool.Name,
+                  Description: description,
+                  InputSchema: inputSchema,
+              },
+          }, nil
+      }
+
+      func main() {
+          ctx := context.Background()
+
+          // 请在您创建智能体的位置运行此程序，而非在工作节点主机上：
+          // 它使用您的 OMA API 密钥（OMA_API_KEY）进行身份验证。
+          client := anthropic.NewClient()
+
+          mcpClient := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "declare-agent-tools", Version: "1.0.0"}, nil)
+          session, err := mcpClient.Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: mcpServerURL}, nil)
+          if err != nil {
+              log.Fatalf("connect to MCP server: %v", err)
+          }
+          defer session.Close()
+
+          listed, err := session.ListTools(ctx, nil)
+          if err != nil {
+              log.Fatalf("list MCP tools: %v", err)
+          }
+
+          tools := []anthropic.BetaAgentNewParamsToolUnion{
+              {OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
+                  Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
+              }},
+          }
+          for _, tool := range listed.Tools {
+              custom, err := toCustomTool(tool)
+              if err != nil {
+                  log.Fatalf("convert MCP tool %s: %v", tool.Name, err)
+              }
+              tools = append(tools, custom)
+          }
+
+          agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
+              Name:  "Internal tools agent",
+              Model: anthropic.BetaManagedAgentsModelConfigParams{ID: anthropic.BetaManagedAgentsModelClaudeOpus5},
+              Tools: tools,
+          })
+          if err != nil {
+              log.Fatalf("create agent: %v", err)
+          }
+          fmt.Println(agent.ID)
+      }
+
+      ```
+
+      ```java Java
+      // 请参阅 Python、TypeScript 和 Go 标签页。在 Java 中声明自定义工具的
+      // 方式相同，只需先使用 MCP 客户端列出服务器的工具即可。
+      ```
+
+      ```php PHP
+      // 请参阅 Python、TypeScript 和 Go 标签页。在 PHP 中声明自定义工具的
+      // 方式相同，只需先通过 MCP 客户端列出服务器的工具即可。
+      ```
+
+      ```ruby Ruby
+      # 请参阅 Python、TypeScript 和 Go 标签页。在 Ruby 中声明自定义工具的
+      # 方式相同，只需先使用 MCP 客户端列出服务器的工具即可。
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="从 worker 提供工具">
+    在启动时连接到同一个 MCP 服务器，使用 MCP 辅助工具转换其工具，并将它们与内置工具集一起注册。在 worker 的整个生命周期内保持一个 MCP 会话打开。
+
+    <CodeGroup exclude="shell">
+      ```python Python
+      import asyncio
+      import os
+      from datetime import timedelta
+      from anthropic import AsyncAnthropic
+      from anthropic.lib.environments import EnvironmentWorker
+      from anthropic.lib.tools.agent_toolset import beta_agent_toolset_20260401
+      from anthropic.lib.tools.mcp import async_mcp_tool
+      from mcp import ClientSession
+      # 需要 mcp >= 1.24，该版本将 streamablehttp_client 重命名为 streamable_http_client。
+      from mcp.client.streamable_http import streamable_http_client
+
+      MCP_SERVER_URL = "http://mcp.internal.example.com:8000/mcp"
+
+
+      async def main() -> None:
+          environment_key = os.environ["ANTHROPIC_ENVIRONMENT_KEY"]
+          environment_id = os.environ["ANTHROPIC_ENVIRONMENT_ID"]
+          # 在启动时连接一次 MCP 服务器，并在工作进程的整个生命周期内
+          # 保持会话打开。超时设置会将挂起的工具调用转为错误
+          # 结果，而不是让调用一直停滞。
+          async with (
+              streamable_http_client(MCP_SERVER_URL) as (read, write, _),
+              ClientSession(read, write, read_timeout_seconds=timedelta(seconds=60)) as mcp_session,
+              AsyncAnthropic(auth_token=environment_key) as client,
+          ):
+              await mcp_session.initialize()
+              listed = await mcp_session.list_tools()
+              mcp_tools = [async_mcp_tool(tool, mcp_session) for tool in listed.tools]
+              await EnvironmentWorker(
+                  client,
+                  environment_id=environment_id,
+                  environment_key=environment_key,
+                  workdir="/workspace",
+                  tools=lambda env: [*beta_agent_toolset_20260401(env), *mcp_tools],
+              ).run()
+
+
+      asyncio.run(main())
+      ```
+
+      ```typescript TypeScript
+      import Anthropic from "@anthropic-ai/sdk";
+      import { EnvironmentWorker } from "@anthropic-ai/sdk/helpers/beta/environments";
+      import {
+        mcpTools,
+        type MCPCallToolResultLike,
+        type MCPClientLike
+      } from "@anthropic-ai/sdk/helpers/beta/mcp";
+      import { betaAgentToolset20260401 } from "@anthropic-ai/sdk/tools/agent-toolset/node";
+      import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+      import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+      const MCP_SERVER_URL = "http://mcp.internal.example.com:8000/mcp";
+
+      const environmentKey = process.env.ANTHROPIC_ENVIRONMENT_KEY!;
+      const environmentId = process.env.ANTHROPIC_ENVIRONMENT_ID!;
+      const client = new Anthropic({ authToken: environmentKey });
+      const controller = new AbortController();
+      process.once("SIGTERM", () => controller.abort());
+
+      // 在启动时连接一次 MCP 服务器，并在工作进程的整个生命周期内
+      // 保持连接打开。
+      const mcpClient = new Client({ name: "sandbox-worker", version: "1.0.0" });
+      await mcpClient.connect(new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL)));
+      const { tools } = await mcpClient.listTools();
+
+      // MCP SDK 的 callTool 返回类型仍包含 mcpTools 不接受的旧版结果形状；
+      // 需要收窄类型。待 MCPClientLike 放宽后删除此处理。
+      const mcpClientForTools: MCPClientLike = {
+        callTool: (params) => mcpClient.callTool(params) as Promise<MCPCallToolResultLike>
+      };
+
+      await new EnvironmentWorker({
+        client,
+        environmentId,
+        environmentKey,
+        workdir: "/workspace",
+        signal: controller.signal,
+        tools: (ctx) => [...betaAgentToolset20260401(ctx), ...mcpTools(tools, mcpClientForTools)]
+      }).run();
+      ```
+
+      ```csharp C#
+      // EnvironmentWorker 目前在 C# SDK 中不可用。
+      ```
+
+      ```go Go
+      package main
+
+      import (
+          "context"
+          "log"
+          "os"
+          "os/signal"
+          "syscall"
+
+          "github.com/anthropics/anthropic-sdk-go"
+          "github.com/anthropics/anthropic-sdk-go/lib/environments"
+          "github.com/anthropics/anthropic-sdk-go/mcp"
+          "github.com/anthropics/anthropic-sdk-go/option"
+          "github.com/anthropics/anthropic-sdk-go/tools/agenttoolset"
+          mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+      )
+
+      const mcpServerURL = "http://mcp.internal.example.com:8000/mcp"
+
+      func main() {
+          environmentKey := os.Getenv("ANTHROPIC_ENVIRONMENT_KEY")
+          environmentID := os.Getenv("ANTHROPIC_ENVIRONMENT_ID")
+
+          ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+          defer stop()
+
+          client := anthropic.NewClient(option.WithAuthToken(environmentKey))
+
+          // 在启动时连接一次 MCP 服务器，并在工作进程的整个生命周期内
+          // 保持会话打开。
+          mcpClient := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "sandbox-worker", Version: "1.0.0"}, nil)
+          session, err := mcpClient.Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: mcpServerURL}, nil)
+          if err != nil {
+              log.Fatalf("connect to MCP server: %v", err)
+          }
+          defer session.Close()
+
+          listed, err := session.ListTools(ctx, nil)
+          if err != nil {
+              log.Fatalf("list MCP tools: %v", err)
+          }
+          mcpTools, err := mcp.NewBetaTools(listed.Tools, session)
+          if err != nil {
+              log.Fatalf("convert MCP tools: %v", err)
+          }
+
+          worker := environments.NewEnvironmentWorker(client, environments.EnvironmentWorkerOptions{
+              EnvironmentID:  environmentID,
+              EnvironmentKey: environmentKey,
+              Workdir:        "/workspace",
+              ToolsFunc: func(env *agenttoolset.AgentToolContext) []anthropic.BetaTool {
+                  return append(agenttoolset.BetaAgentToolset20260401(env), mcpTools...)
+              },
+          })
+          if err := worker.Run(ctx); err != nil {
+              log.Fatalf("worker: %v", err)
+          }
+      }
+
+      ```
+
+      ```java Java
+      // EnvironmentWorker 目前在 Java SDK 中不可用。
+      ```
+
+      ```php PHP
+      // EnvironmentWorker 目前在 PHP SDK 中不可用。
+      ```
+
+      ```ruby Ruby
+      # EnvironmentWorker 目前在 Ruby SDK 中不可用。
+      ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+封装 MCP 服务器时，请注意以下几点：
+
+* **工具是声明的，而非在运行时发现的。** worker 在启动时列出 MCP 服务器的工具一次，无法向正在运行的会话添加工具。当服务器的工具发生变化时，请重新声明它们——在智能体上声明，或通过[更新智能体配置](/docs/zh/session-operations#updating-the-agent-configuration)在空闲会话上声明——然后重启 worker。
+* **名称和描述必须符合托管智能体 API 的要求。** 自定义工具名称在每个智能体中是唯一的，使用字母、数字、下划线和连字符（1–128 个字符）；描述必须非空；智能体的 `tools` 数组最多包含 128 个条目（每个封装的工具是一个条目，内置工具集是另一个条目）。API 会拒绝重复使用工具名称的声明、以内置智能体工具（如 `bash` 或 `read`）命名自定义工具的声明，或使用保留的 `mcp__` 前缀的声明。MCP 辅助工具保留服务器的名称和描述，因此请在需要时重命名或裁剪。当两个服务器暴露相同的工具名称时，请自行以带前缀的名称定义封装器，并让它调用服务器的原始工具名称。
+* **大多数 schema 可原样传递。** API 接受 MCP 服务器常用的 JSON Schema 关键字，例如 `additionalProperties` 和 `title`。它拒绝自定义工具 `input_schema` 中任何位置的引用关键字（如 `$ref`），因此请内联那些由 pydantic 等生成器提取到 `$defs` 中的 schema。它还拒绝顶层的 `oneOf`、`anyOf` 和 `allOf`，以及超出字母、数字、下划线、点和连字符范围的属性名称（1–64 个字符）。
+* **工具失败以错误工具结果的形式呈现。** 当 MCP 服务器报告工具错误时，worker 会发布一个模型可以响应的错误工具结果。没有对应工具结果的 MCP 内容（如音频块和资源链接）也会以错误形式呈现。在 MCP 客户端上设置超时以获得更快、更清晰的失败反馈，如 Python worker 示例中使用 `read_timeout_seconds` 所示。如果没有设置超时，挂起的调用只有在 TypeScript MCP SDK 的默认请求超时触发（约一分钟）或 worker 自身的后备机制触发时才会变成错误结果：Python 中约为两分半钟，Go 中为两分钟——Go worker 会取消超过其 120 秒默认值的工具调用并发布错误结果。
+* **封装您运营或信任的服务器。** 封装工具的名称、描述和结果会像任何其他工具一样进入模型的上下文：这是不受信任的输入，可能影响智能体使用其他工具（包括 worker 主机上的 `bash`）的方式。仅声明您打算让智能体使用的工具。
+* **权限策略不适用于自定义工具。** [权限策略](/docs/zh/permission-policies#custom-tools)管理内置和 MCP 工具集；worker 会执行模型发出的每个封装工具调用，因此请在您自己的工具代码中加入任何审批步骤。
+
+## 监控和运维
+
+这些调用从您的监控或运维工具中运行，使用您的 OMA API 密钥进行身份验证，以观察和管理 worker 集群。认领和保活循环在 worker 辅助工具内部处理，因此您无需直接调用这些端点。
+
+<Warning>
+  这些端点接受您的组织 API 密钥或环境密钥。请使用您的组织 API 密钥从 worker 主机外部调用它们。在 worker 主机上设置 `OMA_API_KEY` 会将组织范围的凭据暴露给智能体工具调用。
+</Warning>
+
+### 读取队列深度
+
+`work.stats` 返回环境的队列状态：
+
+* `depth` 是等待被认领的项目数量。根据此值扩展您的 worker 集群或对积压发出警报。
+* `pending` 是已被 worker 认领但尚未确认的项目数量。worker 辅助工具在处理每个项目之前会先确认它，因此在正常运行中此值保持接近零；持续的非零值意味着某个 worker 在认领和确认之间停滞了。
+* `oldest_queued_at` 是队列中最早项目的时间戳（等待被认领或已认领但尚未确认），如果没有则为 `null`。
+* `workers_polling` 是过去 30 秒内进行过轮询的 worker 数量。使用此值进行存活性警报。
+
+<CodeGroup>
+  ```bash cURL
+  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/stats" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "anthropic-version: 2023-06-01"
+  ```
+
+  ```bash CLI
+  ant beta:environments:work stats --environment-id "$ANTHROPIC_ENVIRONMENT_ID"
+  ```
+
+  ```python Python
+  import os
+
+  import anthropic
+
+  client = anthropic.Anthropic()
+
+  stats = client.beta.environments.work.stats(os.environ["ANTHROPIC_ENVIRONMENT_ID"])
+  print(f"depth={stats.depth} pending={stats.pending}")
+  ```
+
+  ```typescript TypeScript
+  import Anthropic from "@anthropic-ai/sdk";
+
+  const client = new Anthropic();
+
+  const stats = await client.beta.environments.work.stats(process.env.ANTHROPIC_ENVIRONMENT_ID!);
+
+  console.log(`depth=${stats.depth} pending=${stats.pending}`);
+  ```
+
+  ```csharp C#
+  using Anthropic;
+
+  var client = new AnthropicClient();
+
+  var environmentId = Environment.GetEnvironmentVariable("ANTHROPIC_ENVIRONMENT_ID")!;
+
+  var stats = await client.Beta.Environments.Work.Stats(environmentId);
+
+  Console.WriteLine($"depth={stats.Depth} pending={stats.Pending}");
+  ```
+
+  ```go Go
+  package main
+
+  import (
+      "context"
+      "fmt"
+      "os"
+
+      "github.com/anthropics/anthropic-sdk-go"
+  )
+
+  func main() {
+      client := anthropic.NewClient()
+      environmentID := os.Getenv("ANTHROPIC_ENVIRONMENT_ID")
+
+      stats, err := client.Beta.Environments.Work.Stats(
+          context.Background(),
+          environmentID,
+          anthropic.BetaEnvironmentWorkStatsParams{},
+      )
+      if err != nil {
+          panic(err)
+      }
+
+      fmt.Printf("depth=%d pending=%d\n", stats.Depth, stats.Pending)
+  }
+  ```
+
+  ```java Java
+  import com.anthropic.client.AnthropicClient;
+  import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+  import com.anthropic.models.beta.environments.work.BetaSelfHostedWorkQueueStats;
+
+  void main() {
+      AnthropicClient client = AnthropicOkHttpClient.fromEnv();
+
+      BetaSelfHostedWorkQueueStats stats = client.beta()
+          .environments()
+          .work()
+          .stats(System.getenv("ANTHROPIC_ENVIRONMENT_ID"));
+
+      IO.println("depth=" + stats.depth() + " pending=" + stats.pending());
+  }
+  ```
+
+  ```php PHP
+  <?php
+
+  use Anthropic\Client;
+
+  $client = new Client();
+
+  $stats = $client->beta->environments->work->stats(getenv('ANTHROPIC_ENVIRONMENT_ID'));
+
+  printf("depth=%d pending=%d\n", $stats->depth, $stats->pending);
+  ```
+
+  ```ruby Ruby
+  require "anthropic"
+
+  client = Anthropic::Client.new
+
+  stats = client.beta.environments.work.stats(ENV.fetch("ANTHROPIC_ENVIRONMENT_ID"))
+
+  puts "depth=#{stats.depth} pending=#{stats.pending}"
+  ```
+</CodeGroup>
+
+```text wrap
+{
+  "type": "work_queue_stats",
+  "depth": 0,
+  "pending": 0,
+  "oldest_queued_at": null,
+  "workers_polling": 0
+}
+```
+
+### 优雅地停止会话
+
+使用 `work.stop` 请求处理特定会话的工作进程将其关闭。默认情况下，worker 会进入 `stopping` 状态：工作进程在下一次租约心跳时会注意到这一变化，取消该会话正在进行的工具调用，并确认关闭，此时 worker 变为 `stopped` 状态。在请求正文中传递 `force: true`（使用 CLI 时传递 `--force`），可立即将 worker 标记为 `stopped`，而无需等待工作进程的确认。
+
+由于这些调用是从您的运维工具而非工作进程主机发起的，因此 `ANTHROPIC_WORK_ID` 不会被自动设置。在运行以下示例之前，请将其设置为目标 worker 的 ID。要查找 worker 的 ID，请通过[环境 worker 端点](/docs/zh/api/environment-work/list-work-items)列出该环境的 worker。
+
+<CodeGroup>
+  ```bash cURL
+  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/$ANTHROPIC_WORK_ID/stop" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-beta: managed-agents-2026-04-01" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "content-type: application/json" \
+    -d '{}'
+  ```
+
+  ```bash CLI
+  ant beta:environments:work stop \
+    --environment-id "$ANTHROPIC_ENVIRONMENT_ID" \
+    --work-id "$ANTHROPIC_WORK_ID"
+  ```
+
+  ```python Python
+  import os
+
+  import anthropic
+
+  client = anthropic.Anthropic()
+
+  work = client.beta.environments.work.stop(
+      os.environ["ANTHROPIC_WORK_ID"],
+      environment_id=os.environ["ANTHROPIC_ENVIRONMENT_ID"],
+  )
+  print(work.state)
+  ```
+
+  ```typescript TypeScript
+  import Anthropic from "@anthropic-ai/sdk";
+
+  const client = new Anthropic();
+
+  const work = await client.beta.environments.work.stop(process.env.ANTHROPIC_WORK_ID!, {
+    environment_id: process.env.ANTHROPIC_ENVIRONMENT_ID!
+  });
+
+  console.log(work.state);
+  ```
+
+  ```csharp C#
+  using Anthropic;
+
+  var client = new AnthropicClient();
+
+  var work = await client.Beta.Environments.Work.Stop(
+      Environment.GetEnvironmentVariable("ANTHROPIC_WORK_ID")!,
+      new()
+      {
+          EnvironmentID = Environment.GetEnvironmentVariable("ANTHROPIC_ENVIRONMENT_ID")!
+      }
+  );
+
+  Console.WriteLine(work.State);
+  ```
+
+  ```go Go
+  package main
+
+  import (
+      "context"
+      "fmt"
+      "os"
+
+      "github.com/anthropics/anthropic-sdk-go"
+  )
+
+  func main() {
+      client := anthropic.NewClient()
+
+      work, err := client.Beta.Environments.Work.Stop(
+          context.Background(),
+          os.Getenv("ANTHROPIC_WORK_ID"),
+          anthropic.BetaEnvironmentWorkStopParams{
+              EnvironmentID: os.Getenv("ANTHROPIC_ENVIRONMENT_ID"),
+          },
+      )
+      if err != nil {
+          panic(err)
+      }
+      fmt.Println(work.State)
+  }
+  ```
+
+  ```java Java
+  import com.anthropic.client.AnthropicClient;
+  import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+  import com.anthropic.models.beta.environments.work.BetaSelfHostedWork;
+  import com.anthropic.models.beta.environments.work.BetaSelfHostedWorkStopRequest;
+  import com.anthropic.models.beta.environments.work.WorkStopParams;
+
+  void main() {
+      AnthropicClient client = AnthropicOkHttpClient.fromEnv();
+
+      BetaSelfHostedWork work = client.beta().environments().work().stop(
+          WorkStopParams.builder()
+              .environmentId(System.getenv("ANTHROPIC_ENVIRONMENT_ID"))
+              .workId(System.getenv("ANTHROPIC_WORK_ID"))
+              .betaSelfHostedWorkStopRequest(BetaSelfHostedWorkStopRequest.builder().build())
+              .build()
+      );
+
+      IO.println(work.state());
+  }
+  ```
+
+  ```php PHP
+  <?php
+
+  use Anthropic\Client;
+
+  $client = new Client();
+
+  $work = $client->beta->environments->work->stop(
+      getenv('ANTHROPIC_WORK_ID'),
+      environmentID: getenv('ANTHROPIC_ENVIRONMENT_ID'),
+  );
+
+  echo $work->state . "\n";
+  ```
+
+  ```ruby Ruby
+  require "anthropic"
+
+  client = Anthropic::Client.new
+
+  work = client.beta.environments.work.stop(
+    ENV.fetch("ANTHROPIC_WORK_ID"),
+    environment_id: ENV.fetch("ANTHROPIC_ENVIRONMENT_ID")
+  )
+
+  puts work.state
+  ```
+</CodeGroup>
+
+## 后续步骤
+
+<CardGroup cols={2}>
+  <Card title="安全模型" href="/docs/zh/self-hosted-sandboxes-security">
+    自托管沙箱环境的责任共担模型。
+  </Card>
+
+  <Card title="启动会话" href="/docs/zh/sessions">
+    创建会话以运行您的智能体并开始执行任务。
+  </Card>
+
+  <Card title="MCP 隧道" href="/docs/zh/mcp-connector">
+    将智能体安全地连接到在您的私有网络中运行的 MCP 服务器，无需开放入站端口或将服务暴露到公共互联网。
+  </Card>
+</CardGroup>

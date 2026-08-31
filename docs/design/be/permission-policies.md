@@ -631,7 +631,7 @@ MCP 工具集默认为 `always_ask`。这可确保添加到 MCP 服务器的新�
 
 在以下示例中，工具使用事件 ID 来自 `session.status_idle` 事件的 `stop_reason.event_ids` 数组。请在[会话事件流](/docs/zh-CN/managed-agents/events-and-streaming#integrating-events)指南中了解有关接收事件的更多信息，或[订阅 Webhook](/docs/zh-CN/managed-agents/webhooks) 以在会话暂停等待输入时收到通知。
 
-本仓库实现说明：`stop_reason` 遵循 SDK union shape，`requires_action` 时只暴露官方字段 `type` / `event_ids`。`event_ids` 保存的是阻塞 `agent.tool_use` / `agent.mcp_tool_use` public event 的 `id`（`sevt_...`），不是 Claude Code worker 的原始 `request.tool_use_id`（`tool_...`）。为兼容早期客户端，`user.tool_confirmation.tool_use_id` 仍接受旧 worker `tool_use_id`，但新客户端应按官方契约使用 `event_ids` 中的 public event id；兼容诊断字段只保留在 `requires_action_details`。
+本仓库实现说明：`can_use_tool` 是唯一 public tool-use event 生产入口，assistant 原始 `tool_use` block 不再重复投影。public tool event 使用扁平官方字段，不公开 Claude Code provider tool id、worker `request_id`、`content` 或 `message`；这些确认上下文只保存在 Code Session 私有 worker metadata。`stop_reason` 遵循 SDK union shape，`requires_action` 时只暴露官方字段 `type` / `event_ids`，其中的 ID 与 `user.tool_confirmation.tool_use_id` 使用同一个 public event id（`sevt_...`）。
 
 <CodeGroup defaultLanguage="CLI">
   ```bash curl
@@ -886,7 +886,7 @@ MCP 工具集默认为 `always_ask`。这可确保添加到 MCP 服务器的新�
 
 ## 自定义工具
 
-权限策略不适用于自定义工具。当智能体调用自定义工具时，您的应用程序会收到 `agent.custom_tool_use` 事件，并负责在发回 `user.custom_tool_result` 之前决定是否执行该工具。有关完整流程，请参阅[会话事件流](/docs/zh-CN/managed-agents/events-and-streaming#handling-custom-tool-calls)。
+权限策略不适用于自定义工具。当智能体调用自定义工具时，您的应用程序会收到 `agent.custom_tool_use` 事件，并负责在发回 `user.custom_tool_result` 之前决定是否执行该工具。`AskUserQuestion` 也使用这组标准事件，不扩展 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。有关完整流程，请参阅[会话事件流](/docs/zh-CN/managed-agents/events-and-streaming#handling-custom-tool-calls)。
 
 ## 后续步骤
 

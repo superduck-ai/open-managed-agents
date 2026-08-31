@@ -2,15 +2,15 @@ import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '../../../shared/ui/dropdown-menu';
-import { Input } from '../../../shared/ui/input';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
-import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  InputGroupTextarea,
+} from '../../../shared/ui/input-group';
+import { ScrollArea } from '../../../shared/ui/scroll-area';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import {
   quickstartComposerFrameClassName,
@@ -27,458 +27,104 @@ import {
   type IdleGapEntry,
   type QueuedBoundaryEntry,
   type QuickstartSessionEvent,
-  type SessionDebugDetailTab,
   type SessionEventListEntry,
   type SessionTraceEntry,
-  type SessionTraceFamily,
-  type SessionTraceFilterOption,
   type SessionTraceView,
-  type SessionDetailSegment,
   type ToolBatchEntry,
   type ToolCallEntry,
   type ToolLifecycle,
-  type TranscriptMarkdownBlock,
 } from '../types';
 import { copyText, toRecord } from '../utils';
 import clsx from 'clsx';
-import { ArrowUp, ChevronDown, Loader2, Search, Timer, X } from 'lucide-react';
-import { type CSSProperties, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, Loader2, Search, Timer, X } from 'lucide-react';
+import { type ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
-import { formatSessionDuration, localizedTranscriptFilterOptions, sessionEventThreadId } from './sessionDetailModel';
+import { formatSessionDuration, sessionEventThreadId } from './sessionDetailModel';
 import { ApprovalChip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
-  buildSessionTraceEntries,
   compactSessionEventId,
-  compareSessionEvents,
-  isSafeTranscriptMarkdownHref,
-  parseTranscriptCode,
-  parseTranscriptMarkdownBlocks,
   prettyCode,
   sessionEventDebugJson,
   sessionEventErrorMessage,
   sessionEventIsThinking,
   sessionEventStructuredContentText,
-  sessionEventTimestamp,
   sessionEventTranscriptText,
   sessionEventType,
-  sessionIsToolResultEvent,
   sessionOutcomeDescription,
   sessionResultText,
   sessionStatusDescription,
   sessionSubagentThreadId,
   sessionThinkingLabel,
   sessionThinkingText,
-  sessionToolLifecycle,
   sessionToolResultText,
   sessionToolUseCodeLanguage,
   sessionToolUseInput,
   sessionTraceDetailTitle,
-  sessionTraceFilterValue,
   sessionTraceTextIsJson,
 } from './sessionTraceModel';
 import {
   compactSubagentThreadId,
   sessionDebugBadge,
-  sessionInlineRowPreview,
   sessionOutcomeStatus,
   sessionSubagentDirection,
   sessionSubagentThreadRef,
   sessionToolBatchSummary,
 } from './sessionTraceRows';
+import { TranscriptContent } from './SessionTranscriptContent';
 
-export function SessionTracePanel({
-  events,
-  loading,
-  error,
-  sessionStartedAt,
-}: {
-  events: QuickstartSessionEvent[];
-  loading: boolean;
-  error: string | null;
-  sessionStartedAt?: string;
-}) {
-  const { msg } = useI18n();
-  const [view, setView] = useState<SessionTraceView>('transcript');
-  const [query, setQuery] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const lastEntryCountRef = useRef(0);
-  const sortedEvents = useMemo(() => [...events].sort(compareSessionEvents), [events]);
-  const traceStartMs = useMemo(() => {
-    const sessionStart = typeof sessionStartedAt === 'string' ? Date.parse(sessionStartedAt) : NaN;
-    if (Number.isFinite(sessionStart)) {
-      return sessionStart;
-    }
-    return sortedEvents.map(sessionEventTimestamp).find(Boolean) ?? 0;
-  }, [sessionStartedAt, sortedEvents]);
-  const entries = useMemo(
-    () => buildSessionTraceEntries(sortedEvents, view, traceStartMs),
-    [sortedEvents, view, traceStartMs],
-  );
-  const filterOptions = useMemo<SessionTraceFilterOption[]>(() => {
-    if (view === 'transcript') {
-      return localizedTranscriptFilterOptions(msg);
-    }
-    const seen = new Set<string>();
-    return entries
-      .map((entry) => entry.type)
-      .filter((type) => {
-        if (seen.has(type)) {
-          return false;
-        }
-        seen.add(type);
-        return true;
-      })
-      .sort((left, right) => left.localeCompare(right))
-      .map((type) => ({ value: type, label: type }));
-  }, [entries, msg, view]);
-  const filteredEntries = useMemo(() => {
-    const selected = new Set(selectedTypes);
-    const needle = query.trim().toLowerCase();
-    return entries.filter((entry) => {
-      const matchesType = selected.size === 0 || selected.has(sessionTraceFilterValue(entry, view));
-      const matchesQuery = !needle || entry.searchText.includes(needle);
-      return matchesType && matchesQuery;
-    });
-  }, [entries, query, selectedTypes, view]);
-  const selectedEntry = filteredEntries.find((entry) => entry.id === selectedEntryId) ?? null;
-  const hasFilter = query.trim().length > 0 || selectedTypes.length > 0;
-
-  useEffect(() => {
-    setSelectedTypes([]);
-    setQuery('');
-  }, [view]);
-
-  useEffect(() => {
-    if (selectedEntryId && !filteredEntries.some((entry) => entry.id === selectedEntryId)) {
-      setSelectedEntryId(null);
-    }
-  }, [filteredEntries, selectedEntryId]);
-
-  useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) {
-      return;
-    }
-    const previousCount = lastEntryCountRef.current;
-    lastEntryCountRef.current = filteredEntries.length;
-    if (!filteredEntries.length) {
-      return;
-    }
-    const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    const shouldFollow = filteredEntries.length > previousCount || distanceFromBottom < 96;
-    if (!shouldFollow) {
-      return;
-    }
-    scroller.scrollTop = scroller.scrollHeight;
-  }, [filteredEntries.length]);
-
-  return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-secondary">
-      <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-2 pt-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <SessionTraceViewMode value={view} onChange={setView} />
-          <div className="h-5 w-px bg-accent" aria-hidden />
-          <SessionEventTypeFilter
-            options={filterOptions}
-            selectedTypes={selectedTypes}
-            view={view}
-            onChange={setSelectedTypes}
-          />
-          <SessionTraceSearch value={query} onChange={setQuery} />
-        </div>
-      </div>
-      <div className="relative min-h-0 flex-1 overflow-hidden border-t border-border">
-        <div ref={scrollerRef} className="subtle-scrollbar absolute inset-0 overflow-auto px-8 pt-2">
-          {loading && !events.length ? (
-            <SessionTraceSkeleton />
-          ) : error && !events.length ? (
-            <SessionTraceEmpty message={error} danger />
-          ) : filteredEntries.length ? (
-            <div className="flex flex-col pb-8">
-              {filteredEntries.map((entry) => (
-                <SessionTraceRow
-                  key={entry.id}
-                  entry={entry}
-                  selected={entry.id === selectedEntryId}
-                  onSelect={() => setSelectedEntryId(entry.id)}
-                />
-              ))}
-            </div>
-          ) : (
-            <SessionTraceEmpty
-              message={
-                entries.length === 0
-                  ? msg(
-                      'managedAgents.sessions.trace.noEvents',
-                      'No events yet. Events will appear here as they occur.',
-                    )
-                  : msg('managedAgents.sessions.trace.noMatchingEvents', 'No events match the current filters.')
-              }
-              onClear={
-                hasFilter
-                  ? () => {
-                      setSelectedTypes([]);
-                      setQuery('');
-                    }
-                  : undefined
-              }
-            />
-          )}
-        </div>
-        {selectedEntry ? (
-          <SessionTraceDetail entry={selectedEntry} view={view} onClose={() => setSelectedEntryId(null)} />
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-export function SessionTraceViewMode({
+export function SessionTraceSearch({
+  className,
   value,
   onChange,
 }: {
-  value: SessionTraceView;
-  onChange: (value: SessionTraceView) => void;
-}) {
-  return <SessionSegmentTabs value={value} items={['transcript', 'debug']} onChange={onChange} />;
-}
-
-export function SessionDetailSegmentMode({
-  value,
-  onChange,
-}: {
-  value: SessionDetailSegment;
-  onChange: (value: SessionDetailSegment) => void;
-}) {
-  return <SessionSegmentTabs value={value} items={['transcript', 'debug', 'trace']} onChange={onChange} />;
-}
-
-function SessionSegmentTabs<T extends SessionDetailSegment>({
-  value,
-  items,
-  onChange,
-}: {
-  value: T;
-  items: readonly T[];
-  onChange: (value: T) => void;
+  className?: string;
+  value: string;
+  onChange: (value: string) => void;
 }) {
   const { msg } = useI18n();
-  const label = msg('managedAgents.sessions.trace.viewMode', 'View mode');
-  return (
-    <Tabs value={value} className="gap-0" onValueChange={(nextValue) => onChange(nextValue as T)}>
-      <TabsList aria-label={label} className="h-7 rounded-full bg-accent p-0.5">
-        {items.map((item) => (
-          <TabsTrigger
-            key={item}
-            value={item}
-            className="h-6 flex-none rounded-full border-transparent bg-transparent px-3 text-sm font-medium text-muted-foreground shadow-none after:hidden data-active:bg-card data-active:text-foreground"
-          >
-            {segmentLabel(item, msg)}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-    </Tabs>
-  );
-}
-
-function segmentLabel(item: SessionDetailSegment, msg: ReturnType<typeof useI18n>['msg']) {
-  if (item === 'transcript') {
-    return msg('managedAgents.sessions.trace.transcript', 'Transcript');
-  }
-  if (item === 'debug') {
-    return msg('managedAgents.sessions.trace.debug', 'Debug');
-  }
-  return msg('managedAgents.sessions.trace.trace', 'Trace');
-}
-
-function toggleSessionFilterOption({
-  checked,
-  option,
-  options,
-  selectedTypes,
-  onChange,
-}: {
-  checked: boolean;
-  option: string;
-  options: SessionTraceFilterOption[];
-  selectedTypes: string[];
-  onChange: (value: string[]) => void;
-}) {
-  const nextTypes = checked ? selectedTypes.filter((item) => item !== option) : [...selectedTypes, option];
-  onChange(nextTypes.length === 0 || nextTypes.length === options.length ? [] : nextTypes);
-}
-
-export function SessionEventTypeFilter({
-  options,
-  selectedTypes,
-  view,
-  onChange,
-}: {
-  options: SessionTraceFilterOption[];
-  selectedTypes: string[];
-  view: SessionTraceView;
-  onChange: (value: string[]) => void;
-}) {
-  const { msg } = useI18n();
-  const [open, setOpen] = useState(false);
-  const selectedSet = useMemo(() => new Set(selectedTypes), [selectedTypes]);
-  const allSelected = selectedTypes.length === 0 || selectedTypes.length === options.length;
-  const label = allSelected
-    ? msg('managedAgents.sessions.trace.allEvents', 'All events')
-    : msg('managedAgents.common.selectedCount', '{count} selected', { count: selectedTypes.length });
-  const showAllEventsFirst = view === 'transcript';
-
-  useEffect(() => {
-    setOpen(false);
-  }, [view]);
-
-  return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            aria-label={label}
-            disabled={options.length === 0}
-            className="gap-2 bg-accent text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-          />
-        }
-      >
-        {label}
-        <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={6} className="max-h-72 w-80 overflow-auto bg-popover">
-        {showAllEventsFirst ? (
-          <DropdownMenuCheckboxItem
-            checked={allSelected}
-            className="h-8 px-2 text-left text-sm text-foreground"
-            onCheckedChange={() => onChange([])}
-          >
-            <span className="min-w-0 flex-1 truncate">
-              {msg('managedAgents.sessions.trace.allEvents', 'All events')}
-            </span>
-          </DropdownMenuCheckboxItem>
-        ) : null}
-        {options.map((option) => {
-          const checked = selectedSet.has(option.value);
-          return (
-            <DropdownMenuCheckboxItem
-              key={option.value}
-              checked={checked}
-              className="h-8 px-2 text-left text-sm text-foreground"
-              onCheckedChange={() =>
-                toggleSessionFilterOption({
-                  checked,
-                  option: option.value,
-                  options,
-                  selectedTypes,
-                  onChange,
-                })
-              }
-            >
-              <span className={clsx('min-w-0 flex-1 truncate', view === 'debug' && 'font-mono text-[12px]')}>
-                {option.label}
-              </span>
-            </DropdownMenuCheckboxItem>
-          );
-        })}
-        {!showAllEventsFirst ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuCheckboxItem
-              checked={allSelected}
-              className="h-8 px-2 text-sm font-semibold text-foreground"
-              onCheckedChange={() => onChange([])}
-            >
-              {msg('managedAgents.sessions.trace.selectAll', 'Select all')}
-            </DropdownMenuCheckboxItem>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-export function SessionTraceSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const { msg } = useI18n();
-  const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const expanded = focused || value.length > 0;
-  const openSearch = () => {
-    setFocused(true);
-    inputRef.current?.focus({ preventScroll: true });
-  };
 
   return (
-    <div
-      role={expanded ? undefined : 'button'}
-      tabIndex={expanded ? undefined : 0}
-      aria-label={expanded ? undefined : msg('managedAgents.sessions.trace.openSearchFilter', 'Open search filter')}
-      className={clsx(
-        'relative flex h-7 shrink-0 items-center overflow-hidden rounded-md transition-[width,background-color,box-shadow]',
-        expanded
-          ? 'w-56 bg-secondary ring-1 ring-border'
-          : 'w-7 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground',
-      )}
-      onClick={expanded ? undefined : openSearch}
-      onKeyDown={(event) => {
-        if (!expanded && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          openSearch();
-        }
-      }}
+    <InputGroup
+      className={clsx('h-8 max-w-full bg-background shadow-xs', className ? 'shrink-0' : 'w-72 shrink', className)}
     >
-      <span className="grid size-7 shrink-0 place-items-center">
+      <InputGroupAddon className="pl-2.5 pr-2">
         <Search className="size-4" aria-hidden />
-      </span>
-      <Input
+      </InputGroupAddon>
+      <InputGroupInput
         ref={inputRef}
+        type="search"
+        data-custom-clear
         aria-label={msg('managedAgents.sessions.trace.filterEvents', 'Filter events')}
         value={value}
         placeholder={msg('managedAgents.sessions.trace.filterEvents', 'Filter events')}
-        tabIndex={expanded ? 0 : -1}
-        aria-hidden={!expanded}
-        className={clsx(
-          'h-7 min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 pr-2 text-sm placeholder:text-muted-foreground focus-visible:ring-0',
-          !expanded && 'pointer-events-none opacity-0',
-        )}
-        onFocus={() => setFocused(true)}
-        onBlur={() => {
-          if (!value) {
-            setFocused(false);
-          }
-        }}
+        className="pr-2 text-sm"
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
             event.stopPropagation();
             onChange('');
-            setFocused(false);
             inputRef.current?.blur();
           }
         }}
       />
-      {expanded && value ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={msg('managedAgents.sessions.trace.clearFilter', 'Clear filter')}
-          className="size-7 shrink-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
-          onClick={() => {
-            onChange('');
-            setFocused(false);
-            inputRef.current?.blur();
-          }}
-        >
-          <X className="size-3.5" aria-hidden />
-        </Button>
+      {value ? (
+        <InputGroupAddon align="inline-end" className="py-0 pl-0 pr-1">
+          <InputGroupButton
+            type="button"
+            size="icon-xs"
+            aria-label={msg('managedAgents.sessions.trace.clearFilter', 'Clear filter')}
+            className="size-7 shrink-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+            onClick={() => {
+              onChange('');
+              inputRef.current?.focus({ preventScroll: true });
+            }}
+          >
+            <X className="size-3.5" aria-hidden />
+          </InputGroupButton>
+        </InputGroupAddon>
       ) : null}
-    </div>
+    </InputGroup>
   );
 }
 
@@ -518,51 +164,6 @@ export function SessionTraceEmpty({
   );
 }
 
-export function SessionTraceRow({
-  entry,
-  selected,
-  onSelect,
-}: {
-  entry: SessionTraceEntry;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const { msg } = useI18n();
-  const title = sessionInlineRowPreview(entry.preview || entry.label);
-  const preview = '';
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      data-event-id={entry.id}
-      aria-label={[entry.label, title, preview, entry.relativeTime].filter(Boolean).join(' ')}
-      className={clsx(
-        '-mx-8 h-9 w-[calc(100%+4rem)] justify-start gap-2 overflow-hidden rounded-none border-0 bg-transparent px-8 text-left font-normal active:translate-y-0',
-        selected ? 'bg-accent outline outline-2 -outline-offset-2 outline-ring' : 'hover:bg-accent',
-        entry.isError && 'bg-destructive/10',
-      )}
-      onClick={onSelect}
-    >
-      <SessionEventBadge family={entry.family} label={sessionEventBadgeName(entry, msg)} />
-      <span
-        className={clsx('min-w-0 truncate text-sm leading-5', entry.isError ? 'text-destructive' : 'text-foreground')}
-      >
-        {title}
-      </span>
-      {preview ? (
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{preview}</span>
-      ) : (
-        <span className="flex-1" />
-      )}
-      <time className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{entry.relativeTime}</time>
-    </Button>
-  );
-}
-
-export function SessionEventBadge({ family, label }: { family: SessionTraceFamily; label?: string }) {
-  return <EventTypeBadge type={sessionFamilyBadgeType(family)} label={label} />;
-}
-
 export function EventTypeBadge({
   type,
   label,
@@ -590,7 +191,6 @@ export function EventTypeBadge({
         config.className,
         className,
       )}
-      style={config.style}
     >
       <span className="min-w-0 truncate">{badgeText}</span>
     </Badge>
@@ -612,17 +212,16 @@ export function sessionEventBadgeConfig(
 ): {
   label: string;
   className: string;
-  style?: CSSProperties;
 } {
   const family = sessionBadgeFamily(type);
   const label = sessionBadgeTypeLabel(type, msg);
   switch (family) {
     case 'user':
-      return { label, className: 'text-white', style: { backgroundColor: '#c46686' } };
+      return { label, className: 'bg-session-speaker-user text-white' };
     case 'agent':
-      return { label, className: 'bg-accent/80 text-accent-foreground' };
+      return { label, className: 'bg-session-speaker-agent text-white' };
     case 'subagent':
-      return { label, className: 'text-white', style: { backgroundColor: '#629987' } };
+      return { label, className: 'bg-success text-white' };
     case 'tool':
       return { label, className: 'bg-accent text-muted-foreground' };
     case 'error':
@@ -694,37 +293,6 @@ export function sessionBadgeTypeLabel(type: DisplayEventType, msg: I18nMsg) {
   }
 }
 
-export function sessionFamilyBadgeType(family: SessionTraceFamily): DisplayEventType {
-  switch (family) {
-    case 'user':
-      return 'user';
-    case 'agent':
-      return 'agent';
-    case 'subagent':
-      return 'subagent';
-    case 'tool_use':
-      return 'tool_use';
-    case 'tool_result':
-    case 'result':
-      return 'result';
-    case 'model':
-      return 'model_request';
-    case 'outcome':
-      return 'outcome';
-    case 'thread':
-      return 'thread';
-    case 'status':
-      return 'root';
-    case 'error':
-      return 'error';
-    case 'system':
-    case 'env':
-    case 'span':
-    default:
-      return 'unknown';
-  }
-}
-
 export function sessionDisplayEventTypeIsStatus(type: DisplayEventType) {
   return (
     type === 'root' ||
@@ -736,98 +304,21 @@ export function sessionDisplayEventTypeIsStatus(type: DisplayEventType) {
   );
 }
 
-export function sessionEventBadgeName(entry: SessionTraceEntry, msg?: I18nMsg) {
-  if (sessionEventIsThinking(entry.event)) {
-    return sessionThinkingLabel(msg);
-  }
-  return undefined;
-}
-
-export function SessionTraceDetail({
-  entry,
-  view,
-  placement = 'overlay',
-  onClose,
-}: {
-  entry: SessionTraceEntry;
-  view: SessionTraceView;
-  placement?: 'overlay' | 'side';
-  onClose: () => void;
-}) {
-  const { msg } = useI18n();
-  const title = sessionTraceDetailTitle(entry);
-  const eventIdLabel = compactSessionEventId(entry.rawEventId);
-  return (
-    <div
-      className={clsx(
-        'relative flex flex-col overflow-hidden',
-        placement === 'overlay' ? 'absolute inset-0 z-10 bg-secondary' : 'h-full bg-transparent',
-      )}
-      data-placement={placement}
-      data-testid="session-trace-detail"
-    >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label={msg('managedAgents.sessions.trace.closeDetailPanel', 'Close detail panel')}
-        className="absolute right-3 top-3 z-20 text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={onClose}
-      >
-        <X className="size-4" aria-hidden />
-      </Button>
-      <div className="shrink-0 border-b border-border pb-4 pl-6 pr-12 pt-3">
-        <div className="flex h-6 items-center gap-2">
-          <SessionEventBadge family={entry.family} label={sessionEventBadgeName(entry, msg)} />
-          <h2 className={clsx('truncate text-sm font-medium', entry.isError ? 'text-destructive' : 'text-foreground')}>
-            {title}
-          </h2>
-        </div>
-        <div className="mt-1 flex h-5 items-center gap-2 text-xs text-muted-foreground">
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            className="h-auto p-0 font-mono text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
-            aria-label={`Copy ${entry.rawEventId}`}
-            onClick={() => void copyText(entry.rawEventId)}
-          >
-            {eventIdLabel}
-          </Button>
-          <span aria-hidden>·</span>
-          <time className="font-mono tabular-nums">{entry.relativeTime}</time>
-        </div>
-      </div>
-      <div className="subtle-scrollbar min-h-0 flex-1 overflow-auto pb-8">
-        {view === 'debug' ? (
-          <DebugEventDetail event={entry.event} type={entry.type} />
-        ) : (
-          <TranscriptEventDetail entry={entry} />
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function EventDetailPanel({
   entry,
   view,
-  detailTab = 'content',
   placement = 'side',
   onClose,
-  onDetailTabChange,
 }: {
   entry: SessionEventListEntry;
   view: SessionTraceView;
-  detailTab?: SessionDebugDetailTab;
   placement?: 'overlay' | 'side';
   onClose: () => void;
-  onDetailTabChange?: (tab: SessionDebugDetailTab) => void;
 }) {
+  const { msg } = useI18n();
   if (!('traceEntry' in entry)) {
     return null;
   }
-  const { msg } = useI18n();
   const traceEntry = entry.traceEntry;
   const title = sessionTraceDetailTitle(traceEntry);
   const eventIdLabel = compactSessionEventId(entry.rawEventId);
@@ -836,56 +327,73 @@ export function EventDetailPanel({
     <div
       className={clsx(
         'relative flex flex-col overflow-hidden',
-        placement === 'overlay' ? 'absolute inset-0 z-10 bg-secondary' : 'h-full bg-transparent',
+        placement === 'overlay' && 'absolute inset-0 z-10 bg-secondary',
+        placement === 'side' && 'h-full bg-transparent',
       )}
       data-placement={placement}
       data-testid="session-trace-detail"
     >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label={msg('managedAgents.sessions.trace.closeDetailPanel', 'Close detail panel')}
-        className="absolute right-3 top-3 z-20 text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={onClose}
-      >
-        <X className="size-4" aria-hidden />
-      </Button>
-      <div className="shrink-0 border-b border-border pb-4 pl-6 pr-12 pt-3">
-        <div className="flex h-6 items-center gap-2">
-          <EventTypeBadge
-            type={entry.displayEvent.type}
-            label={isDebug ? sessionDebugBadge(entry.type) : eventDetailBadge(entry, msg)}
-            title={isDebug ? entry.type : undefined}
-            className={isDebug ? 'font-mono' : undefined}
-          />
-          <h2 className={clsx('truncate text-sm font-medium', entry.isError ? 'text-destructive' : 'text-foreground')}>
-            {isDebug ? entry.displayEvent.label || title : title}
-          </h2>
-        </div>
-        <div className="mt-1 flex h-5 items-center gap-2 text-xs text-muted-foreground">
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            className="h-auto p-0 font-mono text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
-            aria-label={`Copy ${entry.rawEventId}`}
-            onClick={() => void copyText(entry.rawEventId)}
-          >
-            {eventIdLabel}
-          </Button>
-          <span aria-hidden>·</span>
-          <time className="font-mono tabular-nums">{entry.relativeTime}</time>
-        </div>
+      <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border/60 px-3 whitespace-nowrap">
+        <EventTypeBadge
+          type={entry.displayEvent.type}
+          label={
+            isDebug
+              ? sessionDebugBadge(entry.type)
+              : entry.kind === 'tool_batch'
+                ? msg('managedAgents.sessions.trace.toolBatch', 'Tools')
+                : undefined
+          }
+          title={isDebug ? entry.type : undefined}
+          className={isDebug ? 'font-mono' : undefined}
+        />
+        <h2
+          className={clsx(
+            'min-w-0 flex-1 truncate text-xs font-medium',
+            entry.isError ? 'text-destructive' : 'text-foreground',
+          )}
+        >
+          {isDebug ? entry.displayEvent.label || title : title}
+        </h2>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="h-6 min-w-0 max-w-28 p-1.5 font-mono text-[11px] font-normal text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:ring-0"
+          aria-label={`Copy ${entry.rawEventId}`}
+          onClick={() => void copyText(entry.rawEventId)}
+        >
+          <span className="truncate">{eventIdLabel}</span>
+        </Button>
+        <span className="text-[11px] text-muted-foreground" aria-hidden>
+          ·
+        </span>
+        <time className="font-mono text-[11px] tabular-nums text-muted-foreground">{entry.relativeTime}</time>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={msg('managedAgents.sessions.trace.closeDetailPanel', 'Close detail panel')}
+          className="text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          onClick={onClose}
+        >
+          <X className="size-3.5" aria-hidden />
+        </Button>
       </div>
-      <div className="subtle-scrollbar min-h-0 flex-1 overflow-auto pb-8">
-        {isDebug ? (
-          <DebugDetailPanel entry={entry} tab={detailTab} onTabChange={onDetailTabChange} />
-        ) : entry.kind === 'tool_batch' ? (
-          <BatchDetailPanel entry={entry} />
-        ) : (
-          <EventDetailContent entry={entry} />
-        )}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ScrollArea
+          data-testid="session-inspector-event-detail-scroll"
+          className="[&_code]:break-words [&_code]:whitespace-pre-wrap [&_pre]:max-h-none [&_pre]:overflow-visible [&_pre]:break-words [&_pre]:whitespace-pre-wrap"
+        >
+          <div className="pb-8">
+            {isDebug ? (
+              <DebugDetailPanel entry={entry} />
+            ) : entry.kind === 'tool_batch' ? (
+              <BatchDetailPanel entry={entry} />
+            ) : (
+              <EventDetailContent entry={entry} />
+            )}
+          </div>
+        </ScrollArea>
       </div>
     </div>
   );
@@ -897,10 +405,10 @@ export function EventDetailContent({
   entry: Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry>;
 }) {
   if (entry.kind === 'tool_batch') {
-    return <ToolBatchEventDetail entry={entry} />;
+    return <BatchDetailPanel entry={entry} />;
   }
   if (entry.kind === 'tool_call') {
-    return <ToolUseEventDetail entry={entry} />;
+    return <ToolCallDetailContent entry={entry} />;
   }
   if (entry.displayEvent.type === 'thinking') {
     return <ThinkingEventDetail entry={entry} />;
@@ -956,14 +464,6 @@ export function MessageEventDetail({
       )}
     </div>
   );
-}
-
-export function ToolUseEventDetail({ entry }: { entry: ToolCallEntry }) {
-  return <ToolCallDetailContent entry={entry} />;
-}
-
-export function ToolBatchEventDetail({ entry }: { entry: ToolBatchEntry }) {
-  return <BatchDetailPanel entry={entry} />;
 }
 
 export function SubagentMessageDetail({ entry }: { entry: DisplayEventEntry }) {
@@ -1133,58 +633,108 @@ export function BatchDetailPanel({ entry }: { entry: ToolBatchEntry }) {
 
 export function DebugDetailPanel({
   entry,
-  tab,
-  onTabChange,
 }: {
   entry: Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry>;
-  tab: SessionDebugDetailTab;
-  onTabChange?: (tab: SessionDebugDetailTab) => void;
 }) {
   const { msg } = useI18n();
   const deltaFrames = useContext(SessionDetailDeltaFramesContext);
   const frame = deltaFrames[entry.displayEvent.id];
-  const canShowDeltas = entry.type === 'agent.message' || entry.type === 'agent.thinking';
-  const activeTab: SessionDebugDetailTab = canShowDeltas ? tab : 'content';
+  const supportsDeltas = entry.type === 'agent.message' || entry.type === 'agent.thinking';
+  const [view, setView] = useState<'raw' | 'deltas'>('raw');
+  const activeView = view === 'deltas' && frame ? 'deltas' : 'raw';
   const contentEvent = frame?.message ?? entry.event;
+  if (!supportsDeltas) {
+    return <DebugEventDetail event={contentEvent} type={entry.type} />;
+  }
+  const unavailableReason = msg(
+    'managedAgents.sessions.trace.deltasUnavailable',
+    'Deltas are only captured for messages streamed live in this browser tab — they are not stored in history.',
+  );
   return (
-    <div>
-      {canShowDeltas ? (
-        <div className="flex gap-1 border-b border-border px-5 py-2">
-          <Button
-            type="button"
-            variant="ghost"
-            className={clsx(
-              'h-auto rounded-md px-2 py-1 text-xs font-medium',
-              activeTab === 'content'
-                ? 'bg-accent text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-            )}
-            onClick={() => onTabChange?.('content')}
-          >
-            {msg('managedAgents.sessions.trace.content', 'Content')}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            className={clsx(
-              'h-auto rounded-md px-2 py-1 text-xs font-medium',
-              activeTab === 'deltas'
-                ? 'bg-accent text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-            )}
-            onClick={() => onTabChange?.('deltas')}
-          >
-            {msg('managedAgents.sessions.trace.deltas', 'Deltas')}
-          </Button>
-        </div>
-      ) : null}
-      {activeTab === 'deltas' ? (
-        <DebugDeltasDetail frames={frame?.frames ?? []} />
-      ) : (
+    <Tabs
+      value={activeView}
+      onValueChange={(nextView) => nextView && setView(nextView as 'raw' | 'deltas')}
+      className="gap-0"
+    >
+      <div className="flex items-center justify-end px-3 pt-2">
+        <TabsList aria-label={msg('managedAgents.sessions.trace.eventView', 'Event view')} className="h-7">
+          <TabsTrigger value="raw" className="h-5 px-2 text-xs">
+            {msg('managedAgents.sessions.trace.raw', 'Raw')}
+          </TabsTrigger>
+          {frame ? (
+            <TabsTrigger value="deltas" className="h-5 px-2 text-xs">
+              {msg('managedAgents.sessions.trace.deltas', 'Deltas')}
+            </TabsTrigger>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="inline-flex" tabIndex={0} aria-label={unavailableReason}>
+                    <TabsTrigger value="deltas" disabled className="h-5 px-2 text-xs">
+                      {msg('managedAgents.sessions.trace.deltas', 'Deltas')}
+                    </TabsTrigger>
+                  </span>
+                }
+              />
+              <TooltipContent>{unavailableReason}</TooltipContent>
+            </Tooltip>
+          )}
+        </TabsList>
+      </div>
+      <TabsContent value="raw">
         <DebugEventDetail event={contentEvent} type={entry.type} />
-      )}
+      </TabsContent>
+      <TabsContent value="deltas">
+        <DebugDeltasDetail frames={frame?.frames ?? []} />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+export function DebugDeltasDetail({ frames }: { frames: QuickstartSessionEvent[] }) {
+  const { msg } = useI18n();
+  let deltaNumber = 0;
+  return (
+    <div className="px-3 pb-5 pt-2">
+      <Table className="table-fixed text-xs">
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="h-7 w-10 px-1.5 text-right">#</TableHead>
+            <TableHead className="h-7 w-24 px-1.5">{msg('managedAgents.sessions.trace.frame', 'Frame')}</TableHead>
+            <TableHead className="h-7 px-1.5">{msg('managedAgents.sessions.trace.text', 'Text')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {frames.map((frame, index) => {
+            const isDelta = sessionEventType(frame) === 'event_delta';
+            if (isDelta) deltaNumber += 1;
+            const text = sessionDeltaFramePreview(frame);
+            return (
+              <TableRow key={index} aria-label={isDelta ? `event_delta #${deltaNumber}` : sessionEventType(frame)}>
+                <TableCell className="h-7 px-1.5 text-right font-mono tabular-nums text-muted-foreground">
+                  {isDelta ? deltaNumber : ''}
+                </TableCell>
+                <TableCell className="h-7 truncate px-1.5 font-mono">{sessionEventType(frame)}</TableCell>
+                <TableCell className="h-7 truncate px-1.5 font-mono text-muted-foreground" title={text}>
+                  {text}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
     </div>
   );
+}
+
+function sessionDeltaFramePreview(frame: QuickstartSessionEvent) {
+  if (sessionEventType(frame) === 'event_start') {
+    return `start · ${sessionEventType(toRecord(frame.event) ?? {})}`;
+  }
+  const delta = toRecord(frame.delta);
+  const content = toRecord(delta?.content);
+  const text = content?.text ?? content?.thinking;
+  return typeof text === 'string' ? text.replaceAll('\n', '↵') : '';
 }
 
 export function LiveMessageContent({ displayEvent }: { displayEvent: DisplayEvent }) {
@@ -1331,101 +881,11 @@ export function PropertyRow({ label, value }: { label: string; value: ReactNode 
   );
 }
 
-export function eventDetailBadge(
-  entry: Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry>,
-  msg: I18nMsg,
-) {
-  if (entry.kind === 'tool_batch') {
-    return msg('managedAgents.sessions.trace.toolBatch', 'Tools');
-  }
-  return undefined;
-}
-
-export function TranscriptEventDetail({ entry }: { entry: SessionTraceEntry }) {
-  const { msg } = useI18n();
-  if (sessionEventIsThinking(entry.event)) {
-    const thinkingText = sessionThinkingText(entry.event);
-    return (
-      <div className="px-5 py-4">
-        <div className="mb-2 text-xs text-muted-foreground">
-          {msg('managedAgents.sessions.trace.content', 'Content')}
-        </div>
-        {thinkingText ? (
-          <TranscriptContent value={thinkingText} />
-        ) : (
-          <div className="text-xs italic text-muted-foreground">
-            {msg('managedAgents.sessions.trace.noContent', 'No content.')}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (entry.family === 'tool_use') {
-    return (
-      <div className="space-y-6 px-5 py-4">
-        <ApprovalChip lifecycle={sessionToolLifecycle(entry.event, entry.resultEvent, entry.confirmationEvent)} />
-        <ToolUseJsonSection
-          title={msg('managedAgents.sessions.trace.toolUse', 'Tool use')}
-          value={sessionToolUseInput(entry.event)}
-        />
-        {entry.confirmationEvent ? <ToolConfirmationSection event={entry.confirmationEvent} /> : null}
-        {entry.resultEvent ? (
-          <ToolResultSection event={entry.resultEvent} />
-        ) : (
-          <p className="text-xs italic text-muted-foreground">
-            {msg('managedAgents.sessions.trace.noResult', 'No result')}
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  if (entry.family === 'tool_result') {
-    return (
-      <div className="px-5 py-4">
-        <ToolResultSection event={entry.event} />
-      </div>
-    );
-  }
-
-  if (entry.family === 'status') {
-    return (
-      <p className="px-5 py-4 text-sm text-muted-foreground">
-        {sessionStatusDescription(entry.type, entry.event) ?? entry.preview}
-      </p>
-    );
-  }
-
-  if (entry.family === 'error') {
-    return (
-      <div className="px-5 py-4">
-        <pre className="whitespace-pre-wrap break-words rounded-md border border-destructive/50 bg-destructive/10 p-3 font-mono text-xs text-destructive">
-          {sessionEventErrorMessage(entry.event)}
-        </pre>
-      </div>
-    );
-  }
-
-  return (
-    <div className="px-5 py-4">
-      <div className="mb-2 text-xs text-muted-foreground">{msg('managedAgents.sessions.trace.content', 'Content')}</div>
-      {entry.displayText || entry.preview ? (
-        <TranscriptTypedContent entry={entry} value={entry.displayText || entry.preview} />
-      ) : (
-        <div className="text-xs italic text-muted-foreground">
-          {msg('managedAgents.sessions.trace.noContent', 'No content.')}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function DebugEventDetail({ event, type }: { event: QuickstartSessionEvent; type: string }) {
   const { msg } = useI18n();
   const debugJson = sessionEventDebugJson(event);
   return (
-    <div className="px-5 pb-6 pt-3">
+    <div className="px-3 pb-5 pt-2">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="font-mono text-xs text-muted-foreground">{type}</div>
         <CopyButton value={debugJson} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
@@ -1433,167 +893,6 @@ export function DebugEventDetail({ event, type }: { event: QuickstartSessionEven
       <SyntaxCodeBlock value={debugJson} language="json" />
     </div>
   );
-}
-
-export function DebugDeltasDetail({ frames }: { frames: QuickstartSessionEvent[] }) {
-  const { msg } = useI18n();
-  const debugJson = JSON.stringify(frames, null, 2);
-  return (
-    <div className="px-5 pb-6 pt-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="font-mono text-xs text-muted-foreground">
-          {msg(
-            'managedAgents.sessions.trace.deltaFrameCount',
-            '{count, plural, one {# delta frame} other {# delta frames}}',
-            { count: frames.length },
-          )}
-        </div>
-        <CopyButton value={debugJson} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
-      </div>
-      {frames.length ? (
-        <SyntaxCodeBlock value={debugJson} language="json" />
-      ) : (
-        <div className="text-xs italic text-muted-foreground">
-          {msg('managedAgents.sessions.trace.noDeltas', 'No deltas captured.')}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function TranscriptContent({ value }: { value: string }) {
-  const code = parseTranscriptCode(value);
-  if (code) {
-    return <SyntaxCodeBlock value={code.value} language={code.language} />;
-  }
-
-  return <MarkdownTranscriptContent value={value} />;
-}
-
-export function MarkdownTranscriptContent({ value }: { value: string }) {
-  const blocks = parseTranscriptMarkdownBlocks(value);
-  return (
-    <div data-testid="session-trace-markdown" className="space-y-4 text-sm leading-relaxed text-foreground">
-      {blocks.map((block, index) => renderTranscriptMarkdownBlock(block, index))}
-    </div>
-  );
-}
-
-export function renderTranscriptMarkdownBlock(block: TranscriptMarkdownBlock, index: number) {
-  switch (block.type) {
-    case 'heading': {
-      const HeadingTag = block.level <= 2 ? 'h3' : 'h4';
-      return (
-        <HeadingTag key={index} className="text-base font-semibold leading-6 text-foreground">
-          {renderTranscriptMarkdownInline(block.text, `heading-${index}`)}
-        </HeadingTag>
-      );
-    }
-    case 'list':
-      return (
-        <ul key={index} className="list-disc space-y-1 pl-5">
-          {block.items.map((item, itemIndex) => (
-            <li key={itemIndex} className="pl-1">
-              {renderTranscriptMarkdownInline(item, `list-${index}-${itemIndex}`)}
-            </li>
-          ))}
-        </ul>
-      );
-    case 'table':
-      return (
-        <div key={index} className="subtle-scrollbar overflow-x-auto rounded-md border border-border">
-          <table className="min-w-full border-collapse text-left text-sm">
-            <thead className="bg-secondary">
-              <tr>
-                {block.headers.map((header, headerIndex) => (
-                  <th
-                    key={headerIndex}
-                    scope="col"
-                    className="border-b border-border px-3 py-2 font-semibold text-foreground"
-                  >
-                    {renderTranscriptMarkdownInline(header, `table-${index}-head-${headerIndex}`)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {block.rows.map((row, rowIndex) => (
-                <tr key={rowIndex} className="border-t border-border first:border-t-0">
-                  {block.headers.map((_, cellIndex) => (
-                    <td key={cellIndex} className="align-top px-3 py-2 text-foreground">
-                      {renderTranscriptMarkdownInline(row[cellIndex] ?? '', `table-${index}-${rowIndex}-${cellIndex}`)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    case 'code':
-      return <SyntaxCodeBlock key={index} value={block.value} language={block.language} />;
-    default:
-      return (
-        <p key={index} className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-          {renderTranscriptMarkdownInline(block.text, `paragraph-${index}`)}
-        </p>
-      );
-  }
-}
-
-export function renderTranscriptMarkdownInline(text: string, keyPrefix: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[\s\S]+?\*\*|\[[^\]]+\]\([^)]+\))/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let index = 0;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-    const token = match[0];
-    const key = `${keyPrefix}-${index}`;
-    if (token.startsWith('`') && token.endsWith('`')) {
-      nodes.push(
-        <code
-          key={key}
-          className="rounded border border-border bg-secondary px-1 py-0.5 font-mono text-[0.92em] text-foreground"
-        >
-          {token.slice(1, -1)}
-        </code>,
-      );
-    } else if (token.startsWith('**') && token.endsWith('**')) {
-      nodes.push(
-        <strong key={key} className="font-semibold text-foreground">
-          {renderTranscriptMarkdownInline(token.slice(2, -2), `${key}-strong`)}
-        </strong>,
-      );
-    } else {
-      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      const href = link?.[2]?.trim() ?? '';
-      nodes.push(
-        isSafeTranscriptMarkdownHref(href) ? (
-          <a
-            key={key}
-            href={href}
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary underline-offset-2 hover:underline"
-          >
-            {renderTranscriptMarkdownInline(link?.[1] ?? token, `${key}-link`)}
-          </a>
-        ) : (
-          token
-        ),
-      );
-    }
-    lastIndex = match.index + token.length;
-    index += 1;
-  }
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-  return nodes;
 }
 
 export function TranscriptTypedContent({ entry, value }: { entry: SessionTraceEntry; value: string }) {
@@ -1674,80 +973,6 @@ export function ToolConfirmationSection({ event }: { event: QuickstartSessionEve
       title={msg('managedAgents.sessions.trace.toolConfirmation', 'Tool confirmation')}
       value={payload}
     />
-  );
-}
-
-export function sessionCanonicalDisplayEvent(event: QuickstartSessionEvent): QuickstartSessionEvent {
-  const currentType = sessionEventType(event);
-  if (!sessionIsToolResultEvent(event) && currentType !== 'event' && currentType !== 'system.message') {
-    return event;
-  }
-
-  const payload = sessionSerializedCanonicalPayload(event);
-  if (!payload) {
-    return event;
-  }
-
-  return {
-    ...payload,
-    created_at: payload.created_at ?? event.created_at,
-    processed_at: payload.processed_at ?? event.processed_at,
-    session_id: payload.session_id ?? event.session_id,
-    session_thread_id: payload.session_thread_id ?? event.session_thread_id,
-    thread_id: payload.thread_id ?? event.thread_id,
-    _wrapped_event_id: event.id,
-  };
-}
-
-export function sessionSerializedCanonicalPayload(event: QuickstartSessionEvent) {
-  const text = sessionSingleTextPayload(event);
-  if (!text || text.length > 200000) {
-    return null;
-  }
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    const record = toRecord(parsed);
-    const type = typeof record?.type === 'string' ? record.type : '';
-    if (!type || !sessionSerializedTypeIsCanonical(type)) {
-      return null;
-    }
-    return record as QuickstartSessionEvent;
-  } catch {
-    return null;
-  }
-}
-
-export function sessionSingleTextPayload(event: QuickstartSessionEvent) {
-  if (typeof event.content === 'string') {
-    return event.content;
-  }
-  if (Array.isArray(event.content) && event.content.length === 1) {
-    const block = toRecord(event.content[0]);
-    if (typeof block?.text === 'string') {
-      return block.text;
-    }
-    if (typeof block?.content === 'string') {
-      return block.content;
-    }
-  }
-  if (typeof event.message === 'string') {
-    return event.message;
-  }
-  return '';
-}
-
-export function sessionSerializedTypeIsCanonical(type: string) {
-  return (
-    type.startsWith('session.') ||
-    type.startsWith('span.') ||
-    type === 'system.message' ||
-    type === 'agent.thread_message_received' ||
-    type === 'agent.thread_message_sent' ||
-    type === 'agent.thread_context_compacted'
   );
 }
 

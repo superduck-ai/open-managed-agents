@@ -56,11 +56,19 @@ type deploymentWriteParams struct {
 	ResourceSecrets       []byte
 	VaultIDs              []byte
 	Schedule              []byte
+	ScheduleChanged       bool
 	LastRunAt             *time.Time
 	Status                string
 	PausedReason          []byte
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+}
+
+type pauseScheduledDeploymentParams struct {
+	WorkspaceUUID string
+	ExternalID    string
+	PausedReason  []byte
+	LastRunAt     time.Time
 }
 
 type deploymentPageMapperParams struct {
@@ -76,12 +84,16 @@ type deploymentPageMapperParams struct {
 
 type DeploymentMapper interface {
 	Insert(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
+	CountScheduledByOrganization(ctx context.Context, organizationUUID string) (int64, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	LockByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	UpdateByExternalID(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
+	ArchiveByRootAgent(ctx context.Context, workspaceUUID, agentExternalID string) error
 	PauseByExternalID(ctx context.Context, workspaceUUID, externalID string, pausedReason []byte) (deploymentMapperRow, error)
 	UnpauseByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
+	ListActiveSchedules(ctx context.Context) ([]DeploymentSchedule, error)
+	PauseAfterScheduledRun(ctx context.Context, params pauseScheduledDeploymentParams) (int64, error)
 	ListPage(ctx context.Context, params deploymentPageMapperParams) ([]deploymentMapperRow, error)
 	UpdateLastRun(ctx context.Context, workspaceUUID, externalID string, lastRunAt time.Time) (int64, error)
 }

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/superduck-ai/yourbatis"
 )
@@ -57,7 +56,7 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 			rows:    [][]driver.Value{adminWorkspaceMapperTestRow(params.ExternalID, createdAt)},
 		})
 		workspace, err := NewAdminWorkspaceMapper(executor).Insert(context.Background(), params)
-		if err != nil || workspace.ExternalID != params.ExternalID || workspace.UUID == uuid.Nil {
+		if err != nil || workspace.ExternalID != params.ExternalID || workspace.UUID == "" {
 			t.Fatalf("Insert() = (%+v, %v)", workspace, err)
 		}
 		assertMapperTestExecution(
@@ -98,7 +97,7 @@ func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 			"wrkspc_mapper",
 			workspaceUUID,
 		)
-		if !errors.Is(err, sql.ErrNoRows) || workspace.UUID != uuid.Nil {
+		if !errors.Is(err, sql.ErrNoRows) || workspace.UUID != "" {
 			t.Fatalf("FindByIdentifier() = (%+v, %v), want zero and sql.ErrNoRows", workspace, err)
 		}
 		assertMapperTestExecution(

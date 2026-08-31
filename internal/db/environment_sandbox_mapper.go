@@ -54,9 +54,16 @@ type environmentSandboxStateParams struct {
 	StoppedAt         *time.Time
 }
 
+type environmentSandboxRecoveryParams struct {
+	CodeSessionExternalID string
+	ProviderSandboxID     string
+	LastError             string
+}
+
 type EnvironmentSandboxMapper interface {
 	Insert(ctx context.Context, params environmentSandboxWriteParams) (environmentSandboxMapperRow, error)
 	UpdateState(ctx context.Context, params environmentSandboxStateParams) error
 	FindActiveForWork(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentSandboxMapperRow, error)
-	FindRenewableByCodeSessionExternalID(ctx context.Context, codeSessionExternalID string) (environmentSandboxMapperRow, error)
+	FindActiveByCodeSessionExternalIDAndWorkerStatuses(ctx context.Context, codeSessionExternalID string, workerStatuses []string) (environmentSandboxMapperRow, error)
+	ScheduleRecoveryForCodeSession(ctx context.Context, params environmentSandboxRecoveryParams) (int64, error)
 }

@@ -39,8 +39,8 @@ type yamlConfig struct {
 	Server            ServerConfig            `yaml:"server"`
 	Database          yamlDatabaseConfig      `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
+	Auth              AuthConfig              `yaml:"auth"`
 	Storage           StorageConfig           `yaml:"storage"`
-	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
@@ -91,8 +91,8 @@ func newYAMLConfig() yamlConfig {
 		Server:            defaults.Server,
 		Database:          yamlDatabaseConfig{URL: defaults.Database.URL},
 		Redis:             defaults.Redis,
+		Auth:              defaults.Auth,
 		Storage:           defaults.Storage,
-		AnthropicUpstream: defaults.AnthropicUpstream,
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
 		EnvironmentRunner: defaults.EnvironmentRunner,
@@ -130,8 +130,8 @@ func (input yamlConfig) resolve() Config {
 		Server:            input.Server,
 		Database:          DatabaseConfig{URL: input.Database.URL},
 		Redis:             input.Redis,
+		Auth:              input.Auth,
 		Storage:           input.Storage,
-		AnthropicUpstream: input.AnthropicUpstream,
 		Batch:             input.Batch,
 		E2B:               input.E2B,
 		EnvironmentRunner: input.EnvironmentRunner,

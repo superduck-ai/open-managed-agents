@@ -16,6 +16,9 @@ database:
 redis:
   url: redis://redis:6379
 
+# Optional SMTP configuration is omitted, so this local template accepts any
+# non-empty email verification code. See docs/configuration-reference.yaml.
+
 storage:
   type: s3
   s3:
@@ -25,10 +28,6 @@ storage:
     access_key_id: minioadmin
     secret_access_key: minioadmin
     force_path_style: true
-
-anthropic_upstream:
-  base_url: https://api.anthropic.com
-  api_key: ""
 
 e2b:
   api_url: http://host.docker.internal:3099

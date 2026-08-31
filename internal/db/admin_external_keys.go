@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type AdminExternalKey struct {
-	UUID             uuid.UUID       `db:"uuid"`
+	UUID             string          `db:"uuid"`
 	ExternalID       string          `db:"external_id"`
-	OrganizationUUID uuid.UUID       `db:"organization_uuid"`
+	OrganizationUUID string          `db:"organization_uuid"`
 	DisplayName      string          `db:"display_name"`
 	Geo              string          `db:"geo"`
 	ProviderConfig   json.RawMessage `db:"provider_config"`
@@ -29,7 +27,7 @@ func (d *DB) CreateAdminExternalKey(ctx context.Context, key AdminExternalKey) (
 	mapper := NewAdminExternalKeyMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminExternalKeyParams{
 		ExternalID:       key.ExternalID,
-		OrganizationUUID: key.OrganizationUUID.String(),
+		OrganizationUUID: key.OrganizationUUID,
 		DisplayName:      key.DisplayName,
 		Geo:              key.Geo,
 		ProviderConfig:   key.ProviderConfig,

@@ -5,7 +5,7 @@ import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileAPIMountPath } from './sessions/file-resource-path';
-import { compareSessionEvents, sessionEventType } from './sessions/SessionDetailPage';
+import { sessionEventType } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
   type AgentCreatedFilter,
@@ -21,6 +21,8 @@ import {
   type DeploymentRunApiResponse,
   type EnvironmentApiResponse,
   type EnvironmentWorkApiResponse,
+  type FileMetadataApiResponse,
+  type FileMetadataPageResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntityListFilters,
@@ -38,8 +40,10 @@ import {
   type SessionDetailDeltaFrames,
   type SessionDetailEventCache,
   type SessionEventCachePatch,
+  type SessionFileResourceFormValue,
   type SessionResourceApiResponse,
   type SessionThreadApiResponse,
+  type SessionToolConfirmationInput,
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from './types';
@@ -62,13 +66,6 @@ export const agentSearchLimit = 100;
 export const agentSearchMaxPages = 3;
 
 export const exactAgentIdPattern = /^agent_(?:staging_|local_)?[0-9a-zA-Z]{20,}$/i;
-
-export async function getEffectiveModelMappings(orgUuid: string) {
-  const response = await consoleApi<{ model_mappings?: Record<string, string> }>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/models`,
-  );
-  return response.model_mappings ?? {};
-}
 
 export function createdFilterStartISOString(filter: AgentCreatedFilter) {
   const now = Date.now();
@@ -536,6 +533,48 @@ export function listSessionResources(sessionId: string, workspaceId: string) {
   >;
 }
 
+export function addSessionFileResource(sessionId: string, resource: SessionFileResourceFormValue, workspaceId: string) {
+  const mountPath = sessionFileAPIMountPath(resource.mountPath);
+  return anthropicBetaApi.sessions.resources.add<SessionResourceApiResponse>(
+    sessionId,
+    {
+      type: 'file',
+      file_id: resource.fileId.trim(),
+      ...(mountPath ? { mount_path: mountPath } : {}),
+    },
+    workspaceId,
+  );
+}
+
+export function retrieveFileMetadata(fileId: string, workspaceId: string) {
+  return anthropicBetaApi.files.retrieveMetadata<FileMetadataApiResponse>(fileId, workspaceId);
+}
+
+export async function listSessionFileOptions(workspaceId: string): Promise<FileMetadataPageResponse> {
+  const data: FileMetadataApiResponse[] = [];
+  let afterId: string | undefined;
+  let firstId: string | null | undefined;
+  let lastId: string | null | undefined;
+
+  for (;;) {
+    const page = (await anthropicBetaApi.files.list<FileMetadataApiResponse>(
+      { limit: 1000, ...(afterId ? { after_id: afterId } : {}) },
+      workspaceId,
+    )) as FileMetadataPageResponse;
+    data.push(...page.data);
+    firstId ??= page.first_id;
+    lastId = page.last_id;
+
+    if (!page.has_more) {
+      return { data, first_id: firstId, has_more: false, last_id: lastId };
+    }
+    if (!lastId || lastId === afterId) {
+      throw new Error('Files API pagination did not return a new cursor');
+    }
+    afterId = lastId;
+  }
+}
+
 export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;
 
 export const SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS = 90_000;
@@ -586,12 +625,6 @@ export async function listAllSessionThreads(sessionId: string, workspaceId: stri
     } while (page);
     return { data, next_page: null } satisfies PageResponse<SessionThreadApiResponse>;
   });
-}
-
-export function listSessionResourcesForDetail(sessionId: string, workspaceId: string) {
-  return sessionDetailSingleFlight(`resources:${workspaceId}:${sessionId}`, () =>
-    listSessionResources(sessionId, workspaceId),
-  );
 }
 
 export function listSessionEvents(
@@ -804,6 +837,36 @@ export function postQuickstartSessionMessage(sessionId: string, message: string,
     {
       events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
     },
+    workspaceId,
+  );
+}
+
+export function postSessionToolConfirmation(
+  sessionId: string,
+  input: SessionToolConfirmationInput,
+  workspaceId: string,
+) {
+  const denyMessage = input.denyMessage?.trim();
+  const event: Record<string, unknown> = input.customTool
+    ? {
+        type: 'user.custom_tool_result',
+        custom_tool_use_id: input.toolUseId,
+        is_error: input.result === 'deny',
+        ...(input.result === 'allow' ? { content: [{ type: 'text', text: JSON.stringify(input.answers ?? {}) }] } : {}),
+      }
+    : {
+        type: 'user.tool_confirmation',
+        tool_use_id: input.toolUseId,
+        result: input.result,
+        ...(denyMessage ? { deny_message: denyMessage } : {}),
+      };
+  const sessionThreadId = input.sessionThreadId?.trim();
+  if (sessionThreadId) {
+    event.session_thread_id = sessionThreadId;
+  }
+  return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
+    sessionId,
+    { events: [event] },
     workspaceId,
   );
 }
@@ -1102,14 +1165,26 @@ export async function syncSessionEventHistory({
       const nextPage = response.next_page ?? null;
       sawTerminated =
         sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
-      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
-        mergeSessionEventCache(
-          cache,
-          response.data,
+      const replacedPreviewIds: string[] = [];
+      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
+        let mergedCache = cache;
+        const remainingEvents = response.data.filter((event) => {
+          const previewId = sessionStreamPreviewIdForFinalEvent(mergedCache, event);
+          if (!previewId) return true;
+          replacedPreviewIds.push(previewId);
+          mergedCache = sessionEventCacheReplacingId(mergedCache, previewId, event);
+          return false;
+        });
+        return mergeSessionEventCache(
+          mergedCache,
+          remainingEvents,
           nextPage
             ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
             : { historyComplete: true, sawTerminated },
-        ),
+        );
+      });
+      replacedPreviewIds.forEach((previewId) =>
+        removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, previewId),
       );
       page = nextPage;
     } while (page && !signal?.aborted);
@@ -1130,13 +1205,113 @@ export function mergeSessionStreamFrame(
     return;
   }
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
-  queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => mergeSessionEventCache(cache, [event]));
+  let replacedPreviewId: string | null = null;
+  queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
+    replacedPreviewId = sessionStreamPreviewIdForFinalEvent(cache, event);
+    return replacedPreviewId
+      ? sessionEventCacheReplacingId(cache, replacedPreviewId, event)
+      : mergeSessionEventCache(cache, [event]);
+  });
+  if (replacedPreviewId) {
+    removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, replacedPreviewId);
+  }
+  if (eventType.endsWith('status_terminated')) {
+    cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
+  }
+}
+
+function sessionStreamPreviewIdForFinalEvent(
+  cache: SessionDetailEventCache | undefined,
+  incoming: QuickstartSessionEvent,
+) {
+  const incomingId = sessionStableEventId(incoming);
+  const incomingType = sessionEventType(incoming);
+  if (
+    !cache ||
+    !incomingId ||
+    (incomingType !== 'agent.message' && incomingType !== 'agent.thinking') ||
+    sessionNullableProcessedAt(incoming) === null
+  ) {
+    return null;
+  }
+
+  const candidates = cache.events.filter((event) => {
+    const id = sessionStableEventId(event);
+    return (
+      id !== null &&
+      id !== incomingId &&
+      sessionEventType(event) === incomingType &&
+      sessionNullableProcessedAt(event) === null &&
+      event.is_streaming === true
+    );
+  });
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const incomingCreatedAt = sessionEventCreatedAtMs(incoming);
+  const timestampMatches =
+    incomingCreatedAt === null
+      ? []
+      : candidates.filter((candidate) => sessionEventCreatedAtMs(candidate) === incomingCreatedAt);
+  const matchedCandidate =
+    timestampMatches.length === 1 ? timestampMatches[0] : candidates.length === 1 ? candidates[0] : null;
+  return matchedCandidate ? sessionStableEventId(matchedCandidate) : null;
+}
+
+function sessionEventCreatedAtMs(event: QuickstartSessionEvent) {
+  if (typeof event.created_at !== 'string' || !event.created_at) {
+    return null;
+  }
+  const createdAtMs = Date.parse(event.created_at);
+  return Number.isFinite(createdAtMs) ? createdAtMs : null;
+}
+
+function sessionEventCacheReplacingId(
+  cache: SessionDetailEventCache | undefined,
+  previewId: string,
+  finalEvent: QuickstartSessionEvent,
+) {
+  if (!cache) {
+    return mergeSessionEventCache(cache, [finalEvent]);
+  }
+  const finalId = sessionStableEventId(finalEvent);
+  const events: QuickstartSessionEvent[] = [];
+  cache.events.forEach((event) => {
+    const eventId = sessionStableEventId(event);
+    if (eventId === previewId) {
+      events.push(finalEvent);
+      return;
+    }
+    if (finalId && eventId === finalId) {
+      return;
+    }
+    events.push(event);
+  });
+  return { ...cache, events };
+}
+
+function removeSessionDeltaFrame(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId: string,
+  eventId: string,
+) {
+  const deltaKey = sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId);
+  queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
+    if (!cache?.[eventId]) {
+      return cache;
+    }
+    const next = { ...cache };
+    delete next[eventId];
+    return next;
+  });
 }
 
 export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEvent[], threadId: string) {
-  const orderedEvents = [...events].sort(compareSessionEvents);
-  for (let index = orderedEvents.length - 1; index >= 0; index -= 1) {
-    const type = sessionEventType(orderedEvents[index]);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const type = sessionEventType(events[index]);
     if (threadId) {
       if (type === 'session.thread_status_idle' || type === 'session.thread_status_terminated') {
         return true;
@@ -1149,7 +1324,7 @@ export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEve
     if (type === 'user.message') {
       return false;
     }
-    if (type === 'session.status_idle' || type === 'session.status_terminated' || type === 'session.deleted') {
+    if (type === 'session.status_terminated' || type === 'session.deleted') {
       return true;
     }
     if (type === 'session.status_running' || type === 'session.status_rescheduled') {
@@ -1226,6 +1401,8 @@ export function sessionStreamingMessageFromStart(
       ...started,
       type: type === 'agent.thinking' ? 'agent.thinking' : 'agent.message',
       content,
+      created_at: started.created_at ?? event.created_at,
+      processed_at: started.processed_at ?? event.processed_at,
     },
     threadId || undefined,
   );
@@ -1264,18 +1441,72 @@ export function cleanupIncompleteSessionStreamEvents(
   workspaceId: string,
   sessionId: string,
   threadId = '',
+  eventIds?: ReadonlySet<string>,
 ) {
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
+  const removedEventIds = new Set<string>();
   queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
     if (!cache) {
       return cache;
     }
     const events = cache.events.filter((event) => {
-      const type = sessionEventType(event);
-      return (type !== 'agent.message' && type !== 'agent.thinking') || sessionNullableProcessedAt(event) !== null;
+      if (!sessionEventIsIncompleteStreamPreview(event)) {
+        return true;
+      }
+      const eventId = sessionStableEventId(event);
+      if (eventIds && (!eventId || !eventIds.has(eventId))) {
+        return true;
+      }
+      if (eventId) removedEventIds.add(eventId);
+      return false;
     });
     return events.length === cache.events.length ? cache : { ...cache, events };
   });
+  if (!removedEventIds.size) {
+    return;
+  }
+  const deltaKey = sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId);
+  queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
+    if (!cache) return cache;
+    const frames = Object.fromEntries(Object.entries(cache).filter(([eventId]) => !removedEventIds.has(eventId)));
+    return Object.keys(frames).length === Object.keys(cache).length ? cache : frames;
+  });
+}
+
+function sessionEventIsIncompleteStreamPreview(event: QuickstartSessionEvent) {
+  const type = sessionEventType(event);
+  return (type === 'agent.message' || type === 'agent.thinking') && sessionNullableProcessedAt(event) === null;
+}
+
+export function sessionIncompleteStreamEventIds(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId = '',
+) {
+  const cache = queryClient.getQueryData<SessionDetailEventCache>(
+    sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
+  );
+  return new Set(
+    cache?.events
+      .filter(sessionEventIsIncompleteStreamPreview)
+      .map(sessionStableEventId)
+      .filter((eventId): eventId is string => Boolean(eventId)),
+  );
+}
+
+export async function reconcileIncompleteSessionStreamEvents(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId = '',
+  signal?: AbortSignal,
+  eventIds?: ReadonlySet<string>,
+) {
+  await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, force: true });
+  if (!signal?.aborted) {
+    cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, eventIds);
+  }
 }
 
 export function sessionDetailScopeEvents(
@@ -1313,7 +1544,7 @@ export function sessionDetailDeltaFrames(
 
 export function mergeSessionEventsById(events: QuickstartSessionEvent[]) {
   const cache = mergeSessionEventCache(undefined, events);
-  return coalesceSessionCrossPostedToolEvents(cache.events).sort(compareSessionEvents);
+  return coalesceSessionCrossPostedToolEvents(cache.events);
 }
 
 export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEvent[]) {
@@ -1329,9 +1560,7 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
     if (existingIndex === undefined) {
       indexByKey.set(canonicalKey, output.length);
       output.push(event);
-      return;
     }
-    output[existingIndex] = event;
   });
   return output;
 }
@@ -1493,6 +1722,24 @@ export function createVaultCredential(vaultId: string, values: CredentialFormVal
   );
 }
 
+export type StartMCPVaultAuthInput = {
+  mcp_server_url: string;
+  vault_id: string;
+  workspace_id: string;
+  redirect_url: string;
+  display_name?: string;
+  source?: string;
+  client_id?: string;
+  client_secret?: string;
+};
+
+export function startMCPVaultAuth(orgUuid: string, input: StartMCPVaultAuthInput, csrfToken?: string) {
+  return consoleApi<{ oauth_flow_id: string; redirect_url: string }>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/mcp/vault-auth/start`,
+    { method: 'POST', body: JSON.stringify(input), csrfToken },
+  );
+}
+
 export function updateVaultCredential(
   vaultId: string,
   credentialId: string,
@@ -1578,11 +1825,14 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: values.fileResources.map((resource) => ({
-          type: 'file',
-          file_id: resource.fileId.trim(),
-          mount_path: sessionFileAPIMountPath(resource.mountPath),
-        })),
+        resources: values.fileResources.map((resource) => {
+          const mountPath = sessionFileAPIMountPath(resource.mountPath);
+          return {
+            type: 'file',
+            file_id: resource.fileId.trim(),
+            ...(mountPath ? { mount_path: mountPath } : {}),
+          };
+        }),
       };
     case 'deployments':
       return {

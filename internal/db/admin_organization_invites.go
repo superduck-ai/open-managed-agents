@@ -3,14 +3,12 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type AdminInvite struct {
-	UUID             uuid.UUID `db:"uuid"`
+	UUID             string    `db:"uuid"`
 	ExternalID       string    `db:"external_id"`
-	OrganizationUUID uuid.UUID `db:"organization_uuid"`
+	OrganizationUUID string    `db:"organization_uuid"`
 	Email            string    `db:"email"`
 	Role             string    `db:"role"`
 	Status           string    `db:"status"`
@@ -29,7 +27,7 @@ func (d *DB) CreateAdminInvite(ctx context.Context, invite AdminInvite) (AdminIn
 	mapper := NewAdminInviteMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminInviteParams{
 		ExternalID:       invite.ExternalID,
-		OrganizationUUID: invite.OrganizationUUID.String(),
+		OrganizationUUID: invite.OrganizationUUID,
 		Email:            invite.Email,
 		Role:             invite.Role,
 		Status:           invite.Status,

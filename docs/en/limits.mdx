@@ -1,0 +1,19 @@
+---
+title: "Limits and cost control"
+description: "Understand current OMA limits and control resources without a session budget API."
+---
+
+OMA does not currently implement `budget` fields or priced-cost metering.
+
+Current limits include 20 MCP servers and 20 skills per agent, 128 tool-related entries, 1 to 20 distinct coordinator agents, 500 session/deployment resources, usually 16 metadata entries, configurable file/workspace storage, a 1 MiB package manifest, a 32 MiB Messages proxy body, and configurable batch limits.
+
+Control cost across layers:
+
+1. Configure spend and rate limits on the upstream model account.
+2. Restrict logical models with model mappings.
+3. Set sandbox CPU, memory, disk, and lifetime limits.
+4. Set runner concurrency and provider quotas.
+5. Alert on scheduled deployments and pause abnormal automation.
+6. Monitor session usage/stats, model spans, and upstream billing.
+
+Treat upstream 429/5xx, sandbox timeouts, and queue pressure as observable states. Retry with exponential backoff and an overall deadline. Resume existing sessions instead of creating duplicate work.

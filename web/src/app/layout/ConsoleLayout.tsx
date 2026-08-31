@@ -69,6 +69,7 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { useAuth } from '../../shared/auth/context';
 import type { AuthAccount } from '../../shared/auth/api';
+import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import type { Workspace } from '../../shared/workspaces/api';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
@@ -153,12 +154,20 @@ export function ConsoleLayout() {
 
 export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
+  const isSessionWorkspace = isSessionDetailPath(currentPath);
+  const isSessionsRoute = isSessionsPath(currentPath);
   const { msg } = useI18n();
 
   return (
     <SidebarProvider defaultOpen>
       <ConsoleSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
-      <SidebarInset className="min-h-screen text-foreground">
+      <SidebarInset
+        className={clsx(
+          'text-foreground',
+          isSessionsRoute && 'session-route-theme',
+          isSessionWorkspace ? 'h-svh min-h-0 overflow-hidden' : 'min-h-screen',
+        )}
+      >
         <ShellMobileBar
           title={msg('app.productName', 'Open Managed Agents')}
           toggleLabel={msg('common.expand', 'Expand')}
@@ -166,7 +175,16 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
           href="/dashboard"
           onNavigate={onNavigate}
         />
-        <div className={clsx(isWide ? 'px-6 py-6 lg:px-8' : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0')}>
+        <div
+          data-session-workspace-shell={isSessionWorkspace ? '' : undefined}
+          className={clsx(
+            isSessionWorkspace
+              ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [&>[data-testid=session-detail-page]]:!overflow-hidden'
+              : isWide
+                ? 'min-w-0 px-6 py-6 lg:px-8'
+                : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
+          )}
+        >
           {children}
         </div>
       </SidebarInset>
@@ -204,7 +222,7 @@ export function SettingsShell({
 
 function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
-  const { activeWorkspaceId, selectWorkspace, workspaces } = useWorkspace();
+  const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
   const { setOpen, state } = useSidebar();
   const collapsed = state === 'collapsed';
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -215,6 +233,9 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
     Manage: true,
   });
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
+  const navigationItems = canManageLLMProviders(account, orgUuid)
+    ? consoleNavigation
+    : consoleNavigation.filter((item) => item.type !== 'link' || item.href !== '/llm-models');
 
   useEffect(() => {
     if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) {
@@ -232,12 +253,12 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
+      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <nav aria-label={msg('nav.consoleNavigation', 'Console navigation')}>
               <SidebarMenu>
-                {consoleNavigation.map((item) => {
+                {navigationItems.map((item) => {
                   if (item.type === 'link') {
                     return (
                       <SidebarLink
@@ -341,7 +362,7 @@ function SettingsSidebar({
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
+      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <SidebarMenu>
@@ -415,7 +436,7 @@ function ShellMobileBar({
   }
 
   return (
-    <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
+    <div className="sticky top-0 z-20 flex shrink-0 items-center gap-3 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
       <Button
         type="button"
         variant="ghost"
@@ -611,7 +632,7 @@ function SidebarFooter({
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            render={<a href="https://docs.anthropic.com/" target="_blank" rel="noreferrer" />}
+            render={<a href="https://oma.mintlify.site/" target="_blank" rel="noreferrer" />}
             tooltip={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
             aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}
@@ -832,6 +853,7 @@ const managedAgentPathByHref: Record<string, string> = {
 };
 
 const workspaceBuildPathByHref: Record<string, string> = {
+  '/llm-models': 'llm-models',
   '/playground': 'playground',
   '/files': 'files',
   '/skills': 'skills',
@@ -886,7 +908,10 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   nextPath ??= currentPath
     .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
     .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
-    .replace(/^\/workspaces\/[^/]+\/(playground|files|skills|batches)/, `/workspaces/${encodedWorkspaceId}/$1`)
+    .replace(
+      /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|batches)/,
+      `/workspaces/${encodedWorkspaceId}/$1`,
+    )
     .replace(
       /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)/,
       `/workspaces/${encodedWorkspaceId}/$1`,
@@ -971,11 +996,19 @@ function isWideConsolePath(currentPath: string) {
   );
 }
 
+function isSessionDetailPath(currentPath: string) {
+  return /^\/workspaces\/[^/]+\/sessions\/[^/]+\/?$/.test(currentPath);
+}
+
+function isSessionsPath(currentPath: string) {
+  return currentPath === '/sessions' || /^\/workspaces\/[^/]+\/sessions(?:\/|$)/.test(currentPath);
+}
+
 function isBuildPath(currentPath: string) {
   return (
-    ['/workbench', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
     currentPath.startsWith('/workbench/') ||
-    /^\/workspaces\/[^/]+\/(?:playground|files|skills|batches)(\/|$)/.test(currentPath)
+    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|batches)(\/|$)/.test(currentPath)
   );
 }
 

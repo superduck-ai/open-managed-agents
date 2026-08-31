@@ -1,0 +1,29 @@
+---
+title: "沙箱安全"
+description: "自托管智能体运行时的信任边界和最低安全要求。"
+---
+
+智能体会处理不可信仓库、文件、网页和工具输出。沙箱只能降低风险，不能把任意代码变成可信代码。
+
+## 部署者责任
+
+- 在独立容器或虚拟机中运行每个 Work，禁止共享宿主机 Docker socket
+- 限制 CPU、内存、磁盘、进程数和最长运行时间
+- 默认拒绝私网、metadata service、loopback 和 link-local 出口
+- 只挂载当前会话需要的文件、技能和短期凭证
+- 沙箱结束后可靠删除磁盘、令牌、代理连接和缓存
+- 收集有界、脱敏日志，不记录 prompt、完整文件或 Secret
+
+## OMA 提供的边界
+
+OMA 可以校验环境网络配置、把密钥库 Secret 与公开 payload 分离、为代码会话签发凭证、限制文件路径，并在 Work 生命周期中请求停止和清理。
+
+它不能验证自定义镜像没有后门、宿主机内核隔离正确、第三方 MCP 安全，或部署者的长期密钥没有泄露。
+
+## 上游代理 MITM
+
+启用 `code_session.upstream_proxy_mitm_enabled` 后，OMA 使用稳定 ECDSA 私钥在内存中签发 CA 和目标 leaf certificate。该私钥可以为沙箱信任的任意域名签名，必须以最高敏感级别保护，不能进入镜像、数据库、日志或沙箱。
+
+<Warning>
+  `upstream_proxy_disable_ssrf_protection: true` 只用于受控本地诊断。它允许私网和 loopback 目标，不应在生产环境开启。
+</Warning>

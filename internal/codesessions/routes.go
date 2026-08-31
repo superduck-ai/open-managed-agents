@@ -38,6 +38,7 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 		sessionRouter.Get("/", h.errorAdapter.Wrap(h.handleCodeSessionHTTPPoll))
 		sessionRouter.Post("/", h.handleSessionIngressPersistence)
 		sessionRouter.Put("/", h.handleSessionIngressPersistence)
+		sessionRouter.Post("/sign-commit", h.errorAdapter.Wrap(h.handleSignCommit))
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
 			workerRouter.Put("/", h.handlePutCodeSessionWorker)

@@ -1,0 +1,121 @@
+---
+title: "参考"
+sidebarTitle: "托管智能体参考"
+description: "Open Managed Agents 的事件类型、自托管 worker CLI 标志、支持的 MCP 服务器类型和速率限制。"
+---
+
+本页面汇集了 Open Managed Agents 的参考资料。如需面向任务的指南，请点击各部分中的链接。有关会话资源的操作，请参阅[会话操作](/docs/zh/session-operations)。
+
+<Note>
+  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+</Note>
+
+## 事件类型
+
+持久化的事件类型字符串遵循 `{domain}.{action}` 命名约定；仅限流式传输的事件增量（参见"事件增量"选项卡）是例外。有关发送、流式传输和列出事件的信息，请参阅[会话事件流](/docs/zh/events-and-streaming)。
+
+<Tabs>
+  <Tab title="用户事件">
+    | 类型                        | 描述                                                                                                                                                            |
+    | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `user.message`            | 包含文本、图像或文档内容的用户消息。                                                                                                                                            |
+    | `user.interrupt`          | 在执行过程中停止智能体。                                                                                                                                                  |
+    | `user.custom_tool_result` | 对智能体发起的自定义工具调用的响应。                                                                                                                                            |
+    | `user.tool_confirmation`  | 当权限策略要求确认时，批准或拒绝智能体或 MCP 工具调用。                                                                                                                                |
+    | `user.define_outcome`     | 定义一个[结果](/docs/zh/define-outcomes)，供智能体努力达成。                                                                     |
+    | `user.tool_result`        | 仅适用于使用 `self_hosted` [环境](/docs/zh/self-hosted-sandboxes)的会话，您的集成负责提供 `agent_toolset` 结果。SDK 辅助工具和 CLI 会自动执行此操作。 |
+  </Tab>
+
+  <Tab title="智能体事件">
+    | 类型                               | 描述                                                                                                                                            |
+    | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `agent.message`                  | 智能体响应内容块。                                                                                                                                     |
+    | `agent.thinking`                 | 表示智能体正在通过扩展思考取得进展。这仅是一个进度信号，不包含思考内容。                                                                                                          |
+    | `agent.tool_use`                 | 智能体调用预构建的智能体工具（bash、文件操作等）。                                                                                                                   |
+    | `agent.tool_result`              | 预构建智能体工具执行的结果。                                                                                                                                |
+    | `agent.mcp_tool_use`             | 智能体调用 MCP 服务器工具。                                                                                                                              |
+    | `agent.mcp_tool_result`          | MCP 工具执行的结果。                                                                                                                                  |
+    | `agent.custom_tool_use`          | 智能体调用您的自定义工具之一。请使用 `user.custom_tool_result` 事件进行响应。                                                                                          |
+    | `agent.thread_context_compacted` | 对话历史已被压缩以适应上下文窗口。                                                                                                                             |
+    | `agent.thread_message_received`  | 在[多智能体](/docs/zh/multiagent-orchestration)会话中，来自另一个线程的消息到达了承载此事件流的线程；在主线程上，表示某个智能体向协调器发送了报告或问题。  |
+    | `agent.thread_message_sent`      | 在[多智能体](/docs/zh/multiagent-orchestration)会话中，承载此事件流的线程向另一个线程发送了消息；在主线程上，表示协调器向另一个智能体发送了任务或后续消息。 |
+
+    这些事件中的消息内容可能包含 `redacted` 内容块，即 `{"type": "redacted"}`：这是因 OMA 模型策略而被隐去的内容的占位符。该块不包含其他字段。已隐去的块仅出现在平台发出的内容中；包含此类块的用户事件将被拒绝并返回 400 错误。
+  </Tab>
+
+  <Tab title="会话事件">
+    | 类型                                  | 描述                                                                                                                                      |
+    | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+    | `session.status_running`            | 智能体正在积极处理。                                                                                                                              |
+    | `session.status_idle`               | 智能体已完成当前任务，正在等待输入。包含一个 `stop_reason`，指示智能体停止的原因。                                                                                        |
+    | `session.status_rescheduled`        | 发生了暂时性错误，会话正在自动重试。                                                                                                                      |
+    | `session.status_terminated`         | 会话已结束，原因是发生了不可恢复的错误或会话已被归档。                                                                                                             |
+    | `session.deleted`                   | 会话已被删除。终止任何活动的事件流；不会再为此会话发出任何事件。                                                                                                        |
+    | `session.updated`                   | 会话更新请求更改了至少一个字段。仅包含已更改的字段。更新将在下一轮次生效。                                                                                                   |
+    | `session.error`                     | 处理过程中发生错误。包含一个带有 `retry_status` 的类型化 `error` 对象。                                                                                        |
+    | `session.usage`                     | 会话累计用量和跟踪的标价成本的快照。包含会话的用量总计以及会话[预算](/docs/zh/budgets)的回显，如果会话没有预算则为 `null`。                |
+    | `session.thread_created`            | 已创建一个[多智能体](/docs/zh/multiagent-orchestration)线程。                                          |
+    | `session.thread_status_running`     | 会话线程开始执行。每个会话都会为其主线程发出此事件；在[多智能体](/docs/zh/multiagent-orchestration)会话中，子线程的状态转换也会交叉发布到主流。 |
+    | `session.thread_status_idle`        | 会话线程已完成其轮次，正在等待输入。包含 `stop_reason`。                                                                                                     |
+    | `session.thread_status_rescheduled` | 会话线程遇到暂时性错误，正在自动重试。                                                                                                                     |
+    | `session.thread_status_terminated`  | 会话线程已被归档或遇到终止性错误。                                                                                                                       |
+  </Tab>
+
+  <Tab title="跨度事件">
+    跨度事件用于包裹活动，以进行计时和用量跟踪。
+
+    | 类型                                | 描述                                                                                                                                                                                      |
+    | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `span.model_request_start`        | 模型推理调用已开始。                                                                                                                                                                              |
+    | `span.model_request_end`          | 模型推理调用已完成。包含带有令牌计数的 `model_usage`。                                                                                                                                                      |
+    | `span.outcome_evaluation_start`   | [结果](/docs/zh/define-outcomes)评估已开始。                                                                                                       |
+    | `span.outcome_evaluation_ongoing` | 正在进行的[结果](/docs/zh/define-outcomes)评估期间的心跳信号。                                                                                              |
+    | `span.outcome_evaluation_end`     | 一个[结果](/docs/zh/define-outcomes)评估周期已完成。`needs_revision` 结果表示将进行另一个周期；`satisfied`、`max_iterations_reached`、`failed` 和 `interrupted` 为终止状态。 |
+  </Tab>
+
+  <Tab title="系统事件">
+    | 类型               | 描述                                                                                                                                                                      |
+    | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `system.message` | 追加特权系统级上下文，该上下文适用于随附的轮次及所有后续轮次。支持 `claude-opus-4-8`、`claude-fable-5`、`claude-mythos-5` 和 `claude-opus-5`；在不支持的主模型上，该事件将被拒绝并返回 `model_does_not_support_mid_conversation_system`。 |
+  </Tab>
+
+  <Tab title="事件增量">
+    事件增量是仅限流式传输的预览事件。它们在通过 `event_deltas[]` 参数选择启用的流连接（会话级或每线程级）上发出，并且永远不会持久化到会话的事件历史中。有关选择启用、累积和协调它们的信息，请参阅[事件增量](/docs/zh/events-and-streaming#event-deltas)。
+
+    | 类型            | 描述                                               |
+    | ------------- | ------------------------------------------------ |
+    | `event_start` | 预览事件已开始生成。包含即将到来的事件的 `type` 和 `id`。仅限流式传输，永不持久化。 |
+    | `event_delta` | 预览事件的增量内容，由 `event_id` 标识。仅限流式传输，永不持久化。          |
+  </Tab>
+</Tabs>
+
+## 自托管工作器
+
+以下是用于驱动 `self_hosted` 环境的预构建工作器的 `ant beta:worker` CLI 标志。有关设置环境、运行工作器和 SDK 辅助工具选项的信息，请参阅[自托管沙箱](/docs/zh/self-hosted-sandboxes)。
+
+| 标志                     | 描述                                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--environment-id`     | 要轮询工作的环境。也可从 `ANTHROPIC_ENVIRONMENT_ID` 读取。                                                                          |
+| `--environment-key`    | 使用此环境对工作器进行身份验证。也可从 `ANTHROPIC_ENVIRONMENT_KEY` 读取。                                                                  |
+| `--workdir`            | 下载技能以及工具读写文件的目录。默认为 `.`（当前目录）；系统默认工作目录为 `/workspace`。                                                                |
+| `--on-work`            | 为每个已认领的 worker 调用的脚本，而不是在进程内运行工具。以环境变量的形式接收会话详细信息。                                                                        |
+| `--unrestricted-paths` | 允许文件工具读写 `--workdir` 之外的路径。工作目录检查仅是文件工具的防护措施，而非沙箱；它不会约束 bash。                                                        |
+| `--max-idle`           | 会话因 `end_turn` 停止原因进入空闲状态后，在关闭之前等待的时长。默认为 `60s`。 |
+| `--log-format`         | 日志输出格式。使用 `json` 进行结构化日志摄取。默认为 `text`。                                                                               |
+
+## 支持的 MCP 服务器类型
+
+Open Managed Agents 可连接到暴露 HTTP 端点的[远程 MCP 服务器](/docs/zh/mcp-connector)，或通过 [MCP 隧道](/docs/zh/mcp-connector)连接到私有 MCP 服务器。服务器应支持 MCP 协议的可流式 HTTP 传输；仅支持已弃用的 SSE 传输的服务器仍可通过自动回退机制正常工作。有关在智能体上声明服务器的信息，请参阅 [MCP 连接器](/docs/zh/mcp-connector)。
+
+有关 MCP 和构建 MCP 服务器的更多信息，请参阅 [MCP 文档](https://modelcontextprotocol.io)。
+
+## 速率限制
+
+托管智能体端点按组织进行速率限制：
+
+| 操作                 | 限制            |
+| ------------------ | ------------- |
+| 创建端点（例如智能体、会话和环境）  | 每分钟 300 个请求   |
+| 读取端点（例如检索、列出和流式传输） | 每分钟 1,200 个请求 |
+
+组织级别的[支出限制和用量层级速率限制](/docs/zh/reference#rate-limits)同样适用。

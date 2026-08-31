@@ -28,6 +28,18 @@ func sessionIngressTokenInvalid(cause error) error {
 	return apperr.New(apperr.Unauthenticated, "Invalid session ingress token", cause)
 }
 
+func invalidSignCommitRequest(message string, cause error) error {
+	return apperr.New(apperr.InvalidArgument, message, cause)
+}
+
+func signCommitRequestTooLarge(cause error) error {
+	return apperr.New(apperr.RequestTooLarge, "Request body exceeds maximum size", cause)
+}
+
+func signCommitFailure(cause error) error {
+	return internalError("Could not sign commit", cause)
+}
+
 func codeSessionEventsLoadError(err error, codeSessionID string) error {
 	return internalError(
 		"Could not list code session events",

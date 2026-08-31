@@ -5,6 +5,7 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
+import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
@@ -136,6 +137,12 @@ const apiKeysRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'api-keys',
   component: () => <DashboardPage section="api-keys" />,
+});
+
+const workspaceLLMModelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/llm-models',
+  component: LLMModelsPage,
 });
 
 const quickstartRoute = createRoute({
@@ -480,6 +487,7 @@ const routeTree = rootRoute.addChildren([
       workspaceSkillDetailRoute,
       batchesRoute,
       workspaceBatchesRoute,
+      workspaceLLMModelsRoute,
       apiKeysRoute,
       quickstartRoute,
       workspaceAgentQuickstartRoute,

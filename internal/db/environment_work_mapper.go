@@ -14,7 +14,8 @@ type environmentWorkMapperRow struct {
 	WorkspaceUUID         string     `db:"workspace_uuid"`
 	EnvironmentUUID       string     `db:"environment_uuid"`
 	EnvironmentExternalID string     `db:"environment_external_id"`
-	Data                  []byte     `db:"data"`
+	SessionUUID           string     `db:"session_uuid"`
+	SessionExternalID     string     `db:"session_external_id"`
 	Metadata              []byte     `db:"metadata"`
 	Secret                *string    `db:"secret"`
 	State                 string     `db:"state"`
@@ -38,7 +39,7 @@ type environmentWorkWriteParams struct {
 	WorkspaceUUID         string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
-	Data                  []byte
+	SessionUUID           string
 	Metadata              []byte
 	Secret                *string
 	State                 string
@@ -76,6 +77,14 @@ type environmentWorkHeartbeatParams struct {
 	TTLSeconds            int
 }
 
+type environmentWorkRecoveryRetryParams struct {
+	OrganizationUUID string
+	WorkspaceUUID    string
+	EnvironmentUUID  string
+	WorkUUID         string
+	RetryAt          time.Time
+}
+
 type environmentWorkStopParams struct {
 	WorkspaceUUID         string
 	EnvironmentExternalID string
@@ -94,16 +103,17 @@ type EnvironmentWorkMapper interface {
 	Insert(ctx context.Context, params environmentWorkWriteParams) (environmentWorkMapperRow, error)
 	CountActive(ctx context.Context, workspaceUUID, environmentUUID string) (int, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentWorkMapperRow, error)
-	FindLatestByData(ctx context.Context, workspaceUUID, environmentExternalID, dataType, dataID string) (environmentWorkMapperRow, error)
+	FindLatestBySession(ctx context.Context, workspaceUUID, environmentExternalID, sessionUUID string) (environmentWorkMapperRow, error)
 	ListPage(ctx context.Context, params environmentWorkPageMapperParams) ([]environmentWorkMapperRow, error)
 	ClaimForEnvironment(ctx context.Context, workspaceUUID, environmentExternalID string, workerID *string, claimExpiresAt time.Time) (environmentWorkMapperRow, error)
-	ClaimNext(ctx context.Context, workerID *string, claimExpiresAt time.Time, includeSessionWork bool) (environmentWorkMapperRow, error)
+	ClaimNext(ctx context.Context, workerID *string, claimExpiresAt time.Time) (environmentWorkMapperRow, error)
 	LockByExternalID(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentWorkMapperRow, error)
 	AckByExternalID(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentWorkMapperRow, error)
 	UpdateMetadata(ctx context.Context, params environmentWorkMetadataParams) (environmentWorkMapperRow, error)
 	MergeMetadata(ctx context.Context, params environmentWorkMetadataPatchParams) (int64, error)
+	RequeueIfRecoverable(ctx context.Context, params environmentWorkRecoveryRetryParams) (int64, error)
 	Heartbeat(ctx context.Context, params environmentWorkHeartbeatParams) (environmentWorkMapperRow, error)
 	Stop(ctx context.Context, params environmentWorkStopParams) (environmentWorkMapperRow, error)
-	StopForDeletedSession(ctx context.Context, workspaceUUID, environmentExternalID, sessionExternalID string) (int64, error)
+	StopForDeletedSession(ctx context.Context, workspaceUUID, environmentExternalID, sessionUUID string) (int64, error)
 	Stats(ctx context.Context, workspaceUUID, environmentExternalID string) (environmentWorkStatsMapperRow, error)
 }

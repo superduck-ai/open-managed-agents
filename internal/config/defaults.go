@@ -13,9 +13,6 @@ func defaultConfig() Config {
 				ForcePathStyle: true,
 			},
 		},
-		AnthropicUpstream: AnthropicUpstreamConfig{
-			BaseURL: "https://api.anthropic.com",
-		},
 		Batch: BatchConfig{
 			WorkerEnabled:             true,
 			WorkerConcurrency:         2,
@@ -30,7 +27,7 @@ func defaultConfig() Config {
 		E2B: E2BConfig{
 			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,
-			SandboxTimeout: 5 * time.Minute,
+			SandboxTimeout: 30 * time.Second,
 		},
 		EnvironmentRunner: EnvironmentRunnerConfig{
 			Enabled:                 true,

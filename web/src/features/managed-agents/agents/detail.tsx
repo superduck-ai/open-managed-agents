@@ -1693,13 +1693,11 @@ export function AgentEditDialog({
                 'px-3 text-[14px] font-semibold leading-5',
                 saveDisabled
                   ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
-                  : 'bg-foreground text-background hover:bg-muted',
+                  : 'bg-foreground text-background hover:bg-foreground/90',
               )}
               onClick={() => void submit()}
             >
-              {submitting
-                ? msg('common.saving', 'Saving...')
-                : msg('managedAgents.agents.editDialog.saveNewVersion', 'Save new version')}
+              {submitting ? msg('common.saving', 'Saving...') : msg('common.save', 'Save')}
             </Button>
           </div>
         </div>

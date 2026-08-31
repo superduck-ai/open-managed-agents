@@ -22,7 +22,7 @@
 - 主线程 lane 0 + 子线程 lanes。
 - 事件 tick 的百分比定位、对数压缩、最小可见宽度。
 - active/hover/filter/playhead/tooltip。
-- minimap 点击、拖拽、lane 切换、纵向列表滚动同步。
+- minimap 点击、放大后的拖拽平移、lane 切换、纵向列表滚动同步。
 - raw firehose 与 debug/归一化模式的 tick 生成差异。
 
 ### 2.2 不包含
@@ -48,21 +48,21 @@ lane 的结构不能只从事件流推断。应优先使用线程元数据：
 
 ```ts
 interface SessionThread {
-  id: string
-  parent_thread_id?: string | null
-  created_at?: string | null
-  archived_at?: string | null
+  id: string;
+  parent_thread_id?: string | null;
+  created_at?: string | null;
+  archived_at?: string | null;
   agent?: {
-    id?: string | null
-    name?: string | null
-  } | null
+    id?: string | null;
+    name?: string | null;
+  } | null;
 }
 
 interface Lane {
-  label: string
-  group: string
-  threadId?: string
-  items: TimelineItem[]
+  label: string;
+  group: string;
+  threadId?: string;
+  items: TimelineItem[];
 }
 ```
 
@@ -72,44 +72,44 @@ minimap 不直接渲染原始 event。先把 event 或归一化 entry 转成 `Ti
 
 ```ts
 type TimelineItemType =
-  | 'user'
-  | 'agent'
-  | 'thinking'
-  | 'tool_use'
-  | 'result'
-  | 'subagent'
-  | 'error'
-  | 'outcome'
-  | 'model_request'
-  | 'status_idle'
-  | 'status_running'
-  | 'status_rescheduled'
-  | 'status_terminated'
-  | 'interrupt'
-  | 'root'
+  | "user"
+  | "agent"
+  | "thinking"
+  | "tool_use"
+  | "result"
+  | "subagent"
+  | "error"
+  | "outcome"
+  | "model_request"
+  | "status_idle"
+  | "status_running"
+  | "status_rescheduled"
+  | "status_terminated"
+  | "interrupt"
+  | "root";
 
 interface TimelineItem {
-  id: string
-  type: TimelineItemType
-  eventType?: string
-  label?: string
-  preview?: string
-  relativeTime: string
-  processedAtMs: number
-  durationMs?: number
+  id: string;
+  type: TimelineItemType;
+  eventType?: string;
+  label?: string;
+  preview?: string;
+  relativeTime: string;
+  processedAtMs: number;
+  durationMs?: number;
 }
 ```
 
 debug/归一化模式的转换规则：
 
-| entry kind | left 时间 | width 时长 | 备注 |
-|---|---|---|---|
-| `tool_call` | `bracketStartMs ?? processedAtMs` | `processedAtMs - bracketStartMs + executionMs` 或 `executionMs` | bracket 覆盖模型请求到工具完成的完整区间 |
-| `tool_batch` | 同 `tool_call` | 同 `tool_call` | label 显示并行调用数量 |
-| `message` | `bracketStartMs ?? processedAtMs` | `inferenceMs` | agent/model 输出区间 |
-| `outcome` | `processedAtMs` | `durationMs` | outcome/grading |
-| `idle_gap` | `processedAtMs` | `durationMs` | 渲染为 `status_idle` 斜纹 |
-| `status` / `passthrough` | `processedAtMs` | 无 | 作为点状最小块 |
+| entry kind               | left 时间                         | width 时长                                                      | 备注                                     |
+| ------------------------ | --------------------------------- | --------------------------------------------------------------- | ---------------------------------------- |
+| `tool_call`              | `bracketStartMs ?? processedAtMs` | `processedAtMs - bracketStartMs + executionMs` 或 `executionMs` | bracket 覆盖模型请求到工具完成的完整区间 |
+| `tool_batch`             | 同 `tool_call`                    | 同 `tool_call`                                                  | label 显示并行调用数量                   |
+| `message`                | `bracketStartMs ?? processedAtMs` | `inferenceMs`                                                   | agent/model 输出区间                     |
+| `outcome`                | `processedAtMs`                   | `durationMs`                                                    | outcome/grading                          |
+| `idle_gap`               | `processedAtMs`                   | `durationMs`                                                    | 渲染为 `status_idle` 斜纹                |
+| `status` / `passthrough` | `processedAtMs`                   | 无                                                              | 作为点状最小块                           |
 
 跳过以下 entry：
 
@@ -130,29 +130,29 @@ raw firehose 模式可使用原始 event 的 `processedAt` 生成点状 item，�
 
 ```ts
 interface TimelineTick extends TimelineItem {
-  leftPct: number
-  widthPct: number
-  ms: number
-  lane: number
+  leftPct: number;
+  widthPct: number;
+  ms: number;
+  lane: number;
 }
 
 function buildTimelineTicks(lanes: Lane[]): TimelineTick[] | null {
   const flat = lanes.flatMap((lane, laneIndex) =>
     lane.items.map((item) => ({ item, lane: laneIndex })),
-  )
+  );
 
-  if (flat.length === 0) return null
+  if (flat.length === 0) return null;
 
-  flat.sort((a, b) => a.item.processedAtMs - b.item.processedAtMs)
+  flat.sort((a, b) => a.item.processedAtMs - b.item.processedAtMs);
 
-  const starts = flat.map((entry) => entry.item.processedAtMs)
+  const starts = flat.map((entry) => entry.item.processedAtMs);
   const renderDurations = flat
     .map((entry) => Math.max(0, entry.item.durationMs ?? 0))
     .map((duration, index) =>
       index + 1 < starts.length
         ? Math.min(duration, starts[index + 1] - starts[index])
         : duration,
-    )
+    );
 
   // Continue with compression below.
 }
@@ -166,61 +166,61 @@ function buildTimelineTicks(lanes: Lane[]): TimelineTick[] | null {
 
 ```ts
 function compress(ms: number, threshold: number): number {
-  if (ms <= 0) return 0
-  if (ms < threshold) return ms
-  return threshold * (1 + Math.log(ms / threshold))
+  if (ms <= 0) return 0;
+  if (ms < threshold) return ms;
+  return threshold * (1 + Math.log(ms / threshold));
 }
 ```
 
 完整映射：
 
 ```ts
-const spans: number[] = []
+const spans: number[] = [];
 
 for (let index = 0; index < flat.length; index++) {
-  if (renderDurations[index] > 0) spans.push(renderDurations[index])
+  if (renderDurations[index] > 0) spans.push(renderDurations[index]);
 
   if (index + 1 < flat.length) {
-    const gap = starts[index + 1] - (starts[index] + renderDurations[index])
-    if (gap > 0) spans.push(gap)
+    const gap = starts[index + 1] - (starts[index] + renderDurations[index]);
+    if (gap > 0) spans.push(gap);
   }
 }
 
-if (spans.length === 0) return null
+if (spans.length === 0) return null;
 
-spans.sort((a, b) => a - b)
-const threshold = 4 * spans[Math.floor(spans.length / 2)]
+spans.sort((a, b) => a - b);
+const threshold = 4 * spans[Math.floor(spans.length / 2)];
 
-const offsets: number[] = []
-const widths: number[] = []
-let cursor = 0
+const offsets: number[] = [];
+const widths: number[] = [];
+let cursor = 0;
 
 for (let index = 0; index < flat.length; index++) {
-  offsets.push(cursor)
+  offsets.push(cursor);
 
-  const width = compress(renderDurations[index], threshold)
-  widths.push(width)
-  cursor += width
+  const width = compress(renderDurations[index], threshold);
+  widths.push(width);
+  cursor += width;
 
   if (index + 1 < flat.length) {
     cursor += compress(
       Math.max(0, starts[index + 1] - (starts[index] + renderDurations[index])),
       threshold,
-    )
+    );
   }
 }
 
-const total = cursor || 1
+const total = cursor || 1;
 
 return flat.map((entry, index) => {
-  let leftPct = 1 + (offsets[index] / total) * 98
-  let widthPct = Math.max(0.4, (widths[index] / total) * 98)
-  const overflow = leftPct + widthPct - 99
+  let leftPct = 1 + (offsets[index] / total) * 98;
+  let widthPct = Math.max(0.4, (widths[index] / total) * 98);
+  const overflow = leftPct + widthPct - 99;
 
   if (overflow > 0) {
-    const shrink = Math.min(widthPct - 0.4, overflow)
-    widthPct -= shrink
-    leftPct -= overflow - shrink
+    const shrink = Math.min(widthPct - 0.4, overflow);
+    widthPct -= shrink;
+    leftPct -= overflow - shrink;
   }
 
   return {
@@ -229,8 +229,8 @@ return flat.map((entry, index) => {
     widthPct,
     ms: starts[index],
     lane: entry.lane,
-  }
-})
+  };
+});
 ```
 
 ### 4.3 设计约束
@@ -251,21 +251,25 @@ tick 是绝对定位块：
 ```tsx
 <div
   className={cn(
-    'absolute top-0.5 bottom-0.5 rounded-sm transition-[left,width,opacity] duration-150 pointer-events-none',
+    "absolute top-0.5 bottom-0.5 rounded-sm transition-[left,width,opacity] duration-150 pointer-events-none",
     colorClass,
-    isActive ? 'opacity-100 outline outline-[1.5px] outline-offset-1 outline-accent-100 z-30' : null,
-    isHovered ? 'opacity-100 outline outline-[1.5px] outline-offset-1 outline-accent-200/50 z-30' : null,
-    !isActive && !isHovered ? 'opacity-90' : null,
-    isHidden ? '!opacity-0' : null,
+    isActive
+      ? "opacity-100 outline outline-[1.5px] outline-offset-1 outline-accent-100 z-30"
+      : null,
+    isHovered
+      ? "opacity-100 outline outline-[1.5px] outline-offset-1 outline-accent-200/50 z-30"
+      : null,
+    !isActive && !isHovered ? "opacity-90" : null,
+    isHidden ? "!opacity-0" : null,
   )}
   style={{
     left: `${tick.leftPct}%`,
     width: `${tick.widthPct}%`,
-    ...(tick.type === 'status_idle'
+    ...(tick.type === "status_idle"
       ? {
-          backgroundColor: 'hsl(var(--bg-200))',
+          backgroundColor: "hsl(var(--bg-200))",
           backgroundImage:
-            'repeating-linear-gradient(-45deg, transparent 0, transparent 6px, hsl(var(--bg-000)) 6px, hsl(var(--bg-000)) 12px)',
+            "repeating-linear-gradient(-45deg, transparent 0, transparent 6px, hsl(var(--bg-000)) 6px, hsl(var(--bg-000)) 12px)",
         }
       : undefined),
   }}
@@ -274,24 +278,24 @@ tick 是绝对定位块：
 
 颜色建议：
 
-| type | 颜色 |
-|---|---|
-| `user` | `#c46686` |
-| `agent` / `thinking` | accent blue |
-| `tool_use` / `result` | neutral gray |
-| `subagent` | `#629987` |
-| `error` | danger red, no stripe |
-| status/root/model request | muted gray |
-| `status_idle` | muted stripe |
+| type                      | 颜色                  |
+| ------------------------- | --------------------- |
+| `user`                    | `#c46686`             |
+| `agent` / `thinking`      | accent blue           |
+| `tool_use` / `result`     | neutral gray          |
+| `subagent`                | `#629987`             |
+| `error`                   | danger red, no stripe |
+| status/root/model request | muted gray            |
+| `status_idle`             | muted stripe          |
 
 ### 5.2 Lane row
 
 lane row 高度随状态变化：
 
-| 状态 | 高度 | 背景 |
-|---|---|---|
-| active | 28px | solid muted background |
-| hovered | 20px | translucent muted background |
+| 状态    | 高度 | 背景                              |
+| ------- | ---- | --------------------------------- |
+| active  | 28px | solid muted background            |
+| hovered | 20px | translucent muted background      |
 | default | 16px | more translucent muted background |
 
 row 使用 `data-lane-index`，供 compact minimap 或 tab strip 滚动到对应 lane。
@@ -301,7 +305,7 @@ row 使用 `data-lane-index`，供 compact minimap 或 tab strip 滚动到对应
 tooltip 锚点为 tick 中心：
 
 ```ts
-const centerPct = tick.leftPct + tick.widthPct / 2
+const centerPct = tick.leftPct + tick.widthPct / 2;
 ```
 
 内容包含：
@@ -330,37 +334,41 @@ function pickTickAtClientX(
   track: HTMLElement,
   ticks: TimelineTick[],
   options: {
-    lane?: number
-    maxDistancePct?: number
-    visibleIds?: Set<string>
-    includeIdle?: boolean
+    lane?: number;
+    maxDistancePct?: number;
+    visibleIds?: Set<string>;
+    includeIdle?: boolean;
   } = {},
 ): TimelineTick | null {
-  const rect = track.getBoundingClientRect()
-  const pct = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100)
-  let hit: TimelineTick | null = null
-  let nearest: TimelineTick | null = null
-  let nearestDistance = Infinity
+  const rect = track.getBoundingClientRect();
+  const pct = clamp(((clientX - rect.left) / rect.width) * 100, 0, 100);
+  let hit: TimelineTick | null = null;
+  let nearest: TimelineTick | null = null;
+  let nearestDistance = Infinity;
 
   for (const tick of ticks) {
-    if (options.lane !== undefined && tick.lane !== options.lane) continue
-    if (options.visibleIds && !options.visibleIds.has(tick.id)) continue
-    if (!options.includeIdle && tick.type === 'status_idle') continue
+    if (options.lane !== undefined && tick.lane !== options.lane) continue;
+    if (options.visibleIds && !options.visibleIds.has(tick.id)) continue;
+    if (!options.includeIdle && tick.type === "status_idle") continue;
 
     if (pct >= tick.leftPct && pct < tick.leftPct + tick.widthPct) {
-      if (!hit || tick.leftPct > hit.leftPct) hit = tick
+      if (!hit || tick.leftPct > hit.leftPct) hit = tick;
     }
 
-    const distance = Math.abs(tick.leftPct - pct)
+    const distance = Math.abs(tick.leftPct - pct);
     if (distance < nearestDistance) {
-      nearestDistance = distance
-      nearest = tick
+      nearestDistance = distance;
+      nearest = tick;
     }
   }
 
-  if (hit) return hit
-  if (options.maxDistancePct !== undefined && nearestDistance > options.maxDistancePct) return null
-  return nearest
+  if (hit) return hit;
+  if (
+    options.maxDistancePct !== undefined &&
+    nearestDistance > options.maxDistancePct
+  )
+    return null;
+  return nearest;
 }
 ```
 
@@ -380,13 +388,14 @@ minimap seek 流程：
 
 ### 6.3 Drag
 
-拖拽采用 Pointer Events：
+拖拽采用 Pointer Events，只负责放大后的 viewport 平移：
 
-- `pointerdown` 记录 `startX` 并 `setPointerCapture`。
-- 横向移动小于 4px 仍视为点击。
-- 达到 4px 后进入 dragging，实时命中 tick 并调用 `onSeek`。
-- 多 lane 下，拖到当前 lane 首/尾 tick 外 1.5% 可进入 `"start"` / `"end"` 边界态。
-- dragging 期间暂停 scroll-driven playhead 同步，避免两个方向互相覆盖。
+- `pointerdown` 记录 `startX`、`startScrollLeft` 并 `setPointerCapture`。
+- 横向移动小于 `4px` 仍视为点击，按压位置继续通过 tick 命中执行 seek。
+- 达到 `4px` 后取消本次点击；`zoom > 1` 且存在横向 overflow 时，按指针位移更新并约束 viewport `scrollLeft`。
+- `1×` 没有横向平移空间，使用默认光标；放大后使用 grab/grabbing 光标。
+- 拖动结束后生成的 click 必须被抑制，不能额外选中或跳转事件。
+- 触控板/滚轮保留浏览器原生横向滚动，不另建第二套滚动位置状态。
 
 ### 6.4 Scroll sync
 
@@ -401,7 +410,7 @@ minimap seek 流程：
 
 - lane tab 点击：设置 active lane，清空 selected event，纵向列表滚到顶部。
 - inactive minimap lane 点击：先同步 active lane ref，再用同一次 pointer 的 `clientX` 在目标 lane 里 seek。
-- compact minimap 或 lane tab 的横向/纵向滚动只用于“让 lane 控件可见”，不承担时间定位。
+- minimap viewport 的横向滚动或拖拽只改变可见时间范围，不承担事件定位；lane tab 的滚动只用于让 lane 控件可见。
 
 ### 6.6 跨线程跳转
 

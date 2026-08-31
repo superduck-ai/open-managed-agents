@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 )
 
 type MetadataValidator func(map[string]string) error
@@ -37,16 +39,14 @@ func DecodeObjectBodyAs[T any](w http.ResponseWriter, r *http.Request, maxBodySi
 	return body, nil
 }
 
+// Deprecated: use jsonx.Encode.
 func MarshalRaw(value any) (json.RawMessage, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	return json.RawMessage(data), nil
+	return jsonx.Encode(value)
 }
 
+// Deprecated: use jsonx.IsNull.
 func IsJSONNull(raw json.RawMessage) bool {
-	return strings.TrimSpace(string(raw)) == "null"
+	return jsonx.IsNull(raw)
 }
 
 func NormalizeMetadata(raw json.RawMessage, validate MetadataValidator) (json.RawMessage, error) {
@@ -104,11 +104,9 @@ func PatchMetadata(current json.RawMessage, raw json.RawMessage, validate Metada
 	return MarshalRaw(metadata)
 }
 
+// Deprecated: use jsonx.Default.
 func RawOr(raw json.RawMessage, fallback string) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(fallback)
-	}
-	return raw
+	return jsonx.Default(raw, fallback)
 }
 
 func FormatTime(t time.Time) string {

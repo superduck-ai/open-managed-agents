@@ -226,7 +226,6 @@ func TestManagedAgentRuntimeResourcesSkipInvalidSources(t *testing.T) {
 }
 
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
-	// 故意给配置放入可识别的上游密钥，后续断言它不会进入 payload 或 shell 命令。
 	cfg := config.Config{
 		CodeSession: config.CodeSessionConfig{
 			SandboxAPIBaseURL: "http://host.docker.internal:18081/",
@@ -235,20 +234,17 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			Enabled:               true,
 			ContentCaptureEnabled: true,
 		},
-		AnthropicUpstream: config.AnthropicUpstreamConfig{
-			BaseURL: "https://api.anthropic.test/",
-			APIKey:  "sk-ant-test-secret",
-		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
 			ManagerPath:        "/opt/env manager/bin/environment-manager",
 			ClaudeAgentVersion: "2.1.120",
 			ClaudePath:         "/opt/claude path/bin/claude",
+			GitSSHtoHTTPSHosts: []string{"gitlab.xxxx.cn"},
 		},
 	}
-	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
+	sessionConfig := json.RawMessage(`{"model":"kimi-k2.5","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, "/workspace/widgets", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -260,10 +256,15 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if startup["api_base_url"] != "http://host.docker.internal:18081" || startup["session_id"] != "cse_test" || startup["use_code_sessions"] != true {
 		t.Fatalf("unexpected startup context: %#v", startup)
 	}
+	claudeArgs := startup["claude_code_args"].(map[string]any)
+	if claudeArgs["settings"] != launcherSettingsPath {
+		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
+	}
 	startupEnv := startup["environment_variables"].(map[string]any)
 	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" ||
 		startupEnv["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_USE_CCR_V2"] != "1" ||
+		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
 		startupEnv["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] != "true" ||
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
@@ -274,7 +275,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnv[key] != "claude-opus-4-8" {
+		if startupEnv[key] != "kimi-k2.5" {
 			t.Fatalf("%s = %q, want session model", key, startupEnv[key])
 		}
 	}
@@ -307,9 +308,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			t.Fatalf("%s = %q, want managed session ingress authorization", key, startupEnv[key])
 		}
 	}
-	if _, ok := startupEnv["CLAUDE_CODE_WORKER_EPOCH"]; ok {
-		t.Fatalf("worker epoch must not be injected for OTLP: %#v", startupEnv)
-	}
 	auths := body["auth"].([]any)
 	sessionAuth := auths[0].(map[string]any)
 	if sessionAuth["type"] != "session_ingress" || sessionAuth["token"] != sessionIngressToken {
@@ -328,9 +326,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := environment["environment"]; ok {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
-	if strings.Contains(string(payload), cfg.AnthropicUpstream.APIKey) {
-		t.Fatalf("payload leaked upstream anthropic api key: %s", payload)
-	}
 
 	command := buildEnvironmentManagerCommand("cse_session with 'quote'/and/slash", cfg, payload)
 	if !reflect.DeepEqual(command.Payload, payload) {
@@ -345,15 +340,26 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"--claude-agent-version 'current'",
 		"--claude-path '/opt/claude path/bin/claude'",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
+		"export GIT_CONFIG_COUNT=5",
+		"export GIT_CONFIG_KEY_0=credential.interactive",
+		"export GIT_CONFIG_VALUE_0=false",
+		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_1=git@github.com:",
+		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
+		"export GIT_CONFIG_KEY_3='url.https://gitlab.xxxx.cn/.insteadOf'",
+		"export GIT_CONFIG_VALUE_3='git@gitlab.xxxx.cn:'",
+		"export GIT_CONFIG_KEY_4='url.https://gitlab.xxxx.cn/.insteadOf'",
+		"export GIT_CONFIG_VALUE_4='ssh://git@gitlab.xxxx.cn/'",
+		"export GIT_EDITOR=true",
+		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
+		"export GIT_TERMINAL_PROMPT=0",
 		"Claude binary version mismatch: expected 2.1.120",
 		"> '/tmp/claude-code-sessions/cse_session_with_'\"'\"'quote'\"'\"'_and_slash/environment-manager.log' 2>&1",
 	} {
 		if !strings.Contains(allCommands, want) {
 			t.Fatalf("commands missing %q in:\n%s", want, allCommands)
 		}
-	}
-	if strings.Contains(allCommands, "sk-ant-test-secret") {
-		t.Fatalf("command leaked anthropic api key:\n%s", allCommands)
 	}
 	if strings.Contains(allCommands, "task-run --stdin") {
 		t.Fatalf("command should use task-run's native clap stdin behavior:\n%s", allCommands)
@@ -369,6 +375,38 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 }
 
+func TestBuildEnvironmentManagerPayloadMergesVaultEnvPlaceholders(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
+	payload, err := buildEnvironmentManagerV0Payload(
+		"cse_test",
+		"sk-ant-si-test-token",
+		"sk-ant-oat01-test-token",
+		1,
+		"",
+		json.RawMessage(`{}`),
+		cfg,
+		map[string]string{
+			"NOTION_API_KEY":     "oma_ph_notion",
+			"CLAUDE_CODE_REMOTE": "oma_ph_should_not_overwrite",
+		},
+	)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	startupEnv := body["startup_context"].(map[string]any)["environment_variables"].(map[string]any)
+	if startupEnv["NOTION_API_KEY"] != "oma_ph_notion" {
+		t.Fatalf("NOTION_API_KEY = %v", startupEnv["NOTION_API_KEY"])
+	}
+	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" {
+		t.Fatalf("platform reserved env must win, got %v", startupEnv["CLAUDE_CODE_REMOTE"])
+	}
+}
+
 func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{
@@ -376,7 +414,7 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
 		"claude_code_args":{"mcp-config":"/tmp/managed-agent-mcp-config.json"}
 	}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -461,6 +499,9 @@ func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) 
 		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token" {
 		t.Fatalf("managed OTLP connection was not applied: %#v", startupEnv)
 	}
+	if startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
+		t.Fatalf("CLAUDE_CODE_WORKER_EPOCH = %q, want 1", startupEnv["CLAUDE_CODE_WORKER_EPOCH"])
+	}
 	// 内容采集关闭时平台不补授权默认值，但不删用户自己设置的键。
 	for _, key := range []string{"OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_TOOL_CONTENT"} {
 		if _, ok := startupEnv[key]; ok {
@@ -492,7 +533,7 @@ func TestBuildEnvironmentManagerPayloadKeepsUserTelemetryWhenDisabled(t *testing
 
 func buildEnvironmentManagerPayloadStartupContext(t *testing.T, sessionConfig json.RawMessage, cfg config.Config) map[string]any {
 	t.Helper()
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -518,7 +559,7 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 				]
 			}]
 		}`),
-		VaultIDs: json.RawMessage(`["vault_cred_123"]`),
+		VaultIDs: []string{"vault_cred_123"},
 	}
 
 	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))

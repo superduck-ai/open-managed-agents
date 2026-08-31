@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-
-	"github.com/google/uuid"
 )
 
 func TestAdminExternalKeyMapperPostgreSQL(t *testing.T) {
@@ -98,7 +96,7 @@ func TestAdminExternalKeyMapperPostgreSQL(t *testing.T) {
 			ProviderConfig:   json.RawMessage(`{"type":"aws","region":"us-east-1"}`),
 			CreatedAt:        createdAt,
 		})
-		if createErr != nil || created.ExternalID != "key_mapper_fixture" || created.UUID == uuid.Nil {
+		if createErr != nil || created.ExternalID != "key_mapper_fixture" || created.UUID == "" {
 			t.Fatalf("Insert() = (%+v, %v)", created, createErr)
 		}
 		assertAdminExternalKeyProviderType(t, created.ProviderConfig, "aws")

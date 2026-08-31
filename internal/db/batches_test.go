@@ -16,6 +16,7 @@ import (
 
 func TestMessageBatchMapperStatements(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
+	organizationUUID := "00000000-0000-4000-8000-000000000000"
 	workspaceUUID := "00000000-0000-4000-8000-000000000001"
 	batchUUID := "00000000-0000-4000-8000-000000000002"
 	requestUUID := "00000000-0000-4000-8000-000000000003"
@@ -24,6 +25,7 @@ func TestMessageBatchMapperStatements(t *testing.T) {
 	insert := insertMessageBatchParams{
 		UUID:                batchUUID,
 		ExternalID:          "msgbatch_mapper",
+		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		CreatedByAPIKeyUUID: "00000000-0000-4000-8000-000000000005",
 		APIVariant:          "stable",
@@ -79,7 +81,7 @@ func TestMessageBatchMapperStatements(t *testing.T) {
 		values    []any
 		fragments []string
 	}{
-		{"insert batch", messageBatchMapperInsertStatement, buildMessageBatchMapperInsert(yourbatis.DialectPostgres, insert), "MessageBatchMapper.Insert", yourbatis.StatementInsert, []any{batchUUID, insert.ExternalID, workspaceUUID, insert.CreatedByAPIKeyUUID, "stable", "2023-06-01", insert.BetaHeaders, 2, 2, now, insert.ExpiresAt}, []string{"INSERT INTO message_batches", "CAST($7 AS jsonb)", "RETURNING uuid, created_at, updated_at"}},
+		{"insert batch", messageBatchMapperInsertStatement, buildMessageBatchMapperInsert(yourbatis.DialectPostgres, insert), "MessageBatchMapper.Insert", yourbatis.StatementInsert, []any{batchUUID, insert.ExternalID, organizationUUID, workspaceUUID, insert.CreatedByAPIKeyUUID, "stable", "2023-06-01", insert.BetaHeaders, 2, 2, now, insert.ExpiresAt}, []string{"INSERT INTO message_batches", "CAST($8 AS jsonb)", "RETURNING uuid, created_at, updated_at"}},
 		{"insert request", messageBatchMapperInsertRequestStatement, buildMessageBatchMapperInsertRequest(yourbatis.DialectPostgres, insertRequest), "MessageBatchMapper.InsertRequest", yourbatis.StatementInsert, []any{insertRequest.ExternalID, workspaceUUID, batchUUID, 1, "custom-id", insertRequest.Params}, []string{"INSERT INTO message_batch_requests", "CAST($6 AS jsonb)"}},
 		{"insert job", messageBatchMapperInsertJobStatement, buildMessageBatchMapperInsertJob(yourbatis.DialectPostgres, workspaceUUID, payload), "MessageBatchMapper.InsertJob", yourbatis.StatementInsert, []any{workspaceUUID, payload}, []string{"INSERT INTO jobs", "CAST($2 AS jsonb)"}},
 		{"find by external ID", messageBatchMapperFindByExternalIDStatement, buildMessageBatchMapperFindByExternalID(yourbatis.DialectPostgres, workspaceUUID, insert.ExternalID), "MessageBatchMapper.FindByExternalID", yourbatis.StatementSelect, []any{workspaceUUID, insert.ExternalID}, []string{"workspace_uuid = $1", "external_id = $2", "deleted_at IS NULL"}},
@@ -246,7 +248,7 @@ func TestMessageBatchMapperResultSemantics(t *testing.T) {
 
 func messageBatchMapperTestColumns() []string {
 	return []string{
-		"uuid", "external_id", "workspace_uuid", "created_by_api_key_uuid", "api_variant",
+		"uuid", "external_id", "organization_uuid", "workspace_uuid", "created_by_api_key_uuid", "api_variant",
 		"anthropic_version", "beta_headers", "processing_status", "request_count",
 		"processing_count", "succeeded_count", "errored_count", "canceled_count",
 		"expired_count", "results_s3_bucket", "results_s3_key", "results_size_bytes",

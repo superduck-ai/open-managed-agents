@@ -1,0 +1,22 @@
+---
+title: "Vaults"
+description: "Manage vaults, encrypted credentials, rotation, and MCP OAuth validation."
+---
+
+Every Vault request requires `?beta=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/vaults` | Create / list vaults |
+| `GET` / `POST` / `DELETE` | `/v1/vaults/{id}` | Retrieve / update / delete |
+| `POST` | `/v1/vaults/{id}/archive` | Archive |
+| `POST` / `GET` | `/v1/vaults/{id}/credentials` | Create / list credentials |
+| `GET` / `POST` / `DELETE` | `/credentials/{credential_id}` | Retrieve / rotate / delete |
+| `POST` | `/credentials/{credential_id}/archive` | Archive credential |
+| `POST` | `/credentials/{credential_id}/mcp_oauth_validate` | Validate refresh and MCP connectivity |
+
+Credential auth types are `mcp_oauth`, `static_bearer`, and `environment_variable`. Create/update requests contain public auth configuration and secret fields. Responses never return secret material.
+
+<Warning>
+  No read endpoint can recover a token or client secret. Store IDs and manage rotation deliberately.
+</Warning>

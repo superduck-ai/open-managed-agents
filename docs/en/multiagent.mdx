@@ -1,0 +1,25 @@
+---
+title: "Multi-agent orchestration"
+description: "Use a coordinator roster to create managed-agent sessions with multiple threads."
+---
+
+OMA multi-agent mode uses one coordinator with a fixed roster. Entries resolve to explicit agent IDs and versions when the coordinator version is created.
+
+```json
+{
+  "multiagent": {
+    "type": "coordinator",
+    "agents": [
+      { "type": "self" },
+      { "type": "agent", "id": "agent_reviewer", "version": 3 },
+      "agent_researcher"
+    ]
+  }
+}
+```
+
+The roster must contain 1 to 20 distinct agents and at most one `self`. String references resolve to the current version; explicit version objects are safer in production.
+
+The session starts with a primary thread. Delegation creates child threads with independent state, usage, stats, and event streams. Blocking tool events from child threads are also projected to the primary stream. Include `session_thread_id` when returning a confirmation or custom tool result.
+
+<Card title="Events and streaming" href="/docs/en/events-streaming" />

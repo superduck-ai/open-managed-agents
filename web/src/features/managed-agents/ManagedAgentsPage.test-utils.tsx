@@ -14,6 +14,7 @@ const { defaultWorkspace } = await import('../../shared/workspaces/api');
 const { setConsoleRequestContext } = await import('../../shared/api/client');
 const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
+const { Toaster } = await import('../../shared/ui/sonner');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
@@ -46,6 +47,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
     uuid: 'acct_managed_agents_test',
     email_address: 'managed-agents-test@example.com',
     display_name: 'Managed Agents Test User',
+    memberships: [{ role: 'admin', organization: { uuid: 'org_test' } }],
   },
   status: 'authenticated',
   csrfToken: 'csrf_managed_agents_test',
@@ -118,7 +120,7 @@ function mockObservabilityPanelResult(queryRef: string) {
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
-  queryOptions: { seedModelMappings?: boolean } = {},
+  queryOptions: { auth?: AuthContextValue; seedModels?: boolean } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -126,19 +128,20 @@ export function render(
       mutations: { retry: false },
     },
   });
-  if (queryOptions.seedModelMappings !== false) {
-    queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
+  const models = [
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+  ];
+  if (queryOptions.seedModels !== false) {
+    queryClient.setQueryData(['create-agent', 'models', 'default'], models);
+    queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
   }
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
   return testingLibrary.render(
-    <AuthContext.Provider value={managedAgentsAuthContextValue}>
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    <AuthContext.Provider value={queryOptions.auth ?? managedAgentsAuthContextValue}>
+      <QueryClientProvider client={queryClient}>
+        <Toaster portal={false} closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
+        {ui}
+      </QueryClientProvider>
     </AuthContext.Provider>,
     options,
   );
@@ -209,14 +212,12 @@ export function renderManagedAgentsPage(
       },
     },
   });
-  queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
+  const models = [
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+  ];
+  queryClient.setQueryData(['create-agent', 'models', 'default'], models);
+  queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
   const history = createBrowserHistory({ window });
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
@@ -306,8 +307,8 @@ export type MockAgentsApiOptions = {
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
   mcpToolCatalogRefreshWait?: Promise<void>;
-  modelMappings?: Record<string, string>;
-  modelMappingsErrorOnce?: boolean;
+  modelsErrorOnce?: boolean;
+  modelsNotConfigured?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
   quickstartStreamErrorOnce?: boolean;
   agentUpdateErrorStatus?: number;
@@ -333,7 +334,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
-  let modelMappingsErrorsRemaining = options.modelMappingsErrorOnce ? 1 : 0;
+  let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
   let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
   let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
@@ -384,15 +385,22 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
 
-    if (url.match(/^\/api\/organizations\/[^/]+\/models$/) && method === 'GET') {
-      if (modelMappingsErrorsRemaining > 0) {
-        modelMappingsErrorsRemaining -= 1;
-        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 503);
-      }
-      return jsonResponse({ model_mappings: options.modelMappings ?? {} });
-    }
-
     if (url.startsWith('/v1/models?') && method === 'GET') {
+      if (options.modelsNotConfigured) {
+        return jsonResponse(
+          {
+            error: {
+              type: 'api_error',
+              message: 'This workspace has no LLM provider configured',
+            },
+          },
+          503,
+        );
+      }
+      if (modelsErrorsRemaining > 0) {
+        modelsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 500);
+      }
       const models = options.models ?? [
         { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
         { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
@@ -892,14 +900,61 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   return { requests };
 }
 
-export function mockManagedResourceApi() {
+type MockManagedResourceApiOptions = {
+  agent?: Pick<AgentFixture, 'tools' | 'version'>;
+};
+
+export function mockManagedResourceApi(options: MockManagedResourceApiOptions = {}) {
   const now = new Date().toISOString();
   const requests: RecordedRequest[] = [];
+  const sessionResources = [
+    {
+      id: 'sesrsc_orders123456',
+      type: 'file',
+      created_at: new Date(Date.now() - 80_000).toISOString(),
+      file_id: 'file_orders123456',
+      mount_path: '/uploads/orders.zip',
+    },
+  ];
   const resources = {
+    files: [
+      {
+        id: 'file_input123456',
+        type: 'file',
+        filename: 'input.txt',
+        size_bytes: 108,
+        mime_type: 'text/plain',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_image123456',
+        type: 'file',
+        filename: 'image.png',
+        size_bytes: 257_024,
+        mime_type: 'image/png',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_report123456',
+        type: 'file',
+        filename: 'NL2SQL report.md',
+        size_bytes: 30_720,
+        mime_type: 'text/markdown',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+    ],
     agents: [
       agentResponse({
         id: 'agent_option123456',
         name: 'Option agent',
+        version: 3,
+        ...options.agent,
       }),
     ],
     sessions: [
@@ -913,17 +968,12 @@ export function mockManagedResourceApi() {
         title: 'Session one',
         type: 'session',
         updated_at: now,
+        usage: { input_tokens: 1234, output_tokens: 56, list_cost: 0.0123 },
         vault_ids: ['vlt_one123456'],
+        resources: sessionResources,
       },
     ],
-    sessionResources: [
-      {
-        id: 'file_orders123456',
-        type: 'file',
-        created_at: new Date(Date.now() - 80_000).toISOString(),
-        filename: 'orders.zip',
-      },
-    ],
+    sessionResources,
     sessionThreads: [
       {
         id: 'sthr_reporter123456',
@@ -1267,6 +1317,17 @@ export function mockManagedResourceApi() {
         vault_ids: [],
       },
     ],
+    deploymentRuns: [
+      {
+        id: 'drun_scheduled123456',
+        created_at: now,
+        deployment_id: 'dep_one123456',
+        error: null,
+        session_id: 'sesn_one123456',
+        trigger_context: { type: 'schedule', scheduled_at: now },
+        type: 'deployment_run',
+      },
+    ],
     environments: [
       {
         id: 'env_one123456',
@@ -1432,11 +1493,34 @@ export function mockManagedResourceApi() {
       });
       return jsonResponse({ data: filteredSessions, next_page: null });
     }
+    if (url.startsWith('/v1/files?') && method === 'GET') {
+      return jsonResponse({
+        data: resources.files,
+        has_more: false,
+        first_id: resources.files.at(0)?.id ?? null,
+        last_id: resources.files.at(-1)?.id ?? null,
+      });
+    }
     const retrieveSessionMatch = url.match(/^\/v1\/sessions\/([^/?]+)\?beta=true$/);
     if (retrieveSessionMatch && method === 'GET') {
       const sessionId = decodeURIComponent(retrieveSessionMatch[1]);
       const session = resources.sessions.find((item) => item.id === sessionId);
       return session ? jsonResponse(session) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    const fileMetadataMatch = url.match(/^\/v1\/files\/([^/?]+)\?beta=true$/);
+    if (fileMetadataMatch && method === 'GET') {
+      const fileId = decodeURIComponent(fileMetadataMatch[1]);
+      return jsonResponse({
+        id: fileId,
+        type: 'file',
+        filename: 'source-orders.zip',
+        size_bytes: 2_048,
+        mime_type: 'application/zip',
+        created_at: new Date(Date.now() - 100_000).toISOString(),
+        downloadable: true,
+        scope: null,
+        metadata: {},
+      });
     }
     const sessionResourcesMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/resources\?/);
     if (sessionResourcesMatch && method === 'GET') {
@@ -1488,6 +1572,19 @@ export function mockManagedResourceApi() {
         return matchesCreatedAtParams(deployment, params);
       });
       return jsonResponse({ data: filteredDeployments, next_page: null });
+    }
+    const retrieveDeploymentMatch = url.match(/^\/v1\/deployments\/([^/?]+)\?beta=true$/);
+    if (retrieveDeploymentMatch && method === 'GET') {
+      const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
+      const deployment = resources.deployments.find((item) => item.id === deploymentId);
+      return deployment ? jsonResponse(deployment) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (url.startsWith('/v1/deployment_runs?') && method === 'GET') {
+      const deploymentId = new URL(url, 'https://oma.duck.ai').searchParams.get('deployment_id');
+      return jsonResponse({
+        data: resources.deploymentRuns.filter((run) => !deploymentId || run.deployment_id === deploymentId),
+        next_page: null,
+      });
     }
     if (url.startsWith('/v1/environments?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;

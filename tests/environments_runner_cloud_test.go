@@ -38,9 +38,6 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
-	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-must-not-enter-sandbox"
-	cfg.AnthropicUpstream.ModelMappings = map[string]string{"claude-opus-4-8": "glm-5-turbo"}
-
 	store := newFakeStore("runner-cloud-bucket")
 	app := newTestAppWithStore(t, &cfg, store)
 	defer app.close()
@@ -188,8 +185,8 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if codeSession.PermissionMode != "bypassPermissions" {
 		t.Fatalf("local code session permission mode = %q", codeSession.PermissionMode)
 	}
-	if codeSession.Model != "glm-5-turbo" {
-		t.Fatalf("local code session model = %q, want mapped snapshot model", codeSession.Model)
+	if codeSession.Model != "claude-opus-4-8" {
+		t.Fatalf("local code session model = %q, want agent model unchanged", codeSession.Model)
 	}
 	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
 	if err != nil {
@@ -197,6 +194,38 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	}
 	if len(queued) != 2 || queued[0].EventType != "control_request" || queued[0].EventSubtype != "initialize" || queued[1].EventType != "user" {
 		t.Fatalf("unexpected queued inbound events: %#v", queued)
+	}
+	var initialize map[string]any
+	if err := json.Unmarshal(queued[0].Payload, &initialize); err != nil {
+		t.Fatalf("decode initialize worker event: %v", err)
+	}
+	initializeRequest := initialize["request"].(map[string]any)
+	if initializeRequest["systemPrompt"] != "You are a concise coding assistant." {
+		t.Fatalf("initialize systemPrompt = %q", initializeRequest["systemPrompt"])
+	}
+	const expectedManagedAgentEnvironmentPrompt = `# Managed-agent environment
+
+These rules describe the current sandbox environment and do not replace your assigned role.
+
+## Uploaded inputs
+
+- A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
+- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
+- /mnt/session/uploads is read-only. Do not modify files under this directory.
+- Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
+- First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.
+- Search the working directory only after the uploads check finds no match. Do not report a file missing until both locations have been checked in this order.
+- Uploaded filenames and paths are authoritative. Use an exact path when provided; otherwise, use only a path returned by inspecting /mnt/session/uploads. If multiple files match, ask the user which one to use.
+- Never guess, truncate, rename, or reconstruct an uploaded input path. Do not infer an upload path from metadata such as a file ID.
+
+## Output deliverables
+
+- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
+- A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
+- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
+- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
+	if initializeRequest["appendSystemPrompt"] != expectedManagedAgentEnvironmentPrompt {
+		t.Fatalf("initialize appendSystemPrompt = %q", initializeRequest["appendSystemPrompt"])
 	}
 	var initial map[string]any
 	if err := json.Unmarshal(queued[1].Payload, &initial); err != nil {
@@ -239,8 +268,8 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnvironment[key] != "glm-5-turbo" {
-			t.Fatalf("%s = %q, want mapped snapshot model", key, startupEnvironment[key])
+		if startupEnvironment[key] != "claude-opus-4-8" {
+			t.Fatalf("%s = %q, want agent model unchanged", key, startupEnvironment[key])
 		}
 	}
 	if _, ok := startupEnvironment["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
@@ -249,8 +278,8 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if _, ok := payload["environment"].(map[string]any)["environment"]; ok {
 		t.Fatalf("environment-manager payload should not contain Claude credential environment variables: %#v", payload["environment"])
 	}
-	if strings.Contains(string(provider.launches[0].stdin), cfg.AnthropicUpstream.APIKey) {
-		t.Fatalf("environment-manager payload leaked upstream key: %s", provider.launches[0].stdin)
+	if strings.Contains(string(provider.launches[0].stdin), "test-provider-key") {
+		t.Fatalf("environment-manager payload leaked Provider key: %s", provider.launches[0].stdin)
 	}
 	if !strings.Contains(provider.launches[0].command, "--session '"+codeSession.ExternalID+"'") ||
 		strings.Contains(provider.launches[0].command, "nohup") ||
@@ -675,7 +704,11 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	ids := getDefaultDBIDs(t, app.pool)
-	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
+	sessionRecord, found, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
+	if err != nil || !found {
+		t.Fatalf("load queued session: found=%v error=%v", found, err)
+	}
+	work, err := app.db.GetLatestEnvironmentWorkForSession(ctx, ids.WorkspaceUUID, environment.ID, sessionRecord.UUID)
 	if err != nil {
 		t.Fatalf("load queued environment work: %v", err)
 	}
@@ -1112,7 +1145,11 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 			ids := getDefaultDBIDs(t, app.pool)
-			work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
+			sessionRecord, found, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
+			if err != nil || !found {
+				t.Fatalf("load environment session: found=%v error=%v", found, err)
+			}
+			work, err := app.db.GetLatestEnvironmentWorkForSession(ctx, ids.WorkspaceUUID, environment.ID, sessionRecord.UUID)
 			if err != nil {
 				t.Fatalf("load environment work: %v", err)
 			}

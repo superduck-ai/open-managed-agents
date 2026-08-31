@@ -175,6 +175,52 @@ export function objectRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+export function optionalNumericValueFromKeys(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (!normalized) continue;
+      const parsed = Number(normalized);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function sessionListCost(value: unknown) {
+  const usage = toRecord(value) ?? {};
+  const money = toRecord(usage.list_cost) ?? {};
+  const cents = optionalNumericValueFromKeys(money, ['amount']);
+  if (cents !== undefined) {
+    return {
+      amount: cents / 100,
+      currency: typeof money.currency === 'string' && money.currency ? money.currency : 'USD',
+    };
+  }
+  const amount = optionalNumericValueFromKeys(usage, ['list_cost', 'cost', 'total_cost']);
+  return amount === undefined ? null : { amount, currency: 'USD' };
+}
+
+export function numericValueFromKeys(record: Record<string, unknown>, keys: string[]) {
+  return optionalNumericValueFromKeys(record, keys) ?? 0;
+}
+
+export function stringValueFromKeys(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
 export function compactEntityId(id: string) {
   if (id.length <= 20) {
     return id;

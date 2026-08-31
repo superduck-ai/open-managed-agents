@@ -341,14 +341,14 @@ data: {
 
 1. ingress token 鉴权。
 2. 确认 code session 存在。
-3. 可选解析并校验 `worker_epoch` query/header。
+3. 可选解析并校验 `worker_epoch` query/header；请求未显式携带时，使用已认证 session-ingress JWT 中的正 `worker_epoch`。
 4. 解析 `from_sequence_num` 或 `Last-Event-ID`。
 5. cursor 非法时直接返回 `400`，不会把 worker 标记为 connected。
-6. 如果带当前 epoch，调用 `MarkCodeSessionWorkerConnectedForEpoch`。
+6. 如果显式参数或 JWT claim 解析出当前 epoch，调用 `MarkCodeSessionWorkerConnectedForEpoch`。
 7. 写 SSE headers，进入 polling loop。
 8. stream 退出时用 epoch 条件调用 `MarkCodeSessionWorkerDisconnectedForEpoch`。
 
-无 epoch 的 stream 保持兼容，只读 queued events，不刷新连接状态。
+只有旧版 JWT 本身也没有 `worker_epoch` 时，stream 才保持 legacy 兼容：只读 queued events，不刷新连接状态。managed-agent 实际建立 SSE 时可以不在 URL 重复传 epoch；其 JWT claim 会让该连接进入 epoch-scoped delivery/replay 路径。
 
 ### 8.3 写出后的状态
 
@@ -424,6 +424,8 @@ and processed_at is null
 ```
 
 这能避免升级后把旧实现中已 `sent`、但没有 epoch/ACK 字段的历史事件重新当作新 prompt 发送。代价是：如果新代码路径产生同形态数据，也会被排除。因此新的 epoch-scoped stream 必须在写出后使用 `MarkCodeSessionInboundEventSentForEpoch` 写入 `delivery_worker_epoch`，不能继续走 legacy mark sent。
+
+这条约束也适用于 pause/resume：旧 SSE 连接可能在 Sandbox 真正冻结前抢先写出刚入队的消息。如果连接使用 managed-agent JWT，即使 URL 没有 `worker_epoch`，服务端也必须从 claim 取得 epoch 并记录 `delivery_worker_epoch`；resume 后的新连接才能把未 ACK 的 `sent` 事件重放，而不会把它误认成历史 legacy 事件永久跳过。
 
 ---
 

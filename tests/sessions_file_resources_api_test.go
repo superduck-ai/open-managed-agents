@@ -1009,16 +1009,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	outputFileID := files[0].ExternalID
 	outputFileCreatedAt := files[0].CreatedAt
 	outputResourceCreatedAt := entry.Node.CreatedAt
-	hiddenResource := app.do(
-		t,
-		http.MethodGet,
-		"/v1/sessions/"+session.ID+"/resources/"+entry.Node.ExternalID+"?beta=true",
-		nil,
-		defaultTestKey,
-		true,
-		"",
-	)
-	assertError(t, hiddenResource, http.StatusNotFound, "not_found_error")
+	assertOutputResourceResponse(t, app, session.ID, entry.Node.ExternalID, outputFileID, "/outputs/reports/result.txt")
 	if allFiles := listFiles(t, app, ""); !containsFile(allFiles.Data, outputFileID) {
 		t.Fatalf("unscoped Files list does not contain active Output %q: %+v", outputFileID, allFiles.Data)
 	}
@@ -1712,4 +1703,41 @@ func defaultWorkspaceStorageBytes(t *testing.T, app *testApp) int64 {
 		t.Fatalf("load default workspace storage usage: %v", err)
 	}
 	return storageBytes
+}
+
+// assertOutputResourceResponse 校验单资源 GET 对输出文件返回 file_id 与公开 mount_path。
+// 输出资源与 Owned File 在读取路径同批 JOIN，因此 file_id 必然存在。
+func assertOutputResourceResponse(
+	t *testing.T,
+	app *testApp,
+	sessionID string,
+	resourceExternalID string,
+	wantFileID string,
+	wantMountPath string,
+) {
+	t.Helper()
+	resp := app.do(
+		t,
+		http.MethodGet,
+		"/v1/sessions/"+sessionID+"/resources/"+resourceExternalID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("output resource status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+	var payload struct {
+		ID        string `json:"id"`
+		Type      string `json:"type"`
+		FileID    string `json:"file_id"`
+		MountPath string `json:"mount_path"`
+	}
+	decodeJSON(t, resp.Body, &payload)
+	if payload.ID != resourceExternalID || payload.Type != "file" ||
+		payload.FileID != wantFileID || payload.MountPath != wantMountPath {
+		t.Fatalf("output resource = %+v, want %q/%q", payload, wantFileID, wantMountPath)
+	}
 }

@@ -233,7 +233,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterOrganizationOAuthEnvironmentRoutes(r)
 		})
 		r.Route("/api/console/organizations/{orgUuid}", func(r chi.Router) {
-			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db)
+			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db, s.logger)
 			platformapi.RegisterConsoleOrganizationAdminRequestRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets)

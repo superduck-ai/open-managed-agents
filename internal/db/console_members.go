@@ -18,6 +18,9 @@ func (d *DB) ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]pla
 	mapper := NewConsoleUserMapper(d.mapperDB)
 	rows, err := mapper.ListOrganizationMembers(ctx, orgUUID, limit)
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return []platform.OrgUser{}, nil
+		}
 		return nil, err
 	}
 
@@ -77,6 +80,9 @@ func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (
 		return nil
 	})
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	return removed, nil

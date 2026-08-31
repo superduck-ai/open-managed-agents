@@ -63,7 +63,7 @@ func (d *DB) ListAdminRequests(ctx context.Context, orgUUID string, requestType 
 		Limit:       limit,
 	})
 	if err != nil {
-		if postgresErr, ok := postgresError(err); ok && postgresErr.Code == "42P01" {
+		if isUndefinedRelationError(err) {
 			return []platform.AdminRequest{}, nil
 		}
 		return nil, err

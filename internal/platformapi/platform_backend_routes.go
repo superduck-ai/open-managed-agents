@@ -3,6 +3,7 @@ package platformapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -81,8 +82,8 @@ func RegisterOrganizationAnalyticsRoutes(r chi.Router) {
 	r.Get("/analytics/sessions/timeseries", handleSessionAnalyticsTimeseries)
 }
 
-func RegisterConsoleOrganizationWorkspaceRoutes(r chi.Router, store OrganizationStore) {
-	r.Get("/workspaces", handleListConsoleWorkspaces(store))
+func RegisterConsoleOrganizationWorkspaceRoutes(r chi.Router, store OrganizationStore, logger *slog.Logger) {
+	r.Get("/workspaces", handleListConsoleWorkspaces(store, logger))
 }
 
 func RegisterConsoleOrganizationAdminRequestRoutes(r chi.Router, store OrganizationStore) {

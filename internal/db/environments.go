@@ -567,7 +567,7 @@ func matchesExpectedHeartbeat(latest *time.Time, expected string, format func(ti
 func environmentWriteParamsFrom(env Environment) environmentWriteParams {
 	return environmentWriteParams{
 		UUID: env.UUID, ExternalID: env.ExternalID, OrganizationUUID: env.OrganizationUUID,
-		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: env.CreatedByAPIKeyUUID,
+		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: nullableString(env.CreatedByAPIKeyUUID),
 		Name: env.Name, Description: env.Description,
 		Config: agentJSONArg(env.Config), Metadata: agentJSONArg(env.Metadata),
 		Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
@@ -630,7 +630,7 @@ func environmentWorkFromRows(rows []environmentWorkMapperRow) []EnvironmentWork 
 func (r environmentMapperRow) environment() Environment {
 	return Environment{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
 		Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,

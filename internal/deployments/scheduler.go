@@ -239,7 +239,7 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 	if referenceFailure != nil {
 		return w.recordFailure(ctx, deployment, referenceFailure, scheduledAt, now)
 	}
-	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, deployment.RuntimeUserUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err

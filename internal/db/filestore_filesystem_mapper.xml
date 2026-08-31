@@ -170,11 +170,11 @@
         JOIN workspaces w
         ON w.uuid = s.workspace_uuid
         AND w.organization_uuid = s.organization_uuid
-        JOIN api_keys ak
+        LEFT JOIN api_keys ak
         ON ak.uuid = s.created_by_api_key_uuid
         AND ak.workspace_uuid = s.workspace_uuid
         JOIN users u
-        ON u.uuid = ak.created_by_user_uuid
+        ON u.uuid = COALESCE(CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid), ak.created_by_user_uuid)
         AND u.organization_uuid = o.uuid
         AND u.deleted_at IS NULL
         JOIN filestore_filesystems fs
@@ -302,12 +302,13 @@
             #{params.FilesystemExternalID}, w.organization_uuid, w.uuid,
             #{params.SessionUUID}, NULL, ak.uuid, #{params.CreatedAt}, #{params.CreatedAt}
             FROM workspaces w
-            JOIN api_keys ak
+            LEFT JOIN api_keys ak
             ON ak.uuid = #{params.CreatedByAPIKeyUUID}
             AND ak.workspace_uuid = w.uuid
             WHERE w.uuid = #{params.WorkspaceUUID}
             AND w.organization_uuid = #{params.OrganizationUUID}
             AND w.archived_at IS NULL
+            <if test="params.CreatedByAPIKeyUUID != nil">AND ak.uuid IS NOT NULL</if>
             ON CONFLICT ON CONSTRAINT filestore_filesystems_workspace_uuid_external_id_key DO NOTHING
             RETURNING uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
                 code_session_uuid, created_by_api_key_uuid, created_at, updated_at, deleted_at

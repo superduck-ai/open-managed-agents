@@ -15,6 +15,8 @@ import (
 const MaxScheduledDeploymentsPerOrganization = 1000
 
 type Deployment struct {
+	// RuntimeUserUUID is inherited by scheduled sessions, independently of API keys.
+	RuntimeUserUUID       string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
@@ -443,7 +445,8 @@ func deploymentWriteParamsFrom(deployment Deployment) deploymentWriteParams {
 	return deploymentWriteParams{
 		UUID: deployment.UUID, ExternalID: deployment.ExternalID,
 		OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
-		CreatedByAPIKeyUUID: deployment.CreatedByAPIKeyUUID, EnvironmentUUID: deployment.EnvironmentUUID,
+		RuntimeUserUUID:     nullableString(deployment.RuntimeUserUUID),
+		CreatedByAPIKeyUUID: nullableString(deployment.CreatedByAPIKeyUUID), EnvironmentUUID: deployment.EnvironmentUUID,
 		EnvironmentExternalID: deployment.EnvironmentExternalID, AgentUUID: deployment.AgentUUID,
 		AgentExternalID: deployment.AgentExternalID, AgentVersion: deployment.AgentVersion,
 		AgentSnapshot: agentJSONArg(deployment.AgentSnapshot), Name: deployment.Name, Description: deployment.Description,
@@ -458,7 +461,7 @@ func deploymentWriteParamsFrom(deployment Deployment) deploymentWriteParams {
 func deploymentRunWriteParamsFrom(run DeploymentRun) deploymentRunWriteParams {
 	return deploymentRunWriteParams{
 		UUID: run.UUID, ExternalID: run.ExternalID, OrganizationUUID: run.OrganizationUUID,
-		WorkspaceUUID: run.WorkspaceUUID, CreatedByAPIKeyUUID: run.CreatedByAPIKeyUUID,
+		WorkspaceUUID: run.WorkspaceUUID, CreatedByAPIKeyUUID: nullableString(run.CreatedByAPIKeyUUID),
 		DeploymentUUID: run.DeploymentUUID, DeploymentExternalID: run.DeploymentExternalID,
 		AgentUUID: run.AgentUUID, AgentExternalID: run.AgentExternalID, AgentVersion: run.AgentVersion,
 		AgentSnapshot: agentJSONArg(run.AgentSnapshot), SessionExternalID: run.SessionExternalID,
@@ -499,7 +502,8 @@ func deploymentRunsFromRows(rows []deploymentRunMapperRow) []DeploymentRun {
 func (r deploymentMapperRow) deployment() Deployment {
 	return Deployment{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
+		RuntimeUserUUID: stringFromNullable(r.RuntimeUserUUID),
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Name: r.Name, Description: r.Description,
@@ -513,7 +517,7 @@ func (r deploymentMapperRow) deployment() Deployment {
 func (r deploymentRunMapperRow) run() DeploymentRun {
 	return DeploymentRun{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		DeploymentUUID: r.DeploymentUUID, DeploymentExternalID: r.DeploymentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), SessionExternalID: r.SessionExternalID,

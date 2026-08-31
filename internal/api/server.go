@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
-	"time"
 
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
@@ -397,7 +396,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	if session.APIKeyUUID == "" || session.UserUUID == "" {
+	if session.UserUUID == "" || session.WorkspaceUUID == "" {
 		refreshed, refreshErr := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
 			SessionKey: sessionKey,
 			UserUUID:   session.UserExternalID,
@@ -428,10 +427,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 
 func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
 	workspaceID := platformRequestWorkspaceID(r)
-	if workspaceID == "" {
-		return principal, nil
-	}
-	if workspaceID == "default" {
+	if workspaceID == "" || workspaceID == "default" {
 		workspaceID = principal.WorkspaceExternalID
 	}
 	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
@@ -448,18 +444,8 @@ func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.P
 	if accessErr := s.authorizePlatformWorkspaceAccess(r, principal, workspace); accessErr != nil {
 		return auth.Principal{}, accessErr
 	}
-	apiKey, err := s.findActivePlatformWorkspaceAPIKey(r, principal.OrganizationUUID, workspace.ExternalID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace has no active API key")
-		}
-		s.logger.ErrorContext(r.Context(), "load platform workspace API key", "error", err)
-		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
-	principal.APIKeyUUID = apiKey.UUID
-	principal.APIKeyExternalID = apiKey.ExternalID
 	return principal, nil
 }
 
@@ -488,34 +474,6 @@ func (s *Server) authorizePlatformWorkspaceAccess(r *http.Request, principal aut
 		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	return nil
-}
-
-func (s *Server) findActivePlatformWorkspaceAPIKey(r *http.Request, organizationUUID, workspaceExternalID string) (db.AdminAPIKey, error) {
-	const pageSize = 100
-
-	now := time.Now()
-	afterID := ""
-	for {
-		keys, hasMore, err := s.db.ListAdminAPIKeysPage(r.Context(), db.ListAdminAPIKeysParams{
-			OrganizationUUID:    organizationUUID,
-			WorkspaceExternalID: workspaceExternalID,
-			Status:              "active",
-			AfterID:             afterID,
-			Limit:               pageSize,
-		})
-		if err != nil {
-			return db.AdminAPIKey{}, err
-		}
-		for _, key := range keys {
-			if key.ExpiresAt == nil || key.ExpiresAt.After(now) {
-				return key, nil
-			}
-		}
-		if !hasMore || len(keys) == 0 {
-			return db.AdminAPIKey{}, db.ErrNotFound
-		}
-		afterID = keys[len(keys)-1].ExternalID
-	}
 }
 
 func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {

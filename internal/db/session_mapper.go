@@ -58,7 +58,7 @@ type sessionRow struct {
 	ExternalID            string          `db:"external_id"`
 	OrganizationUUID      string          `db:"organization_uuid"`
 	WorkspaceUUID         string          `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID   string          `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID   *string         `db:"created_by_api_key_uuid"`
 	EnvironmentUUID       string          `db:"environment_uuid"`
 	EnvironmentExternalID string          `db:"environment_external_id"`
 	AgentUUID             string          `db:"agent_uuid"`
@@ -69,6 +69,7 @@ type sessionRow struct {
 	DeploymentID          *string         `db:"deployment_external_id"`
 	Title                 *string         `db:"title"`
 	Metadata              []byte          `db:"metadata"`
+	RuntimeUserUUID       *string         `db:"runtime_user_uuid"`
 	VaultIDs              sessionVaultIDs `db:"vault_ids"`
 	Status                string          `db:"status"`
 	Usage                 []byte          `db:"usage"`
@@ -81,11 +82,12 @@ type sessionRow struct {
 }
 
 type sessionWriteParams struct {
+	RuntimeUserUUID       *string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
 	WorkspaceUUID         string
-	CreatedByAPIKeyUUID   string
+	CreatedByAPIKeyUUID   *string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
 	AgentUUID             string

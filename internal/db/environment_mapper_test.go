@@ -485,7 +485,7 @@ func environmentMapperTestWriteParams(now time.Time) environmentWriteParams {
 		UUID: "00000000-0000-4000-8000-000000000001", ExternalID: "env_test",
 		OrganizationUUID:    "00000000-0000-4000-8000-000000000002",
 		WorkspaceUUID:       "00000000-0000-4000-8000-000000000003",
-		CreatedByAPIKeyUUID: "00000000-0000-4000-8000-000000000004",
+		CreatedByAPIKeyUUID: nullableString("00000000-0000-4000-8000-000000000004"),
 		Name:                "test", Description: "description", Config: []byte(`{}`), Metadata: []byte(`{}`),
 		Provider: "local", ResolvedTemplate: "default", CreatedAt: now, UpdatedAt: now,
 	}

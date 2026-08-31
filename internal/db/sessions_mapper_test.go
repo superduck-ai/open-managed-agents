@@ -31,7 +31,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	sessionParams := sessionWriteParams{
 		UUID: "session-uuid", ExternalID: "ses_test", OrganizationUUID: "organization-uuid",
-		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: "api-key-uuid",
+		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: nullableString("api-key-uuid"),
 		EnvironmentUUID: "environment-uuid", EnvironmentExternalID: "env_test",
 		AgentUUID: "agent-uuid", AgentExternalID: "agent_test", AgentVersion: 1,
 		AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`), VaultIDs: sessionVaultIDs{},
@@ -64,7 +64,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.CreatedByAPIKeyUUID", "params.EnvironmentUUID", "params.EnvironmentExternalID",
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
-				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata",
+				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata", "params.RuntimeUserUUID",
 				"params.VaultIDs", "params.Status", "params.Usage", "params.Stats",
 				"params.OutcomeEvaluations", "params.CreatedAt", "params.CreatedAt",
 			},

@@ -208,7 +208,7 @@ func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 	defer app.close()
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
-	cookies := app.platformLoginCookies(t, "workspace-scope@example.com")
+	cookies := app.platformLoginCookies(t, "workspace-scope-"+suffix+"@example.com")
 	orgCookie := responseCookie(cookies, "lastActiveOrg")
 	if orgCookie == nil || orgCookie.Value == "" {
 		t.Fatalf("platform login cookies = %#v, want lastActiveOrg", cookies)
@@ -219,7 +219,7 @@ func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load custom workspace: %v", err)
 	}
-	customAPIKeyUUID := createPlatformWorkspaceAPIKey(t, app, cookies, orgCookie.Value, customWorkspaceID)
+	createPlatformWorkspaceAPIKey(t, app, cookies, orgCookie.Value, customWorkspaceID)
 	seedTestLLMProviderForWorkspace(
 		t,
 		app,
@@ -299,8 +299,8 @@ func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("load custom workspace session = (%t, %v), want found", found, err)
 	}
-	if createdSession.CreatedByAPIKeyUUID != customAPIKeyUUID {
-		t.Fatalf("custom workspace session API key UUID = %q, want %q", createdSession.CreatedByAPIKeyUUID, customAPIKeyUUID)
+	if createdSession.CreatedByAPIKeyUUID != "" || createdSession.RuntimeUserUUID != platformSession.UserUUID {
+		t.Fatalf("platform session actor = (key %q, user %q), want no key and authenticated user", createdSession.CreatedByAPIKeyUUID, createdSession.RuntimeUserUUID)
 	}
 }
 
@@ -506,7 +506,10 @@ func createPlatformWorkspace(t *testing.T, app *testApp, cookies []*http.Cookie,
 func createPlatformWorkspaceAPIKey(t *testing.T, app *testApp, cookies []*http.Cookie, orgUUID, workspaceID string) string {
 	t.Helper()
 	path := "/api/console/organizations/" + orgUUID + "/workspaces/" + workspaceID + "/api_keys"
-	resp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"name":"Platform session test key"}`), cookies)
+	resp := app.platformRequestWithHeaders(t, http.MethodPost, path, strings.NewReader(`{"name":"Platform session test key"}`), cookies, map[string]string{
+		"X-Organization-UUID": orgUUID,
+		"X-Workspace-ID":      workspaceID,
+	})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("create workspace API key status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))

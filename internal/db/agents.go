@@ -74,7 +74,7 @@ func (d *DB) CreateAgent(ctx context.Context, agent Agent, versionExternalID str
 			UUID:                agent.UUID,
 			ExternalID:          agent.ExternalID,
 			WorkspaceUUID:       agent.WorkspaceUUID,
-			CreatedByAPIKeyUUID: agent.CreatedByAPIKeyUUID,
+			CreatedByAPIKeyUUID: nullableString(agent.CreatedByAPIKeyUUID),
 			Config:              newAgentConfigParams(agent),
 			CreatedAt:           agent.CreatedAt,
 		})

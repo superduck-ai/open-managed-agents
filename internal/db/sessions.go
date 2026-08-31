@@ -14,11 +14,13 @@ import (
 )
 
 type Session struct {
-	UUID                  string
-	ExternalID            string
-	OrganizationUUID      string
-	WorkspaceUUID         string
-	CreatedByAPIKeyUUID   string
+	UUID                string
+	ExternalID          string
+	OrganizationUUID    string
+	WorkspaceUUID       string
+	CreatedByAPIKeyUUID string
+	// RuntimeUserUUID is server-owned execution identity, not resource ownership.
+	RuntimeUserUUID       string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
 	AgentUUID             string

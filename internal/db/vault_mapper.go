@@ -12,7 +12,7 @@ type vaultRow struct {
 	ExternalID          string     `db:"external_id"`
 	OrganizationUUID    string     `db:"organization_uuid"`
 	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string    `db:"created_by_api_key_uuid"`
 	DisplayName         string     `db:"display_name"`
 	Metadata            []byte     `db:"metadata"`
 	CreatedAt           time.Time  `db:"created_at"`
@@ -31,7 +31,7 @@ type insertVaultParams struct {
 	ExternalID          string
 	OrganizationUUID    string
 	WorkspaceUUID       string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	DisplayName         string
 	Metadata            []byte
 	CreatedAt           time.Time

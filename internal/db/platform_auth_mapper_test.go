@@ -21,7 +21,21 @@ func TestPlatformAuthMapperBuilders(t *testing.T) {
 		wantArgumentNames: []string{
 			"organizationUUID", "userID", "userUUID", "userID",
 		},
-		wantSQLFragments: []string{"u.organization_uuid = $1", "u.external_id = $2", "OR u.uuid = $3"},
+		wantSQLFragments: []string{
+			"u.organization_uuid = $1", "u.external_id = $2", "OR u.uuid = $3",
+		},
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: platformAuthUserMapperResolveSessionIdentityStatement,
+		bound: buildPlatformAuthUserMapperResolveSessionIdentity(
+			yourbatis.DialectPostgres, "11111111-1111-4111-8111-111111111111", "user_test", nil,
+		),
+		wantID:            "PlatformAuthUserMapper.ResolveSessionIdentity",
+		wantKind:          yourbatis.StatementSelect,
+		wantArgumentNames: []string{"organizationUUID", "userID", "userID"},
+		wantSQLFragments: []string{
+			"u.organization_uuid = $1", "u.external_id = $2",
+		},
 	})
 
 	params := insertPlatformAuthAPIKeyParams{
@@ -49,13 +63,11 @@ func TestPlatformSessionIdentityRowMapsStringUUIDs(t *testing.T) {
 		WorkspaceExternalID: "workspace_test",
 		UserUUID:            "33333333-3333-4333-8333-333333333333",
 		UserExternalID:      "user_test",
-		APIKeyUUID:          "44444444-4444-4444-8444-444444444444",
-		APIKeyExternalID:    "api_key_test",
 	}
 
 	session := row.session()
 	if session.OrganizationUUID != row.OrganizationUUID || session.WorkspaceUUID != row.WorkspaceUUID ||
-		session.UserUUID != row.UserUUID || session.APIKeyUUID != row.APIKeyUUID {
+		session.UserUUID != row.UserUUID || session.APIKeyUUID != "" {
 		t.Fatalf("session = %#v, want values from row %#v", session, row)
 	}
 }

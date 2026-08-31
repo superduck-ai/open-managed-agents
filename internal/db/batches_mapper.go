@@ -24,7 +24,7 @@ type messageBatchRow struct {
 	ExternalID          string     `db:"external_id"`
 	OrganizationUUID    string     `db:"organization_uuid"`
 	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string    `db:"created_by_api_key_uuid"`
 	APIVariant          string     `db:"api_variant"`
 	AnthropicVersion    string     `db:"anthropic_version"`
 	BetaHeadersJSON     []byte     `db:"beta_headers"`
@@ -81,7 +81,7 @@ type insertMessageBatchParams struct {
 	ExternalID          string
 	OrganizationUUID    string
 	WorkspaceUUID       string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	APIVariant          string
 	AnthropicVersion    string
 	BetaHeaders         json.RawMessage

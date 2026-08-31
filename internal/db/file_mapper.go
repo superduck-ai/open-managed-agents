@@ -49,7 +49,7 @@ type fileMapperRecordParams struct {
 	Downloadable        bool
 	ScopeType           *string
 	ScopeID             *string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	CreatedAt           time.Time
 }
 
@@ -87,7 +87,7 @@ type fileRecordRow struct {
 	Downloadable        bool      `db:"downloadable"`
 	ScopeType           *string   `db:"scope_type"`
 	ScopeID             *string   `db:"scope_id"`
-	CreatedByAPIKeyUUID string    `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string   `db:"created_by_api_key_uuid"`
 	CreatedAt           time.Time `db:"created_at"`
 }
 
@@ -120,7 +120,7 @@ func fileMapperRecordParameters(file FileRecord) fileMapperRecordParams {
 		Downloadable:        file.Downloadable,
 		ScopeType:           file.ScopeType,
 		ScopeID:             file.ScopeID,
-		CreatedByAPIKeyUUID: file.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: nullableString(file.CreatedByAPIKeyUUID),
 		CreatedAt:           file.CreatedAt,
 	}
 }
@@ -172,7 +172,7 @@ func (r fileRecordRow) record() FileRecord {
 		Downloadable:        r.Downloadable,
 		ScopeType:           r.ScopeType,
 		ScopeID:             r.ScopeID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		CreatedAt:           r.CreatedAt,
 	}
 }

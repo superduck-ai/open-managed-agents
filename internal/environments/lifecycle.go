@@ -15,8 +15,13 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
-const SandboxLifecycleQueue = "sandbox_lifecycle"
-const lifecycleBatchSize = 100
+const (
+	SandboxLifecycleQueue = "sandbox_lifecycle"
+	lifecycleBatchSize    = 100
+	sandboxSweepID        = "sandbox_lifecycle_sweep"
+	sandboxSweepCron      = "* * * * *"
+	sandboxSweepTimezone  = "UTC"
+)
 
 type SandboxLifecycle struct {
 	database *db.DB
@@ -31,7 +36,7 @@ func NewSandboxLifecycle(database *db.DB, provider *e2bruntime.E2BProvider, cfg 
 
 type sandboxSweepArgs struct{}
 
-func (sandboxSweepArgs) Kind() string { return "sandbox_lifecycle_sweep" }
+func (sandboxSweepArgs) Kind() string { return sandboxSweepID }
 
 type sandboxReclaimArgs struct {
 	OrganizationUUID string `json:"organization_uuid"`
@@ -51,36 +56,55 @@ func (l *SandboxLifecycle) Register(workers *river.Workers) {
 
 // Configure upserts a single cluster-wide cron; policy is read by workers at execution time.
 func (l *SandboxLifecycle) Configure(ctx context.Context, client *river.Client[*sql.Tx]) error {
-	existing, err := client.DurablePeriodicJobGet(ctx, "sandbox_lifecycle_sweep")
+	existing, err := client.DurablePeriodicJobGet(ctx, sandboxSweepID)
 	if err != nil && !errors.Is(err, river.ErrNotFound) {
 		return err
 	}
-	if err == nil && existing.CronExpression != nil && *existing.CronExpression == "* * * * *" && existing.CronTimezone == "UTC" && existing.Kind == (sandboxSweepArgs{}).Kind() && existing.Queue == SandboxLifecycleQueue && existing.PausedAt == nil {
+	if err == nil && matchesSandboxSweepSchedule(existing) {
 		return nil
 	}
 	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{
-		ID: "sandbox_lifecycle_sweep", Kind: sandboxSweepArgs{}.Kind(), Queue: SandboxLifecycleQueue,
-		Schedule: &river.DurablePeriodicJobSchedule{CronExpression: "* * * * *", CronTimezone: "UTC"},
+		ID: sandboxSweepID, Kind: sandboxSweepArgs{}.Kind(), Queue: SandboxLifecycleQueue,
+		Schedule: &river.DurablePeriodicJobSchedule{CronExpression: sandboxSweepCron, CronTimezone: sandboxSweepTimezone},
 	})
 	return err
+}
+
+func matchesSandboxSweepSchedule(job *rivertype.DurablePeriodicJob) bool {
+	return job != nil && job.CronExpression != nil && *job.CronExpression == sandboxSweepCron &&
+		job.CronTimezone == sandboxSweepTimezone && job.Kind == (sandboxSweepArgs{}).Kind() &&
+		job.Queue == SandboxLifecycleQueue && job.PausedAt == nil
+}
+
+func (l *SandboxLifecycle) allowsNewClaims() bool {
+	return l.cfg.Enabled && !l.cfg.DryRun
 }
 
 // Reclaim only contacts the provider after a durable, conditional claim.
 func (l *SandboxLifecycle) Reclaim(ctx context.Context, target db.SandboxReclaimTarget) error {
 	cutoff := time.Now().UTC().Add(-l.cfg.IdleTimeout)
-	// Disabling new reclamation must not abandon already committed deletions.
-	if !l.cfg.Enabled || l.cfg.DryRun {
-		cutoff = time.Time{}
-	}
-	claimed, ok, err := l.database.BeginSandboxReclamation(ctx, target, cutoff)
-	if err != nil || !ok {
+	claimed, ok, err := l.database.BeginSandboxReclamation(ctx, target, cutoff, l.allowsNewClaims())
+	if err != nil {
 		return err
+	}
+	if !ok {
+		l.logger.DebugContext(ctx, "idle sandbox reclamation skipped", "reason", "target_missing_or_ineligible",
+			"organization_id", target.OrganizationUUID,
+			"workspace_id", target.WorkspaceUUID, "sandbox_id", target.SandboxUUID)
+		return nil
 	}
 	if err := l.provider.Kill(ctx, claimed.ProviderSandboxID); err != nil {
 		return err
 	}
-	if err := l.database.CompleteSandboxReclamation(ctx, claimed); err != nil {
+	completed, err := l.database.CompleteSandboxReclamation(ctx, claimed)
+	if err != nil {
 		return err
+	}
+	if !completed {
+		l.logger.DebugContext(ctx, "idle sandbox reclamation completion skipped", "reason", "target_missing_or_already_completed",
+			"organization_id", claimed.OrganizationUUID,
+			"workspace_id", claimed.WorkspaceUUID, "sandbox_id", claimed.SandboxUUID)
+		return nil
 	}
 	l.logger.InfoContext(ctx, "idle sandbox reclaimed", "organization_id", claimed.OrganizationUUID,
 		"workspace_id", claimed.WorkspaceUUID, "sandbox_id", claimed.SandboxUUID)
@@ -105,8 +129,11 @@ func (l *SandboxLifecycle) enqueueReclaims(ctx context.Context, client *river.Cl
 			return err
 		}
 		for _, target := range targets {
-			if l.cfg.DryRun && !target.Reclaiming {
-				l.logger.InfoContext(ctx, "idle sandbox reclaim candidate", "workspace_id", target.WorkspaceUUID, "sandbox_id", target.SandboxUUID)
+			if !l.allowsNewClaims() && !target.Reclaiming {
+				if l.cfg.Enabled && l.cfg.DryRun {
+					l.logger.InfoContext(ctx, "idle sandbox reclaim candidate", "organization_id", target.OrganizationUUID,
+						"workspace_id", target.WorkspaceUUID, "sandbox_id", target.SandboxUUID)
+				}
 				continue
 			}
 			_, err := client.Insert(ctx, sandboxReclaimArgs{OrganizationUUID: target.OrganizationUUID, WorkspaceUUID: target.WorkspaceUUID, SandboxUUID: target.SandboxUUID}, nil)

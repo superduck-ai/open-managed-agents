@@ -35,33 +35,51 @@ func (d *DB) ListSandboxReclaimCandidates(ctx context.Context, cutoff time.Time,
 // BeginSandboxReclamation serializes with public input and worker state updates.
 // Only a committed claim authorizes a provider deletion. Repeated claims retain
 // the same immutable sandbox UUID and cannot target a replacement.
-func (d *DB) BeginSandboxReclamation(ctx context.Context, target SandboxReclaimTarget, cutoff time.Time) (SandboxReclaimTarget, bool, error) {
+func (d *DB) BeginSandboxReclamation(ctx context.Context, target SandboxReclaimTarget, cutoff time.Time, allowNewClaim bool) (SandboxReclaimTarget, bool, error) {
 	var claimed bool
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewSandboxLifecycleMapper(executor)
 		current, found, err := mapper.FindTarget(ctx, target.scope())
-		if err != nil || !found {
+		if err != nil {
 			return err
+		}
+		if !found {
+			return nil
 		}
 		if current.State == "stopping" && current.StopReason != nil && *current.StopReason == "idle_timeout" {
 			target, claimed = current.reclaimTarget(), true
 			return nil
 		}
+		if !allowNewClaim {
+			return nil
+		}
 		_, found, err = NewSessionMapper(executor).LockSessionForEvents(ctx, current.WorkspaceUUID, current.SessionExternalID)
-		if err != nil || !found {
+		if err != nil {
 			return err
+		}
+		if !found {
+			return nil
 		}
 		_, found, err = NewCodeSessionMapper(executor).LockCodeSessionByExternalID(ctx, current.CodeSessionExternalID)
-		if err != nil || !found {
+		if err != nil {
 			return err
+		}
+		if !found {
+			return nil
 		}
 		current, found, err = mapper.LockTarget(ctx, target.scope())
-		if err != nil || !found {
+		if err != nil {
 			return err
 		}
+		if !found {
+			return nil
+		}
 		rows, err := mapper.Claim(ctx, current.CodeSessionUUID, current.SandboxUUID, cutoff)
-		if err != nil || rows == 0 {
+		if err != nil {
 			return err
+		}
+		if rows == 0 {
+			return nil
 		}
 		if err := mapper.BeginStop(ctx, target.scope()); err != nil {
 			return err
@@ -73,12 +91,16 @@ func (d *DB) BeginSandboxReclamation(ctx context.Context, target SandboxReclaimT
 	return target, claimed, err
 }
 
-func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxReclaimTarget) error {
-	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxReclaimTarget) (bool, error) {
+	var completed bool
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewSandboxLifecycleMapper(executor)
 		current, found, err := mapper.FindTarget(ctx, target.scope())
-		if err != nil || !found {
+		if err != nil {
 			return err
+		}
+		if !found {
+			return nil
 		}
 		// Lock the parent before the worker and work, matching public ingress.
 		if _, _, err := NewSessionMapper(executor).LockSessionForEvents(ctx, current.WorkspaceUUID, current.SessionExternalID); err != nil {
@@ -89,13 +111,22 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 		if err != nil {
 			return err
 		}
-		if _, _, err := mapper.LockTarget(ctx, target.scope()); err != nil {
+		locked, found, err := mapper.LockTarget(ctx, target.scope())
+		if err != nil {
 			return err
 		}
+		if !found {
+			return nil
+		}
+		current = locked
 		rows, err := mapper.FinishStop(ctx, target.scope())
-		if err != nil || rows == 0 {
+		if err != nil {
 			return err
 		}
+		if rows == 0 {
+			return nil
+		}
+		completed = true
 		// Input accepted during deletion uses the existing missing-sandbox recovery path.
 		// Without pending input, the stopped sandbox stays reclaimed.
 		_, err = NewEnvironmentSandboxMapper(executor).ScheduleRecoveryForCodeSession(ctx, environmentSandboxRecoveryParams{
@@ -105,6 +136,7 @@ func (d *DB) CompleteSandboxReclamation(ctx context.Context, target SandboxRecla
 		})
 		return err
 	})
+	return completed, err
 }
 
 func (r sandboxLifecycleRow) reclaimTarget() SandboxReclaimTarget {

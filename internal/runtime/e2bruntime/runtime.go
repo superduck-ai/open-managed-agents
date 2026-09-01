@@ -108,7 +108,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 }
 
 func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolved Resolution) (Sandbox, error) {
-	if strings.TrimSpace(p.cfg.APIKey) == "" && !p.cfg.Debug {
+	if p.cfg.APIKey == "" && !p.cfg.Debug {
 		return Sandbox{}, errors.New("e2b.api_key is required to create a sandbox")
 	}
 	if strings.TrimSpace(resolved.Template) == "" {
@@ -144,16 +144,19 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 // Kill deletes by ID without Connect: paused sandboxes must not resume merely
 // to be reclaimed.
 func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
-	if sandboxID == "" || p.cfg.Debug {
+	if sandboxID == "" {
 		return nil
 	}
 	requestTimeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
+	debug := p.cfg.Debug
 	opts := &e2b.SandboxApiOpts{
-		ApiKey: p.cfg.APIKey, Domain: p.cfg.Domain, ApiUrl: p.cfg.APIURL, RequestTimeoutMs: &requestTimeoutMs,
+		ApiKey: p.cfg.APIKey, Domain: p.cfg.Domain, ApiUrl: p.cfg.APIURL, Debug: &debug, RequestTimeoutMs: &requestTimeoutMs,
 	}
 	if p.cfg.AccessToken != "" {
 		opts.Headers = map[string]string{"Authorization": "Bearer " + p.cfg.AccessToken}
 	}
+	// The SDK maps a provider 404 to (false, nil); an already absent sandbox
+	// satisfies the same deletion postcondition as a successful DELETE.
 	_, err := e2b.Kill(ctx, sandboxID, opts)
 	return err
 }

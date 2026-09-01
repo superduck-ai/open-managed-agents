@@ -19,6 +19,7 @@ sandbox_lifecycle:
 默认 dry-run 只输出候选。设为 `dry_run: false` 后执行真实删除。
 `enabled: false` 停止领取新回收操作；已领取的删除仍会重试完成。
 修改 YAML 后重启生效，多实例应使用一致配置。新消息所需的重建沿用 Environment Runner。
+Worker 会把“是否允许新领取”作为显式条件传给事务；关闭或 dry-run 不再通过特殊时间值影响 SQL。
 
 ## 数据与回收协议
 
@@ -50,6 +51,7 @@ stateDiagram-v2
 Provider 直接调用 SDK 的 `e2b.Kill`，不再自行构造 API client 或 DELETE 请求；不调用 Connect，404 由 SDK 视为已删除。
 `SandboxApiOpts.ApiUrl` 允许包级 Kill 直接使用 Provider 的 `e2b.api_url` 配置；配置为空时沿用 SDK 的环境变量及默认值。
 API key、domain、超时仍按请求传参；配置的 access token 通过 SDK 的 Headers 传递，不写入进程环境。
+Debug 模式仍执行同一个 DELETE，不会在数据库已推进到 stopped 时假装删除成功。
 任务每次从数据库读取同一 sandbox UUID 对应的 Provider ID，不删除 replacement。
 删除失败保持 stopping，River 重试；任务耗尽重试后，下一轮扫描仍可重新投递。
 删除成功但落库前退出时，下次 DELETE 得到 404 并完成记录。关闭回收开关不遗弃已领取的删除。
@@ -105,7 +107,8 @@ SQL 和事务仍经现有 `database/sql` 包装层，监听复用同一个 pgxpo
 它不再计入池的 MaxConns，因此每个运行实例通常比池上限额外占用一条连接。必须先停止 River，再关闭 DB；
 仅关闭连接池不会关闭被 hijack 的连接。部署若使用 PgBouncer，当前共享数据库地址必须支持 session pooling
 或直连 PostgreSQL，不能使用 transaction pooling 承载 LISTEN。
-正常回收输出结构化 Info 日志，dry-run 输出候选；失败交给 River 重试记录，不输出消息或凭据。
+正常回收输出结构化 Info 日志，dry-run 输出候选；候选在锁定后失效、目标已消失或完成状态已由其他任务推进时输出 Debug 日志。
+失败交给 River 重试记录，不输出消息或凭据。
 
 ## 验收
 
@@ -116,7 +119,7 @@ SQL 和事务仍经现有 `database/sql` 包装层，监听复用同一个 pgxpo
 - dry-run 不删除；heartbeat 和重复 idle 上报不延长 idle_since。
 
 真实 PostgreSQL 用例位于 `tests/sandbox_lifecycle_test.go`；Mapper 测试检查 SQL 和参数绑定。
-`internal/runtime/e2bruntime/lifecycle_test.go` 验证 SDK 环境变量地址、鉴权透传、直接 DELETE、删除失败与 404 幂等。
+`internal/runtime/e2bruntime/lifecycle_test.go` 验证 SDK 显式 API URL、鉴权透传、Debug 模式直接 DELETE、删除失败与 404 幂等。
 回收与 River 集成测试也使用真实 `E2BProvider`，通过本地 HTTP 服务模拟 E2B 删除响应。
 `tests/sandbox_lifecycle_river_test.go` 验证 durable schedule 的 sweep → reclaim 投递、LISTEN 连接及
 重复启动不重置 next_run_at。测试队列轮询设为一小时，并用独立 sweep 队列避免同队列通知限流干扰。

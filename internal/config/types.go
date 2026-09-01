@@ -202,7 +202,6 @@ type SeedAPIKey struct {
 }
 
 // SandboxLifecycleConfig controls long-idle managed sandbox reclamation.
-// Wake reconciliation remains active even when reclamation is disabled.
 type SandboxLifecycleConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	DryRun      bool          `yaml:"dry_run"`

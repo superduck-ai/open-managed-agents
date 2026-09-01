@@ -197,6 +197,27 @@ auth:
 	}
 }
 
+func TestLoadNormalizesE2BConfig(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `
+e2b:
+  api_key: " e2b_test "
+  access_token: " access-token "
+  domain: " e2b.example.test "
+  api_url: " https://api.example.test "
+  sandbox_url: " https://sandbox.example.test "
+  template: " managed-agent "
+`)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.E2B.APIKey != "e2b_test" || cfg.E2B.AccessToken != "access-token" ||
+		cfg.E2B.Domain != "e2b.example.test" || cfg.E2B.APIURL != "https://api.example.test" ||
+		cfg.E2B.SandboxURL != "https://sandbox.example.test" || cfg.E2B.Template != "managed-agent" {
+		t.Fatalf("E2B config was not normalized: %+v", cfg.E2B)
+	}
+}
+
 func TestValidateAuthConfigAllowsOmittedSMTP(t *testing.T) {
 	if err := validateAuthConfig(AuthConfig{}); err != nil {
 		t.Fatalf("validateAuthConfig() error = %v, want omitted SMTP accepted", err)

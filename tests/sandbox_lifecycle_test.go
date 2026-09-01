@@ -95,7 +95,7 @@ func TestSandboxReclamationRejectsUnsafeCandidates(t *testing.T) {
 			if tc.name == "queued input" {
 				f.exec(t, `UPDATE code_sessions SET idle_since = NOW() - interval '25 hours' WHERE uuid = $1`, f.code.UUID)
 			}
-			_, ok, err := f.app.db.BeginSandboxReclamation(context.Background(), f.target, time.Now().Add(-24*time.Hour))
+			_, ok, err := f.app.db.BeginSandboxReclamation(context.Background(), f.target, time.Now().Add(-24*time.Hour), true)
 			if err != nil || ok {
 				t.Fatalf("unsafe claim = %t, %v", ok, err)
 			}
@@ -108,7 +108,7 @@ func TestSandboxReclamationRejectsUnsafeCandidates(t *testing.T) {
 		f := newSandboxLifecycleFixture(t)
 		target := f.target
 		target.WorkspaceUUID = uuid.NewV4().String()
-		_, ok, err := f.app.db.BeginSandboxReclamation(context.Background(), target, time.Now())
+		_, ok, err := f.app.db.BeginSandboxReclamation(context.Background(), target, time.Now(), true)
 		if err != nil || ok {
 			t.Fatalf("cross tenant claim = %t, %v", ok, err)
 		}
@@ -173,6 +173,9 @@ func TestSandboxReclamationRetriesDeletionAndWakesAfterConcurrentInput(t *testin
 	if _, err := f.app.db.RecordCodeSessionWorkerHeartbeat(ctx, f.code.ExternalID, f.code.CurrentWorkerEpoch, time.Minute, 10*time.Second); !errors.Is(err, db.ErrWorkerNotRegistered) {
 		t.Fatalf("old heartbeat = %v", err)
 	}
+	// Disabling the policy stops new claims but must finish a deletion that was
+	// already committed before the configuration changed.
+	lifecycle = environments.NewSandboxLifecycle(f.app.db, killer, config.SandboxLifecycleConfig{IdleTimeout: 24 * time.Hour}, nil)
 	result := make(chan error, 1)
 	go func() { result <- lifecycle.Reclaim(ctx, f.target) }()
 	select {
@@ -298,7 +301,7 @@ func TestSandboxReclamationRejectsPublicInputBeforeForwarding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, claimed, err := f.app.db.BeginSandboxReclamation(ctx, f.target, now.Add(-24*time.Hour)); err != nil || claimed {
+	if _, claimed, err := f.app.db.BeginSandboxReclamation(ctx, f.target, now.Add(-24*time.Hour), true); err != nil || claimed {
 		t.Fatalf("claimed after public input = %t, %v", claimed, err)
 	}
 }

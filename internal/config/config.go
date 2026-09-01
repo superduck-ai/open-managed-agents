@@ -29,6 +29,12 @@ func Load() (Config, error) {
 	}
 	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
 	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
+	cfg.E2B.APIKey = strings.TrimSpace(cfg.E2B.APIKey)
+	cfg.E2B.AccessToken = strings.TrimSpace(cfg.E2B.AccessToken)
+	cfg.E2B.Domain = strings.TrimSpace(cfg.E2B.Domain)
+	cfg.E2B.APIURL = strings.TrimSpace(cfg.E2B.APIURL)
+	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
+	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err

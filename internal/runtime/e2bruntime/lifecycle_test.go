@@ -29,7 +29,7 @@ func TestKillUsesExplicitSDKAPIURLWithoutConnecting(t *testing.T) {
 			defer server.Close()
 			provider := NewProvider(config.E2BConfig{
 				APIKey:      "e2b_0000000000000000000000000000000000000000",
-				AccessToken: "test-access-token", APIURL: server.URL, RequestTimeout: time.Second,
+				AccessToken: "test-access-token", APIURL: server.URL, Debug: true, RequestTimeout: time.Second,
 			})
 			err := provider.Kill(context.Background(), "sbx_paused")
 			if (err != nil) != (status == http.StatusUnauthorized || status == http.StatusServiceUnavailable) {

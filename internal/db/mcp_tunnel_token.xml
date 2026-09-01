@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MCPTunnelTokenMapper">
+    <sql id="columns">
+        uuid, external_id, tunnel_uuid, version, token_hash,
+        ciphertext, nonce, wrapped_dek, format_version, key_provider, key_version,
+        created_at, retired_at, archived_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="mcpTunnelTokenRow">
+        INSERT INTO mcp_tunnel_token_versions (
+            uuid, external_id, tunnel_uuid, version, token_hash,
+            ciphertext, nonce, wrapped_dek, format_version, key_provider, key_version,
+            created_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.TunnelUUID}, #{params.Version},
+            #{params.TokenHash,sensitive=true}, #{params.Ciphertext,sensitive=true},
+            #{params.Nonce,sensitive=true}, #{params.WrappedDEK,sensitive=true},
+            #{params.FormatVersion}, #{params.KeyProvider}, #{params.KeyVersion},
+            #{params.CreatedAt}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="FindActiveByTunnelUUID" resultType="mcpTunnelTokenRow">
+        SELECT <include refid="columns"/>
+        FROM mcp_tunnel_token_versions
+        WHERE tunnel_uuid = #{tunnelUUID}
+        AND retired_at IS NULL
+        AND archived_at IS NULL
+    </select>
+
+    <select id="FindActiveForUpdate" resultType="mcpTunnelTokenRow">
+        SELECT <include refid="columns"/>
+        FROM mcp_tunnel_token_versions
+        WHERE tunnel_uuid = #{tunnelUUID}
+        AND retired_at IS NULL
+        AND archived_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindByHashAndTunnelExternalID" resultType="mcpTunnelTokenContextRow">
+        SELECT
+            tv.uuid, tv.external_id, tv.tunnel_uuid, tv.version, tv.token_hash,
+            tv.ciphertext, tv.nonce, tv.wrapped_dek, tv.format_version,
+            tv.key_provider, tv.key_version, tv.created_at, tv.retired_at, tv.archived_at,
+            t.external_id AS tunnel_external_id,
+            t.organization_uuid,
+            t.workspace_uuid,
+            t.archived_at AS tunnel_archived_at
+        FROM mcp_tunnel_token_versions tv
+        JOIN mcp_tunnels t ON t.uuid = tv.tunnel_uuid
+        WHERE tv.token_hash = #{tokenHash,sensitive=true}
+        AND t.external_id = #{tunnelExternalID}
+    </select>
+
+    <update id="RetireActiveByTunnelUUID" result="rows">
+        UPDATE mcp_tunnel_token_versions
+        SET retired_at = #{retiredAt},
+            ciphertext = NULL,
+            nonce = NULL,
+            wrapped_dek = NULL,
+            format_version = NULL,
+            key_provider = NULL,
+            key_version = NULL
+        WHERE tunnel_uuid = #{tunnelUUID}
+        AND retired_at IS NULL
+        AND archived_at IS NULL
+    </update>
+
+    <update id="ArchiveByTunnelUUID" result="exec">
+        UPDATE mcp_tunnel_token_versions
+        SET archived_at = COALESCE(archived_at, #{archivedAt}),
+            ciphertext = NULL,
+            nonce = NULL,
+            wrapped_dek = NULL,
+            format_version = NULL,
+            key_provider = NULL,
+            key_version = NULL
+        WHERE tunnel_uuid = #{tunnelUUID}
+    </update>
+</mapper>

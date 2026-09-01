@@ -302,7 +302,10 @@ export type MockAgentsApiOptions = {
   deployments?: DeploymentFixture[];
   skills?: SkillFixture[];
   mcpDirectoryServers?: Array<Record<string, unknown>>;
+  mcpTunnels?: Array<Record<string, unknown>>;
+  mcpTunnelProbeResult?: Record<string, unknown>;
   mcpDirectoryErrorOnce?: boolean;
+  mcpTunnelsErrorOnce?: boolean;
   mcpToolCatalogs?: Array<Record<string, unknown>>;
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
@@ -333,6 +336,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentsSearchErrorsRemaining = options.agentsSearchErrorOnce ? 1 : 0;
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
+  let mcpTunnelsErrorsRemaining = options.mcpTunnelsErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
   let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
   let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
@@ -458,6 +462,27 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'MCP directory unavailable' } }, 503);
       }
       return jsonResponse({ servers: options.mcpDirectoryServers ?? [] });
+    }
+
+    if (url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\?/) && method === 'GET') {
+      if (mcpTunnelsErrorsRemaining > 0) {
+        mcpTunnelsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'MCP tunnels unavailable' } }, 503);
+      }
+      return jsonResponse(options.mcpTunnels ?? []);
+    }
+
+    if (
+      url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\/[^/]+\/probe$/) &&
+      method === 'POST'
+    ) {
+      return jsonResponse(
+        options.mcpTunnelProbeResult ?? {
+          status: 'ok',
+          channel: typeof body?.channel === 'string' ? body.channel : 'main',
+          tools: [],
+        },
+      );
     }
 
     if (url.startsWith('/v1/agents?') && method === 'GET') {

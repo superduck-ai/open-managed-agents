@@ -27,6 +27,30 @@ const (
 	sessionIngressTokenPrefix = "sk-ant-si-"
 	sessionIngressIssuer      = "session-ingress"
 	sessionIngressAudience    = "anthropic-api"
+	// MCP proxy token 只允许 sandbox 访问当前 Code Session 配置的命名 MCP server。
+	mcpProxyTokenPrefix = "sk-ant-mcp-"
+	mcpProxyIssuer      = "mcp-proxy"
+	mcpProxyAudience    = "oma-mcp-proxy"
+)
+
+type sessionCredentialProfile struct {
+	prefix      string
+	issuer      string
+	audience    string
+	application string
+	role        string
+	name        string
+}
+
+var (
+	sessionIngressCredentialProfile = sessionCredentialProfile{
+		prefix: sessionIngressTokenPrefix, issuer: sessionIngressIssuer,
+		audience: sessionIngressAudience, application: "ccr", role: "worker", name: "session ingress",
+	}
+	mcpProxyCredentialProfile = sessionCredentialProfile{
+		prefix: mcpProxyTokenPrefix, issuer: mcpProxyIssuer,
+		audience: mcpProxyAudience, application: "oma", role: "mcp_proxy", name: "MCP proxy",
+	}
 )
 
 // SessionCredentialClaims 描述写入 session-ingress JWT 的稳定身份和租户关联。
@@ -131,6 +155,15 @@ func readSessionCredentialPrivateKey(path string) (ed25519.PrivateKey, error) {
 // Issue 签发带 sk-ant-si- 前缀的 Ed25519 JWT。JWT 不设置独立 expiry；携带
 // worker_epoch 的 managed-agent 凭证会在 HTTP 鉴权和 worker 注册时回查当前 epoch。
 func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, error) {
+	return c.issue(identity, sessionIngressCredentialProfile)
+}
+
+// IssueMCPProxy 签发只能用于当前 Code Session MCP Runtime Gateway 的能力凭证。
+func (c *SessionCredentials) IssueMCPProxy(identity SessionCredentialIdentity) (string, error) {
+	return c.issue(identity, mcpProxyCredentialProfile)
+}
+
+func (c *SessionCredentials) issue(identity SessionCredentialIdentity, profile sessionCredentialProfile) (string, error) {
 	if c == nil || len(c.privateKey) == 0 {
 		return "", errors.New("code-session credential signer is not configured")
 	}
@@ -144,9 +177,9 @@ func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, 
 	}
 	claims := SessionCredentialClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:   sessionIngressIssuer,
+			Issuer:   profile.issuer,
 			Subject:  identity.SessionID,
-			Audience: jwt.ClaimStrings{sessionIngressAudience},
+			Audience: jwt.ClaimStrings{profile.audience},
 			IssuedAt: jwt.NewNumericDate(now),
 			ID:       jti,
 		},
@@ -156,8 +189,8 @@ func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, 
 		AgentVersion:     identity.AgentVersion,
 		OrganizationUUID: identity.OrganizationUUID,
 		WorkspaceUUID:    identity.WorkspaceUUID,
-		Application:      "ccr",
-		Role:             "worker",
+		Application:      profile.application,
+		Role:             profile.role,
 		AccountEmail:     strings.TrimSpace(identity.AccountEmail),
 		WorkerEpoch:      identity.WorkerEpoch,
 	}
@@ -166,48 +199,57 @@ func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, 
 	token.Header["kid"] = c.kid
 	signed, err := token.SignedString(c.privateKey)
 	if err != nil {
-		return "", fmt.Errorf("sign code-session ingress token: %w", err)
+		return "", fmt.Errorf("sign %s token: %w", profile.name, err)
 	}
-	return sessionIngressTokenPrefix + signed, nil
+	return profile.prefix + signed, nil
 }
 
 // Verify 固定 EdDSA、kid、issuer、audience 和时间约束，返回已完成结构校验的 claims。
 func (c *SessionCredentials) Verify(rawToken string) (SessionCredentialClaims, error) {
+	return c.verify(rawToken, sessionIngressCredentialProfile)
+}
+
+// VerifyMCPProxy 只接受 MCP proxy profile，拒绝通用 session-ingress token。
+func (c *SessionCredentials) VerifyMCPProxy(rawToken string) (SessionCredentialClaims, error) {
+	return c.verify(rawToken, mcpProxyCredentialProfile)
+}
+
+func (c *SessionCredentials) verify(rawToken string, profile sessionCredentialProfile) (SessionCredentialClaims, error) {
 	if c == nil || len(c.publicKey) == 0 {
 		return SessionCredentialClaims{}, errors.New("code-session credential verifier is not configured")
 	}
-	if !strings.HasPrefix(rawToken, sessionIngressTokenPrefix) {
-		return SessionCredentialClaims{}, errors.New("invalid session ingress token prefix")
+	if !strings.HasPrefix(rawToken, profile.prefix) {
+		return SessionCredentialClaims{}, fmt.Errorf("invalid %s token prefix", profile.name)
 	}
 	claims := SessionCredentialClaims{}
 	// 显式固定算法、issuer、audience 与严格 base64 解码，拒绝算法降级和宽松 JWT。
 	// 旧版本签发、仍携带 exp 的 token 继续按 golang-jwt 默认规则校验该字段。
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
-		jwt.WithIssuer(sessionIngressIssuer),
-		jwt.WithAudience(sessionIngressAudience),
+		jwt.WithIssuer(profile.issuer),
+		jwt.WithAudience(profile.audience),
 		jwt.WithIssuedAt(),
 		jwt.WithTimeFunc(c.now),
 		jwt.WithStrictDecoding(),
 	)
-	token, err := parser.ParseWithClaims(strings.TrimPrefix(rawToken, sessionIngressTokenPrefix), &claims, func(token *jwt.Token) (any, error) {
+	token, err := parser.ParseWithClaims(strings.TrimPrefix(rawToken, profile.prefix), &claims, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodEdDSA || token.Header["typ"] != "JWT" {
-			return nil, errors.New("invalid session ingress signing algorithm")
+			return nil, fmt.Errorf("invalid %s signing algorithm", profile.name)
 		}
 		kid, ok := token.Header["kid"].(string)
 		// kid 虽不是秘密，仍使用常量时间比较保持凭证比较路径一致。
 		if !ok || subtle.ConstantTimeCompare([]byte(kid), []byte(c.kid)) != 1 {
-			return nil, errors.New("invalid session ingress signing key")
+			return nil, fmt.Errorf("invalid %s signing key", profile.name)
 		}
 		return c.publicKey, nil
 	})
 	if err != nil {
-		return SessionCredentialClaims{}, fmt.Errorf("verify session ingress token: %w", err)
+		return SessionCredentialClaims{}, fmt.Errorf("verify %s token: %w", profile.name, err)
 	}
 	if !token.Valid {
-		return SessionCredentialClaims{}, errors.New("verify session ingress token: token is invalid")
+		return SessionCredentialClaims{}, fmt.Errorf("verify %s token: token is invalid", profile.name)
 	}
-	if err := validateSessionCredentialClaims(claims); err != nil {
+	if err := validateSessionCredentialClaims(claims, profile); err != nil {
 		return SessionCredentialClaims{}, err
 	}
 	return claims, nil
@@ -235,7 +277,7 @@ func validateSessionCredentialIdentity(identity SessionCredentialIdentity) error
 	return nil
 }
 
-func validateSessionCredentialClaims(claims SessionCredentialClaims) error {
+func validateSessionCredentialClaims(claims SessionCredentialClaims, profile sessionCredentialProfile) error {
 	identity := SessionCredentialIdentity{
 		SessionID:        claims.SessionID,
 		PublicSessionID:  claims.PublicSessionID,
@@ -249,8 +291,8 @@ func validateSessionCredentialClaims(claims SessionCredentialClaims) error {
 		return err
 	}
 	// sub 必须与 session_id 重合，application/role 则把 token 限定为 CCR worker 凭证。
-	if claims.Subject != claims.SessionID || claims.ID == "" || claims.Application != "ccr" || claims.Role != "worker" {
-		return errors.New("invalid session ingress token claims")
+	if claims.Subject != claims.SessionID || claims.ID == "" || claims.Application != profile.application || claims.Role != profile.role {
+		return fmt.Errorf("invalid %s token claims", profile.name)
 	}
 	return nil
 }

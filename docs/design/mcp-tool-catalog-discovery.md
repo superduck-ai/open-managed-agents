@@ -1,8 +1,8 @@
 # Agent Detail MCP 工具目录手动刷新设计
 
-> 状态：Implemented（匿名 URL / Streamable HTTP）
+> 状态：Implemented（远程 URL / Streamable HTTP 与 MCP Tunnel Broker）
 >
-> 适用范围：Agent Detail 的 `MCPs and tools` 展示、Console catalog API、匿名 MCP `tools/list` 快照
+> 适用范围：Agent Detail 的 `MCPs and tools` 展示、Console catalog API、远程 MCP `tools/list` 快照
 >
 > 展示基线：[Agent detail MCP 与工具展示](./fe/agent-detail-mcp-tools.md)
 
@@ -12,10 +12,12 @@ Agent Detail 需要展示私有 MCP 的真实工具列表，但工具列表是�
 
 1. Agent Detail GET 只读取数据库中最近一次成功快照，不连接 MCP、不创建任务。
 2. 每张 MCP 卡片提供 Refresh 按钮；按钮调用后端同步刷新接口。
-3. 后端从已鉴权的 Agent 版本读取 endpoint，在有界超时内调用匿名 `tools/list`。
+3. 后端从已鉴权的 Agent 版本读取 endpoint；普通远程 MCP 通过匿名 Streamable HTTP 调用
+   `tools/list`，OMA Tunnel URL 则验证当前 workspace 归属后通过 Redis Broker 和 connector 探测。
 4. 只有探测成功才原子 UPSERT catalog；探测失败完全不修改数据库。
 5. 前端在刷新期间保留旧列表，成功后立即替换 Query cache，失败只显示 toast。
-6. catalog 按规范化 `(transport_type, endpoint_url)` 全局复用，不属于 organization、workspace、Agent 或 Agent version。
+6. catalog 按规范化 `(transport_type, endpoint_url)` 全局复用，不属于 organization、workspace、Agent 或 Agent version；
+   读取或刷新 Tunnel endpoint 前仍必须重新校验它属于当前 organization/workspace。
 
 该方案刻意不使用持久化 job、worker、generation、lease、自动重试、TTL 或轮询。当前需求是用户在详情页主动刷新单个 MCP，约 10 秒的同步等待比异步状态机更直接，也更容易解释和维护。
 
@@ -41,20 +43,23 @@ http://arthurs-MacBook-Pro-2.local:39090/mcp
 
 ### 3.1 目标
 
-- 私有或 Directory 未收录的 MCP 可以通过人工刷新获得真实工具清单。
+- 私有、Tunnel 或 Directory 未收录的 MCP 可以通过人工刷新获得真实工具清单。
 - 失败刷新不覆盖最后一次成功结果。
 - 成功空列表与未知状态在数据库和 API 中保持不同语义。
 - Agent create/update 和 Detail GET 不受外部 MCP 延迟影响。
-- 不同租户和 Agent 可以复用同一匿名 endpoint 的成功快照。
+- 不同租户和 Agent 可以复用同一普通远程 endpoint 的成功快照；Tunnel 快照仅在当前 scope 能重新解析该
+  Tunnel 时可读。
 - 保持 Anthropic 兼容 `/v1/agents` API、Agent 版本与权限配置语义不变。
 
 ### 3.2 非目标
 
-- 不在 Agent create/update 时自动探测或预热 MCP。
+- Agent create/update API 不自动探测或预热 MCP；Picker 选择已连接 Tunnel 后可以显式调用 Console Probe，
+  只为当前编辑器补全权限列表，不写 catalog。
 - 不定时刷新、自动重试或保证 catalog 新鲜度。
 - 不把工具列表写入 `agents`、`agent_versions` 或 `mcp_servers`。
 - 不由浏览器直接访问 MCP endpoint。
-- 不使用 vault、cookie、Authorization header 或其他凭据执行发现。
+- 普通远程 MCP discovery 不使用 vault、cookie、Authorization header 或其他凭据；Tunnel discovery 复用
+  connector 已配置的私网 MCP 凭据，但 Console catalog 层不会读取或转发这些凭据。
 - 不保存完整 input/output schema、annotations 或任意服务端扩展字段。
 - 不保证历史 Agent 版本显示的是该版本创建时刻的工具列表。
 
@@ -66,7 +71,8 @@ http://arthurs-MacBook-Pro-2.local:39090/mcp
 4. 成功刷新整体替换旧工具列表，不能与旧列表或 Directory 做 union。
 5. 失败、超时或请求取消不能创建或更新 catalog。
 6. `configs[].name` 只参与权限 override，不能被当成工具 inventory。
-7. catalog identity 只包含 transport 和规范化 endpoint；租户字段只用于 Agent/API 鉴权。
+7. catalog identity 只包含 transport 和规范化 endpoint；租户字段用于 Agent/API 鉴权，并在 Tunnel catalog
+   读写前验证 endpoint 的 Tunnel 归属。
 8. catalog 刷新不能修改 Agent 的 `updated_at`、`current_version` 或版本行。
 
 ## 5. 总体架构
@@ -77,7 +83,7 @@ sequenceDiagram
   participant UI as Agent Detail
   participant API as Console MCP Catalog API
   participant AgentDB as Agent versions
-  participant MCP as MCP endpoint
+  participant MCP as Remote MCP / Tunnel connector
   participant CatalogDB as mcp_tool_catalogs
 
   UI->>API: GET catalogs(version)
@@ -89,7 +95,12 @@ sequenceDiagram
   User->>UI: Refresh one MCP
   UI->>API: POST refresh {server_name}
   API->>AgentDB: authorize and load selected Agent version
-  API->>MCP: initialize + tools/list (bounded timeout)
+  alt ordinary remote URL
+    API->>MCP: anonymous initialize + tools/list
+  else OMA Tunnel URL
+    API->>API: validate Tunnel ownership
+    API->>MCP: Broker command to connector
+  end
   alt discovery succeeds
     MCP-->>API: tools (including [])
     API->>CatalogDB: atomic upsert success snapshot
@@ -118,9 +129,11 @@ organization、workspace、Agent ID 和 Agent version 不进入唯一键。它�
 1. 验证 Console principal 能访问 path 中的 organization/workspace；
 2. 在 principal 的内部 workspace 范围读取指定 Agent/version；
 3. 从该不可变版本的 `mcp_servers` 找到 `server_name` 对应 URL；
-4. 使用规范化 endpoint 读取或更新全局匿名 catalog。
+4. 使用规范化 endpoint 读取或更新全局 catalog；若 endpoint 属于 OMA Tunnel，必须先确认该 Tunnel 在当前
+   organization/workspace 可见，失败时不能读取已有全局快照。
 
-因此，同一个 endpoint 被多个 Agent 或租户引用时共享一行；endpoint 改变后自然映射到另一行。server 只改名但 URL 不变时仍复用同一快照。历史版本显示的是其 endpoint 的最近成功快照，不是历史时点快照。
+因此，同一个 endpoint 被多个 Agent 或租户引用时共享一行；endpoint 改变后自然映射到另一行。server 只改名但 URL 不变时仍复用同一快照。历史版本显示的是其 endpoint 的最近成功快照，不是历史时点快照。Tunnel
+external ID 全局唯一，但 GET 和 Refresh 仍先执行 scope 校验，防止复制其他 workspace 的 Tunnel URL 后读取工具名。
 
 ## 7. 持久化模型
 
@@ -134,16 +147,16 @@ internal/db/migrations/00014_globalize_mcp_tool_catalogs.sql
 
 ### 7.1 `mcp_tool_catalogs`
 
-| 字段 | 类型/约束 | 说明 |
-| --- | --- | --- |
-| `id` | `bigint generated always as identity` PK | DB 内部主键 |
-| `uuid` | `uuid default gen_random_uuid()` unique | 稳定业务 UUID |
-| `external_id` | `text` unique | `mcpc_...` |
-| `transport_type` | `text not null` | 当前只允许 `url` |
-| `endpoint_url` | `text not null` | 规范化完整 URL，1–2048 bytes |
-| `tools` | `jsonb not null` | 最近一次成功 `tools/list`，必须是 array |
-| `created_at` | `timestamptz not null` | 首次成功时间 |
-| `updated_at` | `timestamptz not null` | 最近一次成功刷新时间 |
+| 字段             | 类型/约束                                | 说明                                    |
+| ---------------- | ---------------------------------------- | --------------------------------------- |
+| `id`             | `bigint generated always as identity` PK | DB 内部主键                             |
+| `uuid`           | `uuid default gen_random_uuid()` unique  | 稳定业务 UUID                           |
+| `external_id`    | `text` unique                            | `mcpc_...`                              |
+| `transport_type` | `text not null`                          | 当前只允许 `url`                        |
+| `endpoint_url`   | `text not null`                          | 规范化完整 URL，1–2048 bytes            |
+| `tools`          | `jsonb not null`                         | 最近一次成功 `tools/list`，必须是 array |
+| `created_at`     | `timestamptz not null`                   | 首次成功时间                            |
+| `updated_at`     | `timestamptz not null`                   | 最近一次成功刷新时间                    |
 
 约束：
 
@@ -183,7 +196,7 @@ internal/db/migrations/00014_globalize_mcp_tool_catalogs.sql
 - 空 path 规范化为 `/`；
 - 最终 URL 最多 2048 bytes。
 
-一次匿名 probe：
+普通远程 endpoint 的匿名 probe：
 
 1. 使用 MCP Go SDK 建立 Streamable HTTP 会话；
 2. 执行 initialize；
@@ -202,6 +215,18 @@ internal/db/migrations/00014_globalize_mcp_tool_catalogs.sql
 - 不保存或返回上游响应体。
 
 请求 context 继承浏览器连接。客户端断开会取消 probe，并且不会执行数据库写入。
+
+OMA canonical Tunnel URL（主 URL 或 `/v1/mcp/{tunnelId}/{channel}`）使用另一条探测路径：
+
+1. 按当前 principal 的 organization/workspace 解析并读取 Tunnel；越权或不存在时拒绝读取 catalog，归档 Tunnel
+   可以保留 last-good 展示，但不能执行新的 Probe；
+2. 复用 `internal/tunnels.Service.Probe`，通过 Redis Broker 把 `initialize`、`notifications/initialized` 和
+   `tools/list` command 发送给 tunnel-client；
+3. connector 使用自身配置访问私网 MCP，catalog handler 不访问需要 API Key 的公开 Tunnel ingress；
+4. 返回工具仍执行 catalog 名称、重复项、数量和展示字段限制，再按同一 last-good 规则保存。
+
+识别为 OMA Tunnel 的 URL 即使解析、连接或探测失败，也不得回退到匿名 HTTP，否则既会错误触发公开 ingress 的
+API Key 鉴权，也可能绕过 Tunnel 的 workspace 边界。
 
 ## 9. Console API
 
@@ -281,16 +306,17 @@ GET 不访问 MCP，不创建占位 catalog，也不修改任何时间戳。
 
 失败映射：
 
-| 场景 | HTTP | 数据库语义 |
-| --- | --- | --- |
-| 请求、version、server name 或 endpoint 非法 | 400 | 不写入 |
-| Agent/租户不可见 | 404 | 不写入 |
-| discovery 功能关闭 | 503 | 不写入 |
-| MCP 鉴权、网络或协议失败 | 502 | 保留 last-good |
-| probe 超时 | 504 | 保留 last-good |
-| 数据库保存失败 | 500 | 旧快照不变 |
+| 场景                                        | HTTP | 数据库语义     |
+| ------------------------------------------- | ---- | -------------- |
+| 请求、version、server name 或 endpoint 非法 | 400  | 不写入         |
+| Agent/租户不可见                            | 404  | 不写入         |
+| discovery 功能关闭                          | 503  | 不写入         |
+| MCP 鉴权、Tunnel 离线、网络或协议失败       | 502  | 保留 last-good |
+| probe 超时                                  | 504  | 保留 last-good |
+| 数据库保存失败                              | 500  | 旧快照不变     |
 
-下游 MCP 401/403 映射成 502，而不是 Console 401/403，避免与当前用户的登录/授权错误混淆。错误消息来自本地稳定映射，不透传上游响应体。
+下游 MCP 401/403 映射成 502，而不是 Console 401/403，避免与当前用户的登录/授权错误混淆。Tunnel Broker、
+connector 或私网 MCP 错误同样映射为安全的 502/504。错误消息来自本地稳定映射，不透传原始上游响应体。
 
 ## 10. 前端设计
 
@@ -322,14 +348,14 @@ TanStack Query key：
 
 ### 10.3 展示状态
 
-| 状态 | count | 展示 |
-| --- | --- | --- |
+| 状态                         | count          | 展示                                 |
+| ---------------------------- | -------------- | ------------------------------------ |
 | unknown + Directory fallback | Directory 数量 | 工具列表 + `Tool list not refreshed` |
-| unknown 且无 fallback | `—` | `No tool list available.` + Refresh |
-| ready 且非空 | 实际数量 | `Saved tool list` + 工具与权限 |
-| ready 且 `[]` | `0` | `This server reported no tools.` |
-| mutation pending | 保持当前数量 | 保留旧列表，按钮 busy |
-| mutation failure | 保持当前数量 | 保留旧列表，显示 toast |
+| unknown 且无 fallback        | `—`            | `No tool list available.` + Refresh  |
+| ready 且非空                 | 实际数量       | `Saved tool list` + 工具与权限       |
+| ready 且 `[]`                | `0`            | `This server reported no tools.`     |
+| mutation pending             | 保持当前数量   | 保留旧列表，按钮 busy                |
+| mutation failure             | 保持当前数量   | 保留旧列表，显示 toast               |
 
 刷新结果是持久化快照，不使用 `Live tool list` 文案，也不显示虚构的 TTL/stale 状态。
 
@@ -344,9 +370,11 @@ TanStack Query key：
 
 ## 11. 网络边界
 
-按当前产品决策，MCP anonymous probe **不执行目标地址级 SSRF allowlist/denylist 检查**：不预解析或过滤 DNS/IP，不区分公网、本机、私网、link-local 或特殊地址。可访问范围由部署环境的实际网络策略决定。
+按当前产品决策，普通远程 MCP anonymous probe **不执行目标地址级 SSRF allowlist/denylist 检查**：不预解析或过滤 DNS/IP，不区分公网、本机、私网、link-local 或特殊地址。可访问范围由部署环境的实际网络策略决定。
 
 仍保留与地址策略无关的协议和资源边界：支持的 scheme、URL 结构规范化、请求超时、同源 redirect、响应大小、页数、工具数量与字段长度限制。出站请求不携带 Console cookie、用户 header、环境代理凭据或 vault secret。
+Tunnel probe 不发起该匿名出站请求，而是走既有 Broker/connector 数据面；Tunnel token 和私网 MCP 凭据不会进入
+catalog handler 或浏览器。
 
 ## 12. 并发与一致性
 
@@ -367,6 +395,7 @@ TanStack Query key：
 - `internal/mcpcatalogs/handler.go`：鉴权、Agent/version 映射、GET 与同步 refresh 编排。
 - `internal/mcpcatalogs/endpoint.go`：endpoint 规范化。
 - `internal/mcpcatalogs/probe.go`：匿名 MCP 协议访问和响应限制。
+- `internal/tunnels/probe.go`：Tunnel endpoint 的 scope 解析与 Broker 探测。
 - `internal/db/mcp_tool_catalogs.go`：类型化 Get 与成功快照 Upsert。
 - `internal/db/migrations/00014_globalize_mcp_tool_catalogs.sql`：最终全局表。
 - `web/src/features/managed-agents/agents/tools/`：Directory、catalog API/query、展示模型与卡片。
@@ -382,6 +411,8 @@ MCP catalog 不再依赖 `jobs` 表，`main.go` 不启动 discovery worker，Age
 - 跨 organization/workspace、Agent/version 不存在、未知 server 和客户端 URL 字段被拒绝；
 - GET missing 返回 `unknown/tools:null`，且不创建 catalog；
 - timeout 返回 504，网络/鉴权/协议错误返回 502；
+- Tunnel endpoint 按当前 organization/workspace 校验，越权 URL 不能读取全局快照；
+- Tunnel 探测经 Broker 成功保存工具，失败不回退到匿名 HTTP；
 - 首次失败不创建行，last-good 后失败不覆盖旧 tools；
 - 成功工具列表与成功空列表完成同步写入并由 GET 读回；
 - 同一 endpoint 重复写入保持一行和稳定 external ID；
@@ -397,6 +428,7 @@ MCP catalog 不再依赖 `jobs` 表，`main.go` 不启动 discovery worker，Age
 - 初次 GET 失败后成功刷新单个 MCP 会回源完整 collection，其他已保存快照不丢失；
 - 失败保留旧列表并显示 toast；
 - pending 时所有 Refresh disabled，仅当前按钮旋转；
+- Picker 添加已连接 Tunnel Channel 后自动展示 Probe 工具，并可在编辑卡片手动刷新；
 - 成功 `[]` 覆盖 Directory fallback 并显示真实 0；
 - Directory fallback、权限 default/override、版本 query key、Catalog/Directory 状态播报和多卡片 accessible name 保持正确。
 

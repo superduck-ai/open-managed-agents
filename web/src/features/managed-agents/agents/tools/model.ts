@@ -41,6 +41,13 @@ export type McpDirectoryServer = {
   url?: string;
   iconUrl?: string;
   toolNames: string[];
+  source?: 'directory' | 'tunnel';
+  group?: string;
+  tunnel?: {
+    id: string;
+    connectionState: 'connected' | 'disconnected' | 'unknown';
+    channels: string[];
+  };
 };
 
 type ResolvedMcpServer = Omit<McpDirectoryServer, 'url'> & {
@@ -409,15 +416,6 @@ export function normalizeRuntimeToolName(value: string) {
 }
 
 function resolveMcpServer(name: string, url: string, directoryServers: McpDirectoryServer[]): ResolvedMcpServer {
-  if (name.startsWith('tunnel:')) {
-    return {
-      slug: name,
-      displayName: urlHost(url) || name.slice('tunnel:'.length),
-      url,
-      toolNames: [],
-    };
-  }
-
   const metadata =
     directoryServers.find((server) => server.slug === name) ??
     FALLBACK_MCP_SERVERS.find((server) => server.slug === name);
@@ -425,6 +423,14 @@ function resolveMcpServer(name: string, url: string, directoryServers: McpDirect
   // 实际 URL 始终以当前 Agent 版本配置为准。
   if (metadata) {
     return { ...metadata, slug: name, url };
+  }
+  if (name.startsWith('tunnel_')) {
+    return {
+      slug: name,
+      displayName: urlHost(url) || name.slice('tunnel_'.length),
+      url,
+      toolNames: [],
+    };
   }
   return {
     slug: name,

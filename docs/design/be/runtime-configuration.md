@@ -65,27 +65,27 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 从旧版环境变量配置切换到 YAML 是 breaking change。新版本不会读取 `.env`，也不会在 YAML 缺失时回退到业务环境变量；部署升级前必须先准备完整配置文件。建议从 `config/config.example.yaml` 复制最小配置，再根据下表迁移实际覆盖值：
 
-| 旧环境变量 | YAML 字段 | 迁移说明 |
-| --- | --- | --- |
-| `APP_ENV` | `env` | `development` 改为 `dev`，`production` 改为 `prod` |
-| `ADDR` | `server.addr` | 保留原监听地址 |
-| `DATABASE_URL` / `DB_AUTO_MIGRATE` | `database.url` / `database.auto_migrate` | `auto_migrate` 未配置时按 `env` 派生 |
-| `REDIS_URL` | `redis.url` | 直接迁移 |
-| `S3_ENDPOINT` / `S3_BUCKET` / `S3_REGION` | `storage.s3.endpoint` / `bucket` / `region` | 同时设置 `storage.type: s3` |
-| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_FORCE_PATH_STYLE` | `storage.s3.access_key_id` / `secret_access_key` / `force_path_style` | `force_path_style` 省略时默认 `true` |
-| `MAX_FILE_BYTES` / `WORKSPACE_STORAGE_LIMIT_BYTES` | `storage.max_file_bytes` / `storage.workspace_limit_bytes` | 迁移非默认容量限制 |
-| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY` | 无 | 已删除；启动后在控制台按 workspace 配置 Provider |
-| `BATCH_*` | `batch.*` | 后缀转为小写 snake case，例如 `BATCH_UPSTREAM_TIMEOUT` → `batch.upstream_timeout` |
-| `E2B_*` | `e2b.*` | 后缀保持小写 snake case；包括连接、debug、template 和 timeout 字段 |
-| `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY` | `environment_runner.enabled` / `concurrency` | 仅在覆盖代码默认值时配置 |
-| `ENVIRONMENT_MANAGER_PATH` / `CLAUDE_AGENT_VERSION` / `CLAUDE_PATH` | `environment_runner.manager_path` / `claude_agent_version` / `claude_path` | 路径可使用 YAML 路径展开语法 |
-| `CODE_SESSION_SANDBOX_API_BASE_URL` | `code_session.sandbox_api_base_url` | 必须是 sandbox 实际可达地址，不从监听地址推导 |
-| `CODE_SESSION_JWT_SIGNING_KEY_FILE` | `code_session.jwt_signing_private_key_file` | 字段改名；生产环境必须指向稳定只读私钥 |
-| `CODE_SESSION_UPSTREAM_PROXY_*` | `code_session.upstream_proxy_*` | 迁移 MITM、CA 私钥路径和 SSRF 诊断开关 |
-| `WEBHOOK_ENDPOINT_URL` / `ANTHROPIC_WEBHOOK_SIGNING_KEY` | `webhook.endpoint_url` / `webhook.signing_key` | signing key 字段不再使用 Anthropic 环境变量名 |
-| `WEBHOOK_EVENT_TYPES` | `webhook.event_types` | 旧 CSV 改为 YAML 字符串列表 |
-| 其他 `WEBHOOK_*` | `webhook.*` | 后缀转为小写 snake case |
-| `OFFICIAL_SDK_FIXTURE_*` | `sdk_fixtures.*` | 只在兼容测试需要覆盖稳定 fixture 时迁移 |
+| 旧环境变量                                                          | YAML 字段                                                                  | 迁移说明                                                                          |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `APP_ENV`                                                           | `env`                                                                      | `development` 改为 `dev`，`production` 改为 `prod`                                |
+| `ADDR`                                                              | `server.addr`                                                              | 保留原监听地址                                                                    |
+| `DATABASE_URL` / `DB_AUTO_MIGRATE`                                  | `database.url` / `database.auto_migrate`                                   | `auto_migrate` 未配置时按 `env` 派生                                              |
+| `REDIS_URL`                                                         | `redis.url`                                                                | 直接迁移                                                                          |
+| `S3_ENDPOINT` / `S3_BUCKET` / `S3_REGION`                           | `storage.s3.endpoint` / `bucket` / `region`                                | 同时设置 `storage.type: s3`                                                       |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_FORCE_PATH_STYLE` | `storage.s3.access_key_id` / `secret_access_key` / `force_path_style`      | `force_path_style` 省略时默认 `true`                                              |
+| `MAX_FILE_BYTES` / `WORKSPACE_STORAGE_LIMIT_BYTES`                  | `storage.max_file_bytes` / `storage.workspace_limit_bytes`                 | 迁移非默认容量限制                                                                |
+| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY`        | 无                                                                         | 已删除；启动后在控制台按 workspace 配置 Provider                                  |
+| `BATCH_*`                                                           | `batch.*`                                                                  | 后缀转为小写 snake case，例如 `BATCH_UPSTREAM_TIMEOUT` → `batch.upstream_timeout` |
+| `E2B_*`                                                             | `e2b.*`                                                                    | 后缀保持小写 snake case；包括连接、debug、template 和 timeout 字段                |
+| `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY`     | `environment_runner.enabled` / `concurrency`                               | 仅在覆盖代码默认值时配置                                                          |
+| `ENVIRONMENT_MANAGER_PATH` / `CLAUDE_AGENT_VERSION` / `CLAUDE_PATH` | `environment_runner.manager_path` / `claude_agent_version` / `claude_path` | 路径可使用 YAML 路径展开语法                                                      |
+| `CODE_SESSION_SANDBOX_API_BASE_URL`                                 | `code_session.sandbox_api_base_url`                                        | 必须是 sandbox 实际可达地址，不从监听地址推导                                     |
+| `CODE_SESSION_JWT_SIGNING_KEY_FILE`                                 | `code_session.jwt_signing_private_key_file`                                | 字段改名；生产环境必须指向稳定只读私钥                                            |
+| `CODE_SESSION_UPSTREAM_PROXY_*`                                     | `code_session.upstream_proxy_*`                                            | 迁移 MITM、CA 私钥路径和 SSRF 诊断开关                                            |
+| `WEBHOOK_ENDPOINT_URL` / `ANTHROPIC_WEBHOOK_SIGNING_KEY`            | `webhook.endpoint_url` / `webhook.signing_key`                             | signing key 字段不再使用 Anthropic 环境变量名                                     |
+| `WEBHOOK_EVENT_TYPES`                                               | `webhook.event_types`                                                      | 旧 CSV 改为 YAML 字符串列表                                                       |
+| 其他 `WEBHOOK_*`                                                    | `webhook.*`                                                                | 后缀转为小写 snake case                                                           |
+| `OFFICIAL_SDK_FIXTURE_*`                                            | `sdk_fixtures.*`                                                           | 只在兼容测试需要覆盖稳定 fixture 时迁移                                           |
 
 `POSTGRES_ADMIN_URL`、`PUBLIC_BASE_URL` 和 `CODE_SESSION_API_BASE_URL` 没有 YAML 对应字段。数据库和角色应在部署前准备好；首次启动回退只使用 `database.url` 派生的 maintenance 连接。客户端响应 URL 根据请求地址及受信任反向代理设置的 `X-Forwarded-*` header 构造；sandbox 回调则显式使用 `code_session.sandbox_api_base_url`。
 
@@ -100,7 +100,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 ## 示例与完整参考
 
-`config/config.example.yaml` 只包含正常本地开发最常修改的连接、监听和凭证字段，并且可以直接复制为 `config/config.yaml`。具有稳定代码默认值的 Batch、Webhook、Environment Runner、Bootstrap、SDK fixture、容量限制和高级 Code Session 开关不进入最小示例，避免把“支持配置”误解为“启动必须配置”。
+`config/config.example.yaml` 只包含正常本地开发最常修改的连接、监听和凭证字段，并且可以直接复制为 `config/config.yaml`。其中 `tunnel.public_base_url` 显式对齐默认的本地监听 origin，使 Console 生成的 canonical Tunnel URL 也能被 Managed Agent Runtime Gateway 精确识别；修改 `server.addr` 或本地访问入口时应同步调整。具有稳定代码默认值的 Batch、Webhook、Environment Runner、Bootstrap、SDK fixture、容量限制和高级 Code Session 开关不进入最小示例，避免把“支持配置”误解为“启动必须配置”。
 
 `docs/configuration-reference.yaml` 是独立的完整字段参考，列出 `Config` 接受的全部 YAML 字段及安全示例值；它用于查找按需覆盖项，不建议整份复制为部署配置。配置合同测试承担两个方向的防漂移：最小示例必须能经过严格解码和完整校验，且只能包含约定的常用字段；完整参考的字段路径必须与 Go `Config` 的 `yaml` 标签精确一致。
 
@@ -131,6 +131,14 @@ Observability 使用独立的进程级 YAML 配置：`observability.enabled` 控
 
 这是一次 breaking 迁移：OpenObserve 平铺 ingestion 凭据已删除，改为嵌套的 `observability.openobserve.ingestion.{username,password}` 与 `observability.openobserve.query.{username,password,timeout}`。升级前必须改写 YAML；严格解析不会接受旧平铺键，也不提供兼容层。旧 `code_session.otlp_file_log_enabled`、`code_session.otlp_log_root` 和 `code_session.otlp_log_body_preview_bytes` 也已随本地文件日志功能一起删除。
 
+该地址同时供 MCP Runtime Gateway 使用。Docker Compose 的进程监听端口为容器内 `8080`、宿主机发布端口为
+`38080`，因此其部署 YAML 显式使用 `http://host.docker.internal:38080`，不能使用容器监听端口代替。
+
+`tunnel.public_base_url` 是另一个方向的地址：它必须是 MCP 客户端可访问的稳定 public origin，生产使用
+HTTPS。它用于生成 canonical Tunnel MCP URL 和 RFC 9728 metadata URL，也用于 OMA 在 Runtime Gateway
+内识别“这个 Agent Snapshot URL 属于本进程 Tunnel”。它不能用 `server.addr` 推导，也不能用只在 sandbox
+内部可见的 `code_session.sandbox_api_base_url` 代替。
+
 Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base_url` 作为 rclone `service_url`，因此启用 Environment Runner 时该地址必须同时能从 E2B Sandbox 访问 Filestore HTTP 路由。Runner 通过 E2B Files API 每 `200ms` 探测 `/tmp/rclone-mounts/ready`，最长 `20s`；这两个值是运行时合同，不提供 YAML 配置。
 
 `rclone-filestore` 的路径不是配置项。E2B 镜像合同固定要求可执行文件位于 `/opt/rclone/rclone-filestore`；缺失或不可执行会使该次 Sandbox 启动失败。五个 source、destination、cache、权限、ready/config/state 路径同样属于版本化运行时合同，不能通过租户数据、Session resource 或 YAML 改写。第五个 source 固定为 Filestore `/skills`，以只读方式直接挂载到 `/root/.claude/skills`；destination 由 `rclone-filestore multimount` 内部创建，Runner 不执行独立准备命令。
@@ -145,6 +153,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `ServerConfig` | `server` | HTTP 监听地址 |
 | `DatabaseConfig` | `database` | PostgreSQL 运行连接和自动迁移开关 |
 | `RedisConfig` | `redis` | 平台会话 Redis 连接 |
+| `TunnelConfig` | `tunnel` | Tunnel public origin、hostname alias、Broker TTL、队列与 payload 上限 |
 | `StorageConfig` | `storage` | 对象存储类型选择和文件容量限制 |
 | `S3Config` | `storage.s3` | S3 兼容对象存储连接、bucket 和寻址方式 |
 | `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |

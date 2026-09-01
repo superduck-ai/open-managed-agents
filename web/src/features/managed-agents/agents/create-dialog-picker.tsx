@@ -19,6 +19,7 @@ export type CreateDialogPickerOption = {
   description?: string;
   disabled?: boolean;
   icon?: ReactNode;
+  group?: string;
 };
 
 export function CreateDialogPicker({
@@ -36,6 +37,7 @@ export function CreateDialogPicker({
   onSearchChange,
   createLabel,
   onCreate,
+  closeOnSelect = false,
 }: {
   label: string;
   placeholder: string;
@@ -51,6 +53,7 @@ export function CreateDialogPicker({
   onSearchChange?: (value: string) => void;
   createLabel?: string;
   onCreate?: () => void;
+  closeOnSelect?: boolean;
 }) {
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
@@ -93,36 +96,41 @@ export function CreateDialogPicker({
             ) : (
               <>
                 <CommandEmpty>{emptyLabel}</CommandEmpty>
-                <CommandGroup>
-                  {options.map((option) => {
-                    const selected = selectedIds.includes(option.id);
-                    return (
-                      <CommandItem
-                        key={option.id}
-                        value={`${option.label} ${option.id}`}
-                        disabled={option.disabled}
-                        onSelect={() => onToggle(option.id)}
-                      >
-                        {option.icon ?? (
-                          <span
-                            className={cn(
-                              'flex size-4 items-center justify-center rounded border border-border',
-                              selected && 'border-primary bg-primary text-primary-foreground',
-                            )}
-                          >
-                            {selected ? <Check className="size-3" aria-hidden /> : null}
+                {groupPickerOptions(options).map((group) => (
+                  <CommandGroup key={group.label || 'default'} heading={group.label || undefined}>
+                    {group.options.map((option) => {
+                      const selected = selectedIds.includes(option.id);
+                      return (
+                        <CommandItem
+                          key={option.id}
+                          value={`${option.label} ${option.id}`}
+                          disabled={option.disabled}
+                          onSelect={() => {
+                            onToggle(option.id);
+                            if (closeOnSelect) setOpen(false);
+                          }}
+                        >
+                          {option.icon ?? (
+                            <span
+                              className={cn(
+                                'flex size-4 items-center justify-center rounded border border-border',
+                                selected && 'border-primary bg-primary text-primary-foreground',
+                              )}
+                            >
+                              {selected ? <Check className="size-3" aria-hidden /> : null}
+                            </span>
+                          )}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{option.label}</span>
+                            {option.description ? (
+                              <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
+                            ) : null}
                           </span>
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate">{option.label}</span>
-                          {option.description ? (
-                            <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
-                          ) : null}
-                        </span>
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                ))}
               </>
             )}
           </CommandList>
@@ -147,4 +155,13 @@ export function CreateDialogPicker({
       </PopoverContent>
     </Popover>
   );
+}
+
+function groupPickerOptions(options: CreateDialogPickerOption[]) {
+  const groups = new Map<string, CreateDialogPickerOption[]>();
+  for (const option of options) {
+    const group = option.group ?? '';
+    groups.set(group, [...(groups.get(group) ?? []), option]);
+  }
+  return [...groups.entries()].map(([label, groupedOptions]) => ({ label, options: groupedOptions }));
 }

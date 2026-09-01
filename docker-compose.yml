@@ -178,7 +178,7 @@ services:
     ports:
       - "38080:8080"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/readyz"]
       interval: 5s
       timeout: 3s
       retries: 10

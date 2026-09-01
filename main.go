@@ -31,6 +31,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
@@ -84,6 +85,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
+	tunnelBroker := tunnels.NewBroker(redisClient, cfg.Tunnel)
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
@@ -179,6 +181,7 @@ func run(logger *slog.Logger) error {
 			VaultSecrets:           vaultSecrets,
 			Redis:                  redisClient,
 			SessionEventBus:        sessionEventBus,
+			TunnelBroker:           tunnelBroker,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

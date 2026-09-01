@@ -15,6 +15,7 @@ type Config struct {
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
 	Auth              AuthConfig              `yaml:"auth"`
+	Tunnel            TunnelConfig            `yaml:"tunnel"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
 	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
@@ -89,6 +90,20 @@ type EmailSMTPConfig struct {
 	Addr     string `yaml:"addr"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+type TunnelConfig struct {
+	PublicBaseURL       string        `yaml:"public_base_url"`
+	DomainSuffix        string        `yaml:"domain_suffix"`
+	PollTimeout         time.Duration `yaml:"poll_timeout"`
+	RequestTimeout      time.Duration `yaml:"request_timeout"`
+	PresenceTTL         time.Duration `yaml:"presence_ttl"`
+	TombstoneTTL        time.Duration `yaml:"tombstone_ttl"`
+	MaxPendingRequests  int           `yaml:"max_pending_requests"`
+	MaxPendingBytes     int64         `yaml:"max_pending_bytes"`
+	MaxBodyBytes        int64         `yaml:"max_body_bytes"`
+	MaxHeaderBytes      int64         `yaml:"max_header_bytes"`
+	MaxHeaderValueBytes int64         `yaml:"max_header_value_bytes"`
 }
 
 type StorageConfig struct {

@@ -5,6 +5,7 @@ import { Button } from '../../../shared/ui/button';
 import {
   CopyIdCell,
   DataTableCell,
+  DataTableResourceLink,
   DataTableRow,
   MoreActionsButton,
   dataTableClassName,
@@ -18,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -32,7 +34,6 @@ import {
   searchAgentsByName,
 } from '../api';
 import {
-  AgentFilterDropdown,
   AgentsEmptyState,
   AgentsListState,
   AgentStatusBadge,
@@ -40,7 +41,6 @@ import {
   CreateResourceDialog,
   EmptyState,
   ManagedErrorAlert,
-  ManagedSearchField,
   ManagedWarningAlert,
 } from '../components/common';
 import {
@@ -563,14 +563,14 @@ export function AgentsResourcePage({
       </header>
 
       <div className="mb-7 flex flex-wrap items-center gap-2">
-        <ManagedSearchField
+        <ResourceSearchField
           id={`${config.section}-search`}
           value={search}
           placeholder={searchPlaceholder}
           prefix={config.searchPrefix}
           onChange={handleSearchChange}
         />
-        <AgentFilterDropdown
+        <ResourceFilterDropdown
           label={msg('managedAgents.filters.created', 'Created')}
           valueLabel={createdFilterLabel(createdFilter, msg)}
           options={createdOptions}
@@ -581,7 +581,7 @@ export function AgentsResourcePage({
           onOpenChange={setOpenFilterMenu}
           onSelect={handleCreatedFilterChange}
         />
-        <AgentFilterDropdown
+        <ResourceFilterDropdown
           label={msg('managedAgents.filters.status', 'Status')}
           valueLabel={statusFilterLabel(statusFilter, msg)}
           options={statusOptions}
@@ -664,23 +664,23 @@ export function AgentsResourcePage({
                           ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: agent.id })}
                           className="gap-1.5"
                         >
-                          <a
+                          <DataTableResourceLink
                             href={detailHref}
-                            className="truncate font-mono text-[13px] text-foreground underline-offset-4 hover:underline"
+                            className="truncate font-mono text-[13px] text-foreground"
                             onClick={(event) => handleInternalLinkClick(event, detailHref)}
                           >
                             {compactAgentId(agent.id)}
-                          </a>
+                          </DataTableResourceLink>
                         </CopyIdCell>
                       </DataTableCell>
                       <DataTableCell className="truncate text-foreground">
-                        <a
+                        <DataTableResourceLink
                           href={detailHref}
-                          className="underline-offset-4 hover:underline"
+                          className="text-foreground"
                           onClick={(event) => handleInternalLinkClick(event, detailHref)}
                         >
                           {agent.name || msg('managedAgents.agents.untitled', 'Untitled agent')}
-                        </a>
+                        </DataTableResourceLink>
                       </DataTableCell>
                       <DataTableCell className="truncate font-mono text-[13px] text-muted-foreground">
                         {agentModelName(agent.model)}

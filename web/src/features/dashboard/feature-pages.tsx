@@ -1,15 +1,4 @@
-import {
-  Activity,
-  Code2,
-  Gauge,
-  KeyRound,
-  LifeBuoy,
-  MessageSquare,
-  Network,
-  Plus,
-  Tags,
-  TerminalSquare,
-} from 'lucide-react';
+import { Activity, Code2, Gauge, KeyRound, LifeBuoy, MessageSquare, Plus, Tags, TerminalSquare } from 'lucide-react';
 import { useState } from 'react';
 import { placeholderIcons } from '../../app/layout/navigation';
 import { useAuth } from '../../shared/auth/context';
@@ -408,14 +397,6 @@ const featurePageConfig: Record<
     action?: string;
   }
 > = {
-  'mcp-tunnels': {
-    title: 'MCP tunnels',
-    icon: Network,
-    description: 'Expose local MCP servers to managed agent sessions.',
-    emptyTitle: 'No MCP tunnels',
-    emptyBody: 'Preview tunnels and connection status appear here.',
-    eyebrow: 'Preview',
-  },
   tags: {
     title: 'Tags',
     icon: Tags,
@@ -440,15 +421,6 @@ function featurePageCopy(
   msg: ReturnType<typeof useI18n>['msg'],
 ) {
   switch (section) {
-    case 'mcp-tunnels':
-      return {
-        title: msg('featurePage.mcpTunnels.title', config.title),
-        description: msg('featurePage.mcpTunnels.description', config.description),
-        emptyTitle: msg('featurePage.mcpTunnels.emptyTitle', config.emptyTitle),
-        emptyBody: msg('featurePage.mcpTunnels.emptyBody', config.emptyBody),
-        eyebrow: msg('nav.preview', config.eyebrow ?? 'Preview'),
-        action: config.action,
-      };
     case 'tags':
       return {
         title: msg('featurePage.tags.title', config.title),

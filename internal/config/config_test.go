@@ -268,6 +268,25 @@ func TestValidateCodeSessionSandboxAPIBaseURL(t *testing.T) {
 	}
 }
 
+func TestValidateTunnelPublicBaseURL(t *testing.T) {
+	t.Parallel()
+	for _, invalid := range []string{
+		"oma.example.com", "ftp://oma.example.com", "https://user:secret@oma.example.com",
+		"https://oma.example.com/v1", "https://oma.example.com?tenant=one", "https://oma.example.com?",
+		"https://oma.example.com#", " https://oma.example.com",
+		"http://127.0.0.1:0", "http://127.0.0.1:65536",
+	} {
+		if err := validateTunnelPublicBaseURL(invalid); err == nil {
+			t.Fatalf("validateTunnelPublicBaseURL(%q) accepted invalid origin", invalid)
+		}
+	}
+	for _, valid := range []string{"", "https://oma.example.com", "http://127.0.0.1:38080", "https://oma.example.com/", "http://127.0.0.1:1", "http://127.0.0.1:65535"} {
+		if err := validateTunnelPublicBaseURL(valid); err != nil {
+			t.Fatalf("validateTunnelPublicBaseURL(%q): %v", valid, err)
+		}
+	}
+}
+
 func TestLoadIgnoresBusinessEnvironmentVariables(t *testing.T) {
 	prepareLoadTest(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -470,6 +489,14 @@ func TestLoadYAMLRejectsNullAndNonPositiveValues(t *testing.T) {
 		_, err := loadConfigTestYAML(t, "batch:\n  worker_concurrency: 0\n")
 		if err == nil || !strings.Contains(err.Error(), "batch.worker_concurrency must be greater than zero") {
 			t.Fatalf("Load() error = %v, want positive-value error", err)
+		}
+	})
+
+	t.Run("tunnel pending request upper bound", func(t *testing.T) {
+		prepareLoadTest(t)
+		_, err := loadConfigTestYAML(t, "tunnel:\n  max_pending_requests: 513\n")
+		if err == nil || !strings.Contains(err.Error(), "tunnel.max_pending_requests must be between 1 and 512") {
+			t.Fatalf("Load() error = %v, want bounded tunnel pending request error", err)
 		}
 	})
 }

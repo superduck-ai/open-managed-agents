@@ -40,6 +40,7 @@ type yamlConfig struct {
 	Database          yamlDatabaseConfig      `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
 	Auth              AuthConfig              `yaml:"auth"`
+	Tunnel            TunnelConfig            `yaml:"tunnel"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
 	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
@@ -93,6 +94,7 @@ func newYAMLConfig() yamlConfig {
 		Database:          yamlDatabaseConfig{URL: defaults.Database.URL},
 		Redis:             defaults.Redis,
 		Auth:              defaults.Auth,
+		Tunnel:            defaults.Tunnel,
 		Storage:           defaults.Storage,
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
@@ -133,6 +135,7 @@ func (input yamlConfig) resolve() Config {
 		Database:          DatabaseConfig{URL: input.Database.URL},
 		Redis:             input.Redis,
 		Auth:              input.Auth,
+		Tunnel:            input.Tunnel,
 		Storage:           input.Storage,
 		Batch:             input.Batch,
 		E2B:               input.E2B,

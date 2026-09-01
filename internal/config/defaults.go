@@ -34,7 +34,7 @@ func defaultConfig() Config {
 			Concurrency:             2,
 			PackageProvisionTimeout: 2 * time.Minute,
 			ManagerPath:             "/usr/local/bin/environment-manager",
-			ClaudeAgentVersion:      "2.1.120",
+			ClaudeAgentVersion:      "2.1.251",
 			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
 		Observability: ObservabilityConfig{

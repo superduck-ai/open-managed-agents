@@ -70,7 +70,7 @@ environment_runner:
   concurrency: 2
   package_provision_timeout: 2m
   manager_path: /usr/local/bin/environment-manager
-  claude_agent_version: 2.1.120
+  claude_agent_version: 2.1.251
   claude_path: /opt/claude-code/bin/claude
   # Extra hosts rewritten from SSH remotes to HTTPS (in addition to built-in github.com).
   # Bare DNS hostnames only (labels [a-z0-9-], no leading/trailing hyphen); each adds git@host: and ssh://git@host/ → https://host/.

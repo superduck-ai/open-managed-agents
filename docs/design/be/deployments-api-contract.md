@@ -64,7 +64,7 @@ Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
 每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule`，不保存应用自行推进的下一次游标或额外调度版本。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
 
-River client 和 migrator 由 `internal/backgroundjobs` 统一组装，与 sandbox_lifecycle 队列共享现有连接池；DeploymentScheduler 只维护 Deployment 的 schedule registry。每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 schedule 快照跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
+River client 和 migrator 由 `internal/riverjobs` 统一组装，与 sandbox_lifecycle 队列共享现有连接池；DeploymentScheduler 只维护 Deployment 的 schedule registry。每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 schedule 快照跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
 
 River 的 leader election 保证只有 leader 根据 Cron 推进并投递 Periodic Job，应用不计算、持久化或插入“下一条 Job”。插入 Periodic Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。暂停或停机期间不补跑历史 occurrence，恢复注册后直接等待 Cron 的下一次。River 开源 Periodic Jobs 的调度状态主要在 leader 内存中，官方不承诺强持久性，leader 切换的极短窗口可能跳过一次 occurrence；当前 fork 也提供 DurablePeriodicJob，[沙箱生命周期](sandbox-lifecycle.md) 使用该机制；Deployment 在本次变更中仍保留原有 PeriodicJobs 调度语义。
 

@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/superduck-ai/open-managed-agents/internal/backgroundjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 )
 
 func main() {
@@ -47,7 +47,7 @@ func run(logger *slog.Logger) error {
 	if err := database.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
-	if err := backgroundjobs.Migrate(ctx, database, logger.With("component", "deployment_scheduler")); err != nil {
+	if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
 		return fmt.Errorf("migrate River: %w", err)
 	}
 	logger.Info("database migrations applied")

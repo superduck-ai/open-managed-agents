@@ -1,5 +1,5 @@
-// Package backgroundjobs owns River infrastructure shared by resource workers.
-package backgroundjobs
+// Package riverjobs owns River infrastructure shared by resource workers.
+package riverjobs
 
 import (
 	"context"

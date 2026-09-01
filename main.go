@@ -13,7 +13,6 @@ import (
 
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
-	"github.com/superduck-ai/open-managed-agents/internal/backgroundjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -26,6 +25,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
@@ -63,7 +63,7 @@ func run(logger *slog.Logger) error {
 		if err := database.Migrate(ctx); err != nil {
 			return fmt.Errorf("migrate database: %w", err)
 		}
-		if err := backgroundjobs.Migrate(ctx, database, logger.With("component", "background_jobs")); err != nil {
+		if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
 			return fmt.Errorf("migrate River: %w", err)
 		}
 	} else {
@@ -143,10 +143,10 @@ func run(logger *slog.Logger) error {
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
 	lifecycle.Register(workers)
-	jobClient, err := backgroundjobs.NewClient(database, logger.With("component", "background_jobs"), workers,
+	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
 		map[string]river.QueueConfig{deployments.DeploymentScheduleQueue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
 	if err != nil {
-		return fmt.Errorf("create background jobs: %w", err)
+		return fmt.Errorf("create River client: %w", err)
 	}
 	if err := lifecycle.Configure(ctx, jobClient); err != nil {
 		return fmt.Errorf("configure sandbox lifecycle: %w", err)

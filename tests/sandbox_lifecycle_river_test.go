@@ -9,15 +9,15 @@ import (
 	"uuid"
 
 	"github.com/riverqueue/river"
-	"github.com/superduck-ai/open-managed-agents/internal/backgroundjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 )
 
 func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 	f := newSandboxLifecycleFixture(t)
 	ctx := context.Background()
-	if err := backgroundjobs.Migrate(ctx, f.app.db, nil); err != nil {
+	if err := riverjobs.Migrate(ctx, f.app.db, nil); err != nil {
 		t.Fatal(err)
 	}
 	calls := make(chan string, 100)
@@ -34,7 +34,7 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 	// Separate sweep and reclaim queues avoid River coalescing their insert notifications.
 	// A long fallback interval makes this test exercise notification-driven fetches.
 	const sweepQueue = "sandbox_lifecycle_test_sweep"
-	client, err := backgroundjobs.NewClient(f.app.db, nil, workers, map[string]river.QueueConfig{
+	client, err := riverjobs.NewClient(f.app.db, nil, workers, map[string]river.QueueConfig{
 		sweepQueue:                         {MaxWorkers: 1, FetchPollInterval: time.Hour},
 		environments.SandboxLifecycleQueue: {MaxWorkers: 4, FetchPollInterval: time.Hour},
 	})

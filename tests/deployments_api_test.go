@@ -14,9 +14,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/superduck-ai/open-managed-agents/internal/backgroundjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 )
 
 type deploymentAPIResponse struct {
@@ -1050,12 +1050,12 @@ func applyScheduledOccurrence(ctx context.Context, database *db.DB, input db.App
 
 func startDeploymentScheduler(t *testing.T, app *testApp) func() {
 	t.Helper()
-	if err := backgroundjobs.Migrate(context.Background(), app.db, nil); err != nil {
+	if err := riverjobs.Migrate(context.Background(), app.db, nil); err != nil {
 		t.Fatalf("migrate River: %v", err)
 	}
 	workers := river.NewWorkers()
 	deploymentsapi.RegisterScheduledWorkers(workers, app.db)
-	client, err := backgroundjobs.NewClient(app.db, nil, workers, map[string]river.QueueConfig{deploymentsapi.DeploymentScheduleQueue: {MaxWorkers: 10}})
+	client, err := riverjobs.NewClient(app.db, nil, workers, map[string]river.QueueConfig{deploymentsapi.DeploymentScheduleQueue: {MaxWorkers: 10}})
 	if err != nil {
 		t.Fatalf("new deployment scheduler: %v", err)
 	}

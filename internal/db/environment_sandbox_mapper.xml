@@ -134,12 +134,23 @@
             AND sandbox.workspace_uuid = code_session.workspace_uuid
             AND sandbox.environment_uuid = code_session.environment_uuid
             AND sandbox.work_uuid = work.uuid
-            AND sandbox.provider_sandbox_id = #{params.ProviderSandboxID}
-            AND sandbox.state = 'running'
+            <if test="params.ProviderSandboxID != ''">
+                AND sandbox.provider_sandbox_id = #{params.ProviderSandboxID}
+            </if>
+            AND (
+                <if test="params.ProviderSandboxID != ''">sandbox.state = 'running' OR</if>
+                (sandbox.state = 'stopped' AND sandbox.stop_reason = 'idle_timeout'
+                    AND EXISTS (SELECT 1 FROM code_session_inbound_events e
+                        WHERE e.code_session_uuid = code_session.uuid AND e.deleted_at IS NULL
+                            AND e.delivery_status &lt;&gt; 'processed'))
+            )
             WHERE code_session.external_id = #{params.CodeSessionExternalID}
             AND code_session.status = 'active'
             AND code_session.worker_status IN ('idle', 'running', 'requires_action')
             AND code_session.deleted_at IS NULL
+            AND EXISTS (SELECT 1 FROM sessions s WHERE s.uuid = code_session.session_uuid
+                AND s.organization_uuid = code_session.organization_uuid AND s.workspace_uuid = code_session.workspace_uuid
+                AND s.deleted_at IS NULL AND s.archived_at IS NULL AND s.status &lt;&gt; 'terminated')
             FOR UPDATE OF code_session, work, sandbox
         ), failed_sandbox AS (
             UPDATE environment_sandboxes sandbox

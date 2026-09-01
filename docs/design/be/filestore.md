@@ -405,3 +405,8 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 ## 验收
 
 自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。
+
+## 长期 idle 回收的文件边界
+
+[沙箱生命周期](sandbox-lifecycle.md) 可以销毁长期 idle 的托管 Sandbox。第一版接受工作目录和未上传写缓存丢失，
+不实现 checkpoint；已提交的 Filestore 文件、transcript 和事件保留。恢复重建固定挂载，但不保证恢复沙箱本地仓库或进程状态。

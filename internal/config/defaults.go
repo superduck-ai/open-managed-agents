@@ -24,6 +24,7 @@ func defaultConfig() Config {
 			JobLeaseHeartbeatInterval: 30 * time.Second,
 			ExpirySweepInterval:       5 * time.Minute,
 		},
+		SandboxLifecycle: SandboxLifecycleConfig{Enabled: true, DryRun: true, IdleTimeout: 24 * time.Hour},
 		E2B: E2BConfig{
 			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,

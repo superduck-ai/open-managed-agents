@@ -123,8 +123,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/superduck-ai/e2b-go-sdk v0.0.1 h1:yW23X/fEQvaPdJHhDnp8PgnsaIixn+UTVMt94X4Kr0s=
-github.com/superduck-ai/e2b-go-sdk v0.0.1/go.mod h1:dWlhv18vJamYp5gQ3ktmjjrX7tUaMe2OyTJXUo8EeXY=
+github.com/superduck-ai/e2b-go-sdk v0.0.2 h1:regpFbVLkwXCzgVdVJ5wGJJACH4pE+WJ47nnRJt/Xrw=
+github.com/superduck-ai/e2b-go-sdk v0.0.2/go.mod h1:dWlhv18vJamYp5gQ3ktmjjrX7tUaMe2OyTJXUo8EeXY=
 github.com/superduck-ai/river v0.46.0-oma-v0.0.1 h1:5Z5l1ZmjQheL8+3oCsoZQJEkI95pcpzG9xv8mx3QA7s=
 github.com/superduck-ai/river v0.46.0-oma-v0.0.1/go.mod h1:e+GMx8BBMixrc52fKnd5obMoxJcmgmWEFfMfMsboljU=
 github.com/superduck-ai/river/riverdriver v0.46.0-oma-v0.0.1 h1:21UyCpH5hPWLI0Wz2sOg6LR3wQUpcZGntChgazNHMAc=

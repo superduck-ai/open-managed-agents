@@ -58,6 +58,7 @@ e2b:
   api_key: ""
   access_token: ""
   domain: ""
+  # E2B API 地址；Provider 会将它显式传给 SDK，为空时沿用 SDK 的环境变量或默认值。
   api_url: ""
   sandbox_url: ""
   debug: false
@@ -163,3 +164,9 @@ sdk_fixtures:
   deployment_run_id: deployment_run_id
   api_key: my-anthropic-api-key
   api_key_external_id: api_key_official_sdk_resource_tests
+
+# Long-idle managed sandbox reclamation. Disable dry_run to delete sandbox local state.
+sandbox_lifecycle:
+  enabled: true
+  dry_run: true
+  idle_timeout: 24h

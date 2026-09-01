@@ -279,6 +279,7 @@ func validatePositiveValues(cfg Config) error {
 		{name: "batch.job_lease_heartbeat_interval", valid: cfg.Batch.JobLeaseHeartbeatInterval > 0},
 		{name: "batch.expiry_sweep_interval", valid: cfg.Batch.ExpirySweepInterval > 0},
 		{name: "e2b.request_timeout", valid: cfg.E2B.RequestTimeout > 0},
+		{name: "sandbox_lifecycle.idle_timeout", valid: cfg.SandboxLifecycle.IdleTimeout > 0},
 		{name: "e2b.sandbox_timeout", valid: cfg.E2B.SandboxTimeout > 0},
 		{name: "environment_runner.concurrency", valid: cfg.EnvironmentRunner.Concurrency > 0},
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},

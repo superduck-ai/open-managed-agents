@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="SandboxLifecycleMapper">
+    <sql id="targetColumns">
+        cs.organization_uuid, cs.workspace_uuid, cs.session_external_id,
+        cs.external_id AS code_session_external_id, cs.uuid AS code_session_uuid,
+        sandbox.uuid AS sandbox_uuid,
+        sandbox.provider_sandbox_id, sandbox.state, sandbox.stop_reason
+    </sql>
+    <sql id="targetTables">
+        FROM code_sessions cs
+        JOIN environment_work work ON work.organization_uuid = cs.organization_uuid
+            AND work.workspace_uuid = cs.workspace_uuid AND work.environment_uuid = cs.environment_uuid
+            AND work.session_uuid = cs.session_uuid
+        JOIN environment_sandboxes sandbox ON sandbox.organization_uuid = work.organization_uuid
+            AND sandbox.workspace_uuid = work.workspace_uuid AND sandbox.environment_uuid = work.environment_uuid
+            AND sandbox.work_uuid = work.uuid
+    </sql>
+    <sql id="scope">
+        cs.organization_uuid = #{scope.OrganizationUUID} AND cs.workspace_uuid = #{scope.WorkspaceUUID}
+        AND sandbox.uuid = #{scope.SandboxUUID} AND sandbox.provider_sandbox_id IS NOT NULL
+    </sql>
+    <select id="ListCandidates" resultType="sandboxLifecycleRow">
+        SELECT <include refid="targetColumns"/> <include refid="targetTables"/>
+        WHERE sandbox.provider_sandbox_id IS NOT NULL
+        <if test="after != ''">AND sandbox.uuid &gt; #{after}</if>
+        AND ((sandbox.state = 'stopping' AND sandbox.stop_reason = 'idle_timeout')
+        <if test="reclaim">
+            OR (sandbox.state = 'running'
+                AND cs.status = 'active' AND cs.deleted_at IS NULL
+                AND cs.worker_status = 'idle' AND cs.idle_since &lt;= #{cutoff}
+                AND work.state = 'active' AND work.deleted_at IS NULL)
+        </if>)
+        ORDER BY sandbox.uuid LIMIT #{limit}
+    </select>
+    <select id="FindTarget" result="optional" resultType="sandboxLifecycleRow">
+        SELECT <include refid="targetColumns"/> <include refid="targetTables"/>
+        WHERE <include refid="scope"/>
+    </select>
+    <select id="LockTarget" result="optional" resultType="sandboxLifecycleRow">
+        SELECT <include refid="targetColumns"/> <include refid="targetTables"/>
+        WHERE <include refid="scope"/> FOR UPDATE OF work, sandbox
+    </select>
+    <update id="Claim" result="rows">
+        UPDATE code_sessions cs
+        SET idle_since = NULL, current_worker_epoch = current_worker_epoch + 1,
+            worker_lease_expires_at = NULL, oauth_access_token_hash = NULL,
+            connection_status = 'disconnected', updated_at = NOW()
+        WHERE cs.uuid = #{codeSessionUUID}
+            AND cs.status = 'active' AND cs.deleted_at IS NULL
+            AND cs.worker_status = 'idle' AND cs.idle_since &lt;= #{cutoff}
+            AND EXISTS (SELECT 1 FROM sessions s JOIN environments env ON env.uuid = s.environment_uuid
+                AND env.organization_uuid = s.organization_uuid AND env.workspace_uuid = s.workspace_uuid
+                WHERE s.uuid = cs.session_uuid AND s.organization_uuid = cs.organization_uuid
+                AND s.workspace_uuid = cs.workspace_uuid AND s.status = 'idle'
+                AND s.deleted_at IS NULL AND s.archived_at IS NULL AND env.config-&gt;&gt;'type' = 'cloud')
+            AND EXISTS (SELECT 1 FROM environment_work work JOIN environment_sandboxes sandbox
+                ON sandbox.work_uuid = work.uuid AND sandbox.organization_uuid = work.organization_uuid
+                AND sandbox.workspace_uuid = work.workspace_uuid AND sandbox.environment_uuid = work.environment_uuid
+                WHERE sandbox.uuid = #{sandboxUUID} AND sandbox.state = 'running'
+                AND work.organization_uuid = cs.organization_uuid AND work.workspace_uuid = cs.workspace_uuid
+                AND work.environment_uuid = cs.environment_uuid AND work.session_uuid = cs.session_uuid
+                AND work.state = 'active' AND work.deleted_at IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM code_session_inbound_events e WHERE e.code_session_uuid = cs.uuid
+                AND e.deleted_at IS NULL AND e.delivery_status &lt;&gt; 'processed')
+    </update>
+    <update id="BeginStop">
+        UPDATE environment_sandboxes SET state = 'stopping', stop_reason = 'idle_timeout', updated_at = NOW()
+        WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+            AND uuid = #{scope.SandboxUUID} AND state = 'running'
+    </update>
+    <update id="FinishStop" result="rows">
+        UPDATE environment_sandboxes SET state = 'stopped', stopped_at = COALESCE(stopped_at, NOW()), updated_at = NOW()
+        WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+            AND uuid = #{scope.SandboxUUID} AND state = 'stopping' AND stop_reason = 'idle_timeout'
+    </update>
+</mapper>

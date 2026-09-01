@@ -155,6 +155,15 @@ func insertSessionEventsTx(
 		}
 		created = append(created, row.event())
 	}
+	for _, event := range created {
+		switch event.EventType {
+		case "user.message", "user.interrupt", "user.tool_confirmation", "user.tool_result", "user.custom_tool_result":
+			if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
+				return nil, err
+			}
+			return created, nil
+		}
+	}
 	return created, nil
 }
 

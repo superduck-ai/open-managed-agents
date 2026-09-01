@@ -154,11 +154,11 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			}),
 			wantID: "CodeSessionMapper.UpdateWorkerState", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.WorkerStatus", "params.RequiresActionDetails", "params.ExternalMetadata",
+				"params.WorkerStatus", "params.Now", "params.WorkerStatus", "params.RequiresActionDetails", "params.ExternalMetadata",
 				"params.Now", "params.Now", "params.Now", "params.UUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.RequiresActionDetails", "params.ExternalMetadata"},
-			wantSQLFragments:           []string{"worker_requires_action_details = CAST($2 AS jsonb)", "RETURNING uuid"},
+			wantSQLFragments:           []string{"worker_requires_action_details = CAST($4 AS jsonb)", "RETURNING uuid"},
 		}},
 	}
 	for _, test := range tests {

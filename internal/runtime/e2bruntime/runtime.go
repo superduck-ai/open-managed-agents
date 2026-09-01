@@ -141,15 +141,21 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 	return Sandbox{ID: sandbox.SandboxID}, nil
 }
 
+// Kill deletes by ID without Connect: paused sandboxes must not resume merely
+// to be reclaimed.
 func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
-	if strings.TrimSpace(sandboxID) == "" {
+	if sandboxID == "" || p.cfg.Debug {
 		return nil
 	}
-	sandbox, err := p.connect(ctx, sandboxID)
-	if err != nil {
-		return err
+	requestTimeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
+	opts := &e2b.SandboxApiOpts{
+		ApiKey: p.cfg.APIKey, Domain: p.cfg.Domain, ApiUrl: p.cfg.APIURL, RequestTimeoutMs: &requestTimeoutMs,
 	}
-	return sandbox.Kill(ctx, nil)
+	if p.cfg.AccessToken != "" {
+		opts.Headers = map[string]string{"Authorization": "Bearer " + p.cfg.AccessToken}
+	}
+	_, err := e2b.Kill(ctx, sandboxID, opts)
+	return err
 }
 
 // SetTimeout renews the provider-side sandbox lifetime from the time of this

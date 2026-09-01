@@ -11,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
+	"github.com/superduck-ai/open-managed-agents/internal/backgroundjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -61,7 +63,7 @@ func run(logger *slog.Logger) error {
 		if err := database.Migrate(ctx); err != nil {
 			return fmt.Errorf("migrate database: %w", err)
 		}
-		if err := deployments.MigrateRiver(ctx, database, logger.With("component", "deployment_scheduler")); err != nil {
+		if err := backgroundjobs.Migrate(ctx, database, logger.With("component", "background_jobs")); err != nil {
 			return fmt.Errorf("migrate River: %w", err)
 		}
 	} else {
@@ -136,13 +138,20 @@ func run(logger *slog.Logger) error {
 	}
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
-	deploymentScheduler, err := deployments.NewDeploymentScheduler(
-		database,
-		logger.With("component", "deployment_scheduler"),
-	)
+	workers := river.NewWorkers()
+	deployments.RegisterScheduledWorkers(workers, database)
+	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
+		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
+	lifecycle.Register(workers)
+	jobClient, err := backgroundjobs.NewClient(database, logger.With("component", "background_jobs"), workers,
+		map[string]river.QueueConfig{deployments.DeploymentScheduleQueue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
 	if err != nil {
-		return fmt.Errorf("create deployment scheduler: %w", err)
+		return fmt.Errorf("create background jobs: %w", err)
 	}
+	if err := lifecycle.Configure(ctx, jobClient); err != nil {
+		return fmt.Errorf("configure sandbox lifecycle: %w", err)
+	}
+	deploymentScheduler := deployments.NewDeploymentScheduler(database, jobClient, logger.With("component", "deployment_scheduler"))
 	if err := deploymentScheduler.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
 	}

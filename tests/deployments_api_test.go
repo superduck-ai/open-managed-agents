@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/riverqueue/river"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/backgroundjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 )
@@ -1048,14 +1050,17 @@ func applyScheduledOccurrence(ctx context.Context, database *db.DB, input db.App
 
 func startDeploymentScheduler(t *testing.T, app *testApp) func() {
 	t.Helper()
-	if err := deploymentsapi.MigrateRiver(context.Background(), app.db, nil); err != nil {
+	if err := backgroundjobs.Migrate(context.Background(), app.db, nil); err != nil {
 		t.Fatalf("migrate River: %v", err)
 	}
-	scheduler, err := deploymentsapi.NewDeploymentScheduler(app.db, nil)
+	workers := river.NewWorkers()
+	deploymentsapi.RegisterScheduledWorkers(workers, app.db)
+	client, err := backgroundjobs.NewClient(app.db, nil, workers, map[string]river.QueueConfig{deploymentsapi.DeploymentScheduleQueue: {MaxWorkers: 10}})
 	if err != nil {
 		t.Fatalf("new deployment scheduler: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	scheduler := deploymentsapi.NewDeploymentScheduler(app.db, client, nil)
 	if err := scheduler.Start(ctx); err != nil {
 		cancel()
 		t.Fatalf("start deployment scheduler: %v", err)

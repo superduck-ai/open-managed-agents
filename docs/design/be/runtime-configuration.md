@@ -147,6 +147,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `StorageConfig` | `storage` | 对象存储类型选择和文件容量限制 |
 | `S3Config` | `storage.s3` | S3 兼容对象存储连接、bucket 和寻址方式 |
 | `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |
+| `SandboxLifecycleConfig` | `sandbox_lifecycle` | 长期 idle 回收开关、dry-run 与超时，见 [沙箱生命周期](sandbox-lifecycle.md) |
 | `E2BConfig` | `e2b` | E2B provider 连接、模板和超时 |
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令 |
 | `CodeSessionConfig` | `code_session` | Code session ingress、JWT、OTLP 文件日志和上游代理安全配置 |

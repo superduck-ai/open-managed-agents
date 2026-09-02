@@ -21,6 +21,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -30,11 +31,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -66,6 +68,30 @@ type recordingSandboxTimeoutExtender struct {
 	mu    sync.Mutex
 	calls []sandboxTimeoutCall
 	err   error
+}
+
+type acceptingEmailCodeStore struct{}
+
+func (acceptingEmailCodeStore) Issue(context.Context, platformauth.EmailCodeIssue) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Check(context.Context, string, string) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Consume(context.Context, string, string) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Revoke(context.Context, string, string) error {
+	return nil
+}
+
+type discardLoginCodeSender struct{}
+
+func (discardLoginCodeSender) SendLoginCode(context.Context, string, string) error {
+	return nil
 }
 
 func (e *recordingSandboxTimeoutExtender) SetTimeout(_ context.Context, sandboxID string, timeout time.Duration) error {
@@ -141,7 +167,7 @@ func TestV1AuthModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	platformSessionKey := "session-auth-modes-" + suffix
 	app := newTestAppWithStore(t, &cfg, newFakeStore("auth-modes-bucket"))
 	defer app.close()
@@ -223,7 +249,7 @@ func TestPlatformUploadB64FilesAPI(t *testing.T) {
 	defaultIDs := getDefaultDBIDs(t, app.pool)
 	workspacePath := "/api/" + defaultIDs.WorkspaceUUID
 	organizationPath := "/api/" + defaultIDs.OrganizationUUID
-	sessionKey := "session-platform-upload-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	sessionKey := "session-platform-upload-" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
 	cookies := []*http.Cookie{{Name: "sessionKey", Value: sessionKey}}
 	app.seedPlatformSession(t, sessionKey)
 	pngBytes := generatedPNG(t, 800, 600)
@@ -236,7 +262,7 @@ func TestPlatformUploadB64FilesAPI(t *testing.T) {
 	})
 
 	t.Run("failure unknown organization", func(t *testing.T) {
-		resp := app.platformAPIRequest(t, "platform.claude.com", http.MethodPost, "/api/"+uuid.NewString()+"/upload_b64", strings.NewReader(validPayload), cookies)
+		resp := app.platformAPIRequest(t, "platform.claude.com", http.MethodPost, "/api/"+uuid.NewV4().String()+"/upload_b64", strings.NewReader(validPayload), cookies)
 		assertError(t, resp, http.StatusForbidden, "permission_error")
 	})
 
@@ -709,7 +735,7 @@ func TestFilesAPI(t *testing.T) {
 			t.Fatalf("before_id page length = %d, want 1", len(pageBefore.Data))
 		}
 
-		scopeID := "session_scope_" + uuid.NewString()
+		scopeID := "session_scope_" + uuid.NewV4().String()
 		scopedID := createMetadataOnlyFile(t, app, scopeID)
 		defer softDeleteFile(t, app, scopedID)
 		scopedPage := listFiles(t, app, "scope_id="+scopeID)
@@ -723,7 +749,7 @@ func TestFilesAPI(t *testing.T) {
 	})
 
 	t.Run("success before_id returns nearest previous pages", func(t *testing.T) {
-		scopeID := "pagination_" + uuid.NewString()
+		scopeID := "pagination_" + uuid.NewV4().String()
 		fileIDs := make([]string, 6)
 		for index := range fileIDs {
 			fileIDs[index] = createMetadataOnlyFile(t, app, scopeID)
@@ -876,7 +902,7 @@ func TestObjectCleanupJobAttemptsIncrementOnFailure(t *testing.T) {
 
 	ctx := context.Background()
 	defaultIDs := getDefaultDBIDs(t, app.pool)
-	objectKey := "attempts-test/" + uuid.NewString()
+	objectKey := "attempts-test/" + uuid.NewV4().String()
 	if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceUUID, app.store.Name(), objectKey, "file_attempts_test"); err != nil {
 		t.Fatalf("enqueue cleanup job: %v", err)
 	}
@@ -1003,7 +1029,6 @@ func newS3ObjectStore(t *testing.T, override *config.Config) (storage.ObjectStor
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -1031,7 +1056,6 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -1048,6 +1072,13 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		t.Fatalf("seed database: %v", err)
 	}
 	platformSessions := platformsession.NewMemoryStore()
+	platformAuth := platformauth.NewEmailProvider(
+		database,
+		acceptingEmailCodeStore{},
+		discardLoginCodeSender{},
+		[]byte("01234567890123456789012345678901"),
+		logger.With("component", "platform_auth"),
+	)
 	credentials, err := codesessions.NewSessionCredentials(cfg)
 	if err != nil {
 		database.Close()
@@ -1080,12 +1111,13 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		ObjectStore:            store,
 		Logger:                 logger,
 		PlatformStore:          platformSessions,
+		PlatformAuth:           platformAuth,
 		CodeSessionCredentials: credentials,
 		SandboxTimeoutExtender: sandboxTimeouts,
 		FilestoreCredentials:   filestoreCredentials,
 		VaultSecrets:           vaultSecrets,
 	}))
-	return &testApp{
+	app := &testApp{
 		cfg:                  cfg,
 		db:                   database,
 		pool:                 pool,
@@ -1098,6 +1130,88 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		server:               server,
 		baseURL:              server.URL,
 		client:               server.Client(),
+	}
+	clearTestLLMProviders(t, app)
+	seedTestLLMProvider(t, app, "Default test provider", "https://llm.example.com", "test-provider-key", defaultTestModelIDs...)
+	return app
+}
+
+var defaultTestModelIDs = []string{
+	"kimi-k2.5",
+	"qwen-max",
+	"claude-opus-4-6",
+	"claude-opus-4-8",
+	"claude-sonnet-4-5",
+	"claude-sonnet-4-6",
+	"test",
+}
+
+func seedTestLLMProvider(t *testing.T, app *testApp, name, baseURL, apiKey string, modelIDs ...string) db.LLMProvider {
+	t.Helper()
+	defaultIDs := getDefaultDBIDs(t, app.pool)
+	return seedTestLLMProviderForWorkspace(
+		t,
+		app,
+		defaultIDs.OrganizationUUID,
+		defaultIDs.WorkspaceUUID,
+		name,
+		baseURL,
+		apiKey,
+		modelIDs...,
+	)
+}
+
+func seedTestLLMProviderForWorkspace(
+	t *testing.T,
+	app *testApp,
+	organizationUUID, workspaceUUID, name, baseURL, apiKey string,
+	modelIDs ...string,
+) db.LLMProvider {
+	t.Helper()
+	externalID, err := ids.New("llmprov_test_")
+	if err != nil {
+		t.Fatalf("generate test LLM provider ID: %v", err)
+	}
+	now := time.Now().UTC()
+	provider := db.LLMProvider{
+		UUID:             uuid.NewV4().String(),
+		ExternalID:       externalID,
+		OrganizationUUID: organizationUUID,
+		WorkspaceUUID:    workspaceUUID,
+		Name:             name,
+		BaseURL:          baseURL,
+		APIKeyLast4:      apiKey[len(apiKey)-4:],
+		ModelIDs:         append([]string(nil), modelIDs...),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	plaintext := []byte(apiKey)
+	envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), plaintext)
+	clear(plaintext)
+	if err != nil {
+		t.Fatalf("seal test LLM provider key: %v", err)
+	}
+	provider.SecretEnvelope = &envelope
+	created, err := app.db.CreateLLMProvider(context.Background(), provider)
+	if err != nil {
+		t.Fatalf("create test LLM provider: %v", err)
+	}
+	return created
+}
+
+func clearTestLLMProviders(t *testing.T, app *testApp) {
+	t.Helper()
+	ids := getDefaultDBIDs(t, app.pool)
+	providers, err := app.db.ListLLMProviders(context.Background(), ids.OrganizationUUID, ids.WorkspaceUUID)
+	if err != nil {
+		t.Fatalf("list test LLM providers: %v", err)
+	}
+	for _, provider := range providers {
+		if err := app.db.DeleteLLMProvider(
+			context.Background(), ids.OrganizationUUID, ids.WorkspaceUUID, provider.ExternalID,
+		); err != nil {
+			t.Fatalf("delete test LLM provider %s: %v", provider.ExternalID, err)
+		}
 	}
 }
 
@@ -1292,7 +1406,7 @@ func containsFile(files []metadataResponse, id string) bool {
 	return false
 }
 
-func seedWorkspaceKey(t *testing.T, pool *pgxpool.Pool, organizationName, workspaceID, keyID, apiKey string) {
+func seedWorkspaceKey(t *testing.T, pool *pgxpool.Pool, organizationName, workspaceID, keyID, apiKey string) (string, string) {
 	t.Helper()
 	ctx := context.Background()
 	var organizationUUID string
@@ -1324,6 +1438,7 @@ func seedWorkspaceKey(t *testing.T, pool *pgxpool.Pool, organizationName, worksp
 	`, keyID, workspaceUUID, auth.HashAPIKey(apiKey)); err != nil {
 		t.Fatalf("seed api key: %v", err)
 	}
+	return organizationUUID, workspaceUUID
 }
 
 func createMetadataOnlyFile(t *testing.T, app *testApp, scopeID string) string {
@@ -1335,7 +1450,7 @@ func createMetadataOnlyFile(t *testing.T, app *testApp, scopeID string) string {
 	defaultIDs := getDefaultDBIDs(t, app.pool)
 	scopeType := "session"
 	if err := app.db.CreateFile(context.Background(), db.FileRecord{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          fileExternalID,
 		WorkspaceUUID:       defaultIDs.WorkspaceUUID,
 		Filename:            "scoped.txt",
@@ -1361,7 +1476,7 @@ func createDownloadableFile(t *testing.T, app *testApp, filename, contentType st
 	if err != nil {
 		t.Fatalf("new file id: %v", err)
 	}
-	fileUUID := uuid.NewString()
+	fileUUID := uuid.NewV4().String()
 	defaultIDs := getDefaultDBIDs(t, app.pool)
 	objectKey := "workspaces/" + defaultIDs.WorkspaceUUID + "/files/" + fileUUID + "/" + filename
 	if _, err := app.store.Upload(context.Background(), objectKey, bytes.NewReader(content), storage.UploadOptions{Size: int64(len(content)), ContentType: contentType}); err != nil {

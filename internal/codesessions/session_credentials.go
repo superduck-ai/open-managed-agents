@@ -41,6 +41,7 @@ type SessionCredentialClaims struct {
 	Application      string `json:"application"`
 	Role             string `json:"role"`
 	AccountEmail     string `json:"account_email,omitempty"`
+	WorkerEpoch      int64  `json:"worker_epoch,omitempty"`
 }
 
 // SessionCredentialIdentity 是签发输入；调用方必须从 active code session 数据库记录构造。
@@ -52,6 +53,7 @@ type SessionCredentialIdentity struct {
 	OrganizationUUID string
 	WorkspaceUUID    string
 	AccountEmail     string
+	WorkerEpoch      int64
 }
 
 // SessionCredentials 持有同一进程使用的 Ed25519 签发与验证密钥。
@@ -126,8 +128,8 @@ func readSessionCredentialPrivateKey(path string) (ed25519.PrivateKey, error) {
 	return privateKey, nil
 }
 
-// Issue 签发带 sk-ant-si- 前缀的 Ed25519 JWT。JWT 不设置独立 expiry；当前只通过
-// 签名、固定 claims 和请求路径绑定完成鉴权，不回查 session 或 worker lease。
+// Issue 签发带 sk-ant-si- 前缀的 Ed25519 JWT。JWT 不设置独立 expiry；携带
+// worker_epoch 的 managed-agent 凭证会在 HTTP 鉴权和 worker 注册时回查当前 epoch。
 func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, error) {
 	if c == nil || len(c.privateKey) == 0 {
 		return "", errors.New("code-session credential signer is not configured")
@@ -157,6 +159,7 @@ func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, 
 		Application:      "ccr",
 		Role:             "worker",
 		AccountEmail:     strings.TrimSpace(identity.AccountEmail),
+		WorkerEpoch:      identity.WorkerEpoch,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	// golang-jwt 默认设置 typ=JWT；这里额外写入可验证的公钥标识。
@@ -226,6 +229,9 @@ func validateSessionCredentialIdentity(identity SessionCredentialIdentity) error
 	if identity.AgentVersion <= 0 {
 		return errors.New("code-session credential agent version is invalid")
 	}
+	if identity.WorkerEpoch < 0 {
+		return errors.New("code-session credential epoch is invalid")
+	}
 	return nil
 }
 
@@ -237,6 +243,7 @@ func validateSessionCredentialClaims(claims SessionCredentialClaims) error {
 		AgentVersion:     claims.AgentVersion,
 		OrganizationUUID: claims.OrganizationUUID,
 		WorkspaceUUID:    claims.WorkspaceUUID,
+		WorkerEpoch:      claims.WorkerEpoch,
 	}
 	if err := validateSessionCredentialIdentity(identity); err != nil {
 		return err

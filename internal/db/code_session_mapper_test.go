@@ -8,6 +8,21 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+func TestCodeSessionMapperFindByExternalIDNotFound(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
+	row, found, err := NewCodeSessionMapper(executor).FindByExternalID(context.Background(), "codeses_missing")
+	if err != nil || found || row.UUID != "" {
+		t.Fatalf("FindByExternalID() = (%+v, %t, %v), want zero, false, nil", row, found, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"CodeSessionMapper.FindByExternalID",
+		yourbatis.StatementSelect,
+		[]any{"codeses_missing"},
+	)
+}
+
 func TestCodeSessionMapperFindVaultIDsNotFound(t *testing.T) {
 	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"vault_ids"}})
 	row, found, err := NewCodeSessionMapper(executor).FindVaultIDs(
@@ -39,7 +54,7 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 		SessionUUID: "session-uuid", SessionExternalID: "session_test", EnvironmentUUID: "environment-uuid",
 		EnvironmentExternalID: "env_test", WorkDir: "/workspace", PermissionMode: "default",
 		Model: "model", Status: "active", Metadata: []byte(`{"source":"test"}`),
-		OAuthAccessTokenHash: &tokenHash, CreatedAt: now,
+		OAuthAccessTokenHash: &tokenHash, InitialWorkerEpoch: 1, CreatedAt: now,
 	}
 	tests := []struct {
 		name     string
@@ -53,7 +68,8 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 				"params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.SessionUUID",
 				"params.SessionExternalID", "params.EnvironmentUUID", "params.EnvironmentExternalID", "params.WorkDir",
 				"params.PermissionMode", "params.Model", "params.Status", "params.Metadata",
-				"params.OAuthAccessTokenHash", "params.CreatedAt", "params.CreatedAt",
+				"params.OAuthAccessTokenHash", "params.InitialWorkerEpoch",
+				"params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Metadata", "params.OAuthAccessTokenHash"},
 			wantSQLFragments:           []string{"INSERT INTO code_sessions", "CAST($12 AS jsonb)", "RETURNING uuid"},
@@ -67,6 +83,28 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames:          []string{"tokenHash"},
 			wantSensitiveArgumentNames: []string{"tokenHash"},
 			wantSQLFragments:           []string{"JOIN sessions", "oauth_access_token_hash = $1", "worker_lease_expires_at > NOW()"},
+		}},
+		{"find active for environment work", mapperBuilderContract{
+			statement: codeSessionMapperFindActiveForEnvironmentWorkStatement,
+			bound: buildCodeSessionMapperFindActiveForEnvironmentWork(
+				yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "environment-uuid", "session-uuid",
+			),
+			wantID: "CodeSessionMapper.FindActiveForEnvironmentWork", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "environmentUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"FROM code_sessions", "environment_uuid = $3", "session_uuid = $4", "LIMIT 2"},
+		}},
+		{"active ingress worker epoch", mapperBuilderContract{
+			statement: codeSessionMapperCountActiveIngressWorkerEpochStatement,
+			bound: buildCodeSessionMapperCountActiveIngressWorkerEpoch(
+				yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "codeses_test", 1,
+			),
+			wantID: "CodeSessionMapper.CountActiveIngressWorkerEpoch", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{
+				"organizationUUID", "workspaceUUID", "codeSessionExternalID", "workerEpoch",
+			},
+			wantSQLFragments: []string{
+				"SELECT COUNT(*)", "current_worker_epoch = $4", "status = 'active'",
+			},
 		}},
 		{"network policy context", mapperBuilderContract{
 			statement: codeSessionMapperFindNetworkPolicyContextStatement,
@@ -91,6 +129,23 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			wantSensitiveArgumentNames: []string{"params.WorkerTokenSessionID", "params.WorkerBinding"},
 			wantSQLFragments:           []string{"UPDATE code_sessions", "CAST($5 AS jsonb)", "RETURNING current_worker_epoch"},
 		}},
+		{"resume worker lease for sandbox", mapperBuilderContract{
+			statement: codeSessionMapperResumeWorkerLeaseForSandboxStatement,
+			bound: buildCodeSessionMapperResumeWorkerLeaseForSandbox(yourbatis.DialectPostgres, resumeCodeSessionWorkerLeaseParams{
+				OrganizationUUID: "org-uuid", WorkspaceUUID: "workspace-uuid", CodeSessionExternalID: "codeses_test",
+				ProviderSandboxID: "sandbox_test", ExpiresAt: expiresAt, Now: now,
+			}),
+			wantID: "CodeSessionMapper.ResumeWorkerLeaseForSandbox", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.ExpiresAt", "params.Now", "params.OrganizationUUID", "params.WorkspaceUUID",
+				"params.CodeSessionExternalID", "params.ProviderSandboxID",
+			},
+			wantSQLFragments: []string{
+				"UPDATE code_sessions", "current_worker_epoch > 0", "worker_lease_expires_at IS NOT NULL",
+				"work.session_uuid = code_session.session_uuid", "JOIN environment_sandboxes",
+				"provider_sandbox_id = $6", "work.state = 'active'",
+			},
+		}},
 		{"update worker state", mapperBuilderContract{
 			statement: codeSessionMapperUpdateWorkerStateStatement,
 			bound: buildCodeSessionMapperUpdateWorkerState(yourbatis.DialectPostgres, updateCodeSessionWorkerStateParams{
@@ -99,11 +154,11 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 			}),
 			wantID: "CodeSessionMapper.UpdateWorkerState", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.WorkerStatus", "params.RequiresActionDetails", "params.ExternalMetadata",
+				"params.WorkerStatus", "params.Now", "params.WorkerStatus", "params.RequiresActionDetails", "params.ExternalMetadata",
 				"params.Now", "params.Now", "params.Now", "params.UUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.RequiresActionDetails", "params.ExternalMetadata"},
-			wantSQLFragments:           []string{"worker_requires_action_details = CAST($2 AS jsonb)", "RETURNING uuid"},
+			wantSQLFragments:           []string{"worker_requires_action_details = CAST($4 AS jsonb)", "RETURNING uuid"},
 		}},
 	}
 	for _, test := range tests {
@@ -165,15 +220,6 @@ func TestCodeSessionEventMapperBuilderContracts(t *testing.T) {
 				"params.Now", "params.UUID",
 			},
 			wantSQLFragments: []string{"UPDATE code_session_inbound_events", "delivery_worker_epoch = $8", "uuid = $11"},
-		}},
-		{"outbound page", mapperBuilderContract{
-			statement: codeSessionOutboundEventMapperListAfterStatement,
-			bound: buildCodeSessionOutboundEventMapperListAfter(
-				yourbatis.DialectPostgres, "codeses_test", 10, 100,
-			),
-			wantID: "CodeSessionOutboundEventMapper.ListAfter", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{"codeSessionExternalID", "afterSequence", "limit"},
-			wantSQLFragments:  []string{"FROM code_session_outbound_events", "sequence_num > $2", "LIMIT $3"},
 		}},
 		{"internal insert", mapperBuilderContract{
 			statement: codeSessionInternalEventMapperInsertStatement,

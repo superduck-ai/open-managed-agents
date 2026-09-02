@@ -18,19 +18,21 @@ func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, 
 		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return
 	}
-	for _, event := range created {
-		h.broadcast(event)
-	}
+	h.publishSessionEvents(r.Context(), created)
 }
 
 func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
 	if h == nil || len(payloads) == 0 {
 		return nil
 	}
-	session, err := h.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
+	session, found, err := h.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {
 		return err
 	}
+	if !found {
+		return db.ErrNotFound
+	}
+	var streamEvents []db.SessionEvent
 	var events []db.SessionEvent
 	now := time.Now().UTC()
 	for _, raw := range payloads {
@@ -40,7 +42,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 				h.logger.WarnContext(ctx, "skip code session stream delta", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
 				continue
 			}
-			h.broadcastStreamDelta(event)
+			streamEvents = append(streamEvents, event)
 			continue
 		}
 		batch, err := h.sessionEventsFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
@@ -50,6 +52,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		events = append(events, batch...)
 	}
+	h.publishSessionEvents(ctx, streamEvents)
 	if len(events) == 0 {
 		return nil
 	}
@@ -69,10 +72,25 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		return err
 	}
+	persisted := make(map[string]db.SessionEvent, len(created))
 	for _, event := range created {
-		h.applySessionEventEffects(ctx, event)
-		h.broadcast(event)
+		persisted[event.ExternalID] = event
 	}
+	// Idempotent retries reapply stored state projections. Only newly inserted
+	// events are broadcast and have webhooks enqueued.
+	var projectionErr error
+	for _, event := range events {
+		stored, ok := persisted[event.ExternalID]
+		var eventErr error
+		if !ok {
+			stored, eventErr = h.db.GetSessionEvent(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
+		}
+		if eventErr == nil {
+			eventErr = h.applySessionEventProjection(ctx, stored)
+		}
+		projectionErr = errors.Join(projectionErr, eventErr)
+	}
+	h.publishSessionEvents(ctx, created)
 	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
-	return nil
+	return projectionErr
 }

@@ -8,6 +8,7 @@ import {
   CircleDollarSign,
   Code2,
   Copy,
+  Cpu,
   Database,
   FileText,
   Gauge,
@@ -62,6 +63,7 @@ export type NavItem = NavLinkItem | NavGroupItem;
 
 export const consoleNavigation: NavItem[] = [
   { type: 'link', href: '/dashboard', label: 'Dashboard', labelId: 'nav.dashboard', icon: LayoutDashboard },
+  { type: 'link', href: '/llm-models', label: 'LLM models', labelId: 'nav.llmModels', icon: Cpu },
   { type: 'link', href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys', icon: KeyRound },
   {
     type: 'group',
@@ -84,6 +86,7 @@ export const consoleNavigation: NavItem[] = [
       { href: '/quickstart', label: 'Quickstart', labelId: 'nav.quickstart' },
       { href: '/agents', label: 'Agents', labelId: 'nav.agents' },
       { href: '/sessions', label: 'Sessions', labelId: 'nav.sessions' },
+      { href: '/observability', label: 'Observability', labelId: 'nav.observability' },
       { href: '/deployments', label: 'Deployments', labelId: 'nav.deployments', badge: 'New', badgeId: 'nav.new' },
       { href: '/environments', label: 'Environments', labelId: 'nav.environments' },
       { href: '/credential-vaults', label: 'Credential vaults', labelId: 'nav.credentialVaults' },
@@ -146,6 +149,7 @@ export const settingsNavigation = [
 ] as const;
 
 export const placeholderIcons = {
+  '/llm-models': Cpu,
   '/api-keys': KeyRound,
   '/workbench': Code2,
   '/playground': Braces,

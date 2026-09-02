@@ -11,7 +11,7 @@ type skillRow struct {
 	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
 	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string    `db:"created_by_api_key_uuid"`
 	DisplayTitle        *string    `db:"display_title"`
 	LatestVersion       *string    `db:"latest_version"`
 	Source              string     `db:"source"`
@@ -24,7 +24,7 @@ type insertSkillParams struct {
 	UUID                string
 	ExternalID          string
 	WorkspaceUUID       string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	DisplayTitle        *string
 	LatestVersion       string
 	CreatedAt           time.Time

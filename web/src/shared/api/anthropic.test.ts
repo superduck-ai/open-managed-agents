@@ -117,6 +117,7 @@ describe('anthropicBetaApi', () => {
     setConsoleRequestContext({
       organizationUuid: 'org_test_uuid',
       workspaceId: 'wrkspc_test_uuid',
+      csrfToken: 'csrf_test_token',
     });
 
     const file = new File(['skill archive'], 'emoji-translator.zip', { type: 'application/zip' });
@@ -133,6 +134,7 @@ describe('anthropicBetaApi', () => {
     expect(headers.get('anthropic-beta')).toBe('skills-2025-10-02');
     expect(headers.get('x-organization-uuid')).toBe('org_test_uuid');
     expect(headers.get('x-workspace-id')).toBe('wrkspc_test_uuid');
+    expect(headers.get('x-csrf-token')).toBe('csrf_test_token');
     expect(headers.get('x-api-key')).toBeNull();
     expect(headers.get('authorization')).toBeNull();
     expect(version.skill_id).toBe('skill_123');
@@ -158,6 +160,27 @@ describe('anthropicBetaApi', () => {
       status: 400,
       code: 'invalid_request_error',
       message: 'Workspace is required.',
+    });
+  });
+
+  test('normalizes an unconfigured model catalog as HTTP 503', async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              type: 'api_error',
+              message: 'This workspace has no LLM provider configured',
+            },
+          }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as unknown as typeof fetch;
+
+    await expect(anthropicApi.models.list({ limit: 1000 }, 'unconfigured')).rejects.toEqual({
+      status: 503,
+      code: 'api_error',
+      message: 'This workspace has no LLM provider configured',
     });
   });
 });

@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -28,7 +29,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -218,7 +218,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateMemoryStore(r.Context(), db.MemoryStore{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          storeID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceUUID:       principal.WorkspaceUUID,
@@ -494,7 +494,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		ContentSHA256:    &contentSHA,
 		S3Bucket:         ptrString(h.store.Name()),
 		S3Key:            &objectKey,
-		CreatedBy:        apiActor(principal),
+		CreatedBy:        principalActor(principal),
 		CreatedAt:        now,
 	})
 	if err != nil {
@@ -777,7 +777,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			writeAPIError(w, r, "Could not generate memory version ID")
 			return
 		}
-		versionUUID := uuid.NewString()
+		versionUUID := uuid.NewV4().String()
 		objectKey := memoryObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
 		contentBytes := []byte(targetContent)
 		contentSHA := sha256Hex(contentBytes)
@@ -801,7 +801,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			S3Key:                 objectKey,
 			ExpectedContentSHA256: expectedHash,
 			BaseVersionExternalID: record.CurrentVersionExternalID,
-			Actor:                 apiActor(principal),
+			Actor:                 principalActor(principal),
 			Now:                   time.Now().UTC(),
 		})
 		if errors.Is(err, db.ErrVersionConflict) {
@@ -858,10 +858,10 @@ func (h *Handler) deleteMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		WorkspaceUUID:         principal.WorkspaceUUID,
 		MemoryStoreExternalID: storeID,
 		MemoryExternalID:      memoryID,
-		VersionUUID:           uuid.NewString(),
+		VersionUUID:           uuid.NewV4().String(),
 		VersionExternalID:     versionID,
 		ExpectedContentSHA256: expected,
-		Actor:                 apiActor(principal),
+		Actor:                 principalActor(principal),
 		Now:                   time.Now().UTC(),
 	}); err != nil {
 		h.writeMemoryMutationError(w, r, err, storeID, memoryID)
@@ -984,7 +984,7 @@ func (h *Handler) redactVersionRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID, versionID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, apiActor(principal), time.Now().UTC())
+	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, principalActor(principal), time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			writeBadRequest(w, r, errors.New("cannot redact the active memory version"))
@@ -1058,8 +1058,8 @@ func (h *Handler) newMemoryObjectIDs(workspaceUUID, storeUUID string) (memoryID,
 	if err != nil {
 		return "", "", "", "", "", err
 	}
-	memoryUUID = uuid.NewString()
-	versionUUID = uuid.NewString()
+	memoryUUID = uuid.NewV4().String()
+	versionUUID = uuid.NewV4().String()
 	objectKey = memoryObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID)
 	return memoryID, versionID, memoryUUID, versionUUID, objectKey, nil
 }
@@ -1153,7 +1153,10 @@ func optionalActor(actor *db.MemoryActor) *actorResponse {
 	return &value
 }
 
-func apiActor(principal auth.Principal) db.MemoryActor {
+func principalActor(principal auth.Principal) db.MemoryActor {
+	if principal.CredentialType == auth.CredentialTypePlatformSession {
+		return db.MemoryActor{Type: "user_actor", UserID: principal.UserExternalID}
+	}
 	return db.MemoryActor{
 		Type:             "api_actor",
 		APIKeyUUID:       principal.APIKeyUUID,
@@ -1545,7 +1548,10 @@ func decodeStoreCursor(raw string) (*db.MemoryStorePageCursor, error) {
 	}
 	resourceUUID, ok := payload["uuid"].(string)
 	createdRaw, _ := payload["created_at"].(string)
-	if !ok || uuid.Validate(resourceUUID) != nil || createdRaw == "" {
+	if !ok || createdRaw == "" {
+		return nil, errors.New("page is invalid")
+	}
+	if _, err := uuid.Parse(resourceUUID); err != nil {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, createdRaw)
@@ -1571,7 +1577,10 @@ func decodeMemoryCursor(raw string) (*db.MemoryPageCursor, error) {
 	}
 	path, _ := payload["path"].(string)
 	resourceUUID, ok := payload["uuid"].(string)
-	if !ok || uuid.Validate(resourceUUID) != nil {
+	if !ok {
+		return nil, errors.New("page is invalid")
+	}
+	if _, err := uuid.Parse(resourceUUID); err != nil {
 		return nil, errors.New("page is invalid")
 	}
 	cursor := &db.MemoryPageCursor{Path: path, UUID: resourceUUID}
@@ -1603,7 +1612,10 @@ func decodeVersionCursor(raw string) (*db.MemoryVersionPageCursor, error) {
 	}
 	resourceUUID, ok := payload["uuid"].(string)
 	createdRaw, _ := payload["created_at"].(string)
-	if !ok || uuid.Validate(resourceUUID) != nil || createdRaw == "" {
+	if !ok || createdRaw == "" {
+		return nil, errors.New("page is invalid")
+	}
+	if _, err := uuid.Parse(resourceUUID); err != nil {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, createdRaw)

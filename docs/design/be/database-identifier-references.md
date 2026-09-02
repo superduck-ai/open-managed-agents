@@ -95,21 +95,43 @@ identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
 | 资源目录（`00041`） | `files`、`skills`、`agents`、`environments`、`vaults`、`memory_stores`、`webhook_endpoints`、`message_batches` | organization、workspace、creator、environment 等所属资源引用 |
 | 资源子表（`00041`） | `skill_versions`、`agent_versions`、`environment_keys`、`vault_credentials`、`mcp_oauth_flows`、`memories`、`memory_versions`、`message_batch_requests` | 父资源、租户、creator/user 和 current/redaction version 引用 |
 | 编排与会话（`00042`） | `deployments`、`deployment_runs`、`sessions`、`session_threads`、`session_resources`、`session_events` | organization、workspace、API key、environment、agent、deployment、session、thread 引用 |
-| Code Session 与 runtime（`00043`） | `code_sessions`、三个 `code_session_*_events` 表、`environment_work`、`environment_worker_polls`、`environment_sandboxes` | organization、workspace、session、environment、code session、work 引用 |
+| Code Session 与 runtime（`00043`） | `code_sessions`、当时存在的三个 `code_session_*_events` 表、`environment_work`、`environment_worker_polls`、`environment_sandboxes` | organization、workspace、session、environment、code session、work 引用；outbound event 表随后由 `00051` 移除 |
 | 后台与统计（`00043`） | `jobs`、`workspace_storage_usage` | `workspace_uuid` |
 | Console 与 Workbench（`00044`） | `console_api_keys`、`workbench_prompts`、`workbench_prompt_revisions`、`workbench_prompt_kv`、`workbench_evaluations`、`workbench_generated_test_cases` | organization、workspace、API key、user、prompt、revision 引用 |
 | Admin Tunnel（`00045`） | `mcp_tunnels`、`mcp_tunnel_certificates` | organization、workspace、tunnel 引用 |
 | Console/Workbench 兼容展示（`00046`） | `console_api_keys`、`workbench_prompts` | 将非权威文本列明确命名为 `workspace_display_id`；资源定位仍只使用 `workspace_uuid` |
+| Environment Work Session 关联（`00052`） | `environment_work` | 用必填 `session_uuid` 替代 Session external ID 的 JSONB 间接关联 |
 
 例如 `skill_versions.skill_uuid`、`deployment_runs.deployment_uuid`、
-`session_events.session_uuid`、`code_session_outbound_events.code_session_uuid` 和
-`workbench_evaluations.revision_ref_uuid` 都直接引用父资源的稳定 UUID，不再保存父表 identity。
+`session_events.session_uuid` 和 `workbench_evaluations.revision_ref_uuid` 都直接引用父资源的稳定 UUID，
+不再保存父表 identity。
 仅为外部协议兼容而存在的 `*_external_id` 或 `prompt_uuid` 文本字段继续保留其协议语义，但不再
 承担数据库内部资源关联。
 
 对于 nullable 引用（例如 session 的 deployment、memory 的 current version、sandbox 的 work），
 迁移保留可空语义；非空旧值无法映射时仍会失败。父子关系和租户归属通过写入 SQL、迁移校验以及
 集成测试保证。
+
+### Environment Work 的 Session 强类型关联
+
+迁移 `00052_use_session_uuid_for_environment_work.sql` 将 `environment_work.data jsonb` 替换为
+`session_uuid uuid not null`。Environment Work 自此只承载 Session Work，不再接受任意 Work payload。
+迁移要求每条历史 `data` 都是只包含 `type`、`id` 的对象，且 `type=session`；随后按 organization、
+workspace、environment 与 Session external ID 唯一回填 Session UUID。非 Session、附带未知字段、
+无法映射或无法唯一映射的数据都会让迁移明确失败。软删除 Session 仍参与回填与回滚，保证历史 Work
+不因 Session 生命周期而丢失关联。
+
+数据库内部的 Session 删除、Work 恢复、Sandbox/Code Session 关联与 Runner 加载全部使用
+`session_uuid`。Work 查询在相同 organization、workspace、environment 范围内关联 `sessions`，一次性
+投影协议所需的 Session external ID；写入和状态更新不会解析 JSON，也不会产生列表 N+1 查询。
+对外 Environment Work API 合同保持不变，仍由 HTTP DTO 构造：
+
+```json
+{"data":{"type":"session","id":"sesn_..."}}
+```
+
+`metadata jsonb` 不在本次迁移范围内。schema 仍不添加 PostgreSQL 外键，关联完整性由 Session 创建
+事务、带租户范围的 Mapper SQL、迁移校验和 PostgreSQL 测试保证。
 
 ## 应用查询边界
 
@@ -198,6 +220,7 @@ Console 与 Workbench 的 workspace 路由仍需兼容协议 external ID 和 `de
 - 默认 seed、Platform 登录、Console Workspace、Admin Workspace、API Key 鉴权、Filestore 和 Code Session 的租户关联继续通过；
 - `files` 到 `message_batches` 的资源主表，以及它们的资源子表，不再保存目标表 bigint identity；
 - deployments/session、Code Session/runtime、jobs/statistics、Console/Workbench 的跨表引用均为 UUID；
+- `environment_work` 只保存必填 `session_uuid`，不再保存 `data jsonb`，而 API 仍返回兼容的 Session Work `data`；
 - 目标表的应用模型、过滤条件、父子关联与稳定排序不读取 bigint identity；
 - nullable UUID 引用保留原有可空语义，必填或已有非空引用无法映射时 migration 失败；
 - DB 输入参数由上层边界按需校验；Mapper 的 UUID/nullable UUID 字段使用字符串类型，普通 SQL

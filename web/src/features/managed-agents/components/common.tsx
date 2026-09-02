@@ -92,7 +92,7 @@ export function ManagedSearchField({
   };
 
   return (
-    <div className="relative block h-9 w-[320px] max-w-full">
+    <div className="relative block h-8 w-[320px] max-w-full">
       <Label className="sr-only" htmlFor={id}>
         {placeholder}
       </Label>
@@ -107,11 +107,13 @@ export function ManagedSearchField({
       ) : null}
       <Input
         ref={inputRef}
+        type="search"
+        data-custom-clear
         id={id}
         value={value}
         placeholder={placeholder}
         className={clsx(
-          'h-9 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border focus-visible:ring-0',
+          'h-8 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border',
           prefix ? 'pl-[64px]' : 'pl-9',
           value ? 'pr-9' : 'pr-3',
         )}
@@ -162,7 +164,7 @@ export function AgentFilterDropdown<TValue extends string, TMenu extends string>
           <Button
             type="button"
             variant="outline"
-            className={clsx('h-9 gap-2 bg-secondary px-3 text-sm', open && 'border-border')}
+            className={clsx('h-8 gap-2 bg-secondary px-3 text-sm', open && 'border-border')}
             data-agent-filter-menu
           />
         }
@@ -648,6 +650,7 @@ export function ManagedTextField({
   placeholder,
   disabled = false,
   autoFocus = false,
+  type = 'text',
   onChange,
 }: {
   label: string;
@@ -655,6 +658,7 @@ export function ManagedTextField({
   placeholder?: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  type?: 'text' | 'password';
   onChange: (value: string) => void;
 }) {
   const id = `managed-field-${useId()}`;
@@ -665,10 +669,12 @@ export function ManagedTextField({
       </Label>
       <Input
         id={id}
+        type={type}
         value={value}
         placeholder={placeholder}
         disabled={disabled}
         autoFocus={autoFocus}
+        autoComplete={type === 'password' ? 'off' : undefined}
         className="managed-resource-field mt-2 h-10 border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:shadow-none focus-visible:shadow-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:text-muted-foreground"
         onChange={(event) => onChange(event.target.value)}
       />

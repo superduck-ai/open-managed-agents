@@ -1,0 +1,31 @@
+---
+title: "密钥库"
+description: "管理密钥库、加密凭据、轮换和 MCP OAuth 验证。"
+---
+
+所有密钥库请求要求 `?beta=true`。
+
+## 密钥库端点
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/vaults` | 创建 / 列出 |
+| `GET` / `POST` / `DELETE` | `/v1/vaults/{id}` | 读取 / 更新 / 删除 |
+| `POST` | `/v1/vaults/{id}/archive` | 归档 |
+
+创建字段是 `display_name` 和字符串 `metadata`。
+
+## 凭据端点
+
+| 方法 | 子路径 | 用途 |
+| --- | --- | --- |
+| `POST` / `GET` | `/credentials` | 创建 / 列出 |
+| `GET` / `POST` / `DELETE` | `/credentials/{credential_id}` | 读取 / 更新 / 删除 |
+| `POST` | `/credentials/{credential_id}/archive` | 归档 |
+| `POST` | `/credentials/{credential_id}/mcp_oauth_validate` | 验证刷新令牌和 MCP 连接 |
+
+凭据的 `auth.type` 为 `mcp_oauth`、`static_bearer` 或 `environment_variable`。创建或更新请求体同时包含公开认证配置和机密字段；响应永不回显机密内容。
+
+<Warning>
+  创建成功后，请安全保存业务所需的 ID。任何读取接口都不能恢复令牌或客户端密钥。
+</Warning>

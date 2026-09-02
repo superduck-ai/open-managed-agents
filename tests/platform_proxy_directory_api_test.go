@@ -1,15 +1,11 @@
 package tests
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
-
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func TestDirectoryServersCORSPreflight(t *testing.T) {
@@ -83,191 +79,87 @@ func TestDirectoryServersRoute(t *testing.T) {
 	}
 }
 
-func TestPlatformOrganizationProxyMessages(t *testing.T) {
-	var (
-		mu       sync.Mutex
-		seenPath string
-		seenAuth string
-		seenKey  string
-		seenBody string
-	)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read upstream body: %v", err)
-		}
-		mu.Lock()
-		seenPath = r.URL.Path
-		seenAuth = r.Header.Get("Authorization")
-		seenKey = r.Header.Get("X-API-Key")
-		seenBody = string(body)
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_proxy_test","type":"message"}`))
-	}))
-	defer upstream.Close()
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.AnthropicUpstream.BaseURL = upstream.URL
-	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-proxy-test"
-	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-proxy-messages-bucket"))
+func TestPlatformOrganizationProxyMessagesRequiresConfiguredModel(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("platform-proxy-provider-errors-bucket"))
 	defer app.close()
-
 	orgUUID := loadDefaultOrganizationUUID(t, app)
-	cookies := app.platformLoginCookies(t, "proxy-messages@example.com")
-	payload := `{"model":"claude-opus-4-6","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
-	req, err := http.NewRequest(http.MethodPost, app.baseURL+"/api/organizations/"+orgUUID+"/proxy/v1/messages", strings.NewReader(payload))
-	if err != nil {
-		t.Fatalf("new proxy request: %v", err)
-	}
-	req.Host = "platform.claude.com"
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer browser-oauth-token")
-	req.Header.Set("Anthropic-Version", "2023-06-01")
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	resp, err := app.client.Do(req)
-	if err != nil {
-		t.Fatalf("do proxy request: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("proxy status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-	var response map[string]any
-	decodeJSON(t, resp.Body, &response)
-	if response["id"] != "msg_proxy_test" {
-		t.Fatalf("proxy response = %#v, want upstream response", response)
+	cookies := app.platformLoginCookies(t, "proxy-provider-errors@example.com")
+	path := "/api/organizations/" + orgUUID + "/proxy/v1/messages"
+
+	unknown := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"model":"not-configured","max_tokens":16,"messages":[]}`), cookies)
+	defer unknown.Body.Close()
+	if unknown.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown model status = %d, want 400: %s", unknown.StatusCode, readAll(t, unknown.Body))
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if seenPath != "/v1/messages" {
-		t.Fatalf("upstream path = %s, want /v1/messages", seenPath)
-	}
-	if seenAuth != "" {
-		t.Fatalf("upstream authorization = %q, want stripped", seenAuth)
-	}
-	if seenKey != "sk-ant-upstream-proxy-test" {
-		t.Fatalf("upstream x-api-key = %q, want configured key", seenKey)
-	}
-	if !json.Valid([]byte(seenBody)) || seenBody != payload {
-		t.Fatalf("upstream body = %q, want original JSON body", seenBody)
+	clearTestLLMProviders(t, app)
+	missing := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"model":"kimi-k2.5","max_tokens":16,"messages":[]}`), cookies)
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("missing Provider status = %d, want 503: %s", missing.StatusCode, readAll(t, missing.Body))
 	}
 }
 
-func TestPlatformOrganizationProxyMessagesMapsConfiguredModel(t *testing.T) {
-	var seenBody []byte
+func TestPlatformOrganizationProxyMessagesForwardsOnlyProtocolHeaders(t *testing.T) {
+	upstreamHeaders := make(chan http.Header, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		seenBody, err = io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read upstream body: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_proxy_mapped_model","type":"message"}`))
-	}))
-	defer upstream.Close()
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.AnthropicUpstream.BaseURL = upstream.URL
-	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-model-mapping-test"
-	cfg.AnthropicUpstream.ModelMappings = map[string]string{
-		"claude-sonnet-4-6": "glm-5-turbo",
-	}
-	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-proxy-model-mapping-bucket"))
-	defer app.close()
-
-	orgUUID := loadDefaultOrganizationUUID(t, app)
-	cookies := app.platformLoginCookies(t, "proxy-model-mapping@example.com")
-	payload := `{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
-	req, err := http.NewRequest(http.MethodPost, app.baseURL+"/api/organizations/"+orgUUID+"/proxy/v1/messages", strings.NewReader(payload))
-	if err != nil {
-		t.Fatalf("new proxy request: %v", err)
-	}
-	req.Host = "platform.claude.com"
-	req.Header.Set("Content-Type", "application/json")
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	resp, err := app.client.Do(req)
-	if err != nil {
-		t.Fatalf("do proxy request: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("proxy status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-
-	var upstreamBody struct {
-		Model     string `json:"model"`
-		MaxTokens int    `json:"max_tokens"`
-		Messages  []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-	}
-	if err := json.Unmarshal(seenBody, &upstreamBody); err != nil {
-		t.Fatalf("decode upstream body: %v", err)
-	}
-	if upstreamBody.Model != "glm-5-turbo" {
-		t.Fatalf("upstream model = %v, want glm-5-turbo", upstreamBody.Model)
-	}
-	if upstreamBody.MaxTokens != 16 || len(upstreamBody.Messages) != 1 {
-		t.Fatalf("upstream body lost request fields: %#v", upstreamBody)
-	}
-}
-
-func TestPlatformOrganizationProxyMessagesStream(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamHeaders <- r.Header.Clone()
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\"}\n\n"))
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("data: ok\n\n"))
 	}))
 	defer upstream.Close()
 
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.AnthropicUpstream.BaseURL = upstream.URL
-	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-proxy-stream-test"
-	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-proxy-messages-stream-bucket"))
+	app := newTestAppWithStore(t, nil, newFakeStore("platform-proxy-headers-bucket"))
 	defer app.close()
+	clearTestLLMProviders(t, app)
+	seedTestLLMProvider(t, app, "Proxy test", upstream.URL, "server-provider-key", "kimi-k2.5")
 
 	orgUUID := loadDefaultOrganizationUUID(t, app)
-	cookies := app.platformLoginCookies(t, "proxy-messages-stream@example.com")
-	req, err := http.NewRequest(http.MethodPost, app.baseURL+"/api/organizations/"+orgUUID+"/proxy/v1/messages", strings.NewReader(`{"stream":true}`))
-	if err != nil {
-		t.Fatalf("new proxy stream request: %v", err)
+	cookies := app.platformLoginCookies(t, "proxy-headers@example.com")
+	response := app.platformRequestWithHeaders(
+		t,
+		http.MethodPost,
+		"/api/organizations/"+orgUUID+"/proxy/v1/messages",
+		strings.NewReader(`{"model":"kimi-k2.5","stream":true,"max_tokens":16,"messages":[]}`),
+		cookies,
+		map[string]string{
+			"Accept":            "text/event-stream",
+			"Anthropic-Version": "2023-06-01",
+			"Anthropic-Beta":    "test-beta",
+			"X-CSRF-Token":      "browser-csrf",
+			"Connection":        "X-Connection-Only",
+			"X-Connection-Only": "browser-connection-secret",
+		},
+	)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("proxy status = %d, want 202: %s", response.StatusCode, readAll(t, response.Body))
 	}
-	req.Host = "platform.claude.com"
-	req.Header.Set("Content-Type", "application/json")
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
+	body, err := io.ReadAll(response.Body)
+	if err != nil || string(body) != "data: ok\n\n" {
+		t.Fatalf("proxy stream = %q, %v", body, err)
 	}
-	resp, err := app.client.Do(req)
-	if err != nil {
-		t.Fatalf("do proxy stream request: %v", err)
+
+	headers := <-upstreamHeaders
+	if headers.Get("X-API-Key") != "server-provider-key" ||
+		headers.Get("Authorization") != "Bearer server-provider-key" ||
+		headers.Get("Accept") != "text/event-stream" ||
+		headers.Get("Content-Type") != "application/json" ||
+		headers.Get("Anthropic-Version") != "2023-06-01" ||
+		headers.Get("Anthropic-Beta") != "test-beta" {
+		t.Fatalf("protocol headers = %#v", headers)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("proxy stream status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
-		t.Fatalf("proxy stream content-type = %q, want event stream", ct)
-	}
-	if cache := resp.Header.Get("Cache-Control"); cache != "no-cache" {
-		t.Fatalf("proxy stream cache-control = %q, want no-cache", cache)
-	}
-	body := string(readAll(t, resp.Body))
-	if !strings.Contains(body, "message_start") {
-		t.Fatalf("proxy stream body = %q, want upstream SSE", body)
+	for _, name := range []string{
+		"Cookie",
+		"X-CSRF-Token",
+		"X-Organization-UUID",
+		"X-Workspace-ID",
+		"Connection",
+		"X-Connection-Only",
+	} {
+		if value := headers.Get(name); value != "" {
+			t.Fatalf("sensitive header %s reached upstream: %q", name, value)
+		}
 	}
 }

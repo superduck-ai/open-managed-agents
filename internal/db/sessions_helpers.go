@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"context"
+	"slices"
 
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -78,6 +80,7 @@ func insertSessionTx(
 		resources = append(resources, created)
 	}
 
+	input.Work.SessionUUID = session.UUID
 	workRow, err := workMapper.Insert(ctx, environmentWorkWriteParamsFrom(input.Work))
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
@@ -154,19 +157,28 @@ func insertSessionEventsTx(
 		}
 		created = append(created, row.event())
 	}
+	if slices.ContainsFunc(created, func(event SessionEvent) bool {
+		return maevents.IsPublicWorkerInputEvent(event.EventType)
+	}) {
+		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
+			return nil, err
+		}
+	}
 	return created, nil
 }
 
 func sessionWriteParameters(session Session) sessionWriteParams {
 	return sessionWriteParams{
-		UUID: session.UUID, ExternalID: session.ExternalID,
+		RuntimeUserUUID: nullableString(session.RuntimeUserUUID),
+		UUID:            session.UUID, ExternalID: session.ExternalID,
 		OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
-		CreatedByAPIKeyUUID: session.CreatedByAPIKeyUUID, EnvironmentUUID: session.EnvironmentUUID,
+		CreatedByAPIKeyUUID: nullableString(session.CreatedByAPIKeyUUID), EnvironmentUUID: session.EnvironmentUUID,
 		EnvironmentExternalID: session.EnvironmentExternalID, AgentUUID: session.AgentUUID,
 		AgentExternalID: session.AgentExternalID, AgentVersion: session.AgentVersion,
 		AgentSnapshot: agentJSONArg(session.AgentSnapshot), DeploymentUUID: session.DeploymentUUID,
 		DeploymentID: session.DeploymentID, Title: session.Title, Metadata: agentJSONArg(session.Metadata),
-		VaultIDs: agentJSONArg(session.VaultIDs), Status: session.Status, Usage: agentJSONArg(session.Usage),
+		VaultIDs: append(sessionVaultIDs{}, session.VaultIDs...), Status: session.Status,
+		Usage: agentJSONArg(session.Usage),
 		Stats: agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
 		CreatedAt: session.CreatedAt,
 	}
@@ -258,12 +270,14 @@ func sessionEventsFromRows(rows []sessionEventRow) []SessionEvent {
 func (r sessionRow) session() Session {
 	return Session{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
+		RuntimeUserUUID: stringFromNullable(r.RuntimeUserUUID),
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
 		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),
-		VaultIDs: bytes.Clone(r.VaultIDs), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		VaultIDs: append([]string{}, r.VaultIDs...), Status: r.Status,
+		Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
 		OutcomeEvaluations: bytes.Clone(r.OutcomeEvaluations), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
@@ -284,6 +298,7 @@ func (r sessionResourceRow) resource() SessionResource {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ResourceType: r.ResourceType, Payload: bytes.Clone(r.Payload), SecretPayload: bytes.Clone(r.SecretPayload),
+		Path: filestoreString(r.Path), FileExternalID: filestoreString(r.FileExternalID),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, DeletedAt: r.DeletedAt,
 	}
 }

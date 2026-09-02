@@ -12,7 +12,7 @@ type deploymentRunMapperRow struct {
 	ExternalID           string     `db:"external_id"`
 	OrganizationUUID     string     `db:"organization_uuid"`
 	WorkspaceUUID        string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID  string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID  *string    `db:"created_by_api_key_uuid"`
 	DeploymentUUID       string     `db:"deployment_uuid"`
 	DeploymentExternalID string     `db:"deployment_external_id"`
 	AgentUUID            string     `db:"agent_uuid"`
@@ -22,7 +22,7 @@ type deploymentRunMapperRow struct {
 	SessionExternalID    *string    `db:"session_external_id"`
 	Error                []byte     `db:"error"`
 	TriggerType          string     `db:"trigger_type"`
-	TriggerContext       []byte     `db:"trigger_context"`
+	ScheduledAt          *time.Time `db:"scheduled_at"`
 	CreatedAt            time.Time  `db:"created_at"`
 	DeletedAt            *time.Time `db:"deleted_at"`
 }
@@ -32,7 +32,7 @@ type deploymentRunWriteParams struct {
 	ExternalID           string
 	OrganizationUUID     string
 	WorkspaceUUID        string
-	CreatedByAPIKeyUUID  string
+	CreatedByAPIKeyUUID  *string
 	DeploymentUUID       string
 	DeploymentExternalID string
 	AgentUUID            string
@@ -42,7 +42,7 @@ type deploymentRunWriteParams struct {
 	SessionExternalID    *string
 	Error                []byte
 	TriggerType          string
-	TriggerContext       []byte
+	ScheduledAt          *time.Time
 	CreatedAt            time.Time
 }
 

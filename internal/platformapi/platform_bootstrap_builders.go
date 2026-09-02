@@ -98,79 +98,8 @@ func buildOrganization(org OrganizationRecord) map[string]any {
 		"external_mapping":                  nil,
 		"raven_configuration":               nil,
 		"merchant_of_record":                "anthropic",
-		"claude_ai_bootstrap_models_config": buildBootstrapModelsConfig(),
+		"claude_ai_bootstrap_models_config": []any{},
 	}
-}
-
-type BootstrapModelOption struct {
-	Model           string                        `json:"model"`
-	Name            string                        `json:"name"`
-	Description     string                        `json:"description,omitempty"`
-	Overflow        bool                          `json:"overflow,omitempty"`
-	Inactive        bool                          `json:"inactive,omitempty"`
-	ThinkingModes   []BootstrapThinkingModeOption `json:"thinking_modes"`
-	Capabilities    *BootstrapModelCapabilities   `json:"capabilities,omitempty"`
-	NoticeText      string                        `json:"notice_text,omitempty"`
-	KnowledgeCutoff string                        `json:"knowledgeCutoff,omitempty"`
-	PaprikaModes    []string                      `json:"paprika_modes"`
-	HardLimit       int                           `json:"hard_limit,omitempty"`
-}
-
-type BootstrapThinkingModeOption struct {
-	Description      string `json:"description"`
-	ID               string `json:"id"`
-	IsDefault        bool   `json:"is_default"`
-	Mode             string `json:"mode"`
-	PaprikaModeValue string `json:"paprika_mode_value"`
-	SelectionTitle   string `json:"selection_title"`
-	Title            string `json:"title"`
-}
-
-type BootstrapModelCapabilities struct {
-	MMPDF       bool `json:"mm_pdf"`
-	MMImages    bool `json:"mm_images"`
-	WebSearch   bool `json:"web_search"`
-	GSuiteTools bool `json:"gsuite_tools"`
-	Compass     bool `json:"compass"`
-}
-
-func buildBootstrapModelsConfig() []BootstrapModelOption {
-	return []BootstrapModelOption{
-		{Model: "claude-fable-5", Name: "Claude Fable 5", Description: "For your toughest challenges", PaprikaModes: []string{"extended"}, ThinkingModes: adaptiveThinkingModes(), HardLimit: 449000},
-		{Model: "claude-opus-4-8", Name: "Claude Opus 4.8", Description: "For complex tasks", NoticeText: "Opus consumes usage limits faster than other models", PaprikaModes: []string{"extended"}, ThinkingModes: adaptiveThinkingModes(), HardLimit: 449000},
-		{Model: "claude-opus-4-5-20251101", Name: "Claude Opus 4.5", Inactive: true, NoticeText: "Opus consumes usage limits faster than other models", PaprikaModes: []string{"extended"}, ThinkingModes: extendedThinkingModes(), HardLimit: 190000},
-		{Model: "claude-opus-4-1-20250805-claude-ai", Name: "Opus 4.1", Inactive: true, NoticeText: "Opus consumes usage limits faster than other models", PaprikaModes: []string{"extended"}, ThinkingModes: extendedThinkingModes(), HardLimit: 190000},
-		{Model: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Description: "Most efficient for everyday tasks", PaprikaModes: []string{"extended"}, ThinkingModes: adaptiveThinkingModes(), HardLimit: 449000},
-		{Model: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4", Inactive: true, PaprikaModes: []string{"extended"}, ThinkingModes: extendedThinkingModes(), HardLimit: 190000},
-		{Model: "claude-haiku-4-5-20251001", Name: "Claude Haiku 4.5", Description: "Fastest for quick answers", PaprikaModes: []string{"extended"}, ThinkingModes: extendedThinkingModes(), HardLimit: 190000},
-		{Model: "claude-opus-4-7", Name: "Claude Opus 4.7", Overflow: true, NoticeText: "Opus consumes usage limits faster than other models", PaprikaModes: []string{"extended"}, ThinkingModes: adaptiveThinkingModes(), HardLimit: 449000},
-		{Model: "claude-opus-4-6", Name: "Claude Opus 4.6", Overflow: true, NoticeText: "Opus consumes usage limits faster than other models", PaprikaModes: []string{"extended"}, ThinkingModes: extendedThinkingModes(), HardLimit: 449000},
-		{Model: "claude-3-opus-20240229", Name: "Claude Opus 3", Overflow: true, NoticeText: "Opus consumes usage limits faster than other models", PaprikaModes: []string{}, ThinkingModes: []BootstrapThinkingModeOption{}, KnowledgeCutoff: "August 2023", Capabilities: &BootstrapModelCapabilities{}, HardLimit: 190000},
-	}
-}
-
-func adaptiveThinkingModes() []BootstrapThinkingModeOption {
-	return []BootstrapThinkingModeOption{{
-		Description:      "Can think for more complex tasks",
-		ID:               "auto",
-		IsDefault:        false,
-		Mode:             "extended",
-		PaprikaModeValue: "extended",
-		SelectionTitle:   "Thinking",
-		Title:            "Thinking",
-	}}
-}
-
-func extendedThinkingModes() []BootstrapThinkingModeOption {
-	return []BootstrapThinkingModeOption{{
-		Description:      "Think longer for complex tasks",
-		ID:               "extended",
-		IsDefault:        false,
-		Mode:             "extended",
-		PaprikaModeValue: "extended",
-		SelectionTitle:   "Extended",
-		Title:            "Extended thinking",
-	}}
 }
 
 func buildOrganizationSettings() map[string]any {

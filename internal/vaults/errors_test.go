@@ -87,6 +87,73 @@ func TestStaticErrors(t *testing.T) {
 	}
 }
 
+func TestInjectionRejected(t *testing.T) {
+	t.Run("nil cause is sentinel", func(t *testing.T) {
+		err := injectionRejected(nil)
+		if !errors.Is(err, ErrInjectionRejected) {
+			t.Fatalf("errors.Is(ErrInjectionRejected) = false for %v", err)
+		}
+		if err != ErrInjectionRejected {
+			t.Fatalf("nil cause should return sentinel directly, got %v", err)
+		}
+	})
+	t.Run("wraps cause", func(t *testing.T) {
+		cause := errors.New("load vault_ids failed")
+		err := injectionRejected(cause)
+		if !errors.Is(err, ErrInjectionRejected) {
+			t.Fatalf("errors.Is(ErrInjectionRejected) = false")
+		}
+		if !errors.Is(err, cause) {
+			t.Fatalf("errors.Is(cause) = false")
+		}
+	})
+	t.Run("public message is stable", func(t *testing.T) {
+		if InjectionUnavailablePublicMessage != "MCP upstream credentials are unavailable" {
+			t.Fatalf("public message drifted: %q", InjectionUnavailablePublicMessage)
+		}
+	})
+}
+
+func TestSubstitutionPublicMessage(t *testing.T) {
+	t.Parallel()
+	if SubstitutionUnavailablePublicMessage != "Environment variable credentials are unavailable" {
+		t.Fatalf("generic public message drifted: %q", SubstitutionUnavailablePublicMessage)
+	}
+	if SubstitutionBodyTooLargePublicMessage != "Request body exceeds 32 MiB; environment variable body substitution cannot be applied" {
+		t.Fatalf("body-too-large public message drifted: %q", SubstitutionBodyTooLargePublicMessage)
+	}
+	wrapped := substitutionRejected(errSnapshotRequestBodyTooLarge)
+	if got := SubstitutionPublicMessage(wrapped); got != SubstitutionBodyTooLargePublicMessage {
+		t.Fatalf("SubstitutionPublicMessage(body too large) = %q", got)
+	}
+	if got := SubstitutionPublicMessage(substitutionRejected(errors.New("open failed"))); got != SubstitutionUnavailablePublicMessage {
+		t.Fatalf("SubstitutionPublicMessage(other) = %q", got)
+	}
+}
+
+func TestRuntimeInjectionErrorConstructors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "missing credential", err: missingCredential(), want: "missing credential"},
+		{name: "incomplete secret", err: incompleteMCPOAuthSecret(), want: "mcp_oauth secret payload is incomplete"},
+		{name: "empty auth", err: emptyMCPOAuthAuth(), want: "empty mcp_oauth auth"},
+		{name: "not mcp oauth", err: credentialAuthNotMCPOAuth(), want: "credential auth is not mcp_oauth"},
+		{name: "server url required", err: mcpOAuthServerURLRequired(), want: "mcp_oauth auth mcp_server_url is required"},
+		{name: "refresh unavailable", err: errMCPOAuthRefreshUnavailable, want: "mcp_oauth refresh unavailable"},
+		{name: "missing access token", err: tokenEndpointMissingAccessToken(), want: "token endpoint returned no access_token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.err == nil || tt.err.Error() != tt.want {
+				t.Fatalf("error = %v, want %q", tt.err, tt.want)
+			}
+		})
+	}
+}
+
 func assertFault(t *testing.T, err error, kind apperr.Kind, message string, cause error) {
 	t.Helper()
 	appErr, ok := errors.AsType[*apperr.Error](err)

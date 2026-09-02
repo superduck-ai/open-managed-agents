@@ -227,23 +227,23 @@ func TestManagedAgentRuntimeResourcesSkipInvalidSources(t *testing.T) {
 }
 
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
-	// 故意给配置放入可识别的上游密钥，后续断言它不会进入 payload 或 shell 命令。
 	cfg := config.Config{
 		CodeSession: config.CodeSessionConfig{
 			SandboxAPIBaseURL: "http://host.docker.internal:18081/",
 		},
-		AnthropicUpstream: config.AnthropicUpstreamConfig{
-			BaseURL: "https://api.anthropic.test/",
-			APIKey:  "sk-ant-test-secret",
+		Observability: config.ObservabilityConfig{
+			Enabled:               true,
+			ContentCaptureEnabled: true,
 		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
 			ManagerPath:        "/opt/env manager/bin/environment-manager",
 			ClaudeAgentVersion: "2.1.120",
 			ClaudePath:         "/opt/claude path/bin/claude",
+			GitSSHtoHTTPSHosts: []string{"gitlab.xxxx.cn"},
 		},
 	}
 	sessionConfig := json.RawMessage(`{
-		"model":"claude-opus-4-8",
+		"model":"kimi-k2.5",
 		"sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}],
 		"claude_code_args":{
 			"tools":"Bash,Read,Write,Edit,Glob,Grep,WebFetch,Task,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,EnterWorktree,ExitPlanMode,ExitWorktree,NotebookEdit,ScheduleWakeup,Skill,TaskOutput,TaskStop,TodoWrite",
@@ -252,7 +252,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, "/workspace/widgets", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -277,6 +277,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_USE_CCR_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
+		startupEnv["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] != "true" ||
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
 	}
@@ -286,7 +287,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnv[key] != "claude-opus-4-8" {
+		if startupEnv[key] != "kimi-k2.5" {
 			t.Fatalf("%s = %q, want session model", key, startupEnv[key])
 		}
 	}
@@ -295,16 +296,29 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
 		startupEnv["OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/metrics" ||
 		startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
 		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/logs" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
+		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
+		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "1" ||
+		startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] != "" {
 		t.Fatalf("unexpected otlp environment variables: %#v", startupEnv)
 	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_HEADERS"]; ok {
-		t.Fatalf("unexpected generic otlp headers: %#v", startupEnv)
+	if startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" ||
+		startupEnv["OTEL_LOG_TOOL_DETAILS"] != "1" ||
+		startupEnv["OTEL_LOG_TOOL_CONTENT"] != "1" {
+		t.Fatalf("content capture grants missing from startup environment: %#v", startupEnv)
+	}
+	otlpBaseURL := "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp"
+	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "" ||
+		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != otlpBaseURL+"/metrics" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != otlpBaseURL+"/logs" ||
+		startupEnv["BETA_TRACING_ENDPOINT"] != otlpBaseURL {
+		t.Fatalf("unexpected managed OTLP endpoints: %#v", startupEnv)
+	}
+	for _, key := range []string{"OTEL_EXPORTER_OTLP_METRICS_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} {
+		if startupEnv[key] != "Authorization=Bearer "+sessionIngressToken {
+			t.Fatalf("%s = %q, want managed session ingress authorization", key, startupEnv[key])
+		}
 	}
 	auths := body["auth"].([]any)
 	sessionAuth := auths[0].(map[string]any)
@@ -324,9 +338,6 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := environment["environment"]; ok {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
-	if strings.Contains(string(payload), cfg.AnthropicUpstream.APIKey) {
-		t.Fatalf("payload leaked upstream anthropic api key: %s", payload)
-	}
 
 	command := buildEnvironmentManagerCommand("cse_session with 'quote'/and/slash", cfg, payload)
 	if !reflect.DeepEqual(command.Payload, payload) {
@@ -336,11 +347,25 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	for _, want := range []string{
 		"environment-manager binary missing or not executable: /opt/env manager/bin/environment-manager",
 		"Claude binary missing or not executable: /opt/claude path/bin/claude",
-		"task-run --stdin --session 'cse_session with '\"'\"'quote'\"'\"'/and/slash'",
+		"task-run --session 'cse_session with '\"'\"'quote'\"'\"'/and/slash'",
 		"--session-mode resume-cached",
 		"--claude-agent-version 'current'",
 		"--claude-path '/opt/claude path/bin/claude'",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
+		"export GIT_CONFIG_COUNT=5",
+		"export GIT_CONFIG_KEY_0=credential.interactive",
+		"export GIT_CONFIG_VALUE_0=false",
+		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_1=git@github.com:",
+		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
+		"export GIT_CONFIG_KEY_3='url.https://gitlab.xxxx.cn/.insteadOf'",
+		"export GIT_CONFIG_VALUE_3='git@gitlab.xxxx.cn:'",
+		"export GIT_CONFIG_KEY_4='url.https://gitlab.xxxx.cn/.insteadOf'",
+		"export GIT_CONFIG_VALUE_4='ssh://git@gitlab.xxxx.cn/'",
+		"export GIT_EDITOR=true",
+		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
+		"export GIT_TERMINAL_PROMPT=0",
 		"Claude binary version mismatch: expected 2.1.120",
 		"> '/tmp/claude-code-sessions/cse_session_with_'\"'\"'quote'\"'\"'_and_slash/environment-manager.log' 2>&1",
 	} {
@@ -348,8 +373,8 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			t.Fatalf("commands missing %q in:\n%s", want, allCommands)
 		}
 	}
-	if strings.Contains(allCommands, "sk-ant-test-secret") {
-		t.Fatalf("command leaked anthropic api key:\n%s", allCommands)
+	if strings.Contains(allCommands, "task-run --stdin") {
+		t.Fatalf("command should use task-run's native clap stdin behavior:\n%s", allCommands)
 	}
 	if strings.Contains(allCommands, "nohup") ||
 		strings.Contains(allCommands, "environment-manager.v0.json") ||
@@ -359,6 +384,38 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if strings.Contains(allCommands, "installed managed agent skills") ||
 		strings.Contains(allCommands, "$HOME/.claude/skills") {
 		t.Fatalf("command should not install managed agent skills directly:\n%s", allCommands)
+	}
+}
+
+func TestBuildEnvironmentManagerPayloadMergesVaultEnvPlaceholders(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
+	payload, err := buildEnvironmentManagerV0Payload(
+		"cse_test",
+		"sk-ant-si-test-token",
+		"sk-ant-oat01-test-token",
+		1,
+		"",
+		json.RawMessage(`{}`),
+		cfg,
+		map[string]string{
+			"NOTION_API_KEY":     "oma_ph_notion",
+			"CLAUDE_CODE_REMOTE": "oma_ph_should_not_overwrite",
+		},
+	)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	startupEnv := body["startup_context"].(map[string]any)["environment_variables"].(map[string]any)
+	if startupEnv["NOTION_API_KEY"] != "oma_ph_notion" {
+		t.Fatalf("NOTION_API_KEY = %v", startupEnv["NOTION_API_KEY"])
+	}
+	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" {
+		t.Fatalf("platform reserved env must win, got %v", startupEnv["CLAUDE_CODE_REMOTE"])
 	}
 }
 
@@ -374,7 +431,7 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 			"disallowed-tools":"Bash"
 		}
 	}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -425,150 +482,83 @@ func TestClaudeRuntimeModelEnvironment(t *testing.T) {
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
+func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) {
+	cfg := config.Config{
+		CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example.test"},
+		Observability: config.ObservabilityConfig{
+			Enabled:               true,
+			ContentCaptureEnabled: false,
+		},
+	}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
+		"CLAUDE_CODE_ENABLE_TELEMETRY":"",
 		"OTEL_METRICS_EXPORTER":"console",
-		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
+		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com",
+		"OTEL_EXPORTER_OTLP_METRICS_HEADERS":"Authorization=Bearer stale",
+		"OTEL_METRICS_INCLUDE_SESSION_ID":"false",
+		"OTEL_LOG_USER_PROMPTS":"1",
+		"OTEL_LOG_RAW_API_BODIES":"1"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
+	startup := buildEnvironmentManagerPayloadStartupContext(t, sessionConfig, cfg)
 	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "console" {
-		t.Fatalf("OTEL_METRICS_EXPORTER = %q, want console", startupEnv["OTEL_METRICS_EXPORTER"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"]; ok {
-		t.Fatalf("unexpected default otlp metrics endpoint for custom exporter: %#v", startupEnv)
+	// 用户设置的值优先；未设置的键才补平台默认值。
+	if startupEnv["OTEL_METRICS_EXPORTER"] != "console" ||
+		startupEnv["OTEL_METRICS_INCLUDE_SESSION_ID"] != "false" {
+		t.Fatalf("user telemetry preferences were overridden: %#v", startupEnv)
 	}
 	if startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/logs" {
-		t.Fatalf("unexpected default otlp logs environment variables: %#v", startupEnv)
+		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
+		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "" {
+		t.Fatalf("user telemetry values or platform defaults mismatch: %#v", startupEnv)
 	}
-	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want existing custom value only", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
+	if got := startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "" {
+		t.Fatalf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %#v, want empty so Claude can export OTEL", got)
 	}
-	if startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_LOGS_HEADERS = %q, want signal auth", startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"])
+	// 用户可以保留采集偏好；连接 OMA 的 signal-specific endpoint/header
+	// 由平台覆盖，使不会动态配置 OTLP 的旧版 environment-manager 也能工作。
+	if startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"] != "https://collector.example.com" ||
+		startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" {
+		t.Fatalf("user telemetry variables were removed: %#v", startupEnv)
 	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"]; ok {
-		t.Fatalf("unexpected metrics headers for custom metrics exporter: %#v", startupEnv)
+	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "https://oma.example.test/v1/code/sessions/cse_test/worker/otlp/metrics" ||
+		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token" {
+		t.Fatalf("managed OTLP connection was not applied: %#v", startupEnv)
 	}
 	if startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
 		t.Fatalf("CLAUDE_CODE_WORKER_EPOCH = %q, want 1", startupEnv["CLAUDE_CODE_WORKER_EPOCH"])
 	}
-}
-
-func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_LOGS_EXPORTER":"console",
-		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
-	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_LOGS_EXPORTER"] != "console" {
-		t.Fatalf("OTEL_LOGS_EXPORTER = %q, want console", startupEnv["OTEL_LOGS_EXPORTER"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"]; ok {
-		t.Fatalf("unexpected default otlp logs endpoint for custom exporter: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/metrics" {
-		t.Fatalf("unexpected default otlp metrics environment variables: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want existing custom value only", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_METRICS_HEADERS = %q, want signal auth", startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"]; ok {
-		t.Fatalf("unexpected logs headers for custom logs exporter: %#v", startupEnv)
-	}
-}
-
-func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
-	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"] != "https://collector.example.com" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q, want custom collector", startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"])
-	}
-	for _, key := range []string{
-		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-		"OTEL_EXPORTER_OTLP_HEADERS",
-		"OTEL_EXPORTER_OTLP_METRICS_HEADERS",
-		"OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-	} {
+	// 内容采集关闭时平台不补授权默认值，但不删用户自己设置的键。
+	for _, key := range []string{"OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_TOOL_CONTENT"} {
 		if _, ok := startupEnv[key]; ok {
-			t.Fatalf("unexpected injected %s with custom generic endpoint: %#v", key, startupEnv)
+			t.Fatalf("content capture grant %s injected while content capture is disabled: %#v", key, startupEnv)
 		}
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
+func TestBuildEnvironmentManagerPayloadKeepsUserTelemetryWhenDisabled(t *testing.T) {
 	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://collector.example.com/v1/metrics"
+		"CLAUDE_CODE_ENABLE_TELEMETRY":"1",
+		"OTEL_METRICS_EXPORTER":"console",
+		"OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer stale",
+		"OTEL_LOG_USER_PROMPTS":"1"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
+	startup := buildEnvironmentManagerPayloadStartupContext(t, sessionConfig, config.Config{})
 	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "https://collector.example.com/v1/metrics" {
-		t.Fatalf("custom metrics endpoint was not preserved: %#v", startupEnv)
+	// observability 关闭时不注入平台默认值，用户自己的遥测配置原样保留。
+	if startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "1" ||
+		startupEnv["OTEL_METRICS_EXPORTER"] != "console" ||
+		startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "Authorization=Bearer stale" ||
+		startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" {
+		t.Fatalf("user telemetry variables were changed when observability is disabled: %#v", startupEnv)
 	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"]; ok {
-		t.Fatalf("unexpected metrics auth headers for custom metrics endpoint: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_LOGS_HEADERS = %q, want default logs auth", startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_HEADERS"]; ok {
-		t.Fatalf("unexpected generic otlp headers with custom metrics endpoint: %#v", startupEnv)
+	if _, ok := startupEnv["OTEL_LOGS_EXPORTER"]; ok {
+		t.Fatalf("platform defaults injected while observability is disabled: %#v", startupEnv)
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://collector.example.com/v1/logs"
-	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
+func buildEnvironmentManagerPayloadStartupContext(t *testing.T, sessionConfig json.RawMessage, cfg config.Config) map[string]any {
+	t.Helper()
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
 	}
@@ -576,20 +566,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t 
 	if err := json.Unmarshal(payload, &body); err != nil {
 		t.Fatalf("decode payload: %v", err)
 	}
-	startup := body["startup_context"].(map[string]any)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "https://collector.example.com/v1/logs" {
-		t.Fatalf("custom logs endpoint was not preserved: %#v", startupEnv)
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"]; ok {
-		t.Fatalf("unexpected logs auth headers for custom logs endpoint: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_METRICS_HEADERS = %q, want default metrics auth", startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_HEADERS"]; ok {
-		t.Fatalf("unexpected generic otlp headers with custom logs endpoint: %#v", startupEnv)
-	}
+	return body["startup_context"].(map[string]any)
 }
 
 func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
@@ -607,7 +584,7 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 				]
 			}]
 		}`),
-		VaultIDs: json.RawMessage(`["vault_cred_123"]`),
+		VaultIDs: []string{"vault_cred_123"},
 	}
 
 	raw, err := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))

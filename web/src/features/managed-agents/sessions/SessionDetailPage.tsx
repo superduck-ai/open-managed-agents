@@ -8,13 +8,21 @@ import {
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
 import { toast } from '../../../shared/ui/sonner';
-import { TooltipProvider } from '../../../shared/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../shared/ui/tooltip';
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from '../../../shared/ui/message-scroller';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import {
+  addSessionFileResource,
   archiveManagedEntity,
   deleteManagedEntity,
   listAllSessionThreads,
-  listSessionResourcesForDetail,
+  postSessionToolConfirmation,
   retrieveSessionDetailSession,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
   sessionThreadListSignature,
@@ -27,46 +35,51 @@ import {
   type QuickstartSessionEvent,
   type ResourceConfig,
   type SessionApiResponse,
-  type SessionDebugDetailTab,
   type SessionEventListEntry,
-  type SessionResourceApiResponse,
+  type SessionFileResourceFormValue,
   type SessionThreadApiResponse,
-  type SessionTraceFilterOption,
-  type SessionTraceView,
+  type SessionToolConfirmationInput,
+  type ToolCallEntry,
 } from '../types';
 import { compactEntityId, copyText, errorMessage, managedEntityListHref } from '../utils';
-import clsx from 'clsx';
-import { Archive, ChevronDown, Copy, RotateCcw, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Archive, ArrowDown, ChevronDown, Copy, PanelRightOpen, RotateCcw, X } from 'lucide-react';
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { SessionDetailDeltaFramesContext, useSessionDetailEventData } from './sessionDetailData';
 import {
-  buildSessionDetailFilterOptions,
   buildSessionDetailLaneState,
   buildSessionDetailSummary,
   buildSessionEventsByLane,
   buildSessionTimeline,
   buildSessionTimelineVisibleIds,
+  findActiveAwaitingToolCall,
   flattenSessionEntriesByLane,
   nearestSessionEventEntry,
   readSessionArchivedLanePreference,
   readSessionDetailInitialEventId,
   readSessionDetailInitialLaneId,
-  readSessionDetailInitialView,
   resolveSelectedSessionEventEntry,
   scrollSessionEntryIntoView,
   sessionDetailEventCopyPayload,
-  sessionEventEntryMatchesSelectedId,
-  sessionEventEntryRowId,
   sessionEventEntrySelectionId,
-  sessionEventListFilterValue,
+  sessionEventEntryRowId,
   sessionEventUpdateTimestamp,
   sessionShouldStreamEvents,
+  sessionStatusIsLive,
   sessionStatusFromEventType,
   writeSessionArchivedLanePreference,
   writeSessionDetailUrlState,
 } from './sessionDetailModel';
 import {
   EventsMinimap,
+  EventsMinimapSkeleton,
   LaneTabStrip,
   scrollSessionEntryToOffset,
   SESSION_MAIN_LANE_ID,
@@ -76,19 +89,35 @@ import {
 } from './sessionTimeline';
 import {
   buildSessionEventEntries,
-  compareSessionEvents,
   sessionEventTimestamp,
   sessionEventType,
+  latestRequiresActionEventIDs,
+  latestOpenModelRequest,
+  sessionStatusFromEvents,
 } from './sessionTraceModel';
+import { SessionTraceEmpty, SessionTraceSearch, SessionTraceSkeleton } from './SessionTracePanel';
+import { SessionInspector } from './SessionInspector';
 import {
-  EventDetailPanel,
-  SessionEventTypeFilter,
-  SessionTraceEmpty,
-  SessionTraceSearch,
-  SessionTraceSkeleton,
-  SessionTraceViewMode,
-} from './SessionTracePanel';
-import { DebugRow, TranscriptRow } from './sessionTraceRows';
+  readSessionInspectorTab,
+  type SessionInspectorTab,
+  writeSessionInspectorUrlState,
+} from './sessionInspectorModel';
+import { SessionMessageComposer } from './SessionMessageComposer';
+import { SessionRequiresActionCard } from './SessionRequiresActionCard';
+import { SessionTranscriptView } from './SessionTranscriptView';
+import { SessionTraceWorkspaceLayout } from './SessionTraceWorkspaceLayout';
+import { sessionTraceKeyboardTarget } from './sessionTraceInteractions';
+
+const SESSION_CHROME_GUTTER_CLASS_NAME = 'px-4 @min-[640px]:px-6 @min-[1024px]:px-8';
+
+function sessionPendingAction(
+  toolCall: ToolCallEntry | null,
+  onConfirm: (input: SessionToolConfirmationInput) => Promise<void>,
+  disabled: boolean,
+) {
+  if (!toolCall) return undefined;
+  return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+}
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
   const { activeWorkspaceId } = useWorkspace();
@@ -97,27 +126,26 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const listHref = managedEntityListHref(activeWorkspaceId, 'sessions');
   const listLabel = resourceTitle(config, msg);
   const [session, setSession] = useState<SessionApiResponse | null>(null);
-  const [resources, setResources] = useState<SessionResourceApiResponse[]>([]);
   const [threads, setThreads] = useState<SessionThreadApiResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [resourceRefreshError, setResourceRefreshError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [view, setView] = useState<SessionTraceView>(readSessionDetailInitialView);
+  const [eventRefreshKey, setEventRefreshKey] = useState(0);
+  const [summaryClock, setSummaryClock] = useState(Date.now);
   const [query, setQuery] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedLaneId, setSelectedLaneId] = useState(readSessionDetailInitialLaneId);
   const [showArchivedLanes, setShowArchivedLanesState] = useState(readSessionArchivedLanePreference);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(readSessionDetailInitialEventId);
-  const [selectedDetailTab, setSelectedDetailTab] = useState<SessionDebugDetailTab>('content');
+  const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorTab, setInspectorTab] = useState<SessionInspectorTab>(readSessionInspectorTab);
   const [confirmAction, setConfirmAction] = useState<'archive' | 'delete' | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [metadataLoaded, setMetadataLoaded] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const detailPanelRef = useRef<HTMLDivElement | null>(null);
-  const lastEntryCountRef = useRef(0);
-  const skipNextAutoFollowRef = useRef(false);
   const suppressScrollSeekUntilRef = useRef(0);
   const threadRefreshTimerRef = useRef<number | null>(null);
   const setShowArchivedLanes = (value: boolean) => {
@@ -145,15 +173,21 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       })().catch(() => undefined);
     }, 600);
   }, [activeWorkspaceId, session?.id]);
-  const refreshSessionMetadata = useCallback(() => {
+  const refreshSessionResources = useCallback(() => {
     if (!session?.id) {
       return;
     }
     const activeSessionId = session.id;
+    setResourceRefreshError(null);
     void retrieveSessionDetailSession(activeSessionId, activeWorkspaceId)
-      .then((updatedSession) => setSession(updatedSession))
-      .catch(() => undefined);
+      .then((updatedSession) => setSession((currentSession) => mergeSessionResources(currentSession, updatedSession)))
+      .catch((error) => setResourceRefreshError(errorMessage(error)));
   }, [activeWorkspaceId, session?.id]);
+  const handleAddFileResource = useCallback(
+    (resource: SessionFileResourceFormValue) =>
+      addSessionFileResource(session!.id, resource, activeWorkspaceId).then(refreshSessionResources),
+    [activeWorkspaceId, refreshSessionResources, session],
+  );
   const activeSessionId = session?.id ?? null;
   const handlePrimaryStreamEvent = useCallback(
     (event: QuickstartSessionEvent) => {
@@ -176,11 +210,9 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       }
       if (type === 'session.thread_created') {
         refreshSessionThreads();
-      } else if (type === 'session.updated') {
-        refreshSessionMetadata();
       }
     },
-    [activeSessionId, refreshSessionMetadata, refreshSessionThreads],
+    [activeSessionId, refreshSessionThreads],
   );
 
   useEffect(() => {
@@ -188,7 +220,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     setLoading(true);
     setLoadError(null);
     setMetadataError(null);
-    setResources([]);
+    setResourceRefreshError(null);
     setThreads([]);
     setMetadataLoaded(false);
     void (async () => {
@@ -200,26 +232,20 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         setSession(loadedSession);
         setLoading(false);
 
-        const [resourcesResult, threadsResult] = await Promise.allSettled([
-          listSessionResourcesForDetail(loadedSession.id, activeWorkspaceId),
-          listAllSessionThreads(loadedSession.id, activeWorkspaceId),
-        ]);
-        if (!active) {
-          return;
+        try {
+          const threadsPage = await listAllSessionThreads(loadedSession.id, activeWorkspaceId);
+          if (active) {
+            setThreads(threadsPage.data ?? []);
+          }
+        } catch (error) {
+          if (active) {
+            setMetadataError(errorMessage(error));
+          }
+        } finally {
+          if (active) {
+            setMetadataLoaded(true);
+          }
         }
-        const loadedThreads = threadsResult.status === 'fulfilled' ? (threadsResult.value.data ?? []) : [];
-        if (resourcesResult.status === 'fulfilled') {
-          setResources(resourcesResult.value.data ?? []);
-        }
-        if (threadsResult.status === 'fulfilled') {
-          setThreads(loadedThreads);
-        }
-        setMetadataLoaded(true);
-        const settledResults = [resourcesResult, threadsResult] as PromiseSettledResult<unknown>[];
-        const firstRejected = settledResults.find(
-          (result): result is PromiseRejectedResult => result.status === 'rejected',
-        );
-        setMetadataError(firstRejected ? errorMessage(firstRejected.reason) : null);
       } catch (error) {
         if (active) {
           setSession(null);
@@ -265,6 +291,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     };
   }, [activeWorkspaceId, session?.archived_at, session?.id, session?.status]);
 
+  useEffect(() => {
+    setSummaryClock(Date.now());
+    const interval = window.setInterval(() => setSummaryClock(Date.now()), sessionSummaryRefreshInterval(session));
+    return () => window.clearInterval(interval);
+  }, [session?.archived_at, session?.id, session?.status]);
+
   const laneState = useMemo(
     () => buildSessionDetailLaneState(threads, msg, showArchivedLanes),
     [msg, showArchivedLanes, threads],
@@ -278,51 +310,79 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     includeArchivedThreads: showArchivedLanes,
     live: sessionShouldStreamEvents(session),
     onPrimaryEvent: handlePrimaryStreamEvent,
-    refreshKey,
+    refreshKey: refreshKey + eventRefreshKey,
   });
   const events = eventData.events;
   const eventsLoading = eventData.loading || eventData.childLoading;
   const eventError = eventData.error;
-  const sortedEvents = useMemo(() => [...events].sort(compareSessionEvents), [events]);
+
+  // Reconcile the header status from the event cache, not just live stream frames,
+  // so a missed frame (or a reply that fully landed before SSE subscribed) still
+  // corrects an optimistic "running". No-op while the statuses agree.
+  useEffect(() => {
+    const next = sessionStatusFromEvents(events);
+    if (!next || !session) {
+      return;
+    }
+    setSession((currentSession) => {
+      const currentStatus = currentSession?.status.toLowerCase();
+      if (
+        !currentSession ||
+        currentSession.id !== session.id ||
+        ((currentStatus === 'terminated' || currentStatus === 'deleted') && next.status !== 'deleted')
+      ) {
+        return currentSession;
+      }
+      // Mirror the live-frame path: a cached session.deleted must also archive,
+      // otherwise the header keeps the Archive action enabled.
+      const archivedAt =
+        next.status === 'deleted'
+          ? (currentSession.archived_at ?? sessionEventUpdateTimestamp(next.event, currentSession.updated_at))
+          : currentSession.archived_at;
+      if (next.status === currentSession.status.toLowerCase() && archivedAt === currentSession.archived_at) {
+        return currentSession;
+      }
+      return { ...currentSession, status: next.status, archived_at: archivedAt };
+    });
+  }, [events, session]);
   const traceStartMs = useMemo(() => {
     const sessionStart = session?.created_at ? Date.parse(session.created_at) : NaN;
     if (Number.isFinite(sessionStart)) {
       return sessionStart;
     }
-    return sortedEvents.map(sessionEventTimestamp).find(Boolean) ?? 0;
-  }, [session?.created_at, sortedEvents]);
+    return events.map(sessionEventTimestamp).find(Boolean) ?? 0;
+  }, [events, session?.created_at]);
 
   const eventsByLaneId = useMemo(
-    () => buildSessionEventsByLane(lanes, sortedEvents, laneIdByThreadId),
-    [laneIdByThreadId, lanes, sortedEvents],
+    () => buildSessionEventsByLane(lanes, events, laneIdByThreadId),
+    [events, laneIdByThreadId, lanes],
   );
   const entriesByLaneId = useMemo(() => {
     const nextEntriesByLaneId = new Map<string, SessionEventListEntry[]>();
     lanes.forEach((lane) => {
       nextEntriesByLaneId.set(
         lane.id,
-        buildSessionEventEntries(eventsByLaneId.get(lane.id) ?? [], view, traceStartMs, msg, {
+        buildSessionEventEntries(eventsByLaneId.get(lane.id) ?? [], 'transcript', traceStartMs, msg, {
           platformTranscriptFiltering: true,
         }),
       );
     });
     return nextEntriesByLaneId;
-  }, [eventsByLaneId, lanes, msg, traceStartMs, view]);
+  }, [eventsByLaneId, lanes, msg, traceStartMs]);
   const entries = useMemo(() => entriesByLaneId.get(activeLane) ?? [], [activeLane, entriesByLaneId]);
+  const openModelRequest = useMemo(
+    () => latestOpenModelRequest(eventsByLaneId.get(activeLane) ?? []),
+    [activeLane, eventsByLaneId],
+  );
   const allEntries = useMemo(() => flattenSessionEntriesByLane(lanes, entriesByLaneId), [entriesByLaneId, lanes]);
-  const filterOptions = useMemo<SessionTraceFilterOption[]>(
-    () => buildSessionDetailFilterOptions(allEntries, view, msg),
-    [allEntries, msg, view],
+  const inspectorEventEntries = useMemo(
+    () => buildSessionEventEntries(events, 'debug', traceStartMs, msg),
+    [events, msg, traceStartMs],
   );
   const filteredEntries = useMemo(() => {
-    const selected = new Set(selectedTypes);
     const needle = query.trim().toLowerCase();
-    return entries.filter((entry) => {
-      const matchesType = selected.size === 0 || selected.has(sessionEventListFilterValue(entry, view));
-      const matchesQuery = !needle || entry.searchText.includes(needle);
-      return matchesType && matchesQuery;
-    });
-  }, [entries, query, selectedTypes, view]);
+    return needle ? entries.filter((entry) => entry.searchText.includes(needle)) : entries;
+  }, [entries, query]);
   const selectedEntry = useMemo(
     () => resolveSelectedSessionEventEntry(filteredEntries, selectedEntryId),
     [filteredEntries, selectedEntryId],
@@ -331,36 +391,72 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     () => resolveSelectedSessionEventEntry(allEntries, selectedEntryId),
     [allEntries, selectedEntryId],
   );
-  const hasFilter = query.trim().length > 0 || selectedTypes.length > 0 || activeLane !== SESSION_MAIN_LANE_ID;
+  const selectedInspectorEntry = useMemo(
+    () => resolveSelectedSessionEventEntry(inspectorEventEntries, selectedEntryId) ?? selectedEntryInAnyLane,
+    [inspectorEventEntries, selectedEntryId, selectedEntryInAnyLane],
+  );
+  const hoveredEntryInAnyLane = useMemo(
+    () => resolveSelectedSessionEventEntry(allEntries, hoveredEventId),
+    [allEntries, hoveredEventId],
+  );
+  const hoveredInspectorEntry = useMemo(
+    () => resolveSelectedSessionEventEntry(inspectorEventEntries, hoveredEventId) ?? hoveredEntryInAnyLane,
+    [hoveredEntryInAnyLane, hoveredEventId, inspectorEventEntries],
+  );
+  const hoveredInspectorEventId = hoveredInspectorEntry
+    ? sessionEventEntrySelectionId(hoveredInspectorEntry)
+    : hoveredEventId;
+  const hasFilter = query.trim().length > 0 || activeLane !== SESSION_MAIN_LANE_ID;
   const timeline = useMemo(() => buildSessionTimeline(lanes, entriesByLaneId), [entriesByLaneId, lanes]);
   const timelineVisibleIds = useMemo(
-    () =>
-      buildSessionTimelineVisibleIds(
-        entriesByLaneId,
-        filteredEntries,
-        timeline,
-        activeLane,
-        selectedTypes,
-        query,
-        view,
-      ),
-    [activeLane, entriesByLaneId, filteredEntries, query, selectedTypes, timeline, view],
+    () => buildSessionTimelineVisibleIds(filteredEntries, timeline, activeLane, query),
+    [activeLane, filteredEntries, query, timeline],
   );
   const summary = useMemo(
-    () => (session ? buildSessionDetailSummary(session, resources, sortedEvents, formatters, msg) : null),
-    [formatters, msg, resources, session, sortedEvents],
+    () => (session ? buildSessionDetailSummary(session, events, formatters, msg, summaryClock) : null),
+    [events, formatters, msg, session, summaryClock],
   );
-  const copyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries, view), [filteredEntries, view]);
+  const currentViewCopyPayload = useMemo(() => sessionDetailEventCopyPayload(filteredEntries), [filteredEntries]);
+  const fullTranscriptCopyPayload = useMemo(() => sessionDetailEventCopyPayload(entries), [entries]);
+  const actionEntries = allEntries;
+  const requiresActionEventIDs = useMemo(() => latestRequiresActionEventIDs(events), [events]);
+  const activeAwaitingToolCall = useMemo(
+    () => findActiveAwaitingToolCall(actionEntries, requiresActionEventIDs),
+    [actionEntries, requiresActionEventIDs],
+  );
+
+  const handleToolConfirmation = useCallback(
+    async (input: SessionToolConfirmationInput) => {
+      if (!session?.id) {
+        return;
+      }
+      setMutationError(null);
+      try {
+        const response = await postSessionToolConfirmation(session.id, input, activeWorkspaceId);
+        if (response.data?.length) {
+          eventData.appendPrimaryEvents(response.data);
+        }
+        setSession((currentSession) =>
+          currentSession && currentSession.id === session.id
+            ? { ...currentSession, status: 'running' }
+            : currentSession,
+        );
+        setEventRefreshKey((value) => value + 1);
+      } catch (error) {
+        setMutationError(errorMessage(error));
+        throw error;
+      }
+    },
+    [activeWorkspaceId, eventData, session?.id],
+  );
 
   useEffect(() => {
-    setSelectedTypes([]);
-    setQuery('');
-    setSelectedDetailTab('content');
-  }, [view]);
+    writeSessionDetailUrlState(selectedEntryId, selectedLaneId, showArchivedLanes);
+  }, [selectedEntryId, selectedLaneId, showArchivedLanes]);
 
   useEffect(() => {
-    writeSessionDetailUrlState(view, selectedEntryId, selectedLaneId, showArchivedLanes);
-  }, [selectedEntryId, selectedLaneId, showArchivedLanes, view]);
+    writeSessionInspectorUrlState(inspectorTab);
+  }, [inspectorTab]);
 
   useEffect(() => {
     if (!metadataLoaded) {
@@ -369,7 +465,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     if (!lanes.some((lane) => lane.id === selectedLaneId)) {
       setSelectedLaneId(SESSION_MAIN_LANE_ID);
       setSelectedEntryId(null);
-      setSelectedDetailTab('content');
     }
   }, [lanes, metadataLoaded, selectedLaneId]);
 
@@ -383,49 +478,17 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }, [eventsLoading, metadataLoaded, selectedEntry, selectedEntryId, selectedEntryInAnyLane]);
 
   useEffect(() => {
-    if (!selectedEntry) {
+    if (!selectedEntryId) {
       return;
     }
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && detailPanelRef.current?.contains(target)) {
-        return;
-      }
-      setSelectedEntryId(null);
-    };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setSelectedEntryId(null);
       }
     };
-    document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [selectedEntry]);
-
-  useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) {
-      return;
-    }
-    const previousCount = lastEntryCountRef.current;
-    lastEntryCountRef.current = filteredEntries.length;
-    if (skipNextAutoFollowRef.current) {
-      skipNextAutoFollowRef.current = false;
-      scroller.scrollTop = 0;
-      return;
-    }
-    if (!filteredEntries.length) {
-      return;
-    }
-    const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    if (filteredEntries.length > previousCount || distanceFromBottom < 96) {
-      scroller.scrollTop = scroller.scrollHeight;
-    }
-  }, [filteredEntries.length]);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedEntryId]);
 
   const handleCopy = async (value: string, message: string) => {
     try {
@@ -454,7 +517,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       processedAtMs,
     );
     setSelectedEntryId(targetEntry?.id ?? null);
-    setSelectedDetailTab('content');
     if (targetEntry) {
       window.setTimeout(() => scrollSessionEntryIntoView(scrollerRef.current, sessionEventEntryRowId(targetEntry)), 0);
     }
@@ -462,10 +524,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const handleSelectLane = useCallback(
     (laneId: string, targetEntryId?: string | null) => {
       suppressScrollSeekUntilRef.current = sessionTimelineNow() + 200;
-      skipNextAutoFollowRef.current = true;
       setSelectedLaneId(laneId);
       setSelectedEntryId(targetEntryId ?? null);
-      setSelectedDetailTab('content');
       if (targetEntryId) {
         const targetEntry = resolveSelectedSessionEventEntry(entriesByLaneId.get(laneId) ?? [], targetEntryId);
         window.setTimeout(
@@ -484,50 +544,43 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   );
   const handleTimelineSeek = useCallback((entryId: string | null) => {
     setSelectedEntryId(entryId);
-    setSelectedDetailTab('content');
   }, []);
   const handleArchive = async () => {
-    if (!session) {
-      return;
-    }
+    if (!session) return;
     setBusyAction('archive');
     setMutationError(null);
     try {
-      const updated = await archiveManagedEntity('sessions', session.id, activeWorkspaceId);
-      setSession(updated as SessionApiResponse);
+      setSession((await archiveManagedEntity('sessions', session.id, activeWorkspaceId)) as SessionApiResponse);
       toast.success(msg('managedAgents.sessions.detail.archivedToast', 'Session archived'));
-      setConfirmAction(null);
     } catch (error) {
       setMutationError(errorMessage(error));
-      setConfirmAction(null);
     } finally {
+      setConfirmAction(null);
       setBusyAction(null);
     }
   };
   const handleDelete = async () => {
-    if (!session) {
-      return;
-    }
+    if (!session) return;
     setBusyAction('delete');
     setMutationError(null);
     try {
       await deleteManagedEntity('sessions', session.id, activeWorkspaceId);
-      setConfirmAction(null);
-      setBusyAction(null);
       window.location.assign(listHref);
     } catch (error) {
       setMutationError(errorMessage(error));
+    } finally {
       setConfirmAction(null);
       setBusyAction(null);
     }
   };
-
   if (loading) {
     return (
-      <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
-        <div className="mt-14 text-sm text-muted-foreground">
-          {msg('managedAgents.sessions.detail.loading', 'Loading session...')}
+      <section className="@container min-h-[calc(100vh-48px)] text-foreground">
+        <div className={SESSION_CHROME_GUTTER_CLASS_NAME}>
+          <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
+          <div className="mt-14 text-sm text-muted-foreground">
+            {msg('managedAgents.sessions.detail.loading', 'Loading session...')}
+          </div>
         </div>
       </section>
     );
@@ -535,20 +588,27 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
 
   if (!session || loadError || !summary) {
     return (
-      <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
-        <ManagedErrorAlert className="mt-6 max-w-xl">
-          {loadError || msg('managedAgents.sessions.detail.notFound', 'Session not found')}
-        </ManagedErrorAlert>
+      <section className="@container min-h-[calc(100vh-48px)] text-foreground">
+        <div className={SESSION_CHROME_GUTTER_CLASS_NAME}>
+          <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
+          <ManagedErrorAlert className="mt-6 max-w-xl">
+            {loadError || msg('managedAgents.sessions.detail.notFound', 'Session not found')}
+          </ManagedErrorAlert>
+        </div>
       </section>
     );
   }
 
   const archived = Boolean(session.archived_at);
+  const conversationState = sessionConversationState(session);
+  const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
 
   return (
     <TooltipProvider>
-      <section className="relative min-h-[calc(100vh-48px)] text-foreground" data-testid="session-detail-page">
+      <section
+        className="@container relative flex min-h-0 w-full flex-1 flex-col overflow-hidden text-foreground"
+        data-testid="session-detail-page"
+      >
         {confirmAction ? (
           <ConfirmEntityDialog
             action={confirmAction}
@@ -569,353 +629,497 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             }}
           />
         ) : null}
-        <ManagedDetailBreadcrumb
-          listHref={listHref}
-          listLabel={listLabel}
-          currentLabel={compactEntityId(session.id)}
-          className="mb-5 min-w-0"
-        />
+        <header className={`mb-3 min-w-0 ${SESSION_CHROME_GUTTER_CLASS_NAME}`} data-testid="session-detail-header">
+          <div
+            className="grid grid-cols-1 items-center gap-2 @min-[768px]:grid-cols-[minmax(0,1fr)_auto]"
+            data-testid="session-detail-header-utility-row"
+          >
+            <ManagedDetailBreadcrumb
+              listHref={listHref}
+              listLabel={listLabel}
+              currentLabel={compactEntityId(session.id)}
+              className="min-w-0"
+            />
+            <div className="flex items-center gap-2 @min-[768px]:justify-self-end">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="default"
+                      className="bg-background text-sm font-medium text-foreground disabled:cursor-wait disabled:opacity-60"
+                      disabled={Boolean(busyAction)}
+                    />
+                  }
+                >
+                  {msg('common.actions', 'Actions')}
+                  <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 bg-popover">
+                  <DropdownMenuItem className="h-9" onClick={() => setRefreshKey((value) => value + 1)}>
+                    <RotateCcw className="size-4" aria-hidden />
+                    {msg('managedAgents.sessions.detail.refresh', 'Refresh')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="h-9"
+                    onClick={() =>
+                      void handleCopy(
+                        session.id,
+                        msg('managedAgents.sessions.detail.copiedSessionId', 'Session ID copied'),
+                      )
+                    }
+                  >
+                    <Copy className="size-4" aria-hidden />
+                    {msg('managedAgents.sessions.detail.copySessionId', 'Copy session ID')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="h-9"
+                    onClick={() =>
+                      void handleCopy(
+                        currentViewCopyPayload,
+                        msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
+                      )
+                    }
+                  >
+                    <Copy className="size-4" aria-hidden />
+                    {msg('managedAgents.sessions.detail.copyCurrentView', 'Copy current view')}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="h-9"
+                    disabled={archived || busyAction === 'archive'}
+                    onClick={() => setConfirmAction('archive')}
+                  >
+                    <Archive className="size-4" aria-hidden />
+                    {msg('common.archive', 'Archive')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="h-9"
+                    variant="destructive"
+                    disabled={busyAction === 'delete'}
+                    onClick={() => setConfirmAction('delete')}
+                  >
+                    <X className="size-4" aria-hidden />
+                    {msg('common.delete', 'Delete')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
 
-        <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h1 className="min-w-0 truncate text-[28px] font-semibold leading-tight text-foreground">
+          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+            <div className="flex min-w-0 max-w-full items-center gap-2">
+              <h1 className="min-w-0 truncate font-serif text-[28px] font-medium leading-[1.3] tracking-[-0.015em] text-foreground">
                 {summary.title}
               </h1>
               <SessionStatusPill
                 status={session.archived_at ? msg('common.archived', 'Archived') : summary.statusLabel}
               />
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              {summary.chips.map((chip) => (
-                <SessionSummaryChip key={chip.key} icon={chip.icon}>
-                  {chip.value}
-                </SessionSummaryChip>
-              ))}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              className="bg-secondary text-sm font-semibold text-foreground hover:bg-accent"
-              onClick={() => setRefreshKey((value) => value + 1)}
-            >
-              <RotateCcw className="size-4" aria-hidden />
-              {msg('managedAgents.sessions.detail.refresh', 'Refresh')}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="lg"
-                    className="bg-secondary text-sm font-semibold text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
-                    disabled={Boolean(busyAction)}
-                  />
-                }
-              >
-                {msg('common.actions', 'Actions')}
-                <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 bg-popover">
-                <DropdownMenuItem className="h-9" onClick={() => setRefreshKey((value) => value + 1)}>
-                  <RotateCcw className="size-4" aria-hidden />
-                  {msg('managedAgents.sessions.detail.refresh', 'Refresh')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="h-9"
-                  onClick={() =>
-                    void handleCopy(
-                      session.id,
-                      msg('managedAgents.sessions.detail.copiedSessionId', 'Session ID copied'),
-                    )
-                  }
-                >
-                  <Copy className="size-4" aria-hidden />
-                  {msg('managedAgents.sessions.detail.copySessionId', 'Copy session ID')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="h-9"
-                  onClick={() =>
-                    void handleCopy(
-                      copyPayload,
-                      msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
-                    )
-                  }
-                >
-                  <Copy className="size-4" aria-hidden />
-                  {msg('managedAgents.sessions.detail.copyCurrentView', 'Copy current view')}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="h-9"
-                  disabled={archived || busyAction === 'archive'}
-                  onClick={() => setConfirmAction('archive')}
-                >
-                  <Archive className="size-4" aria-hidden />
-                  {msg('common.archive', 'Archive')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="h-9"
-                  variant="destructive"
-                  disabled={busyAction === 'delete'}
-                  onClick={() => setConfirmAction('delete')}
-                >
-                  <X className="size-4" aria-hidden />
-                  {msg('common.delete', 'Delete')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {summary.chips.map((chip) => (
+              <SessionSummaryChip key={chip.key} icon={chip.icon} tooltip={chip.tooltip}>
+                {chip.value}
+              </SessionSummaryChip>
+            ))}
           </div>
         </header>
 
-        {mutationError ? <ManagedErrorAlert className="mb-4 max-w-xl">{mutationError}</ManagedErrorAlert> : null}
-        {metadataError || eventError ? (
-          <ManagedWarningAlert className="mb-4 max-w-xl">{metadataError || eventError}</ManagedWarningAlert>
-        ) : null}
+        <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />
 
-        <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
-          <EventsTab
-            activeLane={activeLane}
-            childLoading={eventsLoading}
-            copyPayload={copyPayload}
-            detailPanelRef={detailPanelRef}
-            entries={entries}
-            events={events}
-            filteredEntries={filteredEntries}
-            filterOptions={filterOptions}
-            hasFilter={hasFilter}
-            lanes={lanes}
-            onClearFilters={() => {
-              setSelectedTypes([]);
-              setQuery('');
-              handleSelectLane(SESSION_MAIN_LANE_ID, null);
-            }}
-            onCopyAll={() =>
-              void handleCopy(
-                copyPayload,
-                msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
-              )
-            }
-            onQueryChange={setQuery}
-            onOpenDeltas={(entryId) => {
-              setSelectedEntryId(entryId);
-              setSelectedDetailTab('deltas');
-            }}
-            onSelectEntry={(entryId) => {
-              setSelectedEntryId(entryId);
-              setSelectedDetailTab('content');
-            }}
-            onSelectLane={handleSelectLane}
-            onThreadClick={handleThreadClick}
-            onSelectedTypesChange={setSelectedTypes}
-            onTimelineSeek={handleTimelineSeek}
-            onViewChange={setView}
-            query={query}
-            scrollerRef={scrollerRef}
-            selectedEntry={selectedEntry}
-            selectedDetailTab={selectedDetailTab}
-            selectedEntryId={selectedEntryId}
-            selectedTypes={selectedTypes}
-            suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
-            archivedLaneCount={archivedLaneCount}
-            isMultiAgent={isMultiAgent}
-            showArchivedLanes={showArchivedLanes}
-            timeline={timeline}
-            timelineVisibleIds={timelineVisibleIds}
-            threadNameById={threadNameById}
-            onDetailTabChange={setSelectedDetailTab}
-            onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
-            view={view}
-          />
-        </SessionDetailDeltaFramesContext.Provider>
+        <div className="min-h-0 flex-1 overflow-hidden pt-1" data-testid="session-viewer">
+          <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
+            <EventsTab
+              activeLane={activeLane}
+              archivedLaneCount={archivedLaneCount}
+              childLoading={eventsLoading}
+              composer={
+                <SessionMessageComposer
+                  awaitingAction={Boolean(activeAwaitingToolCall)}
+                  disabled={conversationState.disabled}
+                  live={conversationState.live}
+                  onError={setMutationError}
+                  onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
+                  onMessageSent={(sentEvents) => {
+                    eventData.appendPrimaryEvents(sentEvents);
+                    setSession((currentSession) =>
+                      currentSession && currentSession.id === session.id
+                        ? { ...currentSession, status: 'running' }
+                        : currentSession,
+                    );
+                  }}
+                  sessionId={session.id}
+                  workspaceId={activeWorkspaceId}
+                />
+              }
+              entries={entries}
+              events={events}
+              filteredEntries={filteredEntries}
+              hasFilter={hasFilter}
+              hoveredEventId={hoveredEventId}
+              inspector={
+                <SessionInspector
+                  activeTab={inspectorTab}
+                  activeLane={activeLane}
+                  events={events}
+                  eventsByLaneId={eventsByLaneId}
+                  lanes={lanes}
+                  onActiveTabChange={(tab) => {
+                    setInspectorTab(tab);
+                    if (tab === 'resources') refreshSessionResources();
+                  }}
+                  onAddFileResource={handleAddFileResource}
+                  onClose={() => setInspectorOpen(false)}
+                  onHoverEvent={setHoveredEventId}
+                  onSelectEntry={(entryId) => {
+                    setSelectedEntryId(entryId);
+                  }}
+                  onSelectLane={(laneId) => handleSelectLane(laneId, null)}
+                  refreshKey={refreshKey}
+                  selectedEntry={selectedInspectorEntry}
+                  hoveredEventId={hoveredInspectorEventId}
+                  session={session}
+                  workspaceId={activeWorkspaceId}
+                />
+              }
+              inspectorOpen={inspectorOpen}
+              isMultiAgent={isMultiAgent}
+              lanes={lanes}
+              openModelRequest={openModelRequest}
+              pendingAction={sessionPendingAction(
+                activeAwaitingToolCall,
+                handleToolConfirmation,
+                conversationState.disabled,
+              )}
+              onClearFilters={() => {
+                setQuery('');
+                handleSelectLane(SESSION_MAIN_LANE_ID, null);
+              }}
+              onCopyAll={() =>
+                void handleCopy(
+                  fullTranscriptCopyPayload,
+                  msg('managedAgents.sessions.detail.copiedFullTranscript', 'Full transcript copied'),
+                )
+              }
+              onCloseInspector={() => setInspectorOpen(false)}
+              onHoverEvent={setHoveredEventId}
+              onOpenInspector={() => setInspectorOpen(true)}
+              onQueryChange={setQuery}
+              onSelectEntry={(entryId) => {
+                setSelectedEntryId(entryId);
+                if (entryId) {
+                  setInspectorOpen(true);
+                  setInspectorTab('events');
+                }
+              }}
+              onSelectLane={handleSelectLane}
+              onThreadClick={handleThreadClick}
+              onTimelineSeek={handleTimelineSeek}
+              onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
+              query={query}
+              scrollerRef={scrollerRef}
+              selectedEntry={selectedEntry}
+              selectedEntryId={selectedEntryId}
+              showArchivedLanes={showArchivedLanes}
+              suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
+              threadNameById={threadNameById}
+              timeline={timeline}
+              timelineVisibleIds={timelineVisibleIds}
+              traceStartMs={traceStartMs}
+            />
+          </SessionDetailDeltaFramesContext.Provider>
+        </div>
       </section>
     </TooltipProvider>
   );
 }
 
-export function EventsTab(props: EventsTabProps) {
-  return <EventsTabInner {...props} />;
+function SessionDetailAlerts({
+  mutationError,
+  warningError,
+}: {
+  mutationError: string | null;
+  warningError?: string | null;
+}) {
+  return (
+    <>
+      {mutationError ? (
+        <ManagedErrorAlert className="mx-4 mb-4 max-w-xl @min-[640px]:mx-6 @min-[1024px]:mx-8">
+          {mutationError}
+        </ManagedErrorAlert>
+      ) : null}
+      {warningError ? (
+        <ManagedWarningAlert className="mx-4 mb-4 max-w-xl @min-[640px]:mx-6 @min-[1024px]:mx-8">
+          {warningError}
+        </ManagedWarningAlert>
+      ) : null}
+    </>
+  );
 }
 
-export function EventsTabInner({
+function mergeSessionResources(currentSession: SessionApiResponse | null, updatedSession: SessionApiResponse) {
+  return currentSession?.id === updatedSession.id
+    ? { ...currentSession, resources: updatedSession.resources }
+    : currentSession;
+}
+
+function sessionSummaryRefreshInterval(session: SessionApiResponse | null) {
+  return session && sessionStatusIsLive(session.status) && !session.archived_at ? 1_000 : 60_000;
+}
+
+function sessionConversationState(session: SessionApiResponse) {
+  const archived = Boolean(session.archived_at);
+  const status = session.status.toLowerCase();
+  return {
+    disabled: archived || status === 'deleted' || status === 'terminated',
+    live: !archived && sessionStatusIsLive(status),
+  };
+}
+
+export function EventsTab({
   activeLane,
   archivedLaneCount,
   childLoading,
+  composer,
   entries,
   events,
   filteredEntries,
-  filterOptions,
   hasFilter,
+  hoveredEventId,
+  inspector,
+  inspectorOpen,
   isMultiAgent,
   lanes,
+  openModelRequest,
+  pendingAction,
   onClearFilters,
   onCopyAll,
-  onDetailTabChange,
-  onOpenDeltas,
+  onCloseInspector,
+  onHoverEvent,
+  onOpenInspector,
   onQueryChange,
   onSelectEntry,
   onSelectLane,
   onThreadClick,
-  onSelectedTypesChange,
   onTimelineSeek,
   onToggleArchivedLanes,
-  onViewChange,
   query,
   scrollerRef,
   selectedEntry,
-  selectedDetailTab,
   selectedEntryId,
-  selectedTypes,
   showArchivedLanes,
   suppressScrollSeekUntilRef,
   threadNameById,
   timeline,
   timelineVisibleIds,
-  view,
-  detailPanelRef,
+  traceStartMs,
 }: EventsTabProps) {
   const { msg } = useI18n();
+  const [minimapControlsSlot, setMinimapControlsSlot] = useState<HTMLSpanElement | null>(null);
+  const inspectorOpenTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const previousInspectorOpenRef = useRef(inspectorOpen);
+  const minimapLoading = childLoading && events.length === 0;
+  const hasMinimapEvents = timeline.some((lane) => lane.items.length > 0);
+  useLayoutEffect(() => {
+    const wasOpen = previousInspectorOpenRef.current;
+    previousInspectorOpenRef.current = inspectorOpen;
+    if (wasOpen && !inspectorOpen) {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && activeElement.closest('[data-testid="session-inspector"]')) {
+        inspectorOpenTriggerRef.current?.focus();
+      }
+    } else if (!wasOpen && inspectorOpen && document.activeElement === document.body) {
+      document.querySelector<HTMLElement>('[data-inspector-close]')?.focus();
+    }
+  }, [inspectorOpen]);
+  const handleTraceNavigation = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const eventTarget = event.target;
+    if (
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      (eventTarget instanceof HTMLElement &&
+        Boolean(eventTarget.closest('input, textarea, select, [contenteditable="true"]')))
+    ) {
+      return;
+    }
+    const target = sessionTraceKeyboardTarget(filteredEntries, selectedEntryId, event.key);
+    if (!target) {
+      return;
+    }
+    event.preventDefault();
+    onSelectEntry(target.selectionId);
+    window.requestAnimationFrame(() =>
+      scrollSessionEntryIntoView(scrollerRef.current, sessionEventEntryRowId(target.entry)),
+    );
+  };
   return (
-    <div data-testid="events-tab">
-      <KeyboardShortcutsModal />
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-0 py-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <ViewModeSegment value={view} onChange={onViewChange} />
-          <div className="h-5 w-px bg-accent" aria-hidden />
-          <SessionEventTypeFilter
-            options={filterOptions}
-            selectedTypes={selectedTypes}
-            view={view}
-            onChange={onSelectedTypesChange}
-          />
-          <ExpandingSearch value={query} onChange={onQueryChange} />
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          className="h-8 px-2 text-sm font-medium text-foreground hover:bg-accent"
-          onClick={onCopyAll}
-        >
-          <Copy className="size-4 text-muted-foreground" aria-hidden />
-          {msg('managedAgents.sessions.detail.copyAll', 'Copy all')}
-        </Button>
-      </div>
-
-      <EventsMinimap
-        lanes={timeline}
-        activeLane={activeLane}
-        selectedEntryId={selectedEntry?.id ?? selectedEntryId}
-        visibleIds={timelineVisibleIds}
-        scrollerRef={scrollerRef}
-        suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
-        onLaneChange={onSelectLane}
-        onSeek={onTimelineSeek}
-      />
-
-      <div className="flex min-h-0 flex-col border-t border-border" data-testid="session-trace-shell">
-        <LaneTabStrip
-          lanes={lanes}
-          activeLane={activeLane}
-          archivedLaneCount={archivedLaneCount}
-          isMultiAgent={isMultiAgent}
-          selectedEntryId={selectedEntry?.id ?? selectedEntryId}
-          showArchivedLanes={showArchivedLanes}
-          timeline={timeline}
-          timelineVisibleIds={timelineVisibleIds}
-          onChange={onSelectLane}
-          onToggleArchivedLanes={onToggleArchivedLanes}
-        />
-
-        <div
-          className={clsx(
-            'grid min-h-[420px]',
-            selectedEntry ? 'lg:grid-cols-[minmax(0,1fr)_minmax(360px,44%)]' : 'grid-cols-1',
-          )}
-        >
-          <div
-            ref={scrollerRef}
-            data-testid="session-trace-list-pane"
-            className={clsx(
-              'subtle-scrollbar max-h-[calc(100vh-330px)] min-h-[420px] min-w-0 overflow-x-hidden overflow-y-auto px-0 py-3',
-              selectedEntry && 'lg:border-r lg:border-border',
-            )}
-          >
-            {childLoading && !events.length ? (
-              <SessionTraceSkeleton />
-            ) : filteredEntries.length ? (
-              <div className="flex flex-col pb-8">
-                {filteredEntries.map((entry) =>
-                  view === 'debug' && entry.kind === 'debug' ? (
-                    <DebugRow
-                      key={entry.id}
-                      entry={entry}
-                      selected={sessionEventEntryMatchesSelectedId(entry, selectedEntryId)}
-                      onSelect={() => onSelectEntry(entry.displayEvent.id)}
-                      onOpenDeltas={() => onOpenDeltas(entry.displayEvent.id)}
-                    />
-                  ) : (
-                    <TranscriptRow
-                      key={entry.id}
-                      entry={entry}
-                      selected={sessionEventEntryMatchesSelectedId(entry, selectedEntryId)}
-                      onSelect={() => onSelectEntry(sessionEventEntrySelectionId(entry))}
-                      threadNameById={threadNameById}
-                      onThreadClick={onThreadClick}
-                    />
-                  ),
-                )}
-              </div>
-            ) : (
-              <SessionTraceEmpty
-                message={
-                  entries.length === 0
-                    ? msg(
-                        'managedAgents.sessions.trace.noEvents',
-                        'No events yet. Events will appear here as they occur.',
-                      )
-                    : msg('managedAgents.sessions.trace.noMatchingEvents', 'No events match the current filters.')
+    <div
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-background [container-type:inline-size]"
+      data-testid="events-tab"
+    >
+      <div
+        className={`grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 py-1.5 ${SESSION_CHROME_GUTTER_CLASS_NAME}`}
+        data-testid="session-trace-toolbar"
+      >
+        <SessionTraceSearch className="w-44 min-w-0 @min-[640px]:w-56" value={query} onChange={onQueryChange} />
+        <div className="flex shrink-0 items-center gap-2">
+          <span ref={setMinimapControlsSlot} className="flex items-center" />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={msg('managedAgents.sessions.detail.copyAll', 'Copy all')}
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={onCopyAll}
+                />
+              }
+            >
+              <Copy className="size-4" aria-hidden />
+            </TooltipTrigger>
+            <TooltipContent>{msg('managedAgents.sessions.detail.copyAll', 'Copy all')}</TooltipContent>
+          </Tooltip>
+          {!inspectorOpen ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    ref={inspectorOpenTriggerRef}
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={msg('managedAgents.sessions.inspector.label', 'Inspector')}
+                    data-inspector-open=""
+                    className="session-inspector-open-trigger text-muted-foreground hover:text-foreground"
+                    onClick={onOpenInspector}
+                  />
                 }
-                onClear={hasFilter ? onClearFilters : undefined}
-              />
-            )}
-          </div>
-          {selectedEntry ? (
-            <div ref={detailPanelRef} data-testid="session-event-detail-panel" className="min-h-0">
-              <EventDetailPanel
-                entry={selectedEntry}
-                view={view}
-                detailTab={selectedDetailTab}
-                placement="side"
-                onClose={() => onSelectEntry(null)}
-                onDetailTabChange={onDetailTabChange}
-              />
-            </div>
+              >
+                <PanelRightOpen className="size-4" aria-hidden />
+                <span className="session-inspector-open-label">
+                  {msg('managedAgents.sessions.inspector.label', 'Inspector')}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{msg('managedAgents.sessions.inspector.label', 'Inspector')}</TooltipContent>
+            </Tooltip>
           ) : null}
         </div>
+      </div>
+
+      <div className="relative" data-testid="session-minimap-rail">
+        {minimapLoading ? (
+          <EventsMinimapSkeleton />
+        ) : hasMinimapEvents ? (
+          <EventsMinimap
+            lanes={timeline}
+            activeLane={activeLane}
+            selectedEntryId={selectedEntry?.id ?? selectedEntryId}
+            hoveredEventId={resolveSelectedSessionEventEntry(entries, hoveredEventId)?.id ?? hoveredEventId}
+            controlsSlot={minimapControlsSlot}
+            visibleIds={timelineVisibleIds}
+            scrollerRef={scrollerRef}
+            suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
+            onLaneChange={onSelectLane}
+            onHoverEvent={onHoverEvent}
+            onSeek={onTimelineSeek}
+          />
+        ) : null}
+      </div>
+
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border"
+        data-testid="session-trace-shell"
+      >
+        <SessionTraceWorkspaceLayout
+          inspectorOpen={inspectorOpen}
+          onInspectorCollapse={onCloseInspector}
+          resizeLabel={msg('managedAgents.sessions.trace.resizeInspector', 'Resize event inspector')}
+          primary={
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden" data-testid="session-transcript-pane">
+              <LaneTabStrip
+                lanes={lanes}
+                activeLane={activeLane}
+                archivedLaneCount={archivedLaneCount}
+                isMultiAgent={isMultiAgent}
+                selectedEntryId={selectedEntry?.id ?? selectedEntryId}
+                showArchivedLanes={showArchivedLanes}
+                timeline={timeline}
+                timelineVisibleIds={timelineVisibleIds}
+                onChange={onSelectLane}
+                onToggleArchivedLanes={onToggleArchivedLanes}
+              />
+              <MessageScrollerProvider key={activeLane} autoScroll defaultScrollPosition="end">
+                <MessageScroller className="min-h-0 flex-1">
+                  <MessageScrollerViewport
+                    ref={scrollerRef}
+                    data-testid="session-trace-list-pane"
+                    tabIndex={0}
+                    aria-label={msg('managedAgents.sessions.trace.eventList', 'Session events')}
+                    className="scrollbar-none overflow-x-hidden px-4 py-3 focus-visible:outline-none"
+                    onKeyDown={handleTraceNavigation}
+                  >
+                    <MessageScrollerContent
+                      className="mx-auto w-full max-w-[720px] pb-8"
+                      data-testid="session-trace-column"
+                    >
+                      {childLoading && !events.length ? (
+                        <SessionTraceSkeleton />
+                      ) : filteredEntries.length ? (
+                        <SessionTranscriptView
+                          entries={entries}
+                          visibleEntries={filteredEntries}
+                          openModelRequest={query.trim() ? null : openModelRequest}
+                          selectedEntryId={selectedEntryId}
+                          hoveredEventId={hoveredEventId}
+                          onHoverEvent={onHoverEvent}
+                          onSelectEntry={onSelectEntry}
+                          threadNameById={threadNameById}
+                          onThreadClick={onThreadClick}
+                          traceStartMs={traceStartMs}
+                        />
+                      ) : (
+                        <SessionTraceEmpty
+                          message={
+                            entries.length === 0
+                              ? msg(
+                                  'managedAgents.sessions.trace.noEvents',
+                                  'No events yet. Events will appear here as they occur.',
+                                )
+                              : msg(
+                                  'managedAgents.sessions.trace.noMatchingEvents',
+                                  'No events match the current filters.',
+                                )
+                          }
+                          onClear={hasFilter ? onClearFilters : undefined}
+                        />
+                      )}
+                    </MessageScrollerContent>
+                  </MessageScrollerViewport>
+                  <MessageScrollerButton
+                    aria-label={msg('managedAgents.sessions.trace.jumpToLatest', 'Jump to latest event')}
+                    className="rounded-full shadow-sm"
+                  >
+                    <ArrowDown className="size-4" aria-hidden />
+                    <span className="sr-only">
+                      {msg('managedAgents.sessions.trace.jumpToLatest', 'Jump to latest event')}
+                    </span>
+                  </MessageScrollerButton>
+                </MessageScroller>
+              </MessageScrollerProvider>
+              {pendingAction ? (
+                <div className="flex-none px-4 pt-2" data-testid="session-pending-action">
+                  <div className="mx-auto w-full max-w-[720px]">{pendingAction}</div>
+                </div>
+              ) : null}
+              {composer}
+            </div>
+          }
+          inspector={inspector}
+        />
       </div>
     </div>
   );
 }
-
-export function ViewModeSegment(props: { value: SessionTraceView; onChange: (value: SessionTraceView) => void }) {
-  return <SessionTraceViewMode {...props} />;
-}
-
-export function ExpandingSearch(props: { value: string; onChange: (value: string) => void }) {
-  return <SessionTraceSearch {...props} />;
-}
-
-export function KeyboardShortcutsModal() {
-  return null;
-}
-
-export * from './SessionTracePanel';
-export * from './sessionTraceModel';
-export * from './sessionDetailData';
-export * from './sessionTimeline';
-export * from './sessionTraceRows';
-export * from './sessionDetailModel';

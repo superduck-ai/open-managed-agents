@@ -9,6 +9,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -25,6 +26,8 @@ type Handler struct {
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
 	streams      *streamHub
+	eventBus     sessionfanout.EventBus
+	previews     *workerPreviewConverter
 }
 
 type webhookEnqueuer interface {
@@ -52,7 +55,7 @@ type sessionResponse struct {
 	Type               string            `json:"type"`
 	UpdatedAt          string            `json:"updated_at"`
 	Usage              json.RawMessage   `json:"usage"`
-	VaultIDs           json.RawMessage   `json:"vault_ids"`
+	VaultIDs           []string          `json:"vault_ids"`
 }
 
 type threadResponse struct {

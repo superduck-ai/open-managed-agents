@@ -12,7 +12,7 @@ import yamlLanguage from 'highlight.js/lib/languages/yaml';
 import { Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { templateBody, templateTitle } from '../labels';
-import { looksLikeJson } from '../sessions/SessionDetailPage';
+import { looksLikeJson } from '../sessions/sessionTraceModel';
 import { type AgentTemplate, type CodeFormat, type HighlightLanguage } from '../types';
 import { copyText } from '../utils';
 

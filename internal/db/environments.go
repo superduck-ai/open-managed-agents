@@ -59,7 +59,8 @@ type EnvironmentWork struct {
 	WorkspaceUUID         string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
-	Data                  json.RawMessage
+	SessionUUID           string
+	SessionExternalID     string
 	Metadata              json.RawMessage
 	Secret                *string
 	State                 string
@@ -230,12 +231,8 @@ func (d *DB) GetEnvironmentKey(ctx context.Context, keyHash string) (Environment
 
 func (d *DB) CreateEnvironmentWork(ctx context.Context, work EnvironmentWork) (EnvironmentWork, error) {
 	work.State = coalesceWorkState(work.State)
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.Insert(ctx, environmentWorkWriteParamsFrom(work))
-	if err != nil {
-		return EnvironmentWork{}, err
-	}
-	return row.work(), nil
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).Insert(ctx, environmentWorkWriteParamsFrom(work))
+	return row.work(), err
 }
 
 func (d *DB) GetEnvironmentWork(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID string) (EnvironmentWork, error) {
@@ -247,9 +244,9 @@ func (d *DB) GetEnvironmentWork(ctx context.Context, workspaceUUID string, envir
 	return row.work(), nil
 }
 
-func (d *DB) GetLatestEnvironmentWorkByData(ctx context.Context, workspaceUUID string, environmentExternalID, dataType, dataID string) (EnvironmentWork, error) {
+func (d *DB) GetLatestEnvironmentWorkForSession(ctx context.Context, workspaceUUID string, environmentExternalID, sessionUUID string) (EnvironmentWork, error) {
 	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.FindLatestByData(ctx, workspaceUUID, environmentExternalID, dataType, dataID)
+	row, err := mapper.FindLatestBySession(ctx, workspaceUUID, environmentExternalID, sessionUUID)
 	if err != nil {
 		return EnvironmentWork{}, mapNoRows(err)
 	}
@@ -307,15 +304,14 @@ func (d *DB) PollEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 }
 
 func (d *DB) PollNextEnvironmentWork(ctx context.Context, workerID string, claimFor time.Duration) (*EnvironmentWork, error) {
-	return d.PollNextEnvironmentWorkForRunner(ctx, workerID, claimFor, true)
-}
-
-func (d *DB) PollNextEnvironmentWorkForRunner(ctx context.Context, workerID string, claimFor time.Duration, includeSessionWork bool) (*EnvironmentWork, error) {
 	if claimFor <= 0 {
 		claimFor = 5 * time.Second
 	}
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.ClaimNext(ctx, nullableWorkerID(workerID), time.Now().UTC().Add(claimFor), includeSessionWork)
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).ClaimNext(
+		ctx,
+		nullableWorkerID(workerID),
+		time.Now().UTC().Add(claimFor),
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -336,24 +332,21 @@ func (d *DB) GetEnvironmentByUUID(ctx context.Context, workspaceUUID, environmen
 }
 
 func (d *DB) AckEnvironmentWork(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID string) (EnvironmentWork, error) {
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.AckByExternalID(ctx, workspaceUUID, environmentExternalID, workExternalID)
-	if err != nil {
-		return EnvironmentWork{}, mapNoRows(err)
-	}
-	return row.work(), nil
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).AckByExternalID(
+		ctx,
+		workspaceUUID,
+		environmentExternalID,
+		workExternalID,
+	)
+	return row.work(), mapNoRows(err)
 }
 
 func (d *DB) UpdateEnvironmentWorkMetadata(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID string, metadata json.RawMessage) (EnvironmentWork, error) {
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.UpdateMetadata(ctx, environmentWorkMetadataParams{
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).UpdateMetadata(ctx, environmentWorkMetadataParams{
 		WorkspaceUUID: workspaceUUID, EnvironmentExternalID: environmentExternalID,
 		WorkExternalID: workExternalID, Metadata: agentJSONArg(metadata),
 	})
-	if err != nil {
-		return EnvironmentWork{}, mapNoRows(err)
-	}
-	return row.work(), nil
+	return row.work(), mapNoRows(err)
 }
 
 func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID, expectedLastHeartbeat string, ttlSeconds int, format func(time.Time) string) (WorkHeartbeatResult, error) {
@@ -400,15 +393,63 @@ func (d *DB) StopEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 	if !force {
 		nextState = "stopping"
 	}
-	mapper := NewEnvironmentWorkMapper(d.mapperDB)
-	row, err := mapper.Stop(ctx, environmentWorkStopParams{
+	row, err := NewEnvironmentWorkMapper(d.mapperDB).Stop(ctx, environmentWorkStopParams{
 		WorkspaceUUID: workspaceUUID, EnvironmentExternalID: environmentExternalID,
 		WorkExternalID: workExternalID, State: nextState,
 	})
-	if err != nil {
-		return EnvironmentWork{}, mapNoRows(err)
-	}
-	return row.work(), nil
+	return row.work(), mapNoRows(err)
+}
+
+func (d *DB) RequeueEnvironmentWorkIfRecoverable(ctx context.Context, work EnvironmentWork, retryAt time.Time) (bool, error) {
+	mapper := NewEnvironmentWorkMapper(d.mapperDB)
+	rowsAffected, err := mapper.RequeueIfRecoverable(ctx, environmentWorkRecoveryRetryParams{
+		OrganizationUUID: work.OrganizationUUID,
+		WorkspaceUUID:    work.WorkspaceUUID,
+		EnvironmentUUID:  work.EnvironmentUUID,
+		WorkUUID:         work.UUID,
+		RetryAt:          retryAt,
+	})
+	return rowsAffected == 1, err
+}
+
+func (d *DB) FailEnvironmentSandboxAndRequeueRecovery(
+	ctx context.Context,
+	sandbox EnvironmentSandbox,
+	work EnvironmentWork,
+	providerSandboxID string,
+	cause error,
+	retryAt time.Time,
+) (bool, error) {
+	requeued := false
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		sandboxMapper := NewEnvironmentSandboxMapper(executor)
+		workMapper := NewEnvironmentWorkMapper(executor)
+		now := time.Now().UTC()
+		message := cause.Error()
+		if err := sandboxMapper.UpdateState(ctx, environmentSandboxStateParams{
+			WorkspaceUUID:     sandbox.WorkspaceUUID,
+			ExternalID:        sandbox.ExternalID,
+			State:             "failed",
+			ProviderSandboxID: optionalEnvironmentString(providerSandboxID),
+			LastError:         &message,
+			StoppedAt:         &now,
+		}); err != nil {
+			return err
+		}
+		rowsAffected, err := workMapper.RequeueIfRecoverable(ctx, environmentWorkRecoveryRetryParams{
+			OrganizationUUID: work.OrganizationUUID,
+			WorkspaceUUID:    work.WorkspaceUUID,
+			EnvironmentUUID:  work.EnvironmentUUID,
+			WorkUUID:         work.UUID,
+			RetryAt:          retryAt,
+		})
+		if err != nil {
+			return err
+		}
+		requeued = rowsAffected == 1
+		return nil
+	})
+	return requeued, err
 }
 
 func (d *DB) EnvironmentWorkStats(ctx context.Context, workspaceUUID string, environmentExternalID string) (EnvironmentWorkStats, error) {
@@ -455,12 +496,49 @@ func (d *DB) GetActiveEnvironmentSandboxForWork(ctx context.Context, workspaceUU
 // workers intentionally return ErrNotFound so their heartbeats cannot keep the
 // sandbox alive indefinitely.
 func (d *DB) GetRenewableEnvironmentSandboxForCodeSession(ctx context.Context, codeSessionExternalID string) (EnvironmentSandbox, error) {
+	return d.getActiveEnvironmentSandboxForCodeSession(ctx, codeSessionExternalID, []string{"running"})
+}
+
+// GetResumableEnvironmentSandboxForCodeSession resolves the provider sandbox
+// owned by an active managed-agent Code Session. All valid worker states are
+// eligible because a queued user event must wake idle and requires-action
+// workers, while a running worker may also need recovery after a missed lease.
+func (d *DB) GetResumableEnvironmentSandboxForCodeSession(ctx context.Context, codeSessionExternalID string) (EnvironmentSandbox, error) {
+	return d.getActiveEnvironmentSandboxForCodeSession(ctx, codeSessionExternalID, []string{"idle", "running", "requires_action"})
+}
+
+func (d *DB) getActiveEnvironmentSandboxForCodeSession(ctx context.Context, codeSessionExternalID string, workerStatuses []string) (EnvironmentSandbox, error) {
 	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
-	row, err := mapper.FindRenewableByCodeSessionExternalID(ctx, codeSessionExternalID)
+	row, err := mapper.FindActiveByCodeSessionExternalIDAndWorkerStatuses(ctx, codeSessionExternalID, workerStatuses)
 	if err != nil {
 		return EnvironmentSandbox{}, mapNoRows(err)
 	}
 	return row.sandbox(), nil
+}
+
+// ScheduleEnvironmentSandboxRecoveryForCodeSession atomically retires the
+// missing provider sandbox and requeues its active managed-agent work. The
+// provider ID comparison makes repeated or concurrent recovery requests safe.
+func (d *DB) ScheduleEnvironmentSandboxRecoveryForCodeSession(
+	ctx context.Context,
+	codeSessionExternalID string,
+	providerSandboxID string,
+	cause error,
+) (bool, error) {
+	lastError := "provider sandbox not found"
+	if cause != nil {
+		lastError = cause.Error()
+	}
+	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
+	rowsAffected, err := mapper.ScheduleRecoveryForCodeSession(ctx, environmentSandboxRecoveryParams{
+		CodeSessionExternalID: codeSessionExternalID,
+		ProviderSandboxID:     providerSandboxID,
+		LastError:             lastError,
+	})
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
 }
 
 func normalizedHeartbeatTTL(ttlSeconds int) int {
@@ -489,7 +567,7 @@ func matchesExpectedHeartbeat(latest *time.Time, expected string, format func(ti
 func environmentWriteParamsFrom(env Environment) environmentWriteParams {
 	return environmentWriteParams{
 		UUID: env.UUID, ExternalID: env.ExternalID, OrganizationUUID: env.OrganizationUUID,
-		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: env.CreatedByAPIKeyUUID,
+		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: nullableString(env.CreatedByAPIKeyUUID),
 		Name: env.Name, Description: env.Description,
 		Config: agentJSONArg(env.Config), Metadata: agentJSONArg(env.Metadata),
 		Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
@@ -509,7 +587,7 @@ func environmentWorkWriteParamsFrom(work EnvironmentWork) environmentWorkWritePa
 		UUID: work.UUID, ExternalID: work.ExternalID, OrganizationUUID: work.OrganizationUUID,
 		WorkspaceUUID: work.WorkspaceUUID, EnvironmentUUID: work.EnvironmentUUID,
 		EnvironmentExternalID: work.EnvironmentExternalID,
-		Data:                  agentJSONArg(work.Data), Metadata: agentJSONArg(work.Metadata),
+		SessionUUID:           work.SessionUUID, Metadata: agentJSONArg(work.Metadata),
 		Secret: work.Secret, State: work.State, CreatedAt: work.CreatedAt,
 	}
 }
@@ -552,7 +630,7 @@ func environmentWorkFromRows(rows []environmentWorkMapperRow) []EnvironmentWork 
 func (r environmentMapperRow) environment() Environment {
 	return Environment{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
 		Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
@@ -571,8 +649,10 @@ func (r environmentWorkMapperRow) work() EnvironmentWork {
 	return EnvironmentWork{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, EnvironmentUUID: r.EnvironmentUUID,
-		EnvironmentExternalID: r.EnvironmentExternalID, Data: bytes.Clone(r.Data), Metadata: bytes.Clone(r.Metadata),
-		Secret: r.Secret, State: r.State, ClaimedByWorkerID: r.ClaimedByWorkerID,
+		EnvironmentExternalID: r.EnvironmentExternalID,
+		SessionUUID:           r.SessionUUID, SessionExternalID: r.SessionExternalID,
+		Metadata: bytes.Clone(r.Metadata),
+		Secret:   r.Secret, State: r.State, ClaimedByWorkerID: r.ClaimedByWorkerID,
 		ClaimExpiresAt: r.ClaimExpiresAt, AcknowledgedAt: r.AcknowledgedAt, StartedAt: r.StartedAt,
 		LatestHeartbeatAt: r.LatestHeartbeatAt, HeartbeatTTLSeconds: r.HeartbeatTTLSeconds,
 		StopRequestedAt: r.StopRequestedAt, StoppedAt: r.StoppedAt,
@@ -603,4 +683,11 @@ func nullableWorkerID(workerID string) *string {
 		return nil
 	}
 	return &workerID
+}
+
+func optionalEnvironmentString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

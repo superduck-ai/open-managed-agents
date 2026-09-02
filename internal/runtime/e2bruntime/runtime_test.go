@@ -15,6 +15,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 )
 
 func TestConnectionOptsFromConfigMapsAllFields(t *testing.T) {
@@ -38,6 +39,57 @@ func TestConnectionOptsFromConfigMapsAllFields(t *testing.T) {
 	wantTimeoutMs := int(cfg.RequestTimeout / time.Millisecond)
 	if got.RequestTimeoutMs == nil || *got.RequestTimeoutMs != wantTimeoutMs {
 		t.Fatalf("ConnectionOptsFromConfig().RequestTimeoutMs = %v, want %d", got.RequestTimeoutMs, wantTimeoutMs)
+	}
+}
+
+func TestSandboxTimeoutDefaultsToThirtySeconds(t *testing.T) {
+	provider := NewProvider(config.E2BConfig{})
+	if got := provider.sandboxTimeout(); got != 30*time.Second {
+		t.Fatalf("sandboxTimeout() = %s, want 30s", got)
+	}
+}
+
+func TestCreateConfiguresExplicitConnectPauseLifecycle(t *testing.T) {
+	var body struct {
+		AutoPause  bool `json:"autoPause"`
+		AutoResume struct {
+			Enabled bool `json:"enabled"`
+		} `json:"autoResume"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/sandboxes" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode create request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"sandboxID":"sbx_lifecycle","templateID":"base","envdVersion":"0.1.0","envdURL":"http://127.0.0.1:1"}`)
+	}))
+	defer server.Close()
+
+	provider := NewProvider(config.E2BConfig{
+		APIKey:         "e2b_0000000000000000000000000000000000000000",
+		APIURL:         server.URL,
+		SandboxURL:     server.URL,
+		RequestTimeout: time.Second,
+	})
+	sandbox, err := provider.Create(context.Background(), db.Environment{}, nil, Resolution{
+		Template:            "base",
+		Timeout:             30 * time.Second,
+		AllowInternetAccess: true,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if sandbox.ID != "sbx_lifecycle" {
+		t.Fatalf("Create().ID = %q, want sbx_lifecycle", sandbox.ID)
+	}
+	if !body.AutoPause || body.AutoResume.Enabled {
+		t.Fatalf("create lifecycle = autoPause:%t autoResume:%t, want pause with explicit connect", body.AutoPause, body.AutoResume.Enabled)
 	}
 }
 
@@ -84,6 +136,24 @@ func TestSetTimeoutUsesConfiguredConnectTimeoutAndRequestedRenewal(t *testing.T)
 	}
 	if want := []int{420, 180}; !reflect.DeepEqual(timeouts, want) {
 		t.Fatalf("request timeouts = %#v, want %#v", timeouts, want)
+	}
+}
+
+func TestSetTimeoutClassifiesMissingSandbox(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"sandbox not found"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	provider := NewProvider(config.E2BConfig{
+		APIKey:         "e2b_0000000000000000000000000000000000000000",
+		APIURL:         server.URL,
+		SandboxURL:     server.URL,
+		RequestTimeout: time.Second,
+	})
+	err := provider.SetTimeout(context.Background(), "sbx_missing", 30*time.Second)
+	if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
+		t.Fatalf("SetTimeout() error = %v, want sandbox not found", err)
 	}
 }
 
@@ -221,30 +291,6 @@ func (p *recordingCommandProcess) record(kill bool) int {
 		p.kills++
 	}
 	return p.sequence
-}
-
-func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  config.E2BConfig
-	}{
-		{name: "hosted", cfg: config.E2BConfig{Domain: "e2b.example.test"}},
-		{name: "local endpoint", cfg: config.E2BConfig{APIURL: "http://127.0.0.1:3000"}},
-		{name: "debug", cfg: config.E2BConfig{Debug: true}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := NewProvider(tt.cfg)
-			mounts := provider.sandboxVolumeMounts(nil)
-			if got := mounts[sandboxUserDataMountPath]; got != sandboxUserDataVolumeName {
-				t.Fatalf("mount %s = %v, want %s", sandboxUserDataMountPath, got, sandboxUserDataVolumeName)
-			}
-			if len(mounts) != 1 {
-				t.Fatalf("mounts = %#v, want only user-data", mounts)
-			}
-		})
-	}
 }
 
 func TestResolveLimitedNetworkFailsClosedOnInvalidAllowedHost(t *testing.T) {

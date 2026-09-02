@@ -3,9 +3,10 @@ package config
 import "time"
 
 const (
-	EnvironmentDev  = "dev"
-	EnvironmentProd = "prod"
-	StorageTypeS3   = "s3"
+	EnvironmentDev                  = "dev"
+	EnvironmentProd                 = "prod"
+	StorageTypeS3                   = "s3"
+	ObservabilityBackendOpenObserve = "openobserve"
 )
 
 type Config struct {
@@ -13,21 +14,34 @@ type Config struct {
 	Server            ServerConfig            `yaml:"server"`
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
+	Auth              AuthConfig              `yaml:"auth"`
 	Storage           StorageConfig           `yaml:"storage"`
-	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
 	Batch             BatchConfig             `yaml:"batch"`
+	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       CodeSessionConfig       `yaml:"code_session"`
+	Observability     ObservabilityConfig     `yaml:"observability"`
 	Webhook           WebhookConfig           `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
 	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
 }
 
-// VaultConfig configures at-rest encryption for vault credential secrets.
+// VaultConfig configures at-rest encryption for vault credential secrets and
+// optional Platform OAuth Clients used during vault MCP OAuth enrollment.
 type VaultConfig struct {
-	MasterKey MasterKeyConfig `yaml:"master_key"`
+	MasterKey            MasterKeyConfig             `yaml:"master_key"`
+	PlatformOAuthClients []PlatformOAuthClientConfig `yaml:"platform_oauth_clients"`
+}
+
+// PlatformOAuthClientConfig is one deployment-owned OAuth client bound to an
+// exact mcp_server_url. When vault-auth/start has no BYO client_id, a matching
+// entry supplies client_id/client_secret before falling back to DCR.
+type PlatformOAuthClientConfig struct {
+	MCPServerURL string `yaml:"mcp_server_url"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
 }
 
 // MasterKeyConfig supplies the key-encryption key (KEK) that wraps per-secret
@@ -67,6 +81,16 @@ type RedisConfig struct {
 	URL string `yaml:"url"`
 }
 
+type AuthConfig struct {
+	SMTP EmailSMTPConfig `yaml:"smtp"`
+}
+
+type EmailSMTPConfig struct {
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
 type StorageConfig struct {
 	Type                string   `yaml:"type"`
 	S3                  S3Config `yaml:"s3"`
@@ -81,12 +105,6 @@ type S3Config struct {
 	AccessKeyID     string `yaml:"access_key_id"`
 	SecretAccessKey string `yaml:"secret_access_key"`
 	ForcePathStyle  bool   `yaml:"force_path_style"`
-}
-
-type AnthropicUpstreamConfig struct {
-	BaseURL       string            `yaml:"base_url"`
-	APIKey        string            `yaml:"api_key"`
-	ModelMappings map[string]string `yaml:"model_mappings"`
 }
 
 type BatchConfig struct {
@@ -120,13 +138,15 @@ type EnvironmentRunnerConfig struct {
 	ManagerPath             string        `yaml:"manager_path"`
 	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
 	ClaudePath              string        `yaml:"claude_path"`
+	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
+	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
+	// github.com is always included by the environment-manager launcher.
+	// After config Load/validate, entries are trimmed and lower-cased in place.
+	GitSSHtoHTTPSHosts []string `yaml:"git_ssh_to_https_hosts"`
 }
 
 type CodeSessionConfig struct {
 	SandboxAPIBaseURL        string `yaml:"sandbox_api_base_url"`
-	OTLPFileLogEnabled       bool   `yaml:"otlp_file_log_enabled"`
-	OTLPLogRoot              string `yaml:"otlp_log_root"`
-	OTLPLogBodyPreviewBytes  int    `yaml:"otlp_log_body_preview_bytes"`
 	JWTSigningPrivateKeyFile string `yaml:"jwt_signing_private_key_file"`
 	// UpstreamProxyMITMEnabled 开启后，CCR CONNECT 会在服务端终止客户端 TLS，按 HTTP 转发，再独立验证真实上游 TLS。
 	UpstreamProxyMITMEnabled bool `yaml:"upstream_proxy_mitm_enabled"`
@@ -135,6 +155,43 @@ type CodeSessionConfig struct {
 	UpstreamProxyCAKeyFile string `yaml:"upstream_proxy_ca_key_file"`
 	// UpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
 	UpstreamProxyDisableSSRFProtection bool `yaml:"upstream_proxy_disable_ssrf_protection"`
+}
+
+type ObservabilityConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// ContentCaptureEnabled defaults to true. It authorizes prompt originals,
+	// model output, and tool input/output payloads to enter the observability
+	// store. Set false to keep structural telemetry only (spans, durations,
+	// tokens, tool names).
+	ContentCaptureEnabled bool                    `yaml:"content_capture_enabled"`
+	OTLP                  ObservabilityOTLPConfig `yaml:"otlp"`
+	Backend               string                  `yaml:"backend"`
+	OpenObserve           OpenObserveConfig       `yaml:"openobserve"`
+}
+
+type OpenObserveConfig struct {
+	BaseURL      string                   `yaml:"base_url"`
+	Organization string                   `yaml:"organization"`
+	LogsStream   string                   `yaml:"logs_stream"`
+	TracesStream string                   `yaml:"traces_stream"`
+	Ingestion    BackendCredentialsConfig `yaml:"ingestion"`
+	Query        BackendQueryConfig       `yaml:"query"`
+}
+
+type BackendCredentialsConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type BackendQueryConfig struct {
+	Username string        `yaml:"username"`
+	Password string        `yaml:"password"`
+	Timeout  time.Duration `yaml:"timeout"`
+}
+
+type ObservabilityOTLPConfig struct {
+	MaxRequestBytes int64         `yaml:"max_request_bytes"`
+	ForwardTimeout  time.Duration `yaml:"forward_timeout"`
 }
 
 type WebhookConfig struct {
@@ -178,4 +235,11 @@ type SDKFixtureConfig struct {
 type SeedAPIKey struct {
 	ExternalID string `yaml:"external_id"`
 	Key        string `yaml:"key"`
+}
+
+// SandboxLifecycleConfig controls long-idle managed sandbox reclamation.
+type SandboxLifecycleConfig struct {
+	Enabled     bool          `yaml:"enabled"`
+	DryRun      bool          `yaml:"dry_run"`
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
 }

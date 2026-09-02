@@ -30,7 +30,6 @@ type CodeSession struct {
 	Metadata                    json.RawMessage
 	ConnectionStatus            string
 	LastInboundSequenceNum      int64
-	LastOutboundSequenceNum     int64
 	LastInternalSequenceNum     int64
 	LastWorkerConnectedAt       *time.Time
 	LastWorkerActivityAt        *time.Time
@@ -63,6 +62,7 @@ type CreateCodeSessionInput struct {
 	Status                string
 	Metadata              json.RawMessage
 	OAuthAccessTokenHash  string
+	InitialWorkerEpoch    int64
 	CreatedAt             time.Time
 }
 
@@ -134,7 +134,6 @@ type CodeSessionEvent struct {
 	LastDeliveryAttemptAt *time.Time
 	LastDeliveryUpdateAt  *time.Time
 	DeliveryAttempts      int
-	Ephemeral             bool
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 	DeletedAt             *time.Time
@@ -162,19 +161,17 @@ type CodeSessionInternalEvent struct {
 }
 
 type AppendCodeSessionEventInput struct {
-	ExternalID          string
-	EventType           string
-	EventSubtype        string
-	PayloadUUID         *string
-	RequestID           *string
-	Payload             json.RawMessage
-	PayloadHash         string
-	IdempotencyKey      string
-	DeliveryStatus      string
-	Source              string
-	CreatedAt           time.Time
-	RequiredWorkerEpoch *int64
-	Ephemeral           bool
+	ExternalID     string
+	EventType      string
+	EventSubtype   string
+	PayloadUUID    *string
+	RequestID      *string
+	Payload        json.RawMessage
+	PayloadHash    string
+	IdempotencyKey string
+	DeliveryStatus string
+	Source         string
+	CreatedAt      time.Time
 }
 
 type AppendCodeSessionInternalEventInput struct {
@@ -264,6 +261,7 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 		Status:                status,
 		Metadata:              input.Metadata,
 		OAuthAccessTokenHash:  oauthAccessTokenHash,
+		InitialWorkerEpoch:    input.InitialWorkerEpoch,
 		CreatedAt:             now,
 	})
 	if err != nil {
@@ -389,9 +387,6 @@ func activationInboundEventInsertRows(
 	rows := make([]codeSessionInboundEventInsertRow, 0, len(inputs))
 	seen := make(map[string]struct{}, len(inputs))
 	for _, input := range inputs {
-		if input.RequiredWorkerEpoch != nil && codeSession.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
-			return nil, 0, ErrWorkerEpochMismatch
-		}
 		if input.IdempotencyKey != "" {
 			if _, ok := existing[input.IdempotencyKey]; ok {
 				continue
@@ -476,6 +471,30 @@ func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organi
 	return row.context(), nil
 }
 
+func (d *DB) ValidateCodeSessionIngressWorkerEpoch(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	codeSessionExternalID string,
+	workerEpoch int64,
+) error {
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	count, err := mapper.CountActiveIngressWorkerEpoch(
+		ctx,
+		organizationUUID,
+		workspaceUUID,
+		codeSessionExternalID,
+		workerEpoch,
+	)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetCodeSessionNetworkPolicyContext 从已验签的租户身份出发，一次性加载并校验
 // Code Session、Environment 与 Session 的策略关系。项目不使用数据库外键，因此
 // 每个 join 都显式约束 organization/workspace 与稳定 UUID；任一关系缺失都 fail closed。
@@ -547,16 +566,13 @@ func decodeVaultIDList(raw []byte) ([]string, error) {
 	return ids, nil
 }
 
-func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, error) {
+func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, bool, error) {
 	mapper := NewCodeSessionMapper(d.mapperDB)
-	row, err := mapper.FindByExternalID(ctx, externalID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return CodeSession{}, ErrNotFound
+	row, found, err := mapper.FindByExternalID(ctx, externalID)
+	if err != nil || !found {
+		return CodeSession{}, found, err
 	}
-	if err != nil {
-		return CodeSession{}, err
-	}
-	return row.session(), nil
+	return row.session(), true, nil
 }
 
 func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUID string, sessionExternalID string) (CodeSession, error) {
@@ -571,7 +587,57 @@ func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUI
 	return row.session(), nil
 }
 
+func (d *DB) GetActiveCodeSessionForEnvironmentWork(ctx context.Context, work EnvironmentWork, sessionUUID string) (CodeSession, error) {
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	rows, err := mapper.FindActiveForEnvironmentWork(
+		ctx,
+		work.OrganizationUUID,
+		work.WorkspaceUUID,
+		work.EnvironmentUUID,
+		sessionUUID,
+	)
+	if err != nil {
+		return CodeSession{}, err
+	}
+	if len(rows) == 0 {
+		return CodeSession{}, ErrNotFound
+	}
+	if len(rows) != 1 {
+		return CodeSession{}, ErrInvalidState
+	}
+	return rows[0].session(), nil
+}
+
 func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalID string, binding CodeSessionWorkerBinding, leaseTTL time.Duration) (int64, time.Time, error) {
+	return d.registerCodeSessionWorker(ctx, codeSessionExternalID, binding, leaseTTL, nil)
+}
+
+func (d *DB) RegisterCodeSessionWorkerAtEpoch(
+	ctx context.Context,
+	codeSessionExternalID string,
+	workerEpoch int64,
+	binding CodeSessionWorkerBinding,
+	leaseTTL time.Duration,
+) (int64, time.Time, error) {
+	if workerEpoch <= 0 {
+		return 0, time.Time{}, ErrWorkerEpochMismatch
+	}
+	return d.registerCodeSessionWorker(
+		ctx,
+		codeSessionExternalID,
+		binding,
+		leaseTTL,
+		&workerEpoch,
+	)
+}
+
+func (d *DB) registerCodeSessionWorker(
+	ctx context.Context,
+	codeSessionExternalID string,
+	binding CodeSessionWorkerBinding,
+	leaseTTL time.Duration,
+	expectedEpoch *int64,
+) (int64, time.Time, error) {
 	if leaseTTL <= 0 {
 		leaseTTL = time.Minute
 	}
@@ -591,9 +657,21 @@ func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalI
 		if !found {
 			return ErrNotFound
 		}
+		// Credential rotation reserves a positive epoch and clears the lease. A
+		// legacy JWT without worker_epoch must not advance past that fence.
+		if expectedEpoch == nil && row.CurrentWorkerEpoch > 0 && row.WorkerLeaseExpiresAt == nil {
+			return ErrWorkerEpochMismatch
+		}
+		nextEpoch := row.CurrentWorkerEpoch + 1
+		if expectedEpoch != nil {
+			if row.CurrentWorkerEpoch != *expectedEpoch {
+				return ErrWorkerEpochMismatch
+			}
+			nextEpoch = *expectedEpoch
+		}
 		epoch, err = mapper.RegisterWorker(ctx, registerCodeSessionWorkerParams{
 			UUID:                 row.UUID,
-			Epoch:                row.CurrentWorkerEpoch + 1,
+			Epoch:                nextEpoch,
 			ExpiresAt:            expiresAt,
 			Now:                  now,
 			WorkerTokenSessionID: optionalCodeSessionString(binding.TokenSessionID),
@@ -727,6 +805,37 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 	return expiresAt, err
 }
 
+// ResumeCodeSessionWorkerLeaseForSandbox re-arms the existing worker lease
+// after the provider has successfully resumed the same sandbox. It preserves
+// the current epoch and only updates a registered worker still associated with
+// the exact active sandbox, so a retired sandbox cannot revive a fenced worker.
+func (d *DB) ResumeCodeSessionWorkerLeaseForSandbox(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	codeSessionExternalID string,
+	providerSandboxID string,
+	leaseTTL time.Duration,
+) (bool, error) {
+	if leaseTTL <= 0 {
+		leaseTTL = time.Minute
+	}
+	now := time.Now().UTC()
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	rowsAffected, err := mapper.ResumeWorkerLeaseForSandbox(ctx, resumeCodeSessionWorkerLeaseParams{
+		OrganizationUUID:      organizationUUID,
+		WorkspaceUUID:         workspaceUUID,
+		CodeSessionExternalID: codeSessionExternalID,
+		ProviderSandboxID:     providerSandboxID,
+		ExpiresAt:             now.Add(leaseTTL),
+		Now:                   now,
+	})
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected == 1, nil
+}
+
 func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExternalID string, input UpdateCodeSessionWorkerStateInput) (CodeSession, error) {
 	if input.WorkerEpoch <= 0 {
 		return CodeSession{}, ErrWorkerEpochMismatch
@@ -786,11 +895,7 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 }
 
 func (d *DB) AppendCodeSessionInboundEvent(ctx context.Context, codeSessionExternalID string, input AppendCodeSessionEventInput) (CodeSessionEvent, bool, error) {
-	return d.appendCodeSessionEvent(ctx, "inbound", codeSessionExternalID, input)
-}
-
-func (d *DB) AppendCodeSessionOutboundEvent(ctx context.Context, codeSessionExternalID string, input AppendCodeSessionEventInput) (CodeSessionEvent, bool, error) {
-	return d.appendCodeSessionEvent(ctx, "outbound", codeSessionExternalID, input)
+	return d.appendCodeSessionInboundEvent(ctx, codeSessionExternalID, input)
 }
 
 func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExternalID string, workerEpoch int64, inputs []AppendCodeSessionInternalEventInput) ([]CodeSessionInternalEvent, error) {
@@ -858,16 +963,12 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 	return created, nil
 }
 
-func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeSessionExternalID string, input AppendCodeSessionEventInput) (CodeSessionEvent, bool, error) {
-	if input.RequiredWorkerEpoch != nil && *input.RequiredWorkerEpoch <= 0 {
-		return CodeSessionEvent{}, false, ErrWorkerEpochMismatch
-	}
+func (d *DB) appendCodeSessionInboundEvent(ctx context.Context, codeSessionExternalID string, input AppendCodeSessionEventInput) (CodeSessionEvent, bool, error) {
 	var event CodeSessionEvent
 	var duplicate bool
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		codeSessionMapper := NewCodeSessionMapper(executor)
 		inboundMapper := NewCodeSessionInboundEventMapper(executor)
-		outboundMapper := NewCodeSessionOutboundEventMapper(executor)
 
 		codeSession, found, err := codeSessionMapper.LockCodeSessionByExternalID(ctx, codeSessionExternalID)
 		if err != nil {
@@ -876,21 +977,11 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 		if !found {
 			return ErrNotFound
 		}
-		if input.RequiredWorkerEpoch != nil && codeSession.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
-			return ErrWorkerEpochMismatch
-		}
 		// 有幂等键时先按 workspace 查是否已写入；命中则返回已有事件并标记 duplicate，避免重复插入。
 		if input.IdempotencyKey != "" {
-			var existing codeSessionEventRow
-			if direction == "outbound" {
-				existing, found, err = outboundMapper.GetCodeSessionOutboundEventByIdempotencyKey(
-					ctx, codeSession.WorkspaceUUID, input.IdempotencyKey,
-				)
-			} else {
-				existing, found, err = inboundMapper.GetCodeSessionInboundEventByIdempotencyKey(
-					ctx, codeSession.WorkspaceUUID, input.IdempotencyKey,
-				)
-			}
+			existing, found, err := inboundMapper.GetCodeSessionInboundEventByIdempotencyKey(
+				ctx, codeSession.WorkspaceUUID, input.IdempotencyKey,
+			)
 			if err != nil {
 				return err
 			}
@@ -905,42 +996,7 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 		if now.IsZero() {
 			now = time.Now().UTC()
 		}
-		// outbound：写入 worker 产出事件，并推进 last_outbound_sequence_num。
-		if direction == "outbound" {
-			sequence := codeSession.LastOutboundSequenceNum + 1
-			inserted, err := outboundMapper.InsertCodeSessionOutboundEvent(ctx, codeSessionOutboundEventInsertRow{
-				ExternalID:            input.ExternalID,
-				OrganizationUUID:      codeSession.OrganizationUUID,
-				WorkspaceUUID:         codeSession.WorkspaceUUID,
-				CodeSessionUUID:       codeSession.UUID,
-				CodeSessionExternalID: codeSession.ExternalID,
-				SequenceNum:           sequence,
-				EventType:             input.EventType,
-				EventSubtype:          input.EventSubtype,
-				PayloadUUID:           input.PayloadUUID,
-				RequestID:             input.RequestID,
-				Payload:               input.Payload,
-				PayloadHash:           input.PayloadHash,
-				IdempotencyKey:        input.IdempotencyKey,
-				Source:                input.Source,
-				Ephemeral:             input.Ephemeral,
-				CreatedAt:             now,
-			})
-			if err != nil {
-				return err
-			}
-			updated, err := codeSessionMapper.UpdateCodeSessionOutboundSequence(ctx, codeSession.UUID, sequence, now)
-			if err != nil {
-				return err
-			}
-			if updated != 1 {
-				return ErrInvalidState
-			}
-			event = inserted.event()
-			return nil
-		}
-
-		// inbound：写入投递给 worker 的事件（默认 delivery_status=queued），并推进 last_inbound_sequence_num。
+		// 写入投递给 worker 的事件（默认 delivery_status=queued），并推进 last_inbound_sequence_num。
 		deliveryStatus := input.DeliveryStatus
 		if deliveryStatus == "" {
 			deliveryStatus = "queued"
@@ -1052,31 +1108,6 @@ func (d *DB) ListCodeSessionInboundEventsForWorkerStream(ctx context.Context, co
 		return nil, err
 	}
 	return []CodeSessionEvent{}, nil
-}
-
-func (d *DB) ListCodeSessionOutboundEventsAfter(ctx context.Context, codeSessionExternalID string, afterSequence int64, limit int) ([]CodeSessionEvent, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	mapper := NewCodeSessionOutboundEventMapper(d.mapperDB)
-	rows, err := mapper.ListAfter(ctx, codeSessionExternalID, afterSequence, limit)
-	return codeSessionEvents(rows), err
-}
-
-func (d *DB) GetLatestCodeSessionToolPermissionRequest(ctx context.Context, codeSessionExternalID string, toolUseID string) (CodeSessionEvent, error) {
-	toolUseID = strings.TrimSpace(toolUseID)
-	if toolUseID == "" {
-		return CodeSessionEvent{}, ErrNotFound
-	}
-	mapper := NewCodeSessionOutboundEventMapper(d.mapperDB)
-	row, err := mapper.FindLatestToolPermissionRequest(ctx, codeSessionExternalID, toolUseID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return CodeSessionEvent{}, ErrNotFound
-	}
-	if err != nil {
-		return CodeSessionEvent{}, err
-	}
-	return row.event(), nil
 }
 
 func (d *DB) MarkCodeSessionInboundEventSent(ctx context.Context, eventExternalID string) error {
@@ -1250,30 +1281,21 @@ func (d *DB) TouchCodeSessionWorkerActivityForEpoch(ctx context.Context, codeSes
 	return d.touchCodeSessionWorkerActivity(ctx, codeSessionExternalID, &epoch)
 }
 
-// TouchCodeSessionWorkerActivityForActiveLease 只允许 OTLP 刷新当前 epoch 且 lease 尚未过期的 worker，
-// 不能借遥测请求复活已经被接管或租约过期的 worker。
-func (d *DB) TouchCodeSessionWorkerActivityForActiveLease(ctx context.Context, codeSessionExternalID string, epoch int64) error {
-	if epoch <= 0 {
-		return ErrWorkerEpochMismatch
-	}
-	now := time.Now().UTC()
-	mapper := NewCodeSessionMapper(d.mapperDB)
-	rowsAffected, err := mapper.TouchWorkerActivityForActiveLease(ctx, codeSessionExternalID, epoch, now)
+// ValidateCodeSessionWorkerActiveLease checks that a worker is currently
+// registered without writing any state. OTLP ingress calls it before reading
+// the body so expired workers are rejected without doing decode work.
+func (d *DB) ValidateCodeSessionWorkerActiveLease(ctx context.Context, codeSessionExternalID string) error {
+	record, found, err := d.GetCodeSession(ctx, codeSessionExternalID)
 	if err != nil {
 		return err
 	}
-	if rowsAffected > 0 {
-		return nil
+	if !found {
+		return ErrNotFound
 	}
-	// 条件更新未命中后再读取当前状态，以便把 takeover 与 lease 过期映射为不同 HTTP 错误。
-	record, err := d.GetCodeSession(ctx, codeSessionExternalID)
-	if err != nil {
-		return err
+	if record.WorkerLeaseExpiresAt == nil || !record.WorkerLeaseExpiresAt.After(time.Now().UTC()) {
+		return ErrWorkerLeaseExpired
 	}
-	if record.CurrentWorkerEpoch != epoch {
-		return ErrWorkerEpochMismatch
-	}
-	return ErrWorkerLeaseExpired
+	return nil
 }
 
 func (d *DB) touchCodeSessionWorkerActivity(ctx context.Context, codeSessionExternalID string, requiredEpoch *int64) error {

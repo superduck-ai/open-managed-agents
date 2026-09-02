@@ -1,24 +1,26 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
+import { Skeleton } from '../../../shared/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Toggle } from '../../../shared/ui/toggle';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import {
   type DisplayEventType,
   type IconComponent,
-  type LaneTabGroup,
   type SessionDetailLane,
   type SessionEventUsage,
   type SessionTimelineLane,
+  type SessionTimelineItem,
   type SessionTimelineTick,
   type TimelinePickOptions,
   type ToolLifecycle,
 } from '../types';
 import clsx from 'clsx';
-import { Ban, ChevronLeft, ChevronRight, CircleX, Database, Loader2, Timer } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, CircleX, Database, Loader2, Minus, Plus, Timer } from 'lucide-react';
 import {
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MutableRefObject,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -31,6 +33,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   formatCompactTokenCount,
   formatSessionDuration,
@@ -41,9 +44,73 @@ import { outcomeStatusChipClass, outcomeStatusLabel } from './sessionTraceRows';
 
 export const SESSION_MAIN_LANE_ID = '';
 const SESSION_MAIN_LANE_TAB_VALUE = '__oma_main_lane__';
-const SESSION_TIMELINE_SINGLE_LANE_HEIGHT_PX = 36;
+const SESSION_TIMELINE_SINGLE_LANE_HEIGHT_PX = 28;
 const SESSION_TIMELINE_LANE_HEIGHT_PX = 28;
-const SESSION_TIMELINE_LANE_GAP_PX = 4;
+const SESSION_TIMELINE_INACTIVE_LANE_HEIGHT_PX = 20;
+const SESSION_TIMELINE_LANE_GAP_PX = 6;
+const SESSION_TIMELINE_VERTICAL_PADDING_PX = 12;
+const SESSION_TIMELINE_MINIMAP_MIN_HEIGHT_PX = 100;
+const SESSION_TIMELINE_MINIMAP_DEFAULT_MAX_HEIGHT_PX = 280;
+const SESSION_TIMELINE_MINIMAP_RESIZE_THRESHOLD_PX = 52;
+const SESSION_TIMELINE_MIN_ZOOM = 1;
+const SESSION_TIMELINE_MAX_ZOOM = 4;
+const SESSION_TIMELINE_ZOOM_STEP = 0.25;
+const SESSION_TIMELINE_IDLE_WINDOW_MIN_MS = 30_000;
+
+export function sessionTimelineLaneHeight(index: number, activeLaneIndex: number) {
+  return index === 0 || index === activeLaneIndex
+    ? SESSION_TIMELINE_LANE_HEIGHT_PX
+    : SESSION_TIMELINE_INACTIVE_LANE_HEIGHT_PX;
+}
+
+export function sessionTimelineLaneTop(index: number, activeLaneIndex: number) {
+  let top = 0;
+  for (let laneIndex = 0; laneIndex < index; laneIndex += 1) {
+    top += sessionTimelineLaneHeight(laneIndex, activeLaneIndex) + SESSION_TIMELINE_LANE_GAP_PX;
+  }
+  return top;
+}
+
+export function sessionTimelineLaneContentHeight(laneCount: number, activeLaneIndex: number) {
+  if (laneCount <= 0) {
+    return 0;
+  }
+  let height = (laneCount - 1) * SESSION_TIMELINE_LANE_GAP_PX;
+  for (let index = 0; index < laneCount; index += 1) {
+    height += sessionTimelineLaneHeight(index, activeLaneIndex);
+  }
+  return height;
+}
+
+export function sessionMinimapLayout(laneCount: number, viewportHeight: number) {
+  const laneContentHeight = sessionTimelineLaneContentHeight(laneCount, laneCount > 1 ? 1 : 0);
+  const contentHeight =
+    Math.max(laneContentHeight, SESSION_TIMELINE_SINGLE_LANE_HEIGHT_PX) + SESSION_TIMELINE_VERTICAL_PADDING_PX;
+  const minHeight = Math.min(contentHeight, SESSION_TIMELINE_MINIMAP_MIN_HEIGHT_PX);
+  const viewportMaxHeight = viewportHeight > 0 ? viewportHeight * 0.6 : contentHeight;
+  const maxHeight = Math.max(minHeight, Math.min(contentHeight, viewportMaxHeight));
+  const defaultHeight = clampNumber(
+    Math.min(contentHeight, SESSION_TIMELINE_MINIMAP_DEFAULT_MAX_HEIGHT_PX),
+    minHeight,
+    maxHeight,
+  );
+  return {
+    contentHeight,
+    defaultHeight,
+    laneContentHeight,
+    maxHeight,
+    minHeight,
+    resizable: contentHeight - minHeight >= SESSION_TIMELINE_MINIMAP_RESIZE_THRESHOLD_PX && maxHeight > minHeight,
+  };
+}
+
+export function clampSessionTimelineZoom(value: number) {
+  return clampNumber(value, SESSION_TIMELINE_MIN_ZOOM, SESSION_TIMELINE_MAX_ZOOM);
+}
+
+export function sessionMinimapViewportOverflowClassName(zoom: number) {
+  return zoom > SESSION_TIMELINE_MIN_ZOOM ? 'overflow-auto' : 'overflow-x-hidden overflow-y-auto';
+}
 
 export const SESSION_ARCHIVED_LANES_STORAGE_KEY = 'oma.sessionDetail.showArchivedLanes';
 
@@ -53,12 +120,14 @@ export function SessionStatusPill({ status }: { status: string }) {
     <Badge
       variant="secondary"
       className={clsx(
-        'h-6 rounded-md px-2 text-xs font-medium',
+        'h-6 shrink-0 rounded-md px-2 text-xs font-medium',
         tone.includes('running') || tone.includes('active')
-          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+          ? 'bg-success-bg text-success'
           : tone.includes('error') || tone.includes('failed')
             ? 'bg-destructive/10 text-destructive'
-            : 'bg-secondary text-secondary-foreground',
+            : tone.includes('queued') || tone.includes('reschedul')
+              ? 'bg-warning-bg text-warning'
+              : 'bg-secondary text-secondary-foreground',
       )}
     >
       {status}
@@ -66,15 +135,38 @@ export function SessionStatusPill({ status }: { status: string }) {
   );
 }
 
-export function SessionSummaryChip({ icon: Icon, children }: { icon: IconComponent; children: ReactNode }) {
-  return (
-    <Badge
-      variant="outline"
-      className="h-auto max-w-full items-center gap-1.5 rounded-md bg-card px-2.5 py-1.5 text-sm font-medium text-foreground shadow-sm"
+export function SessionSummaryChip({
+  icon: Icon,
+  children,
+  className,
+  tooltip,
+}: {
+  icon: IconComponent;
+  children: ReactNode;
+  className?: string;
+  tooltip?: string;
+}) {
+  const chip = (
+    <span
+      className={clsx('flex min-w-0 max-w-52 shrink-0 items-center gap-2 text-sm text-muted-foreground', className)}
     >
-      <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-      <span className="truncate">{children}</span>
-    </Badge>
+      <span aria-hidden className="text-border">
+        ·
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <Icon className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate text-foreground/80">{children}</span>
+      </span>
+    </span>
+  );
+  if (!tooltip) {
+    return chip;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger render={chip} />
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -82,44 +174,118 @@ export function EventsMinimap({
   lanes,
   activeLane,
   selectedEntryId,
+  hoveredEventId = null,
+  controlsSlot = null,
   visibleIds,
   scrollerRef,
   suppressScrollSeekUntilRef,
   onLaneChange,
+  onHoverEvent,
   onSeek,
 }: {
   lanes: SessionTimelineLane[];
   activeLane: string;
   selectedEntryId: string | null;
+  hoveredEventId?: string | null;
+  controlsSlot?: HTMLElement | null;
   visibleIds?: Set<string>;
   scrollerRef: RefObject<HTMLDivElement | null>;
   suppressScrollSeekUntilRef: MutableRefObject<number>;
   onLaneChange: (laneId: string, targetEntryId?: string | null) => void;
+  onHoverEvent?: (entryId: string | null) => void;
   onSeek: (entryId: string | null) => void;
 }) {
   const { msg } = useI18n();
-  const ticks = useMemo(() => buildTimelineTicks(lanes), [lanes]);
+  const hasOpenTick = useMemo(() => lanes.some((lane) => lane.items.some((item) => item.open)), [lanes]);
+  const [timelineNowMs, setTimelineNowMs] = useState(Date.now);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
-  const dragRef = useRef<{ startX: number; pointerId: number; laneId: string; dragging: boolean } | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startScrollLeft: number;
+    pointerId: number;
+    laneId: string;
+    dragging: boolean;
+    pannable: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const resizeRef = useRef<{ startHeight: number; startY: number; pointerId: number } | null>(null);
+  const heightWasResizedRef = useRef(false);
   const hoveredLaneRef = useRef<string | null>(null);
   const isMultiLane = lanes.length > 1;
-  const [boundaryLock, setBoundaryLock] = useState<'start' | 'end' | null>(null);
+  const activeLaneIndex = Math.max(
+    0,
+    lanes.findIndex((lane) => lane.id === activeLane),
+  );
+  const [viewportHeight, setViewportHeight] = useState(sessionTimelineViewportHeight);
+  const minimapLayout = useMemo(
+    () => sessionMinimapLayout(lanes.length, viewportHeight),
+    [lanes.length, viewportHeight],
+  );
+  const [minimapHeight, setMinimapHeight] = useState(minimapLayout.defaultHeight);
+  const [zoom, setZoom] = useState(SESSION_TIMELINE_MIN_ZOOM);
+  const [trackBaseWidth, setTrackBaseWidth] = useState(0);
+  const ticks = useMemo(
+    () => buildTimelineTicks(lanes, timelineNowMs, trackBaseWidth * zoom),
+    [lanes, timelineNowMs, trackBaseWidth, zoom],
+  );
   const [hoveredTickId, setHoveredTickId] = useState<string | null>(null);
+  const [hoveredPointerClientX, setHoveredPointerClientX] = useState<number | null>(null);
   const [hoveredLaneId, setHoveredLaneId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [windowRange, setWindowRange] = useState({ leftPct: 1, widthPct: 98 });
-  const [playhead, setPlayhead] = useState<{ leftPct: number; topPx: number; label: string; visible: boolean }>({
-    leftPct: 1,
-    topPx: 14,
-    label: '',
-    visible: false,
-  });
-  const hoveredTick = hoveredTickId ? (ticks.find((tick) => tick.id === hoveredTickId) ?? null) : null;
+  const hoveredTick = ticks.find((tick) => tick.id === hoveredTickId);
+  const pointedTickId = hoveredTickId ?? hoveredEventId;
   const activeLaneTicks = useMemo(() => ticks.filter((tick) => tick.lane.id === activeLane), [activeLane, ticks]);
-  const timelineMinHeight = isMultiLane
-    ? lanes.length * SESSION_TIMELINE_LANE_HEIGHT_PX + (lanes.length - 1) * SESSION_TIMELINE_LANE_GAP_PX
-    : undefined;
+  const selectableActiveLaneTicks = useMemo(
+    () => activeLaneTicks.filter((tick) => isTimelineTickSelectable(tick, visibleIds, true)),
+    [activeLaneTicks, visibleIds],
+  );
+  const selectedTickIndex = selectableActiveLaneTicks.findIndex((tick) => tick.id === selectedEntryId);
+  const selectedTick = selectableActiveLaneTicks[selectedTickIndex];
+  const messageLinks = useMemo(
+    () => buildSessionTimelineMessageLinks(ticks, lanes, activeLaneIndex),
+    [activeLaneIndex, lanes, ticks],
+  );
+  const idleWindows = useMemo(() => buildSessionTimelineIdleWindows(ticks), [ticks]);
+
+  useEffect(() => {
+    if (!hasOpenTick) {
+      return;
+    }
+    setTimelineNowMs(Date.now());
+    const interval = window.setInterval(() => setTimelineNowMs(Date.now()), 250);
+    return () => window.clearInterval(interval);
+  }, [hasOpenTick]);
+
+  useEffect(() => {
+    const handleResize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const updateWidth = () => {
+      const width = viewport.clientWidth - 6;
+      if (width > 0) setTrackBaseWidth(width);
+    };
+    updateWidth();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setMinimapHeight((currentHeight) =>
+      heightWasResizedRef.current
+        ? clampNumber(currentHeight, minimapLayout.minHeight, minimapLayout.maxHeight)
+        : minimapLayout.defaultHeight,
+    );
+  }, [minimapLayout.defaultHeight, minimapLayout.maxHeight, minimapLayout.minHeight]);
 
   const suppressScrollSync = useCallback(() => {
     suppressScrollSeekUntilRef.current = sessionTimelineNow() + 200;
@@ -133,60 +299,66 @@ export function EventsMinimap({
     setHoveredLaneId(laneId);
   }, []);
 
-  const updatePlayheadFromTick = useCallback((tick: SessionTimelineTick, label = tick.relativeTime) => {
-    const row = rowRefs.current.get(tick.lane.id);
-    const topPx = row ? row.offsetTop + row.offsetHeight / 2 : 14;
-    setBoundaryLock(null);
-    setPlayhead({
-      leftPct: timelineTickCenterPct(tick),
-      topPx,
-      label,
-      visible: true,
-    });
-  }, []);
+  const updateZoom = useCallback(
+    (value: number) => {
+      const nextZoom = clampSessionTimelineZoom(value);
+      if (nextZoom === zoom) {
+        return;
+      }
+      const viewport = viewportRef.current;
+      const centerRatio = viewport
+        ? (viewport.scrollLeft + viewport.clientWidth / 2) / Math.max(viewport.scrollWidth, viewport.clientWidth)
+        : 0.5;
+      setZoom(nextZoom);
+      window.requestAnimationFrame(() => {
+        const nextViewport = viewportRef.current;
+        if (!nextViewport) {
+          return;
+        }
+        nextViewport.scrollLeft = Math.max(0, centerRatio * nextViewport.scrollWidth - nextViewport.clientWidth / 2);
+      });
+    },
+    [zoom],
+  );
+
+  const updateMinimapHeight = useCallback(
+    (height: number) => {
+      heightWasResizedRef.current = true;
+      setMinimapHeight(clampNumber(height, minimapLayout.minHeight, minimapLayout.maxHeight));
+    },
+    [minimapLayout.maxHeight, minimapLayout.minHeight],
+  );
+
+  const revealTimelineTick = useCallback(
+    (tick: SessionTimelineTick) => {
+      const viewport = viewportRef.current;
+      if (zoom > SESSION_TIMELINE_MIN_ZOOM && viewport) {
+        const center = (timelineTickCenterPct(tick) / 100) * viewport.scrollWidth;
+        if (center < viewport.scrollLeft || center > viewport.scrollLeft + viewport.clientWidth) {
+          viewport.scrollLeft = Math.max(0, center - viewport.clientWidth / 2);
+        }
+      }
+    },
+    [zoom],
+  );
 
   const seekToTick = useCallback(
     (tick: SessionTimelineTick) => {
       suppressScrollSync();
-      updatePlayheadFromTick(tick);
+      revealTimelineTick(tick);
       onSeek(tick.id);
       scrollSessionEntryToOffset(scrollerRef.current, tick.rowId);
     },
-    [onSeek, scrollerRef, suppressScrollSync, updatePlayheadFromTick],
+    [onSeek, revealTimelineTick, scrollerRef, suppressScrollSync],
   );
 
   const changeLaneToTick = useCallback(
     (tick: SessionTimelineTick) => {
       suppressScrollSync();
-      updatePlayheadFromTick(tick);
+      revealTimelineTick(tick);
       onLaneChange(tick.lane.id, tick.id);
     },
-    [onLaneChange, suppressScrollSync, updatePlayheadFromTick],
-  );
-
-  const seekToBoundary = useCallback(
-    (boundary: 'start' | 'end', laneId = activeLane) => {
-      const laneTicks = ticks.filter(
-        (tick) => tick.lane.id === laneId && isTimelineTickSelectable(tick, visibleIds, true),
-      );
-      const tick = boundary === 'start' ? laneTicks[0] : laneTicks[laneTicks.length - 1];
-      const scroller = scrollerRef.current;
-      const row = rowRefs.current.get(laneId);
-      const topPx = row ? row.offsetTop + row.offsetHeight / 2 : playhead.topPx;
-      suppressScrollSync();
-      setBoundaryLock(boundary);
-      onSeek(null);
-      if (scroller) {
-        scroller.scrollTop = boundary === 'start' ? 0 : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-      }
-      setPlayhead({
-        leftPct: boundary === 'start' ? 1 : 99,
-        topPx,
-        label: tick?.relativeTime ?? '',
-        visible: true,
-      });
-    },
-    [activeLane, onSeek, playhead.topPx, scrollerRef, suppressScrollSync, ticks, visibleIds],
+    [onLaneChange, revealTimelineTick, suppressScrollSync],
   );
 
   const laneIdAtClientY = useCallback(
@@ -237,15 +409,16 @@ export function EventsMinimap({
     if (hoveredLaneRef.current === laneId) {
       updateHoveredLane(null);
       setHoveredTickId(null);
+      onHoverEvent?.(null);
     }
   };
 
   useEffect(() => {
     const tick = selectedEntryId ? ticks.find((candidate) => candidate.id === selectedEntryId) : null;
     if (tick) {
-      updatePlayheadFromTick(tick);
+      revealTimelineTick(tick);
     }
-  }, [selectedEntryId, ticks, updatePlayheadFromTick]);
+  }, [revealTimelineTick, selectedEntryId, ticks]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -271,7 +444,7 @@ export function EventsMinimap({
         return;
       }
       if (isMultiLane) {
-        updatePlayheadFromTick(firstTick);
+        revealTimelineTick(firstTick);
         return;
       }
       const lastVisibleTick = [...laneTicks].reverse().find((tick) => visibleEntryIds.has(tick.rowId)) ?? firstTick;
@@ -285,9 +458,10 @@ export function EventsMinimap({
     handleScroll();
     scroller.addEventListener('scroll', handleScroll, { passive: true });
     return () => scroller.removeEventListener('scroll', handleScroll);
-  }, [activeLaneTicks, isMultiLane, scrollerRef, suppressScrollSeekUntilRef, updatePlayheadFromTick, visibleIds]);
+  }, [activeLaneTicks, isMultiLane, revealTimelineTick, scrollerRef, suppressScrollSeekUntilRef, visibleIds]);
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    setHoveredPointerClientX(event.clientX);
     const dragState = dragRef.current;
     const laneId = dragState
       ? laneIdAtClientY(event.clientY)
@@ -300,30 +474,28 @@ export function EventsMinimap({
     }
     const hoverTick = pickTickAtPoint(event.clientX, laneId, true, 1.5);
     setHoveredTickId(hoverTick?.id ?? null);
+    onHoverEvent?.(hoverTick?.id ?? null);
     if (!dragState || dragState.pointerId !== event.pointerId) {
       return;
     }
     if (!dragState.dragging && Math.abs(event.clientX - dragState.startX) < 4) {
       return;
     }
-    dragState.dragging = true;
-    setIsDragging(true);
-    const pct = clientXToTimelinePct(event.clientX, trackRef.current);
-    if (isMultiLane && pct <= 1.5) {
-      seekToBoundary('start', laneId);
+    if (!dragState.dragging) {
+      dragState.dragging = true;
+      suppressClickRef.current = true;
+      setIsDragging(dragState.pannable);
+    }
+    if (!dragState.pannable) {
       return;
     }
-    if (isMultiLane && pct >= 98.5) {
-      seekToBoundary('end', laneId);
-      return;
-    }
-    const dragTick = pickTickAtPoint(event.clientX, laneId, true, 1.5);
-    if (dragTick) {
-      if (dragTick.lane.id !== activeLane) {
-        changeLaneToTick(dragTick);
-        return;
-      }
-      seekToTick(dragTick);
+    const viewport = viewportRef.current;
+    if (viewport) {
+      viewport.scrollLeft = clampNumber(
+        dragState.startScrollLeft + dragState.startX - event.clientX,
+        0,
+        Math.max(0, viewport.scrollWidth - viewport.clientWidth),
+      );
     }
   };
 
@@ -332,7 +504,17 @@ export function EventsMinimap({
       return;
     }
     const laneId = laneIdAtClientY(event.clientY);
-    dragRef.current = { startX: event.clientX, pointerId: event.pointerId, laneId, dragging: false };
+    const viewport = viewportRef.current;
+    dragRef.current = {
+      startX: event.clientX,
+      startScrollLeft: viewport?.scrollLeft ?? 0,
+      pointerId: event.pointerId,
+      laneId,
+      dragging: false,
+      pannable: Boolean(
+        zoom > SESSION_TIMELINE_MIN_ZOOM && viewport && viewport.scrollWidth > viewport.clientWidth + 1,
+      ),
+    };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
@@ -356,13 +538,10 @@ export function EventsMinimap({
     setIsDragging(false);
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     const laneId = laneIdAtClientY(event.clientY);
-    const pct = clientXToTimelinePct(event.clientX, trackRef.current);
     if (dragState?.dragging) {
-      if (isMultiLane && pct <= 1.5) {
-        seekToBoundary('start', laneId);
-      } else if (isMultiLane && pct >= 98.5) {
-        seekToBoundary('end', laneId);
-      }
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
       return;
     }
     const tick = pickTickAtPoint(event.clientX, laneId, false, 2.5);
@@ -379,6 +558,8 @@ export function EventsMinimap({
   const handlePointerLeave = () => {
     if (!dragRef.current?.dragging) {
       setHoveredTickId(null);
+      setHoveredPointerClientX(null);
+      onHoverEvent?.(null);
       updateHoveredLane(null);
     }
   };
@@ -390,16 +571,24 @@ export function EventsMinimap({
     if (hoveredLaneRef.current === null) {
       updateHoveredLane(laneId);
     }
+    setHoveredPointerClientX(event.clientX);
     const hoverTick = pickTickAtPoint(event.clientX, laneId, true, 1.5);
     setHoveredTickId(hoverTick?.id ?? null);
+    onHoverEvent?.(hoverTick?.id ?? null);
   };
   const handleMouseLeave = () => {
     if (!dragRef.current) {
       setHoveredTickId(null);
+      setHoveredPointerClientX(null);
+      onHoverEvent?.(null);
       updateHoveredLane(null);
     }
   };
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     const laneId = laneIdAtClientY(event.clientY);
     const tick = pickTickAtPoint(event.clientX, laneId, false, 2.5);
     if (!tick) {
@@ -412,24 +601,149 @@ export function EventsMinimap({
     seekToTick(tick);
   };
 
+  const handleTimelineKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!selectableActiveLaneTicks.length) {
+      return;
+    }
+    let targetIndex: number | null = null;
+    if (event.key === 'Home') {
+      targetIndex = 0;
+    } else if (event.key === 'End') {
+      targetIndex = selectableActiveLaneTicks.length - 1;
+    } else if (event.key === 'ArrowLeft' || event.key === 'k') {
+      targetIndex = selectedTickIndex < 0 ? selectableActiveLaneTicks.length - 1 : Math.max(0, selectedTickIndex - 1);
+    } else if (event.key === 'ArrowRight' || event.key === 'j') {
+      targetIndex = selectedTickIndex < 0 ? 0 : Math.min(selectableActiveLaneTicks.length - 1, selectedTickIndex + 1);
+    }
+    if (targetIndex === null) {
+      return;
+    }
+    event.preventDefault();
+    seekToTick(selectableActiveLaneTicks[targetIndex]);
+  };
+
+  const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    resizeRef.current = { pointerId: event.pointerId, startHeight: minimapHeight, startY: event.clientY };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) {
+      return;
+    }
+    updateMinimapHeight(resizeState.startHeight + event.clientY - resizeState.startY);
+  };
+
+  const handleResizePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (resizeRef.current?.pointerId !== event.pointerId) {
+      return;
+    }
+    resizeRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
+
+  const handleResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
+      return;
+    }
+    event.preventDefault();
+    updateMinimapHeight(minimapHeight + (event.key === 'ArrowUp' ? -16 : 16));
+  };
+
+  const zoomControls = (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={msg('managedAgents.sessions.detail.zoomOut', 'Zoom out')}
+        disabled={zoom <= SESSION_TIMELINE_MIN_ZOOM}
+        onClick={() => updateZoom(zoom - SESSION_TIMELINE_ZOOM_STEP)}
+      >
+        <Minus className="size-3" aria-hidden />
+      </Button>
+      <span
+        className="min-w-10 text-center font-mono text-[11px] tabular-nums text-muted-foreground"
+        aria-live="polite"
+      >
+        {zoom.toFixed(2)}×
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={msg('managedAgents.sessions.detail.zoomIn', 'Zoom in')}
+        disabled={zoom >= SESSION_TIMELINE_MAX_ZOOM}
+        onClick={() => updateZoom(zoom + SESSION_TIMELINE_ZOOM_STEP)}
+      >
+        <Plus className="size-3" aria-hidden />
+      </Button>
+    </>
+  );
+
   return (
     <div
-      className="oma-session-timeline relative z-10 shrink-0 px-0 pb-2"
+      className="group/mm relative z-10 shrink-0 px-8 [overflow:clip_visible]"
+      role="group"
       aria-label={msg('managedAgents.sessions.detail.eventTimeline', 'Session event timeline')}
+      data-zoom={zoom.toFixed(2)}
       data-testid="events-minimap"
     >
+      {controlsSlot ? (
+        createPortal(
+          <div className="flex items-center gap-1" data-testid="session-minimap-zoom-controls">
+            {zoomControls}
+          </div>,
+          controlsSlot,
+        )
+      ) : (
+        <div
+          className="pointer-events-none absolute right-1 top-1 z-50 flex items-center gap-1 rounded-md bg-popover px-1.5 py-px opacity-0 transition-opacity duration-150 group-focus-within/mm:pointer-events-auto group-focus-within/mm:opacity-100 group-hover/mm:pointer-events-auto group-hover/mm:opacity-100"
+          data-testid="session-minimap-zoom-controls"
+        >
+          {zoomControls}
+        </div>
+      )}
       <div
-        className={clsx(isMultiLane && 'mb-5')}
-        style={timelineMinHeight ? { minHeight: `${timelineMinHeight}px` } : undefined}
+        ref={viewportRef}
+        className={clsx(
+          'scrollbar-none relative -mx-[3px] flex-none overscroll-x-contain px-[3px]',
+          minimapLayout.contentHeight > minimapHeight && 'session-minimap-bottom-fade',
+          sessionMinimapViewportOverflowClassName(zoom),
+        )}
+        style={
+          {
+            height: `${minimapHeight}px`,
+            maxHeight: `min(60vh, ${minimapLayout.contentHeight}px)`,
+            minHeight: `${minimapLayout.minHeight}px`,
+            paddingBottom: 4,
+            paddingTop: 8,
+          } as CSSProperties
+        }
+        data-testid="session-minimap-viewport"
       >
         <div
           ref={trackRef}
-          data-boundary-lock={boundaryLock ?? undefined}
           data-dragging={isDragging || undefined}
+          data-testid="session-minimap-track"
+          role="slider"
+          aria-label={msg('managedAgents.sessions.detail.seekTimeline', 'Seek session event timeline')}
+          aria-orientation="horizontal"
+          aria-valuemin={0}
+          aria-valuemax={Math.max(0, selectableActiveLaneTicks.length - 1)}
+          aria-valuenow={Math.max(0, selectedTickIndex)}
+          aria-valuetext={selectedTick ? `${selectedTick.relativeTime} · ${selectedTick.label}` : undefined}
+          tabIndex={selectableActiveLaneTicks.length ? 0 : -1}
           className={clsx(
-            'relative flex touch-none select-none flex-col gap-1',
-            isDragging ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing',
+            'relative flex touch-none select-none flex-col gap-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            sessionMinimapCursorClassName(zoom > SESSION_TIMELINE_MIN_ZOOM, isDragging),
           )}
+          style={sessionMinimapTrackStyle(minimapLayout.laneContentHeight, zoom)}
+          onKeyDown={handleTimelineKeyDown}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -446,36 +760,19 @@ export function EventsMinimap({
               aria-hidden
             />
           ) : null}
-          {isMultiLane && playhead.visible && isDragging ? (
-            <div
-              className="pointer-events-none absolute z-20 -translate-x-1/2"
-              style={{ left: `${playhead.leftPct}%`, top: `${playhead.topPx}px` }}
-              aria-hidden
-            >
-              <div className="oma-session-timeline-playhead-dot absolute left-1/2 top-0 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-sm transition-opacity duration-150" />
-              {playhead.label ? (
-                <div
-                  className={clsx(
-                    'oma-session-timeline-playhead-label pointer-events-auto absolute left-1/2 top-2 -translate-x-1/2 whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums shadow-sm ring-2 transition-transform',
-                    isDragging ? 'scale-105 cursor-grabbing' : 'cursor-grab active:cursor-grabbing',
-                  )}
-                >
-                  {playhead.label}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
           {!isMultiLane ? (
             <div
-              className="oma-session-timeline-track-active relative h-9 rounded"
-              style={{ height: `${SESSION_TIMELINE_SINGLE_LANE_HEIGHT_PX}px` }}
+              ref={(node) => setSessionTimelineRowRef(rowRefs.current, activeLane, node)}
+              className="relative h-7 rounded bg-muted"
+              data-minimap-track-state="active"
             >
+              <SessionTimelineIdleWash laneId={activeLane} windows={idleWindows} />
               {ticks.map((tick) => (
                 <SessionTimelineTickMark
                   key={tick.id}
                   tick={tick}
                   selected={tick.id === selectedEntryId}
-                  hovered={tick.id === hoveredTickId}
+                  hovered={tick.id === pointedTickId}
                   hidden={Boolean(visibleIds && !visibleIds.has(tick.id))}
                 />
               ))}
@@ -484,27 +781,30 @@ export function EventsMinimap({
             lanes.map((lane, index) => (
               <div
                 key={lane.id || 'main'}
-                ref={(node) => {
-                  if (node) {
-                    rowRefs.current.set(lane.id, node);
-                  } else {
-                    rowRefs.current.delete(lane.id);
-                  }
-                }}
+                ref={(node) => setSessionTimelineRowRef(rowRefs.current, lane.id, node)}
                 data-lane-index={index}
                 className={clsx(
-                  "relative h-7 shrink-0 rounded transition-[background-color,opacity] duration-100 ease-out after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-1 after:h-1 after:content-['']",
+                  "group/lane relative flex shrink-0 items-center rounded transition-[background-color,opacity,height] duration-100 ease-out after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-['']",
+                  index === 0 || index === activeLaneIndex ? 'h-7' : 'h-5',
+                  index === 0 && 'sticky top-0 z-20',
                   lane.id === activeLane
-                    ? 'oma-session-timeline-track-active'
+                    ? 'bg-muted'
                     : lane.id === hoveredLaneId
-                      ? 'oma-session-timeline-track-hover'
-                      : 'oma-session-timeline-track-inactive',
+                      ? 'bg-muted/50 opacity-100'
+                      : 'bg-muted/40 opacity-[0.85]',
                   lane.id !== activeLane && 'cursor-pointer',
                 )}
+                data-minimap-track-state={
+                  lane.id === activeLane ? 'active' : lane.id === hoveredLaneId ? 'hovered' : 'inactive'
+                }
                 onPointerDown={(event) => handleInactiveLanePointerDown(lane.id, event)}
                 onPointerEnter={() => handleLanePointerEnter(lane.id)}
                 onPointerLeave={(event) => handleLanePointerLeave(lane.id, event)}
               >
+                <SessionTimelineIdleWash laneId={lane.id} windows={idleWindows} />
+                <span className="pointer-events-none sticky left-0 z-10 ml-0.5 inline-flex h-4 max-w-[180px] items-center truncate rounded-sm bg-background/90 px-1 text-[10px] text-foreground shadow-sm transition-opacity duration-150 group-hover/lane:opacity-0">
+                  {truncateLaneLabel(lane.label)}
+                </span>
                 {ticks
                   .filter((tick) => tick.lane.id === lane.id)
                   .map((tick) => (
@@ -512,19 +812,226 @@ export function EventsMinimap({
                       key={tick.id}
                       tick={tick}
                       selected={tick.id === selectedEntryId}
-                      hovered={tick.id === hoveredTickId}
+                      hovered={tick.id === pointedTickId}
                       hidden={Boolean(visibleIds && !visibleIds.has(tick.id))}
                     />
                   ))}
               </div>
             ))
           )}
+          {messageLinks.length ? (
+            <SessionTimelineMessageLinks links={messageLinks} height={minimapLayout.laneContentHeight} />
+          ) : null}
           {hoveredTick ? (
-            <SessionTimelineTooltip tick={hoveredTick} row={rowRefs.current.get(hoveredTick.lane.id) ?? null} />
+            <SessionTimelineTooltip
+              tick={hoveredTick}
+              row={rowRefs.current.get(hoveredTick.lane.id) ?? null}
+              pointerClientX={hoveredPointerClientX}
+            />
           ) : null}
         </div>
       </div>
+      {minimapLayout.resizable ? (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={msg('managedAgents.sessions.detail.resizeMinimap', 'Resize minimap')}
+          aria-valuenow={Math.round(minimapHeight)}
+          aria-valuemin={Math.round(minimapLayout.minHeight)}
+          aria-valuemax={Math.round(minimapLayout.maxHeight)}
+          tabIndex={0}
+          className="group/resize relative -mx-8 -mb-[3px] mt-[9px] h-2 touch-none cursor-row-resize outline-none after:absolute after:inset-x-0 after:top-1/2 after:h-px after:bg-border/60 after:transition-colors hover:after:bg-border focus-visible:after:bg-ring"
+          onKeyDown={handleResizeKeyDown}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={handleResizePointerUp}
+        />
+      ) : (
+        <div
+          aria-hidden
+          className="relative -mx-8 -mb-[3px] mt-[9px] h-2 after:absolute after:inset-x-0 after:top-1/2 after:h-px after:bg-border/60"
+        />
+      )}
     </div>
+  );
+}
+
+export function EventsMinimapSkeleton() {
+  return (
+    <div className="px-8" data-testid="events-minimap-skeleton" aria-hidden>
+      <div style={{ paddingBottom: 4, paddingTop: 8 }}>
+        <Skeleton className="h-7 rounded-sm" />
+      </div>
+      <div className="relative -mx-8 -mb-[3px] mt-[9px] h-2 after:absolute after:inset-x-0 after:top-1/2 after:h-px after:bg-border/60" />
+    </div>
+  );
+}
+
+function sessionTimelineViewportHeight() {
+  return typeof window === 'undefined' ? 0 : window.innerHeight;
+}
+
+function setSessionTimelineRowRef(rows: Map<string, HTMLDivElement>, laneId: string, node: HTMLDivElement | null) {
+  if (node) {
+    rows.set(laneId, node);
+  } else {
+    rows.delete(laneId);
+  }
+}
+
+function sessionMinimapCursorClassName(pannable: boolean, dragging: boolean) {
+  if (!pannable) return 'cursor-default';
+  return dragging ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing';
+}
+
+function sessionMinimapTrackStyle(laneContentHeight: number, zoom: number): CSSProperties {
+  const style: CSSProperties = {
+    height: `${laneContentHeight || SESSION_TIMELINE_SINGLE_LANE_HEIGHT_PX}px`,
+  };
+  if (zoom > SESSION_TIMELINE_MIN_ZOOM) style.width = `${zoom * 100}%`;
+  return style;
+}
+
+type SessionTimelineMessageLink = {
+  id: string;
+  path: string;
+};
+
+type SessionTimelineIdleWindow = {
+  id: string;
+  laneId: string;
+  leftPct: number;
+  widthPct: number;
+};
+
+export function buildSessionTimelineIdleWindows(ticks: SessionTimelineTick[]): SessionTimelineIdleWindow[] {
+  const laneIds = new Set(ticks.map((tick) => tick.lane.id));
+  return [...laneIds].flatMap((laneId) => {
+    const laneTicks = ticks.filter((tick) => tick.lane.id === laneId).sort((left, right) => left.ms - right.ms);
+    return laneTicks.flatMap((tick, index) => {
+      if (tick.type !== 'status_idle') return [];
+      if ((tick.durationMs ?? 0) >= SESSION_TIMELINE_IDLE_WINDOW_MIN_MS) {
+        return [{ id: tick.id, laneId, leftPct: tick.leftPct, widthPct: tick.widthPct }];
+      }
+      const runningTick = laneTicks.slice(index + 1).find((candidate) => candidate.type === 'status_running');
+      if (!runningTick || runningTick.ms - tick.ms < SESSION_TIMELINE_IDLE_WINDOW_MIN_MS) return [];
+      return [
+        {
+          id: `${tick.id}:${runningTick.id}`,
+          laneId,
+          leftPct: tick.leftPct,
+          widthPct: Math.max(0, runningTick.leftPct - tick.leftPct),
+        },
+      ];
+    });
+  });
+}
+
+function SessionTimelineIdleWash({ laneId, windows }: { laneId: string; windows: SessionTimelineIdleWindow[] }) {
+  const laneWindows = windows.filter((window) => window.laneId === laneId);
+  if (!laneWindows.length) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-sm" aria-hidden>
+      {laneWindows.map((window) => (
+        <span
+          key={window.id}
+          data-minimap-idle-window={window.id}
+          className="absolute inset-y-0 rounded-sm bg-background/80"
+          style={{ left: `${window.leftPct}%`, width: `${window.widthPct}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function buildSessionTimelineMessageLinks(
+  ticks: SessionTimelineTick[],
+  lanes: SessionTimelineLane[],
+  activeLaneIndex: number,
+): SessionTimelineMessageLink[] {
+  const laneIndexById = new Map(lanes.map((lane, index) => [lane.id, index]));
+  const laneCenter = (index: number) =>
+    sessionTimelineLaneTop(index, activeLaneIndex) + sessionTimelineLaneHeight(index, activeLaneIndex) / 2;
+  const receivedTicks = ticks.filter((tick) => tick.threadMessage?.direction === 'received');
+  const usedReceivedTickIds = new Set<string>();
+  return ticks.flatMap((tick) => {
+    const message = tick.threadMessage;
+    const currentLaneIndex = laneIndexById.get(tick.lane.id);
+    const connectedLaneIndex = message ? laneIndexById.get(message.laneId) : undefined;
+    if (
+      !message ||
+      message.direction !== 'sent' ||
+      currentLaneIndex === undefined ||
+      connectedLaneIndex === undefined ||
+      currentLaneIndex === connectedLaneIndex
+    ) {
+      return [];
+    }
+    const receivedTick = receivedTicks
+      .filter(
+        (candidate) =>
+          !usedReceivedTickIds.has(candidate.id) &&
+          candidate.lane.id === message.laneId &&
+          candidate.threadMessage?.laneId === tick.lane.id &&
+          candidate.ms >= tick.ms,
+      )
+      .sort((left, right) => left.ms - right.ms)[0];
+    if (receivedTick) usedReceivedTickIds.add(receivedTick.id);
+    const fromX = clampTimelinePct(tick.leftPct + tick.widthPct);
+    const toX = receivedTick ? receivedTick.leftPct : timelineTickCenterPct(tick);
+    return [
+      {
+        id: receivedTick ? `${receivedTick.id}:${tick.id}` : tick.id,
+        path: sessionTimelineMessageLinkPath(fromX, toX, laneCenter(currentLaneIndex), laneCenter(connectedLaneIndex)),
+      },
+    ];
+  });
+}
+
+function sessionTimelineMessageLinkPath(fromX: number, toX: number, fromY: number, toY: number) {
+  if (toX - fromX < 2) {
+    return `M ${toX} ${fromY} V ${toY}`;
+  }
+  const beforeArrowX = toX - 0.75;
+  const controlX = (fromX + beforeArrowX) / 2;
+  return `M ${fromX} ${fromY} C ${controlX} ${fromY} ${controlX} ${toY} ${beforeArrowX} ${toY} H ${toX}`;
+}
+
+function SessionTimelineMessageLinks({ links, height }: { links: SessionTimelineMessageLink[]; height: number }) {
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 h-full w-full overflow-visible text-muted-foreground/55"
+      data-testid="session-minimap-message-links"
+      viewBox={`0 0 100 ${height}`}
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <defs>
+        <marker
+          id="session-minimap-arrowhead"
+          viewBox="0 0 6 6"
+          refX="5"
+          refY="3"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M0,0 L6,3 L0,6 z" fill="currentColor" />
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+        {links.map((link) => (
+          <path
+            key={link.id}
+            data-timeline-message-link={link.id}
+            d={link.path}
+            markerEnd="url(#session-minimap-arrowhead)"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </g>
+    </svg>
   );
 }
 
@@ -539,15 +1046,12 @@ export function SessionTimelineTickMark({
   hovered: boolean;
   hidden: boolean;
 }) {
+  if (tick.type === 'status_idle') return null;
   const style: CSSProperties = {
     left: `${tick.leftPct}%`,
+    minWidth: 3,
     width: `${tick.widthPct}%`,
   };
-  if (tick.type === 'status_idle') {
-    style.backgroundColor = 'hsl(var(--oma-session-timeline-bg-200))';
-    style.backgroundImage =
-      'repeating-linear-gradient(-45deg, transparent 0, transparent 6px, hsl(var(--oma-session-timeline-bg-000)) 6px, hsl(var(--oma-session-timeline-bg-000)) 12px)';
-  }
   return (
     <span
       data-timeline-tick-id={tick.id}
@@ -555,9 +1059,10 @@ export function SessionTimelineTickMark({
       className={clsx(
         'pointer-events-none absolute bottom-0.5 top-0.5 rounded-sm transition-[left,width,opacity] duration-150',
         sessionTimelineTickClass(tick.type),
-        selected && 'oma-session-timeline-tick-selected z-30',
-        !selected && hovered && 'oma-session-timeline-tick-hovered z-30',
+        selected && 'z-30 outline outline-[1.5px] outline-ring outline-offset-1',
+        !selected && hovered && 'z-30 outline outline-[1.5px] outline-ring/50 outline-offset-1',
         !selected && !hovered && 'opacity-90',
+        tick.open && 'motion-safe:animate-pulse',
         hidden && '!opacity-0',
       )}
       style={style}
@@ -566,39 +1071,51 @@ export function SessionTimelineTickMark({
   );
 }
 
-export function SessionTimelineTooltip({ tick, row }: { tick: SessionTimelineTick; row: HTMLDivElement | null }) {
-  const topPx = row ? row.offsetTop : 0;
-  const centerPct = timelineTickCenterPct(tick);
+export function SessionTimelineTooltip({
+  tick,
+  row,
+  pointerClientX,
+}: {
+  tick: SessionTimelineTick;
+  row: HTMLDivElement | null;
+  pointerClientX: number | null;
+}) {
+  if (!row || pointerClientX === null || typeof document === 'undefined') {
+    return null;
+  }
+  const rowRect = row.getBoundingClientRect();
+  const belowLane = Number(row.dataset.laneIndex ?? 0) > 0;
   const tooltipId = `session-timeline-tooltip-${tick.id}`;
   const title = tick.preview ?? tick.label;
   const duration = formatTimelineDuration(tick.durationMs);
-  return (
+  return createPortal(
     <div
       id={tooltipId}
       role="tooltip"
-      className="oma-session-timeline-tooltip pointer-events-none absolute z-40 flex max-w-[min(520px,calc(100%-1rem))] items-center gap-2 whitespace-nowrap rounded-lg px-2 py-1.5 text-xs shadow-md"
+      className="pointer-events-none fixed left-0 top-0 z-50 flex w-80 max-w-[calc(100vw-1rem)] flex-col gap-0.5 rounded-lg border-[0.5px] border-border bg-popover px-2 py-1.5 text-xs text-popover-foreground shadow-md"
       style={{
-        left: `${centerPct}%`,
-        top: `${topPx}px`,
-        transform: `translate(calc(-${centerPct}% + ${(centerPct - 50) * 0.5}px), calc(-100% - 4px))`,
+        translate: `min(${pointerClientX - 8}px, calc(100vw - 8px - 100%)) ${
+          belowLane ? `${rowRect.bottom + 4}px` : `calc(${Math.max(56, rowRect.top) - 4}px - 100%)`
+        }`,
       }}
     >
-      <span
-        className={clsx(
-          'inline-flex h-4 shrink-0 rounded-sm px-1 text-[10px] font-semibold uppercase leading-4',
-          sessionTimelineTickClass(tick.type),
-        )}
-      >
-        {sessionTimelineTypeLabel(tick.type)}
-      </span>
-      {title ? (
-        <span className="oma-session-timeline-tooltip-title min-w-0 max-w-[260px] truncate">{title}</span>
-      ) : null}
-      <span className="oma-session-timeline-tooltip-time shrink-0 font-mono text-xs tabular-nums">
-        {duration ? `${duration} · ` : null}
-        {tick.relativeTime}
-      </span>
-    </div>
+      <div className="flex items-baseline justify-between gap-2 whitespace-nowrap">
+        <span
+          className={clsx(
+            'inline-flex h-4 min-w-0 shrink rounded-sm px-1 text-[10px] font-semibold uppercase leading-4',
+            sessionTimelineTickClass(tick.type),
+          )}
+        >
+          {sessionTimelineTypeLabel(tick.type)}
+        </span>
+        <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+          {duration ? `${duration} · ` : null}
+          {tick.relativeTime}
+        </span>
+      </div>
+      {title ? <div className="truncate text-foreground">{title}</div> : null}
+    </div>,
+    document.body,
   );
 }
 
@@ -614,51 +1131,24 @@ function TimelineTooltip({ label, children }: { label?: string; children: ReactE
   );
 }
 
-export function sessionTimelineLaneVisualHeightPx(laneId: string, activeLane: string, hoveredLaneId: string | null) {
-  void laneId;
-  void activeLane;
-  void hoveredLaneId;
-  return SESSION_TIMELINE_LANE_HEIGHT_PX;
-}
-
-export function sessionTimelineLaneSlotHeightPx(laneId: string, activeLane: string) {
-  void laneId;
-  void activeLane;
-  return SESSION_TIMELINE_LANE_HEIGHT_PX;
-}
-
-export function sessionTimelineLaneSlotStyle(laneId: string, activeLane: string): CSSProperties {
-  const height = `${sessionTimelineLaneSlotHeightPx(laneId, activeLane)}px`;
-  return { height, minHeight: height, maxHeight: height };
-}
-
-export function sessionTimelineLaneVisualStyle(
-  laneId: string,
-  activeLane: string,
-  hoveredLaneId: string | null,
-): CSSProperties {
-  const height = `${sessionTimelineLaneVisualHeightPx(laneId, activeLane, hoveredLaneId)}px`;
-  return { height, minHeight: height, maxHeight: height };
-}
-
 export function sessionTimelineTickClass(type: DisplayEventType) {
   switch (type) {
     case 'user':
-      return 'oma-session-timeline-tick-user';
+      return 'bg-session-speaker-user/70';
     case 'error':
-      return 'oma-session-timeline-tick-error';
+      return 'bg-destructive';
     case 'agent':
     case 'thinking':
-      return 'oma-session-timeline-tick-agent';
+      return 'bg-session-speaker-agent/70';
     case 'subagent':
-      return 'oma-session-timeline-tick-subagent';
+      return 'bg-chart-2/80';
     case 'status_idle':
-      return 'oma-session-timeline-tick-neutral';
+      return 'bg-muted-foreground/40';
     case 'tool_use':
     case 'result':
-      return 'oma-session-timeline-tick-tool';
+      return 'bg-muted-foreground/60';
     case 'thread':
-      return 'oma-session-timeline-tick-subagent';
+      return 'bg-chart-2/80';
     case 'status_rescheduled':
     case 'interrupt':
     case 'model_request':
@@ -669,7 +1159,7 @@ export function sessionTimelineTickClass(type: DisplayEventType) {
     case 'system_message':
     case 'unknown':
     default:
-      return 'oma-session-timeline-tick-neutral';
+      return 'bg-muted-foreground/40';
   }
 }
 
@@ -808,6 +1298,10 @@ export function clampTimelinePct(value: number) {
   return Math.max(1, Math.min(99, value));
 }
 
+export function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
 export function timelineTickCenterPct(tick: SessionTimelineTick) {
   return clampTimelinePct(tick.leftPct + tick.widthPct / 2);
 }
@@ -831,78 +1325,33 @@ export function nearestTimelineTickForLane(
   return nearest?.tick ?? null;
 }
 
-export function buildTimelineTicks(lanes: SessionTimelineLane[]): SessionTimelineTick[] {
+export function buildTimelineTicks(
+  lanes: SessionTimelineLane[],
+  nowMs = Date.now(),
+  trackWidthPx = 1_000,
+): SessionTimelineTick[] {
   const flattened = lanes
     .flatMap((lane) => lane.items.map((item) => ({ ...item, lane })))
-    .filter((item) => Number.isFinite(item.processedAtMs))
-    .sort((left, right) => left.processedAtMs - right.processedAtMs || left.id.localeCompare(right.id));
+    .filter((item) => Number.isFinite(item.processedAtMs));
   if (!flattened.length) {
     return [];
   }
 
-  const starts = flattened.map((item) => item.processedAtMs);
-  const renderDurations = flattened
-    .map((item) => Math.max(0, item.durationMs ?? 0))
-    .map((duration, index) =>
-      index + 1 < starts.length ? Math.min(duration, Math.max(0, starts[index + 1] - starts[index])) : duration,
-    );
-  const spans: number[] = [];
-  for (let index = 0; index < flattened.length; index += 1) {
-    if (renderDurations[index] > 0) {
-      spans.push(renderDurations[index]);
-    }
-    if (index + 1 < flattened.length) {
-      const gap = starts[index + 1] - (starts[index] + renderDurations[index]);
-      if (gap > 0) {
-        spans.push(gap);
-      }
-    }
-  }
-
-  if (!spans.length) {
-    const totalMs = Math.max(1, starts[starts.length - 1] - starts[0]);
-    return flattened.map((item) => {
-      const rawLeftPct = starts.length === 1 ? 1 : 1 + ((item.processedAtMs - starts[0]) / totalMs) * 98;
-      return {
-        ...item,
-        leftPct: Math.max(1, Math.min(98.6, rawLeftPct)),
-        widthPct: 0.4,
-        ms: item.processedAtMs,
-      };
-    });
-  }
-
-  spans.sort((left, right) => left - right);
-  const threshold = Math.max(1, 4 * spans[Math.floor(spans.length / 2)]);
-  const compressMs = (ms: number) => {
-    if (ms <= 0) {
-      return 0;
-    }
-    if (ms < threshold) {
-      return ms;
-    }
-    return threshold * (1 + Math.log(ms / threshold));
-  };
-  const offsets: number[] = [];
-  const widths: number[] = [];
-  let cursor = 0;
-  for (let index = 0; index < flattened.length; index += 1) {
-    offsets.push(cursor);
-    const width = compressMs(renderDurations[index]);
-    widths.push(width);
-    cursor += width;
-    if (index + 1 < flattened.length) {
-      cursor += compressMs(Math.max(0, starts[index + 1] - (starts[index] + renderDurations[index])));
-    }
-  }
-  const total = cursor || 1;
+  const renderDurations = flattened.map((item) =>
+    Math.max(0, item.durationMs ?? 0, item.open ? nowMs - item.processedAtMs : 0),
+  );
+  const resolvedTrackWidth = trackWidthPx > 0 ? trackWidthPx : 1_000;
+  const timeScale = sessionTimelineTimeScale(flattened, renderDurations, resolvedTrackWidth);
+  const minWidthPct = (3 / resolvedTrackWidth) * 100;
 
   return flattened.map((item, index) => {
-    let leftPct = 1 + (offsets[index] / total) * 98;
-    let widthPct = Math.min(98, Math.max(0.4, (widths[index] / total) * 98));
+    const startOffset = timeScale.offsetByMs.get(item.processedAtMs) ?? 0;
+    const endOffset = timeScale.offsetByMs.get(item.processedAtMs + renderDurations[index]) ?? startOffset;
+    let leftPct = 1 + (startOffset / timeScale.total) * 98;
+    let widthPct = Math.min(98, Math.max(minWidthPct, ((endOffset - startOffset) / timeScale.total) * 98));
     const overflow = leftPct + widthPct - 99;
     if (overflow > 0) {
-      const shrink = Math.min(widthPct - 0.4, overflow);
+      const shrink = Math.min(widthPct - minWidthPct, overflow);
       widthPct -= shrink;
       leftPct -= overflow - shrink;
     }
@@ -913,6 +1362,54 @@ export function buildTimelineTicks(lanes: SessionTimelineLane[]): SessionTimelin
       ms: item.processedAtMs,
     };
   });
+}
+
+function sessionTimelineTimeScale(
+  items: Array<SessionTimelineItem & { lane: SessionTimelineLane }>,
+  durations: number[],
+  trackWidthPx: number,
+) {
+  const domainStart = Math.min(...items.map((item) => item.processedAtMs));
+  const domainEnd = Math.max(
+    domainStart + 10_000,
+    ...items.map((item, index) => item.processedAtMs + durations[index]),
+  );
+  const points = [
+    ...new Set([
+      domainStart,
+      domainEnd,
+      ...items.flatMap((item, index) => [item.processedAtMs, item.processedAtMs + durations[index]]),
+    ]),
+  ].sort((left, right) => left - right);
+  const spans = points.slice(1).map((point, index) => point - points[index]);
+  const idleRanges = items.flatMap((item, index) =>
+    item.type === 'status_idle' && durations[index] > 0
+      ? [[item.processedAtMs, item.processedAtMs + durations[index]] as const]
+      : [],
+  );
+  const activeRanges = items.flatMap((item, index) =>
+    item.type !== 'status_idle' && durations[index] > 0
+      ? [[item.processedAtMs, item.processedAtMs + durations[index]] as const]
+      : [],
+  );
+  const idleSpans = spans.map((span, index) => {
+    const midpoint = points[index] + span / 2;
+    const insideIdle = idleRanges.some(([start, end]) => start < midpoint && midpoint < end);
+    const insideActive = activeRanges.some(([start, end]) => start < midpoint && midpoint < end);
+    return insideIdle && !insideActive;
+  });
+  const fixedIdleWidth = 11;
+  const activeDuration = spans.reduce((total, span, index) => total + (idleSpans[index] ? 0 : span), 0);
+  const innerWidth = Math.max(1, trackWidthPx * 0.98);
+  const activeWidth = Math.max(1, innerWidth - idleSpans.filter(Boolean).length * fixedIdleWidth);
+  const activePxPerMs = activeWidth / Math.max(1, activeDuration);
+  const offsetByMs = new Map<number, number>([[points[0], 0]]);
+  let total = 0;
+  spans.forEach((span, index) => {
+    total += idleSpans[index] ? fixedIdleWidth : span * activePxPerMs;
+    offsetByMs.set(points[index + 1], total);
+  });
+  return { offsetByMs, total: Math.max(1, total) };
 }
 
 export function LaneTabStrip({
@@ -942,7 +1439,6 @@ export function LaneTabStrip({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollState, setScrollState] = useState({ canScroll: false, left: false, right: false });
   const timelineTicks = useMemo(() => buildTimelineTicks(timeline ?? []), [timeline]);
-  const laneGroups = useMemo(() => buildLaneTabGroups(lanes, activeLane), [activeLane, lanes]);
   const selectedTick = selectedEntryId ? (timelineTicks.find((tick) => tick.id === selectedEntryId) ?? null) : null;
   const activeTick =
     selectedTick ??
@@ -978,11 +1474,11 @@ export function LaneTabStrip({
       scroller.removeEventListener('scroll', refreshScrollState);
       window.removeEventListener('resize', refreshScrollState);
     };
-  }, [refreshScrollState, laneGroups.length]);
+  }, [refreshScrollState, lanes.length]);
 
   useEffect(() => {
-    const activeTab = scrollerRef.current?.querySelector<HTMLElement>(
-      `[data-lane-tab-id="${cssEscape(activeLane || 'main')}"]`,
+    const activeTab = Array.from(scrollerRef.current?.querySelectorAll<HTMLElement>('[data-lane-tab-id]') ?? []).find(
+      (tab) => tab.dataset.laneTabId === (activeLane || 'main'),
     );
     activeTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     refreshScrollState();
@@ -1011,7 +1507,7 @@ export function LaneTabStrip({
     });
   };
   return (
-    <div className="flex items-center gap-2 border-b border-border px-0 py-2" data-testid="lane-tab-strip">
+    <div className="flex items-center gap-2 border-b border-border px-4 py-2" data-testid="lane-tab-strip">
       {scrollState.canScroll ? (
         <Button
           type="button"
@@ -1030,7 +1526,7 @@ export function LaneTabStrip({
       ) : null}
       <div
         ref={scrollerRef}
-        className="subtle-scrollbar flex min-w-0 flex-1 gap-1 overflow-x-auto"
+        className="scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto"
         style={{
           maskImage: scrollState.canScroll
             ? 'linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)'
@@ -1046,23 +1542,9 @@ export function LaneTabStrip({
             aria-label={msg('managedAgents.sessions.detail.laneTabs', 'Session threads')}
             className="h-auto flex-nowrap gap-1 rounded-none bg-transparent p-0"
           >
-            {laneGroups.map((group) =>
-              group.collapsed ? (
-                <TimelineTooltip key={group.key} label={group.label}>
-                  <TabsTrigger
-                    value={laneTabValue(group.lanes[0]?.id ?? SESSION_MAIN_LANE_ID)}
-                    className="h-8 shrink-0 gap-2 rounded-md bg-transparent px-2 text-sm font-medium text-muted-foreground shadow-none after:hidden hover:bg-accent hover:text-foreground data-active:bg-accent data-active:text-foreground data-active:hover:bg-accent"
-                  >
-                    <span className="max-w-[88px] truncate">{truncateLaneLabel(group.label)}</span>
-                    <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-secondary-foreground">
-                      {group.lanes.length}
-                    </span>
-                  </TabsTrigger>
-                </TimelineTooltip>
-              ) : (
-                group.lanes.map((lane) => <LaneTabLabel key={lane.id || 'main'} lane={lane} />)
-              ),
-            )}
+            {lanes.map((lane) => (
+              <LaneTabLabel key={lane.id || 'main'} lane={lane} />
+            ))}
           </TabsList>
         </Tabs>
         {archivedLaneCount > 0 ? (
@@ -1126,40 +1608,14 @@ export function LaneTabLabel({ lane }: { lane: SessionDetailLane }) {
   );
 }
 
-export function buildLaneTabGroups(lanes: SessionDetailLane[], activeLane: string): LaneTabGroup[] {
-  const groups: LaneTabGroup[] = [];
-  lanes.forEach((lane) => {
-    const key = lane.group || lane.label || lane.id || 'main';
-    const existing = groups.find((group) => group.key === key);
-    if (existing) {
-      existing.lanes.push(lane);
-    } else {
-      groups.push({ key, label: key, lanes: [lane], collapsed: false });
-    }
-  });
-  return groups.map((group) => {
-    const activeInGroup = group.lanes.some((lane) => lane.id === activeLane);
-    return {
-      ...group,
-      collapsed: group.lanes.length > 8 && !activeInGroup,
-    };
-  });
-}
-
-export function cssEscape(value: string) {
-  const css = typeof CSS !== 'undefined' ? CSS : undefined;
-  if (css && typeof css.escape === 'function') {
-    return css.escape(value);
-  }
-  return value.replace(/["\\]/g, '\\$&');
-}
-
 export function HeaderRow({
   isSelected,
+  density = 'default',
   children,
   onSelect,
 }: {
   isSelected: boolean;
+  density?: 'default' | 'compact';
   children: ReactNode;
   onSelect: () => void;
 }) {
@@ -1170,9 +1626,10 @@ export function HeaderRow({
       data-transcript-header
       pressed={isSelected}
       className={clsx(
-        'flex h-9 w-[calc(100%+2rem)] cursor-pointer justify-start rounded-none border-0 bg-transparent px-4 text-left font-normal active:translate-y-0',
-        '-mx-4',
-        isSelected && '[[data-panel-focused=true]_&]:bg-accent',
+        'flex w-full cursor-pointer justify-start rounded-md border-0 bg-transparent text-left font-normal active:translate-y-0 focus-visible:border-transparent focus-visible:ring-1 focus-visible:ring-ring/30',
+        density === 'compact' ? 'h-6 gap-1.5 px-1 text-xs' : 'h-9 px-3',
+        'hover:bg-session-hover',
+        isSelected && 'bg-session-selected',
       )}
       onPressedChange={() => onSelect()}
     >
@@ -1275,7 +1732,7 @@ export function ApprovalChip({ lifecycle }: { lifecycle?: ToolLifecycle }) {
     return (
       <Badge
         variant="secondary"
-        className="h-auto items-center gap-1 rounded px-1.5 py-0.5 font-sans text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400"
+        className="h-auto items-center gap-1 rounded bg-warning-bg px-1.5 py-0.5 font-sans text-[10px] font-semibold text-warning"
       >
         <Ban className="size-3" aria-hidden />
         {msg('managedAgents.sessions.trace.denied', 'denied')}

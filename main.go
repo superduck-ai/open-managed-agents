@@ -11,18 +11,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -57,17 +63,27 @@ func run(logger *slog.Logger) error {
 		if err := database.Migrate(ctx); err != nil {
 			return fmt.Errorf("migrate database: %w", err)
 		}
+		if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
+			return fmt.Errorf("migrate River: %w", err)
+		}
 	} else {
 		logger.Info("database auto migration disabled", "env", cfg.Env)
 	}
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
-	platformSessions, err := platformsession.NewRedisStore(ctx, cfg.Redis.URL)
+	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
-		return fmt.Errorf("open platform session store: %w", err)
+		return fmt.Errorf("open redis client: %w", err)
 	}
-	defer platformSessions.Close()
+	defer redisClient.Close()
+	platformSessions := platformsession.NewRedisStore(redisClient)
+	platformAuthProvider := platformauth.New(cfg.Auth, database, redisClient, logger.With("component", "platform_auth"))
+	sessionEventBus, err := sessionfanout.NewRedis(ctx, redisClient, logger.With("component", "session_event_bus"))
+	if err != nil {
+		return fmt.Errorf("open session event fanout: %w", err)
+	}
+	defer sessionEventBus.Close()
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
@@ -103,7 +119,7 @@ func run(logger *slog.Logger) error {
 		database,
 		objectStore,
 		cfg.Batch,
-		batches.NewHTTPUpstreamClient(cfg),
+		batches.NewHTTPUpstreamClient(database, vaultSecrets, cfg.Batch),
 		logger.With("component", "batches"),
 	).Start(ctx)
 	environmentLogger := logger.With("component", "environment_runner")
@@ -122,6 +138,30 @@ func run(logger *slog.Logger) error {
 	}
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	workers := river.NewWorkers()
+	deployments.RegisterScheduledWorkers(workers, database)
+	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
+		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
+	lifecycle.Register(workers)
+	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
+		map[string]river.QueueConfig{deployments.DeploymentScheduleQueue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
+	if err != nil {
+		return fmt.Errorf("create River client: %w", err)
+	}
+	if err := lifecycle.Configure(ctx, jobClient); err != nil {
+		return fmt.Errorf("configure sandbox lifecycle: %w", err)
+	}
+	deploymentScheduler := deployments.NewDeploymentScheduler(database, jobClient, logger.With("component", "deployment_scheduler"))
+	if err := deploymentScheduler.Start(ctx); err != nil {
+		return fmt.Errorf("start deployment scheduler: %w", err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := deploymentScheduler.Stop(stopCtx); err != nil {
+			logger.Error("stop deployment scheduler", "error", err)
+		}
+	}()
 
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
@@ -131,11 +171,14 @@ func run(logger *slog.Logger) error {
 			ObjectStore:            objectStore,
 			Logger:                 logger,
 			PlatformStore:          platformSessions,
+			PlatformAuth:           platformAuthProvider,
 			CodeSessionCredentials: codeSessionCredentials,
 			SandboxTimeoutExtender: sandboxProvider,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,
+			Redis:                  redisClient,
+			SessionEventBus:        sessionEventBus,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

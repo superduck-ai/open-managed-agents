@@ -8,11 +8,12 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper DeploymentMapper -sql ./deployment_mapper.xml -out ./deployment_mapper.sqlmap.gen.go -dialect postgres
 
 type deploymentMapperRow struct {
+	RuntimeUserUUID       *string    `db:"runtime_user_uuid"`
 	UUID                  string     `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
 	OrganizationUUID      string     `db:"organization_uuid"`
 	WorkspaceUUID         string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID   string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID   *string    `db:"created_by_api_key_uuid"`
 	EnvironmentUUID       string     `db:"environment_uuid"`
 	EnvironmentExternalID string     `db:"environment_external_id"`
 	AgentUUID             string     `db:"agent_uuid"`
@@ -37,11 +38,12 @@ type deploymentMapperRow struct {
 }
 
 type deploymentWriteParams struct {
+	RuntimeUserUUID       *string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
 	WorkspaceUUID         string
-	CreatedByAPIKeyUUID   string
+	CreatedByAPIKeyUUID   *string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
 	AgentUUID             string
@@ -56,11 +58,19 @@ type deploymentWriteParams struct {
 	ResourceSecrets       []byte
 	VaultIDs              []byte
 	Schedule              []byte
+	ScheduleChanged       bool
 	LastRunAt             *time.Time
 	Status                string
 	PausedReason          []byte
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+}
+
+type pauseScheduledDeploymentParams struct {
+	WorkspaceUUID string
+	ExternalID    string
+	PausedReason  []byte
+	LastRunAt     time.Time
 }
 
 type deploymentPageMapperParams struct {
@@ -76,12 +86,16 @@ type deploymentPageMapperParams struct {
 
 type DeploymentMapper interface {
 	Insert(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
+	CountScheduledByOrganization(ctx context.Context, organizationUUID string) (int64, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	LockByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	UpdateByExternalID(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
+	ArchiveByRootAgent(ctx context.Context, workspaceUUID, agentExternalID string) error
 	PauseByExternalID(ctx context.Context, workspaceUUID, externalID string, pausedReason []byte) (deploymentMapperRow, error)
 	UnpauseByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
+	ListActiveSchedules(ctx context.Context) ([]DeploymentSchedule, error)
+	PauseAfterScheduledRun(ctx context.Context, params pauseScheduledDeploymentParams) (int64, error)
 	ListPage(ctx context.Context, params deploymentPageMapperParams) ([]deploymentMapperRow, error)
 	UpdateLastRun(ctx context.Context, workspaceUUID, externalID string, lastRunAt time.Time) (int64, error)
 }

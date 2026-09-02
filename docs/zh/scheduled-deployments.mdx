@@ -1,0 +1,675 @@
+---
+title: "计划部署"
+sidebarTitle: "计划部署"
+description: "使用 OMA API 创建和管理部署：按照定期的 cron 计划运行智能体并查看其运行历史记录。"
+---
+
+**计划部署**（scheduled deployment）允许[智能体](/docs/zh/agent-setup)自主启动[会话](/docs/zh/sessions)，从而按照可预测的节奏完成任务。您可以使用 OMA 部署 API 创建和管理部署。
+
+<Note>
+  所有托管智能体 API 请求都需要 `managed-agents-2026-04-01` Beta 请求头。SDK 会自动设置该 Beta 请求头。
+</Note>
+
+## 创建计划部署
+
+创建部署时，除了 `schedule` 之外，您还需要传递执行所需的[会话配置](/docs/zh/sessions)。
+
+* 部署需要[智能体配置](/docs/zh/agent-setup)和[环境配置](/docs/zh/environments)，并可选择性地接受[文件](/docs/zh/files)、[GitHub](/docs/zh/github)、[记忆存储](/docs/zh/memory)和[密钥库](/docs/zh/vaults)。
+* 部署还需要至少一个初始事件（`user.message` 或 `user.define_outcome`），用于启动每个会话的工作。
+* 在 `schedule` 中，您需要定义一个 cron `expression` 和一个 `timezone`。支持的最大粒度为分钟级别。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  DEPLOYMENT_ID=$(
+    curl --fail-with-body -sS "http://localhost:38080/v1/deployments?beta=true" \
+      -H "x-api-key: $OMA_API_KEY" \
+      -H "anthropic-version: 2023-06-01" \
+      -H "anthropic-beta: managed-agents-2026-04-01" \
+      -H "content-type: application/json" \
+      -d @- <<EOF | jq -er '.id'
+  {
+    "name": "Weekly compliance scan",
+    "agent": "$AGENT_ID",
+    "environment_id": "$ENVIRONMENT_ID",
+    "initial_events": [
+      {"type": "user.message", "content": [{"type": "text", "text": "Run the weekly compliance scan."}]}
+    ],
+    "schedule": {
+      "type": "cron",
+      "expression": "0 20 * * 5",
+      "timezone": "America/New_York"
+    }
+  }
+  EOF
+  )
+  ```
+
+  ```bash CLI
+  DEPLOYMENT_ID=$(ant beta:deployments create <<YAML | jq -er '.id'
+  name: Weekly compliance scan
+  agent: $AGENT_ID
+  environment_id: $ENVIRONMENT_ID
+  initial_events:
+    - type: user.message
+      content:
+        - type: text
+          text: Run the weekly compliance scan.
+  schedule:
+    type: cron
+    expression: "0 20 * * 5"
+    timezone: America/New_York
+  YAML
+  )
+  ```
+
+  ```python Python
+  deployment = client.beta.deployments.create(
+      name="Weekly compliance scan",
+      agent=agent.id,
+      environment_id=environment.id,
+      initial_events=[
+          {
+              "type": "user.message",
+              "content": [{"type": "text", "text": "Run the weekly compliance scan."}],
+          },
+      ],
+      schedule={
+          "type": "cron",
+          "expression": "0 20 * * 5",
+          "timezone": "America/New_York",
+      },
+  )
+  ```
+
+  ```typescript TypeScript
+  const deployment = await client.beta.deployments.create({
+    name: "Weekly compliance scan",
+    agent: agent.id,
+    environment_id: environment.id,
+    initial_events: [
+      {
+        type: "user.message",
+        content: [{ type: "text", text: "Run the weekly compliance scan." }],
+      },
+    ],
+    schedule: {
+      type: "cron",
+      expression: "0 20 * * 5",
+      timezone: "America/New_York",
+    },
+  });
+  ```
+
+  ```csharp C#
+  var deployment = await client.Beta.Deployments.Create(new()
+  {
+      Name = "Weekly compliance scan",
+      Agent = agent.ID,
+      EnvironmentID = environment.ID,
+      InitialEvents =
+      [
+          new BetaManagedAgentsUserMessageEventParams
+          {
+              Type = BetaManagedAgentsUserMessageEventParamsType.UserMessage,
+              Content =
+              [
+                  new BetaManagedAgentsTextBlock
+                  {
+                      Type = BetaManagedAgentsTextBlockType.Text,
+                      Text = "Run the weekly compliance scan.",
+                  },
+              ],
+          },
+      ],
+      Schedule = new BetaManagedAgentsScheduleParams
+      {
+          Type = BetaManagedAgentsScheduleParamsType.Cron,
+          Expression = "0 20 * * 5",
+          Timezone = "America/New_York",
+      },
+  });
+  ```
+
+  ```go Go
+  deployment, err := client.Beta.Deployments.New(ctx, anthropic.BetaDeploymentNewParams{
+      Name:          "Weekly compliance scan",
+      Agent:         anthropic.BetaDeploymentNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+      EnvironmentID: environment.ID,
+      InitialEvents: []anthropic.BetaManagedAgentsDeploymentInitialEventParamsUnion{{
+          OfUserMessage: &anthropic.BetaManagedAgentsUserMessageEventParams{
+              Type: anthropic.BetaManagedAgentsUserMessageEventParamsTypeUserMessage,
+              Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{
+                  OfText: &anthropic.BetaManagedAgentsTextBlockParam{
+                      Type: anthropic.BetaManagedAgentsTextBlockTypeText,
+                      Text: "Run the weekly compliance scan.",
+                  },
+              }},
+          },
+      }},
+      Schedule: anthropic.BetaManagedAgentsScheduleParams{
+          Type:       anthropic.BetaManagedAgentsScheduleParamsTypeCron,
+          Expression: "0 20 * * 5",
+          Timezone:   "America/New_York",
+      },
+  })
+  if err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var deployment = client.beta().deployments().create(
+      DeploymentCreateParams.builder()
+          .name("Weekly compliance scan")
+          .agent(agent.id())
+          .environmentId(environment.id())
+          .addInitialEvent(
+              BetaManagedAgentsUserMessageEventParams.builder()
+                  .type(BetaManagedAgentsUserMessageEventParams.Type.USER_MESSAGE)
+                  .addTextContent("Run the weekly compliance scan.")
+                  .build()
+          )
+          .schedule(
+              BetaManagedAgentsScheduleParams.builder()
+                  .type(BetaManagedAgentsScheduleParams.Type.CRON)
+                  .expression("0 20 * * 5")
+                  .timezone("America/New_York")
+                  .build()
+          )
+          .build()
+  );
+  ```
+
+  ```php PHP
+  $deployment = $client->beta->deployments->create(
+      name: 'Weekly compliance scan',
+      agent: $agent->id,
+      environmentID: $environment->id,
+      initialEvents: [
+          [
+              'type' => 'user.message',
+              'content' => [['type' => 'text', 'text' => 'Run the weekly compliance scan.']],
+          ],
+      ],
+      schedule: [
+          'type' => 'cron',
+          'expression' => '0 20 * * 5',
+          'timezone' => 'America/New_York',
+      ],
+  );
+  ```
+
+  ```ruby Ruby
+  deployment = client.beta.deployments.create(
+    name: "Weekly compliance scan",
+    agent: agent.id,
+    environment_id: environment.id,
+    initial_events: [
+      {
+        type: "user.message",
+        content: [{type: "text", text: "Run the weekly compliance scan."}]
+      }
+    ],
+    schedule: {
+      type: "cron",
+      expression: "0 20 * * 5",
+      timezone: "America/New_York"
+    }
+  )
+  ```
+</CodeGroup>
+
+响应包含一个部署对象，其中填充了 `schedule.upcoming_runs_at`，列出接下来即将触发的时间，以便您确认计划设置正确。
+
+```json
+{
+  "id": "depl_01xyz",
+  "status": "active",
+  "paused_reason": null,
+  "schedule": {
+    "type": "cron",
+    "expression": "0 20 * * 5",
+    "timezone": "America/New_York",
+    "last_run_at": null,
+    "upcoming_runs_at": [
+      "2026-05-09T00:00:00Z",
+      "2026-05-16T00:00:00Z",
+      "2026-05-23T00:00:00Z"
+    ]
+  }
+}
+```
+
+即将运行的时间戳反映的是所配置的确切计划。但是，为了分散负载，实际执行会应用最多为运行间隔 15% 的抖动（jitter），最小为 5 秒，最大为 9 分钟。
+
+每个组织最多支持 **1,000 个计划部署**。如果您需要更多，请联系 OMA 支持团队。
+
+有关完整参数和响应架构，请参阅[创建部署参考文档](/docs/zh/api/deployments/create-deployment)。
+
+### Cron 和时区语义
+
+* **表达式：** 标准 POSIX cron（`minute hour day-of-month month day-of-week`）。您可以在 OMA 控制台中生成和验证这些 cron 表达式。
+* **时区：** IANA 时区标识符（例如 `"America/Los_Angeles"`）。
+* **夏令时（DST）：** Cron 计划使用字面挂钟时间匹配，因此在 `America/New_York` 时区中的 `"0 20 * * *"` 会在当地时间晚上 8触发，无论当前是 EST 还是 EDT。
+
+<Note>
+  在春季调快时钟当天不存在的挂钟时间（例如凌晨 2 点）不会被触发。在秋季调慢时钟当天出现两次的挂钟时间会触发两次。如果无法接受遗漏或重复执行，请将计划安排在当地时间凌晨 1–3 点窗口之外，或使用 UTC。
+</Note>
+
+### 为每次运行设置预算
+
+在创建或更新部署时传递可选的 `budget` 对象。它的结构与[会话预算](/docs/zh/budgets)相同。部署会将该上限复制到它启动的每个会话上，因此该预算分别限制每次运行，而不是作为跨多次运行的累计上限：上限为 `"2000"` 的部署在每次运行中最多可花费约 20 美元。
+
+由部署启动的会话的行为与任何其他设置了预算的会话完全相同：当其自身的标价成本[达到上限](/docs/zh/budgets#when-a-session-reaches-its-budget)时，会以 `budget_reached` 状态暂停。更改部署的预算仅适用于此后启动的运行；已在运行的会话会保留其启动时的上限，您可以[通过会话本身进行更改](/docs/zh/session-operations#updating-the-session-budget)。与会话预算不同，部署的预算可以通过 `"budget": null` 移除，并在之后重新设置。
+
+以下示例为现有部署设置预算：
+
+```bash cURL
+curl --fail-with-body -sS "http://localhost:38080/v1/deployments/$DEPLOYMENT_ID?beta=true" \
+  -H "x-api-key: $OMA_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "anthropic-beta: managed-agents-2026-04-01" \
+  -H "content-type: application/json" \
+  -d @- <<'EOF'
+{
+  "budget": {
+    "type": "limit",
+    "max_list_cost": {"amount": "2000", "currency": "USD"}
+  }
+}
+EOF
+```
+
+## 部署运行
+
+部署可能因多种原因而无法触发：例如，`environment` 资源已被归档，或会话创建受到速率限制。每次执行部署的尝试都会生成一条**部署运行**（deployment run）记录，使您能够独立于会话生命周期来跟踪成功和失败情况。
+
+成功的部署会生成活动会话，成功的部署运行包含关联的 `session_id`。要跟踪会话的生命周期，请通过[事件流](/docs/zh/events-and-streaming)或 [webhook](/docs/zh/webhooks) 跟踪会话事件。部署生命周期变更以及每次定时运行的结果也会作为 webhook 事件传递，列在[支持的事件类型](/docs/zh/webhooks#supported-event-types)的"部署 events"和"部署 run events"选项卡中。
+
+按如下方式列出某个部署的所有部署运行：
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  curl --fail-with-body -sS "http://localhost:38080/v1/deployment_runs?beta=true&deployment_id=$DEPLOYMENT_ID" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01"
+  ```
+
+  ```bash CLI
+  ant beta:deployment-runs list --deployment-id "$DEPLOYMENT_ID"
+  ```
+
+  ```python Python
+  for run in client.beta.deployment_runs.list(
+      deployment_id=deployment.id,
+  ):
+      print(run.created_at, run.session_id or run.error.type)
+  ```
+
+  ```typescript TypeScript
+  for await (const run of client.beta.deploymentRuns.list({
+    deployment_id: deployment.id,
+  })) {
+    console.log(run.created_at, run.session_id ?? run.error?.type);
+  }
+  ```
+
+  ```csharp C#
+  var runs = await client.Beta.DeploymentRuns.List(
+      new() { DeploymentID = deployment.ID }
+  );
+  await foreach (var run in runs.Paginate())
+  {
+      // Error 联合类型直接暴露 .Message；在添加通用 .Type 访问器之前，
+      // 判别器需从 .Json 中读取。
+      var outcome = run.SessionID ?? run.Error!.Json.GetProperty("type").GetString();
+      Console.WriteLine($"{run.CreatedAt} {outcome}");
+  }
+  ```
+
+  ```go Go
+  runs := client.Beta.DeploymentRuns.ListAutoPaging(ctx, anthropic.BetaDeploymentRunListParams{
+      DeploymentID: anthropic.String(deployment.ID),
+  })
+  for runs.Next() {
+      run := runs.Current()
+      if run.SessionID != "" {
+          fmt.Println(run.CreatedAt.Format(time.RFC3339), run.SessionID)
+      } else {
+          fmt.Println(run.CreatedAt.Format(time.RFC3339), run.Error.Type)
+      }
+  }
+  if err := runs.Err(); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  for (var run : client.beta().deploymentRuns().list(
+          DeploymentRunListParams.builder()
+              .deploymentId(deployment.id())
+              .build()).autoPager()) {
+      // Error 联合类型尚未暴露通用的 .type()/.message()
+      // 访问器；.toString() 包含两者。
+      IO.println(run.createdAt() + " "
+          + run.sessionId().orElseGet(() -> run.error().orElseThrow().toString()));
+  }
+  ```
+
+  ```php PHP
+  foreach ($client->beta->deploymentRuns->list(
+      deploymentID: $deployment->id,
+  )->pagingEachItem() as $run) {
+      $outcome = $run->sessionID ?? $run->error->type;
+      echo "{$run->createdAt->format(DATE_ATOM)} {$outcome}\n";
+  }
+  ```
+
+  ```ruby Ruby
+  client.beta.deployment_runs.list(
+    deployment_id: deployment.id
+  ).auto_paging_each do
+    puts "#{it.created_at} #{it.session_id || it.error.type}"
+  end
+  ```
+</CodeGroup>
+
+您还可以筛选出存在错误的部署运行：
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  curl --fail-with-body -sS "http://localhost:38080/v1/deployment_runs?beta=true&deployment_id=$DEPLOYMENT_ID&has_error=true" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01"
+  ```
+
+  ```bash CLI
+  ant beta:deployment-runs list --deployment-id "$DEPLOYMENT_ID" --has-error
+  ```
+
+  ```python Python
+  for run in client.beta.deployment_runs.list(
+      deployment_id=deployment.id,
+      has_error=True,
+  ):
+      print(run.created_at, run.error.type, run.error.message)
+  ```
+
+  ```typescript TypeScript
+  for await (const run of client.beta.deploymentRuns.list({
+    deployment_id: deployment.id,
+    has_error: true,
+  })) {
+    console.log(run.created_at, run.error?.type, run.error?.message);
+  }
+  ```
+
+  ```csharp C#
+  var failedRuns = await client.Beta.DeploymentRuns.List(
+      new() { DeploymentID = deployment.ID, HasError = true }
+  );
+  await foreach (var failedRun in failedRuns.Paginate())
+  {
+      var error = failedRun.Error!;
+      var errorType = error.Json.GetProperty("type").GetString();
+      Console.WriteLine($"{failedRun.CreatedAt} {errorType} {error.Message}");
+  }
+  ```
+
+  ```go Go
+  failedRuns := client.Beta.DeploymentRuns.ListAutoPaging(ctx, anthropic.BetaDeploymentRunListParams{
+      DeploymentID: anthropic.String(deployment.ID),
+      HasError:     anthropic.Bool(true),
+  })
+  for failedRuns.Next() {
+      failedRun := failedRuns.Current()
+      fmt.Println(failedRun.CreatedAt.Format(time.RFC3339), failedRun.Error.Type, failedRun.Error.Message)
+  }
+  if err := failedRuns.Err(); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  for (var run : client.beta().deploymentRuns().list(
+          DeploymentRunListParams.builder()
+              .deploymentId(deployment.id())
+              .hasError(true)
+              .build()).autoPager()) {
+      IO.println(run.createdAt() + " " + run.error().orElseThrow());
+  }
+  ```
+
+  ```php PHP
+  foreach ($client->beta->deploymentRuns->list(
+      deploymentID: $deployment->id,
+      hasError: true,
+  )->pagingEachItem() as $run) {
+      echo "{$run->createdAt->format(DATE_ATOM)} {$run->error->type} {$run->error->message}\n";
+  }
+  ```
+
+  ```ruby Ruby
+  client.beta.deployment_runs.list(
+    deployment_id: deployment.id,
+    has_error: true
+  ).auto_paging_each do
+    puts "#{it.created_at} #{it.error.type} #{it.error.message}"
+  end
+  ```
+</CodeGroup>
+
+失败的运行包含一个 `error`，其中的 `type` 描述了会话创建被拒绝的原因（例如 `environment_archived_error`、`agent_archived_error` 或 `session_rate_limited_error`）。有关所有筛选参数和响应架构，请参阅[列出部署运行参考文档](/docs/zh/api/deployment-runs/list-deployment-runs)。
+
+```json
+{
+  "type": "deployment_run",
+  "id": "drun_01abc124",
+  "deployment_id": "depl_01xyz",
+  "trigger_context": { "type": "schedule", "scheduled_at": "2026-05-09T00:00:00Z" },
+  "session_id": null,
+  "error": {
+    "type": "environment_archived_error",
+    "message": "environment `env_01abc` is archived"
+  },
+  "agent": { "type": "agent", "id": "agent_01ghi789", "version": 3 },
+  "created_at": "2026-05-09T00:00:01Z"
+}
+```
+
+要按 ID 检索单次运行，请调用 [`GET /v1/deployment_runs/{deployment_run_id}`](/docs/zh/api/deployment-runs/get-deployment-run)。[`deployment_run` webhook 事件](/docs/zh/webhooks#supported-event-types)会将运行 ID 作为其 `data.id` 携带。
+
+## 管理部署生命周期
+
+每次生命周期变更都会发出一个 [webhook 事件](/docs/zh/webhooks#supported-event-types)，因此您无需轮询即可对已暂停、已恢复或已归档的部署作出响应；请参阅"部署 events"选项卡。
+
+**暂停**（Pause）会在此后抑制定时触发；来自先前部署运行的正在运行的会话会继续执行。暂停期间仍允许通过 `run` 端点进行手动运行。暂停会将 `paused_reason` 设置为 `{"type": "manual"}`；取消暂停会将其清除。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  curl --fail-with-body -sS -X POST "http://localhost:38080/v1/deployments/$DEPLOYMENT_ID/pause?beta=true" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01"
+  ```
+
+  ```bash CLI
+  ant beta:deployments pause --deployment-id "$DEPLOYMENT_ID"
+  ```
+
+  ```python Python
+  client.beta.deployments.pause(deployment.id)
+  ```
+
+  ```typescript TypeScript
+  await client.beta.deployments.pause(deployment.id);
+  ```
+
+  ```csharp C#
+  await client.Beta.Deployments.Pause(deployment.ID);
+  ```
+
+  ```go Go
+  if _, err := client.Beta.Deployments.Pause(ctx, deployment.ID, anthropic.BetaDeploymentPauseParams{}); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  client.beta().deployments().pause(deployment.id());
+  ```
+
+  ```php PHP
+  $client->beta->deployments->pause($deployment->id);
+  ```
+
+  ```ruby Ruby
+  client.beta.deployments.pause(deployment.id)
+  ```
+</CodeGroup>
+
+**取消暂停**（Unpause）会从下一个计划的触发时间点恢复计划。错过的触发不会被补执行。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  curl --fail-with-body -sS -X POST "http://localhost:38080/v1/deployments/$DEPLOYMENT_ID/unpause?beta=true" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01"
+  ```
+
+  ```bash CLI
+  ant beta:deployments unpause --deployment-id "$DEPLOYMENT_ID"
+  ```
+
+  ```python Python
+  client.beta.deployments.unpause(deployment.id)
+  ```
+
+  ```typescript TypeScript
+  await client.beta.deployments.unpause(deployment.id);
+  ```
+
+  ```csharp C#
+  await client.Beta.Deployments.Unpause(deployment.ID);
+  ```
+
+  ```go Go
+  if _, err := client.Beta.Deployments.Unpause(ctx, deployment.ID, anthropic.BetaDeploymentUnpauseParams{}); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  client.beta().deployments().unpause(deployment.id());
+  ```
+
+  ```php PHP
+  $client->beta->deployments->unpause($deployment->id);
+  ```
+
+  ```ruby Ruby
+  client.beta.deployments.unpause(deployment.id)
+  ```
+</CodeGroup>
+
+**归档**（Archive）与**暂停**不同，是终止性操作：计划会终止，且部署无法再被修改。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  curl --fail-with-body -sS -X POST "http://localhost:38080/v1/deployments/$DEPLOYMENT_ID/archive?beta=true" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01"
+  ```
+
+  ```bash CLI
+  ant beta:deployments archive --deployment-id "$DEPLOYMENT_ID"
+  ```
+
+  ```python Python
+  client.beta.deployments.archive(deployment.id)
+  ```
+
+  ```typescript TypeScript
+  await client.beta.deployments.archive(deployment.id);
+  ```
+
+  ```csharp C#
+  await client.Beta.Deployments.Archive(deployment.ID);
+  ```
+
+  ```go Go
+  if _, err := client.Beta.Deployments.Archive(ctx, deployment.ID, anthropic.BetaDeploymentArchiveParams{}); err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  client.beta().deployments().archive(deployment.id());
+  ```
+
+  ```php PHP
+  $client->beta->deployments->archive($deployment->id);
+  ```
+
+  ```ruby Ruby
+  client.beta.deployments.archive(deployment.id)
+  ```
+</CodeGroup>
+
+### 失败行为
+
+会话创建的速率限制响应会立即记录为 `session_rate_limited_error` 运行，不会重试；计划会在下一个计划的触发时间点再次尝试。会话内底层 API 调用的速率限制由会话本身处理。
+
+如果部署的智能体已被归档，则该部署会在同一操作中自动归档。如果智能体已被删除，则下一次定时触发会检测到缺失的智能体并自动归档该部署。在这两种情况下都不会记录部署运行。如果智能体引用的子智能体已被归档，则下一次触发会记录一次失败的运行，其 `error.type: "agent_archived_error"`，并且部署会自动暂停，以便您更新智能体并恢复。其他不可恢复的会话创建错误（例如已归档的环境或密钥库）的行为相同：触发会记录一次失败的运行，并且部署会自动暂停。部署的 `paused_reason.error.type` 与失败运行的 `error.type` 保持一致。
+
+## 触发手动运行
+
+要在计划之外运行部署，请调用 [`run` 端点](/docs/zh/api/deployments/run-deployment-now)。这会立即创建一个会话，并写入一条 `trigger_context.type: "manual"` 的部署运行记录。这使您可以在正式启用计划之前测试部署。
+
+<CodeGroup defaultLanguage="CLI">
+  ```bash cURL
+  curl --fail-with-body -sS -X POST "http://localhost:38080/v1/deployments/$DEPLOYMENT_ID/run?beta=true" \
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "anthropic-beta: managed-agents-2026-04-01"
+  ```
+
+  ```bash CLI
+  ant beta:deployments run --deployment-id "$DEPLOYMENT_ID"
+  ```
+
+  ```python Python
+  run = client.beta.deployments.run(deployment.id)
+  ```
+
+  ```typescript TypeScript
+  const run = await client.beta.deployments.run(deployment.id);
+  ```
+
+  ```csharp C#
+  var manualRun = await client.Beta.Deployments.Run(deployment.ID);
+  ```
+
+  ```go Go
+  manualRun, err := client.Beta.Deployments.Run(ctx, deployment.ID, anthropic.BetaDeploymentRunParams{})
+  if err != nil {
+      panic(err)
+  }
+  ```
+
+  ```java Java
+  var run = client.beta().deployments().run(deployment.id());
+  ```
+
+  ```php PHP
+  $run = $client->beta->deployments->run($deployment->id);
+  ```
+
+  ```ruby Ruby
+  run = client.beta.deployments.run(deployment.id)
+  ```
+</CodeGroup>

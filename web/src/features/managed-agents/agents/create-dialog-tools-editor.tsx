@@ -36,7 +36,11 @@ import {
   type ToolPermissionState,
 } from './tools/model';
 
-const permissionValues: EditablePermission[] = ['always_allow', 'always_ask', 'always_deny'];
+const permissionOptions = [
+  { value: 'always_allow' as const, icon: CheckCircle2 },
+  { value: 'always_ask' as const, icon: Hand },
+  { value: 'always_deny' as const, icon: Ban },
+];
 
 export function CreateDialogToolsEditor({
   draft,
@@ -258,10 +262,11 @@ function PermissionMenu({
         {permissionLabel(value, msg)}
         <ChevronDown className="size-3.5" aria-hidden />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="w-max min-w-40">
         <DropdownMenuRadioGroup value={value} onValueChange={(next) => onChange(next as EditablePermission)}>
-          {permissionValues.map((permission) => (
-            <DropdownMenuRadioItem key={permission} value={permission}>
+          {permissionOptions.map(({ value: permission, icon: PermissionIcon }) => (
+            <DropdownMenuRadioItem key={permission} value={permission} className="whitespace-nowrap">
+              <PermissionIcon data-slot="permission-option-icon" className="size-4 text-muted-foreground" aria-hidden />
               {permissionLabel(permission, msg)}
             </DropdownMenuRadioItem>
           ))}
@@ -279,42 +284,25 @@ function PermissionButtons({
   onChange: (permission: EditablePermission) => void;
 }) {
   const { msg } = useI18n();
-  const buttons = [
-    {
-      value: 'always_allow' as const,
-      label: msg('managedAgents.agents.detail.alwaysAllow', 'Always allow'),
-      icon: CheckCircle2,
-    },
-    {
-      value: 'always_ask' as const,
-      label: msg('managedAgents.agents.detail.alwaysAsk', 'Always ask'),
-      icon: Hand,
-    },
-    {
-      value: 'always_deny' as const,
-      label: msg('managedAgents.agents.detail.alwaysDeny', 'Always deny'),
-      icon: Ban,
-    },
-  ];
   return (
     <div className="flex rounded-lg bg-muted p-0.5">
-      {buttons.map((button) => {
-        const Icon = button.icon;
+      {permissionOptions.map(({ value: permission, icon: PermissionIcon }) => {
+        const label = permissionLabel(permission, msg);
         return (
           <Button
-            key={button.value}
+            key={permission}
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={button.label}
-            title={button.label}
+            aria-label={label}
+            title={label}
             className={cn(
               'size-7 text-muted-foreground',
-              value === button.value && 'bg-background text-foreground shadow-sm',
+              value === permission && 'bg-background text-foreground shadow-sm',
             )}
-            onClick={() => onChange(button.value)}
+            onClick={() => onChange(permission)}
           >
-            <Icon className="size-4" aria-hidden />
+            <PermissionIcon className="size-4" aria-hidden />
           </Button>
         );
       })}

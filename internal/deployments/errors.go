@@ -84,3 +84,11 @@ func deploymentRunLoadError(err error, runID string) error {
 func deploymentFileMountConflict(cause error) error {
 	return apperr.New(apperr.Conflict, "File resource mount_path conflicts with the session filesystem", cause)
 }
+
+func scheduledDeploymentLimitExceeded() error {
+	return apperr.New(
+		apperr.InvalidArgument,
+		fmt.Sprintf("an organization may have at most %d scheduled deployments", db.MaxScheduledDeploymentsPerOrganization),
+		db.ErrLimitExceeded,
+	)
+}

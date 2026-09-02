@@ -101,7 +101,20 @@ import {
   TemplateCard,
 } from '../components/CodeBlocks';
 import { templateTitle } from '../labels';
-import { mergeSessionEvents, QuickstartSessionComposer, SessionTracePanel } from '../sessions/SessionDetailPage';
+import { resolveSelectedSessionEventEntry } from '../sessions/sessionDetailModel';
+import {
+  EventDetailPanel,
+  QuickstartSessionComposer,
+  SessionTraceEmpty,
+  SessionTraceSkeleton,
+} from '../sessions/SessionTracePanel';
+import {
+  buildSessionEventEntries,
+  latestOpenModelRequest,
+  mergeSessionEvents,
+  sessionEventTimestamp,
+} from '../sessions/sessionTraceModel';
+import { SessionTranscriptView } from '../sessions/SessionTranscriptView';
 import {
   type AgentApiResponse,
   type AgentPanelTab,
@@ -1744,6 +1757,7 @@ export function BrowseTemplatesPanel({
           />
           <Input
             ref={searchRef}
+            type="search"
             id="agent-template-search"
             value={query}
             placeholder={msg('managedAgents.quickstart.searchTemplates', 'Search templates')}
@@ -1806,7 +1820,7 @@ export function TemplateDetailPanel({
   onFormatChange,
   onUseTemplate,
   isUsing,
-  modelMappings,
+  modelID,
 }: {
   template: AgentTemplate;
   format: CodeFormat;
@@ -1814,10 +1828,10 @@ export function TemplateDetailPanel({
   onFormatChange: (format: CodeFormat) => void;
   onUseTemplate: () => void;
   isUsing: boolean;
-  modelMappings: Record<string, string>;
+  modelID: string;
 }) {
   const { msg, locale } = useI18n();
-  const code = codeForTemplate(template, format, locale, modelMappings);
+  const code = codeForTemplate(template, format, locale, modelID);
   const title = templateTitle(template, msg);
   return (
     <Card className="relative h-full min-h-0 overflow-hidden border border-border bg-card py-0 shadow-sm ring-0">
@@ -1880,7 +1894,7 @@ export function CreatedAgentConfigPanel({
   onConfigureEnvironment,
   onFormatChange,
   onTabChange,
-  modelMappings,
+  modelID,
 }: {
   template: AgentTemplate;
   agent: AgentApiResponse | null;
@@ -1899,11 +1913,11 @@ export function CreatedAgentConfigPanel({
   onConfigureEnvironment: () => Promise<void>;
   onFormatChange: (format: CodeFormat) => void;
   onTabChange: (tab: AgentPanelTab) => void;
-  modelMappings: Record<string, string>;
+  modelID: string;
 }) {
   const { msg, locale } = useI18n();
   const displayedConfig = displayAgentConfig(
-    agentConfig ?? createDialogAgentConfig(template, locale, undefined, modelMappings),
+    agentConfig ?? createDialogAgentConfig(template, locale, undefined, modelID),
   );
   const code = format === 'YAML' ? yamlStringify(displayedConfig) : JSON.stringify(displayedConfig, null, 2);
   return (
@@ -2111,7 +2125,7 @@ export function PreviewEnvironmentPanel({
             <ArrowUpRight className="size-4 text-foreground" aria-hidden />
           </ButtonLink>
         </div>
-        <SessionTracePanel
+        <QuickstartSessionTranscript
           events={eventState.events}
           loading={eventState.loading}
           error={eventState.error}
@@ -2254,6 +2268,78 @@ export function PreviewEnvironmentPanel({
           </Card>
         </div>
       )}
+    </div>
+  );
+}
+
+function QuickstartSessionTranscript({
+  error,
+  events,
+  loading,
+  sessionStartedAt,
+}: {
+  error: string | null;
+  events: QuickstartSessionEvent[];
+  loading: boolean;
+  sessionStartedAt?: string;
+}) {
+  const { msg } = useI18n();
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const traceStartMs = useMemo(() => {
+    const sessionStart = sessionStartedAt ? Date.parse(sessionStartedAt) : NaN;
+    return Number.isFinite(sessionStart) ? sessionStart : (events.map(sessionEventTimestamp).find(Boolean) ?? 0);
+  }, [events, sessionStartedAt]);
+  const entries = useMemo(
+    () => buildSessionEventEntries(events, 'transcript', traceStartMs, msg),
+    [events, msg, traceStartMs],
+  );
+  const selectedEntry = resolveSelectedSessionEventEntry(entries, selectedEntryId);
+  const openModelRequest = useMemo(() => latestOpenModelRequest(events), [events]);
+
+  return (
+    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-secondary">
+      <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+        <MessageScroller className="min-h-0 flex-1">
+          <MessageScrollerViewport
+            aria-label={msg('managedAgents.sessions.trace.eventList', 'Session events')}
+            className="scrollbar-none overflow-x-hidden px-4 py-3"
+          >
+            <MessageScrollerContent className="mx-auto w-full max-w-[720px] pb-8">
+              {loading && !events.length ? (
+                <SessionTraceSkeleton />
+              ) : error && !events.length ? (
+                <SessionTraceEmpty message={error} danger />
+              ) : entries.length ? (
+                <SessionTranscriptView
+                  entries={entries}
+                  openModelRequest={openModelRequest}
+                  selectedEntryId={selectedEntryId}
+                  onSelectEntry={setSelectedEntryId}
+                  threadNameById={new Map()}
+                  onThreadClick={() => {}}
+                  traceStartMs={traceStartMs}
+                />
+              ) : (
+                <SessionTraceEmpty
+                  message={msg(
+                    'managedAgents.sessions.trace.noEvents',
+                    'No events yet. Events will appear here as they occur.',
+                  )}
+                />
+              )}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton />
+        </MessageScroller>
+      </MessageScrollerProvider>
+      {selectedEntry ? (
+        <EventDetailPanel
+          entry={selectedEntry}
+          view="transcript"
+          placement="overlay"
+          onClose={() => setSelectedEntryId(null)}
+        />
+      ) : null}
     </div>
   );
 }

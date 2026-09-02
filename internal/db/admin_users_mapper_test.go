@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -25,7 +25,7 @@ func TestAdminUserMapperFindByExternalID(t *testing.T) {
 			organizationUUID,
 			"user_mapper",
 		)
-		if !errors.Is(err, sql.ErrNoRows) || user.UUID != uuid.Nil {
+		if !errors.Is(err, sql.ErrNoRows) || user.UUID != "" {
 			t.Fatalf("FindByExternalID() = (%+v, %v), want zero and sql.ErrNoRows", user, err)
 		}
 		assertMapperTestExecution(

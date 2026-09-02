@@ -14,13 +14,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 
 	e2b "github.com/superduck-ai/e2b-go-sdk"
-)
-
-const (
-	sandboxUserDataVolumeName = "user-data"
-	sandboxUserDataMountPath  = "/mnt/user-data"
 )
 
 type Resolution struct {
@@ -62,7 +58,7 @@ type E2BProvider struct {
 	cfg config.E2BConfig
 }
 
-const defaultSandboxTimeout = 5 * time.Minute
+const defaultSandboxTimeout = 30 * time.Second
 
 func NewProvider(cfg config.E2BConfig) *E2BProvider {
 	return &E2BProvider{cfg: cfg}
@@ -112,7 +108,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 }
 
 func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolved Resolution) (Sandbox, error) {
-	if strings.TrimSpace(p.cfg.APIKey) == "" && !p.cfg.Debug {
+	if p.cfg.APIKey == "" && !p.cfg.Debug {
 		return Sandbox{}, errors.New("e2b.api_key is required to create a sandbox")
 	}
 	if strings.TrimSpace(resolved.Template) == "" {
@@ -134,9 +130,9 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 		TimeoutMs:           &timeoutMs,
 		AllowInternetAccess: &allowInternet,
 		Network:             resolved.Network,
-	}
-	if volumeMounts := p.sandboxVolumeMounts(work); len(volumeMounts) > 0 {
-		opts.VolumeMounts = volumeMounts
+		Lifecycle: &e2b.SandboxLifecycle{
+			OnTimeout: "pause",
+		},
 	}
 	sandbox, err := e2b.Create(ctx, resolved.Template, opts)
 	if err != nil {
@@ -145,15 +141,24 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 	return Sandbox{ID: sandbox.SandboxID}, nil
 }
 
+// Kill deletes by ID without Connect: paused sandboxes must not resume merely
+// to be reclaimed.
 func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
-	if strings.TrimSpace(sandboxID) == "" {
+	if sandboxID == "" {
 		return nil
 	}
-	sandbox, err := p.connect(ctx, sandboxID)
-	if err != nil {
-		return err
+	requestTimeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
+	debug := p.cfg.Debug
+	opts := &e2b.SandboxApiOpts{
+		ApiKey: p.cfg.APIKey, Domain: p.cfg.Domain, ApiUrl: p.cfg.APIURL, Debug: &debug, RequestTimeoutMs: &requestTimeoutMs,
 	}
-	return sandbox.Kill(ctx, nil)
+	if p.cfg.AccessToken != "" {
+		opts.Headers = map[string]string{"Authorization": "Bearer " + p.cfg.AccessToken}
+	}
+	// The SDK maps a provider 404 to (false, nil); an already absent sandbox
+	// satisfies the same deletion postcondition as a successful DELETE.
+	_, err := e2b.Kill(ctx, sandboxID, opts)
+	return err
 }
 
 // SetTimeout renews the provider-side sandbox lifetime from the time of this
@@ -168,9 +173,20 @@ func (p *E2BProvider) SetTimeout(ctx context.Context, sandboxID string, timeout 
 	}
 	sandbox, err := p.connect(ctx, sandboxID)
 	if err != nil {
-		return err
+		return classifySandboxError(err)
 	}
-	return sandbox.SetTimeout(ctx, int(timeout/time.Millisecond), nil)
+	return classifySandboxError(sandbox.SetTimeout(ctx, int(timeout/time.Millisecond), nil))
+}
+
+func classifySandboxError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var notFound *e2b.SandboxNotFoundError
+	if errors.As(err, &notFound) {
+		return fmt.Errorf("%w: %v", sandboxruntime.ErrSandboxNotFound, err)
+	}
+	return err
 }
 
 func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
@@ -491,10 +507,4 @@ func mcpAllowedHostsFromWork(work *db.EnvironmentWork) ([]string, error) {
 		return nil, nil
 	}
 	return networkpolicy.ParseWorkMetadataMCPAllowedHosts(work.Metadata)
-}
-
-func (p *E2BProvider) sandboxVolumeMounts(_ *db.EnvironmentWork) map[string]any {
-	return map[string]any{
-		sandboxUserDataMountPath: sandboxUserDataVolumeName,
-	}
 }

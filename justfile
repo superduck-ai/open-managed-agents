@@ -45,7 +45,7 @@ test: generate
 
 # Regenerate DB mappers with the version pinned by go.mod's tool directive.
 generate-yourbatis-mappers:
-  go generate ./internal/db
+  ./scripts/generate-go.sh
 
 # Run the repository's configured Go static-analysis and formatting checks.
 lint: generate
@@ -65,6 +65,10 @@ generate-code-session-jwt-key output:
 
 test-generate-code-session-jwt-key:
   ./scripts/tests/generate-code-session-jwt-key_test.sh
+
+# Print the OpenSSH signing public key for GitHub without exposing the private key.
+print-code-session-signing-public-key private_key_file: generate
+  @go run ./cmd/code-session-signing-public-key "{{ private_key_file }}"
 
 # Generate the stable CCRv2 MITM CA key. Example: just generate-upstream-proxy-ca-key config/secrets/upstream-proxy-ca-key.pem
 generate-upstream-proxy-ca-key output:

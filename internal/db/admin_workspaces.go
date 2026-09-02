@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type AdminWorkspace struct {
-	UUID             uuid.UUID       `db:"uuid"`
+	UUID             string          `db:"uuid"`
 	ExternalID       string          `db:"external_id"`
-	OrganizationUUID uuid.UUID       `db:"organization_uuid"`
+	OrganizationUUID string          `db:"organization_uuid"`
 	Name             string          `db:"name"`
 	CreatedAt        time.Time       `db:"created_at"`
 	UpdatedAt        time.Time       `db:"updated_at"`
@@ -34,9 +32,9 @@ type ListAdminWorkspacesParams struct {
 func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace) (AdminWorkspace, error) {
 	mapper := NewAdminWorkspaceMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminWorkspaceParams{
-		UUID:             workspace.UUID.String(),
+		UUID:             workspace.UUID,
 		ExternalID:       workspace.ExternalID,
-		OrganizationUUID: workspace.OrganizationUUID.String(),
+		OrganizationUUID: workspace.OrganizationUUID,
 		Name:             workspace.Name,
 		CreatedAt:        workspace.CreatedAt,
 		CompartmentID:    workspace.CompartmentID,

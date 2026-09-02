@@ -3,12 +3,11 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type AdminOrganization struct {
-	UUID      uuid.UUID `db:"uuid"`
+	UUID      string    `db:"uuid"`
 	Name      string    `db:"name"`
 	CreatedAt time.Time `db:"created_at"`
 }

@@ -1,4 +1,4 @@
-# Session Tool 权限确认只读回放设计指南
+# Session Tool 权限确认与审批交互设计指南
 
 
 ---
@@ -8,11 +8,9 @@
 权限策略有两层含义：
 
 - **配置层**：Agent 的 `tools` 配置决定预构建 agent toolset 与 MCP toolset 是自动执行还是等待确认。详见 [权限策略](../permission-policies.md)。
-- **回放层**：Session Detail 页面读取已经写入事件流的 tool use、tool confirmation 和 tool result，还原本次工具调用处于等待、运行、完成、失败或拒绝状态。
+- **回放与交互层**：Session Detail 页面读取已经写入事件流的 tool use、tool confirmation 和 tool result，还原本次工具调用处于等待、运行、完成、失败或拒绝状态；最新 `session.status_idle.stop_reason` 为 `requires_action` 时，控制台按其中的 `event_ids` 提供普通工具 Allow/Deny 或 AskUserQuestion 问卷交互，分别发送 `user.tool_confirmation` 与 `user.custom_tool_result`。
 
-本文只设计回放层。Session Detail 不承担审批决策，不渲染 Allow/Deny 按钮，也不主动发送 `user.tool_confirmation`。审批动作发生在 agent 运行客户端或调用方应用中，结果以 `user.tool_confirmation` 事件进入 session event stream。
-
-后端事件输出必须先遵守 Anthropic multi-agent 线程契约，再由前端做归一化回放：
+后端事件输出必须先遵守 Anthropic multi-agent 线程契约，再由前端做归一化回放与交互：
 
 - `/v1/sessions/{session_id}/events` 是 primary thread 的浓缩视图，不应返回普通子线程的完整工具调用历史。
 - `/v1/sessions/{session_id}/threads/{session_thread_id}/events` 是子线程明细视图，子线程自身的 tool use/result 应在这里返回。
@@ -170,6 +168,7 @@ function toolLifecycle(toolUse, resultEvent, confirmationEvent): ToolLifecycle {
 - `ask + allow confirmation + no result` 必须是 `running`，不是 `awaiting_approval`。
 - `ask + no confirmation + no result` 才是 `awaiting_approval`。
 - 缺少 `evaluated_permission` 时按 `allow` 兼容处理，除非事件显式带有 `requires_action=true`。
+- lifecycle 用于回放；当前可操作卡片必须额外由最新 `session.status_idle.stop_reason.event_ids` 决定，并扣除该 status 之后已经出现 confirmation/result 的 ID，避免新 status 到达前重复提交；不能让历史 ask tool 长期阻塞 composer。
 
 ---
 
@@ -249,23 +248,44 @@ Debug 模式是事件审计视图，必须保留：
 
 孤立事件不应影响任何 `tool_call` lifecycle，但需要在 Debug 中可见，方便定位后端或导入数据问题。
 
+### 6.4 Inspector Tools 权限列
+
+Inspector 的 Tools 表格展示配置层权限，而不是根据历史调用是否出现 confirmation 反推策略：
+
+- 按 `session.agent.id` 和 `session.agent.version` 获取该 Session 固定引用的 Agent 版本；
+- 内置 toolset 与 MCP toolset 复用 Agent 详情页的权限计算，包括逐工具 first-wins、`default_config`、`enabled=false`、内置默认 `always_allow` 和 MCP 默认 `always_ask`；
+- 历史事件的 `evaluated_permission`、confirmation 和 result 只负责本次调用的 lifecycle、审批与执行结果，不得覆盖 Agent 配置列；
+- Agent 版本暂时不可读取，或 custom tool 等没有配置层权限语义时，才兼容使用已观察调用的权限结果，避免伪造一个不存在的 Agent 配置。
+
+因此，Agent 配置为 `always_ask` 时，即使历史工具调用已经获准并完成，Tools 表格仍显示 `Always ask` / `始终询问`；调用行本身继续按事件展示 completed、denied 或 awaiting approval。
+
 ---
 
 ## 7. 后端与事件发送边界
 
-本文不新增公开 API。后端应继续按现有 session events 契约接受合法 client input events，其中 `user.tool_confirmation` 的最小校验为：
+后端继续按 session events 契约接受合法 client input events。
 
-- `tool_use_id` 必填且非空。
+普通 `agent.tool_use` / `agent.mcp_tool_use` 使用 `user.tool_confirmation`：
+
+- `tool_use_id` 必填且非空（必须是公开 `agent.tool_use` / `agent.mcp_tool_use` 的 `id`，例如 `sevt_...`）。
 - `result` 必须是 `allow` 或 `deny`。
 - `deny_message` 如存在，必须是 string 或 null。
+- `session_thread_id`：若所确认的阻塞 tool use 来源于子线程 cross-post，则原样带回 `session_thread_id`。
 
-Session Detail 的 composer 或 action mutation 不应新增审批发送分支。Web UI 可发送的用户交互仍保持当前产品边界，例如用户消息和中断；tool confirmation 由外部运行客户端或调用方应用写入事件流。
+`AskUserQuestion` 作为 `agent.custom_tool_use` 发布，使用 `user.custom_tool_result`：
+
+- `custom_tool_use_id` 必须是最新 `stop_reason.event_ids` 引用的公开 custom tool event id。
+- 接受答案时 `is_error=false`，`content` 中单个 text block 保存以完整 `question` 文本为 key 的答案对象 JSON。
+- 拒绝时 `is_error=true`，无需 `content`。
+- 后端从私有映射恢复原始 input，将答案写入 Claude Code `updatedInput.answers`；不扩展公开 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
+
+控制台 Session Detail 详情页只在最新 `session.status_idle.stop_reason.type=requires_action` 时，按 `event_ids` 找到对应 tool call，并在右侧详情区域优先展示可滚动的 Action Card；等待处理期间保留并禁用左侧消息输入框，避免用户将回复误发为普通 `user.message`。
 
 ---
 
 ## 8. 本仓库实现状态
 
-当前前端实现位于 [sessionTraceModel.ts](/Users/arthur/GolandProjects/claude-api-server/web/src/features/managed-agents/sessions/sessionTraceModel.ts)、[sessionTraceRows.tsx](/Users/arthur/GolandProjects/claude-api-server/web/src/features/managed-agents/sessions/sessionTraceRows.tsx) 与 [SessionTracePanel.tsx](/Users/arthur/GolandProjects/claude-api-server/web/src/features/managed-agents/sessions/SessionTracePanel.tsx)，已按本文只读回放模型落地：
+当前前端实现位于 `sessionTraceModel.ts`、`sessionTraceRows.tsx`、`SessionRequiresActionCard.tsx`、`SessionDetailPage.tsx` 与 `SessionTracePanel.tsx`：
 
 - `buildSessionTraceEntries` 在生成 Transcript 前预扫描完整事件流，建立 `toolResultsByUseId` 与 `toolConfirmationsByUseId`。
 - Transcript 中 `user.tool_confirmation` 与 tool result 不独立成行，而是挂到对应 `tool_call.confirmationEvent` / `tool_call.resultEvent`。
@@ -273,15 +293,20 @@ Session Detail 的 composer 或 action mutation 不应新增审批发送分支�
 - `sessionToolLifecycle` 支持字符串与对象形态的 `evaluated_permission` / `permission`，并按 `deny > result > ask-without-confirmation > running` 的顺序派生 lifecycle。
 - `ask + allow confirmation + no result` 显示为 `running`；`ask + deny confirmation` 或策略 `deny` 显示为 `denied`；`ask + no confirmation` 显示为 `awaiting_approval`。
 - tool 详情面板展示 confirmation JSON；拒绝事件会显示 `deny_message`。
+- 在页面检测到待确认工具时，右侧详情区域呈现 `SessionRequiresActionCard` 并提供 Allow/Deny 或问卷交互，左侧普通输入框保持可见但禁用。
+- 页面待处理集合来自最新 `session.status_idle.stop_reason.event_ids`，历史 lifecycle 不会继续显示操作卡。
+- 普通工具提交 `user.tool_confirmation`；`agent.custom_tool_use`（包括 `AskUserQuestion`）提交 `user.custom_tool_result`。
 
-相关测试在 `web/src/features/managed-agents/ManagedAgentsPage.test.tsx` 的 `folds tool confirmations into transcript tool rows while keeping debug audit events` 中覆盖。
+相关测试在 `web/src/features/managed-agents/ManagedAgentsPage.test.tsx` 及 `SessionRequiresActionCard.test.tsx` 中覆盖。
 
 ## 9. 验收场景
 
 | 场景 | 输入事件 | 期望展示 |
 |---|---|---|
-| 等待确认 | `tool_use(evaluated_permission=ask)`，无 confirmation/result | Transcript tool row 显示 `awaiting approval`。 |
-| 确认后运行 | `ask` + `user.tool_confirmation(result=allow)`，无 result | tool row 显示 running spinner，不显示 awaiting chip。 |
+| 等待确认 | `tool_use(evaluated_permission=ask)`，无 confirmation/result | Transcript tool row 显示 `awaiting approval`，右侧详情区域出现操作卡片，左侧输入框保持可见但禁用。 |
+| 允许执行 | 点击 Allow 按钮 | 发送 `result=allow` 的 confirmation，tool row 转为 running spinner。 |
+| 拒绝执行 | 点击 Deny 按钮 | 发送 `result=deny` 的 confirmation，tool row 显示 `denied`。 |
+| 问卷交互 | `AskUserQuestion` custom tool 被最新 `event_ids` 引用 | 渲染问卷选项与输入框，确认后以 `question` 文本为 key 发送 `user.custom_tool_result`。 |
 | 用户拒绝 | `ask` + `user.tool_confirmation(result=deny, deny_message=...)` | tool row 显示 `denied`，详情可看到拒绝原因。 |
 | 策略拒绝 | `tool_use(evaluated_permission=deny)` | 即使没有 confirmation，也显示 `denied`。 |
 | 执行失败 | 有 result 且 `is_error=true` | tool row 显示 error badge，lifecycle 为 `failed`。 |
@@ -289,37 +314,13 @@ Session Detail 的 composer 或 action mutation 不应新增审批发送分支�
 | batch 等待 | 同一 bracket 多个 tool call，其中一个 awaiting | batch row 显示 `awaiting approval`。 |
 | Transcript 过滤 | confirmation/result 原始事件存在 | Transcript 不出现独立 confirmation/result 行。 |
 | Debug 审计 | confirmation/result 原始事件存在 | Debug 可看到原始事件 JSON。 |
-| 只读边界 | 页面存在 awaiting tool call | 不出现 Allow/Deny 按钮，不调用 `events.send(user.tool_confirmation)`。 |
 
 ---
 
-## 9. 实现注意
+## 10. 实现注意
 
 - 当前本仓库前端已把 `user.tool_confirmation` 纳入按 `tool_use_id` 关联的归一化模型；新增 permission 事件形态时应优先扩展现有 helper，而不是在行渲染处单独判断。
 - 不要只从 `tool_use.evaluated_permission` 推断最终状态；用户拒绝必须来自 confirmation。
 - 不要把 `user.tool_confirmation` 当普通 `user` 行渲染到 Transcript，否则会破坏官方两层模型。
-- 不要在回放页补 Web 端审批按钮。若后续产品要支持 Web 审批，应另起设计，覆盖 mutation、权限门、乐观状态、失败回滚和 SSE 回灌。
+- AskUserQuestion 的答案 key 必须是完整问题文本 `question`，不能是短标题 `header`。
 - 自定义工具不受 permission policy 控制，但 custom tool use/result 仍应能在统一 tool 展示框架中回放。
-
----
-
-## 10. 测试建议
-
-前端单元测试应覆盖：
-
-- `toolResultsByUseId` 与 `toolConfirmationsByUseId` 的关联键提取。
-- `ask` 无 confirmation -> `awaiting_approval`。
-- `ask` + allow confirmation -> `running`。
-- `ask` + deny confirmation -> `denied`。
-- `deny` permission -> `denied`。
-- result error -> `failed`。
-- result success -> `completed`。
-- tool batch lifecycle 取最小 priority。
-- Transcript 隐藏 confirmation/result，Debug 保留原始事件。
-
-后端测试应继续覆盖：
-
-- `user.tool_confirmation` 属于 client input event。
-- 缺少 `tool_use_id` 返回 `invalid_request_error`。
-- `result` 非 `allow`/`deny` 返回 `invalid_request_error`。
-- `deny_message` 类型错误返回 `invalid_request_error`。

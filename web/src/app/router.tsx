@@ -5,6 +5,7 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
+import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
@@ -138,6 +139,12 @@ const apiKeysRoute = createRoute({
   component: () => <DashboardPage section="api-keys" />,
 });
 
+const workspaceLLMModelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/llm-models',
+  component: LLMModelsPage,
+});
+
 const quickstartRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'quickstart',
@@ -163,8 +170,12 @@ const workspaceSessionsRoute = createRoute({
 });
 
 const sessionDetailSearch = (search: Record<string, unknown>) => ({
-  segment: search.segment === 'debug' ? 'debug' : undefined,
+  segment: search.segment === 'debug' || search.segment === 'trace' ? search.segment : undefined,
   event: typeof search.event === 'string' && search.event.trim() ? search.event.trim() : undefined,
+  trace_id:
+    typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
+      ? search.trace_id.trim()
+      : undefined,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -172,6 +183,18 @@ const workspaceSessionDetailRoute = createRoute({
   path: 'workspaces/$workspaceId/sessions/$sessionId',
   validateSearch: sessionDetailSearch,
   component: () => <ManagedAgentsPage section="sessions" />,
+});
+
+const observabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'observability',
+  component: () => <ManagedAgentsPage section="observability" />,
+});
+
+const workspaceObservabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/observability',
+  component: () => <ManagedAgentsPage section="observability" />,
 });
 
 const deploymentsRoute = createRoute({
@@ -464,6 +487,7 @@ const routeTree = rootRoute.addChildren([
       workspaceSkillDetailRoute,
       batchesRoute,
       workspaceBatchesRoute,
+      workspaceLLMModelsRoute,
       apiKeysRoute,
       quickstartRoute,
       workspaceAgentQuickstartRoute,
@@ -474,6 +498,8 @@ const routeTree = rootRoute.addChildren([
       sessionsRoute,
       workspaceSessionsRoute,
       workspaceSessionDetailRoute,
+      observabilityRoute,
+      workspaceObservabilityRoute,
       deploymentsRoute,
       workspaceDeploymentsRoute,
       workspaceDeploymentDetailRoute,

@@ -1,8 +1,6 @@
 package messages
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,9 +9,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 type proxyErrorReader struct {
@@ -21,27 +16,10 @@ type proxyErrorReader struct {
 }
 
 func TestHandlerUsesInjectedLogger(t *testing.T) {
-	var output bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&output, nil)).With("component", "messages")
-	handler := NewHandler(config.Config{
-		AnthropicUpstream: config.AnthropicUpstreamConfig{
-			APIKey:  "test-key",
-			BaseURL: "%",
-		},
-	}, logger)
-	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`))
-	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{
-		CredentialType: auth.CredentialTypeAPIKey,
-	}))
-
-	handler.Create(httptest.NewRecorder(), request)
-
-	var entry map[string]any
-	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
-		t.Fatalf("decode log entry: %v", err)
-	}
-	if entry["component"] != "messages" || entry["msg"] != "build messages upstream endpoint" {
-		t.Fatalf("unexpected log entry: %#v", entry)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := NewHandler(nil, nil, logger)
+	if handler.logger != logger {
+		t.Fatal("NewHandler did not keep the injected logger")
 	}
 }
 
@@ -107,5 +85,41 @@ func TestWriteProxyResponseCopiesAndFlushes(t *testing.T) {
 	}
 	if !recorder.Flushed {
 		t.Fatal("response was not flushed")
+	}
+}
+
+func TestReadRequestModelPreservesOriginalBody(t *testing.T) {
+	body := `{"model":"kimi-k2.5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`
+	modelID, buffered, err := readRequestModel(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("readRequestModel() error = %v", err)
+	}
+	if modelID != "kimi-k2.5" {
+		t.Fatalf("model = %q, want kimi-k2.5", modelID)
+	}
+	if string(buffered) != body {
+		t.Fatalf("buffered body = %q, want original JSON", buffered)
+	}
+}
+
+func TestReadRequestModelRejectsDuplicateModel(t *testing.T) {
+	_, _, err := readRequestModel(strings.NewReader(`{"model":"kimi-k2.5","model":"not-configured"}`))
+	if err == nil || err.Error() != "model must appear exactly once" {
+		t.Fatalf("readRequestModel() error = %v", err)
+	}
+}
+
+func TestReadRequestModelPreservesMaxBytesError(t *testing.T) {
+	body := `{"model":"kimi-k2.5","messages":[]}`
+	limited := http.MaxBytesReader(
+		httptest.NewRecorder(),
+		io.NopCloser(strings.NewReader(body)),
+		int64(len(body)-1),
+	)
+
+	_, _, err := readRequestModel(limited)
+	var maxBytesErr *http.MaxBytesError
+	if !errors.As(err, &maxBytesErr) {
+		t.Fatalf("readRequestModel() error = %v, want *http.MaxBytesError", err)
 	}
 }

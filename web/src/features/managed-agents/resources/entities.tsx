@@ -66,7 +66,14 @@ import {
   type ResourceConfig,
   type SessionApiResponse,
 } from '../types';
-import { compactEntityId, copyText, errorMessage, handleInternalLinkClick, managedEntityDetailHref } from '../utils';
+import {
+  compactEntityId,
+  copyText,
+  errorMessage,
+  handleInternalLinkClick,
+  managedEntityDetailHref,
+  navigateToInternalHref,
+} from '../utils';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
@@ -74,6 +81,13 @@ import { columnWidth, entityAgentId, entityAgentLabel, entityDisplayName, entity
 
 type ManagedFilterMenu = 'agent' | 'created' | 'deployment' | 'status';
 type DeploymentStatusFilter = NonNullable<ManagedEntityListFilters['status']>;
+type ManagedEntityPageState = {
+  workspaceId: string;
+  section: ManagedEntitySection;
+  cursor: PageCursor;
+  history: PageCursor[];
+  nextPage: PageCursor;
+};
 
 function defaultGenericStatusFilter(section: ManagedEntitySection): AgentStatusFilter {
   switch (section) {
@@ -85,6 +99,25 @@ function defaultGenericStatusFilter(section: ManagedEntitySection): AgentStatusF
     case 'memory-stores':
       return 'active';
   }
+}
+
+function currentManagedEntityPageState(
+  state: ManagedEntityPageState,
+  workspaceId: string,
+  section: ManagedEntitySection,
+) {
+  if (state.workspaceId === workspaceId && state.section === section) {
+    return state;
+  }
+  return { cursor: null, history: [], nextPage: null };
+}
+
+function managedFilterValueLabel(
+  options: ReadonlyArray<{ value: string; label: string }>,
+  value: string,
+  fallback: string,
+) {
+  return options.find((option) => option.value === value)?.label ?? fallback;
 }
 
 export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { section: ManagedEntitySection } }) {
@@ -116,31 +149,17 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   const [sessionAgentFilter, setSessionAgentFilter] = useState('');
   const [sessionDeploymentFilter, setSessionDeploymentFilter] = useState('');
   const [sessionStatusFilter, setSessionStatusFilter] = useState<AgentDetailStatusFilter>('active');
-  const [entityPageState, setEntityPageState] = useState<{
-    workspaceId: string;
-    section: ManagedEntitySection;
-    cursor: PageCursor;
-    history: PageCursor[];
-    nextPage: PageCursor;
-  }>({
+  const [entityPageState, setEntityPageState] = useState<ManagedEntityPageState>({
     workspaceId: '',
     section: config.section,
     cursor: null,
     history: [],
     nextPage: null,
   });
-  const entityPageCursor =
-    entityPageState.workspaceId === activeWorkspaceId && entityPageState.section === config.section
-      ? entityPageState.cursor
-      : null;
-  const entityPageHistory =
-    entityPageState.workspaceId === activeWorkspaceId && entityPageState.section === config.section
-      ? entityPageState.history
-      : [];
-  const entityNextPage =
-    entityPageState.workspaceId === activeWorkspaceId && entityPageState.section === config.section
-      ? entityPageState.nextPage
-      : null;
+  const currentPage = currentManagedEntityPageState(entityPageState, activeWorkspaceId, config.section);
+  const entityPageCursor = currentPage.cursor;
+  const entityPageHistory = currentPage.history;
+  const entityNextPage = currentPage.nextPage;
   const title = resourceTitle(config, msg);
   const description = resourceDescription(config, msg);
   const createLabel = resourceCreateLabel(config, msg);
@@ -267,26 +286,41 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     }
     return options;
   }, [entities, msg, sessionDeploymentFilter]);
-  const createdFilterValueLabel =
-    createdFilterOptions.find((option) => option.value === createdFilter)?.label ??
-    msg('managedAgents.filters.allTime', 'All time');
-  const deploymentAgentValueLabel =
-    deploymentAgentFilterOptions.find((option) => option.value === deploymentAgentFilter)?.label ??
-    msg('common.all', 'All');
-  const deploymentStatusValueLabel =
-    deploymentStatusFilterOptions.find((option) => option.value === deploymentStatusFilter)?.label ??
-    msg('common.all', 'All');
-  const genericStatusValueLabel =
-    genericStatusFilterOptions.find((option) => option.value === genericStatusFilter)?.label ??
-    msg('common.all', 'All');
-  const sessionAgentValueLabel =
-    sessionAgentFilterOptions.find((option) => option.value === sessionAgentFilter)?.label ?? msg('common.all', 'All');
-  const sessionDeploymentValueLabel =
-    sessionDeploymentFilterOptions.find((option) => option.value === sessionDeploymentFilter)?.label ??
-    msg('common.all', 'All');
-  const sessionStatusValueLabel =
-    sessionStatusFilterOptions.find((option) => option.value === sessionStatusFilter)?.label ??
-    msg('managedAgents.sessions.statusActive', 'Active');
+  const createdFilterValueLabel = managedFilterValueLabel(
+    createdFilterOptions,
+    createdFilter,
+    msg('managedAgents.filters.allTime', 'All time'),
+  );
+  const deploymentAgentValueLabel = managedFilterValueLabel(
+    deploymentAgentFilterOptions,
+    deploymentAgentFilter,
+    msg('common.all', 'All'),
+  );
+  const deploymentStatusValueLabel = managedFilterValueLabel(
+    deploymentStatusFilterOptions,
+    deploymentStatusFilter,
+    msg('common.all', 'All'),
+  );
+  const genericStatusValueLabel = managedFilterValueLabel(
+    genericStatusFilterOptions,
+    genericStatusFilter,
+    msg('common.all', 'All'),
+  );
+  const sessionAgentValueLabel = managedFilterValueLabel(
+    sessionAgentFilterOptions,
+    sessionAgentFilter,
+    msg('common.all', 'All'),
+  );
+  const sessionDeploymentValueLabel = managedFilterValueLabel(
+    sessionDeploymentFilterOptions,
+    sessionDeploymentFilter,
+    msg('common.all', 'All'),
+  );
+  const sessionStatusValueLabel = managedFilterValueLabel(
+    sessionStatusFilterOptions,
+    sessionStatusFilter,
+    msg('managedAgents.sessions.statusActive', 'Active'),
+  );
 
   useEffect(() => {
     setCreatedFilter('all_time');
@@ -657,6 +691,11 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     const created = await createManagedEntity(config.section, values, activeWorkspaceId);
     setEntities((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     toast.success(managedToastMessage(config.section, 'created', msg));
+    if (config.section === 'credential-vaults') {
+      navigateToInternalHref(
+        `${managedEntityDetailHref(activeWorkspaceId, config.section, created.id)}?addCredential=1`,
+      );
+    }
   };
 
   const handleConfirm = async () => {
@@ -718,21 +757,48 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   };
 
   return (
-    <section className="relative min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5 flex items-start justify-between gap-6">
+    <section
+      className={cn(
+        'relative min-h-[calc(100vh-48px)] text-foreground',
+        config.section === 'sessions' && 'mx-auto w-full max-w-[1600px]',
+      )}
+    >
+      <header
+        className={cn('flex items-start justify-between', config.section === 'sessions' ? 'mb-2 gap-4' : 'mb-5 gap-6')}
+      >
         <div>
-          <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
-          <p className="mt-2 max-w-[760px] text-[15px] leading-5 text-muted-foreground">{description}</p>
+          <h1
+            className={cn(
+              'text-foreground',
+              config.section === 'sessions'
+                ? 'text-[22px] leading-7 font-medium'
+                : 'text-[28px] leading-tight font-semibold',
+            )}
+          >
+            {title}
+          </h1>
+          <p
+            className={cn(
+              'mt-2 max-w-[760px] leading-5 text-muted-foreground',
+              config.section === 'sessions' ? 'text-sm' : 'text-[15px]',
+            )}
+          >
+            {description}
+          </p>
         </div>
         {createLabel ? (
-          <Button type="button" className="h-9 shrink-0" onClick={() => setDialogState({ mode: 'create' })}>
+          <Button
+            type="button"
+            className={cn('shrink-0', config.section === 'sessions' ? 'h-8 px-3' : 'h-9')}
+            onClick={() => setDialogState({ mode: 'create' })}
+          >
             <Plus className="size-4" aria-hidden />
             {createLabel}
           </Button>
         ) : null}
       </header>
 
-      <div className="mb-7 flex flex-wrap items-center gap-2">
+      <div className={cn('flex flex-wrap items-center gap-2', config.section === 'sessions' ? 'mb-2' : 'mb-7')}>
         <ManagedSearchField
           id={`${config.section}-search`}
           value={search}
@@ -746,14 +812,18 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       {loadError ? <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert> : null}
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
-      <div className="overflow-visible">
-        <Table className={dataTableClassName}>
+      <div>
+        <Table className={cn(dataTableClassName, config.section === 'sessions' && 'min-w-[1080px]')}>
           <TableHeader>
             <TableRow className={dataTableHeaderRowClassName}>
               {config.columns.map((column) => (
                 <TableHead
                   key={column || 'select'}
-                  className={cn(dataTableHeaderCellClassName, columnWidth(config.section, column))}
+                  className={cn(
+                    dataTableHeaderCellClassName,
+                    columnWidth(config.section, column),
+                    (column === 'Tokens in / out' || column === 'Cost') && 'text-right',
+                  )}
                 >
                   {column ? (
                     managedColumnLabel(column, msg)
@@ -937,7 +1007,11 @@ export function ManagedEntityRow({
             />
           );
         return (
-          <DataTableCell key={column || 'select'} edge={index === 0 ? 'start' : undefined} className="truncate">
+          <DataTableCell
+            key={column || 'select'}
+            edge={index === 0 ? 'start' : undefined}
+            className={cn('truncate', (column === 'Tokens in / out' || column === 'Cost') && 'text-right tabular-nums')}
+          >
             {content}
           </DataTableCell>
         );

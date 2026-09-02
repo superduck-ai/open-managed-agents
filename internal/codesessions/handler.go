@@ -5,11 +5,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -22,18 +22,21 @@ type Handler struct {
 	db                     *db.DB
 	service                *Service
 	logger                 *slog.Logger
+	errorAdapter           *httpapi.ErrorAdapter
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
-	injectMCPProxyHeaders  mcpProxyHeaderInjector
+	wrapMCPVaultTransport  mcpProxyTransportWrapper
+	mitmEgress             *vaults.MITMEgress
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
-	otlpLogMu                 sync.Mutex
+	otlpSink                  otlpSink
+	otlpAdmission             *otlpAdmission
 }
 
-// SandboxTimeoutExtender renews the provider-side lifetime of a managed-agent
-// sandbox after its current worker proves liveness.
+// SandboxTimeoutExtender resumes or renews the provider-side lifetime of a
+// managed-agent sandbox after worker liveness or new queued work is observed.
 type SandboxTimeoutExtender interface {
 	SetTimeout(ctx context.Context, sandboxID string, timeout time.Duration) error
 }
@@ -50,10 +53,12 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		db:                     service.db,
 		service:                service,
 		logger:                 logger,
+		errorAdapter:           httpapi.NewErrorAdapter(logger),
 		sandboxTimeoutExtender: sandboxTimeoutExtender,
 		upstreamProxy:          newUpstreamProxyRuntime(),
 		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),
-		injectMCPProxyHeaders:  func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error { return nil },
+		otlpSink:               newOTLPSink(cfg.Observability),
+		otlpAdmission:          newOTLPAdmission(defaultOTLPGlobalConcurrency, defaultOTLPSessionConcurrency),
 	}
 	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
 	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext
@@ -67,21 +72,30 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 	return handler
 }
 
-// WithVaultSecrets wires vault static_bearer injection into the MCP HTTP proxy.
-func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service) *Handler {
+// WithVaultSecrets wires vault credential injection (static_bearer / mcp_oauth)
+// into Session MCP HTTP proxy and CONNECT MITM, and environment_variable egress
+// rewriting (placeholder substitution + Git Smart HTTP Authorization) on MITM
+// via MITMEgress.Prepare. Platform OAuth client secrets are re-resolved from
+// cfg at refresh time.
+func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaults.OAuthRefreshLease) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
 	}
-	injector := vaults.NewInjector(h.db, secretSvc)
-	h.injectMCPProxyHeaders = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, headers http.Header) error {
-		return injector.RewriteAuthorization(
+	injector := vaults.NewInjector(h.db, secretSvc, h.logger).
+		WithPlatformOAuthClients(h.cfg.Vault.PlatformOAuthClients)
+	if refreshLease != nil {
+		injector = injector.WithRefreshLease(refreshLease)
+	}
+	h.wrapMCPVaultTransport = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, base http.RoundTripper) http.RoundTripper {
+		return injector.WrapTransport(
 			ctx,
 			claims.SessionID,
 			claims.OrganizationUUID,
 			claims.WorkspaceUUID,
 			target,
-			headers,
+			base,
 		)
 	}
+	h.mitmEgress = vaults.NewMITMEgress(h.db, secretSvc, h.logger, injector)
 	return h
 }

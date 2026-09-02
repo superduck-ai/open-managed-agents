@@ -1,0 +1,16 @@
+---
+title: "Sandbox security"
+description: "Define trust boundaries and minimum controls for self-hosted agent runtimes."
+---
+
+Agents process untrusted repositories, files, pages, and tool output. A sandbox reduces risk but does not make arbitrary code trustworthy.
+
+Operators must isolate each work item, set CPU/memory/disk/process/time limits, deny private and metadata networks by default, mount only required resources and short-lived credentials, delete runtime state after completion, and collect bounded redacted logs.
+
+OMA validates environment policy, separates vault secrets from public payloads, issues code-session credentials, validates mount paths, and coordinates stop/cleanup. It cannot prove a custom image is safe, a host kernel is isolated correctly, an MCP server is trustworthy, or an operator's long-term keys remain secret.
+
+When upstream proxy MITM is enabled, OMA uses a stable ECDSA key to issue an in-memory CA and leaf certificates. Protect that key as highly sensitive material; never place it in images, the database, logs, or sandboxes.
+
+<Warning>
+  `upstream_proxy_disable_ssrf_protection: true` is for controlled local diagnostics only. It enables private, loopback, and link-local targets.
+</Warning>

@@ -3,17 +3,15 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type AdminWorkspaceMember struct {
-	UUID                uuid.UUID `db:"uuid"`
+	UUID                string    `db:"uuid"`
 	ExternalID          string    `db:"external_id"`
-	OrganizationUUID    uuid.UUID `db:"organization_uuid"`
-	WorkspaceUUID       uuid.UUID `db:"workspace_uuid"`
+	OrganizationUUID    string    `db:"organization_uuid"`
+	WorkspaceUUID       string    `db:"workspace_uuid"`
 	WorkspaceExternalID string    `db:"workspace_external_id"`
-	UserUUID            uuid.UUID `db:"user_uuid"`
+	UserUUID            string    `db:"user_uuid"`
 	UserExternalID      string    `db:"user_external_id"`
 	WorkspaceRole       string    `db:"workspace_role"`
 	CreatedAt           time.Time `db:"created_at"`
@@ -32,10 +30,10 @@ func (d *DB) CreateAdminWorkspaceMember(ctx context.Context, member AdminWorkspa
 	mapper := NewAdminWorkspaceMemberMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminWorkspaceMemberParams{
 		ExternalID:          member.ExternalID,
-		OrganizationUUID:    member.OrganizationUUID.String(),
-		WorkspaceUUID:       member.WorkspaceUUID.String(),
+		OrganizationUUID:    member.OrganizationUUID,
+		WorkspaceUUID:       member.WorkspaceUUID,
 		WorkspaceExternalID: member.WorkspaceExternalID,
-		UserUUID:            member.UserUUID.String(),
+		UserUUID:            member.UserUUID,
 		UserExternalID:      member.UserExternalID,
 		WorkspaceRole:       member.WorkspaceRole,
 		CreatedAt:           member.CreatedAt,

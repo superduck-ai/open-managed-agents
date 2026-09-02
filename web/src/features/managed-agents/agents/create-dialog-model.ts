@@ -478,9 +478,7 @@ function isHTTPURL(value: string) {
 }
 
 function normalizeDraftModel(model: AgentModelInput): AgentModelInput {
-  return typeof model === 'string'
-    ? model.trim()
-    : { id: model.id.trim(), ...(model.speed ? { speed: model.speed } : {}) };
+  return typeof model === 'string' ? model : { id: model.id, ...(model.speed ? { speed: model.speed } : {}) };
 }
 
 function nullableString(value: string | null | undefined) {

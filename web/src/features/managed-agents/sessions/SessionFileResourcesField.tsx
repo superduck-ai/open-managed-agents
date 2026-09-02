@@ -1,23 +1,43 @@
 import { ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '@/shared/i18n';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/shared/ui/combobox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu';
 import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
-import { Input } from '@/shared/ui/input';
-import type { SessionFileResourceFormValue } from '../types';
-import { isValidSessionFileMountPath, sessionFileRuntimePath } from './file-resource-path';
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/shared/ui/input-group';
+import { listSessionFileOptions } from '../api';
+import type { FileMetadataApiResponse, SessionFileResourceFormValue } from '../types';
+import { formatBytes } from '../utils';
+import { hasSessionFileMountPath, isValidSessionFileMountPath, SESSION_FILE_UPLOADS_ROOT } from './file-resource-path';
 
 export function SessionFileResourcesField({
   resources,
+  showAddButton = true,
   workspaceId,
   onChange,
 }: {
   resources: SessionFileResourceFormValue[];
+  showAddButton?: boolean;
   workspaceId: string;
   onChange: (resources: SessionFileResourceFormValue[]) => void;
 }) {
   const { msg } = useI18n();
+  const filesQuery = useQuery({
+    queryKey: ['managed-agents', 'session-file-options', workspaceId],
+    queryFn: () => listSessionFileOptions(workspaceId),
+    enabled: resources.length > 0 && Boolean(workspaceId),
+    retry: false,
+  });
+  const files = filesQuery.data?.data ?? [];
   const updateResource = (index: number, patch: Partial<SessionFileResourceFormValue>) => {
     onChange(
       resources.map((resource, resourceIndex) => (resourceIndex === index ? { ...resource, ...patch } : resource)),
@@ -39,9 +59,11 @@ export function SessionFileResourcesField({
       </div>
 
       {resources.map((resource, index) => {
-        const runtimePath = sessionFileRuntimePath(resource.mountPath);
+        const selectedFilename = files.find((file) => file.id === resource.fileId)?.filename;
+        const mountPathInvalid =
+          hasSessionFileMountPath(resource.mountPath) && !isValidSessionFileMountPath(resource.mountPath);
         return (
-          <Card key={index} size="sm" className="gap-3 py-3">
+          <Card key={index} size="sm" className="mx-px gap-3 py-3">
             <CardHeader className="grid-cols-[1fr_auto] items-center px-3">
               <CardTitle className="flex items-center gap-2 text-sm">
                 <FileText className="size-4 text-muted-foreground" aria-hidden />
@@ -82,39 +104,41 @@ export function SessionFileResourcesField({
                     {msg('managedAgents.sessions.resources.manageFiles', 'Manage files')}
                   </ButtonLink>
                 </div>
-                <Input
+                <SessionFileCombobox
                   id={`session-file-id-${index}`}
+                  files={files}
+                  loading={filesQuery.isPending}
+                  failed={filesQuery.isError}
                   value={resource.fileId}
-                  placeholder="file_abc123..."
-                  required
-                  onChange={(event) => updateResource(index, { fileId: event.currentTarget.value })}
+                  onChange={(fileId) => updateResource(index, { fileId })}
                 />
               </Field>
-              <Field data-invalid={resource.mountPath.length > 0 && !isValidSessionFileMountPath(resource.mountPath)}>
-                <div className="flex items-center gap-1">
-                  <FieldLabel htmlFor={`session-file-mount-path-${index}`}>
-                    {msg('managedAgents.sessions.resources.mountPath', 'Mount path')}
-                  </FieldLabel>
-                  <span className="text-destructive" aria-hidden>
-                    *
-                  </span>
-                </div>
-                <Input
-                  id={`session-file-mount-path-${index}`}
-                  value={resource.mountPath}
-                  placeholder="myfile.txt"
-                  required
-                  aria-invalid={resource.mountPath.length > 0 && !isValidSessionFileMountPath(resource.mountPath)}
-                  onChange={(event) => updateResource(index, { mountPath: event.currentTarget.value })}
-                />
+              <Field data-invalid={mountPathInvalid}>
+                <FieldLabel htmlFor={`session-file-mount-path-${index}`}>
+                  {msg('managedAgents.sessions.resources.mountPathOptional', 'Mount path (optional)')}
+                </FieldLabel>
+                <InputGroup>
+                  <InputGroupAddon align="inline-start" className="shrink-0 pr-0">
+                    <InputGroupText className="text-foreground">{SESSION_FILE_UPLOADS_ROOT}/</InputGroupText>
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id={`session-file-mount-path-${index}`}
+                    value={resource.mountPath}
+                    placeholder={
+                      selectedFilename ?? msg('managedAgents.sessions.resources.mountPlaceholder', 'filename')
+                    }
+                    aria-invalid={mountPathInvalid}
+                    onChange={(event) => updateResource(index, { mountPath: event.currentTarget.value })}
+                  />
+                </InputGroup>
                 <FieldDescription>
-                  {runtimePath
-                    ? msg('managedAgents.sessions.resources.runtimePath', 'Available at {path}', {
-                        path: runtimePath,
-                      })
-                    : msg('managedAgents.sessions.resources.mountHelp', 'Enter a path relative to {path}', {
-                        path: '/uploads',
-                      })}
+                  {msg(
+                    'managedAgents.sessions.resources.mountHelp',
+                    'Files are mounted in the container under {path}.',
+                    {
+                      path: `${SESSION_FILE_UPLOADS_ROOT}/`,
+                    },
+                  )}
                 </FieldDescription>
               </Field>
             </CardContent>
@@ -122,29 +146,100 @@ export function SessionFileResourcesField({
         );
       })}
 
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button type="button" variant="secondary">
-              <Plus aria-hidden />
-              {msg('managedAgents.sessions.resources.add', 'Add resource')}
-              <ChevronDown aria-hidden />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="start">
-          <DropdownMenuItem onClick={() => onChange([...resources, { fileId: '', mountPath: '' }])}>
-            <FileText aria-hidden />
-            {msg('managedAgents.sessions.resources.typeFile', 'File')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {showAddButton ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button type="button" variant="secondary">
+                <Plus aria-hidden />
+                {msg('managedAgents.sessions.resources.add', 'Add resource')}
+                <ChevronDown aria-hidden />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => onChange([...resources, { fileId: '', mountPath: '' }])}>
+              <FileText aria-hidden />
+              {msg('managedAgents.sessions.resources.typeFile', 'File')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     </section>
   );
 }
 
+function SessionFileCombobox({
+  failed,
+  files,
+  id,
+  loading,
+  onChange,
+  value,
+}: {
+  failed: boolean;
+  files: FileMetadataApiResponse[];
+  id: string;
+  loading: boolean;
+  onChange: (fileId: string) => void;
+  value: string;
+}) {
+  const { msg } = useI18n();
+  const selectedFile = files.find((file) => file.id === value) ?? null;
+  const emptyText = loading
+    ? msg('managedAgents.sessions.resources.loadingFiles', 'Loading files...')
+    : failed
+      ? msg('managedAgents.sessions.resources.loadFilesError', 'Could not load files')
+      : msg('managedAgents.sessions.resources.noFiles', 'No files found');
+
+  return (
+    <Combobox
+      items={files}
+      value={selectedFile}
+      required
+      autoHighlight
+      itemToStringLabel={fileOptionLabel}
+      itemToStringValue={(file) => file.id}
+      isItemEqualToValue={(file, selected) => file.id === selected.id}
+      filter={(file, query) => fileSearchText(file).includes(query.toLocaleLowerCase())}
+      onValueChange={(file) => onChange(file?.id ?? '')}
+    >
+      <ComboboxInput
+        id={id}
+        required
+        placeholder={
+          loading
+            ? msg('managedAgents.sessions.resources.loadingFiles', 'Loading files...')
+            : msg('managedAgents.sessions.resources.selectFile', 'Select a file to mount to the session')
+        }
+        aria-label={msg('managedAgents.sessions.resources.fileId', 'File ID')}
+      />
+      <ComboboxContent>
+        <ComboboxEmpty>{emptyText}</ComboboxEmpty>
+        <ComboboxList>
+          {(file: FileMetadataApiResponse) => (
+            <ComboboxItem key={file.id} value={file}>
+              <span className="min-w-0 truncate">{fileOptionLabel(file)}</span>
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
+  );
+}
+
+function fileOptionLabel(file: FileMetadataApiResponse) {
+  return `${file.filename} (${formatBytes(file.size_bytes)})`;
+}
+
+function fileSearchText(file: FileMetadataApiResponse) {
+  return `${file.filename}\n${file.id}`.toLocaleLowerCase();
+}
+
 export function areSessionFileResourcesValid(resources: SessionFileResourceFormValue[]) {
   return resources.every(
-    (resource) => resource.fileId.trim().length > 0 && isValidSessionFileMountPath(resource.mountPath),
+    (resource) =>
+      resource.fileId.trim().length > 0 &&
+      (!hasSessionFileMountPath(resource.mountPath) || isValidSessionFileMountPath(resource.mountPath)),
   );
 }

@@ -1,6 +1,8 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
+import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
+import { Bubble, BubbleContent } from '../../../shared/ui/bubble';
+import { MessageHeader } from '../../../shared/ui/message';
 import {
   type DisplayEvent,
   type DisplayEventEntry,
@@ -11,13 +13,14 @@ import {
   type SessionEventListEntry,
   type ToolBatchEntry,
   type ToolCallEntry,
+  type ToolLifecycle,
 } from '../types';
-import { compactEntityId, toRecord } from '../utils';
+import { compactEntityId, numericValueFromKeys, toRecord } from '../utils';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Ban, Check, CircleX, Clock3, Loader2, Wrench } from 'lucide-react';
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
-import { formatSessionDuration, numericValueFromKeys } from './sessionDetailModel';
+import { formatSessionDuration } from './sessionDetailModel';
 import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
   sessionEventFamily,
@@ -35,22 +38,43 @@ import {
   sessionToolResultText,
 } from './sessionTraceModel';
 import { EventTypeBadge } from './SessionTracePanel';
+import { TranscriptContent } from './SessionTranscriptContent';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 
 export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
   const duration = formatSessionDuration(entry.durationMs, formatters, msg);
+  const resumedAt = entry.processedAtMs;
+  const resumedTime = formatters.time(resumedAt, { hour12: false });
+  const crossesDate = new Date(entry.createdAtMs).toDateString() !== new Date(resumedAt).toDateString();
+  const resumedWhen = crossesDate
+    ? `${formatters.date(resumedAt, { month: 'short', day: 'numeric' })} · ${resumedTime}`
+    : resumedTime;
   return (
     <div
       role="separator"
       aria-label={msg('managedAgents.sessions.trace.sessionIdleGap', 'Session idle for {duration}', { duration })}
       data-entry-kind="idle_gap"
-      className="oma-session-idle-gap relative my-2 flex h-6 items-center justify-center overflow-hidden rounded-md border text-xs"
+      className="my-2 flex min-h-6 items-center gap-3 py-1 text-xs text-muted-foreground"
     >
-      <span className="oma-session-idle-gap-stripes absolute inset-0" aria-hidden />
-      <span className="relative">
-        {msg('managedAgents.sessions.trace.sessionIdleDot', 'Session idle · {duration}', { duration })}
-      </span>
+      <span className="h-0 flex-1 border-t-[0.5px] border-border/60" aria-hidden />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <time dateTime={new Date(resumedAt).toISOString()} className="flex-none">
+              <span className="text-session-secondary-foreground">{resumedWhen}</span> ({duration})
+            </time>
+          }
+        />
+        <TooltipContent>
+          {msg('managedAgents.sessions.trace.idleRange', 'Idle since {from}; resumed {to}', {
+            from: formatters.date(entry.createdAtMs, { dateStyle: 'medium', timeStyle: 'medium' }),
+            to: formatters.date(resumedAt, { dateStyle: 'medium', timeStyle: 'medium' }),
+          })}
+        </TooltipContent>
+      </Tooltip>
+      <span className="h-0 flex-1 border-t-[0.5px] border-border/60" aria-hidden />
     </div>
   );
 }
@@ -80,6 +104,7 @@ export function DisplayEventRow({
   entry,
   selected,
   onSelect,
+  presentation = 'standalone',
   threadNameById,
   onThreadClick,
 }: {
@@ -88,8 +113,15 @@ export function DisplayEventRow({
   onSelect: () => void;
   threadNameById: Map<string, string>;
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
+  presentation?: 'standalone' | 'iteration';
 }) {
   const { msg } = useI18n();
+  if (entry.displayEvent.type === 'user' || entry.displayEvent.type === 'agent') {
+    return <TranscriptMessageRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
+  }
+  if (entry.displayEvent.type === 'thinking') {
+    return <TranscriptThinkingRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
+  }
   const title = sessionDisplayEventInlinePreview(entry, msg);
   const textInProgress = Boolean(entry.inProgress || entry.displayEvent.isQueued || entry.displayEvent.isStreaming);
   const showGenerating = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
@@ -102,11 +134,7 @@ export function DisplayEventRow({
     >
       <HeaderRow isSelected={selected} onSelect={onSelect}>
         <span className="flex w-14 shrink-0 items-center">
-          <EventTypeBadge
-            type={entry.displayEvent.type}
-            label={sessionDisplayEventBadge(entry, msg)}
-            variant="compact"
-          />
+          <EventTypeBadge type={entry.displayEvent.type} variant="compact" />
         </span>
         {entry.displayEvent.type === 'subagent' ? (
           <SubagentLabel entry={entry} msg={msg} threadNameById={threadNameById} onThreadClick={onThreadClick} />
@@ -130,39 +158,263 @@ export function DisplayEventRow({
   );
 }
 
+function TranscriptMessageRow({
+  entry,
+  selected,
+  onSelect,
+  presentation,
+}: {
+  entry: DisplayEventEntry;
+  selected: boolean;
+  onSelect: () => void;
+  presentation: 'standalone' | 'iteration';
+}) {
+  const { msg } = useI18n();
+  const inProgress = Boolean(entry.inProgress || entry.displayEvent.isQueued || entry.displayEvent.isStreaming);
+  const content = entry.displayEvent.content || sessionDisplayEventInlinePreview(entry, msg);
+  const speaker = entry.displayEvent.type === 'agent' ? 'agent' : 'user';
+  const handleClick = (event: ReactMouseEvent<HTMLElement>) => {
+    if (!transcriptEventTargetIsInteractive(event.target)) {
+      onSelect();
+    }
+  };
+  return (
+    <article
+      data-event-id={entry.traceEntry.id}
+      data-entry-kind={entry.kind}
+      data-display-kind={entry.traceEntry.displayKind}
+      className="group/event relative flex w-full min-w-0 flex-col"
+      onClick={handleClick}
+    >
+      {presentation === 'standalone' ? (
+        <TranscriptSpeakerHeader
+          label={entry.displayEvent.label}
+          speaker={speaker}
+          processedAtMs={entry.processedAtMs}
+          relativeTime={entry.relativeTime}
+          selected={selected}
+          onSelect={onSelect}
+        />
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          aria-label={msg('managedAgents.sessions.trace.selectEvent', 'Select {label} event', {
+            label: entry.displayEvent.label,
+          })}
+          className="sr-only absolute right-1 top-1 z-10 focus:not-sr-only"
+          onClick={onSelect}
+        >
+          {msg('managedAgents.sessions.trace.selectEventShort', 'Select')}
+        </Button>
+      )}
+      {presentation === 'iteration' ? (
+        <Bubble align="start" variant="ghost" className="w-full max-w-full">
+          <BubbleContent
+            data-transcript-message-body
+            className={clsx(
+              '!w-full !max-w-full !overflow-visible !rounded-md !border-0 !bg-transparent !px-1.5 !py-0.5 text-sm leading-5 whitespace-pre-wrap text-foreground transition-colors group-hover/event:!bg-session-hover',
+              selected && '!bg-session-selected',
+              entry.isError && 'text-destructive',
+            )}
+          >
+            <TranscriptMessageContent entry={entry} content={content} inProgress={inProgress} msg={msg} />
+          </BubbleContent>
+        </Bubble>
+      ) : (
+        <Bubble
+          align={speaker === 'user' ? 'end' : 'start'}
+          variant="ghost"
+          className={speaker === 'user' ? 'max-w-full' : 'w-full max-w-full'}
+        >
+          <BubbleContent
+            data-transcript-message-body
+            className={clsx(
+              'max-w-full !rounded-[10px] !px-[11px] !py-[6px] text-sm leading-5 whitespace-pre-wrap text-foreground shadow-none transition-colors',
+              speaker === 'user'
+                ? '!border-[0.5px] !border-session-border !bg-session-speaker-user/10 group-hover/event:!bg-session-hover'
+                : '!w-full !border-0 !bg-transparent !px-1.5 !py-0.5 group-hover/event:!bg-session-hover',
+              selected && '!bg-session-selected',
+              entry.isError && '!bg-destructive/5 text-destructive',
+            )}
+          >
+            <TranscriptMessageContent entry={entry} content={content} inProgress={inProgress} msg={msg} />
+          </BubbleContent>
+        </Bubble>
+      )}
+    </article>
+  );
+}
+
+function TranscriptMessageContent({
+  entry,
+  content,
+  inProgress,
+  msg,
+}: {
+  entry: DisplayEventEntry;
+  content: string;
+  inProgress: boolean;
+  msg: I18nMsg;
+}) {
+  if (entry.displayEvent.isStreaming) {
+    return <LiveRowPreview displayEvent={entry.displayEvent} msg={msg} compact={false} />;
+  }
+  if (inProgress) {
+    return <SynchronizedShimmerText>{content}</SynchronizedShimmerText>;
+  }
+  return <TranscriptContent value={content} />;
+}
+
+export function TranscriptSpeakerHeader({
+  label,
+  speaker,
+  processedAtMs,
+  relativeTime,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  speaker: 'agent' | 'user';
+  processedAtMs: number;
+  relativeTime: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const { msg } = useI18n();
+  const formatters = useFormatters();
+  const time = processedAtMs
+    ? formatters.date(processedAtMs, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : relativeTime;
+  return (
+    <MessageHeader
+      className={clsx('mb-0.5 min-w-0 gap-2 px-1.5 text-xs leading-[17px]', speaker === 'user' && 'justify-end')}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        aria-pressed={selected}
+        aria-label={msg('managedAgents.sessions.trace.selectEvent', 'Select {label} event', { label })}
+        className={clsx(
+          'h-auto min-w-0 gap-2 rounded-sm border-transparent px-0 py-0 font-semibold hover:bg-transparent focus-visible:ring-1 focus-visible:ring-ring/35',
+          speaker === 'agent' ? 'text-session-speaker-agent' : 'text-session-speaker-user',
+        )}
+        onClick={onSelect}
+      >
+        <span className="truncate">{label}</span>
+      </Button>
+      <time className="shrink-0 font-mono text-[11px] font-normal text-muted-foreground">{time}</time>
+    </MessageHeader>
+  );
+}
+
+function transcriptEventTargetIsInteractive(target: EventTarget) {
+  return (
+    target instanceof Element &&
+    Boolean(target.closest('a, button, input, select, textarea, summary, [role="button"], [contenteditable="true"]'))
+  );
+}
+
+function TranscriptThinkingRow({
+  entry,
+  selected,
+  onSelect,
+  presentation,
+}: {
+  entry: DisplayEventEntry;
+  selected: boolean;
+  onSelect: () => void;
+  presentation: 'standalone' | 'iteration';
+}) {
+  const { msg } = useI18n();
+  const inProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
+  const durationSeconds =
+    entry.bracketStartMs === undefined ? undefined : (entry.processedAtMs - entry.bracketStartMs) / 1000;
+  const duration =
+    durationSeconds !== undefined && Number.isFinite(durationSeconds) && durationSeconds >= 0
+      ? `${durationSeconds.toFixed(durationSeconds < 10 ? 1 : 0)}s`
+      : undefined;
+  const label = inProgress
+    ? sessionThinkingPreview(msg)
+    : duration
+      ? msg('managedAgents.sessions.trace.thoughtFor', 'Thought for {duration}', { duration })
+      : msg('managedAgents.sessions.trace.thought', 'Thought');
+  return (
+    <Bubble
+      align="start"
+      variant="ghost"
+      className={clsx('w-full max-w-full', presentation === 'standalone' && 'my-1')}
+    >
+      <BubbleContent className="!w-full !max-w-full !overflow-visible !rounded-md !px-0 !py-0">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-event-id={entry.traceEntry.id}
+          data-entry-kind={entry.kind}
+          data-display-kind={entry.traceEntry.displayKind}
+          data-transcript-thinking-row
+          aria-pressed={selected}
+          className={clsx(
+            'h-auto min-h-6 w-full justify-start rounded-md border-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal italic text-muted-foreground transition-colors hover:bg-session-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30',
+            selected && 'bg-session-selected text-foreground',
+          )}
+          onClick={onSelect}
+        >
+          {inProgress ? (
+            <SynchronizedShimmerText className="min-w-0 flex-1 truncate">{label}</SynchronizedShimmerText>
+          ) : (
+            <span className="min-w-0 flex-1 truncate">{label}</span>
+          )}
+        </Button>
+      </BubbleContent>
+    </Bubble>
+  );
+}
+
 export function ToolCallRow({
   entry,
   selected,
   onSelect,
+  presentation = 'standalone',
 }: {
   entry: ToolCallEntry;
   selected: boolean;
   onSelect: () => void;
+  presentation?: 'standalone' | 'iteration';
 }) {
+  const { msg } = useI18n();
+  const formatters = useFormatters();
+  const duration = formatSessionDuration(entry.executionMs, formatters, msg);
   return (
     <div
       data-event-id={entry.traceEntry.id}
       data-entry-kind={entry.kind}
       data-display-kind={entry.traceEntry.displayKind}
-      className="w-full"
+      className={clsx('w-full rounded-md', presentation === 'standalone' && 'my-0.5 bg-transparent')}
     >
-      <HeaderRow isSelected={selected} onSelect={onSelect}>
-        <span className="flex w-14 shrink-0 items-center">
-          <EventTypeBadge type="tool_use" variant="compact" />
-        </span>
-        <TraceRowText inProgress={entry.lifecycle === 'running'} suffix={entry.inputPreview || undefined}>
-          {entry.name}
-        </TraceRowText>
-        <MetaStrip
-          usage={entry.usage}
-          inferenceMs={entry.inferenceMs}
-          executionMs={entry.executionMs}
+      <button
+        type="button"
+        data-transcript-tool-row
+        data-transcript-header
+        aria-pressed={selected}
+        className={clsx(
+          'flex h-6 w-full min-w-0 items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal text-foreground outline-none hover:bg-session-hover focus-visible:ring-1 focus-visible:ring-ring/30',
+          selected && 'bg-session-selected',
+          entry.isError && 'text-destructive',
+        )}
+        onClick={onSelect}
+      >
+        <Wrench className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <CompactToolRowContent
+          name={entry.name}
+          preview={entry.inputPreview}
+          duration={duration}
           lifecycle={entry.lifecycle}
-          isError={entry.isError}
-          relativeTime={entry.relativeTime}
-          processedAtMs={entry.processedAtMs}
         />
-      </HeaderRow>
+      </button>
     </div>
   );
 }
@@ -171,36 +423,110 @@ export function ToolBatchRow({
   entry,
   selected,
   onSelect,
+  presentation = 'standalone',
 }: {
   entry: ToolBatchEntry;
   selected: boolean;
   onSelect: () => void;
+  presentation?: 'standalone' | 'iteration';
 }) {
-  const summary = sessionToolBatchSummary(entry);
   return (
     <div
       data-event-id={entry.traceEntry.id}
       data-entry-kind={entry.kind}
       data-display-kind={entry.traceEntry.displayKind}
-      className="w-full"
+      className={clsx('w-full rounded-md', presentation === 'standalone' && 'my-0.5 bg-transparent')}
     >
-      <HeaderRow isSelected={selected} onSelect={onSelect}>
-        <span className="flex w-14 shrink-0 items-center">
-          <EventTypeBadge type="tool_use" variant="compact" />
-        </span>
-        <TraceRowText inProgress={entry.lifecycle === 'running'}>{sessionInlineRowPreview(summary)}</TraceRowText>
-        <MetaStrip
-          usage={entry.usage}
-          inferenceMs={entry.inferenceMs}
-          executionMs={entry.executionMs}
-          lifecycle={entry.lifecycle}
-          isError={entry.isError}
-          relativeTime={entry.relativeTime}
-          processedAtMs={entry.processedAtMs}
-        />
-      </HeaderRow>
+      {entry.calls.map((call) => (
+        <ToolCallRow key={call.id} entry={call} selected={selected} onSelect={onSelect} presentation={presentation} />
+      ))}
     </div>
   );
+}
+
+function CompactToolRowContent({
+  name,
+  preview,
+  duration,
+  lifecycle,
+}: {
+  name: string;
+  preview: string;
+  duration: string;
+  lifecycle: ToolLifecycle;
+}) {
+  return (
+    <>
+      {lifecycle === 'running' ? (
+        <SynchronizedShimmerText className="shrink-0 truncate font-medium">{name}</SynchronizedShimmerText>
+      ) : (
+        <span className="shrink-0 truncate font-medium text-foreground">{name}</span>
+      )}
+      {lifecycle === 'running' ? (
+        <SynchronizedShimmerText className="min-w-0 flex-1 truncate" variant="secondary">
+          {preview}
+        </SynchronizedShimmerText>
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{preview}</span>
+      )}
+      <CompactToolLifecycleBadge lifecycle={lifecycle} />
+      {lifecycle !== 'running' && duration ? (
+        <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{duration}</span>
+      ) : null}
+    </>
+  );
+}
+
+function CompactToolLifecycleBadge({ lifecycle }: { lifecycle: ToolLifecycle }) {
+  const { msg } = useI18n();
+  const state = compactToolLifecycleState(lifecycle, msg);
+  const Icon = state.icon;
+  return (
+    <Badge
+      variant="secondary"
+      data-tool-lifecycle={lifecycle}
+      role={lifecycle === 'running' ? 'status' : undefined}
+      className={clsx('h-4 shrink-0 gap-1 rounded px-1 py-0 text-[10px] leading-none font-medium', state.className)}
+    >
+      <Icon className={clsx('size-2.5!', lifecycle === 'running' && 'animate-spin')} aria-hidden />
+      {state.label}
+    </Badge>
+  );
+}
+
+function compactToolLifecycleState(lifecycle: ToolLifecycle, msg: I18nMsg) {
+  switch (lifecycle) {
+    case 'awaiting_approval':
+      return {
+        className: 'bg-accent text-accent-foreground',
+        icon: Clock3,
+        label: msg('managedAgents.sessions.trace.awaitingApproval', 'awaiting approval'),
+      };
+    case 'denied':
+      return {
+        className: 'bg-warning-bg text-warning',
+        icon: Ban,
+        label: msg('managedAgents.sessions.trace.denied', 'denied'),
+      };
+    case 'failed':
+      return {
+        className: 'bg-destructive/10 text-destructive',
+        icon: CircleX,
+        label: msg('managedAgents.sessions.inspector.failed', 'Failed'),
+      };
+    case 'completed':
+      return {
+        className: 'bg-secondary text-secondary-foreground',
+        icon: Check,
+        label: msg('managedAgents.sessions.inspector.completed', 'Completed'),
+      };
+    case 'running':
+      return {
+        className: 'bg-accent text-accent-foreground',
+        icon: Loader2,
+        label: msg('managedAgents.sessions.inspector.executing', 'Executing'),
+      };
+  }
 }
 
 export function OutcomeRow({
@@ -378,10 +704,10 @@ export function outcomeStatusLabel(status: string, msg: I18nMsg) {
 export function outcomeStatusChipClass(status: string) {
   switch (status.toLowerCase()) {
     case 'satisfied':
-      return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+      return 'bg-success-bg text-success';
     case 'needs_revision':
     case 'needs-revision':
-      return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+      return 'bg-warning-bg text-warning';
     case 'max_iterations_reached':
     case 'max-iterations-reached':
       return 'bg-secondary text-secondary-foreground';
@@ -476,12 +802,14 @@ export function TranscriptRow({
   onSelect,
   threadNameById,
   onThreadClick,
+  presentation = 'standalone',
 }: {
   entry: SessionEventListEntry;
   selected: boolean;
   onSelect: () => void;
   threadNameById: Map<string, string>;
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
+  presentation?: 'standalone' | 'iteration';
 }) {
   switch (entry.kind) {
     case 'idle_gap':
@@ -491,9 +819,9 @@ export function TranscriptRow({
     case 'outcome':
       return <OutcomeRow entry={entry} selected={selected} onSelect={onSelect} />;
     case 'tool_call':
-      return <ToolCallRow entry={entry} selected={selected} onSelect={onSelect} />;
+      return <ToolCallRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
     case 'tool_batch':
-      return <ToolBatchRow entry={entry} selected={selected} onSelect={onSelect} />;
+      return <ToolBatchRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
     case 'message':
     case 'status':
     case 'passthrough':
@@ -504,6 +832,7 @@ export function TranscriptRow({
           onSelect={onSelect}
           threadNameById={threadNameById}
           onThreadClick={onThreadClick}
+          presentation={presentation}
         />
       );
     case 'debug':
@@ -515,17 +844,13 @@ export function DebugRow({
   entry,
   selected,
   onSelect,
-  onOpenDeltas,
 }: {
   entry: DisplayEventEntry;
   selected: boolean;
   onSelect: () => void;
-  onOpenDeltas: () => void;
 }) {
   const { msg } = useI18n();
   const title = sessionDisplayEventInlinePreview(entry, msg);
-  const hasDeltas = entry.type === 'agent.message' || entry.type === 'agent.thinking';
-  const deltasLabel = msg('managedAgents.sessions.trace.openDeltas', 'Open deltas');
   return (
     <div
       data-event-id={entry.traceEntry.id}
@@ -533,44 +858,16 @@ export function DebugRow({
       data-display-kind={entry.traceEntry.displayKind}
       className="w-full"
     >
-      <HeaderRow isSelected={selected} onSelect={onSelect}>
-        <span className="flex min-w-32 shrink-0 items-center">
-          <EventTypeBadge
-            type={entry.displayEvent.type}
-            label={sessionDebugBadge(entry.type)}
-            title={entry.type}
-            variant="compact"
-            className="font-mono"
-          />
-        </span>
+      <HeaderRow isSelected={selected} density="compact" onSelect={onSelect}>
+        <DebugEventType type={entry.type} error={entry.isError} />
         <span
-          className={clsx('min-w-0 flex-1 truncate text-sm', entry.isError ? 'text-destructive' : 'text-foreground')}
+          className={clsx(
+            'min-w-0 flex-1 truncate font-mono text-xs',
+            entry.isError ? 'text-destructive' : 'text-muted-foreground',
+          )}
         >
           {title}
         </span>
-        {hasDeltas ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="inline-flex shrink-0">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    className="h-auto shrink-0 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground hover:bg-accent"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenDeltas();
-                    }}
-                  >
-                    {msg('managedAgents.sessions.trace.deltas', 'Deltas')}
-                  </Button>
-                </span>
-              }
-            />
-            <TooltipContent>{deltasLabel}</TooltipContent>
-          </Tooltip>
-        ) : null}
         <MetaStrip
           isError={entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
           relativeTime={entry.relativeTime}
@@ -581,7 +878,57 @@ export function DebugRow({
   );
 }
 
-export function LiveRowPreview({ displayEvent, msg }: { displayEvent: DisplayEvent; msg: I18nMsg }) {
+export function DebugListHeader() {
+  const { msg } = useI18n();
+  return (
+    <div
+      aria-hidden
+      className="sticky top-0 z-10 -mx-1 flex h-7 items-center gap-1.5 border-b border-border/60 bg-card px-1 text-[11px] font-medium text-muted-foreground"
+    >
+      <span className="min-w-48 shrink-0">{msg('managedAgents.sessions.trace.eventColumn', 'Event')}</span>
+      <span className="min-w-0 flex-1">{msg('managedAgents.sessions.trace.previewColumn', 'Preview')}</span>
+      <span className="w-16 shrink-0 text-right">{msg('managedAgents.sessions.trace.timeColumn', 'Time')}</span>
+    </div>
+  );
+}
+
+export function DebugEventType({ type, error = false }: { type: string; error?: boolean }) {
+  const separator = type.indexOf('.');
+  const namespace = separator === -1 ? type : type.slice(0, separator);
+  const suffix = separator === -1 ? '' : type.slice(separator);
+  return (
+    <span className="min-w-48 shrink-0 truncate font-mono text-xs" title={type}>
+      <span className={debugEventNamespaceClass(namespace, error)}>{namespace}</span>
+      {suffix}
+    </span>
+  );
+}
+
+export function debugEventNamespaceClass(namespace: string, error: boolean) {
+  if (error) {
+    return 'text-destructive';
+  }
+  switch (namespace) {
+    case 'agent':
+      return 'text-session-speaker-agent';
+    case 'user':
+      return 'text-session-speaker-user';
+    case 'span':
+      return 'text-session-event-span';
+    default:
+      return 'text-muted-foreground';
+  }
+}
+
+export function LiveRowPreview({
+  displayEvent,
+  msg,
+  compact = true,
+}: {
+  displayEvent: DisplayEvent;
+  msg: I18nMsg;
+  compact?: boolean;
+}) {
   const deltaFrames = useContext(SessionDetailDeltaFramesContext);
   const liveEvent = deltaFrames[displayEvent.id]?.message ?? displayEvent.event;
   const family = sessionEventFamily(liveEvent);
@@ -595,7 +942,7 @@ export function LiveRowPreview({ displayEvent, msg }: { displayEvent: DisplayEve
       displayEvent.content ||
       displayEvent.label ||
       label;
-  return <>{sessionInlineRowPreview(value)}</>;
+  return <>{compact ? sessionInlineRowPreview(value) : value}</>;
 }
 
 export function sessionDisplayEventInlinePreview(entry: DisplayEventEntry, msg: I18nMsg) {
@@ -613,10 +960,6 @@ export function sessionDisplayEventInlinePreview(entry: DisplayEventEntry, msg: 
 export function sessionInlineRowPreview(value: string, maxLength = 80) {
   const compact = value.replace(/\s+/g, ' ').trim();
   return compact.length > maxLength ? `${compact.slice(0, maxLength)}…` : compact;
-}
-
-export function sessionDisplayEventBadge(_entry: DisplayEventEntry, _msg: I18nMsg) {
-  return undefined;
 }
 
 export function sessionDebugBadge(type: string) {

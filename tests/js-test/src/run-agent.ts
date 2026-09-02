@@ -36,7 +36,7 @@ function usage(): string {
     '  --environment-id <id>        Existing environment ID. Defaults to ENVIRONMENT_ID/ANTHROPIC_ENVIRONMENT_ID',
     '  --base-url <url>             API base URL. Defaults to TEST_API_BASE_URL/ANTHROPIC_BASE_URL/http://127.0.0.1:18080',
     '  --api-key <key>              API key. Defaults to TEST_API_KEY/ANTHROPIC_API_KEY/sk-ant-local-default',
-    '  --model <model>              Model used when creating a temporary agent. Defaults to claude-sonnet-4-6',
+    '  --model <model>              Configured workspace model ID. Defaults to AGENT_MODEL/ANTHROPIC_AGENT_MODEL',
     '  --title <title>              Session title. Defaults to Quickstart session',
     '  --keep-resources             Keep any temporary agent/environment created by this command',
     '  -h, --help                   Show this help',
@@ -59,7 +59,7 @@ function parseArgs(argv: string[]): CliOptions {
   let environmentID = readEnv('ENVIRONMENT_ID', 'ANTHROPIC_ENVIRONMENT_ID');
   let keepResources = false;
   let message = '';
-  let model = readEnv('AGENT_MODEL', 'ANTHROPIC_AGENT_MODEL') ?? 'claude-sonnet-4-6';
+  let model = readEnv('AGENT_MODEL', 'ANTHROPIC_AGENT_MODEL') ?? '';
   let title = readEnv('SESSION_TITLE') ?? 'Quickstart session';
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -119,6 +119,9 @@ function parseArgs(argv: string[]): CliOptions {
   }
   if (!message) {
     throw new Error(`Missing user message.\n\n${usage()}`);
+  }
+  if (!agentID && !model) {
+    throw new Error(`Missing model for temporary agent. Pass --model with a configured workspace model ID.`);
   }
 
   return {

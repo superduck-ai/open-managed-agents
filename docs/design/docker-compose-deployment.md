@@ -11,7 +11,8 @@ docker compose
 ├── e2b-local (:3099)    — 沙箱网关（host 网络，管理 sandbox 容器）
 ├── postgres (:5432)     — 元数据存储
 ├── redis (:6379)        — 平台 session 存储
-└── minio (:9000/9001)   — S3 兼容对象存储
+├── minio (:9000/9001)   — S3 兼容对象存储
+└── openobserve (:5082)  — OTel Logs、Metrics 和 Traces 存储，仅回环地址开放调试入口
 ```
 
 **依赖关系**：
@@ -33,6 +34,7 @@ caddy ──→ oma-server ──→ postgres / redis / minio
 | minio | `docker.io/pgsty/minio:latest` | 社区维护 fork（原版已归档） |
 | oma-server | `Dockerfile`（多阶段构建） | Go 后端 + 前端 bun build |
 | e2b-local | `Dockerfile`（多阶段构建） | Go 后端 + envd 二进制 |
+| openobserve | `public.ecr.aws/zinclabs/openobserve:v0.91.1` | 固定版本的单节点 OTel 存储 |
 
 所有服务镜像均为公开可拉取，无需本地编译。
 
@@ -115,6 +117,8 @@ Caddy 配置更简洁，与项目技术栈一致（都是 Go），Caddyfile 仅 
 
 受 Git 跟踪的 `deploy/docker-compose/oma-server.yaml` 是不含真实密钥的完整模板。`just init-compose-config` 首次运行时以 `0600` 权限将它复制为已加入 `.gitignore` 的 `deploy/docker-compose/oma-server.local.yaml`，目标已经存在时保持原文件不变。Compose 只读挂载该本地文件，并仅通过 `CONFIG_FILE` 告知进程配置路径。
 
+从包含旧 OTLP 本地文件日志配置的版本升级时，必须手动从 `oma-server.local.yaml` 删除 `code_session.otlp_file_log_enabled`、`code_session.otlp_log_root` 和 `code_session.otlp_log_body_preview_bytes`。文件日志功能及这三个字段已经移除，严格 YAML 解析会拒绝残留字段；`just init-compose-config` 为避免覆盖密钥不会自动改写已有本地配置。
+
 本地文件是完整运行配置，不是局部 overlay；应用不会合并模板与本地文件。数据库、Redis、S3、E2B 和上游凭证等业务字段全部由本地 YAML 提供，不再由进程环境变量逐项覆盖。真实 API key、access token 和 signing key 只能进入本地文件，不能写回受跟踪模板。生产部署可通过 Compose override 或平台 Secret Manager 将另一份受控的完整 YAML 只读挂载到同一个容器目标路径。
 
 oma-server 在容器内监听 `:8080`，Compose 通过 `38080:8080` 发布到宿主机。本地 sandbox 位于该容器网络之外，因此回调地址显式配置为 `code_session.sandbox_api_base_url: http://host.docker.internal:38080`。这里不能从 `server.addr` 推导：前者是 sandbox 可达的宿主机地址和发布端口，后者只是进程在容器内的监听地址。配置合同测试会同时校验监听端口、Compose 端口映射和回调 URL，防止三者漂移。
@@ -162,7 +166,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    just init-compose-config
    ```
 
-   如需调用真实上游，只编辑 `deploy/docker-compose/oma-server.local.yaml` 的 `anthropic_upstream.api_key`。不要把真实密钥写入 `deploy/docker-compose/oma-server.yaml` 模板。
+   启动后在控制台的「LLM 模型」页面为工作区配置 Provider。不要把 Provider API Key 写入 Compose YAML。
 
 > **平台要求**：`e2b-local` 使用 `network_mode: host`，支持 Linux Docker Engine 20.10+ 和 OrbStack（macOS）。Docker Desktop for Mac/Windows 不支持 host 网络模式。
 
@@ -182,6 +186,17 @@ docker compose down -v     # 同时删除数据卷
 | oma API | `http://localhost:38080` |
 | e2b-local | `http://localhost:3099` |
 | MinIO Web | `http://localhost:9001` |
+| OpenObserve 调试入口 | `http://localhost:5082` |
+
+OpenObserve 数据保存在独立的 `openobservedata` named volume。Compose 设置
+`ZO_COMPACT_DATA_RETENTION_DAYS=61` 和 `ZO_IGNORE_FILE_RETENTION_BY_STREAM=true`，确保 Logs、Metrics 和
+Traces 统一保存 61 天——Analytics 需要对比最大 30 天当前窗口与上一等长窗口，保留期必须覆盖两个窗口，且
+Stream 设置不能延长全局保留期。本地调试端口只绑定 `127.0.0.1`；OMA 服务间访问
+使用 `http://openobserve:5080`。
+
+新生成的 `oma-server.local.yaml` 默认启用 Observability 和内容采集，并使用 Compose 的
+OpenObserve 本地账号。修改 Compose 账号时需同步修改该文件；生产环境必须使用独立 Secret。
+`just init-compose-config` 不覆盖已有文件，旧部署升级时需手动补齐开关和凭据。
 
 ## 8. 本地开发模式
 

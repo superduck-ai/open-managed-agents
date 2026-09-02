@@ -5,13 +5,14 @@
 两件事：
 
 1. **存库加密（已完成）**：库被拖走、或只有读库权限的人，都拿不到明文密码。
-2. **运行时注入（static_bearer MVP：已完成）**：Sandbox 调需要认证的 MCP 时能用上密码；Sandbox 本身永远看不到真密码。
+2. **运行时注入（已完成）**：Managed Agent 出站经 CONNECT MITM 注入 `static_bearer` / `mcp_oauth`，并对 `environment_variable` 做 Egress Secret Substitution；Sandbox 默认看不到真密码。
 
 主密钥放 `config.yaml` / `kek_file`（全局一把，多 workspace 共用）。本地支持 `version` + `decrypt_only`。不做分片；`KeyProvider` 预留以后接 KMS。
 
 ## 背景
 
-Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）仍支持对显式传入的真实 `mcp_url` 注入 static_bearer，但 Managed Agent Runner 不再自动把 MCP config URL 改写到该接口。
+Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Managed Agent 保留 Agent Snapshot 原始 MCP URL，经 `HTTPS_PROXY` CONNECT；当 `upstream_proxy_mitm_enabled` 开启时，OMA 在 MITM 解密后的 HTTP 边界注入凭证。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）按 #235 作为显式兼容入口保留，Runner 不再自动改写 `mcp_config` 到该接口。
+
 ## 威胁模型（加密管到哪）
 
 | 场景 | 加密能否挡住 |
@@ -20,7 +21,7 @@ Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Sessi
 | 只有查库权限的人偷看 | 能 |
 | 数据库 + `config.yaml` 一起丢 | 不能。主密钥就在 config 里，以后分片/KMS 再管 |
 | 打进运行中的 OMA 进程 | 不能。本期不解决 |
-| 沙箱里靠 prompt injection 骗 Agent 偷密码 | 加密不管。靠后续注入设计：沙箱只见占位符，真密码只在 proxy 里瞬态出现 |
+| 沙箱里靠 prompt injection 骗 Agent 偷密码 | 加密不管。靠注入设计：沙箱只见占位符 / 原始 MCP URL，真密码只在 MITM 注入瞬态出现 |
 
 加密只覆盖前两行。沙箱偷密走注入（后续）；进程被拿下是运行时加固，另议；config 一起丢是接受的缺口。
 
@@ -115,11 +116,11 @@ API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析
 
 `ArchiveVault` / `DeleteVault` / `CreateVaultCredential` 在同一 Yourbatis 事务内分别构造两个 Mapper，不再使用 `sqlx.Tx`。
 运行时凭证加载先通过 `VaultMapper` 批量筛选当前 workspace 中未归档的 Vault，再通过 `VaultCredentialMapper` 按 Vault UUID 批量加载活动凭证；Go 层按原始 `vault_ids` 顺序组装结果，最多执行两次查询。
-**Credential secret update（preserve-on-omit）**：更新请求省略 secret 时，Open 现有信封 → merge 非秘密字段 → 用新 DEK reseal，并用 `version` CAS（冲突 → HTTP 409）。缺信封时无法 merge：metadata-only 或未带完整替换 secret → HTTP 400；带完整替换 secret → 直接 reseal。
+**Credential secret update（preserve-on-omit）**：更新请求省略 secret 时，Open 现有信封 → merge 非秘密字段 → 用新 DEK reseal，并用 `version` CAS（冲突 → HTTP 409）。缺信封时无法 merge：metadata-only 或未带完整替换 secret → HTTP 400；带完整替换 secret → 直接 reseal。mcp_oauth 合并后完整性只要求 `access_token`，以及配置了 refresh 时的 `refresh_token`；**不**因公开 `token_endpoint_auth.type` 为 `client_secret_*` 而强制信封内有 `client_secret`（平台 OAuth 合法地省略；BYO/DCR 的 secret 在 create / patch `token_endpoint_auth` 时校验）。
 
 KEK 版本由 config 管（`version` current + `decrypt_only` 旧列表）。每条凭证用 `key_version` 标明自己用的是哪把。KEK 本身不进库。
 
-`mcp_oauth_flows` 里的 `client_secret` / `code_verifier` 也是明文（15min TTL）。若验收要求“DB 零明文”，同样走 Secret Service（该表加一组精简信封列，两者复用同一 DEK）。生命周期短，也可拆小 issue。
+`mcp_oauth_flows` 的 `code_verifier` 与 flow-owned `client_secret`（BYO / DCR）写入 Secret envelope（与凭证同一 `secrets.Service`）；`client_credential_source` 为 `platform | sealed`。平台 client secret **不落用户 flow 行，也不写入 `vault_credentials` 的 sealed refresh payload**；token exchange（以及日后 refresh）按 `mcp_server_url` 从 `vault.platform_oauth_clients` 再解析。Complete/Fail 清空信封列。
 
 Provider/KMS 调用放在 DB 事务外。
 
@@ -153,44 +154,112 @@ vault:
 
 KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销毁；本期价值在「换钥后旧数据仍可读」，不靠扫表迁移。
 
-## 运行时注入（static_bearer MVP）
+## 运行时注入（CONNECT MITM）
 
-> **状态：已实现但不再由 Runner 自动接入。** 存库加密已完成；MCP HTTP proxy 路径仅注入 static_bearer。
+> **状态：已实现。** Managed Agent 经 CONNECT MITM 注入 `static_bearer` / `mcp_oauth`（含 refresh / 401 一轮重试）；`environment_variable` 经同一 MITM 边界做 Egress Secret Substitution。
 
-目标：显式调用 OMA MCP HTTP proxy 时，由 OMA 在转发前注入凭证；调用方只看到 proxy URL，不看到 token。
+目标：Sandbox 连需认证的 MCP 时，由 OMA 在 MITM 解密后的出站 HTTP 上注入凭证；沙箱只持有原始 MCP URL，看不到 token。
 
-注入点：`/v2/ccr-sessions/{code_session_id}/mcp`。显式调用方把真实 MCP URL 放进 `mcp_url`；Proxy 验 JWT、按 Agent Snapshot + Environment 策略授权后，对真实 `mcp_url` 做 Credential URL match，再注入 `Authorization` 并转发。不依赖 upstream CONNECT MITM。Managed Agent 当前保留原始 MCP URL 并通过 `HTTPS_PROXY` 走 CONNECT，因此不会经过此注入点；如需恢复自动 static_bearer 注入，应在 CONNECT MITM 边界单独实现。
+注入点：CONNECT MITM（`serveUpstreamProxyMITMHTTP` → `vaults.MITMEgress.Prepare`）为 Managed Agent 主路径。先环境变量占位符替换，再按 CONNECT authority + origin-form path 拼绝对 URL，经 `Injector.WrapTransport` 做 Credential URL match 与 Bearer 注入。显式调用方可继续走 Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`），共用同一 `Injector`；Runner 不恢复改写 `mcp_config`。
 
-### MVP 决策（grilling 已确认）
+### 运行时注入决策（grilling 已确认）
 
 | 项 | 决定 |
 |---|---|
-| 凭证类型 | 仅 **static_bearer**；`mcp_oauth` / `environment_variable` 本切片不做 |
-| 注入落点 | Session MCP HTTP proxy（`injectMCPProxyHeaders` → `vaults.Injector`）；**不**走 CONNECT MITM |
-| Credential `networking` | **不做**；出站仍受 Environment / MCP proxy 策略约束 |
-| 数据加载 | **每请求查库**（code session → session → `vault_ids` → 活动凭证）；不缓存明文 token |
-| Redirect | **不自动跟随**跨 origin redirect（ReverseProxy 透传 3xx，不代跟） |
-| host 未覆盖 | **passthrough**（即使 session 有 `vault_ids`） |
-| 失败对外 | 注入拒绝 / Open 失败 → **HTTP 502** |
-| 代码落点 | 匹配 / Open 在 `internal/vaults`；`codesessions.WithVaultSecrets` 接到 MCP proxy |
+| 凭证类型 | **static_bearer** + **mcp_oauth**（MITM MCP 注入）；**environment_variable**（Opaque Placeholder + Egress Secret Substitution） |
+| 注入落点 | Managed Agent：CONNECT MITM（`MITMEgress` → `Injector` + `EgressSubstitutor`）。显式：Session MCP HTTP proxy（`WithVaultSecrets` → `wrapMCPVaultTransport` → 同一 `Injector`）。Runner **不**自动改写 `mcp_config`。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan。`WithPlatformOAuthClients` 接入 `vault.platform_oauth_clients`。Env：Session 挂载时经 `startup_context.environment_variables` 灌入 Opaque Placeholder |
+| MITM 硬门闩 | Session 挂载时若有活跃 `environment_variable` 且 `upstream_proxy_mitm_enabled=false` → 失败。`static_bearer` / `mcp_oauth` **不**挡启动：MITM 关时 Session 仍可起来，MCP 注入只走显式 `/mcp`；Managed Agent 自动注入仍需 MITM |
+| Credential `networking` | MCP 注入仍不按 credential networking 门控。`environment_variable` **要求**显式 `networking`；limited 的 `allowed_hosts` 复用 Environment host 语义，仅约束是否可替换，不授予可达性 |
+| host 未覆盖 | MCP：passthrough。Env：未覆盖 host / 关闭的 Injection Location → 占位符原文透传 |
+| Snapshot URL | MITM 注入不额外卡 Agent Snapshot 精确 URL（对齐 CMA）；可达性仍由 Environment host allowlist 约束 |
+| 客户端 Authorization | 命中可注入凭证时先 Del 再写 Vault Bearer；未命中不改 |
+| 出站改写顺序 | 先环境变量替换，再 MCP 注入 |
+| 匹配但开票失败 | fail-closed → `ErrInjectionRejected` → 502 |
+
+### Environment Variable Credential（本切片）
+
+| 项 | 决定 |
+|---|---|
+| 模型 | Opaque Placeholder + Egress Secret Substitution（真值不下发沙箱） |
+| MITM | **硬前置（仅 env）**：Session 挂载时若有活跃 env 凭证且 `upstream_proxy_mitm_enabled=false` → 失败（`ErrMITMRequiredForEnvCredentials`）。MCP 凭证不要求 MITM 才能挂载 |
+| Placeholder | 创建时随机持久化（`oma_ph_` 前缀）；轮换 `secret_value` 不改 placeholder；缺 placeholder / injection_location 的旧凭证作废（archive 重建，无惰性补齐） |
+| Egress 替换 | header / body 各对原始文本单次扫描；密钥若等于另一凭证 placeholder，不再二次替换 |
+| Injection Location | API + runtime 支持 header 与 body；省略 → header-only；全关 → 400 |
+| Networking | 省略 → 400；limited 至少一 host |
+| 平台保留名 | create 400（大小写不敏感）；`secret_name` 须为 POSIX 标识符（`[A-Za-z_][A-Za-z0-9_]*`），两端空白 trim 后持久化；挂载合并时平台键不被覆盖 |
+| Vault Attachment Order | `vault_ids` 先到先得（同 `secret_name`） |
+| 数据加载 | 每个 MITM HTTP 请求查库一次；不缓存明文 |
+| Open 失败 | **拒请求**（`ErrSubstitutionRejected` → 502） |
+
+### Git Smart HTTP Authorization
+
+> 用户执行 `git clone https://host/group/repo.git` 时请求常常没有 Authorization；Git 的 Basic 即使用了 Opaque Placeholder 也是 Base64，Egress Secret Substitution 看不见。
+
+| 项 | 决定 |
+|---|---|
+| 匹配 | **Git Smart HTTP 协议**，不按 GitLab/GitHub 产品。`GET …/info/refs?service=git-upload-pack\|git-receive-pack`；`POST …/git-upload-pack` 或 `…/git-receive-pack`。错误 method、LFS、dumb HTTP、REST 不匹配 |
+| 范围 | Vault/MITM **只**处理已是 HTTPS 的 Smart HTTP；**不**覆盖 Git LFS / dumb HTTP / Git REST，也**不**在 MITM 层改写 `git@` / `ssh://`。SSH→HTTPS：内置 `github.com`，另可通过 `environment_runner.git_ssh_to_https_hosts` 追加（见 [upstream-proxy-and-model-runtime](./ccrv2/upstream-proxy-and-model-runtime.md#git-私有仓库出站)），改写后再走本注入 |
+| 写入 | 第一次转发前写 `Authorization: Basic`；用户名固定 `oauth2`；密码为 Environment Variable Credential secret。已有 Authorization 一律覆盖 |
+| 选凭据 | Credential Networking 覆盖该 host 且 Injection Location 含 header；Vault Attachment Order 先到先得 |
+| 未覆盖 | passthrough |
+| Open 失败 | `ErrSubstitutionRejected` → 502 |
+| 与 substitution | 同一请求仍做 Egress Secret Substitution；随后把 Authorization 设为这条 Basic（均在 `MITMEgress.Prepare` 内、MCP inject wrap 之前；凭证只加载一次） |
+
+```mermaid
+sequenceDiagram
+    participant Git as Sandbox git
+    participant MITM as MITMEgress.Prepare
+    participant Up as Git host
+
+    Git->>MITM: GET /repo.git/info/refs?service=git-upload-pack
+    MITM->>MITM: load credentials once
+    MITM->>MITM: Egress Secret Substitution
+    MITM->>MITM: Git Smart HTTP Authorization
+    MITM->>Up: Authorization Basic oauth2:secret
+```
+
+深模块缝：
+
+- `vaults.PrepareEnvCredentialMount` — Session 挂载（env 的 MITM 门闩 + placeholder map；MCP 凭证不挡启动）
+- `vaults.MITMEgress.Prepare` — MITM 出站深模块：一次加载凭证 → env 替换 → Git Smart HTTP Authorization → MCP inject wrap
+- `vaults.Injector.WrapTransport` — Credential URL match / open / refresh / 401（可与 MCP proxy 共用）
+- `networkpolicy.AllowsHost` — Credential Networking host 匹配
+
+### 运行时注入决策（MCP 细节）
+
+| 项 | 决定 |
+|---|---|
+| token endpoint 错误 | 非 2xx 只上报 HTTP status（`token endpoint status N`），不把 IdP `error` 原文带进 error/日志 |
+| `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
+| 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk。`excluded` / `forceRefresh` 按 **plan 凭证 ExternalID**（`planCredID`）记账，不依赖 refresh CAS 返回行是否带齐字段 |
+| 401 重试 body | **仅当** injection plan 有可注入 URL 匹配时才缓冲请求体（上限 32 MiB）以支持 inject/401 重放；无匹配 → 流式 passthrough，不触发 32 MiB 门闩。超限 **fail closed**（不静默截断重放）。打出的是 clone；snapshot 路径用 `defer closeRequestBody(req)` 关闭原始 body；passthrough 由 base RoundTripper 关闭 |
+| Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
+| 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MITM ErrorHandler / Prepare 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
+| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，覆盖整段 Hold，nil Redis 拒绝）。持约后重读。每次 Hold **最多一次** token-endpoint exchange。exchange 成功后必须落盘：`version` CAS 冲突时重读，信封仍是换票前那份或重读 token 不可用则 rebase 再写 R1；重读已有未过期 token 则复用。exchange 失败后重读，仅当信封 token 已变且 access 未过期时复用，否则保留换票错误（改名导致的 version +1 不再触发二次换票）。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
+| 平台 client_secret | 不进用户信封。callback 与 refresh 共用 `ResolveMCPOAuthTokenClientSecret`。公开 `auth.client_credential_source` 为 `platform`（或遗留 confidential 且信封无 secret）时按 `mcp_server_url` 再查 registry；`sealed` 用信封值。reseal 仍不把平台 secret 写回信封 |
+| 数据加载 | **每个 MCP RoundTrip 查库一次**（`vault_ids` + active credentials）；401 walk / 换凭证不重复加载；不缓存明文 token |
+| Redirect | **不自动跟随**跨 origin redirect |
+| host 未覆盖（MCP） | **passthrough** |
+| 本切片不做 | `mcp_oauth_validate` 真 refresh；`vault_credential.refresh_failed` webhook |
 
 ### 每次 MCP 出站流程
 
-1. Proxy 已认证 session（`authenticateRuntimeSession`）→ 解析 `mcp_url` → 策略授权。
-2. 查 code session → workspace → `vault_ids` → 活动凭证；按真实 `mcp_url` 匹配；按 `vault_ids` 顺序，**首个可注入（static_bearer）命中胜出**。非 static_bearer 跳过。凭证 auth schema 无法解析 → **fail-closed**；同 scheme、host、effective port 无 path 命中 → **fail-closed**；目标不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
-3. Open 信封得到 Transient secret payload（token）。Open 失败 → **拒绝该请求**（不换下一条、不 passthrough）。
-4. 删掉客户端带给 proxy 的 `Authorization`（session JWT），加 `Authorization: Bearer <token>`，转发真实上游。passthrough 不写上游 Authorization。
-5. 跨 origin redirect：代理不自动跟；客户端新请求重新匹配。
+1. CONNECT 已鉴权；MITM 解密出站 HTTP；Environment host allowlist 已在 CONNECT 时校验。
+2. `MITMEgress.Prepare`：一次加载凭证 → env 占位符替换 → Git Smart HTTP Authorization；再按 CONNECT authority + path/query 拼绝对 HTTPS URL。
+3. `Injector` 查 code session → `vault_ids` → 活动凭证（**每个 RoundTrip 一次**）；按绝对 URL 匹配；按 `vault_ids` 顺序 walk **可注入**凭证（`static_bearer` / `mcp_oauth`）。凭证 auth schema 无法解析 → **fail-closed**；同 scheme、host、effective port 无 path 命中 → **fail-closed**；host 不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
+4. Open 信封得到 Transient secret payload。`mcp_oauth` 若已过期则 refresh（CAS reseal）后再取 access token。Open/refresh 失败 → **跳过该条**试下一条。
+5. 命中时 Del 客户端 `Authorization`，加 `Authorization: Bearer <token>`，转发上游。上游 401 时对当前 `mcp_oauth` 再 refresh 一轮并重试；仍失败则排除该凭证继续 walk。
+6. 跨 origin redirect：不自动跟；客户端新请求重新匹配。
 
-匹配规则：凭证与请求 URL 的 scheme、hostname、effective port 必须一致；凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。
+`mcp_oauth` 匹配、open、refresh、reseal 统一走 `auth_schema` / `secret_schema`（`decodeCredentialAuth`、`decodeMCPOAuthCredentialSecret`），不另维护平行 `json.RawMessage` 结构；`expires_at` 为可选 `*string`（缺失 → 视为未过期直接注入）。写回信封时用命名 struct marshal，token endpoint 响应才是外部 wire DTO。
+
+匹配规则：凭证与请求 URL 的 scheme、hostname、effective port 必须一致；凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。`https://host` 不得匹配 `http://host:443`（避免把 Bearer 注到明文 HTTP）。
 
 后续（非本切片）：
 
-- **mcp_oauth**：过期检查 + refresh 后再注入
-- **environment_variable**：环境占位符 / 出口替换（E2B 上另议）
-- Credential 级 `networking.allowed_hosts` 门控
+- `mcp_oauth_validate` 真探测；`vault_credential.refresh_failed` webhook
 
-显式 MCP proxy 调用方只持有 proxy URL + session JWT，没有上游 token。真 token 只在 OMA proxy 里瞬态出现。日志不记录明文。Runner 生成的 `mcp_config` 则保留原始 URL，不携带 session JWT 或上游 token。
+真 token 只在 OMA MITM 注入瞬态出现。日志不记录明文。Runner 生成的 `mcp_config` 保留原始 URL，不携带 session JWT 或上游 token。
 
 ## 实施阶段
 
@@ -199,11 +268,11 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 2. DB Direct cutover：加信封列 + 删 `secret_payload`；无 Expand/Backfill ✅
 3. vault API 收口：写走加密，读只返回元信息；缺信封 → 400；Open 失败 → 5xx ✅（含 platform MCP OAuth callback seal）
 4. Transport 注入（static_bearer MVP）✅
-5. OAuth 刷新；env 占位符；credential networking — **未做**
+5. OAuth 刷新 + mcp_oauth 注入（含 401 一轮）✅；environment_variable Opaque Placeholder + Egress Secret Substitution ✅
 
 ## 验收（存库加密：已完成）
 
-- DB、日志、trace 不出现明文密码 / DEK；**主密钥只在 `config.yaml` / `kek_file`**（不进 DB/日志）；dev/prod 均须配置，无 ephemeral 兜底。*（注：`mcp_oauth_flows` 的 client_secret/code_verifier 本期仍明文，拆小 issue。）*
+- DB、日志、trace 不出现明文密码 / DEK；**主密钥只在 `config.yaml` / `kek_file`**（不进 DB/日志）；dev/prod 均须配置，无 ephemeral 兜底。`mcp_oauth_flows` 敏感字段走 Secret envelope；平台 client secret 不落 flow 表，也不复制进用户 `vault_credentials`。
 - 写统一经 Secret Service；读不返回密码；`secret_payload` 列不存在。
 - 篡改密文 / nonce / wrapped_dek / AAD 后解密失败；未知格式或 key 不可用 → fail closed（HTTP 5xx）。
 - 活动凭证缺信封且未带完整替换 secret 的 update/validate（含仅改 metadata/display_name）→ HTTP 400；带完整替换 secret 的 update → 直接 reseal；`version` CAS 冲突 → HTTP 409。
@@ -212,21 +281,46 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 - 本地 KEK：`version` + `decrypt_only`（无 rewrap）。
 - `go test ./internal/secrets/ ./internal/vaults/ ./internal/config/ ./internal/db/ ./internal/api/ -count=1`；相关 E2E / `tests/vaults_encryption_test.go`。
 
-## 验收（运行时注入 MVP：已完成）
+## 验收（运行时注入：已完成）
 
-- 显式 MCP proxy 请求走 `/v2/ccr-sessions/{id}/mcp`；vault 注入接在该 proxy，不依赖 MITM。Managed Agent Runner 不再自动生成该 URL。
-- static_bearer：path 前缀命中后注入 Bearer；沙箱 / `mcp_config` / 日志不见 token。
-- host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）；命中后 Open 失败 → 拒绝（502）。
+- Managed Agent MCP 经 CONNECT MITM；vault 注入接在 `MITMEgress` / `Injector`。显式 `/v2/ccr-sessions/{id}/mcp` 保留并共用同一 `Injector`；Runner 不自动改写 MCP URL。
+- `static_bearer` / `mcp_oauth`：path 前缀命中后注入 Bearer；沙箱 / `mcp_config` / 日志不见 token。Runner 保留原始 MCP URL。
+- Session 挂载：MITM 关且存在活跃 env → 失败；仅挂 MCP 凭证时仍可启动（注入走显式 `/mcp` 或 MITM 开时的 CONNECT）。
+- `mcp_oauth`：无 `expires_at` 直接注入；过期则 refresh + CAS reseal；上游 401 再 refresh 一轮。
+- Open / refresh / 401 重试失败 → 跳过该凭证继续 walk；全部失败 → 502。
+- host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）。
+- 出站顺序：env 占位符替换（含 Git Smart HTTP Authorization）→ MCP Authorization 注入。
 - 不自动跟随跨 origin redirect 携带注入头。
-- Environment / MCP proxy 网络策略仍生效；本切片不做 credential `networking`。
+- Environment CONNECT 网络策略仍生效；MCP 注入不做 credential `networking`，也不额外卡 Snapshot 精确 URL。
+
+## 验收（environment_variable：本切片）
+
+- create 签发 `oma_ph_` placeholder；响应含 `injection_location`；不回显 `secret_value`。
+- Session 挂载：MITM 关且存在活跃 env → 失败；仅 MCP 凭证不挡启动；否则 `startup_context.environment_variables` 灌入 placeholder（先到先得，不覆盖平台保留名）。
+- MITM egress：host/location 匹配时替换；未覆盖透传；Open 失败 → 502。
+- Git Smart HTTP：`GET` `info/refs?service=…` 与 `POST` `git-upload-pack` / `git-receive-pack` 在第一次转发前写入 `Authorization: Basic oauth2:<secret>`；错误 method / 未覆盖透传；Open 失败 → 502；LFS / dumb HTTP / REST 不注票。SSH→HTTPS（内置 `github.com` + `environment_runner.git_ssh_to_https_hosts`）属 Runner/environment-manager，不在本模块。
+- 旧凭证缺 placeholder / injection_location → update/挂载拒绝（archive 重建）。
 
 > 注：云 KMS 自动轮换 / DisableKey 另议。
 
-## 不做（注入 MVP）
+## Platform OAuth Client（登记）
 
-- `mcp_oauth` 注入与 refresh
-- `environment_variable` 出口替换
-- Credential 级 `networking.allowed_hosts`
+部署方可在 `vault.platform_oauth_clients` 配置通用 registry（列表），每项绑定精确 `mcp_server_url` + `client_id` + `client_secret`（本地/dev 可内联；勿提交真实 secret）。
+
+`POST .../mcp/vault-auth/start` 解析 client 顺序：
+
+1. 请求带非空 BYO `client_id` → 用 BYO（覆盖 Platform）；`client_credential_source=sealed`，secret 进 flow 信封
+2. 否则精确匹配 Platform OAuth Client registry → 只用平台 `client_id`（secret **不**写入 flow / credential）；`client_credential_source=platform`，callback（及日后 refresh）再从配置取 secret
+3. 否则走既有 DCR；无 registration endpoint 则失败；DCR secret 进 flow 信封与最终 credential 信封（`sealed`）
+
+`code_verifier` 始终进同一信封。Redirect 仍由前端传入 `{origin}/oauth/vault/success`。控制台 Optional Client 字段保留。用户 access/refresh token 仍进个人 Credential 信封；平台 `client_secret` 不进该信封。
+
+## 不做（本切片外）
+
+- `mcp_oauth_validate` 真 refresh / live MCP probe
+- `vault_credential.refresh_failed` webhook 发出
+- Git LFS、dumb HTTP、原生 git SSH 隧道；通用任意 `git@`→HTTPS 不在 Vault 切片。内置 github.com + `environment_runner.git_ssh_to_https_hosts` 的 insteadOf 见 CCRv2 upstream-proxy 文档
+- GitHub App `x-access-token` Basic 用户名
 - Expand/Backfill、`backfill_secrets`
 - Shamir / 云 KMS provider 实现
 - 重做 vault CRUD、管理页、MCP Catalog/Permission/Confirmation
@@ -237,4 +331,5 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 - https://platform.claude.com/docs/en/managed-agents/vaults
 - https://www.anthropic.com/engineering/managed-agents
 - HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
-- Related: #65、#52、#121、#137、#142
+- Related: #65、#52、#121、#137、#142、#256
+- Ubiquitous language: `CONTEXT.md`（Secret envelope / Runtime credential injection / Credential URL match / Platform OAuth Client / Git Smart HTTP Authorization）

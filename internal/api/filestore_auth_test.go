@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -22,7 +23,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -334,8 +334,8 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		name   string
 		mutate func(*filestore.TokenIdentity)
 	}{
-		{name: "account", mutate: func(identity *filestore.TokenIdentity) { identity.AccountUUID = uuid.NewString() }},
-		{name: "workspace", mutate: func(identity *filestore.TokenIdentity) { identity.WorkspaceUUID = uuid.NewString() }},
+		{name: "account", mutate: func(identity *filestore.TokenIdentity) { identity.AccountUUID = uuid.NewV4().String() }},
+		{name: "workspace", mutate: func(identity *filestore.TokenIdentity) { identity.WorkspaceUUID = uuid.NewV4().String() }},
 		{name: "workspace tagged id", mutate: func(identity *filestore.TokenIdentity) { identity.WorkspaceTaggedID = "workspace_other" }},
 		{name: "filesystem", mutate: func(identity *filestore.TokenIdentity) { identity.FilesystemID = "fs_other" }},
 		{name: "organization taints", mutate: func(identity *filestore.TokenIdentity) { identity.OrgTaints = []string{"restricted"} }},
@@ -437,12 +437,12 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 	})
 
 	t.Run("failure real filesystem from another workspace", func(t *testing.T) {
-		suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-		otherWorkspaceUUID := uuid.NewString()
+		suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
+		otherWorkspaceUUID := uuid.NewV4().String()
 		otherWorkspaceExternalID := "workspace_filestore_cross_" + suffix
-		otherSessionUUID := uuid.NewString()
+		otherSessionUUID := uuid.NewV4().String()
 		otherSessionExternalID := "sesn_filestore_cross_" + suffix
-		otherFilesystemUUID := uuid.NewString()
+		otherFilesystemUUID := uuid.NewV4().String()
 		otherFilesystemExternalID := "fs_filestore_cross_" + suffix
 
 		if _, err := pool.Exec(context.Background(), `
@@ -464,8 +464,8 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 			)
 			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, 'running')
 		`, otherSessionUUID, otherSessionExternalID, fixture.tokenIdentity.OrgUUID, otherWorkspaceUUID,
-			uuid.NewString(), uuid.NewString(), "env_filestore_cross_"+suffix,
-			uuid.NewString(), "agent_filestore_cross_"+suffix); err != nil {
+			uuid.NewV4().String(), uuid.NewV4().String(), "env_filestore_cross_"+suffix,
+			uuid.NewV4().String(), "agent_filestore_cross_"+suffix); err != nil {
 			t.Fatalf("insert other workspace session: %v", err)
 		}
 		if _, err := pool.Exec(context.Background(), `
@@ -576,16 +576,16 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, confi
 		t.Fatalf("open filestore auth test pool: %v", err)
 	}
 
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	organizationUUID := uuid.NewString()
-	workspaceUUID := uuid.NewString()
+	suffix := strings.ReplaceAll(uuid.NewV4().String(), "-", "")
+	organizationUUID := uuid.NewV4().String()
+	workspaceUUID := uuid.NewV4().String()
 	workspaceExternalID := "workspace_filestore_auth_" + suffix
-	accountUUID := uuid.NewString()
+	accountUUID := uuid.NewV4().String()
 	accountExternalID := "user_filestore_auth_" + suffix
 	publicSessionID := "sesn_filestore_auth_" + suffix
 	codeSessionID := "cse_filestore_auth_" + suffix
 	filesystemID := "fs_filestore_auth_" + suffix
-	filesystemUUID := uuid.NewString()
+	filesystemUUID := uuid.NewV4().String()
 	agentID := "agent_filestore_auth_" + suffix
 	environmentID := "env_filestore_auth_" + suffix
 	workspaceAPIKey := "sk-ant-api03-filestore-auth-" + suffix
@@ -616,7 +616,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, confi
 	`, workspaceUUID, workspaceExternalID, organizationUUID, "Filestore auth test"); err != nil {
 		t.Fatalf("insert filestore auth workspace: %v", err)
 	}
-	apiKeyUUID := uuid.NewString()
+	apiKeyUUID := uuid.NewV4().String()
 	if _, err := pool.Exec(context.Background(), `
 		insert into api_keys (uuid, external_id, workspace_uuid, key_hash, status)
 		values ($1, $2, $3, $4, 'active')
@@ -629,9 +629,9 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, confi
 	`, accountUUID, accountExternalID, organizationUUID, accountExternalID+"@example.com", "Filestore auth account"); err != nil {
 		t.Fatalf("insert filestore auth account: %v", err)
 	}
-	sessionUUID := uuid.NewString()
-	environmentUUID := uuid.NewString()
-	agentUUID := uuid.NewString()
+	sessionUUID := uuid.NewV4().String()
+	environmentUUID := uuid.NewV4().String()
+	agentUUID := uuid.NewV4().String()
 	if _, err := pool.Exec(context.Background(), `
 		insert into sessions (
 			uuid, external_id, organization_uuid, workspace_uuid,
@@ -644,7 +644,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, confi
 		environmentUUID, environmentID, agentUUID, agentID, "Filestore auth test"); err != nil {
 		t.Fatalf("insert filestore auth session: %v", err)
 	}
-	codeSessionUUID := uuid.NewString()
+	codeSessionUUID := uuid.NewV4().String()
 	if _, err := pool.Exec(context.Background(), `
 		insert into code_sessions (
 			uuid, external_id, organization_uuid, workspace_uuid,

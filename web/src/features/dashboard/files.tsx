@@ -13,7 +13,7 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { toast, Toaster } from '@/shared/ui/sonner';
+import { toast } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
 import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
@@ -130,12 +130,6 @@ export function FilesPage() {
 
   return (
     <>
-      <Toaster
-        position="top-right"
-        duration={2200}
-        closeButton
-        toastOptions={{ closeButtonAriaLabel: msg('common.close', 'Close') }}
-      />
       <ConsolePageFrame
         title={msg('files.title', 'Files')}
         icon={FileText}

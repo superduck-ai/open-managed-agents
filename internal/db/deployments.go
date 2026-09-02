@@ -6,10 +6,17 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/superduck-ai/yourbatis"
 )
 
+// MaxScheduledDeploymentsPerOrganization is the org-level ceiling for non-archived
+// deployments that still have a schedule.
+const MaxScheduledDeploymentsPerOrganization = 1000
+
 type Deployment struct {
+	// RuntimeUserUUID is inherited by scheduled sessions, independently of API keys.
+	RuntimeUserUUID       string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
@@ -53,7 +60,7 @@ type DeploymentRun struct {
 	SessionExternalID    *string
 	Error                json.RawMessage
 	TriggerType          string
-	TriggerContext       json.RawMessage
+	ScheduledAt          *time.Time
 	CreatedAt            time.Time
 	DeletedAt            *time.Time
 }
@@ -100,8 +107,35 @@ type CreateManualDeploymentRunInput struct {
 	Now                  time.Time
 }
 
+type UpdateDeploymentInput struct {
+	Deployment       Deployment
+	ScheduleProvided bool
+}
+
+type DeploymentSchedule struct {
+	WorkspaceUUID string
+	ExternalID    string
+	Schedule      json.RawMessage
+}
+
+type ApplyScheduledOccurrenceInput struct {
+	Deployment        Deployment
+	ScheduledAt       time.Time
+	Session           *CreateSessionInput
+	Events            []SessionEvent
+	Run               DeploymentRun
+	AutoPauseReason   json.RawMessage
+	ArchiveDeployment bool
+	Now               time.Time
+}
+
 func (d *DB) CreateDeployment(ctx context.Context, deployment Deployment) (Deployment, error) {
 	mapper := NewDeploymentMapper(d.mapperDB)
+	if len(deployment.Schedule) > 0 {
+		if err := checkScheduledDeploymentQuota(ctx, mapper, deployment.OrganizationUUID); err != nil {
+			return Deployment{}, err
+		}
+	}
 	row, err := mapper.Insert(ctx, deploymentWriteParamsFrom(deployment))
 	if err != nil {
 		return Deployment{}, err
@@ -118,7 +152,7 @@ func (d *DB) GetDeployment(ctx context.Context, workspaceUUID string, externalID
 	return row.deployment(), nil
 }
 
-func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externalID string, next Deployment) (Deployment, error) {
+func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externalID string, input UpdateDeploymentInput) (Deployment, error) {
 	var updated Deployment
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewDeploymentMapper(executor)
@@ -129,10 +163,18 @@ func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externa
 		if current.ArchivedAt != nil {
 			return ErrInvalidState
 		}
+		next := input.Deployment
+		scheduleChanged := input.ScheduleProvided && !sameJSON(current.Schedule, next.Schedule)
+		if scheduleChanged && len(current.Schedule) == 0 && len(next.Schedule) > 0 {
+			if err := checkScheduledDeploymentQuota(ctx, mapper, current.OrganizationUUID); err != nil {
+				return err
+			}
+		}
 
 		params := deploymentWriteParamsFrom(next)
 		params.WorkspaceUUID = workspaceUUID
 		params.ExternalID = externalID
+		params.ScheduleChanged = scheduleChanged
 		row, err := mapper.UpdateByExternalID(ctx, params)
 		if err != nil {
 			return mapNoRows(err)
@@ -141,6 +183,17 @@ func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externa
 		return nil
 	})
 	return updated, err
+}
+
+func checkScheduledDeploymentQuota(ctx context.Context, mapper DeploymentMapper, organizationUUID string) error {
+	count, err := mapper.CountScheduledByOrganization(ctx, organizationUUID)
+	if err != nil {
+		return err
+	}
+	if count >= MaxScheduledDeploymentsPerOrganization {
+		return ErrLimitExceeded
+	}
+	return nil
 }
 
 func (d *DB) ArchiveDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
@@ -187,6 +240,10 @@ func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPage
 	return deployments, hasMore, nil
 }
 
+func (d *DB) ListDeploymentSchedules(ctx context.Context) ([]DeploymentSchedule, error) {
+	return NewDeploymentMapper(d.mapperDB).ListActiveSchedules(ctx)
+}
+
 func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDeploymentRunInput) (DeploymentRun, Session, SessionThread, []SessionEvent, error) {
 	var created DeploymentRun
 	var session Session
@@ -195,7 +252,7 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		deploymentMapper := NewDeploymentMapper(executor)
 		runMapper := NewDeploymentRunMapper(executor)
-		deploymentRow, err := deploymentMapper.LockByExternalID(ctx, input.Run.WorkspaceUUID, input.DeploymentExternalID)
+		deploymentRow, err := deploymentMapper.LockByExternalID(ctx, input.Session.Session.WorkspaceUUID, input.DeploymentExternalID)
 		if err != nil {
 			return mapNoRows(err)
 		}
@@ -227,6 +284,92 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 		return nil
 	})
 	return created, session, thread, events, err
+}
+
+func (d *DB) ApplyScheduledOccurrence(ctx context.Context, input ApplyScheduledOccurrenceInput) error {
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		deploymentMapper := NewDeploymentMapper(executor)
+		row, err := deploymentMapper.LockByExternalID(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		deployment := row.deployment()
+		if deployment.ArchivedAt != nil || deployment.Status != "active" ||
+			!sameJSON(deployment.Schedule, input.Deployment.Schedule) ||
+			!sameDeploymentExecution(deployment, input.Deployment) {
+			return ErrStaleSchedule
+		}
+		if input.ArchiveDeployment {
+			if _, err := deploymentMapper.ArchiveByExternalID(ctx, deployment.WorkspaceUUID, deployment.ExternalID); err != nil {
+				return err
+			}
+			return nil
+		}
+		if input.Session != nil {
+			workspace, err := NewAdminWorkspaceMapper(executor).FindByIdentifier(
+				ctx, deployment.OrganizationUUID, "", deployment.WorkspaceUUID,
+			)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			if workspace.ArchivedAt != nil {
+				return ErrWorkspaceArchived
+			}
+		}
+
+		runMapper := NewDeploymentRunMapper(executor)
+		run := deploymentRunFromDeployment(input.Run, deployment)
+		run.CreatedByAPIKeyUUID = deployment.CreatedByAPIKeyUUID
+		run.TriggerType = "schedule"
+		run.ScheduledAt = &input.ScheduledAt
+		run.CreatedAt = input.Now
+		if input.Session != nil {
+			session, _, _, _, err := insertSessionTx(ctx, executor, *input.Session)
+			if err != nil {
+				return err
+			}
+			if _, err = insertSessionEventsTx(ctx, executor, session, input.Events, false); err != nil {
+				return err
+			}
+			run.SessionExternalID = &session.ExternalID
+			run.Error = nil
+		} else {
+			run.SessionExternalID = nil
+		}
+		_, err = runMapper.Insert(ctx, deploymentRunWriteParamsFrom(run))
+		if err != nil {
+			if isUniqueViolationOnConstraint(err, "deployment_runs_schedule_occurrence_idx") {
+				return ErrStaleSchedule
+			}
+			return err
+		}
+
+		if len(input.AutoPauseReason) > 0 {
+			_, err = deploymentMapper.PauseAfterScheduledRun(ctx, pauseScheduledDeploymentParams{
+				WorkspaceUUID: deployment.WorkspaceUUID, ExternalID: deployment.ExternalID,
+				PausedReason: agentJSONArg(input.AutoPauseReason), LastRunAt: input.Now,
+			})
+		} else {
+			_, err = deploymentMapper.UpdateLastRun(
+				ctx, deployment.WorkspaceUUID, deployment.ExternalID, input.Now,
+			)
+		}
+		return err
+	})
+}
+
+func sameDeploymentExecution(left Deployment, right Deployment) bool {
+	return left.AgentUUID == right.AgentUUID &&
+		left.AgentExternalID == right.AgentExternalID &&
+		left.AgentVersion == right.AgentVersion &&
+		sameJSON(left.AgentSnapshot, right.AgentSnapshot) &&
+		left.EnvironmentUUID == right.EnvironmentUUID &&
+		left.EnvironmentExternalID == right.EnvironmentExternalID &&
+		sameJSON(left.Metadata, right.Metadata) &&
+		sameJSON(left.InitialEvents, right.InitialEvents) &&
+		sameJSON(left.Resources, right.Resources) &&
+		sameJSON(left.ResourceSecrets, right.ResourceSecrets) &&
+		sameJSON(left.VaultIDs, right.VaultIDs)
 }
 
 func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployment, run DeploymentRun) (DeploymentRun, error) {
@@ -287,6 +430,8 @@ func updateDeploymentLastRun(ctx context.Context, mapper DeploymentMapper, works
 }
 
 func deploymentRunFromDeployment(run DeploymentRun, deployment Deployment) DeploymentRun {
+	run.OrganizationUUID = deployment.OrganizationUUID
+	run.WorkspaceUUID = deployment.WorkspaceUUID
 	run.DeploymentUUID = deployment.UUID
 	run.DeploymentExternalID = deployment.ExternalID
 	run.AgentUUID = deployment.AgentUUID
@@ -300,7 +445,8 @@ func deploymentWriteParamsFrom(deployment Deployment) deploymentWriteParams {
 	return deploymentWriteParams{
 		UUID: deployment.UUID, ExternalID: deployment.ExternalID,
 		OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
-		CreatedByAPIKeyUUID: deployment.CreatedByAPIKeyUUID, EnvironmentUUID: deployment.EnvironmentUUID,
+		RuntimeUserUUID:     nullableString(deployment.RuntimeUserUUID),
+		CreatedByAPIKeyUUID: nullableString(deployment.CreatedByAPIKeyUUID), EnvironmentUUID: deployment.EnvironmentUUID,
 		EnvironmentExternalID: deployment.EnvironmentExternalID, AgentUUID: deployment.AgentUUID,
 		AgentExternalID: deployment.AgentExternalID, AgentVersion: deployment.AgentVersion,
 		AgentSnapshot: agentJSONArg(deployment.AgentSnapshot), Name: deployment.Name, Description: deployment.Description,
@@ -315,12 +461,11 @@ func deploymentWriteParamsFrom(deployment Deployment) deploymentWriteParams {
 func deploymentRunWriteParamsFrom(run DeploymentRun) deploymentRunWriteParams {
 	return deploymentRunWriteParams{
 		UUID: run.UUID, ExternalID: run.ExternalID, OrganizationUUID: run.OrganizationUUID,
-		WorkspaceUUID: run.WorkspaceUUID, CreatedByAPIKeyUUID: run.CreatedByAPIKeyUUID,
+		WorkspaceUUID: run.WorkspaceUUID, CreatedByAPIKeyUUID: nullableString(run.CreatedByAPIKeyUUID),
 		DeploymentUUID: run.DeploymentUUID, DeploymentExternalID: run.DeploymentExternalID,
 		AgentUUID: run.AgentUUID, AgentExternalID: run.AgentExternalID, AgentVersion: run.AgentVersion,
 		AgentSnapshot: agentJSONArg(run.AgentSnapshot), SessionExternalID: run.SessionExternalID,
-		Error: agentJSONArg(run.Error), TriggerType: run.TriggerType,
-		TriggerContext: agentJSONArg(run.TriggerContext), CreatedAt: run.CreatedAt,
+		Error: agentJSONArg(run.Error), TriggerType: run.TriggerType, ScheduledAt: run.ScheduledAt, CreatedAt: run.CreatedAt,
 	}
 }
 
@@ -347,25 +492,18 @@ func deploymentRunPageParams(params ListDeploymentRunsPageParams) deploymentRunP
 }
 
 func deploymentsFromRows(rows []deploymentMapperRow) []Deployment {
-	deployments := make([]Deployment, len(rows))
-	for index := range rows {
-		deployments[index] = rows[index].deployment()
-	}
-	return deployments
+	return lo.Map(rows, func(row deploymentMapperRow, _ int) Deployment { return row.deployment() })
 }
 
 func deploymentRunsFromRows(rows []deploymentRunMapperRow) []DeploymentRun {
-	runs := make([]DeploymentRun, len(rows))
-	for index := range rows {
-		runs[index] = rows[index].run()
-	}
-	return runs
+	return lo.Map(rows, func(row deploymentRunMapperRow, _ int) DeploymentRun { return row.run() })
 }
 
 func (r deploymentMapperRow) deployment() Deployment {
 	return Deployment{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
+		RuntimeUserUUID: stringFromNullable(r.RuntimeUserUUID),
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Name: r.Name, Description: r.Description,
@@ -379,11 +517,11 @@ func (r deploymentMapperRow) deployment() Deployment {
 func (r deploymentRunMapperRow) run() DeploymentRun {
 	return DeploymentRun{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		DeploymentUUID: r.DeploymentUUID, DeploymentExternalID: r.DeploymentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), SessionExternalID: r.SessionExternalID,
-		Error: bytes.Clone(r.Error), TriggerType: r.TriggerType, TriggerContext: bytes.Clone(r.TriggerContext),
+		Error: bytes.Clone(r.Error), TriggerType: r.TriggerType, ScheduledAt: r.ScheduledAt,
 		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }

@@ -8,14 +8,33 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
+	row, found, err := NewSessionMapper(executor).FindByExternalID(
+		context.Background(),
+		"workspace-uuid",
+		"ses_missing",
+	)
+	if err != nil || found || row.UUID != "" {
+		t.Fatalf("FindByExternalID() = (%+v, %t, %v), want zero, false, nil", row, found, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"SessionMapper.FindByExternalID",
+		yourbatis.StatementSelect,
+		[]any{"workspace-uuid", "ses_missing"},
+	)
+}
+
 func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	sessionParams := sessionWriteParams{
 		UUID: "session-uuid", ExternalID: "ses_test", OrganizationUUID: "organization-uuid",
-		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: "api-key-uuid",
+		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: nullableString("api-key-uuid"),
 		EnvironmentUUID: "environment-uuid", EnvironmentExternalID: "env_test",
 		AgentUUID: "agent-uuid", AgentExternalID: "agent_test", AgentVersion: 1,
-		AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`), VaultIDs: []byte(`[]`),
+		AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`), VaultIDs: sessionVaultIDs{},
 		Status: "idle", Usage: []byte(`{}`), Stats: []byte(`{}`), OutcomeEvaluations: []byte(`[]`),
 		CreatedAt: now,
 	}
@@ -45,7 +64,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.CreatedByAPIKeyUUID", "params.EnvironmentUUID", "params.EnvironmentExternalID",
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
-				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata",
+				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata", "params.RuntimeUserUUID",
 				"params.VaultIDs", "params.Status", "params.Usage", "params.Stats",
 				"params.OutcomeEvaluations", "params.CreatedAt", "params.CreatedAt",
 			},
@@ -54,6 +73,13 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.Stats", "params.OutcomeEvaluations",
 			},
 			wantSQLFragments: []string{"INSERT INTO sessions", "CAST($11 AS jsonb)", "RETURNING", "uuid, external_id"},
+		},
+		{
+			statement: sessionMapperFindByUUIDStatement,
+			bound:     buildSessionMapperFindByUUID(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid"),
+			wantID:    "SessionMapper.FindByUUID", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"FROM sessions", "workspace_uuid = $1", "uuid = $2", "deleted_at IS NULL"},
 		},
 		{
 			statement: sessionThreadMapperInsertIfAbsentStatement,
@@ -100,6 +126,53 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	}
 }
 
+func TestSessionVaultIDsJSONBoundary(t *testing.T) {
+	t.Run("rejects invalid JSON", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan([]byte(`{"not":"an array"}`)); err == nil {
+			t.Fatal("Scan() error = nil")
+		}
+	})
+
+	t.Run("rejects unsupported source", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan(42); err == nil {
+			t.Fatal("Scan() error = nil")
+		}
+	})
+
+	t.Run("scans JSON array", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan([]byte(`["vlt_one","vlt_two"]`)); err != nil {
+			t.Fatalf("Scan(): %v", err)
+		}
+		if len(ids) != 2 || ids[0] != "vlt_one" || ids[1] != "vlt_two" {
+			t.Fatalf("Scan() = %v", ids)
+		}
+	})
+
+	t.Run("canonicalizes null", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan(nil); err != nil {
+			t.Fatalf("Scan(): %v", err)
+		}
+		if ids == nil || len(ids) != 0 {
+			t.Fatalf("Scan() = %#v, want non-nil empty slice", ids)
+		}
+	})
+
+	t.Run("writes JSON array", func(t *testing.T) {
+		value, err := (sessionVaultIDs{"vlt_one", "vlt_two"}).Value()
+		if err != nil {
+			t.Fatalf("Value(): %v", err)
+		}
+		raw, ok := value.([]byte)
+		if !ok || string(raw) != `["vlt_one","vlt_two"]` {
+			t.Fatalf("Value() = %#v", value)
+		}
+	})
+}
+
 func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	agentVersion := 2
@@ -131,6 +204,7 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	)
 	assertMapperSQLContains(t, toolUseBound, "e.event_type IN ( $3 , $4 )")
 	assertMapperSQLContains(t, toolUseBound, ") IN ( $5 , $6 )")
+
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {

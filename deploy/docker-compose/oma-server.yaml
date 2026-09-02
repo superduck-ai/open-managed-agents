@@ -16,6 +16,9 @@ database:
 redis:
   url: redis://redis:6379
 
+# Optional SMTP configuration is omitted, so this local template accepts any
+# non-empty email verification code. See docs/configuration-reference.yaml.
+
 storage:
   type: s3
   s3:
@@ -25,10 +28,6 @@ storage:
     access_key_id: minioadmin
     secret_access_key: minioadmin
     force_path_style: true
-
-anthropic_upstream:
-  base_url: https://api.anthropic.com
-  api_key: ""
 
 e2b:
   api_url: http://host.docker.internal:3099
@@ -47,4 +46,26 @@ vault:
 
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080
-  otlp_file_log_enabled: false
+
+observability:
+  enabled: true
+  # May capture prompts, model output, tool data, source code, and secrets.
+  # Set false for structure-only telemetry.
+  content_capture_enabled: true
+  otlp:
+    max_request_bytes: 16777216
+    forward_timeout: 8s
+  backend: openobserve
+  openobserve:
+    base_url: http://openobserve:5080
+    organization: oma
+    logs_stream: oma_claude_code
+    traces_stream: oma_claude_code
+    # Local credentials must match docker-compose.yml.
+    ingestion:
+      username: root@example.com
+      password: "Complexpass#123"
+    query:
+      username: root@example.com
+      password: "Complexpass#123"
+      timeout: 15s

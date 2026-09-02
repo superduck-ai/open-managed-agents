@@ -1,0 +1,25 @@
+---
+title: "Webhook"
+description: "注册端点、选择事件并轮换签名密钥。"
+---
+
+所有请求必须发送 `anthropic-beta: webhooks-2026-03-01`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` / `GET` | `/v1/webhooks` | 创建 / 列表 |
+| `GET` / `POST` / `DELETE` | `/v1/webhooks/{id}` | 读取 / 更新 / 删除 |
+| `POST` | `/v1/webhooks/{id}/regenerate_signing_secret` | 轮换签名密钥 |
+
+```json
+{
+  "url": "https://hooks.example.com/oma",
+  "name": "production-events",
+  "description": "Session and vault lifecycle",
+  "enabled_events": ["session.status_idled", "session.error"]
+}
+```
+
+URL 必须通过 SSRF 和 HTTPS 校验，除非部署显式允许本地不安全连接。`enabled_events` 只接受实现中定义的事件白名单。
+
+创建响应包含一次性 `signing_secret`；轮换端点返回新的签名密钥。读取和列表不会泄露它。消费者需要验证 `X-Webhook-Signature`，并按重复投递场景设计幂等处理。

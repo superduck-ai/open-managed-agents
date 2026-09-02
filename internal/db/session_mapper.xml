@@ -15,7 +15,8 @@
         deployment_uuid,
         deployment_external_id,
         title,
-        metadata,
+        metadata - '_oma_runtime_user_uuid' AS metadata,
+        metadata->>'_oma_runtime_user_uuid' AS runtime_user_uuid,
         vault_ids,
         status,
         usage,
@@ -39,7 +40,8 @@
             #{params.CreatedByAPIKeyUUID}, #{params.EnvironmentUUID}, #{params.EnvironmentExternalID},
             #{params.AgentUUID}, #{params.AgentExternalID}, #{params.AgentVersion},
             CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb), #{params.DeploymentUUID},
-            #{params.DeploymentID}, #{params.Title}, CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            #{params.DeploymentID}, #{params.Title}, (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
+                || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', CAST(#{params.RuntimeUserUUID} AS text))),
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb), #{params.Status},
             CAST(#{params.Usage,sensitive=true} AS jsonb), CAST(#{params.Stats,sensitive=true} AS jsonb),
             CAST(#{params.OutcomeEvaluations,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}
@@ -55,11 +57,20 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="FindByUUID" resultType="sessionRow">
+        SELECT <include refid="columns"/>
+        FROM sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{sessionUUID}
+        AND deleted_at IS NULL
+    </select>
+
     <update id="UpdateByExternalID" result="returning" resultType="sessionRow">
         UPDATE sessions
         SET agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
             title = #{params.Title},
-            metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            metadata = (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
+                || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', metadata->'_oma_runtime_user_uuid')),
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
@@ -72,7 +83,7 @@
     <update id="PatchMetadata" result="returning" resultType="sessionRow">
         UPDATE sessions
         SET metadata = COALESCE(metadata, CAST('{}' AS jsonb))
-                || CAST(#{metadataPatch,sensitive=true} AS jsonb),
+                || (CAST(#{metadataPatch,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid'),
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{sessionExternalID}
@@ -183,7 +194,7 @@
     <update id="MergeMetadata" result="rows">
         UPDATE sessions
         SET metadata = COALESCE(metadata, CAST('{}' AS jsonb))
-                || CAST(#{params.MetadataPatch,sensitive=true} AS jsonb),
+                || (CAST(#{params.MetadataPatch,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid'),
             updated_at = NOW()
         WHERE organization_uuid = #{params.OrganizationUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}

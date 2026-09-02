@@ -66,6 +66,8 @@ Filestore 是服务的固定能力，对象存储在应用启动阶段初始化�
 
 Filestore 只接受 `Authorization: Bearer` 中的专用 Filestore JWT。它使用原始 compact JWT，不带 `sk-ant-si-` 前缀；验证器固定 EdDSA、`kid` 与严格 Base64URL 解码。生产环境与 session ingress 可读取同一份 Ed25519 私钥文件，但两者的 claims、token 外形和验证入口完全分离。`X-Api-Key`、workspace API key、`sk-ant-oat01-` OAuth-compatible token 与 `sk-ant-si-` session-ingress JWT 均不能访问 Filestore；Code Session Ingress 和 `/v1/messages` 的鉴权逻辑保持不变。
 
+Runner 签发时优先从 session 的服务端运行上下文取得用户 UUID，再查询同组织内有效用户；平台 session 因此不要求存在 API key。仅未保存运行身份的旧/API-key session 才通过真实 `created_by_api_key_uuid` 找用户，不得用任意组织管理员补位。已有运行身份失效时拒绝签发，不回退换人。用户身份仍是必需的，JWT 的 `account_uuid` 不允许为空。服务端元数据保护、deployment 身份传递与迁移兼容见 [认证路由](auth-credential-routing.md#42-与-api-key-解耦的运行身份)。Session 文件系统创建也允许 NULL API-key 创建者，但请求提供 key 时仍验证其 workspace 归属。
+
 Filestore JWT 包含以下注册 claims 与业务 claims：
 
 | Claim                                                  | 约束                                                                 |
@@ -136,6 +138,8 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 
 五个挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token 并设置 `readonly=true`；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
 
+OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/user-data/outputs/<relative-path>`。提示词为用户提到的文件名或相对路径规定固定查找顺序：先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，只有 uploads 未命中后才搜索工作目录；两处都检查前不得报告文件不存在。Claude 只能使用实际命中的上传路径，不截断、改名或从 `file_id` 推断文件名；写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
+
 Runner 不执行独立的 mount preparation；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
@@ -205,7 +209,7 @@ Input attach 不创建新的 `files` 行，不复制 File 元数据或 S3 对象
 
 Environment Manager 不再接收 `type=file` resource。它只在 rclone ready 后看到已经完成的 `/uploads` 文件系统视图；File 的下载、路径投影或内容刷新均不属于 Environment Manager 职责。
 
-Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的身份解析、rclone 启动、ready、heartbeat 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 rclone ready、Sandbox running 和首次 heartbeat 成功之后创建；Environment Manager 启动或运行时 metadata 原子发布失败时，Runner 将 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
+Provider Sandbox 创建前的普通启动失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的身份解析、rclone 启动、ready、heartbeat 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 rclone ready、Sandbox running 和首次 heartbeat 成功之后创建；首次创建时 Environment Manager 启动或运行时 metadata 原子发布失败会将新 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。若 Work 仍能关联到唯一 active durable Code Session，则按丢失 Sandbox 的恢复启动处理：保留该 Code Session、延迟重新排队 Work，只清理本次 replacement Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
 
 ## 数据模型
 
@@ -401,3 +405,8 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 ## 验收
 
 自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。
+
+## 长期 idle 回收的文件边界
+
+[沙箱生命周期](sandbox-lifecycle.md) 可以销毁长期 idle 的托管 Sandbox。第一版接受工作目录和未上传写缓存丢失，
+不实现 checkpoint；已提交的 Filestore 文件、transcript 和事件保留。恢复重建固定挂载，但不保证恢复沙箱本地仓库或进程状态。

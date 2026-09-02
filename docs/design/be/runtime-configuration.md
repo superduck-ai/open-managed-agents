@@ -13,7 +13,7 @@ flowchart LR
     validation --> resolved["Resolved Config"]
     resolved --> infrastructure["Database / Redis / Object Storage"]
     resolved --> workers["Batch / EnvironmentRunner / Webhook"]
-    resolved --> runtime["AnthropicUpstream / E2B / CodeSession"]
+    resolved --> runtime["E2B / CodeSession"]
     resolved --> compatibility["Bootstrap / SDKFixtures"]
 ```
 
@@ -31,13 +31,15 @@ flowchart LR
 
 YAML 使用严格字段解析，未知字段、显式 `null`、类型错误和多文档输入均视为配置错误。加载器只把 YAML 字节解析成一次节点树：先按私有 YAML 输入类型检查节点树，再从同一棵树解码并与代码默认值合并，最后处理路径和跨字段校验。
 
+`auth.smtp` 可以完全省略，此时服务不发送邮件并接受任意非空验证码，同时记录安全警告。需要真实认证的部署必须完整配置 SMTP；部分配置会拒绝启动。SMTP 配置在加载边界修剪 `addr` 和 `username` 的首尾空白；`addr` 必须同时包含非空 host 和 port，`username` 必须是邮箱地址。密码保持 YAML 原值，不做静默修剪。
+
 需要区分“未配置”和“显式配置为 `false` 或空列表”的字段，在私有 YAML 输入类型中使用 `optional[T]`。输入模型解析完成后再转换为不含指针和 Optional 的运行时 `Config`。这样 presence 是字段类型的一部分，不依赖字符串路径集合；新增派生默认值时必须显式建模，并由 YAML 输入与运行时配置字段合同测试防止两种类型发生字段漂移。
 
 ## 配置与运行时依赖分离
 
 `config.Config` 只表示可以由 YAML 加载、校验和复现的数据，不持有 logger、数据库连接、对象存储 client 或其他进程内对象。`*slog.Logger` 属于运行时依赖：可执行程序通过 `internal/logging` 创建根 logger 后，通过 `api.ServerDeps` 和组件构造函数显式注入。HTTP Server 组装层从根 logger 派生带稳定 `component` 字段的子 logger，各 handler、service、enqueuer 和 worker 保存并使用自己的 logger；数据库入口同样接收 `component=database` logger，并交给持久化 runtime 持有。构造边界通过 `logging.LoggerOrDefault` 统一兼容 nil，组件内部不再读取全局默认 logger。HTTP access middleware 同样使用归一化后的 `component=http` logger 并始终安装；nil 只表示回落到 `slog.Default()`，不用于隐式关闭 access log。
 
-稳定依赖按生命周期归属组件，而不是在每次调用中机械透传。例如 webhook 入队由 `webhooks.Enqueuer` 持有数据库、Webhook 配置和 `component=webhooks` logger，sessions、deployments 与 vaults 只依赖其入队能力；Workbench 路由组由 `workbenchHandler` 持有 persistence store、Anthropic upstream 配置和 logger；delivery、batch、object cleanup 和 filestore cleanup 的数据库、对象存储、配置、upstream、循环状态与 logger 则由各自 Worker 持有。Worker 的 `RunOnce` 类方法只接收 `context.Context`、worker ID、当前时间等单次执行数据，测试也通过构造 Worker 调用这些方法，不再重复传入稳定依赖。叶子 helper 不接受 logger，应该返回结果或 error，由拥有请求或任务上下文的组件记录。数据库、upstream 配置和静态组件 logger 不放入请求 context；request context 只承载取消信号、deadline、认证 principal、request ID、trace 等请求域数据。
+稳定依赖按生命周期归属组件，而不是在每次调用中机械透传。例如 webhook 入队由 `webhooks.Enqueuer` 持有数据库、Webhook 配置和 `component=webhooks` logger，sessions、deployments 与 vaults 只依赖其入队能力；Workbench 路由组持有数据库、Vault service 和 logger，并按请求 workspace 读取 Provider；delivery、batch、object cleanup 和 filestore cleanup 的数据库、对象存储、配置、循环状态与 logger 则由各自 Worker 持有。Worker 的 `RunOnce` 类方法只接收 `context.Context`、worker ID、当前时间等单次执行数据，测试也通过构造 Worker 调用这些方法，不再重复传入稳定依赖。叶子 helper 不接受 logger，应该返回结果或 error，由拥有请求或任务上下文的组件记录。数据库连接和静态组件 logger 不放入请求 context；request context 只承载取消信号、deadline、认证 principal、request ID、trace 等请求域数据。
 
 ```mermaid
 flowchart LR
@@ -55,7 +57,7 @@ flowchart LR
     componentLoggers --> workers
 ```
 
-该边界让配置比较、序列化和测试保持确定性，也让日志级别、输出 handler 与公共字段由进程入口统一控制。领域代码不能通过把 logger 塞进 `Config` 来绕过依赖声明，也不能自行创建另一套全局 handler。
+该边界让配置比较、序列化和测试保持确定性，也让日志级别、输出 handler 与公共字段由进程入口统一控制。进程入口使用的 console handler 始终输出不含 ANSI 控制字符的纯文本，终端、文件、管道和日志采集器采用相同格式。领域代码不能通过把 logger 塞进 `Config` 来绕过依赖声明，也不能自行创建另一套全局 handler。
 
 Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业务字段，也不做 YAML merge。本地 Compose 从受跟踪的无密钥模板 `deploy/docker-compose/oma-server.yaml` 初始化 gitignored 的 `deploy/docker-compose/oma-server.local.yaml`，并只读挂载后者；密码、API key 和私钥路径只能写入本地文件。生产环境应由容器平台或 Secret Manager 将受权限保护的完整 YAML 只读挂载到同一目标路径。
 
@@ -72,13 +74,12 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_REGION` | `storage.s3.endpoint` / `bucket` / `region` | 同时设置 `storage.type: s3` |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_FORCE_PATH_STYLE` | `storage.s3.access_key_id` / `secret_access_key` / `force_path_style` | `force_path_style` 省略时默认 `true` |
 | `MAX_FILE_BYTES` / `WORKSPACE_STORAGE_LIMIT_BYTES` | `storage.max_file_bytes` / `storage.workspace_limit_bytes` | 迁移非默认容量限制 |
-| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY` | `anthropic_upstream.base_url` / `api_key` | 密钥只能写入受保护的运行配置 |
+| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY` | 无 | 已删除；启动后在控制台按 workspace 配置 Provider |
 | `BATCH_*` | `batch.*` | 后缀转为小写 snake case，例如 `BATCH_UPSTREAM_TIMEOUT` → `batch.upstream_timeout` |
 | `E2B_*` | `e2b.*` | 后缀保持小写 snake case；包括连接、debug、template 和 timeout 字段 |
 | `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY` | `environment_runner.enabled` / `concurrency` | 仅在覆盖代码默认值时配置 |
 | `ENVIRONMENT_MANAGER_PATH` / `CLAUDE_AGENT_VERSION` / `CLAUDE_PATH` | `environment_runner.manager_path` / `claude_agent_version` / `claude_path` | 路径可使用 YAML 路径展开语法 |
 | `CODE_SESSION_SANDBOX_API_BASE_URL` | `code_session.sandbox_api_base_url` | 必须是 sandbox 实际可达地址，不从监听地址推导 |
-| `CODE_SESSION_OTLP_*` | `code_session.otlp_*` | 后缀保持小写 snake case |
 | `CODE_SESSION_JWT_SIGNING_KEY_FILE` | `code_session.jwt_signing_private_key_file` | 字段改名；生产环境必须指向稳定只读私钥 |
 | `CODE_SESSION_UPSTREAM_PROXY_*` | `code_session.upstream_proxy_*` | 迁移 MITM、CA 私钥路径和 SSRF 诊断开关 |
 | `WEBHOOK_ENDPOINT_URL` / `ANTHROPIC_WEBHOOK_SIGNING_KEY` | `webhook.endpoint_url` / `webhook.signing_key` | signing key 字段不再使用 Anthropic 环境变量名 |
@@ -109,7 +110,6 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 - `environment_runner.manager_path`
 - `environment_runner.claude_path`
-- `code_session.otlp_log_root`
 - `code_session.jwt_signing_private_key_file`
 - `code_session.upstream_proxy_ca_key_file`
 
@@ -122,11 +122,14 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 部分默认值依赖其他字段，因此只在 YAML 未显式设置对应字段时派生：
 
 - `database.auto_migrate`：`env` 为 `prod` 时默认关闭，`dev` 时默认开启。
-- `code_session.otlp_file_log_enabled`：`env` 为 `prod` 时默认关闭，`dev` 时默认开启。
 - `webhook.worker_enabled`：同时配置 endpoint 和 signing key 时默认开启。
 - `bootstrap.seed_api_keys`：未配置时根据 Bootstrap 和 SDK fixture 的 ID/key 生成默认 seed keys；显式空列表表示不 seed API key。
 
-`code_session.sandbox_api_base_url` 不从 `server.addr` 或其他字段推导。空值会保持为空；需要 sandbox 回调 code-session ingress 或 OTLP endpoint 时，部署配置必须显式提供 sandbox 可访问的地址。Docker Compose 的进程监听端口为容器内 `8080`、宿主机发布端口为 `38080`，因此其部署 YAML 显式使用 `http://host.docker.internal:38080`，不能使用容器监听端口代替。
+`code_session.sandbox_api_base_url` 不从 `server.addr` 或其他字段推导。空值会保持为空；需要 sandbox 回调 code-session ingress 或 OTLP endpoint 时，部署配置必须显式提供 sandbox 可访问的地址。非空值必须是绝对 HTTP(S) URL；生产环境必须使用 HTTPS。Docker Compose 使用 `env: dev`，因此可显式使用 `http://host.docker.internal:38080`。
+
+Observability 使用独立的进程级 YAML 配置：`observability.enabled` 控制采集、转发与查询 API（开启即注入 Metrics、Logs 和 Detailed Trace 全部信号，不再按信号拆分开关）；`observability.backend` 选择写入/查询后端（首版仅 `openobserve`）；`observability.content_capture_enabled`（默认 true）控制 prompt 原文、模型输出和工具输入/输出正文是否进入可观测存储，设为 false 时仅保留结构化遥测（span 结构、耗时、token、工具名）；`observability.otlp` 控制 ingress body 上限和转发超时；选中后端块内的 `ingestion` 与 `query` 分组分别保存写入凭据和查询凭据（`query.timeout` 默认 15s）。OpenObserve 凭据只存在于 OMA 服务端，不进入 Agent、Session 或 Sandbox 环境。
+
+这是一次 breaking 迁移：OpenObserve 平铺 ingestion 凭据已删除，改为嵌套的 `observability.openobserve.ingestion.{username,password}` 与 `observability.openobserve.query.{username,password,timeout}`。升级前必须改写 YAML；严格解析不会接受旧平铺键，也不提供兼容层。旧 `code_session.otlp_file_log_enabled`、`code_session.otlp_log_root` 和 `code_session.otlp_log_body_preview_bytes` 也已随本地文件日志功能一起删除。
 
 Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base_url` 作为 rclone `service_url`，因此启用 Environment Runner 时该地址必须同时能从 E2B Sandbox 访问 Filestore HTTP 路由。Runner 通过 E2B Files API 每 `200ms` 探测 `/tmp/rclone-mounts/ready`，最长 `20s`；这两个值是运行时合同，不提供 YAML 配置。
 
@@ -144,11 +147,12 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `RedisConfig` | `redis` | 平台会话 Redis 连接 |
 | `StorageConfig` | `storage` | 对象存储类型选择和文件容量限制 |
 | `S3Config` | `storage.s3` | S3 兼容对象存储连接、bucket 和寻址方式 |
-| `AnthropicUpstreamConfig` | `anthropic_upstream` | Anthropic 上游地址、服务端凭证和可选的 Console 模型映射 |
 | `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |
+| `SandboxLifecycleConfig` | `sandbox_lifecycle` | 长期 idle 回收开关、dry-run 与超时，见 [沙箱生命周期](sandbox-lifecycle.md) |
 | `E2BConfig` | `e2b` | E2B provider 连接、模板和超时 |
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令 |
-| `CodeSessionConfig` | `code_session` | Code session ingress、JWT、OTLP 文件日志和上游代理安全配置 |
+| `CodeSessionConfig` | `code_session` | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置 |
+| `ObservabilityConfig` | `observability` | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
 | `WebhookConfig` | `webhook` | Webhook endpoint、签名、事件和投递 worker 策略 |
 | `BootstrapConfig` | `bootstrap` | 本地默认身份和需要 seed 的 API keys |
 | `SDKFixtureConfig` | `sdk_fixtures` | 官方 SDK 兼容测试使用的稳定 fixture 标识 |
@@ -170,13 +174,11 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 ## 兼容与安全合同
 
 - `CONFIG_FILE` 只选择 YAML 文件；业务环境变量不参与配置合并。
-- Workbench 访问 Anthropic 时使用同一份 `anthropic_upstream.base_url` 和 `anthropic_upstream.api_key`，不从 `ANTHROPIC_*` 环境变量回退读取。
-- `anthropic_upstream.model_mappings` 对模型 ID 执行可选的精确覆盖；解析时对 source/target 两侧做 trim，未配置、空映射或未命中的模型均保留 trim 后的原 ID。命中项在模型目录和 Workbench 中以映射后的 ID 展示，Workbench 的 completions、prompt/title 和 test case 生成统一在 Anthropic 请求构造边界使用映射后的 ID。组织级 `GET /api/organizations/{orgUuid}/models` 同时返回有效目录及 `model_mappings`，由 Managed Agents 功能自行读取，不把模型状态耦合进账户 Bootstrap。Quickstart Builder 的请求模型使用映射后的 ID；Builder 返回的 Agent config 在前端配置归一化边界映射，Agent 创建或更新时也把映射后的 ID 写入新的不可变 Agent Version。
-- 映射不能形成 `A -> B -> C` 链或循环，以保证前端展示、Console 代理和 Agent 写入等多个边界重复解析时结果一致；多个逻辑模型可以映射到同一个上游模型 ID，模型目录按最终 ID 去重，并保留目录中第一个逻辑槽位的能力元数据。
-- 映射项是部署方声明的模型别名覆盖，不是 OMA 维护的独立能力目录；兼容模型项沿用原逻辑槽位的能力元数据，部署方应只把逻辑模型映射到满足相同运行合同的上游模型。需要准确的供应商能力目录时，应由公司 AI gateway 提供完整 catalog，而不是继续扩展该映射配置。
-- Environment Runner 和独立 Environment Manager 不读取映射配置；运行链路直接使用 Agent Snapshot 已保存的最终模型 ID。OMA 在 `environment-manager` v0 启动 payload 中把该 ID 同时投射为 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`，确保 Claude Code 的主 Agent 与内置子 Agent 使用同一个不可变 Session 模型。Snapshot 没有模型时不注入这些变量，继续沿用原运行时默认逻辑。修改映射不会改变既有 Agent Version，只影响后续创建或更新的版本。
+- LLM Provider 是数据库中的 workspace 业务数据，不属于 `config.Config`。进程 YAML 不再包含 `anthropic_upstream`。
+- Provider 可以有多个，每个包含 base URL、Vault 信封加密 Key 和真实模型 ID 列表；模型 ID 原样使用，不做别名、映射或默认回退。
+- Environment Runner 直接使用 Agent Snapshot 保存的真实模型 ID。`environment-manager` v0 仍把该值投射为 Claude Code 所需的 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`；Provider Key 不进入 sandbox。
 - 数据库配置不接受独立的管理员 URL 或管理员凭证；启动回退只能使用 `database.url` 派生的 maintenance DB 连接和当前系统用户候选。
-- 上游 API key、Webhook signing key 等秘密只保存在服务端配置边界，不得进入 sandbox payload 或日志。
+- Provider API Key 只以数据库密文存在，Webhook signing key 等进程秘密只存在于服务端配置边界；二者都不得进入 sandbox payload 或日志。
 - JWT 和 CCR MITM 私钥继续通过只读文件路径配置；路径校验仍在相应的 code-session 启动边界执行。
 - `config/config.yaml`、`config/secrets/` 和 `deploy/docker-compose/oma-server.local.yaml` 中的真实秘密已加入 `.gitignore`；仓库提交的 `config/config.example.yaml`、`deploy/docker-compose/oma-server.yaml` 和 `docs/configuration-reference.yaml` 只使用无真实凭证的示例值。
 - `BootstrapConfig` 与 `SDKFixtureConfig` 只承载本地初始化和兼容测试数据，不能演变为租户级业务配置。

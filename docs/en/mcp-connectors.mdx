@@ -1,0 +1,36 @@
+---
+title: "Connect MCP servers"
+description: "Declare remote MCP servers on an agent and authenticate through vaults."
+---
+
+OMA agents currently connect to remote MCP servers by HTTPS URL. Every declared server must be referenced by an `mcp_toolset` so connectivity and tool permissions stay explicit.
+
+```json
+{
+  "mcp_servers": [
+    { "name": "github", "type": "url", "url": "https://example.com/mcp" }
+  ],
+  "tools": [
+    {
+      "type": "mcp_toolset",
+      "mcp_server_name": "github",
+      "default_config": {
+        "enabled": true,
+        "permission_policy": { "type": "always_ask" }
+      },
+      "configs": []
+    }
+  ]
+}
+```
+
+Names must be unique, at most 20 servers are allowed, and URLs may contain at most 2048 characters. Stdio MCP declarations are not supported in agent configuration.
+
+Do not put tokens in URLs or metadata. Create a vault credential and reference the vault through `vault_ids`. Runtime injection supports MCP OAuth, static bearer tokens, and environment-variable credentials with networking rules.
+
+For a `limited` environment, set `allow_mcp_servers: true`. Then verify the vault is active, its URL matches, and OAuth refresh succeeds.
+
+<CardGroup cols={2}>
+  <Card title="Vaults and credentials" href="/docs/en/vaults" />
+  <Card title="Environment networking" href="/docs/en/environments" />
+</CardGroup>

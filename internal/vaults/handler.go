@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -22,7 +23,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const maxVaultBodySize = 4 << 20
@@ -206,7 +206,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateVault(r.Context(), db.Vault{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          vaultID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceUUID:       principal.WorkspaceUUID,
@@ -407,7 +407,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	now := time.Now().UTC()
 	credential := db.VaultCredential{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          credentialID,
 		OrganizationUUID:    vault.OrganizationUUID,
 		WorkspaceUUID:       principal.WorkspaceUUID,
@@ -644,7 +644,7 @@ func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return credentialSecretError(err, "Could not validate credential")
 	}
-	hasRefreshToken := secret.Refresh != nil && strings.TrimSpace(secret.Refresh.RefreshToken) != ""
+	hasRefreshToken := secret.Refresh != nil && secret.Refresh.RefreshToken != ""
 	refreshStatus := "no_refresh_token"
 	if hasRefreshToken {
 		refreshStatus = "connect_error"
@@ -870,7 +870,10 @@ func decodeVaultCursor(raw string) (*db.VaultPageCursor, error) {
 		return nil, errors.New("page is invalid")
 	}
 	var payload pageCursorPayload
-	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
+	if err := json.Unmarshal(data, &payload); err != nil || payload.CreatedAt == "" {
+		return nil, errors.New("page is invalid")
+	}
+	if _, err := uuid.Parse(payload.UUID); err != nil {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)
@@ -894,7 +897,10 @@ func decodeCredentialCursor(raw string) (*db.VaultCredentialPageCursor, error) {
 		return nil, errors.New("page is invalid")
 	}
 	var payload pageCursorPayload
-	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
+	if err := json.Unmarshal(data, &payload); err != nil || payload.CreatedAt == "" {
+		return nil, errors.New("page is invalid")
+	}
+	if _, err := uuid.Parse(payload.UUID); err != nil {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)

@@ -226,6 +226,10 @@ export function managedColumnLabel(column: string, msg: I18nMsg) {
       return msg('managedAgents.common.lastUpdated', 'Last updated');
     case 'Agent':
       return msg('managedAgents.common.agent', 'Agent');
+    case 'Tokens in / out':
+      return msg('managedAgents.sessions.tokensInOut', 'Tokens in / out');
+    case 'Cost':
+      return msg('managedAgents.sessions.inspector.cost', 'Cost');
     case 'Trigger':
       return msg('managedAgents.common.trigger', 'Trigger');
     case 'Session':

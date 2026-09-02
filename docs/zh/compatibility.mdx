@@ -1,0 +1,38 @@
+---
+title: "兼容性与当前边界"
+description: "了解 OMA 当前的协议兼容范围和部署边界。"
+---
+
+OMA 是开源、自托管的智能体控制面。它为兼容 SDK 提供稳定的资源形状和请求习惯，同时保留自己的部署、存储和运行时边界。
+
+## 能力矩阵
+
+| 主题 | OMA 状态 | 说明 |
+| --- | --- | --- |
+| 智能体、版本与归档 | 支持 | `/v1/agents?beta=true` |
+| 环境 | 支持 | `cloud` 和 `self_hosted` 配置；实际沙箱由部署者提供 |
+| 会话、线程、事件 | 支持 | 列表、SSE、输入事件、工具确认与自定义工具结果 |
+| 文件、GitHub、记忆 | 支持 | 作为会话资源挂载 |
+| Tools、MCP、技能 | 支持 | 远程 URL MCP、内置/自定义工具、版本化 Skill 包 |
+| 密钥库 | 支持 | MCP OAuth、静态 Bearer 和环境变量凭证 |
+| Multi-agent | 支持 | coordinator + 最多 20 个固定版本智能体引用 |
+| Outcomes | 部分支持 | 可以定义结果并读取评估事件；实现仍在演进 |
+| Scheduled deployments | 支持 | POSIX 5 字段 cron + IANA 时区 + 手动运行 |
+| Webhooks | 支持 | 支持的会话/线程/密钥库事件子集 |
+| 会话 cost budgets | 未实现 | 当前通过上游限额、运行时超时和队列并发控制成本 |
+
+## SDK 兼容原则
+
+- 公共资源位于 `/v1`；控制台的 `/api`、`/auth` 和 `/web-api` 不属于 SDK 合同。
+- OMA 接受 `Authorization: Bearer` 和 `X-Api-Key`。
+- beta 激活方式按资源不同，不能把 `?beta=true` 当作通用替代品。
+- `POST /v1/messages` 按请求中的精确模型 ID 选择当前工作区的 Provider，客户端凭证不会透传给上游。
+- 模型 ID 原样发送；OMA 不提供 Claude 名称别名、模型映射或默认上游。
+
+## 版本升级建议
+
+升级 OMA 前应在测试工作区复跑：智能体创建与更新、会话事件流、文件下载、密钥库注入、部署手动运行和 Webhook 验签。Beta 合同可能随项目版本变化；以当前代码、API 页面和发行说明为准。
+
+<Card title="API 请求与 beta" href="/docs/zh/api/versioning-beta">
+  查看每个资源需要的查询参数和请求头。
+</Card>

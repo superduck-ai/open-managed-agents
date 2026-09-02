@@ -20,7 +20,6 @@
         metadata,
         connection_status,
         last_inbound_sequence_num,
-        last_outbound_sequence_num,
         last_internal_sequence_num,
         last_worker_connected_at,
         last_worker_activity_at,
@@ -62,7 +61,7 @@
             AND s.deleted_at IS NULL
         LEFT JOIN api_keys ak ON ak.uuid = s.created_by_api_key_uuid
             AND ak.workspace_uuid = w.uuid
-        LEFT JOIN users u ON u.uuid = ak.created_by_user_uuid
+        LEFT JOIN users u ON u.uuid = COALESCE(CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid), ak.created_by_user_uuid)
             AND u.organization_uuid = cs.organization_uuid
             AND u.deleted_at IS NULL
     </sql>
@@ -82,6 +81,7 @@
             status,
             metadata,
             oauth_access_token_hash,
+            current_worker_epoch,
             created_at,
             updated_at
         ) VALUES (
@@ -98,6 +98,7 @@
             #{params.Status},
             CAST(#{params.Metadata,sensitive=true} AS jsonb),
             #{params.OAuthAccessTokenHash,sensitive=true},
+            #{params.InitialWorkerEpoch},
             #{params.CreatedAt},
             #{params.CreatedAt}
         )
@@ -178,6 +179,20 @@
         FROM code_sessions
         WHERE external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL
+    </select>
+
+    <select id="FindActiveForEnvironmentWork" resultType="codeSessionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND environment_uuid = #{environmentUUID}
+          AND session_uuid = #{sessionUUID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT 2
     </select>
 
     <select id="FindLatestBySessionExternalID" resultType="codeSessionRow">
@@ -266,9 +281,43 @@
         RETURNING worker_lease_expires_at
     </update>
 
+    <update id="ResumeWorkerLeaseForSandbox" result="rows">
+        UPDATE code_sessions code_session
+        SET worker_lease_expires_at = #{params.ExpiresAt},
+            updated_at = #{params.Now}
+        WHERE code_session.organization_uuid = #{params.OrganizationUUID}
+          AND code_session.workspace_uuid = #{params.WorkspaceUUID}
+          AND code_session.external_id = #{params.CodeSessionExternalID}
+          AND code_session.status = 'active'
+          AND code_session.current_worker_epoch &gt; 0
+          AND code_session.worker_lease_expires_at IS NOT NULL
+          AND code_session.worker_status IN ('idle', 'running', 'requires_action')
+          AND code_session.deleted_at IS NULL
+          AND EXISTS (
+              SELECT 1
+              FROM environment_work work
+              JOIN environment_sandboxes sandbox
+                ON sandbox.organization_uuid = work.organization_uuid
+               AND sandbox.workspace_uuid = work.workspace_uuid
+               AND sandbox.environment_uuid = work.environment_uuid
+               AND sandbox.work_uuid = work.uuid
+               AND sandbox.provider_sandbox_id = #{params.ProviderSandboxID}
+               AND sandbox.state = 'running'
+              WHERE work.organization_uuid = code_session.organization_uuid
+                AND work.workspace_uuid = code_session.workspace_uuid
+                AND work.environment_uuid = code_session.environment_uuid
+                AND work.environment_external_id = code_session.environment_external_id
+                AND work.session_uuid = code_session.session_uuid
+                AND work.state = 'active'
+                AND work.deleted_at IS NULL
+          )
+    </update>
+
     <update id="UpdateWorkerState" result="returning" resultType="codeSessionRow">
         UPDATE code_sessions
-        SET worker_status = #{params.WorkerStatus},
+        SET idle_since = CASE WHEN #{params.WorkerStatus} = 'idle'
+                    THEN COALESCE(idle_since, #{params.Now}) ELSE NULL END,
+            worker_status = #{params.WorkerStatus},
             worker_requires_action_details = CAST(#{params.RequiresActionDetails,sensitive=true} AS jsonb),
             worker_external_metadata = CAST(#{params.ExternalMetadata,sensitive=true} AS jsonb),
             connection_status = 'connected',
@@ -280,16 +329,15 @@
         <include refid="columns"/>
     </update>
 
+    <update id="ResetIdleSinceForSession">
+        UPDATE code_sessions SET idle_since = NULL
+        WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID}
+            AND session_uuid = #{sessionUUID} AND status = 'active' AND deleted_at IS NULL
+    </update>
     <update id="UpdateCodeSessionInboundSequence" result="rows">
         UPDATE code_sessions
         SET last_inbound_sequence_num = #{sequenceNum},
-            updated_at = #{now}
-        WHERE uuid = #{codeSessionUUID}
-    </update>
-
-    <update id="UpdateCodeSessionOutboundSequence" result="rows">
-        UPDATE code_sessions
-        SET last_outbound_sequence_num = #{sequenceNum},
+            idle_since = NULL,
             updated_at = #{now}
         WHERE uuid = #{codeSessionUUID}
     </update>
@@ -318,16 +366,6 @@
           AND deleted_at IS NULL
     </update>
 
-    <update id="TouchWorkerActivityForActiveLease" result="rows">
-        UPDATE code_sessions
-        SET last_worker_activity_at = #{now},
-            updated_at = #{now}
-        WHERE external_id = #{codeSessionExternalID}
-          AND current_worker_epoch = #{epoch}
-          AND worker_lease_expires_at &gt; #{now}
-          AND deleted_at IS NULL
-    </update>
-
     <update id="TouchWorkerActivity" result="rows">
         UPDATE code_sessions
         SET last_worker_activity_at = #{now},
@@ -352,6 +390,34 @@
               AND current_worker_epoch = #{params.RequiredEpoch}
           </if>
           AND deleted_at IS NULL
+    </update>
+
+    <select id="CountActiveIngressWorkerEpoch" result="scalar" resultType="int64">
+        SELECT COUNT(*)
+        FROM code_sessions
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND external_id = #{codeSessionExternalID}
+          AND current_worker_epoch = #{workerEpoch}
+          AND status = 'active'
+          AND deleted_at IS NULL
+    </select>
+
+    <update id="RotateCredentials" result="returning" resultType="int64">
+        UPDATE code_sessions
+        SET idle_since = NULL,
+            oauth_access_token_hash = #{params.OAuthAccessTokenHash,sensitive=true},
+            current_worker_epoch = current_worker_epoch + 1,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrganizationUUID}
+          AND workspace_uuid = #{params.WorkspaceUUID}
+          AND session_external_id = #{params.SessionExternalID}
+          AND external_id = #{params.CodeSessionExternalID}
+          AND status = 'active'
+          AND deleted_at IS NULL
+        RETURNING current_worker_epoch
     </update>
 
     <update id="TerminateByExternalID" result="rows">

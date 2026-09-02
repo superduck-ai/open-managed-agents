@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"slices"
 	"strings"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -17,7 +18,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/yourbatis"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 )
@@ -37,6 +37,8 @@ var (
 	ErrLimitExceeded            = errors.New("limit exceeded")
 	ErrFileInUse                = errors.New("file is in use")
 	ErrFileReferenceNotFound    = errors.New("file reference not found")
+	ErrStaleSchedule            = errors.New("stale deployment schedule")
+	ErrWorkspaceArchived        = errors.New("workspace archived")
 )
 
 type DB struct {
@@ -140,6 +142,19 @@ func (d *DB) Close() {
 	if d.pool != nil {
 		d.pool.Close()
 	}
+}
+
+// SQLDB exposes the Yourbatis-owned database/sql wrapper to integrations.
+// Callers must not close it or use it for application queries.
+func (d *DB) SQLDB() *sql.DB {
+	return d.mapperDB.SQLDB()
+}
+
+// ListenerPool exposes the existing pool for integration-owned LISTEN connections.
+// Callers must not close it or use it for application queries. Stop integrations
+// before DB.Close so their dedicated listener connections are also closed.
+func (d *DB) ListenerPool() *pgxpool.Pool {
+	return d.pool
 }
 
 func EnsureDatabase(ctx context.Context, databaseURL string) error {

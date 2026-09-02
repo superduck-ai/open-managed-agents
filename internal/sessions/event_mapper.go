@@ -8,14 +8,13 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-
-	"github.com/google/uuid"
 )
 
 func rawSessionEventType(raw json.RawMessage) string {
@@ -58,9 +57,12 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 	delete(payload, "owner_session_thread_id")
 	delete(payload, "_owner_session_thread_id")
 	if threadID == "" {
-		primary, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
+		primary, found, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
 		if err != nil {
 			return db.SessionEvent{}, err
+		}
+		if !found {
+			return db.SessionEvent{}, errors.New("primary session thread not found")
 		}
 		threadID = primary.ExternalID
 	}
@@ -69,7 +71,7 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 		return db.SessionEvent{}, err
 	}
 	return db.SessionEvent{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        eventID,
 		OrganizationUUID:  session.OrganizationUUID,
 		WorkspaceUUID:     session.WorkspaceUUID,
@@ -145,7 +147,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			return nil, err
 		}
 		events = append(events, db.SessionEvent{
-			UUID:              uuid.NewString(),
+			UUID:              uuid.NewV4().String(),
 			ExternalID:        spec.EventID,
 			OrganizationUUID:  session.OrganizationUUID,
 			WorkspaceUUID:     session.WorkspaceUUID,
@@ -384,12 +386,12 @@ func firstSessionPayloadString(payload map[string]any, fields ...string) string 
 }
 
 func (h *Handler) ensurePrimarySessionThread(ctx context.Context, session db.Session) (db.SessionThread, error) {
-	thread, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
-	if err == nil {
-		return thread, nil
-	}
-	if !errors.Is(err, db.ErrNotFound) {
+	thread, found, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil {
 		return db.SessionThread{}, err
+	}
+	if found {
+		return thread, nil
 	}
 	threadID, err := ids.New("sthr_")
 	if err != nil {
@@ -397,7 +399,7 @@ func (h *Handler) ensurePrimarySessionThread(ctx context.Context, session db.Ses
 	}
 	now := time.Now().UTC()
 	return h.db.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
-		UUID:              uuid.NewString(),
+		UUID:              uuid.NewV4().String(),
 		ExternalID:        threadID,
 		OrganizationUUID:  session.OrganizationUUID,
 		WorkspaceUUID:     session.WorkspaceUUID,
@@ -435,13 +437,14 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	var parentThreadExternalID *string
 	parentExternalID := sessionPayloadString(payload, "parent_session_thread_id")
 	var parent db.SessionThread
+	parentFound := true
 	var err error
 	if parentExternalID != "" {
 		parent, err = h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, parentExternalID)
 	} else {
-		parent, err = h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
+		parent, parentFound, err = h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
 	}
-	if err == nil && parent.ExternalID != threadID {
+	if err == nil && parentFound && parent.ExternalID != threadID {
 		parentThreadUUID = &parent.UUID
 		value := parent.ExternalID
 		parentThreadExternalID = &value
@@ -456,7 +459,7 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 		now = time.Now().UTC()
 	}
 	_, err = h.db.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
-		UUID:                   uuid.NewString(),
+		UUID:                   uuid.NewV4().String(),
 		ExternalID:             threadID,
 		OrganizationUUID:       session.OrganizationUUID,
 		WorkspaceUUID:          session.WorkspaceUUID,

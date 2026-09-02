@@ -1,0 +1,20 @@
+---
+title: "Sandbox runtime reference"
+description: "Commands, paths, and capabilities expected by the standard OMA sandbox image."
+---
+
+OMA does not require one Linux distribution, but the standard runner expects this contract.
+
+| Item | Default or requirement |
+| --- | --- |
+| Environment Manager | `/usr/local/bin/environment-manager` |
+| Agent runtime | `/opt/claude-code/bin/claude`, configurable |
+| Workspace | `/workspace` |
+| Skills | `/skills/<directory>` |
+| Filestore | rclone/FUSE configured by the runner |
+
+Environment Manager must support `provision-packages --protocol v1 --stdin`, accept a JSON manifest no larger than 1 MiB, and return one strict v1 JSON result no larger than 16 KiB.
+
+The package contract covers `apt`, `cargo`, `gem`, `go`, `npm`, and `pip`. Images should also include a shell, Git, CA bundle, archive tools, and rclone. Pin custom images for language-version-sensitive workflows.
+
+Sandbox size is provider configuration, not an OMA API constant. Configure provider limits together with `e2b.sandbox_timeout` and `environment_runner.package_provision_timeout`, then monitor that they take effect.

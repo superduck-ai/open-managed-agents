@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	urlpkg "net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
@@ -19,6 +20,27 @@ const (
 	defaultEnvironmentWorkDir     = "/home/user"
 	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
+	managedAgentEnvironmentPrompt = `# Managed-agent environment
+
+These rules describe the current sandbox environment and do not replace your assigned role.
+
+## Uploaded inputs
+
+- A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
+- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
+- /mnt/session/uploads is read-only. Do not modify files under this directory.
+- Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
+- First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.
+- Search the working directory only after the uploads check finds no match. Do not report a file missing until both locations have been checked in this order.
+- Uploaded filenames and paths are authoritative. Use an exact path when provided; otherwise, use only a path returned by inspecting /mnt/session/uploads. If multiple files match, ask the user which one to use.
+- Never guess, truncate, rename, or reconstruct an uploaded input path. Do not infer an upload path from metadata such as a file ID.
+
+## Output deliverables
+
+- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
+- A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
+- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
+- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
 )
 
 func managedAgentSessionConfig(
@@ -33,10 +55,11 @@ func managedAgentSessionConfig(
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
-		"origin":   "managed_agents_api",
-		"model":    modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":  runtimeResources.sources,
-		"outcomes": []any{},
+		"origin":               "managed_agents_api",
+		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
+		"sources":              runtimeResources.sources,
+		"outcomes":             []any{},
+		"append_system_prompt": managedAgentEnvironmentPrompt,
 		"claude_code_args": map[string]string{
 			"tools": toolArgs.Tools,
 		},
@@ -44,6 +67,9 @@ func managedAgentSessionConfig(
 	claudeCodeArgs := body["claude_code_args"].(map[string]string)
 	if toolArgs.AllowedTools != "" {
 		claudeCodeArgs["allowed-tools"] = toolArgs.AllowedTools
+	}
+	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
+		body["system_prompt"] = system
 	}
 	if len(mcpServers) > 0 {
 		body["mcp_servers"] = mcpServers
@@ -56,8 +82,8 @@ func managedAgentSessionConfig(
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	if vaultIDs := rawJSONArray(session.VaultIDs); len(vaultIDs) > 0 {
-		body["vault_ids"] = vaultIDs
+	if len(session.VaultIDs) > 0 {
+		body["vault_ids"] = session.VaultIDs
 	}
 	return json.Marshal(body)
 }
@@ -186,17 +212,6 @@ func rawJSONObject(raw json.RawMessage) map[string]any {
 	return object
 }
 
-func rawJSONArray(raw json.RawMessage) []any {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil
-	}
-	var values []any
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil
-	}
-	return values
-}
-
 func mapStringAnyValue(value any) map[string]any {
 	object, ok := value.(map[string]any)
 	if ok && object != nil {
@@ -228,7 +243,8 @@ func modelIDFromAgentSnapshot(raw json.RawMessage) string {
 }
 
 // buildEnvironmentManagerV0Payload 把 code session 映射为 environment-manager v0 合同；relay、runtime API 与 ingress 绑定同一 external ID，真实上游凭证不进入 sandbox。
-func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken string, oauthAccessToken string, workDir string, sessionConfig json.RawMessage, cfg config.Config) ([]byte, error) {
+// vaultEnvPlaceholders 为 Environment Variable Credential 的 secret_name→Opaque Placeholder；平台保留名不会被覆盖。
+func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken string, oauthAccessToken string, workerEpoch int64, workDir string, sessionConfig json.RawMessage, cfg config.Config, vaultEnvPlaceholders map[string]string) ([]byte, error) {
 	startupContext := map[string]any{}
 	if len(sessionConfig) > 0 && string(sessionConfig) != "null" {
 		if err := json.Unmarshal(sessionConfig, &startupContext); err != nil {
@@ -247,12 +263,20 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	environmentVariables["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] = "1"
 	delete(environmentVariables, "CLAUDE_CODE_SESSION_ACCESS_TOKEN") // 避免遮蔽 environment-manager 注入的 WebSocket auth FD。
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
-	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
-	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1" // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
+	workerEpochText := strconv.FormatInt(workerEpoch, 10)
+	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = workerEpochText
+	environmentVariables["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] = "true" // 让 worker 输出包含 streaming 中间消息。
+	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"              // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
-	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, sessionIngressToken, "1")
+	applyCodeSessionOTLPEnvironment(environmentVariables, cfg.Observability, apiBaseURL, codeSessionID, sessionIngressToken)
+	for key, placeholder := range vaultEnvPlaceholders {
+		if _, exists := environmentVariables[key]; exists {
+			continue
+		}
+		environmentVariables[key] = placeholder
+	}
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
 		startupContext["sources"] = []any{}
@@ -296,99 +320,46 @@ func claudeRuntimeModelEnvironment(modelID string) map[string]string {
 	}
 }
 
-func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string, workerEpoch string) {
-	if environmentVariables == nil {
+// applyCodeSessionOTLPEnvironment 对采集选项只补默认值；连接 OMA 所需的
+// endpoint 和 Authorization 由平台覆盖，兼容不会动态配置 OTLP 的旧版
+// environment-manager。OTLP ingress 仍会校验 session token 与 active lease。
+func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg config.ObservabilityConfig, apiBaseURL, codeSessionID, sessionIngressToken string) {
+	if !cfg.Enabled {
 		return
 	}
-	requiredHeaders := []string{
-		"Authorization=Bearer " + sessionIngressToken,
-		"x-worker-epoch=" + workerEpoch,
+	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_ENABLE_TELEMETRY", "1")
+	// Runner shell defaults this to 1 to skip marketplace/auto-update. Claude Code
+	// treats a non-empty value as "essential traffic only" and will not export OTEL.
+	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+	setDefaultEnvironmentVariable(environmentVariables, "ENABLE_BETA_TRACING_DETAILED", "1")
+	if cfg.ContentCaptureEnabled {
+		// Without these grants Claude Code exports user_prompt="<REDACTED>" and
+		// omits tool input/output; detailed tracing alone only carries structure.
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_USER_PROMPTS", "1")
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_DETAILS", "1")
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_CONTENT", "1")
 	}
-	metricsInjected := false
-	logsInjected := false
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		exporters := stringFromMap(environmentVariables, "OTEL_METRICS_EXPORTER")
-		if exporters == "" || commaListContains(exporters, "otlp") {
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL, codeSessionID))
-			metricsInjected = true
-		}
-	}
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		exporters := stringFromMap(environmentVariables, "OTEL_LOGS_EXPORTER")
-		if exporters == "" || commaListContains(exporters, "otlp") {
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", codeSessionWorkerOTLPLogsEndpoint(apiBaseURL, codeSessionID))
-			logsInjected = true
-		}
-	}
-	if metricsInjected {
-		environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = ensureOTLPHeaders(
-			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_HEADERS"),
-			requiredHeaders,
-		)
-	}
-	if logsInjected {
-		environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = ensureOTLPHeaders(
-			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_HEADERS"),
-			requiredHeaders,
-		)
-	}
-}
 
-func codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL string, codeSessionID string) string {
-	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/metrics"
-}
-
-func codeSessionWorkerOTLPLogsEndpoint(apiBaseURL string, codeSessionID string) string {
-	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/logs"
+	otlpBaseURL := strings.TrimRight(apiBaseURL, "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp"
+	headers := "Authorization=Bearer " + sessionIngressToken
+	environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ""
+	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] = otlpBaseURL + "/metrics"
+	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = headers
+	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] = otlpBaseURL + "/logs"
+	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = headers
+	environmentVariables["BETA_TRACING_ENDPOINT"] = otlpBaseURL
+	environmentVariables["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = headers
 }
 
 func setDefaultEnvironmentVariable(environmentVariables map[string]any, key string, value string) {
-	if stringFromMap(environmentVariables, key) == "" {
+	if _, configured := environmentVariables[key]; !configured {
 		environmentVariables[key] = value
 	}
-}
-
-func ensureOTLPHeaders(raw string, required []string) string {
-	pairs := make([]string, 0, len(required)+2)
-	seen := map[string]struct{}{}
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		pairs = append(pairs, pair)
-		key, _, ok := strings.Cut(pair, "=")
-		if ok {
-			seen[strings.ToLower(strings.TrimSpace(key))] = struct{}{}
-		}
-	}
-	for _, pair := range required {
-		key, _, ok := strings.Cut(pair, "=")
-		if !ok {
-			continue
-		}
-		normalizedKey := strings.ToLower(strings.TrimSpace(key))
-		if _, ok := seen[normalizedKey]; ok {
-			continue
-		}
-		pairs = append(pairs, pair)
-		seen[normalizedKey] = struct{}{}
-	}
-	return strings.Join(pairs, ",")
-}
-
-func commaListContains(raw string, want string) bool {
-	want = strings.TrimSpace(strings.ToLower(want))
-	for _, item := range strings.Split(raw, ",") {
-		if strings.TrimSpace(strings.ToLower(item)) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func codeSessionSandboxAPIBaseURL(cfg config.Config) string {
@@ -403,7 +374,9 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 	agentVersion := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ClaudeAgentVersion), defaultClaudeAgentVersion)
 	claudePath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ClaudePath), defaultClaudePath)
 	versionPattern := `s/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p`
-	command := strings.Join([]string{
+	extraGitConfig := configuredGitSSHtoHTTPSEntries(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts)
+	gitConfigCount := environmentManagerBuiltInGitConfigCount + len(extraGitConfig)
+	commandParts := []string{
 		"set -eu",
 		"mkdir -p " + shellQuote(baseDir),
 		"if [ ! -x " + shellQuote(managerPath) + " ]; then printf '%s\\n' " + shellQuote("environment-manager binary missing or not executable: "+managerPath) + " >&2; exit 1; fi",
@@ -414,19 +387,33 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		"export CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=${CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL:-1}",
 		"export CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH=${CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH:-0}",
 		"export SKIP_PLUGIN_MARKETPLACE=${SKIP_PLUGIN_MARKETPLACE:-true}",
+		// 让 environment-manager 自身及其子进程把 GitHub SSH remote 改写为经受控 HTTPS 出口访问。
+		// COUNT = 内置 3 条 + environment_runner.git_ssh_to_https_hosts 展开条目。
+		"export GIT_CONFIG_COUNT=" + strconv.Itoa(gitConfigCount),
+		"export GIT_CONFIG_KEY_0=credential.interactive",
+		"export GIT_CONFIG_VALUE_0=false",
+		"export GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_1=git@github.com:",
+		"export GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+		"export GIT_CONFIG_VALUE_2=ssh://git@github.com/",
+	}
+	commandParts = append(commandParts, gitConfigExportLinesFrom(environmentManagerBuiltInGitConfigCount, extraGitConfig)...)
+	commandParts = append(commandParts,
+		"export GIT_EDITOR=true",
+		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
+		"export GIT_TERMINAL_PROMPT=0",
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
-		"exec " + shellQuote(managerPath) +
-			" task-run" +
-			" --stdin" +
-			" --session " + shellQuote(codeSessionID) +
-			" --session-mode resume-cached" +
-			" --claude-agent-version " + shellQuote("current") +
-			" --claude-path " + shellQuote(claudePath) +
-			" > " + shellQuote(logPath) + " 2>&1",
-	}, "\n")
+		"exec "+shellQuote(managerPath)+
+			" task-run"+
+			" --session "+shellQuote(codeSessionID)+
+			" --session-mode resume-cached"+
+			" --claude-agent-version "+shellQuote("current")+
+			" --claude-path "+shellQuote(claudePath)+
+			" > "+shellQuote(logPath)+" 2>&1",
+	)
 	return environmentManagerCommand{
 		Payload:      append([]byte(nil), payload...),
-		ShellCommand: command,
+		ShellCommand: strings.Join(commandParts, "\n"),
 	}
 }
 

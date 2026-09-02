@@ -14,31 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const (
-	defaultAnthropicMaxTokens = 16384
-	anthropicAPIVersion       = "2023-06-01"
-	chatFallbackModel         = "claude-haiku-4-5-20251001"
-	miscDefaultChatModel      = "claude-sonnet-4-6"
-)
-
-var chatModelFallbacks = map[string]string{
-	"claude-fable-5":                     chatFallbackModel,
-	"claude-opus-4-8":                    chatFallbackModel,
-	"claude-opus-4-1-20250805":           chatFallbackModel,
-	"claude-opus-4-20250514":             chatFallbackModel,
-	"claude-opus-4-5-20251101":           chatFallbackModel,
-	"claude-opus-4-6":                    chatFallbackModel,
-	"claude-opus-4-7":                    chatFallbackModel,
-	"claude-sonnet-4-5-20250929":         chatFallbackModel,
-	"claude-sonnet-4-6":                  chatFallbackModel,
-	"claude-haiku-4-5-20251001":          chatFallbackModel,
-	"claude-3-opus-20240229":             chatFallbackModel,
-	"claude-3-5-sonnet-20241022":         chatFallbackModel,
-	"claude-3-7-sonnet-20250219":         chatFallbackModel,
-	"claude-sonnet-4-20250514":           chatFallbackModel,
-	"claude-opus-4-1-20250805-claude-ai": chatFallbackModel,
-}
-
 type OrganizationStore interface{}
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -72,10 +47,17 @@ func readRequiredJSON[T any](r *http.Request, disallowUnknownFields bool) (T, er
 }
 
 func visibleOrgUUID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	orgUUID, ok := resolvedVisibleOrgUUID(r)
+	if !ok {
+		organizationNotFound(w)
+	}
+	return orgUUID, ok
+}
+
+func resolvedVisibleOrgUUID(r *http.Request) (string, bool) {
 	orgUUID := strings.TrimSpace(chi.URLParam(r, "orgUuid"))
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if orgUUID == "" || !ok {
-		organizationNotFound(w)
 		return "", false
 	}
 	if principalCanSeeOrg(principal, orgUUID) {
@@ -86,7 +68,6 @@ func visibleOrgUUID(w http.ResponseWriter, r *http.Request) (string, bool) {
 			return localOrgUUID, true
 		}
 	}
-	organizationNotFound(w)
 	return "", false
 }
 

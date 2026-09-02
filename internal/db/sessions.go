@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,11 +14,13 @@ import (
 )
 
 type Session struct {
-	UUID                  string
-	ExternalID            string
-	OrganizationUUID      string
-	WorkspaceUUID         string
-	CreatedByAPIKeyUUID   string
+	UUID                string
+	ExternalID          string
+	OrganizationUUID    string
+	WorkspaceUUID       string
+	CreatedByAPIKeyUUID string
+	// RuntimeUserUUID is server-owned execution identity, not resource ownership.
+	RuntimeUserUUID       string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
 	AgentUUID             string
@@ -27,7 +31,7 @@ type Session struct {
 	DeploymentID          *string
 	Title                 *string
 	Metadata              json.RawMessage
-	VaultIDs              json.RawMessage
+	VaultIDs              []string
 	Status                string
 	Usage                 json.RawMessage
 	Stats                 json.RawMessage
@@ -65,6 +69,10 @@ const (
 	// MaxSessionFileResources is the write-time limit for active File resources
 	// attached to one Session.
 	MaxSessionFileResources = sessioncontract.MaxFileResources
+	// MaxSessionOutputFileResources caps the output files ListSessionResources
+	// returns. Output files bypass the write-time limit, so without this cap the
+	// resources array would grow unbounded. files.list(scope_id) stays complete.
+	MaxSessionOutputFileResources = sessioncontract.MaxFileResources
 )
 
 type SessionResource struct {
@@ -77,9 +85,13 @@ type SessionResource struct {
 	ResourceType      string
 	Payload           json.RawMessage
 	SecretPayload     json.RawMessage
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	DeletedAt         *time.Time
+	// Path 是 Filestore namespace 中的公开路径；FileExternalID 是 Owned File 的
+	// `file_...` ID，只在读取路径同批 JOIN 出 File 行时才有值。
+	Path           string
+	FileExternalID string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	DeletedAt      *time.Time
 }
 
 type SessionEvent struct {
@@ -214,10 +226,22 @@ func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Sessi
 	return session, thread, resources, work, err
 }
 
-func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
+func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, bool, error) {
 	mapper := NewSessionMapper(d.mapperDB)
-	row, err := mapper.FindByExternalID(ctx, workspaceUUID, externalID)
-	return row.session(), mapNoRows(err)
+	row, found, err := mapper.FindByExternalID(ctx, workspaceUUID, externalID)
+	if err != nil || !found {
+		return Session{}, found, err
+	}
+	return row.session(), true, nil
+}
+
+func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, sessionUUID string) (Session, bool, error) {
+	mapper := NewSessionMapper(d.mapperDB)
+	row, found, err := mapper.FindByUUID(ctx, workspaceUUID, sessionUUID)
+	if err != nil || !found {
+		return Session{}, found, err
+	}
+	return row.session(), true, nil
 }
 
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
@@ -313,7 +337,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if _, txErr = eventMapper.SoftDeleteBySession(ctx, workspaceUUID, externalID); txErr != nil {
 			return txErr
 		}
-		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, externalID)
+		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
 		return txErr
 	})
 	return session, err
@@ -336,10 +360,16 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	return sessions, hasMore, nil
 }
 
-func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, error) {
+func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, bool, error) {
 	mapper := NewSessionThreadMapper(d.mapperDB)
 	row, err := mapper.FindPrimary(ctx, workspaceUUID, sessionExternalID)
-	return row.thread(), mapNoRows(err)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionThread{}, false, nil
+	}
+	if err != nil {
+		return SessionThread{}, false, err
+	}
+	return row.thread(), true, nil
 }
 
 func (d *DB) GetSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, error) {
@@ -434,7 +464,7 @@ func (d *DB) GetSessionResource(ctx context.Context, workspaceUUID string, sessi
 
 func (d *DB) ListSessionResources(ctx context.Context, workspaceUUID string, sessionExternalID string) ([]SessionResource, error) {
 	mapper := NewSessionResourceMapper(d.mapperDB)
-	rows, err := mapper.List(ctx, workspaceUUID, sessionExternalID)
+	rows, err := mapper.List(ctx, workspaceUUID, sessionExternalID, MaxSessionOutputFileResources)
 	return sessionResourcesFromRows(rows), err
 }
 

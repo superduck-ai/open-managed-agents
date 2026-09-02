@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 
 	"golang.org/x/net/websocket"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -31,33 +32,6 @@ const (
 	// UpstreamProxyChunk 对应 message UpstreamProxyChunk { bytes data = 1; }。
 	upstreamProxyChunkDataFieldNumber protowire.Number = 1
 )
-
-// blockedUpstreamProxyNetworks 是默认 SSRF 边界：拒绝本机、私网、链路本地、
-// CGNAT、benchmark/fake-IP、文档保留段、组播及 IPv6 ULA 等非公网目标。
-// 198.18.0.0/15 在标准语义中是 benchmark 网段，但本地 Clash/TUN 也可能将其用作
-// fake-IP；此冲突只能通过显式的临时配置开关绕过，不能改变默认安全边界。
-var blockedUpstreamProxyNetworks = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("224.0.0.0/4"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("::/128"),
-	netip.MustParsePrefix("::1/128"),
-	netip.MustParsePrefix("fc00::/7"),
-	netip.MustParsePrefix("fe80::/10"),
-	netip.MustParsePrefix("ff00::/8"),
-	netip.MustParsePrefix("2001:db8::/32"),
-}
 
 type upstreamProxyConnectRequest struct {
 	// Target 保留 CONNECT 行中的 host:port；SessionID 与 Token 来自 Basic 凭证的两部分。
@@ -157,7 +131,7 @@ func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, identity 
 		return
 	}
 	if h.cfg.CodeSession.UpstreamProxyMITMEnabled {
-		h.serveUpstreamProxyMITM(connection, connectRequest.Target, resolvedTarget)
+		h.serveUpstreamProxyMITM(connection, identity, connectRequest.Target, resolvedTarget)
 		return
 	}
 	targetConnection, err := h.upstreamProxy.dial(connection.Request().Context(), resolvedTarget)
@@ -252,7 +226,7 @@ func resolveProxyTarget(ctx context.Context, target string, disableSSRFProtectio
 	}
 	// IP 字面量无需 DNS；默认必须是公网地址，临时开关开启时才原样放行。
 	if parsed, parseErr := netip.ParseAddr(host); parseErr == nil {
-		if !disableSSRFProtection && !publicUpstreamProxyIP(parsed) {
+		if !disableSSRFProtection && !networkpolicy.PublicAddress(parsed) {
 			return "", &upstreamProxyTargetError{status: http.StatusForbidden, cause: errors.New("target address is not public")}
 		}
 		return net.JoinHostPort(parsed.Unmap().String(), port), nil
@@ -265,25 +239,11 @@ func resolveProxyTarget(ctx context.Context, target string, disableSSRFProtectio
 	}
 	for _, address := range addresses {
 		parsed, ok := netip.AddrFromSlice(address.IP)
-		if ok && (disableSSRFProtection || publicUpstreamProxyIP(parsed)) {
+		if ok && (disableSSRFProtection || networkpolicy.PublicAddress(parsed)) {
 			return net.JoinHostPort(parsed.Unmap().String(), port), nil
 		}
 	}
 	return "", &upstreamProxyTargetError{status: http.StatusForbidden, cause: errors.New("target has no public address")}
-}
-
-func publicUpstreamProxyIP(address netip.Addr) bool {
-	// Unmap 将 IPv4-mapped IPv6 统一成 IPv4，保证 ::ffff:127.0.0.1 等形式不能绕过网段检查。
-	address = address.Unmap()
-	if !address.IsValid() || !address.IsGlobalUnicast() {
-		return false
-	}
-	for _, network := range blockedUpstreamProxyNetworks {
-		if network.Contains(address) {
-			return false
-		}
-	}
-	return true
 }
 
 func dialUpstreamProxyTarget(ctx context.Context, target string) (net.Conn, error) {

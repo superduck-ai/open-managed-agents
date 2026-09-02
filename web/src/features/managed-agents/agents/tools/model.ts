@@ -252,6 +252,32 @@ export function aggregateToolPermissions(
   return new Set(permissions).size === 1 ? permissions[0] : 'custom';
 }
 
+export function configuredAgentToolPermission(
+  agent: AgentApiResponse,
+  runtimeToolName: string,
+): Exclude<ToolPermissionState, 'custom'> | undefined {
+  const tools = arrayRecords(agent.tools);
+  const normalizedName = normalizeRuntimeToolName(runtimeToolName);
+  const builtInToolset = tools.find((tool) => stringValue(tool.type).startsWith('agent_toolset_'));
+  const builtInDefinitions = BUILT_IN_AGENT_TOOLSETS[CURRENT_BUILT_IN_TOOLSET];
+  if (builtInToolset && builtInDefinitions.some((tool) => tool.name === normalizedName)) {
+    return toolPermissionForName(builtInToolset, normalizedName, true, 'always_allow');
+  }
+
+  for (const server of arrayRecords(agent.mcp_servers)) {
+    const serverName = stringValue(server.name);
+    const prefix = `mcp__${normalizeRuntimeToolName(serverName)}__`;
+    if (!serverName || !normalizedName.startsWith(prefix)) continue;
+    const toolName = normalizedName.slice(prefix.length);
+    const toolset = tools.find(
+      (tool) => tool.type === 'mcp_toolset' && stringValue(tool.mcp_server_name) === serverName,
+    );
+    return toolPermissionForName(toolset, toolName, false, 'always_ask');
+  }
+
+  return undefined;
+}
+
 export function buildAgentToolDisplayCards(
   agent: AgentApiResponse,
   directoryServers: McpDirectoryServer[] = [],
@@ -399,6 +425,14 @@ function toolPermissionForName(
     (config) => (stringValue(config.name) || (allowLegacyToolName ? stringValue(config.tool_name) : '')) === toolName,
   );
   return effectiveToolPermission(override ?? optionalRecordValue(toolset.default_config), fallback);
+}
+
+export function normalizeRuntimeToolName(value: string) {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
 }
 
 function resolveMcpServer(name: string, url: string, directoryServers: McpDirectoryServer[]): ResolvedMcpServer {

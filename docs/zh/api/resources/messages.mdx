@@ -1,0 +1,408 @@
+---
+title: "创建消息"
+description: "通过 OMA 发送结构化输入并生成下一条消息。"
+api: "POST /v1/messages"
+---
+
+发送由文本、图片、文档或工具结果组成的结构化消息列表，并生成对话中的下一条消息。该端点既可用于单次请求，也可用于无状态的多轮对话。
+
+OMA 验证调用方身份，并把请求透明转发到配置的模型上游。OMA 不解析或持久化消息请求体。可用的 Beta 字段、内容块、工具和限制由所选模型及上游决定。
+
+<Info>
+  使用 Beta 请求形状时，请调用 `/v1/messages?beta=true`。OMA 转发请求时会保留查询字符串和兼容的功能请求头。
+</Info>
+
+## 请求示例
+
+<CodeGroup>
+```bash cURL
+curl 'http://localhost:38080/v1/messages?beta=true' \
+  -H 'X-Api-Key: sk-ant-local-default' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'content-type: application/json' \
+  --data '{
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "请用三个步骤说明 OMA 会话的生命周期。"
+      }
+    ]
+  }'
+```
+
+```python Python
+from anthropic import Anthropic
+
+client = Anthropic(
+    api_key="sk-ant-local-default",
+    base_url="http://localhost:38080",
+)
+
+message = client.beta.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    messages=[
+        {
+            "role": "user",
+            "content": "请用三个步骤说明 OMA 会话的生命周期。",
+        }
+    ],
+)
+
+print(message.content)
+```
+
+```typescript TypeScript
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  apiKey: "sk-ant-local-default",
+  baseURL: "http://localhost:38080",
+});
+
+const message = await client.beta.messages.create({
+  model: "claude-sonnet-4-6",
+  max_tokens: 1024,
+  messages: [
+    {
+      role: "user",
+      content: "请用三个步骤说明 OMA 会话的生命周期。",
+    },
+  ],
+});
+
+console.log(message.content);
+```
+</CodeGroup>
+
+## 请求头
+
+<ParamField header="X-Api-Key" type="string">
+  OMA 工作区 API 密钥。未使用 `Authorization: Bearer` 时必填。如果两个请求头同时出现，OMA 优先使用 `X-Api-Key`。
+</ParamField>
+
+<ParamField header="Authorization" type="string">
+  Bearer 认证的替代方式，格式为 `Bearer <workspace-api-key>`。
+</ParamField>
+
+<ParamField header="anthropic-version" type="string" required>
+  消息协议版本。除非配置的上游明确要求其他版本，否则使用 `2023-06-01`。
+</ParamField>
+
+<ParamField header="anthropic-beta" type="string">
+  可选请求字段所需的 Beta 功能标识，多个值使用逗号分隔。OMA 不解释这些值，直接转发该请求头。
+</ParamField>
+
+<ParamField header="anthropic-user-profile-id" type="string">
+  部分 Beta 上游支持的用户档案归因标识。使用时还必须启用对应的 Beta 功能。
+</ParamField>
+
+## 请求体
+
+<ParamField body="model" type="string" required>
+  本次请求使用的模型标识。部署可以把逻辑标识映射为上游模型。请通过[列出模型](/docs/zh/api/endpoints/list-models)查看当前 OMA 部署公开的模型。
+</ParamField>
+
+<ParamField body="max_tokens" type="integer" required>
+  输出令牌数的绝对上限。模型可以在达到此值前停止。部分上游接受 `0`，用于只预热提示缓存而不生成输出。
+</ParamField>
+
+<ParamField body="messages" type="object[]" required>
+  提供给模型的对话轮次。每一项都包含 `role` 和 `content`。上游可能合并连续且角色相同的轮次。消息数量和总大小受上游限制。
+</ParamField>
+
+### 消息结构
+
+<ParamField body="messages[].role" type="string" required>
+  对话角色。为了获得广泛兼容性，使用 `user` 和 `assistant`。Beta 上游也可能接受 `system`；初始系统指令优先使用顶层 `system` 字段。
+</ParamField>
+
+<ParamField body="messages[].content" type="string | object[]" required>
+  字符串或带类型的内容块数组。字符串是单个 `{ "type": "text", "text": "..." }` 内容块的简写。
+</ParamField>
+
+常用输入内容块包括：
+
+| `type` | 必填字段 | 用途 |
+| --- | --- | --- |
+| `text` | `text` | 纯文本输入 |
+| `image` | `source` | Base64、URL 或文件形式的图片输入 |
+| `document` | `source` | PDF、纯文本、URL、内容或文件形式的文档 |
+| `search_result` | 搜索结果字段 | 带来源元数据的搜索内容 |
+| `tool_use` | `id`、`name`、`input` | 重放之前的工具调用 |
+| `tool_result` | `tool_use_id`、`content` | 客户端工具的执行结果 |
+| `thinking` | `thinking`、`signature` | 之前响应返回的思考块；再次发送时必须保持不变 |
+| `redacted_thinking` | `data` | 不透明的脱敏块；再次发送时必须保持不变 |
+| `mcp_tool_result` | `tool_use_id` | MCP 连接器工具调用结果 |
+
+其他服务端工具、代码执行、上下文管理和 Beta 内容块也会原样转发。只发送所选上游和已启用 Beta 功能支持的内容块类型。
+
+### 系统指令与生成控制
+
+<ParamField body="system" type="string | object[]">
+  初始系统指令。可以是字符串或文本块数组。稳定版消息历史中不要添加 `system` 角色轮次。
+</ParamField>
+
+<ParamField body="stop_sequences" type="string[]">
+  触发停止生成的自定义字符串。匹配后，`stop_reason` 为 `stop_sequence`，`stop_sequence` 返回匹配值。
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="false">
+  为 `true` 时，通过服务器发送事件增量返回内容。OMA 会立即转发上游 SSE，不会缓存完整响应。
+</ParamField>
+
+<ParamField body="temperature" type="number" deprecated>
+  为兼容性保留的采样控制。较新的模型可能只接受默认值，或拒绝该字段。
+</ParamField>
+
+<ParamField body="top_k" type="integer" deprecated>
+  为旧模型保留的 top-k 采样控制。较新的模型可能拒绝该字段。
+</ParamField>
+
+<ParamField body="top_p" type="number" deprecated>
+  为兼容性保留的核采样控制。较新的模型可能只接受接近 `1` 的值，或拒绝该字段。
+</ParamField>
+
+<ParamField body="service_tier" type="string" default="auto">
+  容量偏好：`auto` 或 `standard_only`。是否可用取决于上游账号和模型。
+</ParamField>
+
+<ParamField body="speed" type="string" default="standard">
+  推理速度模式：`standard` 或 `fast`。不受支持的模型与速度组合会被上游拒绝。
+</ParamField>
+
+<ParamField body="inference_geo" type="string">
+  首选推理区域。省略时使用上游工作区的默认设置。
+</ParamField>
+
+### 输出与推理
+
+<ParamField body="output_config" type="object">
+  输出配置。支持的 Beta 属性包括 `effort`、结构化 `format` 和跨上下文 `task_budget`。
+</ParamField>
+
+<ParamField body="output_config.effort" type="string">
+  推理强度级别：`low`、`medium`、`high`、`xhigh` 或 `max`。是否可用取决于所选模型。
+</ParamField>
+
+<ParamField body="output_config.format" type="object">
+  结构化输出架构。功能激活方式和架构限制由上游决定。
+</ParamField>
+
+<ParamField body="output_config.task_budget" type="object">
+  跨上下文令牌预算，包含 `type: "tokens"`、必填的 `total` 和可选的 `remaining`。
+</ParamField>
+
+<ParamField body="output_format" type="object" deprecated>
+  已弃用的结构化输出架构。请改用 `output_config.format`。
+</ParamField>
+
+<ParamField body="thinking" type="object">
+  思考配置。支持的形状可能包括 `{ "type": "adaptive" }`、`{ "type": "disabled" }` 或 `{ "type": "enabled", "budget_tokens": 2048 }`。启用固定预算时，预算至少为 1,024 且必须小于 `max_tokens`。
+</ParamField>
+
+### 工具与外部上下文
+
+<ParamField body="tools" type="object[]">
+  模型可以调用的工具。客户端工具包含 `name`、`input_schema` 和可选的 `description`。服务端工具和工具集使用带版本的 Beta 形状。
+</ParamField>
+
+<ParamField body="tool_choice" type="object">
+  工具选择策略。使用 `auto`、`any`、带 `name` 的 `tool` 或 `none`。`disable_parallel_tool_use` 可以把响应限制为最多一个工具调用。
+</ParamField>
+
+<ParamField body="mcp_servers" type="object[]">
+  本次请求可以使用的远程 MCP 服务器。每一项包含 `type: "url"`、`name`、`url`，以及可选的 `authorization_token` 和 `tool_configuration`。
+</ParamField>
+
+<ParamField body="container" type="string | object">
+  在多个请求之间复用的容器标识或配置，需要代码执行功能支持。
+</ParamField>
+
+<ParamField body="cache_control" type="object">
+  顶层提示缓存断点。常用临时形状为 `{ "type": "ephemeral", "ttl": "5m" }`；部分上游也支持 `1h`。
+</ParamField>
+
+<ParamField body="context_management" type="object">
+  Beta 上下文管理编辑，例如清理旧的工具调用或思考块，或者压缩过长的上下文。
+</ParamField>
+
+### 路由、诊断与元数据
+
+<ParamField body="metadata" type="object">
+  请求元数据。`metadata.user_id` 应使用不透明标识，不要包含姓名、邮箱或电话号码。
+</ParamField>
+
+<ParamField body="diagnostics" type="object">
+  部分 Beta 上游支持的请求级诊断输入，例如用于分析提示缓存分歧的前一个响应标识。
+</ParamField>
+
+<ParamField body="fallbacks" type="string | object">
+  显式启用的备用模型配置。仅当配置的上游支持模型回退路由时使用。
+</ParamField>
+
+<ParamField body="fallback_credit_token" type="string | object">
+  符合条件的拒绝响应返回的不透明重试额度。兑换时保留原请求形状，并遵循上游的重试要求。
+</ParamField>
+
+## 响应
+
+```json 响应
+{
+  "id": "msg_01J8Y9QF4W7N6K2M3P5R8T1V0X",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "content": [
+    {
+      "type": "text",
+      "text": "1. 创建会话。2. 读取事件流。3. 获取最终结果。"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "stop_details": null,
+  "container": null,
+  "context_management": null,
+  "diagnostics": null,
+  "usage": {
+    "cache_creation": null,
+    "input_tokens": 19,
+    "output_tokens": 31,
+    "cache_creation_input_tokens": null,
+    "cache_read_input_tokens": null,
+    "fallback_credit": null,
+    "inference_geo": null,
+    "iterations": null,
+    "output_tokens_details": null,
+    "server_tool_use": null,
+    "service_tier": "standard",
+    "speed": "standard"
+  }
+}
+```
+
+<ResponseField name="id" type="string" required>
+  唯一消息标识。不要依赖其格式和长度。
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  对于完成的消息响应始终为 `message`。
+</ResponseField>
+
+<ResponseField name="role" type="string" required>
+  对于模型生成的输出始终为 `assistant`。
+</ResponseField>
+
+<ResponseField name="model" type="string" required>
+  生成响应的模型，可能是上游最终选择的映射模型或备用模型。
+</ResponseField>
+
+<ResponseField name="content" type="object[]" required>
+  生成的内容块。常见类型包括 `text`、`thinking`、`redacted_thinking`、`tool_use`、服务端工具结果、MCP 工具内容块、容器上传、压缩和回退信息。
+</ResponseField>
+
+<ResponseField name="stop_reason" type="string | null" required>
+  停止生成的原因：`end_turn`、`max_tokens`、`stop_sequence`、`tool_use`、`pause_turn`、`compaction`、`refusal` 或 `model_context_window_exceeded`。
+</ResponseField>
+
+<ResponseField name="stop_sequence" type="string | null" required>
+  匹配到的自定义停止序列，否则为 `null`。
+</ResponseField>
+
+<ResponseField name="stop_details" type="object | null" required>
+  上游返回的结构化拒绝信息，其中可能包含重试额度令牌。
+</ResponseField>
+
+<ResponseField name="container" type="object | null" required>
+  使用受支持的代码执行功能时的容器信息。
+</ResponseField>
+
+<ResponseField name="context_management" type="object | null" required>
+  本次请求期间实际应用的上下文管理编辑。
+</ResponseField>
+
+<ResponseField name="diagnostics" type="object | null" required>
+  与请求级 `diagnostics` 字段对应的诊断响应。
+</ResponseField>
+
+<ResponseField name="usage" type="object" required>
+  上游报告的令牌、缓存、服务等级、速度、推理区域、逐轮迭代和服务端工具用量。
+</ResponseField>
+
+<ResponseField name="usage.input_tokens" type="integer" required>
+  未写入提示缓存、也未从提示缓存读取的输入令牌数量。
+</ResponseField>
+
+<ResponseField name="usage.output_tokens" type="integer" required>
+  输出令牌总数。即使响应包含输出明细，这仍然是权威总数。
+</ResponseField>
+
+<ResponseField name="usage.cache_creation_input_tokens" type="integer | null" required>
+  用于创建提示缓存条目的输入令牌数量。
+</ResponseField>
+
+<ResponseField name="usage.cache_read_input_tokens" type="integer | null" required>
+  从提示缓存条目读取的输入令牌数量。
+</ResponseField>
+
+<ResponseField name="usage.cache_creation" type="object | null" required>
+  按受支持的缓存 TTL 拆分的缓存创建输入令牌数量。
+</ResponseField>
+
+<ResponseField name="usage.fallback_credit" type="object | null" required>
+  请求提供 `fallback_credit_token` 时的兑换结果。
+</ResponseField>
+
+<ResponseField name="usage.inference_geo" type="string | null" required>
+  上游返回的实际推理区域。
+</ResponseField>
+
+<ResponseField name="usage.iterations" type="object | null" required>
+  发生多次采样时，每次迭代的令牌和提示缓存用量。
+</ResponseField>
+
+<ResponseField name="usage.output_tokens_details" type="object | null" required>
+  对权威 `output_tokens` 总数的可选拆分，例如思考令牌数量。
+</ResponseField>
+
+<ResponseField name="usage.server_tool_use" type="object | null" required>
+  生成消息期间发起的服务端工具请求数量。
+</ResponseField>
+
+<ResponseField name="usage.service_tier" type="string | null" required>
+  实际使用的容量等级：`standard`、`priority` 或 `batch`。
+</ResponseField>
+
+<ResponseField name="usage.speed" type="string | null" required>
+  实际使用的推理速度：`standard` 或 `fast`。
+</ResponseField>
+
+## 流式响应
+
+当 `stream: true` 时，端点返回 `text/event-stream`。事件流由以下事件组成：
+
+| 事件 | 用途 |
+| --- | --- |
+| `message_start` | 初始消息 envelope 和起始用量 |
+| `content_block_start` | 开始一个内容块 |
+| `content_block_delta` | 增加文本、JSON 输入、思考、引用、签名或其他内容块增量 |
+| `content_block_stop` | 完成一个内容块 |
+| `message_delta` | 更新停止信息和累计用量 |
+| `message_stop` | 完成事件流 |
+
+OMA 会在 SSE 帧到达时立即转发；如果上游未提供，OMA 会设置 `Cache-Control: no-cache`，并通过 `X-Accel-Buffering: no` 关闭常见反向代理的缓冲。
+
+## OMA 网关行为
+
+- 请求体最大为 32 MiB。超过限制时返回 `413 request_too_large`。
+- OMA 在转发前移除调用方的 `Authorization`、`X-Api-Key`、Cookie、租户请求头和逐跳请求头。
+- OMA 注入服务端配置的上游密钥。未配置 LLM Provider 时返回 `503 api_error`。工作区模型配置无法读取时返回 `500 api_error`。
+- 其余查询参数、请求体、兼容功能请求头、上游状态码、响应体和端到端响应头保持不变。
+- 无法构造或连接上游时返回 `502 api_error`。上游正常返回的错误会保留原始状态码和响应体。
+
+<Warning>
+  不要在请求中提供上游凭证。OMA 始终使用部署配置中的密钥替换调用方凭证。
+</Warning>

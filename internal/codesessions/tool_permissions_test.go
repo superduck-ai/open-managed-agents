@@ -3,7 +3,22 @@ package codesessions
 import (
 	"encoding/json"
 	"testing"
+	"uuid"
 )
+
+func TestControlResponseUUIDMatchesExistingUUIDv5(t *testing.T) {
+	t.Parallel()
+
+	const want = "f2342556-f950-52b1-9f44-b34130c2bfd5"
+	got := controlResponseUUID("codeses_test", "request_test")
+	if got != want {
+		t.Fatalf("control response UUID = %q, want %q", got, want)
+	}
+	parsed := uuid.MustParse(got)
+	if version := parsed[6] >> 4; version != 5 {
+		t.Fatalf("control response UUID version = %d, want 5", version)
+	}
+}
 
 func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 	t.Parallel()
@@ -114,5 +129,55 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 		if identity.Kind != "agent_toolset" || identity.ToolName != configName {
 			t.Fatalf("identity for %s = %+v, want config name %s", claudeName, identity, configName)
 		}
+	}
+}
+
+func TestToolPermissionPublicPayloadsUseCanonicalPublicID(t *testing.T) {
+	t.Parallel()
+
+	requestID := "request-weather"
+	payload := workerControlRequestPayload{
+		Request: workerPermissionRequest{
+			ToolName:  "mcp__weather_service__get_weather",
+			ToolUseID: "toolu_weather",
+			Input:     map[string]any{"location": "Beijing"},
+		},
+	}
+	request, publicPayloads, err := toolPermissionPublicPayloads(
+		"cse_test",
+		&payload,
+		EventMetadata{RequestID: &requestID},
+		parseClaudeToolIdentity(payload.Request.ToolName),
+		resolvedToolPermissionAsk,
+	)
+	if err != nil {
+		t.Fatalf("build public payloads: %v", err)
+	}
+	if len(publicPayloads) != 2 {
+		t.Fatalf("public payload count = %d, want 2", len(publicPayloads))
+	}
+	var toolEvent map[string]any
+	if err := json.Unmarshal(publicPayloads[0], &toolEvent); err != nil {
+		t.Fatalf("decode tool event: %v", err)
+	}
+	if toolEvent["id"] != request.PublicEventID || toolEvent["type"] != "agent.mcp_tool_use" || toolEvent["name"] != "get_weather" || toolEvent["evaluated_permission"] != "ask" {
+		t.Fatalf("canonical tool event = %#v", toolEvent)
+	}
+	for _, privateField := range []string{"content", "message", "tool_use_id", "request_id", "requires_action_details"} {
+		if _, ok := toolEvent[privateField]; ok {
+			t.Fatalf("canonical tool event leaked %s: %#v", privateField, toolEvent)
+		}
+	}
+	var statusEvent map[string]any
+	if err := json.Unmarshal(publicPayloads[1], &statusEvent); err != nil {
+		t.Fatalf("decode status event: %v", err)
+	}
+	stopReason, _ := statusEvent["stop_reason"].(map[string]any)
+	eventIDs, _ := stopReason["event_ids"].([]any)
+	if len(eventIDs) != 1 || eventIDs[0] != request.PublicEventID {
+		t.Fatalf("stop_reason.event_ids = %#v, want [%s]", eventIDs, request.PublicEventID)
+	}
+	if _, ok := statusEvent["requires_action_details"]; ok {
+		t.Fatalf("status event leaked private action details: %#v", statusEvent)
 	}
 }

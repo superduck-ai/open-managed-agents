@@ -83,7 +83,7 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 			UUID:                skill.UUID,
 			ExternalID:          skill.ExternalID,
 			WorkspaceUUID:       skill.WorkspaceUUID,
-			CreatedByAPIKeyUUID: skill.CreatedByAPIKeyUUID,
+			CreatedByAPIKeyUUID: nullableString(skill.CreatedByAPIKeyUUID),
 			DisplayTitle:        skill.DisplayTitle,
 			LatestVersion:       version.Version,
 			CreatedAt:           skill.CreatedAt,
@@ -271,7 +271,7 @@ func insertSkillVersion(ctx context.Context, mapper SkillVersionMapper, version 
 		S3Key:               version.S3Key,
 		SizeBytes:           version.SizeBytes,
 		SHA256:              version.SHA256,
-		CreatedByAPIKeyUUID: version.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: nullableString(version.CreatedByAPIKeyUUID),
 		CreatedAt:           version.CreatedAt,
 	})
 	return skillVersionFromMapperRow(row, err)
@@ -312,7 +312,7 @@ func (r skillRow) skill() Skill {
 		UUID:                r.UUID,
 		ExternalID:          r.ExternalID,
 		WorkspaceUUID:       r.WorkspaceUUID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		DisplayTitle:        r.DisplayTitle,
 		LatestVersion:       r.LatestVersion,
 		Source:              r.Source,
@@ -337,7 +337,7 @@ func (r skillVersionRow) version() SkillVersion {
 		S3Key:               r.S3Key,
 		SizeBytes:           r.SizeBytes,
 		SHA256:              r.SHA256,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		CreatedAt:           r.CreatedAt,
 		DeletedAt:           r.DeletedAt,
 	}

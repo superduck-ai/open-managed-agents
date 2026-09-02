@@ -30,6 +30,54 @@ func TestDeploymentResponseUsesEmptyDescription(t *testing.T) {
 	}
 }
 
+func TestDeploymentRunResponseBuildsOfficialTriggerContext(t *testing.T) {
+	manual, err := responseFromRun(db.DeploymentRun{TriggerType: "manual"})
+	if err != nil {
+		t.Fatalf("responseFromRun(manual): %v", err)
+	}
+	if manual.TriggerContext.Type != "manual" || manual.TriggerContext.ScheduledAt != "" {
+		t.Fatalf("manual trigger context = %+v", manual.TriggerContext)
+	}
+
+	scheduledAt := time.Date(2026, time.August, 6, 14, 20, 0, 0, time.UTC)
+	scheduled, err := responseFromRun(db.DeploymentRun{TriggerType: "schedule", ScheduledAt: &scheduledAt})
+	if err != nil {
+		t.Fatalf("responseFromRun(schedule): %v", err)
+	}
+	if scheduled.TriggerContext.Type != "schedule" || scheduled.TriggerContext.ScheduledAt != "2026-08-06T14:20:00Z" {
+		t.Fatalf("schedule trigger context = %+v", scheduled.TriggerContext)
+	}
+}
+
+func TestScheduleResponseKeepsInvalidStoredCron(t *testing.T) {
+	response := scheduleResponse(
+		json.RawMessage(`{"type":"cron","expression":"bad","timezone":"UTC"}`),
+		nil,
+		time.Now(),
+		false,
+	)
+	if response == nil || response.Expression != "bad" || len(response.UpcomingRunsAt) != 0 {
+		t.Fatalf("scheduleResponse() = %+v", response)
+	}
+}
+
+func TestDeploymentResponseShowsUpcomingRunsWhilePaused(t *testing.T) {
+	response, err := responseFromDeployment(db.Deployment{
+		ExternalID: "deployment_test",
+		Status:     "paused",
+		Schedule:   json.RawMessage(`{"type":"cron","expression":"0 9 * * *","timezone":"UTC"}`),
+	}, time.Date(2026, time.August, 19, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("responseFromDeployment() error = %v", err)
+	}
+	if response.Schedule == nil || len(response.Schedule.UpcomingRunsAt) != upcomingRunCount {
+		t.Fatalf("paused upcoming_runs_at = %#v", response.Schedule)
+	}
+	if response.Schedule.UpcomingRunsAt[0] != "2026-08-19T09:00:00Z" {
+		t.Fatalf("paused upcoming_runs_at[0] = %q", response.Schedule.UpcomingRunsAt[0])
+	}
+}
+
 func TestDeploymentResourcesResponse(t *testing.T) {
 	t.Run("rejects invalid stored resources", func(t *testing.T) {
 		if _, err := deploymentResourcesResponse(json.RawMessage(`{"type":"file"}`)); err == nil {

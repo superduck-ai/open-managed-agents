@@ -12,17 +12,18 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const messageBatchesBeta = "message-batches-2024-09-24"
@@ -137,10 +138,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress"))
 		return nil
 	}
-	if h.cfg.AnthropicUpstream.APIKey == "" {
-		return batchServiceUnavailable()
-	}
-
 	body, err := httpapi.DecodeObjectBodyAs[createRequest](w, r, h.cfg.Batch.MaxBodyBytes)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -149,8 +146,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		}
 		return invalidRequest(err)
 	}
-	if err := h.validateCreate(body, betaHeaders); err != nil {
+	requestModels, err := h.validateCreate(body, betaHeaders)
+	if err != nil {
 		return invalidRequest(err)
+	}
+	if err := h.validateConfiguredModels(
+		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body, requestModels,
+	); err != nil {
+		return err
 	}
 
 	externalID, err := ids.New("msgbatch_")
@@ -167,8 +170,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		anthropicVersion = "2023-06-01"
 	}
 	record := db.MessageBatch{
-		UUID:                uuid.NewString(),
+		UUID:                uuid.NewV4().String(),
 		ExternalID:          externalID,
+		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		APIVariant:          apiVariant,
@@ -199,35 +203,67 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	return nil
 }
 
-func (h *Handler) validateCreate(body *createRequest, betaHeaders []string) error {
-	if len(body.Requests) == 0 {
-		return errors.New("requests must contain at least one request")
+func (h *Handler) validateConfiguredModels(
+	ctx context.Context,
+	organizationUUID, workspaceUUID string,
+	body *createRequest,
+	requestModels []string,
+) error {
+	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
+	if err != nil {
+		return configuredModelError(err)
 	}
-	if h.cfg.Batch.MaxRequests > 0 && len(body.Requests) > h.cfg.Batch.MaxRequests {
-		return fmt.Errorf("requests must contain at most %d requests", h.cfg.Batch.MaxRequests)
+	configured := make(map[string]struct{}, len(modelIDs))
+	for _, modelID := range modelIDs {
+		configured[modelID] = struct{}{}
 	}
-	for _, beta := range betaHeaders {
-		if beta == "output-300k-2026-03-24" {
-			return errors.New("output-300k-2026-03-24 is not supported in Local Fan-out Message Batches")
-		}
-	}
-	seen := make(map[string]struct{}, len(body.Requests))
-	for _, item := range body.Requests {
-		if !customIDPattern.MatchString(item.CustomID) {
-			return errors.New("custom_id must match ^[A-Za-z0-9_-]{1,64}$")
-		}
-		if _, ok := seen[item.CustomID]; ok {
-			return errors.New("custom_id must be unique within a batch")
-		}
-		seen[item.CustomID] = struct{}{}
-		if !isJSONObject(item.Params) {
-			return errors.New("params must be a JSON object")
-		}
-		if err := validateParams(item.Params); err != nil {
-			return fmt.Errorf("params for custom_id %s: %w", item.CustomID, err)
+	for index, modelID := range requestModels {
+		if _, ok := configured[modelID]; !ok {
+			return invalidRequest(fmt.Errorf(
+				"params for custom_id %s: model %q is not configured for this workspace",
+				body.Requests[index].CustomID,
+				modelID,
+			))
 		}
 	}
 	return nil
+}
+
+func (h *Handler) validateCreate(body *createRequest, betaHeaders []string) ([]string, error) {
+	if len(body.Requests) == 0 {
+		return nil, errors.New("requests must contain at least one request")
+	}
+	if h.cfg.Batch.MaxRequests > 0 && len(body.Requests) > h.cfg.Batch.MaxRequests {
+		return nil, fmt.Errorf("requests must contain at most %d requests", h.cfg.Batch.MaxRequests)
+	}
+	for _, beta := range betaHeaders {
+		if beta == "output-300k-2026-03-24" {
+			return nil, errors.New("output-300k-2026-03-24 is not supported in Local Fan-out Message Batches")
+		}
+	}
+	seen := make(map[string]struct{}, len(body.Requests))
+	requestModels := make([]string, 0, len(body.Requests))
+	for _, item := range body.Requests {
+		if !customIDPattern.MatchString(item.CustomID) {
+			return nil, errors.New("custom_id must match ^[A-Za-z0-9_-]{1,64}$")
+		}
+		if _, ok := seen[item.CustomID]; ok {
+			return nil, errors.New("custom_id must be unique within a batch")
+		}
+		seen[item.CustomID] = struct{}{}
+		if !isJSONObject(item.Params) {
+			return nil, errors.New("params must be a JSON object")
+		}
+		if err := validateParams(item.Params); err != nil {
+			return nil, fmt.Errorf("params for custom_id %s: %w", item.CustomID, err)
+		}
+		modelID, err := llmproviders.MessageRequestModel(item.Params)
+		if err != nil {
+			return nil, fmt.Errorf("params for custom_id %s: %w", item.CustomID, err)
+		}
+		requestModels = append(requestModels, modelID)
+	}
+	return requestModels, nil
 }
 
 func isJSONObject(raw json.RawMessage) bool {

@@ -191,7 +191,22 @@ func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID 
 			return mapNoRows(err)
 		}
 		archived = row.agent()
-		return NewDeploymentMapper(executor).ArchiveByRootAgent(ctx, workspaceUUID, externalID)
+		schedules, err := NewDeploymentMapper(executor).ArchiveByRootAgent(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return err
+		}
+		for _, schedule := range schedules {
+			if len(schedule.Schedule) == 0 {
+				continue
+			}
+			if err := d.applyDeploymentScheduleTxHook(ctx, executor, Deployment{
+				WorkspaceUUID: schedule.WorkspaceUUID,
+				ExternalID:    schedule.ExternalID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return archived, err
 }

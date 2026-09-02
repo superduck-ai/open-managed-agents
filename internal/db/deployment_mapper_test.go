@@ -102,7 +102,7 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			bound:     buildDeploymentMapperArchiveByRootAgent(yourbatis.DialectPostgres, params.WorkspaceUUID, params.AgentExternalID),
 			wantID:    "DeploymentMapper.ArchiveByRootAgent", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"workspaceUUID", "agentExternalID"},
-			wantSQLFragments:  []string{"agent_external_id = $2", "archived_at = COALESCE"},
+			wantSQLFragments:  []string{"agent_external_id = $2", "archived_at = COALESCE", "RETURNING workspace_uuid, external_id, schedule"},
 		}},
 		{"pause", mapperBuilderContract{
 			statement: deploymentMapperPauseByExternalIDStatement,

@@ -141,13 +141,19 @@
             <if test="params.DeploymentID != ''">AND s.deployment_external_id = #{params.DeploymentID}</if>
             <if test="params.MemoryStoreID != ''">
                 AND EXISTS (
-                    SELECT 1 FROM session_resources sr
+                    SELECT 1
+                    FROM session_resources sr
+                    JOIN memory_stores memory_store
+                    ON memory_store.uuid = sr.memory_store_uuid
+                    AND memory_store.workspace_uuid = sr.workspace_uuid
                     WHERE sr.workspace_uuid = s.workspace_uuid
                     AND sr.session_external_id = s.external_id
                     AND sr.deleted_at IS NULL
                     AND sr.resource_type = 'memory_store'
-                    AND (sr.payload-&gt;&gt;'memory_store_id' = #{params.MemoryStoreID}
-                        OR sr.payload-&gt;&gt;'id' = #{params.MemoryStoreID})
+                    AND (
+                        memory_store.external_id = #{params.MemoryStoreID}
+                        OR sr.external_id = #{params.MemoryStoreID}
+                    )
                 )
             </if>
             <if test="len(params.Statuses) &gt; 0">

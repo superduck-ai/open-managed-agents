@@ -1065,7 +1065,7 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("put Filestore file through typed UUID parameters: %v", err)
 	}
-	if activeResult.Node.UUID == "" || activeResult.Node.SourceFileUUID != nil {
+	if activeResult.Node.UUID == "" || !activeResult.Node.OwnsFile() {
 		t.Fatalf("Filestore nullable UUID row = %+v", activeResult.Node)
 	}
 

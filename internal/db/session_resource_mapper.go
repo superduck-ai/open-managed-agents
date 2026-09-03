@@ -11,7 +11,7 @@ type SessionResourceMapper interface {
 	Insert(ctx context.Context, params sessionResourceWriteParams) (sessionResourceRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
 	List(ctx context.Context, workspaceUUID, sessionExternalID string, maxOutputResources int) ([]sessionResourceRow, error)
-	Update(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
+	UpdateGitHubRepositorySecret(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	CountSessionFileResources(ctx context.Context, workspaceUUID, sessionExternalID, resourceType string) (int, error)
 	FindMountConflict(ctx context.Context, params sessionResourcePathParams) (string, bool, error)
@@ -37,39 +37,54 @@ type SessionResourceMapper interface {
 }
 
 type sessionResourceRow struct {
-	UUID              string     `db:"uuid"`
-	ExternalID        string     `db:"external_id"`
-	OrganizationUUID  string     `db:"organization_uuid"`
-	WorkspaceUUID     string     `db:"workspace_uuid"`
-	SessionUUID       string     `db:"session_uuid"`
-	SessionExternalID string     `db:"session_external_id"`
-	ResourceType      string     `db:"resource_type"`
-	Payload           []byte     `db:"payload"`
-	SecretPayload     []byte     `db:"secret_payload"`
-	Path              *string    `db:"path"`
-	FileExternalID    *string    `db:"file_external_id"`
-	CreatedAt         time.Time  `db:"created_at"`
-	UpdatedAt         time.Time  `db:"updated_at"`
-	DeletedAt         *time.Time `db:"deleted_at"`
+	UUID               string     `db:"uuid"`
+	ExternalID         string     `db:"external_id"`
+	OrganizationUUID   string     `db:"organization_uuid"`
+	WorkspaceUUID      string     `db:"workspace_uuid"`
+	SessionUUID        string     `db:"session_uuid"`
+	SessionExternalID  string     `db:"session_external_id"`
+	ResourceType       string     `db:"resource_type"`
+	SecretPayload      []byte     `db:"secret_payload"`
+	FileExternalID     *string    `db:"file_external_id"`
+	FilePath           *string    `db:"file_path"`
+	FileOwnership      *string    `db:"file_ownership"`
+	GitHubURL          *string    `db:"github_repository_url"`
+	GitHubCheckout     []byte     `db:"github_repository_checkout"`
+	MountPath          *string    `db:"mount_path"`
+	MemoryStoreUUID    *string    `db:"memory_store_uuid"`
+	MemoryStoreID      *string    `db:"memory_store_external_id"`
+	MemoryAccess       *string    `db:"memory_access"`
+	MemoryDescription  *string    `db:"memory_description"`
+	MemoryInstructions *string    `db:"memory_instructions"`
+	MemoryName         *string    `db:"memory_name"`
+	CreatedAt          time.Time  `db:"created_at"`
+	UpdatedAt          time.Time  `db:"updated_at"`
+	DeletedAt          *time.Time `db:"deleted_at"`
 }
 
 type sessionResourceWriteParams struct {
-	UUID              string
-	ExternalID        string
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	SessionExternalID string
-	ResourceType      string
-	Payload           []byte
-	SecretPayload     []byte
-	CreatedAt         time.Time
+	UUID               string
+	ExternalID         string
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	SessionExternalID  string
+	ResourceType       string
+	SecretPayload      []byte
+	GitHubURL          *string
+	GitHubCheckout     []byte
+	MountPath          *string
+	MemoryStoreID      *string
+	MemoryAccess       *string
+	MemoryDescription  *string
+	MemoryInstructions *string
+	MemoryName         *string
+	CreatedAt          time.Time
 }
 
 type sessionResourceUpdateParams struct {
 	WorkspaceUUID      string
 	SessionExternalID  string
 	ResourceExternalID string
-	Payload            []byte
 	SecretPayload      []byte
 }
 
@@ -82,6 +97,7 @@ type sessionResourcePathParams struct {
 type sessionFileResourceBindingParams struct {
 	EntryPath     string
 	ParentPath    string
+	MountPath     string
 	FileUUID      string
 	UpdatedAt     time.Time
 	ResourceUUID  string

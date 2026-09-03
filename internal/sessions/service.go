@@ -685,7 +685,7 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) er
 		return invalidRequest(err)
 	}
 	secret, _ := httpapi.MarshalRaw(map[string]any{"authorization_token": token})
-	updated, err := h.db.UpdateSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID, current.Payload, secret)
+	updated, err := h.db.UpdateSessionGitHubRepositorySecret(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID, secret)
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
 	}

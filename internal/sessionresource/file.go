@@ -31,6 +31,7 @@ type FileSpec struct {
 type SessionFileBinding struct {
 	ResourceID string
 	FileID     string
+	MountPath  string
 	Path       string
 }
 
@@ -100,43 +101,6 @@ func ParseStoredFileSpec(raw json.RawMessage) (FileSpec, error) {
 	}, nil
 }
 
-// ParseFilePayload validates a persisted Session resource payload against the
-// owning session_resources row before deriving its Filestore binding.
-func ParseFilePayload(raw json.RawMessage, resourceID string) (FileSpec, error) {
-	var payload filePayload
-	if err := json.Unmarshal(raw, &payload); err != nil ||
-		strings.TrimSpace(payload.ID) == "" ||
-		payload.ID != resourceID ||
-		payload.Type != FileType ||
-		strings.TrimSpace(payload.FileID) == "" ||
-		payload.Source != sandboxmount.FileSource {
-		return FileSpec{}, errors.New("file resource payload is invalid")
-	}
-	if err := sandboxmount.ValidateFileMountPath(payload.MountPath); err != nil {
-		return FileSpec{}, err
-	}
-	return FileSpec{
-		fileID:    payload.FileID,
-		mountPath: payload.MountPath,
-	}, nil
-}
-
-// PayloadFields returns the canonical JSON fields for either a Deployment
-// template or a Session resource. resourceID is empty only for Deployment
-// storage.
-func (s FileSpec) PayloadFields(resourceID string) map[string]any {
-	fields := map[string]any{
-		"type":       FileType,
-		"file_id":    s.fileID,
-		"source":     sandboxmount.FileSource,
-		"mount_path": s.mountPath,
-	}
-	if resourceID != "" {
-		fields["id"] = resourceID
-	}
-	return fields
-}
-
 // SessionFileBinding maps the public mount_path into the authoritative uploads
 // namespace used by the Session resource write transaction.
 func (s FileSpec) SessionFileBinding(resourceID string) (SessionFileBinding, error) {
@@ -147,6 +111,7 @@ func (s FileSpec) SessionFileBinding(resourceID string) (SessionFileBinding, err
 	return SessionFileBinding{
 		ResourceID: resourceID,
 		FileID:     s.fileID,
+		MountPath:  s.mountPath,
 		Path:       backingPath,
 	}, nil
 }

@@ -262,7 +262,7 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if source.Kind != db.SessionResourceFileKindFile || source.S3Key == nil {
 		return fileResponse{}, failedPrecondition("source is not a file")
 	}
-	if source.SourceFileUUID != nil {
+	if !source.OwnsFile() {
 		// 这里拒绝的是 Filestore 协议里的 copyFile：它表示“在对象存储端做
 		// 服务端复制（server-side copy），把一个由 Filestore 自己拥有的对象
 		// 复制成新对象，再把该副本绑定到目标路径”，而不是客户端先把源文件

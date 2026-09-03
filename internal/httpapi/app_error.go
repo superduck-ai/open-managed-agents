@@ -70,7 +70,18 @@ func errorMappingFor(err *apperr.Error) (errorMapping, bool) {
 		return errorMapping{}, false
 	}
 
-	switch err.Kind {
+	mapping, ok := kindMapping(err.Kind)
+	if !ok {
+		return errorMapping{}, false
+	}
+	if err.ErrorType != "" {
+		mapping.errorType = err.ErrorType
+	}
+	return mapping, true
+}
+
+func kindMapping(kind apperr.Kind) (errorMapping, bool) {
+	switch kind {
 	case apperr.InvalidArgument:
 		return errorMapping{http.StatusBadRequest, "invalid_request_error", "invalid_argument"}, true
 	case apperr.InvalidState:

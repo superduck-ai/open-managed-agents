@@ -95,6 +95,13 @@ type redactMemoryVersionParams struct {
 	RedactedByUserID           *string
 }
 
+// deleteMemoryVersionsOlderThanParams 清理某 store 中创建于 cutoff 之前的版本（30 天保留）。
+type deleteMemoryVersionsOlderThanParams struct {
+	WorkspaceUUID         string
+	MemoryStoreExternalID string
+	CreatedBefore         time.Time
+}
+
 type MemoryVersionMapper interface {
 	Insert(ctx context.Context, params insertMemoryVersionParams) (memoryVersionRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, memoryStoreExternalID, versionExternalID string) (memoryVersionRow, error)
@@ -103,4 +110,5 @@ type MemoryVersionMapper interface {
 	ListObjectRefsByStoreUUID(ctx context.Context, workspaceUUID, storeUUID string) ([]memoryObjectRefRow, error)
 	RedactByExternalID(ctx context.Context, params redactMemoryVersionParams) (memoryVersionRow, error)
 	DeleteByStoreUUID(ctx context.Context, workspaceUUID, storeUUID string) error
+	DeleteOlderThan(ctx context.Context, params deleteMemoryVersionsOlderThanParams) (int64, error)
 }

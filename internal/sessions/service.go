@@ -605,6 +605,7 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
+	// memory store 限额由 CreateSessionResource 事务内原子校验（ErrMemoryStoreLimit）。
 	resourceInput, err := sessionResourceWriteInput(resource)
 	if err != nil {
 		return mapResourceBuildError(err)

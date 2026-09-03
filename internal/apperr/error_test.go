@@ -34,3 +34,15 @@ func TestErrorSupportsAsType(t *testing.T) {
 		t.Fatalf("errors.AsType() = (%v, %v), want (%v, true)", got, ok, want)
 	}
 }
+
+func TestNewWithTypeCarriesWireErrorType(t *testing.T) {
+	cause := errors.New("database detail")
+	err := apperr.NewWithType(apperr.Conflict, "memory_store_limit_error", "limit reached", cause)
+
+	if err.Kind != apperr.Conflict || err.ErrorType != "memory_store_limit_error" {
+		t.Fatalf("error = (%v, %q), want (Conflict, memory_store_limit_error)", err.Kind, err.ErrorType)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("errors.Is did not reach the cause")
+	}
+}

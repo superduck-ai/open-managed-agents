@@ -436,6 +436,16 @@ func (d *DB) CreateSessionResource(
 				return txErr
 			}
 		}
+		if resource.ResourceType == "memory_store" {
+			mapper := NewSessionResourceMapper(executor)
+			activeStores, txErr := mapper.CountSessionFileResources(ctx, resource.WorkspaceUUID, resource.SessionExternalID, sessioncontract.MemoryStoreResourceType)
+			if txErr != nil {
+				return txErr
+			}
+			if activeStores >= sessioncontract.MaxMemoryStoresPerSession {
+				return ErrMemoryStoreLimit
+			}
+		}
 		created, txErr = createSessionResource(ctx, executor, resource)
 		if txErr != nil {
 			return txErr

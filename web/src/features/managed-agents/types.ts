@@ -563,6 +563,7 @@ export type ManagedEntityFormValues = {
   timezone: string;
   vaultIds: string[];
   memoryStoreIds: string[];
+  memoryAccess: 'read_write' | 'read_only';
   fileResources: SessionFileResourceFormValue[];
 };
 

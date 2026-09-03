@@ -107,6 +107,10 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{sessionExternalID}
         AND deleted_at IS NULL
+        AND (
+            status IN ('idle', 'running', 'rescheduling')
+            OR status = #{status}
+        )
     </update>
 
     <update id="Archive" result="returning" resultType="sessionRow">

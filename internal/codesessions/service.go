@@ -472,6 +472,10 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	if len(payloads) == 0 {
 		return nil
 	}
+	// db 是可选依赖（如仅签发凭证的 Service）；无 DB 时无处可写公共事件。
+	if s.db == nil {
+		return nil
+	}
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return err

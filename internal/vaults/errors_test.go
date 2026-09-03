@@ -88,13 +88,14 @@ func TestStaticErrors(t *testing.T) {
 }
 
 func TestInjectionRejected(t *testing.T) {
-	t.Run("nil cause is sentinel", func(t *testing.T) {
+	t.Run("nil cause matches sentinel", func(t *testing.T) {
 		err := injectionRejected(nil)
 		if !errors.Is(err, ErrInjectionRejected) {
 			t.Fatalf("errors.Is(ErrInjectionRejected) = false for %v", err)
 		}
-		if err != ErrInjectionRejected {
-			t.Fatalf("nil cause should return sentinel directly, got %v", err)
+		rejected, ok := errors.AsType[*InjectionRejectedError](err)
+		if !ok || rejected.Cause() != nil {
+			t.Fatalf("nil cause should yield cause-less InjectionRejectedError, got %#v", err)
 		}
 	})
 	t.Run("wraps cause", func(t *testing.T) {

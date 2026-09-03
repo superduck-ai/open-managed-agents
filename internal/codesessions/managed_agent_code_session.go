@@ -192,7 +192,7 @@ func (s *Service) ActivateManagedAgentCodeSession(
 	if s == nil || s.db == nil {
 		return db.ErrNotFound
 	}
-	return s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
+	err := s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
 		// lock session by session external id
 		lockedSession, err := tx.LockSessionForEvents(
 			ctx,
@@ -238,6 +238,21 @@ func (s *Service) ActivateManagedAgentCodeSession(
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// The activation transaction remains authoritative. Publish its committed
+	// history afterward; duplicate message IDs make republishing existing queued
+	// events harmless in JetStream.
+	events, err := s.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "load activated code session inbound events for publish", "code_session_id", codeSession.ExternalID, "error", err)
+		return nil
+	}
+	for _, event := range events {
+		s.publishInboundEvent(ctx, event)
+	}
+	return nil
 }
 
 // convertSessionEventToInbound maps one public session event payload into a

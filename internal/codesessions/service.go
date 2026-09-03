@@ -17,6 +17,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
@@ -28,6 +29,7 @@ type Service struct {
 	sink                   PublicEventSink
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	sandboxTimeout         time.Duration
+	workerEvents           workerevents.Broker
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
@@ -36,7 +38,15 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 		panic("codesessions: session credentials are required")
 	}
 	logger = logging.LoggerOrDefault(logger)
-	return &Service{db: database, credentials: credentials, logger: logger}
+	return &Service{db: database, credentials: credentials, logger: logger, workerEvents: workerevents.NewMemory()}
+}
+
+// WithWorkerEventBroker wires the live transport copy of durable inbound events.
+func (s *Service) WithWorkerEventBroker(broker workerevents.Broker) *Service {
+	if s != nil && broker != nil {
+		s.workerEvents = broker
+	}
+	return s
 }
 
 // WithSandboxTimeoutExtender wires the provider lifecycle operation used to
@@ -162,28 +172,6 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 	// 持久化入站队列消费事件。
 	for _, payload := range payloads {
 		_, duplicate, err := s.appendInboundPayload(ctx, codeSession.ExternalID, payload, "public-session")
-		if err != nil {
-			return err
-		}
-		if duplicate {
-			continue
-		}
-	}
-	return nil
-}
-
-func (s *Service) QueueRawCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage, source string) error {
-	if s == nil || len(payloads) == 0 {
-		return nil
-	}
-	source = strings.TrimSpace(source)
-	if source == "" {
-		source = "code-session-api"
-	}
-	// 不得通过进程内 push 绕过持久化队列。CCR v2 投递必须校验 epoch，
-	// 并且在 worker 被替换后仍可重放。
-	for _, payload := range payloads {
-		_, duplicate, err := s.appendInboundPayload(ctx, codeSession.ExternalID, payload, source)
 		if err != nil {
 			return err
 		}
@@ -433,7 +421,34 @@ func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string
 	if err != nil {
 		return db.CodeSessionEvent{}, false, err
 	}
-	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, input)
+	event, duplicate, err := s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, input)
+	if err != nil {
+		return db.CodeSessionEvent{}, false, err
+	}
+	s.publishInboundEvent(ctx, event)
+	return event, duplicate, nil
+}
+
+func (s *Service) publishInboundEvent(ctx context.Context, event db.CodeSessionEvent) {
+	if s.workerEvents == nil {
+		return
+	}
+	payloadEventID := ""
+	if event.PayloadUUID != nil {
+		payloadEventID = *event.PayloadUUID
+	}
+	envelope := workerevents.EventEnvelope(
+		event.CodeSessionExternalID,
+		event.ExternalID,
+		payloadEventID,
+		event.SequenceNum,
+		event.EventType,
+		event.EventSubtype,
+		event.Payload,
+	)
+	if err := s.workerEvents.Publish(ctx, envelope); err != nil {
+		s.logger.WarnContext(ctx, "publish code session inbound event", "code_session_id", event.CodeSessionExternalID, "event_id", event.ExternalID, "sequence_num", event.SequenceNum, "error", err)
+	}
 }
 
 func newInboundEventInput(codeSessionID string, payload json.RawMessage, source string) (db.AppendCodeSessionEventInput, error) {

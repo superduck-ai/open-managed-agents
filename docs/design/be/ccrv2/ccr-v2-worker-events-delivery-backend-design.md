@@ -345,8 +345,9 @@ data: {
 4. 解析 `from_sequence_num` 或 `Last-Event-ID`。
 5. cursor 非法时直接返回 `400`，不会把 worker 标记为 connected。
 6. 如果显式参数或 JWT claim 解析出当前 epoch，调用 `MarkCodeSessionWorkerConnectedForEpoch`。
-7. 写 SSE headers，进入 polling loop。
-8. stream 退出时用 epoch 条件调用 `MarkCodeSessionWorkerDisconnectedForEpoch`。
+7. 在写 response headers 前创建按 code session subject 过滤的临时 JetStream pull consumer；使用 `DeliverNew` 和显式 ACK。
+8. 写 SSE headers，先从 PostgreSQL 发送 backlog，再阻塞消费 JetStream 实时消息。
+9. stream 退出时删除临时 consumer，并用 epoch 条件调用 `MarkCodeSessionWorkerDisconnectedForEpoch`。
 
 只有旧版 JWT 本身也没有 `worker_epoch` 时，stream 才保持 legacy 兼容：只读 queued events，不刷新连接状态。managed-agent 实际建立 SSE 时可以不在 URL 重复传 epoch；其 JWT claim 会让该连接进入 epoch-scoped delivery/replay 路径。
 
@@ -375,7 +376,7 @@ from_sequence_num=<lastSequenceNum>
 Last-Event-ID: <lastSequenceNum>
 ```
 
-epoch-scoped stream 使用本地 `lastSentSequence` 从 cursor 开始推进，每个 polling loop 只查询并写出 `sequence_num > lastSentSequence` 的事件，避免同一条健康连接反复发送同一事件。
+epoch-scoped stream 使用本地 `lastSentSequence` 从 cursor 开始推进。连接建立时从 PostgreSQL 查询并写出 `sequence_num > lastSentSequence` 的 backlog；随后不再执行 500ms 数据库轮询，而是消费 JetStream 的实时完整事件信封。重复或已发送 sequence 会被 ACK 并跳过；若收到的 sequence 大于 `lastSentSequence + 1`，stream 会先按当前 cursor 从 PostgreSQL 补洞，再处理当前消息。
 
 查询约束：
 
@@ -399,9 +400,20 @@ where e.code_session_external_id = $1
 order by e.sequence_num asc;
 ```
 
-如果查询返回 0 行，DB 层仍会再次校验当前 epoch；新 register bump 后，旧 stream 会停止。
+初始查询返回 0 行时，DB 层仍会再次校验当前 epoch。健康连接保留 15 秒 keepalive epoch 校验；新 register 成功后，旧 stream 最迟在下一次 keepalive 时发现 epoch 已变化并停止。JetStream 不承载 epoch 或其他流控制消息。
 
-### 8.5 新 epoch 接管
+### 8.5 PostgreSQL / JetStream 双写边界
+
+所有 inbound 来源（public session event、control response、initialize、activation history 和 code-session API）先写 PostgreSQL，事务提交后再发布版本 1 的 JetStream 完整信封。数据库 event ID 作为 `Nats-Msg-Id`，一小时窗口内的幂等重试不会产生第二条持久消息。
+
+JetStream 只是实时传输副本，PostgreSQL 继续承载 sequence、delivery 状态和 ACK 权威数据。publish ACK 失败、连接中断或默认 NATS `max_payload` 拒绝消息时：
+
+- 原请求与 PostgreSQL 提交保持成功；
+- 只记录 code session、event ID、sequence 和 error，不记录 payload；
+- 不使用事务 outbox、后台补偿、运行期周期性数据库扫描或 DLQ；
+- 有后续 sequence 时由 gap fill 恢复，否则由 worker 下次重连的 PostgreSQL backlog 恢复。
+
+### 8.6 新 epoch 接管
 
 新 worker register 后，`current_worker_epoch` 增加。新 epoch 的 SSE stream 会重放未 `processed` 且满足查询条件的事件：
 

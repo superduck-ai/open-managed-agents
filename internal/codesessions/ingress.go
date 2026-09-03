@@ -16,6 +16,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -232,6 +233,16 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Streaming is not supported"))
 		return
 	}
+	subscription, err := h.service.workerEvents.Subscribe(r.Context(), codeSessionID)
+	if err != nil {
+		h.errorAdapter.Write(w, r, workerEventStreamUnavailable(err))
+		return
+	}
+	defer func() {
+		if err := subscription.Close(); err != nil {
+			h.logger.WarnContext(r.Context(), "close code session worker event subscription", "code_session_id", codeSessionID, "error", err)
+		}
+	}()
 	if hasEpoch {
 		if err := h.db.MarkCodeSessionWorkerConnectedForEpoch(r.Context(), codeSessionID, epoch); err != nil {
 			h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not connect code session worker stream")
@@ -251,7 +262,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	header.Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	h.streamCodeSessionWorkerEvents(r.Context(), w, flusher, codeSessionID, epoch, hasEpoch, fromSequence)
+	h.streamCodeSessionWorkerEvents(r.Context(), w, flusher, subscription, codeSessionID, epoch, hasEpoch, fromSequence)
 }
 
 func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http.Request) {
@@ -288,62 +299,122 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"worker_epoch": strconv.FormatInt(epoch, 10)})
 }
 
-func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher, codeSessionID string, epoch int64, epochScoped bool, fromSequence int64) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher,
+	subscription workerevents.Subscription, codeSessionID string, epoch int64, epochScoped bool, fromSequence int64) {
+
 	keepAlive := time.NewTicker(15 * time.Second)
 	defer keepAlive.Stop()
 	lastSentSequence := fromSequence
+	var ok bool
+	lastSentSequence, ok = h.sendCodeSessionWorkerBacklog(ctx, w, flusher, codeSessionID, epoch, epochScoped, lastSentSequence)
+	if !ok {
+		return
+	}
 	for {
-		var events []db.CodeSessionEvent
-		var err error
-		if epochScoped {
-			events, err = h.db.ListCodeSessionInboundEventsForWorkerStream(ctx, codeSessionID, epoch, lastSentSequence)
-		} else {
-			events, err = h.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
-		}
-		if err != nil {
-			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
-				return
-			}
-			if !errors.Is(err, context.Canceled) {
-				h.logger.ErrorContext(ctx, "list queued code session worker stream events", "code_session_id", codeSessionID, "error", err)
-			}
-			return
-		}
-		for _, event := range events {
-			if err := writeCodeSessionWorkerSSEEvent(w, flusher, event); err != nil {
-				h.logger.ErrorContext(ctx, "write code session worker stream event", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
-				return
-			}
-			if event.SequenceNum > lastSentSequence {
-				lastSentSequence = event.SequenceNum
-			}
-			markCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if epochScoped {
-				err = h.db.MarkCodeSessionInboundEventSentForEpoch(markCtx, codeSessionID, event.ExternalID, epoch)
-			} else {
-				err = h.db.MarkCodeSessionInboundEventSent(markCtx, event.ExternalID)
-			}
-			cancel()
-			if errors.Is(err, db.ErrWorkerEpochMismatch) {
-				return
-			}
-			if err != nil && !errors.Is(err, db.ErrNotFound) {
-				h.logger.ErrorContext(ctx, "mark code session worker stream event sent", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
-			}
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case err, open := <-subscription.Errors():
+			if open && err != nil && !errors.Is(err, context.Canceled) {
+				h.logger.WarnContext(ctx, "consume code session worker event", "code_session_id", codeSessionID, "error", err)
+			}
+			return
+		case delivery, open := <-subscription.Messages():
+			if !open {
+				return
+			}
+			envelope := delivery.Envelope
+			if envelope.Version != 1 || envelope.CodeSessionID != codeSessionID {
+				h.logger.WarnContext(ctx, "reject code session worker event envelope", "code_session_id", codeSessionID, "event_id", envelope.EventID)
+				return
+			}
+			if envelope.SequenceNum <= lastSentSequence {
+				_ = delivery.Ack()
+				continue
+			}
+			if envelope.SequenceNum > lastSentSequence+1 {
+				lastSentSequence, ok = h.sendCodeSessionWorkerBacklog(ctx, w, flusher, codeSessionID, epoch, epochScoped, lastSentSequence)
+				if !ok {
+					return
+				}
+			}
+			if envelope.SequenceNum > lastSentSequence {
+				event := codeSessionEventFromWorkerEnvelope(envelope)
+				lastSentSequence, ok = h.sendCodeSessionWorkerEvents(ctx, w, flusher, codeSessionID, epoch, epochScoped, lastSentSequence, []db.CodeSessionEvent{event})
+				if !ok {
+					return
+				}
+			}
+			if err := delivery.Ack(); err != nil {
+				h.logger.WarnContext(ctx, "ack code session worker event", "code_session_id", codeSessionID, "event_id", envelope.EventID, "error", err)
+				return
+			}
 		case <-keepAlive.C:
+			if epochScoped {
+				if err := h.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, epoch); err != nil {
+					return
+				}
+			}
 			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
 		}
 	}
+}
+
+func (h *Handler) sendCodeSessionWorkerBacklog(ctx context.Context, w io.Writer, flusher http.Flusher, codeSessionID string, epoch int64, epochScoped bool, afterSequence int64) (int64, bool) {
+	var events []db.CodeSessionEvent
+	var err error
+	if epochScoped {
+		events, err = h.db.ListCodeSessionInboundEventsForWorkerStream(ctx, codeSessionID, epoch, afterSequence)
+	} else {
+		events, err = h.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	}
+	if err != nil {
+		if !errors.Is(err, db.ErrWorkerEpochMismatch) && !errors.Is(err, db.ErrNotFound) && !errors.Is(err, context.Canceled) {
+			h.logger.ErrorContext(ctx, "list queued code session worker stream events", "code_session_id", codeSessionID, "error", err)
+		}
+		return afterSequence, false
+	}
+	return h.sendCodeSessionWorkerEvents(ctx, w, flusher, codeSessionID, epoch, epochScoped, afterSequence, events)
+}
+
+func (h *Handler) sendCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher, codeSessionID string, epoch int64, epochScoped bool, lastSequence int64, events []db.CodeSessionEvent) (int64, bool) {
+	for _, event := range events {
+		if event.SequenceNum <= lastSequence {
+			continue
+		}
+		if err := writeCodeSessionWorkerSSEEvent(w, flusher, event); err != nil {
+			h.logger.ErrorContext(ctx, "write code session worker stream event", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
+			return lastSequence, false
+		}
+		lastSequence = event.SequenceNum
+		markCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var err error
+		if epochScoped {
+			err = h.db.MarkCodeSessionInboundEventSentForEpoch(markCtx, codeSessionID, event.ExternalID, epoch)
+		} else {
+			err = h.db.MarkCodeSessionInboundEventSent(markCtx, event.ExternalID)
+		}
+		cancel()
+		if errors.Is(err, db.ErrWorkerEpochMismatch) {
+			return lastSequence, false
+		}
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			h.logger.ErrorContext(ctx, "mark code session worker stream event sent", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
+		}
+	}
+	return lastSequence, true
+}
+
+func codeSessionEventFromWorkerEnvelope(envelope workerevents.EnvelopeV1) db.CodeSessionEvent {
+	var payloadUUID *string
+	if envelope.PayloadEventID != "" {
+		value := envelope.PayloadEventID
+		payloadUUID = &value
+	}
+	return db.CodeSessionEvent{ExternalID: envelope.EventID, CodeSessionExternalID: envelope.CodeSessionID, SequenceNum: envelope.SequenceNum, EventType: envelope.EventType, EventSubtype: envelope.EventSubtype, PayloadUUID: payloadUUID, Payload: envelope.Payload}
 }
 
 func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.Request) {

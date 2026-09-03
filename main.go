@@ -33,6 +33,7 @@ import (
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 func main() {
@@ -95,6 +96,10 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
+	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection)
+	if err != nil {
+		return fmt.Errorf("open worker event broker: %w", err)
+	}
 	logger.Info("nats messaging ready", "jetstream", true)
 
 	storageClient, err := storage.New(cfg.Storage)
@@ -140,7 +145,7 @@ func run(logger *slog.Logger) error {
 		DB:              database,
 		Provider:        sandboxProvider,
 		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger),
+		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).WithWorkerEventBroker(workerEventBroker),
 		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 		Logger:          environmentLogger,
@@ -191,6 +196,7 @@ func run(logger *slog.Logger) error {
 			VaultSecrets:           vaultSecrets,
 			Redis:                  redisClient,
 			SessionEventBus:        sessionEventBus,
+			WorkerEventBroker:      workerEventBroker,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

@@ -39,6 +39,7 @@ import (
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
 	webhooksapi "github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
@@ -89,6 +90,7 @@ type ServerDeps struct {
 	VaultSecrets           *secrets.Service
 	Redis                  *redis.Client
 	SessionEventBus        sessionfanout.EventBus
+	WorkerEventBroker      workerevents.Broker
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -104,6 +106,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	codeSessionLogger := componentLogger("codesessions")
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
+		WithWorkerEventBroker(deps.WorkerEventBroker).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)

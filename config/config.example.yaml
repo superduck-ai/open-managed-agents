@@ -14,9 +14,6 @@ database:
 redis:
   url: redis://localhost:6379
 
-nats:
-  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
-
 # Optional SMTP email verification. When omitted, any non-empty verification
 # code is accepted. Configure all three fields together for real email delivery.
 # auth:

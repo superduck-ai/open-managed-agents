@@ -47,6 +47,10 @@ func codeSessionEventsLoadError(err error, codeSessionID string) error {
 	)
 }
 
+func workerEventStreamUnavailable(cause error) error {
+	return internalError("Could not connect code session worker stream", cause)
+}
+
 func mapCodeSessionLoadError(err error, codeSessionID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return codeSessionNotFound(err)

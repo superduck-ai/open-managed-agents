@@ -623,3 +623,93 @@ func mustRawJSON(t *testing.T, value any) json.RawMessage {
 func ptrString(value string) *string {
 	return &value
 }
+
+func TestTaskNotificationFailureEmitsSessionError(t *testing.T) {
+	// 失败场景先行：task_notification 的 status 为 failed/error/terminated 时，
+	// 事件流必须出现 session.error（带 type/retry_status/message），且先于 thread_status_terminated。
+	for _, status := range []string{"failed", "error", "terminated"} {
+		t.Run(status, func(t *testing.T) {
+			payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+				ExternalID:     "csev_err_" + status,
+				EventType:      "system",
+				IdempotencyKey: "err_" + status,
+				CreatedAt:      time.Date(2026, 6, 16, 1, 10, 5, 0, time.UTC),
+			}, mustRawJSON(t, map[string]any{
+				"type":        "system",
+				"uuid":        "system-err-" + status,
+				"subtype":     "task_notification",
+				"task_id":     "abc123",
+				"tool_use_id": "tool_translate",
+				"status":      status,
+				"summary":     "something broke",
+			}))
+			if err != nil {
+				t.Fatalf("task_notification(%s) mapping error: %v", status, err)
+			}
+			if !ok {
+				t.Fatal("task_notification mapping ok = false, want true")
+			}
+			objects := decodePublicPayloads(t, payloads)
+			if len(objects) != 2 {
+				t.Fatalf("task_notification(%s) payloads = %#v, want 2 (error + terminated)", status, objects)
+			}
+			errorEvent := objects[0]
+			if errorEvent["type"] != "session.error" {
+				t.Fatalf("第一个事件应为 session.error, got %v", errorEvent["type"])
+			}
+			errorObject, ok := errorEvent["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("session.error 缺 error 对象: %#v", errorEvent)
+			}
+			if errorObject["retry_status"] != "not_retryable" {
+				t.Fatalf("retry_status = %v, want not_retryable", errorObject["retry_status"])
+			}
+			if errorObject["message"] != "something broke" {
+				t.Fatalf("message = %v, want something broke", errorObject["message"])
+			}
+			if errorObject["type"] != status {
+				t.Fatalf("error.type = %v, want %v（与 status 同源）", errorObject["type"], status)
+			}
+			if objects[1]["type"] != "session.thread_status_terminated" {
+				t.Fatalf("第二个事件应为 thread_status_terminated, got %v", objects[1]["type"])
+			}
+			stopReason := objects[1]["stop_reason"].(map[string]any)
+			if stopReason["type"] != status {
+				t.Fatalf("stop_reason.type = %v, want %v", stopReason["type"], status)
+			}
+			errorAt, _ := time.Parse(time.RFC3339Nano, objects[0]["processed_at"].(string))
+			terminatedAt, _ := time.Parse(time.RFC3339Nano, objects[1]["processed_at"].(string))
+			if !errorAt.Before(terminatedAt) {
+				t.Fatalf("session.error 应先于 thread_status_terminated: %v vs %v", errorAt, terminatedAt)
+			}
+		})
+	}
+}
+
+func TestTaskNotificationSuccessNoSessionError(t *testing.T) {
+	// 成功场景：completed 的 task_notification 不产生 session.error
+	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+		ExternalID:     "csev_ok",
+		EventType:      "system",
+		IdempotencyKey: "ok",
+		CreatedAt:      time.Date(2026, 6, 16, 1, 10, 5, 0, time.UTC),
+	}, mustRawJSON(t, map[string]any{
+		"type":        "system",
+		"uuid":        "system-ok",
+		"subtype":     "task_notification",
+		"task_id":     "abc123",
+		"tool_use_id": "tool_translate",
+		"status":      "completed",
+		"summary":     "done",
+	}))
+	if err != nil {
+		t.Fatalf("task_notification mapping error: %v", err)
+	}
+	if !ok {
+		t.Fatal("task_notification mapping ok = false, want true")
+	}
+	objects := decodePublicPayloads(t, payloads)
+	if len(objects) != 1 || objects[0]["type"] != "session.thread_status_idle" {
+		t.Fatalf("completed 应只有 thread_status_idle, got %#v", objects)
+	}
+}

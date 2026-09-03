@@ -21,7 +21,7 @@ type skillVersionRow struct {
 	S3Key               string     `db:"s3_key"`
 	SizeBytes           int64      `db:"size_bytes"`
 	SHA256              string     `db:"sha256"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string    `db:"created_by_api_key_uuid"`
 	CreatedAt           time.Time  `db:"created_at"`
 	DeletedAt           *time.Time `db:"deleted_at"`
 }
@@ -40,7 +40,7 @@ type insertSkillVersionParams struct {
 	S3Key               string
 	SizeBytes           int64
 	SHA256              string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	CreatedAt           time.Time
 }
 

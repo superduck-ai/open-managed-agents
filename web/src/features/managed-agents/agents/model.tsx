@@ -1,7 +1,6 @@
 import { type ReactNode } from 'react';
 import { createdFilterStartISOString } from '../api';
 import { StatusPill } from '../components/common';
-import { numericValueFromKeys } from '../sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
   type AgentDetailCreatedFilter,
@@ -9,11 +8,9 @@ import {
   type AgentDetailTab,
   type AgentDetailVersionFilter,
   type AgentListFilters,
-  type AgentSessionAnalyticsOverview,
-  type AnalyticsMetricBucket,
   type SessionApiResponse,
 } from '../types';
-import { objectRecord } from '../utils';
+import { numericValueFromKeys, objectRecord } from '../utils';
 
 export const emptyAgents: AgentApiResponse[] = [];
 
@@ -412,71 +409,6 @@ export function sessionTokenUsage(session: SessionApiResponse) {
   return { input: input + cacheRead + cacheCreation, output };
 }
 
-export function emptyAgentSessionAnalyticsOverview(): AgentSessionAnalyticsOverview {
-  return {
-    sessions_count: { value: 0 },
-    error_rate: { value: 0 },
-    input_tokens: { total: 0, p50: 0, p95: 0 },
-    output_tokens: { total: 0, p50: 0, p95: 0 },
-    duration: { total: 0, p50: 0, p95: 0 },
-    active_time: { total: 0, p50: 0, p95: 0 },
-    input_tokens_per_session: { p50: 0, p95: 0 },
-    output_tokens_per_session: { p50: 0, p95: 0 },
-    turns_per_session: { p50: 0, p95: 0 },
-    tool_call_counts: {},
-    stop_reason_counts: {},
-    data_as_of: null,
-  };
-}
-
-export function metricValue(metric?: number | AnalyticsMetricBucket) {
-  if (typeof metric === 'number') {
-    return Number.isFinite(metric) ? metric : 0;
-  }
-  if (!metric) {
-    return 0;
-  }
-  const value = Number(metric.value ?? metric.count ?? 0);
-  return Number.isFinite(value) ? value : 0;
-}
-
-export function metricTotal(metric?: AnalyticsMetricBucket) {
-  const total = metric?.total;
-  if (total && typeof total === 'object') {
-    return metricValue(total as AnalyticsMetricBucket);
-  }
-  return Number(total ?? metric?.value ?? metric?.count ?? 0) || 0;
-}
-
-export function metricQuantile(metric: AnalyticsMetricBucket | undefined, quantile: 'p50' | 'p90' | 'p95') {
-  const value = metric?.[quantile];
-  if (value && typeof value === 'object') {
-    return metricValue(value as AnalyticsMetricBucket);
-  }
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 export function formatInteger(value: number) {
   return new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(Number.isFinite(value) ? value : 0);
-}
-
-export function formatDecimal(value: number) {
-  return new Intl.NumberFormat('en', { maximumFractionDigits: 1 }).format(Number.isFinite(value) ? value : 0);
-}
-
-export function formatPercent(value: number) {
-  const normalized = value > 1 ? value / 100 : value;
-  return `${new Intl.NumberFormat('en', { maximumFractionDigits: 1 }).format((Number.isFinite(normalized) ? normalized : 0) * 100)}%`;
-}
-
-export function formatDurationSeconds(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0s';
-  }
-  if (value < 60) {
-    return `${formatDecimal(value)}s`;
-  }
-  const minutes = value / 60;
-  return `${formatDecimal(minutes)}m`;
 }

@@ -15,8 +15,6 @@ type platformSessionIdentityRow struct {
 	WorkspaceExternalID string `db:"workspace_external_id"`
 	UserUUID            string `db:"user_uuid"`
 	UserExternalID      string `db:"user_external_id"`
-	APIKeyUUID          string `db:"api_key_uuid"`
-	APIKeyExternalID    string `db:"api_key_external_id"`
 }
 
 type insertPlatformAuthUserParams struct {

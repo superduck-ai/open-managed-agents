@@ -80,7 +80,7 @@ describe('ConsoleShell', () => {
       .getByRole('navigation', { name: /Console navigation/i })
       .closest('[data-sidebar-scroll-area="true"]');
     expect(scrollArea).toBeTruthy();
-    expect(scrollArea?.classList.contains('sidebar-scroll-area')).toBe(true);
+    expect(scrollArea?.classList.contains('scrollbar-none')).toBe(true);
   });
 
   test('collapses and expands the desktop sidebar from the sidebar rail', () => {
@@ -116,6 +116,103 @@ describe('ConsoleShell', () => {
     expect(sidebar?.getAttribute('data-state')).toBe('expanded');
     expect(sidebar?.getAttribute('data-collapsible')).toBe('');
     expect(screen.getByRole('link', { name: 'Files' })).toBeTruthy();
+  });
+
+  test('preserves the desktop sidebar state when entering a session detail route', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+
+    function SessionRouteHarness() {
+      const [currentPath, setCurrentPath] = useState('/workspaces/default/sessions');
+      return (
+        <>
+          <button type="button" onClick={() => setCurrentPath('/workspaces/default/sessions/sesn_one123456')}>
+            Open session
+          </button>
+          <ConsoleShell
+            currentPath={currentPath}
+            account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+            onLogout={() => undefined}
+          >
+            <div>Session content</div>
+          </ConsoleShell>
+        </>
+      );
+    }
+
+    renderWithWorkspaces(<SessionRouteHarness />);
+
+    const sidebar = document.querySelector('[data-slot="sidebar"]');
+    const sessionsMain = screen.getByText('Session content').closest('main');
+    expect(sessionsMain?.classList.contains('session-route-theme')).toBe(true);
+    expect(sidebar?.getAttribute('data-state')).toBe('expanded');
+    expect(sidebar?.getAttribute('data-collapsible')).toBe('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle Sidebar' }));
+    expect(sidebar?.getAttribute('data-state')).toBe('collapsed');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open session' }));
+
+    expect(sidebar?.getAttribute('data-state')).toBe('collapsed');
+    expect(sidebar?.getAttribute('data-collapsible')).toBe('icon');
+    const sessionMain = screen.getByText('Session content').closest('main');
+    const workspaceShell = screen.getByText('Session content').parentElement;
+    expect(sessionMain?.classList.contains('h-svh')).toBe(true);
+    expect(sessionMain?.classList.contains('min-h-0')).toBe(true);
+    expect(sessionMain?.classList.contains('overflow-hidden')).toBe(true);
+    expect(sessionMain?.classList.contains('session-route-theme')).toBe(true);
+    expect(workspaceShell?.hasAttribute('data-session-workspace-shell')).toBe(true);
+    expect(workspaceShell?.classList.contains('flex-1')).toBe(true);
+    expect(workspaceShell?.classList.contains('min-h-0')).toBe(true);
+    expect(workspaceShell?.classList.contains('overflow-hidden')).toBe(true);
+    expect(workspaceShell?.classList.contains('px-4')).toBe(false);
+    expect(workspaceShell?.classList.contains('lg:px-8')).toBe(false);
+    expect(screen.queryByRole('link', { name: 'Sessions' })).toBeNull();
+  });
+
+  test('restores the desktop sidebar state after the console shell remounts', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const account = { uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' };
+    const listView = renderWithWorkspaces(
+      <ConsoleShell currentPath="/workspaces/default/sessions" account={account} onLogout={() => undefined}>
+        <div>Sessions list</div>
+      </ConsoleShell>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle Sidebar' }));
+    expect(document.querySelector('[data-slot="sidebar"]')?.getAttribute('data-state')).toBe('collapsed');
+    expect(document.cookie).toContain('sidebar_state=false');
+
+    listView.unmount();
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/sessions/sesn_one123456"
+        account={account}
+        onLogout={() => undefined}
+      >
+        <div>Session detail</div>
+      </ConsoleShell>,
+    );
+
+    expect(document.querySelector('[data-slot="sidebar"]')?.getAttribute('data-state')).toBe('collapsed');
+    expect(screen.getByText('Session detail').closest('main')?.classList.contains('h-svh')).toBe(true);
+  });
+
+  test('keeps document scrolling for non-session console routes', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/dashboard" account={testAccount()} onLogout={() => undefined}>
+        <div>Dashboard content</div>
+      </ConsoleShell>,
+    );
+
+    const main = screen.getByText('Dashboard content').closest('main');
+    expect(main?.classList.contains('min-h-screen')).toBe(true);
+    expect(main?.classList.contains('h-svh')).toBe(false);
+    expect(main?.classList.contains('overflow-hidden')).toBe(false);
+    expect(main?.classList.contains('session-route-theme')).toBe(false);
+    expect(screen.getByText('Dashboard content').parentElement?.hasAttribute('data-session-workspace-shell')).toBe(
+      false,
+    );
   });
 
   test('localizes the desktop sidebar rail for Chinese users', () => {

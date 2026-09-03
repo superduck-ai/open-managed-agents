@@ -874,7 +874,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ExpiresAt:  &platformExpiresAt,
 	})
 	if err != nil || platformIdentity.OrganizationUUID != orgUUID ||
-		!isValidUUID(platformIdentity.UserUUID) || !isValidUUID(platformIdentity.APIKeyUUID) {
+		!isValidUUID(platformIdentity.UserUUID) || !isValidUUID(platformIdentity.WorkspaceUUID) || platformIdentity.APIKeyUUID != "" {
 		t.Fatalf("resolve platform identity through typed UUID rows = (%+v, %v)", platformIdentity, err)
 	}
 

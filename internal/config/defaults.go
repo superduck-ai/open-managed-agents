@@ -28,6 +28,7 @@ func defaultConfig() Config {
 			JobLeaseHeartbeatInterval: 30 * time.Second,
 			ExpirySweepInterval:       5 * time.Minute,
 		},
+		SandboxLifecycle: SandboxLifecycleConfig{Enabled: true, DryRun: true, IdleTimeout: 24 * time.Hour},
 		E2B: E2BConfig{
 			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,
@@ -41,9 +42,22 @@ func defaultConfig() Config {
 			ClaudeAgentVersion:      "2.1.120",
 			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
-		CodeSession: CodeSessionConfig{
-			OTLPLogRoot:             "logs",
-			OTLPLogBodyPreviewBytes: 256 * 1024,
+		Observability: ObservabilityConfig{
+			ContentCaptureEnabled: true,
+			OTLP: ObservabilityOTLPConfig{
+				MaxRequestBytes: 16 << 20,
+				ForwardTimeout:  8 * time.Second,
+			},
+			Backend: ObservabilityBackendOpenObserve,
+			OpenObserve: OpenObserveConfig{
+				BaseURL:      "http://openobserve:5080",
+				Organization: "oma",
+				LogsStream:   "oma_claude_code",
+				TracesStream: "oma_claude_code",
+				Query: BackendQueryConfig{
+					Timeout: 15 * time.Second,
+				},
+			},
 		},
 		Webhook: WebhookConfig{
 			EventTypes:  defaultWebhookEventTypes(),
@@ -81,10 +95,6 @@ func defaultConfig() Config {
 }
 
 func defaultDatabaseAutoMigrate(appEnv string) bool {
-	return appEnv != EnvironmentProd
-}
-
-func defaultCodeSessionOTLPFileLogEnabled(appEnv string) bool {
 	return appEnv != EnvironmentProd
 }
 

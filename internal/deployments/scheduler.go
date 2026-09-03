@@ -11,8 +11,6 @@ import (
 	"uuid"
 
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -21,8 +19,7 @@ import (
 )
 
 const (
-	riverSchema                    = "public"
-	deploymentScheduleQueue        = "deployment_schedules"
+	DeploymentScheduleQueue        = "deployment_schedules"
 	deploymentScheduleSyncInterval = 10 * time.Second
 )
 
@@ -76,39 +73,13 @@ type DeploymentScheduler struct {
 	done       chan struct{}
 }
 
-func MigrateRiver(ctx context.Context, database *db.DB, logger *slog.Logger) error {
-	migrator, err := rivermigrate.New(riverdatabasesql.New(database.SQLDB()), &rivermigrate.Config{
-		Schema: riverSchema, Logger: logging.LoggerOrDefault(logger),
-	})
-	if err != nil {
-		return err
-	}
-	_, err = migrator.Migrate(ctx, rivermigrate.DirectionUp, nil)
-	return err
+// RegisterScheduledWorkers keeps deployment behavior separate from River assembly.
+func RegisterScheduledWorkers(workers *river.Workers, database *db.DB) {
+	river.AddWorker(workers, &scheduledDeploymentWorker{database: database})
 }
 
-func NewDeploymentScheduler(database *db.DB, logger *slog.Logger) (*DeploymentScheduler, error) {
-	logger = logging.LoggerOrDefault(logger)
-	workers := river.NewWorkers()
-	worker := &scheduledDeploymentWorker{database: database}
-	river.AddWorker(workers, worker)
-	client, err := river.NewClient(riverdatabasesql.New(database.SQLDB()), &river.Config{
-		Schema: riverSchema,
-		Queues: map[string]river.QueueConfig{
-			deploymentScheduleQueue: {MaxWorkers: 10},
-		},
-		Workers:         workers,
-		Logger:          logger,
-		PollOnly:        true,
-		JobTimeout:      2 * time.Minute,
-		SoftStopTimeout: 10 * time.Second,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &DeploymentScheduler{
-		database: database, client: client, logger: logger, registered: make(map[string]deploymentSchedule),
-	}, nil
+func NewDeploymentScheduler(database *db.DB, client *river.Client[*sql.Tx], logger *slog.Logger) *DeploymentScheduler {
+	return &DeploymentScheduler{database: database, client: client, logger: logging.LoggerOrDefault(logger), registered: make(map[string]deploymentSchedule)}
 }
 
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
@@ -161,7 +132,7 @@ func (s *DeploymentScheduler) sync(ctx context.Context) error {
 			return scheduledDeploymentArgs{
 				WorkspaceUUID: state.WorkspaceUUID, DeploymentExternalID: state.ExternalID,
 				Schedule: schedule.config,
-			}, &river.InsertOpts{Queue: deploymentScheduleQueue}
+			}, &river.InsertOpts{Queue: DeploymentScheduleQueue}
 		}, &river.PeriodicJobOpts{ID: state.ExternalID})
 		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
 		if _, err := s.client.PeriodicJobs().AddSafely(job); err != nil {
@@ -239,7 +210,7 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 	if referenceFailure != nil {
 		return w.recordFailure(ctx, deployment, referenceFailure, scheduledAt, now)
 	}
-	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, deployment.RuntimeUserUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err

@@ -51,6 +51,8 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 			workerRouter.Post("/heartbeat", h.handleCodeSessionWorkerHeartbeat)
 			workerRouter.Post("/otlp/metrics", h.handleCodeSessionWorkerOTLP)
 			workerRouter.Post("/otlp/logs", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/v1/logs", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/v1/traces", h.handleCodeSessionWorkerOTLP)
 		})
 	})
 }

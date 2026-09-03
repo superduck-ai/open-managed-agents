@@ -27,7 +27,7 @@ func TestMessageBatchMapperStatements(t *testing.T) {
 		ExternalID:          "msgbatch_mapper",
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
-		CreatedByAPIKeyUUID: "00000000-0000-4000-8000-000000000005",
+		CreatedByAPIKeyUUID: nullableString("00000000-0000-4000-8000-000000000005"),
 		APIVariant:          "stable",
 		AnthropicVersion:    "2023-06-01",
 		BetaHeaders:         json.RawMessage(`[]`),

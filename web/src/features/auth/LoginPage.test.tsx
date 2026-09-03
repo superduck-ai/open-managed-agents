@@ -126,4 +126,32 @@ describe('LoginFlow', () => {
     expect(screen.getByLabelText(/邮箱/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: '使用邮箱继续' })).toBeTruthy();
   });
+
+  test('localizes an invalid or expired verification code in Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/login');
+    const send = mock(async () => ({ sent: true }));
+    const verify = mock(async () => {
+      throw {
+        status: 401,
+        code: 'authentication_error',
+        message: 'Verification code is invalid or expired',
+      };
+    });
+    render(
+      <I18nProvider initialLocale="zh-CN">
+        <LoginFlow onAuthenticated={() => undefined} onSendMagicLink={send} onVerifyMagicLink={verify} />
+      </I18nProvider>,
+    );
+
+    fireEvent.input(screen.getByLabelText('邮箱 *'), { target: { value: 'user@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: '使用邮箱继续' }));
+
+    await screen.findByLabelText('验证码');
+    fireEvent.input(screen.getByLabelText('验证码'), { target: { value: '000000' } });
+    fireEvent.click(screen.getByRole('button', { name: '验证邮箱' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('验证码无效或已过期');
+    expect(alert.textContent).not.toContain('Verification code is invalid or expired');
+  });
 });

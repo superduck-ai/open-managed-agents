@@ -10,6 +10,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 // ManagedAgentCreateInput 汇总为 managed agent 创建 code session 和签发 sandbox 凭证所需的上下文。
@@ -216,7 +217,7 @@ func (s *Service) ActivateManagedAgentCodeSession(
 		}
 		inboundInputs := make([]db.AppendCodeSessionEventInput, 0, len(sessionEvents))
 		for _, event := range sessionEvents {
-			if !shouldForwardPublicEventToWorker(event.EventType) {
+			if !maevents.IsPublicWorkerInputEvent(event.EventType) {
 				continue
 			}
 			inbound, err := s.convertSessionEventToInbound(lockedCodeSession.ExternalID, event)

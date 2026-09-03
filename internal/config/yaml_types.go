@@ -40,11 +40,14 @@ type yamlConfig struct {
 	Database          yamlDatabaseConfig      `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
 	NATS              yamlNATSConfig          `yaml:"nats"`
+	Auth              AuthConfig              `yaml:"auth"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
+	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       yamlCodeSessionConfig   `yaml:"code_session"`
+	Observability     ObservabilityConfig     `yaml:"observability"`
 	Webhook           yamlWebhookConfig       `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         yamlBootstrapConfig     `yaml:"bootstrap"`
@@ -63,14 +66,11 @@ type yamlNATSConfig struct {
 }
 
 type yamlCodeSessionConfig struct {
-	SandboxAPIBaseURL                  string         `yaml:"sandbox_api_base_url"`
-	OTLPFileLogEnabled                 optional[bool] `yaml:"otlp_file_log_enabled"`
-	OTLPLogRoot                        string         `yaml:"otlp_log_root"`
-	OTLPLogBodyPreviewBytes            int            `yaml:"otlp_log_body_preview_bytes"`
-	JWTSigningPrivateKeyFile           string         `yaml:"jwt_signing_private_key_file"`
-	UpstreamProxyMITMEnabled           bool           `yaml:"upstream_proxy_mitm_enabled"`
-	UpstreamProxyCAKeyFile             string         `yaml:"upstream_proxy_ca_key_file"`
-	UpstreamProxyDisableSSRFProtection bool           `yaml:"upstream_proxy_disable_ssrf_protection"`
+	SandboxAPIBaseURL                  string `yaml:"sandbox_api_base_url"`
+	JWTSigningPrivateKeyFile           string `yaml:"jwt_signing_private_key_file"`
+	UpstreamProxyMITMEnabled           bool   `yaml:"upstream_proxy_mitm_enabled"`
+	UpstreamProxyCAKeyFile             string `yaml:"upstream_proxy_ca_key_file"`
+	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
 }
 
 type yamlWebhookConfig struct {
@@ -104,19 +104,20 @@ func newYAMLConfig() yamlConfig {
 			ConnectTimeout: defaults.NATS.ConnectTimeout,
 			DrainTimeout:   defaults.NATS.DrainTimeout,
 		},
+		Auth:              defaults.Auth,
 		Storage:           defaults.Storage,
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
+		SandboxLifecycle:  defaults.SandboxLifecycle,
 		EnvironmentRunner: defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
-			OTLPLogRoot:                        defaults.CodeSession.OTLPLogRoot,
-			OTLPLogBodyPreviewBytes:            defaults.CodeSession.OTLPLogBodyPreviewBytes,
 			JWTSigningPrivateKeyFile:           defaults.CodeSession.JWTSigningPrivateKeyFile,
 			UpstreamProxyMITMEnabled:           defaults.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             defaults.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: defaults.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
+		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
 			EndpointURL:   defaults.Webhook.EndpointURL,
 			SigningKey:    defaults.Webhook.SigningKey,
@@ -148,19 +149,20 @@ func (input yamlConfig) resolve() Config {
 			ConnectTimeout: input.NATS.ConnectTimeout,
 			DrainTimeout:   input.NATS.DrainTimeout,
 		},
+		Auth:              input.Auth,
 		Storage:           input.Storage,
 		Batch:             input.Batch,
 		E2B:               input.E2B,
+		SandboxLifecycle:  input.SandboxLifecycle,
 		EnvironmentRunner: input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,
-			OTLPLogRoot:                        input.CodeSession.OTLPLogRoot,
-			OTLPLogBodyPreviewBytes:            input.CodeSession.OTLPLogBodyPreviewBytes,
 			JWTSigningPrivateKeyFile:           input.CodeSession.JWTSigningPrivateKeyFile,
 			UpstreamProxyMITMEnabled:           input.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
+		Observability: input.Observability,
 		Webhook: WebhookConfig{
 			EndpointURL:   input.Webhook.EndpointURL,
 			SigningKey:    input.Webhook.SigningKey,
@@ -180,7 +182,6 @@ func (input yamlConfig) resolve() Config {
 		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
-	cfg.CodeSession.OTLPFileLogEnabled = input.CodeSession.OTLPFileLogEnabled.valueOr(defaultCodeSessionOTLPFileLogEnabled(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")
 	if input.Bootstrap.SeedAPIKeys.set {
 		cfg.Bootstrap.SeedAPIKeys = input.Bootstrap.SeedAPIKeys.value

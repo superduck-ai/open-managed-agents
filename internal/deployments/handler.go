@@ -365,6 +365,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		OrganizationUUID:      principal.OrganizationUUID,
 		WorkspaceUUID:         principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+		RuntimeUserUUID:       principal.UserUUID,
 		EnvironmentUUID:       env.UUID,
 		EnvironmentExternalID: env.ExternalID,
 		AgentUUID:             agent.record.UUID,
@@ -630,7 +631,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)

@@ -41,7 +41,7 @@ func TestWebhookMapperStatements(t *testing.T) {
 		ExternalID:          "wh_test",
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
-		CreatedByAPIKeyUUID: apiKeyUUID,
+		CreatedByAPIKeyUUID: nullableString(apiKeyUUID),
 		URL:                 "https://example.test/webhook",
 		Name:                "Test webhook",
 		Description:         "Test",
@@ -115,7 +115,7 @@ func TestWebhookMapperStatements(t *testing.T) {
 			bound: buildWebhookEndpointMapperInsert(yourbatis.DialectPostgres, insertParams),
 			id:    "WebhookEndpointMapper.Insert", kind: yourbatis.StatementInsert,
 			values: []any{
-				endpointUUID, "wh_test", organizationUUID, workspaceUUID, apiKeyUUID,
+				endpointUUID, "wh_test", organizationUUID, workspaceUUID, insertParams.CreatedByAPIKeyUUID,
 				insertParams.URL, insertParams.Name, insertParams.Description, events,
 				insertParams.SigningSecret, insertParams.Status, &disabledReason,
 				1, now, now,

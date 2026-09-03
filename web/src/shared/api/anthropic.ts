@@ -107,6 +107,9 @@ export function anthropicRequestHeaders(context: AnthropicRequestContext = {}): 
   if (activeContext.workspaceId) {
     headers['x-workspace-id'] = activeContext.workspaceId;
   }
+  if (activeContext.csrfToken) {
+    headers['x-csrf-token'] = activeContext.csrfToken;
+  }
   return headers;
 }
 
@@ -353,6 +356,11 @@ export const anthropicBetaApi = {
       },
     },
     resources: {
+      add<T>(sessionId: string, params: Record<string, unknown>, workspaceId?: string) {
+        return sdkCall(() =>
+          getAnthropicClient().beta.sessions.resources.add(sessionId, sdkParams(params), requestOptions(workspaceId)),
+        ) as Promise<T>;
+      },
       list<T>(sessionId: string, params: Record<string, unknown>, workspaceId?: string) {
         return sdkPage<T>(() =>
           getAnthropicClient().beta.sessions.resources.list(sessionId, params, requestOptions(workspaceId)),

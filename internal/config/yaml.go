@@ -240,7 +240,6 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 	}{
 		{name: "environment_runner.manager_path", value: &cfg.EnvironmentRunner.ManagerPath},
 		{name: "environment_runner.claude_path", value: &cfg.EnvironmentRunner.ClaudePath},
-		{name: "code_session.otlp_log_root", value: &cfg.CodeSession.OTLPLogRoot},
 		{name: "code_session.jwt_signing_private_key_file", value: &cfg.CodeSession.JWTSigningPrivateKeyFile},
 		{name: "code_session.upstream_proxy_ca_key_file", value: &cfg.CodeSession.UpstreamProxyCAKeyFile},
 		{name: "vault.master_key.kek_file", value: &cfg.Vault.MasterKey.KekFile},

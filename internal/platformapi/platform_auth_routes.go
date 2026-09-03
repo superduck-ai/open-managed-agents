@@ -3,14 +3,15 @@ package platformapi
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 
 	"github.com/go-chi/chi/v5"
@@ -36,6 +37,10 @@ type VerifyMagicLinkRequest struct {
 	RecaptchaSiteKey   *string                     `json:"recaptcha_site_key,omitempty"`
 	RecaptchaToken     *string                     `json:"recaptcha_token,omitempty"`
 	Source             *string                     `json:"source,omitempty"`
+}
+
+type SendMagicLinkRequest struct {
+	EmailAddress string `json:"email_address"`
 }
 
 type VerifyMagicLinkCredentials struct {
@@ -72,22 +77,24 @@ type loginMethodsResponse struct {
 	Methods []string `json:"methods"`
 }
 
-type platformMagicLinkStore interface {
-	bootstrapAccountStore
+type emailLoginService interface {
+	RequestEmailLogin(ctx context.Context, email string) error
+	VerifyEmailLogin(ctx context.Context, email, code string) (userID string, orgUUID string, err error)
+	CompleteEmailLogin(ctx context.Context, email, code string) error
 }
 
-type platformMagicLinkService interface {
-	FindOrCreateUserContextByEmail(ctx context.Context, email string) (userUUID string, orgUUID string, err error)
+type platformMagicLinkStore interface {
+	bootstrapAccountStore
 	ResolvePlatformSessionIdentity(ctx context.Context, input platformsession.CreateInput) (platformsession.Session, error)
 }
 
-func RegisterPlatformEmailLoginRoutes(r chi.Router, store OrganizationStore, authService platformMagicLinkService, sessions platformsession.Store) {
+func RegisterPlatformEmailLoginRoutes(r chi.Router, store platformMagicLinkStore, authProvider emailLoginService, sessions platformsession.Store) {
 	r.Get("/api/auth/login_methods", handleAuthLoginMethods)
-	r.Post("/api/auth/send_magic_link", handleSendMagicLink)
-	r.Post("/api/auth/verify_magic_link", handleVerifyMagicLink(store, authService, sessions, false))
+	r.Post("/api/auth/send_magic_link", handleSendMagicLink(authProvider))
+	r.Post("/api/auth/verify_magic_link", handleVerifyMagicLink(store, authProvider, sessions, false))
 	r.Post("/api/auth/logout", handleWebLogout(store, sessions))
-	r.Post("/auth/send_magic_link", handleSendMagicLink)
-	r.Post("/auth/verify_magic_link", handleVerifyMagicLink(store, authService, sessions, true))
+	r.Post("/auth/send_magic_link", handleSendMagicLink(authProvider))
+	r.Post("/auth/verify_magic_link", handleVerifyMagicLink(store, authProvider, sessions, true))
 	r.Post("/auth/logout", handleAndroidLogout(store, sessions))
 }
 
@@ -95,30 +102,40 @@ func handleAuthLoginMethods(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, loginMethodsResponse{Methods: []string{"google", "magic_link"}})
 }
 
-func handleSendMagicLink(w http.ResponseWriter, r *http.Request) {
-	if r.Body != nil {
-		_, _ = io.Copy(io.Discard, r.Body)
-		_ = r.Body.Close()
+func handleSendMagicLink(authProvider emailLoginService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		request, err := httpapi.DecodeObjectBodyAs[SendMagicLinkRequest](w, r, 64*1024)
+		if err != nil {
+			writeEmailLoginError(w, r, invalidEmailLoginRequest(err))
+			return
+		}
+		if err := authProvider.RequestEmailLogin(r.Context(), request.EmailAddress); err != nil {
+			writeEmailLoginError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, SendMagicLinkResponse{Sent: true})
 	}
-	writeJSON(w, http.StatusOK, SendMagicLinkResponse{Sent: true})
 }
 
-func handleVerifyMagicLink(store OrganizationStore, authService platformMagicLinkService, sessions platformsession.Store, androidShape bool) http.HandlerFunc {
-	magicLinkStore, _ := store.(platformMagicLinkStore)
+func handleVerifyMagicLink(store platformMagicLinkStore, authProvider emailLoginService, sessions platformsession.Store, androidShape bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if magicLinkStore == nil || authService == nil || sessions == nil {
+		if store == nil || sessions == nil {
 			internalError(w, "organization store is not configured")
 			return
 		}
 
-		request := readVerifyMagicLinkRequest(r)
-		userUUID, orgUUID, err := authService.FindOrCreateUserContextByEmail(r.Context(), verifyMagicLinkEmail(request))
+		request, err := httpapi.DecodeObjectBodyAs[VerifyMagicLinkRequest](w, r, 64*1024)
 		if err != nil {
-			internalError(w, "failed to verify magic link")
+			writeEmailLoginError(w, r, invalidEmailLoginRequest(err))
+			return
+		}
+		userUUID, orgUUID, err := authProvider.VerifyEmailLogin(r.Context(), verifyMagicLinkEmail(*request), verifyMagicLinkCode(*request))
+		if err != nil {
+			writeEmailLoginError(w, r, err)
 			return
 		}
 
-		account, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), magicLinkStore, userUUID, orgUUID)
+		account, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), store, userUUID, orgUUID)
 		if err != nil {
 			internalError(w, "failed to load verified account")
 			return
@@ -127,7 +144,7 @@ func handleVerifyMagicLink(store OrganizationStore, authService platformMagicLin
 		created := true
 		sessionKey := "sk-ant-sid-session-key-" + uuid.NewV4().String()
 		expiresAt := time.Now().UTC().Add(time.Duration(25920000) * time.Second)
-		session, err := authService.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
+		session, err := store.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
 			SessionKey: sessionKey,
 			UserUUID:   account.UUID,
 			OrgUUID:    selectedOrgUUID,
@@ -139,6 +156,17 @@ func handleVerifyMagicLink(store OrganizationStore, authService platformMagicLin
 		}
 		if err := sessions.Save(r.Context(), sessionKey, session); err != nil {
 			internalError(w, "failed to create session")
+			return
+		}
+		if err := authProvider.CompleteEmailLogin(r.Context(), verifyMagicLinkEmail(*request), verifyMagicLinkCode(*request)); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+			cleanupErr := sessions.Delete(cleanupCtx, sessionKey)
+			cancel()
+			if cleanupErr != nil {
+				internalError(w, "failed to clean up incomplete session")
+				return
+			}
+			writeEmailLoginError(w, r, err)
 			return
 		}
 
@@ -178,31 +206,49 @@ func handleAndroidLogout(store OrganizationStore, sessions platformsession.Store
 	}
 }
 
-func readVerifyMagicLinkRequest(r *http.Request) VerifyMagicLinkRequest {
-	var request VerifyMagicLinkRequest
-	if r.Body == nil {
-		return request
-	}
-	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
-	if err != nil || len(strings.TrimSpace(string(body))) == 0 {
-		return request
-	}
-	_ = json.Unmarshal(body, &request)
-	return request
-}
-
 func verifyMagicLinkEmail(request VerifyMagicLinkRequest) string {
 	if request.Credentials == nil {
 		return ""
 	}
 	if request.Credentials.EmailAddress != nil {
-		return strings.TrimSpace(*request.Credentials.EmailAddress)
+		return *request.Credentials.EmailAddress
 	}
 	if request.Credentials.EncodedEmailAddress != nil {
 		return decodeMagicLinkEmail(*request.Credentials.EncodedEmailAddress)
 	}
 	return ""
+}
+
+func verifyMagicLinkCode(request VerifyMagicLinkRequest) string {
+	if request.Credentials == nil || request.Credentials.Code == nil {
+		return ""
+	}
+	return *request.Credentials.Code
+}
+
+func writeEmailLoginError(w http.ResponseWriter, r *http.Request, err error) {
+	appErr, ok := errors.AsType[*apperr.Error](err)
+	if !ok {
+		internalError(w, "email login failed")
+		return
+	}
+	status := http.StatusInternalServerError
+	code := "api_error"
+	switch appErr.Kind {
+	case apperr.InvalidArgument:
+		status, code = http.StatusBadRequest, "invalid_request_error"
+	case apperr.Unauthenticated:
+		status, code = http.StatusUnauthorized, "authentication_error"
+	case apperr.RateLimited:
+		status, code = http.StatusTooManyRequests, "rate_limit_error"
+	case apperr.Unavailable:
+		status, code = http.StatusServiceUnavailable, "api_error"
+	}
+	writeJSON(w, status, map[string]any{
+		"error":      code,
+		"message":    appErr.PublicMessage,
+		"request_id": httpapi.RequestID(r.Context()),
+	})
 }
 
 func decodeMagicLinkEmail(encoded string) string {

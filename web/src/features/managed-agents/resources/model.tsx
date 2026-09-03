@@ -1014,6 +1014,22 @@ export function columnWidth(section: ManagedEntitySection, column: string) {
   if (!column) {
     return 'w-[48px]';
   }
+  if (section === 'sessions') {
+    switch (column) {
+      case 'ID':
+        return 'w-[180px]';
+      case 'Status':
+        return 'w-[130px]';
+      case 'Agent':
+        return 'w-[160px]';
+      case 'Tokens in / out':
+        return 'w-[140px]';
+      case 'Cost':
+        return 'w-[130px]';
+      case 'Created':
+        return 'w-[160px]';
+    }
+  }
   if (column === 'ID') {
     return 'w-[190px]';
   }

@@ -248,6 +248,17 @@ Debug 模式是事件审计视图，必须保留：
 
 孤立事件不应影响任何 `tool_call` lifecycle，但需要在 Debug 中可见，方便定位后端或导入数据问题。
 
+### 6.4 Inspector Tools 权限列
+
+Inspector 的 Tools 表格展示配置层权限，而不是根据历史调用是否出现 confirmation 反推策略：
+
+- 按 `session.agent.id` 和 `session.agent.version` 获取该 Session 固定引用的 Agent 版本；
+- 内置 toolset 与 MCP toolset 复用 Agent 详情页的权限计算，包括逐工具 first-wins、`default_config`、`enabled=false`、内置默认 `always_allow` 和 MCP 默认 `always_ask`；
+- 历史事件的 `evaluated_permission`、confirmation 和 result 只负责本次调用的 lifecycle、审批与执行结果，不得覆盖 Agent 配置列；
+- Agent 版本暂时不可读取，或 custom tool 等没有配置层权限语义时，才兼容使用已观察调用的权限结果，避免伪造一个不存在的 Agent 配置。
+
+因此，Agent 配置为 `always_ask` 时，即使历史工具调用已经获准并完成，Tools 表格仍显示 `Always ask` / `始终询问`；调用行本身继续按事件展示 completed、denied 或 awaiting approval。
+
 ---
 
 ## 7. 后端与事件发送边界

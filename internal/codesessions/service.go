@@ -67,7 +67,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	payloads := make([]json.RawMessage, 0, len(events))
 	queued := false
 	for _, event := range events {
-		if !shouldForwardPublicEventToWorker(event.EventType) {
+		if !maevents.IsPublicWorkerInputEvent(event.EventType) {
 			continue
 		}
 		handled := false
@@ -110,7 +110,8 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return nil
+			_, err = s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil)
+			return err
 		}
 		return err
 	}
@@ -573,15 +574,6 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 		}
 	}
 	return threadByAgent, nil
-}
-
-func shouldForwardPublicEventToWorker(eventType string) bool {
-	switch eventType {
-	case "user.message", "user.interrupt", "user.tool_confirmation", "user.tool_result", "user.custom_tool_result":
-		return true
-	default:
-		return false
-	}
 }
 
 func isPublicWorkerOutputEvent(eventType string) bool {

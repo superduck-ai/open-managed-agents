@@ -8,6 +8,7 @@ export type ManagedAgentSection =
   | 'quickstart'
   | 'agents'
   | 'sessions'
+  | 'observability'
   | 'deployments'
   | 'environments'
   | 'credential-vaults'
@@ -126,7 +127,7 @@ export type AgentUpdateInput = {
   multiagent: unknown | null;
 };
 
-export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams'>;
+export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams' | 'observability'>;
 
 export type PageResponse<T> = {
   data: T[];
@@ -392,16 +393,9 @@ export type SessionTraceFamily =
   | 'env'
   | 'span';
 
-export type SessionTraceFilterOption = {
-  value: string;
-  label: string;
-};
-
 export type SessionTraceBuildOptions = {
   platformTranscriptFiltering?: boolean;
 };
-
-export type SessionDebugDetailTab = 'content' | 'deltas';
 
 export type SessionTraceEntry = {
   id: string;
@@ -474,6 +468,9 @@ export type BaseSessionEventEntry = {
   relativeTime: string;
   searchText: string;
   isError: boolean;
+  turnId?: string;
+  bracketOpen?: boolean;
+  bracketEndMs?: number;
 };
 
 export type IdleGapEntry = {
@@ -541,6 +538,7 @@ export type ModelBracketTargetEntry = DisplayEventEntry | ToolCallEntry;
 export type ModelRequestBracket = {
   startId: string;
   startMs: number;
+  softEndMs?: number;
   entries: ModelBracketTargetEntry[];
 };
 
@@ -716,20 +714,13 @@ export type QuickstartQuestion = {
   options: Array<{ label: string; description: string }>;
 };
 
-export type TranscriptMarkdownBlock =
-  | { type: 'paragraph'; text: string }
-  | { type: 'heading'; level: number; text: string }
-  | { type: 'list'; items: string[] }
-  | { type: 'table'; headers: string[]; rows: string[][] }
-  | { type: 'code'; language?: string; value: string };
-
 export type SessionThreadHint = { id: string; name: string };
 
 export type HighlightLanguage =
   'bash' | 'bash-yaml' | 'javascript' | 'json' | 'plaintext' | 'python' | 'typescript' | 'yaml';
 
 export type ResourceConfig = {
-  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>;
+  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams' | 'observability'>;
   title: string;
   description: string;
   createLabel?: string;
@@ -749,45 +740,44 @@ export type EventsTabProps = {
   archivedLaneCount: number;
   childLoading: boolean;
   composer?: ReactNode;
-  copyPayload: string;
-  detailPanelRef: RefObject<HTMLDivElement | null>;
   entries: SessionEventListEntry[];
   events: QuickstartSessionEvent[];
   filteredEntries: SessionEventListEntry[];
-  filterOptions: SessionTraceFilterOption[];
   hasFilter: boolean;
+  hoveredEventId: string | null;
+  inspector: ReactNode;
+  inspectorOpen: boolean;
   isMultiAgent: boolean;
   lanes: SessionDetailLane[];
+  openModelRequest: QuickstartSessionEvent | null;
   pendingAction?: ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
-  onDetailTabChange: (tab: SessionDebugDetailTab) => void;
-  onOpenDeltas: (entryId: string) => void;
+  onCloseInspector: () => void;
+  onHoverEvent: (entryId: string | null) => void;
+  onOpenInspector: () => void;
   onQueryChange: (value: string) => void;
   onSelectEntry: (entryId: string | null) => void;
   onSelectLane: (laneId: string, targetEntryId?: string | null) => void;
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
-  onSelectedTypesChange: (types: string[]) => void;
   onTimelineSeek: (entryId: string | null) => void;
   onToggleArchivedLanes: (nextPressed: boolean) => void;
-  onViewChange: (view: SessionTraceView) => void;
   query: string;
   scrollerRef: RefObject<HTMLDivElement | null>;
   selectedEntry: SessionEventListEntry | null;
-  selectedDetailTab: SessionDebugDetailTab;
   selectedEntryId: string | null;
-  selectedTypes: string[];
   showArchivedLanes: boolean;
   suppressScrollSeekUntilRef: MutableRefObject<number>;
   threadNameById: Map<string, string>;
   timeline: SessionTimelineLane[];
   timelineVisibleIds?: Set<string>;
-  view: SessionTraceView;
+  traceStartMs: number;
 };
 
 export type SessionDetailSummaryChip = {
   key: string;
   icon: IconComponent;
+  tooltip?: string;
   value: string;
 };
 
@@ -820,6 +810,11 @@ export type SessionTimelineItem = {
   relativeTime: string;
   processedAtMs: number;
   durationMs: number;
+  open?: boolean;
+  threadMessage?: {
+    direction: 'sent' | 'received';
+    laneId: string;
+  };
 };
 
 export type SessionTimelineTick = SessionTimelineItem & {
@@ -834,13 +829,6 @@ export type TimelinePickOptions = {
   includeIdle?: boolean;
   maxDistancePct?: number;
   visibleIds?: Set<string>;
-};
-
-export type LaneTabGroup = {
-  key: string;
-  label: string;
-  lanes: SessionDetailLane[];
-  collapsed: boolean;
 };
 
 export type EnvironmentPackageRow = {

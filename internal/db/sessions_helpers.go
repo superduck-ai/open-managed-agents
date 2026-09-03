@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"context"
+	"slices"
 
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -155,14 +157,22 @@ func insertSessionEventsTx(
 		}
 		created = append(created, row.event())
 	}
+	if slices.ContainsFunc(created, func(event SessionEvent) bool {
+		return maevents.IsPublicWorkerInputEvent(event.EventType)
+	}) {
+		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
+			return nil, err
+		}
+	}
 	return created, nil
 }
 
 func sessionWriteParameters(session Session) sessionWriteParams {
 	return sessionWriteParams{
-		UUID: session.UUID, ExternalID: session.ExternalID,
+		RuntimeUserUUID: nullableString(session.RuntimeUserUUID),
+		UUID:            session.UUID, ExternalID: session.ExternalID,
 		OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
-		CreatedByAPIKeyUUID: session.CreatedByAPIKeyUUID, EnvironmentUUID: session.EnvironmentUUID,
+		CreatedByAPIKeyUUID: nullableString(session.CreatedByAPIKeyUUID), EnvironmentUUID: session.EnvironmentUUID,
 		EnvironmentExternalID: session.EnvironmentExternalID, AgentUUID: session.AgentUUID,
 		AgentExternalID: session.AgentExternalID, AgentVersion: session.AgentVersion,
 		AgentSnapshot: agentJSONArg(session.AgentSnapshot), DeploymentUUID: session.DeploymentUUID,
@@ -260,7 +270,8 @@ func sessionEventsFromRows(rows []sessionEventRow) []SessionEvent {
 func (r sessionRow) session() Session {
 	return Session{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
+		RuntimeUserUUID: stringFromNullable(r.RuntimeUserUUID),
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,

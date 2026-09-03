@@ -84,7 +84,10 @@ export const agentRows: Array<Record<string, ReactNode>> = [
   },
 ];
 
-export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>, ResourceConfig> = {
+export const resourceConfigs: Record<
+  Exclude<ManagedAgentSection, 'quickstart' | 'dreams' | 'observability'>,
+  ResourceConfig
+> = {
   agents: {
     section: 'agents',
     title: 'Agents',
@@ -106,7 +109,7 @@ export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' |
     searchPrefix: 'ID',
     searchPlaceholder: 'Search by session ID',
     filters: ['Created  All time', 'Agent  All', 'Deployment  All', 'Status  Active'],
-    columns: ['', 'ID', 'Name', 'Status', 'Agent', 'Created'],
+    columns: ['ID', 'Name', 'Status', 'Agent', 'Tokens in / out', 'Cost', 'Created'],
     emptyTitle: 'No sessions yet',
     emptyBody: 'Sessions will appear here once created through the API.',
     emptyIcon: MessageCircle,

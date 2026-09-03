@@ -118,7 +118,12 @@ export function LoginFlow({
       await onVerifyMagicLink(submittedEmail, code);
       await onAuthenticated();
     } catch (err) {
-      setError(errorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')));
+      const apiError = err as { status?: unknown; code?: unknown } | undefined;
+      setError(
+        apiError?.status === 401 && apiError.code === 'authentication_error'
+          ? msg('auth.login.invalidOrExpiredCode', 'Verification code is invalid or expired')
+          : errorMessage(err, msg('auth.login.verifyCodeFailed', 'Could not verify that code. Try again.')),
+      );
     } finally {
       setIsSubmitting(false);
     }

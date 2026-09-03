@@ -1,37 +1,61 @@
 package platformauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"strings"
 	"uuid"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
-	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
 type Store interface {
 	WithPlatformAuthTx(ctx context.Context, fn func(db.PlatformAuthTxStore) error) error
-	ResolvePlatformSessionIdentity(ctx context.Context, input platformsession.CreateInput) (platformsession.Session, error)
 }
 
-type Service struct {
-	store Store
+type EmailProvider struct {
+	store         Store
+	codes         EmailCodeStore
+	sender        LoginCodeSender
+	codeHMACKey   []byte
+	acceptAnyCode bool
+	logger        *slog.Logger
 }
 
-func New(store Store) *Service {
-	return &Service{store: store}
+func New(cfg config.AuthConfig, store Store, redisClient *redis.Client, logger *slog.Logger) *EmailProvider {
+	if cfg.SMTP.Addr == "" {
+		logger = logging.LoggerOrDefault(logger)
+		logger.Warn("SMTP is not configured; email login accepts any non-empty verification code")
+		return &EmailProvider{store: store, acceptAnyCode: true, logger: logger}
+	}
+	key := sha256.Sum256([]byte("open-managed-agents/email-login-code/v1\x00" + cfg.SMTP.Password))
+	return NewEmailProvider(store, newRedisEmailCodeStore(redisClient), newSMTPSender(cfg.SMTP), key[:], logger)
 }
 
-func (s *Service) FindOrCreateUserContextByEmail(ctx context.Context, email string) (string, string, error) {
+func NewEmailProvider(store Store, codes EmailCodeStore, sender LoginCodeSender, codeHMACKey []byte, logger *slog.Logger) *EmailProvider {
+	return &EmailProvider{
+		store:       store,
+		codes:       codes,
+		sender:      sender,
+		codeHMACKey: bytes.Clone(codeHMACKey),
+		logger:      logging.LoggerOrDefault(logger),
+	}
+}
+
+func (s *EmailProvider) findOrCreateUserContextByEmail(ctx context.Context, normalizedEmail string) (string, string, error) {
 	if s == nil || s.store == nil {
 		return "", "", db.ErrNotFound
 	}
-	normalizedEmail := normalizeLoginEmail(email)
 	defaultName := defaultPlatformUserName(normalizedEmail)
 
 	var userExternalID string
@@ -57,13 +81,6 @@ func (s *Service) FindOrCreateUserContextByEmail(ctx context.Context, email stri
 		return "", "", err
 	}
 	return userExternalID, orgUUID, nil
-}
-
-func (s *Service) ResolvePlatformSessionIdentity(ctx context.Context, input platformsession.CreateInput) (platformsession.Session, error) {
-	if s == nil || s.store == nil {
-		return platformsession.Session{}, db.ErrNotFound
-	}
-	return s.store.ResolvePlatformSessionIdentity(ctx, input)
 }
 
 func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStore, email string, defaultName string) (db.PlatformAuthUserContext, error) {
@@ -136,14 +153,6 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 		return db.PlatformAuthUserContext{}, err
 	}
 	return db.PlatformAuthUserContext{UserExternalID: userExternalID, OrgUUID: org.UUID}, nil
-}
-
-func normalizeLoginEmail(email string) string {
-	normalized := strings.ToLower(strings.TrimSpace(email))
-	if normalized == "" {
-		return "test@qq.com"
-	}
-	return normalized
 }
 
 func defaultPlatformUserName(email string) string {

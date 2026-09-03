@@ -11,10 +11,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("platform-console-backend-bucket"))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	// 该测试断言 observability 关闭时相关路由不注册（404）；显式固定开关，
+	// 不依赖本地 config.yaml 的取值。
+	cfg.Observability.Enabled = false
+	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-console-backend-bucket"))
 	defer app.close()
 
 	orgUUID := loadDefaultOrganizationUUID(t, app)
@@ -447,32 +456,18 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			}
 		}
 
-		sessionOverviewResp := app.platformRequest(t, http.MethodGet, orgPath+"/analytics/sessions/overview?agent_id=agent_test123", nil, cookies)
+		sessionOverviewResp := app.platformRequest(t, http.MethodGet, orgPath+"/observability/dashboard", nil, cookies)
 		defer sessionOverviewResp.Body.Close()
-		if sessionOverviewResp.StatusCode != http.StatusOK {
-			t.Fatalf("session analytics overview status = %d, want 200: %s", sessionOverviewResp.StatusCode, readAll(t, sessionOverviewResp.Body))
+		if sessionOverviewResp.StatusCode != http.StatusNotFound {
+			t.Fatalf("observability dashboard status = %d, want 404 when observability is disabled: %s", sessionOverviewResp.StatusCode, readAll(t, sessionOverviewResp.Body))
 		}
-		var sessionOverview map[string]any
-		decodeJSON(t, sessionOverviewResp.Body, &sessionOverview)
-		if sessionsCount, ok := sessionOverview["sessions_count"].(map[string]any); !ok || sessionsCount["value"] != float64(0) {
-			t.Fatalf("session analytics sessions_count = %#v, want zero value bucket", sessionOverview["sessions_count"])
-		}
-		if inputTokens, ok := sessionOverview["input_tokens"].(map[string]any); !ok || inputTokens["p95"] == nil {
-			t.Fatalf("session analytics input_tokens = %#v, want quantile bucket", sessionOverview["input_tokens"])
-		}
-
-		sessionTimeseriesResp := app.platformRequest(t, http.MethodGet, orgPath+"/analytics/sessions/timeseries?agent_id=agent_test123&group_by=agent_version", nil, cookies)
-		defer sessionTimeseriesResp.Body.Close()
-		if sessionTimeseriesResp.StatusCode != http.StatusOK {
-			t.Fatalf("session analytics timeseries status = %d, want 200: %s", sessionTimeseriesResp.StatusCode, readAll(t, sessionTimeseriesResp.Body))
-		}
-		var sessionTimeseries map[string]any
-		decodeJSON(t, sessionTimeseriesResp.Body, &sessionTimeseries)
-		if sessionTimeseries["group_by"] != "agent_version" {
-			t.Fatalf("session analytics timeseries = %#v, want requested group_by", sessionTimeseries)
-		}
-		if dataPoints, ok := sessionTimeseries["data_points"].([]any); !ok || len(dataPoints) != 0 {
-			t.Fatalf("session analytics data_points = %#v, want empty array", sessionTimeseries["data_points"])
+		for _, path := range []string{"/analytics/sessions/overview", "/analytics/sessions/timeseries"} {
+			resp := app.platformRequest(t, http.MethodGet, orgPath+path, nil, cookies)
+			if resp.StatusCode != http.StatusNotFound {
+				resp.Body.Close()
+				t.Fatalf("retired analytics route %s status = %d, want 404", path, resp.StatusCode)
+			}
+			resp.Body.Close()
 		}
 	})
 

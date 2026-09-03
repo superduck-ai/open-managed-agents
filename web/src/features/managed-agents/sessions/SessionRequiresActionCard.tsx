@@ -20,7 +20,7 @@ import { parseQuestionInput } from '../quickstart/questionModel';
 import { objectRecord } from '../utils';
 import { sessionEventStringField } from '../api';
 import { sessionEventType, sessionToolUseInput } from './sessionTraceModel';
-import { Check, HelpCircle, ShieldAlert, X } from 'lucide-react';
+import { Check, HelpCircle, X } from 'lucide-react';
 import { type FormEvent, useMemo, useState } from 'react';
 
 export function isAskUserQuestionCall(toolCall: ToolCallEntry): boolean {
@@ -101,53 +101,33 @@ export function SessionToolApprovalActionCard({
   return (
     <div
       data-testid="session-tool-approval-card"
-      className="w-full rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-foreground shadow-xs"
+      className="flex w-full flex-wrap items-center gap-2 rounded-md bg-muted/45 px-2 py-1.5 text-foreground"
     >
-      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
-            <ShieldAlert className="size-4" aria-hidden />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold">
-                {msg('managedAgents.sessions.detail.toolPermissionRequired', 'Tool permission required')}
-              </span>
-              <span className="rounded bg-muted px-1.5 py-0.2 text-[11px] font-mono font-medium text-foreground">
-                {toolCall.name}
-              </span>
-            </div>
-            {toolCall.inputPreview ? (
-              <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{toolCall.inputPreview}</p>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            data-testid="tool-deny-button"
-            disabled={submitting || disabled}
-            onClick={() => void handleDecision('deny')}
-            className="h-7 border-destructive/30 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            <X className="mr-1 size-3" aria-hidden />
-            {msg('managedAgents.sessions.detail.deny', 'Deny')}
-          </Button>
-          <Button
-            type="button"
-            variant="default"
-            size="xs"
-            data-testid="tool-allow-button"
-            disabled={submitting || disabled}
-            onClick={() => void handleDecision('allow')}
-            className="h-7 px-2.5 text-xs"
-          >
-            <Check className="mr-1 size-3" aria-hidden />
-            {msg('managedAgents.sessions.detail.allow', 'Allow')}
-          </Button>
-        </div>
+      <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+        {msg('managedAgents.sessions.detail.requiresApproval', 'Requires approval')}
+      </span>
+      <div className="inline-flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          data-testid="tool-deny-button"
+          disabled={submitting || disabled}
+          onClick={() => void handleDecision('deny')}
+        >
+          {msg('managedAgents.sessions.detail.deny', 'Deny')}
+        </Button>
+        <Button
+          type="button"
+          variant="default"
+          size="xs"
+          data-testid="tool-allow-button"
+          disabled={submitting || disabled}
+          onClick={() => void handleDecision('allow')}
+        >
+          <Check aria-hidden />
+          {msg('managedAgents.sessions.detail.approve', 'Approve')}
+        </Button>
       </div>
     </div>
   );

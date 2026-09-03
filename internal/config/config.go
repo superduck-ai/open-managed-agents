@@ -3,6 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/mail"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -25,6 +28,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
+	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
+	cfg.E2B.APIKey = strings.TrimSpace(cfg.E2B.APIKey)
+	cfg.E2B.AccessToken = strings.TrimSpace(cfg.E2B.AccessToken)
+	cfg.E2B.Domain = strings.TrimSpace(cfg.E2B.Domain)
+	cfg.E2B.APIURL = strings.TrimSpace(cfg.E2B.APIURL)
+	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
+	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err
@@ -54,6 +65,9 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.NATS.URL) == "" {
 		return errors.New("nats.url is required")
 	}
+	if err := validateAuthConfig(cfg.Auth); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.Storage.Type) == "" {
 		return errors.New("storage.type is required")
 	}
@@ -78,6 +92,12 @@ func validate(cfg Config) error {
 	if err := validateVaultMasterKey(cfg.Vault); err != nil {
 		return err
 	}
+	if err := validateObservabilityConfig(cfg.Observability); err != nil {
+		return err
+	}
+	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession, cfg.Observability.Enabled); err != nil {
+		return err
+	}
 	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
 		return err
 	}
@@ -85,6 +105,24 @@ func validate(cfg Config) error {
 		return err
 	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
+}
+
+func validateAuthConfig(cfg AuthConfig) error {
+	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(cfg.SMTP.Addr)
+	if err != nil || host == "" || port == "" {
+		return errors.New("auth.smtp.addr must include a host and port")
+	}
+	address, err := mail.ParseAddress(cfg.SMTP.Username)
+	if err != nil || address.Address != cfg.SMTP.Username {
+		return errors.New("auth.smtp.username must be a valid email address")
+	}
+	if strings.TrimSpace(cfg.SMTP.Password) == "" {
+		return errors.New("auth.smtp.password is required")
+	}
+	return nil
 }
 
 // FindPlatformOAuthClient returns the registry entry whose mcp_server_url
@@ -241,6 +279,29 @@ func validateVaultMasterKey(cfg VaultConfig) error {
 	return nil
 }
 
+// validateCodeSessionSandboxAPIBaseURL 校验 sandbox 回连 OMA 的地址
+// （启动 payload 里的 startup_context.api_base_url）。常规会话流量走
+// environment-manager relay，不依赖该地址，所以平时可以为空；但开启
+// observability 后 worker 要用它拼 OTLP 导出 endpoint 把遥测送回 OMA，
+// 为空会导致 sandbox 内导出静默失败、数据永远不到达，因此升级为启动期硬错误。
+func validateCodeSessionSandboxAPIBaseURL(environment string, cfg CodeSessionConfig, observabilityEnabled bool) error {
+	baseURL := strings.TrimSpace(cfg.SandboxAPIBaseURL)
+	if baseURL == "" {
+		if observabilityEnabled {
+			return errors.New("code_session.sandbox_api_base_url is required when observability.enabled is true")
+		}
+		return nil
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("code_session.sandbox_api_base_url must be an absolute HTTP(S) URL")
+	}
+	if environment == EnvironmentProd && parsed.Scheme != "https" {
+		return errors.New("code_session.sandbox_api_base_url must use HTTPS in production")
+	}
+	return nil
+}
+
 func validatePositiveValues(cfg Config) error {
 	checks := []struct {
 		name  string
@@ -259,10 +320,12 @@ func validatePositiveValues(cfg Config) error {
 		{name: "batch.job_lease_heartbeat_interval", valid: cfg.Batch.JobLeaseHeartbeatInterval > 0},
 		{name: "batch.expiry_sweep_interval", valid: cfg.Batch.ExpirySweepInterval > 0},
 		{name: "e2b.request_timeout", valid: cfg.E2B.RequestTimeout > 0},
+		{name: "sandbox_lifecycle.idle_timeout", valid: cfg.SandboxLifecycle.IdleTimeout > 0},
 		{name: "e2b.sandbox_timeout", valid: cfg.E2B.SandboxTimeout > 0},
 		{name: "environment_runner.concurrency", valid: cfg.EnvironmentRunner.Concurrency > 0},
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
-		{name: "code_session.otlp_log_body_preview_bytes", valid: cfg.CodeSession.OTLPLogBodyPreviewBytes > 0},
+		{name: "observability.otlp.max_request_bytes", valid: cfg.Observability.OTLP.MaxRequestBytes > 0},
+		{name: "observability.otlp.forward_timeout", valid: cfg.Observability.OTLP.ForwardTimeout > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},
 	}
@@ -270,6 +333,48 @@ func validatePositiveValues(cfg Config) error {
 		if !check.valid {
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
+	}
+	return nil
+}
+
+func validateObservabilityConfig(cfg ObservabilityConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	switch strings.TrimSpace(cfg.Backend) {
+	case ObservabilityBackendOpenObserve:
+		return validateOpenObserveConfig(cfg.OpenObserve)
+	default:
+		return fmt.Errorf("observability.backend must be %q when observability.enabled is true", ObservabilityBackendOpenObserve)
+	}
+}
+
+func validateOpenObserveConfig(cfg OpenObserveConfig) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "observability.openobserve.base_url", value: cfg.BaseURL},
+		{name: "observability.openobserve.organization", value: cfg.Organization},
+		{name: "observability.openobserve.logs_stream", value: cfg.LogsStream},
+		{name: "observability.openobserve.traces_stream", value: cfg.TracesStream},
+		{name: "observability.openobserve.ingestion.username", value: cfg.Ingestion.Username},
+		{name: "observability.openobserve.ingestion.password", value: cfg.Ingestion.Password},
+		{name: "observability.openobserve.query.username", value: cfg.Query.Username},
+		{name: "observability.openobserve.query.password", value: cfg.Query.Password},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required when observability.enabled is true", field.name)
+		}
+	}
+	if cfg.Query.Timeout <= 0 {
+		return errors.New("observability.openobserve.query.timeout must be greater than zero")
+	}
+	baseURL, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
+	if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") ||
+		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return errors.New("observability.openobserve.base_url must be an absolute HTTP(S) URL without userinfo, query, or fragment")
 	}
 	return nil
 }

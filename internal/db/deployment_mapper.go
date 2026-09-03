@@ -8,11 +8,12 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper DeploymentMapper -sql ./deployment_mapper.xml -out ./deployment_mapper.sqlmap.gen.go -dialect postgres
 
 type deploymentMapperRow struct {
+	RuntimeUserUUID       *string    `db:"runtime_user_uuid"`
 	UUID                  string     `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
 	OrganizationUUID      string     `db:"organization_uuid"`
 	WorkspaceUUID         string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID   string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID   *string    `db:"created_by_api_key_uuid"`
 	EnvironmentUUID       string     `db:"environment_uuid"`
 	EnvironmentExternalID string     `db:"environment_external_id"`
 	AgentUUID             string     `db:"agent_uuid"`
@@ -37,11 +38,12 @@ type deploymentMapperRow struct {
 }
 
 type deploymentWriteParams struct {
+	RuntimeUserUUID       *string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
 	WorkspaceUUID         string
-	CreatedByAPIKeyUUID   string
+	CreatedByAPIKeyUUID   *string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
 	AgentUUID             string

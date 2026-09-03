@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -515,48 +514,6 @@ func (h *Handler) extendCodeSessionSandboxTimeout(ctx context.Context, codeSessi
 	return nil
 }
 
-func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Request) {
-	codeSessionID := chi.URLParam(r, "code_session_id")
-	// OTLP 与其他 worker ingress 共用签名 JWT，并把 session_id claim 绑定到 URL；
-	// 后续 worker epoch + active lease 校验继续阻止旧 worker 写入。
-	if !h.authorizeSessionIngress(w, r, codeSessionID) {
-		return
-	}
-	body, err := readCodeSessionWorkerBody(w, r)
-	if err != nil {
-		h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, 0, false, "", "", "body_read_error", err)
-		writeCodeSessionWorkerBodyReadError(w, r, err)
-		return
-	}
-	epoch, found, epochSource, epochValue, err := parseOptionalWorkerEpochFromRequestWithSource(r)
-	if err != nil {
-		h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, epoch, found, epochSource, epochValue, "epoch_parse_error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
-	}
-	if !found {
-		// environment-manager 自身会在 worker register 之前通过标准 OTLP exporter
-		// 上报启动与安装指标；该 exporter 只携带 session bearer token。无 epoch
-		// telemetry 只确认 session 仍存在，不刷新 worker activity 或 lease，避免旧
-		// exporter 借遥测请求维持已经失效的 worker 所有权。
-		if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
-			h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, 0, false, "", "", "session_load_error", err)
-			h.writeIngressLoadError(w, r, err)
-			return
-		}
-		h.recordCodeSessionWorkerOTLP(r, codeSessionID, body, false, "", "")
-		writeOTLPSuccess(w, r)
-		return
-	}
-	if err := h.db.TouchCodeSessionWorkerActivityForActiveLease(r.Context(), codeSessionID, epoch); err != nil {
-		h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, epoch, true, epochSource, epochValue, "epoch_activity_touch_error", err)
-		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not record code session worker OTLP activity")
-		return
-	}
-	h.recordCodeSessionWorkerOTLP(r, codeSessionID, body, true, epochSource, epochValue)
-	writeOTLPSuccess(w, r)
-}
-
 func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	claims, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
@@ -950,87 +907,6 @@ func (h *Handler) logCodeSessionWorkerInternalEventsBadRequest(r *http.Request, 
 		"body_bytes", len(body),
 		"error", err,
 	)
-}
-
-func (h *Handler) logCodeSessionWorkerOTLPRequest(r *http.Request, codeSessionID string, body []byte, epoch int64, epochFound bool, epochSource string, epochRawValue string, reason string, err error) {
-	path := ""
-	if r.URL != nil {
-		path = r.URL.Path
-	}
-	epochValue := strings.TrimSpace(epochRawValue)
-	if epochValue == "" && epochFound && epoch > 0 {
-		epochValue = strconv.FormatInt(epoch, 10)
-	}
-	h.logger.WarnContext(
-		r.Context(),
-		"code session worker otlp request rejected",
-		"request_id", httpapi.RequestID(r.Context()),
-		"signal", otlpSignalFromPath(path),
-		"method", r.Method,
-		"path", path,
-		"code_session_id", codeSessionID,
-		"content_type", r.Header.Get("Content-Type"),
-		"content_length", r.ContentLength,
-		"body_bytes", len(body),
-		"epoch_found", epochFound,
-		"epoch_value", epochValue,
-		"epoch_source", epochSource,
-		"reason", reason,
-		"error", err,
-	)
-}
-
-func otlpBodyLooksText(r *http.Request) bool {
-	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		mediaType = strings.TrimSpace(strings.Split(contentType, ";")[0])
-	}
-	mediaType = strings.ToLower(mediaType)
-	if strings.HasPrefix(mediaType, "text/") {
-		return true
-	}
-	if strings.HasSuffix(mediaType, "+json") || strings.HasSuffix(mediaType, "+xml") {
-		return true
-	}
-	for _, exact := range []string{"application/json", "application/xml", "application/yaml", "application/x-yaml", "text/csv"} {
-		if mediaType == exact {
-			return true
-		}
-	}
-	return false
-}
-
-func otlpSignalFromPath(path string) string {
-	switch {
-	case strings.HasSuffix(path, "/metrics"):
-		return "metrics"
-	case strings.HasSuffix(path, "/logs"):
-		return "logs"
-	default:
-		// Only the metrics and logs worker OTLP HTTP endpoints are registered today.
-		return ""
-	}
-}
-
-func writeOTLPSuccess(w http.ResponseWriter, r *http.Request) {
-	if otlpWantsJSONResponse(r) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{}\n"))
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.WriteHeader(http.StatusOK)
-}
-
-func otlpWantsJSONResponse(r *http.Request) bool {
-	contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
-	if strings.Contains(contentType, "json") {
-		return true
-	}
-	accept := strings.ToLower(r.Header.Get("Accept"))
-	return strings.Contains(accept, "application/json")
 }
 
 func parseRequiredWorkerEpochFromBody(body []byte) (int64, error) {

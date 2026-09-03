@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert';
 import { Badge } from '../../../shared/ui/badge';
 import { Button, ButtonLink } from '../../../shared/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../shared/ui/card';
+import { Card } from '../../../shared/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import {
   Dialog,
@@ -22,7 +22,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { toast } from '../../../shared/ui/sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
@@ -49,8 +48,6 @@ import {
   archiveAgent,
   createAgentDetailDeployment,
   createAgentDetailSession,
-  getAgentSessionAnalyticsOverview,
-  getAgentSessionAnalyticsTimeseries,
   listAgentDetailDeployments,
   listAgentDetailSessions,
   listAgentVersions,
@@ -71,16 +68,12 @@ import {
   localizedEntityStatusLabel,
   ManagedEntityDialog,
 } from '../resources/ManagedResources';
-import { numericValueFromKeys, stringValueFromKeys } from '../sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
   type AgentDetailCreatedFilter,
   type AgentDetailStatusFilter,
   type AgentDetailTab,
   type AgentDetailVersionFilter,
-  type AgentSessionAnalyticsOverview,
-  type AgentSessionAnalyticsTimeseries,
-  type AnalyticsMetricBucket,
   type DeploymentApiResponse,
   type PageCursor,
   type SessionApiResponse,
@@ -92,7 +85,6 @@ import {
   errorMessage,
   managedEntityDetailHref,
   objectRecord,
-  titleCase,
 } from '../utils';
 import {
   agentDetailDeploymentFromSearch,
@@ -108,18 +100,11 @@ import {
   agentSkillRequestedVersion,
   agentSkillSnapshotSource,
   agentSkillSnapshotTitle,
-  emptyAgentSessionAnalyticsOverview,
   ensureArray,
   formatAgentSkillSource,
-  formatDecimal,
   formatDetailDate,
-  formatDurationSeconds,
   formatInteger,
-  formatPercent,
   latestAgentVersion,
-  metricQuantile,
-  metricTotal,
-  metricValue,
   relativeTime,
   sessionTokenUsage,
   sessionVersionLabel,
@@ -127,6 +112,7 @@ import {
   uniqueVersionNumbers,
   writeAgentSessionFiltersToUrl,
 } from './model';
+import { ObservabilityPage } from '../../observability/ObservabilityPage';
 import { AgentToolsSection } from './tools/AgentToolsSection';
 import { hasConfiguredAgentTools } from './tools/model';
 import { listCreateAgentModels } from './create-dialog-api';
@@ -424,15 +410,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
             value="observability"
             className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
           >
-            <span className="inline-flex items-center gap-2">
-              {msg('managedAgents.observability.title', 'Observability')}
-              <Badge
-                variant="secondary"
-                className="h-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-secondary-foreground"
-              >
-                {msg('common.new', 'New')}
-              </Badge>
-            </span>
+            {msg('managedAgents.observability.title', 'Observability')}
           </TabsTrigger>
         </TabsList>
 
@@ -481,7 +459,9 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         </TabsContent>
 
         <TabsContent value="observability" className="mt-0">
-          {detailTab === 'observability' ? <AgentObservabilityTab agentId={agent.id} orgUuid={orgUuid} /> : null}
+          {detailTab === 'observability' ? (
+            <ObservabilityPage key={workspaceId} scope={{ kind: 'agent', agentId: agent.id }} />
+          ) : null}
         </TabsContent>
       </Tabs>
 
@@ -1518,180 +1498,6 @@ export function AgentDeploymentDetailPanel({
   );
 }
 
-export function AgentObservabilityTab({ agentId, orgUuid }: { agentId: string; orgUuid?: string }) {
-  const { msg, locale } = useI18n();
-  const [overview, setOverview] = useState<AgentSessionAnalyticsOverview | null>(null);
-  const [timeseries, setTimeseries] = useState<AgentSessionAnalyticsTimeseries | null>(null);
-  const [loading, setLoading] = useState(Boolean(orgUuid));
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [groupBy, setGroupBy] = useState('agent_version');
-  const groupByOptions = [
-    { value: 'agent_version', label: msg('managedAgents.observability.groupByAgentVersion', 'Agent version') },
-    { value: 'outcome_category', label: msg('managedAgents.observability.groupByOutcomeCategory', 'Outcome category') },
-    { value: 'had_error', label: msg('managedAgents.observability.groupByHadError', 'Had error') },
-  ];
-  const selectedGroupBy = groupByOptions.find((option) => option.value === groupBy) ?? groupByOptions[0];
-
-  useEffect(() => {
-    if (!orgUuid) {
-      setOverview(emptyAgentSessionAnalyticsOverview());
-      setTimeseries({ data: [] });
-      setLoading(false);
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    void Promise.all([
-      getAgentSessionAnalyticsOverview(orgUuid, agentId),
-      getAgentSessionAnalyticsTimeseries(orgUuid, agentId, groupBy),
-    ])
-      .then(([overviewPayload, timeseriesPayload]) => {
-        if (!active) {
-          return;
-        }
-        setOverview(overviewPayload);
-        setTimeseries(timeseriesPayload);
-        setLoadError(null);
-        setLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (!active) {
-          return;
-        }
-        setOverview(emptyAgentSessionAnalyticsOverview());
-        setTimeseries({ data: [] });
-        setLoadError(errorMessage(error));
-        setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [agentId, groupBy, orgUuid]);
-
-  const data = overview ?? emptyAgentSessionAnalyticsOverview();
-  const timeRows = timeseries?.data ?? timeseries?.data_points ?? [];
-  const hasTimeseries = timeRows.length > 0;
-  const toolCounts = data.tool_call_counts ?? {};
-  const stopReasonCounts = data.stop_reason_counts ?? {};
-
-  return (
-    <div className="space-y-5">
-      {loadError ? (
-        <AgentDetailErrorAlert className="max-w-xl">
-          {msg('managedAgents.observability.loadError', "Couldn't load usage analytics.")} {loadError}
-        </AgentDetailErrorAlert>
-      ) : null}
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <AgentMetricCard
-          title={msg('managedAgents.observability.sessions', 'Sessions')}
-          value={loading ? '...' : formatInteger(metricValue(data.sessions_count))}
-        />
-        <AgentMetricCard
-          title={msg('managedAgents.observability.errorRate', 'Error rate')}
-          value={loading ? '...' : formatPercent(metricValue(data.error_rate))}
-        />
-        <AgentMetricCard
-          title={msg('managedAgents.observability.totalInputTokens', 'Total input tokens')}
-          value={loading ? '...' : formatInteger(metricTotal(data.input_tokens))}
-        />
-        <AgentMetricCard
-          title={msg('managedAgents.observability.totalOutputTokens', 'Total output tokens')}
-          value={loading ? '...' : formatInteger(metricTotal(data.output_tokens))}
-        />
-      </div>
-
-      <Card className="gap-0 py-0">
-        <CardHeader className="flex flex-wrap items-start justify-between gap-3 border-b border-border py-3">
-          <div>
-            <CardTitle>{msg('managedAgents.observability.sessionActivity', 'Session activity')}</CardTitle>
-            {data.data_as_of ? (
-              <CardDescription className="mt-1 text-xs">
-                {msg('managedAgents.observability.dataAsOf', 'Data as of {date}', {
-                  date: formatDetailDate(data.data_as_of, locale),
-                })}
-              </CardDescription>
-            ) : null}
-          </div>
-          <Select<string>
-            value={groupBy}
-            items={groupByOptions}
-            onValueChange={(nextValue) => {
-              if (nextValue !== null) {
-                setGroupBy(nextValue);
-              }
-            }}
-          >
-            <SelectTrigger
-              aria-label={msg('managedAgents.observability.groupBy', 'Group by')}
-              className="h-9 border-border px-3 text-sm text-foreground"
-            >
-              <span className="text-muted-foreground">{msg('managedAgents.observability.groupBy', 'Group by')}</span>
-              <SelectValue>{selectedGroupBy.label}</SelectValue>
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              {groupByOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value} label={option.label}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </CardHeader>
-        <CardContent className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-          {loading ? (
-            msg('managedAgents.observability.loading', 'Loading analytics...')
-          ) : hasTimeseries ? (
-            <AgentTimeseriesPreview rows={timeRows} groupBy={groupBy} />
-          ) : (
-            msg('managedAgents.observability.noSessionActivity', 'No session activity in this range')
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.turns', 'Turns')}
-          metric={data.turns_per_session}
-          suffix={msg('managedAgents.observability.perSession', 'per session')}
-          formatValue={formatDecimal}
-        />
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.activeTime', 'Active time')}
-          metric={data.active_time}
-          suffix=""
-          formatValue={formatDurationSeconds}
-        />
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.inputTokens', 'Input tokens')}
-          metric={data.input_tokens_per_session}
-          suffix={msg('managedAgents.observability.perSession', 'per session')}
-          formatValue={formatInteger}
-        />
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.outputTokens', 'Output tokens')}
-          metric={data.output_tokens_per_session}
-          suffix={msg('managedAgents.observability.perSession', 'per session')}
-          formatValue={formatInteger}
-        />
-      </div>
-
-      <div className="grid gap-5 lg:grid-cols-2">
-        <AgentAnalyticsBreakdown
-          title={msg('managedAgents.observability.toolUsage', 'Tool usage')}
-          values={toolCounts}
-          emptyLabel={msg('managedAgents.observability.noToolUsage', 'No tool calls in this range')}
-        />
-        <AgentAnalyticsBreakdown
-          title={msg('managedAgents.observability.stopReasons', 'Stop reasons')}
-          values={stopReasonCounts}
-          emptyLabel={msg('managedAgents.observability.noStopReasons', 'No stop reasons in this range')}
-        />
-      </div>
-    </div>
-  );
-}
-
 function AgentDetailErrorAlert({
   title,
   className,
@@ -2114,128 +1920,5 @@ export function AgentStatusFilterDropdown({
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-export function AgentMetricCard({ title, value }: { title: string; value: ReactNode }) {
-  return (
-    <Card className="gap-0 py-0">
-      <CardContent className="py-3">
-        <div className="text-xs font-medium text-muted-foreground">{title}</div>
-        <div className="mt-2 text-2xl font-semibold leading-8 text-foreground">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
-export function AgentQuantileCard({
-  title,
-  metric,
-  suffix,
-  formatValue,
-}: {
-  title: string;
-  metric?: AnalyticsMetricBucket;
-  suffix: string;
-  formatValue: (value: number) => string;
-}) {
-  const quantileOptions = ['p50', 'p90', 'p95'] as const;
-  const [quantile, setQuantile] = useState<'p50' | 'p90' | 'p95'>('p50');
-
-  return (
-    <Card className="gap-0 py-0">
-      <CardContent className="py-3">
-        <Tabs
-          value={quantile}
-          onValueChange={(nextValue) => setQuantile(nextValue as 'p50' | 'p90' | 'p95')}
-          className="gap-0"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-base font-semibold text-foreground">{title}</div>
-            <TabsList aria-label={title} className="h-8 rounded-lg p-0.5">
-              {quantileOptions.map((option) => (
-                <TabsTrigger key={option} value={option} className="h-7 rounded-md px-2 text-xs">
-                  {option}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </div>
-          {quantileOptions.map((option) => {
-            const value = metricQuantile(metric, option);
-            return (
-              <TabsContent key={option} value={option} className="mt-8">
-                <div className="text-2xl font-semibold leading-8 text-foreground">
-                  {value ? formatValue(value) : '-'}
-                </div>
-                {suffix ? <div className="mt-1 text-sm text-muted-foreground">{suffix}</div> : null}
-              </TabsContent>
-            );
-          })}
-        </Tabs>
-      </CardContent>
-    </Card>
-  );
-}
-
-export function AgentTimeseriesPreview({ rows, groupBy }: { rows: Array<Record<string, unknown>>; groupBy: string }) {
-  const maxValue = Math.max(1, ...rows.map((row) => numericValueFromKeys(row, ['sessions_count', 'count', 'value'])));
-  return (
-    <div className="flex h-full w-full max-w-[720px] items-end justify-center gap-2 px-4 pb-4">
-      {rows.slice(-24).map((row, index) => {
-        const value = numericValueFromKeys(row, ['sessions_count', 'count', 'value']);
-        const height = Math.max(8, Math.round((value / maxValue) * 190));
-        const label =
-          stringValueFromKeys(row, ['outcome_category', 'agent_version', 'date', 'time_bucket']) ||
-          `${groupBy} ${index + 1}`;
-        return (
-          <div key={`${label}-${index}`} className="flex min-w-0 flex-1 flex-col items-center gap-2">
-            <div className="w-full rounded-t bg-accent" style={{ height }} title={`${label}: ${value}`} />
-            <span className="max-w-full truncate text-[10px] text-muted-foreground/70">{value}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export function AgentAnalyticsBreakdown({
-  title,
-  values,
-  emptyLabel,
-}: {
-  title: string;
-  values: Record<string, unknown>;
-  emptyLabel: string;
-}) {
-  const entries = Object.entries(values)
-    .map(([label, value]) => [label, metricValue(typeof value === 'number' ? value : objectRecord(value))] as const)
-    .filter(([, value]) => Number.isFinite(value) && value > 0);
-  const total = entries.reduce((sum, [, value]) => sum + value, 0);
-  return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="border-b border-border py-3">
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 py-4">
-        {entries.length ? (
-          entries.map(([label, value]) => {
-            const pct = total ? (value / total) * 100 : 0;
-            return (
-              <div key={label}>
-                <div className="mb-1 flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate text-foreground">{titleCase(label.replace(/_/g, ' '))}</span>
-                  <span className="text-muted-foreground">{formatInteger(value)}</span>
-                </div>
-                <div className="h-2 rounded-full bg-secondary">
-                  <div className="h-2 rounded-full bg-accent" style={{ width: `${Math.max(2, pct)}%` }} />
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <div className="py-8 text-center text-sm text-muted-foreground">{emptyLabel}</div>
-        )}
-      </CardContent>
-    </Card>
   );
 }

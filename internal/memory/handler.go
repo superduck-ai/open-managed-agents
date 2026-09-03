@@ -494,7 +494,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		ContentSHA256:    &contentSHA,
 		S3Bucket:         ptrString(h.store.Name()),
 		S3Key:            &objectKey,
-		CreatedBy:        apiActor(principal),
+		CreatedBy:        principalActor(principal),
 		CreatedAt:        now,
 	})
 	if err != nil {
@@ -801,7 +801,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			S3Key:                 objectKey,
 			ExpectedContentSHA256: expectedHash,
 			BaseVersionExternalID: record.CurrentVersionExternalID,
-			Actor:                 apiActor(principal),
+			Actor:                 principalActor(principal),
 			Now:                   time.Now().UTC(),
 		})
 		if errors.Is(err, db.ErrVersionConflict) {
@@ -861,7 +861,7 @@ func (h *Handler) deleteMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		VersionUUID:           uuid.NewV4().String(),
 		VersionExternalID:     versionID,
 		ExpectedContentSHA256: expected,
-		Actor:                 apiActor(principal),
+		Actor:                 principalActor(principal),
 		Now:                   time.Now().UTC(),
 	}); err != nil {
 		h.writeMemoryMutationError(w, r, err, storeID, memoryID)
@@ -984,7 +984,7 @@ func (h *Handler) redactVersionRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID, versionID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, apiActor(principal), time.Now().UTC())
+	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, principalActor(principal), time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			writeBadRequest(w, r, errors.New("cannot redact the active memory version"))
@@ -1153,7 +1153,10 @@ func optionalActor(actor *db.MemoryActor) *actorResponse {
 	return &value
 }
 
-func apiActor(principal auth.Principal) db.MemoryActor {
+func principalActor(principal auth.Principal) db.MemoryActor {
+	if principal.CredentialType == auth.CredentialTypePlatformSession {
+		return db.MemoryActor{Type: "user_actor", UserID: principal.UserExternalID}
+	}
 	return db.MemoryActor{
 		Type:             "api_actor",
 		APIKeyUUID:       principal.APIKeyUUID,

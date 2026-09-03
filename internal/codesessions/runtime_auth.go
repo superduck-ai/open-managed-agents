@@ -41,6 +41,8 @@ func (h *Handler) authorizeSessionIngressRequest(r *http.Request, codeSessionID 
 	return err
 }
 
+// sessionIngressClaims 返回鉴权后的 claims；OTLP ingress 需要 claims 并以 OTLP
+// 状态体回写错误，因此返回 apperr 交由调用方按各自的传输格式适配。
 func (h *Handler) sessionIngressClaims(r *http.Request, codeSessionID string) (SessionCredentialClaims, error) {
 	// 校验 URL 中的 codeSessionID，为空时返回 404，避免处理没有明确 session 归属的请求。
 	if strings.TrimSpace(codeSessionID) == "" {

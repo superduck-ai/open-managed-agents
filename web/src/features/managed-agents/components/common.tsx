@@ -92,7 +92,7 @@ export function ManagedSearchField({
   };
 
   return (
-    <div className="relative block h-9 w-[320px] max-w-full">
+    <div className="relative block h-8 w-[320px] max-w-full">
       <Label className="sr-only" htmlFor={id}>
         {placeholder}
       </Label>
@@ -113,7 +113,7 @@ export function ManagedSearchField({
         value={value}
         placeholder={placeholder}
         className={clsx(
-          'h-9 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border',
+          'h-8 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border',
           prefix ? 'pl-[64px]' : 'pl-9',
           value ? 'pr-9' : 'pr-3',
         )}
@@ -164,7 +164,7 @@ export function AgentFilterDropdown<TValue extends string, TMenu extends string>
           <Button
             type="button"
             variant="outline"
-            className={clsx('h-9 gap-2 bg-secondary px-3 text-sm', open && 'border-border')}
+            className={clsx('h-8 gap-2 bg-secondary px-3 text-sm', open && 'border-border')}
             data-agent-filter-menu
           />
         }

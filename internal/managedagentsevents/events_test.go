@@ -27,6 +27,7 @@ func TestReferencePersistedEventCategories(t *testing.T) {
 		"session.deleted":                   CategorySessionStatus,
 		"session.updated":                   CategorySessionStatus,
 		"session.error":                     CategorySessionStatus,
+		"session.outcome_evaluation_ended":  CategorySessionStatus,
 		"session.thread_created":            CategoryThreadCoordination,
 		"session.thread_status_running":     CategoryThreadStatus,
 		"session.thread_status_idle":        CategoryThreadStatus,

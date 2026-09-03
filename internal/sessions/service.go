@@ -508,6 +508,17 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	return nil
 }
 
+func (h *Handler) validateOutcomeRubricFile(workspaceUUID, fileID string) error {
+	_, err := h.db.GetFile(context.Background(), workspaceUUID, fileID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return db.ErrFileReferenceNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	body, err := httpapi.DecodeObjectBodyAs[sessionEventsRequest](w, r, maxSessionBodySize)
@@ -543,8 +554,11 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	var outcomesChanged bool
 	normalizedSession := session
 	for _, raw := range inputs {
-		event, outcomes, changed, err := normalizeInputEvent(normalizedSession, raw, now)
+		event, outcomes, changed, err := normalizeInputEvent(normalizedSession, raw, now, h.validateOutcomeRubricFile)
 		if err != nil {
+			if mapped, ok := mapFileResourcePersistenceError(err); ok {
+				return mapped
+			}
 			return invalidRequest(err)
 		}
 		if changed {

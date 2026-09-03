@@ -609,3 +609,42 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 		t.Fatalf("mcp config file = %#v, want %#v", fileConfig, mcpConfig)
 	}
 }
+
+func TestManagedAgentSessionConfigCarriesOutcomeEvaluations(t *testing.T) {
+	// Bug 1 回归守卫：session 启动配置必须携带真实 OutcomeEvaluations（此前硬编码空数组）
+	session := db.Session{
+		AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"}}`),
+		OutcomeEvaluations: json.RawMessage(`[{"id":"outc_1","status":"pending","max_iterations":3,` +
+			`"description":"ship the feature","rubric":{"type":"text","content":"# Rubric"}}]`),
+	}
+	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode session config: %v", err)
+	}
+	outcomes, ok := body["outcomes"].([]any)
+	if !ok || len(outcomes) != 1 {
+		t.Fatalf("outcomes = %v, want 1 个 evaluation", body["outcomes"])
+	}
+	first := outcomes[0].(map[string]any)
+	if first["id"] != "outc_1" || first["status"] != "pending" {
+		t.Fatalf("outcomes[0] = %v, want outc_1/pending", first)
+	}
+	if first["description"] != "ship the feature" {
+		t.Fatalf("outcomes[0].description = %v, want 完整透传目标定义", first["description"])
+	}
+	rubric := first["rubric"].(map[string]any)
+	if rubric["type"] != "text" || rubric["content"] != "# Rubric" {
+		t.Fatalf("outcomes[0].rubric = %v, want 完整透传评分标准", first["rubric"])
+	}
+
+	// 无 outcomes 时保持空数组（不回归为 nil）
+	emptySession := db.Session{AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"}}`)}
+	raw = managedAgentSessionConfig(emptySession, resolveManagedAgentRuntimeResources(nil))
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode session config: %v", err)
+	}
+	if outcomes, ok := body["outcomes"].([]any); !ok || len(outcomes) != 0 {
+		t.Fatalf("无 outcomes 应为空数组, got %v", body["outcomes"])
+	}
+}

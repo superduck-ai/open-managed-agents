@@ -53,7 +53,7 @@ func managedAgentSessionConfig(
 		"origin":               "managed_agents_api",
 		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
 		"sources":              runtimeResources.sources,
-		"outcomes":             []any{},
+		"outcomes":             rawJSONArrayOrEmpty(session.OutcomeEvaluations),
 		"append_system_prompt": managedAgentEnvironmentPrompt,
 	}
 	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
@@ -199,6 +199,25 @@ func rawJSONObject(raw json.RawMessage) map[string]any {
 		return map[string]any{}
 	}
 	return object
+}
+
+func rawJSONArray(raw json.RawMessage) []any {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	var values []any
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	}
+	return values
+}
+
+// rawJSONArrayOrEmpty 返回数组值；空/null/无效时返回空数组（而非 nil），保证 payload 稳定。
+func rawJSONArrayOrEmpty(raw json.RawMessage) []any {
+	if values := rawJSONArray(raw); values != nil {
+		return values
+	}
+	return []any{}
 }
 
 func mapStringAnyValue(value any) map[string]any {

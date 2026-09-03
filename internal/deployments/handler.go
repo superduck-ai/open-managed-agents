@@ -210,12 +210,14 @@ type deploymentSessionEventPayload struct {
 }
 
 type deploymentOutcomeEvaluation struct {
-	ID            string `json:"id"`
-	OutcomeID     string `json:"outcome_id"`
-	MaxIterations int    `json:"max_iterations"`
-	Status        string `json:"status"`
-	Type          string `json:"type"`
-	UpdatedAt     string `json:"updated_at"`
+	ID            string                   `json:"id"`
+	OutcomeID     string                   `json:"outcome_id"`
+	MaxIterations int                      `json:"max_iterations"`
+	Status        string                   `json:"status"`
+	Type          string                   `json:"type"`
+	UpdatedAt     string                   `json:"updated_at"`
+	Description   string                   `json:"description,omitempty"`
+	Rubric        *deploymentOutcomeRubric `json:"rubric,omitempty"`
 }
 
 type deploymentAgentSnapshot struct {
@@ -1087,6 +1089,8 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 				Status:        "pending",
 				Type:          "outcome_evaluation",
 				UpdatedAt:     now.Format(time.RFC3339),
+				Description:   input.Description,
+				Rubric:        input.Rubric,
 			})
 		}
 		payloadRaw, err := jsonx.Encode(payload)

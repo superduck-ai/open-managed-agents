@@ -16,7 +16,7 @@ Managed Agents API 的权限模型定义在 agent snapshot 的 `tools` 中：
 Claude Code 运行在 `environment-manager` 中，它通过 MCP config 加载 MCP server，并在工具执行前通过 `control_request / can_use_tool` 请求权限。二者不是同一个权限模型：
 
 - Managed Agents 的 policy 是 API 产品契约，需要支持 default policy 和 per-tool override。
-- Claude Code 的 CLI 参数，如 `--allowed-tools`、`--disallowed-tools`、`--permission-mode`，只能表达启动时的部分本地权限配置。
+- Claude Code 的 `--tools` 控制内置工具可见性；`--allowed-tools`、`--disallowed-tools`、`--permission-mode` 表达启动时的部分权限配置。
 - `mcp_toolset.default_config` 对未来或未知 MCP tool 也生效，无法只靠启动时的 allow list 完整表达。
 
 因此主方案是：`environment-manager` 继续只负责启动和透传；`claude-api-server` 在 Claude Code 发出 `can_use_tool` 时，按 session 的 `agent_snapshot.tools` 计算 effective policy，再向 Claude Code 发送 `control_response` 或向 Managed Agents client 暴露等待确认事件。
@@ -57,7 +57,17 @@ session config 继续通过现有字段传给 `environment-manager`：
 }
 ```
 
-`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此本设计不改变 v0 stdin schema，也不修改 `environment-manager` 代码。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
+`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数。本设计不改变 v0 stdin schema。`internal/agentsnapshot.ClaudeToolArgsFromSnapshot` 只负责从已校验并固化的 Agent Snapshot 派生本 PR 新增的 `tools` 与 `allowed-tools`；Managed Agent session config 继续沿用既有逻辑生成 MCP config、MCP config file 和 `mcp-config` 参数。`buildEnvironmentManagerV0Payload` 只补充 environment-manager 自身需要的 `settings`、认证和环境变量，不再解析 `tools`、重算权限或删除已有工具参数。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
+
+OMA 在 `agentsnapshot` 模块派生 `claude_code_args["tools"]`，显式限定 Claude Code 向模型暴露的内置工具集合。该集合来自项目当前固定的 Claude Code 2.1.120 `system/init` 事件，共 22 项；输出顺序与前端一致，优先放置原有 7 项：`Bash`、`Read`、`Write`、`Edit`、`Glob`、`Grep`、`WebFetch`，随后为 `Task`、`AskUserQuestion`、`CronCreate`、`CronDelete`、`CronList`、`EnterPlanMode`、`EnterWorktree`、`ExitPlanMode`、`ExitWorktree`、`NotebookEdit`、`ScheduleWakeup`、`Skill`、`TaskOutput`、`TaskStop`、`TodoWrite`。它保留该版本的默认内置能力，只移除 `WebSearch`；升级 Claude Code 时必须用新版本的真实 `system/init.tools` 复核并同步此集合。
+
+`--tools` 只约束 Claude Code 内置工具，不移除 `--mcp-config` 加载的第三方 MCP 工具；例如 You Search 仍以 `mcp__<server>__<tool>` 名称独立暴露。Agent API 同时拒绝在 `agent_toolset_20260401.configs` 中配置内置 `web_search`；需要网页搜索时应配置独立 MCP 搜索工具。该限制不影响 Workbench 的 Messages API 服务端 web search。
+
+由于 Claude Code 使用双下划线分隔 `mcp__<server>__<tool>`，Agent API 与前端均拒绝包含 `__` 的 MCP Server 名称。当前没有需要兼容的存量 Agent，因此运行时直接信任已通过入口校验并固化的 Snapshot，不重复扫描 Server 名称。
+
+Agent Create/Update API 是不可信输入的权威校验 seam：`normalizeMCPServers` 校验 Server 名称格式、长度、唯一性、禁止 `__` 以及无凭据和 fragment 的 HTTP/HTTPS 绝对 URL；`normalizeTools` 校验 Toolset 引用、Tool 名称、权限策略、数量限制和重复配置。前端重复这些规则只用于即时反馈。`allowed-tools` 不接受前端输入，只能从保存后的 Agent Snapshot 派生。
+
+`--tools` 与 `--allowed-tools` 属于不同层级：前者控制内置工具是否进入模型上下文，未列出的内置工具不可见也不可调用；后者只添加免审批权限规则，未列出的工具仍可见，并继续由 permission mode、动态权限回调和 deny/ask 规则裁决。因此本项目使用 `--tools` 固定内置能力面，继续由 Agent Snapshot 的 permission policy 和 runtime permission handler 决定已暴露工具调用时是自动允许、询问还是拒绝。
 
 ### 2.2 静态提示层
 
@@ -74,10 +84,10 @@ session config 继续通过现有字段传给 `environment-manager`：
 这层只能作为优化，不能作为最终权限裁决：
 
 - `default_config.permission_policy` 适用于 server 下所有工具，包括 session 启动时尚未枚举的 MCP tool。
-- Claude Code `--allowed-tools` 需要具体工具名，例如 `mcp__weather_service__get_weather`，无法完整表达“这个 MCP server 的所有当前和未来工具都按 default policy 处理”。
+- Claude Code `--allowed-tools` 既支持具体工具名（例如 `mcp__weather_service__get_weather`），也支持 server 通配规则（例如 `mcp__weather_service__*`）。但通配规则无法同时表达“默认允许、个别工具询问或禁用”，因此存在 ask/deny 覆盖时只能列出明确允许的工具。
 - 启动参数可能和运行时事件存在版本差异，最终行为必须以 server 端 agent snapshot 为准。
 
-可选优化：对显式 `configs[]` 中的 allow/deny tool 生成 `allowed-tools` / `disallowed-tools`，减少 Claude Code prompt 次数。但即使做了该优化，runtime permission handler 仍是最终裁决者。
+`agentsnapshot.ClaudeToolArgsFromSnapshot` 会根据 Agent Snapshot 的 effective policy 生成 `claude_code_args["allowed-tools"]`：内置工具将规范名映射为 Claude Code 名称；MCP 默认 `always_allow` 且没有 ask/deny 覆盖时使用 `mcp__<server>__*`，否则只列出明确 `always_allow` 的 `mcp__<server>__<tool>`。`always_ask` 与 disabled 工具不进入 allow list。该参数只减少 Claude Code 权限询问，runtime permission handler 仍是最终裁决者。
 
 ### 2.3 运行时权限层
 
@@ -139,14 +149,30 @@ agent toolset 的工具名需要归一化到 Managed Agents 配置使用的名�
 
 | Managed Agent name | Claude Code tool name examples |
 |---|---|
+| `task` | `Task`, `Agent` |
+| `ask_user_question` | `AskUserQuestion` |
 | `bash` | `Bash` |
+| `cron_create` | `CronCreate` |
+| `cron_delete` | `CronDelete` |
+| `cron_list` | `CronList` |
 | `edit` | `Edit`, `MultiEdit` |
-| `read` | `Read` |
-| `write` | `Write` |
+| `enter_plan_mode` | `EnterPlanMode` |
+| `enter_worktree` | `EnterWorktree` |
+| `exit_plan_mode` | `ExitPlanMode` |
+| `exit_worktree` | `ExitWorktree` |
 | `glob` | `Glob` |
 | `grep` | `Grep` |
+| `notebook_edit` | `NotebookEdit` |
+| `read` | `Read` |
+| `schedule_wakeup` | `ScheduleWakeup` |
+| `skill` | `Skill` |
+| `task_output` | `TaskOutput` |
+| `task_stop` | `TaskStop` |
+| `todo_write` | `TodoWrite` |
 | `web_fetch` | `WebFetch` |
-| `web_search` | `WebSearch` |
+| `write` | `Write` |
+
+`WebSearch` 不在当前 Managed Agent 内置工具集合中，Agent API 也拒绝 `web_search` 配置；第三方搜索能力按 MCP tool identity 处理。
 
 无法识别的工具按 `unknown` 处理。`unknown` 不应被默认放行；除非后续有明确产品决策，默认按 `ask` 或 deny-safe 策略处理。
 
@@ -262,13 +288,14 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 ## 5. 与 Claude Code CLI 参数的关系
 
-本设计保留 `claude_code_args["mcp-config"]` 作为必需启动参数。其他 Claude Code 权限参数只作为可选优化或诊断手段。
+本设计保留 `claude_code_args["mcp-config"]` 作为必需启动参数，并固定使用 `claude_code_args["tools"]` 限定内置工具面。其他 Claude Code 权限参数只作为可选优化或诊断手段。
 
 | Claude Code 参数 | 设计定位 |
 |---|---|
 | `--mcp-config` | 必需，用于加载 Managed Agent MCP servers。 |
-| `--allowed-tools` | 可选优化，只适合显式已知 allow tools。 |
-| `--disallowed-tools` | 可选优化，只适合显式已知 disabled tools。 |
+| `--tools` | 必需，按固定 Claude Code 版本的实际默认清单显式暴露内置工具，但排除 `WebSearch`；不控制 MCP 工具。 |
+| `--allowed-tools` | 由 Agent Snapshot 的 effective `always_allow` 工具生成，作为启动时免审批规则；不改变工具可见性。 |
+| `--disallowed-tools` | 当前不传；禁用/询问策略由前端快照生成的 `--allowed-tools` 与运行时权限回调共同裁决。 |
 | `--permission-mode dontAsk` | 不用于 Managed Agents 默认实现，会把 ask 变成自动 deny，不符合确认事件契约。 |
 | `--permission-mode bypassPermissions` | 仅限本地排障，不作为 `always_allow` 的产品实现。 |
 
@@ -286,7 +313,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 实现应集中在 `claude-api-server`：
 
-- Managed Agent session config 继续生成 MCP config file 和 `claude_code_args["mcp-config"]`；environment-manager payload 边界保留其中的真实 URL。
+- `agentsnapshot` 模块从已固化快照派生本 PR 新增的 Claude `tools` 与 `allowed-tools` 参数；Managed Agent session config 保留既有 MCP config、MCP config file 和 `claude_code_args["mcp-config"]` 生成逻辑，environment-manager payload 透传这些结果并保留其中的真实 URL。
 - Code Session handler 负责 MCP proxy 的 JWT/path 绑定；加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 的精确 URL set 与 Environment host/port policy 编译为单一授权对象，handler 只调用 `AuthorizeMCPURL`，不保存或重解析原始 snapshot。授权后再执行拨号期 SSRF 防护、流式转发和凭证 header 注入边界。
 - Code session service 新增 policy-aware permission handler。
 - Session events 接收 `user.tool_confirmation` / `user.custom_tool_result` 后，从 Code Session 私有 worker metadata 恢复生成 Claude Code `control_response` 所需的请求上下文。

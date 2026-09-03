@@ -18,7 +18,7 @@ flowchart LR
   Draft -->|有语义变化且校验通过| Update["POST /v1/agents/{id}?beta=true"]
 ```
 
-- 支持的标准配置默认进入 `Rendered`；合法但含未知旧字段、未知工具类型或无法安全映射的数据默认进入 `Raw`，并禁用 `Rendered`，避免静默丢字段。
+- 支持的标准配置默认进入 `Rendered`；合法但含未知旧字段、未知工具类型、重复 toolset 或无法安全映射的数据默认进入 `Raw`，并禁用 `Rendered`，避免静默丢字段。
 - Rendered 和 Raw 共享同一份 Edit Draft。进入 Raw 或切换 YAML/JSON 时均从 Draft 重新序列化，不做文本级转换。
 - Raw 语法或顶层 schema 无效时不污染最后合法 Draft，并阻止切换格式、切回 Rendered及保存。
 - Rendered 允许表单处于临时无效状态，错误在底部操作区展示；修正前禁止保存，不会自动切换到 Raw。
@@ -33,10 +33,11 @@ flowchart LR
 
 ## 字段与组件复用
 
-- General、Multiagent、Skills、Tools 复用 Create Agent 的 `AgentConfigRenderedEditor`，因此搜索、多选、版本固定、MCP Directory 图标、权限聚合和 Custom Tool 校验保持一致。
+- General、Multiagent、Skills、Tools 复用 Create Agent 的 `AgentConfigRenderedEditor`，因此搜索、多选、版本固定、MCP Directory/自定义页签、权限聚合和 Custom Tool 校验保持一致。
 - 编辑既有模型 ID 时保留 `model.speed`；已有 `self`、固定 Agent 版本和固定 Skill 版本会展示并保留。
-- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新。
-- 内置工具只展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`；Raw 可继续保留后端合同允许的其他既有配置。
+- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；自定义 MCP 名称只允许字母、数字、下划线、连字符和句点且不得包含连续两个下划线 `__`，并通过不含内嵌凭据或 fragment 的 HTTP/HTTPS URL 添加，创建阶段不探测工具列表。
+- Rendered 不提供新增 Custom Tool 的入口，但继续允许编辑和移除已有 Custom Tool，Raw 往返不丢失其定义。
+- 内置工具回显当前固定 Claude Code 2.1.120 的 22 项默认工具，与创建页和后端 `--tools` 清单一致；`web_fetch` 对应 Claude Code 本地 `WebFetch`，不启用 Messages API 的模型服务端同名工具。内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中。
 
 ## 布局与验收
 

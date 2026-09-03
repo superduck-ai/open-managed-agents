@@ -114,6 +114,22 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	if identity.Kind != "agent_toolset" || identity.ToolName != "edit" {
 		t.Fatalf("identity = %+v", identity)
 	}
+
+	identity = parseClaudeToolIdentity("WebFetch")
+	if identity.Kind != "agent_toolset" || identity.ToolName != "web_fetch" {
+		t.Fatalf("identity = %+v", identity)
+	}
+
+	for claudeName, configName := range map[string]string{
+		"Task": "task", "Agent": "task", "AskUserQuestion": "ask_user_question", "CronCreate": "cron_create",
+		"EnterPlanMode": "enter_plan_mode", "NotebookEdit": "notebook_edit", "ScheduleWakeup": "schedule_wakeup",
+		"Skill": "skill", "TaskOutput": "task_output", "TaskStop": "task_stop", "TodoWrite": "todo_write",
+	} {
+		identity = parseClaudeToolIdentity(claudeName)
+		if identity.Kind != "agent_toolset" || identity.ToolName != configName {
+			t.Fatalf("identity for %s = %+v, want config name %s", claudeName, identity, configName)
+		}
+	}
 }
 
 func TestToolPermissionPublicPayloadsUseCanonicalPublicID(t *testing.T) {

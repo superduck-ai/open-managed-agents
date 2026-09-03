@@ -1,5 +1,5 @@
 import { Ban, BriefcaseBusiness, CheckCircle2, ChevronDown, Hand, Plus, Server, Trash2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
@@ -19,8 +19,6 @@ import { type CreateAgentInput } from '../types';
 import { toRecord } from '../utils';
 import {
   addBuiltInToolset,
-  addCustomTool,
-  addMcpServer,
   type EditablePermission,
   removeCustomTool,
   removeToolset,
@@ -29,7 +27,7 @@ import {
   toolsetPermission,
   updateCustomTool,
 } from './create-dialog-model';
-import { CreateDialogPicker } from './create-dialog-picker';
+import { CreateDialogMcpPicker } from './create-dialog-mcp-picker';
 import {
   BUILT_IN_AGENT_TOOLSETS,
   builtInAgentToolDescription,
@@ -37,7 +35,6 @@ import {
   type McpDirectoryServer,
   type ToolPermissionState,
 } from './tools/model';
-import { RemoteServerIcon } from './tools/RemoteServerIcon';
 
 const permissionOptions = [
   { value: 'always_allow' as const, icon: CheckCircle2 },
@@ -61,13 +58,6 @@ export function CreateDialogToolsEditor({
   onChange: (next: CreateAgentInput) => void;
 }) {
   const { msg } = useI18n();
-  const configuredServerNames = draft.mcp_servers.flatMap((server) => {
-    const name = toRecord(server)?.name;
-    return typeof name === 'string' ? [name] : [];
-  });
-  const availableServers = directoryServers.filter(
-    (server) => server.url && !configuredServerNames.includes(server.slug),
-  );
   const hasBuiltInToolset = draft.tools.some((tool) => tool.type === 'agent_toolset_20260401');
 
   return (
@@ -95,13 +85,16 @@ export function CreateDialogToolsEditor({
         }
         if (tool.type === 'mcp_toolset') {
           const serverName = String(tool.mcp_server_name ?? '');
-          const server = directoryServers.find((candidate) => candidate.slug === serverName);
+          const serverURL = configuredServerURL(draft, serverName);
+          const server = directoryServers.find(
+            (candidate) => candidate.slug === serverName && candidate.url === serverURL,
+          );
           return (
             <ToolsetCard
               key={`mcp:${serverName}`}
               icon={<Server className="size-4" aria-hidden />}
               title={server?.displayName || serverName}
-              subtitle={configuredServerURL(draft, serverName)}
+              subtitle={serverURL}
               toolset={tool}
               tools={(server?.toolNames ?? []).map((name) => ({ name }))}
               fallback="always_ask"
@@ -141,45 +134,14 @@ export function CreateDialogToolsEditor({
             {msg('managedAgents.agents.createDialog.addBuiltInTools', 'Add built-in tools')}
           </Button>
         ) : null}
-        <CreateDialogPicker
-          label={msg('managedAgents.agents.createDialog.addMcpServer', 'Add MCP server')}
-          placeholder={msg('managedAgents.agents.createDialog.addMcpServer', 'Add MCP server')}
-          searchPlaceholder={msg('managedAgents.agents.createDialog.searchMcpServers', 'Search MCP servers...')}
-          emptyLabel={msg('managedAgents.agents.createDialog.noMcpServers', 'No MCP servers found.')}
-          options={availableServers.map((server) => ({
-            id: server.slug,
-            label: server.displayName,
-            description: server.url,
-            icon: (
-              <RemoteServerIcon
-                iconUrl={server.iconUrl}
-                serverUrl={server.url}
-                className="size-8"
-                iconClassName="size-4"
-              />
-            ),
-          }))}
-          selectedIds={[]}
-          loading={directoryLoading}
-          error={directoryError}
-          onRetry={onRetryDirectory}
-          onToggle={(id) => {
-            const server = availableServers.find((candidate) => candidate.slug === id);
-            if (server) {
-              onChange(addMcpServer(draft, server));
-            }
-          }}
+        <CreateDialogMcpPicker
+          draft={draft}
+          directoryServers={directoryServers}
+          directoryLoading={directoryLoading}
+          directoryError={directoryError}
+          onRetryDirectory={onRetryDirectory}
+          onChange={onChange}
         />
-        <Button
-          type="button"
-          variant="ghost"
-          className="h-9 justify-start gap-2 px-2 text-sm font-normal text-foreground"
-          aria-label={msg('managedAgents.agents.createDialog.addCustomTool', 'Add custom tool')}
-          onClick={() => onChange(addCustomTool(draft))}
-        >
-          <Plus className="size-4" aria-hidden />
-          {msg('managedAgents.agents.createDialog.addCustomTool', 'Add custom tool')}
-        </Button>
       </div>
     </div>
   );
@@ -358,8 +320,16 @@ function CustomToolCard({
   onRemove: () => void;
 }) {
   const { msg } = useI18n();
-  const schemaText =
-    typeof tool.input_schema === 'string' ? tool.input_schema : JSON.stringify(tool.input_schema ?? {}, null, 2);
+  const serializedSchema = customToolSchemaText(tool.input_schema);
+  const [schemaText, setSchemaText] = useState(serializedSchema);
+  const publishedSchemaText = useRef(serializedSchema);
+  useEffect(() => {
+    if (serializedSchema === publishedSchemaText.current) {
+      return;
+    }
+    publishedSchemaText.current = serializedSchema;
+    setSchemaText(serializedSchema);
+  }, [serializedSchema]);
   return (
     <Card className="gap-4 rounded-xl p-4 shadow-none">
       <div className="flex items-center gap-3">
@@ -400,16 +370,25 @@ function CustomToolCard({
           className="min-h-32 font-mono text-xs"
           value={schemaText}
           onChange={(event) => {
+            const nextText = event.target.value;
+            setSchemaText(nextText);
+            let inputSchema: unknown = nextText;
             try {
-              onChange({ input_schema: JSON.parse(event.target.value) as unknown });
+              inputSchema = JSON.parse(nextText) as unknown;
             } catch {
-              onChange({ input_schema: event.target.value });
+              inputSchema = nextText;
             }
+            publishedSchemaText.current = customToolSchemaText(inputSchema);
+            onChange({ input_schema: inputSchema });
           }}
         />
       </label>
     </Card>
   );
+}
+
+function customToolSchemaText(inputSchema: unknown) {
+  return typeof inputSchema === 'string' ? inputSchema : (JSON.stringify(inputSchema ?? {}, null, 2) ?? '{}');
 }
 
 function configuredServerURL(draft: CreateAgentInput, name: string) {

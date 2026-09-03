@@ -55,9 +55,9 @@ describe('Dashboard i18n', () => {
     expect(getApiKey.getAttribute('href')).toBe('/settings/workspaces/default/keys');
     expect(getApiKey.dataset.slot).toBe('button');
     const docsLink = screen.getByRole('link', { name: '查看文档' });
-    expect(docsLink.getAttribute('href')).toBe('https://oma.mintlify.site/docs/zh/overview');
+    expect(docsLink.getAttribute('href')).toBe('https://oma.mintlifysite.com/docs/zh/overview');
     expect(screen.getByRole('link', { name: '比较模型' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/api/models/list-models',
+      'https://oma.mintlifysite.com/docs/zh/api/models/list-models',
     );
     expect(screen.getByRole('link', { name: '构建 Agent' }).dataset.slot).toBe('button');
     expect(screen.getByText('本月支出')).toBeTruthy();
@@ -85,10 +85,10 @@ describe('Dashboard i18n', () => {
     renderDashboardPage(<DashboardPage section="dashboard" />);
 
     expect(screen.getByRole('link', { name: 'Explore docs' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/overview',
+      'https://oma.mintlifysite.com/docs/en/overview',
     );
     expect(screen.getByRole('link', { name: 'Compare models' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/api/models/list-models',
+      'https://oma.mintlifysite.com/docs/en/api/models/list-models',
     );
   });
 

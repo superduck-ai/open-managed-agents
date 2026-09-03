@@ -20,15 +20,15 @@ describe('LoginFlow', () => {
     expect(screen.getByText('Build with Open Managed Agents')).toBeTruthy();
     const developerDocs = screen.getByRole('link', { name: /Developer Docs/i });
     expect(developerDocs.getAttribute('data-slot')).toBe('button');
-    expect(developerDocs.getAttribute('href')).toBe('https://oma.mintlify.site/docs/en/overview');
+    expect(developerDocs.getAttribute('href')).toBe('https://oma.mintlifysite.com/docs/en/overview');
     expect(screen.getByRole('link', { name: /API Reference/i }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/api/overview',
+      'https://oma.mintlifysite.com/docs/en/api/overview',
     );
     expect(screen.getByRole('link', { name: /Cookbooks/i }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/quickstart',
+      'https://oma.mintlifysite.com/docs/en/quickstart',
     );
     expect(screen.getByRole('link', { name: /Quickstarts/i }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/quickstart',
+      'https://oma.mintlifysite.com/docs/en/quickstart',
     );
     expect(document.querySelectorAll('[data-slot="card"]').length).toBe(1);
     expect(document.querySelector('.surface-card')).toBeNull();
@@ -112,16 +112,16 @@ describe('LoginFlow', () => {
     expect(document.documentElement.lang).toBe('zh-CN');
     expect(screen.getByText('使用 Open Managed Agents 构建')).toBeTruthy();
     expect(screen.getByRole('link', { name: '开发者文档' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/overview',
+      'https://oma.mintlifysite.com/docs/zh/overview',
     );
     expect(screen.getByRole('link', { name: 'API 参考' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/api/overview',
+      'https://oma.mintlifysite.com/docs/zh/api/overview',
     );
     expect(screen.getByRole('link', { name: 'Cookbooks' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/quickstart',
+      'https://oma.mintlifysite.com/docs/zh/quickstart',
     );
     expect(screen.getByRole('link', { name: '快速开始' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/quickstart',
+      'https://oma.mintlifysite.com/docs/zh/quickstart',
     );
     expect(screen.getByLabelText(/邮箱/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: '使用邮箱继续' })).toBeTruthy();

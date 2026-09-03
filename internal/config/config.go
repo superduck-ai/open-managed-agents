@@ -51,8 +51,8 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Redis.URL) == "" {
 		return errors.New("redis.url is required")
 	}
-	if cfg.NATS.Enabled && strings.TrimSpace(cfg.NATS.URL) == "" {
-		return errors.New("nats.url is required when nats is enabled")
+	if strings.TrimSpace(cfg.NATS.URL) == "" {
+		return errors.New("nats.url is required")
 	}
 	if strings.TrimSpace(cfg.Storage.Type) == "" {
 		return errors.New("storage.type is required")

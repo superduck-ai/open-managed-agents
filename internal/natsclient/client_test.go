@@ -46,8 +46,30 @@ func TestOpen(t *testing.T) {
 		if connection.Opts.Name != clientName {
 			t.Fatalf("NATS client name = %q, want %q", connection.Opts.Name, clientName)
 		}
+		if connection.Opts.ReconnectBufSize != -1 {
+			t.Fatal("NATS reconnect buffering must be disabled for live events")
+		}
 		if err := connection.Drain(); err != nil {
 			t.Fatalf("Drain() error = %v", err)
+		}
+	})
+
+	t.Run("connects through any available seed URL", func(t *testing.T) {
+		serverURL := startNATSTestServer(t, true)
+		seedURLs := "nats://127.0.0.1:1," + serverURL
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		connection, err := Open(ctx, testNATSConfig(seedURLs), testLogger())
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		defer connection.Close()
+		if !connection.IsConnected() {
+			t.Fatal("NATS connection is not connected")
+		}
+		if len(connection.Servers()) < 2 {
+			t.Fatalf("NATS server pool = %v, want both configured seeds", connection.Servers())
 		}
 	})
 }
@@ -76,7 +98,6 @@ func startNATSTestServer(t *testing.T, jetStreamEnabled bool) string {
 
 func testNATSConfig(serverURL string) config.NATSConfig {
 	return config.NATSConfig{
-		Enabled:        true,
 		URL:            serverURL,
 		ConnectTimeout: time.Second,
 		DrainTimeout:   time.Second,

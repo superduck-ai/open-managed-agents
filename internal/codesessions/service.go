@@ -348,31 +348,18 @@ func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (pr
 }
 
 func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, workerOutputEvents []preparedWorkerOutputEvent) error {
-	for index := 0; index < len(workerOutputEvents); {
-		if _, ok := workerOutputEvents[index].(preparedStreamAction); ok {
-			payloads := leadingWorkerStreamPayloads(workerOutputEvents[index:])
-			s.publishWorkerStreamPayloads(ctx, route, workerEpoch, payloads)
-			index += len(payloads)
+	for _, workerOutputEvent := range workerOutputEvents {
+		if stream, ok := workerOutputEvent.(preparedStreamAction); ok {
+			// Publish previews independently so an ingress batch cannot become one
+			// oversized broker message or cause unrelated previews to fail together.
+			s.publishWorkerStreamPayload(ctx, route, workerEpoch, stream.payload)
 			continue
 		}
-		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerEpoch, workerOutputEvents[index]); err != nil {
+		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerEpoch, workerOutputEvent); err != nil {
 			return err
 		}
-		index++
 	}
 	return nil
-}
-
-func leadingWorkerStreamPayloads(workerOutputEvents []preparedWorkerOutputEvent) []json.RawMessage {
-	payloads := make([]json.RawMessage, 0, len(workerOutputEvents))
-	for _, workerOutputEvent := range workerOutputEvents {
-		stream, ok := workerOutputEvent.(preparedStreamAction)
-		if !ok {
-			break
-		}
-		payloads = append(payloads, stream.payload)
-	}
-	return payloads
 }
 
 func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerEpoch int64, workerOutputEvent preparedWorkerOutputEvent) error {
@@ -390,12 +377,12 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 	}
 }
 
-func (s *Service) publishWorkerStreamPayloads(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payloads []json.RawMessage) {
-	if len(payloads) == 0 || s.sink == nil {
+func (s *Service) publishWorkerStreamPayload(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payload json.RawMessage) {
+	if len(payload) == 0 || s.sink == nil {
 		return
 	}
-	if err := s.sink.PublishCodeSessionStreamEvents(ctx, route, workerEpoch, payloads); err != nil {
-		s.logger.WarnContext(ctx, "publish worker stream preview", "code_session_id", route.CodeSessionID, "worker_epoch", workerEpoch, "event_count", len(payloads), "error", err)
+	if err := s.sink.PublishCodeSessionStreamEvent(ctx, route, workerEpoch, payload); err != nil {
+		s.logger.WarnContext(ctx, "publish worker stream preview", "code_session_id", route.CodeSessionID, "worker_epoch", workerEpoch, "error", err)
 	}
 }
 

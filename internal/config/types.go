@@ -79,7 +79,6 @@ type RedisConfig struct {
 }
 
 type NATSConfig struct {
-	Enabled        bool          `yaml:"enabled"`
 	URL            string        `yaml:"url"`
 	ConnectTimeout time.Duration `yaml:"connect_timeout"`
 	DrainTimeout   time.Duration `yaml:"drain_timeout"`

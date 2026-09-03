@@ -30,16 +30,18 @@ type workerPreviewConverter struct {
 }
 
 type previewScope struct {
-	codeSessionID   string
-	workerEpoch     int64
-	rawSessionID    string
-	parentToolUseID string
+	sessionExternalID string
+	codeSessionID     string
+	workerEpoch       int64
+	rawSessionID      string
+	parentToolUseID   string
 }
 
 type seenStreamEventKey struct {
-	codeSessionID string
-	workerEpoch   int64
-	eventUUID     string
+	sessionExternalID string
+	codeSessionID     string
+	workerEpoch       int64
+	eventUUID         string
 }
 
 type previewBlock struct {
@@ -110,35 +112,18 @@ func newWorkerPreviewLRU[K comparable, V any](size int) *simplelru.LRU[K, V] {
 	return cache
 }
 
-func (c *workerPreviewConverter) convert(batch codeSessionStreamFanout) []sessionStreamEvent {
-	payloads := decodeWorkerStreamPayloads(batch.Payloads)
-	if len(payloads) == 0 {
-		return nil
+func (c *workerPreviewConverter) convert(message codeSessionStreamFanout) (sessionStreamEvent, bool) {
+	payload, ok := decodeWorkerStreamPayload(message.Payload)
+	if !ok || !payload.Event.affectsPreview() {
+		return sessionStreamEvent{}, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now().UTC()
-	events := make([]sessionStreamEvent, 0, len(payloads))
-	for _, payload := range payloads {
-		if c.isDuplicate(batch, payload, now) {
-			continue
-		}
-		if event, emit := c.applyStreamEvent(batch, payload, now); emit {
-			events = append(events, event)
-		}
+	if c.isDuplicate(message, payload, now) {
+		return sessionStreamEvent{}, false
 	}
-	return events
-}
-
-func decodeWorkerStreamPayloads(rawPayloads []json.RawMessage) []workerStreamPayload {
-	payloads := make([]workerStreamPayload, 0, len(rawPayloads))
-	for _, raw := range rawPayloads {
-		payload, ok := decodeWorkerStreamPayload(raw)
-		if ok && payload.Event.affectsPreview() {
-			payloads = append(payloads, payload)
-		}
-	}
-	return payloads
+	return c.applyStreamEvent(message, payload, now)
 }
 
 func decodeWorkerStreamPayload(raw json.RawMessage) (workerStreamPayload, bool) {
@@ -179,9 +164,10 @@ func (c *workerPreviewConverter) isDuplicate(batch codeSessionStreamFanout, payl
 		return false
 	}
 	key := seenStreamEventKey{
-		codeSessionID: batch.CodeSessionID,
-		workerEpoch:   batch.WorkerEpoch,
-		eventUUID:     payload.UUID,
+		sessionExternalID: batch.SessionExternalID,
+		codeSessionID:     batch.CodeSessionID,
+		workerEpoch:       batch.WorkerEpoch,
+		eventUUID:         payload.UUID,
 	}
 	expiresAt, seen := c.seen.Get(key)
 	if seen && !expiresAt.Before(now) {
@@ -193,10 +179,11 @@ func (c *workerPreviewConverter) isDuplicate(batch codeSessionStreamFanout, payl
 
 func (c *workerPreviewConverter) applyStreamEvent(batch codeSessionStreamFanout, payload workerStreamPayload, now time.Time) (sessionStreamEvent, bool) {
 	scope := previewScope{
-		codeSessionID:   batch.CodeSessionID,
-		workerEpoch:     batch.WorkerEpoch,
-		rawSessionID:    payload.SessionID,
-		parentToolUseID: optionalString(payload.ParentToolUseID),
+		sessionExternalID: batch.SessionExternalID,
+		codeSessionID:     batch.CodeSessionID,
+		workerEpoch:       batch.WorkerEpoch,
+		rawSessionID:      payload.SessionID,
+		parentToolUseID:   optionalString(payload.ParentToolUseID),
 	}
 	switch payload.Event.Type {
 	case workerStreamEventTypeMessageStart:
@@ -211,6 +198,21 @@ func (c *workerPreviewConverter) applyStreamEvent(batch codeSessionStreamFanout,
 		c.deletePreviewState(scope)
 	}
 	return sessionStreamEvent{}, false
+}
+
+func (c *workerPreviewConverter) resetSession(sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, scope := range c.states.Keys() {
+		if scope.sessionExternalID == sessionID {
+			c.states.Remove(scope)
+		}
+	}
+	for _, key := range c.seen.Keys() {
+		if key.sessionExternalID == sessionID {
+			c.seen.Remove(key)
+		}
+	}
 }
 
 func (c *workerPreviewConverter) startPreviewMessage(scope previewScope, messageID string, now time.Time) {
@@ -288,13 +290,6 @@ func (c *workerPreviewConverter) stopPreviewBlock(scope previewScope, index int,
 
 func (c *workerPreviewConverter) deletePreviewState(scope previewScope) {
 	c.states.Remove(scope)
-}
-
-func (c *workerPreviewConverter) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.states.Purge()
-	c.seen.Purge()
 }
 
 func previewSessionEvent(batch codeSessionStreamFanout, source workerStreamPayload, processedAt time.Time, externalID, eventType string, payload json.RawMessage) sessionStreamEvent {

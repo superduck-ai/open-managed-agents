@@ -57,10 +57,9 @@ type yamlDatabaseConfig struct {
 }
 
 type yamlNATSConfig struct {
-	Enabled        optional[bool] `yaml:"enabled"`
-	URL            string         `yaml:"url"`
-	ConnectTimeout time.Duration  `yaml:"connect_timeout"`
-	DrainTimeout   time.Duration  `yaml:"drain_timeout"`
+	URL            string        `yaml:"url"`
+	ConnectTimeout time.Duration `yaml:"connect_timeout"`
+	DrainTimeout   time.Duration `yaml:"drain_timeout"`
 }
 
 type yamlCodeSessionConfig struct {
@@ -181,7 +180,6 @@ func (input yamlConfig) resolve() Config {
 		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
-	cfg.NATS.Enabled = input.NATS.Enabled.valueOr(cfg.NATS.URL != "")
 	cfg.CodeSession.OTLPFileLogEnabled = input.CodeSession.OTLPFileLogEnabled.valueOr(defaultCodeSessionOTLPFileLogEnabled(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")
 	if input.Bootstrap.SeedAPIKeys.set {

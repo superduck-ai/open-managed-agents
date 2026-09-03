@@ -17,11 +17,23 @@
 #   oma API:    http://localhost:38080
 #   e2b-local:  http://localhost:3099
 #   MinIO Web:  http://localhost:9001
-#   NATS 监控:  http://localhost:8222
+#   NATS 监控:  http://localhost:8222 / 8223 / 8224
 #
 # Caddy 使用 28080 端口（非特权端口）。
 # oma-server 只读挂载 gitignored 的 oma-server.local.yaml；受跟踪的 oma-server.yaml 仅作为无密钥模板。
 # =============================================================================
+
+x-nats-common: &nats-common
+  image: docker.io/library/nats:2.14.6-alpine
+  expose:
+    - "6222"
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz?js-enabled-only=true"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+    start_period: 5s
+  restart: unless-stopped
 
 services:
   # ===========================================================================
@@ -101,20 +113,52 @@ services:
     restart: unless-stopped
 
   nats:
-    image: docker.io/library/nats:2.14.6-alpine
-    command: ["--jetstream", "--store_dir", "/data", "--http_port", "8222"]
+    <<: *nats-common
+    command:
+      - --name=nats-1
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+      - --cluster_name=oma-nats
+      - --cluster=nats://0.0.0.0:6222
+      - --routes=nats://nats-2:6222,nats://nats-3:6222
     ports:
       - "127.0.0.1:4222:4222"
       - "127.0.0.1:8222:8222"
     volumes:
       - natsdata:/data
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz?js-enabled-only=true"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    restart: unless-stopped
+
+  nats-2:
+    <<: *nats-common
+    command:
+      - --name=nats-2
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+      - --cluster_name=oma-nats
+      - --cluster=nats://0.0.0.0:6222
+      - --routes=nats://nats:6222
+    ports:
+      - "127.0.0.1:4223:4222"
+      - "127.0.0.1:8223:8222"
+    volumes:
+      - natsdata2:/data
+
+  nats-3:
+    <<: *nats-common
+    command:
+      - --name=nats-3
+      - --jetstream
+      - --store_dir=/data
+      - --http_port=8222
+      - --cluster_name=oma-nats
+      - --cluster=nats://0.0.0.0:6222
+      - --routes=nats://nats:6222
+    ports:
+      - "127.0.0.1:4224:4222"
+      - "127.0.0.1:8224:8222"
+    volumes:
+      - natsdata3:/data
 
   minio:
     image: docker.io/pgsty/minio:latest
@@ -169,6 +213,10 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
       minio:
         condition: service_healthy
     ports:
@@ -216,5 +264,7 @@ volumes:
   pgdata:
   redisdata:
   natsdata:
+  natsdata2:
+  natsdata3:
   miniodata:
   webdist:

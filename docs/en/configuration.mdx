@@ -28,7 +28,7 @@ redis:
   url: redis://localhost:6379
 
 nats:
-  url: nats://localhost:4222
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
 
 storage:
   type: s3
@@ -48,7 +48,7 @@ LLM Providers are workspace data, not process configuration. Add one or more Pro
 
 <AccordionGroup>
   <Accordion title="server, database, redis, and nats">
-    Configure the listen address, PostgreSQL connection, platform session storage, and optional NATS JetStream connection. Setting `nats.url` enables NATS by default. Production mode does not automatically migrate the database by default.
+    Configure the listen address, PostgreSQL connection, platform session storage, and the required NATS JetStream connection. `nats.url` accepts comma-separated seed URLs; provide multiple cluster nodes so startup does not depend on one server. Production mode does not automatically migrate the database by default.
   </Accordion>
   <Accordion title="storage">
     Configure S3-compatible storage, the bucket, capacity limits, and path-style access. Files, skills, and batch results depend on this storage.

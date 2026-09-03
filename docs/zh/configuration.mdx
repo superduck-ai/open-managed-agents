@@ -28,7 +28,7 @@ redis:
   url: redis://localhost:6379
 
 nats:
-  url: nats://localhost:4222
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
 
 storage:
   type: s3
@@ -48,7 +48,7 @@ LLM Provider 是工作区数据，不属于进程配置。服务启动后，在�
 
 <AccordionGroup>
   <Accordion title="server、database、redis 和 nats">
-    配置监听地址、PostgreSQL 连接、平台会话存储和可选的 NATS JetStream 连接。设置 `nats.url` 时默认启用 NATS。生产环境默认不自动迁移数据库。
+    配置监听地址、PostgreSQL 连接、平台会话存储和必需的 NATS JetStream 连接。`nats.url` 接受逗号分隔的种子节点 URL；配置多个集群节点可避免启动依赖单台服务器。生产环境默认不自动迁移数据库。
   </Accordion>
   <Accordion title="storage">
     配置 S3 兼容对象存储、bucket、容量限制和 path-style 访问。文件、技能与批处理结果依赖该存储。

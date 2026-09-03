@@ -76,26 +76,22 @@ func run(logger *slog.Logger) error {
 	}
 	defer redisClient.Close()
 	platformSessions := platformsession.NewRedisStore(redisClient)
-	sessionEventBus, err := sessionfanout.NewRedis(ctx, redisClient, logger.With("component", "session_event_bus"))
+	natsConnection, err := natsclient.Open(ctx, cfg.NATS, logger.With("component", "nats"))
+	if err != nil {
+		return fmt.Errorf("open nats client: %w", err)
+	}
+	defer func() {
+		if err := natsConnection.Drain(); err != nil {
+			logger.Warn("drain nats connection", "error", err)
+			natsConnection.Close()
+		}
+	}()
+	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"))
 	if err != nil {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
-	if cfg.NATS.Enabled {
-		natsConnection, err := natsclient.Open(ctx, cfg.NATS, logger.With("component", "nats"))
-		if err != nil {
-			return fmt.Errorf("open nats client: %w", err)
-		}
-		defer func() {
-			if err := natsConnection.Drain(); err != nil {
-				logger.Warn("drain nats connection", "error", err)
-				natsConnection.Close()
-			}
-		}()
-		logger.Info("nats messaging ready", "jetstream", true)
-	} else {
-		logger.Info("nats messaging disabled")
-	}
+	logger.Info("nats messaging ready", "jetstream", true)
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {

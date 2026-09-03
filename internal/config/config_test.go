@@ -45,19 +45,28 @@ const (
 type dockerComposeTestFile struct {
 	Services struct {
 		OMAServer struct {
-			Ports   []string                  `yaml:"ports"`
-			Volumes []dockerComposeTestVolume `yaml:"volumes"`
+			DependsOn map[string]dockerComposeTestDependency `yaml:"depends_on"`
+			Ports     []string                               `yaml:"ports"`
+			Volumes   []dockerComposeTestVolume              `yaml:"volumes"`
 		} `yaml:"oma-server"`
-		NATS struct {
-			Image       string   `yaml:"image"`
-			Command     []string `yaml:"command"`
-			Ports       []string `yaml:"ports"`
-			Volumes     []string `yaml:"volumes"`
-			Healthcheck struct {
-				Test []string `yaml:"test"`
-			} `yaml:"healthcheck"`
-		} `yaml:"nats"`
+		NATS  dockerComposeTestNATSService `yaml:"nats"`
+		NATS2 dockerComposeTestNATSService `yaml:"nats-2"`
+		NATS3 dockerComposeTestNATSService `yaml:"nats-3"`
 	} `yaml:"services"`
+}
+
+type dockerComposeTestDependency struct {
+	Condition string `yaml:"condition"`
+}
+
+type dockerComposeTestNATSService struct {
+	Image       string   `yaml:"image"`
+	Command     []string `yaml:"command"`
+	Ports       []string `yaml:"ports"`
+	Volumes     []string `yaml:"volumes"`
+	Healthcheck struct {
+		Test []string `yaml:"test"`
+	} `yaml:"healthcheck"`
 }
 
 type dockerComposeTestVolume struct {
@@ -86,6 +95,8 @@ database:
   url: postgresql://yaml/database
 redis:
   url: redis://yaml:6379
+nats:
+  url: nats://yaml:4222
 storage:
   type: s3
   s3:
@@ -215,6 +226,7 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 	}{
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
+		{name: "removed NATS enable flag", overrides: "nats:\n  enabled: false\n", wantField: "enabled"},
 		{name: "optional list item field", overrides: "bootstrap:\n  seed_api_keys:\n    - external_idd: typo\n      key: secret\n", wantField: "external_idd"},
 	}
 	for _, testCase := range testCases {
@@ -238,7 +250,7 @@ func TestLoadYAMLRequiresDeploymentFields(t *testing.T) {
 		{name: "server address", overrides: "server:\n  addr: \"\"", wantError: "server.addr is required"},
 		{name: "database URL", overrides: "database:\n  url: \"\"", wantError: "database.url is required"},
 		{name: "Redis URL", overrides: "redis:\n  url: \"\"", wantError: "redis.url is required"},
-		{name: "NATS URL", overrides: "nats:\n  enabled: true\n  url: \"\"", wantError: "nats.url is required when nats is enabled"},
+		{name: "NATS URL", overrides: "nats:\n  url: \"\"", wantError: "nats.url is required"},
 		{name: "storage type", overrides: "storage:\n  type: \"\"", wantError: "storage.type is required"},
 		{name: "S3 endpoint", overrides: "storage:\n  s3:\n    endpoint: \"\"", wantError: "storage.s3.endpoint is required"},
 		{name: "S3 bucket", overrides: "storage:\n  s3:\n    bucket: \"\"", wantError: "storage.s3.bucket is required"},
@@ -264,30 +276,6 @@ func TestLoadYAMLRejectsUnsupportedStorageType(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `storage.type must be "s3"`) {
 		t.Fatalf("Load() error = %v, want unsupported object storage type error", err)
 	}
-}
-
-func TestLoadYAMLNATSEnabledDefault(t *testing.T) {
-	t.Run("URL enables NATS", func(t *testing.T) {
-		prepareLoadTest(t)
-		cfg, err := loadConfigTestYAML(t, "")
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if !cfg.NATS.Enabled {
-			t.Fatal("NATS.Enabled = false, want URL-derived true")
-		}
-	})
-
-	t.Run("explicit false keeps configured NATS dormant", func(t *testing.T) {
-		prepareLoadTest(t)
-		cfg, err := loadConfigTestYAML(t, "nats:\n  enabled: false\n")
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.NATS.Enabled {
-			t.Fatal("NATS.Enabled = true, want explicit false")
-		}
-	})
 }
 
 func TestLoadYAMLRejectsMultipleDocuments(t *testing.T) {
@@ -480,29 +468,61 @@ func TestDockerComposeNATSJetStreamTopology(t *testing.T) {
 		t.Fatalf("resolve Docker Compose config path: %v", err)
 	}
 	cfg := loadValidatedConfigTestFile(t, configPath)
-	if !cfg.NATS.Enabled || cfg.NATS.URL != "nats://nats:4222" {
-		t.Fatalf("Compose NATS config = enabled:%t url:%q, want enabled service URL", cfg.NATS.Enabled, cfg.NATS.URL)
+	wantURL := "nats://nats:4222,nats://nats-2:4222,nats://nats-3:4222"
+	if cfg.NATS.URL != wantURL {
+		t.Fatalf("Compose NATS URL = %q, want three cluster seeds", cfg.NATS.URL)
 	}
 
-	natsService := loadDockerComposeTestFile(t).Services.NATS
-	if natsService.Image != "docker.io/library/nats:2.14.6-alpine" {
-		t.Fatalf("Compose NATS image = %q, want pinned official image", natsService.Image)
+	compose := loadDockerComposeTestFile(t)
+	natsServices := []struct {
+		name        string
+		service     dockerComposeTestNATSService
+		serverName  string
+		clientPort  string
+		monitorPort string
+		volume      string
+	}{
+		{name: "nats", service: compose.Services.NATS, serverName: "nats-1", clientPort: "4222", monitorPort: "8222", volume: "natsdata:/data"},
+		{name: "nats-2", service: compose.Services.NATS2, serverName: "nats-2", clientPort: "4223", monitorPort: "8223", volume: "natsdata2:/data"},
+		{name: "nats-3", service: compose.Services.NATS3, serverName: "nats-3", clientPort: "4224", monitorPort: "8224", volume: "natsdata3:/data"},
 	}
-	for _, option := range []string{"--jetstream", "--store_dir", "/data", "--http_port", "8222"} {
-		if !slices.Contains(natsService.Command, option) {
-			t.Fatalf("Compose NATS command = %v, missing %q", natsService.Command, option)
+	for _, item := range natsServices {
+		if item.service.Image != "docker.io/library/nats:2.14.6-alpine" {
+			t.Fatalf("Compose %s image = %q, want pinned official image", item.name, item.service.Image)
+		}
+		for _, option := range []string{
+			"--name=" + item.serverName,
+			"--jetstream",
+			"--store_dir=/data",
+			"--http_port=8222",
+			"--cluster_name=oma-nats",
+			"--cluster=nats://0.0.0.0:6222",
+		} {
+			if !slices.Contains(item.service.Command, option) {
+				t.Fatalf("Compose %s command = %v, missing %q", item.name, item.service.Command, option)
+			}
+		}
+		for _, port := range []string{
+			"127.0.0.1:" + item.clientPort + ":4222",
+			"127.0.0.1:" + item.monitorPort + ":8222",
+		} {
+			if !slices.Contains(item.service.Ports, port) {
+				t.Fatalf("Compose %s ports = %v, missing loopback mapping %q", item.name, item.service.Ports, port)
+			}
+		}
+		if !slices.Contains(item.service.Volumes, item.volume) {
+			t.Fatalf("Compose %s volumes = %v, want independent JetStream storage %q", item.name, item.service.Volumes, item.volume)
+		}
+		if !strings.Contains(strings.Join(item.service.Healthcheck.Test, " "), "js-enabled-only=true") {
+			t.Fatalf("Compose %s healthcheck = %v, want JetStream readiness check", item.name, item.service.Healthcheck.Test)
 		}
 	}
-	for _, port := range []string{"127.0.0.1:4222:4222", "127.0.0.1:8222:8222"} {
-		if !slices.Contains(natsService.Ports, port) {
-			t.Fatalf("Compose NATS ports = %v, missing loopback mapping %q", natsService.Ports, port)
+
+	for _, serviceName := range []string{"nats", "nats-2", "nats-3"} {
+		dependency, ok := compose.Services.OMAServer.DependsOn[serviceName]
+		if !ok || dependency.Condition != "service_healthy" {
+			t.Fatalf("Compose oma-server dependency %q = %+v, want service_healthy", serviceName, dependency)
 		}
-	}
-	if !slices.Contains(natsService.Volumes, "natsdata:/data") {
-		t.Fatalf("Compose NATS volumes = %v, want persistent JetStream storage", natsService.Volumes)
-	}
-	if !strings.Contains(strings.Join(natsService.Healthcheck.Test, " "), "js-enabled-only=true") {
-		t.Fatalf("Compose NATS healthcheck = %v, want JetStream readiness check", natsService.Healthcheck.Test)
 	}
 }
 

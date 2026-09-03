@@ -62,7 +62,7 @@ docker compose up -d
 - Bun，用于前端开发、测试和构建。
 - PostgreSQL，默认连接串是 `postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable`。
 - Redis，默认 `redis://localhost:6379`。
-- NATS JetStream，默认 `nats://localhost:4222`；仅在配置 `nats.url` 时启用。
+- NATS JetStream 三节点集群，默认本地端口为 `4222` / `4223` / `4224`；`nats.url` 是服务启动必填配置，支持逗号分隔的多个种子节点。
 - MinIO 或其他 S3 兼容存储，默认 `http://localhost:9000`、bucket `claude-files`、账号密码 `minioadmin/minioadmin`。
 
 启动服务前通常应确保 `database.url` 指向的 PostgreSQL 数据库和角色已经可用。首次连接失败时，应用只会尝试使用该 URL 派生的 `postgres`/`template1` 连接以及当前系统用户完成本地初始化，不再接受独立的管理员连接串。
@@ -90,7 +90,7 @@ redis:
   url: redis://localhost:6379
 
 nats:
-  url: nats://localhost:4222
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
 
 storage:
   type: s3

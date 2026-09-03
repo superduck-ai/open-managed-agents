@@ -19,7 +19,7 @@ type CodeSessionStreamRoute struct {
 // 接口保留在 codesessions 包内，避免 Service 反向依赖具体 API/传输层。
 type PublicEventSink interface {
 	PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error
-	PublishCodeSessionStreamEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payloads []json.RawMessage) error
+	PublishCodeSessionStreamEvent(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payload json.RawMessage) error
 }
 
 // SetPublicEventSink 在服务组装阶段注入事件接收端。

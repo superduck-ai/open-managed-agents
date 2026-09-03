@@ -20,9 +20,8 @@ redis:
   url: redis://localhost:6379
 
 nats:
-  # Defaults to true when url is set. Set false to keep a configured endpoint dormant.
-  enabled: true
-  url: nats://localhost:4222
+  # One or more comma-separated seed URLs. Configure multiple nodes for startup failover.
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
   connect_timeout: 5s
   drain_timeout: 10s
 

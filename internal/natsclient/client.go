@@ -47,6 +47,8 @@ func connectionOptions(cfg config.NATSConfig, logger *slog.Logger) []nats.Option
 		nats.Name(clientName),
 		nats.Timeout(cfg.ConnectTimeout),
 		nats.DrainTimeout(cfg.DrainTimeout),
+		// Live previews must not be replayed from a reconnect buffer after a gap.
+		nats.ReconnectBufSize(-1),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, disconnectErr error) {
 			if disconnectErr != nil {
 				logger.Warn("nats disconnected", "error", disconnectErr)

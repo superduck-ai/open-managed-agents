@@ -183,7 +183,7 @@ batch 中可公开的 durable output 直接以稳定 public event ID 幂等写�
 去重。internal transcript 仍按原有事务在 code session 行锁内校验 epoch 后写入
 `code_session_internal_events`。
 
-其中 ephemeral `stream_event` 会在 epoch gate 之后通过 Redis Pub/Sub 实时扇出到各
+其中 ephemeral `stream_event` 会在 epoch gate 之后通过 Core NATS 实时扇出到各
 API 实例，但仍不落 PostgreSQL；协议转换、稳定 ID 与故障语义见
 [`ccr-v2-worker-sse-fanout.md`](ccr-v2-worker-sse-fanout.md)。
 

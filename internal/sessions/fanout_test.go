@@ -102,7 +102,7 @@ func TestSessionEventsFanoutUsesMinimalSSEContract(t *testing.T) {
 	}
 }
 
-func TestPublishCodeSessionStreamEventsUsesProvidedRouteWithoutDatabase(t *testing.T) {
+func TestPublishCodeSessionStreamEventUsesProvidedRouteWithoutDatabase(t *testing.T) {
 	bus := &recordingEventBus{}
 	handler := &Handler{
 		eventBus: bus,
@@ -113,10 +113,10 @@ func TestPublishCodeSessionStreamEventsUsesProvidedRouteWithoutDatabase(t *testi
 		WorkspaceUUID:     "workspace-test",
 		SessionExternalID: "session-test",
 	}
-	payloads := []json.RawMessage{json.RawMessage(`{"type":"stream_event"}`)}
+	payload := json.RawMessage(`{"type":"stream_event"}`)
 
-	if err := handler.PublishCodeSessionStreamEvents(context.Background(), route, 7, payloads); err != nil {
-		t.Fatalf("PublishCodeSessionStreamEvents() error = %v", err)
+	if err := handler.PublishCodeSessionStreamEvent(context.Background(), route, 7, payload); err != nil {
+		t.Fatalf("PublishCodeSessionStreamEvent() error = %v", err)
 	}
 	if len(bus.publications) != 1 || bus.publications[0].sessionID != route.SessionExternalID {
 		t.Fatalf("publications = %#v, want one publication for %q", bus.publications, route.SessionExternalID)
@@ -125,37 +125,45 @@ func TestPublishCodeSessionStreamEventsUsesProvidedRouteWithoutDatabase(t *testi
 	if err := json.Unmarshal(bus.publications[0].envelope.Payload, &fanout); err != nil {
 		t.Fatalf("decode stream fanout: %v", err)
 	}
-	if fanout.CodeSessionID != route.CodeSessionID || fanout.WorkspaceUUID != route.WorkspaceUUID || fanout.SessionExternalID != route.SessionExternalID || fanout.WorkerEpoch != 7 || len(fanout.Payloads) != 1 {
+	if fanout.CodeSessionID != route.CodeSessionID || fanout.WorkspaceUUID != route.WorkspaceUUID || fanout.SessionExternalID != route.SessionExternalID || fanout.WorkerEpoch != 7 || string(fanout.Payload) != string(payload) {
 		t.Fatalf("stream fanout = %#v, want supplied immutable route", fanout)
 	}
 }
 
-func TestReceiveSessionEventsFanoutKeepsNonTerminalSubscription(t *testing.T) {
+func TestReceiveSessionEventsFanoutKeepsPreviewForNonTerminalEvent(t *testing.T) {
 	bus := &recordingEventBus{}
+	previews := newWorkerPreviewConverter()
+	scope := previewScope{sessionExternalID: "session-test"}
+	previews.states.Add(scope, &previewState{})
 	handler := &Handler{
 		eventBus: bus,
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		streams:  newStreamHub(),
+		previews: previews,
 	}
-	handler.receiveSessionEventsFanout(context.Background(), []sessionStreamEvent{{
+	handler.receiveSessionEventsFanout([]sessionStreamEvent{{
 		WorkspaceUUID:     "workspace-test",
 		SessionExternalID: "session-test",
 		EventType:         "session.status_idle",
 	}})
-	if len(bus.unsubscribedSessionIDs) != 0 {
-		t.Fatalf("unsubscribed sessions = %v, want none", bus.unsubscribedSessionIDs)
+	if !previews.states.Contains(scope) {
+		t.Fatal("non-terminal event cleared preview state")
 	}
 }
 
-func TestReceiveSessionEventsFanoutDeliversTerminalEventBeforeUnsubscribe(t *testing.T) {
+func TestReceiveSessionEventsFanoutDeliversTerminalEventAndClearsPreview(t *testing.T) {
 	bus := &recordingEventBus{}
+	previews := newWorkerPreviewConverter()
+	scope := previewScope{sessionExternalID: "session-test"}
+	previews.states.Add(scope, &previewState{})
 	handler := &Handler{
 		eventBus: bus,
 		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		streams:  newStreamHub(),
+		previews: previews,
 	}
 	_, ch := handler.streams.subscribe("workspace-test", "session-test")
-	handler.receiveSessionEventsFanout(context.Background(), []sessionStreamEvent{{
+	handler.receiveSessionEventsFanout([]sessionStreamEvent{{
 		WorkspaceUUID:     "workspace-test",
 		SessionExternalID: "session-test",
 		EventType:         "session.status_terminated",
@@ -166,8 +174,8 @@ func TestReceiveSessionEventsFanoutDeliversTerminalEventBeforeUnsubscribe(t *tes
 	if !ok || eventDelivery.event.EventType != "session.status_terminated" {
 		t.Fatalf("terminal delivery = %#v, want session.status_terminated", delivery)
 	}
-	if len(bus.unsubscribedSessionIDs) != 1 || bus.unsubscribedSessionIDs[0] != "session-test" {
-		t.Fatalf("unsubscribed sessions = %v, want session-test", bus.unsubscribedSessionIDs)
+	if previews.states.Contains(scope) {
+		t.Fatal("terminal event retained preview state")
 	}
 }
 
@@ -177,8 +185,7 @@ type recordedPublication struct {
 }
 
 type recordingEventBus struct {
-	publications           []recordedPublication
-	unsubscribedSessionIDs []string
+	publications []recordedPublication
 }
 
 func (b *recordingEventBus) Publish(_ context.Context, sessionID string, envelope sessionfanout.Envelope) error {
@@ -190,12 +197,11 @@ func (b *recordingEventBus) Subscribe(context.Context, string) error {
 	return nil
 }
 
-func (b *recordingEventBus) Unsubscribe(_ context.Context, sessionID string) error {
-	b.unsubscribedSessionIDs = append(b.unsubscribedSessionIDs, sessionID)
+func (b *recordingEventBus) Unsubscribe(string) error {
 	return nil
 }
 
-func (b *recordingEventBus) Register(sessionfanout.Handler, func()) {}
+func (b *recordingEventBus) Register(sessionfanout.Handler, sessionfanout.ResetHandler) {}
 
 func (b *recordingEventBus) Close() error {
 	return nil

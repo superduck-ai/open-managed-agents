@@ -19,8 +19,7 @@ import (
 )
 
 const (
-	DeploymentScheduleQueue        = "deployment_schedules"
-	deploymentScheduleSyncInterval = 10 * time.Second
+	DeploymentScheduleQueue = "deployment_schedules"
 )
 
 type scheduledDeploymentArgs struct {
@@ -65,12 +64,9 @@ func occurrenceTime(job *river.Job[scheduledDeploymentArgs]) (time.Time, error) 
 }
 
 type DeploymentScheduler struct {
-	database   *db.DB
-	client     *river.Client[*sql.Tx]
-	logger     *slog.Logger
-	registered map[string]deploymentSchedule
-	cancel     context.CancelFunc
-	done       chan struct{}
+	database *db.DB
+	client   *river.Client[*sql.Tx]
+	logger   *slog.Logger
 }
 
 // RegisterScheduledWorkers keeps deployment behavior separate from River assembly.
@@ -79,91 +75,149 @@ func RegisterScheduledWorkers(workers *river.Workers, database *db.DB) {
 }
 
 func NewDeploymentScheduler(database *db.DB, client *river.Client[*sql.Tx], logger *slog.Logger) *DeploymentScheduler {
-	return &DeploymentScheduler{database: database, client: client, logger: logging.LoggerOrDefault(logger), registered: make(map[string]deploymentSchedule)}
+	return &DeploymentScheduler{database: database, client: client, logger: logging.LoggerOrDefault(logger)}
 }
 
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
-	if err := s.sync(ctx); err != nil {
-		return fmt.Errorf("load deployment schedules: %w", err)
+	s.database.SetDeploymentScheduleTxHook(s.updateTx)
+	if err := s.reconcile(ctx); err != nil {
+		s.database.SetDeploymentScheduleTxHook(nil)
+		return fmt.Errorf("reconcile deployment schedules: %w", err)
 	}
-	ctx, s.cancel = context.WithCancel(ctx)
 	if err := s.client.Start(ctx); err != nil {
-		s.cancel()
+		s.database.SetDeploymentScheduleTxHook(nil)
 		return err
 	}
-	s.done = make(chan struct{})
-	go s.syncLoop(ctx)
 	return nil
 }
 
 func (s *DeploymentScheduler) Stop(ctx context.Context) error {
-	if s.cancel != nil {
-		s.cancel()
+	if err := s.client.Stop(ctx); err != nil {
+		return err
 	}
-	if s.done != nil {
-		select {
-		case <-s.done:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return s.client.Stop(ctx)
+	s.database.SetDeploymentScheduleTxHook(nil)
+	return nil
 }
 
-func (s *DeploymentScheduler) sync(ctx context.Context) error {
+func (s *DeploymentScheduler) updateTx(ctx context.Context, tx *sql.Tx, deployment db.Deployment) error {
+	if deployment.ArchivedAt != nil || deployment.Status != "active" || len(deployment.Schedule) == 0 {
+		return s.deleteTx(ctx, tx, deployment.ExternalID)
+	}
+	opts, err := durableDeploymentScheduleOpts(deployment)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DurablePeriodicJobUpsertTx(ctx, tx, opts)
+	return err
+}
+
+func (s *DeploymentScheduler) deleteTx(ctx context.Context, tx *sql.Tx, id string) error {
+	_, err := s.client.DurablePeriodicJobDeleteTx(ctx, tx, id)
+	if errors.Is(err, rivertype.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (s *DeploymentScheduler) reconcile(ctx context.Context) error {
 	states, err := s.database.ListDeploymentSchedules(ctx)
 	if err != nil {
 		return err
 	}
-	desired := make(map[string]struct{}, len(states))
+	targets := make(map[string]string, len(states))
 	for _, state := range states {
-		schedule, err := parseDeploymentSchedule(state.Schedule)
-		if err != nil {
-			s.client.PeriodicJobs().RemoveByID(state.ExternalID)
-			delete(s.registered, state.ExternalID)
-			s.logger.WarnContext(ctx, "skip invalid stored deployment schedule", "deployment_id", state.ExternalID, "error", err)
-			continue
-		}
-		desired[state.ExternalID] = struct{}{}
-		if registeredSchedule, ok := s.registered[state.ExternalID]; ok && registeredSchedule == schedule.config {
-			continue
-		}
-		job := river.NewPeriodicJob(schedule.cron, func() (river.JobArgs, *river.InsertOpts) {
-			return scheduledDeploymentArgs{
-				WorkspaceUUID: state.WorkspaceUUID, DeploymentExternalID: state.ExternalID,
-				Schedule: schedule.config,
-			}, &river.InsertOpts{Queue: DeploymentScheduleQueue}
-		}, &river.PeriodicJobOpts{ID: state.ExternalID})
-		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
-		if _, err := s.client.PeriodicJobs().AddSafely(job); err != nil {
-			delete(s.registered, state.ExternalID)
-			return fmt.Errorf("deployment %s: %w", state.ExternalID, err)
-		}
-		s.registered[state.ExternalID] = schedule.config
+		targets[state.ExternalID] = state.WorkspaceUUID
 	}
-	for id := range s.registered {
-		if _, ok := desired[id]; !ok {
-			s.client.PeriodicJobs().RemoveByID(id)
-			delete(s.registered, id)
+	rows, err := s.client.DurablePeriodicJobList(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.Kind != (scheduledDeploymentArgs{}).Kind() {
+			continue
+		}
+		if _, ok := targets[row.ID]; ok {
+			continue
+		}
+		args, err := jsonx.Decode[scheduledDeploymentArgs](json.RawMessage(row.Args))
+		if err != nil {
+			s.logger.WarnContext(ctx, "skip invalid durable deployment schedule", "deployment_id", row.ID, "error", err)
+			continue
+		}
+		targets[row.ID] = args.WorkspaceUUID
+	}
+	for id, workspaceUUID := range targets {
+		if err := s.database.ReconcileDeploymentSchedule(ctx, workspaceUUID, id, s.reconcileTx); err != nil {
+			return fmt.Errorf("deployment %s: %w", id, err)
 		}
 	}
 	return nil
 }
 
-func (s *DeploymentScheduler) syncLoop(ctx context.Context) {
-	defer close(s.done)
-	ticker := time.NewTicker(deploymentScheduleSyncInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.sync(ctx); err != nil {
-				s.logger.ErrorContext(ctx, "sync deployment periodic jobs", "error", err)
-			}
-		}
+func (s *DeploymentScheduler) reconcileTx(ctx context.Context, tx *sql.Tx, deployment db.Deployment) error {
+	if deployment.ArchivedAt != nil || deployment.Status != "active" || len(deployment.Schedule) == 0 {
+		return s.deleteTx(ctx, tx, deployment.ExternalID)
 	}
+	opts, err := durableDeploymentScheduleOpts(deployment)
+	if err != nil {
+		s.logger.WarnContext(ctx, "skip invalid stored deployment schedule", "deployment_id", deployment.ExternalID, "error", err)
+		return s.deleteTx(ctx, tx, deployment.ExternalID)
+	}
+	row, err := s.client.DurablePeriodicJobGetTx(ctx, tx, deployment.ExternalID)
+	if err == nil && durableDeploymentScheduleMatches(row, opts) {
+		return nil
+	}
+	if err != nil && !errors.Is(err, rivertype.ErrNotFound) {
+		return err
+	}
+	_, err = s.client.DurablePeriodicJobUpsertTx(ctx, tx, opts)
+	return err
+}
+
+func durableDeploymentScheduleOpts(deployment db.Deployment) (*river.DurablePeriodicJobUpsertOpts, error) {
+	parsed, err := parseDeploymentSchedule(deployment.Schedule)
+	if err != nil {
+		return nil, err
+	}
+	args, err := jsonx.Encode(scheduledDeploymentArgs{
+		WorkspaceUUID:        deployment.WorkspaceUUID,
+		DeploymentExternalID: deployment.ExternalID,
+		Schedule:             parsed.config,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &river.DurablePeriodicJobUpsertOpts{
+		Args:        args,
+		ID:          deployment.ExternalID,
+		Kind:        scheduledDeploymentArgs{}.Kind(),
+		MaxAttempts: river.MaxAttemptsDefault,
+		Priority:    river.PriorityDefault,
+		Queue:       DeploymentScheduleQueue,
+		Schedule: &river.DurablePeriodicJobSchedule{
+			CronExpression: mapSundaySeven(parsed.config.Expression),
+			CronTimezone:   parsed.config.Timezone,
+		},
+	}, nil
+}
+
+func durableDeploymentScheduleMatches(row *rivertype.DurablePeriodicJob, opts *river.DurablePeriodicJobUpsertOpts) bool {
+	persistedArgs, err := jsonx.Decode[scheduledDeploymentArgs](json.RawMessage(row.Args))
+	if err != nil {
+		return false
+	}
+	desiredArgs, err := jsonx.Decode[scheduledDeploymentArgs](json.RawMessage(opts.Args))
+	return row.ID == opts.ID &&
+		err == nil && persistedArgs == desiredArgs &&
+		row.CronExpression != nil &&
+		*row.CronExpression == opts.Schedule.CronExpression &&
+		row.CronTimezone == opts.Schedule.CronTimezone &&
+		row.Kind == opts.Kind &&
+		row.MaxAttempts == opts.MaxAttempts &&
+		row.PausedAt == nil &&
+		row.Priority == opts.Priority &&
+		row.Queue == opts.Queue &&
+		len(row.Tags) == 0
 }
 
 type scheduledDeploymentWorker struct {

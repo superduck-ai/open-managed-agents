@@ -42,8 +42,9 @@ var (
 )
 
 type DB struct {
-	pool     *pgxpool.Pool
-	mapperDB *yourbatis.DB
+	pool                     *pgxpool.Pool
+	mapperDB                 *yourbatis.DB
+	deploymentScheduleTxHook DeploymentScheduleTxHook
 }
 
 type APIKey struct {

@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/samber/lo"
@@ -115,7 +117,7 @@ type UpdateDeploymentInput struct {
 type DeploymentSchedule struct {
 	WorkspaceUUID string
 	ExternalID    string
-	Schedule      json.RawMessage
+	Schedule      []byte
 }
 
 type ApplyScheduledOccurrenceInput struct {
@@ -129,18 +131,68 @@ type ApplyScheduledOccurrenceInput struct {
 	Now               time.Time
 }
 
+type DeploymentScheduleTxHook func(context.Context, *sql.Tx, Deployment) error
+
+func (d *DB) SetDeploymentScheduleTxHook(hook DeploymentScheduleTxHook) {
+	d.deploymentScheduleTxHook = hook
+}
+
+func (d *DB) applyDeploymentScheduleTxHook(ctx context.Context, executor yourbatis.Executor, deployment Deployment) error {
+	if d.deploymentScheduleTxHook == nil {
+		return nil
+	}
+	tx, ok := executor.(*yourbatis.Tx)
+	if !ok {
+		return errors.New("deployment schedule hook requires a transaction")
+	}
+	return d.deploymentScheduleTxHook(ctx, tx.SQLTx(), deployment)
+}
+
+func (d *DB) ReconcileDeploymentSchedule(
+	ctx context.Context,
+	workspaceUUID string,
+	externalID string,
+	reconcile DeploymentScheduleTxHook,
+) error {
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		deployment := Deployment{WorkspaceUUID: workspaceUUID, ExternalID: externalID}
+		row, err := NewDeploymentMapper(executor).LockByExternalID(ctx, workspaceUUID, externalID)
+		if err == nil {
+			deployment = row.deployment()
+		} else if !errors.Is(mapNoRows(err), ErrNotFound) {
+			return err
+		}
+		tx, ok := executor.(*yourbatis.Tx)
+		if !ok {
+			return errors.New("deployment schedule reconcile requires a transaction")
+		}
+		return reconcile(ctx, tx.SQLTx(), deployment)
+	})
+}
+
 func (d *DB) CreateDeployment(ctx context.Context, deployment Deployment) (Deployment, error) {
-	mapper := NewDeploymentMapper(d.mapperDB)
-	if len(deployment.Schedule) > 0 {
-		if err := checkScheduledDeploymentQuota(ctx, mapper, deployment.OrganizationUUID); err != nil {
+	if len(deployment.Schedule) == 0 {
+		row, err := NewDeploymentMapper(d.mapperDB).Insert(ctx, deploymentWriteParamsFrom(deployment))
+		if err != nil {
 			return Deployment{}, err
 		}
+		return row.deployment(), nil
 	}
-	row, err := mapper.Insert(ctx, deploymentWriteParamsFrom(deployment))
-	if err != nil {
-		return Deployment{}, err
-	}
-	return row.deployment(), nil
+
+	var created Deployment
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewDeploymentMapper(executor)
+		if err := checkScheduledDeploymentQuota(ctx, mapper, deployment.OrganizationUUID); err != nil {
+			return err
+		}
+		row, err := mapper.Insert(ctx, deploymentWriteParamsFrom(deployment))
+		if err != nil {
+			return err
+		}
+		created = row.deployment()
+		return d.applyDeploymentScheduleTxHook(ctx, executor, created)
+	})
+	return created, err
 }
 
 func (d *DB) GetDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
@@ -180,6 +232,9 @@ func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externa
 			return mapNoRows(err)
 		}
 		updated = row.deployment()
+		if scheduleChanged {
+			return d.applyDeploymentScheduleTxHook(ctx, executor, updated)
+		}
 		return nil
 	})
 	return updated, err
@@ -197,30 +252,42 @@ func checkScheduledDeploymentQuota(ctx context.Context, mapper DeploymentMapper,
 }
 
 func (d *DB) ArchiveDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
-	mapper := NewDeploymentMapper(d.mapperDB)
-	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Deployment{}, mapNoRows(err)
-	}
-	return row.deployment(), nil
+	var archived Deployment
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, err := NewDeploymentMapper(executor).ArchiveByExternalID(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		archived = row.deployment()
+		return d.applyDeploymentScheduleTxHook(ctx, executor, archived)
+	})
+	return archived, err
 }
 
 func (d *DB) PauseDeployment(ctx context.Context, workspaceUUID string, externalID string, pausedReason json.RawMessage) (Deployment, error) {
-	mapper := NewDeploymentMapper(d.mapperDB)
-	row, err := mapper.PauseByExternalID(ctx, workspaceUUID, externalID, agentJSONArg(pausedReason))
-	if err != nil {
-		return Deployment{}, mapNoRows(err)
-	}
-	return row.deployment(), nil
+	var paused Deployment
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, err := NewDeploymentMapper(executor).PauseByExternalID(ctx, workspaceUUID, externalID, agentJSONArg(pausedReason))
+		if err != nil {
+			return mapNoRows(err)
+		}
+		paused = row.deployment()
+		return d.applyDeploymentScheduleTxHook(ctx, executor, paused)
+	})
+	return paused, err
 }
 
 func (d *DB) UnpauseDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
-	mapper := NewDeploymentMapper(d.mapperDB)
-	row, err := mapper.UnpauseByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Deployment{}, mapNoRows(err)
-	}
-	return row.deployment(), nil
+	var unpaused Deployment
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, err := NewDeploymentMapper(executor).UnpauseByExternalID(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		unpaused = row.deployment()
+		return d.applyDeploymentScheduleTxHook(ctx, executor, unpaused)
+	})
+	return unpaused, err
 }
 
 func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPageParams) ([]Deployment, bool, error) {
@@ -300,10 +367,11 @@ func (d *DB) ApplyScheduledOccurrence(ctx context.Context, input ApplyScheduledO
 			return ErrStaleSchedule
 		}
 		if input.ArchiveDeployment {
-			if _, err := deploymentMapper.ArchiveByExternalID(ctx, deployment.WorkspaceUUID, deployment.ExternalID); err != nil {
+			archivedRow, err := deploymentMapper.ArchiveByExternalID(ctx, deployment.WorkspaceUUID, deployment.ExternalID)
+			if err != nil {
 				return err
 			}
-			return nil
+			return d.applyDeploymentScheduleTxHook(ctx, executor, archivedRow.deployment())
 		}
 		if input.Session != nil {
 			workspace, err := NewAdminWorkspaceMapper(executor).FindByIdentifier(
@@ -349,6 +417,10 @@ func (d *DB) ApplyScheduledOccurrence(ctx context.Context, input ApplyScheduledO
 				WorkspaceUUID: deployment.WorkspaceUUID, ExternalID: deployment.ExternalID,
 				PausedReason: agentJSONArg(input.AutoPauseReason), LastRunAt: input.Now,
 			})
+			if err == nil {
+				deployment.Status = "paused"
+				err = d.applyDeploymentScheduleTxHook(ctx, executor, deployment)
+			}
 		} else {
 			_, err = deploymentMapper.UpdateLastRun(
 				ctx, deployment.WorkspaceUUID, deployment.ExternalID, input.Now,

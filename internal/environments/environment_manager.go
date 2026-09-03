@@ -51,7 +51,7 @@ func managedAgentSessionConfig(
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
 		"origin":               "managed_agents_api",
-		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
+		"model":                modelObjectFromAgentSnapshot(session.AgentSnapshot),
 		"sources":              runtimeResources.sources,
 		"outcomes":             []any{},
 		"append_system_prompt": managedAgentEnvironmentPrompt,
@@ -231,6 +231,23 @@ func modelIDFromAgentSnapshot(raw json.RawMessage) string {
 	return strings.TrimSpace(stringFromMap(model, "id"))
 }
 
+// modelObjectFromAgentSnapshot 下发完整 model 对象（id + speed + effort）给 worker；
+// 旧 agent 快照中的字符串 model 原样透传，避免 payload 出现 "model": null。
+// 仅取 id 的审计场景（code_sessions.model 列）继续用 modelIDFromAgentSnapshot。
+func modelObjectFromAgentSnapshot(raw json.RawMessage) any {
+	var snapshot map[string]any
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil
+	}
+	if model, ok := snapshot["model"].(map[string]any); ok {
+		return model
+	}
+	if model, ok := snapshot["model"].(string); ok {
+		return model
+	}
+	return nil
+}
+
 // buildEnvironmentManagerV0Payload 把 code session 映射为 environment-manager v0 合同；relay、runtime API 与 ingress 绑定同一 external ID，真实上游凭证不进入 sandbox。
 // vaultEnvPlaceholders 为 Environment Variable Credential 的 secret_name→Opaque Placeholder；平台保留名不会被覆盖。
 func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken string, oauthAccessToken string, workerEpoch int64, workDir string, sessionConfig json.RawMessage, cfg config.Config, vaultEnvPlaceholders map[string]string) ([]byte, error) {
@@ -256,7 +273,11 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = workerEpochText
 	environmentVariables["CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES"] = "true" // 让 worker 输出包含 streaming 中间消息。
 	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"              // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
-	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
+	modelID := stringFromMap(startupContext, "model")
+	if modelObject, ok := startupContext["model"].(map[string]any); ok {
+		modelID = strings.TrimSpace(stringFromMap(modelObject, "id"))
+	}
+	for key, value := range claudeRuntimeModelEnvironment(modelID) {
 		environmentVariables[key] = value
 	}
 	applyCodeSessionOTLPEnvironment(environmentVariables, cfg.Observability, apiBaseURL, codeSessionID, sessionIngressToken)

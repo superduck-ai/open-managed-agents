@@ -36,6 +36,7 @@ const modelSchema = z.union([
     .object({
       id: z.string().trim().min(1, 'Model id is required.'),
       speed: z.enum(['standard', 'fast']).optional(),
+      effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
     })
     .strict(),
 ]);
@@ -372,7 +373,13 @@ export function permissionConfig(permission: EditablePermission) {
 }
 
 function normalizeDraftModel(model: AgentModelInput): AgentModelInput {
-  return typeof model === 'string' ? model : { id: model.id, ...(model.speed ? { speed: model.speed } : {}) };
+  return typeof model === 'string'
+    ? model.trim()
+    : {
+        id: model.id.trim(),
+        ...(model.speed ? { speed: model.speed } : {}),
+        ...(model.effort ? { effort: model.effort } : {}),
+      };
 }
 
 function nullableString(value: string | null | undefined) {

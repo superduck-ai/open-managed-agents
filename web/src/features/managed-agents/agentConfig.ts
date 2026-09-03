@@ -689,6 +689,7 @@ export function agentEditModelInput(model: AgentApiResponse['model']): AgentMode
   return {
     id: agentModelName(model),
     ...(typeof model.speed === 'string' && model.speed.trim() ? { speed: model.speed } : {}),
+    ...(model.effort?.type ? { effort: model.effort.type } : {}),
   };
 }
 

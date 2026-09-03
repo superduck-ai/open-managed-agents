@@ -567,8 +567,8 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode session config: %v", err)
 	}
-	if body["model"] != "claude-opus-4-8" {
-		t.Fatalf("model = %v", body["model"])
+	if model, ok := body["model"].(map[string]any); !ok || model["id"] != "claude-opus-4-8" {
+		t.Fatalf("model = %v, want {id: claude-opus-4-8}", body["model"])
 	}
 	mcpConfig := body["mcp_config"].(map[string]any)
 	servers := mcpConfig["mcpServers"].(map[string]any)
@@ -607,5 +607,52 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fileConfig, mcpConfig) {
 		t.Fatalf("mcp config file = %#v, want %#v", fileConfig, mcpConfig)
+	}
+}
+
+func TestModelObjectFromAgentSnapshot(t *testing.T) {
+	// 对象形式：返回完整 model 对象
+	objectRaw := json.RawMessage(`{"model":{"id":"claude-opus-4-8","speed":"fast","effort":{"type":"high"}}}`)
+	got := modelObjectFromAgentSnapshot(objectRaw)
+	model, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("modelObjectFromAgentSnapshot(对象) = %T, want map[string]any", got)
+	}
+	if model["id"] != "claude-opus-4-8" || model["speed"] != "fast" {
+		t.Fatalf("modelObjectFromAgentSnapshot(对象) = %v, want 完整对象", model)
+	}
+
+	// 字符串形式（旧 agent）：回退原字符串，不产生 null
+	stringRaw := json.RawMessage(`{"model":"claude-opus-4-8"}`)
+	if got := modelObjectFromAgentSnapshot(stringRaw); got != "claude-opus-4-8" {
+		t.Fatalf("modelObjectFromAgentSnapshot(字符串) = %v, want claude-opus-4-8", got)
+	}
+
+	// 无效快照：返回 nil
+	if got := modelObjectFromAgentSnapshot(json.RawMessage(`invalid`)); got != nil {
+		t.Fatalf("modelObjectFromAgentSnapshot(invalid) = %v, want nil", got)
+	}
+}
+
+func TestBuildEnvironmentManagerV0PayloadObjectModelDrivesModelEnv(t *testing.T) {
+	// model 为对象（含 speed/effort）时，模型环境变量必须取对象里的 id，
+	// 防止回退 stringFromMap 后被静默清空。
+	cfg := config.Config{}
+	sessionConfig := json.RawMessage(`{"model":{"id":"kimi-k2.5","speed":"fast","effort":{"type":"high"}},"sources":[]}`)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	startupEnv := body["startup_context"].(map[string]any)["environment_variables"].(map[string]any)
+	if startupEnv["ANTHROPIC_MODEL"] != "kimi-k2.5" {
+		t.Fatalf("ANTHROPIC_MODEL = %v, want kimi-k2.5（来自对象 model 的 id）", startupEnv["ANTHROPIC_MODEL"])
+	}
+	model := body["startup_context"].(map[string]any)["model"].(map[string]any)
+	if model["speed"] != "fast" || model["effort"].(map[string]any)["type"] != "high" {
+		t.Fatalf("startup_context.model = %#v, want speed=fast effort.type=high 完整透传", model)
 	}
 }

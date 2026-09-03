@@ -27,7 +27,7 @@ const baseDraft: CreateAgentInput = {
 };
 
 describe('create agent draft model', () => {
-  test('round trips supported YAML and JSON fields without accepting model effort', () => {
+  test('round trips supported YAML and JSON fields including model effort', () => {
     const input: CreateAgentInput = {
       ...baseDraft,
       metadata: { source: 'test' },
@@ -42,11 +42,14 @@ describe('create agent draft model', () => {
       }
     }
 
-    const invalid = parseCreateAgentConfigText(
+    const withEffort = parseCreateAgentConfigText(
       JSON.stringify({ ...baseDraft, model: { id: 'claude-sonnet-4-6', effort: 'high' } }),
       'JSON',
     );
-    expect(invalid.ok).toBe(false);
+    expect(withEffort.ok).toBe(true);
+    if (withEffort.ok) {
+      expect(withEffort.input.model).toEqual({ id: 'claude-sonnet-4-6', effort: 'high' });
+    }
   });
 
   test('preserves speed while changing the rendered model id', () => {

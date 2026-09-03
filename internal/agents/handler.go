@@ -723,13 +723,15 @@ func parseRequiredVersion(raw json.RawMessage) (int, error) {
 }
 
 type agentModelInput struct {
-	ID    *string `json:"id"`
-	Speed *string `json:"speed"`
+	ID     *string         `json:"id"`
+	Speed  *string         `json:"speed"`
+	Effort json.RawMessage `json:"effort"`
 }
 
 type normalizedAgentModel struct {
-	ID    string `json:"id"`
-	Speed string `json:"speed"`
+	ID     string          `json:"id"`
+	Speed  string          `json:"speed"`
+	Effort json.RawMessage `json:"effort,omitempty"`
 }
 
 func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
@@ -767,6 +769,13 @@ func normalizeModel(raw json.RawMessage) (normalizedAgentModel, error) {
 		}
 		normalized.Speed = *model.Speed
 	}
+	if len(model.Effort) > 0 && !httpapi.IsJSONNull(model.Effort) {
+		effort, err := normalizeEffort(model.Effort)
+		if err != nil {
+			return normalizedAgentModel{}, err
+		}
+		normalized.Effort = effort
+	}
 	return normalized, nil
 }
 
@@ -789,6 +798,36 @@ func (h *Handler) normalizeConfiguredModel(
 		}
 	}
 	return normalizedAgentModel{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
+}
+
+// normalizeEffort 归一化官方两种 effort 形式（字符串或 {"type": ...}）为 {"type": ...} 结构。
+func normalizeEffort(raw json.RawMessage) (json.RawMessage, error) {
+	var level string
+	if json.Unmarshal(raw, &level) == nil {
+		level = strings.TrimSpace(level)
+		if !validEffortLevel(level) {
+			return nil, errors.New("model.effort must be low, medium, high, xhigh, or max")
+		}
+		return httpapi.MarshalRaw(map[string]string{"type": level})
+	}
+	var object struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &object); err != nil || object.Type == "" {
+		return nil, errors.New("model.effort must be a string or {type: ...} object")
+	}
+	if !validEffortLevel(object.Type) {
+		return nil, errors.New("model.effort must be low, medium, high, xhigh, or max")
+	}
+	return httpapi.MarshalRaw(map[string]string{"type": object.Type})
+}
+
+func validEffortLevel(level string) bool {
+	switch level {
+	case "low", "medium", "high", "xhigh", "max":
+		return true
+	}
+	return false
 }
 
 func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {

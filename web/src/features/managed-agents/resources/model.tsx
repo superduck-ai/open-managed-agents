@@ -781,7 +781,7 @@ export function environmentMetadataBody(values: EnvironmentEditValues) {
 export function emptyCredentialFormValues(): CredentialFormValues {
   return {
     displayName: '',
-    authType: 'static_bearer',
+    authType: 'mcp_oauth',
     mcpServerUrl: '',
     token: '',
     secretName: '',
@@ -821,21 +821,57 @@ export function patchCredentialFormValues(
 }
 
 export function parseCredentialAuthType(value: string): CredentialFormValues['authType'] {
-  if (value === 'environment_variable' || value === 'mcp_oauth') {
+  if (value === 'environment_variable' || value === 'mcp_oauth' || value === 'static_bearer') {
     return value;
   }
-  return 'static_bearer';
+  return '';
+}
+
+/** Resolved auth type for existing credentials; defaults to static_bearer when missing. */
+export function parseExistingCredentialAuthType(value: string): Exclude<CredentialFormValues['authType'], ''> {
+  const parsed = parseCredentialAuthType(value);
+  return parsed || 'static_bearer';
+}
+
+/** API display_name when the optional Name field is left blank. */
+export function credentialDisplayName(values: CredentialFormValues): string {
+  if (values.displayName.trim()) {
+    return values.displayName.trim();
+  }
+  if (values.authType === 'environment_variable' && values.secretName.trim()) {
+    return values.secretName.trim();
+  }
+  if (values.mcpServerUrl.trim()) {
+    try {
+      return new URL(values.mcpServerUrl.trim()).hostname;
+    } catch {
+      return values.mcpServerUrl.trim();
+    }
+  }
+  if (values.authType === 'mcp_oauth') {
+    return 'MCP OAuth credential';
+  }
+  if (values.authType === 'environment_variable') {
+    return 'Environment variable';
+  }
+  if (values.authType === 'static_bearer') {
+    return 'Static bearer credential';
+  }
+  return 'Credential';
 }
 
 export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
-  const auth = objectRecord(credential?.auth);
-  const authType = parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : '');
+  if (!credential) {
+    return emptyCredentialFormValues();
+  }
+  const auth = objectRecord(credential.auth);
+  const authType = parseExistingCredentialAuthType(typeof auth.type === 'string' ? auth.type : '');
   const networking = authType === 'environment_variable' ? credentialNetworkingFromAuth(auth) : null;
   const injection = authType === 'environment_variable' ? credentialInjectionLocationFromAuth(auth) : null;
   return {
     ...emptyCredentialFormValues(),
-    displayName: credential?.display_name || '',
-    authType: parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : ''),
+    displayName: credential.display_name || '',
+    authType,
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
     ...(networking ?? {}),
@@ -873,6 +909,9 @@ function credentialRefreshBody(values: CredentialFormValues) {
 }
 
 export function credentialAuthBody(values: CredentialFormValues, mode: 'create' | 'update') {
+  if (!values.authType) {
+    throw new Error('Credential auth type is required');
+  }
   if (values.authType === 'environment_variable') {
     // Keep secret_value verbatim; env values may intentionally include whitespace.
     const secretValue = values.secretValue;
@@ -924,7 +963,7 @@ function credentialRefreshComplete(values: CredentialFormValues) {
 }
 
 export function credentialFormReady(values: CredentialFormValues, mode: 'create' | 'edit', acknowledged: boolean) {
-  if (!acknowledged || !values.displayName.trim()) {
+  if (!acknowledged || !values.authType) {
     return false;
   }
   if (values.authType === 'environment_variable') {
@@ -974,9 +1013,153 @@ export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
   if (authType === 'mcp_oauth') {
     return msg ? msg('managedAgents.credentialVaults.credentialDialog.mcpOAuth', 'MCP OAuth') : 'MCP OAuth';
   }
-  return msg
-    ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Static bearer token')
-    : 'Static bearer';
+  return msg ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Bearer token') : 'Bearer token';
+}
+
+/** Credential display names for vault pickers (CMA-aligned). */
+export function vaultCredentialNames(credentials: VaultCredentialApiResponse[], msg: I18nMsg): string[] {
+  return credentials.map((credential) => {
+    if (typeof credential.display_name === 'string' && credential.display_name.trim()) {
+      return credential.display_name.trim();
+    }
+    const auth = objectRecord(credential.auth);
+    if (typeof auth.secret_name === 'string' && auth.secret_name.trim()) {
+      return auth.secret_name.trim();
+    }
+    return credentialAuthLabel(credential.auth, msg);
+  });
+}
+
+/** Trailing summary for vault pickers: joined names, or “No credentials”. */
+export function vaultCredentialSummary(credentials: VaultCredentialApiResponse[], msg: I18nMsg): string {
+  const names = vaultCredentialNames(credentials, msg);
+  if (!names.length) {
+    return msg('managedAgents.credentialVaults.emptyCredentialSummary', 'No credentials');
+  }
+  return names.join(', ');
+}
+
+export function vaultCredentialSummaryFromNames(names: string[], msg: I18nMsg): string {
+  if (!names.length) {
+    return msg('managedAgents.credentialVaults.emptyCredentialSummary', 'No credentials');
+  }
+  return names.join(', ');
+}
+
+/** Set equality for vault id selections (order-insensitive). */
+export function vaultSelectionEquals(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
+/** Order-insensitive cache key so vault list reshuffles do not restart loads. */
+export function vaultCredentialSummaryCacheKey(vaultIds: string[]): string {
+  if (!vaultIds.length) {
+    return '';
+  }
+  return [...vaultIds].sort().join('\0');
+}
+
+export type VaultCredentialSummaryLoadState =
+  { status: 'idle' | 'loading' | 'error'; names?: string[] } | { status: 'ready'; names: string[] };
+
+export type VaultCredentialSummaryCache = {
+  workspaceId: string;
+  summaries: Record<string, VaultCredentialSummaryLoadState>;
+};
+
+/** Active summary map for the current workspace; foreign caches read as empty. */
+export function vaultCredentialSummariesForWorkspace(
+  cache: VaultCredentialSummaryCache,
+  workspaceId: string,
+): Record<string, VaultCredentialSummaryLoadState> {
+  return cache.workspaceId === workspaceId ? cache.summaries : {};
+}
+
+/**
+ * Vaults that still need a credential-summary fetch.
+ * Includes cancelled in-flight `loading` entries so a restarted effect can recover.
+ */
+export function vaultCredentialSummaryPendingIds(
+  vaultIds: string[],
+  summaries: Record<string, VaultCredentialSummaryLoadState | undefined>,
+): string[] {
+  return vaultIds.filter((vaultId) => {
+    const current = summaries[vaultId];
+    return !current || current.status !== 'ready';
+  });
+}
+
+/** Trailing label + tooltip body for a vault row credential summary. */
+export function vaultCredentialSummaryPresentation(
+  state: VaultCredentialSummaryLoadState | undefined,
+  loadingLabel: string,
+  msg: I18nMsg,
+): { trailing: string; detail: string } {
+  const status = state?.status ?? 'idle';
+  if (status === 'loading' || status === 'idle') {
+    return { trailing: loadingLabel, detail: loadingLabel };
+  }
+  if (status === 'error') {
+    const trailing = vaultCredentialSummaryFromNames([], msg);
+    return { trailing, detail: trailing };
+  }
+  const names = state?.names ?? [];
+  const trailing = vaultCredentialSummaryFromNames(names, msg);
+  return {
+    trailing,
+    detail: names.length ? names.join('\n') : trailing,
+  };
+}
+
+/** CMA-style created label: relative when recent, short calendar date when older. */
+export function vaultCreatedLabel(
+  createdAt: string,
+  formatRelative: (value: number, unit: Intl.RelativeTimeFormatUnit) => string,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return '—';
+  }
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  if (Math.abs(seconds) < 60) {
+    return formatRelative(0, 'second');
+  }
+  const minutes = Math.round(seconds / 60);
+  if (Math.abs(minutes) < 60) {
+    return formatRelative(minutes, 'minute');
+  }
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) {
+    return formatRelative(hours, 'hour');
+  }
+  const days = Math.round(hours / 24);
+  if (Math.abs(days) < 7) {
+    return formatRelative(days, 'day');
+  }
+  return formatDate(createdAt, { month: 'short', day: 'numeric' });
+}
+
+export function vaultCreatedAbsoluteLabel(
+  createdAt: string,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return '—';
+  }
+  return formatDate(createdAt, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
 }
 
 /** Map platform vault OAuth error_code wire values to localized user copy. */

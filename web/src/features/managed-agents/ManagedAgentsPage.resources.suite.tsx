@@ -1820,8 +1820,29 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByRole('heading', { name: 'Vault one' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '凭据保险库' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '添加凭据' })).toBeTruthy();
-    expect(screen.getByText('供关联此保险库的 Agent 使用的凭据。')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: '添加凭据' }).length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText('按 ID 查找凭据')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '认证' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '概览' })).toBeNull();
+    expect(screen.queryByText('供关联此保险库的 Agent 使用的凭据。')).toBeNull();
+  });
+
+  test('renders CMA-style vault credential detail chrome', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('credential-vaults');
+
+    const heading = await screen.findByRole('heading', { name: 'Vault one' });
+    const header = heading.closest('header') as HTMLElement;
+    expect(within(header).getByText('Active')).toBeTruthy();
+    expect(within(header).getByText('vlt_one123456')).toBeTruthy();
+    expect(within(header).getByRole('button', { name: 'Add credential' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Overview' })).toBeNull();
+    expect(screen.getByPlaceholderText('Find credential by ID')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Status All' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Auth' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Updated' })).toBeTruthy();
+    expect(await screen.findByText('Vault credential one')).toBeTruthy();
   });
 
   test('renders memory store details in natural Chinese', async () => {
@@ -2119,7 +2140,7 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Create session' });
-    fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: 'Console session' } });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Console session' } });
     expect(within(dialog).getByText('Mount files into the session uploads directory.')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
@@ -2193,6 +2214,91 @@ export function registerManagedAgentsResourceTests() {
     expect(createRequest?.headers['x-workspace-id']).toBe('default');
   });
 
+  test('creates a session with CMA-style vault picker and credential summary', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    expect(api.requests.some((request) => /\/v1\/vaults\/[^/?]+\/credentials\?beta=true/.test(request.url))).toBe(
+      false,
+    );
+    expect(
+      within(dialog)
+        .getByRole('link', { name: /Manage credential vaults/ })
+        .getAttribute('href'),
+    ).toBe('/workspaces/default/vaults');
+    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain(
+      'Select one or more vaults',
+    );
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault one/);
+    await waitFor(() =>
+      expect(api.requests.some((request) => /\/v1\/vaults\/[^/?]+\/credentials\?beta=true/.test(request.url))).toBe(
+        true,
+      ),
+    );
+    expect(await screen.findByText('Vault credential one')).toBeTruthy();
+    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Vault one');
+    expect(within(dialog).getByRole('button', { name: 'Clear selected vaults' })).toBeTruthy();
+    const createButton = within(dialog).getByRole('button', { name: 'Create session' });
+    expect(createButton.hasAttribute('disabled')).toBe(true);
+    const vaultAck = within(dialog).getByRole('checkbox', {
+      name: /I own or am authorized to use this vault/,
+    });
+    expect(within(dialog).getByText(/I understand this means this agent can assume the identity/)).toBeTruthy();
+    fireEvent.click(vaultAck);
+    await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(false));
+
+    fireEvent.click(createButton);
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.vault_ids).toEqual(['vlt_one123456']);
+  });
+
+  test('resets vault authorization when the selected vault set changes', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault one/);
+    const createButton = within(dialog).getByRole('button', { name: 'Create session' });
+    const vaultAck = within(dialog).getByRole('checkbox', {
+      name: /I own or am authorized to use this vault/,
+    });
+    fireEvent.click(vaultAck);
+    await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(false));
+    expect((vaultAck as HTMLButtonElement).getAttribute('aria-checked') ?? vaultAck.getAttribute('data-state')).toMatch(
+      /true|checked/,
+    );
+
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault two/);
+    await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(true));
+    expect((vaultAck as HTMLButtonElement).getAttribute('aria-checked') ?? vaultAck.getAttribute('data-state')).toMatch(
+      /false|unchecked/,
+    );
+    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Vault one');
+    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Vault two');
+  });
+
   test('renders the official-style create deployment dialog and submits deployment payload', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
     const api = mockManagedResourceApi();
@@ -2223,8 +2329,8 @@ export function registerManagedAgentsResourceTests() {
       target: { value: 'Summarize support tickets.' },
     });
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
-    await selectManagedComboboxOption(dialog, /Credential vaults/, 'Vault one');
-    await selectManagedComboboxOption(dialog, /Memory stores/, 'Memory one');
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault one/);
+    await selectManagedComboboxOption(dialog, /Memory stores/, /Memory one/);
     await selectManagedComboboxOption(dialog, 'Trigger', 'Manual');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
 

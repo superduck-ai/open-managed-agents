@@ -28,7 +28,6 @@ import {
   ManagedSelectField,
   ManagedTextArea,
   ManagedTextField,
-  VaultMultiSelect,
 } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
@@ -54,6 +53,7 @@ import {
   credentialAuthTypeLabel,
   credentialFormReady,
   credentialFormValues,
+  credentialDisplayName,
   initialFormValues,
   parseCredentialAuthType,
   patchCredentialFormValues,
@@ -63,6 +63,7 @@ import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
+import { ManagedVaultSelectField } from './vault-select-field';
 
 type VaultOAuthCompleteMessage = {
   type: 'vault_oauth_complete';
@@ -104,6 +105,54 @@ function OptionalCredentialFields({
   );
 }
 
+function credentialDialogTypeSteps(values: CredentialFormValues, mode: 'create' | 'edit') {
+  const mcpChosen = Boolean(values.mcpServerUrl.trim());
+  const mcpAuth = values.authType === 'static_bearer' || values.authType === 'mcp_oauth';
+  return {
+    showMcpUrl: mcpAuth,
+    showDirectoryPicker: mode === 'create' && mcpAuth,
+    showBearerToken: values.authType === 'static_bearer' && (mode === 'edit' || mcpChosen),
+    showOAuthFields: values.authType === 'mcp_oauth' && (mode === 'edit' || mcpChosen),
+    // CMA: Bearer/OAuth show MCP first; token + shared-warning appear after a server is chosen.
+    showCredentialCommitment: mode === 'edit' || values.authType === 'environment_variable' || (mcpAuth && mcpChosen),
+  };
+}
+
+function CredentialSharedAck({
+  acknowledged,
+  onAcknowledgedChange,
+}: {
+  acknowledged: boolean;
+  onAcknowledgedChange: (acknowledged: boolean) => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <>
+      <Alert className="border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+        <AlertDescription>
+          {msg(
+            'managedAgents.credentialVaults.credentialDialog.sharedWarning',
+            'This credential will be shared across this workspace. Anyone with API key access can use this credential in an agent session to access the service associated with the credential — including reading data and taking actions on behalf of the credential owner.',
+          )}
+        </AlertDescription>
+      </Alert>
+      <div className="flex items-start gap-2">
+        <Checkbox
+          id="credential-ack"
+          checked={acknowledged}
+          onCheckedChange={(checked) => onAcknowledgedChange(checked === true)}
+        />
+        <Label htmlFor="credential-ack" className="text-sm font-normal leading-5 text-foreground">
+          {msg(
+            'managedAgents.credentialVaults.credentialDialog.acknowledge',
+            'I acknowledge this credential is shared and that I am responsible for its storage and use.',
+          )}
+        </Label>
+      </div>
+    </>
+  );
+}
+
 export function CredentialDialog({
   credential,
   vaultId,
@@ -133,11 +182,12 @@ export function CredentialDialog({
   const pendingOAuthFlowIdRef = useRef<string | null>(null);
   const oauthPopupRef = useRef<Window | null>(null);
   const mode = credential ? 'edit' : 'create';
+  const typeSelected = mode === 'edit' || Boolean(values.authType);
   const canSubmit = credentialFormReady(values, mode, acknowledged);
   const needsOAuthConnect = mode === 'create' && values.authType === 'mcp_oauth' && !values.token.trim();
   const waitingForOAuth = needsOAuthConnect && submitting;
-  const showMcpUrl = values.authType === 'static_bearer' || values.authType === 'mcp_oauth';
-  const showDirectoryPicker = values.authType === 'mcp_oauth' && mode === 'create';
+  const { showMcpUrl, showDirectoryPicker, showBearerToken, showOAuthFields, showCredentialCommitment } =
+    credentialDialogTypeSteps(values, mode);
   const patchValues = (patch: Partial<CredentialFormValues>) => {
     setValues((current) => patchCredentialFormValues(current, patch));
   };
@@ -167,8 +217,8 @@ export function CredentialDialog({
       return [{ id: values.authType, label: credentialAuthTypeLabel(values.authType, msg) }];
     }
     return [
-      { id: 'static_bearer', label: credentialAuthTypeLabel('static_bearer', msg) },
       { id: 'mcp_oauth', label: credentialAuthTypeLabel('mcp_oauth', msg) },
+      { id: 'static_bearer', label: credentialAuthTypeLabel('static_bearer', msg) },
       { id: 'environment_variable', label: credentialAuthTypeLabel('environment_variable', msg) },
     ];
   }, [credential, values.authType, msg]);
@@ -324,7 +374,7 @@ export function CredentialDialog({
           vault_id: vaultId,
           workspace_id: workspaceId,
           redirect_url: redirectUrl,
-          display_name: values.displayName.trim(),
+          display_name: credentialDisplayName(values) || undefined,
           source: firstCredential ? 'vault_create' : 'vault_detail',
           ...(values.oauthClientId.trim() ? { client_id: values.oauthClientId.trim() } : {}),
           ...(values.oauthClientSecret.trim() ? { client_secret: values.oauthClientSecret.trim() } : {}),
@@ -354,15 +404,15 @@ export function CredentialDialog({
     dialogTitle = msg('managedAgents.credentialVaults.credentialDialog.addFirst', 'Add your first credential');
   }
   const dialogDescription =
-    values.authType === 'mcp_oauth'
+    !typeSelected || values.authType === 'environment_variable' || mode === 'create'
       ? msg(
-          'managedAgents.credentialVaults.credentialDialog.oauthDescription',
-          'Connect an MCP server with OAuth, or paste an access token.',
+          'managedAgents.credentialVaults.credentialDialog.envDescription',
+          'Add a credential to this vault for agents to use.',
         )
-      : values.authType === 'environment_variable'
+      : values.authType === 'mcp_oauth'
         ? msg(
-            'managedAgents.credentialVaults.credentialDialog.envDescription',
-            'Add a credential to this vault for agents to use.',
+            'managedAgents.credentialVaults.credentialDialog.oauthDescription',
+            'Connect an MCP server with OAuth, or paste an access token.',
           )
         : msg(
             'managedAgents.credentialVaults.credentialDialog.description',
@@ -371,186 +421,169 @@ export function CredentialDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && dismissDialog()}>
-      <DialogContent className="sm:max-w-[560px]">
-        <form onSubmit={submitDirect}>
-          <DialogHeader>
+      <DialogContent className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]">
+        <form className="relative flex min-h-0 flex-col" onSubmit={submitDirect}>
+          <DialogHeader className="shrink-0">
             <DialogTitle>{dialogTitle}</DialogTitle>
             <DialogDescription>{dialogDescription}</DialogDescription>
           </DialogHeader>
-          <div className="mt-5 space-y-4">
+          <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <ManagedTextField
-              label={msg('managedAgents.credentialVaults.credentialDialog.displayName', 'Display name')}
+              label={msg('managedAgents.credentialVaults.credentialDialog.displayName', 'Name')}
               value={values.displayName}
+              placeholder={msg('managedAgents.credentialVaults.credentialDialog.namePlaceholder', 'Example credential')}
+              optional={mode === 'create'}
               onChange={(displayName) => patchValues({ displayName })}
               autoFocus
             />
             <ManagedSelectField
-              label={
-                values.authType === 'environment_variable'
-                  ? msg('managedAgents.credentialVaults.credentialDialog.type', 'Type')
-                  : msg('managedAgents.credentialVaults.credentialDialog.authType', 'Authentication type')
-              }
+              label={msg('managedAgents.credentialVaults.credentialDialog.type', 'Type')}
               value={values.authType}
-              placeholder={msg('managedAgents.credentialVaults.credentialDialog.authType', 'Authentication type')}
+              placeholder={msg('managedAgents.credentialVaults.credentialDialog.selectType', 'Select a type')}
               options={authTypeOptions}
               onChange={(authType) => patchValues({ authType: parseCredentialAuthType(authType) })}
             />
-            {showMcpUrl ? (
-              values.authType === 'mcp_oauth' ? (
-                <CredentialMcpServerField
-                  value={values.mcpServerUrl}
-                  directoryOptions={directoryOptions}
-                  readOnly={Boolean(credential)}
-                  onChange={(mcpServerUrl) => patchValues({ mcpServerUrl })}
-                />
-              ) : (
-                <ManagedTextField
-                  label={msg('managedAgents.credentialVaults.credentialDialog.mcpServerUrl', 'MCP server URL')}
-                  value={values.mcpServerUrl}
-                  placeholder={msg(
-                    'managedAgents.credentialVaults.credentialDialog.mcpServerUrlPlaceholder',
-                    'https://example.com/mcp',
-                  )}
-                  disabled={Boolean(credential)}
-                  onChange={(mcpServerUrl) => patchValues({ mcpServerUrl })}
-                />
-              )
-            ) : null}
-            {values.authType === 'static_bearer' ? (
-              <ManagedTextField
-                label={msg('managedAgents.credentialVaults.credentialDialog.token', 'Token')}
-                type="password"
-                value={values.token}
-                placeholder={msg('managedAgents.credentialVaults.credentialDialog.token', 'Token')}
-                onChange={(token) => patchValues({ token })}
-              />
-            ) : null}
-            {values.authType === 'environment_variable' ? (
-              <EnvironmentVariableCredentialFields
-                values={values}
-                secretNameLocked={Boolean(credential)}
-                onChange={patchValues}
-              />
-            ) : null}
-            {values.authType === 'mcp_oauth' ? (
+            {typeSelected ? (
               <>
-                <OptionalCredentialFields
-                  title={msg('managedAgents.credentialVaults.credentialDialog.accessToken', 'Access token')}
-                >
+                {showMcpUrl ? (
+                  mode === 'create' ? (
+                    <CredentialMcpServerField
+                      value={values.mcpServerUrl}
+                      directoryOptions={directoryOptions}
+                      onChange={(mcpServerUrl) => patchValues({ mcpServerUrl })}
+                    />
+                  ) : (
+                    <ManagedTextField
+                      label={msg('managedAgents.credentialVaults.credentialDialog.mcpServer', 'MCP server')}
+                      value={values.mcpServerUrl}
+                      placeholder={msg(
+                        'managedAgents.credentialVaults.credentialDialog.mcpServerUrlPlaceholder',
+                        'https://mcp.example.com',
+                      )}
+                      disabled
+                      onChange={() => undefined}
+                    />
+                  )
+                ) : null}
+                {showBearerToken ? (
                   <ManagedTextField
-                    label={msg('managedAgents.credentialVaults.credentialDialog.accessToken', 'Access token')}
+                    label={msg('managedAgents.credentialVaults.credentialDialog.token', 'Token')}
                     type="password"
                     value={values.token}
-                    placeholder={msg(
-                      'managedAgents.credentialVaults.credentialDialog.accessTokenPlaceholder',
-                      'Paste access token to skip OAuth popup',
-                    )}
+                    placeholder={msg('managedAgents.credentialVaults.credentialDialog.token', 'Token')}
                     onChange={(token) => patchValues({ token })}
                   />
-                </OptionalCredentialFields>
-                {mode === 'create' ? (
-                  <OptionalCredentialFields
-                    title={msg('managedAgents.credentialVaults.credentialDialog.oauthClient', 'OAuth client')}
-                  >
-                    <ManagedTextField
-                      label={msg('managedAgents.credentialVaults.credentialDialog.clientId', 'Client ID')}
-                      value={values.oauthClientId}
-                      placeholder={msg(
-                        'managedAgents.credentialVaults.credentialDialog.clientIdPlaceholder',
-                        'When dynamic registration is unavailable',
-                      )}
-                      onChange={(oauthClientId) => patchValues({ oauthClientId })}
-                    />
-                    <ManagedTextField
-                      label={msg('managedAgents.credentialVaults.credentialDialog.clientSecret', 'Client secret')}
-                      type="password"
-                      value={values.oauthClientSecret}
-                      placeholder={msg('managedAgents.credentialVaults.credentialDialog.optional', 'Optional')}
-                      onChange={(oauthClientSecret) => patchValues({ oauthClientSecret })}
-                    />
-                  </OptionalCredentialFields>
                 ) : null}
-                {mode === 'create' && values.token.trim() ? (
-                  <OptionalCredentialFields
-                    title={msg('managedAgents.credentialVaults.credentialDialog.refresh', 'Refresh')}
-                  >
-                    <ManagedTextField
-                      label={msg('managedAgents.credentialVaults.credentialDialog.refreshToken', 'Refresh token')}
-                      type="password"
-                      value={values.refreshToken}
-                      onChange={(refreshToken) => patchValues({ refreshToken })}
-                    />
-                    <ManagedTextField
-                      label={msg('managedAgents.credentialVaults.credentialDialog.tokenEndpoint', 'Token endpoint')}
-                      value={values.refreshTokenEndpoint}
-                      placeholder={msg(
-                        'managedAgents.credentialVaults.credentialDialog.tokenEndpointPlaceholder',
-                        'https://example.com/oauth/token',
-                      )}
-                      onChange={(refreshTokenEndpoint) => patchValues({ refreshTokenEndpoint })}
-                    />
-                    <ManagedTextField
-                      label={msg('managedAgents.credentialVaults.credentialDialog.clientId', 'Client ID')}
-                      value={values.refreshClientId}
-                      onChange={(refreshClientId) => patchValues({ refreshClientId })}
-                    />
-                    <ManagedSelectField
-                      label={msg(
-                        'managedAgents.credentialVaults.credentialDialog.tokenEndpointAuth',
-                        'Token endpoint auth',
-                      )}
-                      value={values.refreshAuthType}
-                      placeholder={msg('managedAgents.credentialVaults.credentialDialog.authMethod', 'Auth method')}
-                      options={[
-                        { id: 'none', label: 'none' },
-                        { id: 'client_secret_post', label: 'client_secret_post' },
-                        { id: 'client_secret_basic', label: 'client_secret_basic' },
-                      ]}
-                      onChange={(refreshAuthType) =>
-                        patchValues({
-                          refreshAuthType:
-                            refreshAuthType === 'client_secret_basic' || refreshAuthType === 'client_secret_post'
-                              ? refreshAuthType
-                              : 'none',
-                        })
-                      }
-                    />
-                    {values.refreshAuthType !== 'none' ? (
+                {values.authType === 'environment_variable' ? (
+                  <EnvironmentVariableCredentialFields
+                    values={values}
+                    secretNameLocked={Boolean(credential)}
+                    onChange={patchValues}
+                  />
+                ) : null}
+                {showOAuthFields ? (
+                  <>
+                    <OptionalCredentialFields
+                      title={msg('managedAgents.credentialVaults.credentialDialog.accessToken', 'Access token')}
+                    >
                       <ManagedTextField
-                        label={msg('managedAgents.credentialVaults.credentialDialog.clientSecret', 'Client secret')}
+                        label={msg('managedAgents.credentialVaults.credentialDialog.accessToken', 'Access token')}
                         type="password"
-                        value={values.refreshClientSecret}
-                        onChange={(refreshClientSecret) => patchValues({ refreshClientSecret })}
+                        value={values.token}
+                        placeholder={msg(
+                          'managedAgents.credentialVaults.credentialDialog.accessTokenPlaceholder',
+                          'Paste access token to skip OAuth popup',
+                        )}
+                        onChange={(token) => patchValues({ token })}
                       />
+                    </OptionalCredentialFields>
+                    {mode === 'create' ? (
+                      <OptionalCredentialFields
+                        title={msg('managedAgents.credentialVaults.credentialDialog.oauthClient', 'OAuth client')}
+                      >
+                        <ManagedTextField
+                          label={msg('managedAgents.credentialVaults.credentialDialog.clientId', 'Client ID')}
+                          value={values.oauthClientId}
+                          placeholder={msg(
+                            'managedAgents.credentialVaults.credentialDialog.clientIdPlaceholder',
+                            'When dynamic registration is unavailable',
+                          )}
+                          onChange={(oauthClientId) => patchValues({ oauthClientId })}
+                        />
+                        <ManagedTextField
+                          label={msg('managedAgents.credentialVaults.credentialDialog.clientSecret', 'Client secret')}
+                          type="password"
+                          value={values.oauthClientSecret}
+                          placeholder={msg('managedAgents.credentialVaults.credentialDialog.optional', 'Optional')}
+                          onChange={(oauthClientSecret) => patchValues({ oauthClientSecret })}
+                        />
+                      </OptionalCredentialFields>
                     ) : null}
-                  </OptionalCredentialFields>
+                    {mode === 'create' && values.token.trim() ? (
+                      <OptionalCredentialFields
+                        title={msg('managedAgents.credentialVaults.credentialDialog.refresh', 'Refresh')}
+                      >
+                        <ManagedTextField
+                          label={msg('managedAgents.credentialVaults.credentialDialog.refreshToken', 'Refresh token')}
+                          type="password"
+                          value={values.refreshToken}
+                          onChange={(refreshToken) => patchValues({ refreshToken })}
+                        />
+                        <ManagedTextField
+                          label={msg('managedAgents.credentialVaults.credentialDialog.tokenEndpoint', 'Token endpoint')}
+                          value={values.refreshTokenEndpoint}
+                          placeholder={msg(
+                            'managedAgents.credentialVaults.credentialDialog.tokenEndpointPlaceholder',
+                            'https://example.com/oauth/token',
+                          )}
+                          onChange={(refreshTokenEndpoint) => patchValues({ refreshTokenEndpoint })}
+                        />
+                        <ManagedTextField
+                          label={msg('managedAgents.credentialVaults.credentialDialog.clientId', 'Client ID')}
+                          value={values.refreshClientId}
+                          onChange={(refreshClientId) => patchValues({ refreshClientId })}
+                        />
+                        <ManagedSelectField
+                          label={msg(
+                            'managedAgents.credentialVaults.credentialDialog.tokenEndpointAuth',
+                            'Token endpoint auth',
+                          )}
+                          value={values.refreshAuthType}
+                          placeholder={msg('managedAgents.credentialVaults.credentialDialog.authMethod', 'Auth method')}
+                          options={[
+                            { id: 'none', label: 'none' },
+                            { id: 'client_secret_post', label: 'client_secret_post' },
+                            { id: 'client_secret_basic', label: 'client_secret_basic' },
+                          ]}
+                          onChange={(refreshAuthType) =>
+                            patchValues({
+                              refreshAuthType:
+                                refreshAuthType === 'client_secret_basic' || refreshAuthType === 'client_secret_post'
+                                  ? refreshAuthType
+                                  : 'none',
+                            })
+                          }
+                        />
+                        {values.refreshAuthType !== 'none' ? (
+                          <ManagedTextField
+                            label={msg('managedAgents.credentialVaults.credentialDialog.clientSecret', 'Client secret')}
+                            type="password"
+                            value={values.refreshClientSecret}
+                            onChange={(refreshClientSecret) => patchValues({ refreshClientSecret })}
+                          />
+                        ) : null}
+                      </OptionalCredentialFields>
+                    ) : null}
+                  </>
+                ) : null}
+                {showCredentialCommitment ? (
+                  <CredentialSharedAck acknowledged={acknowledged} onAcknowledgedChange={setAcknowledged} />
                 ) : null}
               </>
             ) : null}
-            <Alert className="border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
-              <AlertDescription>
-                {msg(
-                  'managedAgents.credentialVaults.credentialDialog.sharedWarning',
-                  'This credential will be shared across this workspace. Anyone with API key access can use this credential in an agent session to access the service associated with the credential — including reading data and taking actions on behalf of the credential owner.',
-                )}
-              </AlertDescription>
-            </Alert>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="credential-ack"
-                checked={acknowledged}
-                onCheckedChange={(checked) => setAcknowledged(checked === true)}
-              />
-              <Label htmlFor="credential-ack" className="text-sm font-normal leading-5 text-foreground">
-                {msg(
-                  'managedAgents.credentialVaults.credentialDialog.acknowledge',
-                  'I acknowledge this credential is shared and that I am responsible for its storage and use.',
-                )}
-              </Label>
-            </div>
           </div>
-          {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
-          <DialogFooter className="mt-5">
+          {error ? <p className="mt-4 shrink-0 text-sm text-destructive">{error}</p> : null}
+          <DialogFooter className="mt-5 shrink-0">
             {firstCredential ? (
               <Button type="button" variant="ghost" disabled={submitting && !waitingForOAuth} onClick={dismissDialog}>
                 {msg('managedAgents.quickstart.skip', 'Skip')}
@@ -710,6 +743,7 @@ function GenericManagedEntityDialog({
   const [environments, setEnvironments] = useState<EntityOption[]>([]);
   const [vaults, setVaults] = useState<EntityOption[]>([]);
   const [memoryStores, setMemoryStores] = useState<EntityOption[]>([]);
+  const [vaultAcknowledged, setVaultAcknowledged] = useState(false);
   const [loadingOptions, setLoadingOptions] = useState(section === 'sessions' || section === 'deployments');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -758,10 +792,11 @@ function GenericManagedEntityDialog({
           label: environment.name || environment.id,
           secondary: environment.id,
         }));
-        const vaultOptions = (vaultPage.data as VaultApiResponse[]).map((vault) => ({
+        const vaultRecords = (vaultPage.data as VaultApiResponse[]) ?? [];
+        const vaultOptions = vaultRecords.map((vault) => ({
           id: vault.id,
           label: vault.display_name || vault.id,
-          secondary: vault.id,
+          createdAt: vault.created_at,
         }));
         const memoryStoreOptions = (memoryStorePage.data as MemoryStoreApiResponse[]).map((memoryStore) => ({
           id: memoryStore.id,
@@ -806,6 +841,7 @@ function GenericManagedEntityDialog({
       : section === 'sessions'
         ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
           areSessionFileResourcesValid(values.fileResources) &&
+          (!values.vaultIds.length || vaultAcknowledged) &&
           !submitting &&
           !loadingOptions
         : values.name.trim().length > 0 &&
@@ -978,6 +1014,7 @@ function GenericManagedEntityDialog({
                   ? msg('managedAgents.sessions.titlePlaceholder', 'Optional - name this run')
                   : msg('managedAgents.common.namePlaceholder', 'Enter a name')
               }
+              optional={section === 'sessions'}
               onChange={(name) => setValues((current) => ({ ...current, name }))}
               autoFocus
             />
@@ -1019,9 +1056,16 @@ function GenericManagedEntityDialog({
                   options={environments}
                   onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
                 />
-                <VaultMultiSelect
-                  vaults={vaults}
+                <ManagedVaultSelectField
+                  label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
+                  optional
+                  workspaceId={workspaceId}
                   selectedIds={values.vaultIds}
+                  options={vaults}
+                  manageHref={`/workspaces/${workspaceId}/vaults`}
+                  manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
+                  acknowledged={vaultAcknowledged}
+                  onAcknowledgedChange={setVaultAcknowledged}
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (

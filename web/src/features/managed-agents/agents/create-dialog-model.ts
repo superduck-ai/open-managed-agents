@@ -110,11 +110,41 @@ const permissionConfigSchema = z
   })
   .strict();
 
-const builtInToolNameSchema = z.enum(['bash', 'edit', 'read', 'write', 'glob', 'grep', 'web_fetch', 'web_search']);
+const builtInToolNameSchema = z.enum([
+  'task',
+  'ask_user_question',
+  'bash',
+  'cron_create',
+  'cron_delete',
+  'cron_list',
+  'edit',
+  'enter_plan_mode',
+  'enter_worktree',
+  'exit_plan_mode',
+  'exit_worktree',
+  'glob',
+  'grep',
+  'notebook_edit',
+  'read',
+  'schedule_wakeup',
+  'skill',
+  'task_output',
+  'task_stop',
+  'todo_write',
+  'web_fetch',
+  'write',
+]);
 
 const builtInToolConfigSchema = permissionConfigSchema.extend({ name: builtInToolNameSchema }).strict();
 
-const mcpToolConfigSchema = permissionConfigSchema.extend({ name: z.string().trim().min(1).max(128) }).strict();
+const mcpToolConfigSchema = permissionConfigSchema
+  .extend({
+    name: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_.-]{1,128}$/),
+  })
+  .strict();
 
 const builtInToolsetSchema = z
   .object({
@@ -181,6 +211,15 @@ export const createAgentDraftSchema = z
       context.addIssue({ code: 'custom', message: 'Toolsets must be unique.', path: ['tools'] });
     }
     const toolsets = draft.tools.filter((tool) => tool.type === 'mcp_toolset');
+    for (const tool of draft.tools) {
+      if (!('configs' in tool) || !Array.isArray(tool.configs)) {
+        continue;
+      }
+      const configNames = tool.configs.map((config) => config.name);
+      if (new Set(configNames).size !== configNames.length) {
+        context.addIssue({ code: 'custom', message: 'Tool config names must be unique.', path: ['tools'] });
+      }
+    }
     for (const toolset of toolsets) {
       if (!serverNames.includes(String(toolset.mcp_server_name))) {
         context.addIssue({

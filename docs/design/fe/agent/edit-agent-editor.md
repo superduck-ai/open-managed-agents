@@ -40,7 +40,7 @@ flowchart LR
 - Tunnel 也复用 Create 的内联 Channel 配置：多/零
   实时 Channel 的待确认卡片阻止 Save 和切换 Raw；已配置 Channel 只在 Apply 或选择有效建议后原子迁移 server/toolset
   引用，保留既有权限和其他字段，并对已连接 Tunnel 重新发现工具。
-- 内置工具只展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`；Raw 可继续保留后端合同允许的其他既有配置。
+- 内置工具回显当前固定 Claude Code 2.1.120 的 22 项默认工具，与创建页和 Agent API 合同一致；`web_fetch` 对应 Claude Code 本地 `WebFetch`，不启用 Messages API 的模型服务端同名工具。内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中。
 
 ## 布局与验收
 

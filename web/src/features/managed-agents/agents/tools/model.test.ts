@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { type AgentApiResponse } from '../../types';
 import {
   aggregateToolPermissions,
+  BUILT_IN_AGENT_TOOLSETS,
+  builtInAgentToolDescription,
   buildAgentToolDisplayCards,
   configuredAgentToolPermission,
   effectiveToolPermission,
@@ -10,6 +12,40 @@ import {
 } from './model';
 
 describe('agent tool display model', () => {
+  test('exposes pinned Claude Code built-in tools while continuing to omit web search', () => {
+    expect(BUILT_IN_AGENT_TOOLSETS.agent_toolset_20260401.map((tool) => tool.name)).toEqual([
+      'bash',
+      'read',
+      'write',
+      'edit',
+      'glob',
+      'grep',
+      'web_fetch',
+      'task',
+      'ask_user_question',
+      'cron_create',
+      'cron_delete',
+      'cron_list',
+      'enter_plan_mode',
+      'enter_worktree',
+      'exit_plan_mode',
+      'exit_worktree',
+      'notebook_edit',
+      'schedule_wakeup',
+      'skill',
+      'task_output',
+      'task_stop',
+      'todo_write',
+    ]);
+    expect(
+      builtInAgentToolDescription(
+        { name: 'web_fetch', description: 'Fetch URL content' },
+        (id: string, defaultMessage: string) =>
+          id === 'managedAgents.agents.createDialog.builtInTool.webFetch' ? '获取 URL 内容' : defaultMessage,
+      ),
+    ).toBe('获取 URL 内容');
+  });
+
   test('does not create content from an orphaned mcp_toolset config', () => {
     const agent = agentFixture({
       tools: [{ type: 'mcp_toolset', mcp_server_name: 'notion' }],

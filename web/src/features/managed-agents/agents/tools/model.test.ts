@@ -38,6 +38,29 @@ describe('agent tool display model', () => {
     expect(card.aggregatePermission).toBe('always_ask');
   });
 
+  test('does not apply Directory metadata when only the MCP slug matches', () => {
+    const [card] = buildAgentToolDisplayCards(
+      agentFixture({
+        mcp_servers: [{ name: 'notion', url: 'https://custom.example.com/mcp' }],
+        tools: [{ type: 'mcp_toolset', mcp_server_name: 'notion' }],
+      }),
+      [
+        {
+          slug: 'notion',
+          displayName: 'Notion Directory',
+          url: 'https://mcp.notion.com/mcp',
+          iconUrl: 'https://example.com/notion.png',
+          toolNames: ['search'],
+        },
+      ],
+    );
+
+    expect(card.title).toBe('Notion');
+    expect(card.subtitle).toBe('https://custom.example.com/mcp');
+    expect(card.iconUrl).toBeUndefined();
+    expect(card.tools).toEqual([]);
+  });
+
   test('derives deny from enabled false and only aggregates known tools', () => {
     expect(effectiveToolPermission({ enabled: false, permission_policy: { type: 'always_allow' } })).toBe(
       'always_deny',
@@ -115,7 +138,14 @@ describe('agent tool display model', () => {
         mcp_servers: [{ name: 'snowflake', url: 'https://tenant.snowflake.example/mcp' }],
         tools: [],
       }),
-      [{ slug: 'snowflake', displayName: 'Snowflake', toolNames: ['search', 'query'] }],
+      [
+        {
+          slug: 'snowflake',
+          displayName: 'Snowflake',
+          url: 'https://tenant.snowflake.example/mcp',
+          toolNames: ['search', 'query'],
+        },
+      ],
     );
 
     expect(card.subtitle).toBe('https://tenant.snowflake.example/mcp');
@@ -191,15 +221,18 @@ describe('agent tool display model', () => {
     const cards = buildAgentToolDisplayCards(
       agentFixture({
         mcp_servers: [
-          { name: 'github', url: 'https://github.example/mcp' },
-          { name: 'slack', url: 'https://slack.example/mcp' },
+          { name: 'github', url: 'https://api.githubcopilot.com/mcp/' },
+          { name: 'slack', url: 'https://mcp.slack.com/mcp' },
         ],
         tools: [],
       }),
     );
 
     expect(cards.map((card) => card.title)).toEqual(['GitHub', 'Slack']);
-    expect(cards.map((card) => card.subtitle)).toEqual(['https://github.example/mcp', 'https://slack.example/mcp']);
+    expect(cards.map((card) => card.subtitle)).toEqual([
+      'https://api.githubcopilot.com/mcp/',
+      'https://mcp.slack.com/mcp',
+    ]);
     expect(cards[0].tools.some((tool) => tool.name === 'search_repositories')).toBe(true);
     expect(cards[1].tools.some((tool) => tool.name === 'slack_send_message')).toBe(true);
     expect(cards.every((card) => card.aggregatePermission === 'always_ask')).toBe(true);
@@ -231,7 +264,7 @@ describe('agent tool display model', () => {
       {
         slug: 'notion',
         displayName: 'Notion',
-        url: 'https://directory.example.com/notion',
+        url: 'https://agent.example.com/notion',
         iconUrl: 'https://example.com/notion.png',
         toolNames: ['search', 'create_page'],
       },

@@ -32,6 +32,18 @@ var ErrMITMRequiredForEnvCredentials = errors.New("upstream proxy MITM is requir
 // Egress Secret Substitution or Git Smart HTTP Authorization cannot proceed.
 var ErrSubstitutionRejected = errors.New("vault environment variable substitution rejected")
 
+// ErrGitResourceAuthorizationRejected marks a failed repository-scoped lookup
+// or secret decryption; callers must not forward an unauthenticated fallback.
+var ErrGitResourceAuthorizationRejected = errors.New("Git repository authorization rejected")
+
+const GitResourceAuthorizationUnavailablePublicMessage = "Git repository credentials are unavailable"
+
+var errAmbiguousGitResource = errors.New("multiple credentials for the same Git repository")
+
+func gitResourceAuthorizationRejected(cause error) error {
+	return fmt.Errorf("%w: %w", ErrGitResourceAuthorizationRejected, cause)
+}
+
 // SubstitutionUnavailablePublicMessage is the client-safe text for MITM 502
 // when Egress Secret Substitution or Git Smart HTTP Authorization rejects a request.
 const SubstitutionUnavailablePublicMessage = "Environment variable credentials are unavailable"

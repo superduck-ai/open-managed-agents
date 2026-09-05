@@ -20,11 +20,12 @@ type EgressSession struct {
 }
 
 // MITMEgress is the deep module for Managed Agent CONNECT MITM outbound
-// rewriting. Callers only use Prepare: env placeholder substitution, Git Smart
-// HTTP Authorization, then MCP Authorization inject.
+// rewriting. Callers use Prepare for resource-scoped Git authorization, or
+// the existing Vault environment and MCP credential stages.
 type MITMEgress struct {
-	env *EgressSubstitutor
-	inj *Injector
+	env      *EgressSubstitutor
+	inj      *Injector
+	gitStore gitResourceStore
 }
 
 // NewMITMEgress wires MITM outbound rewriting. database/secretSvc drive env +
@@ -47,7 +48,11 @@ func NewMITMEgress(
 	if env == nil && inj == nil {
 		return nil
 	}
-	return &MITMEgress{env: env, inj: inj}
+	egress := &MITMEgress{env: env, inj: inj}
+	if env != nil {
+		egress.gitStore = database
+	}
+	return egress
 }
 
 // newMITMEgressForTest builds MITMEgress from package-local doubles.
@@ -58,12 +63,9 @@ func newMITMEgressForTest(env *EgressSubstitutor, inj *Injector) *MITMEgress {
 	return &MITMEgress{env: env, inj: inj}
 }
 
-// Prepare mutates req for env substitution and Git Smart HTTP Authorization,
-// then returns a RoundTripper that performs MCP Authorization inject on base.
-//
-// Ordering is fixed: env substitute → Git Basic → MCP inject wrap.
-// Credentials are loaded once for env and Git. Absolute URL for MCP credential
-// match is built from CONNECT authority + origin-form path/query.
+// Prepare first authorizes an explicitly attached Git repository. Unmatched
+// requests retain Vault env substitution, Git Basic, then MCP injection ordering.
+// Absolute URLs are built from CONNECT authority and the origin-form path/query.
 func (e *MITMEgress) Prepare(
 	ctx context.Context,
 	session EgressSession,
@@ -75,6 +77,15 @@ func (e *MITMEgress) Prepare(
 		return base, nil
 	}
 	host, port := splitConnectAuthority(connectAuthority)
+	// A resource token wins over a host-wide Vault token. MCP credentials must
+	// never replace a repository's explicitly bound Git authorization.
+	matched, err := e.authorizeGitResource(ctx, session, host, port, req)
+	if err != nil {
+		return nil, err
+	}
+	if matched {
+		return base, nil
+	}
 	if err := e.rewriteOutbound(ctx, session, host, port, req); err != nil {
 		return nil, err
 	}

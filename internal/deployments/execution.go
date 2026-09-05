@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 var errRetryableRunPreparation = errors.New("retryable deployment run preparation")
@@ -24,6 +26,7 @@ type preparedDeploymentExecution struct {
 }
 
 func prepareDeploymentExecution(
+	ctx context.Context, secretService *secrets.Service,
 	deployment db.Deployment,
 	createdByAPIKeyUUID, runtimeUserUUID string,
 	now time.Time,
@@ -36,7 +39,7 @@ func prepareDeploymentExecution(
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
+	resources, err := sessionResourcesFromDeployment(ctx, secretService, sessionID, deployment, now)
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}

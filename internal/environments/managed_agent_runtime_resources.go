@@ -2,85 +2,76 @@ package environments
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 type managedAgentRuntimeResources struct {
-	sources []json.RawMessage
-	workDir string
-}
-
-type githubRepositoryRuntimePayload struct {
-	URL       string          `json:"url"`
-	MountPath string          `json:"mount_path"`
-	Checkout  json.RawMessage `json:"checkout"`
+	sources            []json.RawMessage
+	workDir            string
+	hasGitRepositories bool
 }
 
 type gitRepositoryRuntimeSource struct {
-	Type      string          `json:"type"`
-	URL       string          `json:"url"`
-	MountPath string          `json:"mount_path"`
-	Checkout  json.RawMessage `json:"checkout,omitempty"`
+	Type      string                          `json:"type"`
+	GitInfo   gitRepositoryRuntimeInfo        `json:"git_info"`
+	MountPath string                          `json:"mount_path"`
+	Checkout  *sessionresource.GitHubCheckout `json:"checkout,omitempty"`
 }
 
-func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managedAgentRuntimeResources {
+type gitRepositoryRuntimeInfo struct {
+	Type string `json:"type"`
+	Repo string `json:"repo"`
+	Host string `json:"host"`
+	URL  string `json:"url"`
+}
+
+func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (managedAgentRuntimeResources, error) {
 	resolved := managedAgentRuntimeResources{
 		sources: make([]json.RawMessage, 0, len(resources)),
 		workDir: defaultEnvironmentWorkDir,
 	}
 	var workDirResource *db.SessionResource
+	var gitSpecs []sessionresource.GitHubSpec
 	for index := range resources {
 		resource := &resources[index]
 		switch resource.ResourceType {
-		case "github_repository":
-			payload, ok := parseGitHubRepositoryRuntimePayload(resource.Payload)
-			if !ok {
-				continue
+		case sessionresource.GitHubRepositoryType:
+			spec, err := sessionresource.ParseStoredGitHubSpec(resource.Payload)
+			if err != nil {
+				return managedAgentRuntimeResources{}, fmt.Errorf("GitHub resource %s: %w", resource.ExternalID, err)
 			}
-			if payload.MountPath != "" &&
-				(workDirResource == nil || repositoryAttachedBefore(*resource, *workDirResource)) {
+			gitSpecs = append(gitSpecs, spec)
+			if workDirResource == nil || repositoryAttachedBefore(*resource, *workDirResource) {
 				workDirResource = resource
-				resolved.workDir = payload.MountPath
+				resolved.workDir = spec.MountPath
 			}
-			source, ok := gitRepositoryRuntimeSourceJSON(payload)
-			if ok {
-				resolved.sources = append(resolved.sources, source)
+			source, err := json.Marshal(gitRepositoryRuntimeSource{
+				Type: "git_repository",
+				GitInfo: gitRepositoryRuntimeInfo{
+					Type: "github", Repo: strings.TrimPrefix(spec.URL, "https://github.com/"),
+					Host: "github", URL: spec.URL,
+				},
+				MountPath: spec.MountPath, Checkout: spec.Checkout,
+			})
+			if err != nil {
+				return managedAgentRuntimeResources{}, err
 			}
+			resolved.sources = append(resolved.sources, source)
+			resolved.hasGitRepositories = true
 		case "memory_store":
 			if source, ok := opaqueRuntimeSourceJSON(resource.Payload); ok {
 				resolved.sources = append(resolved.sources, source)
 			}
 		}
 	}
-	return resolved
-}
-
-func parseGitHubRepositoryRuntimePayload(raw json.RawMessage) (githubRepositoryRuntimePayload, bool) {
-	var payload githubRepositoryRuntimePayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return githubRepositoryRuntimePayload{}, false
+	if err := sessionresource.ValidateGitHubSpecs(gitSpecs); err != nil {
+		return managedAgentRuntimeResources{}, err
 	}
-	payload.URL = strings.TrimSpace(payload.URL)
-	payload.MountPath = strings.TrimSpace(payload.MountPath)
-	return payload, true
-}
-
-func gitRepositoryRuntimeSourceJSON(payload githubRepositoryRuntimePayload) (json.RawMessage, bool) {
-	if payload.URL == "" || payload.MountPath == "" {
-		return nil, false
-	}
-	if len(payload.Checkout) > 0 && !json.Valid(payload.Checkout) {
-		payload.Checkout = nil
-	}
-	raw, err := json.Marshal(gitRepositoryRuntimeSource{
-		Type:      "git_repository",
-		URL:       payload.URL,
-		MountPath: payload.MountPath,
-		Checkout:  payload.Checkout,
-	})
-	return raw, err == nil
+	return resolved, nil
 }
 
 func opaqueRuntimeSourceJSON(raw json.RawMessage) (json.RawMessage, bool) {

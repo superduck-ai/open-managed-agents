@@ -130,7 +130,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			{name: "message content is empty", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":[]}]`)},
 			{name: "system message contains image", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":[{"type":"text","text":"hello"}]},{"type":"system.message","content":[{"type":"image","source":{"type":"url","url":"https://example.com/image.png"}}]}]`)},
 			{name: "outcome rubric is not an object", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.define_outcome","description":"ship it","rubric":"be correct"}]`)},
-			{name: "github token is missing", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git"}]`)},
+			{name: "github token has invalid type", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo","authorization_token":42}]`)},
 			{name: "memory instructions are not a string", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":42}]`)},
 			{name: "memory instructions are too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 4097))+`}]`)},
 		}
@@ -166,17 +166,20 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	})
 
-	t.Run("failure github resources returned by get require token on update", func(t *testing.T) {
+	t.Run("success replacing github resources without token selects anonymous access", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-github-round-trip-agent"}`)
 		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-github-round-trip-env"}`)
 		defer cleanupEnvironmentRows(t, app.pool, env.ID)
-		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git","authorization_token":"secret"}]`))
+		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo","authorization_token":"secret"}]`))
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		retrieved := retrieveDeployment(t, app, created.ID)
 		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+created.ID, strings.NewReader(`{"resources":`+string(retrieved.Resources)+`}`), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("anonymous replacement status=%d", resp.StatusCode)
+		}
+		resp.Body.Close()
 	})
 
 	t.Run("failure file resource source and mount conflicts", func(t *testing.T) {
@@ -670,7 +673,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			"initial_events":[{"type":"user.message","content":[{"type":"text","text":"Where is my order?"}]}],
 			"resources":[
 				{"type":"file","file_id":`+quoteJSON(file.ID)+`},
-				{"type":"github_repository","url":"https://github.com/example/repo.git","authorization_token":"secret-token"}
+				{"type":"github_repository","url":"https://github.com/example/repo","authorization_token":"secret-token"}
 			],
 			"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}
 		}`)
@@ -1054,7 +1057,7 @@ func startDeploymentScheduler(t *testing.T, app *testApp) func() {
 		t.Fatalf("migrate River: %v", err)
 	}
 	workers := river.NewWorkers()
-	deploymentsapi.RegisterScheduledWorkers(workers, app.db)
+	deploymentsapi.RegisterScheduledWorkers(workers, app.db, app.vaultSecrets)
 	client, err := riverjobs.NewClient(app.db, nil, workers, map[string]river.QueueConfig{deploymentsapi.DeploymentScheduleQueue: {MaxWorkers: 10}})
 	if err != nil {
 		t.Fatalf("new deployment scheduler: %v", err)

@@ -5,6 +5,7 @@ import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileAPIMountPath } from './sessions/file-resource-path';
+import { managedResourcesBody } from './resources/git-resource';
 import { sessionEventType } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
@@ -259,6 +260,7 @@ export function createAgentDetailSession(
       agent: { type: 'agent', id: agent.id },
       environment_id: values.environmentId,
       vault_ids: values.vaultIds.length ? values.vaultIds : undefined,
+      resources: managedResourcesBody(values, false),
     },
     workspaceId,
   );
@@ -277,7 +279,7 @@ export function createAgentDetailDeployment(
       environment_id: values.environmentId,
       vault_ids: values.vaultIds,
       metadata: {},
-      resources: deploymentResources(values.memoryStoreIds),
+      resources: managedResourcesBody(values, true),
       initial_events: deploymentInitialEvents(values.initialMessage),
       schedule: deploymentSchedule(values),
     },
@@ -542,6 +544,20 @@ export function addSessionFileResource(sessionId: string, resource: SessionFileR
       file_id: resource.fileId.trim(),
       ...(mountPath ? { mount_path: mountPath } : {}),
     },
+    workspaceId,
+  );
+}
+
+export function updateSessionGitResourceToken(
+  sessionId: string,
+  resourceId: string,
+  token: string,
+  workspaceId: string,
+) {
+  return anthropicBetaApi.sessions.resources.update<SessionResourceApiResponse>(
+    sessionId,
+    resourceId,
+    token.trim(),
     workspaceId,
   );
 }
@@ -1825,14 +1841,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: values.fileResources.map((resource) => {
-          const mountPath = sessionFileAPIMountPath(resource.mountPath);
-          return {
-            type: 'file',
-            file_id: resource.fileId.trim(),
-            ...(mountPath ? { mount_path: mountPath } : {}),
-          };
-        }),
+        resources: managedResourcesBody(values, false),
       };
     case 'deployments':
       return {
@@ -1842,7 +1851,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: deploymentResources(values.memoryStoreIds),
+        resources: managedResourcesBody(values, true),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
       };
@@ -1890,7 +1899,7 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
         vault_ids: values.vaultIds,
-        resources: deploymentResources(values.memoryStoreIds),
+        ...(values.resourcesChanged ? { resources: managedResourcesBody(values, true) } : {}),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
       };
@@ -1910,13 +1919,6 @@ export function deploymentInitialEvents(initialMessage: string) {
       content: [{ type: 'text', text: initialMessage.trim() }],
     },
   ];
-}
-
-export function deploymentResources(memoryStoreIds: string[]) {
-  return memoryStoreIds.map((memoryStoreId) => ({
-    type: 'memory_store',
-    memory_store_id: memoryStoreId,
-  }));
 }
 
 export function deploymentSchedule(values: ManagedEntityFormValues) {

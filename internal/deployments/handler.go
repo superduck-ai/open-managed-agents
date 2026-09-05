@@ -22,6 +22,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
@@ -32,10 +33,11 @@ const (
 )
 
 type Handler struct {
-	db           *db.DB
-	webhooks     webhookEnqueuer
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	secretService *secrets.Service
+	db            *db.DB
+	webhooks      webhookEnqueuer
+	errorAdapter  *httpapi.ErrorAdapter
+	router        chi.Router
 }
 
 type webhookEnqueuer interface {
@@ -89,12 +91,6 @@ type deploymentMutationRequest struct {
 	Resources     json.RawMessage `json:"resources"`
 	Schedule      json.RawMessage `json:"schedule"`
 	VaultIDs      json.RawMessage `json:"vault_ids"`
-}
-
-type deploymentCheckoutRequest struct {
-	Name json.RawMessage `json:"name"`
-	SHA  json.RawMessage `json:"sha"`
-	Type json.RawMessage `json:"type"`
 }
 
 type deploymentRunResponse struct {
@@ -232,9 +228,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, secretService *secrets.Service, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, webhooks: webhookEvents, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, webhooks: webhookEvents, secretService: secretService, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -346,17 +342,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
 	}
-	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`))
+	deploymentID, err := ids.New("depl_")
+	if err != nil {
+		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
+	}
+	resources, resourceSecrets, err := h.normalizeResources(r, principal, deploymentID, jsonx.Default(body.Resources, `[]`))
 	if err != nil {
 		return resourceBuildError(err)
 	}
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, jsonx.Default(body.VaultIDs, `[]`))
 	if err != nil {
 		return invalidRequest(err)
-	}
-	deploymentID, err := ids.New("depl_")
-	if err != nil {
-		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
@@ -540,7 +536,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(body.Resources) > 0 {
-		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources)
+		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, next.ExternalID, body.Resources)
 		if err != nil {
 			return resourceBuildError(err)
 		}
@@ -631,7 +627,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now)
+	preparedRun, err := prepareDeploymentExecution(r.Context(), h.secretService, deployment, principal.APIKeyUUID, principal.UserUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)
@@ -1555,26 +1551,6 @@ func normalizeOutcomeRubric(raw json.RawMessage) (*deploymentOutcomeRubric, erro
 		return nil, err
 	}
 	return rubric, nil
-}
-
-func validateCheckout(raw json.RawMessage) error {
-	var checkout deploymentCheckoutRequest
-	if err := json.Unmarshal(raw, &checkout); err != nil {
-		return errors.New("checkout must be an object")
-	}
-	checkoutType, err := parseRequiredRawString(checkout.Type, "type")
-	if err != nil {
-		return err
-	}
-	switch checkoutType {
-	case "branch":
-		_, err = parseRequiredRawString(checkout.Name, "name")
-	case "commit":
-		_, err = parseRequiredRawString(checkout.SHA, "sha")
-	default:
-		err = errors.New("checkout.type must be branch or commit")
-	}
-	return err
 }
 
 func deploymentAPIContractEnabled(r *http.Request) bool {

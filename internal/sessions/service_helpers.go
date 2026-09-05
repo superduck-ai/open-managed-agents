@@ -16,6 +16,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -111,6 +113,9 @@ func (h *Handler) resourcesFromCreate(
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, errors.New("resources must be an array")
 	}
+	if len(items) > sessioncontract.MaxResources {
+		return nil, fmt.Errorf("resources may contain at most %d entries", sessioncontract.MaxResources)
+	}
 	resources := make([]normalizedSessionResource, 0, len(items))
 	session := db.Session{
 		ExternalID:       sessionID,
@@ -147,6 +152,7 @@ func (h *Handler) resourceFromRequest(
 	payload := map[string]any{"id": resourceID, "type": resourceType}
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
+	var gitSpec *sessionresource.GitHubSpec
 	switch resourceType {
 	case sessionresource.FileType:
 		fileID, err := sessionresource.ParseFileID(body.FileID)
@@ -171,24 +177,28 @@ func (h *Handler) resourceFromRequest(
 		}
 		payload = fileSpec.PayloadFields(resourceID)
 		normalizedFileSpec = &fileSpec
-	case "github_repository":
-		url, err := parseRequiredRawString(body.URL, "url")
+	case sessionresource.GitHubRepositoryType:
+		spec, err := sessionresource.NormalizeGitHubSpec(body.URL, body.MountPath, body.Checkout)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(
-			body.MountPath,
-			sessionresource.DefaultGitHubRepositoryMountPath(url),
-			"mount_path",
-		)
+		token, err := sessionresource.ParseGitHubToken(body.AuthorizationToken)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		payload["url"] = url
-		payload["mount_path"] = mountPath
-		if len(body.Checkout) > 0 && !httpapi.IsJSONNull(body.Checkout) {
-			payload["checkout"] = agentsnapshot.RawJSONValue(body.Checkout, nil)
+		secret, err = sessionresource.SealGitHubToken(r.Context(), h.secretService, secrets.ResourceBinding{
+			OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
+			OwnerKind: "session", OwnerID: session.ExternalID, ResourceID: resourceID,
+		}, token)
+		if err != nil {
+			return normalizedSessionResource{}, err
 		}
+		payload["url"] = spec.URL
+		payload["mount_path"] = spec.MountPath
+		if spec.Checkout != nil {
+			payload["checkout"] = spec.Checkout
+		}
+		gitSpec = &spec
 	case "memory_store":
 		memoryStoreID, err := parseRequiredRawString(body.MemoryStoreID, "memory_store_id")
 		if err != nil {
@@ -228,6 +238,7 @@ func (h *Handler) resourceFromRequest(
 			UpdatedAt:         now,
 		},
 		fileSpec: normalizedFileSpec,
+		gitSpec:  gitSpec,
 	}, nil
 }
 
@@ -501,6 +512,7 @@ func responseFromResource(resource db.SessionResource) json.RawMessage {
 	}
 	payload["id"] = resource.ExternalID
 	payload["type"] = resource.ResourceType
+	delete(payload, "authorization_token")
 	if resource.ResourceType == sessionresource.FileType {
 		delete(payload, "source")
 		if isOutputResource(resource) {

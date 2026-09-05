@@ -208,7 +208,7 @@ func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
 		"agent":`+quoteJSON(agent.ID)+`,
 		"environment_id":`+quoteJSON(env.ID)+`,
 		"resources":[{
-			"type":"github_repository",
+			"type":"github_repository","authorization_token":"test-github-token",
 			"url":"https://github.com/example/repository",
 			"mount_path":"/workspace/repository"
 		}]
@@ -232,7 +232,7 @@ func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
 			http.MethodPost,
 			"/v1/sessions/"+created.ID+"/resources?beta=true",
 			strings.NewReader(`{
-				"type":"github_repository",
+				"type":"github_repository","authorization_token":"test-github-token",
 				"url":"https://github.com/example/second",
 				"mount_path":"/workspace/second"
 			}`),
@@ -1377,7 +1377,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("make session projection stale: %v", err)
 	}
 	retryService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, nil)
+	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, app.vaultSecrets, nil)
 	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
 		t.Fatalf("retry existing running event projection: %v", err)
 	}

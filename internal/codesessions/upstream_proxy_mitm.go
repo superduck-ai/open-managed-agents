@@ -90,7 +90,11 @@ func newUpstreamProxyMITMServerTLSConfig(authority *upstreamProxyCertificateAuth
 }
 
 func dialUpstreamProxyTLSTarget(ctx context.Context, resolvedTarget string, serverName string) (net.Conn, error) {
-	connection, err := dialUpstreamProxyTarget(ctx, resolvedTarget)
+	proxyURL, err := http.ProxyFromEnvironment(&http.Request{URL: &url.URL{Scheme: "https", Host: serverName}})
+	if err != nil {
+		return nil, errors.New("invalid upstream HTTPS proxy configuration")
+	}
+	connection, err := dialUpstreamProxyEgress(ctx, resolvedTarget, proxyURL)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +216,9 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 				message := http.StatusText(status)
 				if errors.Is(err, vaults.ErrSubstitutionRejected) {
 					message = vaults.SubstitutionPublicMessage(err)
+				}
+				if errors.Is(err, vaults.ErrGitResourceAuthorizationRejected) {
+					message = vaults.GitResourceAuthorizationUnavailablePublicMessage
 				}
 				http.Error(w, message, status)
 				return

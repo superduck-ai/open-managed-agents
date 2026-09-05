@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -10,14 +11,14 @@ import (
 )
 
 func TestSessionResourcesFromDeploymentRejectsInvalidSecrets(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment(context.Background(), nil, "ses_test", db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{})
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
 	}
 }
 
 func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment(context.Background(), nil, "ses_test", db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
 	}

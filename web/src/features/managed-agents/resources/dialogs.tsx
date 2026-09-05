@@ -48,7 +48,7 @@ import {
   type VaultCredentialApiResponse,
 } from '../types';
 import { errorMessage } from '../utils';
-import { areSessionFileResourcesValid, SessionFileResourcesField } from '../sessions/SessionFileResourcesField';
+import { ManagedResourceFields, managedResourceFieldsValid } from './ManagedResourceFields';
 import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
 import {
   credentialAuthTypeLabel,
@@ -797,6 +797,7 @@ function GenericManagedEntityDialog({
         values.agentId.trim().length > 0 &&
         values.environmentId.trim().length > 0 &&
         values.initialMessage.trim().length > 0 &&
+        managedResourceFieldsValid(values, Boolean(entity)) &&
         (values.triggerType === 'manual' ||
           (values.triggerType === 'schedule' &&
             values.cronExpression.trim().length > 0 &&
@@ -805,7 +806,7 @@ function GenericManagedEntityDialog({
         !loadingOptions
       : section === 'sessions'
         ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
-          areSessionFileResourcesValid(values.fileResources) &&
+          managedResourceFieldsValid(values, false) &&
           !submitting &&
           !loadingOptions
         : values.name.trim().length > 0 &&
@@ -904,15 +905,12 @@ function GenericManagedEntityDialog({
                 manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
                 onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
               />
-              <DeploymentAddSelectField
-                label={msg('managedAgents.memoryStores.title', 'Memory stores')}
-                optional
-                valueLabel={msg('managedAgents.memoryStores.kind', 'memory store')}
-                selectedIds={values.memoryStoreIds}
-                options={memoryStores}
-                manageHref={`/workspaces/${workspaceId}/memory-stores`}
-                manageLabel={msg('managedAgents.memoryStores.manage', 'Manage memory stores')}
-                onChange={(memoryStoreIds) => setValues((current) => ({ ...current, memoryStoreIds }))}
+              <ManagedResourceFields
+                values={values}
+                onChange={setValues}
+                workspaceId={workspaceId}
+                editing={Boolean(entity)}
+                memoryStores={memoryStores}
               />
               <DeploymentSelectField
                 label={msg('managedAgents.common.trigger', 'Trigger')}
@@ -1025,11 +1023,7 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <SessionFileResourcesField
-                    resources={values.fileResources}
-                    workspaceId={workspaceId}
-                    onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
-                  />
+                  <ManagedResourceFields values={values} onChange={setValues} workspaceId={workspaceId} />
                 ) : null}
               </>
             ) : null}

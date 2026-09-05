@@ -1611,11 +1611,13 @@ export function LaneTabLabel({ lane }: { lane: SessionDetailLane }) {
 export function HeaderRow({
   isSelected,
   density = 'default',
+  wrap = false,
   children,
   onSelect,
 }: {
   isSelected: boolean;
   density?: 'default' | 'compact';
+  wrap?: boolean;
   children: ReactNode;
   onSelect: () => void;
 }) {
@@ -1628,6 +1630,7 @@ export function HeaderRow({
       className={clsx(
         'flex w-full cursor-pointer justify-start rounded-md border-0 bg-transparent text-left font-normal active:translate-y-0 focus-visible:border-transparent focus-visible:ring-1 focus-visible:ring-ring/30',
         density === 'compact' ? 'h-6 gap-1.5 px-1 text-xs' : 'h-9 px-3',
+        wrap && 'h-auto min-h-9 py-2',
         'hover:bg-session-hover',
         isSelected && 'bg-session-selected',
       )}

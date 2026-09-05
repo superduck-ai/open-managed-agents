@@ -38,15 +38,15 @@ type Binding struct {
 	CredentialExternalID string
 }
 
-// Envelope is the sealed form of a credential secret, mapped 1:1 to the
-// vault_credentials envelope columns. All fields are required for Open.
+// Envelope is the sealed form of a secret. Vault credentials map these fields
+// to columns; Git resources store their JSON form. All fields are required for Open.
 type Envelope struct {
-	Ciphertext    []byte
-	Nonce         []byte
-	WrappedDEK    []byte
-	FormatVersion int
-	KeyProvider   string
-	KeyVersion    int64
+	Ciphertext    []byte `json:"ciphertext"`
+	Nonce         []byte `json:"nonce"`
+	WrappedDEK    []byte `json:"wrapped_dek"`
+	FormatVersion int    `json:"format_version"`
+	KeyProvider   string `json:"key_provider"`
+	KeyVersion    int64  `json:"key_version"`
 }
 
 // Service seals and opens credential secrets using envelope encryption. It
@@ -66,6 +66,10 @@ func (s *Service) Seal(ctx context.Context, binding Binding, plaintext []byte) (
 	if err := validateBinding(binding); err != nil {
 		return Envelope{}, err
 	}
+	return s.seal(ctx, aadBytes(binding, envelopeFormatVersion), plaintext)
+}
+
+func (s *Service) seal(ctx context.Context, aad, plaintext []byte) (Envelope, error) {
 	dek, err := randomBytes(32) // AES-256
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: generate DEK: %w", err)
@@ -85,7 +89,7 @@ func (s *Service) Seal(ctx context.Context, binding Binding, plaintext []byte) (
 		return Envelope{}, fmt.Errorf("secrets: wrap DEK: %w", err)
 	}
 	return Envelope{
-		Ciphertext:    gcm.Seal(nil, nonce, plaintext, aadBytes(binding, envelopeFormatVersion)),
+		Ciphertext:    gcm.Seal(nil, nonce, plaintext, aad),
 		Nonce:         nonce,
 		WrappedDEK:    wrapped.Ciphertext,
 		FormatVersion: envelopeFormatVersion,
@@ -101,6 +105,10 @@ func (s *Service) Open(ctx context.Context, binding Binding, envelope Envelope) 
 	if err := validateBinding(binding); err != nil {
 		return nil, err
 	}
+	return s.open(ctx, aadBytes(binding, envelope.FormatVersion), envelope)
+}
+
+func (s *Service) open(ctx context.Context, aad []byte, envelope Envelope) ([]byte, error) {
 	if envelope.FormatVersion != envelopeFormatVersion {
 		return nil, fmt.Errorf("%w: %d", ErrUnknownEnvelopeFormat, envelope.FormatVersion)
 	}
@@ -120,7 +128,7 @@ func (s *Service) Open(ctx context.Context, binding Binding, envelope Envelope) 
 	if len(envelope.Nonce) != gcm.NonceSize() {
 		return nil, fmt.Errorf("secrets: nonce size mismatch: got %d want %d", len(envelope.Nonce), gcm.NonceSize())
 	}
-	plaintext, err := gcm.Open(nil, envelope.Nonce, envelope.Ciphertext, aadBytes(binding, envelope.FormatVersion))
+	plaintext, err := gcm.Open(nil, envelope.Nonce, envelope.Ciphertext, aad)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: open ciphertext: %w", err)
 	}

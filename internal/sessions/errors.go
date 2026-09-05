@@ -6,6 +6,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func invalidRequest(err error) error {
@@ -61,6 +62,9 @@ func resourceNotFound(resourceID string, cause error) error {
 }
 
 func mapResourceBuildError(err error) error {
+	if errors.Is(err, sessionresource.ErrGitHubTokenStorage) {
+		return internalError("Could not secure GitHub resource token", err)
+	}
 	if mapped, ok := mapFileResourcePersistenceError(err); ok {
 		return mapped
 	}
@@ -127,4 +131,8 @@ func mapResourceLoadError(err error, resourceID string) error {
 
 func streamingUnsupported() error {
 	return internalError("Streaming is not supported", errors.New("response writer does not implement http.Flusher"))
+}
+
+func gitTokenUpdateRequiredError() error {
+	return invalidRequest(errors.New("authorization_token must be provided when updating a GitHub resource"))
 }

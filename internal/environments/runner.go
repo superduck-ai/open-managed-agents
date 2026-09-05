@@ -548,7 +548,13 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if err := r.replaceRuntimeSkillArchives(ctx, session, runtimeSkills); err != nil {
 		return nil, err
 	}
-	runtimeResources := resolveManagedAgentRuntimeResources(resources)
+	runtimeResources, err := resolveManagedAgentRuntimeResources(resources)
+	if err != nil {
+		return nil, fmt.Errorf("resolve managed agent resources: %w", err)
+	}
+	if runtimeResources.hasGitRepositories && !r.cfg.CodeSession.UpstreamProxyMITMEnabled {
+		return nil, errGitResourcesRequireMITM
+	}
 	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
 	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)
 	if err != nil {

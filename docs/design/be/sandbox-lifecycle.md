@@ -85,7 +85,8 @@ Debug 模式仍执行同一个 DELETE，不会在数据库已推进到 stopped �
 ## River 与模块边界
 
 `internal/riverjobs` 负责共享 River client、官方 migrator 和连接池复用。资源 worker 仍由 deployments、
-environments 注册；启动组装一次性注册全部 worker 和队列，deployment 的现有 PeriodicJobs 行为不变。
+environments 注册；启动组装一次性注册全部 worker 和队列。Deployment 使用持久化调度，详见
+[Scheduled Deployment 执行](./deployments-api-contract.md#scheduled-deployment-执行)。
 
 当前使用 `superduck-ai/river v0.46.0-oma-v0.0.1` fork 的 DurablePeriodicJob：
 

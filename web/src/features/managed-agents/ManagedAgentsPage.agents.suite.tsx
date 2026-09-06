@@ -1224,8 +1224,8 @@ export function registerManagedAgentsAgentsTests() {
       ),
     );
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
-    await selectManagedComboboxOption(dialog, 'Trigger', 'Manual');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(within(dialog).getByRole('tab', { name: 'Manual' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
 
     await waitFor(() =>
       expect(

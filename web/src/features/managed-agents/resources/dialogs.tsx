@@ -18,12 +18,8 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, localTimezone, startMCPVaultAuth } from '../api';
+import { listAgents, listManagedEntities, startMCPVaultAuth } from '../api';
 import {
-  DeploymentAddSelectField,
-  DeploymentSelectField,
-  DeploymentTextArea,
-  DeploymentTextField,
   LockedAgentReferenceField,
   ManagedSelectField,
   ManagedTextArea,
@@ -61,6 +57,8 @@ import {
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
+import { DeploymentFormFields } from './deployment-form-fields';
+import { previewSchedule } from './deployment-schedule';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
 
@@ -798,9 +796,7 @@ function GenericManagedEntityDialog({
         values.environmentId.trim().length > 0 &&
         values.initialMessage.trim().length > 0 &&
         (values.triggerType === 'manual' ||
-          (values.triggerType === 'schedule' &&
-            values.cronExpression.trim().length > 0 &&
-            values.timezone.trim().length > 0)) &&
+          (values.triggerType === 'schedule' && !previewSchedule(values.cronExpression, values.timezone).error)) &&
         !submitting &&
         !loadingOptions
       : section === 'sessions'
@@ -835,7 +831,7 @@ function GenericManagedEntityDialog({
     return (
       <Dialog open onOpenChange={(open) => !open && onClose()}>
         <DialogContent
-          className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]"
+          className="flex max-h-[calc(100dvh-2rem)] flex-col p-5 sm:max-w-[960px] sm:p-7"
           showCloseButton={false}
         >
           <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
@@ -843,108 +839,18 @@ function GenericManagedEntityDialog({
 
             <DeploymentDialogHeader title={title} />
 
-            <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-[18px] overflow-y-auto pr-1">
-              <DeploymentTextField
-                label={msg('common.name', 'Name')}
-                value={values.name}
-                placeholder={msg('managedAgents.deployments.namePlaceholder', 'Nightly inbox triage')}
-                onChange={(name) => setValues((current) => ({ ...current, name }))}
-                autoFocus
+            <div className="subtle-scrollbar mt-7 min-h-0 flex-1 overflow-y-auto px-1">
+              <DeploymentFormFields
+                values={values}
+                lockedAgent={lockedAgent}
+                workspaceId={workspaceId}
+                agents={agents}
+                environments={environments}
+                vaults={vaults}
+                memoryStores={memoryStores}
+                loadingOptions={loadingOptions}
+                onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
               />
-              {lockedAgent ? (
-                <LockedAgentReferenceField agent={lockedAgent} variant="deployment" />
-              ) : (
-                <DeploymentSelectField
-                  label={msg('managedAgents.common.agent', 'Agent')}
-                  value={values.agentId}
-                  placeholder={
-                    loadingOptions
-                      ? msg('managedAgents.agents.loading', 'Loading agents...')
-                      : msg('managedAgents.deployments.selectAgent', 'Select an agent')
-                  }
-                  options={agents}
-                  manageHref={`/workspaces/${workspaceId}/agents`}
-                  manageLabel={msg('managedAgents.agents.manage', 'Manage agents')}
-                  onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
-                />
-              )}
-              <DeploymentTextArea
-                label={msg('managedAgents.deployments.initialMessage', 'Initial message')}
-                value={values.initialMessage}
-                placeholder={msg(
-                  'managedAgents.deployments.initialMessagePlaceholder',
-                  "Summarize today's support tickets and post to #digest",
-                )}
-                helpText={msg(
-                  'managedAgents.deployments.initialMessageHelp',
-                  'Sent to the agent at the start of every run.',
-                )}
-                onChange={(initialMessage) => setValues((current) => ({ ...current, initialMessage }))}
-              />
-              <DeploymentSelectField
-                label={msg('managedAgents.environments.kindTitle', 'Environment')}
-                value={values.environmentId}
-                placeholder={
-                  loadingOptions
-                    ? msg('managedAgents.environments.loading', 'Loading environments...')
-                    : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
-                }
-                options={environments}
-                manageHref={`/workspaces/${workspaceId}/environments`}
-                manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
-                onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
-              />
-              <DeploymentAddSelectField
-                label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
-                optional
-                valueLabel={msg('managedAgents.credentialVaults.kind', 'vault')}
-                selectedIds={values.vaultIds}
-                options={vaults}
-                manageHref={`/workspaces/${workspaceId}/vaults`}
-                manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
-                onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
-              />
-              <DeploymentAddSelectField
-                label={msg('managedAgents.memoryStores.title', 'Memory stores')}
-                optional
-                valueLabel={msg('managedAgents.memoryStores.kind', 'memory store')}
-                selectedIds={values.memoryStoreIds}
-                options={memoryStores}
-                manageHref={`/workspaces/${workspaceId}/memory-stores`}
-                manageLabel={msg('managedAgents.memoryStores.manage', 'Manage memory stores')}
-                onChange={(memoryStoreIds) => setValues((current) => ({ ...current, memoryStoreIds }))}
-              />
-              <DeploymentSelectField
-                label={msg('managedAgents.common.trigger', 'Trigger')}
-                value={values.triggerType}
-                placeholder={msg('managedAgents.deployments.selectTrigger', 'Select a trigger')}
-                options={[
-                  { id: 'manual', label: msg('managedAgents.deployments.trigger.manual', 'Manual') },
-                  { id: 'schedule', label: msg('managedAgents.deployments.trigger.scheduled', 'Scheduled') },
-                ]}
-                onChange={(triggerType) =>
-                  setValues((current) => ({
-                    ...current,
-                    triggerType: triggerType === 'schedule' ? 'schedule' : triggerType === 'manual' ? 'manual' : '',
-                  }))
-                }
-              />
-              {values.triggerType === 'schedule' ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <DeploymentTextField
-                    label={msg('managedAgents.deployments.cronExpression', 'Cron expression')}
-                    value={values.cronExpression}
-                    placeholder="0 9 * * 1"
-                    onChange={(cronExpression) => setValues((current) => ({ ...current, cronExpression }))}
-                  />
-                  <DeploymentTextField
-                    label={msg('managedAgents.deployments.timezone', 'Timezone')}
-                    value={values.timezone}
-                    placeholder={localTimezone()}
-                    onChange={(timezone) => setValues((current) => ({ ...current, timezone }))}
-                  />
-                </div>
-              ) : null}
             </div>
 
             {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}

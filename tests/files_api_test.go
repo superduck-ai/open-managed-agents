@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -29,16 +30,20 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
+	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 )
 
 const defaultTestKey = config.DefaultAPIKey
@@ -47,6 +52,8 @@ const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 type testApp struct {
 	cfg                  config.Config
 	db                   *db.DB
+	deployments          *deploymentsapi.Store
+	deploymentJobs       *river.Client[*sql.Tx]
 	pool                 *pgxpool.Pool
 	store                storage.ObjectStore
 	sessions             *platformsession.MemoryStore
@@ -1067,6 +1074,10 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("migrate database: %v", err)
 	}
+	if err := riverjobs.Migrate(ctx, database, logger); err != nil {
+		database.Close()
+		t.Fatalf("migrate River: %v", err)
+	}
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		database.Close()
 		t.Fatalf("seed database: %v", err)
@@ -1103,11 +1114,26 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("create vault secrets service: %v", err)
 	}
+	deploymentStore := deploymentsapi.NewStore(database)
+	workers := river.NewWorkers()
+	deploymentsapi.RegisterWorkers(workers, deploymentStore)
+	deploymentJobs, err := riverjobs.NewClient(database, logger, workers, map[string]river.QueueConfig{
+		deploymentjobs.Queue: {MaxWorkers: 10},
+	})
+	if err != nil {
+		database.Close()
+		t.Fatalf("create deployment schedule client: %v", err)
+	}
+	if err := deploymentStore.Configure(ctx, deploymentJobs); err != nil {
+		database.Close()
+		t.Fatalf("configure deployment store: %v", err)
+	}
 	pool := openTestPool(t, cfg)
 	sandboxTimeouts := &recordingSandboxTimeoutExtender{}
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
 		Config:                 cfg,
 		DB:                     database,
+		Deployments:            deploymentStore,
 		ObjectStore:            store,
 		Logger:                 logger,
 		PlatformStore:          platformSessions,
@@ -1120,6 +1146,8 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 	app := &testApp{
 		cfg:                  cfg,
 		db:                   database,
+		deployments:          deploymentStore,
+		deploymentJobs:       deploymentJobs,
 		pool:                 pool,
 		store:                store,
 		sessions:             platformSessions,

@@ -64,7 +64,15 @@ Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
 每个 active 且未归档、schedule 非空的 Deployment 对应 `river_periodic_job` 中一个 Durable Periodic Job，ID 使用 Deployment ID。Deployment 表是配置真源，River 持久化并推进 `next_run_at`；应用不另建调度游标或版本表。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
 
-River client 和 migrator 由 `internal/riverjobs` 统一组装，与 sandbox_lifecycle 队列共享现有连接池。创建或修改 schedule，以及 pause、unpause、archive、自动暂停和根 Agent 归档时，Deployment 状态与 Durable Periodic Job 在同一个 PostgreSQL 事务中写入或删除；River 写入失败会回滚业务状态。应用实例启动时只执行一次 reconcile：补齐缺失或配置变化的记录，删除无效和孤立的 Deployment 调度记录；配置未变化时不执行 upsert，避免重置 `next_run_at`。不再运行每 10 秒同步的内存 registry。单条确定性的存量 schedule 错误记录后跳过并清理对应 durable row，数据库不可用等全局基础设施错误仍使启动失败。
+River client 和 migrator 由 `internal/riverjobs` 组装。Deployment 和 sandbox_lifecycle 共用一个 client 和现有连接池。启动先创建 `deployments.Store` 并注册两类 worker，再创建 client，依次调用 `lifecycle.Configure` 与 `store.Configure`，最后启动 client 和 HTTP server。`Store.Configure` 注入这个共享 client 并补注册缺失的旧 schedule；失败时阻止启动，Store 不接受写操作。Configure 只在 HTTP 与 worker 启动前执行，不与请求或任务并发调用。
+
+`internal/db` 不依赖 River，也不持有调度 client 或 logger。它保留业务 Mapper、Get/List 方法和事务内写入方法：资源层通过 `DB.Transaction(func(*db.Tx) error)` 协调写入，业务 SQL 使用 `db.Tx` 的方法，River 使用同一事务的 `SQLTx()`；提交和回滚仍统一由 Yourbatis 管理。事务句柄不暴露 Yourbatis DB，不得逃逸到回调外或由调用方提交、回滚。`deployments.Store` 负责 Create/Update/Pause/Unpause/Archive、定时执行和 Agent 归档的调度同步。Agent handler 只调用 `Store.ArchiveAgent`，关联 Deployment 的遍历与调度删除由 Store 在同一事务内完成，不注册事务 hook。`internal/deploymentjobs` 保留 cron、Args 和 UpsertOpts 合同。
+
+`UpdateDeployment` 在事务内锁定业务行并返回 schedule 是否变化；无关字段更新不调用 River。启动时不比较已有 River 记录的配置，也不覆盖它的暂停状态、选项或调度游标；MaxAttempts/Priority 使用 River 默认值。
+
+创建或修改 schedule，以及 pause、unpause、archive、自动暂停和根 Agent 归档时，Deployment 状态与 Durable Periodic Job 在同一个 PostgreSQL 事务中写入或删除；River 写入失败会回滚业务状态。
+
+应用实例在启动 River worker 前调用 `Store.Configure`，仅为从旧版内存调度升级补注册缺失记录：读取 active schedule，在事务内锁定并复查 Deployment；River 记录已存在就跳过，只有不存在时才注册。已有记录的恢复、到期投递和 `next_run_at` 推进由 River 负责。启动不再扫描 River 全表、清理孤儿或修复两表配置差异；人工改库导致的漂移不属于启动自愈范围。缺失记录注册失败时返回包含 Deployment ID 的错误并阻止启动。
 
 River 的 leader election 保证多实例中只有 leader 原子推进 Durable Periodic Job 并投递 occurrence，leader 退出后其他实例接管同一条持久化记录。插入 Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。全部实例停机或 leader 切换导致 schedule overdue 时，River 最多补一个 occurrence，并把 `next_run_at` 直接推进到当前时间之后，不逐条重放所有错过时刻。pause 会删除 durable row；unpause 从恢复后的下一个 Cron occurrence 开始，因此不补暂停期间的任务。
 

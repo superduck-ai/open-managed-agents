@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,11 +15,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
-	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 )
 
 type deploymentAPIResponse struct {
@@ -347,80 +349,169 @@ func TestDeploymentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
-	t.Run("startup skips a bad stored schedule", func(t *testing.T) {
+	t.Run("failure durable schedule write rolls back deployment update", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-durable-rollback-agent"}`)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-durable-rollback-env"}`)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
+		created := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
+		defer cleanupDeploymentRows(t, app, created.ID)
+
+		// The API accepts this syntax, but River rejects it after the deployment
+		// update because February 31 has no future occurrence.
+		resp := doDeploymentRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/deployments/"+created.ID,
+			strings.NewReader(`{"schedule":{"type":"cron","expression":"0 0 31 2 *","timezone":"UTC"}}`),
+			defaultTestKey,
+			true,
+		)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("schedule update status = %d, want 500: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		client := app.deploymentJobs
+		if _, err := client.DurablePeriodicJobGet(t.Context(), created.ID); !errors.Is(err, rivertype.ErrNotFound) {
+			t.Fatalf("schedule after failed write error = %v, want not found", err)
+		}
+		after := retrieveDeployment(t, app, created.ID)
+		if string(after.Schedule) != "null" {
+			t.Fatalf("schedule after durable write failure = %s, want null", after.Schedule)
+		}
+	})
+
+	t.Run("failure schedule mutation rolls back business rows", func(t *testing.T) {
+		for _, action := range []string{"pause", "unpause", "archive", "archive agent", "automatic pause"} {
+			t.Run(action, func(t *testing.T) {
+				ctx := t.Context()
+				agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"schedule-rollback-agent"}`)
+				defer cleanupAgentRows(t, app.pool, agent.ID)
+				env := createEnvironment(t, app, `{"name":"schedule-rollback-env"}`)
+				defer cleanupEnvironmentRows(t, app.pool, env.ID)
+				created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
+				defer cleanupDeploymentRows(t, app, created.ID)
+				if action == "unpause" {
+					pauseDeployment(t, app, created.ID)
+				}
+				workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
+				before, err := app.db.GetDeployment(ctx, workspaceUUID, created.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				release := rejectDeploymentScheduleWrites(t, app, created.ID)
+				defer release()
+				if action == "automatic pause" {
+					now := time.Now().UTC()
+					err = app.deployments.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+						Deployment: before, ScheduledAt: now, Now: now,
+						Run:             db.DeploymentRun{UUID: uuid.NewV4().String(), ExternalID: "drun_" + uuid.NewV4().String(), Error: json.RawMessage(`{"type":"unknown_error"}`)},
+						AutoPauseReason: json.RawMessage(`{"type":"error"}`),
+					})
+					if err == nil {
+						t.Fatal("automatic pause succeeded despite rejected River delete")
+					}
+					runs, _, err := app.db.ListDeploymentRunsPage(ctx, db.ListDeploymentRunsPageParams{WorkspaceUUID: workspaceUUID, DeploymentExternalID: created.ID})
+					if err != nil || len(runs) != 0 {
+						t.Fatalf("runs after rollback = %v, error = %v", runs, err)
+					}
+				} else {
+					path := "/v1/deployments/" + created.ID + "/" + action
+					if action == "archive agent" {
+						path = "/v1/agents/" + agent.ID + "/archive?beta=true"
+					}
+					resp := doDeploymentRequest(t, app, http.MethodPost, path, nil, defaultTestKey, true)
+					defer resp.Body.Close()
+					if resp.StatusCode != http.StatusInternalServerError {
+						t.Fatalf("%s status = %d, want 500", action, resp.StatusCode)
+					}
+				}
+				after, err := app.db.GetDeployment(ctx, workspaceUUID, created.ID)
+				if err != nil || after.Status != before.Status || after.ArchivedAt != nil || after.LastRunAt != nil {
+					t.Fatalf("deployment state changed after failed %s: status=%s archived=%v last_run=%v error=%v", action, after.Status, after.ArchivedAt, after.LastRunAt, err)
+				}
+				root, err := app.db.GetAgent(ctx, workspaceUUID, agent.ID)
+				if err != nil || root.ArchivedAt != nil {
+					t.Fatalf("agent archived after rollback: archived=%v error=%v", root.ArchivedAt, err)
+				}
+				_, err = app.deploymentJobs.DurablePeriodicJobGet(ctx, created.ID)
+				if action == "unpause" {
+					if !errors.Is(err, rivertype.ErrNotFound) {
+						t.Fatalf("durable row after failed unpause error = %v", err)
+					}
+				} else if err != nil {
+					t.Fatalf("durable row removed after failed %s: %v", action, err)
+				}
+			})
+		}
+	})
+
+	t.Run("failure configure does not enable store writes", func(t *testing.T) {
+		store := deploymentsapi.NewStore(app.db)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := store.Configure(ctx, app.deploymentJobs); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Configure() error = %v, want canceled", err)
+		}
+		if _, err := store.Create(t.Context(), db.Deployment{}); err == nil || !strings.Contains(err.Error(), "not configured") {
+			t.Fatalf("Create() after failed Configure error = %v", err)
+		}
+	})
+
+	t.Run("startup registers missing schedules and preserves existing River state", func(t *testing.T) {
 		ctx := t.Context()
+		client := app.deploymentJobs
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-startup-schedule-agent"}`)
 		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-startup-schedule-env"}`)
 		defer cleanupEnvironmentRows(t, app.pool, env.ID)
-		good := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
-		defer cleanupDeploymentRows(t, app, good.ID)
-		bad := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
-		defer cleanupDeploymentRows(t, app, bad.ID)
-		orphan := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
-		defer cleanupDeploymentRows(t, app, orphan.ID)
-		firstClient, stopFirst := startDeploymentScheduler(t, app)
-		goodBefore, err := firstClient.DurablePeriodicJobGet(ctx, good.ID)
+		missing := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
+		defer cleanupDeploymentRows(t, app, missing.ID)
+		existing := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
+		defer cleanupDeploymentRows(t, app, existing.ID)
+		if _, err := client.DurablePeriodicJobDelete(ctx, missing.ID); err != nil {
+			t.Fatalf("prepare missing durable schedule: %v", err)
+		}
+		// Startup must not repair or replace an existing River record, even if it differs.
+		if _, err := app.pool.Exec(ctx, `update river_periodic_job set paused_at = now(), priority = 3, cron_expression = '0 9 * * *' where id = $1`, existing.ID); err != nil {
+			t.Fatalf("prepare existing River state: %v", err)
+		}
+		before, err := client.DurablePeriodicJobGet(ctx, existing.ID)
 		if err != nil {
-			stopFirst()
-			t.Fatalf("load reconciled durable schedule: %v", err)
+			t.Fatal(err)
 		}
-		if _, err := firstClient.DurablePeriodicJobGet(ctx, bad.ID); err != nil {
-			stopFirst()
-			t.Fatalf("load durable schedule before corruption: %v", err)
+		if err := app.deployments.Configure(ctx, client); err != nil {
+			t.Fatalf("configure deployment store: %v", err)
 		}
-		if _, err := firstClient.DurablePeriodicJobGet(ctx, orphan.ID); err != nil {
-			stopFirst()
-			t.Fatalf("load durable schedule before orphaning: %v", err)
+		imported, err := client.DurablePeriodicJobGet(ctx, missing.ID)
+		if err != nil || imported.CronExpression == nil || *imported.CronExpression != "*/10 * * * *" {
+			t.Fatalf("missing schedule was not registered: row=%+v error=%v", imported, err)
 		}
-		stopFirst()
-
-		if _, err := app.pool.Exec(ctx, `
-			update deployments
-			set schedule = '{"type":"cron","expression":"bad","timezone":"UTC"}'::jsonb
-			where external_id = $1
-		`, bad.ID); err != nil {
-			t.Fatalf("prepare invalid stored schedule: %v", err)
+		after, err := client.DurablePeriodicJobGet(ctx, existing.ID)
+		if err != nil || !after.UpdatedAt.Equal(before.UpdatedAt) || !after.NextRunAt.Equal(before.NextRunAt) ||
+			after.PausedAt == nil || !after.PausedAt.Equal(*before.PausedAt) || after.Priority != before.Priority ||
+			after.CronExpression == nil || *after.CronExpression != *before.CronExpression {
+			t.Fatalf("startup changed existing River state: before=%+v after=%+v error=%v", before, after, err)
 		}
-		if _, err := app.pool.Exec(ctx, `delete from deployments where external_id = $1`, orphan.ID); err != nil {
-			t.Fatalf("prepare orphan durable schedule: %v", err)
-		}
-		secondClient, stopSecond := startDeploymentScheduler(t, app)
-		defer stopSecond()
-		defer func() { _, _ = secondClient.DurablePeriodicJobDelete(ctx, good.ID) }()
-		defer func() { _, _ = secondClient.DurablePeriodicJobDelete(ctx, bad.ID) }()
-		defer func() { _, _ = secondClient.DurablePeriodicJobDelete(ctx, orphan.ID) }()
-		goodAfter, err := secondClient.DurablePeriodicJobGet(ctx, good.ID)
-		if err != nil || !goodAfter.UpdatedAt.Equal(goodBefore.UpdatedAt) || !goodAfter.NextRunAt.Equal(goodBefore.NextRunAt) {
-			t.Fatalf("unchanged schedule was reset by reconcile: before=%+v after=%+v error=%v", goodBefore, goodAfter, err)
-		}
-		if _, err := secondClient.DurablePeriodicJobGet(ctx, bad.ID); !errors.Is(err, rivertype.ErrNotFound) {
-			t.Fatalf("invalid stored schedule durable row error = %v, want rivertype.ErrNotFound", err)
-		}
-		if _, err := secondClient.DurablePeriodicJobGet(ctx, orphan.ID); !errors.Is(err, rivertype.ErrNotFound) {
-			t.Fatalf("orphan durable schedule error = %v, want rivertype.ErrNotFound", err)
-		}
-
 	})
 
-	t.Run("scheduled deployment creates a durable schedule", func(t *testing.T) {
+	t.Run("durable schedule lifecycle does not require a running worker", func(t *testing.T) {
 		ctx := t.Context()
-		client, stopScheduler := startDeploymentScheduler(t, app)
-		defer stopScheduler()
+		client := app.deploymentJobs
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-durable-schedule-agent"}`)
 		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-durable-schedule-env"}`)
 		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
 		defer cleanupDeploymentRows(t, app, created.ID)
-		defer func() { _, _ = client.DurablePeriodicJobDelete(ctx, created.ID) }()
 
 		periodicJob, err := client.DurablePeriodicJobGet(ctx, created.ID)
 		if err != nil {
 			t.Fatalf("load durable deployment schedule: %v", err)
 		}
 		if periodicJob.CronExpression == nil || *periodicJob.CronExpression != "*/10 * * * *" ||
-			periodicJob.CronTimezone != "UTC" || periodicJob.Queue != deploymentsapi.DeploymentScheduleQueue {
+			periodicJob.CronTimezone != "UTC" || periodicJob.Queue != deploymentjobs.Queue {
 			t.Fatalf("durable deployment schedule = %+v", periodicJob)
 		}
 
@@ -460,7 +551,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("load deployment before automatic pause: %v", err)
 		}
 		now := time.Now().UTC()
-		err = app.db.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+		err = app.deployments.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
 			Deployment:  deployment,
 			ScheduledAt: now,
 			Run: db.DeploymentRun{
@@ -484,54 +575,84 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("HTTP and worker share the configured client", func(t *testing.T) {
+		ctx := t.Context()
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"shared-client-agent"}`)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
+		env := createEnvironment(t, app, `{"name":"shared-client-env"}`)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
+		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
+		defer cleanupDeploymentRows(t, app, created.ID)
+		archiveEnvironment(t, app, env.ID)
+		client, stop := startDeploymentScheduler(t, app)
+		defer stop()
+		scheduledAt := time.Now().UTC()
+		job, err := client.Insert(ctx, deploymentjobs.Args{
+			WorkspaceUUID: getDefaultDBIDs(t, app.pool).WorkspaceUUID, DeploymentExternalID: created.ID,
+			Schedule: deploymentjobs.Schedule{Type: "cron", Expression: "*/10 * * * *", Timezone: "UTC"},
+		}, &river.InsertOpts{Queue: deploymentjobs.Queue, ScheduledAt: scheduledAt})
+		if err != nil {
+			t.Fatalf("insert scheduled occurrence: %v", err)
+		}
+		defer func() {
+			if _, err := client.JobDelete(ctx, job.Job.ID); err != nil {
+				t.Errorf("cleanup scheduled occurrence: %v", err)
+			}
+		}()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			row, err := client.JobGet(ctx, job.Job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if row.State == rivertype.JobStateCompleted {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("worker did not complete: state=%s", row.State)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		after := retrieveDeployment(t, app, created.ID)
+		if after.Status != "paused" {
+			t.Fatalf("worker status = %s, want paused", after.Status)
+		}
+		if _, err := client.DurablePeriodicJobGet(ctx, created.ID); !errors.Is(err, rivertype.ErrNotFound) {
+			t.Fatalf("worker did not remove durable schedule: %v", err)
+		}
+	})
+
 	t.Run("agent archive deletes durable deployment schedules", func(t *testing.T) {
 		ctx := t.Context()
-		client, stopScheduler := startDeploymentScheduler(t, app)
-		defer stopScheduler()
+		client := app.deploymentJobs
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-durable-agent-archive"}`)
 		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-durable-agent-archive-env"}`)
 		defer cleanupEnvironmentRows(t, app.pool, env.ID)
-		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
-		defer cleanupDeploymentRows(t, app, created.ID)
-		defer func() { _, _ = client.DurablePeriodicJobDelete(ctx, created.ID) }()
-		if _, err := client.DurablePeriodicJobGet(ctx, created.ID); err != nil {
-			t.Fatalf("load durable schedule before agent archive: %v", err)
+		var deploymentIDs []string
+		for _, extra := range []string{
+			`"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`,
+			`"schedule":{"type":"cron","expression":"0 9 * * *","timezone":"UTC"}`,
+		} {
+			created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, extra))
+			defer cleanupDeploymentRows(t, app, created.ID)
+			deploymentIDs = append(deploymentIDs, created.ID)
+			if _, err := client.DurablePeriodicJobGet(ctx, created.ID); err != nil {
+				t.Fatalf("load durable schedule before agent archive: %v", err)
+			}
 		}
+		manual := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
+		defer cleanupDeploymentRows(t, app, manual.ID)
+		deploymentIDs = append(deploymentIDs, manual.ID)
 
 		archiveAgent(t, app, agent.ID)
-		if _, err := client.DurablePeriodicJobGet(ctx, created.ID); !errors.Is(err, rivertype.ErrNotFound) {
-			t.Fatalf("durable schedule after agent archive error = %v, want rivertype.ErrNotFound", err)
-		}
-	})
-
-	t.Run("failure durable schedule write rolls back deployment update", func(t *testing.T) {
-		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-durable-rollback-agent"}`)
-		defer cleanupAgentRows(t, app.pool, agent.ID)
-		env := createEnvironment(t, app, `{"name":"deployments-durable-rollback-env"}`)
-		defer cleanupEnvironmentRows(t, app.pool, env.ID)
-		created := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
-		defer cleanupDeploymentRows(t, app, created.ID)
-
-		hookErr := errors.New("durable schedule unavailable")
-		app.db.SetDeploymentScheduleTxHook(func(context.Context, *sql.Tx, db.Deployment) error { return hookErr })
-		defer app.db.SetDeploymentScheduleTxHook(nil)
-		resp := doDeploymentRequest(
-			t,
-			app,
-			http.MethodPost,
-			"/v1/deployments/"+created.ID,
-			strings.NewReader(`{"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}}`),
-			defaultTestKey,
-			true,
-		)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusInternalServerError {
-			t.Fatalf("schedule update status = %d, want 500: %s", resp.StatusCode, readAll(t, resp.Body))
-		}
-		after := retrieveDeployment(t, app, created.ID)
-		if string(after.Schedule) != "null" {
-			t.Fatalf("schedule after durable write failure = %s, want null", after.Schedule)
+		for _, id := range deploymentIDs {
+			if archived := retrieveDeployment(t, app, id); archived.ArchivedAt == nil {
+				t.Fatalf("deployment %s was not archived", id)
+			}
+			if _, err := client.DurablePeriodicJobGet(ctx, id); !errors.Is(err, rivertype.ErrNotFound) {
+				t.Fatalf("durable schedule %s after agent archive error = %v, want not found", id, err)
+			}
 		}
 	})
 
@@ -551,7 +672,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 		updateDeployment(t, app, created.ID, `{"schedule":{"type":"cron","expression":"*/15 * * * *","timezone":"UTC"}}`)
 		scheduledAt := time.Now().UTC().Truncate(time.Minute)
-		err = applyScheduledOccurrence(ctx, app.db, db.ApplyScheduledOccurrenceInput{
+		err = app.deployments.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
 			Deployment: deployment, ScheduledAt: scheduledAt,
 			Run: db.DeploymentRun{UUID: uuid.NewV4().String(), ExternalID: "drun_stale_" + uuid.NewV4().String()},
 			Now: scheduledAt,
@@ -590,12 +711,12 @@ func TestDeploymentsAPI(t *testing.T) {
 			},
 			Now: scheduledAt,
 		}
-		if err := applyScheduledOccurrence(ctx, app.db, input); err != nil {
+		if err := app.deployments.ApplyScheduledOccurrence(ctx, input); err != nil {
 			t.Fatalf("apply first scheduled occurrence: %v", err)
 		}
 		input.Run.UUID = uuid.NewV4().String()
 		input.Run.ExternalID = "drun_periodic_" + uuid.NewV4().String()
-		if err := applyScheduledOccurrence(ctx, app.db, input); !errors.Is(err, db.ErrStaleSchedule) {
+		if err := app.deployments.ApplyScheduledOccurrence(ctx, input); !errors.Is(err, db.ErrStaleSchedule) {
 			t.Fatalf("apply duplicate scheduled occurrence error = %v, want ErrStaleSchedule", err)
 		}
 		runs, _, err := app.db.ListDeploymentRunsPage(ctx, db.ListDeploymentRunsPageParams{
@@ -634,7 +755,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			}
 		}()
 
-		err = applyScheduledOccurrence(ctx, app.db, db.ApplyScheduledOccurrenceInput{
+		err = app.deployments.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
 			Deployment: deployment, ScheduledAt: scheduledAt,
 			Session: &db.CreateSessionInput{},
 		})
@@ -1204,6 +1325,9 @@ func containsDeploymentRun(runs []deploymentRunAPIResponse, id string) bool {
 
 func cleanupDeploymentRows(t *testing.T, app *testApp, deploymentID string) {
 	t.Helper()
+	if _, err := app.pool.Exec(context.Background(), `delete from public.river_periodic_job where id = $1`, deploymentID); err != nil {
+		t.Fatalf("cleanup durable schedule: %v", err)
+	}
 	if _, err := app.pool.Exec(context.Background(), `delete from deployment_runs where deployment_external_id = $1`, deploymentID); err != nil {
 		t.Fatalf("cleanup deployment runs: %v", err)
 	}
@@ -1212,24 +1336,11 @@ func cleanupDeploymentRows(t *testing.T, app *testApp, deploymentID string) {
 	}
 }
 
-func applyScheduledOccurrence(ctx context.Context, database *db.DB, input db.ApplyScheduledOccurrenceInput) error {
-	return database.ApplyScheduledOccurrence(ctx, input)
-}
-
 func startDeploymentScheduler(t *testing.T, app *testApp) (*river.Client[*sql.Tx], func()) {
 	t.Helper()
-	if err := riverjobs.Migrate(t.Context(), app.db, nil); err != nil {
-		t.Fatalf("migrate River: %v", err)
-	}
-	workers := river.NewWorkers()
-	deploymentsapi.RegisterScheduledWorkers(workers, app.db)
-	client, err := riverjobs.NewClient(app.db, nil, workers, map[string]river.QueueConfig{deploymentsapi.DeploymentScheduleQueue: {MaxWorkers: 10}})
-	if err != nil {
-		t.Fatalf("new deployment scheduler: %v", err)
-	}
+	client := app.deploymentJobs
 	ctx, cancel := context.WithCancel(t.Context())
-	scheduler := deploymentsapi.NewDeploymentScheduler(app.db, client, nil)
-	if err := scheduler.Start(ctx); err != nil {
+	if err := client.Start(ctx); err != nil {
 		cancel()
 		t.Fatalf("start deployment scheduler: %v", err)
 	}
@@ -1237,8 +1348,42 @@ func startDeploymentScheduler(t *testing.T, app *testApp) (*river.Client[*sql.Tx
 		cancel()
 		stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer stopCancel()
-		if err := scheduler.Stop(stopCtx); err != nil {
+		if err := client.Stop(stopCtx); err != nil {
 			t.Errorf("stop deployment scheduler: %v", err)
 		}
 	}
+}
+
+// Reject just this deployment's River writes, after the business SQL has run.
+func rejectDeploymentScheduleWrites(t *testing.T, app *testApp, deploymentID string) func() {
+	t.Helper()
+	name := pgx.Identifier{"test_schedule_failure_" + uuid.NewV4().String()}.Sanitize()
+	_, err := app.pool.Exec(t.Context(), `create function `+name+`() returns trigger language plpgsql as $$
+	declare target_id text;
+	begin
+		if TG_OP = 'DELETE' then target_id := OLD.id; else target_id := NEW.id; end if;
+		if target_id = TG_ARGV[0] then raise exception 'test rejected schedule write'; end if;
+		if TG_OP = 'DELETE' then return OLD; else return NEW; end if;
+	end $$`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, query := range []string{
+			`drop trigger if exists ` + name + ` on river_periodic_job`,
+			`drop function ` + name + `()`,
+		} {
+			if _, err := app.pool.Exec(ctx, query); err != nil {
+				t.Errorf("cleanup schedule failure trigger: %v", err)
+			}
+		}
+	}
+	query := fmt.Sprintf(`create trigger %s before insert or update or delete on river_periodic_job for each row execute function %s('%s')`, name, name, strings.ReplaceAll(deploymentID, "'", "''"))
+	if _, err := app.pool.Exec(t.Context(), query); err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	return cleanup
 }

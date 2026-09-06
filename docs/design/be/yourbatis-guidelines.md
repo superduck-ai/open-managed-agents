@@ -134,6 +134,11 @@ err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 必须迁移完整事务链，不能只替换其中一条语句。事务 executor 不得保存、异步使用或逃逸到事务
 回调之外。
 
+资源包需要把业务写入与集成库写入放在同一事务时，使用 `DB.Transaction(ctx, func(tx *db.Tx) error)`。
+`db.Tx` 私有持有当前 Yourbatis 事务，对外提供命名业务方法和 `SQLTx()`。业务方法继续使用 Mapper；
+`SQLTx()` 仅用于集成库要求的同一事务句柄，不能用于应用 SQL、手动提交或回滚。回调返回错误时，
+业务写入和集成库写入整体回滚。资源包不获得 `*yourbatis.DB`，DB 包也不需要依赖集成库的类型。
+
 ## 日志
 
 进程组装层使用 `yourbatis.SlogLogger` 注入 `component=database` 的 logger，Mapper 和事务沿用

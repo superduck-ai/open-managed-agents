@@ -362,7 +362,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
 		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
 	}
-	if archived, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
+	if archived, err := app.deployments.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
 		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
 	}
 
@@ -470,7 +470,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}
 
 	deploymentID := "dep_typed_uuid_" + suffix
-	deployment, err := app.db.CreateDeployment(ctx, db.Deployment{
+	deployment, err := app.deployments.Create(ctx, db.Deployment{
 		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      ids.OrganizationUUID,

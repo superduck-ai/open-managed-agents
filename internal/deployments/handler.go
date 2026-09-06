@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -33,6 +34,7 @@ const (
 
 type Handler struct {
 	db           *db.DB
+	deployments  *Store
 	webhooks     webhookEnqueuer
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
@@ -74,7 +76,7 @@ type deploymentAgentReference struct {
 }
 
 type deploymentScheduleResponse struct {
-	deploymentSchedule
+	deploymentjobs.Schedule
 	LastRunAt      *string  `json:"last_run_at"`
 	UpcomingRunsAt []string `json:"upcoming_runs_at"`
 }
@@ -232,9 +234,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, webhooks: webhookEvents, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -359,7 +361,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
 	}
 	now := time.Now().UTC()
-	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
+	created, err := h.deployments.Create(r.Context(), db.Deployment{
 		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      principal.OrganizationUUID,
@@ -559,7 +561,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
+	updated, err := h.deployments.Update(r.Context(), principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
 		Deployment: next, ScheduleProvided: scheduleProvided,
 	})
 	if err != nil {
@@ -576,7 +578,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	archived, err := h.db.ArchiveDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
+	archived, err := h.deployments.Archive(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -590,7 +592,7 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
 	reason := json.RawMessage(`{"type":"manual"}`)
-	paused, err := h.db.PauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
+	paused, err := h.deployments.Pause(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -603,7 +605,7 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
+	unpaused, err := h.deployments.Unpause(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -1113,17 +1115,17 @@ func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now tim
 	if len(scheduleRaw) == 0 || jsonx.IsNull(scheduleRaw) {
 		return nil
 	}
-	config, err := jsonx.Decode[deploymentSchedule](scheduleRaw)
+	config, err := jsonx.Decode[deploymentjobs.Schedule](scheduleRaw)
 	if err != nil {
 		return nil
 	}
 	response := &deploymentScheduleResponse{
-		deploymentSchedule: config,
-		LastRunAt:          httpapi.OptionalTime(lastRunAt),
-		UpcomingRunsAt:     []string{},
+		Schedule:       config,
+		LastRunAt:      httpapi.OptionalTime(lastRunAt),
+		UpcomingRunsAt: []string{},
 	}
-	if schedule, err := parseDeploymentSchedule(scheduleRaw); err == nil {
-		response.UpcomingRunsAt = upcomingRuns(schedule.cron, now, inactive)
+	if schedule, err := deploymentjobs.Parse(scheduleRaw); err == nil {
+		response.UpcomingRunsAt = upcomingRuns(schedule.Cron, now, inactive)
 	}
 	return response
 }

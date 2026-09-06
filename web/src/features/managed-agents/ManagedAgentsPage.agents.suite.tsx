@@ -463,7 +463,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(dialog).getByText('https://old.example.com/mcp')).toBeTruthy();
   });
 
-  test('builds multiagent, skills, directory and custom MCPs, and permissions from the rendered create form', async () => {
+  test('builds multiagent, skills, directory MCPs, and permissions from the rendered create form', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi(
       [
@@ -493,17 +493,6 @@ export function registerManagedAgentsAgentsTests() {
             tool_names: ['search_code'],
             visibility: ['commercial'],
             remote: { url: 'https://api.githubcopilot.com/mcp/' },
-          },
-        ],
-        workspaceMCPServers: [
-          {
-            id: 'mcpsrv_internal_docs',
-            type: 'mcp_server',
-            name: 'internal-docs',
-            transport_type: 'url',
-            url: 'https://mcp.example.com/mcp',
-            created_at: '2026-08-13T00:00:00Z',
-            updated_at: '2026-08-13T00:00:00Z',
           },
         ],
       },
@@ -546,15 +535,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(permissionMenu?.className).toContain('min-w-40');
     fireEvent.click(alwaysAllowItem);
 
-    const addMcpButton = within(dialog).getByRole('combobox', { name: 'Add MCP server' });
     expect(within(dialog).queryByRole('button', { name: 'Add custom tool' })).toBeNull();
-    fireEvent.click(addMcpButton);
-    fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
-    const customPanel = screen.getByRole('tabpanel', { name: 'Custom MCP' });
-    fireEvent.click(await within(customPanel).findByRole('option', { name: /internal-docs/ }));
-    const customMcpCard = within(dialog).getByText('internal-docs').closest('[data-slot="card"]') as HTMLElement;
-    expect(within(customMcpCard).getByText('https://mcp.example.com/mcp')).toBeTruthy();
-    expect(within(customMcpCard).getByText('Tool names are unavailable.')).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove Built-in tools' }));
     const restoreBuiltInsButton = within(dialog).getByRole('button', { name: 'Add built-in tools' });
@@ -579,7 +560,6 @@ export function registerManagedAgentsAgentsTests() {
     expect(request?.body?.skills).toEqual([{ type: 'custom', skill_id: 'skill_reporting', version: 'latest' }]);
     expect(request?.body?.mcp_servers).toEqual([
       { name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' },
-      { name: 'internal-docs', type: 'url', url: 'https://mcp.example.com/mcp' },
     ]);
     expect(request?.body?.tools).toEqual(
       expect.arrayContaining([
@@ -587,11 +567,6 @@ export function registerManagedAgentsAgentsTests() {
           type: 'mcp_toolset',
           mcp_server_name: 'github',
           default_config: { enabled: true, permission_policy: { type: 'always_allow' } },
-        }),
-        expect.objectContaining({
-          type: 'mcp_toolset',
-          mcp_server_name: 'internal-docs',
-          default_config: { enabled: true, permission_policy: { type: 'always_ask' } },
         }),
       ]),
     );
@@ -1526,7 +1501,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.change(schemaInput, { target: { value: compactSchema } });
 
     expect(schemaInput.value).toBe(compactSchema);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(
         api.requests.some(

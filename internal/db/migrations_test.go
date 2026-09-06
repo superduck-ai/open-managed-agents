@@ -29,7 +29,7 @@ func TestMigrationVersionsAreUnique(t *testing.T) {
 }
 
 func TestRemoveMCPServerArchivingMigrationKeepsReversibleSchemaChange(t *testing.T) {
-	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00052_remove_mcp_server_archiving.sql")
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00060_remove_mcp_server_archiving.sql")
 	if err != nil {
 		t.Fatalf("read MCP Server archiving removal migration: %v", err)
 	}

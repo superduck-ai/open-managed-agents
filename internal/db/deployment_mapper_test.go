@@ -126,13 +126,6 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			},
 			wantSQLFragments: []string{"archived_at IS NULL", "agent_external_id = $2", "ORDER BY created_at DESC", "LIMIT $8"},
 		}},
-		{"list active schedules", mapperBuilderContract{
-			statement: deploymentMapperListActiveSchedulesStatement,
-			bound:     buildDeploymentMapperListActiveSchedules(yourbatis.DialectPostgres),
-			wantID:    "DeploymentMapper.ListActiveSchedules", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{},
-			wantSQLFragments:  []string{"SELECT workspace_uuid, external_id, schedule", "schedule IS NOT NULL"},
-		}},
 		{"pause after scheduled run", mapperBuilderContract{
 			statement: deploymentMapperPauseAfterScheduledRunStatement,
 			bound: buildDeploymentMapperPauseAfterScheduledRun(yourbatis.DialectPostgres, pauseScheduledDeploymentParams{

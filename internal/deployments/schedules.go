@@ -3,7 +3,6 @@ package deployments
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -29,39 +28,4 @@ func (s *Store) deleteDeploymentScheduleTx(ctx context.Context, tx *yourbatis.Tx
 		return nil
 	}
 	return err
-}
-
-// registerMissingSchedules imports schedules created before durable scheduling.
-// Existing River records are authoritative for execution and are left untouched.
-func (s *Store) registerMissingSchedules(ctx context.Context) error {
-	states, err := s.database.ListActiveDeploymentSchedules(ctx)
-	if err != nil {
-		return err
-	}
-	for _, state := range states {
-		err := s.transaction(ctx, func(tx *yourbatis.Tx) error {
-			deployment, err := s.database.LockDeploymentTx(ctx, tx, state.WorkspaceUUID, state.ExternalID)
-			if errors.Is(err, db.ErrNotFound) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if deployment.ArchivedAt != nil || deployment.Status != "active" || len(deployment.Schedule) == 0 {
-				return nil
-			}
-			_, err = s.client.DurablePeriodicJobGetTx(ctx, tx.SQLTx(), deployment.ExternalID)
-			if err == nil {
-				return nil
-			}
-			if !errors.Is(err, rivertype.ErrNotFound) {
-				return err
-			}
-			return s.writeDeploymentScheduleTx(ctx, tx, deployment)
-		})
-		if err != nil {
-			return fmt.Errorf("register deployment %s: %w", state.ExternalID, err)
-		}
-	}
-	return nil
 }

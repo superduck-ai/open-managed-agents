@@ -11,7 +11,7 @@ import (
 )
 
 // Store coordinates deployment writes and durable schedules in one transaction.
-// Configure must succeed before HTTP handlers or workers use it.
+// Configure must be called before HTTP handlers or workers use it.
 type Store struct {
 	database *db.DB
 	client   *river.Client[*sql.Tx]
@@ -21,19 +21,9 @@ func NewStore(database *db.DB) *Store {
 	return &Store{database: database}
 }
 
-// Configure binds the shared River client and registers missing schedules before startup.
-// It must not run concurrently with handlers or workers. A failed configuration
-// leaves the store unavailable for writes and may be retried before startup.
-func (s *Store) Configure(ctx context.Context, client *river.Client[*sql.Tx]) error {
+// Configure binds the shared River client before HTTP handlers or workers start.
+func (s *Store) Configure(client *river.Client[*sql.Tx]) {
 	s.client = client
-	if client == nil {
-		return errStoreNotConfigured
-	}
-	if err := s.registerMissingSchedules(ctx); err != nil {
-		s.client = nil
-		return err
-	}
-	return nil
 }
 
 func (s *Store) transaction(ctx context.Context, fn func(*yourbatis.Tx) error) error {

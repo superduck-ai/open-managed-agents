@@ -190,15 +190,6 @@
         <include refid="columns"/>
     </update>
 
-	<select id="ListActiveSchedules" resultType="DeploymentSchedule">
-		SELECT workspace_uuid, external_id, schedule
-		FROM deployments
-		WHERE status = 'active'
-		AND archived_at IS NULL
-		AND deleted_at IS NULL
-		AND schedule IS NOT NULL
-	</select>
-
 	<update id="PauseAfterScheduledRun" result="rows">
 		UPDATE deployments
 		SET last_run_at = #{params.LastRunAt},

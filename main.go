@@ -153,9 +153,7 @@ func run(logger *slog.Logger) error {
 	if err := lifecycle.Configure(ctx, jobClient); err != nil {
 		return fmt.Errorf("configure sandbox lifecycle: %w", err)
 	}
-	if err := deploymentStore.Configure(ctx, jobClient); err != nil {
-		return fmt.Errorf("register missing deployment schedules: %w", err)
-	}
+	deploymentStore.Configure(jobClient)
 	if err := jobClient.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
 	}

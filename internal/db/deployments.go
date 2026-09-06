@@ -224,20 +224,8 @@ func (d *DB) UnpauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspac
 	return row.deployment(), nil
 }
 
-func (d *DB) LockDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx).LockByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Deployment{}, mapNoRows(err)
-	}
-	return row.deployment(), nil
-}
-
 func (d *DB) ArchiveDeploymentsByRootAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, agentExternalID string) ([]DeploymentSchedule, error) {
 	return NewDeploymentMapper(tx).ArchiveByRootAgent(ctx, workspaceUUID, agentExternalID)
-}
-
-func (d *DB) ListActiveDeploymentSchedules(ctx context.Context) ([]DeploymentSchedule, error) {
-	return NewDeploymentMapper(d.mapperDB).ListActiveSchedules(ctx)
 }
 
 func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPageParams) ([]Deployment, bool, error) {

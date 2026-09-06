@@ -20,7 +20,6 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
-	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 )
 
 type deploymentAPIResponse struct {
@@ -444,55 +443,6 @@ func TestDeploymentsAPI(t *testing.T) {
 					t.Fatalf("durable row removed after failed %s: %v", action, err)
 				}
 			})
-		}
-	})
-
-	t.Run("failure configure does not enable store writes", func(t *testing.T) {
-		store := deploymentsapi.NewStore(app.db)
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		if err := store.Configure(ctx, app.deploymentJobs); !errors.Is(err, context.Canceled) {
-			t.Fatalf("Configure() error = %v, want canceled", err)
-		}
-		if _, err := store.Create(t.Context(), db.Deployment{}); err == nil || !strings.Contains(err.Error(), "not configured") {
-			t.Fatalf("Create() after failed Configure error = %v", err)
-		}
-	})
-
-	t.Run("startup registers missing schedules and preserves existing River state", func(t *testing.T) {
-		ctx := t.Context()
-		client := app.deploymentJobs
-		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-startup-schedule-agent"}`)
-		defer cleanupAgentRows(t, app.pool, agent.ID)
-		env := createEnvironment(t, app, `{"name":"deployments-startup-schedule-env"}`)
-		defer cleanupEnvironmentRows(t, app.pool, env.ID)
-		missing := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
-		defer cleanupDeploymentRows(t, app, missing.ID)
-		existing := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
-		defer cleanupDeploymentRows(t, app, existing.ID)
-		if _, err := client.DurablePeriodicJobDelete(ctx, missing.ID); err != nil {
-			t.Fatalf("prepare missing durable schedule: %v", err)
-		}
-		// Startup must not repair or replace an existing River record, even if it differs.
-		if _, err := app.pool.Exec(ctx, `update river_periodic_job set paused_at = now(), priority = 3, cron_expression = '0 9 * * *' where id = $1`, existing.ID); err != nil {
-			t.Fatalf("prepare existing River state: %v", err)
-		}
-		before, err := client.DurablePeriodicJobGet(ctx, existing.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := app.deployments.Configure(ctx, client); err != nil {
-			t.Fatalf("configure deployment store: %v", err)
-		}
-		imported, err := client.DurablePeriodicJobGet(ctx, missing.ID)
-		if err != nil || imported.CronExpression == nil || *imported.CronExpression != "*/10 * * * *" {
-			t.Fatalf("missing schedule was not registered: row=%+v error=%v", imported, err)
-		}
-		after, err := client.DurablePeriodicJobGet(ctx, existing.ID)
-		if err != nil || !after.UpdatedAt.Equal(before.UpdatedAt) || !after.NextRunAt.Equal(before.NextRunAt) ||
-			after.PausedAt == nil || !after.PausedAt.Equal(*before.PausedAt) || after.Priority != before.Priority ||
-			after.CronExpression == nil || *after.CronExpression != *before.CronExpression {
-			t.Fatalf("startup changed existing River state: before=%+v after=%+v error=%v", before, after, err)
 		}
 	})
 

@@ -1124,10 +1124,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("create deployment schedule client: %v", err)
 	}
-	if err := deploymentStore.Configure(ctx, deploymentJobs); err != nil {
-		database.Close()
-		t.Fatalf("configure deployment store: %v", err)
-	}
+	deploymentStore.Configure(deploymentJobs)
 	pool := openTestPool(t, cfg)
 	sandboxTimeouts := &recordingSandboxTimeoutExtender{}
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{

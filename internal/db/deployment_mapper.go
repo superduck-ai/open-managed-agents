@@ -94,7 +94,6 @@ type DeploymentMapper interface {
 	ArchiveByRootAgent(ctx context.Context, workspaceUUID, agentExternalID string) ([]DeploymentSchedule, error)
 	PauseByExternalID(ctx context.Context, workspaceUUID, externalID string, pausedReason []byte) (deploymentMapperRow, error)
 	UnpauseByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
-	ListActiveSchedules(ctx context.Context) ([]DeploymentSchedule, error)
 	PauseAfterScheduledRun(ctx context.Context, params pauseScheduledDeploymentParams) (int64, error)
 	ListPage(ctx context.Context, params deploymentPageMapperParams) ([]deploymentMapperRow, error)
 	UpdateLastRun(ctx context.Context, workspaceUUID, externalID string, lastRunAt time.Time) (int64, error)

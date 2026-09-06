@@ -1,9 +1,9 @@
 -- +goose Up
 
 alter table mcp_servers
-    drop column archived_at;
+    drop column if exists archived_at;
 
 -- +goose Down
 
 alter table mcp_servers
-    add column archived_at timestamptz;
+    add column if not exists archived_at timestamptz;

@@ -37,8 +37,8 @@ func TestRemoveMCPServerArchivingMigrationKeepsReversibleSchemaChange(t *testing
 	contents := strings.ToLower(string(migration))
 	for _, fragment := range []string{
 		"alter table mcp_servers",
-		"drop column archived_at",
-		"add column archived_at timestamptz",
+		"drop column if exists archived_at",
+		"add column if not exists archived_at timestamptz",
 	} {
 		if !strings.Contains(contents, fragment) {
 			t.Fatalf("MCP Server archiving removal migration does not contain %q", fragment)

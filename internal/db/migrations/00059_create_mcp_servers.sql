@@ -1,6 +1,6 @@
 -- +goose Up
 
-create table mcp_servers (
+create table if not exists mcp_servers (
     id bigint generated always as identity primary key,
     uuid uuid not null default gen_random_uuid(),
     external_id text not null,
@@ -20,15 +20,15 @@ create table mcp_servers (
     constraint mcp_servers_endpoint_url_not_empty check (octet_length(endpoint_url) between 1 and 2048)
 );
 
-create unique index mcp_servers_workspace_name_unique
+create unique index if not exists mcp_servers_workspace_name_unique
     on mcp_servers (workspace_uuid, name)
     where deleted_at is null;
 
-create unique index mcp_servers_workspace_endpoint_unique
+create unique index if not exists mcp_servers_workspace_endpoint_unique
     on mcp_servers (workspace_uuid, transport_type, endpoint_url)
     where deleted_at is null;
 
-create index mcp_servers_workspace_created_page
+create index if not exists mcp_servers_workspace_created_page
     on mcp_servers (workspace_uuid, created_at desc, uuid desc)
     where deleted_at is null;
 

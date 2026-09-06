@@ -20,24 +20,28 @@ export function ManagedResourceFields({
   onChange,
   workspaceId,
   editing = false,
+  embedded = false,
   memoryStores,
 }: {
   values: ManagedEntityFormValues;
   onChange: (values: ManagedEntityFormValues) => void;
   workspaceId: string;
   editing?: boolean;
+  embedded?: boolean;
   memoryStores?: EntityOption[];
 }) {
   const { msg } = useI18n();
   const patch = (value: Partial<ManagedEntityFormValues>) => onChange({ ...values, ...value, resourcesChanged: true });
   return (
     <section className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold">{msg('managedAgents.sessions.resources.title', 'Resources')}</h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg('managedAgents.git.resourcesHelp', 'Mount files and Git repositories into the session.')}
-        </p>
-      </div>
+      {embedded ? null : (
+        <div>
+          <h3 className="text-sm font-semibold">{msg('managedAgents.sessions.resources.title', 'Resources')}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {msg('managedAgents.git.resourcesHelp', 'Mount files and Git repositories into the session.')}
+          </p>
+        </div>
+      )}
       {editing && !values.resourcesChanged ? (
         <>
           <ul className="space-y-1 text-sm text-muted-foreground">

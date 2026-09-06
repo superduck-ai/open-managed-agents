@@ -19,6 +19,9 @@ func normalizeOptionalSchedule(raw json.RawMessage) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	if schedule.Cron.Next(time.Now()).IsZero() {
+		return nil, errScheduleNoFutureOccurrence
+	}
 	return jsonx.Encode(schedule.Config)
 }
 

@@ -343,9 +343,23 @@ func TestDeploymentsAPI(t *testing.T) {
 		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-bad-schedule-env"}`)
 		defer cleanupEnvironmentRows(t, app.pool, env.ID)
-		body := deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"bad","timezone":"UTC"}`)
-		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(body), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		created := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
+		defer cleanupDeploymentRows(t, app, created.ID)
+		for _, expression := range []string{"bad", "0 0 31 2 *"} {
+			schedule := `"schedule":{"type":"cron","expression":"` + expression + `","timezone":"UTC"}`
+			body := deploymentBodyWithExtra(agent.ID, env.ID, schedule)
+			resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(body), defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+			resp = doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+created.ID, strings.NewReader("{"+schedule+"}"), defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		}
+		after := retrieveDeployment(t, app, created.ID)
+		if string(after.Schedule) != "null" {
+			t.Fatalf("schedule after invalid requests = %s, want null", after.Schedule)
+		}
+		if _, err := app.deploymentJobs.DurablePeriodicJobGet(t.Context(), created.ID); !errors.Is(err, rivertype.ErrNotFound) {
+			t.Fatalf("durable schedule after invalid requests error = %v, want not found", err)
+		}
 	})
 
 	t.Run("failure durable schedule write rolls back deployment update", func(t *testing.T) {
@@ -356,14 +370,14 @@ func TestDeploymentsAPI(t *testing.T) {
 		created := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
 		defer cleanupDeploymentRows(t, app, created.ID)
 
-		// The API accepts this syntax, but River rejects it after the deployment
-		// update because February 31 has no future occurrence.
+		release := rejectDeploymentScheduleWrites(t, app, created.ID)
+		defer release()
 		resp := doDeploymentRequest(
 			t,
 			app,
 			http.MethodPost,
 			"/v1/deployments/"+created.ID,
-			strings.NewReader(`{"schedule":{"type":"cron","expression":"0 0 31 2 *","timezone":"UTC"}}`),
+			strings.NewReader(`{"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}}`),
 			defaultTestKey,
 			true,
 		)
@@ -486,6 +500,27 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err != nil || resumed.CronExpression == nil || *resumed.CronExpression != "*/15 * * * *" {
 			t.Fatalf("durable schedule after unpause = (%+v, %v)", resumed, err)
 		}
+
+		t.Run("repeated unpause preserves an overdue occurrence", func(t *testing.T) {
+			if _, err := app.pool.Exec(ctx, `update river_periodic_job set next_run_at = $1 where id = $2`, time.Now().UTC().Add(-time.Minute), created.ID); err != nil {
+				t.Fatal(err)
+			}
+			before, err := client.DurablePeriodicJobGet(ctx, created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			release := rejectDeploymentScheduleWrites(t, app, created.ID)
+			defer release()
+			for range 2 {
+				if active := unpauseDeployment(t, app, created.ID); active.Status != "active" {
+					t.Fatalf("repeated unpause status = %s, want active", active.Status)
+				}
+			}
+			after, err := client.DurablePeriodicJobGet(ctx, created.ID)
+			if err != nil || !after.NextRunAt.Equal(before.NextRunAt) || !after.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Fatalf("repeated unpause changed durable schedule: before=%+v after=%+v error=%v", before, after, err)
+			}
+		})
 
 		updateDeployment(t, app, created.ID, `{"schedule":null}`)
 		if _, err := client.DurablePeriodicJobGet(ctx, created.ID); !errors.Is(err, rivertype.ErrNotFound) {

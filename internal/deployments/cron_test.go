@@ -68,6 +68,7 @@ func TestUpcomingRuns(t *testing.T) {
 func TestNormalizeOptionalScheduleRejectsUnsupportedSyntax(t *testing.T) {
 	tests := []string{
 		`{"type":"cron","expression":"bad","timezone":"UTC"}`,
+		`{"type":"cron","expression":"0 0 31 2 *","timezone":"UTC"}`,
 		`{"type":"cron","expression":"0 0 * * *","timezone":"not/a-zone"}`,
 	}
 	for _, raw := range tests {

@@ -216,12 +216,24 @@ func (d *DB) PauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceU
 	return row.deployment(), nil
 }
 
-func (d *DB) UnpauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx).UnpauseByExternalID(ctx, workspaceUUID, externalID)
+// UnpauseDeploymentTx reports whether a paused deployment resumed under the row lock.
+func (d *DB) UnpauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string) (Deployment, bool, error) {
+	mapper := NewDeploymentMapper(tx)
+	current, err := mapper.LockByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
-		return Deployment{}, mapNoRows(err)
+		return Deployment{}, false, mapNoRows(err)
 	}
-	return row.deployment(), nil
+	if current.ArchivedAt != nil {
+		return Deployment{}, false, ErrNotFound
+	}
+	if current.Status != "paused" {
+		return current.deployment(), false, nil
+	}
+	row, err := mapper.UnpauseByExternalID(ctx, workspaceUUID, externalID)
+	if err != nil {
+		return Deployment{}, false, mapNoRows(err)
+	}
+	return row.deployment(), true, nil
 }
 
 func (d *DB) ArchiveDeploymentsByRootAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, agentExternalID string) ([]DeploymentSchedule, error) {

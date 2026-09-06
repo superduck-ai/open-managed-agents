@@ -76,9 +76,10 @@ func (s *Store) Pause(ctx context.Context, workspaceUUID, externalID string, pau
 func (s *Store) Unpause(ctx context.Context, workspaceUUID, externalID string) (db.Deployment, error) {
 	var unpaused db.Deployment
 	err := s.transaction(ctx, func(tx *yourbatis.Tx) error {
+		var resumed bool
 		var err error
-		unpaused, err = s.database.UnpauseDeploymentTx(ctx, tx, workspaceUUID, externalID)
-		if err != nil {
+		unpaused, resumed, err = s.database.UnpauseDeploymentTx(ctx, tx, workspaceUUID, externalID)
+		if err != nil || !resumed {
 			return err
 		}
 		return s.writeDeploymentScheduleTx(ctx, tx, unpaused)

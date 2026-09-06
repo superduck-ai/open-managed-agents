@@ -8,7 +8,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-var errStoreNotConfigured = errors.New("deployment store is not configured")
+var (
+	errStoreNotConfigured         = errors.New("deployment store is not configured")
+	errScheduleNoFutureOccurrence = errors.New("schedule.expression has no future occurrence")
+)
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

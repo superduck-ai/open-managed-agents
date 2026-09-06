@@ -57,7 +57,7 @@ OMA 使用 River `v0.46.0`（当前替换为 `superduck-ai/river v0.46.0-oma-v0.
 
 Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
-- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；由 `robfig/cron/v3` 解析。DOW 接受 `0-7`，`7` 在解析前映射为 Sunday（`0`）。`L/W/#/?/@` 等扩展语法被拒绝；解析失败时返回参数错误。
+- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；由 `robfig/cron/v3` 解析。DOW 接受 `0-7`，`7` 在解析前映射为 Sunday（`0`）。`L/W/#/?/@` 等扩展语法被拒绝；解析失败或 `Next` 返回零值（无未来执行时刻）时，创建和更新请求返回 HTTP 400 参数错误。
 - `upcoming_runs_at` 返回最多五个名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - River Job 插入时把 Cron 名义 occurrence 写入 Job args；不增加私有 jitter 算法。
@@ -74,7 +74,7 @@ River client 和 migrator 由 `internal/riverjobs` 组装。Deployment 和 sandb
 
 Deployment 无历史调度迁移需求，启动不扫描或补注册 Deployment 调度。新调度由 HTTP 写入事务创建；已有记录的恢复、到期投递和 `next_run_at` 推进由 River 负责。
 
-River 的 leader election 保证多实例中只有 leader 原子推进 Durable Periodic Job 并投递 occurrence，leader 退出后其他实例接管同一条持久化记录。插入 Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。全部实例停机或 leader 切换导致 schedule overdue 时，River 最多补一个 occurrence，并把 `next_run_at` 直接推进到当前时间之后，不逐条重放所有错过时刻。pause 会删除 durable row；unpause 从恢复后的下一个 Cron occurrence 开始，因此不补暂停期间的任务。
+River 的 leader election 保证多实例中只有 leader 原子推进 Durable Periodic Job 并投递 occurrence，leader 退出后其他实例接管同一条持久化记录。插入 Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。全部实例停机或 leader 切换导致 schedule overdue 时，River 最多补一个 occurrence，并把 `next_run_at` 直接推进到当前时间之后，不逐条重放所有错过时刻。pause 会删除 durable row；unpause 在同一事务内锁行，仅在 `paused → active` 时注册恢复后的下一个 Cron occurrence，因此不补暂停期间的任务。对已经 active 的 Deployment 重复 unpause 返回当前记录，不写 River，也不重置已到期的调度游标。
 
 ```mermaid
 sequenceDiagram

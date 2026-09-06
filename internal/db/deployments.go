@@ -129,8 +129,16 @@ type ApplyScheduledOccurrenceInput struct {
 	Now               time.Time
 }
 
-func (tx *Tx) CreateDeployment(ctx context.Context, deployment Deployment) (Deployment, error) {
-	mapper := NewDeploymentMapper(tx.executor)
+// DeploymentTransaction shares a Yourbatis transaction with deployment schedule writes.
+// The callback must not retain, commit, or roll back the transaction.
+func (d *DB) DeploymentTransaction(ctx context.Context, fn func(*yourbatis.Tx) error) error {
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		return fn(executor.(*yourbatis.Tx))
+	})
+}
+
+func (d *DB) CreateDeploymentTx(ctx context.Context, tx *yourbatis.Tx, deployment Deployment) (Deployment, error) {
+	mapper := NewDeploymentMapper(tx)
 	if len(deployment.Schedule) > 0 {
 		if err := checkScheduledDeploymentQuota(ctx, mapper, deployment.OrganizationUUID); err != nil {
 			return Deployment{}, err
@@ -152,9 +160,9 @@ func (d *DB) GetDeployment(ctx context.Context, workspaceUUID string, externalID
 	return row.deployment(), nil
 }
 
-// UpdateDeployment reports whether the schedule changed while holding the row lock.
-func (tx *Tx) UpdateDeployment(ctx context.Context, workspaceUUID string, externalID string, input UpdateDeploymentInput) (Deployment, bool, error) {
-	mapper := NewDeploymentMapper(tx.executor)
+// UpdateDeploymentTx reports whether the schedule changed while holding the row lock.
+func (d *DB) UpdateDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, input UpdateDeploymentInput) (Deployment, bool, error) {
+	mapper := NewDeploymentMapper(tx)
 	current, err := mapper.LockByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
 		return Deployment{}, false, mapNoRows(err)
@@ -192,40 +200,40 @@ func checkScheduledDeploymentQuota(ctx context.Context, mapper DeploymentMapper,
 	return nil
 }
 
-func (tx *Tx) ArchiveDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx.executor).ArchiveByExternalID(ctx, workspaceUUID, externalID)
+func (d *DB) ArchiveDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string) (Deployment, error) {
+	row, err := NewDeploymentMapper(tx).ArchiveByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
 		return Deployment{}, mapNoRows(err)
 	}
 	return row.deployment(), nil
 }
 
-func (tx *Tx) PauseDeployment(ctx context.Context, workspaceUUID string, externalID string, pausedReason json.RawMessage) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx.executor).PauseByExternalID(ctx, workspaceUUID, externalID, agentJSONArg(pausedReason))
+func (d *DB) PauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, pausedReason json.RawMessage) (Deployment, error) {
+	row, err := NewDeploymentMapper(tx).PauseByExternalID(ctx, workspaceUUID, externalID, agentJSONArg(pausedReason))
 	if err != nil {
 		return Deployment{}, mapNoRows(err)
 	}
 	return row.deployment(), nil
 }
 
-func (tx *Tx) UnpauseDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx.executor).UnpauseByExternalID(ctx, workspaceUUID, externalID)
+func (d *DB) UnpauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string) (Deployment, error) {
+	row, err := NewDeploymentMapper(tx).UnpauseByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
 		return Deployment{}, mapNoRows(err)
 	}
 	return row.deployment(), nil
 }
 
-func (tx *Tx) LockDeployment(ctx context.Context, workspaceUUID, externalID string) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx.executor).LockByExternalID(ctx, workspaceUUID, externalID)
+func (d *DB) LockDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Deployment, error) {
+	row, err := NewDeploymentMapper(tx).LockByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
 		return Deployment{}, mapNoRows(err)
 	}
 	return row.deployment(), nil
 }
 
-func (tx *Tx) ArchiveDeploymentsByRootAgent(ctx context.Context, workspaceUUID, agentExternalID string) ([]DeploymentSchedule, error) {
-	return NewDeploymentMapper(tx.executor).ArchiveByRootAgent(ctx, workspaceUUID, agentExternalID)
+func (d *DB) ArchiveDeploymentsByRootAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, agentExternalID string) ([]DeploymentSchedule, error) {
+	return NewDeploymentMapper(tx).ArchiveByRootAgent(ctx, workspaceUUID, agentExternalID)
 }
 
 func (d *DB) ListActiveDeploymentSchedules(ctx context.Context) ([]DeploymentSchedule, error) {
@@ -291,8 +299,8 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	return created, session, thread, events, err
 }
 
-func (tx *Tx) ApplyScheduledOccurrence(ctx context.Context, input ApplyScheduledOccurrenceInput) error {
-	deploymentMapper := NewDeploymentMapper(tx.executor)
+func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, input ApplyScheduledOccurrenceInput) error {
+	deploymentMapper := NewDeploymentMapper(tx)
 	row, err := deploymentMapper.LockByExternalID(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID)
 	if err != nil {
 		return mapNoRows(err)
@@ -308,7 +316,7 @@ func (tx *Tx) ApplyScheduledOccurrence(ctx context.Context, input ApplyScheduled
 		return err
 	}
 	if input.Session != nil {
-		workspace, err := NewAdminWorkspaceMapper(tx.executor).FindByIdentifier(
+		workspace, err := NewAdminWorkspaceMapper(tx).FindByIdentifier(
 			ctx, deployment.OrganizationUUID, "", deployment.WorkspaceUUID,
 		)
 		if err != nil {
@@ -319,18 +327,18 @@ func (tx *Tx) ApplyScheduledOccurrence(ctx context.Context, input ApplyScheduled
 		}
 	}
 
-	runMapper := NewDeploymentRunMapper(tx.executor)
+	runMapper := NewDeploymentRunMapper(tx)
 	run := deploymentRunFromDeployment(input.Run, deployment)
 	run.CreatedByAPIKeyUUID = deployment.CreatedByAPIKeyUUID
 	run.TriggerType = "schedule"
 	run.ScheduledAt = &input.ScheduledAt
 	run.CreatedAt = input.Now
 	if input.Session != nil {
-		session, _, _, _, err := insertSessionTx(ctx, tx.executor, *input.Session)
+		session, _, _, _, err := insertSessionTx(ctx, tx, *input.Session)
 		if err != nil {
 			return err
 		}
-		if _, err = insertSessionEventsTx(ctx, tx.executor, session, input.Events, false); err != nil {
+		if _, err = insertSessionEventsTx(ctx, tx, session, input.Events, false); err != nil {
 			return err
 		}
 		run.SessionExternalID = &session.ExternalID

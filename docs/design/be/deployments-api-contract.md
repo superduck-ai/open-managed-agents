@@ -66,7 +66,7 @@ Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
 River client 和 migrator 由 `internal/riverjobs` 组装。Deployment 和 sandbox_lifecycle 共用一个 client 和现有连接池。启动先创建 `deployments.Store` 并注册两类 worker，再创建 client，依次调用 `lifecycle.Configure` 与 `store.Configure`，最后启动 client 和 HTTP server。`Store.Configure` 注入这个共享 client 并补注册缺失的旧 schedule；失败时阻止启动，Store 不接受写操作。Configure 只在 HTTP 与 worker 启动前执行，不与请求或任务并发调用。
 
-`internal/db` 不依赖 River，也不持有调度 client 或 logger。它保留业务 Mapper、Get/List 方法和事务内写入方法：资源层通过 `DB.Transaction(func(*db.Tx) error)` 协调写入，业务 SQL 使用 `db.Tx` 的方法，River 使用同一事务的 `SQLTx()`；提交和回滚仍统一由 Yourbatis 管理。事务句柄不暴露 Yourbatis DB，不得逃逸到回调外或由调用方提交、回滚。`deployments.Store` 负责 Create/Update/Pause/Unpause/Archive、定时执行和 Agent 归档的调度同步。Agent handler 只调用 `Store.ArchiveAgent`，关联 Deployment 的遍历与调度删除由 Store 在同一事务内完成，不注册事务 hook。`internal/deploymentjobs` 保留 cron、Args 和 UpsertOpts 合同。
+`internal/db` 不依赖 River，也不持有调度 client 或 logger。它保留业务 Mapper、Get/List 方法和事务内写入方法：资源层通过 `DB.DeploymentTransaction` 获取当前 `*yourbatis.Tx`，传给 DB 的 `...Tx` 写入方法；River 直接使用该事务的 `SQLTx()`，提交和回滚仍统一由 Yourbatis 管理，不另建事务包装类型。事务句柄不暴露 Yourbatis DB，不得逃逸到回调外或由调用方提交、回滚。`deployments.Store` 负责 Create/Update/Pause/Unpause/Archive、定时执行和 Agent 归档的调度同步。Agent handler 只调用 `Store.ArchiveAgent`，关联 Deployment 的遍历与调度删除由 Store 在同一事务内完成，不注册事务 hook。`internal/deploymentjobs` 保留 cron、Args 和 UpsertOpts 合同。
 
 `UpdateDeployment` 在事务内锁定业务行并返回 schedule 是否变化；无关字段更新不调用 River。启动时不比较已有 River 记录的配置，也不覆盖它的暂停状态、选项或调度游标；MaxAttempts/Priority 使用 River 默认值。
 

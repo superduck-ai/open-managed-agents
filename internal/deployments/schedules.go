@@ -8,9 +8,10 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
+	"github.com/superduck-ai/yourbatis"
 )
 
-func (s *Store) writeDeploymentScheduleTx(ctx context.Context, tx *db.Tx, deployment db.Deployment) error {
+func (s *Store) writeDeploymentScheduleTx(ctx context.Context, tx *yourbatis.Tx, deployment db.Deployment) error {
 	if deployment.ArchivedAt != nil || deployment.Status != "active" || len(deployment.Schedule) == 0 {
 		return s.deleteDeploymentScheduleTx(ctx, tx, deployment.ExternalID)
 	}
@@ -22,7 +23,7 @@ func (s *Store) writeDeploymentScheduleTx(ctx context.Context, tx *db.Tx, deploy
 	return err
 }
 
-func (s *Store) deleteDeploymentScheduleTx(ctx context.Context, tx *db.Tx, externalID string) error {
+func (s *Store) deleteDeploymentScheduleTx(ctx context.Context, tx *yourbatis.Tx, externalID string) error {
 	_, err := s.client.DurablePeriodicJobDeleteTx(ctx, tx.SQLTx(), externalID)
 	if errors.Is(err, rivertype.ErrNotFound) {
 		return nil
@@ -38,8 +39,8 @@ func (s *Store) registerMissingSchedules(ctx context.Context) error {
 		return err
 	}
 	for _, state := range states {
-		err := s.transaction(ctx, func(tx *db.Tx) error {
-			deployment, err := tx.LockDeployment(ctx, state.WorkspaceUUID, state.ExternalID)
+		err := s.transaction(ctx, func(tx *yourbatis.Tx) error {
+			deployment, err := s.database.LockDeploymentTx(ctx, tx, state.WorkspaceUUID, state.ExternalID)
 			if errors.Is(err, db.ErrNotFound) {
 				return nil
 			}

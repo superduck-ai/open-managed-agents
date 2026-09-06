@@ -183,8 +183,8 @@ func isNullJSON(raw json.RawMessage) bool {
 	return value == nil
 }
 
-func (tx *Tx) ArchiveAgent(ctx context.Context, workspaceUUID, externalID string) (Agent, error) {
-	row, err := NewAgentMapper(tx.executor).ArchiveByExternalID(ctx, workspaceUUID, externalID)
+func (d *DB) ArchiveAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Agent, error) {
+	row, err := NewAgentMapper(tx).ArchiveByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
 		return Agent{}, mapNoRows(err)
 	}

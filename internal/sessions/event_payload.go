@@ -2,7 +2,6 @@ package sessions
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
-	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func patchSessionAgent(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
@@ -119,66 +117,6 @@ func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
 
 func sessionEventPayload(event db.SessionEvent) json.RawMessage {
 	return sessionEventPayloadForResponse(event, "")
-}
-
-func (h *Handler) primaryOrphanToolUseIDsWithChildCopies(ctx context.Context, sessionID, threadID string, records []db.SessionEvent) (map[string]struct{}, error) {
-	if strings.TrimSpace(threadID) != "" || len(records) == 0 {
-		return nil, nil
-	}
-	workspaceID := records[0].WorkspaceUUID
-	seen := make(map[string]struct{})
-	toolUseIDs := make([]string, 0)
-	for _, record := range records {
-		if id := primaryOrphanToolProjectionUseID(record); id != "" {
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			toolUseIDs = append(toolUseIDs, id)
-		}
-	}
-	if len(toolUseIDs) == 0 {
-		return nil, nil
-	}
-	return h.db.ChildSessionToolUseIDs(ctx, workspaceID, sessionID, toolUseIDs)
-}
-
-func primaryToolProjectionHidden(event db.SessionEvent, hiddenToolUseIDs map[string]struct{}) bool {
-	if len(hiddenToolUseIDs) == 0 {
-		return false
-	}
-	toolUseID := primaryOrphanToolProjectionUseID(event)
-	if toolUseID == "" {
-		return false
-	}
-	_, ok := hiddenToolUseIDs[toolUseID]
-	return ok
-}
-
-func primaryOrphanToolProjectionUseID(event db.SessionEvent) string {
-	var payload map[string]any
-	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return ""
-	}
-	if hasSessionThreadOwnerField(payload) {
-		return ""
-	}
-	eventType := strings.TrimSpace(event.EventType)
-	if maevents.IsCrossPostedBlockingEvent(eventType) {
-		// 历史数据里曾出现子线程工具事件先被无归属地写入 primary，随后又
-		// 以 owner copy 写入子线程。primary 响应隐藏这种 orphan projection。
-		return sessionToolUseID(payload)
-	}
-	if !isToolResultOrConfirmationEvent(eventType) {
-		return ""
-	}
-	// Claude Code 的 tool_result 可能先作为无归属 primary projection 写入，
-	// 再由对应的子线程 tool_use 提供真正 owner；响应层按 tool_use_id 过滤。
-	return sessionToolReferenceID(payload)
-}
-
-func sessionToolUseID(payload map[string]any) string {
-	return firstSessionPayloadString(payload, "tool_use_id", "mcp_tool_use_id", "custom_tool_use_id", "id")
 }
 
 func sessionToolReferenceID(payload map[string]any) string {

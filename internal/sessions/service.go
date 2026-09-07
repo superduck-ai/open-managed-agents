@@ -470,16 +470,9 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return internalError("Could not list events", fmt.Errorf("list session %q events: %w", sessionID, err))
 	}
-	hiddenPrimaryToolUseIDs, err := h.primaryOrphanToolUseIDsWithChildCopies(r.Context(), sessionID, threadID, records)
-	if err != nil {
-		return internalError("Could not list events", fmt.Errorf("list session %q child tool projections: %w", sessionID, err))
-	}
 	data := make([]json.RawMessage, 0, len(records))
 	for _, record := range records {
 		if !maevents.IsPublicSessionHistoryEvent(record.EventType) {
-			continue
-		}
-		if primaryToolProjectionHidden(record, hiddenPrimaryToolUseIDs) {
 			continue
 		}
 		data = append(data, sessionEventPayloadForResponse(record, threadID))

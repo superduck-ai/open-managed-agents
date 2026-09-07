@@ -44,7 +44,6 @@ func (streamResetDelivery) implStreamDelivery()  {}
 
 type streamConnection struct {
 	threadID         string
-	historyThreadID  string
 	primaryThread    bool
 	streamDeltaTypes map[string]struct{}
 	activePreviewIDs map[string]string
@@ -248,7 +247,6 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		return
 	}
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
-	connection.historyThreadID = threadID
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")

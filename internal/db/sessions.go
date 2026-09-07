@@ -598,28 +598,3 @@ func listSessionEventsPage(ctx context.Context, mapper SessionEventMapper, param
 func (d *DB) SessionEventWatermark(ctx context.Context, workspaceUUID, sessionExternalID string) (time.Time, error) {
 	return NewSessionMapper(d.mapperDB).EventWatermark(ctx, workspaceUUID, sessionExternalID)
 }
-
-func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceUUID string, sessionExternalID string, toolUseIDs []string) (map[string]struct{}, error) {
-	if len(toolUseIDs) == 0 {
-		return map[string]struct{}{}, nil
-	}
-	mapper := NewSessionEventMapper(d.mapperDB)
-	toolUseIDRows, err := mapper.ChildSessionToolUseIDs(
-		ctx,
-		workspaceUUID,
-		sessionExternalID,
-		[]string{"agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use"},
-		toolUseIDs,
-	)
-	if err != nil {
-		return nil, err
-	}
-	found := make(map[string]struct{})
-	for _, toolUseID := range toolUseIDRows {
-		toolUseID = strings.TrimSpace(toolUseID)
-		if toolUseID != "" {
-			found[toolUseID] = struct{}{}
-		}
-	}
-	return found, nil
-}

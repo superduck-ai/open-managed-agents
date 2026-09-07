@@ -104,28 +104,22 @@
         LIMIT #{params.FetchLimit}
     </select>
 
-    <select id="ChildSessionToolUseIDs" resultType="string">
+    <select id="ToolUseOwnerThreadIDs" resultType="string">
         SELECT DISTINCT COALESCE(
-            e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id',
-            e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id'
-        ) AS tool_use_id
+            NULLIF(e.payload-&gt;&gt;'session_thread_id', ''),
+            NULLIF(e.payload-&gt;&gt;'thread_id', ''), e.thread_external_id
+        ) AS owner_thread_id
         FROM session_events e
-        JOIN session_threads t
-        ON t.workspace_uuid = e.workspace_uuid
-        AND t.session_uuid = e.session_uuid
-        AND t.uuid = e.thread_uuid
-        AND t.deleted_at IS NULL
         WHERE e.workspace_uuid = #{workspaceUUID}
         AND e.session_external_id = #{sessionExternalID}
         AND e.deleted_at IS NULL
-        AND t.parent_thread_uuid IS NOT NULL
+        AND e.thread_external_id IS NOT NULL
         AND e.event_type IN
         <foreach collection="eventTypes" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
         AND COALESCE(
-            e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id',
-            e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id'
-        ) IN
-        <foreach collection="toolUseIDs" item="toolUseID" open="(" separator="," close=")">#{toolUseID}</foreach>
+            NULLIF(e.payload-&gt;&gt;'tool_use_id', ''), NULLIF(e.payload-&gt;&gt;'mcp_tool_use_id', ''),
+            NULLIF(e.payload-&gt;&gt;'custom_tool_use_id', ''), e.payload-&gt;&gt;'id'
+        ) = #{toolUseID}
     </select>
 
     <update id="SoftDeleteBySession" result="rows">

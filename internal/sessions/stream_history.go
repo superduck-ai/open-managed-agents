@@ -99,15 +99,8 @@ func (h *Handler) catchUpSessionEvents(w http.ResponseWriter, ctx context.Contex
 		if err != nil {
 			return false, err
 		}
-		hiddenPrimaryToolUseIDs, err := h.primaryOrphanToolUseIDsWithChildCopies(ctx, sessionID, connection.historyThreadID, records)
-		if err != nil {
-			return false, err
-		}
 		for _, record := range records {
 			if !maevents.IsPublicSessionHistoryEvent(record.EventType) {
-				continue
-			}
-			if primaryToolProjectionHidden(record, hiddenPrimaryToolUseIDs) {
 				continue
 			}
 			event := sessionStreamEventFrom(record)

@@ -593,9 +593,17 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 			t.Fatalf("primary events missing %q: %+v", want, primaryEvents.Data)
 		}
 	}
-	for _, leaked := range []string{"npm test", "child stream answer", "span.model_request_start", "stream preview only", "mcp__weather_orphan", "mcp__agent_inferred", "orphan weather result should not be primary"} {
+	for _, leaked := range []string{"npm test", "child stream answer", "span.model_request_start", "stream preview only", "mcp__agent_inferred"} {
 		if eventPageContains(primaryEvents, leaked) {
 			t.Fatalf("primary stream contains child or stream-only event %q: %+v", leaked, primaryEvents.Data)
+		}
+	}
+
+	// Accepted records remain visible even if a later child transcript supplies
+	// another copy. Multiple known owners do not authorize reassignment.
+	for _, retained := range []string{"mcp__weather_orphan", "orphan weather result should not be primary"} {
+		if !eventPageContains(primaryEvents, retained) {
+			t.Fatalf("accepted legacy tool record disappeared: %q", retained)
 		}
 	}
 

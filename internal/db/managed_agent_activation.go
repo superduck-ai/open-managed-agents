@@ -164,3 +164,10 @@ func (tx ManagedAgentEventTx) ListSessionThreads(ctx context.Context, session Se
 	rows, err := tx.sessionThreadMapper.List(ctx, session.WorkspaceUUID, session.ExternalID)
 	return sessionThreadsFromRows(rows), err
 }
+
+// ToolUseOwnerThreadIDs resolves already accepted tool uses in this transaction.
+// A primary blocking projection carries its child owner in the public payload.
+func (tx ManagedAgentEventTx) ToolUseOwnerThreadIDs(ctx context.Context, session Session, toolUseID string) ([]string, error) {
+	return tx.sessionEventMapper.ToolUseOwnerThreadIDs(ctx, session.WorkspaceUUID, session.ExternalID,
+		[]string{"agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use"}, toolUseID)
+}

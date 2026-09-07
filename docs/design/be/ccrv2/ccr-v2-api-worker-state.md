@@ -1,10 +1,13 @@
 # 接口文档：`GET/PUT /v1/code/sessions/{session_id}/worker`
 
-本文记录当前后端实现中的 code-session worker state API。该接口用于持久化 worker 的轻量状态和 metadata patch，不负责 worker event 生成、delivery ACK、webhook job 或 session event 合成。
+本文记录当前后端实现中的 code-session worker state API。该接口用于持久化 worker 的轻量状态和 metadata patch；显式上报状态时，同步提交相应公共状态事件。delivery ACK 仍由独立接口处理。
+
+公共事件写入与本状态接口共用 epoch 校验和事务：同 ID 内容冲突返回 409，不提交同批之前的事件或状态。canonical error 字段及 result 结束原因尚未统一。worker 瞬态 idle 仍可能提前产生 `end_turn`，详见 [Session 一致性方案](../../session-event-stream-consistency.md#升级与边界)。
 
 相关代码：
 
 - HTTP handler: `internal/codesessions/ingress.go`
+- Service: `internal/codesessions/status.go`
 - DB helper: `internal/db/code_sessions.go`
 - migrations: `internal/db/migrations/00003_add_code_session_worker_epoch.sql`、`00004_add_code_session_worker_state.sql`、`00005_ensure_code_session_worker_state.sql`、`00006_ensure_code_session_worker_epoch_default.sql`
 
@@ -124,9 +127,11 @@ DB 行为：
 
 `PUT` 在 DB 事务内执行：
 
-1. `select code_sessions ... for update`。
-2. 若 request `worker_epoch != current_worker_epoch`，返回 `409 conflict_error`。
-3. 匹配时才应用 state patch。
+1. 按 Session → Code Session 顺序加行锁；已归档的 Session 返回 `409 conflict_error`。
+2. 在锁内复验请求原始 `worker_epoch`，不匹配返回 `409 conflict_error`。
+3. 在同一个 `ManagedAgentEventTx` 中应用 worker patch、判断公共状态是否变化、写入事件并推进公共状态。任一步失败全部回滚。
+
+worker 字段更新通过同一 executor 的 Yourbatis Mapper 执行，按 workspace/Code Session UUID 定位并排除软删除记录。
 
 `PUT` 不会 bump epoch；只有 `/worker/register` 会注册新 worker 并递增 epoch。
 
@@ -179,19 +184,21 @@ final worker_status != requires_action  => 一律保存为 null
 - `last_worker_activity_at=now`
 - `updated_at=now`
 
-如果请求中显式提供了 `worker_status`，handler 会同步 public session 和 primary thread 状态：
+如果请求中显式提供了 `worker_status`，service 在事务中按 primary thread 当前状态判断是否需要同步：
 
-| `worker_status` | public `sessions.status` / primary thread status |
+| `worker_status` | primary thread status（Session 另行聚合） |
 |---|---|
 | `running` | `running` |
 | `idle` | `idle` |
 | `requires_action` | `idle` |
 
-同步发生在 worker state DB 更新提交之后。`running`、`idle` 和 `requires_action` 都通过同一条 public event 管道同步：先持久化 `session.status_running` 或 `session.status_idle`，再由 session event projection 更新 public session 与 primary thread，随后广播 SSE，并且只为首次创建的事件投递 webhook。同一 public 状态下重复上报不会生成重复事件；状态发生转换后再次上报会生成新的事件。
+worker state、`session.thread_status_running` / `session.thread_status_idle`、必要的聚合 Session 状态事件、Session/primary thread projection 与公共事件时钟一起提交；提交后才通知 SSE 和投递现有 webhook。SSE 从数据库有序补读完整事件，刷新历史读取相同记录。显式状态上报还保留原有的子线程 transcript 物化，物化失败也回滚本次 worker patch。
 
-`requires_action` 不是 public session status enum，因此 worker 状态只映射为不带 `stop_reason` 的普通 `session.status_idle`。工具阻塞语义仍由 worker state、metadata 以及工具权限路径产生的 `session.status_idle.stop_reason` 表达。
+状态去重在 Session 锁内比较 primary thread；并发的相同上报只产生一条公共状态事件。主线程首次 idle 或重复 idle 时，只要子线程仍 running，聚合 Session 就保持 running，不发送 Session idle；首次转换仍保存线程 idle 事实。所有线程状态优先级为 running > rescheduling > idle > terminated。状态实际转换后会生成新事件。该去重不代表已完成所有生命周期入口的统一仲裁。
 
-如果事件已经持久化但状态 projection 失败，PUT 返回 `500 api_error`。worker 使用相同状态重试时会命中同一个稳定事件 ID；服务端会重新执行已存在事件的 projection，但不会重复广播 SSE 或投递 webhook。Session 状态最后写入，作为 primary thread projection 已完成的标记，避免部分成功让后续重试被提前跳过。
+`requires_action` 映射为 primary 的 `session.thread_status_idle`。聚合 Session idle 时，从 source Code Session 的待确认权限记录与本次请求合并 `requires_action.event_ids`；有子线程运行则不发 Session idle。单独 PUT 的 details 不提供可验证的 public event ID，没有权限记录时仍使用默认 `end_turn`，这部分尚未完整对齐。新线程事件从对应快照补 `agent_name`，重试保留原字段。
+
+事件、projection 或 worker patch 写入失败时，PUT 返回 `500 api_error`，数据库保留本次调用前的记录和处理水位。成功后重复上报同一状态不推进公共事件时钟，也不重放旧状态；私有连接/activity 字段仍按原接口合同更新。请求未携带 turn ID 或状态命令 ID，同一 epoch 内跨状态的迟到请求仍需后续 turn 合同解决。
 
 如果请求没有显式 `worker_status`，不会触发 public session/thread 状态同步。details-only update 会保留当前 public status。
 
@@ -294,11 +301,12 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 | body 超过 `maxIngressBodySize` | `413 invalid_request_error` |
 | body 非 JSON object、缺 `worker_epoch`、字段类型非法 | `400 invalid_request_error` |
 | `worker_epoch` 过期或不匹配 | `409 conflict_error`，message 为 `Worker epoch mismatch` |
+| Session 已归档 | `409 conflict_error` |
 | DB 更新或 public status 同步异常 | `500 api_error` |
 
 ## 7. 与其它 Worker Endpoint 的边界
 
-`PUT /worker` 只持久化 worker state，不合成 session events，不写 webhook jobs，也不处理 outbound delivery ACK。
+`PUT /worker` 将 worker state 与必要的公共状态事件一起提交，并在提交后通知既有事件分发路径；不处理 delivery ACK，也不把 worker 的 idle 上报视为输入已应用或模型请求结束的事实。
 
 相关但独立的接口：
 
@@ -320,16 +328,18 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 - `requires_action` 保存 details 和 `external_metadata.pending_action`。
 - `running` / `idle` 清空 `requires_action_details`。
 - 当前 status 为 `running` 时，details-only PUT 不保存 details，且 public session/thread 保持 `running`。
-- `worker_status=running` 持久化一个 `session.status_running`，并通过该事件同步 public session/thread 为 `running`。
+- `worker_status=running` 持久化线程 running 事实，按需产生聚合 Session running；事件与投影原子提交。
 - 同一 running 状态的重复 PUT 不重复生成事件；经过 idle 后的新一轮 running 会生成新事件。
-- `worker_status=idle` 或 `requires_action` 同步 public session/thread 为 `idle`。
+- `worker_status=idle` 或 `requires_action` 将 primary thread 转为 idle；Session 状态根据全部线程聚合，待确认请求不会被其他线程的 end_turn 覆盖。
 - GET `/worker` 用最小 response 读回 PUT 后的 non-empty `external_metadata`。
 - GET `/worker` metadata 为空时返回 `{ "worker": {} }`，且不刷新 connected/activity。
 - 缺失或非法 `worker_epoch`、非法 `worker_status`、非 object metadata/details 返回 400。
 
+新增 `tests/session_event_worker_state_test.go` 覆盖公共写入失败回滚完整私有快照、私有 metadata 写入失败、details 与大整数 metadata patch、重复/并发状态去重，以及子线程 running 时重复主线程 idle。`tests/session_event_consistency_test.go` 在持有 Session 锁的竞态窗口切换 epoch，验证旧 PUT 不能更新私有状态、metadata 或公共事件。
+
 推荐验证命令：
 
 ```bash
-go test ./tests -run TestCodeSessionWorker -count=1
+go test ./tests -run 'TestCodeSessionWorker|TestWorkerStateCommits|TestWorkerStatusSerializes|TestWorkerEpochSwitch' -count=1
 go test ./internal/codesessions ./internal/db -count=1
 ```

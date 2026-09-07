@@ -43,10 +43,13 @@ func (sessionEventDelivery) implStreamDelivery() {}
 func (streamResetDelivery) implStreamDelivery()  {}
 
 type streamConnection struct {
-	threadID         string
-	primaryThread    bool
-	streamDeltaTypes map[string]struct{}
-	activePreviewIDs map[string]string
+	threadID           string
+	primaryThread      bool
+	streamDeltaTypes   map[string]struct{}
+	activePreviewIDs   map[string]string
+	closedPreviewIDs   map[string]struct{}
+	previewsTerminated bool
+	activeRequestID    string
 }
 
 func newStreamHub() *streamHub {
@@ -120,6 +123,7 @@ func newStreamConnection(threadID string, primaryThread bool, streamDeltaTypes m
 		primaryThread:    primaryThread,
 		streamDeltaTypes: streamDeltaTypes,
 		activePreviewIDs: make(map[string]string),
+		closedPreviewIDs: make(map[string]struct{}),
 	}
 }
 
@@ -127,6 +131,7 @@ func (c *streamConnection) event(delivery streamDelivery) (sessionStreamEvent, b
 	switch delivery := delivery.(type) {
 	case streamResetDelivery:
 		clear(c.activePreviewIDs)
+		c.activeRequestID = ""
 		return sessionStreamEvent{}, false
 	case sessionEventDelivery:
 		return delivery.event, c.accepts(delivery.event)
@@ -135,6 +140,9 @@ func (c *streamConnection) event(delivery streamDelivery) (sessionStreamEvent, b
 }
 
 func (c *streamConnection) accepts(event sessionStreamEvent) bool {
+	if maevents.IsPublicSessionHistoryEvent(event.EventType) {
+		c.observePreviewEnd(event)
+	}
 	if !c.matches(event) {
 		return false
 	}
@@ -142,7 +150,13 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		delete(c.activePreviewIDs, event.ExternalID)
 		return true
 	}
-	if !maevents.IsStreamDelta(event.EventType) || len(c.streamDeltaTypes) == 0 {
+	if !maevents.IsStreamDelta(event.EventType) {
+		return false
+	}
+	if c.activeRequestID == "" || previewModelRequestStartID(event) != c.activeRequestID {
+		return false
+	}
+	if len(c.streamDeltaTypes) == 0 {
 		return false
 	}
 	previewType, previewID := streamPreviewTarget(event)
@@ -150,6 +164,9 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	if event.EventType == previewEventStart {
+		if _, closed := c.closedPreviewIDs[previewID]; closed || c.previewsTerminated {
+			return false
+		}
 		if !c.acceptsPreviewType(previewType) {
 			return false
 		}
@@ -161,6 +178,69 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 	}
 	activeType, active := c.activePreviewIDs[previewID]
 	return active && activeType != "agent.thinking"
+}
+
+// Only requests observed after this live connection's watermark may preview.
+// The private request link rejects unseen late starts after an end or reconnect.
+func (c *streamConnection) observePreviewEnd(event sessionStreamEvent) {
+	if c.matches(event) {
+		switch event.EventType {
+		case "span.model_request_start":
+			c.closePreviews()
+			c.activeRequestID = event.ExternalID
+			return
+		case "span.model_request_end":
+			var end struct {
+				StartID string `json:"model_request_start_id"`
+			}
+			if json.Unmarshal(event.Payload, &end) != nil || end.StartID != c.activeRequestID {
+				return
+			}
+			c.closePreviews()
+			c.activeRequestID = ""
+			return
+		}
+	}
+	terminal := false
+	if status, ok := maevents.SessionStatus(event.EventType); ok && status == "terminated" {
+		terminal = true
+	}
+	if status, ok := maevents.ThreadStatus(event.EventType); ok && status == "terminated" {
+		var subject struct {
+			ThreadID string `json:"session_thread_id"`
+		}
+		if err := json.Unmarshal(event.Payload, &subject); err == nil && subject.ThreadID == c.threadID {
+			terminal = true
+		}
+	}
+	if terminal {
+		c.previewsTerminated = true
+	}
+	if !terminal {
+		return
+	}
+	c.closePreviews()
+	c.activeRequestID = ""
+}
+
+func (c *streamConnection) closePreviews() {
+	for id := range c.activePreviewIDs {
+		c.closedPreviewIDs[id] = struct{}{}
+	}
+	clear(c.activePreviewIDs)
+}
+
+func previewModelRequestStartID(event sessionStreamEvent) string {
+	if event.ModelRequestStartID != "" {
+		return event.ModelRequestStartID
+	}
+	var payload struct {
+		StartID string `json:"model_request_start_id"`
+	}
+	if json.Unmarshal(event.Payload, &payload) != nil {
+		return ""
+	}
+	return payload.StartID
 }
 
 func (c *streamConnection) matches(event sessionStreamEvent) bool {
@@ -241,12 +321,17 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 	}
 	progressCtx, cancelProgress := context.WithTimeout(r.Context(), 10*time.Second)
 	cursor, err := h.db.SessionEventWatermark(progressCtx, session.WorkspaceUUID, sessionID)
+	var previewsTerminated bool
+	if err == nil {
+		previewsTerminated, err = h.sessionPreviewTerminated(progressCtx, session.WorkspaceUUID, sessionID, subscribeThreadID)
+	}
 	cancelProgress()
 	if err != nil {
 		h.errorAdapter.Write(w, r, internalError("Could not read event progress", err))
 		return
 	}
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
+	connection.previewsTerminated = previewsTerminated
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -283,6 +368,20 @@ func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) 
 	} else if event.EventType == previewEventStart {
 		if eventType, eventID := streamPreviewTarget(event); eventType == "agent.thinking" {
 			payload = eventStartPayload(previewBlock{eventID: eventID, eventType: eventType})
+		}
+	}
+	if maevents.IsStreamDelta(event.EventType) {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(payload, &fields); err != nil {
+			return err
+		}
+		if _, linked := fields["model_request_start_id"]; linked {
+			delete(fields, "model_request_start_id")
+			var err error
+			payload, err = json.Marshal(fields)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if err := setStreamWriteDeadline(w); err != nil {

@@ -594,6 +594,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, *pgxpool.Pool, confi
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `delete from filestore_filesystems where external_id = $1`, filesystemID)
+		_, _ = pool.Exec(ctx, `delete from code_session_worker_event_receipts where code_session_uuid in (select uuid from code_sessions where external_id = $1)`, codeSessionID)
 		_, _ = pool.Exec(ctx, `delete from code_sessions where external_id = $1`, codeSessionID)
 		_, _ = pool.Exec(ctx, `delete from sessions where external_id = $1`, publicSessionID)
 		_, _ = pool.Exec(ctx, `delete from api_keys where key_hash = $1`, auth.HashAPIKey(workspaceAPIKey))

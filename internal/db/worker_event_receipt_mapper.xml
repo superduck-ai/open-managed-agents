@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="WorkerEventReceiptMapper">
+    <select id="Find" result="optional" resultType="WorkerEventReceipt">
+        SELECT event_external_id, scope, model_request_id, payload_hash, block_index
+        FROM code_session_worker_event_receipts
+        WHERE workspace_uuid = #{workspaceUUID} AND code_session_uuid = #{codeSessionUUID}
+          AND worker_epoch = #{epoch} AND event_external_id = #{eventID}
+    </select>
+    <insert id="Insert" result="rows">
+        INSERT INTO code_session_worker_event_receipts
+            (workspace_uuid, code_session_uuid, worker_epoch, event_external_id, scope, model_request_id, payload_hash, block_index)
+        VALUES (#{workspaceUUID}, #{codeSessionUUID}, #{epoch}, #{receipt.EventID}, #{receipt.Scope}, #{receipt.RequestID}, #{receipt.Hash,sensitive=true}, #{receipt.BlockIndex})
+    </insert>
+    <delete id="DeleteBySession" result="rows">
+        DELETE FROM code_session_worker_event_receipts
+        WHERE workspace_uuid = #{workspaceUUID} AND code_session_uuid IN (
+            SELECT uuid FROM code_sessions WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
+        )
+    </delete>
+    <select id="LatestBlockIndices" resultType="WorkerRequestBlockIndex">
+        WITH ranked AS (
+            SELECT model_request_id, block_index,
+                   ROW_NUMBER() OVER (PARTITION BY model_request_id ORDER BY id DESC) AS position
+            FROM code_session_worker_event_receipts
+            WHERE workspace_uuid = #{workspaceUUID} AND code_session_uuid = #{codeSessionUUID}
+              AND worker_epoch = #{epoch} AND block_index IS NOT NULL
+              AND model_request_id IN
+              <foreach collection="requestIDs" item="requestID" open="(" separator="," close=")">#{requestID}</foreach>
+        )
+        SELECT model_request_id, block_index FROM ranked WHERE position = 1
+    </select>
+</mapper>

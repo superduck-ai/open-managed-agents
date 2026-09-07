@@ -39,7 +39,6 @@ import {
   type SessionApiResponse,
   type SessionDetailDeltaFrames,
   type SessionDetailEventCache,
-  type SessionEventCachePatch,
   type SessionFileResourceFormValue,
   type SessionResourceApiResponse,
   type SessionThreadApiResponse,
@@ -630,7 +629,7 @@ export async function listAllSessionThreads(sessionId: string, workspaceId: stri
 export function listSessionEvents(
   sessionId: string,
   workspaceId: string,
-  order: 'asc' | 'desc' = 'desc',
+  order: 'asc' | 'desc' = 'asc',
   limit = 50,
   page?: PageCursor,
   signal?: AbortSignal,
@@ -679,10 +678,23 @@ export async function fetchSessionEventsPage({
     throw new Error(`Could not list session events (${response.status})`);
   }
   const payload = (await response.json()) as Partial<PageResponse<QuickstartSessionEvent>>;
+  if (
+    !Array.isArray(payload.data) ||
+    payload.data.some(
+      (event) =>
+        !event ||
+        typeof event !== 'object' ||
+        !sessionStableEventId(event) ||
+        typeof event.type !== 'string' ||
+        !event.type ||
+        (event.processed_at != null && typeof event.processed_at !== 'string'),
+    ) ||
+    (payload.next_page != null && typeof payload.next_page !== 'string')
+  ) {
+    throw new Error('Invalid session event history page');
+  }
   return {
-    data: Array.isArray(payload.data)
-      ? payload.data.map((event) => sessionEventWithResponseThread(event, threadId))
-      : [],
+    data: payload.data.map((event) => sessionEventWithResponseThread(event, threadId)),
     next_page: typeof payload.next_page === 'string' ? payload.next_page : null,
   };
 }
@@ -935,7 +947,7 @@ export async function streamSessionEvents({
   threadId?: string;
   workspaceId: string;
   signal: AbortSignal;
-  onOpen?: () => void;
+  onOpen?: () => void | Promise<void>;
   onEvent: (event: QuickstartSessionEvent) => void;
 }) {
   const headers = new Headers({ Accept: 'text/event-stream' });
@@ -949,36 +961,40 @@ export async function streamSessionEvents({
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/stream?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?${params.toString()}`;
   const streamSignal = sessionLinkedAbortSignal(signal, SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS);
-  const response = await fetch(path, {
-    credentials: 'include',
-    headers,
-    signal: streamSignal.signal,
-  });
-  if (!response.ok || !response.body) {
-    streamSignal.dispose();
-    throw new SessionStreamError(response.status);
-  }
-  onOpen?.();
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   try {
-    streamSignal.touch();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-      streamSignal.touch();
-      buffer += decoder.decode(value, { stream: true });
-      const parsed = consumeSseBuffer<QuickstartSessionEvent>(buffer);
-      buffer = parsed.remaining;
-      parsed.events.forEach((event) => onEvent(sessionEventWithResponseThread(event.data, threadId)));
+    const response = await fetch(path, {
+      credentials: 'include',
+      headers,
+      signal: streamSignal.signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new SessionStreamError(response.status);
     }
-    buffer += decoder.decode();
-    consumeSseBuffer<QuickstartSessionEvent>(`${buffer}\n\n`).events.forEach((event) =>
-      onEvent(sessionEventWithResponseThread(event.data, threadId)),
-    );
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      await onOpen?.();
+      streamSignal.touch();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+        streamSignal.touch();
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = consumeSseBuffer<QuickstartSessionEvent>(buffer);
+        buffer = parsed.remaining;
+        parsed.events.forEach((event) => onEvent(sessionEventWithResponseThread(event.data, threadId)));
+      }
+      buffer += decoder.decode();
+      consumeSseBuffer<QuickstartSessionEvent>(`${buffer}\n\n`).events.forEach((event) =>
+        onEvent(sessionEventWithResponseThread(event.data, threadId)),
+      );
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
   } finally {
     streamSignal.dispose();
   }
@@ -1025,9 +1041,6 @@ export function sessionLinkedAbortSignal(parent: AbortSignal, idleTimeoutMs: num
 export function emptySessionDetailEventCache(): SessionDetailEventCache {
   return {
     events: [],
-    syncedThrough: null,
-    historyComplete: false,
-    sawTerminated: false,
   };
 }
 
@@ -1042,7 +1055,6 @@ export function sessionDetailDeltaFramesKey(workspaceId: string, sessionId: stri
 export function mergeSessionEventCache(
   cache: SessionDetailEventCache | undefined,
   incoming: QuickstartSessionEvent[],
-  patch: SessionEventCachePatch = {},
 ): SessionDetailEventCache {
   const current = cache ?? emptySessionDetailEventCache();
   const indexById = new Map<string, number>();
@@ -1054,14 +1066,10 @@ export function mergeSessionEventCache(
   });
 
   let nextEvents: QuickstartSessionEvent[] | null = null;
-  let sawTerminated = current.sawTerminated || patch.sawTerminated === true;
   for (const event of incoming) {
     const id = sessionStableEventId(event);
     if (!id) {
       continue;
-    }
-    if (sessionEventType(event) === 'session.status_terminated') {
-      sawTerminated = true;
     }
     const existingIndex = indexById.get(id);
     if (existingIndex === undefined) {
@@ -1078,22 +1086,36 @@ export function mergeSessionEventCache(
     }
   }
 
-  const syncedThrough = patch.syncedThrough !== undefined ? patch.syncedThrough : current.syncedThrough;
-  const historyComplete = patch.historyComplete !== undefined ? patch.historyComplete : current.historyComplete;
-  if (
-    nextEvents === null &&
-    syncedThrough === current.syncedThrough &&
-    historyComplete === current.historyComplete &&
-    sawTerminated === current.sawTerminated
-  ) {
+  if (nextEvents === null) {
     return current;
   }
   return {
-    events: nextEvents ?? current.events,
-    syncedThrough,
-    historyComplete,
-    sawTerminated,
+    ...current,
+    events: nextEvents.sort(compareSessionEvents),
   };
+}
+
+// Compare UTC instants at microsecond precision; Date.parse alone loses the
+// ordering of adjacent events produced in the same millisecond.
+function sessionEventTimeKey(value: string) {
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return '';
+  const fraction = value.match(/\.(\d+)/)?.[1] ?? '';
+  return new Date(ms).toISOString().slice(0, 19) + '.' + fraction.padEnd(6, '0').slice(0, 6) + 'Z';
+}
+
+export function compareSessionEvents(a: QuickstartSessionEvent, b: QuickstartSessionEvent) {
+  const aProcessed = sessionNullableProcessedAt(a);
+  const bProcessed = sessionNullableProcessedAt(b);
+  const aPending = a.processed_at === null && a.is_streaming !== true;
+  const bPending = b.processed_at === null && b.is_streaming !== true;
+  if (aPending !== bPending) return aPending ? 1 : -1;
+  const aTime = sessionEventTimeKey(aProcessed ?? String(a.created_at ?? ''));
+  const bTime = sessionEventTimeKey(bProcessed ?? String(b.created_at ?? ''));
+  if (aTime !== bTime) return aTime < bTime ? -1 : 1;
+  const aId = sessionStableEventId(a) ?? '';
+  const bId = sessionStableEventId(b) ?? '';
+  return aId < bId ? -1 : aId > bId ? 1 : 0;
 }
 
 export function sessionStableEventId(event: QuickstartSessionEvent) {
@@ -1122,34 +1144,33 @@ export async function syncSessionEventHistory({
   workspaceId,
   threadId = '',
   signal,
-  fromStart = false,
-  force = false,
 }: {
   queryClient: QueryClient;
   sessionId: string;
   workspaceId: string;
   threadId?: string;
   signal?: AbortSignal;
-  fromStart?: boolean;
-  force?: boolean;
 }) {
+  if (signal?.aborted) throw signal.reason;
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
-  const current = queryClient.getQueryData<SessionDetailEventCache>(cacheKey);
-  if (!fromStart && !force && current?.historyComplete) {
-    return current;
-  }
-  const initialPage = fromStart ? null : (current?.syncedThrough ?? null);
-  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}:${fromStart ? 'start' : force ? 'force' : (initialPage ?? 'tail')}`;
-  return sessionDetailSingleFlight(requestKey, async () => {
+  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}`;
+  // A read after SSE opens must start a fresh snapshot, not join a
+  // pre-connection snapshot. Wait so older pages cannot restore rows.
+  const previous = sessionDetailRequestInFlight.get(requestKey);
+  if (previous) await waitForSessionHistoryRequest(previous, signal);
+  if (signal?.aborted) throw signal.reason;
+  const request = sessionDetailSingleFlight(requestKey, async () => {
     if (signal?.aborted) {
       throw signal.reason;
     }
-    if (fromStart) {
-      queryClient.setQueryData(cacheKey, emptySessionDetailEventCache());
-      queryClient.setQueryData(sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId), {});
-    }
-    let page = initialPage;
-    let sawTerminated = false;
+    let page: PageCursor = null;
+    const baseline = new Map(
+      queryClient
+        .getQueryData<SessionDetailEventCache>(cacheKey)
+        ?.events.filter((event) => sessionNullableProcessedAt(event) !== null)
+        .map((event) => [sessionStableEventId(event), JSON.stringify(event)]),
+    );
+    const snapshot = new Map<string, QuickstartSessionEvent>();
     do {
       if (signal?.aborted) {
         throw signal.reason;
@@ -1161,34 +1182,54 @@ export async function syncSessionEventHistory({
         order: 'asc',
         limit: SESSION_DETAIL_EVENT_PAGE_LIMIT,
         page,
+        signal,
       });
-      const nextPage = response.next_page ?? null;
-      sawTerminated =
-        sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
-      const replacedPreviewIds: string[] = [];
-      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
-        let mergedCache = cache;
-        const remainingEvents = response.data.filter((event) => {
-          const previewId = sessionStreamPreviewIdForFinalEvent(mergedCache, event);
-          if (!previewId) return true;
-          replacedPreviewIds.push(previewId);
-          mergedCache = sessionEventCacheReplacingId(mergedCache, previewId, event);
-          return false;
-        });
-        return mergeSessionEventCache(
-          mergedCache,
-          remainingEvents,
-          nextPage
-            ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
-            : { historyComplete: true, sawTerminated },
-        );
-      });
-      replacedPreviewIds.forEach((previewId) =>
-        removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, previewId),
-      );
-      page = nextPage;
+      response.data.forEach((event) => snapshot.set(sessionStableEventId(event)!, event));
+      page = response.next_page ?? null;
     } while (page && !signal?.aborted);
+    if (signal?.aborted) throw signal.reason;
+    const replacedPreviewIds: string[] = [];
+    queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
+      const current = cache ?? emptySessionDetailEventCache();
+      const protectedIds = new Set<string>();
+      const events = current.events.filter((event) => {
+        const id = sessionStableEventId(event)!;
+        if (sessionNullableProcessedAt(event) === null) return true;
+        const incoming = snapshot.get(id);
+        if (baseline.get(id) === JSON.stringify(event) && (!incoming || sessionNullableProcessedAt(incoming) !== null))
+          return false;
+        protectedIds.add(id);
+        return true;
+      });
+      const incoming = [...snapshot.values()].filter((event) => !protectedIds.has(sessionStableEventId(event)!));
+      for (const event of incoming) {
+        const previewId = sessionStreamPreviewIdForFinalEvent(current, event);
+        if (previewId) replacedPreviewIds.push(previewId);
+      }
+      return mergeSessionEventCache({ ...current, events }, incoming);
+    });
+    replacedPreviewIds.forEach((previewId) =>
+      removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, previewId),
+    );
     return queryClient.getQueryData<SessionDetailEventCache>(cacheKey) ?? emptySessionDetailEventCache();
+  });
+  await waitForSessionHistoryRequest(request, signal);
+  return request;
+}
+
+function waitForSessionHistoryRequest(previous: Promise<unknown>, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const abort = () => reject(signal?.reason);
+    signal?.addEventListener('abort', abort, { once: true });
+    const finished = () => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    };
+    previous.then(finished, finished);
   });
 }
 
@@ -1198,26 +1239,64 @@ export function mergeSessionStreamFrame(
   sessionId: string,
   threadId: string,
   event: QuickstartSessionEvent,
+  primaryThreadId = '',
 ) {
   const eventType = sessionEventType(event);
   if (eventType === 'event_start' || eventType === 'event_delta') {
-    mergeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, event);
+    mergeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, event, primaryThreadId);
     return;
   }
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
   let replacedPreviewId: string | null = null;
   queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
     replacedPreviewId = sessionStreamPreviewIdForFinalEvent(cache, event);
-    return replacedPreviewId
-      ? sessionEventCacheReplacingId(cache, replacedPreviewId, event)
-      : mergeSessionEventCache(cache, [event]);
+    return mergeSessionEventCache(cache, [event]);
   });
   if (replacedPreviewId) {
     removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, replacedPreviewId);
   }
-  if (eventType.endsWith('status_terminated')) {
-    cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
+  if (eventType === 'span.model_request_start' || eventType === 'span.model_request_end') {
+    mergeSessionRequestBoundary(queryClient, workspaceId, sessionId, threadId, event);
+  } else if (eventType === 'session.status_terminated' || eventType === 'session.deleted') {
+    const prefix = sessionDetailEventCacheKey(workspaceId, sessionId).slice(0, 4);
+    for (const [key] of queryClient.getQueriesData({ queryKey: prefix })) {
+      if (typeof key[4] === 'string')
+        cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, key[4], undefined, 'close');
+    }
+  } else if (
+    eventType === 'session.thread_status_terminated' &&
+    typeof event.session_thread_id === 'string' &&
+    event.session_thread_id
+  ) {
+    cleanupIncompleteSessionStreamEvents(
+      queryClient,
+      workspaceId,
+      sessionId,
+      event.session_thread_id,
+      undefined,
+      'close',
+    );
+    if (event.session_thread_id === primaryThreadId)
+      cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '', undefined, 'close');
   }
+}
+
+function mergeSessionRequestBoundary(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId: string,
+  event: QuickstartSessionEvent,
+) {
+  const key = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
+  const current = queryClient.getQueryData<SessionDetailEventCache>(key)?.activeModelRequestId;
+  const start = sessionEventType(event) === 'span.model_request_start';
+  if (!start && current && event.model_request_start_id !== current) return;
+  cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, undefined, 'close');
+  queryClient.setQueryData<SessionDetailEventCache>(key, (cache) => ({
+    ...(cache ?? emptySessionDetailEventCache()),
+    activeModelRequestId: start ? (sessionStableEventId(event) ?? undefined) : undefined,
+  }));
 }
 
 function sessionStreamPreviewIdForFinalEvent(
@@ -1235,60 +1314,9 @@ function sessionStreamPreviewIdForFinalEvent(
     return null;
   }
 
-  const candidates = cache.events.filter((event) => {
-    const id = sessionStableEventId(event);
-    return (
-      id !== null &&
-      id !== incomingId &&
-      sessionEventType(event) === incomingType &&
-      sessionNullableProcessedAt(event) === null &&
-      event.is_streaming === true
-    );
-  });
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  const incomingCreatedAt = sessionEventCreatedAtMs(incoming);
-  const timestampMatches =
-    incomingCreatedAt === null
-      ? []
-      : candidates.filter((candidate) => sessionEventCreatedAtMs(candidate) === incomingCreatedAt);
-  const matchedCandidate =
-    timestampMatches.length === 1 ? timestampMatches[0] : candidates.length === 1 ? candidates[0] : null;
-  return matchedCandidate ? sessionStableEventId(matchedCandidate) : null;
-}
-
-function sessionEventCreatedAtMs(event: QuickstartSessionEvent) {
-  if (typeof event.created_at !== 'string' || !event.created_at) {
-    return null;
-  }
-  const createdAtMs = Date.parse(event.created_at);
-  return Number.isFinite(createdAtMs) ? createdAtMs : null;
-}
-
-function sessionEventCacheReplacingId(
-  cache: SessionDetailEventCache | undefined,
-  previewId: string,
-  finalEvent: QuickstartSessionEvent,
-) {
-  if (!cache) {
-    return mergeSessionEventCache(cache, [finalEvent]);
-  }
-  const finalId = sessionStableEventId(finalEvent);
-  const events: QuickstartSessionEvent[] = [];
-  cache.events.forEach((event) => {
-    const eventId = sessionStableEventId(event);
-    if (eventId === previewId) {
-      events.push(finalEvent);
-      return;
-    }
-    if (finalId && eventId === finalId) {
-      return;
-    }
-    events.push(event);
-  });
-  return { ...cache, events };
+  return cache.events.some((event) => sessionStableEventId(event) === incomingId && event.is_streaming === true)
+    ? incomingId
+    : null;
 }
 
 function removeSessionDeltaFrame(
@@ -1313,7 +1341,7 @@ export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEve
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const type = sessionEventType(events[index]);
     if (threadId) {
-      if (type === 'session.thread_status_idle' || type === 'session.thread_status_terminated') {
+      if (type === 'session.thread_status_terminated') {
         return true;
       }
       if (type === 'session.thread_status_running' || type === 'session.thread_status_rescheduled') {
@@ -1351,6 +1379,7 @@ export function mergeSessionDeltaFrame(
   sessionId: string,
   threadId: string,
   event: QuickstartSessionEvent,
+  primaryThreadId = '',
 ) {
   const deltaKey = sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId);
   if (sessionEventType(event) === 'event_start') {
@@ -1359,6 +1388,15 @@ export function mergeSessionDeltaFrame(
     if (!id) {
       return;
     }
+    const stored = queryClient.getQueryData<SessionDetailEventCache>(
+      sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
+    );
+    if (
+      stored?.closedPreviewIds?.has(id) ||
+      sessionPreviewScopeIsTerminated(queryClient, workspaceId, sessionId, threadId, primaryThreadId) ||
+      stored?.events.some((event) => sessionStableEventId(event) === id && sessionNullableProcessedAt(event) !== null)
+    )
+      return;
     queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => ({
       ...(cache ?? {}),
       [id]: { message: started, frames: [event] },
@@ -1389,6 +1427,28 @@ export function mergeSessionDeltaFrame(
   });
 }
 
+function sessionPreviewScopeIsTerminated(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId: string,
+  primaryThreadId: string,
+) {
+  const prefix = sessionDetailEventCacheKey(workspaceId, sessionId).slice(0, 4);
+  return queryClient.getQueriesData<SessionDetailEventCache>({ queryKey: prefix }).some(([, cache]) =>
+    cache?.events.some((event) => {
+      const type = sessionEventType(event);
+      return (
+        type === 'session.status_terminated' ||
+        type === 'session.deleted' ||
+        (type === 'session.thread_status_terminated' &&
+          event.session_thread_id === (threadId || primaryThreadId) &&
+          Boolean(event.session_thread_id))
+      );
+    }),
+  );
+}
+
 export function sessionStreamingMessageFromStart(
   event: QuickstartSessionEvent,
   threadId: string,
@@ -1401,7 +1461,8 @@ export function sessionStreamingMessageFromStart(
       ...started,
       type: type === 'agent.thinking' ? 'agent.thinking' : 'agent.message',
       content,
-      created_at: started.created_at ?? event.created_at,
+      // Preview timestamps only position the temporary UI; the final replaces them.
+      created_at: started.created_at ?? event.created_at ?? new Date().toISOString(),
       processed_at: started.processed_at ?? event.processed_at,
     },
     threadId || undefined,
@@ -1436,12 +1497,15 @@ export function sessionStreamingMessageFromDelta(
   return message;
 }
 
+// A disconnected accumulator is disposable; only an explicit request/terminal
+// close seals IDs against later starts. Durable finals remain in either case.
 export function cleanupIncompleteSessionStreamEvents(
   queryClient: QueryClient,
   workspaceId: string,
   sessionId: string,
   threadId = '',
   eventIds?: ReadonlySet<string>,
+  disposition: 'discard' | 'close' = 'discard',
 ) {
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
   const removedEventIds = new Set<string>();
@@ -1460,7 +1524,10 @@ export function cleanupIncompleteSessionStreamEvents(
       if (eventId) removedEventIds.add(eventId);
       return false;
     });
-    return events.length === cache.events.length ? cache : { ...cache, events };
+    if (events.length === cache.events.length) return cache;
+    return disposition === 'close'
+      ? { ...cache, events, closedPreviewIds: new Set([...(cache.closedPreviewIds ?? []), ...removedEventIds]) }
+      : { ...cache, events };
   });
   if (!removedEventIds.size) {
     return;
@@ -1503,7 +1570,7 @@ export async function reconcileIncompleteSessionStreamEvents(
   signal?: AbortSignal,
   eventIds?: ReadonlySet<string>,
 ) {
-  await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, force: true });
+  await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal });
   if (!signal?.aborted) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, eventIds);
   }

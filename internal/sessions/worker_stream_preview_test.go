@@ -28,8 +28,8 @@ func TestWorkerPreviewConverterHandlesConcurrentBatches(t *testing.T) {
 			batch := previewTestBatch()
 			batch.CodeSessionID = fmt.Sprintf("cse-%d", index)
 			events := convertPreviewTestPayloads(converter, batch, []json.RawMessage{
-				json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
-				json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
+				json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
+				json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
 			})
 			if len(events) != 1 {
 				errs <- fmt.Errorf("batch %d produced %d preview events, want 1", index, len(events))
@@ -47,11 +47,11 @@ func TestWorkerPreviewConverterMessageStopClearsAllBlocks(t *testing.T) {
 	converter := newWorkerPreviewConverter()
 	batch := previewTestBatch()
 	events := convertPreviewTestPayloads(converter, batch, []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_stop"},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-stop"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"orphan"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_stop"},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-stop"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"orphan"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-delta"}`),
 	})
 
 	if len(events) != 2 {
@@ -147,10 +147,10 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 	converter := newWorkerPreviewConverter()
 	first := previewTestBatch()
 	firstEvents := convertPreviewTestPayloads(converter, first, []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test","content":[]}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-start","ttft_ms":5821}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-delta"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signature"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"signature-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_start","message":{"id":"msg_test","content":[]}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-start","ttft_ms":5821}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signature"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"signature-delta"}`),
 	})
 	if len(firstEvents) != 1 {
 		t.Fatalf("first preview event count = %d, want thinking start: %#v", len(firstEvents), firstEvents)
@@ -158,14 +158,14 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 
 	second := previewTestBatch()
 	secondEvents := convertPreviewTestPayloads(converter, second, []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_stop","index":0},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-stop"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_test","name":"Bash","input":{}}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"tool-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"input-json-delta"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_stop","index":1},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"tool-stop"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"","citations":null}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"page_location","cited_text":"source"}}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"citation-delta"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Hi"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-delta"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"future_event","future_field":true},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"future-event"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_stop","index":0},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-stop"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_test","name":"Bash","input":{}}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"tool-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"input-json-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_stop","index":1},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"tool-stop"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"","citations":null}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"page_location","cited_text":"source"}}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"citation-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Hi"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"future_event","future_field":true},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"future-event"}`),
 	})
 	if len(secondEvents) != 2 {
 		t.Fatalf("second preview event count = %d, want text start and delta: %#v", len(secondEvents), secondEvents)
@@ -176,8 +176,8 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 
 	last := previewTestBatch()
 	lastEvents := convertPreviewTestPayloads(converter, last, []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-delta"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_stop"},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-stop"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_stop"},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"message-stop"}`),
 	})
 	if len(lastEvents) != 0 {
 		t.Fatalf("terminal preview events = %#v, want none", lastEvents)
@@ -206,10 +206,10 @@ func TestWorkerPreviewConverterEmitsThinkingStartWithoutDeltas(t *testing.T) {
 	converter := newWorkerPreviewConverter()
 	batch := previewTestBatch()
 	events := convertPreviewTestPayloads(converter, batch, []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-one"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" user"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-two"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-one"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" user"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-two"}`),
 	})
 
 	if len(events) != 1 {
@@ -223,16 +223,16 @@ func TestWorkerPreviewConverterForwardsTextFragmentsAcrossBatches(t *testing.T) 
 	converter := newWorkerPreviewConverter()
 	first := previewTestBatch()
 	firstEvents := convertPreviewTestPayloads(converter, first, []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
 	})
 	if len(firstEvents) != 0 {
 		t.Fatalf("message_start events = %#v, want none", firstEvents)
 	}
 	second := previewTestBatch()
 	payloads := []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-one"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" world"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-two"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-one"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" world"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-two"}`),
 	}
 
 	events := convertPreviewTestPayloads(converter, second, payloads)
@@ -307,7 +307,9 @@ func TestSessionFanoutConvertsWorkerStreamOncePerInstance(t *testing.T) {
 	_, secondCh := receiver.streams.subscribe("workspace-test", "session-test")
 	_, childCh := receiver.streams.subscribe("workspace-test", "session-test")
 	first := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
+	observePreviewTestRequest(first)
 	second := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
+	observePreviewTestRequest(second)
 	child := newStreamConnection("child-thread-test", false, map[string]struct{}{"agent.message": {}})
 	primaryStreams := []struct {
 		connection *streamConnection
@@ -319,9 +321,9 @@ func TestSessionFanoutConvertsWorkerStreamOncePerInstance(t *testing.T) {
 
 	batch := previewTestBatch()
 	payloads := []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"raw-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"text-delta"}`),
 	}
 	for _, payload := range payloads {
 		batch.Payload = payload
@@ -346,22 +348,25 @@ func TestSessionFanoutConvertsWorkerStreamOncePerInstance(t *testing.T) {
 
 func TestStreamConnectionResetDropsOrphanDelta(t *testing.T) {
 	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
+	observePreviewTestRequest(connection)
 	block := previewBlock{eventID: "event-test", eventType: "agent.message"}
 	start := sessionStreamEvent{
-		ExternalID:    block.eventID,
-		PrimaryThread: true,
-		EventType:     previewEventStart,
-		Payload:       eventStartPayload(block),
+		ExternalID:          block.eventID,
+		ModelRequestStartID: managedagentsevents.ModelRequestEventID("cse_test", "msg_test", "start"),
+		PrimaryThread:       true,
+		EventType:           previewEventStart,
+		Payload:             eventStartPayload(block),
 	}
 	if _, accepted := connection.event(sessionEventDelivery{event: start}); !accepted {
 		t.Fatal("preview start was not accepted")
 	}
 	connection.event(streamResetDelivery{})
 	delta := sessionStreamEvent{
-		ExternalID:    block.eventID,
-		PrimaryThread: true,
-		EventType:     previewEventDelta,
-		Payload:       eventDeltaPayload(block.eventID, "orphan"),
+		ExternalID:          block.eventID,
+		ModelRequestStartID: managedagentsevents.ModelRequestEventID("cse_test", "msg_test", "start"),
+		PrimaryThread:       true,
+		EventType:           previewEventDelta,
+		Payload:             eventDeltaPayload(block.eventID, "orphan"),
 	}
 	if _, accepted := connection.event(sessionEventDelivery{event: delta}); accepted {
 		t.Fatal("orphan delta was accepted after reset")
@@ -491,8 +496,10 @@ func assertPreviewDelta(t *testing.T, raw json.RawMessage, eventID, text string)
 
 func TestThinkingPreviewNeverCarriesWorkerContent(t *testing.T) {
 	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.thinking": {}, "agent.message": {}})
+	observePreviewTestRequest(connection)
 	start := sessionStreamEvent{
-		ExternalID: "thinking-test", PrimaryThread: true, EventType: previewEventStart,
+		ModelRequestStartID: managedagentsevents.ModelRequestEventID("cse_test", "msg_test", "start"),
+		ExternalID:          "thinking-test", PrimaryThread: true, EventType: previewEventStart,
 		Payload: json.RawMessage(`{"type":"event_start","event":{"type":"agent.thinking","id":"thinking-test","content":"private-thinking","message":{"content":"nested-thinking"}},"extra":"extra-content"}`),
 	}
 	event, accepted := connection.event(sessionEventDelivery{event: start})
@@ -512,15 +519,133 @@ func TestThinkingPreviewNeverCarriesWorkerContent(t *testing.T) {
 			t.Fatal("thinking start exposed worker content")
 		}
 	}
-	delta := sessionStreamEvent{ExternalID: "thinking-test", PrimaryThread: true, EventType: previewEventDelta, Payload: eventDeltaPayload("thinking-test", "private delta")}
+	delta := sessionStreamEvent{ModelRequestStartID: managedagentsevents.ModelRequestEventID("cse_test", "msg_test", "start"),
+		ExternalID: "thinking-test", PrimaryThread: true, EventType: previewEventDelta, Payload: eventDeltaPayload("thinking-test", "private delta")}
 	if _, accepted := connection.event(sessionEventDelivery{event: delta}); accepted {
 		t.Fatal("thinking content delta was accepted")
 	}
-	complete := sessionStreamEvent{ExternalID: "thinking-test", PrimaryThread: true, EventType: "agent.thinking"}
+	complete := sessionStreamEvent{ModelRequestStartID: managedagentsevents.ModelRequestEventID("cse_test", "msg_test", "start"),
+		ExternalID: "thinking-test", PrimaryThread: true, EventType: "agent.thinking"}
 	if _, accepted := connection.event(sessionEventDelivery{event: complete}); !accepted {
 		t.Fatal("complete thinking progress was rejected")
 	}
 	if len(connection.activePreviewIDs) != 0 {
 		t.Fatal("complete thinking event retained preview state")
+	}
+}
+
+func TestStreamConnectionClosesUnfinishedRequestPreviews(t *testing.T) {
+	connection := newStreamConnection("primary", true, map[string]struct{}{"agent.message": {}, "agent.thinking": {}})
+	observePreviewTestRequest(connection)
+	start := func(id, kind string) sessionStreamEvent {
+		return sessionStreamEvent{ModelRequestStartID: managedagentsevents.ModelRequestEventID("cse_test", "msg_test", "start"), ExternalID: id, PrimaryThread: true, EventType: previewEventStart,
+			Payload: eventStartPayload(previewBlock{eventID: id, eventType: kind})}
+	}
+	for _, id := range []string{"unfinished", "final"} {
+		if !connection.accepts(start(id, "agent.message")) {
+			t.Fatal("start rejected")
+		}
+	}
+	if !connection.accepts(start("thinking", "agent.thinking")) {
+		t.Fatal("thinking start rejected")
+	}
+	final := sessionStreamEvent{ExternalID: "final", ThreadExternalID: new("primary"), EventType: "agent.message"}
+	if !connection.accepts(final) {
+		t.Fatal("final rejected")
+	}
+	// A different thread's end cannot close this connection's previews.
+	connection.accepts(sessionStreamEvent{ExternalID: "other-end", ThreadExternalID: new("child"), EventType: "span.model_request_end"})
+	if len(connection.activePreviewIDs) != 2 {
+		t.Fatal("another thread closed previews")
+	}
+	end := sessionStreamEvent{ExternalID: "end", ThreadExternalID: new("primary"), EventType: "span.model_request_end", Payload: json.RawMessage(`{"model_request_start_id":"` + connection.activeRequestID + `"}`)}
+	if !connection.accepts(end) || len(connection.activePreviewIDs) != 0 {
+		t.Fatal("request end did not close all unfinished previews")
+	}
+	for _, id := range []string{"unfinished", "thinking"} {
+		if connection.accepts(start(id, "agent.message")) {
+			t.Fatal("closed preview reopened")
+		}
+		if connection.accepts(sessionStreamEvent{PrimaryThread: true, EventType: previewEventDelta, Payload: eventDeltaPayload(id, "late")}) {
+			t.Fatal("late delta accepted")
+		}
+	}
+	observePreviewTestRequest(connection)
+	if !connection.accepts(final) || !connection.accepts(start("next-request", "agent.message")) {
+		t.Fatal("request end blocked complete facts or a new request")
+	}
+}
+
+func TestStreamConnectionTerminalPreviewScope(t *testing.T) {
+	for _, eventType := range []string{"session.thread_status_terminated", "session.status_terminated", "session.deleted"} {
+		for _, threadID := range []string{"primary", "child", "other"} {
+			t.Run(eventType+"/"+threadID, func(t *testing.T) {
+				connection := newStreamConnection(threadID, threadID == "primary", map[string]struct{}{"agent.message": {}})
+				observePreviewTestRequest(connection)
+				start := sessionStreamEvent{ModelRequestStartID: connection.activeRequestID, ThreadExternalID: &threadID, EventType: previewEventStart,
+					Payload: eventStartPayload(previewBlock{eventID: "preview", eventType: "agent.message"})}
+				if !connection.accepts(start) {
+					t.Fatal("start rejected")
+				}
+				control := sessionStreamEvent{ExternalID: "terminal", ThreadExternalID: new("primary"), EventType: eventType,
+					Payload: json.RawMessage(`{"session_thread_id":"child"}`)}
+				if accepted := connection.accepts(control); accepted != (threadID == "primary") {
+					t.Fatal("terminal control leaked into another thread's public stream")
+				}
+				closed := eventType != "session.thread_status_terminated" || threadID == "child"
+				if connection.previewsTerminated != closed || (len(connection.activePreviewIDs) == 0) != closed {
+					t.Fatal("terminal closed the wrong scope")
+				}
+				start.Payload = eventStartPayload(previewBlock{eventID: "new-preview", eventType: "agent.message"})
+				if connection.accepts(start) == closed {
+					t.Fatal("terminal start policy did not match scope")
+				}
+			})
+		}
+	}
+}
+
+func observePreviewTestRequest(connection *streamConnection) {
+	connection.accepts(sessionStreamEvent{ExternalID: managedagentsevents.ModelRequestEventID("cse_test", "msg_test", "start"), ThreadExternalID: &connection.threadID, EventType: "span.model_request_start"})
+}
+
+func TestStreamConnectionRejectsUnseenLateRequestPreview(t *testing.T) {
+	connection := newStreamConnection("primary", true, map[string]struct{}{"agent.message": {}})
+	preview := func(request, id string) sessionStreamEvent {
+		return sessionStreamEvent{PrimaryThread: true, ModelRequestStartID: request, EventType: previewEventStart, Payload: eventStartPayload(previewBlock{eventID: id, eventType: "agent.message"})}
+	}
+	if connection.accepts(preview("request-a", "unseen")) {
+		t.Fatal("preview without an observed request was accepted")
+	}
+	connection.accepts(sessionStreamEvent{PrimaryThread: true, ExternalID: "request-a", EventType: "span.model_request_start"})
+	connection.accepts(sessionStreamEvent{PrimaryThread: true, ExternalID: "end-a", EventType: "span.model_request_end", Payload: json.RawMessage(`{"model_request_start_id":"request-a"}`)})
+	if connection.accepts(preview("request-a", "unseen")) {
+		t.Fatal("first late start reopened an ended request")
+	}
+	connection.accepts(sessionStreamEvent{PrimaryThread: true, ExternalID: "request-b", EventType: "span.model_request_start"})
+	if connection.accepts(preview("request-a", "another-unseen")) {
+		t.Fatal("old request preview entered the new request")
+	}
+	if !connection.accepts(preview("request-b", "current")) {
+		t.Fatal("current request preview rejected")
+	}
+	connection.accepts(sessionStreamEvent{PrimaryThread: true, ExternalID: "late-end-a", EventType: "span.model_request_end", Payload: json.RawMessage(`{"model_request_start_id":"request-a"}`)})
+	if len(connection.activePreviewIDs) != 1 {
+		t.Fatal("old end closed the current request")
+	}
+	restarted := newStreamConnection("primary", true, map[string]struct{}{"agent.message": {}})
+	if restarted.accepts(preview("request-a", "unseen-on-reconnect")) {
+		t.Fatal("reconnect replayed an old preview")
+	}
+}
+
+func TestPublicRequestBoundaryHidesWorkerRecoveryFields(t *testing.T) {
+	raw := json.RawMessage(`{"id":"end","type":"span.model_request_end","model_request_start_id":"start","is_error":true,"_worker_model_request_id":"internal-id","_worker_epoch":7,"_worker_source_event_id":"internal-source"}`)
+	public := eventPayloadForResponse(raw, time.Now(), time.Now(), "primary")
+	if strings.Contains(string(public), "_worker_") || strings.Contains(string(public), "internal-") {
+		t.Fatalf("public boundary leaked recovery fields: %s", public)
+	}
+	if !strings.Contains(string(public), `"model_request_start_id":"start"`) {
+		t.Fatal("public request association was removed")
 	}
 }

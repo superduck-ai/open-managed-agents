@@ -16,15 +16,16 @@ type sessionEventsFanout struct {
 }
 
 type sessionStreamEvent struct {
-	ExternalID        string          `json:"external_id"`
-	WorkspaceUUID     string          `json:"workspace_uuid"`
-	SessionExternalID string          `json:"session_id"`
-	ThreadExternalID  *string         `json:"thread_id,omitempty"`
-	PrimaryThread     bool            `json:"primary_thread,omitempty"`
-	EventType         string          `json:"event_type"`
-	Payload           json.RawMessage `json:"payload"`
-	ProcessedAt       time.Time       `json:"processed_at,omitempty"`
-	CreatedAt         time.Time       `json:"created_at,omitempty"`
+	ExternalID          string          `json:"external_id"`
+	WorkspaceUUID       string          `json:"workspace_uuid"`
+	SessionExternalID   string          `json:"session_id"`
+	ThreadExternalID    *string         `json:"thread_id,omitempty"`
+	PrimaryThread       bool            `json:"primary_thread,omitempty"`
+	EventType           string          `json:"event_type"`
+	ModelRequestStartID string          `json:"model_request_start_id,omitempty"`
+	Payload             json.RawMessage `json:"payload"`
+	ProcessedAt         time.Time       `json:"processed_at,omitempty"`
+	CreatedAt           time.Time       `json:"created_at,omitempty"`
 }
 
 type codeSessionStreamFanout struct {

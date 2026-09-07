@@ -169,6 +169,12 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt 
 		return payloadRaw
 	}
 	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)
+	for _, key := range []string{"_worker_model_request_id", "_worker_epoch", "_worker_source_event_id"} {
+		if _, exists := payload[key]; exists {
+			delete(payload, key)
+			changed = true
+		}
+	}
 	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
 		payload["session_thread_id"] = strings.TrimSpace(threadID)

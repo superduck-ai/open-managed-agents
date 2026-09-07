@@ -12,14 +12,14 @@ Session。快照之后、Code Session 创建之前发送的消息虽然已经写
 
 Send Events 与 Code Session activation 都先锁同一条 Session 行：
 
-- Send 通过 `DB.AppendSessionEvents` 锁 Session 并提交公开事件；
+- Send 通过 `Service.SendPublicSessionEvents` 复用 `ManagedAgentEventTx`，先锁 Session，再锁最新 Code Session；active 时在同一事务内写公开事件与 inbound，其他状态先保存公开事件；
 - activation 锁 Session 后读取完整公开历史，在同一事务中写 inbound 并将 Code Session 从
   `initializing` 切为 `active`。
 
 因此只可能有两种顺序：
 
 1. Send 先提交，activation 随后读取到该事件并写入 inbound；
-2. activation 先提交，Send 随后由现有 active realtime 路径投递当前 batch。
+2. activation 先提交，Send 随后读取到 active 状态，在自己的事务内保存公开事件并写入当前 batch 的 inbound。
 
 ```mermaid
 sequenceDiagram
@@ -49,8 +49,10 @@ sequenceDiagram
         Activate->>CS: initializing → active
         Activate->>Activate: COMMIT
         Send->>Session: acquire lock
+        Send->>CS: lock latest Code Session (active)
         Send->>Events: INSERT current batch
-        Send->>Inbound: active realtime delivery
+        Send->>Inbound: append current batch
+        Send->>Send: COMMIT
     end
 ```
 
@@ -71,11 +73,11 @@ sequenceDiagram
 
 ## Realtime cutover
 
-Send 提交公开事件后始终调用 `Service.QueuePublicSessionEvents`。该方法重新读取最新 Code
-Session，只有 `status == active` 时才写 inbound；不存在或仍为 `initializing` 时直接返回。
+Send 的公开写入和 active worker inbound 入队使用同一个 Yourbatis executor。普通消息、工具确认和自定义工具结果先完成转换，再按输入顺序追加 inbound；工具待确认 metadata 的清理也在此事务内。任一转换、入队或清理失败时，公开事件、outcome、处理时钟、inbound 与序号一起回滚，HTTP 不会报告发送成功。
 
-如果 activation 恰好在公开事件提交后、realtime 检查前完成，同一事件可能同时出现在
-activation 历史和 realtime 尝试中；现有 inbound idempotency key 会保留一份，不会重复投递。
+Send 和 activation 持有同一 Session 锁，交接检查不再发生在公开提交之后。现有 inbound idempotency key 仍负责历史回放和控制响应重试去重。activation 本身的历史读取顺序保持 `created_at ASC, id ASC`，本次未把启动回放协议改成公共列表的排序合同。
+
+通知 broker 和恢复 sandbox 发生在事务提交之后。通知失败不改变已接受的事实，持久 inbound 仍可由现有 worker SSE/poll 读取。提交后的通知查询复用 activation 的 queued 读取；重复通知使用原消息身份。
 
 ## 验收
 
@@ -84,3 +86,7 @@ activation 历史和 realtime 尝试中；现有 inbound idempotency key 会保�
 - activation 失败时不留下部分 inbound，也不切换为 active；
 - activation 后的新 batch 只通过 realtime 路径追加；
 - Deployment initial user messages 在 `initialize` 后按输入顺序进入 inbound。
+
+- active Send 的 inbound 写入或工具 metadata 清理失败时，公开事件、outcome、处理时钟与队列一起回滚；
+- 混合文本、工具确认、自定义工具结果的 batch 按原输入顺序进入 inbound；
+- 重试成功后 Send 响应与历史 API 的完整事件 JSON 值一致。

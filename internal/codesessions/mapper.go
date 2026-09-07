@@ -150,7 +150,8 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, false, fmt.Errorf("%w: invalid system payload: %w", ErrProtocol, err)
 		}
-		return systemPublicPayloadCandidates(codeSessionID, object, payload), true, nil
+		candidates, err := systemPublicPayloadCandidates(codeSessionID, raw, object, payload)
+		return candidates, true, err
 	case "result":
 		var payload workerResultOutputPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
@@ -216,6 +217,13 @@ func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw 
 		}
 		return internalSubagentUserPayloadCandidates(object, payload), nil
 	case "system":
+		var payload workerSystemOutputPayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, fmt.Errorf("%w: invalid system payload: %w", ErrProtocol, err)
+		}
+		if payload.Subtype == "model_request_start" || payload.Subtype == "model_request_end" {
+			return modelRequestPublicPayload(codeSessionID, raw, object, payload.Subtype)
+		}
 		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
 	default:
 		return nil, nil
@@ -278,6 +286,8 @@ func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEven
 	if payload == nil {
 		payload = map[string]any{}
 	}
+	delete(payload, "model_request_id")
+	delete(payload, "model_request_events")
 	if seedSuffix != "" {
 		delete(payload, "uuid")
 	}
@@ -393,7 +403,7 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 		durationMs = schema.DurationMs
 	}
 	duration := time.Duration(durationMs * float64(time.Millisecond))
-	if modelUsage != nil || usage != nil || duration > 0 {
+	if !schema.ModelRequestEvents && (modelUsage != nil || usage != nil || duration > 0) {
 		seed := firstNonEmpty(event.IdempotencyKey, event.PayloadHash, event.ExternalID)
 		startID := ""
 		if seed != "" {
@@ -568,12 +578,14 @@ func internalSubagentUserPayloadCandidates(object map[string]any, schema workerU
 	return []publicPayloadCandidate{{payload: payload, seedSuffix: "internal_subagent:user_message"}}
 }
 
-func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerSystemOutputPayload) []publicPayloadCandidate {
+func systemPublicPayloadCandidates(codeSessionID string, raw json.RawMessage, object map[string]any, schema workerSystemOutputPayload) ([]publicPayloadCandidate, error) {
 	switch schema.Subtype {
+	case "model_request_start", "model_request_end":
+		return modelRequestPublicPayload(codeSessionID, raw, object, schema.Subtype)
 	case "task_started":
 		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
 		if threadID == "" {
-			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
+			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
 		}
 		agentName := firstNonEmpty(schema.Description, schema.TaskType, "subagent")
 		content := claudeTaskContentFromFields(schema.Prompt, schema.Summary)
@@ -599,11 +611,11 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 			{payload: created, seedSuffix: "task_started:thread_created:" + threadID},
 			{payload: running, seedSuffix: "task_started:thread_running:" + threadID, timeOffset: time.Millisecond},
 			{payload: sent, seedSuffix: "task_started:message_sent:" + threadID, timeOffset: 2 * time.Millisecond},
-		}
+		}, nil
 	case "task_notification":
 		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
 		if threadID == "" {
-			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
+			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
 		}
 		statusEventType := "session.thread_status_idle"
 		if status := strings.ToLower(schema.Status); status == "failed" || status == "error" || status == "terminated" {
@@ -617,10 +629,49 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 			"type":   firstNonEmpty(schema.Status, "completed"),
 			"detail": schema.Summary,
 		}
-		return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + threadID}}
+		return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + threadID}}, nil
 	default:
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
+		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
 	}
+}
+
+func modelRequestPublicPayload(codeSessionID string, raw json.RawMessage, object map[string]any, subtype string) ([]publicPayloadCandidate, error) {
+	var schema workerModelRequestPayload
+	if err := json.Unmarshal(raw, &schema); err != nil || schema.RequestID == "" {
+		return nil, ErrProtocol
+	}
+	phase := "start"
+	if subtype == "model_request_end" {
+		phase = "end"
+	}
+	payload := map[string]any{
+		"type":                     "span." + subtype,
+		"id":                       maevents.ModelRequestEventID(codeSessionID, schema.RequestID, phase),
+		"_worker_model_request_id": schema.RequestID,
+	}
+	if phase == "end" {
+		if schema.IsError == nil {
+			return nil, ErrProtocol
+		}
+		payload["is_error"] = *schema.IsError
+		payload["model_request_start_id"] = maevents.ModelRequestEventID(codeSessionID, schema.RequestID, "start")
+		usage := schema.ModelUsage
+		if len(usage) == 0 || bytes.Equal(bytes.TrimSpace(usage), []byte("null")) {
+			usage = json.RawMessage(`{}`)
+		}
+		payload["model_usage"] = usage
+	} else if schema.Model != "" {
+		payload["model"] = schema.Model
+	}
+	for _, key := range []string{"owner_session_thread_id", "_owner_session_thread_id", "session_thread_id", "thread_id", "_worker_epoch", "_worker_source_event_id"} {
+		if value, ok := object[key]; ok {
+			payload[key] = value
+		}
+	}
+	if schema.ParentToolUseID != "" {
+		payload["_owner_session_thread_id"] = maevents.ClaudeTaskThreadID(codeSessionID, schema.ParentToolUseID)
+	}
+	return []publicPayloadCandidate{{payload: payload, seedSuffix: subtype}}, nil
 }
 
 func claudeTaskThreadIDFromFields(codeSessionID, toolUseID, taskID string) string {

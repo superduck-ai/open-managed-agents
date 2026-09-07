@@ -55,6 +55,21 @@ func (h *Handler) followSessionEvents(w http.ResponseWriter, r *http.Request, wo
 	}
 }
 
+func (h *Handler) sessionPreviewTerminated(ctx context.Context, workspaceUUID, sessionID, threadID string) (bool, error) {
+	session, found, err := h.db.GetSession(ctx, workspaceUUID, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, db.ErrNotFound
+	}
+	if session.Status == "terminated" {
+		return true, nil
+	}
+	thread, err := h.db.GetSessionThread(ctx, workspaceUUID, sessionID, threadID)
+	return thread.Status == "terminated", err
+}
+
 func (h *Handler) writeSessionPreview(w http.ResponseWriter, ctx context.Context, connection *streamConnection, delivery streamDelivery) error {
 	if incoming, ok := delivery.(sessionEventDelivery); ok && incoming.event.EventType == previewEventStart {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

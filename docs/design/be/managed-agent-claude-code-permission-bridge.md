@@ -99,10 +99,10 @@ Claude Code 执行工具前发出内部事件：
 `claude-api-server` 必须在 worker batch endpoint 和单事件 endpoint 中统一处理该事件：
 
 - 直接解析 `control_request`，不保存私有 outbound event log。
-- 调用统一 permission handler 计算 effective policy。
-- `can_use_tool` 是唯一 public tool-use event 生产入口；`allow` / `ask` / `deny` 都先发布同一扁平事件。
-- 对 `allow` / `deny` 再生成 inbound `control_response`，响应 UUID 由原始 `request_id` 稳定派生以保证重试幂等。
-- 对 `ask` 将后续确认所需的 provider tool id、`request_id`、`input` 和 thread 信息按 public event id 分别保存在 Code Session 私有 worker metadata，等待客户端发送确认事件。
+- 复用 `ManagedAgentEventTx`，按 Session → Code Session 加锁并复验原 worker epoch，再从锁定 Session 的 agent snapshot 计算 effective policy。
+- `can_use_tool` 是唯一 public tool-use event 生产入口；`allow` / `ask` / `deny` 都在事务内写入同一扁平事件，提交后才通知实时流。
+- 对 `allow` / `deny` 在同一事务中生成 inbound `control_response` 并推进入站序号，响应 UUID 由原始 `request_id` 稳定派生以保证重试幂等；提交后通过已有 queued inbound 通知路径唤醒 worker。
+- 对 `ask` 将后续确认所需的 provider tool id、`request_id`、`input` 和 thread 信息按 public event id 合并到 Code Session 私有 worker metadata，与公共事件及状态一起提交；不会覆盖其他待确认项或无关 metadata。
 
 ---
 
@@ -187,7 +187,7 @@ agent toolset：
 
 当 permission handler 解析为 `allow`：
 
-1. 不公开内部 `control_request`；先发布 `evaluated_permission=allow` 的扁平 canonical tool-use event。
+1. 不公开内部 `control_request`；在事务内写入 `evaluated_permission=allow` 的扁平 canonical tool-use event。
 2. 生成 inbound `control_response`：
 
 ```json
@@ -212,7 +212,7 @@ agent toolset：
 
 当 permission handler 解析为 `deny`：
 
-1. 不公开内部 `control_request`；先发布 `evaluated_permission=deny` 的扁平 canonical tool-use event。
+1. 不公开内部 `control_request`；在事务内写入 `evaluated_permission=deny` 的扁平 canonical tool-use event。
 2. 生成 inbound `control_response`，`behavior` 为 `deny`。
 3. 如果 Claude Code control protocol 需要 message 字段，使用稳定、非敏感文案，例如 `Tool is disabled by the agent permission policy.`
 4. 只持久化需要投递给 worker 的 inbound `control_response`；原始 `control_request` 不落库。
@@ -227,7 +227,7 @@ agent toolset：
    - 一次工具调用只产生一条 public tool use 事件；assistant 原始 `tool_use` block 不做 public 投影，事件统一由 `can_use_tool` 产生。
    - public event 只保留 `id`、`type`、`name`、`input`、`evaluated_permission`、`processed_at` 及可选 thread/MCP 字段，不公开 provider tool id、worker `request_id`、`content` 或 `message`。
    - 事件 id 由 `code_session_id + provider tool id` 稳定派生；provider tool id、`request_id`、原始 input 和 thread 信息只保存在 Code Session 私有 worker metadata。
-   - session 进入 idle / requires_action 状态。
+   - 对应线程进入 idle / requires_action；全部线程不再运行时才产生聚合 Session idle，等待 ID 合并尚未确认的其他请求。
    - `stop_reason.event_ids` 包含阻塞 tool use public event 的 `id`，例如 `agent.tool_use.id` 或 `agent.mcp_tool_use.id`（`sevt_...`），不是 Claude Code worker `request.tool_use_id`。
    - `stop_reason` 遵循 SDK union shape，只包含官方字段 `type` / `event_ids`；public status 不返回 `requires_action_details`。
 3. 等待 API client 使用 `stop_reason.event_ids` 中的 public event id 发送：
@@ -248,13 +248,25 @@ agent toolset：
 
 `AskUserQuestion` 按 custom tool 合同发布 `agent.custom_tool_use`；客户端使用同一个 public event id 发送 `user.custom_tool_result`，将答案对象编码为单个 text content block。server 从私有映射恢复原始 input，把该 JSON 对象写入 Claude Code `updatedInput.answers` 后发送 `control_response`。不扩展 `user.tool_confirmation` 的 `updated_input` 或 `answers` 字段。
 
-### 4.4 Batch 与单事件一致性
+### 4.4 事务与重试
+
+一个权限请求的公共工具事件、等待状态与私有待确认记录，或者公共工具事件与自动控制回复，是一个提交单元。任何公开转换、metadata 合并或 inbound 写入失败，全部回滚；调用方收到错误，不会观察到半个请求。
+
+重复 ask 先经过公共事件的内容与归属冲突检查。原工具事件已经存在时，不重新写入待确认 metadata，也不重放旧 idle 状态；因此用户确认并恢复运行后，迟到的原请求不会重新挂起会话。原工具 ID 被另一个等待状态复用会返回冲突。自动回复重复请求复用原 inbound 身份，不增加第二条回复或推进序号。
+
+权限请求 `input`、metadata 中的原始参数及自定义工具答案都按 JSON 数字原值解析。`9007199254740993` 与 `9007199254740992` 不会因为 float64 舍入而被视为同一请求；确认后发送给 worker 的 `updatedInput` 保留原值。
+
+用户确认走现有 Send 事务：公开确认事件、inbound 回复与对应待确认 metadata 的清除一起提交。完整事件仍由 SSE 和历史 API 从同一数据库记录返回。
+
+整份 worker HTTP `events[]` 的权限输出、公共事件、状态、metadata 与自动回复共用同一事务；后续 output 或最终入队失败均回滚全批；聚合 idle 已合并 source Code Session 的待确认权限集合；原版 CLI 的请求边界已在入口关联；usage 紧邻 idle、跨运行器等待迁移及覆盖响应前失败的完整生命周期仍以 [Session 一致性方案](../session-event-stream-consistency.md) 中的未完成项为准。
+
+### 4.5 Batch 与单事件一致性
 
 Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`。因此 permission handler 不能只挂在单事件 `appendWorkerEvent` 路径上。
 
 要求：
 
-- `AppendWorkerOutputEventsForEpoch` 和 `appendWorkerEvent` 处理 `control_request / can_use_tool` 时调用同一逻辑。
+- worker batch、legacy events 与 persistence 入口将 `control_request / can_use_tool` 交给同一事务内的权限处理逻辑。
 - 对重复 `control_request` 必须保持幂等，不重复写入 auto response 或 public tool event。
 - `control_request`、`control_response`、`control_cancel_request` 仍是内部协议事件，默认不泄漏到 public session events。
 
@@ -319,16 +331,19 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 覆盖：
 
+- ask metadata/公共写入失败、allow/deny inbound 写入失败均回滚公共历史、状态、metadata 与入站序号。
+- 确认后重复原请求不恢复 pending metadata、不重放 idle，自动回复重试不重复入队。
+- 公共 input、metadata 和 worker updatedInput 保留大整数，异内容重试返回冲突。
 - batch `/worker/events` 中的 `can_use_tool` 会进入 permission handler。
 - 单事件 worker append 路径和 batch 路径行为一致。
-- worker `result.stop_reason` 为字符串时，public `session.status_idle.stop_reason` 会规范化为 SDK 对象 union，例如 `{ "type": "end_turn" }`。
+- worker `result.stop_reason` 为字符串时，public `session.thread_status_idle.stop_reason` 会规范化为 SDK 对象 union，例如 `{ "type": "end_turn" }`。
 - `always_allow` 生成 inbound `control_response`，source 为 `auto-approve`。
 - duplicate worker event 不重复生成 auto response。
-- ephemeral 与隐藏 worker output 不落库；durable public output 依靠稳定 public event ID 去重。
+- ephemeral 正文与隐藏 worker output 不进入公共历史；原版 preview 的源 UUID 接收凭据单独持久化，durable public output 依靠稳定 public event ID 去重。
 - `always_ask` 不 auto approve。
 - `enabled=false` 生成 deny response。
 - internal `control_request` 不出现在 public session events。
-- `always_ask` 生成的 `session.status_idle.stop_reason` 遵循 SDK union shape，`event_ids` 包含阻塞 `agent.tool_use` / `agent.mcp_tool_use` 的 public event id，public status 不含 `requires_action_details`。
+- `always_ask` 生成线程 idle 事实；必要时生成的 `session.status_idle.stop_reason` 遵循 SDK union shape，`event_ids` 包含阻塞 `agent.tool_use` / `agent.mcp_tool_use` 的 public event id，public status 不含 `requires_action_details`。
 - assistant 原始 `tool_use` 不做 public 投影；`can_use_tool` 产生唯一扁平 tool-use event，`stop_reason.event_ids` 指向这条事件，用该 id 发送 confirmation 仍能生成 Claude Code `control_response`。
 - tool result 的关联 ID 会从 provider tool id 转换为对应 public event id，public 响应不出现 provider tool id 或 worker `request_id`。
 - `AskUserQuestion` 使用 `agent.custom_tool_use` / `user.custom_tool_result` 并恢复为 Claude Code `updatedInput.answers`。

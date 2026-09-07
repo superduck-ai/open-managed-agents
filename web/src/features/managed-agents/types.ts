@@ -348,9 +348,8 @@ export type SessionToolConfirmationInput = {
 
 export type SessionDetailEventCache = {
   events: QuickstartSessionEvent[];
-  syncedThrough: PageCursor;
-  historyComplete: boolean;
-  sawTerminated: boolean;
+  closedPreviewIds?: ReadonlySet<string>;
+  activeModelRequestId?: string;
 };
 
 export type SessionDetailDeltaFrame = {
@@ -359,8 +358,6 @@ export type SessionDetailDeltaFrame = {
 };
 
 export type SessionDetailDeltaFrames = Record<string, SessionDetailDeltaFrame>;
-
-export type SessionEventCachePatch = Partial<Omit<SessionDetailEventCache, 'events'>>;
 
 export type QuickstartStreamEvent = ServerSentEvent<Record<string, unknown>>;
 

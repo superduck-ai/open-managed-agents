@@ -12,6 +12,7 @@ import {
   sessionStreamBackoff,
   sessionStreamShouldStop,
   sessionThreadShouldFetchEvents,
+  sessionThreadIsChild,
   sleepWithAbort,
   streamSessionEvents,
   syncSessionEventHistory,
@@ -20,7 +21,7 @@ import { type QuickstartSessionEvent, type SessionDetailDeltaFrames, type Sessio
 import { errorMessage } from '../utils';
 import { sessionEventType } from './sessionTraceModel';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
-import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 
 export const SessionDetailDeltaFramesContext = createContext<SessionDetailDeltaFrames>({});
 
@@ -48,7 +49,7 @@ export function useSessionDetailEventData({
   const [loading, setLoading] = useState(false);
   const [childLoading, setChildLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const previousRefreshKeyRef = useRef(refreshKey);
+  const primaryThreadId = threads.find((thread) => !sessionThreadIsChild(thread))?.id ?? '';
   const childThreadIds = useMemo(
     () =>
       threads
@@ -76,8 +77,6 @@ export function useSessionDetailEventData({
     }
     const controller = new AbortController();
     let active = true;
-    const fromStart = refreshKey !== previousRefreshKeyRef.current;
-    previousRefreshKeyRef.current = refreshKey;
     const syncScope = async (threadId = '') => {
       await syncSessionEventHistory({
         queryClient,
@@ -85,7 +84,6 @@ export function useSessionDetailEventData({
         workspaceId,
         threadId,
         signal: controller.signal,
-        fromStart,
       });
       if (active) {
         bump();
@@ -144,7 +142,6 @@ export function useSessionDetailEventData({
             workspaceId,
             threadId,
             signal: controller.signal,
-            force: true,
           }),
         ),
       )
@@ -169,6 +166,7 @@ export function useSessionDetailEventData({
       sessionId,
       workspaceId,
       threadId: '',
+      primaryThreadId,
       signal: controller.signal,
       onCacheChange: bump,
       onPrimaryEvent,
@@ -178,7 +176,7 @@ export function useSessionDetailEventData({
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '');
       bump();
     };
-  }, [bump, live, onPrimaryEvent, queryClient, sessionId, workspaceId]);
+  }, [bump, live, onPrimaryEvent, primaryThreadId, queryClient, sessionId, workspaceId]);
 
   useEffect(() => {
     if (!sessionId || !live || !childThreadIds.length) {
@@ -197,7 +195,6 @@ export function useSessionDetailEventData({
             workspaceId,
             threadId,
             signal: controller.signal,
-            force: true,
           }),
         ),
       )
@@ -228,6 +225,7 @@ export async function runSessionEventStreamLoop({
   sessionId,
   workspaceId,
   threadId,
+  primaryThreadId = '',
   signal,
   onCacheChange,
   onPrimaryEvent,
@@ -236,6 +234,7 @@ export async function runSessionEventStreamLoop({
   sessionId: string;
   workspaceId: string;
   threadId: string;
+  primaryThreadId?: string;
   signal: AbortSignal;
   onCacheChange: () => void;
   onPrimaryEvent?: (event: QuickstartSessionEvent) => void;
@@ -244,7 +243,6 @@ export async function runSessionEventStreamLoop({
   let everConnected = false;
   let fallbackCount = 0;
   let backoff = 0;
-  let historySynced = false;
   let idleReconciliationTimer: number | null = null;
   const cancelIdleReconciliation = () => {
     if (idleReconciliationTimer !== null) {
@@ -272,46 +270,35 @@ export async function runSessionEventStreamLoop({
     if (isFallback) {
       fallbackCount += 1;
       await sleepWithAbort(Math.max(3000, backoff), signal);
-      await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal, force: true });
+      await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal });
       onCacheChange();
       consecutiveFailures = 0;
     }
     try {
-      if (!historySynced) {
-        // Force a tail sync before subscribing: the stream is live-only, so events
-        // broadcast between a send/interrupt and this subscribe (e.g. a fast agent
-        // reply) would otherwise be lost for good. Merge dedups by event id.
-        const historyCache = await syncSessionEventHistory({
-          queryClient,
-          sessionId,
-          workspaceId,
-          threadId,
-          signal,
-          force: true,
-        });
-        onCacheChange();
-        historySynced = true;
-        if (
-          sessionEventHistoryShouldSkipStream(historyCache.events, threadId) ||
-          (threadId && sessionPrimaryHistoryShouldSkipStream(queryClient, workspaceId, sessionId))
-        ) {
-          return;
-        }
-      }
       await streamSessionEvents({
         sessionId,
         threadId: threadId || undefined,
         workspaceId,
         signal,
-        onOpen: () => {
+        onOpen: async () => {
+          // The live-only stream is already established. Its response buffers
+          // events while the fixed history snapshot is fetched and merged.
+          await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal });
+          onCacheChange();
           everConnected = true;
           consecutiveFailures = 0;
           backoff = 0;
         },
         onEvent: (event) => {
-          mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, event);
+          mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, event, primaryThreadId);
           const incompletePreviewIds = sessionIncompleteStreamEventIds(queryClient, workspaceId, sessionId, threadId);
-          if (sessionEventType(event).endsWith('status_idle') && incompletePreviewIds.size) {
+          const type = sessionEventType(event);
+          const scopeIdle =
+            type === 'session.status_idle' ||
+            (type === 'session.thread_status_idle' &&
+              event.session_thread_id === (threadId || primaryThreadId) &&
+              Boolean(event.session_thread_id));
+          if (scopeIdle && incompletePreviewIds.size) {
             scheduleIdleReconciliation(incompletePreviewIds);
           } else if (!incompletePreviewIds.size) {
             cancelIdleReconciliation();
@@ -325,7 +312,22 @@ export async function runSessionEventStreamLoop({
       everConnected = true;
       consecutiveFailures = 0;
       backoff = 0;
-      return;
+      const disconnectedPreviewIds = sessionIncompleteStreamEventIds(queryClient, workspaceId, sessionId, threadId);
+      const historyCache = await syncSessionEventHistory({
+        queryClient,
+        sessionId,
+        workspaceId,
+        threadId,
+        signal,
+      });
+      cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, disconnectedPreviewIds);
+      onCacheChange();
+      if (
+        sessionEventHistoryShouldSkipStream(historyCache.events, threadId) ||
+        (threadId && sessionPrimaryHistoryShouldSkipStream(queryClient, workspaceId, sessionId))
+      )
+        return;
+      await sleepWithAbort(1000, signal);
     } catch (streamError) {
       cancelIdleReconciliation();
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);

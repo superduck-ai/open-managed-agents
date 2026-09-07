@@ -1,6 +1,6 @@
 # CCR v2 Worker Internal Events 后端实现设计
 
-本文记录 `POST/GET /v1/code/sessions/{code_session_id}/worker/internal-events` 的当前后端实现。该端点是 worker 私有 transcript 持久化通道，用于 CCR v2 resume；它不复用公开的 session event 表，也不会向前端 SSE 流发布事件。
+本文记录 `POST/GET /v1/code/sessions/{code_session_id}/worker/internal-events` 的当前后端实现。该端点将原始 transcript 保存到私有表，供 CCR v2 resume 使用。foreground transcript 保持私有；能关联到 Session 子线程的 subagent transcript 会转换为公开事件并写入 `session_events`，供历史 API 与 SSE 共用。
 
 相关文档：
 
@@ -16,9 +16,9 @@
 | 能力 | 当前实现 |
 |---|---|
 | 私有 transcript 落库 | 是，写入 `code_session_internal_events` |
-| 前端可见事件 | 否，不写 `session_events` |
+| 前端可见事件 | 已关联子线程的 subagent transcript 可物化到 `session_events`；foreground 保持私有 |
 | worker output event | 否；outbound 私有日志已移除，公开输出直接进入 `session_events` |
-| 前端 SSE 广播 | 否 |
+| 前端 SSE 广播 | 公开事件提交后发送通知，SSE 从数据库有序补读 |
 | CCR v2 resume 读取 | 是，配套 `GET /worker/internal-events` |
 | worker epoch 写保护 | POST 在 DB 事务内校验 |
 
@@ -119,7 +119,7 @@ handler 支持：
 3. 只有 `payload.agentId` 存在时兼容使用 payload 值。
 4. 两者都缺失时视为 foreground transcript，数据库中 `agent_id is null`。
 
-`events: []` 是合法请求。它只在事务中校验 `worker_epoch`，不插入事件，成功返回 `{"ok": true}`。
+`events: []` 是合法请求。它在事务中校验 `worker_epoch`，不插入内部事件；与非空请求一样，在同一事务中尝试已有子线程 transcript 的公开物化，提交后返回 `{"ok": true}`。
 
 ### 3.2 响应与错误
 
@@ -138,7 +138,7 @@ handler 支持：
 | `400` | JSON 非法、缺少 `events`、payload 非 object、缺少 `payload.uuid`、非 transcript entry 类型等 |
 | `401` | 鉴权失败 |
 | `404` | code session 不存在 |
-| `409` | `worker_epoch` 不是当前 epoch |
+| `409` | `worker_epoch` 不是当前 epoch、raw/公共事件身份或内容冲突、Session 已归档 |
 | `413` | body 超过现有大小限制 |
 | `5xx` | 数据库或服务端错误 |
 
@@ -146,24 +146,37 @@ handler 支持：
 
 ## 4. 写入事务
 
-写入入口是：
+HTTP 入口调用：
 
 ```go
-AppendCodeSessionInternalEvents(ctx, codeSessionID, workerEpoch, inputs)
+service.CommitWorkerSessionEvents(ctx, codeSessionID, workerEpoch, nil, inputs)
 ```
 
-事务流程：
+复用现有 `ManagedAgentEventTx`，所有 Mapper 使用同一个 Yourbatis executor：
 
-1. `begin tx`。
-2. `select code_sessions ... for update` 锁定目标 code session。
-3. 校验 `current_worker_epoch == workerEpoch`。
-4. 根据 `idempotency_key` 预读已存在事件。
-5. 按请求顺序跳过重复事件，插入未见过的事件。
-6. 对每条新事件递增 `code_sessions.last_internal_sequence_num`。
-7. 如有新事件，更新 `code_sessions.last_internal_sequence_num` 和 `updated_at`。
-8. `commit`。
+1. 锁定所属 Session，拒绝已归档或不存在的 Session。
+2. 锁定该 Session 范围内的 Code Session，复验原请求 `workerEpoch`。
+3. 按请求顺序插入 raw internal 记录；重复 `idempotency_key` 在同一事务内比较内容与归属，等价重试跳过，冲突返回 `409 conflict_error` 并回滚本批写入。
+4. 按新记录数量推进 `last_internal_sequence_num`。
+5. 读取全部分页的子线程映射，按内部序号读取完整 subagent transcript；通过公开 Session mapper 物化已能确定所属线程的事件。
+6. raw、内部序号、公共事件及其状态一起提交；任何转换、幂等冲突或写入失败均一起回滚。
+7. 提交后调用 `PublicEventSink.NotifyCodeSessionEvents`，通知 SSE 从数据库有序补读。
 
-事务内 epoch 校验是必要的：如果新 worker register 已经先拿到同一行锁并 bump epoch，旧 worker 的 POST 会在 append 阶段返回 `409`，不会继续写入 internal events。
+```mermaid
+flowchart LR
+    I[内部 transcript POST] --> T[Session → Code Session 锁与 epoch 校验]
+    T --> R[写 raw 与内部序号]
+    R --> P[同事务物化已关联子线程的公共事件]
+    P --> C[提交]
+    C --> N[通知 SSE 补读]
+    P -.失败.-> B[raw 与公共副作用全部回滚]
+```
+
+`PublicEventSink.AppendCodeSessionEvents` 只在调用方已锁定的事务内做公开转换和写入，不自行提交或提前广播。旧 worker 若在公共提交前失去 epoch，会返回 `409`，不会留下 raw 或公开状态。缺少事件 sink 时返回错误，不静默接受无法公开的写入。
+
+没有线程映射的 transcript 暂时只保存在私有表。后续 `/worker/events` 在同一事务中先写新的线程及协调事件，再物化已有 transcript；物化失败时新线程也回滚。重复请求即使没有新 raw，仍会尝试已有 transcript，以支持升级前未物化记录的恢复。该恢复由 worker 写入触发，未新增后台补齐任务。
+
+公共物化不采用 resume GET 的 compaction 边界：即使 compaction 先于线程映射到达，压缩前的公共消息也必须保留。raw 与 thread-created 的查询都读完分页，不以 500 条为总上限。公开历史 GET 只读已提交事件，已删除原先“子线程为空则补写”的路径；刷新不会改变事件内容或推进处理时钟。
 
 ### 4.1 幂等键
 
@@ -173,7 +186,9 @@ AppendCodeSessionInternalEvents(ctx, codeSessionID, workerEpoch, inputs)
 <code_session_id>:internal:uuid:<payload.uuid>
 ```
 
-重复重试返回成功，但数据库只保留一条 internal event。去重在同一个 code session 内生效。
+raw 去重在同一个 code session 内生效，数据库只保留一条 internal event。重复写入比较 code session、事件类型、payload UUID、agent owner、compaction 标记、payload 和 metadata；payload 与 metadata 按 JSONB 语义比较，因此对象键顺序和等价数字写法不构成冲突，大整数的实际差异仍构成冲突。缺失 metadata 与已有对象不同。服务端生成的 external ID、时间、序号及原始字节 hash 不参与重试比较。
+
+等价重试保留原记录、时间和序号；同身份不同内容返回 `409 conflict_error`，本批先前新插入的 raw、内部序号和公共副作用全部回滚，响应不包含事件正文。这替代了旧版无条件跳过的行为；worker 重试必须发送原事件。相同 payload UUID 在另一个 code session 中仍是独立事件。HTTP 是否成功还取决于同事务的公共物化，不能用“raw 是重复记录”跳过物化或吞掉错误。
 
 ### 4.2 顺序号
 
@@ -337,9 +352,13 @@ and e.code_session_external_id = :code_session_external_id
 | 测试场景 | 期望 |
 |---|---|
 | POST success + GET | transcript 按顺序落库并读回 |
-| private channel | 不创建公开 `session_events`，不广播前端流 |
+| private channel | foreground 不创建公开事件；已关联 subagent 物化失败会同时回滚 raw 和内部序号，重试只保存一份 |
+| delayed mapping | 新线程与已有 transcript 的物化一起提交/回滚；超过 500 条映射仍能定位 owner |
+| public compaction | 公开 transcript 保留压缩前消息，resume GET 仍从压缩边界开始 |
+| history reads | 公开线程历史 GET 不补写记录，不推进处理时钟 |
 | stale epoch | 返回 `409 conflict_error`，包括空 `events` 请求 |
-| duplicate retry | 同一 `payload.uuid` 多次 POST 只存一条 |
+| duplicate retry | 同一 `payload.uuid` 的原样/JSON 等价重试只存一条，原内容、时间、序号与公共水位不变 |
+| conflicting retry | payload、大整数、类型、owner、compaction 或 metadata 变化返回 409，本批先前新记录一起回滚；另一个 code session 可复用 source UUID |
 | compaction filtering | 返回最近边界事件和之后事件，排除更旧历史 |
 | subagents | `subagents=true` 排除 foreground，并按每个 `agent_id` 独立 compaction |
 | cursor pagination | 500 固定页大小，无重复、无缺口 |
@@ -352,6 +371,8 @@ and e.code_session_external_id = :code_session_external_id
 
 ## 10. 已知实现取舍
 
-1. 当前幂等实现先查重再批量插入，没有使用 `insert ... on conflict do nothing`。由于事务持有 code session 行锁，同一 code session 的并发 append 已串行化，正确性不依赖数据库 conflict retry。
+1. raw internal 保留 `ON CONFLICT DO NOTHING`，仅命中重复键后增加同事务 JSONB/归属比较；新事件不增加预查，不新增表或索引。raw 和公开事件使用各自的身份及内容比较合同。
 2. GET 的 compaction 查询先在 scoped CTE 内计算边界，再做 cursor/limit 分页。它优先保证语义清晰；如果 internal event 历史非常大，可以后续将 compaction boundary 查询拆成更窄的索引查找。
 3. `created_at` 当前由 append 批次统一设置，同一批事件可能拥有相同时间戳；对外顺序以 `sequence_num` 为准。
+
+4. 公开写入会在 Session 锁内扫描完整子线程 transcript 并幂等物化。首版优先复用现有表；仅在实际长历史负载出现时再引入持久物化游标。

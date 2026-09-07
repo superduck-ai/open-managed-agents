@@ -191,6 +191,10 @@ func (s *MemoryAcknowledgementStore) Refresh(_ context.Context, sessionID string
 	defer s.mu.Unlock()
 	key := acknowledgementKey(sessionID, epoch, eventID)
 	entry, found := s.entries[key]
+	if found && !time.Now().Before(entry.expiresAt) {
+		delete(s.entries, key)
+		return nil
+	}
 	if found {
 		entry.expiresAt = time.Now().Add(AcknowledgementStoreTTL)
 		s.entries[key] = entry

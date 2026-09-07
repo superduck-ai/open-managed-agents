@@ -88,6 +88,9 @@ func LikelyExceedsLargePayload(payloadSize int) bool {
 type ExpiredEvent struct {
 	StreamSequence uint64
 	Envelope       EnvelopeV1
+	// DecodeError 表示不可解析或身份不符的消息；Envelope 此时只含可信 subject
+	// 中的 Session ID 和基于服务端存储时间的兜底期限，不含不可信对象引用。
+	DecodeError error
 }
 
 type Subscription interface {
@@ -101,7 +104,6 @@ type Broker interface {
 	Subscribe(context.Context, string) (Subscription, error)
 	InProgress(ctx context.Context, ackSubject string) error
 	DoubleAck(ctx context.Context, ackSubject string) error
-	Term(ctx context.Context, ackSubject string) error
 	ScanExpired(context.Context, uint64, int, time.Time) ([]ExpiredEvent, uint64, error)
 	PurgeSession(context.Context, string) error
 }
@@ -223,13 +225,6 @@ func (b *JetStreamBroker) DoubleAck(ctx context.Context, ackSubject string) erro
 	return nil
 }
 
-func (b *JetStreamBroker) Term(_ context.Context, ackSubject string) error {
-	if ackSubject == "" {
-		return errAckSubjectEmpty
-	}
-	return b.connection.Publish(ackSubject, []byte("+TERM"))
-}
-
 func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit int, now time.Time) ([]ExpiredEvent, uint64, error) {
 	stream, err := b.js.Stream(ctx, StreamName)
 	if err != nil {
@@ -248,24 +243,38 @@ func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit 
 	}
 	expired := make([]ExpiredEvent, 0)
 	for inspected := 0; inspected < limit && sequence <= info.State.LastSeq; inspected++ {
-		message, getErr := stream.GetMsg(ctx, sequence)
-		if getErr == nil {
-			var envelope EnvelopeV1
-			if decodeErr := json.Unmarshal(message.Data, &envelope); decodeErr != nil {
-				return nil, sequence, fmt.Errorf("decode stored worker event envelope at sequence %d: %w", sequence, decodeErr)
-			}
-			if envelope.IsExpired(now) {
-				expired = append(expired, ExpiredEvent{StreamSequence: message.Sequence, Envelope: envelope})
-			}
-		} else if !errors.Is(getErr, jetstream.ErrMsgNotFound) {
+		message, getErr := stream.GetMsg(ctx, sequence, jetstream.WithGetMsgSubject(streamSubject))
+		if errors.Is(getErr, jetstream.ErrMsgNotFound) {
+			return expired, 0, nil
+		}
+		if getErr != nil {
 			return nil, sequence, getErr
 		}
-		sequence++
+		if message.Sequence > info.State.LastSeq {
+			return expired, 0, nil
+		}
+		event := storedWorkerEvent(message)
+		if event.DecodeError != nil || event.Envelope.IsExpired(now) {
+			expired = append(expired, event)
+		}
+		sequence = message.Sequence + 1
 	}
 	if sequence > info.State.LastSeq {
 		sequence = 0
 	}
 	return expired, sequence, nil
+}
+
+func storedWorkerEvent(message *jetstream.RawStreamMsg) ExpiredEvent {
+	event := ExpiredEvent{StreamSequence: message.Sequence}
+	err := json.Unmarshal(message.Data, &event.Envelope)
+	sessionID := strings.TrimPrefix(message.Subject, subjectPrefix)
+	if err != nil || event.Envelope.Version != 2 || event.Envelope.CodeSessionID != sessionID || event.Envelope.ExpiresAt.IsZero() {
+		// JSON/time 解码错误可能包含原始字段值，不能进入运行日志。
+		event.DecodeError = errInvalidStoredEnvelope
+		event.Envelope = EnvelopeV1{CodeSessionID: sessionID, ExpiresAt: message.Time.Add(LogicalRetention)}
+	}
+	return event
 }
 
 func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string) error {
@@ -277,14 +286,11 @@ func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string
 	if err != nil {
 		return err
 	}
-	if err := stream.Purge(ctx, jetstream.WithPurgeSubject(filter)); err != nil {
+	// 先删除 consumer；若删除失败，消息仍保留，可被 expiry 再次发现并重试。
+	if err := b.js.DeleteConsumer(ctx, StreamName, consumerName(codeSessionID)); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
 		return err
 	}
-	err = b.js.DeleteConsumer(ctx, StreamName, consumerName(codeSessionID))
-	if errors.Is(err, jetstream.ErrConsumerNotFound) {
-		return nil
-	}
-	return err
+	return stream.Purge(ctx, jetstream.WithPurgeSubject(filter))
 }
 
 type jetStreamSubscription struct {
@@ -447,14 +453,6 @@ func (b *MemoryBroker) Subscribe(ctx context.Context, codeSessionID string) (Sub
 func (b *MemoryBroker) InProgress(context.Context, string) error { return nil }
 
 func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
-	return b.finishDelivery(ackSubject)
-}
-
-func (b *MemoryBroker) Term(_ context.Context, ackSubject string) error {
-	return b.finishDelivery(ackSubject)
-}
-
-func (b *MemoryBroker) finishDelivery(ackSubject string) error {
 	if ackSubject == "" {
 		return errAckSubjectEmpty
 	}

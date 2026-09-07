@@ -14,16 +14,20 @@ sequenceDiagram
     participant Send as Send transaction
     participant Session as sessions row
     participant History as session_events
-    participant Activation as activation transaction
+    participant Activation as activation
     participant CS as code_sessions
+    participant S3 as Object storage
     participant JS as JetStream
 
+    Activation->>Session: 短事务锁定 Session / Code Session
+    Activation->>History: 读取历史快照后 COMMIT
+    Activation->>S3: 锁外准备 initialize / 历史大对象
     alt Send 先获得 Session 锁
         Send->>History: 写入公开事件并 COMMIT
         Activation->>Session: 获得锁
-        Activation->>History: 读取完整历史
+        Activation->>History: 重读历史，发现变化则释放锁并重新准备
     else Activation 先获得 Session 锁
-        Activation->>History: 读取当前完整历史
+        Activation->>History: 重读并确认快照未变
         Send->>Session: 等待 activation 提交
     end
     Activation->>JS: initialize + 可转发历史，逐条等待 PubAck
@@ -34,12 +38,14 @@ sequenceDiagram
 
 ## Activation 事务
 
-activation 在同一个 Yourbatis 事务中锁定 Session 与 `initializing` Code Session，读取完整
-`session_events`，准备 initialize 与可转发历史，然后按历史顺序直接 Publish。每条消息都必须获得
-PubAck；全部成功后才更新 `status=active` 并提交。这里等待的是 JetStream 持久化确认，不等待 worker
-消费或 ACK。
+activation 先用短 Yourbatis 事务锁定 Session 与 `initializing` Code Session，读取完整
+`session_events` 快照。释放事务后准备 initialize 与可转发历史，提交 cleanup jobs 并上传大对象。
+然后重新按相同顺序加锁，核对 metadata 和历史快照；若改变，退出事务并重新准备，不能漏掉上传期间
+到达的输入。快照未变时才按历史顺序直接 Publish，每条消息必须获得 PubAck；全部成功后更新
+`status=active` 并提交。整个流程含快照重试最多 1 分钟。这里不等待 worker 消费或 ACK。
 
-网络调用发生在事务内，因此启动期间会持有两条行锁。这样做使 activation 与 Send Events 的 Session
+PubAck 等待发生在最终事务内，因此发布期间会持有两条行锁；S3 和 cleanup job 准备必须在事务外，
+不能持有一条 PG 连接又借第二条连接，以免耗尽连接池。这样做使 activation 与 Send Events 的 Session
 写入互斥，并让 active 状态成为明确 cutover。若历史转换失败，尚未发布任何消息；若中途 PubAck
 失败或最后 PG commit 失败，已发布的部分消息可能留在 JetStream，但 Code Session 仍是
 `initializing`，worker 鉴权不能进入消费路径。
@@ -65,6 +71,8 @@ Send Events 与 activation 都锁定同一条 Session：
 - initialize 是该 Code Session 的首类启动消息，历史按查询顺序发布；
 - 任一 PubAck 失败时 Code Session 不 active；
 - 模糊 PubAck 后重试使用同一 message ID；
+- PG 包装层仅允许一条连接时，大对象发布与 activation 仍能成功；
+- 上传期间新增历史会触发快照重试，并出现在最终启动队列；
 - activation 提交后到达的事件只走 realtime 直接发布；
 - realtime PubAck 失败向调用方返回 503，不存在后台补发；
 - 不查询 PostgreSQL backlog，也不维护 PG 入站 sequence。

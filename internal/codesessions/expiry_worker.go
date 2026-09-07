@@ -55,10 +55,17 @@ func (w *WorkerEventExpiryWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("scan expired JetStream events: %w", err)
 	}
-	w.cursor = nextCursor
 	seen := make(map[string]struct{}, len(events))
 	var errs []error
 	for _, event := range events {
+		if event.DecodeError != nil {
+			w.logger.ErrorContext(ctx, "invalid stored worker event", "stream_sequence", event.StreamSequence, "code_session_id", event.Envelope.CodeSessionID, "error", event.DecodeError)
+			// 无法信任坏 envelope 的 expires_at，以 JetStream 存储时间 + 30 天兜底。
+			// 在期限前只告警，不 ACK、不跳过该 Session，但不阻塞其他 Session 扫描。
+			if !event.Envelope.IsExpired(now) {
+				continue
+			}
+		}
 		if _, found := seen[event.Envelope.CodeSessionID]; found {
 			continue
 		}
@@ -67,7 +74,11 @@ func (w *WorkerEventExpiryWorker) RunOnce(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	w.cursor = nextCursor
+	return nil
 }
 
 func (w *WorkerEventExpiryWorker) expireSession(ctx context.Context, envelope workerevents.EnvelopeV1) error {
@@ -76,29 +87,23 @@ func (w *WorkerEventExpiryWorker) expireSession(ctx context.Context, envelope wo
 		return err
 	}
 	if !found {
-		// Session 记录已删除时仍需清理 subject 与外置对象；terminate 对空租户
-		// 范围返回 ErrNotFound，由统一处置策略容忍。
-		session = db.CodeSession{ExternalID: envelope.CodeSessionID}
+		// 没有记录便不执行带空租户 UUID 的 SQL；对象仍有上传前创建的兜底任务。
+		return w.service.workerEvents.PurgeSession(ctx, envelope.CodeSessionID)
 	}
-	w.service.expireWorkerEvent(ctx, session, envelope, "")
-	return nil
+	return w.service.expireWorkerEvent(ctx, session, envelope)
 }
 
-// expireWorkerEvent 执行一条过期事件的统一处置：终止本次投递（若有）、加速外置
-// payload 的对象清理、终止对应 Code Session 并清空其 worker-event subject。
-// SSE handler 与过期 worker 共用该策略，两处行为不会漂移。
-func (s *Service) expireWorkerEvent(ctx context.Context, codeSession db.CodeSession, envelope workerevents.EnvelopeV1, ackSubject string) {
+// expireWorkerEvent 与普通 termination 共用先终止 PG、再清理队列的顺序。
+// PG 失败时不能 TERM 或 purge，否则重试扫描会失去尚未终止 Session 的依据。
+func (s *Service) expireWorkerEvent(ctx context.Context, codeSession db.CodeSession, envelope workerevents.EnvelopeV1) error {
 	s.logger.ErrorContext(ctx, "code session worker event expired", "code_session_id", codeSession.ExternalID, "event_id", envelope.EventID, "expires_at", envelope.ExpiresAt)
-	if ackSubject != "" {
-		_ = s.workerEvents.Term(ctx, ackSubject)
+	if err := s.TerminateManagedAgentCodeSession(ctx, db.Session{
+		OrganizationUUID: codeSession.OrganizationUUID, WorkspaceUUID: codeSession.WorkspaceUUID,
+	}, codeSession.ExternalID); err != nil {
+		return err
 	}
 	if envelope.PayloadRef != nil {
 		s.triggerPayloadCleanupNow(ctx, envelope.PayloadRef.CleanupJobID)
 	}
-	if err := s.db.TerminateManagedAgentCodeSession(ctx, codeSession.OrganizationUUID, codeSession.WorkspaceUUID, codeSession.ExternalID); err != nil && !errors.Is(err, db.ErrNotFound) {
-		s.logger.ErrorContext(ctx, "terminate code session after worker event expiry", "code_session_id", codeSession.ExternalID, "error", err)
-	}
-	if err := s.workerEvents.PurgeSession(ctx, codeSession.ExternalID); err != nil {
-		s.logger.ErrorContext(ctx, "purge expired code session worker events", "code_session_id", codeSession.ExternalID, "error", err)
-	}
+	return nil
 }

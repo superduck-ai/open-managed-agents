@@ -10,9 +10,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
+
+func TestPrepareInboundEventRejectsOversizedPayloadBeforeStorage(t *testing.T) {
+	service := &Service{}
+	payload := bytes.Repeat([]byte("x"), workerevents.MaxOffloadedPayloadBytes+1)
+	if _, err := service.prepareInboundEvent(t.Context(), db.CodeSession{}, payload, "test", ""); !errors.Is(err, errInboundPayloadTooLarge) {
+		t.Fatalf("oversized preparation error = %v", err)
+	}
+}
 
 func TestLoadOffloadedPayloadRejectsMissingCorruptAndOversizedObjects(t *testing.T) {
 	payload := []byte(`{"type":"user","text":"hydrate me"}`)

@@ -184,3 +184,19 @@ func freePort(t *testing.T) int {
 }
 
 func fmtInt(value int) string { return strconv.Itoa(value) }
+
+func receiveWorkerDelivery(t *testing.T, subscription Subscription) Delivery {
+	t.Helper()
+	select {
+	case delivery, open := <-subscription.Messages():
+		if !open {
+			t.Fatal("worker event subscription closed")
+		}
+		return delivery
+	case err := <-subscription.Errors():
+		t.Fatalf("worker event subscription: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for worker event")
+	}
+	return Delivery{}
+}

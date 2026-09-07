@@ -31,6 +31,9 @@ func (s *Service) prepareInboundEvent(
 	source string,
 	stableSeed string,
 ) (preparedInboundEvent, error) {
+	if len(payload) > workerevents.MaxOffloadedPayloadBytes {
+		return preparedInboundEvent{}, errInboundPayloadTooLarge
+	}
 	metadata, err := BuildEventMetadata(codeSession.ExternalID, "inbound", payload)
 	if err != nil {
 		return preparedInboundEvent{}, err
@@ -95,7 +98,7 @@ func (s *Service) offloadInboundPayload(
 	envelope *workerevents.EnvelopeV1,
 ) (string, error) {
 	if s.workerEventObjects == nil {
-		return "", errorsLargePayloadStorageUnavailable()
+		return "", errLargePayloadStorageUnavailable
 	}
 	cleanupJobID, err := ids.New("job_")
 	if err != nil {
@@ -138,7 +141,7 @@ func (s *Service) loadOffloadedPayload(ctx context.Context, envelope workerevent
 		return envelope, nil
 	}
 	if s.workerEventObjects == nil {
-		return workerevents.EnvelopeV1{}, errorsLargePayloadStorageUnavailable()
+		return workerevents.EnvelopeV1{}, errLargePayloadStorageUnavailable
 	}
 	reference := envelope.PayloadRef
 	if reference.Size < 0 || reference.Size > workerevents.MaxOffloadedPayloadBytes {
@@ -161,7 +164,7 @@ func (s *Service) loadOffloadedPayload(ctx context.Context, envelope workerevent
 	}
 	digest := sha256.Sum256(payload)
 	if hex.EncodeToString(digest[:]) != reference.SHA256 {
-		return workerevents.EnvelopeV1{}, errorsLargePayloadDigestMismatch()
+		return workerevents.EnvelopeV1{}, errLargePayloadDigestMismatch
 	}
 	envelope.Payload = payload
 	return envelope, nil
@@ -173,15 +176,9 @@ func (s *Service) triggerPayloadCleanupNow(ctx context.Context, cleanupJobID str
 	if cleanupJobID == "" {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	if err := s.db.ExpediteObjectCleanupJob(ctx, cleanupJobID); err != nil && !errors.Is(err, db.ErrNotFound) {
 		s.logger.WarnContext(ctx, "trigger worker event payload cleanup now", "cleanup_job_id", cleanupJobID, "error", err)
 	}
-}
-
-func errorsLargePayloadStorageUnavailable() error {
-	return fmt.Errorf("worker event payload object storage is unavailable")
-}
-
-func errorsLargePayloadDigestMismatch() error {
-	return fmt.Errorf("worker event payload digest mismatch")
 }

@@ -493,9 +493,7 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 	if err != nil {
 		return err
 	}
-	return s.db.WithLockedActiveCodeSession(ctx, codeSessionID, func(codeSession db.CodeSession) error {
-		return s.publishInboundPayload(ctx, codeSession, payload, source, "control-response:"+request.RequestID)
-	})
+	return s.publishControlResponse(ctx, codeSessionID, payload, source, "control-response:"+request.RequestID)
 }
 
 // controlResponseUUID preserves the UUIDv5 output previously produced with the

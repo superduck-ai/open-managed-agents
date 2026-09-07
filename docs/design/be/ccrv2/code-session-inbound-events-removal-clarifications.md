@@ -16,7 +16,8 @@
 
 ```mermaid
 flowchart LR
-    Producer["入站生产方"] --> Lock["锁定 active Code Session"]
+    Producer["入站生产方"] --> Prepare["锁外准备 payload / cleanup job / S3"]
+    Prepare --> Lock["锁定 active Code Session"]
     Lock -->|直接 Publish，等待 PubAck| JS["共享 JetStream Stream"]
     JS --> Durable["每 Code Session 独立 durable consumer"]
     Durable --> SSE["worker SSE"]
@@ -47,17 +48,16 @@ Redis 不能提供这一事务保证。
 ## Activation
 
 Activation 是 Code Session 从 `initializing` 切到 `active` 的启动交接，不是等待 worker 消费。
-它在一个 Yourbatis 事务中：
+它分为三个阶段：
 
-1. 锁定公开 Session；
-2. 锁定 `initializing` Code Session；
-3. 读取完整可转发 `session_events` 历史；
-4. 准备稳定的 initialize 与历史消息；
-5. 按顺序直接发布，并逐条等待 JetStream PubAck；
-6. 全部 PubAck 成功后才把 Code Session 更新为 `active` 并提交。
+1. 在短 Yourbatis 事务中依次锁定公开 Session 和 `initializing` Code Session，读取完整历史快照后释放锁；
+2. 在事务外准备 initialize 和历史 envelope，提交 cleanup job、上传大 payload；
+3. 重新按相同顺序锁定并读取快照。若 metadata 或历史改变，释放锁、清理未发布对象并重新准备；
+   若未改变，则按顺序发布、逐条等待 PubAck，全部成功后更新 `active` 并提交。
 
-网络调用期间会持有 Session 和 Code Session 行锁。这会增加启动事务时长，但保证 activation 与
-realtime cutover 不交叉。它不等待 worker received、processing 或 processed。
+只有 PubAck 网络等待仍持有两条行锁，保证 activation 与 realtime cutover 不交叉。大对象准备
+不得在持锁事务内借用第二条 PG 连接，否则并发请求可能耗尽连接池。整个 activation（含快照重试）
+最多 1 分钟；超时返回失败，保留 initializing。它不等待 worker received、processing 或 processed。
 
 如果只发布了部分消息、PubAck 丢失或 PostgreSQL 最终提交失败，Code Session 保持
 `initializing`。重试使用由 Code Session、initialize 标识或 `session_event` UUID 派生的稳定 message
@@ -88,11 +88,18 @@ code_session + worker_epoch + event_id -> JetStream ACK subject + cleanup_job_id
 `received`、`processing` 发送 InProgress 并刷新 TTL；`processed` 校验 PostgreSQL 当前 epoch 后执行
 DoubleAck。Redis 写失败时不发送 SSE；Redis 丢失时 delivery 返回 `ignored`，JetStream 之后重投。
 Redis 不保存权威消息，也不能替代 PostgreSQL lifecycle/epoch fence。
+20 分钟是定位缓存 TTL，不是消息的 ACK 等待时间。worker 应在一分钟首次重投窗口前持续上报
+processing（建议每 20–30 秒）。SSE 写失败时保留映射直到 TTL，避免旧连接删除新重投写入的映射。
 
 envelope 超过 900 KiB 时，payload 先上传到租户隔离的 S3 key。key 包含稳定 event ID 和随机 cleanup
 job ID，避免重试对象之间互相清理。JetStream 只保存 key、size、SHA-256 和 cleanup job ID，单条
 消息仍小于 1 MiB。PubAck 失败是模糊结果，因此不会立即删除对象；processed 后立即加速清理，最迟
 在 30 天逻辑期限清理。
+
+发布前拒绝超过 16 MiB 的原始 payload，与 hydrate 读取上限保持一致。普通公开输入和 control
+response 也先在锁外准备对象，再锁定 active Code Session 发布。确定未尝试发布的对象可以提前清理；
+已尝试 Publish 的对象必须保留，因为 PubAck 失败可能是模糊成功。提前清理使用独立的 5 秒上下文，
+不受原请求取消影响，失败仍由原定到期任务兜底。
 
 ## 生命周期与失败语义
 
@@ -103,6 +110,12 @@ job ID，避免重试对象之间互相清理。JetStream 只保存 key、size�
 - S3 缺失、读取失败或摘要不匹配：不发送、不 ACK，同 Session 后续消息被阻塞；
 - 事件 30 天仍未 processed：终止 Code Session、撤销凭证、删除 consumer 和 subject 消息，并加速对象清理；
 - Code Session 终止：与直接 Publish 通过同一行锁串行，状态更新后清空该 Session 的 consumer 和消息。
+
+过期处置必须先成功提交 PG 终止与凭证撤销，再删除 consumer、purge subject，最后加速对象清理；
+不能提前 TERM/ACK。PG 或队列清理失败时保留扫描游标以重试。PG 记录已不存在时直接清理队列，
+不构造空租户 UUID 执行 SQL。扫描每轮最多读取 512 条实际存储消息，按 subject 跳过已 ACK 的序号
+空洞。坏 JSON 或无效 envelope 会告警但不阻塞其他 Session 扫描；其 Session 仍不 ACK，按
+JetStream 存储时间加 30 天兜底终止，不能信任坏 envelope 的身份、期限或对象引用。
 
 idle 回收不查询 JetStream backlog。公开输入事务会清空 `idle_since`；新输入到达已经 idle-stop 的
 Sandbox 时，沿用既有 recovery 流程重建 Sandbox。
@@ -189,6 +202,22 @@ PG 提交失败、三节点 failover、24 小时去重窗口真实流逝和 5/15
 - `just lint`、`just dead-code`、`git diff --check` 通过。
 - 已覆盖范围未复现业务缺陷；这不代表跨系统故障窗口已全部验证。没有对共享环境运行
   会创建另一套 API/内存 Broker 的全量 `just test`，也没有注入依赖级停机故障。
+
+### PR 评论修复回归（2026-09-07）
+
+本轮使用独立 PostgreSQL 测试库和测试 bucket 运行 `just test`，没有重启当前 API 或修改其业务库。
+新增 11 个回归测试，并修正内存 ACK TTL 和 control response 测试中的失真断言：
+
+- 单 PG 连接的大 payload 发布；activation 上传期间新增历史后的快照重试；
+- PG 终止失败保留消息、purge 失败重试，以及 PG 记录不存在时清理孤立队列；
+- 三节点 NATS 的稀疏序号扫描、坏 envelope 隔离、按 Session 幂等 purge；
+- 旧 SSE 写失败保留新投递映射、过期 ACK 映射不能被 Refresh 复活；
+- 16 MiB 写入上限、转换失败返回错误、请求取消后未发布对象仍提前清理。
+
+上述回归的 `-race` 检查通过。`go generate ./...`、`just test`、`just lint`、`just dead-code`、
+`just duplicates`、`just complexity`、`just large-files` 均通过。
+这轮没有重跑现有 API 的 `tests/liveworker`：PG 行为使用真实 PostgreSQL，NATS 使用测试独占的真实
+三节点集群，故障注入中的 ACK store 和对象存储使用测试实现，不等同于 Redis/S3 断网或部署故障验收。
 
 相关设计：
 

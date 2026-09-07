@@ -47,7 +47,7 @@ worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没�
 类型、`expires_at`，以及内联 payload 或对象存储引用。生产方直接使用稳定 `Nats-Msg-Id` 发布并
 等待 PubAck。PubAck 响应丢失时，调用方重试由 duplicate window 去重。
 
-`sequence_num` 不写入存储消息，由 consumer 读取 JetStream metadata 后填入 Stream sequence。它是
+`sequence_num` 在存储 envelope 中为 0，由 consumer 读取 JetStream metadata 后填入 Stream sequence。它是
 共享 Stream 的全局序号，单个 Code Session 看到间断是正常的。
 
 ## Subject 与 consumer
@@ -59,11 +59,14 @@ worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没�
 SSE 断开不删除 consumer。worker 上报 `received` 或 `processing` 时发送 InProgress；只有
 `processed` 才 DoubleAck。终止或 30 天过期时删除该 consumer，并按 subject 清空消息。
 
-`workerevents.Delivery` 只携带 envelope 和 ACK subject。InProgress、DoubleAck 和 Term 统一由
-`Broker` 按 ACK subject 执行，不在 delivery 中保存 SDK 方法或函数回调。SSE 发现已投递事件过期时，
-通过 Term 发送 `+TERM` 停止该消息重投，再执行 Code Session 终止与清理；Term 保持异步发送语义，
-不等待服务端确认。内存 Broker 的 Term 与 DoubleAck 共享队列完成逻辑，移除当前消息并释放后续
-投递；空或未知 ACK subject 返回错误。
+`workerevents.Delivery` 只携带 envelope 和 ACK subject。InProgress、DoubleAck 由 `Broker` 按
+ACK subject 执行，不在 delivery 中保存 SDK 方法或函数回调。SSE 或后台扫描发现过期时，必须先
+成功提交 PG 终止与凭证撤销，再删除 consumer、purge subject。不能提前 TERM 或 ACK，否则 PG
+失败时会丢失重试依据，且可能向同一 worker 放行下一条消息。
+
+后台每分钟按 subject 查找下一条实际存储消息，一轮最多检查 512 条；序号空洞不占预算。坏
+envelope 会告警，但不阻塞其他 Session 的扫描。其所属 Session 仍阻塞消费，以可信的 subject
+和存储时间加 30 天兜底终止；任何终止或队列清理失败都保留批次游标重试。
 
 ## 数据安全与大消息
 
@@ -81,8 +84,7 @@ JetStream envelope 可能包含用户内容，不得写入运行日志。编码�
 
 连接层测试覆盖空 URL、JetStream 未启用和成功连接。worker event 测试使用内嵌三节点集群验证
 Stream 配置、duplicate window、durable consumer、全局 Stream sequence 和严格串行 ACK。
-Term 测试覆盖空 ACK subject、连接关闭、内存中的未知 ACK subject，以及内存和三节点 JetStream
-中终止当前投递后释放下一条消息、重新订阅不重投已终止消息；JetStream 还验证终止 advisory。
+过期测试覆盖序号空洞、损坏 envelope 隔离，以及 PG 终止失败保留队列、恢复后重新终止和清理。
 
 ```bash
 docker compose up -d nats nats-2 nats-3

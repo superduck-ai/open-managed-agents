@@ -113,8 +113,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		}
 		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.UUID, event.ProcessedAt)
 		if err != nil {
-			s.logger.ErrorContext(ctx, "convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
-			continue
+			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}
 		payloads = append(payloads, payload)
 	}
@@ -184,13 +183,19 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 	if s == nil || len(payloads) == 0 {
 		return nil
 	}
-	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, func(locked db.CodeSession) error {
-		for _, payload := range payloads {
-			if err := s.publishInboundPayload(ctx, locked, payload, "public-session", ""); err != nil {
-				return err
-			}
+	ctx, cancel := context.WithTimeout(ctx, workerPublicationTimeout)
+	defer cancel()
+	batch := &inboundPublicationBatch{service: s}
+	defer batch.cleanupUnpublished(ctx)
+	for _, payload := range payloads {
+		prepared, err := s.prepareInboundEvent(ctx, codeSession, payload, "public-session", "")
+		if err != nil {
+			return err
 		}
-		return nil
+		batch.events = append(batch.events, prepared)
+	}
+	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, func(db.CodeSession) error {
+		return batch.publish(ctx)
 	})
 }
 
@@ -430,20 +435,6 @@ func (s *Service) prepareInitializeEvent(
 		return preparedInboundEvent{}, err
 	}
 	return s.prepareInboundEvent(ctx, codeSession, payload, "internal", "initialize")
-}
-
-func (s *Service) publishInboundPayload(
-	ctx context.Context,
-	codeSession db.CodeSession,
-	payload json.RawMessage,
-	source string,
-	stableSeed string,
-) error {
-	prepared, err := s.prepareInboundEvent(ctx, codeSession, payload, source, stableSeed)
-	if err != nil {
-		return err
-	}
-	return s.publishPreparedInboundEvent(ctx, prepared)
 }
 
 func (s *Service) publishPreparedInboundEvent(ctx context.Context, prepared preparedInboundEvent) error {

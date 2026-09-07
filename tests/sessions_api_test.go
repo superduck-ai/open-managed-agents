@@ -1936,9 +1936,9 @@ func TestCodeSessionMCPDefaultAllowAutoApprovesWorkerPermissionRequest(t *testin
 		t.Fatalf("retried control response event IDs = %#v, want one stable non-empty ID", responseEventIDs)
 	}
 
-	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "auto-approve")
-	if source != "auto-approve" || eventType != "control_response" {
-		t.Fatalf("auto response source/event_type = %q/%q, want auto-approve/control_response payload=%s", source, eventType, payload)
+	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
+	if eventType != "control_response" {
+		t.Fatalf("auto response event_type = %q, want control_response payload=%s", eventType, payload)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(payload, &object); err != nil {
@@ -2069,9 +2069,9 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("send tool confirmation status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
-	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "tool-confirmation")
-	if source != "tool-confirmation" || eventType != "control_response" {
-		t.Fatalf("confirmation response source/event_type = %q/%q, want tool-confirmation/control_response payload=%s", source, eventType, payload)
+	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
+	if eventType != "control_response" {
+		t.Fatalf("confirmation response event_type = %q, want control_response payload=%s", eventType, payload)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(payload, &object); err != nil {
@@ -2145,7 +2145,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("send AskUserQuestion custom result status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
-	_, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "custom-tool-result")
+	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
 	if eventType != "control_response" {
 		t.Fatalf("confirmation event_type = %q, want control_response payload=%s", eventType, payload)
 	}
@@ -2292,9 +2292,9 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 		}
 	}
 
-	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "tool-confirmation")
-	if source != "tool-confirmation" || eventType != "control_response" {
-		t.Fatalf("confirmation response source/event_type = %q/%q, want tool-confirmation/control_response payload=%s", source, eventType, payload)
+	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
+	if eventType != "control_response" {
+		t.Fatalf("confirmation response event_type = %q, want control_response payload=%s", eventType, payload)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(payload, &object); err != nil {
@@ -3875,16 +3875,16 @@ func eventPageContainsCount(events sessionEventPageAPIResponse, needle string) i
 	return count
 }
 
-func latestCodeSessionInboundEventForSource(t *testing.T, app *testApp, codeSessionID string, source string) (string, string, json.RawMessage) {
+func latestCodeSessionControlResponse(t *testing.T, app *testApp, codeSessionID string) (string, json.RawMessage) {
 	t.Helper()
 	events := app.workerEvents.Pending(codeSessionID)
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i].EventType == "control_response" {
-			return source, events[i].EventType, append(json.RawMessage(nil), events[i].Payload...)
+			return events[i].EventType, append(json.RawMessage(nil), events[i].Payload...)
 		}
 	}
-	t.Fatalf("load latest inbound event source=%s: not found", source)
-	return "", "", nil
+	t.Fatal("load latest control response: not found")
+	return "", nil
 }
 
 func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string {

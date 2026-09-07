@@ -16,6 +16,9 @@ func TestMemoryAcknowledgementStoreTreatsExpiredReferenceAsMissing(t *testing.T)
 	entry := store.entries[key]
 	entry.expiresAt = time.Now().Add(-time.Second)
 	store.entries[key] = entry
+	if err := store.Refresh(ctx, "cse_test", 1, "event_test"); err != nil {
+		t.Fatal(err)
+	}
 	if _, found, err := store.Get(ctx, "cse_test", 1, "event_test"); err != nil || found {
 		t.Fatalf("expired ACK reference = (%t, %v), want missing", found, err)
 	}

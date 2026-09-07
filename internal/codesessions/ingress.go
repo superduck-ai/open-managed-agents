@@ -291,7 +291,9 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				return
 			}
 			if envelope.IsExpired(time.Now().UTC()) {
-				h.service.expireWorkerEvent(ctx, codeSession, envelope, delivery.AckSubject)
+				if err := h.service.expireWorkerEvent(ctx, codeSession, envelope); err != nil {
+					h.logger.ErrorContext(ctx, "expire code session worker event", "code_session_id", codeSession.ExternalID, "error", err)
+				}
 				return
 			}
 			loaded, loadErr := h.service.loadOffloadedPayload(ctx, envelope)
@@ -313,7 +315,8 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				return
 			}
 			if err := writeCodeSessionWorkerSSEEvent(w, flusher, event); err != nil {
-				_ = h.service.workerEventAcks.Delete(context.Background(), codeSession.ExternalID, epoch, eventID)
+				// 保留到 TTL：旧连接写失败时，新连接可能已重投并覆盖同一个 key。
+				// 无条件删除会抹掉新投递的 ACK 定位；未 flush 的映射本身不会 ACK 消息。
 				return
 			}
 		case <-keepAlive.C:

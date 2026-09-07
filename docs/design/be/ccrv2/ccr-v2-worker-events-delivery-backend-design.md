@@ -49,13 +49,16 @@ sequenceDiagram
 系统没有 `event_outbox`，也不使用 `last_inbound_sequence_num`。普通发布在 Yourbatis 事务中锁定
 Code Session，确认状态为 active，然后在锁内直接 Publish 并等待 PubAck。事务不写入站数据；它只
 防止 termination 在状态检查与 PubAck 之间清空 subject。
+payload 转换、cleanup job 提交和 S3 上传都在该事务之前完成；进入事务后只校验状态并发布。
+整个请求的发布流程最多 1 分钟，确定未尝试发布的对象在退出事务后加速清理。
 
 公开 Send Events 已经先把事件提交到 `session_events`。若随后 Publish 失败，API 返回 503，但
 服务端没有后台补发记录。调用方必须重试。存在 payload UUID 或 request ID 时，服务端据此派生稳定
 `csev_* Nats-Msg-Id`；PubAck 已成功但响应丢失时，JetStream 在 24 小时内去重。无稳定 ID 的调用
 被视为新事件。
 
-activation 是例外的启动编排：它锁定 Session 与 initializing Code Session，读取完整历史，逐条
+activation 是例外的启动编排：先短事务锁定 Session 与 initializing Code Session 并读取完整历史，
+释放锁后准备所有对象，再重新加锁核对历史和 metadata 快照。快照改变则重新准备；未改变才逐条
 Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发布、模糊 PubAck 或最终 PG commit
 失败都让状态保持 initializing；稳定 message ID 允许安全重试。activation 不等待 worker 消费。
 
@@ -123,10 +126,14 @@ JetStream ACK 不随 PG 事务回滚；若 ACK 已确认但后续 PG 操作失�
 Redis 写失败时不 flush SSE，消息保持未 ACK。Redis key 丢失或过期时 delivery update 计入
 `ignored`；consumer 之后重投并建立新映射。Redis 不能决定消息完成，也不能替代 PostgreSQL 的
 lifecycle 或 epoch fence。
+SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，不能抹掉新 ACK subject；未 flush 的映射
+本身不会 ACK 消息，保留到 TTL 即可。worker 的 processing 应早于首次 1 分钟 ACK 窗口，建议每
+20–30 秒一次；20 分钟 TTL 不是处理心跳间隔。
 
 ## 大 payload
 
-先序列化完整 envelope。超过 900 KiB 时：
+原始 payload 超过 16 MiB 时在存储前拒绝，与 hydrate 的大小上限一致。实现按 payload 长度加
+512 字节 envelope 余量保守估算 900 KiB 阈值；超过估算阈值时：
 
 1. 创建最迟在 `expires_at` 执行的 object cleanup job；
 2. 把原始 payload 上传到租户隔离 key；
@@ -137,6 +144,8 @@ lifecycle 或 epoch fence。
 SSE 读取时限制为声明长度加一字节，并校验对象报告大小、实际大小和 SHA-256。缺失、截断、篡改或
 读取失败都不发送、不 ACK；`MaxAckPending=1` 使后续消息继续阻塞。PubAck 失败可能是模糊成功，
 所以不立即清理对象。processed 后加速清理；否则最迟 30 天清理。
+确定未尝试发布的对象可以加速清理。清理调度在行锁事务外使用不继承请求取消的 5 秒上下文；失败
+只告警，由上传前已提交的到期任务兜底，不能依赖已经取消的请求完成清理。
 
 对象清理任务仍存于通用 `jobs` 表，由 `internal/db/object_cleanup_jobs.go` 和独立的
 `ObjectCleanupJobMapper` 负责入队、定时调度、提前执行、领取、完成和失败重试。
@@ -146,8 +155,15 @@ SSE 读取时限制为声明长度加一字节，并校验对象报告大小、�
 ## 30 天逻辑期限
 
 JetStream 不使用 `MaxAge` 静默删除。每个 envelope 带 `expires_at`，应用每分钟扫描 Stream。
-发现过期消息时终止 Code Session、撤销凭证、按 subject 清空消息、删除 durable consumer、加速关联
-对象清理并输出 Error 日志。单条过期或毒消息不能跳过继续执行。
+发现过期消息时先提交 Code Session 终止与凭证撤销，再删除 durable consumer、按 subject 清空消息、
+加速关联对象清理并输出 Error 日志。PG 失败时不得先 TERM、ACK 或 purge；consumer 删除失败时
+不得先 purge，否则会丢失下一轮扫描的重试依据。该批次任何终止/清理失败都不推进扫描游标。
+
+扫描按 subject 查找实际存储的下一条消息，一轮最多 512 条，已 ACK 的序号空洞不占扫描预算。
+坏 JSON、版本/身份/期限无效时告警，并继续检查其他 Session。坏消息本身不 ACK；以可信 subject
+定位其 Session，以 JetStream 存储时间加 30 天作为兜底期限，不使用损坏 envelope 的对象引用。
+PG 记录已不存在时直接清理对应队列，不执行空租户 UUID 的终止 SQL。单条过期或毒消息不能跳过
+继续执行同一 Session 的后续输入。
 
 ## 故障语义
 

@@ -10,6 +10,13 @@ import (
 
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
+var (
+	errInboundPayloadTooLarge         = errors.New("worker event payload exceeds 16 MiB")
+	errLargePayloadStorageUnavailable = errors.New("worker event payload object storage is unavailable")
+	errLargePayloadDigestMismatch     = errors.New("worker event payload digest mismatch")
+	errActivationSnapshotChanged      = errors.New("code session activation snapshot changed")
+)
+
 func codeSessionNotFound(cause error) error {
 	return apperr.New(apperr.NotFound, "Code session not found", cause)
 }

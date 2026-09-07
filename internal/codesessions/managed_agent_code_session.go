@@ -10,7 +10,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
-	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 // ManagedAgentCreateInput 汇总为 managed agent 创建 code session 和签发 sandbox 凭证所需的上下文。
@@ -175,90 +174,6 @@ func (s *Service) managedAgentCreateResult(
 	}, nil
 }
 
-// ActivateManagedAgentCodeSession locks the owning Session, publishes complete
-// public history in stable order, and marks the Code Session active only after
-// JetStream acknowledges every startup event.
-func (s *Service) ActivateManagedAgentCodeSession(
-	ctx context.Context,
-	codeSession db.CodeSession,
-) error {
-	if s == nil || s.db == nil {
-		return db.ErrNotFound
-	}
-	cleanupJobIDs := make([]string, 0)
-	publishAttempted := false
-	err := s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
-		// lock session by session external id
-		lockedSession, err := tx.LockSessionForEvents(
-			ctx,
-			codeSession.WorkspaceUUID,
-			codeSession.SessionExternalID,
-		)
-		if err != nil {
-			return err
-		}
-		// lock code_session by code session id
-		lockedCodeSession, err := tx.LockInitializingCodeSession(
-			ctx,
-			codeSession.WorkspaceUUID,
-			codeSession.UUID,
-		)
-		if err != nil {
-			return err
-		}
-		sessionEvents, err := tx.ListSessionEventsForActivation(ctx, lockedSession)
-		if err != nil {
-			return err
-		}
-		configRaw, err := marshalRaw(codeSessionConfig(lockedCodeSession.Metadata))
-		if err != nil {
-			return err
-		}
-		initialize, err := s.prepareInitializeEvent(ctx, lockedCodeSession, configRaw, lockedCodeSession.CreatedAt)
-		if err != nil {
-			return err
-		}
-		startupEvents := make([]preparedInboundEvent, 0, len(sessionEvents)+1)
-		startupEvents = append(startupEvents, initialize)
-		if initialize.cleanupJobID != "" {
-			cleanupJobIDs = append(cleanupJobIDs, initialize.cleanupJobID)
-		}
-		for _, event := range sessionEvents {
-			if !maevents.IsPublicWorkerInputEvent(event.EventType) {
-				continue
-			}
-			inbound, err := s.convertSessionEventToInbound(ctx, lockedCodeSession, event)
-			if err != nil {
-				return err
-			}
-			if inbound.cleanupJobID != "" {
-				cleanupJobIDs = append(cleanupJobIDs, inbound.cleanupJobID)
-			}
-			startupEvents = append(startupEvents, inbound)
-		}
-		for _, event := range startupEvents {
-			publishAttempted = true
-			if err := s.publishPreparedInboundEvent(ctx, event); err != nil {
-				return err
-			}
-		}
-		activated, err := tx.ActivateCodeSession(ctx, lockedCodeSession.UUID, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		if !activated {
-			return db.ErrInvalidState
-		}
-		return nil
-	})
-	if err != nil && !publishAttempted {
-		for _, cleanupJobID := range cleanupJobIDs {
-			s.triggerPayloadCleanupNow(ctx, cleanupJobID)
-		}
-	}
-	return err
-}
-
 // convertSessionEventToInbound maps one public session event to a stable
 // JetStream publication. Its message ID survives activation retries.
 func (s *Service) convertSessionEventToInbound(
@@ -302,7 +217,7 @@ func (s *Service) TerminateManagedAgentCodeSession(
 	if purgeErr := s.workerEvents.PurgeSession(ctx, codeSessionID); purgeErr != nil {
 		return purgeErr
 	}
-	return err
+	return nil
 }
 
 func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMessage, error) {

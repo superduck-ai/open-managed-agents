@@ -55,6 +55,7 @@ import {
   credentialFormReady,
   credentialFormValues,
   initialFormValues,
+  isPlatformMemoryMarkdownPath,
   parseCredentialAuthType,
   patchCredentialFormValues,
   vaultOAuthErrorMessage,
@@ -598,7 +599,7 @@ export function MemoryDialog({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canSubmit = values.path.trim() && values.content.length > 0;
+  const canSubmit = values.path.trim() && values.content.length > 0 && !isPlatformMemoryMarkdownPath(values.path);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) {
@@ -638,6 +639,14 @@ export function MemoryDialog({
               onChange={(path) => setValues((current) => ({ ...current, path }))}
               autoFocus
             />
+            {isPlatformMemoryMarkdownPath(values.path) ? (
+              <p className="text-sm text-destructive" role="alert">
+                {msg(
+                  'managedAgents.memoryStores.memoryDialog.platformMemoryMd',
+                  'Platform MEMORY.md is created in the sandbox and cannot be added to a store.',
+                )}
+              </p>
+            ) : null}
             <ManagedTextArea
               label={msg('managedAgents.memoryStores.memoryDialog.content', 'Content')}
               value={values.content}

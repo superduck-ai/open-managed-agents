@@ -1555,6 +1555,7 @@
   "managedAgents.memoryStores.memoryDialog.edit": "编辑记忆",
   "managedAgents.memoryStores.memoryDialog.path": "路径",
   "managedAgents.memoryStores.memoryDialog.placeholder": "记忆内容",
+  "managedAgents.memoryStores.memoryDialog.platformMemoryMd": "平台 MEMORY.md 由沙箱创建，不能添加到存储中。",
   "managedAgents.observability.activeTime": "活跃时长",
   "managedAgents.observability.dataAsOf": "数据截至 {date}",
   "managedAgents.observability.errorRate": "错误率",

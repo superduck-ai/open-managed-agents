@@ -1555,6 +1555,7 @@
   "managedAgents.memoryStores.memoryDialog.edit": "Edit memory",
   "managedAgents.memoryStores.memoryDialog.path": "Path",
   "managedAgents.memoryStores.memoryDialog.placeholder": "Memory content",
+  "managedAgents.memoryStores.memoryDialog.platformMemoryMd": "Platform MEMORY.md is created in the sandbox and cannot be added to a store.",
   "managedAgents.observability.activeTime": "Active time",
   "managedAgents.observability.dataAsOf": "Data as of {date}",
   "managedAgents.observability.errorRate": "Error rate",

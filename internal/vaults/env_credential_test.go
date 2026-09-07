@@ -26,6 +26,8 @@ func TestParseSecretName(t *testing.T) {
 		{name: "reserved", input: "CLAUDE_CODE_REMOTE", wantErr: "is reserved"},
 		{name: "reserved lowercase", input: "claude_code_remote", wantErr: "is reserved"},
 		{name: "reserved with surrounding space", input: " CLAUDE_CODE_REMOTE ", wantErr: "is reserved"},
+		{name: "reserved memory dir", input: "CLAUDE_CODE_REMOTE_MEMORY_DIR", wantErr: "is reserved"},
+		{name: "reserved cowork memory path", input: "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE", wantErr: "is reserved"},
 		{name: "trim surrounding space", input: " TOKEN ", want: "TOKEN"},
 		{name: "lowercase user name", input: "my_api_key", want: "my_api_key"},
 		{name: "leading underscore", input: "_PRIVATE", want: "_PRIVATE"},

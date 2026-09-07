@@ -1,6 +1,6 @@
 # Memory Store 运行时
 
-- 状态：Attach 合同与 Filestore `/memory/{slug}` 写回已实现；Sandbox 挂载与 `MEMORY.md` 见后续 PR
+- 状态：已实现（Attach 合同、Filestore `/memory/{slug}` 写回、Sandbox 挂载与 `MEMORY.md`）
 - 日期：2026-08-27
 - 官方 HTTP 合同：[Using agent memory](https://platform.claude.com/docs/en/managed-agents/memory)
 

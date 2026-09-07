@@ -176,6 +176,8 @@ func PlatformReservedSecretName(secretName string) bool {
 var platformReservedSecretNames = func() map[string]struct{} {
 	names := []string{
 		"CLAUDE_CODE_REMOTE",
+		"CLAUDE_CODE_REMOTE_MEMORY_DIR",
+		"CLAUDE_COWORK_MEMORY_PATH_OVERRIDE",
 		"CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2",
 		"CLAUDE_CODE_USE_CCR_V2",
 		"CLAUDE_CODE_WORKER_EPOCH",

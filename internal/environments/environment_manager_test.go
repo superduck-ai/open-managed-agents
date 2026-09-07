@@ -178,14 +178,6 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 			"mount_path": "/workspace/widgets",
 			"checkout":   "main",
 		},
-		map[string]any{
-			"type":            "memory_store",
-			"memory_store_id": "mem_test",
-			"mount_path":      "/workspace/memory",
-			"runtime_extension": map[string]any{
-				"enabled": true,
-			},
-		},
 	}
 	sources := managedAgentRuntimeSourceValues(
 		t,
@@ -281,6 +273,12 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 	if _, ok := startupEnv["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
 		t.Fatalf("session access token environment variable must not mask the WebSocket auth FD: %#v", startupEnv)
+	}
+	if _, ok := startupEnv["CLAUDE_CODE_REMOTE_MEMORY_DIR"]; ok {
+		t.Fatalf("memory dir env must be absent without stores: %#v", startupEnv)
+	}
+	if _, ok := startupEnv["CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"]; ok {
+		t.Fatalf("cowork memory path env must be absent without stores: %#v", startupEnv)
 	}
 	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
 		startupEnv["OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"] != "http/protobuf" ||

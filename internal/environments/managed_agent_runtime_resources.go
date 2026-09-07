@@ -5,11 +5,17 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 type managedAgentRuntimeResources struct {
-	sources []json.RawMessage
-	workDir string
+	sources      []json.RawMessage
+	workDir      string
+	memoryMounts []memoryRuntimeMount
+	// invalidMemoryResources holds the session_resource IDs whose memory
+	// snapshot could not be parsed. Launch is fail-closed on these: a store the
+	// caller attached must never be silently left unmounted.
+	invalidMemoryResources []string
 }
 
 type githubRepositoryRuntimePayload struct {
@@ -48,10 +54,13 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managed
 			if ok {
 				resolved.sources = append(resolved.sources, source)
 			}
-		case "memory_store":
-			if source, ok := opaqueRuntimeSourceJSON(resource.Payload); ok {
-				resolved.sources = append(resolved.sources, source)
+		case sessionresource.MemoryStoreType:
+			mount, ok := parseMemoryRuntimeMount(resource.Payload)
+			if !ok {
+				resolved.invalidMemoryResources = append(resolved.invalidMemoryResources, resource.ExternalID)
+				continue
 			}
+			resolved.memoryMounts = append(resolved.memoryMounts, mount)
 		}
 	}
 	return resolved
@@ -81,14 +90,6 @@ func gitRepositoryRuntimeSourceJSON(payload githubRepositoryRuntimePayload) (jso
 		Checkout:  payload.Checkout,
 	})
 	return raw, err == nil
-}
-
-func opaqueRuntimeSourceJSON(raw json.RawMessage) (json.RawMessage, bool) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
-		return nil, false
-	}
-	return append(json.RawMessage(nil), raw...), true
 }
 
 func repositoryAttachedBefore(candidate, current db.SessionResource) bool {

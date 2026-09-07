@@ -6,8 +6,10 @@ import {
   type EnvironmentApiResponse,
   type EnvironmentEditValues,
   type I18nMsg,
+  type MemoryApiResponse,
 } from '../types';
 import {
+  buildMemoryTreeNodes,
   credentialAuthBody,
   credentialEnvInjectionMissing,
   credentialFormReady,
@@ -15,6 +17,8 @@ import {
   emptyCredentialFormValues,
   environmentConfigBody,
   environmentEditValues,
+  isPlatformMemoryMarkdownPath,
+  memoryRowsFromPage,
   patchCredentialFormValues,
   statusPillTone,
   vaultOAuthErrorMessage,
@@ -410,3 +414,38 @@ describe('vaultOAuthErrorMessage', () => {
     expect(vaultOAuthErrorMessage(' mystery_code ', msgFallback)).toBe('Could not complete OAuth. Try again.');
   });
 });
+
+describe('platform MEMORY.md filter', () => {
+  test('hides the sandbox policy file from store trees and ingest', () => {
+    expect(isPlatformMemoryMarkdownPath('/MEMORY.md')).toBe(true);
+    expect(isPlatformMemoryMarkdownPath('MEMORY.md')).toBe(true);
+    expect(isPlatformMemoryMarkdownPath('/notes/MEMORY.md')).toBe(false);
+
+    const rows = memoryRowsFromPage({
+      data: [memoryRow('/MEMORY.md', 'mem_platform'), memoryRow('/project/brief.md', 'mem_brief')],
+      prefixes: [],
+      next_page: null,
+    });
+    expect(rows.map((row) => row.path)).toEqual(['/project/brief.md']);
+
+    const nodes = buildMemoryTreeNodes(
+      [memoryRow('/MEMORY.md', 'mem_platform'), memoryRow('/project/brief.md', 'mem_brief')],
+      new Set(),
+      {},
+    );
+    expect(nodes.map((node) => node.label)).toEqual(['brief.md']);
+  });
+});
+
+function memoryRow(path: string, id: string): MemoryApiResponse {
+  return {
+    id,
+    content: null,
+    content_size_bytes: 0,
+    created_at: '2026-08-30T00:00:00Z',
+    memory_store_id: 'memstore_one123456',
+    path,
+    type: 'memory',
+    updated_at: '2026-08-30T00:00:00Z',
+  };
+}

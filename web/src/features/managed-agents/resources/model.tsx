@@ -59,7 +59,8 @@ export function memoryBranchFromPage(page: PageResponse<MemoryApiResponse>): Mem
 export function memoryRowsFromPage(page: PageResponse<MemoryApiResponse>) {
   const rows = (page.data ?? [])
     .map(normalizeMemoryRow)
-    .filter((memory): memory is MemoryApiResponse => Boolean(memory));
+    .filter((memory): memory is MemoryApiResponse => Boolean(memory))
+    .filter((memory) => memory.type !== 'memory' || !isPlatformMemoryMarkdownPath(memory.path));
   const existingPaths = new Set(
     rows.map((memory) => (memory.type === 'memory_prefix' ? normalizeMemoryFolderPath(memory.path) : memory.path)),
   );
@@ -179,6 +180,9 @@ export function buildMemoryTreeNodes(
   const appendRows = (rows: MemoryApiResponse[], depth: number) => {
     const seenFolders = new Set<string>();
     for (const row of sortMemoryRows(rows)) {
+      if (row.type === 'memory' && isPlatformMemoryMarkdownPath(row.path)) {
+        continue;
+      }
       if (row.type === 'memory_prefix') {
         const path = normalizeMemoryFolderPath(row.path);
         if (seenFolders.has(path)) {
@@ -466,6 +470,11 @@ export function entityInitialMessage(entity: ManagedEntityApiResponse) {
     }
   }
   return '';
+}
+
+export function isPlatformMemoryMarkdownPath(path: string) {
+  const trimmed = path.trim();
+  return trimmed === '/MEMORY.md' || trimmed === 'MEMORY.md';
 }
 
 export function entityTriggerType(entity: ManagedEntityApiResponse): ManagedEntityFormValues['triggerType'] {

@@ -111,7 +111,7 @@ func TestSessionsAPI(t *testing.T) {
 			"metadata":{"case":"1234"},
 			"resources":[
 				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/session-resource.txt"},
-				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`,"name":"memory"}
+				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`}
 			]
 		}`)
 		if created.Type != "session" || created.Status != "idle" || created.EnvironmentID != env.ID {

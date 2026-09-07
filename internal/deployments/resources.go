@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"time"
-	"unicode/utf8"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -41,6 +41,8 @@ type deploymentResourceRequest struct {
 	MemoryStoreID      json.RawMessage `json:"memory_store_id"`
 	Access             json.RawMessage `json:"access"`
 	Instructions       json.RawMessage `json:"instructions"`
+	Name               json.RawMessage `json:"name"`
+	Description        json.RawMessage `json:"description"`
 }
 
 type deploymentResourcePayload struct {
@@ -63,14 +65,15 @@ type deploymentResourceSecret struct {
 //
 // 未传 resources 或值为 null 时，函数返回规范的空数组和空 secrets 对象。其他输入必须是
 // JSON 数组，且总资源数不能超过 sessioncontract.MaxResources。它按原始顺序调用
-// normalizeResource 处理每一项，收集可公开保存的 payload、可选 secret 和 File mount_path；
-// 任意一项失败都会终止整组处理。
+// normalizeResource 处理每一项，收集可公开保存的 payload、可选 secret、File mount_path
+// 和 Memory Store id；任意一项失败都会终止整组处理。
 //
 // secret 使用资源在原数组中的下标作为 key。这样普通 resources 中不会包含 GitHub
 // authorization_token，Deployment 运行时 sessionResourcesFromDeployment 仍可用相同下标
 // 将秘密匹配回对应的 Session resource。File mount_path 在全部项目处理完成后统一校验，
 // 确保路径没有重复或祖先/后代冲突，且 File 数量不超过 sessionresource.MaxFileResources
-// （当前等于 MaxResources）。这样 Create/Update 与 run 时 materialize Session 的限额一致。
+// （当前等于 MaxResources）。Memory Store 的重复 id 和数量上限在收集每条 resource 时
+// 用 MemoryAttachSet 校验。这样 Create/Update 与 run 时 materialize Session 的限额一致。
 //
 // 例如：
 //   - 输入一个 File 和一个带 Token 的 GitHub resource，resourcesRaw 保存规范化后的两条
@@ -102,6 +105,7 @@ func (h *Handler) normalizeResources(
 	resources := make([]deploymentResourcePayload, 0, len(items))
 	secrets := map[string]deploymentResourceSecret{}
 	fileMountPaths := make([]string, 0, len(items))
+	memoryStores := sessionresource.NewMemoryAttachSet()
 	for index, fields := range items {
 		resource, err := h.normalizeResource(r, principal, fields)
 		if err != nil {
@@ -110,6 +114,11 @@ func (h *Handler) normalizeResources(
 		resources = append(resources, resource.payload)
 		if resource.resourceType == sessionresource.FileType {
 			fileMountPaths = append(fileMountPaths, resource.mountPath)
+		}
+		if resource.resourceType == sessionresource.MemoryStoreType {
+			if err := memoryStores.Claim(resource.referenceID); err != nil {
+				return nil, nil, err
+			}
 		}
 		if resource.secret != nil {
 			secrets[strconv.Itoa(index)] = *resource.secret
@@ -142,7 +151,8 @@ func (h *Handler) normalizeResources(
 //
 // File resource 会固定为 source=/uploads，并生成经过校验的 mount_path。当前函数只处理
 // 单条资源；File 数量、重复 mount_path 和祖先/后代路径冲突由外层 normalizeResources
-// 收集全部路径后统一校验。Deployment 真正运行时，sessionResourcesFromDeployment
+// 收集全部路径后统一校验。同一组 resources 里 Memory Store 的重复 id 和数量上限也由
+// 外层在收集每条 resource 时校验。Deployment 真正运行时，sessionResourcesFromDeployment
 // 才会为这些模板生成 sesrsc_ ID，并创建 Session resource 和对应的 File binding。
 //
 // 例如：
@@ -230,55 +240,62 @@ func (h *Handler) normalizeResource(
 			return normalizedDeploymentResource{}, err
 		}
 		resource.secret = &deploymentResourceSecret{AuthorizationToken: token}
-	case "memory_store":
-		memoryStoreID, err := parseRequiredRawString(fields.MemoryStoreID, "memory_store_id")
-		if err != nil {
-			return normalizedDeploymentResource{}, err
-		}
-		resource.payload.MemoryStoreID = memoryStoreID
-		resource.referenceID = memoryStoreID
-		access, err := optionalStringWithDefault(fields.Access, "read_write", "access")
-		if err != nil {
-			return normalizedDeploymentResource{}, err
-		}
-		if access != "read_write" && access != "read_only" {
-			return normalizedDeploymentResource{}, errors.New("access must be read_write or read_only")
-		}
-		resource.payload.Access = access
-		if len(fields.Instructions) > 0 {
-			if httpapi.IsJSONNull(fields.Instructions) {
-				return normalizedDeploymentResource{}, errors.New("instructions is required")
-			}
-			var instructions string
-			if err := json.Unmarshal(fields.Instructions, &instructions); err != nil {
-				return normalizedDeploymentResource{}, errors.New("instructions must be a string")
-			}
-			if utf8.RuneCountInString(instructions) > 4096 {
-				return normalizedDeploymentResource{}, errors.New("instructions must be at most 4096 characters")
-			}
-			resource.payload.Instructions = &instructions
-		}
+	case sessionresource.MemoryStoreType:
+		return h.normalizeMemoryStoreResource(r, principal, fields)
 	default:
 		return normalizedDeploymentResource{}, errors.New(
 			"resource type must be file, github_repository, or memory_store",
 		)
 	}
 
-	if resource.resourceType == "memory_store" {
-		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, resource.referenceID)
+	return resource, nil
+}
+
+func (h *Handler) normalizeMemoryStoreResource(
+	r *http.Request,
+	principal auth.Principal,
+	fields deploymentResourceRequest,
+) (normalizedDeploymentResource, error) {
+	if err := sessionresource.RejectClientMemoryIdentityFields(fields.MountPath, fields.Name, fields.Description); err != nil {
+		return normalizedDeploymentResource{}, err
+	}
+	memoryStoreID, err := parseRequiredRawString(fields.MemoryStoreID, "memory_store_id")
+	if err != nil {
+		return normalizedDeploymentResource{}, err
+	}
+	access, err := sessionresource.ParseMemoryAccess(fields.Access)
+	if err != nil {
+		return normalizedDeploymentResource{}, err
+	}
+	resource := normalizedDeploymentResource{
+		resourceType: sessionresource.MemoryStoreType,
+		payload: deploymentResourcePayload{
+			Type:          sessionresource.MemoryStoreType,
+			MemoryStoreID: memoryStoreID,
+			Access:        access,
+		},
+		referenceID: memoryStoreID,
+	}
+	if len(fields.Instructions) > 0 {
+		instructions, err := sessionresource.ParseMemoryInstructions(fields.Instructions)
 		if err != nil {
-			return normalizedDeploymentResource{}, resourceReferenceError{
-				ResourceType: "memory_store",
-				ResourceID:   resource.referenceID,
-				Err:          err,
-			}
+			return normalizedDeploymentResource{}, err
 		}
-		if store.ArchivedAt != nil {
-			return normalizedDeploymentResource{}, resourceReferenceError{
-				ResourceType: "memory_store",
-				ResourceID:   resource.referenceID,
-				Err:          db.ErrInvalidState,
-			}
+		resource.payload.Instructions = &instructions
+	}
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, memoryStoreID)
+	if err != nil {
+		return normalizedDeploymentResource{}, resourceReferenceError{
+			ResourceType: sessionresource.MemoryStoreType,
+			ResourceID:   memoryStoreID,
+			Err:          err,
+		}
+	}
+	if store.ArchivedAt != nil {
+		return normalizedDeploymentResource{}, resourceReferenceError{
+			ResourceType: sessionresource.MemoryStoreType,
+			ResourceID:   memoryStoreID,
+			Err:          db.ErrInvalidState,
 		}
 	}
 	return resource, nil
@@ -344,6 +361,7 @@ func (e resourceReferenceError) Unwrap() error {
 func sessionResourcesFromDeployment(
 	deployment db.Deployment,
 	now time.Time,
+	memoryStores map[string]db.MemoryStore,
 ) ([]db.CreateSessionResourceInput, error) {
 	var configs []json.RawMessage
 	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
@@ -360,6 +378,7 @@ func sessionResourcesFromDeployment(
 
 	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
 	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
+	attachSet := sessionresource.NewMemoryAttachSet()
 	for index, configRaw := range configs {
 		var config map[string]any
 		if err := json.Unmarshal(configRaw, &config); err != nil || config == nil {
@@ -373,7 +392,8 @@ func sessionResourcesFromDeployment(
 
 		payload := maps.Clone(config)
 		var fileMount *db.SessionFileMount
-		if resourceType == sessionresource.FileType {
+		switch resourceType {
+		case sessionresource.FileType:
 			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
 			if err != nil {
 				return nil, err
@@ -389,7 +409,12 @@ func sessionResourcesFromDeployment(
 				FileExternalID:     binding.FileID,
 				Path:               binding.Path,
 			}
-		} else {
+		case sessionresource.MemoryStoreType:
+			payload, err = snapshotMemoryStorePayload(config, memoryStores, attachSet, resourceID)
+			if err != nil {
+				return nil, err
+			}
+		default:
 			payload["id"] = resourceID
 			payload["type"] = resourceType
 		}
@@ -421,4 +446,99 @@ func sessionResourcesFromDeployment(
 		return nil, err
 	}
 	return resources, nil
+}
+
+func snapshotMemoryStorePayload(
+	config map[string]any,
+	stores map[string]db.MemoryStore,
+	attachSet *sessionresource.MemoryAttachSet,
+	resourceID string,
+) (map[string]any, error) {
+	memoryStoreID, ok := config["memory_store_id"].(string)
+	if !ok || memoryStoreID == "" {
+		return nil, errors.New("stored memory_store resource is missing memory_store_id")
+	}
+	store, ok := stores[memoryStoreID]
+	if !ok {
+		return nil, fmt.Errorf("memory store not found: %s", memoryStoreID)
+	}
+	access, err := storedMemoryAccess(config["access"])
+	if err != nil {
+		return nil, err
+	}
+	instructions, ok := config["instructions"].(string)
+	if !ok && config["instructions"] != nil {
+		return nil, errors.New("stored memory_store instructions must be a string")
+	}
+	slug, err := attachSet.Add(memoryStoreID, store.Name, store.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := sessionresource.SnapshotMemoryStore(
+		memoryStoreID,
+		access,
+		instructions,
+		store.Name,
+		store.Description,
+		slug,
+	)
+	return snapshot.PayloadFields(resourceID), nil
+}
+
+// storedMemoryAccess reads the access field of a stored memory_store resource.
+// Validation itself lives in sessionresource.NormalizeMemoryAccess; this only
+// rejects a value that is present but not a JSON string.
+func storedMemoryAccess(raw any) (string, error) {
+	if raw == nil {
+		return sessionresource.MemoryAccessReadWrite, nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", sessionresource.ErrMemoryStoreAccess
+	}
+	return sessionresource.NormalizeMemoryAccess(value)
+}
+
+func loadDeploymentMemoryStores(
+	ctx context.Context,
+	database *db.DB,
+	workspaceUUID string,
+	resources json.RawMessage,
+) (map[string]db.MemoryStore, error) {
+	if len(resources) == 0 || httpapi.IsJSONNull(resources) {
+		return nil, nil
+	}
+	var configs []deploymentResourcePayload
+	if err := json.Unmarshal(resources, &configs); err != nil {
+		return nil, errors.New("stored resources are invalid")
+	}
+	stores := make(map[string]db.MemoryStore)
+	for _, config := range configs {
+		if config.Type != sessionresource.MemoryStoreType || config.MemoryStoreID == "" {
+			continue
+		}
+		if _, exists := stores[config.MemoryStoreID]; exists {
+			continue
+		}
+		store, err := database.GetMemoryStore(ctx, workspaceUUID, config.MemoryStoreID)
+		if err != nil {
+			return nil, err
+		}
+		if store.ArchivedAt != nil {
+			return nil, db.ErrInvalidState
+		}
+		stores[config.MemoryStoreID] = store
+	}
+	return stores, nil
+}
+
+func memoryStoreLoadFailure(err error) *deploymentRunError {
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		return runErrorForReference("memory_store", err, false)
+	case errors.Is(err, db.ErrInvalidState):
+		return runErrorForReference("memory_store", err, true)
+	default:
+		return nil
+	}
 }

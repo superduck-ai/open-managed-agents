@@ -601,7 +601,11 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return invalidRequest(err)
 	}
-	resource, err := h.resourceFromRequest(r, session, body, time.Now().UTC())
+	existing, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
+	if err != nil {
+		return internalError("Could not list resources", fmt.Errorf("list session %q resources: %w", sessionID, err))
+	}
+	resource, err := h.resourceFromRequest(r, session, body, time.Now().UTC(), observeSessionMemoryResources(existing))
 	if err != nil {
 		return mapResourceBuildError(err)
 	}

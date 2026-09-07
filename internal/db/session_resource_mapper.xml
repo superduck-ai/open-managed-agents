@@ -122,6 +122,16 @@
         AND payload IS NOT NULL
         AND deleted_at IS NULL
     </select>
+    <select id="CountSessionMemoryStoresByStoreID" result="scalar">
+        SELECT count(*) AS resource_count
+        FROM session_resources
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND resource_type = 'memory_store'
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+        AND payload->>'memory_store_id' = #{memoryStoreID}
+    </select>
 
     <select id="FindMountConflict" result="optional" resultType="string">
         SELECT resource.path

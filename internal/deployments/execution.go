@@ -27,6 +27,7 @@ func prepareDeploymentExecution(
 	deployment db.Deployment,
 	createdByAPIKeyUUID, runtimeUserUUID string,
 	now time.Time,
+	memoryStores map[string]db.MemoryStore,
 ) (preparedDeploymentExecution, error) {
 	sessionID, threadID, workID, runID, err := newRunIDs()
 	if err != nil {
@@ -36,7 +37,7 @@ func prepareDeploymentExecution(
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
+	resources, err := sessionResourcesFromDeployment(deployment, now, memoryStores)
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}

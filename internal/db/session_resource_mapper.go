@@ -14,6 +14,7 @@ type SessionResourceMapper interface {
 	Update(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	CountSessionFileResources(ctx context.Context, workspaceUUID, sessionExternalID, resourceType string) (int, error)
+	CountSessionMemoryStoresByStoreID(ctx context.Context, workspaceUUID, sessionExternalID, memoryStoreID string) (int, error)
 	FindMountConflict(ctx context.Context, params sessionResourcePathParams) (string, bool, error)
 	BindSessionFileResource(ctx context.Context, params sessionFileResourceBindingParams) (sessionResourceRow, error)
 	GetSessionResourceForMutation(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)

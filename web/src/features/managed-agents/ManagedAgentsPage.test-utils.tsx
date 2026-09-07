@@ -162,6 +162,20 @@ export function codeBlockContaining(value: string) {
   return Array.from(document.querySelectorAll('pre')).find((element) => element.textContent?.includes(value));
 }
 
+export async function addMemoryStoreResource(container: HTMLElement, storeName: string | RegExp) {
+  fireEvent.click(within(container).getByRole('button', { name: 'Add resource' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Memory store' }));
+  const trigger = await waitFor(() => within(container).getByRole('combobox', { name: 'Memory store' }));
+  fireEvent.pointerDown(trigger);
+  fireEvent.pointerUp(trigger);
+  fireEvent.click(trigger);
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+  const option = await screen.findByRole('option', { name: storeName });
+  fireEvent.pointerDown(option);
+  fireEvent.pointerUp(option);
+  fireEvent.click(option);
+}
+
 export async function selectManagedComboboxOption(
   container: HTMLElement,
   name: string | RegExp,
@@ -1578,6 +1592,22 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
       const deployment = resources.deployments.find((item) => item.id === deploymentId);
       return deployment ? jsonResponse(deployment) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (retrieveDeploymentMatch && method === 'POST') {
+      const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
+      const existing = resources.deployments.find((item) => item.id === deploymentId);
+      if (!existing) {
+        return jsonResponse({ error: { message: 'not found' } }, 404);
+      }
+      const updated = {
+        ...existing,
+        name: typeof body?.name === 'string' ? body.name : existing.name,
+        description: body?.description === undefined ? existing.description : body.description,
+        resources: body?.resources ?? existing.resources,
+        updated_at: new Date().toISOString(),
+      };
+      resources.deployments = [updated, ...resources.deployments.filter((item) => item.id !== deploymentId)];
+      return jsonResponse(updated);
     }
     if (url.startsWith('/v1/deployment_runs?') && method === 'GET') {
       const deploymentId = new URL(url, 'https://oma.duck.ai').searchParams.get('deployment_id');

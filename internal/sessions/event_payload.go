@@ -94,16 +94,6 @@ func optionalStringWithDefault(raw json.RawMessage, fallback, name string) (stri
 	return value, nil
 }
 
-func copyOptionalPayloadString(payload map[string]any, raw json.RawMessage, name string) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return
-	}
-	var value string
-	if json.Unmarshal(raw, &value) == nil {
-		payload[name] = value
-	}
-}
-
 func validateMetadataEntries(metadata map[string]string) error {
 	return httpapi.ValidateMetadataEntryLimit(metadata, 16, "metadata may contain at most 16 entries")
 }

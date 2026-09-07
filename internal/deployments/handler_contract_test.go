@@ -1,25 +1,200 @@
 package deployments
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func TestSessionResourcesFromDeploymentRejectsInvalidSecrets(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment(db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{}, nil)
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
 	}
 }
 
 func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment(db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{}, nil)
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
+	}
+}
+
+func TestSessionResourcesFromDeploymentSnapshotsMemoryStores(t *testing.T) {
+	resources, err := sessionResourcesFromDeployment(db.Deployment{
+		OrganizationUUID: "org",
+		WorkspaceUUID:    "ws",
+		Resources: json.RawMessage(`[
+			{"type":"github_repository","url":"https://github.com/example/repo.git","mount_path":"/repo"},
+			{"type":"memory_store","memory_store_id":"memstore_one","access":"read_only","instructions":"keep notes"}
+		]`),
+	}, time.Time{}, map[string]db.MemoryStore{
+		"memstore_one": {
+			ExternalID:  "memstore_one",
+			Name:        "Product Docs-Draft!!",
+			Description: "personal taste",
+		},
+	})
+	if err != nil {
+		t.Fatalf("sessionResourcesFromDeployment() error = %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("resources = %d, want 2", len(resources))
+	}
+	var github map[string]any
+	if err := json.Unmarshal(resources[0].Resource.Payload, &github); err != nil {
+		t.Fatalf("decode github payload: %v", err)
+	}
+	if github["type"] != "github_repository" ||
+		github["url"] != "https://github.com/example/repo.git" ||
+		github["mount_path"] != "/repo" {
+		t.Fatalf("github payload = %#v", github)
+	}
+	if _, ok := github["id"].(string); !ok || github["id"] == "" {
+		t.Fatalf("github id = %#v", github["id"])
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resources[1].Resource.Payload, &payload); err != nil {
+		t.Fatalf("decode memory payload: %v", err)
+	}
+	if payload["type"] != "memory_store" ||
+		payload["memory_store_id"] != "memstore_one" ||
+		payload["access"] != "read_only" ||
+		payload["instructions"] != "keep notes" ||
+		payload["name"] != "Product Docs-Draft!!" ||
+		payload["description"] != "personal taste" ||
+		payload["mount_path"] != "/mnt/memory/product-docs-draft" {
+		t.Fatalf("memory payload = %#v", payload)
+	}
+}
+
+func TestSessionResourcesFromDeploymentRejectsMalformedMemoryFields(t *testing.T) {
+	stores := map[string]db.MemoryStore{
+		"memstore_one": {ExternalID: "memstore_one", Name: "notes"},
+	}
+	for _, test := range []struct {
+		name        string
+		resource    string
+		wantErr     error
+		wantMessage string
+	}{
+		{
+			name:     "access is not a string",
+			resource: `{"type":"memory_store","memory_store_id":"memstore_one","access":7}`,
+			wantErr:  sessionresource.ErrMemoryStoreAccess,
+		},
+		{
+			name:     "access is an unknown value",
+			resource: `{"type":"memory_store","memory_store_id":"memstore_one","access":"write"}`,
+			wantErr:  sessionresource.ErrMemoryStoreAccess,
+		},
+		{
+			name:        "memory_store_id is missing",
+			resource:    `{"type":"memory_store","access":"read_only"}`,
+			wantMessage: "memory_store_id",
+		},
+		{
+			name:        "instructions is not a string",
+			resource:    `{"type":"memory_store","memory_store_id":"memstore_one","instructions":7}`,
+			wantMessage: "instructions",
+		},
+		{
+			name:        "store was not loaded for snapshot",
+			resource:    `{"type":"memory_store","memory_store_id":"memstore_missing"}`,
+			wantMessage: "memory store not found",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := sessionResourcesFromDeployment(db.Deployment{
+				OrganizationUUID: "org",
+				WorkspaceUUID:    "ws",
+				Resources:        json.RawMessage("[" + test.resource + "]"),
+			}, time.Time{}, stores)
+			if err == nil {
+				t.Fatal("sessionResourcesFromDeployment() error = nil, want rejection")
+			}
+			if test.wantErr != nil && !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want %v", err, test.wantErr)
+			}
+			if test.wantMessage != "" && !strings.Contains(err.Error(), test.wantMessage) {
+				t.Fatalf("error = %v, want it to mention %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestSessionResourcesFromDeploymentDefaultsAbsentMemoryAccess(t *testing.T) {
+	resources, err := sessionResourcesFromDeployment(db.Deployment{
+		OrganizationUUID: "org",
+		WorkspaceUUID:    "ws",
+		Resources:        json.RawMessage(`[{"type":"memory_store","memory_store_id":"memstore_one"}]`),
+	}, time.Time{}, map[string]db.MemoryStore{
+		"memstore_one": {ExternalID: "memstore_one", Name: "notes"},
+	})
+	if err != nil {
+		t.Fatalf("sessionResourcesFromDeployment() error = %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resources[0].Resource.Payload, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["access"] != sessionresource.MemoryAccessReadWrite {
+		t.Fatalf("access = %#v, want read_write", payload["access"])
+	}
+}
+
+func TestLoadDeploymentMemoryStores(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("empty and null resources need no database", func(t *testing.T) {
+		for _, raw := range []json.RawMessage{nil, json.RawMessage(`null`)} {
+			stores, err := loadDeploymentMemoryStores(ctx, nil, "ws", raw)
+			if err != nil || stores != nil {
+				t.Fatalf("loadDeploymentMemoryStores(%s) = (%v, %v)", raw, stores, err)
+			}
+		}
+	})
+
+	t.Run("rejects invalid stored resources", func(t *testing.T) {
+		_, err := loadDeploymentMemoryStores(ctx, nil, "ws", json.RawMessage(`{"type":"memory_store"}`))
+		if err == nil || !strings.Contains(err.Error(), "stored resources are invalid") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("skips non-memory resources without loading", func(t *testing.T) {
+		stores, err := loadDeploymentMemoryStores(
+			ctx,
+			nil,
+			"ws",
+			json.RawMessage(`[{"type":"file","file_id":"file_1"},{"type":"github_repository","url":"https://github.com/example/repo.git"}]`),
+		)
+		if err != nil {
+			t.Fatalf("loadDeploymentMemoryStores() error = %v", err)
+		}
+		if len(stores) != 0 {
+			t.Fatalf("stores = %#v, want empty", stores)
+		}
+	})
+}
+
+func TestMemoryStoreLoadFailure(t *testing.T) {
+	notFound := memoryStoreLoadFailure(db.ErrNotFound)
+	if notFound == nil || notFound.Type != "session_resource_not_found_error" {
+		t.Fatalf("not found = %+v", notFound)
+	}
+	archived := memoryStoreLoadFailure(db.ErrInvalidState)
+	if archived == nil || archived.Type != "memory_store_archived_error" {
+		t.Fatalf("archived = %+v", archived)
+	}
+	if failure := memoryStoreLoadFailure(errors.New("database unavailable")); failure != nil {
+		t.Fatalf("unexpected failure = %+v", failure)
 	}
 }
 

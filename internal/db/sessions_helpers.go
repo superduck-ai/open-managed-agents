@@ -93,6 +93,9 @@ func createSessionResource(
 	executor yourbatis.Executor,
 	resource SessionResource,
 ) (SessionResource, error) {
+	if err := enforceSessionMemoryResourceInvariantsTx(ctx, executor, resource); err != nil {
+		return SessionResource{}, err
+	}
 	mapper := NewSessionResourceMapper(executor)
 	row, err := mapper.Insert(ctx, sessionResourceWriteParameters(resource))
 	if err != nil {

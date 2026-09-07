@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,9 +44,10 @@ func (streamResetDelivery) implStreamDelivery()  {}
 
 type streamConnection struct {
 	threadID         string
+	historyThreadID  string
 	primaryThread    bool
 	streamDeltaTypes map[string]struct{}
-	activePreviewIDs map[string]struct{}
+	activePreviewIDs map[string]string
 }
 
 func newStreamHub() *streamHub {
@@ -118,7 +120,7 @@ func newStreamConnection(threadID string, primaryThread bool, streamDeltaTypes m
 		threadID:         threadID,
 		primaryThread:    primaryThread,
 		streamDeltaTypes: streamDeltaTypes,
-		activePreviewIDs: make(map[string]struct{}),
+		activePreviewIDs: make(map[string]string),
 	}
 }
 
@@ -141,18 +143,12 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		delete(c.activePreviewIDs, event.ExternalID)
 		return true
 	}
-	if !maevents.IsStreamDelta(event.EventType) {
-		return false
-	}
-	if len(c.streamDeltaTypes) == 0 {
+	if !maevents.IsStreamDelta(event.EventType) || len(c.streamDeltaTypes) == 0 {
 		return false
 	}
 	previewType, previewID := streamPreviewTarget(event)
-	if event.EventType == previewEventDelta && previewID == "" {
-		// Legacy event_delta payloads predate preview lifecycle IDs. They cannot
-		// be correlated with an event_start, so retain their previous opt-in
-		// delivery behavior for clients requesting stream deltas.
-		return true
+	if previewID == "" {
+		return false
 	}
 	if event.EventType == previewEventStart {
 		if !c.acceptsPreviewType(previewType) {
@@ -161,11 +157,11 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		if _, active := c.activePreviewIDs[previewID]; active {
 			return false
 		}
-		c.activePreviewIDs[previewID] = struct{}{}
+		c.activePreviewIDs[previewID] = previewType
 		return true
 	}
-	_, active := c.activePreviewIDs[previewID]
-	return active
+	activeType, active := c.activePreviewIDs[previewID]
+	return active && activeType != "agent.thinking"
 }
 
 func (c *streamConnection) matches(event sessionStreamEvent) bool {
@@ -228,49 +224,38 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		subscribeThreadID = primary.ExternalID
 		primaryThread = true
 	}
-	flusher, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok {
 		h.errorAdapter.Write(w, r, streamingUnsupported())
 		return
 	}
 	subID, ch := h.streams.subscribe(session.WorkspaceUUID, sessionID)
+	defer h.streams.unsubscribe(subID)
 	if err := h.eventBus.Subscribe(r.Context(), session.ExternalID); err != nil {
-		h.streams.unsubscribe(subID)
-		h.errorAdapter.Write(w, r, internalError("Could not subscribe to session event stream", err))
+		h.logger.WarnContext(r.Context(), "session stream using database polling", "session_id", session.ExternalID, "error", err)
+	} else {
+		defer func() {
+			if err := h.eventBus.Unsubscribe(session.ExternalID); err != nil {
+				h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
+			}
+		}()
+	}
+	progressCtx, cancelProgress := context.WithTimeout(r.Context(), 10*time.Second)
+	cursor, err := h.db.SessionEventWatermark(progressCtx, session.WorkspaceUUID, sessionID)
+	cancelProgress()
+	if err != nil {
+		h.errorAdapter.Write(w, r, internalError("Could not read event progress", err))
 		return
 	}
-	defer func() {
-		h.streams.unsubscribe(subID)
-		if err := h.eventBus.Unsubscribe(session.ExternalID); err != nil {
-			h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
-		}
-	}()
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
+	connection.historyThreadID = threadID
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	fmt.Fprint(w, ": connected\n\n")
-	flusher.Flush()
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
-		case delivery, ok := <-ch:
-			if !ok {
-				return
-			}
-			event, accepted := connection.event(delivery)
-			if accepted {
-				writeSSE(w, event, subscribeThreadID)
-				flusher.Flush()
-			}
-		}
+	if err := writeStreamComment(w, "connected"); err != nil {
+		return
 	}
+	h.followSessionEvents(w, r, session.WorkspaceUUID, sessionID, connection, ch, cursor)
 }
 
 func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
@@ -290,9 +275,53 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 	return types, nil
 }
 
-func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
-	fmt.Fprintf(w, "event: %s\n", event.EventType)
-	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID))
+func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) error {
+	payload := event.Payload
+	if !maevents.IsStreamDelta(event.EventType) {
+		if event.ThreadExternalID != nil {
+			threadID = *event.ThreadExternalID
+		}
+		payload = eventPayloadForResponse(payload, event.CreatedAt, event.ProcessedAt, threadID)
+	} else if event.EventType == previewEventStart {
+		if eventType, eventID := streamPreviewTarget(event); eventType == "agent.thinking" {
+			payload = eventStartPayload(previewBlock{eventID: eventID, eventType: eventType})
+		}
+	}
+	if err := setStreamWriteDeadline(w); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.EventType, payload); err != nil {
+		return err
+	}
+	return flushSessionStream(w)
+}
+
+func flushSessionStream(w http.ResponseWriter) error {
+	controller := http.NewResponseController(w)
+	err := controller.Flush()
+	clearErr := controller.SetWriteDeadline(time.Time{})
+	if errors.Is(clearErr, http.ErrNotSupported) {
+		clearErr = nil
+	}
+	return errors.Join(err, clearErr)
+}
+
+func setStreamWriteDeadline(w http.ResponseWriter) error {
+	err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if errors.Is(err, http.ErrNotSupported) {
+		return nil
+	}
+	return err
+}
+
+func writeStreamComment(w http.ResponseWriter, comment string) error {
+	if err := setStreamWriteDeadline(w); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, ": %s\n\n", comment); err != nil {
+		return err
+	}
+	return flushSessionStream(w)
 }
 
 func streamPreviewTarget(event sessionStreamEvent) (string, string) {

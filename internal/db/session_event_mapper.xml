@@ -39,14 +39,18 @@
         RETURNING <include refid="columns"/>
     </insert>
 
-    <select id="InsertIfAbsent" result="optional" resultType="sessionEventRow">
-        WITH inserted AS (
-            INSERT INTO session_events (<include refid="insertColumns"/>)
-            VALUES (<include refid="insertValues"/>)
-            ON CONFLICT (workspace_uuid, external_id) DO NOTHING
-            RETURNING <include refid="columns"/>
-        )
-        SELECT <include refid="columns"/> FROM inserted
+    <select id="MatchRetry" result="optional" resultType="sessionEventRetryRow">
+        SELECT (
+            session_uuid = #{params.SessionUUID}
+            AND event_type = #{params.EventType}
+            AND thread_uuid IS NOT DISTINCT FROM #{params.ThreadUUID}
+            AND (payload - COALESCE(CAST(#{ignoredPayloadFields} AS text[]), CAST('{}' AS text[]))) =
+                (CAST(#{params.Payload,sensitive=true} AS jsonb) - COALESCE(CAST(#{ignoredPayloadFields} AS text[]), CAST('{}' AS text[])))
+        ) AS matches
+        FROM session_events
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND deleted_at IS NULL
     </select>
 
     <select id="FindByExternalID" resultType="sessionEventRow">
@@ -64,9 +68,11 @@
         <where>
             workspace_uuid = #{params.WorkspaceUUID}
             AND session_external_id = #{params.SessionExternalID}
-            AND deleted_at IS NULL
+            <if test="!params.IncludeDeleted">AND deleted_at IS NULL</if>
             <if test="params.ThreadExternalID != ''">
-                AND thread_external_id = #{params.ThreadExternalID}
+                AND (thread_external_id = #{params.ThreadExternalID}
+                    <if test="params.IncludeDeleted">OR event_type = 'session.deleted'</if>
+                )
             </if>
             <if test="params.ThreadExternalID == '' &amp;&amp; params.PrimaryOnly">
                 AND thread_external_id = (
@@ -83,18 +89,18 @@
                 AND event_type IN
                 <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
             </if>
-            <if test="params.CreatedAtGT != nil">AND created_at &gt; #{params.CreatedAtGT}</if>
-            <if test="params.CreatedAtGTE != nil">AND created_at &gt;= #{params.CreatedAtGTE}</if>
-            <if test="params.CreatedAtLT != nil">AND created_at &lt; #{params.CreatedAtLT}</if>
-            <if test="params.CreatedAtLTE != nil">AND created_at &lt;= #{params.CreatedAtLTE}</if>
+            <if test="params.CreatedAtGT != nil">AND processed_at &gt; #{params.CreatedAtGT}</if>
+            <if test="params.CreatedAtGTE != nil">AND processed_at &gt;= #{params.CreatedAtGTE}</if>
+            <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
+            <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (created_at, uuid)
+                AND (processed_at, external_id COLLATE "C")
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
-                (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+                (#{params.Cursor.ProcessedAt}, #{params.Cursor.ExternalID})
             </if>
         </where>
-        ORDER BY created_at
-        <choose><when test="params.Descending">DESC, uuid DESC</when><otherwise>ASC, uuid ASC</otherwise></choose>
+        ORDER BY processed_at
+        <choose><when test="params.Descending">DESC, external_id COLLATE "C" DESC</when><otherwise>ASC, external_id COLLATE "C" ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>
 

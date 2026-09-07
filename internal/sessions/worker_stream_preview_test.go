@@ -270,7 +270,7 @@ func TestPreviewSessionEventDistinguishesPrimaryAndChildScopes(t *testing.T) {
 	}
 }
 
-func TestPreviewSSEIncludesTimesAndResolvedPrimaryThread(t *testing.T) {
+func TestPreviewSSEDoesNotInjectDurableFields(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC)
 	processedAt := createdAt.Add(2 * time.Second)
 	event := previewSessionEvent(
@@ -294,14 +294,8 @@ func TestPreviewSSEIncludesTimesAndResolvedPrimaryThread(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		t.Fatalf("decode preview SSE data: %v", err)
 	}
-	if payload.CreatedAt != createdAt.Format(time.RFC3339Nano) {
-		t.Fatalf("created_at = %q, want %q", payload.CreatedAt, createdAt.Format(time.RFC3339Nano))
-	}
-	if payload.ProcessedAt != processedAt.Format(time.RFC3339Nano) {
-		t.Fatalf("processed_at = %q, want %q", payload.ProcessedAt, processedAt.Format(time.RFC3339Nano))
-	}
-	if payload.SessionThreadID != "primary-thread" {
-		t.Fatalf("session_thread_id = %q, want primary-thread", payload.SessionThreadID)
+	if payload.CreatedAt != "" || payload.ProcessedAt != "" || payload.SessionThreadID != "" {
+		t.Fatalf("preview must preserve its transient envelope: %s", data)
 	}
 }
 
@@ -374,7 +368,7 @@ func TestStreamConnectionResetDropsOrphanDelta(t *testing.T) {
 	}
 }
 
-func TestStreamConnectionAcceptsLegacyDeltaWithoutPreviewID(t *testing.T) {
+func TestStreamConnectionRejectsDeltaWithoutPreviewID(t *testing.T) {
 	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
 	event := sessionStreamEvent{
 		ExternalID:    "legacy-event-test",
@@ -382,8 +376,8 @@ func TestStreamConnectionAcceptsLegacyDeltaWithoutPreviewID(t *testing.T) {
 		EventType:     previewEventDelta,
 		Payload:       json.RawMessage(`{"type":"event_delta","delta":{"text":"legacy"}}`),
 	}
-	if _, accepted := connection.event(sessionEventDelivery{event: event}); !accepted {
-		t.Fatal("legacy stream delta without preview ID was not accepted")
+	if _, accepted := connection.event(sessionEventDelivery{event: event}); accepted {
+		t.Fatal("uncorrelated stream delta was accepted")
 	}
 }
 
@@ -492,5 +486,41 @@ func assertPreviewDelta(t *testing.T, raw json.RawMessage, eventID, text string)
 	}
 	if payload.Type != "event_delta" || payload.EventID != eventID || payload.Delta.Type != "content_delta" || payload.Delta.Index != 0 || payload.Delta.Content.Type != "text" || payload.Delta.Content.Text != text {
 		t.Fatalf("event_delta = %#v, want id=%q text=%q", payload, eventID, text)
+	}
+}
+
+func TestThinkingPreviewNeverCarriesWorkerContent(t *testing.T) {
+	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.thinking": {}, "agent.message": {}})
+	start := sessionStreamEvent{
+		ExternalID: "thinking-test", PrimaryThread: true, EventType: previewEventStart,
+		Payload: json.RawMessage(`{"type":"event_start","event":{"type":"agent.thinking","id":"thinking-test","content":"private-thinking","message":{"content":"nested-thinking"}},"extra":"extra-content"}`),
+	}
+	event, accepted := connection.event(sessionEventDelivery{event: start})
+	if !accepted {
+		t.Fatal("thinking progress start was rejected")
+	}
+	response := httptest.NewRecorder()
+	if err := writeSSE(response, event, "thread-test"); err != nil {
+		t.Fatal(err)
+	}
+	want := `data: {"event":{"id":"thinking-test","type":"agent.thinking"},"type":"event_start"}`
+	if !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("thinking start carried fields beyond identity: %s", response.Body.String())
+	}
+	for _, text := range []string{"private-thinking", "nested-thinking", "extra-content"} {
+		if strings.Contains(response.Body.String(), text) {
+			t.Fatal("thinking start exposed worker content")
+		}
+	}
+	delta := sessionStreamEvent{ExternalID: "thinking-test", PrimaryThread: true, EventType: previewEventDelta, Payload: eventDeltaPayload("thinking-test", "private delta")}
+	if _, accepted := connection.event(sessionEventDelivery{event: delta}); accepted {
+		t.Fatal("thinking content delta was accepted")
+	}
+	complete := sessionStreamEvent{ExternalID: "thinking-test", PrimaryThread: true, EventType: "agent.thinking"}
+	if _, accepted := connection.event(sessionEventDelivery{event: complete}); !accepted {
+		t.Fatal("complete thinking progress was rejected")
+	}
+	if len(connection.activePreviewIDs) != 0 {
+		t.Fatal("complete thinking event retained preview state")
 	}
 }

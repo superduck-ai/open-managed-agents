@@ -73,3 +73,21 @@ type workerPayloadError struct {
 func (e *workerPayloadError) Error() string { return e.message }
 
 func (e *workerPayloadError) Unwrap() error { return e.cause }
+
+func sessionEventConflict(cause error) error {
+	return apperr.New(apperr.Conflict, "Session event ID conflicts with previously accepted content", cause)
+}
+
+func internalEventConflict(cause error) error {
+	return apperr.New(apperr.Conflict, "Internal event identity conflicts with previously accepted content", cause)
+}
+
+func workerEventProtocolError(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "Invalid worker event payload", cause)
+}
+
+func publicSessionRejectsWorkerEvents(cause error) error {
+	return apperr.New(apperr.Conflict, "Session no longer accepts worker events", cause)
+}
+
+var ErrPublicEventSinkUnavailable = errors.New("public session event sink is unavailable")

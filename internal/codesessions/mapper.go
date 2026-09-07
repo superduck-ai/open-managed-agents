@@ -1,6 +1,7 @@
 package codesessions
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -443,7 +444,8 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 			seedSuffix: "result:model_request_end",
 		})
 	}
-	candidates = append(candidates, publicPayloadCandidate{payload: publicPayloadWithType(object, "session.status_idle")})
+	idle := publicPayloadWithType(object, "session.thread_status_idle")
+	candidates = append(candidates, publicPayloadCandidate{payload: idle, seedSuffix: "result:thread_idle"})
 	return candidates
 }
 
@@ -721,11 +723,13 @@ func workerOutputContent(content, messageContent json.RawMessage) any {
 }
 
 func decodeWorkerOutputValue(raw json.RawMessage) any {
-	if len(raw) == 0 {
+	if !json.Valid(raw) {
 		return nil
 	}
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
 		return nil
 	}
 	return value
@@ -825,8 +829,8 @@ func cloneMap(input map[string]any) map[string]any {
 		}
 		return out
 	}
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+	out, ok := decodeWorkerOutputValue(raw).(map[string]any)
+	if !ok || out == nil {
 		return map[string]any{}
 	}
 	return out

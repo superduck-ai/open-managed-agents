@@ -1,7 +1,6 @@
 package sessions
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -370,18 +369,16 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(errors.New("running sessions cannot be deleted"))
 	}
 	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, nil)
-	if err == nil {
-		if current.ArchivedAt == nil {
-			h.appendAndBroadcastInternal(r, sessionID, []db.SessionEvent{deletedEvent})
-		} else {
-			deletedEvent.SessionExternalID = sessionID
-			h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
-		}
+	if err != nil {
+		return internalError("Could not create deletion event", err)
 	}
-	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID, deletedEvent)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
+	deletedEvent.WorkspaceUUID = principal.WorkspaceUUID
+	deletedEvent.SessionExternalID = sessionID
+	h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 	return nil
@@ -394,42 +391,13 @@ func (h *Handler) listEventsRoute(w http.ResponseWriter, r *http.Request) error 
 func (h *Handler) listThreadEventsRoute(w http.ResponseWriter, r *http.Request) error {
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
-	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
-	if err != nil {
+	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
 		return err
 	}
 	if _, err := h.db.GetSessionThread(r.Context(), workspaceUUIDFromRequest(r), sessionID, threadID); err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	if err := h.backfillSubagentThreadEventsIfEmpty(r.Context(), session, threadID); err != nil {
-		h.logger.ErrorContext(r.Context(), "backfill subagent thread events", "session_id", sessionID, "thread_id", threadID, "error", err)
-	}
 	return h.listEvents(w, r, sessionID, threadID)
-}
-
-func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, session db.Session, threadID string) error {
-	threadID = strings.TrimSpace(threadID)
-	if h == nil || h.codeSessions == nil || threadID == "" {
-		return nil
-	}
-	existing, _, err := h.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceUUID:     session.WorkspaceUUID,
-		SessionExternalID: session.ExternalID,
-		ThreadExternalID:  threadID,
-		Limit:             1,
-		Order:             "asc",
-	})
-	if err != nil || len(existing) > 0 {
-		return err
-	}
-	codeSession, err := h.db.GetCodeSessionBySessionExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
-	if errors.Is(err, db.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return h.codeSessions.PublishSubagentInternalEvents(ctx, codeSession)
 }
 
 func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) error {
@@ -449,8 +417,15 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		return invalidRequest(err)
 	}
 	order, err := parseOrder(r)
+	if r.URL.Query().Get("order") == "" {
+		order = "asc"
+	}
 	if err != nil {
 		return invalidRequest(err)
+	}
+	scope := eventCursorScope(r, sessionID, threadID, order)
+	if cursor != nil && cursor.Scope != scope {
+		return invalidRequest(errEventCursorQueryMismatch)
 	}
 	createdAtGT, err := httpapi.ParseOptionalTime(r, "created_at[gt]")
 	if err != nil {
@@ -468,13 +443,23 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
+	watermark, err := h.db.SessionEventWatermark(r.Context(), workspaceUUIDFromRequest(r), sessionID)
+	if err != nil {
+		return internalError("Could not read event progress", err)
+	}
+	if cursor != nil {
+		watermark = cursor.Watermark
+	}
+	if createdAtLTE == nil || watermark.Before(*createdAtLTE) {
+		createdAtLTE = &watermark
+	}
 	records, hasMore, err := h.db.ListSessionEventsPage(r.Context(), db.ListSessionEventsPageParams{
 		WorkspaceUUID:     workspaceUUIDFromRequest(r),
 		SessionExternalID: sessionID,
 		ThreadExternalID:  threadID,
 		PrimaryOnly:       threadID == "",
 		Limit:             limit,
-		Cursor:            cursor,
+		Cursor:            cursor.position(),
 		Order:             order,
 		Types:             parseRepeatedQuery(r, "types[]", "types"),
 		CreatedAtGT:       createdAtGT,
@@ -501,7 +486,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
-		value := encodeEventCursor(records[len(records)-1])
+		value := encodeEventCursor(records[len(records)-1], watermark, scope)
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: data, NextPage: nextPage})
@@ -557,7 +542,12 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	var created []db.SessionEvent
+	if h.codeSessions == nil {
+		created, err = h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	} else {
+		created, err = h.codeSessions.SendPublicSessionEvents(r.Context(), session, events, outcomeEvaluations)
+	}
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
@@ -565,11 +555,6 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		return mapSessionLoadError(err, sessionID)
 	}
 	h.publishSessionEvents(r.Context(), created)
-	if h.codeSessions != nil {
-		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
-			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
-		}
-	}
 	if outcomesChanged {
 		h.enqueueWebhook(r.Context(), webhooks.EnqueueInput{
 			WorkspaceUUID:       session.WorkspaceUUID,

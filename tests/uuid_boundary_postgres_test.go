@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -736,8 +737,8 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		SessionExternalID: session.ExternalID,
 		Limit:             10,
 		Cursor: &db.SessionEventPageCursor{
-			CreatedAt: now.Add(-time.Second),
-			UUID:      uuid.NewV4().String(),
+			ProcessedAt: now.Add(-time.Second),
+			ExternalID:  uuid.NewV4().String(),
 		},
 	})
 	if err != nil || len(listedEvents) != 1 || listedEvents[0].UUID != events[0].UUID {
@@ -791,13 +792,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	if err != nil || epoch != 1 {
 		t.Fatalf("register Code Session worker through typed UUID update = (%d, %v)", epoch, err)
 	}
-	runningStatus := "running"
-	if _, err := app.db.UpdateCodeSessionWorkerState(ctx, codeSession.ExternalID, db.UpdateCodeSessionWorkerStateInput{
-		WorkerEpoch:  epoch,
-		WorkerStatus: &runningStatus,
-	}); err != nil {
-		t.Fatalf("mark Code Session worker running through typed UUID update: %v", err)
-	}
+	putCodeSessionWorkerState(t, app, codeSession.ExternalID, `{"worker_epoch":`+strconv.FormatInt(epoch, 10)+`,"worker_status":"running"}`)
 	renewableSandbox, err := app.db.GetRenewableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil || renewableSandbox.UUID != runningSandbox.UUID ||
 		renewableSandbox.ProviderSandboxID == nil || *renewableSandbox.ProviderSandboxID != providerSandboxID {
@@ -836,16 +831,28 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	if err != nil || duplicate || inbound.CodeSessionUUID != codeSession.UUID {
 		t.Fatalf("append Code Session event through typed UUID transaction = (%+v, %v, %v)", inbound, duplicate, err)
 	}
-	internalEvents, err := app.db.AppendCodeSessionInternalEvents(ctx, codeSession.ExternalID, epoch, []db.AppendCodeSessionInternalEventInput{{
-		ExternalID:     "cseint_typed_uuid_" + suffix,
-		EventType:      "typed_uuid",
-		PayloadUUID:    "payload_" + suffix,
-		Payload:        []byte(`{}`),
-		PayloadHash:    strings.Repeat("c", 64),
-		IdempotencyKey: "internal-typed-uuid-" + suffix,
-		EventMetadata:  []byte(`{}`),
-		CreatedAt:      now,
-	}})
+	var internalEvents []db.CodeSessionInternalEvent
+	err = app.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
+		lockedSession, err := tx.LockSessionForEvents(ctx, session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return err
+		}
+		worker, err := tx.LockPublicEventWorker(ctx, lockedSession, db.SessionEventWorker{CodeSessionUUID: codeSession.UUID, Epoch: epoch})
+		if err != nil {
+			return err
+		}
+		internalEvents, err = tx.AppendCodeSessionInternalEvents(ctx, worker, []db.AppendCodeSessionInternalEventInput{{
+			ExternalID:     "cseint_typed_uuid_" + suffix,
+			EventType:      "typed_uuid",
+			PayloadUUID:    "payload_" + suffix,
+			Payload:        []byte(`{}`),
+			PayloadHash:    strings.Repeat("c", 64),
+			IdempotencyKey: "internal-typed-uuid-" + suffix,
+			EventMetadata:  []byte(`{}`),
+			CreatedAt:      now,
+		}})
+		return err
+	})
 	if err != nil || len(internalEvents) != 1 || internalEvents[0].CodeSessionUUID != codeSession.UUID {
 		t.Fatalf("append Code Session internal event through typed UUID transaction = (%+v, %v)", internalEvents, err)
 	}

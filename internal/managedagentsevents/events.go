@@ -137,6 +137,18 @@ func ThreadStatus(eventType string) (string, bool) {
 	}
 }
 
+// AggregateThreadStatuses preserves the Session's existing status priority.
+func AggregateThreadStatuses(statuses []string) string {
+	status := "terminated"
+	priorities := map[string]int{"terminated": 0, "idle": 1, "rescheduling": 2, "running": 3}
+	for _, candidate := range statuses {
+		if priorities[candidate] > priorities[status] {
+			status = candidate
+		}
+	}
+	return status
+}
+
 func IsPrimaryCoordinationEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
 	case "session.thread_created",

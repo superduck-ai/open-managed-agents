@@ -51,9 +51,11 @@ type workerStreamPublication struct {
 	payload     json.RawMessage
 }
 
-func (s *recordingWorkerStreamSink) PublishCodeSessionEvents(context.Context, db.CodeSession, []json.RawMessage) error {
-	return nil
+func (s *recordingWorkerStreamSink) AppendCodeSessionEvents(context.Context, db.ManagedAgentEventTx, db.Session, string, []json.RawMessage) ([]db.SessionEvent, error) {
+	return nil, nil
 }
+
+func (s *recordingWorkerStreamSink) NotifyCodeSessionEvents(context.Context, []db.SessionEvent) {}
 
 func (s *recordingWorkerStreamSink) PublishCodeSessionStreamEvent(_ context.Context, route CodeSessionStreamRoute, workerEpoch int64, payload json.RawMessage) error {
 	s.publications = append(s.publications, workerStreamPublication{

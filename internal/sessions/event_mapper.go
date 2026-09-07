@@ -1,11 +1,13 @@
 package sessions
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"uuid"
@@ -18,16 +20,18 @@ import (
 )
 
 func rawSessionEventType(raw json.RawMessage) string {
-	var payload struct {
-		Type string `json:"type"`
-	}
+	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(payload.Type)
+	var eventType string
+	if err := json.Unmarshal(payload["type"], &eventType); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(eventType)
 }
 
-func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, session db.Session, codeSessionID string, raw json.RawMessage, now time.Time) (db.SessionEvent, error) {
+func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, raw json.RawMessage, now time.Time) (db.SessionEvent, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return db.SessionEvent{}, errors.New("code session stream delta must be an object")
@@ -57,7 +61,7 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 	delete(payload, "owner_session_thread_id")
 	delete(payload, "_owner_session_thread_id")
 	if threadID == "" {
-		primary, found, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
+		primary, found, err := tx.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
 		if err != nil {
 			return db.SessionEvent{}, err
 		}
@@ -100,15 +104,31 @@ type sessionEventCopySpec struct {
 	EventID       string
 }
 
-func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, session db.Session, codeSessionID string, raw json.RawMessage, now time.Time) ([]db.SessionEvent, error) {
+func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, raw json.RawMessage, now time.Time) ([]db.SessionEvent, error) {
 	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil || !json.Valid(raw) {
 		return nil, errors.New("code session event must be an object")
 	}
 	eventType, _ := payload["type"].(string)
 	eventType = strings.TrimSpace(eventType)
 	if eventType == "" {
 		return nil, errors.New("code session event type is required")
+	}
+	if _, status := maevents.ThreadStatus(eventType); status && sessionPayloadString(payload, "session_thread_id") == "" {
+		threadID := streamDeltaOwnerThreadID(payload)
+		if threadID == "" {
+			primary, found, err := tx.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, db.ErrNotFound
+			}
+			threadID = primary.ExternalID
+		}
+		payload["session_thread_id"] = threadID
 	}
 	if maevents.IsStreamDelta(eventType) {
 		return nil, errors.New("stream delta events are not persisted")
@@ -133,15 +153,20 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 		}
 	}
 	payload["created_at"] = httpapi.FormatTime(createdAt)
-	if err := h.populateThreadCoordinationAgentNames(ctx, session, eventType, payload); err != nil {
+	if err := h.populateThreadCoordinationAgentNames(ctx, tx, session, eventType, payload); err != nil {
 		return nil, err
 	}
-	specs, err := h.sessionEventCopySpecs(ctx, session, codeSessionID, eventType, eventID, payload, createdAt)
+	specs, err := h.sessionEventCopySpecs(ctx, tx, session, codeSessionID, eventType, eventID, payload, createdAt)
 	if err != nil {
 		return nil, err
 	}
 	events := make([]db.SessionEvent, 0, len(specs))
 	for _, spec := range specs {
+		if _, status := maevents.ThreadStatus(eventType); status {
+			if err := h.populateThreadStatusAgentName(ctx, tx, session, spec); err != nil {
+				return nil, err
+			}
+		}
 		payloadRaw, err := httpapi.MarshalRaw(spec.Payload)
 		if err != nil {
 			return nil, err
@@ -163,13 +188,43 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 	return events, nil
 }
 
-func (h *Handler) populateThreadCoordinationAgentNames(ctx context.Context, session db.Session, eventType string, payload map[string]any) error {
+func (h *Handler) populateThreadStatusAgentName(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, spec sessionEventCopySpec) error {
+	if sessionPayloadString(spec.Payload, "agent_name") != "" {
+		return nil
+	}
+	// Retry enrichment must use the committed name, even if the snapshot was
+	// subsequently updated. The complete payload is still checked for conflicts.
+	stored, err := tx.GetSessionEvent(ctx, session, spec.EventID)
+	if err == nil {
+		var payload struct {
+			AgentName *string `json:"agent_name"`
+		}
+		if err := json.Unmarshal(stored.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.AgentName != nil {
+			spec.Payload["agent_name"] = *payload.AgentName
+		}
+		return nil
+	}
+	if !errors.Is(err, db.ErrNotFound) {
+		return err
+	}
+	name, err := h.agentNameForSessionThread(ctx, tx, session, sessionPayloadString(spec.Payload, "session_thread_id"))
+	if err != nil {
+		return err
+	}
+	spec.Payload["agent_name"] = name
+	return nil
+}
+
+func (h *Handler) populateThreadCoordinationAgentNames(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, eventType string, payload map[string]any) error {
 	switch eventType {
 	case "agent.thread_message_received":
 		if sessionPayloadString(payload, "from_agent_name") != "" {
 			return nil
 		}
-		name, err := h.agentNameForSessionThread(ctx, session, sessionPayloadString(payload, "from_session_thread_id"))
+		name, err := h.agentNameForSessionThread(ctx, tx, session, sessionPayloadString(payload, "from_session_thread_id"))
 		if err != nil {
 			return err
 		}
@@ -180,7 +235,7 @@ func (h *Handler) populateThreadCoordinationAgentNames(ctx context.Context, sess
 		if sessionPayloadString(payload, "to_agent_name") != "" {
 			return nil
 		}
-		name, err := h.agentNameForSessionThread(ctx, session, sessionPayloadString(payload, "to_session_thread_id"))
+		name, err := h.agentNameForSessionThread(ctx, tx, session, sessionPayloadString(payload, "to_session_thread_id"))
 		if err != nil {
 			return err
 		}
@@ -191,12 +246,12 @@ func (h *Handler) populateThreadCoordinationAgentNames(ctx context.Context, sess
 	return nil
 }
 
-func (h *Handler) agentNameForSessionThread(ctx context.Context, session db.Session, threadID string) (string, error) {
+func (h *Handler) agentNameForSessionThread(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, threadID string) (string, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return "", nil
 	}
-	thread, err := h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID)
+	thread, err := tx.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID)
 	if errors.Is(err, db.ErrNotFound) {
 		return "", nil
 	}
@@ -219,7 +274,7 @@ func shouldInferOwnerThreadFromPayload(eventType string) bool {
 	}
 }
 
-func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, session db.Session, payload map[string]any) (string, error) {
+func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, payload map[string]any) (string, error) {
 	candidates := make(map[string]struct{})
 	for _, field := range []string{"agent_id", "agentId", "task_id"} {
 		if value := sessionPayloadString(payload, field); value != "" {
@@ -229,40 +284,47 @@ func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, session db.Sess
 	if len(candidates) == 0 {
 		return "", nil
 	}
-	events, _, err := h.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+	query := db.ListSessionEventsPageParams{
 		WorkspaceUUID:     session.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		PrimaryOnly:       true,
 		Limit:             500,
 		Order:             "asc",
 		Types:             []string{"session.thread_created"},
-	})
-	if err != nil {
-		return "", err
 	}
-	for _, event := range events {
-		var object map[string]any
-		if err := json.Unmarshal(event.Payload, &object); err != nil {
-			continue
+	for {
+		events, more, err := tx.ListSessionEventsPage(ctx, query)
+		if err != nil {
+			return "", err
 		}
-		threadID := sessionPayloadString(object, "session_thread_id")
-		if threadID == "" {
-			continue
-		}
-		for _, field := range []string{"agent_id", "agentId", "task_id"} {
-			if value := sessionPayloadString(object, field); value != "" {
-				if _, ok := candidates[value]; ok {
-					// 子线程内部事件有时只带 agent/task 标识。这里把它归还给对应
-					// session thread，避免普通工具调用被误写到 primary 线程。
-					return threadID, nil
+		for _, event := range events {
+			var object map[string]any
+			if err := json.Unmarshal(event.Payload, &object); err != nil {
+				return "", fmt.Errorf("decode stored thread mapping: %w", err)
+			}
+			threadID := sessionPayloadString(object, "session_thread_id")
+			if threadID == "" {
+				continue
+			}
+			for _, field := range []string{"agent_id", "agentId", "task_id"} {
+				if value := sessionPayloadString(object, field); value != "" {
+					if _, ok := candidates[value]; ok {
+						// 子线程内部事件有时只带 agent/task 标识。这里把它归还给对应
+						// session thread，避免普通工具调用被误写到 primary 线程。
+						return threadID, nil
+					}
 				}
 			}
 		}
+		if !more {
+			return "", nil
+		}
+		last := events[len(events)-1]
+		query.Cursor = &db.SessionEventPageCursor{ProcessedAt: last.ProcessedAt, ExternalID: last.ExternalID}
 	}
-	return "", nil
 }
 
-func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session, codeSessionID, eventType, eventID string, payload map[string]any, now time.Time) ([]sessionEventCopySpec, error) {
+func (h *Handler) sessionEventCopySpecs(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID, eventType, eventID string, payload map[string]any, now time.Time) ([]sessionEventCopySpec, error) {
 	ownerThreadID := sessionPayloadString(payload, "owner_session_thread_id")
 	if ownerThreadID == "" {
 		ownerThreadID = sessionPayloadString(payload, "_owner_session_thread_id")
@@ -270,14 +332,14 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session,
 	delete(payload, "owner_session_thread_id")
 	delete(payload, "_owner_session_thread_id")
 	if ownerThreadID == "" && shouldInferOwnerThreadFromPayload(eventType) {
-		inferredThreadID, err := h.inferOwnerSessionThreadID(ctx, session, payload)
+		inferredThreadID, err := h.inferOwnerSessionThreadID(ctx, tx, session, payload)
 		if err != nil {
 			return nil, err
 		}
 		ownerThreadID = inferredThreadID
 	}
 	if ownerThreadID != "" {
-		if err := h.ensureSessionThread(ctx, session, ownerThreadID, payload, now); err != nil {
+		if err := h.ensureSessionThread(ctx, tx, session, ownerThreadID, payload, now); err != nil {
 			return nil, err
 		}
 		if h.shouldCrossPostBlockingToolEvent(eventType, payload, ownerThreadID) {
@@ -288,20 +350,20 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session,
 	threadID := sessionPayloadString(payload, "session_thread_id")
 	if eventType == "session.thread_created" {
 		if threadID != "" {
-			if err := h.ensureSessionThread(ctx, session, threadID, payload, now); err != nil {
+			if err := h.ensureSessionThread(ctx, tx, session, threadID, payload, now); err != nil {
 				return nil, err
 			}
 		}
 		return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil
 	}
 	if _, ok := maevents.ThreadStatus(eventType); ok && threadID != "" {
-		if err := h.ensureSessionThread(ctx, session, threadID, payload, now); err != nil {
+		if err := h.ensureSessionThread(ctx, tx, session, threadID, payload, now); err != nil {
 			return nil, err
 		}
 		return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil
 	}
 	if h.shouldCrossPostBlockingToolEvent(eventType, payload, threadID) {
-		if err := h.ensureSessionThread(ctx, session, threadID, payload, now); err != nil {
+		if err := h.ensureSessionThread(ctx, tx, session, threadID, payload, now); err != nil {
 			return nil, err
 		}
 		return h.dualSessionEventCopySpecs(codeSessionID, eventType, eventID, payload, threadID, true), nil
@@ -310,12 +372,14 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session,
 		return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil
 	}
 	if threadID != "" {
-		if _, err := h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID); err == nil {
+		if _, err := tx.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID); err == nil {
 			ownerPayload := copySessionEventPayload(payload)
 			if sessionToolUseEventHasThreadScopedSessionThreadID(eventType) {
 				delete(ownerPayload, "session_thread_id")
 			}
 			return []sessionEventCopySpec{newSessionEventCopySpec(eventID, ownerPayload, &threadID, false)}, nil
+		} else if !errors.Is(err, db.ErrNotFound) {
+			return nil, err
 		}
 	}
 	return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil
@@ -423,12 +487,12 @@ func threadStatusForSession(status string) string {
 	}
 }
 
-func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, threadID string, payload map[string]any, now time.Time) error {
+func (h *Handler) ensureSessionThread(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, threadID string, payload map[string]any, now time.Time) error {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil
 	}
-	if _, err := h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID); err == nil {
+	if _, err := tx.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID); err == nil {
 		return nil
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return err
@@ -440,9 +504,9 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	parentFound := true
 	var err error
 	if parentExternalID != "" {
-		parent, err = h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, parentExternalID)
+		parent, err = tx.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, parentExternalID)
 	} else {
-		parent, parentFound, err = h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
+		parent, parentFound, err = tx.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
 	}
 	if err == nil && parentFound && parent.ExternalID != threadID {
 		parentThreadUUID = &parent.UUID
@@ -458,7 +522,7 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	_, err = h.db.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
+	_, err = tx.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
 		UUID:                   uuid.NewV4().String(),
 		ExternalID:             threadID,
 		OrganizationUUID:       session.OrganizationUUID,

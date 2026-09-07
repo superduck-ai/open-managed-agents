@@ -96,8 +96,37 @@ type workerModelRequestPayload struct {
 	ModelUsage      json.RawMessage `json:"model_usage"`
 }
 
+// SDK stdout uses a classified string; internal transcript serializes APIError.
+// Decode only retry variants so opaque diagnostic error objects remain private.
+type workerSystemRetryPayload struct {
+	Error       string `json:"error"`
+	ErrorStatus *int   `json:"error_status"`
+}
+
+type workerInternalSystemRetryPayload struct {
+	Error struct {
+		Status *int `json:"status"`
+	} `json:"error"`
+}
+
+func decodeWorkerSystemRetry(raw json.RawMessage, subtype string) (workerSystemRetryPayload, error) {
+	var retry workerSystemRetryPayload
+	if subtype == "api_retry" {
+		err := json.Unmarshal(raw, &retry)
+		return retry, err
+	}
+	var transcript workerInternalSystemRetryPayload
+	if err := json.Unmarshal(raw, &transcript); err != nil {
+		return retry, err
+	}
+	retry.ErrorStatus = transcript.Error.Status
+	return retry, nil
+}
+
 type workerResultOutputPayload struct {
 	Type               string          `json:"type"`
+	Subtype            string          `json:"-"`
+	IsError            *bool           `json:"-"`
 	ModelRequestEvents bool            `json:"model_request_events"`
 	Model              string          `json:"model"`
 	DurationAPIMs      float64         `json:"duration_api_ms"`

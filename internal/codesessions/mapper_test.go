@@ -11,6 +11,78 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
+func TestSystemProgressMappingRejectsMalformedKnownEvents(t *testing.T) {
+	for _, raw := range []string{
+		`{"type":"system","uuid":"bad","subtype":"task_started"}`,
+		`{"type":"system","uuid":"bad","subtype":"task_notification"}`,
+		`{"type":"system","uuid":"bad","subtype":"api_retry","error":{}}`,
+		`{"type":"system","uuid":"bad","subtype":"api_retry","error_status":"500"}`,
+		`{"type":"system","uuid":"bad","subtype":"api_error","error":{"status":"500"}}`,
+	} {
+		if _, _, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "system"}, json.RawMessage(raw)); !errors.Is(err, ErrProtocol) {
+			t.Fatalf("malformed system event error = %v, want protocol error", err)
+		}
+	}
+}
+
+func TestSystemProgressMappingUsesCanonicalEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields, eventType, errorType string
+	}{
+		{"init", `"subtype":"init","apiKeySource":"runtime-secret"`, "", ""},
+		{"unknown diagnostic", `"subtype":"future_diagnostic","content":"runtime-secret","error":{"detail":"runtime-secret"}`, "", ""},
+		{"compacting", `"subtype":"status","status":"compacting"`, "", ""},
+		{"compacted", `"subtype":"compact_boundary","compact_metadata":{"pre_tokens":100}`, "agent.thread_context_compacted", ""},
+		{"retry overload", `"subtype":"api_retry","error_status":529,"error":"server_error"`, "session.error", "model_overloaded_error"},
+		{"retry rate limit", `"subtype":"api_retry","error_status":429,"error":"rate_limit"`, "session.error", "model_rate_limited_error"},
+		{"retry billing", `"subtype":"api_retry","error_status":402,"error":"billing_error"`, "session.error", "billing_error"},
+		{"retry connection", `"subtype":"api_retry","error_status":null,"error":"unknown"`, "session.error", "model_request_failed_error"},
+		{"internal retry", `"subtype":"api_error","error":{"status":529,"message":"runtime-secret"},"retryAttempt":2,"maxRetries":2`, "session.error", "model_overloaded_error"},
+		{"internal connection", `"subtype":"api_error","error":{"message":"runtime-secret"}`, "session.error", "model_request_failed_error"},
+		{"last scheduled retry", `"subtype":"api_retry","error_status":500,"error":"server_error","attempt":10,"max_retries":10`, "session.error", "model_request_failed_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := json.RawMessage(`{"type":"system","uuid":"system-source","session_thread_id":"sthr_owner","private_field":"runtime-secret",` + tc.fields + `}`)
+			event := db.CodeSessionEvent{EventType: "system", IdempotencyKey: "source", CreatedAt: time.Now()}
+			public, _, err := publicPayloadsFromWorkerEvent("cse_test", event, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			internal, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{
+				EventType: "system", IdempotencyKey: "source", Payload: raw, CreatedAt: event.CreatedAt,
+			}, "sthr_owner")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, payloads := range [][]json.RawMessage{public, internal} {
+				if tc.eventType == "" {
+					if len(payloads) != 0 {
+						t.Fatalf("runtime diagnostic became conversation content: %s", payloads)
+					}
+					continue
+				}
+				objects := decodePublicPayloads(t, payloads)
+				if len(objects) != 1 || objects[0]["type"] != tc.eventType || objects[0]["session_thread_id"] != "sthr_owner" {
+					t.Fatalf("incorrect public event: %s", payloads)
+				}
+				if strings.Contains(string(payloads[0]), "runtime-secret") || objects[0]["content"] != nil || objects[0]["compact_metadata"] != nil {
+					t.Fatalf("runtime data leaked: %s", payloads)
+				}
+				if tc.errorType != "" {
+					details, ok := objects[0]["error"].(map[string]any)
+					if !ok || details["type"] != tc.errorType || details["message"] == "" {
+						t.Fatalf("invalid public error: %s", payloads)
+					}
+					retry, ok := details["retry_status"].(map[string]any)
+					if !ok || retry["type"] != "retrying" {
+						t.Fatalf("scheduled retry reported exhausted: %s", payloads)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testing.T) {
 	_, _, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
 		EventType: "result",
@@ -362,6 +434,65 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 	}
 }
 
+func TestResultClassificationRejectsMalformedExactFields(t *testing.T) {
+	for _, fields := range []string{`"subtype":false`, `"is_error":"false"`} {
+		raw := json.RawMessage(`{"type":"result","uuid":"malformed-result",` + fields + `}`)
+		if _, _, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result"}, raw); !errors.Is(err, ErrProtocol) {
+			t.Fatalf("malformed classification error = %v, want protocol error", err)
+		}
+	}
+}
+
+func TestResultIdleReasonRequiresExplicitSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name, eventType, fields, wantReason string
+	}{
+		{"execution error", "result", `"subtype":"error_during_execution","is_error":true,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"success subtype with error", "result", `"subtype":"success","is_error":true,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"error subtype with false flag", "result", `"subtype":"error_during_execution","is_error":false,"stop_reason":"max_tokens"`, "max_tokens"},
+		{"legacy missing classification", "result", `"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"legacy missing error flag", "result", `"subtype":"success","stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"null error flag", "result", `"subtype":"success","is_error":null,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"legacy missing subtype", "result", `"is_error":false,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"aliases cannot overwrite failure", "result", `"subtype":"error_during_execution","is_error":true,"SUBTYPE":"success","IS_ERROR":false,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"aliases before exact failure", "result", `"SUBTYPE":"success","IS_ERROR":false,"subtype":"error_during_execution","is_error":true,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"aliases alone are not success", "result", `"SUBTYPE":"success","IS_ERROR":false,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"malformed aliases alone are ignored", "result", `"SUBTYPE":true,"IS_ERROR":"false","stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"subtype alias cannot supply success", "result", `"SUBTYPE":"success","is_error":false,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"error flag alias cannot supply success", "result", `"subtype":"success","IS_ERROR":false,"stop_reason":"stop_sequence"`, "stop_sequence"},
+		{"canonical idle", "session.status_idle", `"subtype":"success","is_error":false,"stop_reason":{"type":"budget_reached"}`, "budget_reached"},
+		{"canonical thread idle", "session.thread_status_idle", `"subtype":"success","is_error":false,"stop_reason":{"type":"retries_exhausted"}`, "retries_exhausted"},
+		{"success stop sequence", "result", `"subtype":"success","is_error":false,"stop_reason":"stop_sequence"`, "end_turn"},
+		{"aliases cannot overwrite success", "result", `"subtype":"success","is_error":false,"SUBTYPE":"error_during_execution","IS_ERROR":true,"stop_reason":"stop_sequence"`, "end_turn"},
+		{"aliases before exact success", "result", `"SUBTYPE":"error_during_execution","IS_ERROR":true,"subtype":"success","is_error":false,"stop_reason":"stop_sequence"`, "end_turn"},
+		{"malformed aliases cannot reject success", "result", `"subtype":"success","is_error":false,"SUBTYPE":true,"IS_ERROR":"false","stop_reason":"stop_sequence"`, "end_turn"},
+		{"success max tokens", "result", `"subtype":"success","is_error":false,"stop_reason":"max_tokens"`, "end_turn"},
+		{"success refusal", "result", `"subtype":"success","is_error":false,"stop_reason":"refusal"`, "end_turn"},
+		{"success null reason", "result", `"subtype":"success","is_error":false,"stop_reason":null`, "end_turn"},
+		{"success missing reason", "result", `"subtype":"success","is_error":false`, "end_turn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := json.RawMessage(`{"type":"` + tc.eventType + `","uuid":"result-test",` + tc.fields + `}`)
+			payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: tc.eventType}, raw)
+			if err != nil || !ok {
+				t.Fatalf("map result: ok=%v, error=%v", ok, err)
+			}
+			objects := decodePublicPayloads(t, payloads)
+			wantType := tc.eventType
+			if wantType == "result" {
+				wantType = "session.thread_status_idle"
+			}
+			if len(objects) != 1 || objects[0]["type"] != wantType {
+				t.Fatalf("events = %#v, want only %s", objects, wantType)
+			}
+			reason, ok := objects[0]["stop_reason"].(map[string]any)
+			if !ok || reason["type"] != tc.wantReason {
+				t.Fatalf("stop_reason = %#v, want %s", objects[0]["stop_reason"], tc.wantReason)
+			}
+		})
+	}
+}
+
 func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *testing.T) {
 	createdAt := time.Date(2026, 6, 16, 1, 11, 0, 0, time.UTC)
 	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
@@ -594,7 +725,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		t.Fatalf("thread_status_idle payload = %#v", doneObjects[0])
 	}
 	stopReason, ok := doneObjects[0]["stop_reason"].(map[string]any)
-	if !ok || stopReason["type"] != "completed" || stopReason["detail"] != "Translate to Japanese" {
+	if !ok || stopReason["type"] != "end_turn" || len(stopReason) != 1 {
 		t.Fatalf("stop_reason = %#v", doneObjects[0]["stop_reason"])
 	}
 }

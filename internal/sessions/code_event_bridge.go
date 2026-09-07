@@ -25,6 +25,11 @@ func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgen
 	var created []db.SessionEvent
 	now := time.Now().UTC()
 	for _, raw := range payloads {
+		if rawSessionEventType(raw) == "session.error" {
+			if err := validateSessionErrorEvent(raw); err != nil {
+				return nil, err
+			}
+		}
 		if maevents.IsStreamDelta(rawSessionEventType(raw)) {
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, tx, session, codeSessionID, raw, now)
 			if err != nil {

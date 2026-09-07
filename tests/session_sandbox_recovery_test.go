@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +42,20 @@ func TestSessionEventsRetryIdleSandboxResumeAfterProviderFailure(t *testing.T) {
 		t.Fatalf("load resumable sandbox = (%+v, %v), want provider sandbox", sandbox, err)
 	}
 	app.sandboxTimeouts.setError(errors.New("provider temporarily unavailable"))
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first resume attempt"}]}]}`, defaultTestKey)
+	failedResumeResponse := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"first resume attempt"}]}]}`),
+		defaultTestKey,
+		true,
+	)
+	failedResumeBody := readAll(t, failedResumeResponse.Body)
+	failedResumeResponse.Body.Close()
+	if failedResumeResponse.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("failed sandbox resume status = %d, want 500: %s", failedResumeResponse.StatusCode, failedResumeBody)
+	}
 	failed, err := getCodeSession(app, ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load worker lease after failed resume: %v", err)
@@ -116,7 +128,6 @@ func TestSessionEventResumeRearmsExpiredWorkerLeaseWithoutChangingEpoch(t *testi
 }
 
 func TestWorkerStreamWithoutEpochQueryReplaysUnackedMessageAfterResume(t *testing.T) {
-	ctx := context.Background()
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-resumed-worker-stream-replay-bucket"))
 	defer app.close()
 
@@ -127,11 +138,7 @@ func TestWorkerStreamWithoutEpochQueryReplaysUnackedMessageAfterResume(t *testin
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	defer deleteSession(t, app, session.ID)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	workerEpochText := registerCodeSessionWorker(t, app, codeSessionID)
-	workerEpoch, err := strconv.ParseInt(workerEpochText, 10, 64)
-	if err != nil {
-		t.Fatalf("parse worker epoch: %v", err)
-	}
+	registerCodeSessionWorker(t, app, codeSessionID)
 
 	const message = "replay after resumed worker stream"
 	frames := readCodeSessionWorkerSSEFramesAfterConnect(t, app, codeSessionID, "events/stream", message, func() {
@@ -142,18 +149,6 @@ func TestWorkerStreamWithoutEpochQueryReplaysUnackedMessageAfterResume(t *testin
 	if payloadUUID == "" {
 		t.Fatalf("worker SSE frame has no event id: %s", frames[len(frames)-1])
 	}
-
-	var eventExternalID string
-	if err := app.pool.QueryRow(ctx, `
-		select external_id
-		from code_session_inbound_events
-		where code_session_external_id = $1
-		  and payload_uuid = $2
-		  and deleted_at is null
-	`, codeSessionID, payloadUUID).Scan(&eventExternalID); err != nil {
-		t.Fatalf("load delivered inbound event: %v", err)
-	}
-	waitInboundDeliveryStatusForEpoch(t, app, eventExternalID, "sent", workerEpoch)
 
 	replayed := readCodeSessionWorkerSSEFramesFromSuffix(t, app, codeSessionID, "events/stream", message)
 	if !strings.Contains(replayed[len(replayed)-1], payloadUUID) {
@@ -443,7 +438,7 @@ func assertRecoveredWorkPublished(t *testing.T, app *testApp, sessionID string) 
 
 func assertRecoveryMessageQueued(t *testing.T, app *testApp, codeSessionID string) {
 	t.Helper()
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	inbound, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 	if err != nil {
 		t.Fatalf("list recovery inbound events: %v", err)
 	}

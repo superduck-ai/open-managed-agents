@@ -36,6 +36,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,9 +55,66 @@ type testApp struct {
 	filestoreCredentials *filestore.TokenCredentials
 	vaultSecrets         *secrets.Service
 	sandboxTimeouts      *recordingSandboxTimeoutExtender
+	workerEvents         *workerevents.MemoryBroker
 	server               *httptest.Server
 	baseURL              string
 	client               *http.Client
+}
+
+// newCodeSessionService 统一测试里 codesessions.Service 的构造方式；
+// broker 或 acks 传 nil 时回退到 testApp 默认的内存 broker 与 ACK store。
+func newCodeSessionService(app *testApp, broker workerevents.Broker, acks workerevents.AckStore) *codesessions.Service {
+	if broker == nil {
+		broker = app.workerEvents
+	}
+	return codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).
+		WithWorkerEventBroker(broker).
+		WithWorkerEventState(acks, app.store)
+}
+
+func listQueuedCodeSessionInboundEvents(app *testApp, codeSessionID string) ([]db.CodeSessionEvent, error) {
+	envelopes := app.workerEvents.Pending(codeSessionID)
+	events := make([]db.CodeSessionEvent, len(envelopes))
+	for i, envelope := range envelopes {
+		var payloadUUID *string
+		if envelope.PayloadEventID != "" {
+			value := envelope.PayloadEventID
+			payloadUUID = &value
+		}
+		events[i] = db.CodeSessionEvent{
+			ExternalID: envelope.EventID, CodeSessionExternalID: envelope.CodeSessionID,
+			SequenceNum: envelope.SequenceNum, EventType: envelope.EventType,
+			EventSubtype: envelope.EventSubtype, PayloadUUID: payloadUUID, Payload: envelope.Payload,
+		}
+	}
+	return events, nil
+}
+
+func countQueuedCodeSessionInboundEvents(app *testApp, codeSessionID, eventType, payloadNeedle string) int {
+	count := 0
+	for _, envelope := range app.workerEvents.Pending(codeSessionID) {
+		if envelope.EventType == eventType && (payloadNeedle == "" || bytes.Contains(envelope.Payload, []byte(payloadNeedle))) {
+			count++
+		}
+	}
+	return count
+}
+
+func queueRawCodeSessionInboundEvent(t *testing.T, app *testApp, codeSessionID string, payload json.RawMessage) workerevents.EnvelopeV1 {
+	t.Helper()
+	codeSession, found, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	if err != nil || !found {
+		t.Fatalf("load Code Session %s = (%t, %v)", codeSessionID, found, err)
+	}
+	service := newCodeSessionService(app, nil, nil)
+	if err := service.QueueRawPublicSessionEvents(context.Background(), codeSession, []json.RawMessage{payload}); err != nil {
+		t.Fatalf("queue Code Session inbound event: %v", err)
+	}
+	pending := app.workerEvents.Pending(codeSessionID)
+	if len(pending) == 0 {
+		t.Fatal("queued Code Session inbound event is missing")
+	}
+	return pending[len(pending)-1]
 }
 
 type sandboxTimeoutCall struct {
@@ -1105,6 +1163,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 	}
 	pool := openTestPool(t, cfg)
 	sandboxTimeouts := &recordingSandboxTimeoutExtender{}
+	workerEvents := workerevents.NewMemory()
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
 		Config:                 cfg,
 		DB:                     database,
@@ -1114,6 +1173,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		PlatformAuth:           platformAuth,
 		CodeSessionCredentials: credentials,
 		SandboxTimeoutExtender: sandboxTimeouts,
+		WorkerEventBroker:      workerEvents,
 		FilestoreCredentials:   filestoreCredentials,
 		VaultSecrets:           vaultSecrets,
 	}))
@@ -1127,6 +1187,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		filestoreCredentials: filestoreCredentials,
 		vaultSecrets:         vaultSecrets,
 		sandboxTimeouts:      sandboxTimeouts,
+		workerEvents:         workerEvents,
 		server:               server,
 		baseURL:              server.URL,
 		client:               server.Client(),

@@ -8,6 +8,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
+
 func codeSessionNotFound(cause error) error {
 	return apperr.New(apperr.NotFound, "Code session not found", cause)
 }
@@ -40,15 +42,14 @@ func signCommitFailure(cause error) error {
 	return internalError("Could not sign commit", cause)
 }
 
-func codeSessionEventsLoadError(err error, codeSessionID string) error {
-	return internalError(
-		"Could not list code session events",
-		fmt.Errorf("list code session %q events: %w", codeSessionID, err),
-	)
+func workerEventStreamUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "Could not connect code session worker stream", cause)
 }
 
-func workerEventStreamUnavailable(cause error) error {
-	return internalError("Could not connect code session worker stream", cause)
+// workerEventUnavailable 将传输层失败包装为 503 应用错误，同时保留
+// ErrWorkerEventUnavailable sentinel，供调用方与测试用 errors.Is 识别。
+func workerEventUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "Could not deliver events to the code session worker", fmt.Errorf("%w: %w", ErrWorkerEventUnavailable, cause))
 }
 
 func mapCodeSessionLoadError(err error, codeSessionID string) error {

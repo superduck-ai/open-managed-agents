@@ -21,7 +21,7 @@ func TestJetStreamBrokerRejectsInsufficientReplicas(t *testing.T) {
 	}
 }
 
-func TestJetStreamBrokerDeliversFullEnvelopeAndCleansConsumer(t *testing.T) {
+func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
 	servers := runNATSCluster(t)
 	publisherConnection := connectNATS(t, servers[0].ClientURL())
 	subscriberConnection := connectNATS(t, servers[1].ClientURL())
@@ -39,34 +39,39 @@ func TestJetStreamBrokerDeliversFullEnvelopeAndCleansConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope := EventEnvelope(sessionID, "csev_test", "payload-test", 7, "user.message", "", []byte(`{"text":"hello"}`))
-	if err := publisher.Publish(t.Context(), envelope); err != nil {
+	envelope := EventEnvelope(sessionID, "csev_test", "payload-test", "user.message", "", []byte(`{"text":"hello"}`), time.Now().Add(time.Hour))
+	if err := publisher.Publish(t.Context(), "message-1", envelope); err != nil {
 		t.Fatal(err)
 	}
-	if err := publisher.Publish(t.Context(), envelope); err != nil {
+	if err := publisher.Publish(t.Context(), "message-1", envelope); err != nil {
 		t.Fatal(err)
 	}
-	if err := publisher.Publish(t.Context(), EventEnvelope("csess_other", "csev_other", "", 1, "user.message", "", []byte(`{}`))); err != nil {
+	if err := publisher.Publish(t.Context(), "message-other", EventEnvelope("csess_other", "csev_other", "", "user.message", "", []byte(`{}`), time.Now().Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	second := EventEnvelope(sessionID, "csev_second", "payload-second", "user.message", "", []byte(`{"text":"second"}`), time.Now().Add(time.Hour))
+	if err := publisher.Publish(t.Context(), "message-2", second); err != nil {
 		t.Fatal(err)
 	}
 
-	select {
-	case delivery := <-subscription.Messages():
-		if delivery.Envelope.EventID != envelope.EventID || string(delivery.Envelope.Payload) != string(envelope.Payload) || delivery.Envelope.SequenceNum != 7 {
-			t.Fatalf("delivery = %#v, want full envelope %#v", delivery.Envelope, envelope)
-		}
-		if err := delivery.Ack(); err != nil {
-			t.Fatal(err)
-		}
-	case err := <-subscription.Errors():
-		t.Fatalf("subscription error: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for worker event")
+	first := receiveWorkerDelivery(t, subscription)
+	if first.Envelope.EventID != envelope.EventID || string(first.Envelope.Payload) != string(envelope.Payload) || first.Envelope.SequenceNum != 1 {
+		t.Fatalf("delivery = %#v, want first stream sequence", first.Envelope)
 	}
 	select {
-	case duplicate := <-subscription.Messages():
-		t.Fatalf("received duplicate or cross-session event: %#v", duplicate.Envelope)
+	case blocked := <-subscription.Messages():
+		t.Fatalf("received sequence before ACK: %#v", blocked.Envelope)
 	case <-time.After(250 * time.Millisecond):
+	}
+	if err := subscriber.DoubleAck(t.Context(), first.AckSubject); err != nil {
+		t.Fatal(err)
+	}
+	delivered := receiveWorkerDelivery(t, subscription)
+	if delivered.Envelope.EventID != second.EventID || delivered.Envelope.SequenceNum != 3 {
+		t.Fatalf("second delivery = %#v, want second stream sequence", delivered.Envelope)
+	}
+	if err := subscriber.DoubleAck(t.Context(), delivered.AckSubject); err != nil {
+		t.Fatal(err)
 	}
 	if err := subscription.Close(); err != nil {
 		t.Fatal(err)
@@ -84,11 +89,14 @@ func TestJetStreamBrokerDeliversFullEnvelopeAndCleansConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Config.Replicas != 3 || info.Config.MaxAge != time.Hour || info.Config.MaxBytes != 1<<30 || info.Config.Storage != jetstream.FileStorage {
+	if info.Config.Replicas != 3 || info.Config.Retention != jetstream.WorkQueuePolicy ||
+		info.Config.Discard != jetstream.DiscardNew || info.Config.MaxAge != 0 ||
+		info.Config.MaxBytes != 10<<30 || info.Config.MaxMsgSize != MaxMessageBytes ||
+		info.Config.Duplicates != 24*time.Hour || info.Config.Storage != jetstream.FileStorage {
 		t.Fatalf("stream config = %#v", info.Config)
 	}
-	if info.State.Consumers != 0 {
-		t.Fatalf("consumer count = %d, want 0", info.State.Consumers)
+	if info.State.Consumers != 1 {
+		t.Fatalf("consumer count = %d, want durable consumer", info.State.Consumers)
 	}
 }
 

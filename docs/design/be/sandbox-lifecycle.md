@@ -3,7 +3,8 @@
 ## 范围与配置
 
 回收长期 idle 的 cloud Session 沙箱，不改变公开 Session、Code Session 的状态或 ID。
-短期空闲继续使用原有 E2B pause 策略；running、requires_action、启动中及存在未处理输入的沙箱不回收。
+短期空闲继续使用原有 E2B pause 策略；running、requires_action 和启动中的沙箱不回收。
+JetStream 中已经存在的未处理输入不阻止 idle 回收；回收期间或之后到达的新输入负责触发恢复。
 自托管 Environment、Session 终止或删除的清理策略不属于本功能。
 
 允许丢失沙箱本地工作目录、进程状态、临时文件和未上传的写缓存，不做 checkpoint。
@@ -42,8 +43,9 @@ stateDiagram-v2
 1. 扫描候选，仅作为提示，不授权删除。
 2. 按 organization UUID、workspace UUID、sandbox UUID 定位不可变的沙箱记录。
 3. 事务按 Session → Code Session → Work / Sandbox 锁定，复查 idle 时间、cloud 类型、
-   活跃且未归档的父 Session、Work 状态及未处理入站事件。
-4. 条件领取成功后，清空 idle_since、递增 worker epoch、撤销旧 lease 和 OAuth hash，沙箱改为 stopping。
+   活跃且未归档的父 Session和 Work 状态；不查询 JetStream backlog 或 PostgreSQL 事件表。
+4. 条件领取成功后保留 `idle_since` 作为并发输入 fence，递增 worker epoch、撤销旧 lease 和 OAuth hash，
+   沙箱改为 stopping。
 5. 提交后执行 Provider DELETE，不在数据库事务中调用网络。
 6. 删除成功或 404 后，在完成事务中标记 stopped。
 
@@ -58,21 +60,22 @@ Debug 模式仍执行同一个 DELETE，不会在数据库已推进到 stopped �
 
 ## 与现有消息流程衔接
 
-接受可转发 public 输入时，在原有事件事务中清空 idle_since；Code Session 入站 sequence 推进也清空它。
-这样输入落库后、转交 worker 前不会按旧 idle 时间领取回收。入站队列已有的未处理事件检查继续保留。
-不添加消息 outbox、wake 标志、后台消息扫描或新的唤醒接口；原有消息转交失败的重试语义不变。
+接受可转发 public 输入的 Session 事务会清空 `idle_since`，随后在 Code Session 行锁内直接发布到
+JetStream。这样输入若先于回收领取提交，候选会失效；直接发布与 Code Session termination 也不会
+跨越行锁。回收不读取 JetStream pending，也不把 Redis 当作恢复依据。
 
 回收后 Work 保持 active，沙箱为 stopped。没有新输入时不重排、不重建。
 
-- 删除期间收到输入：先进入原有入站队列，不连接 stopping 沙箱。删除完成事务检查待处理输入，
-  通过既有 `ScheduleRecoveryForCodeSession` 原子地重排 Work。
-- 删除完成后收到输入：正常消息入口找不到 running 沙箱时，调用同一恢复方法。
-  空 Provider ID 仅允许匹配 `stopped + idle_timeout` 且有待处理输入的沙箱，不能恢复任意缺失目标。
+- 删除期间收到输入：Session 事件先清空 `idle_since`，再直接进入 JetStream。删除完成后通过既有
+  `ScheduleRecoveryForCodeSession` 原子地重排 Work。
+- 删除完成后收到输入：正常消息入口找不到 running 沙箱时调用同一恢复方法。空 Provider ID 只允许
+  匹配 `stopped + idle_timeout` 且 `idle_since IS NULL` 的沙箱，不能恢复任意缺失目标。
 - 恢复沿用现有路径：旧沙箱记录标为 failed，Work 改为 queued，Runner 复用 Code Session 并创建新沙箱。
   `stop_reason=idle_timeout` 保留原回收原因。旧记录被退役后不能再次重排新 Work。
 - 对仍为 running 的沙箱，正常消息入口的 SetTimeout、worker lease 恢复和 Provider not-found 处理保持不变。
 
-正常回收本身不会调用 Provider 唤醒。重建只处理真实待处理输入，已归档或终止的 Session 不重排。
+正常回收本身不会调用 Provider 唤醒。`idle_since IS NULL` 表示领取后发生过新输入，是重建所需的
+竞态信号；已归档或终止的 Session 不重排。
 
 ## 迁移
 
@@ -112,7 +115,7 @@ SQL 和事务仍经现有 `database/sql` 包装层，监听复用同一个 pgxpo
 
 ## 验收
 
-- 不安全候选、错误租户、未转交的 public 输入和未处理入站事件拒绝领取。
+- 不安全候选、错误租户和领取前刚到达的新输入拒绝领取；已有 JetStream pending 不阻止回收。
 - 领取后旧 worker 不能续租；Provider 删除失败保留 stopping；完成后重复执行不再删除。
 - 删除期间的新输入不会连接旧沙箱，完成后只启动一次 replacement，保留 Code Session 身份。
 - 没有输入时不会重排，stopping 或其他原因停止的沙箱不能被空 Provider ID 的恢复调用重排。

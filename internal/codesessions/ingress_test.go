@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestCodeSessionHTTPPollReturnsErrorsThroughAdapter(t *testing.T) {
+func TestCodeSessionHTTPPollRouteIsRemoved(t *testing.T) {
 	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
 	router := chi.NewRouter()
 	handler.RegisterV1Routes(router)
@@ -21,8 +21,8 @@ func TestCodeSessionHTTPPollReturnsErrorsThroughAdapter(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusMethodNotAllowed, response.Body.String())
 	}
 }
 

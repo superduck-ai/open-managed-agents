@@ -89,12 +89,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if cleanupErr := s.db.TerminateManagedAgentCodeSession(
-			cleanupCtx,
-			input.Session.OrganizationUUID,
-			input.Session.WorkspaceUUID,
-			record.ExternalID,
-		); cleanupErr != nil {
+		if cleanupErr := s.TerminateManagedAgentCodeSession(cleanupCtx, input.Session, record.ExternalID); cleanupErr != nil {
 			s.logger.ErrorContext(
 				cleanupCtx,
 				"terminate incomplete managed agent code session",
@@ -103,9 +98,6 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 			)
 		}
 	}()
-	if err := s.queueInitialize(ctx, record, input.Config, now); err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
 	if err := s.ActivateManagedAgentCodeSession(ctx, record); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
@@ -183,8 +175,9 @@ func (s *Service) managedAgentCreateResult(
 	}, nil
 }
 
-// ActivateManagedAgentCodeSession locks the owning Session, replays complete
-// public history in stable order, and activates the Code Session atomically.
+// ActivateManagedAgentCodeSession locks the owning Session, publishes complete
+// public history in stable order, and marks the Code Session active only after
+// JetStream acknowledges every startup event.
 func (s *Service) ActivateManagedAgentCodeSession(
 	ctx context.Context,
 	codeSession db.CodeSession,
@@ -192,6 +185,8 @@ func (s *Service) ActivateManagedAgentCodeSession(
 	if s == nil || s.db == nil {
 		return db.ErrNotFound
 	}
+	cleanupJobIDs := make([]string, 0)
+	publishAttempted := false
 	err := s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
 		// lock session by session external id
 		lockedSession, err := tx.LockSessionForEvents(
@@ -215,19 +210,37 @@ func (s *Service) ActivateManagedAgentCodeSession(
 		if err != nil {
 			return err
 		}
-		inboundInputs := make([]db.AppendCodeSessionEventInput, 0, len(sessionEvents))
+		configRaw, err := marshalRaw(codeSessionConfig(lockedCodeSession.Metadata))
+		if err != nil {
+			return err
+		}
+		initialize, err := s.prepareInitializeEvent(ctx, lockedCodeSession, configRaw, lockedCodeSession.CreatedAt)
+		if err != nil {
+			return err
+		}
+		startupEvents := make([]preparedInboundEvent, 0, len(sessionEvents)+1)
+		startupEvents = append(startupEvents, initialize)
+		if initialize.cleanupJobID != "" {
+			cleanupJobIDs = append(cleanupJobIDs, initialize.cleanupJobID)
+		}
 		for _, event := range sessionEvents {
 			if !maevents.IsPublicWorkerInputEvent(event.EventType) {
 				continue
 			}
-			inbound, err := s.convertSessionEventToInbound(lockedCodeSession.ExternalID, event)
+			inbound, err := s.convertSessionEventToInbound(ctx, lockedCodeSession, event)
 			if err != nil {
 				return err
 			}
-			inboundInputs = append(inboundInputs, inbound)
+			if inbound.cleanupJobID != "" {
+				cleanupJobIDs = append(cleanupJobIDs, inbound.cleanupJobID)
+			}
+			startupEvents = append(startupEvents, inbound)
 		}
-		if err := tx.AppendCodeSessionInboundEvents(ctx, lockedCodeSession, inboundInputs); err != nil {
-			return err
+		for _, event := range startupEvents {
+			publishAttempted = true
+			if err := s.publishPreparedInboundEvent(ctx, event); err != nil {
+				return err
+			}
 		}
 		activated, err := tx.ActivateCodeSession(ctx, lockedCodeSession.UUID, time.Now().UTC())
 		if err != nil {
@@ -238,34 +251,32 @@ func (s *Service) ActivateManagedAgentCodeSession(
 		}
 		return nil
 	})
-	if err != nil {
-		return err
+	if err != nil && !publishAttempted {
+		for _, cleanupJobID := range cleanupJobIDs {
+			s.triggerPayloadCleanupNow(ctx, cleanupJobID)
+		}
 	}
-	// The activation transaction remains authoritative. Publish its committed
-	// history afterward; duplicate message IDs make republishing existing queued
-	// events harmless in JetStream.
-	events, err := s.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
-	if err != nil {
-		s.logger.WarnContext(ctx, "load activated code session inbound events for publish", "code_session_id", codeSession.ExternalID, "error", err)
-		return nil
-	}
-	for _, event := range events {
-		s.publishInboundEvent(ctx, event)
-	}
-	return nil
+	return err
 }
 
-// convertSessionEventToInbound maps one public session event payload into a
-// Code Session inbound append input.
+// convertSessionEventToInbound maps one public session event to a stable
+// JetStream publication. Its message ID survives activation retries.
 func (s *Service) convertSessionEventToInbound(
-	codeSessionID string,
+	ctx context.Context,
+	codeSession db.CodeSession,
 	event db.SessionEvent,
-) (db.AppendCodeSessionEventInput, error) {
-	payload, err := workerPayloadForPublicEvent(codeSessionID, event.Payload, event.ProcessedAt)
+) (preparedInboundEvent, error) {
+	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.UUID, event.ProcessedAt)
 	if err != nil {
-		return db.AppendCodeSessionEventInput{}, err
+		return preparedInboundEvent{}, err
 	}
-	return newInboundEventInput(codeSessionID, payload, "public-session")
+	return s.prepareInboundEvent(
+		ctx,
+		codeSession,
+		payload,
+		"public-session",
+		"session-event:"+firstNonEmpty(event.UUID, event.ExternalID),
+	)
 }
 
 // TerminateManagedAgentCodeSession revokes a Code Session created for a
@@ -278,12 +289,20 @@ func (s *Service) TerminateManagedAgentCodeSession(
 	if s == nil {
 		return nil
 	}
-	return s.db.TerminateManagedAgentCodeSession(
+	codeSessionID = strings.TrimSpace(codeSessionID)
+	err := s.db.TerminateManagedAgentCodeSession(
 		ctx,
 		session.OrganizationUUID,
 		session.WorkspaceUUID,
-		strings.TrimSpace(codeSessionID),
+		codeSessionID,
 	)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return err
+	}
+	if purgeErr := s.workerEvents.PurgeSession(ctx, codeSessionID); purgeErr != nil {
+		return purgeErr
+	}
+	return err
 }
 
 func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMessage, error) {

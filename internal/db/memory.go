@@ -4,9 +4,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
+)
+
+// Platform limits for a single memory store. Enforced in CreateMemory and by
+// the callers that read request bodies.
+const (
+	MaxMemoryContentBytes  = 100 * 1024
+	MaxMemoryItemsPerStore = 2000
+)
+
+// Actor types recorded on every memory version, identifying which surface
+// performed the mutation.
+const (
+	MemoryActorTypeSession = "session_actor"
+	MemoryActorTypeAPI     = "api_actor"
 )
 
 type MemoryStore struct {
@@ -168,6 +183,16 @@ type MemoryPathConflictError struct {
 	ConflictingPath     string
 }
 
+type SessionMemoryMount struct {
+	SessionExternalID     string
+	MemoryStoreExternalID string
+	MemoryStoreUUID       string
+	Access                string
+	MountPath             string
+	Archived              bool
+	StoreMissing          bool
+}
+
 func (e *MemoryPathConflictError) Error() string {
 	return "memory path conflicts with existing memory"
 }
@@ -314,6 +339,13 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 		if txErr = ensureMemoryPathAvailable(ctx, memoryMapper, store.WorkspaceUUID, store.UUID, memory.Path, ""); txErr != nil {
 			return txErr
 		}
+		activeCount, txErr := memoryMapper.CountActiveByStore(ctx, store.WorkspaceUUID, store.ExternalID)
+		if txErr != nil {
+			return txErr
+		}
+		if activeCount >= MaxMemoryItemsPerStore {
+			return ErrLimitExceeded
+		}
 
 		row, txErr := memoryMapper.Insert(ctx, insertMemoryParams{
 			UUID:                     memory.UUID,
@@ -364,6 +396,39 @@ func (d *DB) GetMemory(ctx context.Context, workspaceUUID, memoryStoreExternalID
 	mapper := NewMemoryMapper(d.mapperDB)
 	row, err := mapper.FindByExternalID(ctx, workspaceUUID, memoryStoreExternalID, memoryExternalID)
 	return memoryFromMapperRow(row, err)
+}
+
+func (d *DB) GetMemoryByPath(ctx context.Context, workspaceUUID, memoryStoreExternalID, path string) (Memory, bool, error) {
+	mapper := NewMemoryMapper(d.mapperDB)
+	row, found, err := mapper.FindByPath(ctx, workspaceUUID, memoryStoreExternalID, path)
+	if err != nil || !found {
+		return Memory{}, found, err
+	}
+	return row.memory(), true, nil
+}
+
+func (d *DB) ListSessionMemoryMounts(ctx context.Context, workspaceUUID, filesystemUUID string) ([]SessionMemoryMount, error) {
+	mapper := NewSessionResourceMapper(d.mapperDB)
+	rows, err := mapper.ListMemoryMountsByFilesystem(ctx, workspaceUUID, filesystemUUID)
+	if err != nil {
+		return nil, err
+	}
+	mounts := make([]SessionMemoryMount, 0, len(rows))
+	for _, row := range rows {
+		mount := SessionMemoryMount{
+			SessionExternalID:     row.SessionExternalID,
+			MemoryStoreExternalID: row.MemoryStoreExternalID,
+			Access:                row.Access,
+			MountPath:             row.MountPath,
+			Archived:              row.ArchivedAt != nil,
+			StoreMissing:          row.MemoryStoreUUID == nil || row.DeletedAt != nil,
+		}
+		if row.MemoryStoreUUID != nil {
+			mount.MemoryStoreUUID = *row.MemoryStoreUUID
+		}
+		mounts = append(mounts, mount)
+	}
+	return mounts, nil
 }
 
 func (d *DB) UpdateMemory(ctx context.Context, input UpdateMemoryInput) (MemoryMutationResult, error) {
@@ -785,6 +850,10 @@ func insertMemoryVersion(ctx context.Context, mapper MemoryVersionMapper, versio
 		CreatedAt:                 version.CreatedAt,
 	})
 	return memoryVersionFromMapperRow(row, err)
+}
+
+func MemoryContentObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID string) string {
+	return fmt.Sprintf("workspaces/%s/memory_stores/%s/memories/%s/versions/%s/content", workspaceUUID, storeUUID, memoryUUID, versionUUID)
 }
 
 func memoryStoreFromMapperRow(row memoryStoreRow, err error) (MemoryStore, error) {

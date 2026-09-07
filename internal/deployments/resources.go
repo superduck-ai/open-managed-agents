@@ -16,6 +16,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncreation"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -57,11 +58,6 @@ type deploymentRunResource struct {
 	payload  deploymentResourcePayload
 	fileSpec *sessionresource.FileSpec
 	file     db.FileRecord
-}
-
-type deploymentSessionResourcePlan struct {
-	resources     []db.CreateSessionResourceInput
-	eventBindings []sessioncontract.EventFileBinding
 }
 
 type deploymentResourceSecret struct {
@@ -382,54 +378,34 @@ func planDeploymentSessionResources(
 	deployment db.Deployment,
 	storedResources []deploymentRunResource,
 	now time.Time,
-) (deploymentSessionResourcePlan, error) {
+) (sessioncreation.ResourcePlan, error) {
 	var secrets map[string]json.RawMessage
 	if len(deployment.ResourceSecrets) > 0 && !httpapi.IsJSONNull(deployment.ResourceSecrets) {
 		if err := json.Unmarshal(deployment.ResourceSecrets, &secrets); err != nil {
-			return deploymentSessionResourcePlan{}, errors.New("stored resource secrets are invalid")
+			return sessioncreation.ResourcePlan{}, errors.New("stored resource secrets are invalid")
 		}
 	}
 
-	plan := deploymentSessionResourcePlan{
-		resources:     make([]db.CreateSessionResourceInput, 0, len(storedResources)),
-		eventBindings: make([]sessioncontract.EventFileBinding, 0, len(storedResources)),
-	}
+	resources := make([]sessioncreation.Resource, 0, len(storedResources))
 	for index, stored := range storedResources {
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
-			return deploymentSessionResourcePlan{}, markRunPreparationRetryable(err)
+			return sessioncreation.ResourcePlan{}, markRunPreparationRetryable(err)
 		}
 
 		payload := stored.payload
 		payload.ID = resourceID
-		var fileMount *db.SessionFileMount
-		if stored.fileSpec != nil {
-			binding, err := stored.fileSpec.SessionFileBinding(resourceID)
-			if err != nil {
-				return deploymentSessionResourcePlan{}, err
-			}
-			fileMount = &db.SessionFileMount{
-				ResourceExternalID: binding.ResourceID,
-				FileExternalID:     binding.FileID,
-				Path:               binding.Path,
-			}
-			plan.eventBindings = append(plan.eventBindings, sessioncontract.EventFileBinding{
-				FileID:   stored.file.ExternalID,
-				Path:     binding.Path,
-				MimeType: stored.file.MimeType,
-			})
-		}
 		payloadRaw, err := httpapi.MarshalRaw(payload)
 		if err != nil {
-			return deploymentSessionResourcePlan{}, err
+			return sessioncreation.ResourcePlan{}, err
 		}
 
 		var secretRaw json.RawMessage
 		if secrets != nil {
 			secretRaw = secrets[strconv.Itoa(index)]
 		}
-		plan.resources = append(plan.resources, db.CreateSessionResourceInput{
-			Resource: db.SessionResource{
+		resources = append(resources, sessioncreation.Resource{
+			Record: db.SessionResource{
 				UUID:             uuid.NewV4().String(),
 				ExternalID:       resourceID,
 				OrganizationUUID: deployment.OrganizationUUID,
@@ -440,8 +416,9 @@ func planDeploymentSessionResources(
 				CreatedAt:        now,
 				UpdatedAt:        now,
 			},
-			FileMount: fileMount,
+			FileSpec:     stored.fileSpec,
+			FileMIMEType: stored.file.MimeType,
 		})
 	}
-	return plan, nil
+	return sessioncreation.PlanResources(resources)
 }

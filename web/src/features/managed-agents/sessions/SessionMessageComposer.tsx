@@ -15,7 +15,7 @@ import {
   quickstartComposerSendButtonClassName,
   quickstartComposerTextareaClassName,
 } from '../components/composerStyles';
-import { errorMessage } from '../utils';
+import { errorMessage, formatBytes } from '../utils';
 
 type ComposerAttachment = {
   id: string;
@@ -41,16 +41,6 @@ function attachmentContentBlock(attachment: ComposerAttachment): SessionMessageC
   return isSupportedSessionImage(attachment.mimeType)
     ? { type: 'image', source, filename: attachment.filename }
     : { type: 'document', source, title: attachment.filename };
-}
-
-function formatAttachmentSize(sizeBytes: number) {
-  if (sizeBytes < 1024) {
-    return `${sizeBytes} B`;
-  }
-  if (sizeBytes < 1024 * 1024) {
-    return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
-  }
-  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function createAttachmentPreview(file: File) {
@@ -290,7 +280,7 @@ export function SessionMessageComposer({
                       ) : attachment.status === 'failed' ? (
                         msg('managedAgents.sessions.detail.attachmentFailed', 'Attachment failed')
                       ) : (
-                        formatAttachmentSize(attachment.sizeBytes)
+                        formatBytes(attachment.sizeBytes)
                       )}
                     </span>
                   </span>

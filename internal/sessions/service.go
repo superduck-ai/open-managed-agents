@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncreation"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -81,7 +82,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	resourcePlan, err := planSessionResourceWrites(resources)
+	resourcePlan, err := sessioncreation.PlanResources(resources)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
@@ -110,7 +111,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	initialEvents, outcomes, err := normalizeInitialSessionEvents(
 		sessionRecord,
 		body.InitialEvents,
-		resourcePlan.eventBindings,
+		resourcePlan.EventFileBindings,
 		now,
 	)
 	if err != nil {
@@ -131,7 +132,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		},
-		Resources:     resourcePlan.inputs,
+		Resources:     resourcePlan.Resources,
 		InitialEvents: initialEvents,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewV4().String(),
@@ -643,7 +644,7 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	resourceInput, err := sessionResourceWriteInput(resource)
+	resourceInput, err := sessioncreation.BuildResourceInput(resource)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}

@@ -56,14 +56,32 @@ Send Events 在事务中锁定 Session 行并按当前 workspace/session 查询�
 Resource 随即被删除，worker 转换时再也找不到挂载”的竞态。Files API 文件本身也会继续受到既有
 活动 Resource 引用保护。过期 Resource 不属于活动绑定，不能用于接受新的文件引用。
 
-Session 创建请求先规范化本次 `resources`，再用同一规则校验 `initial_events`，最后在一个事务
-内写入 Session、Resource、公开初始事件和 Environment Work。初始事件支持 `user.message`、
-`user.define_outcome`，以及符合既有顺序约束的末尾 `system.message`。创建边界只校验引用，不生成
-随后会丢弃的 worker payload；Code Session activation 从已提交的公开历史统一执行实际转换。
+Session 创建请求先规范化本次 `resources`，再通过共享的 Session 创建计划生成 Resource 写入输入和
+File 事件绑定，用同一规则校验 `initial_events`，最后在一个事务内写入 Session、Resource、公开初始
+事件和 Environment Work。初始事件支持 `user.message`、`user.define_outcome`，以及符合既有顺序约束
+的末尾 `system.message`。创建边界只校验引用，不生成随后会丢弃的 worker payload；Code Session
+activation 从已提交的公开历史统一执行实际转换。
 
-Deployment 创建仍保存公开的 `initial_events` 模板；每次运行在物化 Session Resource 后，用本次
-运行解析出的 File 绑定校验初始事件。引用未出现在 Deployment `resources` 中、文件已删除或绑定
-无法物化时，本次 Deployment Run 以 `session_resource_not_found_error` 失败，不创建 Session。
+Session 与 Deployment 的初始事件通过同一个解析器校验内容、评分标准、数量和顺序：
+`system.message` 只允许文本，且必须紧跟 `user.message` 并位于末尾。Session 保留原始内容中的
+未知字段用于公开事件和审计；Deployment 继续存储规范模板。Session 仍允许省略初始事件。
+
+Deployment 不维护独立的 Session 物化逻辑。Deployment 创建仍保存公开的 `resources` 和
+`initial_events` 模板；每次运行只负责解析资源模板与 secret、生成本次 Session Resource ID，并把
+模板文件恢复为规范 `FileSpec`。随后它调用与直接创建 Session 相同的创建计划，生成 Resource 写入
+输入和 File 事件绑定，使用共享规则校验初始事件，再把完整 `db.CreateSessionInput` 交给共同的
+Session 创建事务：
+
+```text
+Deployment resources + initial_events 模板
+→ 解析本次 Session 创建输入
+→ 共享资源计划与文件引用校验
+→ 复用 Session 创建事务
+→ Activation
+```
+
+引用未出现在 Deployment `resources` 中、文件已删除或绑定无法生成时，本次 Deployment Run 以
+`session_resource_not_found_error` 失败，不创建 Session。
 
 ## Worker 转换
 
@@ -152,6 +170,6 @@ API 不为缓存刷新增加人为延迟。
 - 对话中 `resources.add` 后发送的文件进入 realtime inbound；
 - activation 前的文件事件从公开历史转换并按顺序进入 inbound；
 - 已引用文件的 Session Resource 不能被单独删除，activation/retry 始终可重新解析相同挂载；
-- Deployment initial event 只能引用同一 Deployment `resources` 中物化的文件；
+- Deployment initial event 只能引用同一 Deployment `resources` 解析到本次 Session 创建计划的文件；
 - worker 重连和重试重放既有 inbound，不重复转换；
 - API、事件列表、SSE、Webhook、标题与前端展示不出现 `/mnt/session/uploads`。

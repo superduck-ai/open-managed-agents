@@ -43,7 +43,7 @@ func prepareDeploymentExecution(
 		return preparedDeploymentExecution{}, err
 	}
 	for _, event := range events {
-		if err := sessioneventfiles.ValidateMountedReferences(event.EventType, event.Payload, resourcePlan.eventBindings); err != nil {
+		if err := sessioneventfiles.ValidateMountedReferences(event.EventType, event.Payload, resourcePlan.EventFileBindings); err != nil {
 			return preparedDeploymentExecution{}, err
 		}
 	}
@@ -70,7 +70,7 @@ func prepareDeploymentExecution(
 				AgentSnapshot: deployment.AgentSnapshot, Status: "idle",
 				Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now,
 			},
-			Resources: resourcePlan.resources,
+			Resources: resourcePlan.Resources,
 			Work: db.EnvironmentWork{
 				UUID: uuid.NewV4().String(), ExternalID: workID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,

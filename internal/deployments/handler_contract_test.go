@@ -85,13 +85,13 @@ func TestPlanDeploymentSessionResourcesSharesFileBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planDeploymentSessionResources() error = %v", err)
 	}
-	if len(plan.resources) != 1 || plan.resources[0].FileMount == nil || len(plan.eventBindings) != 1 {
+	if len(plan.Resources) != 1 || plan.Resources[0].FileMount == nil || len(plan.EventFileBindings) != 1 {
 		t.Fatalf("planDeploymentSessionResources() = %+v", plan)
 	}
-	mount := plan.resources[0].FileMount
+	mount := plan.Resources[0].FileMount
 	want := sessioncontract.EventFileBinding{FileID: mount.FileExternalID, Path: mount.Path, MimeType: "text/csv"}
-	if plan.eventBindings[0] != want {
-		t.Fatalf("event binding = %+v, want %+v", plan.eventBindings[0], want)
+	if plan.EventFileBindings[0] != want {
+		t.Fatalf("event binding = %+v, want %+v", plan.EventFileBindings[0], want)
 	}
 }
 
@@ -223,6 +223,10 @@ func TestNormalizeInitialEvents(t *testing.T) {
 		name string
 		raw  string
 	}{
+		{
+			name: "system message contains image",
+			raw:  `[{"type":"user.message","content":[{"type":"text","text":"hello"}]},{"type":"system.message","content":[{"type":"image","source":{"type":"url","url":"https://example.com/image.png"}}]}]`,
+		},
 		{
 			name: "system message without preceding user message",
 			raw:  `[{"type":"system.message","content":[{"type":"text","text":"context"}]}]`,

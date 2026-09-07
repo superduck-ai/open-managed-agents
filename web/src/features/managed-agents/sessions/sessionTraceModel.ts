@@ -45,12 +45,6 @@ export function buildSessionTraceEntries(
   msg?: I18nMsg,
   options: SessionTraceBuildOptions = {},
 ): SessionTraceEntry[] {
-  if (view === 'debug') {
-    return events.map((event, index) =>
-      sessionTraceEntryFromEvent(event, index, sessionEventFamily(event), undefined, undefined, traceStartMs, msg),
-    );
-  }
-
   const toolResults = new Map<string, QuickstartSessionEvent[]>();
   const toolConfirmations = new Map<string, QuickstartSessionEvent[]>();
   const displayEvents = events.map(sessionCanonicalDisplayEvent);
@@ -75,16 +69,16 @@ export function buildSessionTraceEntries(
 
   return displayEvents.flatMap((event, index) => {
     const enrichedEvent = sessionEventWithThreadHint(event, threadHints.byThreadId);
-    const family = sessionEventFamily(enrichedEvent);
-    if (!sessionEventAppearsInTranscript(event, options)) {
+    if (view === 'transcript' && !sessionEventAppearsInTranscript(event, options)) {
       return [];
     }
 
-    const contentEntries = sessionTranscriptContentBlockEntries(
+    const contentEntries = sessionContentBlockEntries(
       enrichedEvent,
       index,
       toolResults,
       toolConfirmations,
+      view,
       traceStartMs,
       threadHints.byToolUseId,
       msg,
@@ -93,6 +87,7 @@ export function buildSessionTraceEntries(
       return contentEntries;
     }
 
+    const family = sessionEventFamily(enrichedEvent);
     const toolUseId = sessionToolUseId(enrichedEvent);
     const resultEvent =
       family === 'tool_use' && toolUseId
@@ -931,11 +926,12 @@ export function sessionEventIsQueuedUserMessage(event: QuickstartSessionEvent) {
   return event.is_queued === true || event.queued === true || toRecord(event.metadata)?.queued === true;
 }
 
-function sessionTranscriptContentBlockEntries(
+export function sessionContentBlockEntries(
   event: QuickstartSessionEvent,
   index: number,
   toolResults: Map<string, QuickstartSessionEvent[]>,
   toolConfirmations: Map<string, QuickstartSessionEvent[]>,
+  view: SessionTraceView,
   traceStartMs: number,
   threadHintsByToolUseId: Map<string, { id: string; name: string }>,
   msg?: I18nMsg,
@@ -951,13 +947,8 @@ function sessionTranscriptContentBlockEntries(
     return type === 'text';
   });
   const text = contentBlocksText(textBlocks);
-  const attachmentText = content
-    .map((block) => sessionMessageAttachmentText(block, msg))
-    .filter(Boolean)
-    .join('\n');
-  const messageText = [text, attachmentText].filter(Boolean).join('\n');
-  if (messageText) {
-    const textEvent = { ...event, content: [{ type: 'text', text: messageText }] };
+  if (text) {
+    const textEvent = { ...event, content: textBlocks };
     entries.push(
       sessionTraceEntryFromEvent(textEvent, index, sessionEventFamily(event), undefined, undefined, traceStartMs, msg),
     );
@@ -993,7 +984,7 @@ function sessionTranscriptContentBlockEntries(
         input: record.input ?? {},
         parent_event_id: sessionEventKey(event),
       };
-      if (sessionIsAgentSubagentToolUse(toolEvent)) {
+      if (view === 'transcript' && sessionIsAgentSubagentToolUse(toolEvent)) {
         return;
       }
       entries.push(
@@ -1009,7 +1000,28 @@ function sessionTranscriptContentBlockEntries(
       );
       return;
     }
-    if (record.type === 'tool_result') {
+    if (record.type === 'tool_result' && view === 'debug') {
+      const resultEvent: QuickstartSessionEvent = {
+        id:
+          typeof record.tool_use_id === 'string'
+            ? `${record.tool_use_id}-result`
+            : `${sessionEventKey(event)}-result-${blockIndex}`,
+        type: 'agent.tool_result',
+        session_id: event.session_id,
+        session_thread_id: event.session_thread_id,
+        thread_id: event.thread_id,
+        created_at: event.created_at,
+        tool_use_id: record.tool_use_id,
+        content: record.content,
+        is_error: record.is_error,
+        parent_event_id: sessionEventKey(event),
+      };
+      entries.push(
+        sessionTraceEntryFromEvent(resultEvent, index, 'tool_result', undefined, undefined, traceStartMs, msg),
+      );
+      return;
+    }
+    if (record.type === 'tool_result' && view === 'transcript') {
       const toolUseId = typeof record.tool_use_id === 'string' ? record.tool_use_id : '';
       const threadHint = toolUseId ? threadHintsByToolUseId.get(toolUseId) : undefined;
       if (!threadHint) {
@@ -1030,22 +1042,6 @@ function sessionTranscriptContentBlockEntries(
   });
 
   return entries;
-}
-
-function sessionMessageAttachmentText(block: unknown, msg?: I18nMsg) {
-  const record = toRecord(block);
-  if (record?.type !== 'image' && record?.type !== 'document') {
-    return '';
-  }
-  const source = toRecord(record.source);
-  const name =
-    stringValueFromKeys(record, ['filename', 'title', 'name']) ||
-    stringValueFromKeys(source ?? {}, ['file_id', 'url']) ||
-    (record.type === 'image' ? 'image' : 'file');
-  if (record.type === 'image') {
-    return msg ? msg('managedAgents.sessions.trace.imageAttachment', 'Image: {name}', { name }) : `Image: ${name}`;
-  }
-  return msg ? msg('managedAgents.sessions.trace.fileAttachment', 'File: {name}', { name }) : `File: ${name}`;
 }
 
 export function buildSessionThreadHints(events: QuickstartSessionEvent[]) {

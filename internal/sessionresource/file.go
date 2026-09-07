@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/filestorepath"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
@@ -55,7 +54,7 @@ func ParseFileID(raw json.RawMessage) (string, error) {
 // NormalizeFileSpec applies the public source and mount_path defaults after the
 // caller has resolved fileID in the current workspace.
 func NormalizeFileSpec(fileID, filename string, sourceRaw, mountPathRaw json.RawMessage) (FileSpec, error) {
-	if fileID == "" {
+	if strings.TrimSpace(fileID) == "" {
 		return FileSpec{}, errors.New("file_id must be non-empty")
 	}
 	if _, err := sandboxmount.NormalizeFileSource(sourceRaw); err != nil {
@@ -69,18 +68,36 @@ func NormalizeFileSpec(fileID, filename string, sourceRaw, mountPathRaw json.Raw
 	if err != nil {
 		return FileSpec{}, err
 	}
-	return newFileSpec(fileID, mountPath)
+	if err := sandboxmount.ValidateFileMountPath(mountPath); err != nil {
+		return FileSpec{}, err
+	}
+	return FileSpec{fileID: fileID, mountPath: mountPath}, nil
 }
 
-// RestoreFileSpec 从已经解码的规范 Deployment 或 Session resource 字段恢复 FileSpec。
-func RestoreFileSpec(fileID, source, mountPath string) (FileSpec, error) {
-	if fileID == "" {
+// ParseStoredFileSpec strictly reconstructs a normalized File resource from a
+// Deployment template. Stored data does not receive API defaults because it
+// must already be in the canonical contract.
+func ParseStoredFileSpec(raw json.RawMessage) (FileSpec, error) {
+	var payload filePayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return FileSpec{}, errors.New("stored file resource is invalid")
+	}
+	if payload.Type != FileType {
+		return FileSpec{}, fmt.Errorf("stored file resource type must be %q", FileType)
+	}
+	if strings.TrimSpace(payload.FileID) == "" {
 		return FileSpec{}, errors.New("stored file resource file_id is required")
 	}
-	if source != sandboxmount.FileSource {
+	if payload.Source != sandboxmount.FileSource {
 		return FileSpec{}, fmt.Errorf("stored file resource source must be %q", sandboxmount.FileSource)
 	}
-	return newFileSpec(fileID, mountPath)
+	if err := sandboxmount.ValidateFileMountPath(payload.MountPath); err != nil {
+		return FileSpec{}, err
+	}
+	return FileSpec{
+		fileID:    payload.FileID,
+		mountPath: payload.MountPath,
+	}, nil
 }
 
 // ParseFilePayload validates a persisted Session resource payload against the
@@ -88,30 +105,21 @@ func RestoreFileSpec(fileID, source, mountPath string) (FileSpec, error) {
 func ParseFilePayload(raw json.RawMessage, resourceID string) (FileSpec, error) {
 	var payload filePayload
 	if err := json.Unmarshal(raw, &payload); err != nil ||
-		payload.ID == "" ||
+		strings.TrimSpace(payload.ID) == "" ||
 		payload.ID != resourceID ||
-		payload.Type != FileType {
+		payload.Type != FileType ||
+		strings.TrimSpace(payload.FileID) == "" ||
+		payload.Source != sandboxmount.FileSource {
 		return FileSpec{}, errors.New("file resource payload is invalid")
 	}
-	spec, err := RestoreFileSpec(payload.FileID, payload.Source, payload.MountPath)
-	if err != nil {
-		return FileSpec{}, fmt.Errorf("file resource payload is invalid: %w", err)
-	}
-	return spec, nil
-}
-
-func newFileSpec(fileID, mountPath string) (FileSpec, error) {
-	if _, err := sandboxmount.FileBackingPath(mountPath); err != nil {
+	if err := sandboxmount.ValidateFileMountPath(payload.MountPath); err != nil {
 		return FileSpec{}, err
 	}
-	return FileSpec{fileID: fileID, mountPath: mountPath}, nil
+	return FileSpec{
+		fileID:    payload.FileID,
+		mountPath: payload.MountPath,
+	}, nil
 }
-
-// FileID 返回此配置保存的原始 Files API resource ID。
-func (s FileSpec) FileID() string { return s.fileID }
-
-// MountPath 返回此配置保存的公开 mount_path。
-func (s FileSpec) MountPath() string { return s.mountPath }
 
 // PayloadFields returns the canonical JSON fields for either a Deployment
 // template or a Session resource. resourceID is empty only for Deployment
@@ -149,32 +157,11 @@ func ValidateFileSpecs(specs []FileSpec) error {
 	if len(specs) > MaxFileResources {
 		return fmt.Errorf("at most %d managed-agent file resources are allowed", MaxFileResources)
 	}
-	backingPaths := make([]string, len(specs))
-	for index, spec := range specs {
-		backingPath, err := sandboxmount.FileBackingPath(spec.mountPath)
-		if err != nil {
-			return err
-		}
-		backingPaths[index] = backingPath
+	mountPaths := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		mountPaths = append(mountPaths, spec.mountPath)
 	}
-	for index, current := range specs {
-		currentBackingPath := backingPaths[index]
-		for otherOffset, other := range specs[index+1:] {
-			otherBackingPath := backingPaths[index+1+otherOffset]
-			if currentBackingPath == otherBackingPath {
-				return fmt.Errorf("resource mount_path is duplicated: %s", current.mountPath)
-			}
-			if filestorepath.IsDescendant(currentBackingPath, otherBackingPath) ||
-				filestorepath.IsDescendant(otherBackingPath, currentBackingPath) {
-				return fmt.Errorf(
-					"resource mount_path values conflict by ancestry: %s and %s",
-					current.mountPath,
-					other.mountPath,
-				)
-			}
-		}
-	}
-	return nil
+	return sandboxmount.ValidateFileMountPaths(mountPaths)
 }
 
 func requiredString(raw json.RawMessage, name string) (string, error) {

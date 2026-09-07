@@ -16,7 +16,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioncreation"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -104,7 +103,7 @@ func (h *Handler) resourcesFromCreate(
 	sessionID string,
 	raw json.RawMessage,
 	now time.Time,
-) ([]sessioncreation.Resource, error) {
+) ([]normalizedSessionResource, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, nil
 	}
@@ -112,7 +111,7 @@ func (h *Handler) resourcesFromCreate(
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, errors.New("resources must be an array")
 	}
-	resources := make([]sessioncreation.Resource, 0, len(items))
+	resources := make([]normalizedSessionResource, 0, len(items))
 	session := db.Session{
 		ExternalID:       sessionID,
 		OrganizationUUID: principal.OrganizationUUID,
@@ -125,7 +124,7 @@ func (h *Handler) resourcesFromCreate(
 		}
 		resources = append(resources, resource)
 	}
-	if err := sessioncreation.ValidateResources(resources); err != nil {
+	if err := validateNormalizedSessionResources(resources); err != nil {
 		return nil, err
 	}
 	return resources, nil
@@ -136,31 +135,30 @@ func (h *Handler) resourceFromRequest(
 	session db.Session,
 	body *sessionResourceRequest,
 	now time.Time,
-) (sessioncreation.Resource, error) {
+) (normalizedSessionResource, error) {
 	resourceType, err := parseRequiredRawString(body.Type, "type")
 	if err != nil {
-		return sessioncreation.Resource{}, err
+		return normalizedSessionResource{}, err
 	}
 	resourceID, err := ids.New("sesrsc_")
 	if err != nil {
-		return sessioncreation.Resource{}, err
+		return normalizedSessionResource{}, err
 	}
 	payload := map[string]any{"id": resourceID, "type": resourceType}
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
-	var fileMimeType string
 	switch resourceType {
 	case sessionresource.FileType:
 		fileID, err := sessionresource.ParseFileID(body.FileID)
 		if err != nil {
-			return sessioncreation.Resource{}, err
+			return normalizedSessionResource{}, err
 		}
 		file, err := h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
-				return sessioncreation.Resource{}, db.ErrFileReferenceNotFound
+				return normalizedSessionResource{}, db.ErrFileReferenceNotFound
 			}
-			return sessioncreation.Resource{}, err
+			return normalizedSessionResource{}, err
 		}
 		fileSpec, err := sessionresource.NormalizeFileSpec(
 			fileID,
@@ -169,15 +167,14 @@ func (h *Handler) resourceFromRequest(
 			body.MountPath,
 		)
 		if err != nil {
-			return sessioncreation.Resource{}, err
+			return normalizedSessionResource{}, err
 		}
 		payload = fileSpec.PayloadFields(resourceID)
-		normalizedFileSpec = new(fileSpec)
-		fileMimeType = file.MimeType
+		normalizedFileSpec = &fileSpec
 	case "github_repository":
 		url, err := parseRequiredRawString(body.URL, "url")
 		if err != nil {
-			return sessioncreation.Resource{}, err
+			return normalizedSessionResource{}, err
 		}
 		mountPath, err := optionalStringWithDefault(
 			body.MountPath,
@@ -185,7 +182,7 @@ func (h *Handler) resourceFromRequest(
 			"mount_path",
 		)
 		if err != nil {
-			return sessioncreation.Resource{}, err
+			return normalizedSessionResource{}, err
 		}
 		payload["url"] = url
 		payload["mount_path"] = mountPath
@@ -195,14 +192,14 @@ func (h *Handler) resourceFromRequest(
 	case "memory_store":
 		memoryStoreID, err := parseRequiredRawString(body.MemoryStoreID, "memory_store_id")
 		if err != nil {
-			return sessioncreation.Resource{}, err
+			return normalizedSessionResource{}, err
 		}
 		store, err := h.db.GetMemoryStore(r.Context(), session.WorkspaceUUID, memoryStoreID)
 		if err != nil {
-			return sessioncreation.Resource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
+			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
 		}
 		if store.ArchivedAt != nil {
-			return sessioncreation.Resource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
+			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
 		}
 		payload["memory_store_id"] = memoryStoreID
 		copyOptionalPayloadString(payload, body.Access, "access")
@@ -211,14 +208,14 @@ func (h *Handler) resourceFromRequest(
 		copyOptionalPayloadString(payload, body.MountPath, "mount_path")
 		copyOptionalPayloadString(payload, body.Name, "name")
 	default:
-		return sessioncreation.Resource{}, errors.New("resource type must be file, github_repository, or memory_store")
+		return normalizedSessionResource{}, errors.New("resource type must be file, github_repository, or memory_store")
 	}
 	payloadRaw, err := httpapi.MarshalRaw(payload)
 	if err != nil {
-		return sessioncreation.Resource{}, err
+		return normalizedSessionResource{}, err
 	}
-	return sessioncreation.Resource{
-		Record: db.SessionResource{
+	return normalizedSessionResource{
+		resource: db.SessionResource{
 			UUID:              uuid.NewV4().String(),
 			ExternalID:        resourceID,
 			OrganizationUUID:  session.OrganizationUUID,
@@ -230,8 +227,7 @@ func (h *Handler) resourceFromRequest(
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		},
-		FileSpec:     normalizedFileSpec,
-		FileMIMEType: fileMimeType,
+		fileSpec: normalizedFileSpec,
 	}, nil
 }
 

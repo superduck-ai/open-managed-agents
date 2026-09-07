@@ -22,7 +22,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioncreation"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
@@ -50,22 +49,22 @@ type RunsHandler struct {
 }
 
 type deploymentResponse struct {
-	ID            string                         `json:"id"`
-	Agent         deploymentAgentReference       `json:"agent"`
-	ArchivedAt    *string                        `json:"archived_at"`
-	CreatedAt     string                         `json:"created_at"`
-	Description   string                         `json:"description"`
-	EnvironmentID string                         `json:"environment_id"`
-	InitialEvents []sessioncreation.InitialEvent `json:"initial_events"`
-	Metadata      map[string]string              `json:"metadata"`
-	Name          string                         `json:"name"`
-	PausedReason  *deploymentPausedReason        `json:"paused_reason"`
-	Resources     json.RawMessage                `json:"resources"`
-	Schedule      *deploymentScheduleResponse    `json:"schedule"`
-	Status        string                         `json:"status"`
-	Type          string                         `json:"type"`
-	UpdatedAt     string                         `json:"updated_at"`
-	VaultIDs      []string                       `json:"vault_ids"`
+	ID            string                      `json:"id"`
+	Agent         deploymentAgentReference    `json:"agent"`
+	ArchivedAt    *string                     `json:"archived_at"`
+	CreatedAt     string                      `json:"created_at"`
+	Description   string                      `json:"description"`
+	EnvironmentID string                      `json:"environment_id"`
+	InitialEvents []deploymentInitialEvent    `json:"initial_events"`
+	Metadata      map[string]string           `json:"metadata"`
+	Name          string                      `json:"name"`
+	PausedReason  *deploymentPausedReason     `json:"paused_reason"`
+	Resources     json.RawMessage             `json:"resources"`
+	Schedule      *deploymentScheduleResponse `json:"schedule"`
+	Status        string                      `json:"status"`
+	Type          string                      `json:"type"`
+	UpdatedAt     string                      `json:"updated_at"`
+	VaultIDs      []string                    `json:"vault_ids"`
 }
 
 type deploymentAgentReference struct {
@@ -139,15 +138,75 @@ type resolvedAgent struct {
 	snapshot json.RawMessage
 }
 
+type deploymentContentBlockRequest struct {
+	Type    json.RawMessage `json:"type"`
+	Text    json.RawMessage `json:"text"`
+	Source  json.RawMessage `json:"source"`
+	Context json.RawMessage `json:"context"`
+	Title   json.RawMessage `json:"title"`
+}
+
+type deploymentContentSourceRequest struct {
+	Type      json.RawMessage `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	MediaType json.RawMessage `json:"media_type"`
+	URL       json.RawMessage `json:"url"`
+	FileID    json.RawMessage `json:"file_id"`
+}
+
+type deploymentOutcomeRubricRequest struct {
+	Type    json.RawMessage `json:"type"`
+	FileID  json.RawMessage `json:"file_id"`
+	Content json.RawMessage `json:"content"`
+}
+
+type deploymentInitialEventRequest struct {
+	Type          string          `json:"type"`
+	Content       json.RawMessage `json:"content,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	Rubric        json.RawMessage `json:"rubric,omitempty"`
+	MaxIterations *int            `json:"max_iterations,omitempty"`
+}
+
+type deploymentInitialEvent struct {
+	Type          string                   `json:"type"`
+	Content       []deploymentContentBlock `json:"content,omitempty"`
+	Description   string                   `json:"description,omitempty"`
+	Rubric        *deploymentOutcomeRubric `json:"rubric,omitempty"`
+	MaxIterations *int                     `json:"max_iterations,omitempty"`
+}
+
+type deploymentContentBlock struct {
+	Type    string                   `json:"type"`
+	Text    string                   `json:"text,omitempty"`
+	Source  *deploymentContentSource `json:"source,omitempty"`
+	Context string                   `json:"context,omitempty"`
+	Title   string                   `json:"title,omitempty"`
+}
+
+type deploymentContentSource struct {
+	Type      string `json:"type"`
+	Data      string `json:"data,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+	URL       string `json:"url,omitempty"`
+	FileID    string `json:"file_id,omitempty"`
+}
+
+type deploymentOutcomeRubric struct {
+	Type    string `json:"type"`
+	FileID  string `json:"file_id,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
 type deploymentSessionEventPayload struct {
-	ID            string                         `json:"id"`
-	ProcessedAt   string                         `json:"processed_at"`
-	Type          string                         `json:"type"`
-	Content       []sessioncreation.ContentBlock `json:"content,omitempty"`
-	Description   string                         `json:"description,omitempty"`
-	Rubric        *sessioncreation.OutcomeRubric `json:"rubric,omitempty"`
-	MaxIterations int                            `json:"max_iterations,omitempty"`
-	OutcomeID     string                         `json:"outcome_id,omitempty"`
+	ID            string                   `json:"id"`
+	ProcessedAt   string                   `json:"processed_at"`
+	Type          string                   `json:"type"`
+	Content       []deploymentContentBlock `json:"content,omitempty"`
+	Description   string                   `json:"description,omitempty"`
+	Rubric        *deploymentOutcomeRubric `json:"rubric,omitempty"`
+	MaxIterations int                      `json:"max_iterations,omitempty"`
+	OutcomeID     string                   `json:"outcome_id,omitempty"`
 }
 
 type deploymentOutcomeEvaluation struct {
@@ -563,15 +622,15 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 	if deployment.ArchivedAt != nil {
 		return invalidRequest(errors.New("archived deployments cannot be run"))
 	}
-	validation, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
+	referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
 	if err != nil {
-		validation.failure = runError("unknown_error", "Could not create session")
+		referenceFailure = runError("unknown_error", "Could not create session")
 	}
-	if validation.failure != nil {
-		return h.writeRunReferenceFailure(w, r, principal, deployment, validation.failure)
+	if referenceFailure != nil {
+		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, validation.resources, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)
@@ -655,41 +714,21 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	return writeRunResponse(w, run)
 }
 
-type deploymentDependencyValidation struct {
-	resources []deploymentRunResource
-	failure   *deploymentRunError
-}
-
-func dependencyReferenceFailure(resourceType string, err error, archived bool) (deploymentDependencyValidation, error) {
-	failure, classifyErr := classifyReferenceFailure(resourceType, err, archived)
-	return deploymentDependencyValidation{failure: failure}, classifyErr
-}
-
-func validateRunReferences(
-	ctx context.Context,
-	database *db.DB,
-	workspaceUUID string,
-	deployment db.Deployment,
-) (deploymentDependencyValidation, error) {
+func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
 	agent, err := database.GetAgent(ctx, workspaceUUID, deployment.AgentExternalID)
 	if err != nil {
-		return dependencyReferenceFailure("agent", err, false)
+		return classifyReferenceFailure("agent", err, false)
 	}
 	if agent.ArchivedAt != nil {
-		return dependencyReferenceFailure("agent", nil, true)
+		return classifyReferenceFailure("agent", nil, true)
 	}
 	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
-func validateRunDependencies(
-	ctx context.Context,
-	database *db.DB,
-	workspaceUUID string,
-	deployment db.Deployment,
-) (deploymentDependencyValidation, error) {
+func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
 	var snapshot deploymentAgentSnapshot
 	if err := json.Unmarshal(deployment.AgentSnapshot, &snapshot); err != nil {
-		return deploymentDependencyValidation{failure: runError("unknown_error", "Stored agent snapshot is invalid")}, nil
+		return runError("unknown_error", "Stored agent snapshot is invalid"), nil
 	}
 	if snapshot.Multiagent != nil {
 		for _, reference := range snapshot.Multiagent.Agents {
@@ -698,10 +737,10 @@ func validateRunDependencies(
 			}
 			subagent, err := database.GetAgent(ctx, workspaceUUID, reference.ID)
 			if err != nil {
-				return dependencyReferenceFailure("agent", err, false)
+				return classifyReferenceFailure("agent", err, false)
 			}
 			if subagent.ArchivedAt != nil {
-				return dependencyReferenceFailure("agent", nil, true)
+				return classifyReferenceFailure("agent", nil, true)
 			}
 		}
 	}
@@ -716,64 +755,58 @@ func validateRunDependencies(
 			_, err = database.GetSkillVersion(ctx, workspaceUUID, skill.ID, skill.Version)
 		}
 		if err != nil {
-			return dependencyReferenceFailure("skill", err, false)
+			return classifyReferenceFailure("skill", err, false)
 		}
 	}
 	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
-func validateSessionDependencies(
-	ctx context.Context,
-	database *db.DB,
-	workspaceUUID string,
-	deployment db.Deployment,
-) (deploymentDependencyValidation, error) {
+func validateSessionDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
 	env, err := database.GetEnvironment(ctx, workspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
-		return dependencyReferenceFailure("environment", err, false)
+		return classifyReferenceFailure("environment", err, false)
 	}
 	if env.ArchivedAt != nil {
-		return dependencyReferenceFailure("environment", nil, true)
+		return classifyReferenceFailure("environment", nil, true)
 	}
 	var vaultIDs []string
 	if len(deployment.VaultIDs) > 0 && !jsonx.IsNull(deployment.VaultIDs) {
 		if err := json.Unmarshal(deployment.VaultIDs, &vaultIDs); err != nil {
-			return deploymentDependencyValidation{failure: runError("unknown_error", "Stored vault references are invalid")}, nil
+			return runError("unknown_error", "Stored vault references are invalid"), nil
 		}
 	}
 	for _, vaultID := range vaultIDs {
 		vault, err := database.GetVault(ctx, workspaceUUID, vaultID)
 		if err != nil {
-			return dependencyReferenceFailure("vault", err, false)
+			return classifyReferenceFailure("vault", err, false)
 		}
 		if vault.ArchivedAt != nil {
-			return dependencyReferenceFailure("vault", nil, true)
+			return classifyReferenceFailure("vault", nil, true)
 		}
 	}
-	resources, err := parseDeploymentRunResources(deployment.Resources)
-	if err != nil {
-		return deploymentDependencyValidation{failure: runError("unknown_error", "Stored resources are invalid")}, nil
+	var resources []deploymentResourcePayload
+	if len(deployment.Resources) > 0 && !jsonx.IsNull(deployment.Resources) {
+		if err := json.Unmarshal(deployment.Resources, &resources); err != nil {
+			return runError("unknown_error", "Stored resources are invalid"), nil
+		}
 	}
-	for index := range resources {
-		resource := &resources[index]
-		switch resource.payload.Type {
+	for _, resource := range resources {
+		switch resource.Type {
 		case "file":
-			file, err := database.GetFile(ctx, workspaceUUID, resource.fileSpec.FileID())
-			if err != nil {
-				return dependencyReferenceFailure("file", err, false)
+			if _, err := database.GetFile(ctx, workspaceUUID, resource.FileID); err != nil {
+				return classifyReferenceFailure("file", err, false)
 			}
-			resource.file = file
 		case "memory_store":
-			store, err := database.GetMemoryStore(ctx, workspaceUUID, resource.payload.MemoryStoreID)
+			store, err := database.GetMemoryStore(ctx, workspaceUUID, resource.MemoryStoreID)
 			if err != nil {
-				return dependencyReferenceFailure("memory_store", err, false)
+				return classifyReferenceFailure("memory_store", err, false)
 			}
 			if store.ArchivedAt != nil {
-				return dependencyReferenceFailure("memory_store", nil, true)
+				return classifyReferenceFailure("memory_store", nil, true)
 			}
 		}
 	}
-	return deploymentDependencyValidation{resources: resources}, nil
+	return nil, nil
 }
 
 func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
@@ -951,15 +984,72 @@ func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, r
 }
 
 func normalizeInitialEvents(raw json.RawMessage) (json.RawMessage, error) {
-	events, err := sessioncreation.ParseInitialEvents(raw)
-	if err != nil {
-		return nil, err
+	if len(raw) == 0 || jsonx.IsNull(raw) {
+		return nil, errors.New("initial_events is required")
+	}
+	var requests []deploymentInitialEventRequest
+	if err := json.Unmarshal(raw, &requests); err != nil {
+		return nil, errors.New("initial_events must be an array")
+	}
+	if len(requests) == 0 || len(requests) > 50 {
+		return nil, errors.New("initial_events must contain between 1 and 50 events")
+	}
+	events := make([]deploymentInitialEvent, 0, len(requests))
+	systemMessages := 0
+	for index, request := range requests {
+		event := deploymentInitialEvent{
+			Type: request.Type, Description: request.Description, MaxIterations: request.MaxIterations,
+		}
+		switch request.Type {
+		case "user.message":
+			content, err := normalizeMessageContent(request.Content, false)
+			if err != nil {
+				return nil, err
+			}
+			event.Content = content
+		case "system.message":
+			systemMessages++
+			if systemMessages > 1 {
+				return nil, errors.New("initial_events may contain at most one system.message")
+			}
+			if index != len(requests)-1 {
+				return nil, errors.New("system.message must be the final initial event")
+			}
+			if index == 0 || requests[index-1].Type != "user.message" {
+				return nil, errors.New("system.message must immediately follow user.message")
+			}
+			content, err := normalizeMessageContent(request.Content, true)
+			if err != nil {
+				return nil, err
+			}
+			event.Content = content
+		case "user.define_outcome":
+			if strings.TrimSpace(request.Description) == "" {
+				return nil, errors.New("description must be non-empty")
+			}
+			rubric, err := normalizeOutcomeRubric(request.Rubric)
+			if err != nil {
+				return nil, err
+			}
+			event.Rubric = rubric
+			if request.MaxIterations != nil {
+				if *request.MaxIterations < 1 {
+					return nil, errors.New("max_iterations must be positive")
+				}
+				if *request.MaxIterations > 20 {
+					return nil, errors.New("max_iterations must be at most 20")
+				}
+			}
+		default:
+			return nil, errors.New("initial_events type must be user.message, user.define_outcome, or system.message")
+		}
+		events = append(events, event)
 	}
 	return jsonx.Encode(events)
 }
 
 func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.SessionEvent, json.RawMessage, error) {
-	var inputs []sessioncreation.InitialEvent
+	var inputs []deploymentInitialEvent
 	if err := json.Unmarshal(raw, &inputs); err != nil {
 		return nil, nil, errors.New("stored initial_events are invalid")
 	}
@@ -1051,7 +1141,7 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 	if deployment.Description != nil {
 		description = *deployment.Description
 	}
-	initialEvents := []sessioncreation.InitialEvent{}
+	initialEvents := []deploymentInitialEvent{}
 	if len(deployment.InitialEvents) > 0 && !jsonx.IsNull(deployment.InitialEvents) {
 		if err := json.Unmarshal(deployment.InitialEvents, &initialEvents); err != nil {
 			return deploymentResponse{}, errors.New("stored deployment initial_events are invalid")
@@ -1326,6 +1416,144 @@ func rejectNullField(raw json.RawMessage, name string) error {
 		return fmt.Errorf("%s must not be null", name)
 	}
 	return nil
+}
+
+func normalizeMessageContent(raw json.RawMessage, textOnly bool) ([]deploymentContentBlock, error) {
+	if len(raw) == 0 || jsonx.IsNull(raw) {
+		return nil, errors.New("initial_events content is required")
+	}
+	var requests []deploymentContentBlockRequest
+	if err := json.Unmarshal(raw, &requests); err != nil {
+		return nil, errors.New("initial_events content must be an array")
+	}
+	if len(requests) == 0 {
+		return nil, errors.New("initial_events content must contain at least one block")
+	}
+	blocks := make([]deploymentContentBlock, 0, len(requests))
+	for _, request := range requests {
+		blockType, err := parseRequiredRawString(request.Type, "content.type")
+		if err != nil {
+			return nil, err
+		}
+		if textOnly && blockType != "text" {
+			return nil, errors.New("system.message content must contain only text blocks")
+		}
+		block := deploymentContentBlock{Type: blockType}
+		switch blockType {
+		case "text":
+			block.Text, err = parseRequiredRawString(request.Text, "content.text")
+			if err != nil {
+				return nil, err
+			}
+		case "image":
+			block.Source, err = normalizeContentSource(request.Source, false)
+			if err != nil {
+				return nil, err
+			}
+		case "document":
+			block.Source, err = normalizeContentSource(request.Source, true)
+			if err != nil {
+				return nil, err
+			}
+			for _, field := range []struct {
+				name  string
+				raw   json.RawMessage
+				value *string
+			}{
+				{name: "context", raw: request.Context, value: &block.Context},
+				{name: "title", raw: request.Title, value: &block.Title},
+			} {
+				if len(field.raw) > 0 && !jsonx.IsNull(field.raw) {
+					*field.value, err = parseRequiredRawString(field.raw, field.name)
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
+		default:
+			return nil, errors.New("user.message content type must be text, image, or document")
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, nil
+}
+
+func normalizeContentSource(raw json.RawMessage, document bool) (*deploymentContentSource, error) {
+	var request deploymentContentSourceRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return nil, errors.New("content source must be an object")
+	}
+	sourceType, err := parseRequiredRawString(request.Type, "source.type")
+	if err != nil {
+		return nil, err
+	}
+	source := &deploymentContentSource{Type: sourceType}
+	switch sourceType {
+	case "base64":
+		source.Data, err = parseRequiredRawString(request.Data, "source.data")
+		if err != nil {
+			return nil, err
+		}
+		source.MediaType, err = parseRequiredRawString(request.MediaType, "source.media_type")
+	case "url":
+		source.URL, err = parseRequiredRawString(request.URL, "source.url")
+	case "file":
+		source.FileID, err = parseRequiredRawString(request.FileID, "source.file_id")
+	case "text":
+		if !document {
+			return nil, errors.New("image source type must be base64, url, or file")
+		}
+		source.Data, err = parseRequiredRawString(request.Data, "source.data")
+		if err != nil {
+			return nil, err
+		}
+		source.MediaType, err = parseRequiredRawString(request.MediaType, "source.media_type")
+		if err != nil {
+			return nil, err
+		}
+		if source.MediaType != "text/plain" {
+			return nil, errors.New("text document media_type must be text/plain")
+		}
+	default:
+		if document {
+			return nil, errors.New("document source type must be base64, text, url, or file")
+		}
+		return nil, errors.New("image source type must be base64, url, or file")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return source, nil
+}
+
+func normalizeOutcomeRubric(raw json.RawMessage) (*deploymentOutcomeRubric, error) {
+	var request deploymentOutcomeRubricRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return nil, errors.New("user.define_outcome rubric must be an object")
+	}
+	rubricType, err := parseRequiredRawString(request.Type, "rubric.type")
+	if err != nil {
+		return nil, err
+	}
+	rubric := &deploymentOutcomeRubric{Type: rubricType}
+	switch rubricType {
+	case "file":
+		rubric.FileID, err = parseRequiredRawString(request.FileID, "rubric.file_id")
+	case "text":
+		rubric.Content, err = parseRequiredRawString(request.Content, "rubric.content")
+		if err != nil {
+			return nil, err
+		}
+		if utf8.RuneCountInString(rubric.Content) > 262144 {
+			return nil, errors.New("user.define_outcome text rubric must be at most 262144 characters")
+		}
+	default:
+		return nil, errors.New("user.define_outcome rubric type must be file or text")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rubric, nil
 }
 
 func validateCheckout(raw json.RawMessage) error {

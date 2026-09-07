@@ -42,7 +42,6 @@ import {
   type SessionDetailDeltaFrames,
   type SessionDetailEventCache,
   type SessionEventCachePatch,
-  type SessionMessageContentBlock,
   type SessionResourceApiResponse,
   type SessionThreadApiResponse,
   type VaultApiResponse,
@@ -836,30 +835,14 @@ export function createQuickstartSession(
   );
 }
 
-export function postQuickstartSessionMessage(
-  sessionId: string,
-  message: string | SessionMessageContentBlock[],
-  workspaceId: string,
-) {
-  const content: SessionMessageContentBlock[] =
-    typeof message === 'string' ? [{ type: 'text', text: message }] : message;
+export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
   return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
     {
-      events: [{ type: 'user.message', content }],
+      events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
     },
     workspaceId,
   );
-}
-
-export async function uploadQuickstartSessionAttachment(file: File, sessionId: string, workspaceId: string) {
-  const uploaded = await anthropicBetaApi.files.upload<FileMetadataApiResponse>(file, workspaceId);
-  const resource = await anthropicBetaApi.sessions.resources.add<SessionResourceApiResponse>(
-    sessionId,
-    { type: 'file', file_id: uploaded.id },
-    workspaceId,
-  );
-  return { resource, uploaded };
 }
 
 export function interruptQuickstartSession(sessionId: string, workspaceId: string) {

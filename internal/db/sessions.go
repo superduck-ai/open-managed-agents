@@ -163,11 +163,10 @@ type ListSessionThreadsPageParams struct {
 }
 
 type CreateSessionInput struct {
-	Session       Session
-	Thread        SessionThread
-	Resources     []CreateSessionResourceInput
-	InitialEvents []SessionEvent
-	Work          EnvironmentWork
+	Session   Session
+	Thread    SessionThread
+	Resources []CreateSessionResourceInput
+	Work      EnvironmentWork
 }
 
 // CreateSessionResourceInput contains the normalized resource row and its

@@ -3572,30 +3572,6 @@ func TestSessionEventMissingFileResourceRejectsWholeBatch(t *testing.T) {
 	}
 }
 
-func TestCreateSessionInitialEventsRejectThreadID(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-initial-event-thread-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-initial-event-thread-agent"}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-initial-event-thread-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	response := doSessionRequest(
-		t,
-		app,
-		http.MethodPost,
-		"/v1/sessions?beta=true",
-		strings.NewReader(`{
-			"agent":`+quoteJSON(agent.ID)+`,
-			"environment_id":`+quoteJSON(env.ID)+`,
-			"initial_events":[{"type":"user.message","session_thread_id":"sthr_client","content":[{"type":"text","text":"hello"}]}]
-		}`),
-		defaultTestKey,
-		true,
-	)
-	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
-}
-
 func TestSessionEventReferencedFileResourceCannotBeDeleted(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-delete-bucket"))
 	defer app.close()
@@ -3609,10 +3585,10 @@ func TestSessionEventReferencedFileResourceCannotBeDeleted(t *testing.T) {
 	session := createSession(t, app, `{
 		"agent":`+quoteJSON(agent.ID)+`,
 		"environment_id":`+quoteJSON(env.ID)+`,
-		"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/uploads/pinned.txt"}],
-		"initial_events":[{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}]}]
+		"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/uploads/pinned.txt"}]
 	}`)
 	defer deleteSession(t, app, session.ID)
+	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}]}]}`, defaultTestKey)
 	if len(session.Resources) != 1 {
 		t.Fatalf("session resources = %+v, want one", session.Resources)
 	}
@@ -3775,56 +3751,6 @@ streamVerified:
 	retrieved = retrieveSession(t, app, session.ID, defaultTestKey)
 	if retrieved.Title == nil || *retrieved.Title != "fixed public title" {
 		t.Fatalf("session title changed after worker conversion: %+v", retrieved.Title)
-	}
-}
-
-func TestCreateSessionInitialEventCanReferenceCreatedFileResource(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-initial-event-file-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-initial-event-file-agent"}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-initial-event-file-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	file := uploadFile(t, app, "initial.pdf", "application/pdf", []byte("%PDF-1.4\ninitial"))
-	defer deleteFile(t, app, file.ID)
-
-	session := createSession(t, app, `{
-		"agent":`+quoteJSON(agent.ID)+`,
-		"environment_id":`+quoteJSON(env.ID)+`,
-		"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/uploads/initial.pdf"}],
-		"initial_events":[{"type":"user.message","content":[
-			{"type":"text","text":"read the initial document"},
-			{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}
-		]}]
-	}`)
-	defer deleteSession(t, app, session.ID)
-
-	events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
-	if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(file.ID)) {
-		t.Fatalf("initial public events = %+v, want original file reference", events.Data)
-	}
-	eventID := sessionEventStringField(t, events.Data[0], "id")
-	storedSession, found, err := app.db.GetSession(t.Context(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
-	if err != nil || !found {
-		t.Fatalf("get stored session: found=%v error=%v", found, err)
-	}
-	stored, err := app.db.GetSessionEvent(t.Context(), storedSession.WorkspaceUUID, session.ID, eventID)
-	if err != nil {
-		t.Fatalf("get initial session event: %v", err)
-	}
-	if !bytes.Contains(stored.Payload, []byte(file.ID)) || bytes.Contains(stored.Payload, []byte(`/mnt/session/uploads/initial.pdf`)) {
-		t.Fatalf("initial public payload crossed worker boundary: %s", stored.Payload)
-	}
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSessionID)
-	if err != nil {
-		t.Fatalf("list initial inbound events: %v", err)
-	}
-	if len(inbound) != 2 ||
-		!bytes.Contains(inbound[1].Payload, []byte(`/mnt/session/uploads/initial.pdf`)) ||
-		bytes.Contains(inbound[1].Payload, []byte(`"file_id"`)) {
-		t.Fatalf("initial inbound events = %#v, want mounted path", inbound)
 	}
 }
 

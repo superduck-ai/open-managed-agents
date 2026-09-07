@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
-  test('replaces an orphaned stream preview as soon as the final agent message arrives', () => {
+  test('replaces the matching stream preview as soon as the final agent message arrives', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -32,11 +32,11 @@ describe('managed agents API', () => {
       type: 'event_start',
       created_at: createdAt,
       processed_at: createdAt,
-      event: { id: 'sevt_preview', type: 'agent.message' },
+      event: { id: 'sevt_final', type: 'agent.message' },
     });
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toMatchObject({
-      id: 'sevt_preview',
+      id: 'sevt_final',
       created_at: createdAt,
       processed_at: null,
       is_streaming: true,
@@ -93,7 +93,7 @@ describe('managed agents API', () => {
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       type: 'event_start',
       created_at: messageAt,
-      event: { id: 'sevt_preview', type: 'agent.message' },
+      event: { id: 'sevt_final', type: 'agent.message' },
     });
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       id: 'sevt_idle',
@@ -104,7 +104,7 @@ describe('managed agents API', () => {
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
       'sevt_model_start',
-      'sevt_preview',
+      'sevt_final',
       'sevt_idle',
     ]);
 
@@ -148,8 +148,8 @@ describe('managed agents API', () => {
     });
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
-      'sevt_thinking_preview',
       'sevt_final',
+      'sevt_thinking_preview',
     ]);
   });
 
@@ -277,7 +277,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('preserves backend event order when timestamps run backwards', () => {
+  test('orders merged events by time rather than arrival', () => {
     const events = [
       {
         id: 'sevt_user_inserted_first',
@@ -294,8 +294,8 @@ describe('managed agents API', () => {
     ];
 
     expect(mergeSessionEventsById(events).map((event) => event.id)).toEqual([
-      'sevt_user_inserted_first',
       'sevt_agent_inserted_second',
+      'sevt_user_inserted_first',
     ]);
     expect(
       buildSessionEventEntries(events, 'transcript', Date.parse('2026-08-28T01:01:29Z'), undefined, {
@@ -343,7 +343,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('replaces cached events without moving them and appends new events in arrival order', () => {
+  test('places completed events at their canonical time', () => {
     const first = mergeSessionEventCache(undefined, [
       {
         id: 'sevt_first',
@@ -366,8 +366,8 @@ describe('managed agents API', () => {
       { id: 'sevt_third', type: 'session.status_idle', created_at: '2026-08-28T01:01:28Z' },
     ]);
 
-    expect(updated.events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_second', 'sevt_third']);
-    expect(updated.events[0]?.content).toBe('final');
+    expect(updated.events.map((event) => event.id)).toEqual(['sevt_third', 'sevt_second', 'sevt_first']);
+    expect(updated.events[2]?.content).toBe('final');
   });
 
   test('omits an idle result that duplicates an agent message with the same timestamp', () => {

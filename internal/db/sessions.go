@@ -353,6 +353,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if _, txErr = eventMapper.SoftDeleteBySession(ctx, workspaceUUID, externalID); txErr != nil {
 			return txErr
 		}
+		if _, txErr = NewWorkerEventReceiptMapper(executor).DeleteBySession(ctx, workspaceUUID, session.UUID); txErr != nil {
+			return txErr
+		}
 		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
 		return txErr
 	})

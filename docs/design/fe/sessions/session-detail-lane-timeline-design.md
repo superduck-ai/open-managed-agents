@@ -36,6 +36,12 @@
 
 ## 3. 数据模型
 
+完整事件缓存统一按 `processed_at` 的微秒精度排序，同时间以 event ID 的字节顺序兜底；跨线程缓存合并后也应用此规则。`Date.parse` 只用于图形坐标与显示，不能承担事件顺序。
+
+刷新/重连先建立 live-only SSE，再读取完整历史快照，随后消费已建立连接缓冲的帧。所有来源按 ID 合并，processed 覆盖同 ID pending，final 替换同 ID preview；不再以不同 ID 的时间相近推断对应关系。非终态 EOF 会重新同步，idle 不阻止继续连接。每次恢复读取新快照第一页，旧快照游标不作为增量尾读位置。实施边界见 [Session 事件一致性](../../session-event-stream-consistency.md)。
+
+完整历史快照在所有页成功且通过响应校验后一次写入缓存。同步开始时未变化的已处理事件由快照替换或移除，因而旧公共投影与快照中已不存在的记录不会永久残留；同步期间的新事件和实时更新保留，pending/preview 可被 final 升级，但 processed 不回退为 pending。失败、取消、非法分页响应不提交部分结果。同一 scope 的并发读取复用现有请求协调，建流后的刷新必须读取新快照；取消等待者不会取消其他调用的共享请求。
+
 ### 3.1 线程与 lane
 
 lane 的结构不能只从事件流推断。应优先使用线程元数据：
@@ -538,3 +544,7 @@ web/src/features/managed-agents/session-detail/
 - 如果后端事件缺少 `bracketStartMs`、`executionMs` 或 `inferenceMs`，tick 宽度会退化成最小块。
 - thread API 与 event stream 到达顺序不同步时，active lane 可能需要基于 thread id 追踪而不是仅存 lane index。
 - archived lane 展开后要重放 pending cross-thread seek，否则用户点击归档线程消息会丢失目标定位。
+
+## Thinking 进度事件兼容
+
+`agent.thinking` 只表示思考进度，公共完整事件不再携带正文。实时的 thinking start 只含类型与 ID，final 到达后仍按同 ID 替换预览；刷新使用同一完整事件，不恢复思考文本。普通文本预览仍通过 `event_start` / 带 `event_id` 的 delta 关联，无 ID 的旧 delta 被服务端丢弃。此变化不修改私有 transcript 或既有事件的持久化身份。

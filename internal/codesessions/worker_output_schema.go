@@ -88,14 +88,23 @@ type workerSystemOutputPayload struct {
 	Summary     string `json:"summary"`
 }
 
+type workerModelRequestPayload struct {
+	RequestID       string          `json:"model_request_id"`
+	ParentToolUseID string          `json:"parent_tool_use_id"`
+	Model           string          `json:"model"`
+	IsError         *bool           `json:"is_error"`
+	ModelUsage      json.RawMessage `json:"model_usage"`
+}
+
 type workerResultOutputPayload struct {
-	Type          string          `json:"type"`
-	Model         string          `json:"model"`
-	DurationAPIMs float64         `json:"duration_api_ms"`
-	DurationMs    float64         `json:"duration_ms"`
-	Usage         json.RawMessage `json:"usage"`
-	ModelUsage    json.RawMessage `json:"modelUsage"`
-	ModelUsageAlt json.RawMessage `json:"model_usage"`
+	Type               string          `json:"type"`
+	ModelRequestEvents bool            `json:"model_request_events"`
+	Model              string          `json:"model"`
+	DurationAPIMs      float64         `json:"duration_api_ms"`
+	DurationMs         float64         `json:"duration_ms"`
+	Usage              json.RawMessage `json:"usage"`
+	ModelUsage         json.RawMessage `json:"modelUsage"`
+	ModelUsageAlt      json.RawMessage `json:"model_usage"`
 }
 
 type workerOpaqueOutputPayload struct {

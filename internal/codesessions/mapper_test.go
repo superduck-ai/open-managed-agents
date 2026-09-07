@@ -3,6 +3,7 @@ package codesessions
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -622,4 +623,34 @@ func mustRawJSON(t *testing.T, value any) json.RawMessage {
 
 func ptrString(value string) *string {
 	return &value
+}
+
+func TestModelRequestBoundaryKeepsRecoveryIdentity(t *testing.T) {
+	for _, raw := range []string{`{"type":"system","subtype":"model_request_start"}`, `{"type":"system","subtype":"model_request_end","model_request_id":"msg"}`} {
+		_, _, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "system"}, json.RawMessage(raw))
+		if !errors.Is(err, ErrProtocol) {
+			t.Fatalf("invalid boundary error = %v", err)
+		}
+	}
+	for _, phase := range []string{"start", "end"} {
+		raw := json.RawMessage(`{"type":"system","subtype":"model_request_` + phase + `","model_request_id":"msg","is_error":true,"model":"test","_worker_epoch":7,"_worker_source_event_id":"source"}`)
+		payloads, _, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "system"}, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := decodePublicPayloads(t, payloads)[0]
+		if payload["id"] != maevents.ModelRequestEventID("cse_test", "msg", phase) || payload["_worker_model_request_id"] != "msg" || payload["_worker_source_event_id"] != "source" {
+			t.Fatalf("lost boundary identity: %s", payloads)
+		}
+		if phase == "end" && payload["model_request_start_id"] != maevents.ModelRequestEventID("cse_test", "msg", "start") {
+			t.Fatal("end refers to a different request")
+		}
+	}
+	payloads, _, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result"}, json.RawMessage(`{"type":"result","subtype":"success","is_error":false,"model_request_events":true,"duration_ms":10,"usage":{"input_tokens":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 1 || !strings.Contains(string(payloads[0]), `"type":"session.thread_status_idle"`) {
+		t.Fatalf("result fabricated request boundaries: %s", payloads)
+	}
 }

@@ -50,9 +50,9 @@ func TestNATSFanoutDeliversPreviewAndFinalAcrossInstances(t *testing.T) {
 	_, otherSession := first.streams.subscribe("workspace-test", sessionID+"-other")
 	batch := previewTestBatch()
 	payloads := []json.RawMessage{
-		json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","uuid":"raw-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","uuid":"block-start"}`),
-		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}},"session_id":"raw-session","uuid":"block-delta"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","uuid":"raw-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"raw-session","uuid":"block-start"}`),
+		json.RawMessage(`{"type":"stream_event","model_request_id":"msg_test","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}},"session_id":"raw-session","uuid":"block-delta"}`),
 	}
 	batch.SessionExternalID = sessionID
 	for _, payload := range payloads {
@@ -80,6 +80,7 @@ func TestNATSFanoutDeliversPreviewAndFinalAcrossInstances(t *testing.T) {
 	for i, stream := range streams {
 		t.Run(fmt.Sprintf("connection-%d", i), func(t *testing.T) {
 			connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
+			observePreviewTestRequest(connection)
 			response := httptest.NewRecorder()
 			for _, eventType := range []string{previewEventStart, previewEventDelta, "agent.message", "session.status_terminated"} {
 				select {

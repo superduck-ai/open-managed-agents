@@ -112,11 +112,11 @@ func TestPrepareWorkerOutputEventsBuildsActions(t *testing.T) {
 		t.Fatalf("prepared[0] = %T, want preparedKeepAliveAction", prepared[0])
 	}
 	stream, ok := prepared[1].(preparedStreamAction)
-	if !ok || len(stream.payload) == 0 {
+	if !ok || stream.request == nil || len(stream.request.payload) == 0 {
 		t.Fatalf("prepared[1] = %#v, want preparedStreamAction", prepared[1])
 	}
 	var streamPayload workerOutputCommonPayload
-	if err := json.Unmarshal(stream.payload, &streamPayload); err != nil {
+	if err := json.Unmarshal(stream.request.payload, &streamPayload); err != nil {
 		t.Fatalf("decode stream payload: %v", err)
 	}
 	if streamPayload.UUID != "stream-uuid" || streamPayload.SessionID != "cse_test" {

@@ -35,6 +35,7 @@ type previewScope struct {
 	workerEpoch       int64
 	rawSessionID      string
 	parentToolUseID   string
+	modelRequestID    string
 }
 
 type seenStreamEventKey struct {
@@ -62,6 +63,7 @@ type workerStreamPayload struct {
 	SessionID       string            `json:"session_id"`
 	ParentToolUseID *string           `json:"parent_tool_use_id"`
 	UUID            string            `json:"uuid"`
+	ModelRequestID  string            `json:"model_request_id"`
 	CreatedAt       string            `json:"created_at"`
 	Timestamp       string            `json:"timestamp"`
 }
@@ -114,7 +116,7 @@ func newWorkerPreviewLRU[K comparable, V any](size int) *simplelru.LRU[K, V] {
 
 func (c *workerPreviewConverter) convert(message codeSessionStreamFanout) (sessionStreamEvent, bool) {
 	payload, ok := decodeWorkerStreamPayload(message.Payload)
-	if !ok || !payload.Event.affectsPreview() {
+	if !ok || payload.ModelRequestID == "" || !payload.Event.affectsPreview() {
 		return sessionStreamEvent{}, false
 	}
 	c.mu.Lock()
@@ -184,6 +186,7 @@ func (c *workerPreviewConverter) applyStreamEvent(batch codeSessionStreamFanout,
 		workerEpoch:       batch.WorkerEpoch,
 		rawSessionID:      payload.SessionID,
 		parentToolUseID:   optionalString(payload.ParentToolUseID),
+		modelRequestID:    payload.ModelRequestID,
 	}
 	switch payload.Event.Type {
 	case workerStreamEventTypeMessageStart:
@@ -294,14 +297,15 @@ func (c *workerPreviewConverter) deletePreviewState(scope previewScope) {
 
 func previewSessionEvent(batch codeSessionStreamFanout, source workerStreamPayload, processedAt time.Time, externalID, eventType string, payload json.RawMessage) sessionStreamEvent {
 	event := sessionStreamEvent{
-		ExternalID:        externalID,
-		WorkspaceUUID:     batch.WorkspaceUUID,
-		SessionExternalID: batch.SessionExternalID,
-		PrimaryThread:     true,
-		EventType:         eventType,
-		Payload:           payload,
-		ProcessedAt:       processedAt,
-		CreatedAt:         source.previewCreatedAt(processedAt),
+		ExternalID:          externalID,
+		WorkspaceUUID:       batch.WorkspaceUUID,
+		SessionExternalID:   batch.SessionExternalID,
+		PrimaryThread:       true,
+		EventType:           eventType,
+		ModelRequestStartID: managedagentsevents.ModelRequestEventID(batch.CodeSessionID, source.ModelRequestID, "start"),
+		Payload:             payload,
+		ProcessedAt:         processedAt,
+		CreatedAt:           source.previewCreatedAt(processedAt),
 	}
 	if parentToolUseID := optionalString(source.ParentToolUseID); parentToolUseID != "" {
 		threadID := managedagentsevents.ClaudeTaskThreadID(batch.CodeSessionID, parentToolUseID)

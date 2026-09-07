@@ -1118,8 +1118,9 @@ func TestSessionEventStreamForwardsWorkerStreamDeltasWithoutHistory(t *testing.T
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
 		{"payload":{"type":"event_delta","uuid":"stream-orphan-sse-`+suffix+`","delta":{"text":"unidentified orphan"}}},
-		{"payload":{"type":"event_start","uuid":"stream-start-sse-`+suffix+`","event":{"id":"preview-`+suffix+`","type":"agent.message"}}},
-		{"payload":{"type":"event_delta","uuid":"stream-delta-sse-`+suffix+`","event_id":"preview-`+suffix+`","delta":{"type":"content_delta","index":0,"content":{"type":"text","text":"stream preview over sse"}},"created_at":"2026-06-16T01:10:03Z"}}
+		{"payload":{"uuid":"request-start-sse-`+suffix+`","type":"span.model_request_start","id":"request-sse-`+suffix+`","model":"test"}},
+		{"payload":{"type":"event_start","model_request_start_id":"request-sse-`+suffix+`","uuid":"stream-start-sse-`+suffix+`","event":{"id":"preview-`+suffix+`","type":"agent.message"}}},
+		{"payload":{"type":"event_delta","model_request_start_id":"request-sse-`+suffix+`","uuid":"stream-delta-sse-`+suffix+`","event_id":"preview-`+suffix+`","delta":{"type":"content_delta","index":0,"content":{"type":"text","text":"stream preview over sse"}},"created_at":"2026-06-16T01:10:03Z"}}
 	]}`)
 
 	deadline := time.After(5 * time.Second)

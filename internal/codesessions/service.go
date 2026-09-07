@@ -256,7 +256,7 @@ type preparedNoopAction struct{}
 type preparedKeepAliveAction struct{}
 
 type preparedStreamAction struct {
-	payload json.RawMessage
+	request *workerRequestInput
 }
 
 type preparedControlAction struct {
@@ -266,6 +266,7 @@ type preparedControlAction struct {
 
 type preparedPublicAction struct {
 	payloads []json.RawMessage
+	request  *workerRequestInput
 }
 
 func (preparedNoopAction) implPreparedWorkerOutputEvent()      {}
@@ -312,9 +313,13 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 		}
 		return prepared, nil
 	}
+	request, err := prepareWorkerRequestInput(input.Payload, payload, meta)
+	if err != nil {
+		return nil, err
+	}
 	if input.Ephemeral {
 		if meta.EventType == "stream_event" {
-			return preparedStreamAction{payload: payload}, nil
+			return preparedStreamAction{request: request}, nil
 		}
 		return preparedNoopAction{}, nil
 	}
@@ -328,7 +333,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !ok {
 		return preparedNoopAction{}, nil
 	}
-	return preparedPublicAction{payloads: publicPayloads}, nil
+	return preparedPublicAction{payloads: publicPayloads, request: request}, nil
 }
 
 func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (preparedWorkerOutputEvent, error) {
@@ -349,21 +354,22 @@ func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSession
 	var durable []preparedWorkerOutputEvent
 	var previews []json.RawMessage
 	for _, output := range outputs {
-		switch prepared := output.(type) {
+		switch output.(type) {
 		case preparedNoopAction, preparedKeepAliveAction:
-		case preparedStreamAction:
-			previews = append(previews, prepared.payload)
-		case preparedPublicAction, preparedControlAction:
+		case preparedStreamAction, preparedPublicAction, preparedControlAction:
 			durable = append(durable, output)
 		default:
 			return fmt.Errorf("unsupported worker output event %T", output)
 		}
 	}
 	if len(durable) > 0 {
-		if err := s.commitWorkerSessionEvents(ctx, route.CodeSessionID, workerEpoch, durable, nil); err != nil {
+		associated, err := s.commitWorkerSessionEvents(ctx, route.CodeSessionID, workerEpoch, durable, nil)
+		if err != nil {
 			return err
 		}
+		previews = append(previews, associated...)
 	}
+	// Start/end boundaries and receipts commit before any associated preview.
 	for _, preview := range previews {
 		s.publishWorkerStreamPayload(ctx, route, workerEpoch, preview)
 	}
@@ -482,19 +488,20 @@ func newInboundEventInput(codeSessionID string, payload json.RawMessage, source 
 // CommitWorkerSessionEvents commits raw transcript and its public projection
 // together. Delayed thread mappings replay stored transcript in the same transaction.
 func (s *Service) CommitWorkerSessionEvents(ctx context.Context, codeSessionID string, workerEpoch int64, payloads []json.RawMessage, internalInputs []db.AppendCodeSessionInternalEventInput) error {
-	return s.commitWorkerSessionEvents(ctx, codeSessionID, workerEpoch, []preparedWorkerOutputEvent{preparedPublicAction{payloads: payloads}}, internalInputs)
+	_, err := s.commitWorkerSessionEvents(ctx, codeSessionID, workerEpoch, []preparedWorkerOutputEvent{preparedPublicAction{payloads: payloads}}, internalInputs)
+	return err
 }
 
-func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID string, workerEpoch int64, outputs []preparedWorkerOutputEvent, internalInputs []db.AppendCodeSessionInternalEventInput) error {
+func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID string, workerEpoch int64, outputs []preparedWorkerOutputEvent, internalInputs []db.AppendCodeSessionInternalEventInput) ([]json.RawMessage, error) {
 	if s.sink == nil {
-		return ErrPublicEventSinkUnavailable
+		return nil, ErrPublicEventSinkUnavailable
 	}
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !found {
-		return db.ErrNotFound
+		return nil, db.ErrNotFound
 	}
 	// Legacy server-side callers have no credential epoch. Modern worker
 	// requests retain their original epoch through the persistence boundary.
@@ -503,6 +510,7 @@ func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID s
 	}
 	var created []db.SessionEvent
 	var inbound []db.AppendCodeSessionEventInput
+	var previews []json.RawMessage
 	err = s.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
 		session, err := tx.LockSessionForEvents(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 		if err != nil {
@@ -518,22 +526,41 @@ func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID s
 		if _, err := tx.AppendCodeSessionInternalEvents(ctx, worker, internalInputs); err != nil {
 			return err
 		}
+		var requestState *workerRequestContext
 		for _, output := range outputs {
 			var public []db.SessionEvent
 			var replies []db.AppendCodeSessionEventInput
-			switch prepared := output.(type) {
-			case preparedPublicAction:
-				public, err = s.sink.AppendCodeSessionEvents(ctx, tx, session, codeSessionID, prepared.payloads)
-			case preparedControlAction:
-				public, replies, err = s.appendToolPermissionRequest(ctx, tx, session, worker, prepared)
-			default:
-				return fmt.Errorf("unsupported persistent worker output %T", output)
+			request := preparedWorkerRequestInput(output)
+			if request != nil {
+				if requestState == nil {
+					requestState, err = restoreWorkerRequestContext(ctx, tx, session, worker)
+					if err != nil {
+						return err
+					}
+				}
+				var preview json.RawMessage
+				public, preview, err = s.applyWorkerRequestInput(ctx, tx, session, worker, requestState, request)
+				if len(preview) > 0 {
+					previews = append(previews, preview)
+				}
+			} else {
+				switch prepared := output.(type) {
+				case preparedPublicAction:
+					public, err = s.sink.AppendCodeSessionEvents(ctx, tx, session, codeSessionID, prepared.payloads)
+				case preparedControlAction:
+					public, replies, err = s.appendToolPermissionRequest(ctx, tx, session, worker, prepared)
+				default:
+					return fmt.Errorf("unsupported persistent worker output %T", output)
+				}
 			}
 			if err != nil {
 				return err
 			}
 			created = append(created, public...)
 			inbound = append(inbound, replies...)
+			if _, stream := output.(preparedStreamAction); stream {
+				continue
+			}
 			// Materialize after each output, preserving the same order whether
 			// the worker sends one batch or several individual requests.
 			subagentPayloads, err := s.subagentPublicPayloads(ctx, tx, worker)
@@ -550,13 +577,13 @@ func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID s
 		return tx.AppendCodeSessionInboundEvents(ctx, worker, inbound)
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	s.sink.NotifyCodeSessionEvents(ctx, created)
 	if len(inbound) > 0 {
 		s.publishQueuedInboundEvents(ctx, codeSessionID)
 	}
-	return nil
+	return previews, nil
 }
 func (s *Service) subagentPublicPayloads(ctx context.Context, tx db.ManagedAgentEventTx, codeSession db.CodeSession) ([]json.RawMessage, error) {
 	threadByAgent, err := s.subagentThreadMappings(ctx, tx, codeSession)

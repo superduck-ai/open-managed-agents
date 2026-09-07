@@ -143,6 +143,7 @@ type SessionMapper interface {
 	PatchMetadata(ctx context.Context, workspaceUUID, sessionExternalID string, metadataPatch []byte) (sessionRow, error)
 	SetOutcomeEvaluations(ctx context.Context, workspaceUUID, sessionExternalID string, evaluations []byte) (sessionRow, error)
 	SetStatus(ctx context.Context, workspaceUUID, sessionExternalID, status string) (int64, error)
+	SetUsage(ctx context.Context, workspaceUUID, sessionUUID string, usage []byte) (int64, error)
 	Archive(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	SoftDelete(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	ListPage(ctx context.Context, params sessionPageMapperParams) ([]sessionRow, error)

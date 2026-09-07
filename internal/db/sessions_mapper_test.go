@@ -46,6 +46,28 @@ func TestSessionEventClockAndOrderStatements(t *testing.T) {
 	}
 }
 
+func TestSessionUsageMapper(t *testing.T) {
+	usage := []byte(`{"output_tokens":0}`)
+	bound := buildSessionMapperSetUsage(yourbatis.DialectPostgres, "workspace", "session", usage)
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionMapperSetUsageStatement, bound: bound,
+		wantID: "SessionMapper.SetUsage", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames:          []string{"usage", "workspaceUUID", "sessionUUID"},
+		wantSensitiveArgumentNames: []string{"usage"},
+		wantSQLFragments:           []string{"SET usage = CAST($1 AS jsonb)", "workspace_uuid = $2", "uuid = $3", "deleted_at IS NULL"},
+	})
+	if !reflect.DeepEqual(bound.Values(), []any{usage, "workspace", "session"}) {
+		t.Fatalf("usage arguments = %v", bound.Values())
+	}
+	for _, count := range []int64{0, 1} {
+		executor := newMapperTestExecutor(t, mapperTestResponse{rowsAffected: count})
+		got, err := NewSessionMapper(executor).SetUsage(t.Context(), "workspace", "session", usage)
+		if err != nil || got != count {
+			t.Fatalf("SetUsage() = %d, %v", got, err)
+		}
+	}
+}
+
 func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
 	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
 	row, found, err := NewSessionMapper(executor).FindByExternalID(
@@ -246,6 +268,10 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 	ctx := context.Background()
 	tests := []mapperExecutionErrorContract{
+		{statementID: "SessionMapper.SetUsage", kind: yourbatis.StatementUpdate, call: func(executor yourbatis.Executor) error {
+			_, err := NewSessionMapper(executor).SetUsage(ctx, "workspace", "session", []byte(`{}`))
+			return err
+		}},
 		{statementID: "SessionMapper.Insert", kind: yourbatis.StatementInsert, query: true, call: func(executor yourbatis.Executor) error {
 			mapper := NewSessionMapper(executor)
 			_, err := mapper.Insert(ctx, sessionWriteParams{})

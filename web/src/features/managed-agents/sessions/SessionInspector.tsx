@@ -61,6 +61,8 @@ import {
 import {
   formatCompactTokenCount,
   formatSessionDuration,
+  sessionDetailListCost,
+  sessionDetailUsage,
   sessionEventEntryMatchesSelectedId,
   sessionEventThreadId,
   sessionStatusIsLive,
@@ -78,7 +80,7 @@ import {
   inspectorAgentModel,
   inspectorEventFamily,
   inspectorEventSuffix,
-  inspectorSessionListCost,
+  inspectorSessionUsage,
   sessionInspectorTabHref,
   SESSION_INSPECTOR_TABS,
   type InspectorContextPoint,
@@ -335,10 +337,7 @@ function SessionOverviewPanel({
   const agentReference = objectRecord(session.agent);
   const agentId = typeof agentReference.id === 'string' ? agentReference.id : '';
   const costPoints = useMemo(() => buildInspectorCostPoints(events), [events]);
-  const latestCostPoint = costPoints.at(-1);
-  const listCost = latestCostPoint
-    ? { amount: latestCostPoint.cents / 100, currency: latestCostPoint.currency }
-    : (inspectorSessionListCost(session.usage) ?? inspectorSessionListCost(session.stats));
+  const listCost = sessionDetailListCost(session, events);
   const selectedCostEventId =
     costPoints.find((point) => selectedEntry && sessionEventEntryMatchesSelectedId(selectedEntry, point.eventId))
       ?.eventId ?? null;
@@ -401,6 +400,7 @@ function SessionOverviewPanel({
         firstEventAt={events[0] ? sessionEventProcessedTimestamp(events[0]) || sessionEventTimestamp(events[0]) : 0}
         hoveredEventId={hoveredEventId}
         listCost={listCost}
+        usage={inspectorSessionUsage(sessionDetailUsage(session, events))}
         points={costPoints}
         selectedEventId={selectedCostEventId}
         onHoverEvent={onHoverEvent}
@@ -418,6 +418,7 @@ function SessionCostSection({
   onSelectEntry,
   points,
   selectedEventId,
+  usage,
 }: {
   firstEventAt: number;
   hoveredEventId: string | null;
@@ -426,10 +427,10 @@ function SessionCostSection({
   onSelectEntry: (entryId: string | null) => void;
   points: InspectorCostPoint[];
   selectedEventId: string | null;
+  usage: InspectorSessionUsage;
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const latestUsage = points.at(-1)?.usage;
   return (
     <section aria-label={msg('managedAgents.sessions.inspector.cost', 'Cost')} className="flex flex-col gap-3 pt-4">
       <div className="flex items-center justify-between gap-4 font-medium">
@@ -446,7 +447,7 @@ function SessionCostSection({
         onHoverEvent={onHoverEvent}
         onSelectEntry={onSelectEntry}
       />
-      {latestUsage ? <SessionUsageFacts usage={latestUsage} /> : null}
+      <SessionUsageFacts usage={usage} />
     </section>
   );
 }
@@ -653,18 +654,14 @@ function InspectorStepChart({
 function SessionUsageFacts({ usage }: { usage: InspectorSessionUsage }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
+  const formatCount = (value: number | undefined) => (value === undefined ? '—' : formatters.number(value));
   const rows: Array<[string, ReactNode]> = [
-    [msg('managedAgents.observability.inputTokens', 'Input tokens'), formatters.number(usage.input)],
-    [msg('managedAgents.observability.outputTokens', 'Output tokens'), formatters.number(usage.output)],
-    [msg('managedAgents.sessions.trace.cacheRead', 'Cache read'), formatters.number(usage.cacheRead)],
-    [msg('managedAgents.sessions.inspector.cacheWrite', 'Cache write'), formatters.number(usage.cacheWrite)],
+    [msg('managedAgents.observability.inputTokens', 'Input tokens'), formatCount(usage.input)],
+    [msg('managedAgents.observability.outputTokens', 'Output tokens'), formatCount(usage.output)],
+    [msg('managedAgents.sessions.trace.cacheRead', 'Cache read'), formatCount(usage.cacheRead)],
+    [msg('managedAgents.sessions.inspector.cacheWrite', 'Cache write'), formatCount(usage.cacheWrite)],
+    [msg('managedAgents.sessions.inspector.webSearches', 'Web searches'), formatCount(usage.webSearches)],
   ];
-  if (usage.webSearches > 0) {
-    rows.push([
-      msg('managedAgents.sessions.inspector.webSearches', 'Web searches'),
-      formatters.number(usage.webSearches),
-    ]);
-  }
   rows.push([
     msg('managedAgents.observability.activeTime', 'Active time'),
     usage.activeSeconds === undefined ? '—' : formatSessionDuration(usage.activeSeconds * 1000, formatters, msg),

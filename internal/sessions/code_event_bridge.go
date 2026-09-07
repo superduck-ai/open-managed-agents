@@ -30,6 +30,14 @@ func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgen
 				return nil, err
 			}
 		}
+		var usage json.RawMessage
+		if rawSessionEventType(raw) == "session.usage" {
+			var err error
+			usage, err = decodeSessionUsageEvent(raw)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if maevents.IsStreamDelta(rawSessionEventType(raw)) {
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, tx, session, codeSessionID, raw, now)
 			if err != nil {
@@ -58,6 +66,13 @@ func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgen
 		inserted, err := tx.AppendSessionEventsIfAbsent(ctx, session, batch, []string{"created_at", "processed_at", "timestamp"})
 		if err != nil {
 			return nil, err
+		}
+		// Usage is a complete cumulative snapshot. Only a newly committed event
+		// replaces the projection; retrying an older ID must not rewind it.
+		if len(usage) > 0 && len(inserted) > 0 {
+			if err := tx.SetSessionUsage(ctx, session, usage); err != nil {
+				return nil, err
+			}
 		}
 		created = append(created, inserted...)
 	}

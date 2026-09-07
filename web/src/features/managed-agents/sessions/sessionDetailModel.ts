@@ -73,7 +73,7 @@ export function buildSessionDetailSummary(
   if (elapsedMs > 0) {
     chips.push({ key: 'duration', icon: Timer, value: formatSessionDuration(elapsedMs, formatters, msg) });
   }
-  const listCost = sessionListCost(session.usage) ?? sessionListCost(session.stats);
+  const listCost = sessionDetailListCost(session, events);
   if (listCost) {
     chips.push({
       key: 'cost',
@@ -88,6 +88,26 @@ export function buildSessionDetailSummary(
     value: formatRelativeFromNow(session.created_at, formatters, msg, nowMs),
   });
   return { title, statusLabel, chips };
+}
+
+// Both live frames and refreshed history enter the same ordered event cache.
+// An explicit snapshot replaces older fields, including a now-unknown cost.
+export function sessionDetailListCost(session: SessionApiResponse, events: QuickstartSessionEvent[]) {
+  const latest = latestSessionUsageEvent(events);
+  return latest ? sessionListCost(latest.usage) : (sessionListCost(session.usage) ?? sessionListCost(session.stats));
+}
+
+export function sessionDetailUsage(session: SessionApiResponse, events: QuickstartSessionEvent[]) {
+  const latest = latestSessionUsageEvent(events);
+  return latest ? latest.usage : (session.usage ?? session.stats);
+}
+
+function latestSessionUsageEvent(events: QuickstartSessionEvent[]) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (sessionEventType(events[index]) === 'session.usage') {
+      return events[index];
+    }
+  }
 }
 
 export function buildSessionEventsByLane(

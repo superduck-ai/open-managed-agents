@@ -42,6 +42,44 @@ function renderInspector(
 }
 
 describe('SessionInspector', () => {
+  test.each([
+    {
+      usage: {
+        output_tokens: 0,
+        cache_creation: { ephemeral_5m_input_tokens: 8 },
+        server_tool_use: { web_search_requests: 0 },
+      },
+      output: '0',
+      searches: '0',
+    },
+    { usage: {}, output: '—', searches: '—' },
+  ])('replaces usage facts even when the latest snapshot has no cost: %j', async ({ usage, output, searches }) => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    renderInspector({
+      events: [
+        {
+          id: 'usage_old',
+          type: 'session.usage',
+          processed_at: '2026-09-07T00:00:00.000001Z',
+          usage: { output_tokens: 9, input_tokens: 5, list_cost: { amount: '200', currency: 'USD' } },
+        },
+        { id: 'usage_new', type: 'session.usage', processed_at: '2026-09-07T00:00:00.000002Z', usage },
+      ],
+    });
+    await act(async () => Promise.resolve());
+    expect(screen.getByText('Cost').parentElement?.textContent).toBe('Cost—');
+    for (const [label, value] of [
+      ['Input tokens', '—'],
+      ['Output tokens', output],
+      ['Cache read', '—'],
+      ['Cache write', '—'],
+      ['Web searches', searches],
+      ['Active time', '—'],
+    ]) {
+      expect(screen.getByText(label).nextElementSibling?.textContent).toBe(value);
+    }
+  });
+
   test('does not invent a zero cost when usage is missing', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
 

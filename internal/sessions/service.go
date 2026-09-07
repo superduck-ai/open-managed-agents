@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncreation"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -81,33 +82,44 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	resourceInputs, err := sessionResourceWriteInputs(resources)
+	resourcePlan, err := sessioncreation.PlanResources(resources)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
+	sessionRecord := db.Session{
+		UUID:                  uuid.NewV4().String(),
+		ExternalID:            sessionID,
+		OrganizationUUID:      principal.OrganizationUUID,
+		WorkspaceUUID:         principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+		EnvironmentUUID:       env.UUID,
+		EnvironmentExternalID: env.ExternalID,
+		AgentUUID:             agent.UUID,
+		AgentExternalID:       agent.ExternalID,
+		AgentVersion:          agent.CurrentVersion,
+		AgentSnapshot:         snapshot,
+		Title:                 title,
+		Metadata:              metadata,
+		VaultIDs:              vaultIDs,
+		Status:                "idle",
+		Usage:                 json.RawMessage(`{}`),
+		Stats:                 json.RawMessage(`{}`),
+		OutcomeEvaluations:    json.RawMessage(`[]`),
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+	initialEvents, outcomes, err := normalizeInitialSessionEvents(
+		sessionRecord,
+		body.InitialEvents,
+		resourcePlan.EventFileBindings,
+		now,
+	)
+	if err != nil {
+		return mapEventProcessingError(err, sessionID)
+	}
+	sessionRecord.OutcomeEvaluations = outcomes
 	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
-		Session: db.Session{
-			UUID:                  uuid.NewV4().String(),
-			ExternalID:            sessionID,
-			OrganizationUUID:      principal.OrganizationUUID,
-			WorkspaceUUID:         principal.WorkspaceUUID,
-			CreatedByAPIKeyUUID:   principal.APIKeyUUID,
-			EnvironmentUUID:       env.UUID,
-			EnvironmentExternalID: env.ExternalID,
-			AgentUUID:             agent.UUID,
-			AgentExternalID:       agent.ExternalID,
-			AgentVersion:          agent.CurrentVersion,
-			AgentSnapshot:         snapshot,
-			Title:                 title,
-			Metadata:              metadata,
-			VaultIDs:              vaultIDs,
-			Status:                "idle",
-			Usage:                 json.RawMessage(`{}`),
-			Stats:                 json.RawMessage(`{}`),
-			OutcomeEvaluations:    json.RawMessage(`[]`),
-			CreatedAt:             now,
-			UpdatedAt:             now,
-		},
+		Session: sessionRecord,
 		Thread: db.SessionThread{
 			UUID:             uuid.NewV4().String(),
 			ExternalID:       threadID,
@@ -120,7 +132,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		},
-		Resources: resourceInputs,
+		Resources:     resourcePlan.Resources,
+		InitialEvents: initialEvents,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewV4().String(),
 			ExternalID:            workID,
@@ -631,7 +644,7 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	resourceInput, err := sessionResourceWriteInput(resource)
+	resourceInput, err := sessioncreation.BuildResourceInput(resource)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}

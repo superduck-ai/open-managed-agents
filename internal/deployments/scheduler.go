@@ -232,14 +232,14 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		return agentErr
 	}
 
-	referenceFailure, err := validateRunDependencies(ctx, w.database, deployment.WorkspaceUUID, deployment)
+	validation, err := validateRunDependencies(ctx, w.database, deployment.WorkspaceUUID, deployment)
 	if err != nil {
 		return err
 	}
-	if referenceFailure != nil {
-		return w.recordFailure(ctx, deployment, referenceFailure, scheduledAt, now)
+	if validation.failure != nil {
+		return w.recordFailure(ctx, deployment, validation.failure, scheduledAt, now)
 	}
-	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, validation.resources, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err

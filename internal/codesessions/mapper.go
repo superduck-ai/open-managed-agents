@@ -157,6 +157,18 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, false, fmt.Errorf("%w: invalid result payload: %w", ErrProtocol, err)
 		}
+		// Success requires the exact protocol fields; encoding/json's
+		// case-insensitive struct matching must not accept unknown aliases.
+		if subtype, ok := fields["subtype"]; ok {
+			if err := json.Unmarshal(subtype, &payload.Subtype); err != nil {
+				return nil, false, fmt.Errorf("%w: invalid result subtype: %w", ErrProtocol, err)
+			}
+		}
+		if isError, ok := fields["is_error"]; ok {
+			if err := json.Unmarshal(isError, &payload.IsError); err != nil {
+				return nil, false, fmt.Errorf("%w: invalid result is_error: %w", ErrProtocol, err)
+			}
+		}
 		return resultPublicPayloadCandidates(codeSessionID, event, object, payload), true, nil
 	default:
 		if !maevents.IsWorkerOutputEvent(event.EventType) && !maevents.IsStreamDelta(event.EventType) {
@@ -224,7 +236,7 @@ func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw 
 		if payload.Subtype == "model_request_start" || payload.Subtype == "model_request_end" {
 			return modelRequestPublicPayload(codeSessionID, raw, object, payload.Subtype)
 		}
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
+		return systemProgressPublicPayloadCandidates(raw, object, payload)
 	default:
 		return nil, nil
 	}
@@ -455,6 +467,11 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 		})
 	}
 	idle := publicPayloadWithType(object, "session.thread_status_idle")
+	// A successful SDK result ends the turn; its stop_reason describes the
+	// model's last generation. Missing success fields retain legacy behavior.
+	if schema.Subtype == "success" && schema.IsError != nil && !*schema.IsError {
+		idle["stop_reason"] = map[string]any{"type": "end_turn"}
+	}
 	candidates = append(candidates, publicPayloadCandidate{payload: idle, seedSuffix: "result:thread_idle"})
 	return candidates
 }
@@ -585,7 +602,7 @@ func systemPublicPayloadCandidates(codeSessionID string, raw json.RawMessage, ob
 	case "task_started":
 		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
 		if threadID == "" {
-			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
+			return nil, ErrProtocol
 		}
 		agentName := firstNonEmpty(schema.Description, schema.TaskType, "subagent")
 		content := claudeTaskContentFromFields(schema.Prompt, schema.Summary)
@@ -615,7 +632,7 @@ func systemPublicPayloadCandidates(codeSessionID string, raw json.RawMessage, ob
 	case "task_notification":
 		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
 		if threadID == "" {
-			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
+			return nil, ErrProtocol
 		}
 		statusEventType := "session.thread_status_idle"
 		if status := strings.ToLower(schema.Status); status == "failed" || status == "error" || status == "terminated" {
@@ -625,13 +642,12 @@ func systemPublicPayloadCandidates(codeSessionID string, raw json.RawMessage, ob
 		status["session_thread_id"] = threadID
 		status["task_id"] = schema.TaskID
 		status["tool_use_id"] = schema.ToolUseID
-		status["stop_reason"] = map[string]any{
-			"type":   firstNonEmpty(schema.Status, "completed"),
-			"detail": schema.Summary,
+		if statusEventType == "session.thread_status_idle" {
+			status["stop_reason"] = map[string]any{"type": "end_turn"}
 		}
 		return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + threadID}}, nil
 	default:
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
+		return systemProgressPublicPayloadCandidates(raw, object, schema)
 	}
 }
 
@@ -672,6 +688,33 @@ func modelRequestPublicPayload(codeSessionID string, raw json.RawMessage, object
 		payload["_owner_session_thread_id"] = maevents.ClaudeTaskThreadID(codeSessionID, schema.ParentToolUseID)
 	}
 	return []publicPayloadCandidate{{payload: payload, seedSuffix: subtype}}, nil
+}
+
+// SDK system messages describe runtime activity, not system-role conversation
+// content. Both live worker output and stored child transcript use this mapping.
+func systemProgressPublicPayloadCandidates(raw json.RawMessage, object map[string]any, schema workerSystemOutputPayload) ([]publicPayloadCandidate, error) {
+	payload := map[string]any{}
+	switch schema.Subtype {
+	case "compact_boundary":
+		payload["type"] = "agent.thread_context_compacted"
+	case "api_retry", "api_error":
+		retry, err := decodeWorkerSystemRetry(raw, schema.Subtype)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid retry payload: %w", ErrProtocol, err)
+		}
+		payload["type"] = "session.error"
+		payload["error"] = publicModelRetryError(retry)
+	default:
+		return nil, nil
+	}
+	// Keep explicit ownership while excluding runtime configuration and raw
+	// diagnostic fields. Internal transcript supplies its owner separately.
+	for _, key := range []string{"owner_session_thread_id", "_owner_session_thread_id", "session_thread_id", "thread_id"} {
+		if value, ok := object[key]; ok {
+			payload[key] = value
+		}
+	}
+	return []publicPayloadCandidate{{payload: payload, seedSuffix: "system:" + schema.Subtype}}, nil
 }
 
 func claudeTaskThreadIDFromFields(codeSessionID, toolUseID, taskID string) string {

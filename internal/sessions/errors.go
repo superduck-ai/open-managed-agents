@@ -5,10 +5,15 @@ import (
 	"fmt"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 var errEventCursorQueryMismatch = errors.New("page cursor does not match event query")
+
+func invalidSessionErrorPayload() error {
+	return fmt.Errorf("%w: invalid session.error payload", codesessions.ErrProtocol)
+}
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

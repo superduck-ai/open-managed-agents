@@ -178,6 +178,8 @@ flowchart LR
 
 公共物化不采用 resume GET 的 compaction 边界：即使 compaction 先于线程映射到达，压缩前的公共消息也必须保留。raw 与 thread-created 的查询都读完分页，不以 500 条为总上限。公开历史 GET 只读已提交事件，已删除原先“子线程为空则补写”的路径；刷新不会改变事件内容或推进处理时钟。
 
+子线程 raw `system` 与普通 worker 输出共用进度映射：`compact_boundary` 生成无原始压缩 metadata 的 `agent.thread_context_compacted`；`api_retry` / `api_error` 生成 `session.error`，`retry_status.type` 固定为 `retrying`。初始化、compacting 中间状态和其他诊断不再变成 `system.message`，raw 表与 resume GET 仍保留原始 transcript。API 重试的计数到达上限不等于已经失败耗尽，耗尽仍需单独的真实结束事实。该映射不新增 idle 或 rescheduled 状态，也不改写历史中已经存储的旧 `system.message`；升级后补物化采用带 subtype 的稳定 ID，避免把旧事件改类型。同一 subtype/source 重试仍生成同一新 ID。
+
 ### 4.1 幂等键
 
 `payload.uuid` 是 transcript 事件的 canonical 幂等键。当前实现生成：

@@ -2,7 +2,7 @@
 
 本文记录当前后端实现中的 code-session worker state API。该接口用于持久化 worker 的轻量状态和 metadata patch；显式上报状态时，同步提交相应公共状态事件。delivery ACK 仍由独立接口处理。
 
-公共事件写入与本状态接口共用 epoch 校验和事务：同 ID 内容冲突返回 409，不提交同批之前的事件或状态。canonical error 字段及 result 结束原因尚未统一。worker 瞬态 idle 仍可能提前产生 `end_turn`，详见 [Session 一致性方案](../../session-event-stream-consistency.md#升级与边界)。
+公共事件写入与本状态接口共用既有 epoch/事务错误映射。worker events、legacy events 与 persistence POST/PUT 遇到协议错误返回 400，同 ID 内容冲突返回 409；不会提交同批之前的事件或状态。canonical `session.error` 的字段校验不自动改变 worker/Session 状态。raw result 仅在精确字段 `subtype="success"` 且 `is_error=false` 时产生线程 `end_turn`，其余分类及失败收尾尚未统一，worker 瞬态 idle 提前产生 `end_turn` 的问题也仍保留；完整边界见 [Session 一致性方案](../../session-event-stream-consistency.md#升级与边界)。
 
 相关代码：
 

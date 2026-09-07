@@ -91,3 +91,19 @@ func publicSessionRejectsWorkerEvents(cause error) error {
 }
 
 var ErrPublicEventSinkUnavailable = errors.New("public session event sink is unavailable")
+
+func publicModelRetryError(retry workerSystemRetryPayload) map[string]any {
+	errorType, message := "model_request_failed_error", "Model request failed; retrying."
+	switch {
+	case retry.ErrorStatus != nil && *retry.ErrorStatus == 529:
+		errorType, message = "model_overloaded_error", "Model is overloaded; retrying."
+	case retry.Error == "rate_limit" || (retry.ErrorStatus != nil && *retry.ErrorStatus == 429):
+		errorType, message = "model_rate_limited_error", "Model rate limit reached; retrying."
+	case retry.Error == "billing_error" || (retry.ErrorStatus != nil && *retry.ErrorStatus == 402):
+		errorType, message = "billing_error", "Model billing error; retrying."
+	}
+	return map[string]any{
+		"type": errorType, "message": message,
+		"retry_status": map[string]any{"type": "retrying"},
+	}
+}

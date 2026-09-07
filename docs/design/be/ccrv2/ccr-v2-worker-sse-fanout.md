@@ -13,6 +13,7 @@
 - 消息总线中断时允许丢失预览；完整 SSE 通过每秒一次的数据库补读恢复；历史 API 使用相同顺序与序列化。
 - `agent.thinking` 完整事件在公共序列化时投影为进度身份、时间与线程归属，不携带思考正文；历史和实时读取共用该投影，已有数据库 payload 保留供幂等重放。thinking `event_start` 仅保留类型和 ID，不接受 thinking 内容 delta。
 - 所有 preview start/delta 都必须有可关联的事件 ID；delta 还必须对应本连接已接受的 start。旧版无 ID delta 不再直接透传，避免无法归属、去重或封口的片段进入正文。
+- Worker `system` 不再通用映射为 `system.message`。`compact_boundary` 产生 `agent.thread_context_compacted`；`api_retry` / 内部 `api_error` 产生带类型、固定说明和 `retry_status: {type: retrying}` 的 `session.error`，不改变 Session 状态。初始化、compacting 中间状态和未识别诊断不生成对话内容；已有 task 生命周期继续使用其专属映射。主输出与子线程内部 transcript 复用同一进度映射，原始诊断字段不进入新公共 payload。
 - 消息总线只传递事件，不保存 message、block 或 SSE 连接的关联状态。
 
 ```mermaid
@@ -49,6 +50,8 @@ sequenceDiagram
     C->>B: close SSE
     B->>R: UNSUB oma.s.session_id
 ```
+
+SDK stdout 的 `api_retry.error` 是错误分类字符串，内部 transcript 的 `api_error.error` 是含 `status` 的 APIError 对象；仅在对应 subtype 解码其专属 schema，未知诊断的 error 对象不触发解析。两种形式均由运行器在等待重试前产生，不能从 attempt/max_retries 提前推断 exhausted。`task_started/task_notification` 缺少 task_id 和 tool_use_id 时返回协议错误，不再生成缺少 content 的 system.message。已明确传入的 canonical system.message 合同保持不变；旧历史不回写。
 
 ## Preview 转换
 

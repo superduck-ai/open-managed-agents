@@ -331,6 +331,12 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, tx db.ManagedAgentE
 	}
 	delete(payload, "owner_session_thread_id")
 	delete(payload, "_owner_session_thread_id")
+	if ownerThreadID == "" && !hasSessionThreadOwnerField(payload) {
+		copies, err := toolEventCopySpecs(ctx, tx, session, eventType, eventID, payload)
+		if err != nil || copies != nil {
+			return copies, err
+		}
+	}
 	if ownerThreadID == "" && shouldInferOwnerThreadFromPayload(eventType) {
 		inferredThreadID, err := h.inferOwnerSessionThreadID(ctx, tx, session, payload)
 		if err != nil {

@@ -229,15 +229,17 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
 	assertMapperSQLContains(t, eventBound, `ORDER BY processed_at ASC, external_id COLLATE "C" ASC`)
 
-	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
+	toolUseBound := buildSessionEventMapperToolUseOwnerThreadIDs(
 		yourbatis.DialectPostgres,
 		"workspace-uuid",
 		"ses_test",
 		[]string{"agent.tool_use", "agent.mcp_tool_use"},
-		[]string{"tool-1", "tool-2"},
+		"tool-1",
 	)
 	assertMapperSQLContains(t, toolUseBound, "e.event_type IN ( $3 , $4 )")
-	assertMapperSQLContains(t, toolUseBound, ") IN ( $5 , $6 )")
+	assertMapperSQLContains(t, toolUseBound, ") = $5")
+	assertMapperSQLContains(t, toolUseBound, "e.workspace_uuid = $1")
+	assertMapperSQLContains(t, toolUseBound, "e.session_external_id = $2")
 
 }
 

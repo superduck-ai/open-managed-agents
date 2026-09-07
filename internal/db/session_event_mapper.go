@@ -64,7 +64,7 @@ type SessionEventMapper interface {
 	MatchRetry(ctx context.Context, params sessionEventWriteParams, ignoredPayloadFields []string) (sessionEventRetryRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)
 	ListPage(ctx context.Context, params sessionEventPageMapperParams) ([]sessionEventRow, error)
-	ChildSessionToolUseIDs(ctx context.Context, workspaceUUID, sessionExternalID string, eventTypes, toolUseIDs []string) ([]string, error)
+	ToolUseOwnerThreadIDs(ctx context.Context, workspaceUUID, sessionExternalID string, eventTypes []string, toolUseID string) ([]string, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	ListSessionEventsForActivation(
 		ctx context.Context,

@@ -134,6 +134,18 @@ func (tx ManagedAgentEventTx) AppendSessionEventsIfAbsent(ctx context.Context, s
 	return insertSessionEventsTx(ctx, tx.executor, session, events, true, ignoredPayloadFields)
 }
 
+// SetSessionUsage replaces the snapshot in the owning Session's event transaction.
+func (tx ManagedAgentEventTx) SetSessionUsage(ctx context.Context, session Session, usage json.RawMessage) error {
+	affected, err := tx.sessionMapper.SetUsage(ctx, session.WorkspaceUUID, session.UUID, agentJSONArg(usage))
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (tx ManagedAgentEventTx) GetSessionThread(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string) (SessionThread, error) {
 	row, err := tx.sessionThreadMapper.FindByExternalID(ctx, workspaceUUID, sessionExternalID, threadExternalID)
 	return row.thread(), mapNoRows(err)

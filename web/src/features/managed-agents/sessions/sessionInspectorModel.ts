@@ -5,7 +5,7 @@ import {
   type SessionEventListEntry,
   type ToolCallEntry,
 } from '../types';
-import { objectRecord, optionalNumericValueFromKeys, sessionListCost, stringValueFromKeys } from '../utils';
+import { objectRecord, optionalNumericValueFromKeys, stringValueFromKeys } from '../utils';
 import { extractSessionEventUsage, sessionEventEntrySourceIds, sessionEventThreadId } from './sessionDetailModel';
 import {
   buildSessionEventEntries,
@@ -87,11 +87,11 @@ export type InspectorContextPoint = {
 
 export type InspectorSessionUsage = {
   activeSeconds?: number;
-  cacheRead: number;
-  cacheWrite: number;
-  input: number;
-  output: number;
-  webSearches: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  input?: number;
+  output?: number;
+  webSearches?: number;
 };
 
 export type InspectorCostPoint = {
@@ -369,7 +369,7 @@ export function buildInspectorCostPoints(events: QuickstartSessionEvent[]) {
     const at = sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event);
     if (!listCost || !at) return;
     const previousCents = points.at(-1)?.cents ?? 0;
-    const cents = Math.max(previousCents, listCost.cents);
+    const cents = listCost.cents;
     points.push({
       at,
       cents,
@@ -382,8 +382,6 @@ export function buildInspectorCostPoints(events: QuickstartSessionEvent[]) {
   return points;
 }
 
-export const inspectorSessionListCost = sessionListCost;
-
 function inspectorMoneyInCents(value: unknown) {
   const money = objectRecord(value);
   const cents = optionalNumericValueFromKeys(money, ['amount']);
@@ -394,18 +392,19 @@ function inspectorMoneyInCents(value: unknown) {
   };
 }
 
-function inspectorSessionUsage(usage: Record<string, unknown>): InspectorSessionUsage {
+export function inspectorSessionUsage(value: unknown): InspectorSessionUsage {
+  const usage = objectRecord(value);
   const cacheCreation = objectRecord(usage.cache_creation);
   const serverToolUse = objectRecord(usage.server_tool_use);
+  const cache5m = optionalNumericValueFromKeys(cacheCreation, ['ephemeral_5m_input_tokens']);
+  const cache1h = optionalNumericValueFromKeys(cacheCreation, ['ephemeral_1h_input_tokens']);
   return {
     activeSeconds: optionalNumericValueFromKeys(usage, ['active_seconds']),
-    cacheRead: optionalNumericValueFromKeys(usage, ['cache_read_input_tokens']) ?? 0,
-    cacheWrite:
-      (optionalNumericValueFromKeys(cacheCreation, ['ephemeral_5m_input_tokens']) ?? 0) +
-      (optionalNumericValueFromKeys(cacheCreation, ['ephemeral_1h_input_tokens']) ?? 0),
-    input: optionalNumericValueFromKeys(usage, ['input_tokens']) ?? 0,
-    output: optionalNumericValueFromKeys(usage, ['output_tokens']) ?? 0,
-    webSearches: optionalNumericValueFromKeys(serverToolUse, ['web_search_requests']) ?? 0,
+    cacheRead: optionalNumericValueFromKeys(usage, ['cache_read_input_tokens']),
+    cacheWrite: cache5m === undefined || cache1h === undefined ? undefined : cache5m + cache1h,
+    input: optionalNumericValueFromKeys(usage, ['input_tokens']),
+    output: optionalNumericValueFromKeys(usage, ['output_tokens']),
+    webSearches: optionalNumericValueFromKeys(serverToolUse, ['web_search_requests']),
   };
 }
 

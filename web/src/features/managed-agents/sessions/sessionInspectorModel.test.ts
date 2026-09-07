@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 import { type AgentApiResponse, type QuickstartSessionEvent } from '../types';
+import { sessionListCost } from '../utils';
 import {
   buildInspectorEventListItems,
   buildInspectorEventRows,
@@ -11,7 +12,7 @@ import {
   buildInspectorToolTotals,
   filterInspectorEventRows,
   inspectorBackingEventIds,
-  inspectorSessionListCost,
+  inspectorSessionUsage,
   readSessionInspectorTab,
   sessionInspectorTabHref,
   writeSessionInspectorUrlState,
@@ -291,7 +292,22 @@ describe('session inspector tool metrics', () => {
 });
 
 describe('session inspector cost', () => {
-  test('builds monotonic cumulative cost snapshots with Claude usage fields', () => {
+  test('preserves unknown counts and sums cache writes only when both counters are known', () => {
+    expect(inspectorSessionUsage({ output_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 8 } })).toEqual({
+      activeSeconds: undefined,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+      input: undefined,
+      output: 0,
+      webSearches: undefined,
+    });
+    expect(
+      inspectorSessionUsage({ cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } })
+        .cacheWrite,
+    ).toBe(0);
+  });
+
+  test('keeps cumulative cost corrections and Claude usage fields', () => {
     const points = buildInspectorCostPoints([
       { id: 'user', type: 'user.message', created_at: '2026-08-27T08:00:00.000Z' },
       {
@@ -309,7 +325,7 @@ describe('session inspector cost', () => {
         },
       },
       {
-        id: 'usage_stale',
+        id: 'usage_corrected',
         type: 'session.usage',
         processed_at: '2026-08-27T08:00:02.000Z',
         usage: { list_cost: { amount: '120', currency: 'USD' } },
@@ -335,25 +351,25 @@ describe('session inspector cost', () => {
       },
       {
         at: Date.parse('2026-08-27T08:00:02.000Z'),
-        cents: 125,
+        cents: 120,
         currency: 'USD',
-        eventId: 'usage_stale',
-        stepCents: 0,
+        eventId: 'usage_corrected',
+        stepCents: -5,
         usage: {
           activeSeconds: undefined,
-          cacheRead: 0,
-          cacheWrite: 0,
-          input: 0,
-          output: 0,
-          webSearches: 0,
+          cacheRead: undefined,
+          cacheWrite: undefined,
+          input: undefined,
+          output: undefined,
+          webSearches: undefined,
         },
       },
     ]);
-    expect(inspectorSessionListCost({ list_cost: { amount: '125', currency: 'USD' } })).toEqual({
+    expect(sessionListCost({ list_cost: { amount: '125', currency: 'USD' } })).toEqual({
       amount: 1.25,
       currency: 'USD',
     });
-    expect(inspectorSessionListCost({ list_cost: 0.0123 })).toEqual({ amount: 0.0123, currency: 'USD' });
+    expect(sessionListCost({ list_cost: 0.0123 })).toEqual({ amount: 0.0123, currency: 'USD' });
   });
 });
 

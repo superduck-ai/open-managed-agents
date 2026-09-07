@@ -11,6 +11,10 @@ import (
 
 var errEventCursorQueryMismatch = errors.New("page cursor does not match event query")
 
+func invalidSessionUsagePayload() error {
+	return fmt.Errorf("%w: invalid session.usage payload", codesessions.ErrProtocol)
+}
+
 func invalidSessionErrorPayload() error {
 	return fmt.Errorf("%w: invalid session.error payload", codesessions.ErrProtocol)
 }

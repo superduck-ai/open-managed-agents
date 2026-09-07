@@ -8,7 +8,7 @@
 - 收到的每条 Worker raw stream event 在每个 API 实例转换一次，session Hub 只投递转换后的事件；每条 SSE 连接负责 preview 过滤，并从数据库按已提交处理时间补读完整事件。
 - `ephemeral: true` 的 `stream_event` 正文只经过消息总线，不持久化到 PostgreSQL 或 JetStream；源 UUID、摘要与请求/块关联接收凭据在发布前写入 PostgreSQL。
 - Worker ingress JWT 中已验证的 `session_id`、`public_session_id` 和 `workspace_uuid` 直接组成 stream route；原版帧在现有 Session/Code Session 事务内关联请求并记录 UUID 接收凭据；提交后使用此 route 发布 preview。
-- 最终公开事件仍幂等写入现有 `session_events`。公共写入事务按 Session → Code Session 的顺序加锁，复验原 worker 请求的 epoch，并与公共状态一起提交，然后通过对应 session subject 通知已订阅实例。入口检查通过后发生 takeover 的旧 worker 仍会被事务拒绝；线程创建、可公开的内部 transcript、权限请求 metadata 和自动控制响应也在同一事务内；worker PUT 私有状态与其公共状态事件也一起提交；canonical usage 快照接入留待后续，当前不从 raw result 推算累计用量。
+- 最终公开事件仍幂等写入现有 `session_events`。公共写入事务按 Session → Code Session 的顺序加锁，复验原 worker 请求的 epoch，并与公共状态一起提交，然后通过对应 session subject 通知已订阅实例。入口检查通过后发生 takeover 的旧 worker 仍会被事务拒绝；线程创建、可公开的内部 transcript、权限请求 metadata 和自动控制响应也在同一事务内；worker PUT 私有状态与其公共状态事件也一起提交；canonical `session.usage` 快照及 `sessions.usage` 投影已纳入同一事务；尚未从 raw result 推算真实累计用量。
 - 同 ID 的完整事件重试必须保持内容、事件类型和归属一致；比较忽略服务端生成的顶层时间字段，其他 JSONB 值改变时公共写入事务回滚，worker events/status HTTP 返回 409 `conflict_error`。相同内容重试保留最初时间和状态，不重新通知第二份事件。
 - 消息总线中断时允许丢失预览；完整 SSE 通过每秒一次的数据库补读恢复；历史 API 使用相同顺序与序列化。
 - `agent.thinking` 完整事件在公共序列化时投影为进度身份、时间与线程归属，不携带思考正文；历史和实时读取共用该投影，已有数据库 payload 保留供幂等重放。thinking `event_start` 仅保留类型和 ID，不接受 thinking 内容 delta。

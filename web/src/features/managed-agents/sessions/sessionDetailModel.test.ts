@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { type useFormatters } from '../../../shared/i18n';
 import { type I18nMsg, type SessionApiResponse } from '../types';
 import { Bot } from 'lucide-react';
-import { buildSessionDetailSummary } from './sessionDetailModel';
+import { buildSessionDetailSummary, sessionDetailListCost, sessionDetailUsage } from './sessionDetailModel';
+import { mergeSessionEventCache } from '../api';
 
 const msg: I18nMsg = ((_key, fallback) => fallback) as I18nMsg;
 const formatters = {
@@ -15,6 +16,49 @@ const formatters = {
 } as ReturnType<typeof useFormatters>;
 
 describe('Claude session header summary', () => {
+  test('live and refreshed usage replace the header cost without retaining missing fields', () => {
+    const session: SessionApiResponse = {
+      id: 'sesn_usage',
+      type: 'session',
+      status: 'idle',
+      created_at: '2026-09-07T00:00:00.000Z',
+      updated_at: '2026-09-07T00:00:00.000Z',
+      usage: { list_cost: { amount: '100', currency: 'USD' } },
+    };
+    const first = {
+      id: 'usage_first',
+      type: 'session.usage',
+      processed_at: '2026-09-07T00:00:00.000001Z',
+      usage: session.usage,
+    };
+    const second = {
+      id: 'usage_second',
+      type: 'session.usage',
+      processed_at: '2026-09-07T00:00:00.000002Z',
+      usage: { list_cost: { amount: '200', currency: 'USD' } },
+    };
+    const live = mergeSessionEventCache(mergeSessionEventCache(undefined, [first]), [second, first]);
+    const refreshed = mergeSessionEventCache(undefined, [first, second]);
+    expect(sessionDetailUsage(session, live.events)).toEqual(second.usage);
+    expect(sessionDetailUsage(session, [])).toEqual(session.usage);
+    const legacy = { ...session, usage: {}, stats: { list_cost: 3 } };
+    expect(sessionDetailListCost(legacy, [])).toEqual({ amount: 3, currency: 'USD' });
+    expect(sessionDetailListCost(legacy, [{ ...second, usage: {} }])).toBeNull();
+    const summary = (events: typeof live.events) =>
+      buildSessionDetailSummary(session, events, formatters, msg, Date.parse(session.created_at));
+    expect(summary(live.events)).toEqual(summary(refreshed.events));
+    expect(summary(live.events).chips.find((chip) => chip.key === 'cost')?.value).toBe('$2');
+    const unknown = {
+      id: 'usage_unknown',
+      type: 'session.usage',
+      processed_at: '2026-09-07T00:00:00.000003Z',
+      usage: {},
+    };
+    expect(summary(mergeSessionEventCache(live, [unknown]).events).chips.some((chip) => chip.key === 'cost')).toBe(
+      false,
+    );
+  });
+
   test('uses the Claude field order without resources or token totals', () => {
     const session: SessionApiResponse = {
       id: 'sesn_test',

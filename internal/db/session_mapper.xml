@@ -114,6 +114,14 @@
         RETURNING <include refid="columns"/>
     </update>
 
+    <update id="SetUsage" result="rows">
+        UPDATE sessions
+        SET usage = CAST(#{usage,sensitive=true} AS jsonb), updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{sessionUUID}
+        AND deleted_at IS NULL
+    </update>
+
     <update id="SetStatus" result="rows">
         UPDATE sessions
         SET status = #{status}, updated_at = NOW()

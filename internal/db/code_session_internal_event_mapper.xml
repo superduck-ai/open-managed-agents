@@ -89,6 +89,22 @@
         <include refid="eventColumns"/>
     </insert>
 
+    <select id="MatchesRetry" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM code_session_internal_events
+            WHERE workspace_uuid = #{params.WorkspaceUUID}
+              AND idempotency_key = #{params.IdempotencyKey}
+              AND deleted_at IS NULL
+              AND code_session_uuid = #{params.CodeSessionUUID}
+              AND event_type = #{params.EventType}
+              AND payload_uuid = #{params.PayloadUUID}
+              AND agent_id IS NOT DISTINCT FROM #{params.AgentID}
+              AND is_compaction = #{params.IsCompaction}
+              AND payload = CAST(#{params.Payload,sensitive=true} AS jsonb)
+              AND event_metadata IS NOT DISTINCT FROM CAST(#{params.EventMetadata,sensitive=true} AS jsonb)
+        ) AS matches
+    </select>
+
     <select id="ListPage" resultType="codeSessionInternalEventRow">
         WITH boundaries AS (
             SELECT c.agent_id, MAX(c.sequence_num) AS sequence_num
@@ -120,5 +136,15 @@
           )
         ORDER BY e.sequence_num ASC
         LIMIT #{params.Limit}
+    </select>
+    <select id="ListForPublicEvents" resultType="codeSessionInternalEventRow">
+        SELECT <include refid="eventColumns"/>
+        FROM code_session_internal_events
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND code_session_external_id = #{codeSessionExternalID}
+          AND agent_id IS NOT NULL AND deleted_at IS NULL
+          AND sequence_num &gt; #{afterSequence}
+        ORDER BY sequence_num ASC
+        LIMIT #{limit}
     </select>
 </mapper>

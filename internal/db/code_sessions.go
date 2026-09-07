@@ -270,7 +270,7 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 	return row.session(), nil
 }
 
-func (tx ManagedAgentActivationTx) LockInitializingCodeSession(
+func (tx ManagedAgentEventTx) LockInitializingCodeSession(
 	ctx context.Context,
 	workspaceUUID string,
 	codeSessionUUID string,
@@ -287,7 +287,7 @@ func (tx ManagedAgentActivationTx) LockInitializingCodeSession(
 
 const managedAgentActivationInboundBatchSize = 500
 
-func (tx ManagedAgentActivationTx) AppendCodeSessionInboundEvents(
+func (tx ManagedAgentEventTx) AppendCodeSessionInboundEvents(
 	ctx context.Context,
 	codeSession CodeSession,
 	inputs []AppendCodeSessionEventInput,
@@ -427,7 +427,7 @@ func activationInboundEventInsertRows(
 	return rows, sequence, nil
 }
 
-func (tx ManagedAgentActivationTx) ActivateCodeSession(
+func (tx ManagedAgentEventTx) ActivateCodeSession(
 	ctx context.Context,
 	codeSessionUUID string,
 	now time.Time,
@@ -836,128 +836,110 @@ func (d *DB) ResumeCodeSessionWorkerLeaseForSandbox(
 	return rowsAffected == 1, nil
 }
 
-func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExternalID string, input UpdateCodeSessionWorkerStateInput) (CodeSession, error) {
-	if input.WorkerEpoch <= 0 {
+// UpdateCodeSessionWorkerState requires the owning Session and current worker
+// to be locked. Public status events use the same transaction as this update.
+func (tx ManagedAgentEventTx) UpdateCodeSessionWorkerState(ctx context.Context, current CodeSession, input UpdateCodeSessionWorkerStateInput) (CodeSession, error) {
+	if input.WorkerEpoch <= 0 || input.WorkerEpoch != current.CurrentWorkerEpoch {
 		return CodeSession{}, ErrWorkerEpochMismatch
 	}
-	var updated CodeSession
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewCodeSessionMapper(executor)
-		current, found, err := mapper.LockCodeSessionByExternalID(ctx, codeSessionExternalID)
+	workerStatus := current.WorkerStatus
+	if input.WorkerStatus != nil {
+		workerStatus = *input.WorkerStatus
+	}
+	requiresActionDetails := json.RawMessage(current.WorkerRequiresActionDetails)
+	if input.RequiresActionDetailsSet {
+		requiresActionDetails = nil
+		if !rawIsJSONNull(input.RequiresActionDetails) {
+			requiresActionDetails = bytes.Clone(input.RequiresActionDetails)
+		}
+	}
+	if workerStatus != "requires_action" {
+		requiresActionDetails = nil
+	}
+	externalMetadata := json.RawMessage(current.WorkerExternalMetadata)
+	if input.ExternalMetadataSet {
+		var err error
+		externalMetadata, err = mergeCodeSessionWorkerExternalMetadata(externalMetadata, input.ExternalMetadata)
 		if err != nil {
-			return err
+			return CodeSession{}, err
 		}
-		if !found {
-			return ErrNotFound
-		}
-		if input.WorkerEpoch != current.CurrentWorkerEpoch {
-			return ErrWorkerEpochMismatch
-		}
+	}
+	if len(externalMetadata) == 0 {
+		externalMetadata = json.RawMessage(`{}`)
+	}
 
-		workerStatus := current.WorkerStatus
-		if input.WorkerStatus != nil {
-			workerStatus = *input.WorkerStatus
-		}
-		requiresActionDetails := json.RawMessage(current.WorkerRequiresActionDetails)
-		if input.RequiresActionDetailsSet {
-			requiresActionDetails = nil
-			if !rawIsJSONNull(input.RequiresActionDetails) {
-				requiresActionDetails = bytes.Clone(input.RequiresActionDetails)
-			}
-		}
-		if workerStatus != "requires_action" {
-			requiresActionDetails = nil
-		}
-		externalMetadata := json.RawMessage(current.WorkerExternalMetadata)
-		if input.ExternalMetadataSet {
-			externalMetadata, err = mergeCodeSessionWorkerExternalMetadata(externalMetadata, input.ExternalMetadata)
-			if err != nil {
-				return err
-			}
-		}
-		if len(externalMetadata) == 0 {
-			externalMetadata = json.RawMessage(`{}`)
-		}
-
-		row, err := mapper.UpdateWorkerState(ctx, updateCodeSessionWorkerStateParams{
-			UUID:                  current.UUID,
-			WorkerStatus:          workerStatus,
-			RequiresActionDetails: requiresActionDetails,
-			ExternalMetadata:      externalMetadata,
-			Now:                   time.Now().UTC(),
-		})
-		if err == nil {
-			updated = row.session()
-		}
-		return err
+	row, err := tx.codeSessionMapper.UpdateWorkerState(ctx, updateCodeSessionWorkerStateParams{
+		UUID:                  current.UUID,
+		WorkspaceUUID:         current.WorkspaceUUID,
+		WorkerStatus:          workerStatus,
+		RequiresActionDetails: requiresActionDetails,
+		ExternalMetadata:      externalMetadata,
+		Now:                   time.Now().UTC(),
 	})
-	return updated, err
+	return row.session(), mapNoRows(err)
 }
 
 func (d *DB) AppendCodeSessionInboundEvent(ctx context.Context, codeSessionExternalID string, input AppendCodeSessionEventInput) (CodeSessionEvent, bool, error) {
 	return d.appendCodeSessionInboundEvent(ctx, codeSessionExternalID, input)
 }
 
-func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExternalID string, workerEpoch int64, inputs []AppendCodeSessionInternalEventInput) ([]CodeSessionInternalEvent, error) {
-	if workerEpoch <= 0 {
-		return nil, ErrWorkerEpochMismatch
-	}
+// AppendCodeSessionInternalEvents requires the owning Session and Code Session
+// to be locked, with the current worker epoch verified before this call.
+func (tx ManagedAgentEventTx) AppendCodeSessionInternalEvents(ctx context.Context, session CodeSession, inputs []AppendCodeSessionInternalEventInput) ([]CodeSessionInternalEvent, error) {
+	internalEventMapper := NewCodeSessionInternalEventMapper(tx.executor)
 	created := make([]CodeSessionInternalEvent, 0, len(inputs))
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		codeSessionMapper := NewCodeSessionMapper(executor)
-		internalEventMapper := NewCodeSessionInternalEventMapper(executor)
-		session, found, err := codeSessionMapper.LockCodeSessionByExternalID(ctx, codeSessionExternalID)
-		if err != nil {
-			return err
+	sequence := session.LastInternalSequenceNum
+	now := time.Now().UTC()
+	for _, input := range inputs {
+		nextSequence := sequence + 1
+		createdAt := input.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = now
 		}
-		if !found {
-			return ErrNotFound
+		params := codeSessionInternalEventInsertParams{
+			ExternalID:            input.ExternalID,
+			OrganizationUUID:      session.OrganizationUUID,
+			WorkspaceUUID:         session.WorkspaceUUID,
+			CodeSessionUUID:       session.UUID,
+			CodeSessionExternalID: session.ExternalID,
+			SequenceNum:           nextSequence,
+			EventType:             input.EventType,
+			PayloadUUID:           input.PayloadUUID,
+			AgentID:               input.AgentID,
+			IsCompaction:          input.IsCompaction,
+			Payload:               input.Payload,
+			PayloadHash:           input.PayloadHash,
+			IdempotencyKey:        input.IdempotencyKey,
+			EventMetadata:         input.EventMetadata,
+			CreatedAt:             createdAt,
 		}
-		if session.CurrentWorkerEpoch != workerEpoch {
-			return ErrWorkerEpochMismatch
-		}
-
-		sequence := session.LastInternalSequenceNum
-		now := time.Now().UTC()
-		for _, input := range inputs {
-			nextSequence := sequence + 1
-			createdAt := input.CreatedAt
-			if createdAt.IsZero() {
-				createdAt = now
-			}
-			row, err := internalEventMapper.Insert(ctx, codeSessionInternalEventInsertParams{
-				ExternalID:            input.ExternalID,
-				OrganizationUUID:      session.OrganizationUUID,
-				WorkspaceUUID:         session.WorkspaceUUID,
-				CodeSessionUUID:       session.UUID,
-				CodeSessionExternalID: session.ExternalID,
-				SequenceNum:           nextSequence,
-				EventType:             input.EventType,
-				PayloadUUID:           input.PayloadUUID,
-				AgentID:               input.AgentID,
-				IsCompaction:          input.IsCompaction,
-				Payload:               input.Payload,
-				PayloadHash:           input.PayloadHash,
-				IdempotencyKey:        input.IdempotencyKey,
-				EventMetadata:         input.EventMetadata,
-				CreatedAt:             createdAt,
-			})
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
+		row, err := internalEventMapper.Insert(ctx, params)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Compare the accepted JSONB rather than its byte hash: object order
+			// and equivalent numeric spellings do not change transcript content.
+			matches, err := internalEventMapper.MatchesRetry(ctx, params)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			sequence = nextSequence
-			created = append(created, row.event())
+			if !matches {
+				return nil, ErrCodeSessionInternalEventConflict
+			}
+			continue
 		}
+		if err != nil {
+			if isUniqueViolation(err) {
+				return nil, ErrCodeSessionInternalEventConflict
+			}
+			return nil, err
+		}
+		sequence = nextSequence
+		created = append(created, row.event())
+	}
 
-		if sequence == session.LastInternalSequenceNum {
-			return nil
-		}
-		return codeSessionMapper.UpdateCodeSessionInternalSequence(ctx, session.UUID, sequence, now)
-	})
-	if err != nil {
+	if sequence == session.LastInternalSequenceNum {
+		return created, nil
+	}
+	if err := tx.codeSessionMapper.UpdateCodeSessionInternalSequence(ctx, session.UUID, sequence, now); err != nil {
 		return nil, err
 	}
 	return created, nil
@@ -1063,6 +1045,14 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 		rows = rows[:limit]
 	}
 	return codeSessionInternalEvents(rows), hasMore, nil
+}
+
+func (tx ManagedAgentEventTx) ListCodeSessionInternalEventsForPublic(ctx context.Context, codeSession CodeSession, afterSequence int64, limit int) ([]CodeSessionInternalEvent, error) {
+	rows, err := NewCodeSessionInternalEventMapper(tx.executor).ListForPublicEvents(ctx, codeSession.WorkspaceUUID, codeSession.ExternalID, afterSequence, limit)
+	if err != nil {
+		return nil, err
+	}
+	return codeSessionInternalEvents(rows), nil
 }
 
 func (d *DB) ListQueuedCodeSessionInboundEvents(ctx context.Context, codeSessionExternalID string) ([]CodeSessionEvent, error) {

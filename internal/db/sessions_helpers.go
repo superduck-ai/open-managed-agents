@@ -106,8 +106,12 @@ func insertSessionEventsTx(
 	executor yourbatis.Executor,
 	session Session,
 	events []SessionEvent,
-	ignoreExisting bool,
+	idempotent bool,
+	ignoredPayloadFields []string,
 ) ([]SessionEvent, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
 	threadMapper := NewSessionThreadMapper(executor)
 	eventMapper := NewSessionEventMapper(executor)
 	primaryRow, err := threadMapper.FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
@@ -140,20 +144,37 @@ func insertSessionEventsTx(
 			event.ThreadUUID = &thread.UUID
 		}
 
-		params := sessionEventWriteParameters(event)
-		if ignoreExisting {
-			row, found, insertErr := eventMapper.InsertIfAbsent(ctx, params)
-			if insertErr != nil {
-				return nil, insertErr
+		if idempotent {
+			match, found, err := eventMapper.MatchRetry(ctx, sessionEventWriteParameters(event), ignoredPayloadFields)
+			if err != nil {
+				return nil, err
 			}
 			if found {
-				created = append(created, row.event())
+				if !match.Matches {
+					return nil, ErrSessionEventConflict
+				}
+				continue
 			}
-			continue
 		}
-		row, insertErr := eventMapper.Insert(ctx, params)
-		if insertErr != nil {
-			return nil, insertErr
+		// The Session lock serializes timestamps and commits. A matching retry
+		// cannot advance the clock or reapply a previous state transition.
+		now, err := NewSessionMapper(executor).AdvanceEventClock(ctx, session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return nil, err
+		}
+		event.CreatedAt, event.ProcessedAt = now, now
+		row, err := eventMapper.Insert(ctx, sessionEventWriteParameters(event))
+		if err != nil {
+			if idempotent && isUniqueViolation(err) {
+				return nil, ErrSessionEventConflict
+			}
+			return nil, err
+		}
+
+		if event.StateChange != nil {
+			if err := applySessionEventStateTx(ctx, executor, session, primary, *event.StateChange); err != nil {
+				return nil, err
+			}
 		}
 		created = append(created, row.event())
 	}
@@ -165,6 +186,35 @@ func insertSessionEventsTx(
 		}
 	}
 	return created, nil
+}
+
+func applySessionEventStateTx(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, change SessionEventStateChange) error {
+	threadID := change.ThreadExternalID
+	if threadID == "" {
+		threadID = primary.ExternalID
+	}
+	threadMapper := NewSessionThreadMapper(executor)
+	affected, err := threadMapper.SetStatus(ctx, session.WorkspaceUUID, session.ExternalID, threadID, change.Status)
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrNotFound
+	}
+	status := change.Status
+	if change.AggregateSession {
+		rows, err := threadMapper.List(ctx, session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return err
+		}
+		statuses := make([]string, len(rows))
+		for i, row := range rows {
+			statuses[i] = row.Status
+		}
+		status = maevents.AggregateThreadStatuses(statuses)
+	}
+	_, err = NewSessionMapper(executor).SetStatus(ctx, session.WorkspaceUUID, session.ExternalID, status)
+	return err
 }
 
 func sessionWriteParameters(session Session) sessionWriteParams {
@@ -228,7 +278,7 @@ func sessionPageParameters(params ListSessionsPageParams) sessionPageMapperParam
 func sessionEventPageParameters(params ListSessionEventsPageParams) sessionEventPageMapperParams {
 	return sessionEventPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, SessionExternalID: params.SessionExternalID,
-		ThreadExternalID: params.ThreadExternalID, PrimaryOnly: params.PrimaryOnly,
+		ThreadExternalID: params.ThreadExternalID, PrimaryOnly: params.PrimaryOnly, IncludeDeleted: params.IncludeDeleted,
 		FetchLimit: params.Limit + 1, Cursor: params.Cursor, Descending: params.Order == "desc",
 		Types: params.Types, CreatedAtGT: params.CreatedAtGT, CreatedAtGTE: params.CreatedAtGTE,
 		CreatedAtLT: params.CreatedAtLT, CreatedAtLTE: params.CreatedAtLTE,
@@ -312,7 +362,7 @@ func (r sessionEventRow) event() SessionEvent {
 	}
 }
 
-func (tx ManagedAgentActivationTx) LockSessionForEvents(
+func (tx ManagedAgentEventTx) LockSessionForEvents(
 	ctx context.Context,
 	workspaceUUID string,
 	sessionExternalID string,

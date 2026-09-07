@@ -79,6 +79,7 @@ type heartbeatCodeSessionWorkerParams struct {
 }
 
 type updateCodeSessionWorkerStateParams struct {
+	WorkspaceUUID         string
 	UUID                  string
 	WorkerStatus          string
 	RequiresActionDetails []byte
@@ -149,6 +150,10 @@ type resumeCodeSessionWorkerLeaseParams struct {
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
+	LockLatestForSession(ctx context.Context, workspaceUUID, sessionUUID string) (codeSessionRow, bool, error)
+	ClearWorkerMetadata(ctx context.Context, workspaceUUID, codeSessionUUID string, keys []string) (int64, error)
+	MergeWorkerMetadata(ctx context.Context, workspaceUUID, codeSessionUUID string, metadata []byte) (int64, error)
+	LockPublicEventWorker(ctx context.Context, workspaceUUID, sessionUUID, codeSessionUUID string) (codeSessionRow, error)
 	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) error
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
 	FindCredentialByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (codeSessionCredentialContextRow, error)
@@ -156,6 +161,7 @@ type CodeSessionMapper interface {
 	FindNetworkPolicyContext(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionNetworkPolicyContextRow, error)
 	FindVaultIDs(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionVaultIDsRow, bool, error)
 	FindByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
+	FindForSession(ctx context.Context, workspaceUUID, sessionUUID, codeSessionExternalID string) (codeSessionRow, bool, error)
 	FindActiveForEnvironmentWork(ctx context.Context, organizationUUID, workspaceUUID, environmentUUID, sessionUUID string) ([]codeSessionRow, error)
 	FindLatestBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (codeSessionRow, error)
 	LockCodeSessionByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)

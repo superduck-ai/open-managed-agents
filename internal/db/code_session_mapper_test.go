@@ -2,11 +2,58 @@ package db
 
 import (
 	"context"
+	"database/sql/driver"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestSessionInputMapperContracts(t *testing.T) {
+	bound := buildCodeSessionMapperLockLatestForSession(yourbatis.DialectPostgres, "workspace", "session")
+	assertMapperSQLContains(t, bound, "workspace_uuid = $1 AND session_uuid = $2")
+	assertMapperSQLContains(t, bound, "ORDER BY created_at DESC, uuid DESC LIMIT 1 FOR UPDATE")
+	if !reflect.DeepEqual(bound.Values(), []any{"workspace", "session"}) {
+		t.Fatalf("input lock arguments: %v", bound.Values())
+	}
+	for _, keys := range [][]string{{"one"}, {"one", "two"}} {
+		bound := buildCodeSessionMapperClearWorkerMetadata(yourbatis.DialectPostgres, "workspace", "worker", keys)
+		assertMapperSQLContains(t, bound, "worker_external_metadata = worker_external_metadata - ARRAY[")
+		assertMapperSQLContains(t, bound, "deleted_at IS NULL")
+		expected := make([]any, 0, len(keys)+2)
+		for _, key := range keys {
+			expected = append(expected, key)
+		}
+		expected = append(expected, "workspace", "worker")
+		if !reflect.DeepEqual(bound.Values(), expected) {
+			t.Fatalf("metadata clear arguments: %v", bound.Values())
+		}
+	}
+}
+
+func TestPublicEventWorkerFenceIsScopedAndLocked(t *testing.T) {
+	bound := buildCodeSessionMapperLockPublicEventWorker(yourbatis.DialectPostgres, "workspace", "session", "worker")
+	assertMapperSQLContains(t, bound, "workspace_uuid = $1 AND session_uuid = $2 AND uuid = $3")
+	assertMapperSQLContains(t, bound, "FOR UPDATE")
+	if !reflect.DeepEqual(bound.Values(), []any{"workspace", "session", "worker"}) {
+		t.Fatalf("worker fence arguments: %v", bound.Values())
+	}
+}
+
+func TestCodeSessionMapperFindForSessionScope(t *testing.T) {
+	bound := buildCodeSessionMapperFindForSession(yourbatis.DialectPostgres, "workspace", "session", "worker")
+	assertMapperSQLContains(t, bound, "workspace_uuid = $1 AND session_uuid = $2 AND external_id = $3 AND deleted_at IS NULL")
+	if !reflect.DeepEqual(bound.Values(), []any{"workspace", "session", "worker"}) {
+		t.Fatalf("source worker arguments: %v", bound.Values())
+	}
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
+	_, found, err := NewCodeSessionMapper(executor).FindForSession(t.Context(), "workspace", "session", "missing")
+	if err != nil || found {
+		t.Fatalf("missing source worker: found=%v, error=%v", found, err)
+	}
+	assertMapperTestExecution(t, executor, "CodeSessionMapper.FindForSession", yourbatis.StatementSelect, []any{"workspace", "session", "missing"})
+}
 
 func TestCodeSessionMapperFindByExternalIDNotFound(t *testing.T) {
 	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
@@ -149,16 +196,16 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 		{"update worker state", mapperBuilderContract{
 			statement: codeSessionMapperUpdateWorkerStateStatement,
 			bound: buildCodeSessionMapperUpdateWorkerState(yourbatis.DialectPostgres, updateCodeSessionWorkerStateParams{
-				UUID: "code-session-uuid", WorkerStatus: "running", RequiresActionDetails: []byte("null"),
+				WorkspaceUUID: "workspace-uuid", UUID: "code-session-uuid", WorkerStatus: "running", RequiresActionDetails: []byte("null"),
 				ExternalMetadata: []byte(`{"worker":"test"}`), Now: now,
 			}),
 			wantID: "CodeSessionMapper.UpdateWorkerState", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
 				"params.WorkerStatus", "params.Now", "params.WorkerStatus", "params.RequiresActionDetails", "params.ExternalMetadata",
-				"params.Now", "params.Now", "params.Now", "params.UUID",
+				"params.Now", "params.Now", "params.Now", "params.WorkspaceUUID", "params.UUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.RequiresActionDetails", "params.ExternalMetadata"},
-			wantSQLFragments:           []string{"worker_requires_action_details = CAST($4 AS jsonb)", "RETURNING uuid"},
+			wantSQLFragments:           []string{"worker_requires_action_details = CAST($4 AS jsonb)", "workspace_uuid = $9 AND uuid = $10", "deleted_at IS NULL", "RETURNING uuid"},
 		}},
 	}
 	for _, test := range tests {
@@ -258,5 +305,50 @@ func TestCodeSessionInternalEventMapperBuildsScopePages(t *testing.T) {
 		})
 		assertMapperSQLContains(t, bound, "b.agent_id IS NOT DISTINCT FROM e.agent_id")
 		assertMapperSQLContains(t, bound, "GREATEST( CAST($9 AS bigint), COALESCE(b.sequence_num - 1, 0) )")
+	}
+}
+
+func TestInternalTranscriptMaterializationDoesNotApplyResumeCompaction(t *testing.T) {
+	bound := buildCodeSessionInternalEventMapperListForPublicEvents(yourbatis.DialectPostgres, "workspace", "worker", 12, 500)
+	assertMapperSQLContains(t, bound, "workspace_uuid = $1 AND code_session_external_id = $2")
+	assertMapperSQLContains(t, bound, "agent_id IS NOT NULL AND deleted_at IS NULL AND sequence_num > $3 ORDER BY sequence_num ASC LIMIT $4")
+	if !reflect.DeepEqual(bound.Values(), []any{"workspace", "worker", int64(12), 500}) {
+		t.Fatalf("materialization query arguments: %v", bound.Values())
+	}
+}
+
+func TestWorkerPermissionMetadataMergeIsScopedAndSensitive(t *testing.T) {
+	metadata := []byte(`{"request":{"input":{"value":9007199254740993}}}`)
+	bound := buildCodeSessionMapperMergeWorkerMetadata(yourbatis.DialectPostgres, "workspace", "worker", metadata)
+	assertMapperSQLContains(t, bound, "COALESCE(worker_external_metadata, CAST('{}' AS jsonb)) || CAST($1 AS jsonb)")
+	assertMapperSQLContains(t, bound, "workspace_uuid = $2 AND uuid = $3 AND deleted_at IS NULL")
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionMapperMergeWorkerMetadataStatement, bound: bound,
+		wantID: "CodeSessionMapper.MergeWorkerMetadata", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames:          []string{"metadata", "workspaceUUID", "codeSessionUUID"},
+		wantSensitiveArgumentNames: []string{"metadata"},
+	})
+}
+
+func TestInternalEventRetryMatchesContentAndOwnership(t *testing.T) {
+	params := codeSessionInternalEventInsertParams{
+		WorkspaceUUID: "workspace", CodeSessionUUID: "worker", IdempotencyKey: "retry",
+		EventType: "assistant", PayloadUUID: "source", AgentID: new("child"), IsCompaction: true,
+		Payload: []byte(`{"value":9007199254740993}`), EventMetadata: []byte(`{"batch":1}`),
+	}
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionInternalEventMapperMatchesRetryStatement,
+		bound:     buildCodeSessionInternalEventMapperMatchesRetry(yourbatis.DialectPostgres, params),
+		wantID:    "CodeSessionInternalEventMapper.MatchesRetry", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames:          []string{"params.WorkspaceUUID", "params.IdempotencyKey", "params.CodeSessionUUID", "params.EventType", "params.PayloadUUID", "params.AgentID", "params.IsCompaction", "params.Payload", "params.EventMetadata"},
+		wantSensitiveArgumentNames: []string{"params.Payload", "params.EventMetadata"},
+		wantSQLFragments:           []string{"SELECT EXISTS", "workspace_uuid = $1", "idempotency_key = $2", "deleted_at IS NULL", "code_session_uuid = $3", "event_type = $4", "payload_uuid = $5", "agent_id IS NOT DISTINCT FROM $6", "is_compaction = $7", "payload = CAST($8 AS jsonb)", "event_metadata IS NOT DISTINCT FROM CAST($9 AS jsonb)"},
+	})
+	for _, matches := range []bool{false, true} {
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"matches"}, rows: [][]driver.Value{{matches}}})
+		got, err := NewCodeSessionInternalEventMapper(executor).MatchesRetry(t.Context(), params)
+		if err != nil || got != matches {
+			t.Fatalf("MatchesRetry = %t, %v; want %t", got, err, matches)
+		}
 	}
 }

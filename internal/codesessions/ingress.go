@@ -89,17 +89,10 @@ func (h *Handler) handlePutCodeSessionWorker(w http.ResponseWriter, r *http.Requ
 		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
-	updated, err := h.db.UpdateCodeSessionWorkerState(r.Context(), codeSessionID, input)
+	updated, err := h.service.UpdateWorkerState(r.Context(), codeSessionID, input)
 	if err != nil {
 		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not update code session worker")
 		return
-	}
-	if input.WorkerStatus != nil {
-		if err := h.service.syncPublicSessionFromWorker(r.Context(), updated, *input.WorkerStatus); err != nil {
-			h.logger.ErrorContext(r.Context(), "sync public session status from worker", "code_session_id", codeSessionID, "session_id", updated.SessionExternalID, "worker_status", *input.WorkerStatus, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not sync code session worker status"))
-			return
-		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.codeSessionWorkerState(updated, r, input.WorkerEpoch))
 }
@@ -152,20 +145,9 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 			return
 		}
-		created, err := h.db.AppendCodeSessionInternalEvents(r.Context(), codeSessionID, epoch, events)
-		if err != nil {
-			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
-				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker internal events")
-				return
-			}
-			h.logger.ErrorContext(r.Context(), "append code session worker internal events", "code_session_id", codeSessionID, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append code session worker internal events"))
+		if err := h.service.CommitWorkerSessionEvents(r.Context(), codeSessionID, epoch, nil, events); err != nil {
+			h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker internal events")
 			return
-		}
-		if len(created) > 0 {
-			if err := h.service.publishSubagentInternalEvents(r.Context(), record); err != nil {
-				h.logger.ErrorContext(r.Context(), "publish subagent internal events after append", "code_session_id", codeSessionID, "session_id", record.SessionExternalID, "error", err)
-			}
 		}
 		httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
@@ -428,10 +410,6 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 		writeCodeSessionWorkerBodyReadError(w, r, err)
 		return
 	}
-	if pretty, marshalErr := json.MarshalIndent(workerReq, "", "  "); marshalErr == nil {
-		h.logger.ErrorContext(r.Context(), "code session worker events request", "code_session_id", codeSessionID)
-		println(string(pretty))
-	}
 	if workerReq.WorkerEpoch <= 0 {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "worker_epoch must be a positive integer"))
 		return
@@ -441,16 +419,7 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := h.service.AppendWorkerOutputEventsForEpoch(r.Context(), codeSessionStreamRouteFromClaims(claims), int64(workerReq.WorkerEpoch), workerReq.Events); err != nil {
-		if errors.Is(err, ErrProtocol) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-			return
-		}
-		if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
-			h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker events")
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "append code session worker events", "code_session_id", codeSessionID, "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append code session worker events"))
+		h.writeWorkerEventError(w, r, codeSessionID, err, "Could not append code session worker events")
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -507,20 +476,9 @@ func (h *Handler) handleCodeSessionWorkerDiagnostics(w http.ResponseWriter, r *h
 		return
 	}
 	route := codeSessionStreamRouteFromClaims(claims)
-	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEventForEpoch(r.Context(), route, workerReq.epoch, payload); err != nil {
-			if errors.Is(err, ErrProtocol) {
-				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-				return
-			}
-			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
-				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker diagnostics")
-				return
-			}
-			h.logger.ErrorContext(r.Context(), "append code session worker diagnostic log", "code_session_id", codeSessionID, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append code session worker diagnostics"))
-			return
-		}
+	if err := h.service.AppendWorkerEvents(r.Context(), route, workerReq.epoch, payloads); err != nil {
+		h.writeWorkerEventError(w, r, codeSessionID, err, "Could not append code session worker diagnostics")
+		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -601,16 +559,9 @@ func (h *Handler) handleSessionIngressEvents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	route := codeSessionStreamRouteFromClaims(claims)
-	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
-			if errors.Is(err, ErrProtocol) {
-				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-				return
-			}
-			h.logger.ErrorContext(r.Context(), "append code session http ingress event", "code_session_id", codeSessionID, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append session ingress events"))
-			return
-		}
+	if err := h.service.AppendWorkerEvents(r.Context(), route, 0, payloads); err != nil {
+		h.writeWorkerEventError(w, r, codeSessionID, err, "Could not append session ingress events")
+		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -631,16 +582,9 @@ func (h *Handler) handleSessionIngressDiagLogs(w http.ResponseWriter, r *http.Re
 		return
 	}
 	route := codeSessionStreamRouteFromClaims(claims)
-	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
-			if errors.Is(err, ErrProtocol) {
-				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-				return
-			}
-			h.logger.ErrorContext(r.Context(), "append code session diag log", "code_session_id", codeSessionID, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append session ingress diag logs"))
-			return
-		}
+	if err := h.service.AppendWorkerEvents(r.Context(), route, 0, payloads); err != nil {
+		h.writeWorkerEventError(w, r, codeSessionID, err, "Could not append session ingress diag logs")
+		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -669,12 +613,9 @@ func (h *Handler) handleSessionIngressPersistence(w http.ResponseWriter, r *http
 		return
 	}
 	route := codeSessionStreamRouteFromClaims(claims)
-	for _, payload := range payloads {
-		if err := h.service.AppendWorkerEvent(r.Context(), route, payload); err != nil {
-			h.logger.ErrorContext(r.Context(), "append code session persistence event", "code_session_id", codeSessionID, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append session ingress event"))
-			return
-		}
+	if err := h.service.AppendWorkerEvents(r.Context(), route, 0, payloads); err != nil {
+		h.writeWorkerEventError(w, r, codeSessionID, err, "Could not append session ingress event")
+		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -919,9 +860,29 @@ func (h *Handler) validateWorkerEpochValue(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+func (h *Handler) writeWorkerEventError(w http.ResponseWriter, r *http.Request, codeSessionID string, err error, internalMessage string) {
+	if errors.Is(err, ErrProtocol) {
+		h.writeIngressLoadError(w, r, workerEventProtocolError(err))
+		return
+	}
+	h.writeWorkerEpochDBError(w, r, codeSessionID, err, internalMessage)
+}
+
 func (h *Handler) writeWorkerEpochDBError(w http.ResponseWriter, r *http.Request, codeSessionID string, err error, internalMessage string) {
 	if errors.Is(err, db.ErrNotFound) {
 		h.writeIngressLoadError(w, r, mapCodeSessionLoadError(err, codeSessionID))
+		return
+	}
+	if errors.Is(err, db.ErrInvalidState) {
+		h.writeIngressLoadError(w, r, publicSessionRejectsWorkerEvents(err))
+		return
+	}
+	if errors.Is(err, db.ErrSessionEventConflict) {
+		h.writeIngressLoadError(w, r, sessionEventConflict(err))
+		return
+	}
+	if errors.Is(err, db.ErrCodeSessionInternalEventConflict) {
+		h.writeIngressLoadError(w, r, internalEventConflict(err))
 		return
 	}
 	if errors.Is(err, db.ErrWorkerEpochMismatch) {

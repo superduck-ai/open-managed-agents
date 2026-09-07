@@ -2,11 +2,49 @@ package db
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestSessionEventClockAndOrderStatements(t *testing.T) {
+	clock := buildSessionMapperAdvanceEventClock(yourbatis.DialectPostgres, "workspace", "session")
+	assertMapperSQLContains(t, clock, "GREATEST(clock_timestamp(), last_event_at + INTERVAL '1 microsecond')")
+	if !reflect.DeepEqual(clock.Values(), []any{"workspace", "session"}) {
+		t.Fatalf("clock scope arguments: %v", clock.Values())
+	}
+	watermark := buildSessionMapperEventWatermark(yourbatis.DialectPostgres, "workspace", "session")
+	assertMapperSQLContains(t, watermark, "SELECT last_event_at FROM sessions")
+	if !reflect.DeepEqual(watermark.Values(), []any{"workspace", "session"}) {
+		t.Fatalf("watermark scope arguments: %v", watermark.Values())
+	}
+	now := time.Now().UTC()
+	for _, descending := range []bool{true, false} {
+		for _, includeDeleted := range []bool{true, false} {
+			bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
+				WorkspaceUUID: "workspace", SessionExternalID: "session", ThreadExternalID: "thread", FetchLimit: 2,
+				Cursor: &SessionEventPageCursor{ProcessedAt: now, ExternalID: "event"}, Descending: descending,
+				IncludeDeleted: includeDeleted, CreatedAtGT: &now, CreatedAtGTE: &now, CreatedAtLT: &now, CreatedAtLTE: &now,
+			})
+			assertMapperSQLContains(t, bound, `(processed_at, external_id COLLATE "C")`)
+			assertMapperSQLContains(t, bound, "processed_at >")
+			assertMapperSQLContains(t, bound, "processed_at >=")
+			assertMapperSQLContains(t, bound, "processed_at <")
+			assertMapperSQLContains(t, bound, "processed_at <=")
+			if strings.Contains(bound.SQL, "deleted_at IS NULL") == includeDeleted {
+				t.Fatalf("incorrect deletion filter: %s", bound.SQL)
+			}
+			if descending {
+				assertMapperSQLContains(t, bound, `ORDER BY processed_at DESC, external_id COLLATE "C" DESC`)
+			} else {
+				assertMapperSQLContains(t, bound, `ORDER BY processed_at ASC, external_id COLLATE "C" ASC`)
+			}
+		}
+	}
+}
 
 func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
 	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
@@ -107,17 +145,12 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 			wantSQLFragments:           []string{"INSERT INTO session_resources", "FROM sessions s", "RETURNING"},
 		},
 		{
-			statement: sessionEventMapperInsertIfAbsentStatement,
-			bound:     buildSessionEventMapperInsertIfAbsent(yourbatis.DialectPostgres, eventParams),
-			wantID:    "SessionEventMapper.InsertIfAbsent", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{
-				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
-				"params.SessionUUID", "params.SessionExternalID", "params.ThreadUUID",
-				"params.ThreadExternalID", "params.EventType", "params.Payload",
-				"params.ProcessedAt", "params.CreatedAt",
-			},
+			statement: sessionEventMapperMatchRetryStatement,
+			bound:     buildSessionEventMapperMatchRetry(yourbatis.DialectPostgres, eventParams, []string{"created_at", "processed_at"}),
+			wantID:    "SessionEventMapper.MatchRetry", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames:          []string{"params.SessionUUID", "params.EventType", "params.ThreadUUID", "ignoredPayloadFields", "params.Payload", "ignoredPayloadFields", "params.WorkspaceUUID", "params.ExternalID"},
 			wantSensitiveArgumentNames: []string{"params.Payload"},
-			wantSQLFragments:           []string{"WITH inserted AS", "INSERT INTO session_events", "ON CONFLICT"},
+			wantSQLFragments:           []string{"thread_uuid IS NOT DISTINCT FROM $3", "payload - COALESCE(CAST($4 AS text[]), CAST('{}' AS text[]))", "CAST($5 AS jsonb)", "workspace_uuid = $7 AND external_id = $8"},
 		},
 	}
 
@@ -188,12 +221,13 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 
 	eventBound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace-uuid", SessionExternalID: "ses_test", PrimaryOnly: true,
-		FetchLimit: 21, Cursor: &SessionEventPageCursor{CreatedAt: now, UUID: "event-uuid"},
+		FetchLimit: 21, Cursor: &SessionEventPageCursor{ProcessedAt: now, ExternalID: "event-id"},
 		Types: []string{"message", "result"},
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
-	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
 	assertMapperSQLContains(t, eventBound, "ORDER BY created_at ASC, uuid ASC")
+	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
+	assertMapperSQLContains(t, eventBound, `ORDER BY processed_at ASC, external_id COLLATE "C" ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -230,9 +264,9 @@ func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 			_, err := mapper.Insert(ctx, sessionResourceWriteParams{})
 			return err
 		}},
-		{statementID: "SessionEventMapper.InsertIfAbsent", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+		{statementID: "SessionEventMapper.MatchRetry", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			mapper := NewSessionEventMapper(executor)
-			_, _, err := mapper.InsertIfAbsent(ctx, sessionEventWriteParams{})
+			_, _, err := mapper.MatchRetry(ctx, sessionEventWriteParams{}, nil)
 			return err
 		}},
 	}

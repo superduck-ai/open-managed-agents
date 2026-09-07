@@ -57,7 +57,9 @@ type listCodeSessionInternalEventsParams struct {
 
 type CodeSessionInternalEventMapper interface {
 	Insert(ctx context.Context, params codeSessionInternalEventInsertParams) (codeSessionInternalEventRow, error)
+	MatchesRetry(ctx context.Context, params codeSessionInternalEventInsertParams) (bool, error)
 	ListPage(ctx context.Context, params listCodeSessionInternalEventsParams) ([]codeSessionInternalEventRow, error)
+	ListForPublicEvents(ctx context.Context, workspaceUUID, codeSessionExternalID string, afterSequence int64, limit int) ([]codeSessionInternalEventRow, error)
 }
 
 func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {

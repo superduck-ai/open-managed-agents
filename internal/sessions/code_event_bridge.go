@@ -3,9 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -21,76 +19,50 @@ func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, 
 	h.publishSessionEvents(r.Context(), created)
 }
 
-func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
-	if h == nil || len(payloads) == 0 {
-		return nil
-	}
-	session, found, err := h.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return db.ErrNotFound
-	}
-	var streamEvents []db.SessionEvent
-	var events []db.SessionEvent
+// AppendCodeSessionEvents maps and writes through the caller's locked transaction.
+// Returned events are safe to notify only after that transaction commits.
+func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, payloads []json.RawMessage) ([]db.SessionEvent, error) {
+	var created []db.SessionEvent
 	now := time.Now().UTC()
 	for _, raw := range payloads {
 		if maevents.IsStreamDelta(rawSessionEventType(raw)) {
-			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
+			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, tx, session, codeSessionID, raw, now)
 			if err != nil {
-				h.logger.WarnContext(ctx, "skip code session stream delta", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
-				continue
+				return nil, err
 			}
-			streamEvents = append(streamEvents, event)
+			created = append(created, event)
 			continue
 		}
-		batch, err := h.sessionEventsFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
+		batch, err := h.sessionEventsFromCodeSessionPayload(ctx, tx, session, codeSessionID, raw, now)
 		if err != nil {
-			h.logger.WarnContext(ctx, "skip code session event", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
+			return nil, err
+		}
+		for i := range batch {
+			batch[i].StateChange = sessionEventStateChange(batch[i])
+		}
+		if _, status := maevents.ThreadStatus(rawSessionEventType(raw)); status {
+			for _, event := range batch {
+				inserted, err := appendThreadStatusEvent(ctx, tx, session, codeSessionID, event)
+				if err != nil {
+					return nil, err
+				}
+				created = append(created, inserted...)
+			}
 			continue
 		}
-		events = append(events, batch...)
+		inserted, err := tx.AppendSessionEventsIfAbsent(ctx, session, batch, []string{"created_at", "processed_at", "timestamp"})
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, inserted...)
 	}
-	h.publishSessionEvents(ctx, streamEvents)
+	return created, nil
+}
+
+func (h *Handler) NotifyCodeSessionEvents(ctx context.Context, events []db.SessionEvent) {
 	if len(events) == 0 {
-		return nil
+		return
 	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if !events[i].ProcessedAt.Equal(events[j].ProcessedAt) {
-			return events[i].ProcessedAt.Before(events[j].ProcessedAt)
-		}
-		if !events[i].CreatedAt.Equal(events[j].CreatedAt) {
-			return events[i].CreatedAt.Before(events[j].CreatedAt)
-		}
-		return events[i].ExternalID < events[j].ExternalID
-	})
-	created, err := h.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events)
-	if err != nil {
-		if errors.Is(err, db.ErrInvalidState) {
-			return nil
-		}
-		return err
-	}
-	persisted := make(map[string]db.SessionEvent, len(created))
-	for _, event := range created {
-		persisted[event.ExternalID] = event
-	}
-	// Idempotent retries reapply stored state projections. Only newly inserted
-	// events are broadcast and have webhooks enqueued.
-	var projectionErr error
-	for _, event := range events {
-		stored, ok := persisted[event.ExternalID]
-		var eventErr error
-		if !ok {
-			stored, eventErr = h.db.GetSessionEvent(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
-		}
-		if eventErr == nil {
-			eventErr = h.applySessionEventProjection(ctx, stored)
-		}
-		projectionErr = errors.Join(projectionErr, eventErr)
-	}
-	h.publishSessionEvents(ctx, created)
-	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
-	return projectionErr
+	h.publishSessionEvents(ctx, events)
+	h.enqueueWebhooksForSessionEvents(ctx, events[0].WorkspaceUUID, events[0].SessionExternalID, events)
 }

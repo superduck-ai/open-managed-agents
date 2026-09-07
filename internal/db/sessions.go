@@ -94,7 +94,15 @@ type SessionResource struct {
 	DeletedAt      *time.Time
 }
 
+// SessionEventStateChange is committed with its event, only on first insertion.
+type SessionEventStateChange struct {
+	ThreadExternalID string
+	Status           string
+	AggregateSession bool
+}
+
 type SessionEvent struct {
+	StateChange       *SessionEventStateChange
 	UUID              string
 	ExternalID        string
 	OrganizationUUID  string
@@ -116,8 +124,8 @@ type SessionPageCursor struct {
 }
 
 type SessionEventPageCursor struct {
-	CreatedAt time.Time
-	UUID      string
+	ProcessedAt time.Time
+	ExternalID  string
 }
 
 type SessionThreadPageCursor struct {
@@ -147,6 +155,7 @@ type ListSessionEventsPageParams struct {
 	SessionExternalID string
 	ThreadExternalID  string
 	PrimaryOnly       bool
+	IncludeDeleted    bool
 	Limit             int
 	Cursor            *SessionEventPageCursor
 	Order             string
@@ -294,7 +303,10 @@ func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceUUID string, s
 }
 
 func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThread) (SessionThread, error) {
-	mapper := NewSessionThreadMapper(d.mapperDB)
+	return createSessionThreadIfAbsent(ctx, NewSessionThreadMapper(d.mapperDB), thread)
+}
+
+func createSessionThreadIfAbsent(ctx context.Context, mapper SessionThreadMapper, thread SessionThread) (SessionThread, error) {
 	row, found, err := mapper.InsertIfAbsent(ctx, sessionThreadWriteParameters(thread))
 	if err != nil {
 		return SessionThread{}, err
@@ -302,7 +314,8 @@ func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThre
 	if found {
 		return row.thread(), nil
 	}
-	return d.GetSessionThread(ctx, thread.WorkspaceUUID, thread.SessionExternalID, thread.ExternalID)
+	row, err = mapper.FindByExternalID(ctx, thread.WorkspaceUUID, thread.SessionExternalID, thread.ExternalID)
+	return row.thread(), mapNoRows(err)
 }
 
 func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
@@ -311,7 +324,7 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalI
 	return row.session(), mapNoRows(err)
 }
 
-func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
+func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string, events ...SessionEvent) (Session, error) {
 	var session Session
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
@@ -325,6 +338,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 			return mapNoRows(txErr)
 		}
 		session = row.session()
+		if _, txErr = insertSessionEventsTx(ctx, executor, session, events, false, nil); txErr != nil {
+			return txErr
+		}
 		if txErr = retireSessionFilesystemTx(ctx, executor, session); txErr != nil {
 			return txErr
 		}
@@ -510,46 +526,39 @@ func (d *DB) AppendSessionEvents(
 	outcomeEvaluations json.RawMessage,
 ) ([]SessionEvent, error) {
 	var created []SessionEvent
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
-		if txErr != nil {
-			return txErr
+	err := d.WithManagedAgentEventTx(ctx, func(tx ManagedAgentEventTx) error {
+		session, err := tx.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		if err != nil {
+			return err
 		}
-		if !found {
-			return ErrNotFound
-		}
-		session := row.session()
-		if session.ArchivedAt != nil {
-			return ErrInvalidState
-		}
-		created, txErr = insertSessionEventsTx(ctx, executor, session, events, false)
-		if txErr != nil || len(outcomeEvaluations) == 0 {
-			return txErr
-		}
-		_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
-		return mapNoRows(txErr)
+		created, err = tx.AppendSessionEvents(ctx, session, events, outcomeEvaluations)
+		return err
 	})
 	return created, err
 }
 
-func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
+// SessionEventWorker identifies the worker that produced a durable event batch.
+type SessionEventWorker struct {
+	CodeSessionUUID string
+	Epoch           int64
+}
+
+// AppendSessionEventsIfAbsent accepts a duplicate only when its content and owner
+// match. The resource layer names any transport fields excluded from comparison.
+func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent, worker *SessionEventWorker, ignoredPayloadFields []string) ([]SessionEvent, error) {
 	var created []SessionEvent
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
-		if txErr != nil {
-			return txErr
+	err := d.WithManagedAgentEventTx(ctx, func(tx ManagedAgentEventTx) error {
+		session, err := tx.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		if err != nil {
+			return err
 		}
-		if !found {
-			return ErrNotFound
+		if worker != nil {
+			if _, err := tx.LockPublicEventWorker(ctx, session, *worker); err != nil {
+				return err
+			}
 		}
-		session := row.session()
-		if session.ArchivedAt != nil {
-			return ErrInvalidState
-		}
-		created, txErr = insertSessionEventsTx(ctx, executor, session, events, true)
-		return txErr
+		created, err = tx.AppendSessionEventsIfAbsent(ctx, session, events, ignoredPayloadFields)
+		return err
 	})
 	return created, err
 }
@@ -565,10 +574,13 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionE
 }
 
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
+	return listSessionEventsPage(ctx, NewSessionEventMapper(d.mapperDB), params)
+}
+
+func listSessionEventsPage(ctx context.Context, mapper SessionEventMapper, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	mapper := NewSessionEventMapper(d.mapperDB)
 	rows, err := mapper.ListPage(ctx, sessionEventPageParameters(params))
 	if err != nil {
 		return nil, false, err
@@ -579,6 +591,12 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 		events = events[:params.Limit]
 	}
 	return events, hasMore, nil
+}
+
+// SessionEventWatermark returns committed progress, including for an existing
+// stream finishing a deleted Session. New readers must authorize the Session.
+func (d *DB) SessionEventWatermark(ctx context.Context, workspaceUUID, sessionExternalID string) (time.Time, error) {
+	return NewSessionMapper(d.mapperDB).EventWatermark(ctx, workspaceUUID, sessionExternalID)
 }
 
 func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceUUID string, sessionExternalID string, toolUseIDs []string) (map[string]struct{}, error) {

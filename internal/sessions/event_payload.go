@@ -1,7 +1,9 @@
 package sessions
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -215,18 +217,36 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 }
 
 func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
+	if event.ThreadExternalID != nil {
+		threadID = *event.ThreadExternalID
+	}
 	return eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID)
 }
 
 func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt time.Time, threadID string) json.RawMessage {
 	var payload map[string]any
-	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payloadRaw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil || !json.Valid(payloadRaw) {
 		return payloadRaw
 	}
 	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)
 	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
 		payload["session_thread_id"] = strings.TrimSpace(threadID)
+		changed = true
+	}
+	if sessionPayloadString(payload, "type") == "agent.thinking" {
+		// Managed Agents thinking is a progress signal. Project at this shared
+		// boundary so legacy records and live events have the same public shape,
+		// while stored worker payloads remain intact for idempotent replay.
+		progress := make(map[string]any, 6)
+		for _, field := range []string{"id", "type", "created_at", "processed_at", "session_thread_id", "thread_id"} {
+			if value, ok := payload[field]; ok {
+				progress[field] = value
+			}
+		}
+		payload = progress
 		changed = true
 	}
 	if !changed {
@@ -252,12 +272,7 @@ func ensureSessionEventTimeField(payload map[string]any, field string, value tim
 	if value.IsZero() {
 		return false
 	}
-	if raw, ok := payload[field].(string); ok && strings.TrimSpace(raw) != "" {
-		if _, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw)); err == nil {
-			return false
-		}
-	}
-	payload[field] = httpapi.FormatTime(value)
+	payload[field] = value.UTC().Format("2006-01-02T15:04:05.000000Z")
 	return true
 }
 
@@ -328,8 +343,16 @@ func encodeSessionCursor(session db.Session) string {
 	return encodeCursor(session.CreatedAt, session.UUID)
 }
 
-func encodeEventCursor(event db.SessionEvent) string {
-	return encodeCursor(event.CreatedAt, event.UUID)
+type eventPageCursor struct {
+	ProcessedAt time.Time `json:"processed_at"`
+	ID          string    `json:"id"`
+	Watermark   time.Time `json:"watermark"`
+	Scope       string    `json:"scope"`
+}
+
+func encodeEventCursor(event db.SessionEvent, watermark time.Time, scope string) string {
+	raw, _ := json.Marshal(eventPageCursor{ProcessedAt: event.ProcessedAt, ID: event.ExternalID, Watermark: watermark, Scope: scope})
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
 func encodeThreadCursor(thread db.SessionThread) string {
@@ -349,12 +372,39 @@ func decodeSessionCursor(raw string) (*db.SessionPageCursor, error) {
 	return &db.SessionPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
 }
 
-func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
-	createdAt, resourceUUID, err := decodeCursor(raw)
-	if err != nil || createdAt == nil {
-		return nil, err
+func decodeEventCursor(raw string) (*eventPageCursor, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
 	}
-	return &db.SessionEventPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, errors.New("page cursor is invalid")
+	}
+	var cursor eventPageCursor
+	if err := json.Unmarshal(data, &cursor); err != nil || cursor.ProcessedAt.IsZero() || cursor.Watermark.IsZero() || cursor.ProcessedAt.After(cursor.Watermark) {
+		return nil, errors.New("page cursor is invalid")
+	}
+	if cursor.ID == "" {
+		return nil, errors.New("page cursor is invalid")
+	}
+	return &cursor, nil
+}
+
+func (c *eventPageCursor) position() *db.SessionEventPageCursor {
+	if c == nil {
+		return nil
+	}
+	return &db.SessionEventPageCursor{ProcessedAt: c.ProcessedAt, ExternalID: c.ID}
+}
+
+func eventCursorScope(r *http.Request, sessionID, threadID, order string) string {
+	query := r.URL.Query()
+	query.Del("page")
+	query.Del("limit")
+	query.Del("beta")
+	query.Set("order", order)
+	digest := sha256.Sum256([]byte(workspaceUUIDFromRequest(r) + "\x00" + sessionID + "\x00" + threadID + "\x00" + query.Encode()))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func decodeThreadCursor(raw string) (*db.SessionThreadPageCursor, error) {

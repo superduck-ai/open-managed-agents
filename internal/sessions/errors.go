@@ -8,6 +8,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var errEventCursorQueryMismatch = errors.New("page cursor does not match event query")
+
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
 }

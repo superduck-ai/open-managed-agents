@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -308,6 +309,9 @@ func (b *memoryPathBackend) upsertMemoryContent(
 	documentPath string,
 	content []byte,
 ) (db.Memory, *apiError) {
+	if !utf8.Valid(content) {
+		return db.Memory{}, invalidArgument("memory file contents must be valid UTF-8")
+	}
 	existing, found, err := b.memories.GetMemoryByPath(ctx, principal.WorkspaceUUID, mount.MemoryStoreExternalID, documentPath)
 	if err != nil {
 		return db.Memory{}, mapMemoryMutationError("lookup memory", err)

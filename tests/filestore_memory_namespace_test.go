@@ -322,6 +322,21 @@ func TestFilestoreMemoryNamespaceContract(t *testing.T) {
 		}
 	})
 
+	t.Run("createFile rejects non-UTF-8 memory contents", func(t *testing.T) {
+		fx := newMemoryFilestoreFixture(t, app, agent.ID, env.ID, "binary-store", "")
+		defer fx.cleanup()
+
+		before := fakeStoreKeys(objects)
+		resp := fx.createFile(t, "/memory/"+fx.slug()+"/notes/a.txt", []byte{0xff, 0xfe, 0xfd})
+		assertFilestoreError(t, resp, http.StatusBadRequest, "invalid_argument")
+		if _, found := findMemoryByPath(t, app, fx.store.ID, "/notes/a.txt"); found {
+			t.Fatal("non-UTF-8 write created a memory")
+		}
+		if after := fakeStoreKeys(objects); !sameStringSet(before, after) {
+			t.Fatalf("non-UTF-8 write uploaded objects: before=%v after=%v", before, after)
+		}
+	})
+
 	t.Run("identical createFile does not leave an unreferenced object", func(t *testing.T) {
 		fx := newMemoryFilestoreFixture(t, app, agent.ID, env.ID, "noop-store", "")
 		defer fx.cleanup()

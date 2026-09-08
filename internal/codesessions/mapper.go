@@ -11,7 +11,7 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallback time.Time) (json.RawMessage, error) {
+func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallbackUUID string, fallback time.Time) (json.RawMessage, error) {
 	fields, err := decodeRawJSONObject(raw)
 	if err != nil {
 		return nil, err
@@ -26,7 +26,7 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 	}
 	switch schema.Type {
 	case "user.message":
-		eventUUID := firstNonEmpty(schema.UUID, schema.ID, uuid.NewV4().String())
+		eventUUID := firstNonEmpty(schema.UUID, schema.ID, fallbackUUID, uuid.NewV4().String())
 		payload := map[string]any{
 			"type":               "user",
 			"uuid":               eventUUID,
@@ -46,7 +46,7 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 		return marshalRaw(payload)
 	default:
 		if schema.UUID == "" {
-			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, uuid.NewV4().String()))
+			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, fallbackUUID, uuid.NewV4().String()))
 		}
 		if schema.SessionID == "" {
 			setRawJSONField(fields, "session_id", codeSessionID)

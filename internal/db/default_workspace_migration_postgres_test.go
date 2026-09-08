@@ -18,7 +18,7 @@ func TestDefaultWorkspaceMarkerMigration(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
-			if _, err := provider.UpTo(ctx, 58); err != nil {
+			if _, err := provider.UpTo(ctx, 59); err != nil {
 				t.Fatal(err)
 			}
 			_, err := database.ExecContext(ctx, `
@@ -42,7 +42,7 @@ func TestDefaultWorkspaceMarkerMigration(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, migrationErr := provider.UpTo(ctx, 59)
+			_, migrationErr := provider.UpTo(ctx, 60)
 			if ambiguous {
 				if migrationErr == nil || !strings.Contains(migrationErr.Error(), "Cannot identify active default workspace") {
 					t.Fatalf("err = %v", migrationErr)

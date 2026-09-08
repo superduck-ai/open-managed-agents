@@ -915,7 +915,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		defer deleteSession(t, app, *run.SessionID)
 
 		codeSessionID := launchLocalCodeSession(t, app, *run.SessionID)
-		inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+		inbound, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 		if err != nil {
 			t.Fatalf("list deployment startup inbound: %v", err)
 		}

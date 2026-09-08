@@ -42,7 +42,7 @@
     </select>
     <update id="Claim" result="rows">
         UPDATE code_sessions cs
-        SET idle_since = NULL, current_worker_epoch = current_worker_epoch + 1,
+        SET current_worker_epoch = current_worker_epoch + 1,
             worker_lease_expires_at = NULL, oauth_access_token_hash = NULL,
             connection_status = 'disconnected', updated_at = NOW()
         WHERE cs.uuid = #{codeSessionUUID}
@@ -60,8 +60,6 @@
                 AND work.organization_uuid = cs.organization_uuid AND work.workspace_uuid = cs.workspace_uuid
                 AND work.environment_uuid = cs.environment_uuid AND work.session_uuid = cs.session_uuid
                 AND work.state = 'active' AND work.deleted_at IS NULL)
-            AND NOT EXISTS (SELECT 1 FROM code_session_inbound_events e WHERE e.code_session_uuid = cs.uuid
-                AND e.deleted_at IS NULL AND e.delivery_status &lt;&gt; 'processed')
     </update>
     <update id="BeginStop">
         UPDATE environment_sandboxes SET state = 'stopping', stop_reason = 'idle_timeout', updated_at = NOW()

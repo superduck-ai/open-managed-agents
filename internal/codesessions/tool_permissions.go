@@ -493,13 +493,7 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 	if err != nil {
 		return err
 	}
-	// 持久化入站队列是唯一投递路径；当前 CCR v2 worker 通过按 epoch
-	// 隔离的事件流接收该响应。
-	_, duplicate, err := s.appendInboundPayload(ctx, codeSessionID, payload, source)
-	if err != nil || duplicate {
-		return err
-	}
-	return nil
+	return s.publishControlResponse(ctx, codeSessionID, payload, source, "control-response:"+request.RequestID)
 }
 
 // controlResponseUUID preserves the UUIDv5 output previously produced with the

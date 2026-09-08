@@ -38,3 +38,12 @@ func validateOrganizationMemberActor(ctx context.Context, executor yourbatis.Exe
 	}
 	return validate(role)
 }
+
+// FindOrgMemberByReference 支持 external_id、tagged ID 与 UUID 三种引用，供 Console 层解析目标成员。
+func (d *DB) FindOrgMemberByReference(ctx context.Context, organizationUUID, userReference string) (AdminUser, error) {
+	if d == nil || d.mapperDB == nil || organizationUUID == "" || userReference == "" {
+		return AdminUser{}, ErrNotFound
+	}
+	user, err := NewOrganizationMemberGuardMapper(d.mapperDB).FindMemberByReference(ctx, organizationUUID, userReference)
+	return user, mapNoRows(err)
+}

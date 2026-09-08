@@ -17,6 +17,7 @@ type consoleWorkspaceMemberStore interface {
 	workspaceaccess.Store
 	workspaceaccess.MemberStore
 	ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]platform.OrgUser, error)
+	FindOrgMemberByReference(ctx context.Context, orgUUID, userReference string) (db.AdminUser, error)
 	ListWorkspaceMemberFacts(ctx context.Context, orgUUID, workspaceUUID string) ([]db.WorkspaceMemberFact, error)
 }
 
@@ -177,17 +178,17 @@ func applyConsoleWorkspaceMemberChange(w http.ResponseWriter, r *http.Request, s
 	if !ok {
 		return
 	}
-	if _, err := workspaceaccess.ChangeMember(r.Context(), memberStore, principal, workspace.ExternalID, userID, role, operation); err != nil {
+	target, err := memberStore.FindOrgMemberByReference(r.Context(), orgUUID, userID)
+	if err != nil {
+		writeConsoleWorkspaceMemberError(w, err)
+		return
+	}
+	if _, err := workspaceaccess.ChangeMember(r.Context(), memberStore, principal, workspace.ExternalID, target.ExternalID, role, operation); err != nil {
 		writeConsoleWorkspaceMemberError(w, err)
 		return
 	}
 	if operation == "delete" {
-		writeJSON(w, http.StatusOK, map[string]any{"id": userID, "type": "workspace_member_deleted"})
-		return
-	}
-	target, err := memberStore.GetAdminUser(r.Context(), orgUUID, userID)
-	if err != nil {
-		writeConsoleWorkspaceMemberError(w, err)
+		writeJSON(w, http.StatusOK, map[string]any{"id": taggedUserID(target.UUID), "type": "workspace_member_deleted"})
 		return
 	}
 	member, err := memberStore.GetAdminWorkspaceMember(r.Context(), orgUUID, workspace.ExternalID, target.ExternalID)

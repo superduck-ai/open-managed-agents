@@ -253,7 +253,13 @@ export function registerManagedAgentsAgentsTests() {
     expect((createRequest?.body?.metadata as Record<string, string>).template).toBe('deep-research');
     const createdToolset = (createRequest?.body?.tools as Array<Record<string, unknown>>)[0];
     expect(createdToolset.type).toBe('agent_toolset_20260401');
-    expect(createdToolset.configs).toBeUndefined();
+    expect(createdToolset.configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: false,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
     expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();

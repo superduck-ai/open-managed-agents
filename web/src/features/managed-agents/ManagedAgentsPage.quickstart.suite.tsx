@@ -502,7 +502,8 @@ export function registerManagedAgentsQuickstartTests() {
     expect(screen.getByRole('combobox', { name: 'Code format' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Use template' })).toBeTruthy();
-    expect(screen.getByText(/name:/)).toBeTruthy();
+    const templateCode = document.querySelector('code.language-yaml') as HTMLElement;
+    expect(within(templateCode).getAllByText(/name:/).length).toBeGreaterThan(0);
     const detailHeading = screen.getByRole('heading', { name: /Structured extractor.*Template/i });
     const detailCard = detailHeading.closest('[data-slot="card"]') as HTMLElement | null;
     expect(detailHeading).toBeTruthy();

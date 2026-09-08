@@ -997,16 +997,15 @@ func validateMCPToolReferences(tools json.RawMessage, mcpServers json.RawMessage
 }
 
 func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]any, error) {
-	if value == nil {
-		return []map[string]any{}, nil
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil, errors.New("tools.configs must be an array")
-	}
 	var configs []map[string]any
-	if err := json.Unmarshal(raw, &configs); err != nil {
-		return nil, errors.New("tools.configs must be an array")
+	if value != nil {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, errors.New("tools.configs must be an array")
+		}
+		if err := json.Unmarshal(raw, &configs); err != nil {
+			return nil, errors.New("tools.configs must be an array")
+		}
 	}
 	allowed := map[string]struct{}{
 		"task": {}, "ask_user_question": {}, "bash": {}, "cron_create": {}, "cron_delete": {}, "cron_list": {},
@@ -1034,6 +1033,13 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 			return nil, err
 		}
 		normalized = append(normalized, map[string]any{"enabled": enabled, "name": name, "permission_policy": policy})
+	}
+	if _, configured := seen["ask_user_question"]; !configured {
+		normalized = append(normalized, map[string]any{
+			"enabled":           false,
+			"name":              "ask_user_question",
+			"permission_policy": map[string]string{"type": "always_allow"},
+		})
 	}
 	return normalized, nil
 }

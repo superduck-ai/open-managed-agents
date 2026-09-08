@@ -258,7 +258,7 @@ export function normalizeCreateAgentDraft(input: CreateAgentInput): CreateAgentI
     model: normalizeDraftModel(parsed.model),
     system: nullableString(parsed.system),
     mcp_servers: cloneJsonValue(parsed.mcp_servers),
-    tools: cloneJsonValue(parsed.tools),
+    tools: parsed.tools.map(withAskUserQuestionDisabledByDefault),
     skills: cloneJsonValue(parsed.skills),
     ...(parsed.metadata ? { metadata: { ...parsed.metadata } } : {}),
     ...(parsed.multiagent === undefined ? {} : { multiagent: cloneJsonValue(parsed.multiagent) }),
@@ -334,7 +334,10 @@ export function addBuiltInToolset(draft: CreateAgentInput): CreateAgentInput {
   if (draft.tools.some((tool) => tool.type === 'agent_toolset_20260401')) {
     return draft;
   }
-  return { ...draft, tools: [{ type: 'agent_toolset_20260401' }, ...draft.tools] };
+  return {
+    ...draft,
+    tools: [withAskUserQuestionDisabledByDefault({ type: 'agent_toolset_20260401' }), ...draft.tools],
+  };
 }
 
 export function removeToolset(draft: CreateAgentInput, key: string): CreateAgentInput {
@@ -425,6 +428,21 @@ export function permissionConfig(permission: EditablePermission) {
   return permission === 'always_deny'
     ? { enabled: false, permission_policy: { type: 'always_allow' } }
     : { enabled: true, permission_policy: { type: permission } };
+}
+
+function withAskUserQuestionDisabledByDefault<T extends Record<string, unknown>>(tool: T): T {
+  const cloned = cloneJsonValue(tool);
+  if (cloned.type !== 'agent_toolset_20260401') {
+    return cloned;
+  }
+  const configs = Array.isArray(cloned.configs) ? cloned.configs : [];
+  if (configs.some((config) => toRecord(config)?.name === 'ask_user_question')) {
+    return cloned;
+  }
+  return {
+    ...cloned,
+    configs: [...configs, { name: 'ask_user_question', ...permissionConfig('always_deny') }],
+  };
 }
 
 function validateMcpServerInput(draft: CreateAgentInput, name: string, url: string): McpServerInputErrors {

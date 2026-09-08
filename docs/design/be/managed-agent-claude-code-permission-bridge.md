@@ -8,7 +8,7 @@
 
 Managed Agents API 的权限模型定义在 agent snapshot 的 `tools` 中：
 
-- `agent_toolset_20260401` 默认 `always_allow`。
+- `agent_toolset_20260401` 默认 `always_allow`；新建或更新配置若未显式声明 `ask_user_question`，规范化边界会为它补充 `enabled:false`，避免无人处理的 API 会话进入 HITL 等待。用户显式配置后可以主动开启。
 - `mcp_toolset` 默认 `always_ask`。
 - `default_config` 定义 toolset 默认行为。
 - `configs[]` 定义单个工具的覆盖行为。
@@ -312,6 +312,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 - MCP 无 toolset 或旧 snapshot 默认 ask。
 - MCP `enabled=false` 自动 deny。
 - agent toolset 默认 allow。
+- 新 Agent 未显式配置 `ask_user_question` 时补充 deny；显式开启时保留用户配置。
 - agent toolset 单工具 config 可覆盖为 ask 或 deny。
 - 无法解析的 tool name 默认 ask，并产生诊断日志。
 

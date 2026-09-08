@@ -411,10 +411,14 @@ export function setToolPermission(
         ? tool.configs.map(toRecord).filter((config): config is Record<string, unknown> => Boolean(config))
         : [];
       const others = existing.filter((config) => config.name !== name);
+      const requiresExplicitPermission = tool.type === 'agent_toolset_20260401' && name === 'ask_user_question';
       return {
         ...tool,
         default_config: toRecord(tool.default_config) ?? permissionConfig(defaultPermission),
-        configs: permission === defaultPermission ? others : [...others, { name, ...permissionConfig(permission) }],
+        configs:
+          permission === defaultPermission && !requiresExplicitPermission
+            ? others
+            : [...others, { name, ...permissionConfig(permission) }],
       };
     }),
   };

@@ -346,6 +346,20 @@ describe('create agent draft model', () => {
     expect(setToolPermission(askBash, () => true, 'bash', 'always_allow', 'always_allow').tools[0].configs).toEqual([]);
   });
 
+  test('preserves an explicit always-allow choice for AskUserQuestion', () => {
+    const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
+    const allowed = setToolPermission(normalizedDraft, () => true, 'ask_user_question', 'always_allow', 'always_allow');
+
+    expect(allowed.tools[0].configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: true,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
+    expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
+  });
+
   test('accepts the full pinned built-in tool permission surface while rejecting web search', () => {
     const configs = [
       'task',

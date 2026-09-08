@@ -149,6 +149,22 @@ func TestAgentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("success ask user question defaults to disabled", func(t *testing.T) {
+		created := createAgent(t, app, `{"model":"claude-opus-4-6","name":"ask-user-question-default","tools":[{"type":"agent_toolset_20260401"}]}`)
+		defer cleanupAgentRows(t, app.pool, created.ID)
+		var toolsets []struct {
+			Configs []map[string]any `json:"configs"`
+		}
+		decodeRawJSON(t, created.Tools, &toolsets)
+		if len(toolsets) != 1 || len(toolsets[0].Configs) != 1 {
+			t.Fatalf("default built-in toolset = %s, want one disabled AskUserQuestion config", created.Tools)
+		}
+		config := toolsets[0].Configs[0]
+		if config["name"] != "ask_user_question" || config["enabled"] != false {
+			t.Fatalf("default AskUserQuestion config = %v, want disabled", config)
+		}
+	})
+
 	t.Run("success full built in tool set", func(t *testing.T) {
 		body := `{
 			"model":"claude-opus-4-6",

@@ -5,6 +5,7 @@ import {
   addBuiltInToolset,
   addMcpServer,
   createAgentDraftSchema,
+  normalizeCreateAgentDraft,
   removeToolset,
   setToolPermission,
   setToolsetPermission,
@@ -27,6 +28,32 @@ const baseDraft: CreateAgentInput = {
 };
 
 describe('create agent draft model', () => {
+  test('disables AskUserQuestion by default without overriding an explicit choice', () => {
+    expect(normalizeCreateAgentDraft(baseDraft).tools[0]).toEqual({
+      type: 'agent_toolset_20260401',
+      configs: [
+        {
+          name: 'ask_user_question',
+          enabled: false,
+          permission_policy: { type: 'always_allow' },
+        },
+      ],
+    });
+
+    const explicitlyEnabled = {
+      ...baseDraft,
+      tools: [
+        {
+          type: 'agent_toolset_20260401' as const,
+          configs: [
+            { name: 'ask_user_question' as const, enabled: true, permission_policy: { type: 'always_ask' as const } },
+          ],
+        },
+      ],
+    };
+    expect(normalizeCreateAgentDraft(explicitlyEnabled).tools).toEqual(explicitlyEnabled.tools);
+  });
+
   test('rejects Raw MCP URLs that the rendered form rejects', () => {
     for (const url of [
       'ftp://internal.example/mcp',
@@ -136,7 +163,7 @@ describe('create agent draft model', () => {
       const parsed = parseCreateAgentConfigText(createAgentConfigText(input, format), format);
       expect(parsed.ok).toBe(true);
       if (parsed.ok) {
-        expect(parsed.input).toEqual(input);
+        expect(parsed.input).toEqual(normalizeCreateAgentDraft(input));
       }
     }
 
@@ -400,7 +427,18 @@ describe('create agent draft model', () => {
   test('restores the removed built-in toolset without duplicating it', () => {
     const withoutBuiltIns = removeToolset(baseDraft, 'agent_toolset_20260401');
 
-    expect(addBuiltInToolset(withoutBuiltIns).tools).toEqual([{ type: 'agent_toolset_20260401' }]);
+    expect(addBuiltInToolset(withoutBuiltIns).tools).toEqual([
+      {
+        type: 'agent_toolset_20260401',
+        configs: [
+          {
+            name: 'ask_user_question',
+            enabled: false,
+            permission_policy: { type: 'always_allow' },
+          },
+        ],
+      },
+    ]);
     expect(addBuiltInToolset(baseDraft)).toBe(baseDraft);
   });
 

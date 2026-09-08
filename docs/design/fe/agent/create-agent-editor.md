@@ -49,7 +49,7 @@ flowchart LR
   同一 Tunnel 可以配置多个不同 Channel，同一 Tunnel + Channel 不得重复。
 - 已配置 Tunnel 的 Channel 使用本地编辑缓冲；Apply 或选择有效建议后，原子更新 `mcp_server` 的名称和 URL 以及
   `mcp_toolset.mcp_server_name`，保留权限与顺序，并在已连接时重新发现工具。
-- 内置工具展示当前固定 Claude Code 2.1.120 的 22 项默认工具。列表优先展示原有 7 项：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`，随后展示 `task`、`ask_user_question`、`cron_create`、`cron_delete`、`cron_list`、`enter_plan_mode`、`enter_worktree`、`exit_plan_mode`、`exit_worktree`、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write`，默认 `always_allow`。`web_fetch` 映射到 Claude Code 在 Sandbox 内执行的 `WebFetch`，不表示 Messages API 的模型服务端工具；内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中；新 MCP 默认 `always_ask`。
+- 内置工具展示当前固定 Claude Code 2.1.120 的 22 项可选工具。列表优先展示原有 7 项：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`，随后展示 `task`、`ask_user_question`、`cron_create`、`cron_delete`、`cron_list`、`enter_plan_mode`、`enter_worktree`、`exit_plan_mode`、`exit_worktree`、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write`。除 `ask_user_question` 默认关闭并要求用户主动开启外，其余工具默认 `always_allow`；这样纯 API 调用不会进入无人处理的 HITL 等待。`web_fetch` 映射到 Claude Code 在 Sandbox 内执行的 `WebFetch`，不表示 Messages API 的模型服务端工具；内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中；新 MCP 默认 `always_ask`。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
 - Toolset 级权限写入 `default_config` 并清空逐工具覆盖；逐工具权限与默认值一致时不保留冗余覆盖。
 - `always_deny` 规范化为 `enabled:false`；`custom` 只是聚合展示状态，不写入 API。

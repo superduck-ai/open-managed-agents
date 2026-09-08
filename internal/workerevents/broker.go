@@ -88,6 +88,9 @@ func LikelyExceedsLargePayload(payloadSize int) bool {
 type ExpiredEvent struct {
 	StreamSequence uint64
 	Envelope       EnvelopeV1
+	// InvalidSubject 表示无法归属合法 Session 的实际 subject。
+	// ScanExpired 只在按精确序号删除成功后返回此标记，供调用方告警而不访问 PG。
+	InvalidSubject bool
 	// DecodeError 表示不可解析或身份不符的消息；Envelope 此时只含可信 subject
 	// 中的 Session ID 和基于服务端存储时间的兜底期限，不含不可信对象引用。
 	DecodeError error
@@ -225,6 +228,8 @@ func (b *JetStreamBroker) DoubleAck(ctx context.Context, ackSubject string) erro
 	return nil
 }
 
+// ScanExpired 扫描逻辑到期事件；唯一的删除副作用是移除无法归属 Session 的非法 subject。
+// 合法 subject 即使正文损坏也保留。返回错误时仍返回已处理事件，避免丢失删除告警。
 func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit int, now time.Time) ([]ExpiredEvent, uint64, error) {
 	stream, err := b.js.Stream(ctx, StreamName)
 	if err != nil {
@@ -248,13 +253,19 @@ func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit 
 			return expired, 0, nil
 		}
 		if getErr != nil {
-			return nil, sequence, getErr
+			return expired, sequence, getErr
 		}
 		if message.Sequence > info.State.LastSeq {
 			return expired, 0, nil
 		}
 		event := storedWorkerEvent(message)
-		if event.DecodeError != nil || event.Envelope.IsExpired(now) {
+		if event.InvalidSubject {
+			// 用 GetMsg 实际返回的序号删除，不能使用跳过空洞之前的扫描游标。
+			if err := stream.DeleteMsg(ctx, message.Sequence); err != nil {
+				return expired, sequence, fmt.Errorf("delete invalid worker event at sequence %d: %w", message.Sequence, err)
+			}
+		}
+		if event.InvalidSubject || event.DecodeError != nil || event.Envelope.IsExpired(now) {
 			expired = append(expired, event)
 		}
 		sequence = message.Sequence + 1
@@ -267,8 +278,13 @@ func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit 
 
 func storedWorkerEvent(message *jetstream.RawStreamMsg) ExpiredEvent {
 	event := ExpiredEvent{StreamSequence: message.Sequence}
-	err := json.Unmarshal(message.Data, &event.Envelope)
 	sessionID := strings.TrimPrefix(message.Subject, subjectPrefix)
+	subject, subjectErr := Subject(sessionID)
+	if subjectErr != nil || subject != message.Subject {
+		event.InvalidSubject = true
+		return event
+	}
+	err := json.Unmarshal(message.Data, &event.Envelope)
 	if err != nil || event.Envelope.Version != 2 || event.Envelope.CodeSessionID != sessionID || event.Envelope.ExpiresAt.IsZero() {
 		// JSON/time 解码错误可能包含原始字段值，不能进入运行日志。
 		event.DecodeError = errInvalidStoredEnvelope

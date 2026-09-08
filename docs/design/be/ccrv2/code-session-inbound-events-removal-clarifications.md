@@ -117,6 +117,11 @@ response 也先在锁外准备对象，再锁定 active Code Session 发布。�
 空洞。坏 JSON 或无效 envelope 会告警但不阻塞其他 Session 扫描；其 Session 仍不 ACK，按
 JetStream 存储时间加 30 天兜底终止，不能信任坏 envelope 的身份、期限或对象引用。
 
+扫描会先校验实际 subject 是否严格对应单个 Code Session。多余 token 等非法 subject 无法
+归属合法 Session，会按实际 stream sequence 精确删除并告警，不访问 PG、不 purge 同名前缀
+的 Session，也不信任正文中自称的 Session ID。删除失败保留游标重试；同批已删除消息即使
+后续扫描失败也会告警。此处理不适用于合法 subject 的坏正文或损坏的 S3 对象。
+
 idle 回收不查询 JetStream backlog。公开输入事务会清空 `idle_since`；新输入到达已经 idle-stop 的
 Sandbox 时，沿用既有 recovery 流程重建 Sandbox。
 
@@ -218,6 +223,12 @@ PG 提交失败、三节点 failover、24 小时去重窗口真实流逝和 5/15
 `just duplicates`、`just complexity`、`just large-files` 均通过。
 这轮没有重跑现有 API 的 `tests/liveworker`：PG 行为使用真实 PostgreSQL，NATS 使用测试独占的真实
 三节点集群，故障注入中的 ACK store 和对象存储使用测试实现，不等同于 Redis/S3 断网或部署故障验收。
+
+后续 CI/评论回归补充：三节点 NATS 验证非法多段 subject（坏 JSON 和身份匹配的合法 JSON）
+仅按序号删除、删除中断后重试、后续批次可达，以及正常 subject 和 consumer 保留。
+worker 回归验证非法消息不进入 PG、失败时游标保留、部分成功的删除仍输出结构化告警。
+live harness 的 agent 清理改走归档 API，另以本地 HTTP 测试验证 Cleanup 阶段已取消的
+测试 context 不会取消归档请求；没有恢复 main 已删除的 DB 归档包装方法。
 
 相关设计：
 

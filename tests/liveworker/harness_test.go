@@ -110,10 +110,8 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	e.agent, err = e.database.GetAgent(ctx, e.key.WorkspaceUUID.String(), created.ID)
 	requireOK(t, err)
 	t.Cleanup(func() {
-		_, err := e.database.ArchiveAgent(context.Background(), e.key.WorkspaceUUID.String(), e.agent.ExternalID)
-		if err != nil {
-			t.Errorf("archive test agent: %v", err)
-		}
+		// t.Context() 在 Cleanup 前已取消；归档仍需通过 API 执行完整资源清理。
+		e.requestContext(context.WithoutCancel(t.Context()), t, "POST", "/v1/agents/"+e.agent.ExternalID+"/archive", e.apiKey, nil, http.StatusOK)
 	})
 	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/environments", e.apiKey, map[string]string{"name": name}, 200), &created))
 	e.environment, err = e.database.GetEnvironment(ctx, e.key.WorkspaceUUID.String(), created.ID)
@@ -128,9 +126,14 @@ func newLiveEnv(t *testing.T) *liveEnv {
 
 func (e *liveEnv) request(t *testing.T, method, path, token string, body any, want int) []byte {
 	t.Helper()
+	return e.requestContext(t.Context(), t, method, path, token, body, want)
+}
+
+func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path, token string, body any, want int) []byte {
+	t.Helper()
 	encoded, err := json.Marshal(body)
 	requireOK(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	separator := "?"
 	if strings.Contains(path, "?") {

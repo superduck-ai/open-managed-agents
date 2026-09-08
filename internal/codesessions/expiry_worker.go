@@ -52,12 +52,21 @@ func (w *WorkerEventExpiryWorker) Start(ctx context.Context) {
 func (w *WorkerEventExpiryWorker) RunOnce(ctx context.Context) error {
 	now := time.Now().UTC()
 	events, nextCursor, err := w.service.workerEvents.ScanExpired(ctx, w.cursor, workerEventExpiryBatch, now)
+	// 即使后续扫描失败，也要记录本批已删除的非法消息。不要记录原始 subject 或正文。
+	for _, event := range events {
+		if event.InvalidSubject {
+			w.logger.ErrorContext(ctx, "removed worker event with invalid subject", "stream_sequence", event.StreamSequence)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("scan expired JetStream events: %w", err)
 	}
 	seen := make(map[string]struct{}, len(events))
 	var errs []error
 	for _, event := range events {
+		if event.InvalidSubject {
+			continue
+		}
 		if event.DecodeError != nil {
 			w.logger.ErrorContext(ctx, "invalid stored worker event", "stream_sequence", event.StreamSequence, "code_session_id", event.Envelope.CodeSessionID, "error", event.DecodeError)
 			// 无法信任坏 envelope 的 expires_at，以 JetStream 存储时间 + 30 天兜底。

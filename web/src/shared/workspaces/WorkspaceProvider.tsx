@@ -129,6 +129,7 @@ function normalizeWorkspaces(apiWorkspaces: Workspace[] = []) {
     workspaces.push({
       ...workspace,
       id,
+      name: workspace.is_default ? defaultWorkspace.name : workspace.name,
       external_id: workspace.id,
       display_color: workspace.display_color || workspace.color || defaultWorkspace.display_color,
       color: workspace.color || workspace.display_color || defaultWorkspace.color,

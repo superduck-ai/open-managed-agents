@@ -1,0 +1,440 @@
+[
+  {
+    "group": "权限矩阵",
+    "name": "Default 最新组织角色映射",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 最新组织角色映射",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 最新组织角色映射",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 最新组织角色映射",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 最新组织角色映射",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "未分配用户直访拒绝",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "跨组织引用拒绝",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Billing 可见但不能开发",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Billing 不可自行提权",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Billing 继承不可删除",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Billing 不可降到其他角色",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Billing 显式提权幂等 1",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Billing 显式提权幂等 2",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "提权后开发可用",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Workspace Admin 无组织管理权",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "提权后可管理目标成员",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "组织降级保留显式授权",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "组织降级后显式 Admin 仍能开发",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "恢复组织 Billing",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "撤销提权恢复 Billing 继承",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "恢复继承后开发立即拒绝",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 保护 default",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 保护 wrkspc_rsxIfzmQ97p8Am7GJF72mtsK",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 保护 default/archive",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 保护 wrkspc_rsxIfzmQ97p8Am7GJF72mtsK/archive",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 保护 default/members",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 保护 wrkspc_rsxIfzmQ97p8Am7GJF72mtsK/members",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Default 同名创建后端保护",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "不支持 Workspace DELETE",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "官方列表分页前排除 Default",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "官方 Get 接受真实 Default ID",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "不存在的管理目标返回404",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Org Admin 继承不可删除",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Org Admin 继承不可改写",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "未知显式角色拒绝",
+    "status": 400,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "普通成员加入",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "加入后新请求立即生效",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "普通成员撤权",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "撤权后原登录新请求立即拒绝",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Agent 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Agent 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Agent 跨工作区读取拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Environment 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Environment 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Environment 跨工作区读取拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Vault 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Vault 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "权限矩阵",
+    "name": "Vault 跨工作区读取拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "File 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "File 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "File 跨工作区拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Skill 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Skill 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Skill 跨工作区拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "MemoryStore 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "MemoryStore 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "MemoryStore 跨工作区拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Session 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Session 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Session 跨工作区拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Memory 创建",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Memory 合法读取",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "资源作用域",
+    "name": "Memory 跨工作区拒绝",
+    "status": 404,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "创建 Key 归档专用工作区",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "授予 Key 创建者显式成员",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "独立成员创建 Workspace Key",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "Key 创建后正常访问",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "移除创建者工作区成员关系",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "创建者本人新请求拒绝",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "创建者移除后 Workspace Key 仍可用",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "归档专用工作区",
+    "status": 200,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "归档后 Key 新业务拒绝",
+    "status": 403,
+    "pass": true
+  },
+  {
+    "group": "Key 与归档",
+    "name": "归档后用户新业务拒绝",
+    "status": 403,
+    "pass": true
+  }
+]

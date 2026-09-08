@@ -450,7 +450,7 @@ describe('ConsoleShell', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /test/i }));
     });
-    expect(screen.getByText('Admin · foo')).toBeTruthy();
+    expect(screen.getByText('Member · foo')).toBeTruthy();
   });
 
   test('uses client navigation when selecting a workspace on managed routes', async () => {

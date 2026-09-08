@@ -52,15 +52,6 @@
         AND deleted_at IS NULL
     </select>
 
-    <select id="FindByOrganizationAndExternalID" resultType="memoryStoreRow">
-        SELECT
-        <include refid="columns"/>
-        FROM memory_stores
-        WHERE organization_uuid = #{organizationUUID}
-        AND external_id = #{externalID}
-        AND deleted_at IS NULL
-    </select>
-
     <select id="FindForUpdate" resultType="memoryStoreRow">
         SELECT
         <include refid="columns"/>

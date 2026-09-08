@@ -759,7 +759,10 @@ export function AccountMenu({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="block truncate text-xs text-sidebar-foreground/70">
-                    {msg('account.subtitle', 'Admin · {workspaceName}', { workspaceName: activeWorkspace.name })}
+                    {msg('account.subtitle', '{role} · {workspaceName}', {
+                      role: msg(`account.role.${activeWorkspace.effective_role || 'unknown'}`, 'Member'),
+                      workspaceName: activeWorkspace.name,
+                    })}
                   </span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
@@ -968,7 +971,7 @@ function isActivePath(currentPath: string, href: string) {
 
 function isWideConsolePath(currentPath: string) {
   return (
-    currentPath === '/api-keys' ||
+    ['/api-keys', '/members', '/settings/members'].includes(currentPath) ||
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
     currentPath === '/webhooks' ||
     /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath) ||

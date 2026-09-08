@@ -61,14 +61,18 @@ func (d *DB) ListAdminUsersPage(ctx context.Context, params ListAdminUsersParams
 }
 
 func (d *DB) UpdateAdminUserRole(ctx context.Context, organizationUUID, externalID, role string) (AdminUser, error) {
-	mapper := NewAdminUserMapper(d.mapperDB)
-	user, err := mapper.UpdateRoleByExternalID(ctx, organizationUUID, externalID, role)
-	return user, mapNoRows(err)
+	var user AdminUser
+	err := d.withOrganizationMemberChange(ctx, organizationUUID, externalID, &role, func(executor yourbatis.Executor) error {
+		var err error
+		user, err = NewAdminUserMapper(executor).UpdateRoleByExternalID(ctx, organizationUUID, externalID, role)
+		return mapNoRows(err)
+	})
+	return user, err
 }
 
 func (d *DB) DeleteAdminUser(ctx context.Context, organizationUUID, externalID string) (AdminUser, error) {
 	var user AdminUser
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+	err := d.withOrganizationMemberChange(ctx, organizationUUID, externalID, nil, func(executor yourbatis.Executor) error {
 		mapper := NewAdminUserMapper(executor)
 		deleted, deleteErr := mapper.SoftDeleteByExternalID(ctx, organizationUUID, externalID)
 		if deleteErr != nil {

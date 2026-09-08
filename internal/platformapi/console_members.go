@@ -5,13 +5,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+
 	"github.com/go-chi/chi/v5"
 )
 
 type consoleMemberStore interface {
 	ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]OrgUser, error)
-	UpdateOrgUserRole(ctx context.Context, orgUUID string, userID string, role string) (*OrgUser, error)
-	RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (bool, error)
+	UpdateOrgUserRole(ctx context.Context, orgUUID, userID, role, actorID string, validate func(string) error) (*OrgUser, error)
+	RemoveOrgUser(ctx context.Context, orgUUID, userID, actorID string, validate func(string) error) (bool, error)
 }
 
 type updateConsoleMemberRequest struct {
@@ -24,8 +26,11 @@ func RegisterConsoleOrganizationMemberRoutes(r chi.Router, store OrganizationSto
 
 func registerConsoleOrganizationMemberRoutes(r chi.Router, store OrganizationStore) {
 	r.Get("/members", handleListConsoleMembers(store))
-	r.Post("/members/{userId}", handleUpdateConsoleMember(store))
-	r.Delete("/members/{userId}", handleDeleteConsoleMember(store))
+	r.Group(func(r chi.Router) {
+		r.Use(requireConsoleOrganizationAdmin(store))
+		r.Post("/members/{userId}", handleUpdateConsoleMember(store))
+		r.Delete("/members/{userId}", handleDeleteConsoleMember(store))
+	})
 }
 
 func handleListConsoleMembers(store OrganizationStore) http.HandlerFunc {
@@ -110,9 +115,10 @@ func handleUpdateConsoleMember(store OrganizationStore) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "user_id_required"})
 			return
 		}
-		user, err := memberStore.UpdateOrgUserRole(r.Context(), orgUUID, userID, role)
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		user, err := memberStore.UpdateOrgUserRole(r.Context(), orgUUID, userID, role, principal.UserExternalID, validateConsoleOrganizationAdminRole)
 		if err != nil {
-			internalError(w, "failed to update member")
+			writeConsoleMemberError(w, err)
 			return
 		}
 		if user == nil {
@@ -139,8 +145,14 @@ func handleDeleteConsoleMember(store OrganizationStore) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "user_id_required"})
 			return
 		}
-		if _, err := memberStore.RemoveOrgUser(r.Context(), orgUUID, userID); err != nil {
-			internalError(w, "failed to remove member")
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		removed, err := memberStore.RemoveOrgUser(r.Context(), orgUUID, userID, principal.UserExternalID, validateConsoleOrganizationAdminRole)
+		if err != nil {
+			writeConsoleMemberError(w, err)
+			return
+		}
+		if !removed {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "member_not_found"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"id": userID, "type": "user_deleted"})

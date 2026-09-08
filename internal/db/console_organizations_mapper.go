@@ -20,6 +20,8 @@ type updateConsoleOrganizationProfileParams struct {
 }
 
 type consoleOrganizationRow struct {
+	UserUUID               string         `db:"user_uuid"`
+	UserExternalID         string         `db:"user_external_id"`
 	UUID                   string         `db:"uuid"`
 	Name                   string         `db:"name"`
 	Domain                 *string        `db:"domain"`

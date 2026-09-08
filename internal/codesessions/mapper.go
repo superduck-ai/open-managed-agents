@@ -77,9 +77,6 @@ func normalizeWorkerOutboundPayload(codeSessionID string, raw json.RawMessage, f
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	if schema.Type == "env_manager_log" {
-		fields = gitPreparationPublicFields(fields)
-	}
 	if schema.Type != "keep_alive" && schema.UUID == "" {
 		setRawJSONField(fields, "uuid", uuid.NewV4().String())
 	}

@@ -7,10 +7,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-func TestResourceEnvelopeBindsTenantOwnerResourceAndDomain(t *testing.T) {
+func TestResourceEnvelopeBindsTenantAndDomain(t *testing.T) {
 	service := newTestService(t)
 	ctx := context.Background()
-	binding := secrets.ResourceBinding{OrganizationUUID: "org", WorkspaceUUID: "ws", OwnerKind: "session", OwnerID: "owner", ResourceID: "resource"}
+	binding := secrets.ResourceBinding{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	envelope, err := service.SealResource(ctx, binding, []byte("secret"))
 	if err != nil {
 		t.Fatal(err)
@@ -18,11 +18,8 @@ func TestResourceEnvelopeBindsTenantOwnerResourceAndDomain(t *testing.T) {
 	for _, modify := range []func(*secrets.ResourceBinding){
 		func(b *secrets.ResourceBinding) { b.OrganizationUUID = "other" },
 		func(b *secrets.ResourceBinding) { b.WorkspaceUUID = "other" },
-		func(b *secrets.ResourceBinding) { b.OwnerKind = "deployment" },
-		func(b *secrets.ResourceBinding) { b.OwnerID = "other" },
-		func(b *secrets.ResourceBinding) { b.ResourceID = "other" },
-		func(b *secrets.ResourceBinding) { b.OwnerKind = "vault" },
-		func(b *secrets.ResourceBinding) { b.OwnerID = "" },
+		func(b *secrets.ResourceBinding) { b.OrganizationUUID = "" },
+		func(b *secrets.ResourceBinding) { b.WorkspaceUUID = "" },
 	} {
 		other := binding
 		modify(&other)

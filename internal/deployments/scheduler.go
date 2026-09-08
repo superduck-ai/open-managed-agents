@@ -16,7 +16,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
-	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 const (
@@ -75,8 +74,8 @@ type DeploymentScheduler struct {
 }
 
 // RegisterScheduledWorkers keeps deployment behavior separate from River assembly.
-func RegisterScheduledWorkers(workers *river.Workers, database *db.DB, secretService *secrets.Service) {
-	river.AddWorker(workers, &scheduledDeploymentWorker{database: database, secretService: secretService})
+func RegisterScheduledWorkers(workers *river.Workers, database *db.DB) {
+	river.AddWorker(workers, &scheduledDeploymentWorker{database: database})
 }
 
 func NewDeploymentScheduler(database *db.DB, client *river.Client[*sql.Tx], logger *slog.Logger) *DeploymentScheduler {
@@ -168,7 +167,6 @@ func (s *DeploymentScheduler) syncLoop(ctx context.Context) {
 }
 
 type scheduledDeploymentWorker struct {
-	secretService *secrets.Service
 	river.WorkerDefaults[scheduledDeploymentArgs]
 	database *db.DB
 }
@@ -212,7 +210,7 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 	if referenceFailure != nil {
 		return w.recordFailure(ctx, deployment, referenceFailure, scheduledAt, now)
 	}
-	preparedRun, err := prepareDeploymentExecution(ctx, w.secretService, deployment, deployment.CreatedByAPIKeyUUID, deployment.RuntimeUserUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, deployment.RuntimeUserUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err

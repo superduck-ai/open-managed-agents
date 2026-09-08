@@ -35,7 +35,7 @@ export function ManagedResourceFields({
       <div>
         <h3 className="text-sm font-semibold">{msg('managedAgents.sessions.resources.title', 'Resources')}</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          {msg('managedAgents.git.resourcesHelp', 'Mount files and GitHub repositories into the session.')}
+          {msg('managedAgents.git.resourcesHelp', 'Mount files and Git repositories into the session.')}
         </p>
       </div>
       {editing && !values.resourcesChanged ? (
@@ -106,7 +106,7 @@ export function ManagedResourceFields({
             <DropdownMenuContent align="start">
               <DropdownMenuItem onClick={() => patch({ gitResources: [...values.gitResources, emptyGitResource()] })}>
                 <GitBranch aria-hidden />
-                {msg('managedAgents.git.repository', 'GitHub repository')}
+                {msg('managedAgents.git.repository', 'Git repository')}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => patch({ fileResources: [...values.fileResources, { fileId: '', mountPath: '' }] })}

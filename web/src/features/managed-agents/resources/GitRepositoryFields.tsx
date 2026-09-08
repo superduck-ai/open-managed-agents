@@ -48,14 +48,14 @@ export function GitRepositoryFields({
       <CardHeader className="grid-cols-[1fr_auto] items-center px-3">
         <CardTitle className="flex items-center gap-2 text-sm">
           <GitBranch className="size-4 text-muted-foreground" aria-hidden />
-          {msg('managedAgents.git.repository', 'GitHub repository')}
+          {msg('managedAgents.git.repository', 'Git repository')}
         </CardTitle>
         <CardAction>
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={msg('managedAgents.git.remove', 'Remove GitHub repository {index}', { index: index + 1 })}
+            aria-label={msg('managedAgents.git.remove', 'Remove Git repository {index}', { index: index + 1 })}
             onClick={onRemove}
           >
             <Trash2 aria-hidden />
@@ -68,11 +68,14 @@ export function GitRepositoryFields({
           type="url"
           required
           value={resource.url}
-          placeholder="https://github.com/owner/repo"
+          placeholder="https://git.example.com/group/repo.git"
           onChange={(event) => patch({ url: event.target.value })}
           error={
             resource.url && !gitResourceURLValid(resource.url)
-              ? msg('managedAgents.git.urlError', 'Use https://github.com/owner/repo without .git or a trailing slash.')
+              ? msg(
+                  'managedAgents.git.urlError',
+                  'Enter an HTTPS repository URL without credentials, query parameters, or a fragment.',
+                )
               : undefined
           }
         />
@@ -81,7 +84,6 @@ export function GitRepositoryFields({
           type="password"
           autoComplete="new-password"
           value={resource.authorizationToken}
-          placeholder="ghp_…"
           maxLength={8192}
           onChange={(event) => patch({ authorizationToken: event.target.value })}
         />

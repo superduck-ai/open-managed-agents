@@ -50,11 +50,12 @@ func managedAgentSessionConfig(
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
-		"origin":               "managed_agents_api",
-		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":              runtimeResources.sources,
-		"outcomes":             []any{},
-		"append_system_prompt": managedAgentEnvironmentPrompt,
+		"origin":                         "managed_agents_api",
+		"continue_on_git_resource_error": session.DeploymentID == nil && session.DeploymentUUID == nil,
+		"model":                          modelIDFromAgentSnapshot(session.AgentSnapshot),
+		"sources":                        runtimeResources.sources,
+		"outcomes":                       []any{},
+		"append_system_prompt":           managedAgentEnvironmentPrompt,
 	}
 	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
 		body["system_prompt"] = system

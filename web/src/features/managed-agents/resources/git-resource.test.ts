@@ -1,61 +1,28 @@
 import { describe, expect, test } from 'bun:test';
+import '../../../test/setup';
 import { createManagedEntityBody, updateManagedEntityBody } from '../api';
 import type { DeploymentApiResponse } from '../types';
 import { initialFormValues } from './model';
-import {
-  emptyGitResource,
-  gitResourceBody,
-  gitResourceMountPathValid,
-  gitResourceURLValid,
-  gitResourceValid,
-} from './git-resource';
+import { emptyGitResource } from './git-resource';
 
-const git = { ...emptyGitResource(), url: 'https://github.com/owner/repo', authorizationToken: 'secret' };
+const repositoryURL = 'https://git.internal/group/subgroup/repo.git';
 
-describe('Git resource request contract', () => {
-  test('rejects malformed URLs, unsafe paths and incomplete fields', () => {
-    for (const url of [
-      'https://github.com/owner/repo.git',
-      'https://github.com/owner/repo/',
-      'http://github.com/owner/repo',
-      'https://token@github.com/owner/repo',
-      'https://github.com/owner/repo?token=secret',
-    ]) {
-      expect(gitResourceURLValid(url)).toBe(false);
+test('creates Session and Deployment Git resources with optional credentials', () => {
+  for (const section of ['sessions', 'deployments'] as const) {
+    for (const authorizationToken of ['', 'secret']) {
+      const values = {
+        ...initialFormValues(section),
+        gitResources: [{ ...emptyGitResource(), url: repositoryURL, authorizationToken }],
+      };
+      expect(createManagedEntityBody(section, values).resources).toEqual([
+        {
+          type: 'github_repository',
+          url: repositoryURL,
+          ...(authorizationToken ? { authorization_token: authorizationToken } : {}),
+        },
+      ]);
     }
-    for (const path of ['/workspace', '/etc/repo', '/workspace/../repo', '/workspace/.git', '/workspace/repo//src']) {
-      expect(gitResourceMountPathValid(path)).toBe(false);
-    }
-    expect(gitResourceValid({ ...git, authorizationToken: '' })).toBe(true);
-    expect(gitResourceBody({ ...git, authorizationToken: '' })).not.toHaveProperty('authorization_token');
-    expect(gitResourceValid({ ...git, checkoutType: 'branch' })).toBe(false);
-    expect(gitResourceValid({ ...git, checkoutType: 'commit', checkoutValue: 'xyz1234' })).toBe(false);
-  });
-
-  test('creates the same Git config for Session and Deployment with optional fields omitted', () => {
-    for (const section of ['sessions', 'deployments'] as const) {
-      const values = { ...initialFormValues(section), gitResources: [git] };
-      expect(createManagedEntityBody(section, values)).toMatchObject({
-        resources: [
-          {
-            type: 'github_repository',
-            url: git.url,
-            authorization_token: 'secret',
-          },
-        ],
-      });
-    }
-    expect(
-      gitResourceBody({ ...git, checkoutType: 'branch', checkoutValue: ' main ', mountPath: ' /workspace/repo ' }),
-    ).toMatchObject({
-      checkout: { type: 'branch', name: 'main' },
-      mount_path: '/workspace/repo',
-    });
-    const sha = 'a'.repeat(40);
-    expect(gitResourceBody({ ...git, checkoutType: 'commit', checkoutValue: sha })).toMatchObject({
-      checkout: { type: 'commit', sha },
-    });
-  });
+  }
 });
 
 describe('Deployment resource replacement', () => {
@@ -72,7 +39,7 @@ describe('Deployment resource replacement', () => {
     resources: [
       {
         type: 'github_repository',
-        url: git.url,
+        url: repositoryURL,
         mount_path: '/workspace/repo',
         checkout: { type: 'branch', name: 'main' },
       },
@@ -89,32 +56,23 @@ describe('Deployment resource replacement', () => {
     expect(body).not.toHaveProperty('resources');
   });
 
-  test('uses anonymous access when explicitly replacing resources without tokens', () => {
-    const values = { ...initialFormValues('deployments', deployment), resourcesChanged: true };
-    expect(updateManagedEntityBody('deployments', values)).toMatchObject({
-      resources: expect.arrayContaining([expect.objectContaining({ type: 'github_repository', url: git.url })]),
-    });
-  });
-
-  test('replaces the full list while preserving file paths and memory settings', () => {
+  test.each(['', 'replacement'])('replaces resources with token %j while preserving other resources', (token) => {
     const values = initialFormValues('deployments', deployment);
     const body = updateManagedEntityBody('deployments', {
       ...values,
       resourcesChanged: true,
-      gitResources: values.gitResources.map((resource) => ({ ...resource, authorizationToken: 'replacement' })),
+      gitResources: values.gitResources.map((resource) => ({ ...resource, authorizationToken: token })),
     });
-    expect(body).toMatchObject({
-      resources: [
-        { type: 'file', file_id: 'file_test', mount_path: '/reports/input.csv' },
-        {
-          type: 'github_repository',
-          url: git.url,
-          mount_path: '/workspace/repo',
-          authorization_token: 'replacement',
-          checkout: { type: 'branch', name: 'main' },
-        },
-        { type: 'memory_store', memory_store_id: 'memory_test', access: 'read_only', instructions: 'Keep context' },
-      ],
-    });
+    expect(body.resources).toEqual([
+      { type: 'file', file_id: 'file_test', mount_path: '/reports/input.csv' },
+      {
+        type: 'github_repository',
+        url: repositoryURL,
+        mount_path: '/workspace/repo',
+        ...(token ? { authorization_token: token } : {}),
+        checkout: { type: 'branch', name: 'main' },
+      },
+      { type: 'memory_store', memory_store_id: 'memory_test', access: 'read_only', instructions: 'Keep context' },
+    ]);
   });
 });

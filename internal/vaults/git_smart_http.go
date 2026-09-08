@@ -11,27 +11,28 @@ import (
 
 const gitSmartHTTPBasicUsername = "oauth2"
 
-// isGitSmartHTTPRequest reports whether req is a valid Git Smart HTTP transfer:
-// GET …/info/refs?service=git-upload-pack|git-receive-pack, or
-// POST …/git-upload-pack|git-receive-pack.
-// Git LFS, dumb HTTP, wrong methods, and Git REST APIs are not.
-func isGitSmartHTTPRequest(req *http.Request) bool {
+// gitSmartHTTPRepositoryPath preserves escaped paths to prevent encoded endpoints from falling back to Vault.
+func gitSmartHTTPRepositoryPath(req *http.Request) string {
 	if req == nil || req.URL == nil {
-		return false
+		return ""
 	}
-	path := strings.TrimRight(req.URL.Path, "/")
-	switch {
-	case strings.HasSuffix(path, "/git-upload-pack"), strings.HasSuffix(path, "/git-receive-pack"):
-		return req.Method == http.MethodPost
-	case strings.HasSuffix(path, "/info/refs"):
-		if req.Method != http.MethodGet {
-			return false
+	path := strings.TrimRight(req.URL.EscapedPath(), "/")
+	if req.Method == http.MethodPost {
+		for _, suffix := range []string{"/git-upload-pack", "/git-receive-pack"} {
+			if repo, ok := strings.CutSuffix(path, suffix); ok {
+				return repo
+			}
 		}
-		service := req.URL.Query().Get("service")
-		return service == "git-upload-pack" || service == "git-receive-pack"
-	default:
-		return false
 	}
+	if req.Method == http.MethodGet {
+		service := req.URL.Query().Get("service")
+		if service == "git-upload-pack" || service == "git-receive-pack" {
+			if repo, ok := strings.CutSuffix(path, "/info/refs"); ok {
+				return repo
+			}
+		}
+	}
+	return ""
 }
 
 func setGitSmartHTTPAuthorization(header http.Header, secret string) {
@@ -39,10 +40,6 @@ func setGitSmartHTTPAuthorization(header http.Header, secret string) {
 	header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(userinfo)))
 }
 
-// authorizeGitSmartHTTP writes Basic oauth2:<secret> when the request is Git
-// Smart HTTP and an environment_variable credential covers the CONNECT host
-// with header Injection Location. Uncovered hosts and non-Git paths passthrough.
-// Open failure is fail-closed (ErrSubstitutionRejected).
 func authorizeGitSmartHTTP(
 	ctx context.Context,
 	opener envSecretOpener,
@@ -52,7 +49,7 @@ func authorizeGitSmartHTTP(
 	credentials []db.VaultCredential,
 	opened map[string]string,
 ) error {
-	if !isGitSmartHTTPRequest(req) {
+	if gitSmartHTTPRepositoryPath(req) == "" {
 		return nil
 	}
 	cred, err := firstGitAuthorizationCredential(credentials, host, port)

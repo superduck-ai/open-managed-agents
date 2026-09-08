@@ -49,9 +49,9 @@ flowchart LR
 
 ### 已创建 Session
 
-Resources Inspector 展示 Git URL、检出的 branch/commit 和 mount_path，支持使用现有 Update Session Resource API 轮换授权 token。轮换表单只提交 `authorization_token`，成功或取消后清空密码输入。已归档 Session 禁用轮换。
+Resources Inspector 展示 Git URL、检出的 branch/commit 和 mount_path，支持使用现有 Update Session Resource API 轮换授权 token。轮换表单只提交 `authorization_token`；留空保存会发送空字符串，清除已有令牌并改用匿名访问。成功或取消后清空密码输入。已归档 Session 禁用轮换。
 
-会话时间线复用系统消息卡片，使用英文展示“Preparing Git repository”“Git repository ready”“Failed to prepare Git repository”，同一事件文案完整展示仓库 URL 和 Duration，不插入强制换行，空间不足时自然换行。成功和失败都展示 Manager 测得的准备耗时；失败原因根据安全原因码翻译，在同一文案后追加处理建议，避免长仓库名截断原因。历史缺失字段显示“Duration: Not recorded”和“No failure details were recorded”。完整 URL、挂载路径和原始事件保留在详情中，不显示原始 Git stderr。“Git repository ready”兼容首次克隆与复用已有工作树；历史事件根据结构化状态即时展示英文文案，无需重新克隆。
+Git 仓库准备不向会话时间线添加自定义系统消息。
 
 运行中的 Add Resource 仍只添加 File。更换仓库、检出引用或路径需要新建 Session；不提供动态 Git 添加、删除或重新 clone 的界面。
 

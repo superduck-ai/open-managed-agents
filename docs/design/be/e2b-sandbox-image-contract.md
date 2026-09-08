@@ -82,3 +82,12 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 7. ready 探测失败或 `20s` 内未出现 marker 均不会启动 Environment Manager，并会终止 Sandbox。
 
 Token 当前固定一小时有效且不刷新；长生命周期 Sandbox 的续签不属于此镜像合同。
+
+
+## Git 资源准备失败与 Claude 启动
+
+Runner 向 `startup_context.continue_on_git_resource_error` 写入显式策略：交互式 Session 为 true；具有 Deployment ID/UUID 的 Session 为 false。旧 Environment Manager 不识别该字段时仍按原严格语义执行，因此此能力需要匹配的 Manager artifact / 本地 Sandbox 镜像。
+
+匹配的 Environment Manager 对显式挂载 Git 资源的网络、鉴权、ref 不存在和超时错误记录 warning 并继续后续资源，Claude 收到不可用资源摘要。失败资源是默认 CWD 时回退到 `/workspace`，并在初始化完成后更新 Claude 的执行配置。Deployment 和 setup-only 仍要求资源全部成功；路径/符号链接/origin 冲突、对象校验失败及取消始终中止。远端错误只映射为固定的脱敏原因，不将凭据或完整 stderr 送进提示或 Session 事件。
+
+验收应覆盖：交互式首个仓库失败但后续仓库成功；全部失败仍能从 `/workspace` 启动 Claude；Deployment 同样输入会中止；安全错误与取消不降级。正式 artifact pin 的更新是独立发布步骤，本地镜像验证不代表已发布。

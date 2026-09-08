@@ -122,8 +122,7 @@ export function DisplayEventRow({
   if (entry.displayEvent.type === 'thinking') {
     return <TranscriptThinkingRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
   }
-  const isGitPreparation = entry.type === 'system.message' && entry.event.subtype === 'git_repository';
-  const title = isGitPreparation ? entry.traceEntry.preview : sessionDisplayEventInlinePreview(entry, msg);
+  const title = sessionDisplayEventInlinePreview(entry, msg);
   const textInProgress = Boolean(entry.inProgress || entry.displayEvent.isQueued || entry.displayEvent.isStreaming);
   const showGenerating = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
   return (
@@ -133,14 +132,14 @@ export function DisplayEventRow({
       data-display-kind={entry.traceEntry.displayKind}
       className="w-full"
     >
-      <HeaderRow isSelected={selected} onSelect={onSelect} wrap={isGitPreparation}>
+      <HeaderRow isSelected={selected} onSelect={onSelect}>
         <span className="flex w-14 shrink-0 items-center">
           <EventTypeBadge type={entry.displayEvent.type} variant="compact" />
         </span>
         {entry.displayEvent.type === 'subagent' ? (
           <SubagentLabel entry={entry} msg={msg} threadNameById={threadNameById} onThreadClick={onThreadClick} />
         ) : (
-          <TraceRowText inProgress={textInProgress} wrap={isGitPreparation}>
+          <TraceRowText inProgress={textInProgress}>
             {entry.displayEvent.isStreaming ? <LiveRowPreview displayEvent={entry.displayEvent} msg={msg} /> : title}
           </TraceRowText>
         )}
@@ -629,21 +628,13 @@ export function TraceRowText({
   children,
   suffix,
   inProgress = false,
-  wrap = false,
 }: {
   children: ReactNode;
   suffix?: string;
   inProgress?: boolean;
-  wrap?: boolean;
 }) {
   return (
-    <span
-      className={clsx(
-        'min-w-0 flex-1 text-sm',
-        wrap ? 'whitespace-normal [overflow-wrap:anywhere]' : 'truncate',
-        !inProgress && 'text-foreground',
-      )}
-    >
+    <span className={clsx('min-w-0 flex-1 truncate text-sm', !inProgress && 'text-foreground')}>
       {inProgress ? <SynchronizedShimmerText>{children}</SynchronizedShimmerText> : children}
       {suffix ? (
         inProgress ? (

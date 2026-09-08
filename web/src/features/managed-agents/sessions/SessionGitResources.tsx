@@ -3,7 +3,7 @@ import { GitBranch, KeyRound } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
-import { Field, FieldLabel } from '@/shared/ui/field';
+import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { updateSessionGitResourceToken } from '../api';
 import type { SessionResourceApiResponse } from '../types';
@@ -84,7 +84,7 @@ export function SessionGitResources({
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!selected?.id || saving || !token.trim()) return;
+              if (!selected?.id || saving) return;
               setSaving(true);
               setError(null);
               void updateSessionGitResourceToken(sessionId, selected.id, token, workspaceId)
@@ -100,14 +100,17 @@ export function SessionGitResources({
               <FieldLabel htmlFor={tokenId}>{msg('managedAgents.git.token', 'Authorization token')}</FieldLabel>
               <Input
                 id={tokenId}
+                aria-describedby={`${tokenId}-help`}
                 type="password"
                 autoComplete="new-password"
-                required
                 maxLength={8192}
                 value={token}
                 disabled={saving}
                 onChange={(event) => setToken(event.target.value)}
               />
+              <FieldDescription id={`${tokenId}-help`}>
+                {msg('managedAgents.git.clearTokenHelp', 'Leave blank to remove the token and use anonymous access.')}
+              </FieldDescription>
             </Field>
             {error ? (
               <p role="alert" className="text-sm text-destructive">
@@ -118,7 +121,7 @@ export function SessionGitResources({
               <Button type="button" variant="outline" disabled={saving} onClick={close}>
                 {msg('common.cancel', 'Cancel')}
               </Button>
-              <Button type="submit" disabled={saving || !token.trim()}>
+              <Button type="submit" disabled={saving}>
                 {saving ? msg('common.saving', 'Saving...') : msg('common.save', 'Save')}
               </Button>
             </DialogFooter>

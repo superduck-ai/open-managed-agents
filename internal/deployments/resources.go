@@ -1,7 +1,6 @@
 package deployments
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,12 +56,9 @@ type deploymentResourcePayload struct {
 	Instructions  *string         `json:"instructions,omitempty"`
 }
 
-// normalizeResources validates public configuration and seals write-only tokens
-// against this Deployment and resource index before any database write.
 func (h *Handler) normalizeResources(
 	r *http.Request,
 	principal auth.Principal,
-	deploymentID string,
 	raw json.RawMessage,
 ) (json.RawMessage, json.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
@@ -78,7 +74,7 @@ func (h *Handler) normalizeResources(
 
 	resources := make([]deploymentResourcePayload, 0, len(items))
 	resourceSecrets := map[string]json.RawMessage{}
-	gitSpecs := make([]sessionresource.GitHubSpec, 0, len(items))
+	gitSpecs := make([]sessionresource.GitRepositorySpec, 0, len(items))
 	fileMountPaths := make([]string, 0, len(items))
 	for index, fields := range items {
 		resource, err := h.normalizeResource(r, principal, fields)
@@ -89,11 +85,10 @@ func (h *Handler) normalizeResources(
 		if resource.resourceType == sessionresource.FileType {
 			fileMountPaths = append(fileMountPaths, resource.mountPath)
 		}
-		if resource.resourceType == sessionresource.GitHubRepositoryType {
-			gitSpecs = append(gitSpecs, sessionresource.GitHubSpec{URL: resource.payload.URL, MountPath: resource.mountPath})
-			secret, err := sessionresource.SealGitHubToken(r.Context(), h.secretService, secrets.ResourceBinding{
+		if resource.resourceType == sessionresource.GitRepositoryType {
+			gitSpecs = append(gitSpecs, sessionresource.GitRepositorySpec{URL: resource.payload.URL, MountPath: resource.mountPath})
+			secret, err := sessionresource.EncryptGitToken(r.Context(), h.secretService, secrets.ResourceBinding{
 				OrganizationUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID,
-				OwnerKind: "deployment", OwnerID: deploymentID, ResourceID: strconv.Itoa(index),
 			}, resource.token)
 			if err != nil {
 				return nil, nil, err
@@ -101,7 +96,7 @@ func (h *Handler) normalizeResources(
 			resourceSecrets[strconv.Itoa(index)] = secret
 		}
 	}
-	if err := sessionresource.ValidateGitHubSpecs(gitSpecs); err != nil {
+	if err := sessionresource.ValidateGitRepositoryConflicts(gitSpecs); err != nil {
 		return nil, nil, err
 	}
 	if len(fileMountPaths) > sessionresource.MaxFileResources {
@@ -122,29 +117,7 @@ func (h *Handler) normalizeResources(
 	return resourcesRaw, secretsRaw, nil
 }
 
-// normalizeResource 将 Deployment 请求中的一条原始资源配置校验并转换为统一的存储格式。
-//
-// 函数先读取必填的 type，只接受 file、github_repository 和 memory_store。它只把已知
-// 字段写入 payload，并补充各类型的默认值。GitHub authorization_token 会单独放入
-// 独立 token，随后由 normalizeResources 加密封装，避免进入普通资源配置。File 和 Memory Store 引用都按 principal.WorkspaceUUID
-// 查询，防止 Deployment 引用其他 Workspace 的对象；已归档的 Memory Store 也会被拒绝。
-//
-// File resource 会固定为 source=/uploads，并生成经过校验的 mount_path。当前函数只处理
-// 单条资源；File 数量、重复 mount_path 和祖先/后代路径冲突由外层 normalizeResources
-// 收集全部路径后统一校验。Deployment 真正运行时，sessionResourcesFromDeployment
-// 才会为这些模板生成 sesrsc_ ID，并创建 Session resource 和对应的 File binding。
-//
-// 例如：
-//   - 输入 {"type":"file","file_id":"file_123","mount_path":"/workspace/context.md"}，
-//     返回的 payload 会包含固定的 source=/uploads 和相同的 mount_path。
-//   - 输入带 authorization_token 的 github_repository，普通 payload 只保存仓库配置，
-//     Token 仅短暂返回给加密写入路径。
-//   - file_id 属于其他 Workspace，或 memory_store 已归档，函数返回引用或状态错误，
-//     不生成可保存的资源。
-//
-// 成功时返回规范化的 payload、可选 secret 和 File mount_path。字段格式错误、未知类型、
-// 引用不存在、跨 Workspace 引用或无效状态都会返回错误。函数只执行必要的数据库读取，
-// 不开启事务、不加显式锁，也不会写数据库、创建 Session、修改 Filestore 或执行挂载。
+// normalizeResource keeps tokens separate from public configuration for subsequent encryption.
 func (h *Handler) normalizeResource(
 	r *http.Request,
 	principal auth.Principal,
@@ -193,8 +166,8 @@ func (h *Handler) normalizeResource(
 		}
 		resource.referenceID = fileID
 		resource.mountPath = mountPath
-	case sessionresource.GitHubRepositoryType:
-		spec, err := sessionresource.NormalizeGitHubSpec(fields.URL, fields.MountPath, fields.Checkout)
+	case sessionresource.GitRepositoryType:
+		spec, err := sessionresource.NormalizeGitRepositorySpec(fields.URL, fields.MountPath, fields.Checkout)
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
@@ -207,7 +180,7 @@ func (h *Handler) normalizeResource(
 				return normalizedDeploymentResource{}, err
 			}
 		}
-		resource.token, err = sessionresource.ParseGitHubToken(fields.AuthorizationToken)
+		resource.token, err = sessionresource.ParseGitTokenInput(fields.AuthorizationToken)
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
@@ -323,7 +296,7 @@ func (e resourceReferenceError) Unwrap() error {
 }
 
 func sessionResourcesFromDeployment(
-	ctx context.Context, secretService *secrets.Service, sessionID string,
+	sessionID string,
 	deployment db.Deployment,
 	now time.Time,
 ) ([]db.CreateSessionResourceInput, error) {
@@ -342,7 +315,7 @@ func sessionResourcesFromDeployment(
 
 	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
 	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
-	gitSpecs := make([]sessionresource.GitHubSpec, 0, len(configs))
+	gitSpecs := make([]sessionresource.GitRepositorySpec, 0, len(configs))
 	for index, configRaw := range configs {
 		var config map[string]any
 		if err := json.Unmarshal(configRaw, &config); err != nil || config == nil {
@@ -382,24 +355,14 @@ func sessionResourcesFromDeployment(
 		}
 
 		var secretRaw json.RawMessage
-		if resourceType == sessionresource.GitHubRepositoryType {
-			spec, err := sessionresource.ParseStoredGitHubSpec(configRaw)
+		if resourceType == sessionresource.GitRepositoryType {
+			spec, err := sessionresource.ParseStoredGitRepositorySpec(configRaw)
 			if err != nil {
 				return nil, err
 			}
 			gitSpecs = append(gitSpecs, spec)
-			token, err := sessionresource.OpenGitHubToken(ctx, secretService, secrets.ResourceBinding{
-				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
-				OwnerKind: "deployment", OwnerID: deployment.ExternalID, ResourceID: strconv.Itoa(index),
-			}, resourceSecrets[strconv.Itoa(index)])
-			if err != nil {
-				return nil, err
-			}
-			secretRaw, err = sessionresource.SealGitHubToken(ctx, secretService, secrets.ResourceBinding{
-				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
-				OwnerKind: "session", OwnerID: sessionID, ResourceID: resourceID,
-			}, token)
-			if err != nil {
+			secretRaw = resourceSecrets[strconv.Itoa(index)]
+			if _, err := sessionresource.ParseGitTokenEnvelope(secretRaw); err != nil {
 				return nil, err
 			}
 		}
@@ -419,7 +382,7 @@ func sessionResourcesFromDeployment(
 			FileMount: fileMount,
 		})
 	}
-	if err := sessionresource.ValidateGitHubSpecs(gitSpecs); err != nil {
+	if err := sessionresource.ValidateGitRepositoryConflicts(gitSpecs); err != nil {
 		return nil, err
 	}
 	if err := sessionresource.ValidateFileSpecs(fileSpecs); err != nil {

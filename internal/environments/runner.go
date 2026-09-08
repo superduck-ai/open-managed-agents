@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
@@ -552,8 +553,12 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if err != nil {
 		return nil, fmt.Errorf("resolve managed agent resources: %w", err)
 	}
-	if runtimeResources.hasGitRepositories && !r.cfg.CodeSession.UpstreamProxyMITMEnabled {
-		return nil, errGitResourcesRequireMITM
+	if !r.cfg.CodeSession.UpstreamProxyMITMEnabled {
+		for _, resource := range resources {
+			if resource.ResourceType == sessionresource.GitRepositoryType {
+				return nil, errGitResourcesRequireMITM
+			}
+		}
 	}
 	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
 	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)

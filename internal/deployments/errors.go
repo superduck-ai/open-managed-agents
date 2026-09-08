@@ -49,8 +49,8 @@ func environmentLoadError(err error, environmentID string) error {
 }
 
 func resourceBuildError(err error) error {
-	if errors.Is(err, sessionresource.ErrGitHubTokenStorage) {
-		return internalError("Could not secure GitHub resource token", err)
+	if errors.Is(err, sessionresource.ErrGitTokenCrypto) {
+		return internalError("Could not secure Git resource token", err)
 	}
 	var refErr resourceReferenceError
 	if !errors.As(err, &refErr) {

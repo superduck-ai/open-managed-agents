@@ -34,9 +34,7 @@ var ErrSubstitutionRejected = errors.New("vault environment variable substitutio
 
 // ErrGitResourceAuthorizationRejected marks a failed repository-scoped lookup
 // or secret decryption; callers must not forward an unauthenticated fallback.
-var ErrGitResourceAuthorizationRejected = errors.New("Git repository authorization rejected")
-
-const GitResourceAuthorizationUnavailablePublicMessage = "Git repository credentials are unavailable"
+var ErrGitResourceAuthorizationRejected = errors.New("git repository authorization rejected")
 
 var errAmbiguousGitResource = errors.New("multiple credentials for the same Git repository")
 

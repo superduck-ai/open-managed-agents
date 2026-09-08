@@ -136,7 +136,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 		},
 		{
 			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/widgets","mount_path":"/workspace/widgets","checkout":{"type":"branch","name":"main"}}`),
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://git.internal:443/group/subgroup/widgets.git","mount_path":"/workspace/widgets","checkout":{"type":"branch","name":"main"}}`),
 		},
 		{
 			ResourceType: "memory_store",
@@ -147,7 +147,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 	want := []any{
 		map[string]any{
 			"type":       "git_repository",
-			"git_info":   map[string]any{"type": "github", "repo": "acme/widgets", "host": "github", "url": "https://github.com/acme/widgets"},
+			"git_info":   map[string]any{"repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git"},
 			"mount_path": "/workspace/widgets",
 			"checkout":   map[string]any{"type": "branch", "name": "main"},
 		},
@@ -212,7 +212,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			GitSSHtoHTTPSHosts: []string{"gitlab.xxxx.cn"},
 		},
 	}
-	sessionConfig := json.RawMessage(`{"model":"kimi-k2.5","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
+	sessionConfig := json.RawMessage(`{"model":"kimi-k2.5","sources":[{"type":"git_repository","url":"https://git.internal:443/group/subgroup/widgets.git"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg, nil)
@@ -578,5 +578,30 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fileConfig, mcpConfig) {
 		t.Fatalf("mcp config file = %#v, want %#v", fileConfig, mcpConfig)
+	}
+}
+
+func TestManagedAgentGitFailurePolicy(t *testing.T) {
+	deployment := "dep_policy"
+	for _, tc := range []struct {
+		name    string
+		session db.Session
+		want    bool
+	}{
+		{"deployment", db.Session{DeploymentID: &deployment}, false},
+		{"deployment UUID", db.Session{DeploymentUUID: &deployment}, false},
+		{"interactive", db.Session{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body struct {
+				Continue bool `json:"continue_on_git_resource_error"`
+			}
+			if err := json.Unmarshal(managedAgentSessionConfig(tc.session, mustResolveRuntimeResources(t, nil)), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Continue != tc.want {
+				t.Fatalf("continue=%v want=%v", body.Continue, tc.want)
+			}
+		})
 	}
 }

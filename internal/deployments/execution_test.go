@@ -1,7 +1,6 @@
 package deployments
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -20,7 +19,7 @@ func TestPrepareDeploymentExecutionRuntimeIdentity(t *testing.T) {
 		{"manual invocation uses current user", "other-workspace-member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			run, err := prepareDeploymentExecution(context.Background(), nil, deployment, "", test.user, time.Now().UTC())
+			run, err := prepareDeploymentExecution(deployment, "", test.user, time.Now().UTC())
 			if err != nil {
 				t.Fatal(err)
 			}

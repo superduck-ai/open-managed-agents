@@ -156,7 +156,7 @@ func run(logger *slog.Logger) error {
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
-	deployments.RegisterScheduledWorkers(workers, database, vaultSecrets)
+	deployments.RegisterScheduledWorkers(workers, database)
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
 	lifecycle.Register(workers)

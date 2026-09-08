@@ -1057,7 +1057,7 @@ func startDeploymentScheduler(t *testing.T, app *testApp) func() {
 		t.Fatalf("migrate River: %v", err)
 	}
 	workers := river.NewWorkers()
-	deploymentsapi.RegisterScheduledWorkers(workers, app.db, app.vaultSecrets)
+	deploymentsapi.RegisterScheduledWorkers(workers, app.db)
 	client, err := riverjobs.NewClient(app.db, nil, workers, map[string]river.QueueConfig{deploymentsapi.DeploymentScheduleQueue: {MaxWorkers: 10}})
 	if err != nil {
 		t.Fatalf("new deployment scheduler: %v", err)

@@ -1486,7 +1486,6 @@ export function sessionEventAppearsInTranscript(event: QuickstartSessionEvent, o
   if (sessionIsClaudeUserEchoEvent(event)) {
     return false;
   }
-  if (sessionEventType(event) === 'system.message' && event.subtype === 'git_repository') return true;
   if (options.platformTranscriptFiltering) {
     if (sessionIsToolResultEvent(event) || sessionEventType(event) === 'user.tool_confirmation') {
       return false;
@@ -1512,22 +1511,23 @@ export function sessionEventAppearsInTranscript(event: QuickstartSessionEvent, o
     }
   }
   const family = sessionEventFamily(event);
-  return (
-    [
-      'user',
-      'agent',
-      'subagent',
-      'tool_use',
-      'model',
-      'outcome',
-      'result',
-      'thread',
-      'status',
-      'error',
-      'system',
-      'env',
-    ].includes(family) || sessionEventType(event) === 'user.interrupt'
-  );
+  if (
+    family === 'user' ||
+    family === 'agent' ||
+    family === 'subagent' ||
+    family === 'tool_use' ||
+    family === 'model' ||
+    family === 'outcome' ||
+    family === 'result' ||
+    family === 'thread' ||
+    family === 'status' ||
+    family === 'error' ||
+    family === 'system' ||
+    family === 'env'
+  ) {
+    return true;
+  }
+  return sessionEventType(event) === 'user.interrupt';
 }
 
 export function sessionIsClaudeUserEchoEvent(event: QuickstartSessionEvent) {
@@ -2135,44 +2135,6 @@ export function sessionEventLabel(event: QuickstartSessionEvent, family: Session
   return sessionEventType(event);
 }
 
-function sessionGitPreparationPreview(event: QuickstartSessionEvent, fallback: string, msg?: I18nMsg) {
-  const messages: Record<string, string> = {
-    started: 'Preparing Git repository: {repository}',
-    ready: 'Git repository ready: {repository} (Duration: {duration})',
-    failed: 'Failed to prepare Git repository: {repository} (Duration: {duration})',
-  };
-  const status = typeof event.resource_status === 'string' ? event.resource_status : '';
-  const message = messages[status];
-  if (!msg || !message || typeof event.url !== 'string') return fallback;
-  const duration =
-    typeof event.duration_ms === 'number' && Number.isFinite(event.duration_ms) && event.duration_ms >= 0
-      ? msg('managedAgents.git.preparation.duration', '{seconds} s', { seconds: (event.duration_ms / 1000).toFixed(1) })
-      : msg('managedAgents.git.preparation.noDuration', 'Not recorded');
-  const title = msg(`managedAgents.git.preparation.${status}`, message, {
-    repository: event.url,
-    duration,
-  });
-  return status === 'failed' ? `${title}. ${sessionGitFailureMessage(event, msg)}` : title;
-}
-
-function sessionGitFailureMessage(event: QuickstartSessionEvent, msg: I18nMsg) {
-  const messages: Record<string, string> = {
-    access_denied:
-      'Repository not found or access denied. Check the URL and token permissions; private repositories require a token.',
-    network_error: 'Could not connect to the Git server. Check the network and proxy settings.',
-    checkout_failed: 'Could not check out the branch or commit. Check that it exists and is accessible.',
-    path_conflict:
-      'The repository directory is unavailable. Check the mount path, directory permissions, and available disk space.',
-    timed_out: 'Repository preparation timed out. Check the connection and try again.',
-    cancelled: 'Repository preparation was cancelled.',
-    unknown: 'Check the runtime logs for failure details.',
-  };
-  const reason = typeof event.failure_reason === 'string' ? event.failure_reason : '';
-  return messages[reason]
-    ? msg(`managedAgents.git.failure.${reason}`, messages[reason])
-    : msg('managedAgents.git.failure.notRecorded', 'No failure details were recorded. Check the runtime logs.');
-}
-
 export function sessionEventPreview(
   event: QuickstartSessionEvent,
   displayText: string,
@@ -2183,9 +2145,7 @@ export function sessionEventPreview(
     return sessionThinkingPreview(msg);
   }
   if (family === 'system' && sessionEventType(event) === 'system.message') {
-    return event.subtype === 'git_repository'
-      ? sessionGitPreparationPreview(event, displayText, msg)
-      : 'System message';
+    return 'System message';
   }
   if (family === 'status') {
     return sessionStatusDescription(sessionEventType(event), event) ?? '';

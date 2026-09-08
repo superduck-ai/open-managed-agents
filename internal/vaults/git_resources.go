@@ -3,26 +3,30 @@ package vaults
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
-	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
-// gitResourceStore reuses scoped lookups; the session and token are read again
-// on every Git request so rotation and session termination take effect immediately.
+// gitResourceStore reloads session state and credentials on each request so rotation and termination take effect.
 type gitResourceStore interface {
 	GetCodeSessionCredentialContextForIssue(context.Context, string, string, string) (db.CodeSessionCredentialContext, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)
 	ListSessionResources(context.Context, string, string) ([]db.SessionResource, error)
 }
 
+// authorizeGitResource returns true for matched anonymous repositories too, preventing Vault fallback.
 func (e *MITMEgress) authorizeGitResource(ctx context.Context, identity EgressSession, host, port string, req *http.Request) (bool, error) {
 	repoPath := gitSmartHTTPRepositoryPath(req)
-	if e.gitStore == nil || host != "github.com" || port != "443" || repoPath == "" {
+	if e.gitStore == nil || repoPath == "" {
 		return false, nil
+	}
+	requestKey, err := sessionresource.GitRepositoryKey("https://" + net.JoinHostPort(host, port) + repoPath)
+	if err != nil {
+		return false, gitResourceAuthorizationRejected(err)
 	}
 	resources, err := e.loadGitResources(ctx, identity)
 	if err != nil {
@@ -40,7 +44,11 @@ func (e *MITMEgress) authorizeGitResource(ctx context.Context, identity EgressSe
 		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
 			return false, gitResourceAuthorizationRejected(err)
 		}
-		if !strings.EqualFold(payload.URL, "https://github.com"+repoPath) {
+		resourceKey, err := sessionresource.GitRepositoryKey(payload.URL)
+		if err != nil {
+			return false, gitResourceAuthorizationRejected(err)
+		}
+		if resourceKey != requestKey {
 			continue
 		}
 		if match != nil {
@@ -51,16 +59,14 @@ func (e *MITMEgress) authorizeGitResource(ctx context.Context, identity EgressSe
 	if match == nil {
 		return false, nil
 	}
-	token, err := sessionresource.OpenGitHubToken(ctx, e.env.secretSvc, secrets.ResourceBinding{
+	token, err := sessionresource.DecryptGitToken(ctx, e.env.secretSvc, secrets.ResourceBinding{
 		OrganizationUUID: identity.OrganizationUUID,
 		WorkspaceUUID:    identity.WorkspaceUUID,
-		OwnerKind:        "session",
-		OwnerID:          match.SessionExternalID,
-		ResourceID:       match.ExternalID,
 	}, match.SecretPayload)
 	if err != nil {
 		return false, gitResourceAuthorizationRejected(err)
 	}
+	// Anonymous resources must also discard client-supplied credentials.
 	req.Header.Del("Authorization")
 	if token != "" {
 		setGitSmartHTTPAuthorization(req.Header, token)
@@ -83,26 +89,4 @@ func (e *MITMEgress) loadGitResources(ctx context.Context, identity EgressSessio
 		return nil, db.ErrNotFound
 	}
 	return e.gitStore.ListSessionResources(ctx, identity.WorkspaceUUID, session.ExternalID)
-}
-
-// GitHub resource URLs are unescaped owner/repo paths. Reject ambiguous request
-// paths rather than broadening a credential to another endpoint on the same host.
-func gitSmartHTTPRepositoryPath(req *http.Request) string {
-	if !isGitSmartHTTPRequest(req) || strings.Contains(req.URL.EscapedPath(), "%") {
-		return ""
-	}
-	path := req.URL.Path
-	for _, suffix := range []string{"/info/refs", "/git-upload-pack", "/git-receive-pack"} {
-		if !strings.HasSuffix(path, suffix) {
-			continue
-		}
-		path = strings.TrimSuffix(strings.TrimSuffix(path, suffix), ".git")
-		parts := strings.Split(path, "/")
-		if len(parts) != 3 || parts[0] != "" || parts[1] == "" || parts[2] == "" ||
-			parts[1] == "." || parts[1] == ".." || parts[2] == "." || parts[2] == ".." {
-			return ""
-		}
-		return path
-	}
-	return ""
 }

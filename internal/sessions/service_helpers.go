@@ -152,7 +152,7 @@ func (h *Handler) resourceFromRequest(
 	payload := map[string]any{"id": resourceID, "type": resourceType}
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
-	var gitSpec *sessionresource.GitHubSpec
+	var gitSpec *sessionresource.GitRepositorySpec
 	switch resourceType {
 	case sessionresource.FileType:
 		fileID, err := sessionresource.ParseFileID(body.FileID)
@@ -177,18 +177,17 @@ func (h *Handler) resourceFromRequest(
 		}
 		payload = fileSpec.PayloadFields(resourceID)
 		normalizedFileSpec = &fileSpec
-	case sessionresource.GitHubRepositoryType:
-		spec, err := sessionresource.NormalizeGitHubSpec(body.URL, body.MountPath, body.Checkout)
+	case sessionresource.GitRepositoryType:
+		spec, err := sessionresource.NormalizeGitRepositorySpec(body.URL, body.MountPath, body.Checkout)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		token, err := sessionresource.ParseGitHubToken(body.AuthorizationToken)
+		token, err := sessionresource.ParseGitTokenInput(body.AuthorizationToken)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		secret, err = sessionresource.SealGitHubToken(r.Context(), h.secretService, secrets.ResourceBinding{
+		secret, err = sessionresource.EncryptGitToken(r.Context(), h.secretService, secrets.ResourceBinding{
 			OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
-			OwnerKind: "session", OwnerID: session.ExternalID, ResourceID: resourceID,
 		}, token)
 		if err != nil {
 			return normalizedSessionResource{}, err

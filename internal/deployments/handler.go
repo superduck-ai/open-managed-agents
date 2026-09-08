@@ -342,17 +342,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
 	}
-	deploymentID, err := ids.New("depl_")
-	if err != nil {
-		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
-	}
-	resources, resourceSecrets, err := h.normalizeResources(r, principal, deploymentID, jsonx.Default(body.Resources, `[]`))
+	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`))
 	if err != nil {
 		return resourceBuildError(err)
 	}
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, jsonx.Default(body.VaultIDs, `[]`))
 	if err != nil {
 		return invalidRequest(err)
+	}
+	deploymentID, err := ids.New("depl_")
+	if err != nil {
+		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
@@ -536,7 +536,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(body.Resources) > 0 {
-		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, next.ExternalID, body.Resources)
+		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources)
 		if err != nil {
 			return resourceBuildError(err)
 		}
@@ -627,7 +627,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(r.Context(), h.secretService, deployment, principal.APIKeyUUID, principal.UserUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)

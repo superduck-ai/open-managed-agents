@@ -7,7 +7,21 @@ export function emptyGitResource(): GitRepositoryResourceFormValue {
 }
 
 export function gitResourceURLValid(value: string) {
-  return /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(value.trim()) && !value.trim().endsWith('.git');
+  try {
+    const url = new URL(value.trim());
+    return (
+      url.protocol === 'https:' &&
+      url.port === '' &&
+      Boolean(url.hostname) &&
+      url.pathname !== '/' &&
+      !url.username &&
+      !url.password &&
+      !value.includes('?') &&
+      !value.includes('#')
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function gitResourceMountPathValid(value: string) {
@@ -35,7 +49,7 @@ export function gitResourceValid(resource: GitRepositoryResourceFormValue) {
 }
 
 export function gitResourceBody(resource: GitRepositoryResourceFormValue) {
-  if (!gitResourceValid(resource)) throw new Error('Complete the GitHub repository fields.');
+  if (!gitResourceValid(resource)) throw new Error('Complete the Git repository fields.');
   const checkout =
     resource.checkoutType === 'commit'
       ? { type: 'commit', sha: resource.checkoutValue.trim() }

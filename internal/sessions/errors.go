@@ -62,8 +62,8 @@ func resourceNotFound(resourceID string, cause error) error {
 }
 
 func mapResourceBuildError(err error) error {
-	if errors.Is(err, sessionresource.ErrGitHubTokenStorage) {
-		return internalError("Could not secure GitHub resource token", err)
+	if errors.Is(err, sessionresource.ErrGitTokenCrypto) {
+		return internalError("Could not secure Git resource token", err)
 	}
 	if mapped, ok := mapFileResourcePersistenceError(err); ok {
 		return mapped
@@ -134,5 +134,5 @@ func streamingUnsupported() error {
 }
 
 func gitTokenUpdateRequiredError() error {
-	return invalidRequest(errors.New("authorization_token must be provided when updating a GitHub resource"))
+	return invalidRequest(errors.New("authorization_token must be provided when updating a Git resource"))
 }

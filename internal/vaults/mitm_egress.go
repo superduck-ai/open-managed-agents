@@ -12,25 +12,19 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-// EgressSession identifies the Code Session tenant for MITM outbound rewriting.
 type EgressSession struct {
 	CodeSessionExternalID string
 	OrganizationUUID      string
 	WorkspaceUUID         string
 }
 
-// MITMEgress is the deep module for Managed Agent CONNECT MITM outbound
-// rewriting. Callers use Prepare for resource-scoped Git authorization, or
-// the existing Vault environment and MCP credential stages.
 type MITMEgress struct {
 	env      *EgressSubstitutor
 	inj      *Injector
 	gitStore gitResourceStore
 }
 
-// NewMITMEgress wires MITM outbound rewriting. database/secretSvc drive env +
-// Git stages; inj may be shared with Session MCP HTTP proxy. Nil inj skips MCP.
-// Returns nil when neither env/Git nor MCP can run.
+// NewMITMEgress returns nil when neither Git/environment nor MCP credentials are available.
 func NewMITMEgress(
 	database *db.DB,
 	secretSvc *secrets.Service,
@@ -55,7 +49,6 @@ func NewMITMEgress(
 	return egress
 }
 
-// newMITMEgressForTest builds MITMEgress from package-local doubles.
 func newMITMEgressForTest(env *EgressSubstitutor, inj *Injector) *MITMEgress {
 	if env == nil && inj == nil {
 		return nil
@@ -63,9 +56,7 @@ func newMITMEgressForTest(env *EgressSubstitutor, inj *Injector) *MITMEgress {
 	return &MITMEgress{env: env, inj: inj}
 }
 
-// Prepare first authorizes an explicitly attached Git repository. Unmatched
-// requests retain Vault env substitution, Git Basic, then MCP injection ordering.
-// Absolute URLs are built from CONNECT authority and the origin-form path/query.
+// Prepare applies repository credentials first, then Vault environment, Git Basic, and MCP injection.
 func (e *MITMEgress) Prepare(
 	ctx context.Context,
 	session EgressSession,
@@ -77,8 +68,6 @@ func (e *MITMEgress) Prepare(
 		return base, nil
 	}
 	host, port := splitConnectAuthority(connectAuthority)
-	// A resource token wins over a host-wide Vault token. MCP credentials must
-	// never replace a repository's explicitly bound Git authorization.
 	matched, err := e.authorizeGitResource(ctx, session, host, port, req)
 	if err != nil {
 		return nil, err

@@ -90,13 +90,18 @@ func claudeBuiltInToolNames() string {
 
 func claudeAllowedTools(toolsets []claudeToolset) string {
 	allowed := make([]string, 0, len(claudeBuiltInTools))
+	hasBuiltInToolset := false
 	for _, toolset := range toolsets {
 		switch toolset.Type {
 		case "agent_toolset_20260401":
+			hasBuiltInToolset = true
 			allowed = append(allowed, claudeAllowedBuiltInTools(toolset)...)
 		case "mcp_toolset":
 			allowed = append(allowed, claudeAllowedMCPTools(toolset)...)
 		}
+	}
+	if !hasBuiltInToolset {
+		allowed = append(allowed, claudeAllowedBuiltInTools(claudeToolset{})...)
 	}
 	return strings.Join(allowed, ",")
 }

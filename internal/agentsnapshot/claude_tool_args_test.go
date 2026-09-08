@@ -15,6 +15,18 @@ func TestClaudeToolArgsFromSnapshotRejectsMalformedSnapshot(t *testing.T) {
 	}
 }
 
+func TestClaudeToolArgsFromSnapshotDefaultsMissingBuiltInToolset(t *testing.T) {
+	t.Parallel()
+
+	config, err := ClaudeToolArgsFromSnapshot(json.RawMessage(`{"tools":[]}`))
+	if err != nil {
+		t.Fatalf("derive launch config: %v", err)
+	}
+	if config.AllowedTools != claudeBuiltInToolNames() {
+		t.Fatalf("allowed tools = %q, want default built-in tools %q", config.AllowedTools, claudeBuiltInToolNames())
+	}
+}
+
 func TestClaudeToolArgsFromSnapshotDerivesToolsAndPermissions(t *testing.T) {
 	t.Parallel()
 
@@ -83,7 +95,7 @@ func TestClaudeToolArgsDefaultAllowWithAskOverrideOmitsMCPWildcard(t *testing.T)
 	if err != nil {
 		t.Fatalf("derive launch config: %v", err)
 	}
-	if config.AllowedTools != "" {
-		t.Fatalf("allowed tools = %q, want no wildcard or explicit ask rule", config.AllowedTools)
+	if config.AllowedTools != claudeBuiltInToolNames() {
+		t.Fatalf("allowed tools = %q, want default built-ins without MCP wildcard or explicit ask rule", config.AllowedTools)
 	}
 }

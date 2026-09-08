@@ -570,6 +570,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
+			return queueCodeSessionEventsError(err)
 		}
 	}
 	if outcomesChanged {

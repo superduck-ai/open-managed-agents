@@ -79,6 +79,7 @@ type Server struct {
 type ServerDeps struct {
 	Config                 config.Config
 	DB                     *db.DB
+	Deployments            *deploymentsapi.Store
 	ObjectStore            storage.ObjectStore
 	Logger                 *slog.Logger
 	PlatformStore          platformsession.Store
@@ -91,6 +92,7 @@ type ServerDeps struct {
 	Redis                  *redis.Client
 	SessionEventBus        sessionfanout.EventBus
 	WorkerEventBroker      workerevents.Broker
+	WorkerEventAcks        workerevents.AckStore
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -105,8 +107,15 @@ func NewServer(deps ServerDeps) *Server {
 		platformStore = platformsession.NewMemoryStore()
 	}
 	codeSessionLogger := componentLogger("codesessions")
+	// ACK store 由 main 统一构造注入（与 WorkerEventBroker 同源）；未注入的组装
+	// 方（如部分测试）回退到进程内实现。
+	workerEventAcks := deps.WorkerEventAcks
+	if workerEventAcks == nil {
+		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
+	}
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
+		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
@@ -134,10 +143,10 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreCredentials: deps.FilestoreCredentials,
 		vaultSecrets:         deps.VaultSecrets,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
-		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
+		agents:               agents.NewHandler(deps.Config, deps.DB, deps.Deployments, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease),
-		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, deps.VaultSecrets, componentLogger("deployments")),
+		deployments:          deploymentsapi.NewHandler(deps.DB, deps.Deployments, webhookEnqueuer, deps.VaultSecrets, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),

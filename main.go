@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
@@ -113,6 +114,7 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
+	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
 	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)
 	if err != nil {
@@ -141,11 +143,17 @@ func run(logger *slog.Logger) error {
 	).Start(ctx)
 	environmentLogger := logger.With("component", "environment_runner")
 	sandboxProvider := e2bruntime.NewProvider(cfg.E2B)
+	// runner 与 worker-event 过期处置共享同一个 code-session Service，
+	// 过期策略只存在一份实现。
+	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).
+		WithWorkerEventBroker(workerEventBroker).
+		WithWorkerEventState(workerEventAcks, objectStore)
+	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
 		Provider:        sandboxProvider,
 		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).WithWorkerEventBroker(workerEventBroker),
+		CodeSessions:    runnerCodeSessions,
 		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 		Logger:          environmentLogger,
@@ -156,26 +164,27 @@ func run(logger *slog.Logger) error {
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
-	deployments.RegisterScheduledWorkers(workers, database)
+	deploymentStore := deployments.NewStore(database)
+	deployments.RegisterWorkers(workers, deploymentStore)
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
 	lifecycle.Register(workers)
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
-		map[string]river.QueueConfig{deployments.DeploymentScheduleQueue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
+		map[string]river.QueueConfig{deploymentjobs.Queue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
 	if err := lifecycle.Configure(ctx, jobClient); err != nil {
 		return fmt.Errorf("configure sandbox lifecycle: %w", err)
 	}
-	deploymentScheduler := deployments.NewDeploymentScheduler(database, jobClient, logger.With("component", "deployment_scheduler"))
-	if err := deploymentScheduler.Start(ctx); err != nil {
+	deploymentStore.Configure(jobClient)
+	if err := jobClient.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
 	}
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := deploymentScheduler.Stop(stopCtx); err != nil {
+		if err := jobClient.Stop(stopCtx); err != nil {
 			logger.Error("stop deployment scheduler", "error", err)
 		}
 	}()
@@ -185,6 +194,7 @@ func run(logger *slog.Logger) error {
 		Handler: api.NewServer(api.ServerDeps{
 			Config:                 cfg,
 			DB:                     database,
+			Deployments:            deploymentStore,
 			ObjectStore:            objectStore,
 			Logger:                 logger,
 			PlatformStore:          platformSessions,
@@ -197,6 +207,7 @@ func run(logger *slog.Logger) error {
 			Redis:                  redisClient,
 			SessionEventBus:        sessionEventBus,
 			WorkerEventBroker:      workerEventBroker,
+			WorkerEventAcks:        workerEventAcks,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

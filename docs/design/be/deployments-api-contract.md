@@ -53,37 +53,45 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 ## Scheduled Deployment 执行
 
-OMA 使用 River `v0.46.0`（当前替换为 `superduck-ai/river v0.46.0-oma-v0.0.1`） 持久执行 schedule。River 官方 migrator 在应用 PostgreSQL database 的 `public` schema 中创建并升级 `river_job`、`river_queue`、`river_leader`、`river_notification` 和 `river_migration`；应用表仍由 Goose 管理。`river_migration` 持久记录已应用版本，进程启动只检查并应用缺失版本，不会重建 River 表。`cmd/migrate up` 和开发环境自动迁移会使用同一个数据库连接配置，依次推进两套 migration。River 内部表的 DDL 不复制到应用 migration，避免升级 River 时出现两套 schema 定义。
+OMA 使用 River `v0.46.0`（当前替换为 `superduck-ai/river v0.46.0-oma-v0.0.1`）持久执行 schedule。River 官方 migrator 在应用 PostgreSQL database 的 `public` schema 中创建并升级 `river_job`、`river_periodic_job`、`river_queue`、`river_leader`、`river_notification` 和 `river_migration`；应用表仍由 Goose 管理。`river_migration` 持久记录已应用版本，进程启动只检查并应用缺失版本，不会重建 River 表。`cmd/migrate up` 和开发环境自动迁移会使用同一个数据库连接配置，依次推进两套 migration。River 内部表的 DDL 不复制到应用 migration，避免升级 River 时出现两套 schema 定义。
 
 Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
-- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；由 `robfig/cron/v3` 解析。DOW 接受 `0-7`，`7` 在解析前映射为 Sunday（`0`）。`L/W/#/?/@` 等扩展语法被拒绝；解析失败时返回参数错误。
+- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；由 `robfig/cron/v3` 解析。DOW 接受 `0-7`，`7` 在解析前映射为 Sunday（`0`）。`L/W/#/?/@` 等扩展语法被拒绝；解析失败或 `Next` 返回零值（无未来执行时刻）时，创建和更新请求返回 HTTP 400 参数错误。
 - `upcoming_runs_at` 返回最多五个名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - River Job 插入时把 Cron 名义 occurrence 写入 Job args；不增加私有 jitter 算法。
 
-每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule`，不保存应用自行推进的下一次游标或额外调度版本。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
+每个 active 且未归档、schedule 非空的 Deployment 对应 `river_periodic_job` 中一个 Durable Periodic Job，ID 使用 Deployment ID。Deployment 表是配置真源，River 持久化并推进 `next_run_at`；应用不另建调度游标或版本表。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
 
-River client 和 migrator 由 `internal/riverjobs` 统一组装，与 sandbox_lifecycle 队列共享现有连接池；DeploymentScheduler 只维护 Deployment 的 schedule registry。每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 schedule 快照跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
+River client 和 migrator 由 `internal/riverjobs` 组装。Deployment 和 sandbox_lifecycle 共用一个 client 和现有连接池。启动先创建 `deployments.Store` 并注册两类 worker，再创建 client，依次调用 `lifecycle.Configure` 与 `store.Configure`，最后启动 client 和 HTTP server。`Store.Configure(client)` 只注入共享 client，不访问数据库；HTTP 与 worker 启动前完成注入，未配置时 Store 拒绝写操作。沙箱的 `lifecycle.Configure` 仍注册全集群固定的一条 sweep 调度。
 
-River 的 leader election 保证只有 leader 根据 Cron 推进并投递 Periodic Job，应用不计算、持久化或插入“下一条 Job”。插入 Periodic Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。暂停或停机期间不补跑历史 occurrence，恢复注册后直接等待 Cron 的下一次。River 开源 Periodic Jobs 的调度状态主要在 leader 内存中，官方不承诺强持久性，leader 切换的极短窗口可能跳过一次 occurrence；当前 fork 也提供 DurablePeriodicJob，[沙箱生命周期](sandbox-lifecycle.md) 使用该机制；Deployment 在本次变更中仍保留原有 PeriodicJobs 调度语义。
+`internal/db` 不依赖 River，也不持有调度 client 或 logger。它保留业务 Mapper、Get/List 方法和事务内写入方法：资源层通过 `DB.DeploymentTransaction` 获取当前 `*yourbatis.Tx`，传给 DB 的 `...Tx` 写入方法；River 直接使用该事务的 `SQLTx()`，提交和回滚仍统一由 Yourbatis 管理，不另建事务包装类型。事务句柄不暴露 Yourbatis DB，不得逃逸到回调外或由调用方提交、回滚。`deployments.Store` 负责 Create/Update/Pause/Unpause/Archive、定时执行和 Agent 归档的调度同步。Agent handler 只调用 `Store.ArchiveAgent`，关联 Deployment 的遍历与调度删除由 Store 在同一事务内完成，不注册事务 hook。`internal/deploymentjobs` 保留 cron、Args 和 UpsertOpts 合同。
+
+`UpdateDeployment` 在事务内锁定业务行并返回 schedule 是否变化；无关字段更新不调用 River。启动时不比较已有 River 记录的配置，也不覆盖它的暂停状态、选项或调度游标；MaxAttempts/Priority 使用 River 默认值。
+
+创建或修改 schedule，以及 pause、unpause、archive、自动暂停和根 Agent 归档时，Deployment 状态与 Durable Periodic Job 在同一个 PostgreSQL 事务中写入或删除；River 写入失败会回滚业务状态。
+
+Deployment 无历史调度迁移需求，启动不扫描或补注册 Deployment 调度。新调度由 HTTP 写入事务创建；已有记录的恢复、到期投递和 `next_run_at` 推进由 River 负责。
+
+River 的 leader election 保证多实例中只有 leader 原子推进 Durable Periodic Job 并投递 occurrence，leader 退出后其他实例接管同一条持久化记录。插入 Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。全部实例停机或 leader 切换导致 schedule overdue 时，River 最多补一个 occurrence，并把 `next_run_at` 直接推进到当前时间之后，不逐条重放所有错过时刻。pause 会删除 durable row；unpause 在同一事务内锁行，仅在 `paused → active` 时注册恢复后的下一个 Cron occurrence，因此不补暂停期间的任务。对已经 active 的 Deployment 重复 unpause 返回当前记录，不写 River，也不重置已到期的调度游标。
 
 ```mermaid
 sequenceDiagram
     participant API as Deployment API
     participant AppDB as Deployment config
-    participant Registry as River Periodic Jobs
+    participant Durable as river_periodic_job
     participant Leader as River leader
     participant Worker as Scheduled worker
 
-    API->>AppDB: 提交 schedule 或状态
-    AppDB-->>Registry: 各实例启动加载并每 10 秒同步配置
-    Leader->>Registry: 按 Cron 计算下一 occurrence
+    API->>AppDB: 事务写 Deployment
+    API->>Durable: 同一事务 upsert/delete schedule
+    Leader->>Durable: 原子领取并推进 next_run_at
     Leader->>Worker: 投递 args 中带名义 occurrence 的 Job
     Worker->>AppDB: 锁定 Deployment，校验 active 与 schedule 快照
     Worker->>AppDB: 同一事务写 Run、Session 与 Deployment 状态
 	Worker-->>Leader: 返回结果，由 River 完成或重试当前 Job
-    Note over Leader,Worker: 下一次投递继续由 River Periodic Jobs 推进
+    Note over Durable,Leader: leader 切换后继续读取同一持久化游标
 ```
 
 `deployment_runs.trigger_type` 区分 manual 与 schedule，`scheduled_at` 保存 schedule Run 的名义时刻；部分唯一索引 `(deployment_uuid, scheduled_at) WHERE trigger_type = 'schedule'` 是 River at-least-once 下的最终幂等边界。API 的 `trigger_context` 由这两列生成，数据库不重复保存同义 JSON。Run 只表示 Session 创建成功或失败，不跟踪 Session 后续执行。

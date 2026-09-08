@@ -183,17 +183,12 @@ func isNullJSON(raw json.RawMessage) bool {
 	return value == nil
 }
 
-func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID string) (Agent, error) {
-	var archived Agent
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		row, err := NewAgentMapper(executor).ArchiveByExternalID(ctx, workspaceUUID, externalID)
-		if err != nil {
-			return mapNoRows(err)
-		}
-		archived = row.agent()
-		return NewDeploymentMapper(executor).ArchiveByRootAgent(ctx, workspaceUUID, externalID)
-	})
-	return archived, err
+func (d *DB) ArchiveAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Agent, error) {
+	row, err := NewAgentMapper(tx).ArchiveByExternalID(ctx, workspaceUUID, externalID)
+	if err != nil {
+		return Agent{}, mapNoRows(err)
+	}
+	return row.agent(), nil
 }
 
 func (d *DB) ListAgentsPage(ctx context.Context, params ListAgentsPageParams) ([]Agent, bool, error) {

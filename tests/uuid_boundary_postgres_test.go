@@ -362,7 +362,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
 		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
 	}
-	if archived, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
+	if archived, err := app.deployments.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
 		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
 	}
 
@@ -470,7 +470,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}
 
 	deploymentID := "dep_typed_uuid_" + suffix
-	deployment, err := app.db.CreateDeployment(ctx, db.Deployment{
+	deployment, err := app.deployments.Create(ctx, db.Deployment{
 		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      ids.OrganizationUUID,
@@ -821,20 +821,6 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	if err != nil || credential.CodeSessionUUID != codeSession.UUID ||
 		credential.PublicSessionUUID != session.UUID || credential.AgentUUID != session.AgentUUID {
 		t.Fatalf("get Code Session credential typed UUID projection = (%+v, %v)", credential, err)
-	}
-	inbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSession.ExternalID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csein_typed_uuid_" + suffix,
-		EventType:      "control_request",
-		EventSubtype:   "typed_uuid",
-		Payload:        []byte(`{}`),
-		PayloadHash:    strings.Repeat("b", 64),
-		IdempotencyKey: "typed-uuid-" + suffix,
-		DeliveryStatus: "queued",
-		Source:         "integration",
-		CreatedAt:      now,
-	})
-	if err != nil || duplicate || inbound.CodeSessionUUID != codeSession.UUID {
-		t.Fatalf("append Code Session event through typed UUID transaction = (%+v, %v, %v)", inbound, duplicate, err)
 	}
 	internalEvents, err := app.db.AppendCodeSessionInternalEvents(ctx, codeSession.ExternalID, epoch, []db.AppendCodeSessionInternalEventInput{{
 		ExternalID:     "cseint_typed_uuid_" + suffix,

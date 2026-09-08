@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
@@ -15,6 +16,15 @@ func invalidRequest(err error) error {
 
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
+}
+
+func queueCodeSessionEventsError(cause error) error {
+	// code session service 已将传输失败包装为 Unavailable 应用错误，直接透传
+	// 保持 503 语义，不再二次解释 sentinel。
+	if errors.Is(cause, codesessions.ErrWorkerEventUnavailable) {
+		return cause
+	}
+	return internalError("Could not queue events for the code session worker", cause)
 }
 
 func sessionsBetaRequired() error {

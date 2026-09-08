@@ -36,11 +36,6 @@ func (h *Handler) authorizeSessionIngressClaims(w http.ResponseWriter, r *http.R
 	return claims, true
 }
 
-func (h *Handler) authorizeSessionIngressRequest(r *http.Request, codeSessionID string) error {
-	_, err := h.sessionIngressClaims(r, codeSessionID)
-	return err
-}
-
 // sessionIngressClaims 返回鉴权后的 claims；OTLP ingress 需要 claims 并以 OTLP
 // 状态体回写错误，因此返回 apperr 交由调用方按各自的传输格式适配。
 func (h *Handler) sessionIngressClaims(r *http.Request, codeSessionID string) (SessionCredentialClaims, error) {

@@ -3,17 +3,15 @@ import { useMemo, useState } from 'react';
 import { cn } from '../../../../shared/lib/utils';
 
 export function RemoteServerIcon({
-  iconUrl,
-  serverUrl,
+  directoryIconUrl,
   className,
   iconClassName,
 }: {
-  iconUrl?: string;
-  serverUrl?: string;
+  directoryIconUrl?: string;
   className?: string;
   iconClassName?: string;
 }) {
-  const candidates = useMemo(() => remoteServerIconCandidates(iconUrl, serverUrl), [iconUrl, serverUrl]);
+  const candidates = useMemo(() => remoteServerIconCandidates(directoryIconUrl), [directoryIconUrl]);
   const candidateKey = candidates.join('\u0000');
   const [failureState, setFailureState] = useState({ candidateKey, candidateIndex: 0 });
   const candidateIndex = failureState.candidateKey === candidateKey ? failureState.candidateIndex : 0;
@@ -47,39 +45,23 @@ export function RemoteServerIcon({
   );
 }
 
-function remoteServerIconCandidates(iconUrl?: string, serverUrl?: string) {
+function remoteServerIconCandidates(iconUrl?: string) {
   const directoryUrl = parseHTTPURL(iconUrl);
-  const server = parseHTTPURL(serverUrl);
+  if (!directoryUrl) {
+    return [];
+  }
   return uniqueStrings([
     directoryIconCandidate(directoryUrl),
-    faviconCandidate(server),
-    directoryUrl && !isImageURL(directoryUrl) ? publicFaviconCandidate(directoryUrl) : undefined,
-    publicFaviconCandidate(server),
+    new URL('/favicon.ico', directoryUrl.origin).toString(),
+    publicFaviconCandidate(directoryUrl),
   ]);
 }
 
 function directoryIconCandidate(url?: URL) {
-  if (!url) {
+  if (!url || !isImageURL(url)) {
     return undefined;
   }
-  if (isImageURL(url)) {
-    return url.toString();
-  }
-  return faviconCandidate(url);
-}
-
-function faviconCandidate(url?: URL) {
-  return url ? new URL('/favicon.ico', url.origin).toString() : undefined;
-}
-
-function publicFaviconCandidate(url?: URL) {
-  if (!url) {
-    return undefined;
-  }
-  const faviconUrl = new URL('https://www.google.com/s2/favicons');
-  faviconUrl.searchParams.set('domain', url.hostname);
-  faviconUrl.searchParams.set('sz', '64');
-  return faviconUrl.toString();
+  return url.toString();
 }
 
 function isImageURL(url: URL) {
@@ -96,6 +78,13 @@ function parseHTTPURL(value?: string) {
   } catch {
     return undefined;
   }
+}
+
+function publicFaviconCandidate(directoryUrl: URL) {
+  const faviconUrl = new URL('https://www.google.com/s2/favicons');
+  faviconUrl.searchParams.set('domain', directoryUrl.hostname);
+  faviconUrl.searchParams.set('sz', '64');
+  return faviconUrl.toString();
 }
 
 function uniqueStrings(values: Array<string | undefined>) {

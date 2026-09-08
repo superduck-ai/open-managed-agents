@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="ConsoleOrganizationMapper">
     <sql id="columns">
+        '' AS user_uuid,
+        '' AS user_external_id,
         uuid,
         name,
         CAST(NULL AS text) AS domain,

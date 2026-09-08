@@ -1,6 +1,7 @@
 package platformapi
 
 type Account struct {
+	DefaultOrganizationUUID   string         `json:"default_organization_uuid"`
 	Permissions               []string       `json:"permissions"`
 	TaggedID                  string         `json:"tagged_id"`
 	UUID                      string         `json:"uuid"`
@@ -22,6 +23,8 @@ type Account struct {
 }
 
 type Membership struct {
+	UserUUID                string         `json:"user_uuid"`
+	UserID                  string         `json:"user_id"`
 	Organization            map[string]any `json:"organization"`
 	Role                    string         `json:"role"`
 	SeatTier                string         `json:"seat_tier"`
@@ -31,6 +34,7 @@ type Membership struct {
 }
 
 type BootstrapCompatibilityResponse struct {
+	CSRFToken                string                 `json:"csrf_token"`
 	Account                  *Account               `json:"account"`
 	Statsig                  *BootstrapStatsig      `json:"statsig,omitempty"`
 	Growthbook               *BootstrapGrowthbook   `json:"growthbook,omitempty"`

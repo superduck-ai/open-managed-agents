@@ -187,6 +187,9 @@ func formatDeletedConsoleInvite(inviteID string) map[string]any {
 }
 
 func effectiveConsoleInviteStatus(invite ConsoleInvite) string {
+	if invite.Status == "declined" {
+		return "deleted"
+	}
 	status := strings.TrimSpace(strings.ToLower(invite.Status))
 	if status == "" {
 		status = "pending"

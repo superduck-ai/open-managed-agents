@@ -1,5 +1,11 @@
 import { anthropicBetaApi } from '../../shared/api/anthropic';
-import { consoleApi } from '../../shared/api/client';
+import {
+  consoleApi,
+  consoleRequestHeaders,
+  getScopeSignal,
+  getConsoleRequestContext,
+  reportApiAuthFailure,
+} from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
@@ -670,15 +676,20 @@ export async function fetchSessionEventsPage({
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/events?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`;
+  signal = AbortSignal.any([getScopeSignal(), ...(signal ? [signal] : [])]);
+  const context = getConsoleRequestContext();
   const response = await fetch(path, {
     credentials: 'include',
-    headers,
+    headers: consoleRequestHeaders(headers, context),
     signal,
   });
+  signal.throwIfAborted();
   if (!response.ok) {
+    reportApiAuthFailure(response.status, context);
     throw new Error(`Could not list session events (${response.status})`);
   }
   const payload = (await response.json()) as Partial<PageResponse<QuickstartSessionEvent>>;
+  signal.throwIfAborted();
   return {
     data: Array.isArray(payload.data)
       ? payload.data.map((event) => sessionEventWithResponseThread(event, threadId))
@@ -896,13 +907,17 @@ export async function streamQuickstartSessionEvents({
   if (workspaceId) {
     headers.set('X-Workspace-ID', workspaceId);
   }
+  signal = AbortSignal.any([getScopeSignal(), signal]);
+  const context = getConsoleRequestContext();
   const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?beta=true`, {
     credentials: 'include',
-    headers,
+    headers: consoleRequestHeaders(headers, context),
     signal,
   });
 
+  signal.throwIfAborted();
   if (!response.ok || !response.body) {
+    reportApiAuthFailure(response.status, context);
     return;
   }
 
@@ -911,6 +926,7 @@ export async function streamQuickstartSessionEvents({
   let buffer = '';
   for (;;) {
     const { value, done } = await reader.read();
+    signal.throwIfAborted();
     if (done) {
       break;
     }
@@ -948,14 +964,18 @@ export async function streamSessionEvents({
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/stream?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?${params.toString()}`;
+  signal = AbortSignal.any([getScopeSignal(), signal]);
+  const context = getConsoleRequestContext();
   const streamSignal = sessionLinkedAbortSignal(signal, SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS);
   const response = await fetch(path, {
     credentials: 'include',
-    headers,
+    headers: consoleRequestHeaders(headers, context),
     signal: streamSignal.signal,
   });
+  signal.throwIfAborted();
   if (!response.ok || !response.body) {
     streamSignal.dispose();
+    reportApiAuthFailure(response.status, context);
     throw new SessionStreamError(response.status);
   }
   onOpen?.();
@@ -966,6 +986,7 @@ export async function streamSessionEvents({
     streamSignal.touch();
     for (;;) {
       const { value, done } = await reader.read();
+      signal.throwIfAborted();
       if (done) {
         break;
       }

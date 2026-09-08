@@ -698,6 +698,9 @@ func (s *Service) ArchiveTunnelCertificate(ctx context.Context, principal auth.P
 
 func inviteFromRecord(record db.AdminInvite) inviteResponse {
 	status := record.Status
+	if status == "declined" {
+		status = "deleted"
+	}
 	if status == "pending" && time.Now().UTC().After(record.ExpiresAt) {
 		status = "expired"
 	}

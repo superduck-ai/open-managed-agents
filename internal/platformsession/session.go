@@ -21,15 +21,32 @@ type CreateInput struct {
 }
 
 type Session struct {
-	ExternalID          string     `json:"external_id"`
-	OrganizationUUID    string     `json:"organization_uuid"`
-	WorkspaceUUID       string     `json:"workspace_uuid"`
-	WorkspaceExternalID string     `json:"workspace_external_id"`
-	UserUUID            string     `json:"user_uuid"`
-	UserExternalID      string     `json:"user_external_id"`
-	APIKeyUUID          string     `json:"api_key_uuid"`
-	APIKeyExternalID    string     `json:"api_key_external_id"`
-	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+	VerifiedEmail        string     `json:"verified_email,omitempty"`
+	HomeOrganizationUUID string     `json:"home_organization_uuid,omitempty"`
+	ExternalID           string     `json:"external_id"`
+	OrganizationUUID     string     `json:"organization_uuid"`
+	WorkspaceUUID        string     `json:"workspace_uuid"`
+	WorkspaceExternalID  string     `json:"workspace_external_id"`
+	UserUUID             string     `json:"user_uuid"`
+	UserExternalID       string     `json:"user_external_id"`
+	APIKeyUUID           string     `json:"api_key_uuid"`
+	APIKeyExternalID     string     `json:"api_key_external_id"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+}
+
+type sessionContextKey struct{}
+
+func WithSession(ctx context.Context, session Session) context.Context {
+	return context.WithValue(ctx, sessionContextKey{}, session)
+}
+
+func SessionFromContext(ctx context.Context) (Session, bool) {
+	session, ok := ctx.Value(sessionContextKey{}).(Session)
+	return session, ok
+}
+
+func CSRFToken(sessionKey string) string {
+	return auth.HashSecret("csrf:" + sessionKey)
 }
 
 type Store interface {

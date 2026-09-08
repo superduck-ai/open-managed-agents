@@ -20,6 +20,7 @@ import (
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
@@ -225,6 +226,12 @@ func filestoreNotFound(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogger *slog.Logger, mcpCatalogHandler *mcpcatalogs.Handler) {
 	router.Group(func(r chi.Router) {
+		r.Use(s.platformIdentityMiddleware)
+		r.Route("/api/invitations", func(r chi.Router) {
+			invitations.NewHandler(s.db, verifiedInvitationEmail, s.logger.With("component", "invitations")).RegisterRoutes(r)
+		})
+	})
+	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
 		platformapi.RegisterPlatformAccountRoutes(r, s.db)
@@ -373,7 +380,7 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			next.ServeHTTP(w, r)
 			return
 		}
-		principal, err := s.authenticatePlatformSession(r)
+		session, err := s.loadPlatformSession(r)
 		if err != nil {
 			if err.Status == http.StatusUnauthorized {
 				clearPlatformSessionCookies(w)
@@ -385,7 +392,12 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+		ctx := platformsession.WithSession(r.Context(), session)
+		// 恢复身份不能依赖已经失效的组织或工作区；可用作用域仅补充权限展示。
+		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session); scopeErr == nil {
+			ctx = auth.WithPrincipal(ctx, principal)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -393,7 +405,7 @@ func (s *Server) authenticated(next http.Handler, authenticate func(*http.Reques
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, err := authenticate(r)
 		if err != nil {
-			if auth.ExtractPlatformSessionKey(r) != "" {
+			if err.Status == http.StatusUnauthorized && auth.ExtractPlatformSessionKey(r) != "" {
 				clearPlatformSessionCookies(w)
 			}
 			httpapi.WriteError(w, r, err)
@@ -416,45 +428,11 @@ func clearPlatformSessionCookies(w http.ResponseWriter) {
 }
 
 func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *httpapi.Error) {
-	sessionKey := auth.ExtractPlatformSessionKey(r)
-	if sessionKey == "" {
-		return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing sessionKey cookie")
-	}
-	session, err := s.platformStore.Get(r.Context(), sessionKey)
+	session, err := s.loadPlatformSession(r)
 	if err != nil {
-		if errors.Is(err, platformsession.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
-		}
-		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
-		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+		return auth.Principal{}, err
 	}
-	if session.UserUUID == "" || session.WorkspaceUUID == "" {
-		refreshed, refreshErr := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
-			SessionKey: sessionKey,
-			UserUUID:   session.UserExternalID,
-			OrgUUID:    session.OrganizationUUID,
-			ExpiresAt:  session.ExpiresAt,
-		})
-		if refreshErr != nil {
-			if errors.Is(refreshErr, db.ErrNotFound) || errors.Is(refreshErr, platform.ErrNotFound) {
-				return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
-			}
-			s.logger.ErrorContext(r.Context(), "refresh platform session UUID references", "error", refreshErr)
-			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-		}
-		refreshed.ExternalID = session.ExternalID
-		if saveErr := s.platformStore.Save(r.Context(), sessionKey, refreshed); saveErr != nil {
-			s.logger.ErrorContext(r.Context(), "save refreshed platform session UUID references", "error", saveErr)
-			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-		}
-		session = refreshed
-	}
-	principal := session.Principal()
-	principal, orgErr := s.applyPlatformOrganizationOverride(r, principal)
-	if orgErr != nil {
-		return auth.Principal{}, orgErr
-	}
-	return s.resolvePlatformWorkspaceScope(r, principal)
+	return s.resolvePlatformSessionPrincipal(r, session)
 }
 
 func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
@@ -473,26 +451,6 @@ func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.P
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
 	principal.WorkspaceAccess = access
-	return principal, nil
-}
-
-func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
-	orgID := platformOrganizationOverrideID(r)
-	if orgID == "" || orgID == principal.OrganizationUUID {
-		return principal, nil
-	}
-	org, err := s.db.GetPlatformOrganization(r.Context(), orgID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not found")
-		}
-		s.logger.ErrorContext(r.Context(), "load platform organization override", "error", err)
-		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	if org.UUID != principal.OrganizationUUID {
-		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not allowed")
-	}
-	principal.OrganizationUUID = org.UUID
 	return principal, nil
 }
 

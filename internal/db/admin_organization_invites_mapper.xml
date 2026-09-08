@@ -75,6 +75,7 @@
             deleted_at = COALESCE(deleted_at, NOW())
         WHERE organization_uuid = #{organizationUUID}
         AND external_id = #{externalID}
+        AND status IN ('pending', 'expired', 'deleted')
         RETURNING
         <include refid="adminInviteColumns"/>
     </update>

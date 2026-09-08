@@ -1,5 +1,8 @@
 import { BillingWorkspaceContent } from '../../features/settings/BillingWorkspaceContent';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
+import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
+import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
+import { useOrganizations } from '../../shared/organizations/context';
 import {
   ArrowLeft,
   BookOpen,
@@ -470,6 +473,8 @@ function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; 
 }
 
 function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+  const confirmation = useScopeConfirmation();
+  const organizations = useOrganizations();
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -488,6 +493,10 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
   const handleSelect = async (workspace: Workspace) => {
     setOpen(false);
     if (workspace.id === activeWorkspaceId) return;
+    if (organizations) {
+      confirmation.request(() => selectWorkspace(workspace.id));
+      return;
+    }
     await navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
     selectWorkspace(workspace.id);
   };
@@ -499,6 +508,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
 
   return (
     <SidebarMenu>
+      {confirmation.dialog}
       <SidebarMenuItem>
         <DropdownMenu open={open} onOpenChange={setOpen}>
           <DropdownMenuTrigger
@@ -807,6 +817,8 @@ export function AccountMenu({
                 </span>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
+
+            <OrganizationMenu />
 
             <DropdownMenuSeparator />
 

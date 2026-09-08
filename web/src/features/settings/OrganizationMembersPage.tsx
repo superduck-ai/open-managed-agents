@@ -736,6 +736,7 @@ function isCurrentAccountMember(account: ReturnType<typeof useAuth>['account'], 
     return false;
   }
   return (
+    account.memberships?.some((membership) => member.id === membership.user_id || member.id === membership.user_uuid) ||
     member.id === account.uuid ||
     member.id === account.tagged_id ||
     (member.email !== '' && member.email.toLowerCase() === account.email_address.toLowerCase())

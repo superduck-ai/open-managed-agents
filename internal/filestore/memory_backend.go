@@ -25,6 +25,7 @@ type memoryFilestoreStore interface {
 	ListMemoriesForDepth(ctx context.Context, params db.ListMemoriesPageParams) ([]db.Memory, error)
 	CreateMemory(ctx context.Context, memory db.Memory, version db.MemoryVersion) (db.Memory, error)
 	UpdateMemory(ctx context.Context, input db.UpdateMemoryInput) (db.MemoryMutationResult, error)
+	MoveMemory(ctx context.Context, input db.MoveMemoryInput) (db.MemoryMutationResult, error)
 	DeleteMemory(ctx context.Context, input db.DeleteMemoryInput) error
 }
 
@@ -48,6 +49,9 @@ func (b *memoryPathBackend) createFile(
 ) (fileResponse, *apiError) {
 	if apiErr := requireMemoryDocumentPath(parsed); apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if params.TTLSeconds != 0 {
+		return fileResponse{}, invalidArgument("ttlSeconds is not supported for memory files")
 	}
 	mount, apiErr := b.resolveMount(ctx, principal, filesystem, parsed, true)
 	if apiErr != nil {
@@ -122,27 +126,26 @@ func (b *memoryPathBackend) moveFile(
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if destRecord, found, err := b.memories.GetMemoryByPath(ctx, principal.WorkspaceUUID, mount.MemoryStoreExternalID, dest.Rel); err != nil {
-		return fileResponse{}, mapMemoryMutationError("move memory", err)
-	} else if found {
-		if apiErr := b.deleteMemoryRecord(ctx, principal.WorkspaceUUID, mount, destRecord); apiErr != nil {
-			return fileResponse{}, apiErr
-		}
+	deleteVersionID, err := ids.New("memver_")
+	if err != nil {
+		return fileResponse{}, internalError("allocate memory version id", err)
 	}
-	versionID, err := ids.New("memver_")
+	sourceVersionID, err := ids.New("memver_")
 	if err != nil {
 		return fileResponse{}, internalError("allocate memory version id", err)
 	}
 	destPath := dest.Rel
-	result, err := b.memories.UpdateMemory(ctx, db.UpdateMemoryInput{
-		WorkspaceUUID:         principal.WorkspaceUUID,
-		MemoryStoreExternalID: mount.MemoryStoreExternalID,
-		MemoryExternalID:      current.ExternalID,
-		VersionUUID:           uuid.NewV4().String(),
-		VersionExternalID:     versionID,
-		Path:                  &destPath,
-		Actor:                 sessionMemoryActor(mount.SessionExternalID),
-		Now:                   b.now().UTC(),
+	result, err := b.memories.MoveMemory(ctx, db.MoveMemoryInput{
+		WorkspaceUUID:                      principal.WorkspaceUUID,
+		MemoryStoreExternalID:              mount.MemoryStoreExternalID,
+		SourceMemoryExternalID:             current.ExternalID,
+		DestinationPath:                    destPath,
+		SourceVersionUUID:                  uuid.NewV4().String(),
+		SourceVersionExternalID:            sourceVersionID,
+		DestinationDeleteVersionUUID:       uuid.NewV4().String(),
+		DestinationDeleteVersionExternalID: deleteVersionID,
+		Actor:                              sessionMemoryActor(mount.SessionExternalID),
+		Now:                                b.now().UTC(),
 	})
 	if err != nil {
 		return fileResponse{}, mapMemoryMutationError("move memory", err)
@@ -351,6 +354,9 @@ func (b *memoryPathBackend) upsertMemoryContent(
 		if err != nil {
 			b.discardMemoryObject(ctx, objectKey)
 			return db.Memory{}, mapMemoryMutationError("update memory", err)
+		}
+		if !result.VersionCreated {
+			b.discardMemoryObject(ctx, objectKey)
 		}
 		return result.Memory, nil
 	}

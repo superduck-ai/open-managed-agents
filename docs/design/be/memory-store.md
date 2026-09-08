@@ -278,9 +278,11 @@ filestore 只 import `internal/db`。`sessions` / `environments` 不碰 memory �
 | --- | --- |
 | 新建 / 覆盖 | `created` / `modified`，`session_actor` + session_id |
 | 删除 | 软删，`deleted` version |
-| 重命名 | `modified` |
+| 重命名 | `modified`；目标 path 已存在时，在同一事务里软删目标再改源 path |
 | mkdir / rmdir | 不持久化 / 空 no-op、非空拒绝 |
 | 跨 namespace copy/move | 拒绝 |
+| `ttlSeconds` | 非 0 拒绝。Memory 没有 Filestore 过期；成功写入是跨 Session 永久记忆 |
+| 相同正文 flush | 不新建 version，丢弃刚上传、未被引用的 object |
 
 S3 key：
 

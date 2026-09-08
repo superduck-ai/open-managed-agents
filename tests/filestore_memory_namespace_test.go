@@ -309,6 +309,41 @@ func TestFilestoreMemoryNamespaceContract(t *testing.T) {
 		}
 	})
 
+	t.Run("createFile rejects ttlSeconds on memory files", func(t *testing.T) {
+		fx := newMemoryFilestoreFixture(t, app, agent.ID, env.ID, "ttl-store", "")
+		defer fx.cleanup()
+
+		resp := fx.createFileWithParams(t, "/memory/"+fx.slug()+"/notes/a.txt", []byte("temp"), map[string]any{
+			"ttlSeconds": "60",
+		})
+		assertFilestoreError(t, resp, http.StatusBadRequest, "invalid_argument")
+		if _, found := findMemoryByPath(t, app, fx.store.ID, "/notes/a.txt"); found {
+			t.Fatal("ttlSeconds write created a permanent memory")
+		}
+	})
+
+	t.Run("identical createFile does not leave an unreferenced object", func(t *testing.T) {
+		fx := newMemoryFilestoreFixture(t, app, agent.ID, env.ID, "noop-store", "")
+		defer fx.cleanup()
+
+		first := fx.createFile(t, "/memory/"+fx.slug()+"/notes/a.txt", []byte("same-bytes"))
+		defer first.Body.Close()
+		if first.StatusCode != http.StatusOK {
+			t.Fatalf("first createFile status = %d: %s", first.StatusCode, readAll(t, first.Body))
+		}
+		afterFirst := fakeStoreKeys(objects)
+
+		second := fx.createFile(t, "/memory/"+fx.slug()+"/notes/a.txt", []byte("same-bytes"))
+		defer second.Body.Close()
+		if second.StatusCode != http.StatusOK {
+			t.Fatalf("identical createFile status = %d: %s", second.StatusCode, readAll(t, second.Body))
+		}
+		afterSecond := fakeStoreKeys(objects)
+		if !sameStringSet(afterFirst, afterSecond) {
+			t.Fatalf("identical rewrite leaked objects: before=%v after=%v", afterFirst, afterSecond)
+		}
+	})
+
 	t.Run("M2-09 moveFile inside the same store", func(t *testing.T) {
 		fx := newMemoryFilestoreFixture(t, app, agent.ID, env.ID, "rename-store", "")
 		defer fx.cleanup()
@@ -337,6 +372,36 @@ func TestFilestoreMemoryNamespaceContract(t *testing.T) {
 		}
 		if !memoryHasOperation(t, app, fx.store.ID, got.ID, "modified") {
 			t.Fatal("rename did not write a modified version")
+		}
+	})
+
+	t.Run("moveFile overwrites an existing destination", func(t *testing.T) {
+		fx := newMemoryFilestoreFixture(t, app, agent.ID, env.ID, "overwrite-move-store", "")
+		defer fx.cleanup()
+		sourceOK := fx.createFile(t, "/memory/"+fx.slug()+"/notes/a.txt", []byte("kept"))
+		defer sourceOK.Body.Close()
+		destOK := fx.createFile(t, "/memory/"+fx.slug()+"/notes/b.txt", []byte("replaced"))
+		defer destOK.Body.Close()
+
+		resp := fx.json(t, "moveFile", map[string]any{
+			"filesystemId": fx.filesystem.ExternalID,
+			"source":       "/memory/" + fx.slug() + "/notes/a.txt",
+			"destination":  "/memory/" + fx.slug() + "/notes/b.txt",
+		})
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("overwrite moveFile status = %d: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		if _, found := findMemoryByPath(t, app, fx.store.ID, "/notes/a.txt"); found {
+			t.Fatal("source path still present after overwrite move")
+		}
+		got, found := findMemoryByPath(t, app, fx.store.ID, "/notes/b.txt")
+		if !found {
+			t.Fatal("destination missing after overwrite move")
+		}
+		full := retrieveMemoryFull(t, app, fx.store.ID, got.ID)
+		if full.Content == nil || *full.Content != "kept" {
+			t.Fatalf("overwrite-move content = %#v", full.Content)
 		}
 	})
 
@@ -460,12 +525,21 @@ func (fx memoryFilestoreFixture) slug() string {
 
 func (fx memoryFilestoreFixture) createFile(t *testing.T, path string, content []byte) *http.Response {
 	t.Helper()
-	params, err := json.Marshal(map[string]any{
+	return fx.createFileWithParams(t, path, content, nil)
+}
+
+func (fx memoryFilestoreFixture) createFileWithParams(t *testing.T, path string, content []byte, extra map[string]any) *http.Response {
+	t.Helper()
+	params := map[string]any{
 		"filesystemId":      fx.filesystem.ExternalID,
 		"path":              path,
 		"mediaType":         "text/plain",
 		"overwriteExisting": true,
-	})
+	}
+	for key, value := range extra {
+		params[key] = value
+	}
+	encoded, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal createFile params: %v", err)
 	}
@@ -475,7 +549,7 @@ func (fx memoryFilestoreFixture) createFile(t *testing.T, path string, content [
 	if err != nil {
 		t.Fatalf("create params part: %v", err)
 	}
-	if _, err := paramsPart.Write(params); err != nil {
+	if _, err := paramsPart.Write(encoded); err != nil {
 		t.Fatalf("write params: %v", err)
 	}
 	filePart, err := writer.CreateFormFile("file", "content")
@@ -586,6 +660,26 @@ func memoryHasOperation(t *testing.T, app *testApp, storeID, memoryID, operation
 		}
 	}
 	return false
+}
+
+func fakeStoreKeys(store *fakeStore) map[string]struct{} {
+	keys := make(map[string]struct{}, len(store.objects))
+	for key := range store.objects {
+		keys[key] = struct{}{}
+	}
+	return keys
+}
+
+func sameStringSet(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key := range left {
+		if _, ok := right[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func seedMemories(t *testing.T, app *testApp, fx memoryFilestoreFixture, count int) {

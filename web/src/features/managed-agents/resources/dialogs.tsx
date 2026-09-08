@@ -18,7 +18,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, localTimezone, startMCPVaultAuth } from '../api';
+import { listAgents, listManagedEntities, listMemoryStoreOptions, localTimezone, startMCPVaultAuth } from '../api';
 import {
   DeploymentAddSelectField,
   DeploymentSelectField,
@@ -733,7 +733,7 @@ function GenericManagedEntityDialog({
           lockedAgent ? Promise.resolve({ data: [], next_page: null } as AgentPageResponse) : listAgents(workspaceId),
           listManagedEntities('environments', workspaceId),
           listManagedEntities('credential-vaults', workspaceId),
-          listManagedEntities('memory-stores', workspaceId),
+          listMemoryStoreOptions(workspaceId),
         ]);
         if (!active) {
           return;

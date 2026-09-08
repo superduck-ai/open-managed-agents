@@ -2153,6 +2153,53 @@ export function registerManagedAgentsResourceTests() {
     expect(within(dialog).queryByRole('radio', { name: 'Read only' })).toBeNull();
   });
 
+  test('loads memory stores beyond the first list page into the session attach picker', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const now = new Date().toISOString();
+    const api = mockManagedResourceApi({ memoryStoresPageSize: 5 });
+    for (let index = 2; index <= 6; index += 1) {
+      api.resources.memoryStores.push({
+        id: `memstore_${index}23456789012`,
+        archived_at: null,
+        created_at: now,
+        description: `Memory ${index}`,
+        name: `Memory ${index}`,
+        type: 'memory_store',
+        updated_at: now,
+      });
+    }
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: 'Paged memory session' } });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await addMemoryStoreResource(dialog, 'Memory 6');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([
+      {
+        type: 'memory_store',
+        memory_store_id: 'memstore_623456789012',
+        access: 'read_write',
+      },
+    ]);
+    expect(
+      api.requests.filter((request) => request.url.startsWith('/v1/memory_stores?') && request.method === 'GET').length,
+    ).toBeGreaterThan(1);
+  });
+
   test('creates a session with selected agent and environment references', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();

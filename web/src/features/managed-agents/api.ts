@@ -354,6 +354,33 @@ export function listManagedEntities(
   }
 }
 
+export const memoryStorePickerPageLimit = 100;
+
+export async function listMemoryStoreOptions(workspaceId: string): Promise<PageResponse<MemoryStoreApiResponse>> {
+  const data: MemoryStoreApiResponse[] = [];
+  let cursor: PageCursor = null;
+
+  for (;;) {
+    const page = (await anthropicBetaApi.memoryStores.list<MemoryStoreApiResponse>(
+      {
+        limit: memoryStorePickerPageLimit,
+        include_archived: false,
+        ...(cursor ? { page: cursor } : {}),
+      },
+      workspaceId,
+    )) as PageResponse<MemoryStoreApiResponse>;
+    data.push(...(page.data ?? []));
+    const nextPage = page.next_page ?? null;
+    if (!nextPage) {
+      return { data, next_page: null };
+    }
+    if (nextPage === cursor) {
+      throw new Error('Memory store pagination did not return a new cursor');
+    }
+    cursor = nextPage;
+  }
+}
+
 export function retrieveManagedEntity(section: ManagedEntitySection, entityId: string, workspaceId: string) {
   switch (section) {
     case 'sessions':

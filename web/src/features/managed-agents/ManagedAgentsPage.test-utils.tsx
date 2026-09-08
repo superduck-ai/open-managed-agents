@@ -916,6 +916,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
 
 type MockManagedResourceApiOptions = {
   agent?: Pick<AgentFixture, 'tools' | 'version'>;
+  memoryStoresPageSize?: number;
 };
 
 export function mockManagedResourceApi(options: MockManagedResourceApiOptions = {}) {
@@ -1756,7 +1757,15 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(memoryStore, params);
       });
-      return jsonResponse({ data: filteredMemoryStores, next_page: null });
+      const requestedLimit = Number(params.get('limit') ?? 5) || 5;
+      const limit = options.memoryStoresPageSize ?? requestedLimit;
+      const page = params.get('page');
+      const parsedOffset = page?.startsWith('memory_') ? Number(page.slice('memory_'.length)) : NaN;
+      const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+      const data = filteredMemoryStores.slice(offset, offset + limit);
+      const nextOffset = offset + data.length;
+      const nextPage = nextOffset < filteredMemoryStores.length ? `memory_${nextOffset}` : null;
+      return jsonResponse({ data, next_page: nextPage });
     }
     if (url === '/v1/memory_stores/memstore_one123456?beta=true' && method === 'GET') {
       return jsonResponse(resources.memoryStores[0]);

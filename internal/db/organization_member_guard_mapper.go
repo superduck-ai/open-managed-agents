@@ -7,5 +7,6 @@ import "context"
 type OrganizationMemberGuardMapper interface {
 	LockOrganization(ctx context.Context, organizationUUID string) (string, error)
 	FindRole(ctx context.Context, organizationUUID, userReference string) (string, error)
+	FindMemberByReference(ctx context.Context, organizationUUID, userReference string) (AdminUser, error)
 	CountAdmins(ctx context.Context, organizationUUID string) (int64, error)
 }

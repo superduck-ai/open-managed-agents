@@ -236,14 +236,18 @@ export function OrganizationMembersPage() {
               }}
             />
           ) : (
-            <OrganizationMemberRemoval
-              key={row.original.id}
-              orgUuid={activeOrgUuid ?? ''}
-              organizationName={bootstrapOrganization?.name ?? 'this organization'}
-              member={row.original}
-              csrfToken={csrfToken}
-              disabled={updateRoleMutation.isPending}
-            />
+            isCurrentAccountMember(account, row.original) ? (
+              <span aria-hidden className="block h-8 w-8" />
+            ) : (
+              <OrganizationMemberRemoval
+                key={row.original.id}
+                orgUuid={activeOrgUuid ?? ''}
+                organizationName={bootstrapOrganization?.name ?? 'this organization'}
+                member={row.original}
+                csrfToken={csrfToken}
+                disabled={updateRoleMutation.isPending}
+              />
+            )
           ),
       }),
     ],

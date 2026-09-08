@@ -146,7 +146,8 @@ agent toolset 的工具名需要归一化到 Managed Agents 配置使用的名�
 | `glob` | `Glob` |
 | `grep` | `Grep` |
 | `web_fetch` | `WebFetch` |
-| `web_search` | `WebSearch` |
+
+内置 `web_search` 已从工具目录移除，`WebSearch` 不再归一化，按 `unknown` 处理；第三方搜索能力应通过 MCP server 配置。
 
 无法识别的工具按 `unknown` 处理。`unknown` 不应被默认放行；除非后续有明确产品决策，默认按 `ask` 或 deny-safe 策略处理。
 

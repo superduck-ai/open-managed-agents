@@ -183,8 +183,6 @@ func managedAgentToolName(claudeToolName string) string {
 		return "todo_write"
 	case "webfetch", "web_fetch":
 		return "web_fetch"
-	case "websearch", "web_search":
-		return "web_search"
 	default:
 		return ""
 	}

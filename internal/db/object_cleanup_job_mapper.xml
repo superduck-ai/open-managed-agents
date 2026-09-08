@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ObjectCleanupJobMapper">
+    <insert id="EnqueueObjectCleanupJob" result="exec">
+        INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
+        VALUES (
+            concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+            #{workspaceUUID}, 'object_cleanup', 'pending', CAST(#{payload} AS jsonb)
+        )
+    </insert>
+
+    <insert id="EnqueueScheduledObjectCleanupJob" result="exec">
+        INSERT INTO jobs (external_id, workspace_uuid, type, status, payload, run_after)
+        VALUES (
+            #{params.ExternalID}, #{params.WorkspaceUUID}, 'object_cleanup', 'pending',
+            CAST(#{params.Payload} AS jsonb), #{params.RunAfter}
+        )
+    </insert>
+
+    <update id="ExpediteObjectCleanupJob" result="rows">
+        UPDATE jobs
+        SET status = CASE WHEN status = 'completed' THEN status ELSE 'pending' END,
+            run_after = CASE WHEN status = 'completed' THEN run_after ELSE NOW() END,
+            locked_by = CASE WHEN status = 'completed' THEN locked_by ELSE NULL END,
+            locked_until = CASE WHEN status = 'completed' THEN locked_until ELSE NULL END,
+            updated_at = NOW()
+        WHERE external_id = #{externalID} AND type = 'object_cleanup'
+    </update>
+
+    <update id="LeaseObjectCleanupJobs" result="returning" resultType="objectCleanupJobRow">
+        WITH next_jobs AS (
+            SELECT uuid
+            FROM jobs
+            WHERE type = 'object_cleanup'
+                AND run_after &lt;= now()
+                AND (
+                    status IN ('pending', 'retry')
+                    OR (status = 'running' AND locked_until &lt; now())
+                )
+            ORDER BY run_after, created_at
+            LIMIT #{limit}
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE jobs j
+        SET status = 'running', locked_by = #{workerID},
+            locked_until = now() + interval '1 minute', updated_at = now()
+        FROM next_jobs
+        WHERE j.uuid = next_jobs.uuid
+        RETURNING j.uuid, j.external_id, j.workspace_uuid,
+            COALESCE(j.payload-&gt;&gt;'bucket', '') AS bucket,
+            COALESCE(j.payload-&gt;&gt;'key', '') AS object_key,
+            COALESCE(j.payload-&gt;&gt;'file_id', '') AS file_external_id,
+            j.attempts
+    </update>
+
+    <update id="CompleteObjectCleanupJob" result="exec">
+        UPDATE jobs
+        SET status = 'completed', locked_by = NULL, locked_until = NULL, updated_at = now()
+        WHERE uuid = #{jobUUID} AND type = 'object_cleanup'
+    </update>
+
+    <update id="FailObjectCleanupJob" result="exec">
+        UPDATE jobs
+        SET status = #{params.Status}, locked_by = NULL, locked_until = NULL,
+            run_after = #{params.RunAfter}, updated_at = now(), attempts = #{params.Attempts},
+            payload = payload || jsonb_build_object('last_error', CAST(#{params.Reason} AS text))
+        WHERE uuid = #{params.JobUUID} AND type = 'object_cleanup'
+    </update>
+</mapper>

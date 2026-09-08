@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -243,7 +244,17 @@ func TestOrganizationJoiningLifecycle(t *testing.T) {
 	if got := staleCookie.loadBootstrap(t, map[string]string{"X-Workspace-ID": "workspace_missing"}); got.Account.UUID != f.bootstrap.Account.UUID {
 		t.Fatal("过期组织 cookie 影响 bootstrap")
 	}
-	if removed, err := f.app.db.RemoveOrgUser(t.Context(), f.organization, member.UserUUID); err != nil || !removed {
+	ownerSession, sessionErr := f.app.sessions.Get(t.Context(), responseCookie(f.ownerCookies, "sessionKey").Value)
+	if sessionErr != nil {
+		t.Fatal(sessionErr)
+	}
+	removeMember := func(role string) error {
+		if role != "admin" {
+			return errors.New("organization administrator required")
+		}
+		return nil
+	}
+	if removed, err := f.app.db.RemoveOrgUser(t.Context(), f.organization, member.UserUUID, ownerSession.UserExternalID, removeMember); err != nil || !removed {
 		t.Fatalf("移除成员：%t %v", removed, err)
 	}
 	f.respond(t, invite, "accept", http.StatusConflict)

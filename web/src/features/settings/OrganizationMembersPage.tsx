@@ -34,6 +34,7 @@ import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
 import {
   createOrganizationInvite,
   deleteOrganizationInvite,
@@ -67,7 +68,7 @@ export function OrganizationMembersPage() {
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrgUuid = orgUuid ?? bootstrapOrganization?.uuid;
-  const canManage = canManageMembers(account);
+  const canManage = canManageMembers(account, activeOrgUuid);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
   const [inviteToRevoke, setInviteToRevoke] = useState<OrganizationInvite | null>(null);
@@ -235,7 +236,14 @@ export function OrganizationMembersPage() {
               }}
             />
           ) : (
-            <span aria-hidden className="block h-8 w-8" />
+            <OrganizationMemberRemoval
+              key={row.original.id}
+              orgUuid={activeOrgUuid ?? ''}
+              organizationName={bootstrapOrganization?.name ?? 'this organization'}
+              member={row.original}
+              csrfToken={csrfToken}
+              disabled={updateRoleMutation.isPending}
+            />
           ),
       }),
     ],

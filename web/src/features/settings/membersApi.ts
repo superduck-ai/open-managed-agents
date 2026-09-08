@@ -78,3 +78,13 @@ export function updateOrganizationMemberRole(
     },
   );
 }
+
+export function removeOrganizationMember(orgUuid: string, memberId: string, csrfToken?: string) {
+  return consoleApi<{ id: string; type: 'user_deleted' }>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/members/${encodeURIComponent(memberId)}`,
+    {
+      method: 'DELETE',
+      csrfToken,
+    },
+  );
+}

@@ -7,7 +7,7 @@ type AccountWithPermissions = AuthAccount & {
 
 const memberManagementRoles = new Set(['admin', 'owner', 'primary_owner', 'membership_admin']);
 
-export function canManageMembers(account: AuthAccount | null | undefined) {
+export function canManageMembers(account: AuthAccount | null | undefined, orgUuid?: string) {
   if (!account) {
     return false;
   }
@@ -18,7 +18,9 @@ export function canManageMembers(account: AuthAccount | null | undefined) {
     return true;
   }
 
-  return account.memberships?.some((membership) => memberManagementRoles.has(normalizeRole(membership.role))) ?? false;
+  const memberships =
+    account.memberships?.filter((membership) => !orgUuid || membership.organization?.uuid === orgUuid) ?? [];
+  return memberships.some((membership) => memberManagementRoles.has(normalizeRole(membership.role)));
 }
 
 function permissionNames(account: AccountWithPermissions) {

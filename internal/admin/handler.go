@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -562,8 +563,13 @@ func (h *Handler) requireTunnelsBeta(next http.Handler) http.Handler {
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || principal.CredentialType != "api_key" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing authenticated principal"))
+		return auth.Principal{}, false
+	}
+	memberRoute := strings.Contains(chi.RouteContext(r.Context()).RoutePattern(), "/workspaces/{workspace_id}/members")
+	if !principal.WorkspaceAccess.ManageOrganization() && !memberRoute {
+		h.writeError(w, r, organizationAdministratorRequired())
 		return auth.Principal{}, false
 	}
 	return principal, true

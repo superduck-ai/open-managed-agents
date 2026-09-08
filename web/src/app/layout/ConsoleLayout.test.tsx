@@ -475,6 +475,28 @@ describe('ConsoleShell', () => {
     expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
   });
 
+  test.each(['agents', 'sessions', 'environments', 'vaults', 'memory-stores', 'skills'])(
+    '从 %s 详情切换工作区后导航到列表',
+    async (section) => {
+      const path = `/workspaces/default/${section}/old-resource`;
+      resetTestDom(`https://oma.duck.ai${path}`);
+      const navigate = mock(async () => undefined);
+      renderWithWorkspaces(
+        <ConsoleShell
+          currentPath={path}
+          account={{ uuid: 'acct_test', email_address: 'test@example.com' }}
+          onLogout={() => undefined}
+          onNavigate={navigate}
+        >
+          <div>Resource detail</div>
+        </ConsoleShell>,
+      );
+      fireEvent.click(getWorkspaceMenuButton(/Default/i));
+      fireEvent.click(screen.getByRole('menuitem', { name: /foo/i }));
+      await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/workspaces/wrkspc_foo/${section}`));
+    },
+  );
+
   test('syncs the workspace selector from workspace-scoped routes', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/wrkspc_foo/logs');
 
@@ -590,6 +612,7 @@ function WorkspaceHarness({
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       orgUuid: 'org_test',
+      canManageWorkspaces: true,
       workspaces,
       activeWorkspace,
       activeWorkspaceId,

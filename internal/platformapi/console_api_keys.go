@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -70,30 +72,32 @@ func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to list workspaces")
 			return
 		}
-		includeArchived := r.URL.Query().Get("include_archived") == "true"
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		includeArchived := r.URL.Query().Get("include_archived") == "true" && principal.WorkspaceAccess.ManageOrganization()
 		workspaces, err := workspaceLister.ListConsoleWorkspaces(r.Context(), orgUUID, includeArchived)
 		if err != nil {
 			internalError(w, "failed to list workspaces")
 			return
 		}
+		workspaces, err = accessibleConsoleWorkspaces(r, store, workspaces)
+		if err != nil {
+			internalError(w, "failed to resolve workspace access")
+			return
+		}
 		out := make([]map[string]any, 0, len(workspaces))
 		for _, workspace := range workspaces {
-			if isDefaultConsoleWorkspace(workspace) {
-				continue
-			}
 			out = append(out, formatConsoleWorkspace(workspace))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
 }
 
-func isDefaultConsoleWorkspace(workspace ConsoleWorkspace) bool {
-	return strings.EqualFold(strings.TrimSpace(workspace.Name), defaultConsoleWorkspaceID)
-}
-
 func handleCreateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 	workspaceCreator, _ := store.(consoleWorkspaceCreator)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireOrganizationAdministrator(w, r) {
+			return
+		}
 		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
@@ -108,6 +112,10 @@ func handleCreateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 			return
 		}
 		name := strings.TrimSpace(body.Name)
+		if strings.EqualFold(name, "default") {
+			defaultWorkspaceNameReserved(w)
+			return
+		}
 		if name == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "workspace name is required"})
 			return
@@ -126,6 +134,10 @@ func handleCreateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 			Color:         displayColor,
 			DataResidency: normalizeConsoleWorkspaceDataResidency(body.DataResidency),
 		})
+		if errors.Is(err, db.ErrDuplicate) {
+			workspaceAlreadyExists(w)
+			return
+		}
 		if err != nil {
 			internalError(w, "failed to create workspace")
 			return
@@ -139,6 +151,9 @@ func handleListConsoleAPIKeys(store OrganizationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
+			return
+		}
+		if !requireOrganizationAdministrator(w, r) {
 			return
 		}
 		if apiKeyStore == nil {
@@ -358,14 +373,33 @@ func consoleWorkspaceScopeFromRequest(
 		internalError(w, "failed to load workspaces")
 		return WorkspaceScope{}, false
 	}
-	workspaces, err := lister.ListConsoleWorkspaces(r.Context(), orgUUID, false)
+	workspaces, err := lister.ListConsoleWorkspaces(r.Context(), orgUUID, true)
 	if err != nil {
 		internalError(w, "failed to load workspaces")
 		return WorkspaceScope{}, false
 	}
 	scope, err := ResolveWorkspaceScope(workspaceReference, workspaces)
 	if err == nil {
-		return scope, true
+		accessStore, ok := lister.(workspaceaccess.Store)
+		principal, authenticated := auth.PrincipalFromContext(r.Context())
+		if !ok || !authenticated {
+			workspaceAccessDenied(w)
+			return WorkspaceScope{}, false
+		}
+		_, access, accessErr := workspaceaccess.New(accessStore).Resolve(r.Context(), orgUUID, principal.UserExternalID, scope.UUID)
+		if accessErr == nil && access.Develop() {
+			return scope, true
+		}
+		workspaceAccessDenied(w)
+		return WorkspaceScope{}, false
+	}
+	for _, workspace := range workspaces {
+		matches := workspaceReference == workspace.UUID || workspaceReference == workspace.ExternalID ||
+			(workspaceReference == defaultConsoleWorkspaceID && workspace.IsDefault)
+		if matches && workspace.ArchivedAt != nil {
+			workspaceAccessDenied(w)
+			return WorkspaceScope{}, false
+		}
 	}
 	writeJSON(w, http.StatusNotFound, map[string]any{"error": "workspace not found"})
 	return WorkspaceScope{}, false
@@ -484,6 +518,9 @@ func formatConsoleWorkspace(workspace ConsoleWorkspace) map[string]any {
 	}
 	return map[string]any{
 		"id":                       workspace.ExternalID,
+		"is_default":               workspace.IsDefault,
+		"effective_role":           workspace.EffectiveRole,
+		"role_source":              workspace.RoleSource,
 		"type":                     "workspace",
 		"name":                     workspace.Name,
 		"display_color":            displayColor,

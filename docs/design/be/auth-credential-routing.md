@@ -168,8 +168,8 @@ http.SetCookie(w, &http.Cookie{
 ## 4. 兼容边界
 
 1. **凭证路由选择** — `/v1/*` 按上述凭证规则分流；控制台 `/api/*` 仍使用平台 session。下述 workspace 鉴权规则同时适用于这两类平台请求。
-2. **workspace API key 逻辑** — 原验证、权限和 scope 不变；`POST /v1/messages` 额外接受受路径、active session 与 CCR worker lease 约束的 OAuth-compatible token。`/v1/filestore` 不接受上述凭证，只接受绑定单个 filesystem 的 Filestore JWT；Code Session Ingress 与 `/v1/messages` 的既有鉴权不受影响。
-3. **platform session 持久化结构** — 不变。session cookie 仍保存登录时解析出的默认 workspace 身份，不写回请求级 workspace。请求携带 `X-Workspace-ID` 或 `workspace_id` 时，鉴权层把客户端值解析为本次请求的 workspace scope；未指定或使用 `default` 时解析默认 workspace，同样验证权限。组织管理员可以访问组织内 workspace，普通用户必须具有有效的 `workspace_members` 记录。目标 workspace 不存在、已归档或用户无权访问时返回 `403`；**没有 active API key 不影响平台鉴权**。登录身份查询完全不关联 API key，已有 session 的 UUID 刷新也不以缺少 API key 为触发条件，保证停用所有 key 后仍可重新登录。不新增 `created_by_user_uuid` 列，也不通过资源创建者判断操作权限。
+2. **workspace API key 逻辑** — 保持工作区凭据语义，检查目标空间未归档，不获得组织管理权限；`POST /v1/messages` 额外接受受路径、active session 与 CCR worker lease 约束的 OAuth-compatible token。`/v1/filestore` 不接受上述凭证，只接受绑定单个 filesystem 的 Filestore JWT；Code Session Ingress 与 `/v1/messages` 的既有鉴权不受影响。
+3. **platform session 持久化结构** — 不变。session cookie 仍保存登录时解析出的默认 workspace 身份，不写回请求级 workspace。请求携带 `X-Workspace-ID` 或 `workspace_id` 时，鉴权层把客户端值解析为本次请求的 workspace scope；未指定或使用 `default` 时解析默认 workspace，同样验证权限。Default 仅按当前组织角色投影并忽略历史成员；普通空间 Admin/Billing 继承，其他组织成员必须具有有效显式关系，Billing 允许显式提升为 Workspace Admin。目标 workspace 不存在、已归档或用户无权访问时返回 `403`；**没有 active API key 不影响平台鉴权**。登录身份查询完全不关联 API key，已有 session 的 UUID 刷新也不以缺少 API key 为触发条件，保证停用所有 key 后仍可重新登录。不新增 `created_by_user_uuid` 列，也不通过资源创建者判断操作权限。
 
 ### 4.1 平台鉴权与资源创建者
 
@@ -258,3 +258,11 @@ flowchart LR
 | `tests/console_invites_api_test.go` | 保留有效 session 下的 organization alias 兼容测试，移除 session 自动恢复预期 |
 | `internal/platformapi/platform_auth_routes.go` | `sessionKey` cookie 添加 `HttpOnly: true` 和 `SameSite: Lax` |
 | `docs/design/be/auth-credential-routing.md` | 本设计文档 |
+
+## #339 当前权限边界
+
+平台用户每次请求通过 `workspaceaccess.Service` 读取有效组织成员和工作区事实。Default 依据 `is_default` 解析，完全忽略历史成员；普通空间按组织继承与显式成员计算，Billing 仅允许显式 Admin 覆盖。结果仅放在本次 Principal，session 不保存权限快照。
+
+Workspace API Key 不依赖创建者的当前组织身份，不能取得组织管理权限。当前没有独立 Admin Key 类型，组织管理接口要求有效 Org Admin 用户权限，工作区成员接口也允许目标空间的 Workspace Admin；旧版 Workspace Key 能调用组织管理接口的行为不再保留。专用 service 凭据保留原用途约束，所有凭据都检查目标空间未归档。
+
+完整角色、发布兼容和测试合同见 [组织与工作区权限管理](./组织与工作区权限管理实现计划.md)。

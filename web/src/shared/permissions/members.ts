@@ -13,6 +13,7 @@ export function canManageMembers(account: AuthAccount | null | undefined) {
   }
 
   const permissions = permissionNames(account as AccountWithPermissions);
+  if (account.permissions) return permissions.has('members:manage');
   if (permissions.has('members:manage') || permissions.has('membership_admins:manage')) {
     return true;
   }

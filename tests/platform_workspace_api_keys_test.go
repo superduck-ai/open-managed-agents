@@ -76,7 +76,7 @@ func TestPlatformWorkspaceAPIKeyLifecycle(t *testing.T) {
 		if !strings.Contains(bootstrap, "key-lifecycle@example.com") {
 			t.Fatal("bootstrap lost the authenticated account in a workspace without keys")
 		}
-		request(t, http.MethodPost, consolePath+"/workspaces", `{"name":"Another workspace"}`, http.StatusOK)
+		request(t, http.MethodPost, consolePath+"/workspaces", `{"name":`+strconv.Quote("Another workspace "+uniqueAdminSuffix())+`}`, http.StatusOK)
 	})
 
 	keyBody := request(t, http.MethodPost, keysPath, `{"name":"First key"}`, http.StatusOK)

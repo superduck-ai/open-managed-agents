@@ -1905,5 +1905,9 @@
   "observability.kind.tool_wait": "等待用户",
   "observability.kind.tool_execution": "工具执行",
   "observability.kind.hook": "Hook",
-  "observability.kind.other": "其他"
+  "observability.kind.other": "其他",
+  "members.defaultNotice": "默认工作区的成员在组织级别管理。",
+  "members.organizationSettings": "前往组织设置",
+  "members.userId": "用户 ID",
+  "workspace.create.reservedName": "Default 是默认工作区的保留名称，请使用其他名称。"
 }

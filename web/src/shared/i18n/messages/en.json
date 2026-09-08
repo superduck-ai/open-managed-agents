@@ -1905,5 +1905,9 @@
   "observability.kind.tool_wait": "Waiting on user",
   "observability.kind.tool_execution": "Tool execution",
   "observability.kind.hook": "Hook",
-  "observability.kind.other": "Other"
+  "observability.kind.other": "Other",
+  "members.defaultNotice": "Members for the default workspace are managed at the organization level.",
+  "members.organizationSettings": "Go to organization settings",
+  "members.userId": "User ID",
+  "workspace.create.reservedName": "Default is reserved for the default workspace. Choose another name."
 }

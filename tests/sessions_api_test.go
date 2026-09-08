@@ -3114,6 +3114,8 @@ func TestCodeSessionWorkerEventsStreamStopsAfterEpochTakeover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append takeover inbound event: %v", err)
 	}
+	// 流由消息代理唤醒；直接写数据库的测试夹具不会发布通知。
+	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"wake stream after takeover"}]}]}`, defaultTestKey)
 
 	done := make(chan error, 1)
 	go func() {

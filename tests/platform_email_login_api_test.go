@@ -103,8 +103,8 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 	}
 	var workspaces []map[string]any
 	decodeJSON(t, workspacesResp.Body, &workspaces)
-	if len(workspaces) != 0 {
-		t.Fatalf("signup workspaces = %#v, want no custom workspaces in console list", workspaces)
+	if len(workspaces) != 1 || workspaces[0]["is_default"] != true {
+		t.Fatalf("signup workspaces = %#v, want marked default workspace", workspaces)
 	}
 	var defaultWorkspaceCount int
 	if err := app.pool.QueryRow(context.Background(), `
@@ -119,6 +119,21 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 	}
 	if defaultWorkspaceCount != 1 {
 		t.Fatalf("default workspace count = %d, want 1", defaultWorkspaceCount)
+	}
+	var defaultMemberCount int
+	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_members WHERE organization_uuid=$1`, orgCookie.Value).Scan(&defaultMemberCount); err != nil {
+		t.Fatal(err)
+	}
+	if defaultMemberCount != 0 {
+		t.Fatalf("新组织写入了 %d 条默认成员记录", defaultMemberCount)
+	}
+	for range 2 {
+		repeat := app.platformRequest(t, http.MethodPost, "/api/auth/verify_magic_link", strings.NewReader(`{"credentials":{"method":"code","code":"123456","email_address":"ada.login@example.com"}}`), nil)
+		repeat.Body.Close()
+		selectedOrg := responseCookie(repeat.Cookies(), "lastActiveOrg")
+		if repeat.StatusCode != http.StatusOK || selectedOrg == nil || selectedOrg.Value != orgCookie.Value {
+			t.Fatalf("无默认成员重复登录更换了组织: status=%d", repeat.StatusCode)
+		}
 	}
 
 	missingSessionCookies := []*http.Cookie{
@@ -238,7 +253,7 @@ func TestPlatformWorkspaceHeaderScopesV1Resources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load platform session: %v", err)
 	}
-	if _, err := app.db.UpdateAdminUserRole(context.Background(), orgCookie.Value, platformSession.UserExternalID, "user"); err != nil {
+	if _, err := app.db.UpdateAdminUserRole(context.Background(), orgCookie.Value, platformSession.UserExternalID, "developer"); err != nil {
 		t.Fatalf("set platform user role: %v", err)
 	}
 	deniedResp := app.platformRequestWithHeaders(t, http.MethodGet, "/v1/agents?beta=true&limit=1", nil, cookies, map[string]string{

@@ -88,10 +88,6 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
 	}
-	memberExternalID, err := ids.New("wmem_")
-	if err != nil {
-		return db.PlatformAuthUserContext{}, err
-	}
 	apiKeyExternalID, err := ids.New("api_key_")
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
@@ -126,17 +122,6 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 		CompartmentID:    uuid.NewV4().String(),
 	})
 	if err != nil {
-		return db.PlatformAuthUserContext{}, err
-	}
-	if err := tx.InsertWorkspaceMember(ctx, db.PlatformAuthWorkspaceMemberInput{
-		ExternalID:          memberExternalID,
-		OrganizationUUID:    org.UUID,
-		WorkspaceUUID:       workspace.UUID,
-		WorkspaceExternalID: workspaceExternalID,
-		UserUUID:            user.UUID,
-		UserExternalID:      userExternalID,
-		WorkspaceRole:       "workspace_admin",
-	}); err != nil {
 		return db.PlatformAuthUserContext{}, err
 	}
 

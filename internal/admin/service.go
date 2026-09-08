@@ -3,8 +3,6 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"net/http"
 	"strings"
 	"time"
 	"uuid"
@@ -13,21 +11,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 )
 
 type Service struct {
 	cfg config.Config
 	db  *db.DB
-}
-
-type serviceError struct {
-	status  int
-	typ     string
-	message string
-}
-
-func (e *serviceError) Error() string {
-	return e.message
 }
 
 func NewService(cfg config.Config, database *db.DB) *Service {
@@ -171,6 +160,9 @@ func (s *Service) DeleteUser(ctx context.Context, principal auth.Principal, user
 
 func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal, req createWorkspaceRequest) (workspaceResponse, error) {
 	name := strings.TrimSpace(req.Name)
+	if strings.EqualFold(name, "default") {
+		return workspaceResponse{}, invalidRequest("Default Workspace name is reserved")
+	}
 	if name == "" {
 		return workspaceResponse{}, invalidRequest("name is required")
 	}
@@ -252,6 +244,9 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
+	if current.IsDefault && req.Name != nil {
+		return workspaceResponse{}, invalidRequest(workspaceaccess.ErrDefaultProtected.Error())
+	}
 	currentResidency, err := decodeDataResidency(current.DataResidency)
 	if err != nil {
 		return workspaceResponse{}, invalidRequest("stored data_residency is invalid")
@@ -302,7 +297,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 		}
 		externalKeyID = &nextExternalKeyID
 	}
-	updated, err := s.db.UpdateAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID, db.AdminWorkspace{
+	updated, err := s.db.UpdateAdminWorkspace(ctx, principal.OrganizationUUID, current.ExternalID, db.AdminWorkspace{
 		Name:          name,
 		DataResidency: residencyJSON,
 		ExternalKeyID: externalKeyID,
@@ -316,92 +311,18 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 }
 
 func (s *Service) ArchiveWorkspace(ctx context.Context, principal auth.Principal, workspaceID string) (workspaceResponse, error) {
-	workspace, err := s.db.ArchiveAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
+	current, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
+	if err != nil {
+		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
+	}
+	if current.IsDefault {
+		return workspaceResponse{}, invalidRequest(workspaceaccess.ErrDefaultProtected.Error())
+	}
+	workspace, err := s.db.ArchiveAdminWorkspace(ctx, principal.OrganizationUUID, current.ExternalID)
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
 	return s.workspaceFromRecord(workspace), nil
-}
-
-func (s *Service) CreateWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID string, req createWorkspaceMemberRequest) (workspaceMemberResponse, error) {
-	if err := validateWorkspaceRole(req.WorkspaceRole, false); err != nil {
-		return workspaceMemberResponse{}, invalidRequest(err.Error())
-	}
-	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace not found")
-	}
-	user, err := s.db.GetAdminUser(ctx, principal.OrganizationUUID, req.UserID)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "User not found")
-	}
-	memberID, err := ids.New("wmem_")
-	if err != nil {
-		return workspaceMemberResponse{}, err
-	}
-	member, err := s.db.CreateAdminWorkspaceMember(ctx, db.AdminWorkspaceMember{
-		ExternalID:          memberID,
-		OrganizationUUID:    workspace.OrganizationUUID,
-		WorkspaceUUID:       workspace.UUID,
-		WorkspaceExternalID: workspace.ExternalID,
-		UserUUID:            user.UUID,
-		UserExternalID:      user.ExternalID,
-		WorkspaceRole:       req.WorkspaceRole,
-		CreatedAt:           time.Now().UTC(),
-	})
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Could not create workspace member")
-	}
-	return workspaceMemberFromRecord(member), nil
-}
-
-func (s *Service) GetWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string) (workspaceMemberResponse, error) {
-	member, err := s.db.GetAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace member not found")
-	}
-	return workspaceMemberFromRecord(member), nil
-}
-
-func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Principal, workspaceID, afterID, beforeID string, limit int) (cursorPageResponse[workspaceMemberResponse], error) {
-	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
-	if err != nil {
-		return cursorPageResponse[workspaceMemberResponse]{}, mapAdminDBError(err, "Workspace not found")
-	}
-	records, hasMore, err := s.db.ListAdminWorkspaceMembersPage(ctx, db.ListAdminMembersParams{
-		OrganizationUUID: principal.OrganizationUUID,
-		WorkspaceUUID:    workspace.UUID,
-		AfterID:          afterID,
-		BeforeID:         beforeID,
-		Limit:            limit,
-	})
-	if err != nil {
-		return cursorPageResponse[workspaceMemberResponse]{}, err
-	}
-	data := make([]workspaceMemberResponse, 0, len(records))
-	for _, record := range records {
-		data = append(data, workspaceMemberFromRecord(record))
-	}
-	return cursorPage(data, hasMore, func(value workspaceMemberResponse) string { return value.UserID }), nil
-}
-
-func (s *Service) UpdateWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string, req updateWorkspaceMemberRequest) (workspaceMemberResponse, error) {
-	if err := validateWorkspaceRole(req.WorkspaceRole, true); err != nil {
-		return workspaceMemberResponse{}, invalidRequest(err.Error())
-	}
-	member, err := s.db.UpdateAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID, req.WorkspaceRole)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace member not found")
-	}
-	return workspaceMemberFromRecord(member), nil
-}
-
-func (s *Service) DeleteWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string) (map[string]string, error) {
-	member, err := s.db.DeleteAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID)
-	if err != nil {
-		return nil, mapAdminDBError(err, "Workspace member not found")
-	}
-	return map[string]string{"type": "workspace_member_deleted", "user_id": member.UserExternalID, "workspace_id": member.WorkspaceExternalID}, nil
 }
 
 func (s *Service) GetAPIKey(ctx context.Context, principal auth.Principal, apiKeyID string) (apiKeyResponse, error) {
@@ -887,28 +808,6 @@ func tunnelCertificateFromRecord(record db.AdminTunnelCertificate) tunnelCertifi
 		TunnelID:    record.TunnelExternalID,
 		Type:        "tunnel_certificate",
 	}
-}
-
-func mapAdminDBError(err error, missingMessage string) error {
-	if errors.Is(err, db.ErrNotFound) {
-		return notFound(missingMessage)
-	}
-	if errors.Is(err, db.ErrDuplicate) {
-		return conflict("Resource already exists")
-	}
-	return err
-}
-
-func invalidRequest(message string) error {
-	return &serviceError{status: http.StatusBadRequest, typ: "invalid_request_error", message: message}
-}
-
-func notFound(message string) error {
-	return &serviceError{status: http.StatusNotFound, typ: "not_found_error", message: message}
-}
-
-func conflict(message string) error {
-	return &serviceError{status: http.StatusConflict, typ: "conflict_error", message: message}
 }
 
 func emptyReport() reportResponse {

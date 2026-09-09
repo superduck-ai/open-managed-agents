@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-//go:generate go tool sqlmapgen -dir $PWD -mapper MCPTunnelMapper -sql ./mcp_tunnel.xml -out ./mcp_tunnel.sqlmap.gen.go -dialect postgres
+//go:generate go tool sqlmapgen -dir $PWD -mapper MCPTunnelMapper -sql ./mcp_tunnel_mapper.xml -out ./mcp_tunnel_mapper.sqlmap.gen.go -dialect postgres
 
 type mcpTunnelRow struct {
 	UUID             string     `db:"uuid"`

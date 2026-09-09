@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-//go:generate go tool sqlmapgen -dir $PWD -mapper MCPTunnelCertificateMapper -sql ./mcp_tunnel_certificate.xml -out ./mcp_tunnel_certificate.sqlmap.gen.go -dialect postgres
+//go:generate go tool sqlmapgen -dir $PWD -mapper MCPTunnelCertificateMapper -sql ./mcp_tunnel_certificate_mapper.xml -out ./mcp_tunnel_certificate_mapper.sqlmap.gen.go -dialect postgres
 
 type MCPTunnelCertificateMapper interface {
 	Insert(ctx context.Context, params insertMCPTunnelCertificateParams) (mcpTunnelCertificateRow, error)

@@ -117,12 +117,18 @@ func (d *DB) ListMCPTunnelsPage(ctx context.Context, params ListMCPTunnelsParams
 
 func (d *DB) GetActiveMCPTunnelToken(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (MCPTunnelTokenVersion, error) {
 	tunnel, err := d.GetMCPTunnel(ctx, organizationUUID, workspaceUUID, externalID)
-	if err != nil || tunnel.ArchivedAt != nil {
+	if err != nil {
+		return MCPTunnelTokenVersion{}, err
+	}
+	if tunnel.ArchivedAt != nil {
 		return MCPTunnelTokenVersion{}, ErrNotFound
 	}
-	row, err := NewMCPTunnelTokenMapper(d.mapperDB).FindActiveByTunnelUUID(ctx, tunnel.UUID)
+	row, found, err := NewMCPTunnelTokenMapper(d.mapperDB).FindActiveByTunnelUUID(ctx, tunnel.UUID)
 	if err != nil {
-		return MCPTunnelTokenVersion{}, mapNoRows(err)
+		return MCPTunnelTokenVersion{}, err
+	}
+	if !found {
+		return MCPTunnelTokenVersion{}, ErrNotFound
 	}
 	return mcpTunnelTokenFromRow(row), nil
 }
@@ -145,9 +151,12 @@ func (d *DB) RotateMCPTunnelToken(
 			return mapNoRows(err)
 		}
 		tokenMapper := NewMCPTunnelTokenMapper(executor)
-		current, err := tokenMapper.FindActiveForUpdate(ctx, tunnelRow.UUID)
+		current, found, err := tokenMapper.FindActiveForUpdate(ctx, tunnelRow.UUID)
 		if err != nil {
-			return mapNoRows(err)
+			return err
+		}
+		if !found {
+			return ErrNotFound
 		}
 		nextVersion, err := nextMCPTunnelTokenVersion(current.Version, expectedVersion)
 		if err != nil {
@@ -205,9 +214,12 @@ func (d *DB) ArchiveMCPTunnel(ctx context.Context, organizationUUID, workspaceUU
 }
 
 func (d *DB) FindMCPTunnelTokenContext(ctx context.Context, tunnelExternalID string, tokenHash []byte) (MCPTunnelTokenContext, error) {
-	row, err := NewMCPTunnelTokenMapper(d.mapperDB).FindByHashAndTunnelExternalID(ctx, tokenHash, tunnelExternalID)
+	row, found, err := NewMCPTunnelTokenMapper(d.mapperDB).FindByHashAndTunnelExternalID(ctx, tokenHash, tunnelExternalID)
 	if err != nil {
-		return MCPTunnelTokenContext{}, mapNoRows(err)
+		return MCPTunnelTokenContext{}, err
+	}
+	if !found {
+		return MCPTunnelTokenContext{}, ErrNotFound
 	}
 	tokenRow := mcpTunnelTokenRow{
 		UUID: row.UUID, ExternalID: row.ExternalID, TunnelUUID: row.TunnelUUID,

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-//go:generate go tool sqlmapgen -dir $PWD -mapper MCPTunnelTokenMapper -sql ./mcp_tunnel_token.xml -out ./mcp_tunnel_token.sqlmap.gen.go -dialect postgres
+//go:generate go tool sqlmapgen -dir $PWD -mapper MCPTunnelTokenMapper -sql ./mcp_tunnel_token_mapper.xml -out ./mcp_tunnel_token_mapper.sqlmap.gen.go -dialect postgres
 
 type mcpTunnelTokenRow struct {
 	UUID          string         `db:"uuid"`
@@ -63,9 +63,9 @@ type insertMCPTunnelTokenParams struct {
 
 type MCPTunnelTokenMapper interface {
 	Insert(ctx context.Context, params insertMCPTunnelTokenParams) (mcpTunnelTokenRow, error)
-	FindActiveByTunnelUUID(ctx context.Context, tunnelUUID string) (mcpTunnelTokenRow, error)
-	FindActiveForUpdate(ctx context.Context, tunnelUUID string) (mcpTunnelTokenRow, error)
-	FindByHashAndTunnelExternalID(ctx context.Context, tokenHash []byte, tunnelExternalID string) (mcpTunnelTokenContextRow, error)
+	FindActiveByTunnelUUID(ctx context.Context, tunnelUUID string) (mcpTunnelTokenRow, bool, error)
+	FindActiveForUpdate(ctx context.Context, tunnelUUID string) (mcpTunnelTokenRow, bool, error)
+	FindByHashAndTunnelExternalID(ctx context.Context, tokenHash []byte, tunnelExternalID string) (mcpTunnelTokenContextRow, bool, error)
 	RetireActiveByTunnelUUID(ctx context.Context, tunnelUUID string, retiredAt time.Time) (int64, error)
 	ArchiveByTunnelUUID(ctx context.Context, tunnelUUID string, archivedAt time.Time) error
 }

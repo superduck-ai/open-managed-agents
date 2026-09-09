@@ -44,6 +44,24 @@ func TestSessionCredentialsRejectInvalidTokens(t *testing.T) {
 		})
 	}
 
+	for _, test := range []struct {
+		name   string
+		change func(*SessionCredentialClaims)
+	}{
+		{"issuer", func(c *SessionCredentialClaims) { c.Issuer = "other-service" }},
+		{"audience", func(c *SessionCredentialClaims) { c.Audience = jwt.ClaimStrings{"other-service"} }},
+		{"role", func(c *SessionCredentialClaims) { c.Role = "other-role" }},
+	} {
+		t.Run("failure "+test.name, func(t *testing.T) {
+			changed := claims
+			test.change(&changed)
+			token := signTestJWT(t, jwt.SigningMethodEdDSA, credentials.privateKey, credentials.kid, changed)
+			if _, err := credentials.Verify(token); err == nil {
+				t.Fatal("accepted incompatible credential claims")
+			}
+		})
+	}
+
 	t.Run("failure signature", func(t *testing.T) {
 		other := newTestSessionCredentials(t, &now)
 		rawToken := signTestJWT(t, jwt.SigningMethodEdDSA, other.privateKey, credentials.kid, claims)
@@ -114,36 +132,6 @@ func TestSessionCredentialsClaimsAndLifecycle(t *testing.T) {
 	}
 	if !strings.HasPrefix(oauthToken, oauthCompatibleTokenPrefix) || strings.Contains(oauthToken, ".") {
 		t.Fatalf("unexpected OAuth-compatible token format: %q", oauthToken)
-	}
-}
-
-func TestSessionCredentialsSeparateMCPProxyCapability(t *testing.T) {
-	now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.UTC)
-	credentials := newTestSessionCredentials(t, &now)
-	identity := testSessionCredentialIdentity()
-	sessionToken, err := credentials.Issue(identity)
-	if err != nil {
-		t.Fatalf("Issue() error = %v", err)
-	}
-	mcpToken, err := credentials.IssueMCPProxy(identity)
-	if err != nil {
-		t.Fatalf("IssueMCPProxy() error = %v", err)
-	}
-	if !strings.HasPrefix(mcpToken, mcpProxyTokenPrefix) {
-		t.Fatalf("MCP token = %q, want %q prefix", mcpToken, mcpProxyTokenPrefix)
-	}
-	claims, err := credentials.VerifyMCPProxy(mcpToken)
-	if err != nil {
-		t.Fatalf("VerifyMCPProxy() error = %v", err)
-	}
-	if claims.Issuer != mcpProxyIssuer || len(claims.Audience) != 1 || claims.Audience[0] != mcpProxyAudience || claims.Application != "oma" || claims.Role != "mcp_proxy" {
-		t.Fatalf("unexpected MCP proxy claims: %#v", claims)
-	}
-	if _, err := credentials.VerifyMCPProxy(sessionToken); err == nil {
-		t.Fatal("VerifyMCPProxy() accepted session-ingress token")
-	}
-	if _, err := credentials.Verify(mcpToken); err == nil {
-		t.Fatal("Verify() accepted MCP proxy token")
 	}
 }
 

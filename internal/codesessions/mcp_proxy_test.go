@@ -60,9 +60,77 @@ func TestMCPProxyAuthorizationRejectsURLNotInSession(t *testing.T) {
 	}
 }
 
+func TestNamedMCPGatewayRejectsInvalidSessionCredentials(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		epoch     int64
+		sessionID string
+	}{
+		{"missing epoch", 0, "cse_test"},
+		{"different session", 1, "cse_other"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler, _ := newNamedMCPTestHandler(t, "local", "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef")
+			identity := testSessionCredentialIdentity()
+			identity.WorkerEpoch, identity.SessionID = test.epoch, test.sessionID
+			token, err := handler.service.credentials.Issue(identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler.loadMCPPolicyContext = func(context.Context, upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
+				t.Fatal("invalid credential reached policy lookup")
+				return mcpProxyPolicyContext{}, nil
+			}
+			router := chi.NewRouter()
+			router.Route("/v2", handler.RegisterV2Routes)
+			router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", handler.HandleMCPProtectedResource)
+			for _, path := range []string{
+				"/v2/ccr-sessions/cse_test/mcp/local",
+				"/.well-known/oauth-protected-resource/v2/ccr-sessions/cse_test/mcp/local",
+			} {
+				request := httptest.NewRequest(http.MethodGet, path, nil)
+				request.Header.Set("Authorization", "Bearer "+token)
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if response.Code != http.StatusUnauthorized {
+					t.Fatalf("%s status = %d, want 401", path, response.Code)
+				}
+			}
+		})
+	}
+}
+
+func TestMCPProxyRejectsWhitespaceSessionID(t *testing.T) {
+	handler, sessionToken := newNamedMCPTestHandler(t, "local", "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef")
+	handler.loadMCPPolicyContext = func(context.Context, upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
+		t.Fatal("invalid session ID reached policy lookup")
+		return mcpProxyPolicyContext{}, nil
+	}
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", handler.HandleMCPProtectedResource)
+	for _, id := range []string{" cse_test", "cse_test ", " "} {
+		for _, route := range []struct {
+			method, path, token string
+		}{
+			{http.MethodPost, "/v2/ccr-sessions/" + url.PathEscape(id) + "/mcp", sessionToken},
+			{http.MethodPost, "/v2/ccr-sessions/" + url.PathEscape(id) + "/mcp/local", sessionToken},
+			{http.MethodGet, "/.well-known/oauth-protected-resource/v2/ccr-sessions/" + url.PathEscape(id) + "/mcp/local", sessionToken},
+		} {
+			request := httptest.NewRequest(route.method, route.path, nil)
+			request.Header.Set("Authorization", "Bearer "+route.token)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("%s returned %d, want 401", route.path, response.Code)
+			}
+		}
+	}
+}
+
 func TestNamedMCPProxyDispatchesOnlyThroughTunnelInvokerAndSeparatesCredentials(t *testing.T) {
 	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
-	handler, mcpToken, sessionToken := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
+	handler, sessionToken := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
 	var tunnelRequest *http.Request
 	var tunnelTarget *url.URL
 	handler.tunnelInvoker = tunnelInvokerFuncs{
@@ -82,24 +150,16 @@ func TestNamedMCPProxyDispatchesOnlyThroughTunnelInvokerAndSeparatesCredentials(
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
 
-	request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/local_tunnel", strings.NewReader(`{}`))
-	request.Header.Set("Authorization", "Bearer "+sessionToken)
+	request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/missing", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "  Bearer "+sessionToken+"  ")
 	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("named MCP proxy accepted session token: status = %d", response.Code)
-	}
-
-	request = httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/missing", strings.NewReader(`{}`))
-	request.Header.Set("Authorization", "Bearer "+mcpToken)
-	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("missing named MCP server status = %d, want 404", response.Code)
 	}
 
 	request = httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/%20local_tunnel%20", strings.NewReader(`{}`))
-	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	request.Header.Set("Authorization", "Bearer "+sessionToken)
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
@@ -107,7 +167,7 @@ func TestNamedMCPProxyDispatchesOnlyThroughTunnelInvokerAndSeparatesCredentials(
 	}
 
 	request = httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/local_tunnel", strings.NewReader(`{}`))
-	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	request.Header.Set("Authorization", "Bearer "+sessionToken)
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -117,12 +177,12 @@ func TestNamedMCPProxyDispatchesOnlyThroughTunnelInvokerAndSeparatesCredentials(
 		t.Fatalf("named MCP Tunnel target = %#v", tunnelTarget)
 	}
 	if tunnelRequest == nil || tunnelRequest.Header.Get("Authorization") != "" {
-		t.Fatalf("MCP capability leaked to TunnelInvoker: %#v", tunnelRequest)
+		t.Fatalf("Session ingress token leaked to TunnelInvoker: %#v", tunnelRequest)
 	}
 }
 
 func TestNamedMCPProxyRejectsOrdinaryMCPWithoutOutboundRequest(t *testing.T) {
-	handler, mcpToken, _ := newNamedMCPTestHandler(t, "docs", "https://mcp.example.test/api/mcp")
+	handler, sessionToken := newNamedMCPTestHandler(t, "docs", "https://mcp.example.test/api/mcp")
 	handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(http.ResponseWriter, *http.Request, string, string, *url.URL) bool {
 		return false
 	}}
@@ -133,7 +193,7 @@ func TestNamedMCPProxyRejectsOrdinaryMCPWithoutOutboundRequest(t *testing.T) {
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
 	request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/docs", strings.NewReader(`{}`))
-	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	request.Header.Set("Authorization", "Bearer "+sessionToken)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
@@ -143,7 +203,7 @@ func TestNamedMCPProxyRejectsOrdinaryMCPWithoutOutboundRequest(t *testing.T) {
 
 func TestNamedMCPProxySupportsEscapedServerNamePath(t *testing.T) {
 	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
-	handler, mcpToken, _ := newNamedMCPTestHandler(t, "team/tools", targetURL)
+	handler, sessionToken := newNamedMCPTestHandler(t, "team/tools", targetURL)
 	var tunnelTarget *url.URL
 	handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(w http.ResponseWriter, _ *http.Request, _, _ string, target *url.URL) bool {
 		tunnelTarget = target
@@ -153,7 +213,7 @@ func TestNamedMCPProxySupportsEscapedServerNamePath(t *testing.T) {
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
 	request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/team%2Ftools", strings.NewReader(`{}`))
-	request.Header.Set("Authorization", "Bearer "+mcpToken)
+	request.Header.Set("Authorization", "Bearer "+sessionToken)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
@@ -166,7 +226,7 @@ func TestNamedMCPProxySupportsEscapedServerNamePath(t *testing.T) {
 
 func TestMCPProxyQueryPreservesTunnelDispatch(t *testing.T) {
 	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
-	handler, _, sessionToken := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
+	handler, sessionToken := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
 	var tunnelTarget *url.URL
 	handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(w http.ResponseWriter, _ *http.Request, _, _ string, target *url.URL) bool {
 		tunnelTarget = target
@@ -251,9 +311,9 @@ func TestWriteCapturedMCPDiscoveryRewritesUnauthorizedRuntimeURLs(t *testing.T) 
 	}
 }
 
-func TestNamedMCPProtectedResourceUsesTunnelCapabilityAndPublicResourceURL(t *testing.T) {
+func TestNamedMCPProtectedResourceUsesSessionIngressAndPublicResourceURL(t *testing.T) {
 	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
-	handler, token, _ := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
+	handler, token := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
 	var tunnelRequest *http.Request
 	var tunnelTarget *url.URL
 	handler.tunnelInvoker = tunnelInvokerFuncs{discovery: func(w http.ResponseWriter, request *http.Request, _, _ string, target *url.URL) bool {
@@ -296,12 +356,12 @@ func TestNamedMCPProtectedResourceUsesTunnelCapabilityAndPublicResourceURL(t *te
 		t.Fatalf("Tunnel metadata target = %#v", tunnelTarget)
 	}
 	if tunnelRequest == nil || tunnelRequest.Header.Get("Authorization") != "" {
-		t.Fatalf("MCP capability leaked to Tunnel metadata request: %#v", tunnelRequest)
+		t.Fatalf("Session ingress token leaked to Tunnel metadata request: %#v", tunnelRequest)
 	}
 }
 
 func TestNamedMCPProtectedResourceRejectsOrdinaryMCPWithoutOutboundRequest(t *testing.T) {
-	handler, token, _ := newNamedMCPTestHandler(t, "docs", "https://mcp.example.test/api/mcp")
+	handler, token := newNamedMCPTestHandler(t, "docs", "https://mcp.example.test/api/mcp")
 	handler.tunnelInvoker = tunnelInvokerFuncs{discovery: func(http.ResponseWriter, *http.Request, string, string, *url.URL) bool {
 		return false
 	}}
@@ -364,7 +424,7 @@ func (f tunnelInvokerFuncs) ServeTunnelOAuthDiscovery(
 	return f.discovery(w, r, organizationUUID, workspaceUUID, target)
 }
 
-func newNamedMCPTestHandler(t *testing.T, serverName, targetURL string) (*Handler, string, string) {
+func newNamedMCPTestHandler(t *testing.T, serverName, targetURL string) (*Handler, string) {
 	t.Helper()
 	snapshot, err := json.Marshal(map[string]any{"mcp_servers": []any{map[string]any{
 		"name": serverName, "type": "http", "url": targetURL,
@@ -384,10 +444,7 @@ func newNamedMCPTestHandler(t *testing.T, serverName, targetURL string) (*Handle
 		SessionID: "cse_test", PublicSessionID: "sesn_test", AgentID: "agent_test", AgentVersion: 1,
 		OrganizationUUID: "00000000-0000-0000-0000-000000000001",
 		WorkspaceUUID:    "00000000-0000-0000-0000-000000000002",
-	}
-	mcpToken, err := credentials.IssueMCPProxy(identity)
-	if err != nil {
-		t.Fatalf("issue MCP proxy token: %v", err)
+		WorkerEpoch:      1,
 	}
 	sessionToken, err := credentials.Issue(identity)
 	if err != nil {
@@ -399,7 +456,7 @@ func newNamedMCPTestHandler(t *testing.T, serverName, targetURL string) (*Handle
 	handler.loadMCPPolicyContext = func(context.Context, upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
 		return mcpProxyPolicyContext{policy: policy}, nil
 	}
-	return handler, mcpToken, sessionToken
+	return handler, sessionToken
 }
 
 func TestMCPProxyVaultInjectionRejectedReturns502(t *testing.T) {
@@ -501,6 +558,7 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 		AgentVersion:     1,
 		OrganizationUUID: "00000000-0000-0000-0000-000000000001",
 		WorkspaceUUID:    "00000000-0000-0000-0000-000000000002",
+		WorkerEpoch:      1,
 	})
 	if err != nil {
 		t.Fatalf("issue session token: %v", err)
@@ -593,6 +651,7 @@ func newMCPProxyTestHandler(t *testing.T, allowedMCPURL string, logger *slog.Log
 		AgentVersion:     1,
 		OrganizationUUID: "00000000-0000-0000-0000-000000000001",
 		WorkspaceUUID:    "00000000-0000-0000-0000-000000000002",
+		WorkerEpoch:      1,
 	})
 	if err != nil {
 		t.Fatalf("issue session token: %v", err)

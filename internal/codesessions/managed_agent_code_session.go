@@ -35,7 +35,6 @@ type ManagedAgentCreateResult struct {
 	WorkerEpoch         int64
 	OAuthAccessToken    string
 	SessionIngressToken string
-	MCPProxyToken       string
 }
 
 type ManagedAgentRecoverInput struct {
@@ -174,10 +173,6 @@ func (s *Service) managedAgentCreateResult(
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	mcpProxyToken, err := s.issueMCPProxyToken(credentialContext, workerEpoch)
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
 	return ManagedAgentCreateResult{
 		CodeSessionID:       credentialContext.CodeSessionExternalID,
 		PublicSessionID:     credentialContext.PublicSessionExternalID,
@@ -185,7 +180,6 @@ func (s *Service) managedAgentCreateResult(
 		WorkerEpoch:         workerEpoch,
 		OAuthAccessToken:    oauthAccessToken,
 		SessionIngressToken: sessionIngressToken,
-		MCPProxyToken:       mcpProxyToken,
 	}, nil
 }
 

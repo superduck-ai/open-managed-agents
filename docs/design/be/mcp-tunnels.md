@@ -46,7 +46,7 @@ flowchart LR
     SDK[Claude SDK / CLI] -->|workspace API key| Management[Tunnel Management]
     Web[OMA Console] -->|cookie Session + CSRF| ConsoleAPI[Console Tunnel API]
     Caller[Direct MCP caller] -->|X-Api-Key| Ingress[MCP Ingress]
-    Agent[Sandbox Claude Code] -->|named Runtime Gateway URL + MCP capability| RuntimeGateway[Code Session Runtime Gateway]
+    Agent[Sandbox Claude Code] -->|named Runtime Gateway URL + SessionIngressToken| RuntimeGateway[Code Session Runtime Gateway]
     RuntimeGateway -. exact Agent Snapshot lookup .-> Ingress
     Management --> DB[(PostgreSQL)]
     Management -->|Certificate CRUD only| CertificateStore[(Certificate rows)]
@@ -83,8 +83,8 @@ NATS 必须启用 JetStream、提供三副本，所有节点 `max_payload` 至�
 | MCP Ingress           | `/v1/mcp/{tunnel_id}[/{channel}]`                                              | 只读取 `X-Api-Key`                                       | Principal 的 organization + workspace                         |
 | Connector metadata    | `GET /connector/v1/tunnels/{tunnel_id}`                                        | Bearer tunnel token                                      | token 所属 tunnel                                             |
 | Connector 数据面      | `/connector/v1/tunnels/{tunnel_id}/poll`、`response`                           | Bearer tunnel token                                      | token 所属 tunnel                                             |
-| Agent Runtime Gateway | `/v2/ccr-sessions/{code_session_id}/mcp/{server_name}`                         | 独立、session-scoped MCP capability JWT                  | token 中的 Code Session + Agent Snapshot 中的精确 server name |
-| OAuth discovery       | `/.well-known/oauth-protected-resource/v1/mcp/...` 或 Runtime Gateway 对应路径 | direct 使用 workspace API key；Agent 使用 MCP capability | 与对应 MCP resource 相同                                      |
+| Agent Runtime Gateway | `/v2/ccr-sessions/{code_session_id}/mcp/{server_name}`                         | SessionIngressToken（session-scoped JWT）                  | token 中的 Code Session + Agent Snapshot 中的精确 server name |
+| OAuth discovery       | `/.well-known/oauth-protected-resource/v1/mcp/...` 或 Runtime Gateway 对应路径 | direct 使用 workspace API key；Agent 使用 SessionIngressToken | 与对应 MCP resource 相同                                      |
 
 两个管理面都不增加 tunnel-specific RBAC。`/v1` 使用 active workspace API key；Console API 复用
 `platformAuthMiddleware`、organization 可见性和 Console workspace scope 解析，不引入第二套鉴权授权。
@@ -120,25 +120,43 @@ Connector metadata 与 poll 使用同一 Bearer tunnel token 校验：错误 tok
 
 Agent 版本长期保存 canonical MCP URL，不能保存某个 sandbox 或某次 Session 的临时地址。Session 启动时按以下顺序投影：
 
-1. 先创建或恢复 Code Session，签发与 session ingress JWT 不同 issuer、audience 和 token prefix 的 MCP capability；
+1. 先创建或恢复 Code Session，签发本次运行共用的 SessionIngressToken，供 worker/relay 和 MCP Gateway 使用；
 2. 使用与 Tunnel Ingress 相同的规则识别 canonical Tunnel URL；普通 Directory/自定义 MCP 不参与投影；
 3. 只为已识别的 Tunnel 按 Agent Snapshot 的 `mcp_servers[].name` 生成
    `{code_session.sandbox_api_base_url}/v2/ccr-sessions/{code_session_id}/mcp/{server_name}`；
-4. 混合 MCP config file 中，Tunnel 使用 Gateway URL 和 capability，普通 MCP 保留原始 URL、Header 和工具配置；
+4. 混合 MCP config file 中，Tunnel 使用 Gateway URL 和 SessionIngressToken，普通 MCP 保留原始 URL、Header 和工具配置；
    启动 payload 顶层 `mcp_servers` 完整保留；
-5. Runtime Gateway 验证 MCP capability 和 worker epoch 后，按 name 从该 Session 固定的 Agent Snapshot
+5. Runtime Gateway 验证 SessionIngressToken 和 worker epoch 后，按 name 从该 Session 固定的 Agent Snapshot
    解析原始 URL，再执行 exact URL 与 environment network policy 授权；请求不能通过 query 参数选择目标；
 6. named Runtime Gateway 只接受 Tunnel，交由进程内 `TunnelInvoker` 进入 NATS Broker；解析到普通 MCP 时返回 404。
+
+MCP 配置组装位于 `internal/environments/managed_agent_mcp_config.go`，与运行时资源转换和
+rclone 配置准备一样，作为 `environments` 包内的聚焦模块。`managedAgentSessionConfig` 调用它
+生成基础 MCP 配置；Runner 创建或恢复 Code Session 后，传入当前身份与 SessionIngressToken，生成
+本次启动使用的配置副本。`environment_manager.go` 负责将配置封装为启动 payload 和命令。
+
+生成的 MCP Server、工具权限和配置文件使用命名 schema；运行时投影只覆盖 Tunnel 的 URL、
+认证 Header 及 MCP 启动字段，其他 JSON 字段以原始 JSON 保留。配置编码错误向上返回，
+由 Runner 统一处理启动失败：新建的 Code Session 执行终止清理，恢复中的已有 Session 保留。
 
 Snapshot policy 的 server name 索引使用原始精确值并拒绝首尾空白；重复或非规范名称、畸形 MCP URL 都会
 使策略编译 fail-closed。Runner 对非空 MCP URL 的解析错误同样直接终止投影，不把坏配置当作普通 MCP
 留给 sandbox。
 
+MCP Gateway 路径中的 Code Session ID 与凭据中的 Session ID 精确比较，不修剪路径 ID；带首尾空白
+的 ID 不会被当作有效 Session。Token 由 HTTP Header 提取边界读取，命名 Gateway 复用 Session ingress 鉴权，并要求正数 worker epoch。
+
 因此 sandbox 无需访问 `127.0.0.1`、宿主机 loopback 或 Tunnel 私网；`sandbox_api_base_url` 只需是
-sandbox 能访问的 OMA Runtime Gateway origin。session ingress token 不能调用 MCP Gateway，MCP capability
-也不能调用 session worker/relay 接口；转发前会删除该 capability。普通 remote MCP 保留原始 URL，经
+sandbox 能访问的 OMA Runtime Gateway origin。同一 SessionIngressToken 可用于 MCP Gateway 和
+session worker/relay 接口，各入口分别执行业务授权；转发前会删除入口凭据。普通 remote MCP 保留原始 URL，经
 Sandbox HTTP(S) Proxy/MITM 由 Vault 注入凭据，不进入 named Runtime Gateway。TunnelInvoker 当前不经过该
 transport，Tunnel 私网 MCP 凭据应由 `tunnel-client` 的本地静态 Header、mTLS 或目标 MCP 自身支持的机制提供。
+
+整个 Managed Agent 运行环境被视为同一个 Session 执行主体。MCP 配置中的 SessionIngressToken
+也具有该 Session 的 ingress 身份权限，因此配置文件按运行凭据保护（0600），不得写回 Agent Snapshot
+或记录到日志。命名 Gateway 和其 discovery 入口要求正数 worker epoch，并校验数据库中的活动 epoch；
+无 epoch 的历史 ingress 凭据不被这两个入口接受。Session ID、租户、Snapshot server name 和目标网络策略
+仍分别校验；持有有效 Session Token 不等于可以访问任意 MCP 目标。
 
 Runtime Gateway 与 direct Tunnel ingress 都支持 RFC 9728 protected-resource discovery。Connector 使用专用
 `oauth_discovery` command，OMA 不转发来访凭据，并把 metadata `resource` 与 MCP 401 challenge 的
@@ -332,3 +350,12 @@ Managed Agent Session 验证 sandbox → Runtime Gateway → TunnelInvoker → B
 
 部署验收还应覆盖两个完整 OMA 实例的崩溃、响应 POST 结果不确定、网络分区和代表性容量负载。
 使用 Harpoon 时，需独立验证完整的自包含工具与 OAuth 流程；无 session 路径遵循固定 owner 的运行边界。
+
+### Session Gateway 凭据验收
+
+`go test -tags=e2e ./tests -run '^TestManagedTunnelGatewayCredentials$' -count=1 -v` 使用独立临时
+PostgreSQL 数据库覆盖命名 Gateway 及 discovery 的跨 Session、跨租户、缺失 epoch 和旧 epoch 拒绝，
+以及当前凭据仍受 Snapshot server name 授权限制。该测试不调用模型或 sandbox。
+`TestManagedAgentMCPLaunchUsesRuntimeConfigWithoutPersistingCredentials` 同时覆盖创建和恢复时
+MCP 配置与启动认证共用当前 SessionIngressToken，源配置保持不变。
+真实客户端和 Managed Agent 的验收仍使用开发指南中的完整链路，不能用凭据单测替代。

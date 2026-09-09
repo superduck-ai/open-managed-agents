@@ -1,6 +1,16 @@
 package environments
 
-import "github.com/superduck-ai/open-managed-agents/internal/apperr"
+import (
+	"errors"
+
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+)
+
+var (
+	errManagedAgentMCPConfigMissing   = errors.New("managed-agent MCP config does not contain any launchable remote servers")
+	errManagedAgentMCPGatewayMissing  = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
+	errManagedAgentMCPIdentityMissing = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")
+)
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

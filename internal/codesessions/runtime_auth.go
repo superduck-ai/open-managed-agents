@@ -28,8 +28,8 @@ func (h *Handler) authenticateMCPProxyRequest(w http.ResponseWriter, r *http.Req
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing MCP proxy token"))
 		return SessionCredentialClaims{}, false
 	}
-	claims, err := h.service.AuthenticateMCPProxy(r.Context(), token, codeSessionID)
-	if err != nil {
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, codeSessionID)
+	if err != nil || claims.SessionID != codeSessionID || claims.WorkerEpoch <= 0 {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid MCP proxy token"))
 		return SessionCredentialClaims{}, false
 	}

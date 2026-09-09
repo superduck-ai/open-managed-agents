@@ -53,7 +53,7 @@ flowchart LR
     SDK -->|workspace API key| Management
     Console -->|Session + CSRF| ConsoleAPI
     Direct -->|workspace X-Api-Key| Ingress
-    Sandbox -->|session-scoped MCP capability| RuntimeGateway
+    Sandbox -->|SessionIngressToken| RuntimeGateway
     RuntimeGateway -->|进程内 TunnelInvoker| Ingress
     Management --> TunnelDB
     ConsoleAPI --> TunnelDB
@@ -157,7 +157,7 @@ MCP Tunnel 有多套凭据，因为每套凭据保护的是不同的信任边界
 | 直接 MCP Ingress        | `/v1/mcp/{tunnel_id}[/{channel}]`                                              | 必须显式提供 workspace `X-Api-Key`                                 | organization + workspace + Tunnel                  |
 | Connector metadata/poll | `/connector/v1/tunnels/{tunnel_id}...`                                         | `Authorization: Bearer <tunnel token>`                             | 精确 Tunnel + active token version                 |
 | Connector response      | `/connector/v1/tunnels/{tunnel_id}/response`                                   | Bearer tunnel token；允许已 retired 的领取版本完成在途请求         | 精确 Tunnel + claim 绑定                           |
-| Agent Runtime Gateway   | `/v2/ccr-sessions/{code_session_id}/mcp/{server_name}`                         | `sk-ant-mcp-` 前缀的 session-scoped Ed25519 JWT                    | Code Session + worker epoch + Snapshot server name |
+| Agent Runtime Gateway   | `/v2/ccr-sessions/{code_session_id}/mcp/{server_name}`                         | `sk-ant-si-` 前缀的 session-scoped Ed25519 JWT                    | Code Session + worker epoch + Snapshot server name |
 | Private MCP Server      | `tunnel-client` 配置的私网 URL/stdio                                           | 下游 `Authorization`、client 本地静态 Header、mTLS 或 MCP 自身方案 | Private MCP Server 自己的权限模型                  |
 
 ### 4.1 Workspace API key
@@ -189,18 +189,21 @@ Tunnel token 只用于 `tunnel-client` 到 Connector API 的控制面认证：
 6. 已由旧 version claim 的请求仍可凭 instance、shard token 和 version 提交终态响应；
 7. archive 后 Tunnel 和所有 token 都拒绝 Connector 请求。
 
-Tunnel token 不是 workspace key，不是 Runtime Gateway capability，也不是 Private MCP Server 的凭据。
+Tunnel token 不是 workspace key，不是 SessionIngressToken，也不是 Private MCP Server 的凭据。
 
-### 4.4 Managed Agent MCP capability
+### 4.4 Managed Agent Session 凭据
 
-Session 启动时，OMA 签发独立的 `sk-ant-mcp-` Ed25519 JWT。它使用独立 issuer `mcp-proxy`、audience
-`oma-mcp-proxy` 和 role `mcp_proxy`，并绑定 Code Session、organization、workspace、Agent version 和
-worker epoch。普通 session-ingress token 不能调用 MCP Gateway，MCP capability 也不能调用 worker/relay。
+Session 创建或恢复时，OMA 签发 `sk-ant-si-` Ed25519 JWT，使用 issuer `session-ingress`、audience
+`anthropic-api` 和 role `worker`，绑定 Code Session、organization、workspace、Agent version 和 worker epoch。
+同一个 SessionIngressToken 用于 worker/relay 与命名 MCP Gateway；各入口保留自己的授权检查。
+整个 Managed Agent 运行环境是同一个 Session 执行主体，MCP 配置中的 Token 也拥有该 Session 的 ingress
+身份权限，配置文件必须按运行凭据保护，不能写回 Agent Snapshot 或进入日志。
 
-Gateway 根据 URL 中的 `code_session_id` 和 `server_name` 回查 Session 固定的 Agent Snapshot，再执行
-Environment network policy。Sandbox 不能通过 query 参数任意指定上游 URL。
+命名 Gateway 及其 discovery 入口要求正数 worker epoch，并回查活动 Session 的当前 epoch；缺失或过期的
+worker epoch 均被拒绝。Gateway 精确匹配路径中的 Code Session ID，再根据 server name 查找 Session 固定
+的 Agent Snapshot，执行租户、exact URL 和 Environment network policy 授权。请求不能通过 query 指定目标。
 
-转发前会删除 capability `Authorization`，避免它泄漏到 Broker、`tunnel-client` 或 Private MCP Server。
+转发前删除入口 `Authorization`，避免 SessionIngressToken 泄漏到 Broker、`tunnel-client` 或 Private MCP Server。
 
 ### 4.5 Private MCP 凭据边界
 
@@ -208,17 +211,17 @@ Environment network policy。Sandbox 不能通过 query 参数任意指定上游
 
 - 直接调用 `/v1/mcp/...` 时，OMA 会删除 `X-Api-Key`、Cookie、hop-by-hop 和 Tunnel 内部 Header，但允许
   下游 `Authorization` 进入队列；`tunnel-client` 最终把它用于 Private MCP HTTP 请求。
-- Managed Agent 调用时，Runtime Gateway 会先删除自己的 MCP capability。当前 TunnelInvoker 分支直接进入
+- Managed Agent 调用时，Runtime Gateway 会先删除自己的 SessionIngressToken。当前 TunnelInvoker 分支直接进入
   NATS Broker，不经过普通 remote MCP 使用的 OMA Vault HTTP transport。因此 Tunnel 私网凭据应在
   `tunnel-client` 侧通过本地静态额外 Header、mTLS 或 Private MCP 自身支持的方式提供。
 
-也就是说，不能把 OMA workspace key、Tunnel token 或 MCP capability 当作下游 MCP token。任何允许穿越
+也就是说，不能把 OMA workspace key、Tunnel token 或 SessionIngressToken 当作下游 MCP token。任何允许穿越
 Tunnel 的下游 `Authorization` 都会经过 OMA 请求处理和 JetStream 队列；若凭据要求严格只留在私网，应使用
 `tunnel-client` 的本地凭据注入能力，而不是从调用方转发。
 
 原版 `tunnel-client` 的本地静态 Header 只适用于 HTTP MCP，并按目标 origin 限定；stdio 没有 HTTP Header
 注入。若一个直接调用请求同时携带同名转发 Header，客户端当前以后应用的转发值为准，因此它可能覆盖本地
-静态 `Authorization`。Managed Agent 路径不会转发 MCP capability，所以不会发生 capability 覆盖本地凭据。
+静态 `Authorization`。Managed Agent 路径不会转发 SessionIngressToken，所以不会发生 Session Token 覆盖本地凭据。
 
 ## 5. Tunnel 生命周期与 `tunnel-client` 启动
 
@@ -432,12 +435,12 @@ sequenceDiagram
     participant Client as tunnel-client
     participant MCP as Private MCP Server
 
-    Start->>Start: 签发 session-scoped MCP capability
+    Start->>Start: 签发 SessionIngressToken
     Start->>Sandbox: 写入 0600 MCP config，普通原始 URL + Tunnel named Gateway
     Sandbox->>Gateway: POST /v2/ccr-sessions/{session}/mcp/{server_name}
-    Gateway->>Gateway: 校验 capability、session path、worker epoch
+    Gateway->>Gateway: 校验 SessionIngressToken、session path、正数 worker epoch
     Gateway->>Snapshot: 按 server_name 解析固定原始 URL并执行 network policy
-    Gateway->>Gateway: 删除 capability Authorization
+    Gateway->>Gateway: 删除入口 Authorization
     Gateway->>Invoker: canonical Tunnel URL 走进程内分发
     Invoker->>Broker: 与直接 Ingress 相同的 enqueue/wait 流程
     Client->>Connector: Bearer token long-poll
@@ -460,7 +463,7 @@ Session 启动时，原始 Tunnel canonical URL 只保存在固定 Agent Snapsho
 {code_session.sandbox_api_base_url}/v2/ccr-sessions/{code_session_id}/mcp/{server_name}
 ```
 
-并只在该 Tunnel 条目中放入 MCP capability。普通 Directory/自定义 MCP 的 URL、Header 和工具配置保持
+并只在该 Tunnel 条目中放入 SessionIngressToken。普通 Directory/自定义 MCP 的 URL、Header 和工具配置保持
 原样，通过 Sandbox HTTP(S) Proxy/MITM 与 Vault 注入；启动 payload 顶层 `mcp_servers` 也完整保留。
 
 Console Agent Picker 允许同一个 Tunnel 绑定多个 Channel，但不扩展 Agent API。所有 Channel 统一使用
@@ -606,7 +609,7 @@ MCP payload、tool argument、response 及被转发的 Authorization 会经过 O
 
 | 现象                                                | 对外状态             | 含义                                  |
 | --------------------------------------------------- | -------------------- | ------------------------------------- |
-| workspace、Console、capability 或 Tunnel token 无效 | 401/403              | 对应信任边界鉴权失败                  |
+| workspace、Console、SessionIngressToken 或 Tunnel token 无效 | 401/403              | 对应信任边界鉴权失败                  |
 | Tunnel 不属于 scope、已归档或 response 绑定不匹配   | 404 或资源不可见语义 | 防止跨租户和内部状态泄漏              |
 | GET MCP SSE                                         | 405                  | Tunnel 只支持同请求内 SSE             |
 | body/Header 超限                                    | 413                  | 请求未入队或响应被拒绝                |
@@ -642,8 +645,9 @@ OMA 主要代码：
 | `internal/db/mcp_tunnel_certificates.go` 及 Mapper/XML | API-only Certificate 持久化                             |
 | `internal/db/migrations/00059_rebuild_mcp_tunnels.sql` | 当前 Tunnel schema                                      |
 | `internal/codesessions/mcp_proxy.go`                   | Runtime Gateway、Snapshot URL 解析和 TunnelInvoker 分支 |
-| `internal/codesessions/session_credentials.go`         | session-ingress 与 MCP capability 的隔离                |
-| `internal/environments/environment_manager.go`         | Sandbox MCP config 投影                                 |
+| `internal/codesessions/session_credentials.go`         | SessionIngressToken 的签发与身份校验                |
+| `internal/environments/managed_agent_mcp_config.go`    | MCP 配置生成、工具权限映射与 Session Gateway 投影       |
+| `internal/environments/environment_manager.go`         | environment-manager 启动 payload 与命令封装             |
 | `web/src/features/mcp-tunnels/`                        | Console 列表、详情、共享动作与 canonical 路由 UI        |
 
 独立 `tunnel-client` 仓库主要代码：
@@ -662,7 +666,7 @@ OMA 主要代码：
 开发者修改 Tunnel 时，应优先确认以下不变量没有被破坏：
 
 1. 所有资源读写都同时绑定 organization、workspace 和 Tunnel；
-2. workspace key、Tunnel token、MCP capability、Private MCP 凭据不可互换；
+2. workspace key、Tunnel token、SessionIngressToken、Private MCP 凭据不可互换；
 3. response subscription 必须先于 enqueue；
 4. 交付许可与撤销必须在同一控制 key 上排序，terminal/cancel 必须竞争同一请求 revision；
 5. dispatched 请求不能自动重投；
@@ -670,7 +674,7 @@ OMA 主要代码：
 7. rotate 必须允许旧 version 只排空已 claim 请求，不能继续领取新请求；
 8. archive 必须在管理面、Connector、Ingress 和 Runtime Gateway 同时失效；
 9. Runtime Gateway 只能按 Snapshot 中无首尾空白的精确 server name 选择目标，不能接受 Sandbox 自选 URL；
-10. MCP capability、workspace key、Tunnel token、Cookie 和私网 secret 不能进入日志；
+10. SessionIngressToken、workspace key、Tunnel token、Cookie 和私网 secret 不能进入日志；
 11. SSE `Content-Type` 与实际 framing 必须一致；
 12. Connector wire 必须满足 OpenAI `tunnel-client` 协议合同，并通过契约测试。
 

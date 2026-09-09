@@ -124,8 +124,6 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaul
 
 // WithTunnelInvoker enables in-process dispatch for configured Tunnel URLs.
 func (h *Handler) WithTunnelInvoker(invoker TunnelInvoker) *Handler {
-	if h != nil {
-		h.tunnelInvoker = invoker
-	}
+	h.tunnelInvoker = invoker
 	return h
 }

@@ -19,7 +19,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const maxMCPProxyURLBytes = 2048
+const (
+	maxMCPProxyURLBytes          = 2048
+	maxMCPDiscoveryResponseBytes = 1 << 20
+)
 
 // mcpProxyTransportWrapper wraps the MCP upstream RoundTripper for vault
 // inject + mcp_oauth 401 refresh retry. This is the sole production credential
@@ -27,7 +30,7 @@ const maxMCPProxyURLBytes = 2048
 type mcpProxyTransportWrapper func(context.Context, SessionCredentialClaims, *url.URL, http.RoundTripper) http.RoundTripper
 
 func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
-	codeSessionID := strings.TrimSpace(chi.URLParam(r, "code_session_id"))
+	codeSessionID := chi.URLParam(r, "code_session_id")
 	claims, _, ok := h.authenticateRuntimeSession(w, r)
 	if !ok {
 		return
@@ -58,7 +61,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
-	codeSessionID := strings.TrimSpace(chi.URLParam(r, "code_session_id"))
+	codeSessionID := chi.URLParam(r, "code_session_id")
 	serverName := namedMCPServerName(r)
 	if codeSessionID == "" || !canonicalMCPServerName(serverName) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
@@ -103,7 +106,7 @@ func (h *Handler) handleNamedMCPProxy(w http.ResponseWriter, r *http.Request) {
 // HandleMCPProtectedResource serves RFC 9728 metadata only for a named Tunnel
 // target. Ordinary MCP servers keep their original direct runtime path.
 func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Request) {
-	codeSessionID := strings.TrimSpace(chi.URLParam(r, "code_session_id"))
+	codeSessionID := chi.URLParam(r, "code_session_id")
 	serverName := namedMCPServerName(r)
 	if codeSessionID == "" || !canonicalMCPServerName(serverName) || r.Method != http.MethodGet {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
@@ -352,7 +355,7 @@ func (c *mcpDiscoveryCapture) Write(body []byte) (int, error) {
 	if c.status == 0 {
 		c.status = http.StatusOK
 	}
-	if c.body.Len()+len(body) > 1<<20 {
+	if c.body.Len()+len(body) > maxMCPDiscoveryResponseBytes {
 		return 0, errors.New("MCP OAuth metadata is too large")
 	}
 	return c.body.Write(body)

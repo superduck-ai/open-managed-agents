@@ -39,7 +39,7 @@ Claude Code 运行在 `environment-manager` 中，它通过 MCP config 加载 MC
       "type": "http",
       "url": "http://oma-runtime.internal/v2/ccr-sessions/cse_123/mcp/weather_service",
       "headers": {
-        "Authorization": "Bearer sk-ant-mcp-..."
+        "Authorization": "Bearer sk-ant-si-..."
       }
     }
   }
@@ -63,8 +63,8 @@ session config 继续通过现有字段传给 `environment-manager`：
 
 `environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此不改变 v0 stdin schema，
 也不要求 environment-manager 理解 Agent policy。MCP config file 保持 `0600`；Runner 只改写其中的 Tunnel
-条目，并完整保留 payload 顶层 `mcp_servers`。Tunnel header 使用独立 MCP capability，不是 session ingress
-token。Runtime Gateway 按 Agent Snapshot 中的精确 server name 解析原始 URL并执行网络策略，只允许 Tunnel
+条目，并完整保留 payload 顶层 `mcp_servers`。Tunnel header 复用本次运行的 SessionIngressToken，与 worker/relay 共用 Session 身份，
+由 Gateway 分别校验正数 worker epoch 和 MCP 目标权限。Runtime Gateway 按 Agent Snapshot 中的精确 server name 解析原始 URL 并执行网络策略，只允许 Tunnel
 进入进程内 `TunnelInvoker`。普通 remote MCP 保留原始 URL，继续走 Sandbox HTTP(S) Proxy/MITM 与 Vault。
 
 ### 2.2 静态提示层
@@ -297,7 +297,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 实现应集中在 `claude-api-server`：
 
 - Managed Agent session config 生成 MCP config file 和 `claude_code_args["mcp-config"]`；Runner 在取得 Code Session identity 后只投影 canonical Tunnel 条目，普通 MCP 与持久化 Snapshot 保留原始 URL。
-- Code Session handler 负责独立 MCP capability 的 JWT/path/epoch 绑定；加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 的 server name → exact URL 与 Environment host/port policy 编译为单一授权对象。named Runtime Gateway 授权后只执行 TunnelInvoker；普通 MCP 使用 query-based proxy、拨号期 SSRF 防护和 Vault 凭据注入。
+- Code Session handler 负责 SessionIngressToken 的 JWT/path/正数 epoch 绑定；加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 的 server name → exact URL 与 Environment host/port policy 编译为单一授权对象。named Runtime Gateway 授权后只执行 TunnelInvoker；普通 MCP 使用 query-based proxy、拨号期 SSRF 防护和 Vault 凭据注入。
 - Code session service 新增 policy-aware permission handler。
 - Session events 接收 `user.tool_confirmation` / `user.custom_tool_result` 后，从 Code Session 私有 worker metadata 恢复生成 Claude Code `control_response` 所需的请求上下文。
 - 日志只记录 tool name、server name、resolved permission、code session id、request id 等诊断字段；不要记录 secret、header value 或完整 tool input。
@@ -381,7 +381,7 @@ tools:
 期望：
 
 - 新 session 的 agent snapshot 包含 `weather_service` 和 `mcp_toolset`。
-- 当 `weather_service` 是 Tunnel 时，`/tmp/managed-agent-mcp-config.json` 中只有该条目被改为 named Runtime Gateway，并附加独立 MCP capability 而不是 session-ingress token；普通 MCP 条目保持原始 URL。
+- 当 `weather_service` 是 Tunnel 时，`/tmp/managed-agent-mcp-config.json` 中只有该条目被改为 named Runtime Gateway，并附加本次运行共用的 SessionIngressToken；普通 MCP 条目保持原始 URL。
 - Claude Code init event 显示 MCP server connected。
 - 调用 `mcp__weather_service__get_weather` 时不再卡在 permission prompt。
 - DB 中只保存对应 auto `control_response` inbound，不保存 `can_use_tool` outbound 日志。

@@ -124,12 +124,6 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	select {
-	case h.broker.pollHTTPSlots <- struct{}{}:
-		defer func() { <-h.broker.pollHTTPSlots }()
-	default:
-		return unavailable("Tunnel broker is busy", ErrBrokerBusy)
-	}
 	controller := http.NewResponseController(w)
 	_ = controller.SetWriteDeadline(time.Now().Add(h.cfg.PollTimeout + 5*time.Second))
 	defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()

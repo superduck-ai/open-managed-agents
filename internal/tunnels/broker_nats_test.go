@@ -114,7 +114,7 @@ func TestNATSBrokerPollSurfacesDeletedConsumer(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := b.pollRound(ctx, consumers, "tunnel", "a", 1, 1); err == nil {
+	if _, err := b.pollCommands(ctx, consumers, "tunnel", "a", 1, 1, false); err == nil || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("consumer failure reported as an empty poll")
 	}
 }
@@ -156,29 +156,6 @@ func TestNATSBrokerRedeliveryNeverDispatchesBoundCommand(t *testing.T) {
 	if len(commands) != 0 {
 		t.Fatal("bound request was dispatched again")
 	}
-}
-
-func TestNATSBrokerFetchHandlesDeadlineBeforeContextTimerFires(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-	consumers, err := b.pollConsumers(t.Context(), "tunnel", "a", []ChannelDeclaration{{Name: "main"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	deliveries := make(chan pollDelivery, 1)
-	ctx := elapsedFetchDeadline{Context: t.Context()}
-	if b.fetchPollMessage(ctx, consumers[0], deliveries) {
-		t.Fatal("expired fetch should finish the pull round")
-	}
-	if len(deliveries) != 0 || len(b.prefetchSlots) != 0 {
-		t.Fatal("expired pull surfaced a broker error or leaked a prefetch slot")
-	}
-}
-
-// Simulate deadline expiry just before context's asynchronous timer marks Err.
-type elapsedFetchDeadline struct{ context.Context }
-
-func (elapsedFetchDeadline) Deadline() (time.Time, bool) {
-	return time.Now().Add(-time.Second), true
 }
 
 func TestNATSBrokerMissingRecordDoesNotDiscardLiveCommand(t *testing.T) {

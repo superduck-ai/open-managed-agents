@@ -16,17 +16,14 @@ import (
 const maxTunnelChannels = 32
 
 type Broker struct {
-	connection    *nats.Conn
-	js            jetstream.JetStream
-	commands      jetstream.Stream
-	requests      *brokerStore
-	control       *brokerStore
-	cfg           config.TunnelConfig
-	now           func() time.Time
-	responseHub   *responseHub
-	pollSlots     chan struct{}
-	prefetchSlots chan struct{}
-	pollHTTPSlots chan struct{}
+	connection  *nats.Conn
+	js          jetstream.JetStream
+	commands    jetstream.Stream
+	requests    *brokerStore
+	control     *brokerStore
+	cfg         config.TunnelConfig
+	now         func() time.Time
+	responseHub *responseHub
 }
 
 type ConnectorSnapshot struct {
@@ -87,7 +84,7 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 	if err != nil {
 		return nil, err
 	}
-	return &Broker{connection: connection, js: js, commands: commands, requests: requests, control: control, cfg: cfg, now: time.Now, responseHub: hub, pollSlots: make(chan struct{}, 128), prefetchSlots: make(chan struct{}, 32), pollHTTPSlots: make(chan struct{}, 128)}, nil
+	return &Broker{connection: connection, js: js, commands: commands, requests: requests, control: control, cfg: cfg, now: time.Now, responseHub: hub}, nil
 }
 
 func (b *Broker) Close() { b.responseHub.close() }

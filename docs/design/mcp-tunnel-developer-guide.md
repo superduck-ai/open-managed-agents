@@ -522,7 +522,9 @@ stateDiagram-v2
 - 请求 KV 的 `MaxMsgs` 默认 4096，限制排队、执行、保留终态与亲和会话的合计数量。每 key 保留一个版本；TTL 为 request timeout 加 tombstone TTL。空间按每条最大 2 MiB 结果预留，新增请求在准入时背压。
 - 每 Tunnel 另有 pending 限制，默认 256 个请求、32 MiB；完成或取消释放，崩溃未释放的额度按原 deadline 清理。控制记录还限制最多 32 个 channel、每 channel 64 个实例。
 - 命令是 R3 file WorkQueue，过期或确认交付后删除。有效命令的 KV 暂时 missing 时 NAK 保留，不能推断为已取消。
-- poll 每个 OMA 最多 128 个并发 HTTP 请求、32 条预取命令；跨 channel 拉取，每次 Fetch(1)，首条后约 5 ms 组批，满足 limit 与总量上限即返回。
+- 每个 HTTP poll 并行消费声明的 channel，使用请求独立的 JetStream `Consume()` 消费过程和共享 durable Consumer；每个 channel 一次拉取一条，交给领取逻辑后才继续拉取。OMA 不设置实例级等待 poll 数量上限，实际消息仍受单条大小、批次、pending 与存储预算约束。
+- 首条有效命令就绪后，只合并已经可接收的命令，不额外等待；达到 limit、约 2 MiB 批次上限或没有就绪命令时返回。`timeout_ms=0` 使用 `FetchNoWait`，只查询已有命令，没有则返回 204；查询仍需要网络往返。
+- poll 返回、超时或连接断开时取消本次消费并在后台归还未绑定消息，HTTP 返回不等待退订的网络确认；已绑定命令不重新派发。无活动 durable Consumer 按保留期限回收。
 
 ### 10.1 Channel 与进程亲和
 

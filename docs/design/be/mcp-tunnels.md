@@ -246,9 +246,11 @@ NATS 不可用时，Console API 仍返回 Tunnel 资源，仅将连接状态降�
 - 亲和 poll 必须携带非空且无首尾空白的 instance ID；
 - `max_pending_requests` 范围为 `1..512`，默认 256，pending bytes 默认 32 MiB；准入与释放使用控制记录 CAS，
   崩溃遗留的 pending 项在原 deadline 后清理，不依赖额外的跨 key 计数器；
-- 长轮询按需拉取，首条命令到达后最多短暂组批 5 ms；单次返回还受约 2 MiB 的总字节限制，可以少于 limit。
-  每实例最多 128 个活动 poll HTTP 请求、32 个预取消息；取消时归还未绑定消息，consumer 无活动超过命令最长有效期再回收；
-- poll limit 默认及最大值为 25，timeout 默认及最大值为 30 秒；轮询窗口到期且没有命令时返回 204，基础设施故障返回 503；
+- 每个 HTTP Poll 独立管理各 Channel 的 JetStream `Consume()` 消费过程，复用按 Tunnel、Channel 和亲和 Instance 划分的 durable Consumer。订阅在本次请求有效期内持续消费；
+- 首条有效命令就绪后，只合并当时已经可接收的命令，不设置组批等待时间；单次返回还受约 2 MiB 的总字节限制，可以少于 limit；
+- OMA 不设置实例级活动 Poll 数量或等待消费名额。每个 Channel 每次只拉取一条消息，通过无缓冲汇总通道交给领取逻辑，未交出当前消息前不继续拉取；消息大小、pending 请求及存储预算仍约束实际工作量。Consumer 的 `MaxAckPending`、`MaxWaiting` 是单个路由的 JetStream 资源约束，不是 OMA 实例可连接的 Tunnel 数量限制；
+- 批次返回、超时或 HTTP 取消时停止本次消费，后台 drain 并归还已获取但尚未绑定的消息，HTTP 返回不等待退订的网络确认；已绑定请求不重新派发。Consumer 无活动超过命令最长有效期再回收；
+- poll limit 默认及最大值为 25，timeout 默认及最大值为 30 秒。`timeout_ms=0` 使用 `FetchNoWait` 查询当前可用消息，不等待未来的新命令；仍需 NATS 查询和领取绑定的网络往返。空队列或正常等待超时返回 204，基础设施故障返回 503；
 - MCP 默认总 deadline 为 2 分钟，可配置范围为 1 秒到 10 分钟；
 - OAuth protected-resource metadata 与其他 Tunnel command 共用上述 `tunnel.request_timeout` 统一 deadline；
 - `response_timeout` 是统一 deadline 的剩余时间，不启动新的计时窗口；

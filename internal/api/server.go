@@ -506,7 +506,10 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 }
 
 func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
-	workspaceID := platformRequestWorkspaceID(r)
+	return s.resolvePlatformWorkspace(r, principal, platformRequestWorkspaceID(r))
+}
+
+func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Principal, workspaceID string) (auth.Principal, *httpapi.Error) {
 	if workspaceID == "" || workspaceID == "default" {
 		workspaceID = principal.WorkspaceExternalID
 	}

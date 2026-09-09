@@ -359,3 +359,8 @@ PostgreSQL 数据库覆盖命名 Gateway 及 discovery 的跨 Session、跨租�
 `TestManagedAgentMCPLaunchUsesRuntimeConfigWithoutPersistingCredentials` 同时覆盖创建和恢复时
 MCP 配置与启动认证共用当前 SessionIngressToken，源配置保持不变。
 真实客户端和 Managed Agent 的验收仍使用开发指南中的完整链路，不能用凭据单测替代。
+
+### Console 授权与工具发现边界
+
+Console Tunnel 的共享 scope 入口以 URL 中的工作区作为操作目标，复用平台现有的组织管理员/工作区成员授权规则。
+Header 或 Query 中的工作区不能代替 URL 目标的成员校验；该检查覆盖列表、详情、创建、归档、探测、查看和轮换 Token。

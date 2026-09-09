@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	"github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
@@ -33,10 +35,16 @@ func (s *Server) configureTunnels(catalog *mcpcatalogs.Handler, logger *slog.Log
 
 func (s *Server) resolveTunnelConsoleScope(w http.ResponseWriter, r *http.Request) (tunnels.ConsoleScope, bool) {
 	scope, ok := platformapi.ResolveConsoleWorkspaceRequest(w, r, s.db)
-	return tunnels.ConsoleScope{
-		OrganizationUUID: scope.OrganizationUUID,
-		WorkspaceUUID:    scope.WorkspaceUUID,
-	}, ok
+	if !ok {
+		return tunnels.ConsoleScope{}, false
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context()) // The Console resolver already requires a principal.
+	principal, accessErr := s.resolvePlatformWorkspace(r, principal, scope.WorkspaceUUID)
+	if accessErr != nil {
+		httpapi.WriteError(w, r, accessErr)
+		return tunnels.ConsoleScope{}, false
+	}
+	return tunnels.ConsoleScope{OrganizationUUID: scope.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID}, true
 }
 
 // tunnelCatalogProber adapts the Tunnel service to the catalog boundary.

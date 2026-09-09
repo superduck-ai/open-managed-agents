@@ -144,3 +144,9 @@ func publishBrokerSignal(connection *nats.Conn, subject, key string) {
 		_ = connection.Publish(subject, data)
 	}
 }
+
+// purgeControl removes the exact subject, including KV tombstones, to release
+// its MaxMsgs slot. Only permanently archived resources may be purged.
+func (b *Broker) purgeControl(ctx context.Context, tunnelUUID string) error {
+	return b.control.stream.Purge(ctx, jetstream.WithPurgeSubject("$KV."+b.control.name+"."+brokerKey(tunnelUUID)))
+}

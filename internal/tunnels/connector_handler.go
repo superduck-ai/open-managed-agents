@@ -145,7 +145,7 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 	commands, err := h.broker.Poll(r.Context(), credential.TunnelUUID, instanceID, credential.TokenVersion, channels, limit, timeout)
-	if errors.Is(err, ErrTokenRetired) {
+	if errors.Is(err, ErrTokenRetired) || errors.Is(err, ErrControlNotFound) {
 		restoreCtx, cancel := context.WithTimeout(r.Context(), tokenVersionRestoreTimeout)
 		restoreErr := reconcileTunnelToken(restoreCtx, h.db, h.broker, tunnelScope{OrganizationUUID: credential.OrganizationUUID, WorkspaceUUID: credential.WorkspaceUUID}, credential.TunnelExternalID, credential.TokenVersion)
 		cancel()

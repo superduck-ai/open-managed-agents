@@ -12,12 +12,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 )
 
-func (s *Server) configureTunnels(catalog *mcpcatalogs.Handler, logger *slog.Logger) {
+func (s *Server) configureTunnels(catalog *mcpcatalogs.Handler, logger *slog.Logger, cleanupJobs *tunnels.CleanupJobs) {
 	// Lightweight routing tests omit DB and Broker; production supplies both.
 	if s.db == nil {
 		return
 	}
-	service := tunnels.NewService(s.cfg.Tunnel, s.db, s.vaultSecrets, s.tunnelBroker)
+	service := tunnels.NewService(s.cfg.Tunnel, s.db, s.vaultSecrets, s.tunnelBroker, cleanupJobs)
 	prober := tunnelCatalogProber{service: service}
 	catalog.WithTunnelProber(prober.recognize, prober.probe)
 	s.tunnels = tunnels.NewHandler(service, logger.With("component", "tunnels"))

@@ -63,7 +63,7 @@ func TestNATSBrokerAffinityRejectsMissingAndDeadSessions(t *testing.T) {
 		t.Fatalf("uninitialized request = %v", err)
 	}
 	sessionID := initializeAffinity(t, b, "a", "first", "")
-	if err := b.updateControl(t.Context(), "tunnel", func(control *tunnelControl) error {
+	if err := b.updateControl(t.Context(), "tunnel", false, func(control *tunnelControl) error {
 		delete(control.Channels["main"].Instances, "a")
 		return nil
 	}); err != nil {

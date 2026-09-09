@@ -239,6 +239,9 @@ func TestNATSBrokerPollSupportsMoreThan128WaitingTunnels(t *testing.T) {
 	results := make(chan pollResult, count)
 	for i := range count {
 		tunnel := fmt.Sprintf("tunnel-%d", i)
+		if err := b.ActivateTokenVersion(t.Context(), tunnel, 1); err != nil {
+			t.Fatal(err)
+		}
 		go func() {
 			commands, err := b.Poll(ctx, tunnel, "a", 1, channels, 1, 15*time.Second)
 			results <- pollResult{i, commands, err}

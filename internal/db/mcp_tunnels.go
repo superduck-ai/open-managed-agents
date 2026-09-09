@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -139,6 +140,12 @@ type MCPTunnelTokenTx struct {
 	executor yourbatis.Executor
 	Tunnel   MCPTunnel
 	Token    MCPTunnelTokenVersion
+}
+
+// SQLTx shares this transaction with River job insertion. The caller must not
+// retain, commit, or roll back the transaction.
+func (tx *MCPTunnelTokenTx) SQLTx() *sql.Tx {
+	return tx.executor.(*yourbatis.Tx).SQLTx()
 }
 
 func (d *DB) WithMCPTunnelTokenTx(ctx context.Context, organizationUUID, workspaceUUID, externalID string, fn func(*MCPTunnelTokenTx) error) error {

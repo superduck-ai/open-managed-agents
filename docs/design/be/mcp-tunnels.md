@@ -224,11 +224,12 @@ NATS ACK 只确认命令交付，不代表工具执行成功；调用取消也�
 
 `OMA_TUNNEL_CONTROL_V1` 每个 Tunnel 保存一个有界控制记录：active token version、暂停状态、
 channel 声明、自包含请求主实例、presence 和 pending 准入。派发许可与令牌暂停条件更新同一个 key，
-因此暂停之前已发放的许可可以继续在途，暂停之后不会发放旧版本新许可。该控制记录不使用 TTL，
-防止暂停状态消失后被迟到的已鉴权 poll 重新创建。PostgreSQL 是资源与凭据的权威来源。
+因此暂停之前已发放的许可可以继续在途，暂停之后不会发放旧版本新许可。活动资源的控制记录不使用 TTL。
+PostgreSQL 是资源与凭据的权威来源：Poll、派发和 pending 释放只能更新已有记录；记录缺失时，
+必须在数据库 Tunnel 行锁下确认资源未归档且 Token 仍有效，才能创建控制记录。迟到 Poll 不能自行重建记录。
 rotate/archive 在同一个 Yourbatis 事务中先锁定 Tunnel 行和当前 token，再暂停 NATS 控制状态并写入 DB。
 事务总时限为 10 秒；提交后或失败补偿时，恢复操作在同一条 DB 行锁下重新读取有效 token，再激活对应版本。
-Poll 遇到暂停状态时，以 5 秒时限获取同一行锁，并核对请求 token 仍是 DB 的有效版本，成功恢复后只重试一次 Poll。
+Poll 遇到暂停或控制记录缺失时，以 5 秒时限获取同一行锁，并核对请求 token 仍是 DB 的有效版本，成功恢复后只重试一次 Poll。
 进程退出会释放数据库事务锁，因此遗留暂停可在下次有效 Poll 自动恢复；正在进行的归档或轮换持锁期间不会被恢复操作越过。
 锁等待或基础设施失败返回可重试的 503；已退休或已归档的 token 不恢复。旧 token 仅能完成已绑定的在途响应，archive 后拒绝所有 Connector 请求。
 
@@ -269,6 +270,24 @@ response POST 才返回 200；满缓冲在接受前返回 429，结果不确定�
 这项全局限制独立于每 Tunnel 的 pending 数量/字节预算，终态释放 pending 预算但仍占全局 slot。
 
 控制 KV 最多 4096 个 Tunnel 记录，每记录 256 KiB、每 channel 最多 64 个 live instance。
+归档与 River `tunnel_control_cleanup` 任务在同一个 Yourbatis/SQL 事务中提交，任务写入失败则一起回滚。
+共享 River runtime 的 `tunnel_cleanup` 队列（并发 2）消费任务，再按 organization/workspace/ID 查询并核对
+Tunnel UUID 与永久归档状态，用精确 subject 的 stream purge 清除控制记录，包括 KV tombstone，释放 MaxMsgs 名额。
+重复清理是幂等操作；重复归档可补建任务，尚未完成的同一资源任务去重。任务不删除 PostgreSQL 资源记录。
+归档响应成功表示资源和任务已提交，容量在后台清理成功后释放。清理失败记录结构化日志并通过 River
+JobSnooze 延后一分钟执行，不消耗普通重试次数；进程退出后任务仍可恢复。已确认归档不因后续回收失败而失效。
+
+```mermaid
+flowchart LR
+    A[锁定并暂停 Token] --> B[同一事务：归档资源和登记清理任务]
+    B --> C[提交并返回归档成功]
+    C --> D[River Worker 校验资源已归档]
+    D --> E[精确清除 NATS 控制记录]
+    E --> F[释放名额，任务完成]
+    E -->|失败| G[一分钟后再试]
+    G --> D
+```
+
 资源容量与保留配置必须在所有实例保持一致；启动使用幂等 Create 验证既有 stream 合同，不在实例启动时
 暂时解除准入上限或静默覆盖与配置合同不一致的配置。
 

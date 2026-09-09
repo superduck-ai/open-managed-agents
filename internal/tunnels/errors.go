@@ -10,6 +10,8 @@ import (
 )
 
 var (
+	ErrControlNotFound      = errors.New("tunnels: control state not found")
+	ErrCleanupUnavailable   = errors.New("tunnels: cleanup jobs are not configured")
 	ErrNoConnector          = errors.New("tunnels: no live connector")
 	ErrQueueLimit           = errors.New("tunnels: pending request limit exceeded")
 	ErrPayloadLimit         = errors.New("tunnels: payload limit exceeded")

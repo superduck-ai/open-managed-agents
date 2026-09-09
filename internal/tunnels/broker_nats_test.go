@@ -274,6 +274,9 @@ func testNATSBroker(t *testing.T, cfg config.TunnelConfig) *Broker {
 		t.Fatal(err)
 	}
 	t.Cleanup(broker.Close)
+	if err := broker.ActivateTokenVersion(t.Context(), "tunnel", 1); err != nil {
+		t.Fatal(err)
+	}
 	return broker
 }
 
@@ -307,6 +310,12 @@ func connectTunnelNATS(t *testing.T, url string) *nats.Conn {
 
 func registerTestConnector(t *testing.T, b *Broker, instance string, channels []ChannelDeclaration) {
 	t.Helper()
+	var state tunnelControl
+	if _, err := b.control.read(t.Context(), brokerKey("tunnel"), &state); errors.Is(err, ErrRequestNotFound) {
+		if err := b.ActivateTokenVersion(t.Context(), "tunnel", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := b.RegisterConnector(t.Context(), "tunnel", instance, 1, channels); err != nil {
 		t.Fatal(err)
 	}

@@ -49,7 +49,7 @@ func TestTunnelProbePaginationThroughNATS(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() { done <- respondToTunnelProbePages(ctx, broker, record.UUID, channels, failSecond) }()
-			result, recognized, err := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker).ProbeTarget(ctx, tunnels.ConsoleScope{OrganizationUUID: ids.OrganizationUUID, WorkspaceUUID: ids.WorkspaceUUID}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+created.ID)
+			result, recognized, err := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker, tunnels.NewCleanupJobs(app.deploymentJobs)).ProbeTarget(ctx, tunnels.ConsoleScope{OrganizationUUID: ids.OrganizationUUID, WorkspaceUUID: ids.WorkspaceUUID}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+created.ID)
 			t.Logf("probe returned tools=%d error=%v", len(result.Tools), err)
 			if !recognized {
 				t.Fatal("not recognized")

@@ -24,25 +24,27 @@ const (
 )
 
 type Service struct {
-	cfg       config.TunnelConfig
-	db        *db.DB
-	secretSvc *secrets.Service
-	now       func() time.Time
-	random    io.Reader
-	broker    *Broker
+	cfg         config.TunnelConfig
+	db          *db.DB
+	secretSvc   *secrets.Service
+	now         func() time.Time
+	random      io.Reader
+	broker      *Broker
+	cleanupJobs *CleanupJobs
 }
 
-func NewService(cfg config.TunnelConfig, database *db.DB, secretSvc *secrets.Service, broker *Broker) *Service {
+func NewService(cfg config.TunnelConfig, database *db.DB, secretSvc *secrets.Service, broker *Broker, cleanupJobs *CleanupJobs) *Service {
 	if database == nil {
 		panic("tunnels: database is required")
 	}
 	return &Service{
-		cfg:       cfg,
-		db:        database,
-		secretSvc: secretSvc,
-		broker:    broker,
-		now:       func() time.Time { return time.Now().UTC() },
-		random:    rand.Reader,
+		cfg:         cfg,
+		db:          database,
+		secretSvc:   secretSvc,
+		broker:      broker,
+		cleanupJobs: cleanupJobs,
+		now:         func() time.Time { return time.Now().UTC() },
+		random:      rand.Reader,
 	}
 }
 
@@ -116,6 +118,9 @@ func (s *Service) Archive(ctx context.Context, scope tunnelScope, tunnelID strin
 		return db.MCPTunnel{}, err
 	}
 	if tunnel.ArchivedAt != nil {
+		if err := s.cleanupJobs.enqueue(ctx, tunnel, nil); err != nil {
+			return db.MCPTunnel{}, tokenTransitionError("Could not schedule tunnel cleanup", err)
+		}
 		return tunnel, nil
 	}
 	transitionCtx, cancel := context.WithTimeout(ctx, tokenTransitionTimeout)
@@ -127,7 +132,10 @@ func (s *Service) Archive(ctx context.Context, scope tunnelScope, tunnelID strin
 		}
 		var err error
 		tunnel, err = tx.Archive(transitionCtx)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.cleanupJobs.enqueue(transitionCtx, tunnel, tx.SQLTx())
 	})
 	if err != nil {
 		return db.MCPTunnel{}, mapTunnelLookupError(err, tunnelID, "archive")

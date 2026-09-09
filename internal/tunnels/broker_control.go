@@ -35,13 +35,16 @@ func newTunnelControl() tunnelControl {
 // A permission and suspension both conditionally update this same key. Whichever
 // update commits first defines whether a delivery was granted before revocation.
 // There is no expiring lock whose stale holder can grant work after suspension.
-func (b *Broker) updateControl(ctx context.Context, tunnelUUID string, change func(*tunnelControl) error) error {
+func (b *Broker) updateControl(ctx context.Context, tunnelUUID string, create bool, change func(*tunnelControl) error) error {
 	key := brokerKey(tunnelUUID)
 	for attempt := range brokerCASAttempts {
 		state := newTunnelControl()
 		stored, err := b.control.read(ctx, key, &state)
 		if err != nil && !errors.Is(err, ErrRequestNotFound) {
 			return err
+		}
+		if stored.revision == 0 && !create {
+			return ErrControlNotFound
 		}
 		b.pruneControl(&state)
 		if err := change(&state); err != nil {
@@ -95,7 +98,7 @@ func (b *Broker) RegisterConnector(ctx context.Context, tunnelUUID, instanceID s
 	if err := validateBrokerChannels(declarations); err != nil {
 		return err
 	}
-	return b.updateControl(ctx, tunnelUUID, func(state *tunnelControl) error {
+	return b.updateControl(ctx, tunnelUUID, false, func(state *tunnelControl) error {
 		if err := advanceControlToken(state, tokenVersion); err != nil {
 			return err
 		}
@@ -121,7 +124,7 @@ func (b *Broker) RegisterConnector(ctx context.Context, tunnelUUID, instanceID s
 }
 
 func (b *Broker) SuspendTokenVersion(ctx context.Context, tunnelUUID string, version int64) error {
-	return b.updateControl(ctx, tunnelUUID, func(state *tunnelControl) error {
+	err := b.updateControl(ctx, tunnelUUID, false, func(state *tunnelControl) error {
 		if state.TokenVersion > version {
 			return ErrTokenRetired
 		}
@@ -131,10 +134,16 @@ func (b *Broker) SuspendTokenVersion(ctx context.Context, tunnelUUID string, ver
 		}
 		return nil
 	})
+	if errors.Is(err, ErrControlNotFound) {
+		return nil
+	}
+	return err
 }
 
+// ActivateTokenVersion may create control state only after the caller validates
+// the active credential under the Tunnel database row lock.
 func (b *Broker) ActivateTokenVersion(ctx context.Context, tunnelUUID string, version int64) error {
-	return b.updateControl(ctx, tunnelUUID, func(state *tunnelControl) error {
+	return b.updateControl(ctx, tunnelUUID, true, func(state *tunnelControl) error {
 		if state.TokenVersion > version {
 			return ErrTokenRetired
 		}
@@ -150,7 +159,7 @@ func (b *Broker) ActivateTokenVersion(ctx context.Context, tunnelUUID string, ve
 
 func (b *Broker) reserveCommand(ctx context.Context, tunnelUUID string, command *queuedCommand) error {
 	clientSessionID := command.Headers.Get("Mcp-Session-Id")
-	return b.updateControl(ctx, tunnelUUID, func(state *tunnelControl) error {
+	return b.updateControl(ctx, tunnelUUID, false, func(state *tunnelControl) error {
 		if !state.Active {
 			return ErrNoConnector
 		}
@@ -182,7 +191,7 @@ func (b *Broker) reserveCommand(ctx context.Context, tunnelUUID string, command 
 }
 
 func (b *Broker) confirmDelivery(ctx context.Context, tunnelUUID, instanceID string, version int64, command queuedCommand) error {
-	return b.updateControl(ctx, tunnelUUID, func(state *tunnelControl) error {
+	return b.updateControl(ctx, tunnelUUID, false, func(state *tunnelControl) error {
 		if !state.Active || state.TokenVersion != version {
 			return ErrTokenRetired
 		}
@@ -202,7 +211,7 @@ func (b *Broker) confirmDelivery(ctx context.Context, tunnelUUID, instanceID str
 
 func (b *Broker) releaseCommand(ctx context.Context, tunnelUUID, requestID string) {
 	// A failed release only keeps admission occupied until the original deadline.
-	_ = b.updateControl(ctx, tunnelUUID, func(state *tunnelControl) error { delete(state.Pending, requestID); return nil })
+	_ = b.updateControl(ctx, tunnelUUID, false, func(state *tunnelControl) error { delete(state.Pending, requestID); return nil })
 }
 
 func (b *Broker) ConnectorSnapshot(ctx context.Context, tunnelUUID string) (ConnectorSnapshot, error) {

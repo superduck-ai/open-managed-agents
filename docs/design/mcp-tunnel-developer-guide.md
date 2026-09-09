@@ -563,12 +563,17 @@ rotation 同时协调 PostgreSQL 与 NATS 控制 KV：
 
 archive 是资源终止操作：
 
-- Tunnel 与所有 token version 在同一数据库事务中归档；Certificate 保持独立，只能通过自身的 Archive API 归档；
-- NATS 控制 KV 中当前 token version 被暂停，presence 被清除；
+- Tunnel、所有 token version 的归档与 River 控制记录清理任务在同一数据库事务中提交；Certificate 保持独立，只能通过自身的 Archive API 归档；
+- NATS 控制 KV 中当前 token version 被暂停，presence 被清除；提交后 River Worker 精确清除该控制记录，释放 4096 个全局名额中的一个；
 - 管理面 retrieve/list 按归档语义返回；
 - Connector metadata/poll/response 不再接受归档 Tunnel；
 - MCP Ingress 把归档 Tunnel 视为不可见资源；
 - Agent Snapshot 即使仍保留旧 URL，Runtime Gateway 的实时 Tunnel 查询仍会拒绝。
+
+归档成功表示资源与清理任务已持久化，NATS 容量在后台清理成功后释放。Worker 在清理前核对租户归属、
+Tunnel UUID 和归档状态；清理幂等，失败一分钟后再执行，不消耗普通重试次数。进程退出不会丢失已提交任务。
+普通 Poll、派发与 pending 释放不能创建缺失的控制记录；只有在数据库行锁下确认 Tunnel 与 Token 仍有效后
+才能恢复记录，因此迟到 Poll 不会复活已归档资源。数据库资源记录继续保留供详情和历史查询使用。
 
 ## 12. Header、安全与数据边界
 

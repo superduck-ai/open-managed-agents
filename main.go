@@ -170,13 +170,14 @@ func run(logger *slog.Logger) error {
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
+	tunnels.RegisterCleanupWorker(workers, database, tunnelBroker, logger.With("component", "tunnel_cleanup"))
 	deploymentStore := deployments.NewStore(database)
 	deployments.RegisterWorkers(workers, deploymentStore)
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
 	lifecycle.Register(workers)
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
-		map[string]river.QueueConfig{deploymentjobs.Queue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
+		map[string]river.QueueConfig{tunnels.CleanupQueue: {MaxWorkers: 2}, deploymentjobs.Queue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
@@ -214,6 +215,7 @@ func run(logger *slog.Logger) error {
 			SessionEventBus:        sessionEventBus,
 			WorkerEventBroker:      workerEventBroker,
 			TunnelBroker:           tunnelBroker,
+			TunnelCleanupJobs:      tunnels.NewCleanupJobs(jobClient),
 			WorkerEventAcks:        workerEventAcks,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

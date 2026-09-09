@@ -16,7 +16,6 @@ import (
 type consoleWorkspaceMemberStore interface {
 	workspaceaccess.Store
 	workspaceaccess.MemberStore
-	ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]platform.OrgUser, error)
 	FindOrgMemberByReference(ctx context.Context, orgUUID, userReference string) (db.AdminUser, error)
 	ListWorkspaceMemberFacts(ctx context.Context, orgUUID, workspaceUUID string) ([]db.WorkspaceMemberFact, error)
 }
@@ -58,22 +57,13 @@ func handleListConsoleWorkspaceMembers(store OrganizationStore) http.HandlerFunc
 			internalError(w, "failed to list workspace members")
 			return
 		}
-		users, err := memberStore.ListOrgUsers(r.Context(), orgUUID, 1000)
-		if err != nil {
-			internalError(w, "failed to list workspace members")
-			return
-		}
-		profiles := make(map[string]platform.OrgUser, len(users))
-		for _, user := range users {
-			profiles[user.UserUUID] = user
-		}
 		members := make([]map[string]any, 0, len(facts))
 		for _, fact := range facts {
 			memberAccess, accessErr := workspaceaccess.Effective(fact.OrganizationRole, workspace.IsDefault, fact.ExplicitRole)
 			if accessErr != nil {
 				continue
 			}
-			profile := profiles[fact.UserUUID]
+			profile := platform.OrgUser{Email: fact.Email, FullName: new(fact.Name)}
 			members = append(members, formatConsoleWorkspaceMember(fact, memberAccess, profile, access.ManageMembers()))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -104,32 +94,20 @@ func handleListConsoleWorkspaceMemberCandidates(store OrganizationStore) http.Ha
 			writeConsoleWorkspaceMemberError(w, workspaceaccess.ErrDenied)
 			return
 		}
-		users, err := memberStore.ListOrgUsers(r.Context(), orgUUID, 1000)
-		if err != nil {
-			internalError(w, "failed to list member candidates")
-			return
-		}
 		facts, err := memberStore.ListWorkspaceMemberFacts(r.Context(), orgUUID, workspace.UUID)
 		if err != nil {
 			internalError(w, "failed to list member candidates")
 			return
 		}
-		explicit := make(map[string]bool, len(facts))
+		candidates := make([]map[string]any, 0, len(facts))
 		for _, fact := range facts {
-			if fact.ExplicitRole != "" {
-				explicit[fact.UserUUID] = true
-			}
-		}
-		candidates := make([]map[string]any, 0, len(users))
-		for _, user := range users {
-			role := strings.ToLower(strings.TrimSpace(user.Role))
-			if role == "admin" || role == "billing" || explicit[user.UserUUID] {
+			if fact.OrganizationRole == "admin" || fact.OrganizationRole == "billing" || fact.ExplicitRole != "" {
 				continue
 			}
 			candidates = append(candidates, map[string]any{
-				"user_id": taggedUserID(user.UserUUID),
-				"name":    consoleMemberName(user),
-				"email":   user.Email,
+				"user_id": taggedUserID(fact.UserUUID),
+				"name":    consoleMemberName(platform.OrgUser{Email: fact.Email, FullName: new(fact.Name)}),
+				"email":   fact.Email,
 			})
 		}
 		writeJSON(w, http.StatusOK, candidates)
@@ -233,9 +211,6 @@ func resolveConsoleWorkspace(w http.ResponseWriter, r *http.Request, store works
 
 func formatConsoleWorkspaceMember(fact db.WorkspaceMemberFact, access auth.WorkspaceAccess, profile platform.OrgUser, canManage bool) map[string]any {
 	canChange := canManage && fact.OrganizationRole != "admin"
-	if fact.OrganizationRole == "billing" && access.Source != "billing_override" {
-		canChange = false
-	}
 	name := profile.FullName
 	if name == nil || strings.TrimSpace(*name) == "" {
 		name = &profile.Email
@@ -248,7 +223,7 @@ func formatConsoleWorkspaceMember(fact db.WorkspaceMemberFact, access auth.Works
 		"workspace_role":    access.Role,
 		"role_source":       access.Source,
 		"can_edit":          canChange,
-		"can_remove":        canChange,
+		"can_remove":        canChange && fact.OrganizationRole != "billing",
 	}
 }
 

@@ -38,7 +38,7 @@ sequenceDiagram
 | POST `/members/{userId}` | 更新 `workspace_role`，包括 Billing 提权和恢复继承 |
 | DELETE `/members/{userId}` | 移除显式成员 |
 
-每个成员返回身份、姓名、邮箱、组织角色、有效工作区角色、角色来源及 `can_edit`、`can_remove`。界面消费服务端权限，不自行复制继承算法。目录与候选查询复用 `ListWorkspaceMemberFacts`；添加、改角色和移除统一走 `workspaceaccess.ChangeMember`（组织成员行锁 → 工作区锁 → 操作者授权 → Default 保护 → Billing 规则）。组织 Admin/Billing 的继承访问不可编辑或移除；候选列表只返回可显式添加的组织成员（排除 Admin/Billing 与已有显式成员）。
+每个成员返回身份、姓名、邮箱、组织角色、有效工作区角色、角色来源及 `can_edit`、`can_remove`。界面消费服务端权限，不自行复制继承算法。目录与候选查询复用 `ListWorkspaceMemberFacts`；添加、改角色和移除统一走 `workspaceaccess.ChangeMember`（组织成员行锁 → 工作区锁 → 操作者授权 → Default 保护 → Billing 规则）。组织 Admin 的继承访问不可编辑或移除；Billing 可编辑以提权或恢复继承，但始终不可移除；候选列表只返回可显式添加的组织成员（排除 Admin/Billing 与已有显式成员）。
 
 ## 组织成员 Console 合同
 
@@ -58,3 +58,7 @@ sequenceDiagram
 - `TestConsoleMembersAPI` 覆盖组织成员列表、改角色、移除；工作区成员 Console 合同由真实 HTTP 验收补充覆盖（见 PR 验收评论）。
 - 全量测试在独立 PostgreSQL + Redis + 三节点 NATS 环境执行；仅 Official SDK fixture（401）与内嵌 JetStream 集群 placement 为基线环境限制，与本功能无关。
 - 本阶段不处理长连接撤权、运行中任务迁移或凭据归属模型变更。
+
+成员资料与权限事实由一次带组织和工作区范围的查询返回，不再拼接截断为 1000 人的组织资料列表；候选成员复用同一查询。工作区页面只保留路由实际使用的 `settings/WorkspaceMembersPage.tsx`。
+
+审查回归覆盖：Billing 继承与提权状态下的编辑/移除能力、Admin API 最后管理员冲突映射、1002 人目录的真实 PostgreSQL 资料扫描与跨组织拒绝。

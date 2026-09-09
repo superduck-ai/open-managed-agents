@@ -161,56 +161,7 @@ func NewServer(deps ServerDeps) *Server {
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:         deps.TunnelBroker,
 	}
-	if deps.DB != nil {
-		tunnelService := tunnelsapi.NewService(deps.Config.Tunnel, deps.DB, deps.VaultSecrets).WithBroker(deps.TunnelBroker)
-		mcpCatalogHandler.WithTunnelProber(func(
-			ctx context.Context,
-			organizationUUID string,
-			workspaceUUID string,
-			endpoint string,
-		) (bool, error) {
-			_, recognized, resolveErr := tunnelService.ResolveProbeTarget(ctx, tunnelsapi.ConsoleScope{
-				OrganizationUUID: organizationUUID,
-				WorkspaceUUID:    workspaceUUID,
-			}, endpoint)
-			return recognized, resolveErr
-		}, func(
-			ctx context.Context,
-			organizationUUID string,
-			workspaceUUID string,
-			endpoint string,
-		) ([]mcpcatalogs.CatalogTool, bool, error) {
-			result, recognized, probeErr := tunnelService.ProbeTarget(ctx, tunnelsapi.ConsoleScope{
-				OrganizationUUID: organizationUUID,
-				WorkspaceUUID:    workspaceUUID,
-			}, endpoint)
-			tools := make([]mcpcatalogs.CatalogTool, 0, len(result.Tools))
-			for _, tool := range result.Tools {
-				tools = append(tools, mcpcatalogs.CatalogTool{
-					Name: tool.Name, Title: tool.Title, Description: tool.Description,
-				})
-			}
-			return tools, recognized, probeErr
-		})
-		s.tunnels = tunnelsapi.NewHandler(tunnelService, componentLogger("tunnels"))
-		s.consoleTunnels = tunnelsapi.NewConsoleHandler(
-			tunnelService,
-			deps.TunnelBroker,
-			func(w http.ResponseWriter, r *http.Request) (tunnelsapi.ConsoleScope, bool) {
-				scope, ok := platformapi.ResolveConsoleWorkspaceRequest(w, r, deps.DB)
-				return tunnelsapi.ConsoleScope{
-					OrganizationUUID: scope.OrganizationUUID,
-					WorkspaceUUID:    scope.WorkspaceUUID,
-				}, ok
-			},
-			componentLogger("console_mcp_tunnels"),
-		)
-	}
-	if deps.DB != nil && deps.TunnelBroker != nil {
-		s.connector = tunnelsapi.NewConnectorHandler(deps.Config.Tunnel, deps.DB, deps.TunnelBroker, componentLogger("tunnel_connector"))
-		s.tunnelIngress = tunnelsapi.NewIngressHandler(deps.Config.Tunnel, deps.DB, deps.TunnelBroker, componentLogger("tunnel_ingress"))
-		s.codeSessions.WithTunnelInvoker(s.tunnelIngress)
-	}
+	s.configureTunnels(mcpCatalogHandler, rootLogger)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
 	router.Use(requestLoggingMiddleware(componentLogger("http")))
@@ -223,8 +174,6 @@ func NewServer(deps ServerDeps) *Server {
 	router.Get("/readyz", s.handleReadiness)
 	if s.connector != nil {
 		router.Mount("/connector", s.connector)
-	}
-	if s.tunnelIngress != nil {
 		router.With(s.v1AuthMiddleware).Get("/.well-known/oauth-protected-resource/v1/mcp/{tunnel_id}", s.tunnelIngress.HandleOAuthProtectedResource)
 		router.With(s.v1AuthMiddleware).Get("/.well-known/oauth-protected-resource/v1/mcp/{tunnel_id}/{channel}", s.tunnelIngress.HandleOAuthProtectedResource)
 	}

@@ -66,6 +66,12 @@ flowchart LR
 定义 `TunnelInvoker` 接口，生产组装传入 Tunnel DataPlane，避免 OMA 对自身 public URL 发起 HTTP 回环。
 
 Tunnel 复用 `main` 创建的进程级 NATS 连接。Broker 自行关闭订阅，连接由组装层 drain。
+
+HTTP 依赖在 `internal/api/tunnels.go` 集中组装：管理 Service 通过构造函数接收共享 Broker，
+Connector 与 Ingress 使用同一 Broker，Ingress 注入 Code Session 的 `TunnelInvoker`。
+目录探测与 Console workspace scope 的跨资源适配也放在该 API 组装边界。生产启动必须成功创建
+DB 和 Broker；轻量路由测试可以省略依赖，缺少 DB 时不挂载 Tunnel 资源，有 DB 而缺少 Broker
+时保留管理入口，但不挂载 Connector 和直接 MCP 数据入口。
 NATS 必须启用 JetStream、提供三副本，所有节点 `max_payload` 至少为 2 MiB。
 
 ## 路由与鉴权

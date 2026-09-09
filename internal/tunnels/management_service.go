@@ -29,14 +29,7 @@ type Service struct {
 	broker    *Broker
 }
 
-func (s *Service) WithBroker(broker *Broker) *Service {
-	if s != nil {
-		s.broker = broker
-	}
-	return s
-}
-
-func NewService(cfg config.TunnelConfig, database *db.DB, secretSvc *secrets.Service) *Service {
+func NewService(cfg config.TunnelConfig, database *db.DB, secretSvc *secrets.Service, broker *Broker) *Service {
 	if database == nil {
 		panic("tunnels: database is required")
 	}
@@ -44,6 +37,7 @@ func NewService(cfg config.TunnelConfig, database *db.DB, secretSvc *secrets.Ser
 		cfg:       cfg,
 		db:        database,
 		secretSvc: secretSvc,
+		broker:    broker,
 		now:       func() time.Time { return time.Now().UTC() },
 		random:    rand.Reader,
 	}

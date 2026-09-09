@@ -121,6 +121,10 @@ func tokenTransitionError(message string, err error) error {
 }
 
 func mapTunnelLookupError(err error, tunnelID, operation string) error {
+	var appError *apperr.Error
+	if errors.As(err, &appError) {
+		return appError
+	}
 	switch {
 	case errors.Is(err, db.ErrNotFound):
 		return tunnelNotFound(tunnelID, err)
@@ -142,4 +146,11 @@ func mapCertificateLookupError(err error, certificateID, operation string) error
 		"Could not "+operation+" tunnel certificate",
 		fmt.Errorf("%s tunnel certificate %q: %w", operation, certificateID, err),
 	)
+}
+
+func connectorTokenRecoveryError(err error) error {
+	if errors.Is(err, db.ErrNotFound) || errors.Is(err, db.ErrInvalidState) || errors.Is(err, ErrTokenRetired) {
+		return invalidConnectorCredential()
+	}
+	return unavailable("Could not restore tunnel token state", err)
 }

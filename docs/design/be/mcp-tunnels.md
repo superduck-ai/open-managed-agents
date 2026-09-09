@@ -226,8 +226,34 @@ NATS ACK 只确认命令交付，不代表工具执行成功；调用取消也�
 channel 声明、自包含请求主实例、presence 和 pending 准入。派发许可与令牌暂停条件更新同一个 key，
 因此暂停之前已发放的许可可以继续在途，暂停之后不会发放旧版本新许可。该控制记录不使用 TTL，
 防止暂停状态消失后被迟到的已鉴权 poll 重新创建。PostgreSQL 是资源与凭据的权威来源。
-rotate/archive 先暂停，再执行 DB 事务；事务失败后从 DB 恢复控制状态；更高 active-token 的有效 poll
-可单调修复激活失败。旧 token 仅能完成已绑定的在途响应，archive 后拒绝所有 Connector 请求。
+rotate/archive 在同一个 Yourbatis 事务中先锁定 Tunnel 行和当前 token，再暂停 NATS 控制状态并写入 DB。
+事务总时限为 10 秒；提交后或失败补偿时，恢复操作在同一条 DB 行锁下重新读取有效 token，再激活对应版本。
+Poll 遇到暂停状态时，以 5 秒时限获取同一行锁，并核对请求 token 仍是 DB 的有效版本，成功恢复后只重试一次 Poll。
+进程退出会释放数据库事务锁，因此遗留暂停可在下次有效 Poll 自动恢复；正在进行的归档或轮换持锁期间不会被恢复操作越过。
+锁等待或基础设施失败返回可重试的 503；已退休或已归档的 token 不恢复。旧 token 仅能完成已绑定的在途响应，archive 后拒绝所有 Connector 请求。
+
+```mermaid
+sequenceDiagram
+    participant M as 管理请求
+    participant DB as PostgreSQL
+    participant N as NATS 控制记录
+    participant P as Connector Poll
+    M->>DB: BEGIN，锁定 Tunnel 与当前 Token
+    M->>N: 暂停当前版本
+    M->>DB: 轮换或归档，COMMIT
+    Note over M,DB: 若进程退出则事务回滚、行锁释放
+    P->>N: Poll 遇到暂停
+    P->>DB: 有界等待同一行锁，读取已提交有效版本
+    alt 请求 Token 仍有效
+        P->>N: 激活 DB 有效版本
+        P->>DB: 结束事务、释放锁
+        P->>N: 重试一次 Poll
+    else 已退休或归档
+        P->>DB: 结束事务，不激活
+        Note over P: 返回鉴权失败
+    end
+```
+
 poll 在写出非空命令批次前再次查询 PostgreSQL 凭据状态；长轮询期间发生轮换或归档，
 或并发管理请求留下迟到的 Broker 激活时，拒绝交付并有界取消已领取但尚未写出的命令。
 

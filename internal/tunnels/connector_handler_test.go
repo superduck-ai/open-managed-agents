@@ -277,3 +277,13 @@ func connectorMetadataRequest(token string) *http.Request {
 func stringPointer(value string) *string {
 	return &value
 }
+
+func (d connectorMetadataDatabase) WithMCPTunnelTokenTx(ctx context.Context, _, _, _ string, fn func(*db.MCPTunnelTokenTx) error) error {
+	if d.getError != nil {
+		return d.getError
+	}
+	if d.context.Token.RetiredAt != nil || d.context.TunnelArchivedAt != nil {
+		return db.ErrNotFound
+	}
+	return fn(&db.MCPTunnelTokenTx{Tunnel: d.tunnel, Token: d.context.Token})
+}

@@ -40,6 +40,7 @@ type ConnectorHandler struct {
 }
 
 type connectorDatabase interface {
+	tunnelTokenDatabase
 	FindMCPTunnelTokenContext(context.Context, string, []byte) (db.MCPTunnelTokenContext, error)
 	GetMCPTunnel(context.Context, string, string, string) (db.MCPTunnel, error)
 }
@@ -144,6 +145,15 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 	commands, err := h.broker.Poll(r.Context(), credential.TunnelUUID, instanceID, credential.TokenVersion, channels, limit, timeout)
+	if errors.Is(err, ErrTokenRetired) {
+		restoreCtx, cancel := context.WithTimeout(r.Context(), tokenVersionRestoreTimeout)
+		restoreErr := reconcileTunnelToken(restoreCtx, h.db, h.broker, tunnelScope{OrganizationUUID: credential.OrganizationUUID, WorkspaceUUID: credential.WorkspaceUUID}, credential.TunnelExternalID, credential.TokenVersion)
+		cancel()
+		if restoreErr != nil {
+			return connectorTokenRecoveryError(restoreErr)
+		}
+		commands, err = h.broker.Poll(r.Context(), credential.TunnelUUID, instanceID, credential.TokenVersion, channels, limit, timeout)
+	}
 	if err != nil {
 		if errors.Is(err, ErrTokenRetired) {
 			return invalidConnectorCredential()

@@ -133,56 +133,57 @@ func (d *DB) GetActiveMCPTunnelToken(ctx context.Context, organizationUUID, work
 	return mcpTunnelTokenFromRow(row), nil
 }
 
-func (d *DB) RotateMCPTunnelToken(
-	ctx context.Context,
-	organizationUUID string,
-	workspaceUUID string,
-	externalID string,
-	expectedVersion int64,
-	next MCPTunnelTokenVersion,
-) (MCPTunnelTokenVersion, error) {
-	if next.Envelope == nil {
-		return MCPTunnelTokenVersion{}, ErrIncompleteSecretEnvelope
-	}
-	var created MCPTunnelTokenVersion
+// MCPTunnelTokenTx is valid only inside WithMCPTunnelTokenTx's synchronous callback.
+// The resource row lock serializes token mutations with control-state recovery.
+type MCPTunnelTokenTx struct {
+	executor yourbatis.Executor
+	Tunnel   MCPTunnel
+	Token    MCPTunnelTokenVersion
+}
+
+func (d *DB) WithMCPTunnelTokenTx(ctx context.Context, organizationUUID, workspaceUUID, externalID string, fn func(*MCPTunnelTokenTx) error) error {
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		tunnelRow, err := NewMCPTunnelMapper(executor).FindActiveForUpdate(ctx, organizationUUID, workspaceUUID, externalID)
+		row, err := NewMCPTunnelMapper(executor).FindActiveForUpdate(ctx, organizationUUID, workspaceUUID, externalID)
 		if err != nil {
 			return mapNoRows(err)
 		}
-		tokenMapper := NewMCPTunnelTokenMapper(executor)
-		current, found, err := tokenMapper.FindActiveForUpdate(ctx, tunnelRow.UUID)
+		token, found, err := NewMCPTunnelTokenMapper(executor).FindActiveForUpdate(ctx, row.UUID)
 		if err != nil {
 			return err
 		}
 		if !found {
 			return ErrNotFound
 		}
-		nextVersion, err := nextMCPTunnelTokenVersion(current.Version, expectedVersion)
-		if err != nil {
-			return err
-		}
-		now := next.CreatedAt
-		rows, err := tokenMapper.RetireActiveByTunnelUUID(ctx, tunnelRow.UUID, now)
-		if err != nil {
-			return err
-		}
-		if rows != 1 {
-			return ErrInvalidState
-		}
-		next.TunnelUUID = tunnelRow.UUID
-		next.Version = nextVersion
-		row, err := tokenMapper.Insert(ctx, mcpTunnelTokenInsertParams(next))
-		if err != nil {
-			return err
-		}
-		created = mcpTunnelTokenFromRow(row)
-		return nil
+		return fn(&MCPTunnelTokenTx{executor: executor, Tunnel: mcpTunnelFromRow(row), Token: mcpTunnelTokenFromRow(token)})
 	})
 	if isUniqueViolation(err) {
-		return MCPTunnelTokenVersion{}, ErrDuplicate
+		return ErrDuplicate
 	}
-	return created, err
+	return err
+}
+
+func (tx *MCPTunnelTokenTx) Rotate(ctx context.Context, expectedVersion int64, next MCPTunnelTokenVersion) (MCPTunnelTokenVersion, error) {
+	if next.Envelope == nil {
+		return MCPTunnelTokenVersion{}, ErrIncompleteSecretEnvelope
+	}
+	nextVersion, err := nextMCPTunnelTokenVersion(tx.Token.Version, expectedVersion)
+	if err != nil {
+		return MCPTunnelTokenVersion{}, err
+	}
+	mapper := NewMCPTunnelTokenMapper(tx.executor)
+	rows, err := mapper.RetireActiveByTunnelUUID(ctx, tx.Tunnel.UUID, next.CreatedAt)
+	if err != nil {
+		return MCPTunnelTokenVersion{}, err
+	}
+	if rows != 1 {
+		return MCPTunnelTokenVersion{}, ErrInvalidState
+	}
+	next.TunnelUUID, next.Version = tx.Tunnel.UUID, nextVersion
+	row, err := mapper.Insert(ctx, mcpTunnelTokenInsertParams(next))
+	if err != nil {
+		return MCPTunnelTokenVersion{}, err
+	}
+	return mcpTunnelTokenFromRow(row), nil
 }
 
 func nextMCPTunnelTokenVersion(currentVersion, expectedVersion int64) (int64, error) {
@@ -192,25 +193,19 @@ func nextMCPTunnelTokenVersion(currentVersion, expectedVersion int64) (int64, er
 	return currentVersion + 1, nil
 }
 
-func (d *DB) ArchiveMCPTunnel(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (MCPTunnel, error) {
-	var archived MCPTunnel
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		tunnelMapper := NewMCPTunnelMapper(executor)
-		row, err := tunnelMapper.ArchiveByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
-		if err != nil {
-			return mapNoRows(err)
-		}
-		archived = mcpTunnelFromRow(row)
-		archivedAt := time.Now().UTC()
-		if row.ArchivedAt != nil {
-			archivedAt = *row.ArchivedAt
-		}
-		if err := NewMCPTunnelTokenMapper(executor).ArchiveByTunnelUUID(ctx, row.UUID, archivedAt); err != nil {
-			return err
-		}
-		return nil
-	})
-	return archived, err
+func (tx *MCPTunnelTokenTx) Archive(ctx context.Context) (MCPTunnel, error) {
+	row, err := NewMCPTunnelMapper(tx.executor).ArchiveByExternalID(ctx, tx.Tunnel.OrganizationUUID, tx.Tunnel.WorkspaceUUID, tx.Tunnel.ExternalID)
+	if err != nil {
+		return MCPTunnel{}, mapNoRows(err)
+	}
+	archivedAt := time.Now().UTC()
+	if row.ArchivedAt != nil {
+		archivedAt = *row.ArchivedAt
+	}
+	if err := NewMCPTunnelTokenMapper(tx.executor).ArchiveByTunnelUUID(ctx, row.UUID, archivedAt); err != nil {
+		return MCPTunnel{}, err
+	}
+	return mcpTunnelFromRow(row), nil
 }
 
 func (d *DB) FindMCPTunnelTokenContext(ctx context.Context, tunnelExternalID string, tokenHash []byte) (MCPTunnelTokenContext, error) {

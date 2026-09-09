@@ -18,7 +18,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const tokenVersionRestoreTimeout = 5 * time.Second
+const (
+	tokenVersionRestoreTimeout = 5 * time.Second
+	tokenTransitionTimeout     = 10 * time.Second
+)
 
 type Service struct {
 	cfg       config.TunnelConfig
@@ -115,24 +118,20 @@ func (s *Service) Archive(ctx context.Context, scope tunnelScope, tunnelID strin
 	if tunnel.ArchivedAt != nil {
 		return tunnel, nil
 	}
-	current, err := s.db.GetActiveMCPTunnelToken(ctx, scope.OrganizationUUID, scope.WorkspaceUUID, tunnelID)
-	if err != nil {
-		return db.MCPTunnel{}, mapTunnelLookupError(err, tunnelID, "archive")
-	}
-	if err := s.suspendTokenVersion(ctx, tunnel.UUID, current.Version); err != nil {
-		return db.MCPTunnel{}, tokenTransitionError("Could not archive tunnel", err)
-	}
-	archived := false
-	defer func() {
-		if !archived {
-			s.restoreDatabaseTokenVersion(ctx, scope, tunnelID, tunnel.UUID)
+	transitionCtx, cancel := context.WithTimeout(ctx, tokenTransitionTimeout)
+	defer cancel()
+	defer s.restoreDatabaseTokenVersion(ctx, scope, tunnelID)
+	err = s.db.WithMCPTunnelTokenTx(transitionCtx, scope.OrganizationUUID, scope.WorkspaceUUID, tunnelID, func(tx *db.MCPTunnelTokenTx) error {
+		if err := s.suspendTokenVersion(transitionCtx, tx.Tunnel.UUID, tx.Token.Version); err != nil {
+			return tokenTransitionError("Could not archive tunnel", err)
 		}
-	}()
-	tunnel, err = s.db.ArchiveMCPTunnel(ctx, scope.OrganizationUUID, scope.WorkspaceUUID, tunnelID)
+		var err error
+		tunnel, err = tx.Archive(transitionCtx)
+		return err
+	})
 	if err != nil {
 		return db.MCPTunnel{}, mapTunnelLookupError(err, tunnelID, "archive")
 	}
-	archived = true
 	return tunnel, nil
 }
 
@@ -172,20 +171,6 @@ func (s *Service) RotateToken(ctx context.Context, scope tunnelScope, tunnelID s
 	if err != nil {
 		return db.MCPTunnelTokenVersion{}, nil, mapTunnelLookupError(err, tunnelID, "rotate token for")
 	}
-	// Reconcile a previous activation failure before suspending. Activation is
-	// monotonic, so this cannot overwrite a newer concurrent rotation.
-	if err := s.activateTokenVersion(ctx, tunnel.UUID, current.Version); err != nil {
-		return db.MCPTunnelTokenVersion{}, nil, tokenTransitionError("Could not rotate tunnel token", err)
-	}
-	if err := s.suspendTokenVersion(ctx, tunnel.UUID, current.Version); err != nil {
-		return db.MCPTunnelTokenVersion{}, nil, tokenTransitionError("Could not rotate tunnel token", err)
-	}
-	rotated := false
-	defer func() {
-		if !rotated {
-			s.restoreDatabaseTokenVersion(ctx, scope, tunnelID, tunnel.UUID)
-		}
-	}()
 	token, err := s.newConnectorToken()
 	if err != nil {
 		return db.MCPTunnelTokenVersion{}, nil, internalError("Could not generate tunnel token", err)
@@ -196,22 +181,30 @@ func (s *Service) RotateToken(ctx context.Context, scope tunnelScope, tunnelID s
 		clear(plaintext)
 		return db.MCPTunnelTokenVersion{}, nil, internalError("Could not protect tunnel token", fmt.Errorf("seal tunnel token: %w", err))
 	}
-	created, err := s.db.RotateMCPTunnelToken(
-		ctx,
-		scope.OrganizationUUID,
-		scope.WorkspaceUUID,
-		tunnelID,
-		current.Version,
-		tokenVersion(token, envelope, s.now()),
-	)
+	transitionCtx, cancel := context.WithTimeout(ctx, tokenTransitionTimeout)
+	defer cancel()
+	var created db.MCPTunnelTokenVersion
+	err = s.db.WithMCPTunnelTokenTx(transitionCtx, scope.OrganizationUUID, scope.WorkspaceUUID, tunnelID, func(tx *db.MCPTunnelTokenTx) error {
+		if tx.Token.Version != current.Version {
+			return db.ErrInvalidState
+		}
+		if err := s.suspendTokenVersion(transitionCtx, tx.Tunnel.UUID, tx.Token.Version); err != nil {
+			return tokenTransitionError("Could not rotate tunnel token", err)
+		}
+		var err error
+		created, err = tx.Rotate(transitionCtx, current.Version, tokenVersion(token, envelope, s.now()))
+		return err
+	})
 	if err != nil {
 		clear(plaintext)
+		s.restoreDatabaseTokenVersion(ctx, scope, tunnelID)
 		return db.MCPTunnelTokenVersion{}, nil, mapTunnelLookupError(err, tunnelID, "rotate token for")
 	}
-	rotated = true
-	if err := s.activateTokenVersion(ctx, tunnel.UUID, created.Version); err != nil {
+	restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), tokenVersionRestoreTimeout)
+	defer restoreCancel()
+	if err := reconcileTunnelToken(restoreCtx, s.db, s.broker, scope, tunnelID, 0); err != nil && !errors.Is(err, db.ErrNotFound) {
 		clear(plaintext)
-		return db.MCPTunnelTokenVersion{}, nil, internalError("Could not activate rotated tunnel token", err)
+		return db.MCPTunnelTokenVersion{}, nil, tokenTransitionError("Could not activate rotated tunnel token", err)
 	}
 	return created, plaintext, nil
 }
@@ -223,21 +216,10 @@ func (s *Service) suspendTokenVersion(ctx context.Context, tunnelUUID string, to
 	return s.broker.SuspendTokenVersion(ctx, tunnelUUID, tokenVersion)
 }
 
-func (s *Service) activateTokenVersion(ctx context.Context, tunnelUUID string, tokenVersion int64) error {
-	if s.broker == nil {
-		return nil
-	}
-	return s.broker.ActivateTokenVersion(ctx, tunnelUUID, tokenVersion)
-}
-
-func (s *Service) restoreDatabaseTokenVersion(ctx context.Context, scope tunnelScope, tunnelID, tunnelUUID string) {
+func (s *Service) restoreDatabaseTokenVersion(ctx context.Context, scope tunnelScope, tunnelID string) {
 	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenVersionRestoreTimeout)
 	defer cancel()
-	current, err := s.db.GetActiveMCPTunnelToken(restoreCtx, scope.OrganizationUUID, scope.WorkspaceUUID, tunnelID)
-	if err != nil {
-		return
-	}
-	_ = s.activateTokenVersion(restoreCtx, tunnelUUID, current.Version)
+	_ = reconcileTunnelToken(restoreCtx, s.db, s.broker, scope, tunnelID, 0)
 }
 
 func (s *Service) newConnectorToken() (connectorToken, error) {

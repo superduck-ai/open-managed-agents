@@ -707,3 +707,7 @@ TEST_TUNNEL_CLIENT_BINARY=/absolute/path/to/tunnel-client go test ./internal/tun
 
 Console 的 Tunnel 操作必须获得 URL 目标工作区的权限。验证时应使用同一组织内只有 A 工作区权限的普通成员，
 确认即使 Header 指定 A，也不能读取 B 的 Tunnel、查看 Token 或执行轮换/归档。
+
+Token 轮换、归档和恢复共用 PostgreSQL 事务行锁。进程在 NATS 暂停后退出、DB 事务回滚时，
+有效 Connector 的下一次 Poll 会基于 DB 当前版本恢复；事务提交了轮换时只接受新 Token，提交了归档时不恢复。
+正在进行的事务不会被恢复操作绕过；有界锁等待失败返回 503，Connector 可以重试。

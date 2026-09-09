@@ -147,9 +147,8 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 	want := []any{
 		map[string]any{
 			"type":       "git_repository",
-			"git_info":   map[string]any{"repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git"},
+			"git_info":   map[string]any{"repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git", "ref": "refs/heads/main"},
 			"mount_path": "/workspace/widgets",
-			"checkout":   map[string]any{"type": "branch", "name": "main"},
 		},
 		map[string]any{
 			"type":            "memory_store",
@@ -176,6 +175,7 @@ func TestManagedAgentRuntimeResourcesRejectInvalidGit(t *testing.T) {
 		`{"url":"https://github.com/acme/repo","mount_path":""}`,
 		`{"url":"https://github.com/acme/repo","mount_path":" /workspace/repo "}`,
 		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":"main"}`,
+		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":{"type":"commit","sha":"abcdef0"}}`,
 		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/../outside"}`,
 	} {
 		t.Run(raw, func(t *testing.T) {
@@ -581,26 +581,27 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	}
 }
 
-func TestManagedAgentGitFailurePolicy(t *testing.T) {
-	deployment := "dep_policy"
-	for _, tc := range []struct {
-		name    string
-		session db.Session
-		want    bool
-	}{
-		{"deployment", db.Session{DeploymentID: &deployment}, false},
-		{"deployment UUID", db.Session{DeploymentUUID: &deployment}, false},
-		{"interactive", db.Session{}, true},
+func TestManagedAgentRuntimeGitRef(t *testing.T) {
+	for _, test := range []struct{ name, checkout, ref string }{
+		{"default", "null", ""},
+		{"branch", `{"type":"branch","name":"release/v1"}`, "refs/heads/release/v1"},
+		{"commit sha1", `{"type":"commit","sha":"` + strings.Repeat("A", 40) + `"}`, strings.Repeat("a", 40)},
+		{"commit sha256", `{"type":"commit","sha":"` + strings.Repeat("B", 64) + `"}`, strings.Repeat("b", 64)},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var body struct {
-				Continue bool `json:"continue_on_git_resource_error"`
+		t.Run(test.name, func(t *testing.T) {
+			resources := []db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`)}}
+			sources := mustResolveRuntimeResources(t, resources).sources
+			var source struct {
+				GitInfo struct {
+					Ref string `json:"ref"`
+				} `json:"git_info"`
+				Checkout json.RawMessage `json:"checkout"`
 			}
-			if err := json.Unmarshal(managedAgentSessionConfig(tc.session, mustResolveRuntimeResources(t, nil)), &body); err != nil {
+			if err := json.Unmarshal(sources[0], &source); err != nil {
 				t.Fatal(err)
 			}
-			if body.Continue != tc.want {
-				t.Fatalf("continue=%v want=%v", body.Continue, tc.want)
+			if source.GitInfo.Ref != test.ref || source.Checkout != nil {
+				t.Fatalf("unexpected runtime source: %s", sources[0])
 			}
 		})
 	}

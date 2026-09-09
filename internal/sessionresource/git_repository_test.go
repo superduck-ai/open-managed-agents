@@ -53,6 +53,45 @@ func TestGitRepositorySpecsRejectAmbiguousRepositoriesAndPaths(t *testing.T) {
 	}
 }
 
+func TestGitRepositoryCommitRequiresFullSHA(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		sha  string
+	}{
+		{"empty", ""},
+		{"short", "abcdef0"},
+		{"sha1 truncated", strings.Repeat("a", 39)},
+		{"sha1 extended", strings.Repeat("a", 41)},
+		{"sha256 truncated", strings.Repeat("a", 63)},
+		{"sha256 extended", strings.Repeat("a", 65)},
+		{"non hexadecimal", strings.Repeat("g", 40)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checkout := json.RawMessage(`{"type":"commit","sha":"` + test.sha + `"}`)
+			if _, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo"`), nil, checkout); err == nil {
+				t.Fatal("invalid commit SHA accepted at resource input")
+			}
+			stored := json.RawMessage(`{"url":"https://github.com/owner/repo","mount_path":"/workspace/repo","checkout":` + string(checkout) + `}`)
+			if _, err := ParseStoredGitRepositorySpec(stored); err == nil {
+				t.Fatal("invalid persisted commit SHA accepted")
+			}
+		})
+	}
+	for _, length := range []int{40, 64} {
+		sha := strings.Repeat("A", length)
+		checkout := json.RawMessage(`{"type":"commit","sha":"` + sha + `"}`)
+		spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo"`), nil, checkout)
+		if err != nil || spec.Checkout == nil || spec.Checkout.SHA != strings.ToLower(sha) {
+			t.Fatalf("full %d-character SHA normalization: spec=%+v err=%v", length, spec, err)
+		}
+		stored := json.RawMessage(`{"url":"https://github.com/owner/repo","mount_path":"/workspace/repo","checkout":` + string(checkout) + `}`)
+		spec, err = ParseStoredGitRepositorySpec(stored)
+		if err != nil || spec.Checkout == nil || spec.Checkout.SHA != strings.ToLower(sha) {
+			t.Fatalf("full %d-character persisted SHA normalization: spec=%+v err=%v", length, spec, err)
+		}
+	}
+}
+
 func TestNormalizeGitRepositorySpecDefaultsAndCheckout(t *testing.T) {
 	for _, checkout := range []string{"", "null", `{"type":"branch","name":"feature/git-resources"}`, `{"type":"commit","sha":"` + strings.Repeat("A", 40) + `"}`} {
 		spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo"`), nil, json.RawMessage(checkout))

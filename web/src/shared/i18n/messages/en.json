@@ -1926,6 +1926,6 @@
   "managedAgents.git.updateToken": "Update authorization token",
   "managedAgents.git.url": "URL",
   "managedAgents.git.urlError": "Enter an HTTPS repository URL without credentials, query parameters, or a fragment.",
-  "managedAgents.git.shaError": "Enter a commit SHA with 7 to 64 hexadecimal characters.",
+  "managedAgents.git.shaError": "Enter a full commit SHA with 40 or 64 hexadecimal characters.",
   "managedAgents.git.optionalToken": "Authorization token (optional for public repositories)"
 }

@@ -3,9 +3,38 @@ import '../../../test/setup';
 import { createManagedEntityBody, updateManagedEntityBody } from '../api';
 import type { DeploymentApiResponse } from '../types';
 import { initialFormValues } from './model';
-import { emptyGitResource } from './git-resource';
+import { emptyGitResource, gitResourceBody, gitResourceValid } from './git-resource';
 
 const repositoryURL = 'https://git.internal/group/subgroup/repo.git';
+
+test.each(['', 'abcdef0', 'a'.repeat(39), 'a'.repeat(41), 'a'.repeat(63), 'a'.repeat(65), 'g'.repeat(40)])(
+  'rejects incomplete or non-hexadecimal commit SHA %j',
+  (sha) => {
+    const resource = {
+      ...emptyGitResource(),
+      url: repositoryURL,
+      checkoutType: 'commit' as const,
+      checkoutValue: sha,
+    };
+    expect(gitResourceValid(resource)).toBe(false);
+    expect(() => gitResourceBody(resource)).toThrow();
+  },
+);
+
+test.each([40, 64])('accepts a full %i-character commit SHA for Session and Deployment resources', (length) => {
+  for (const section of ['sessions', 'deployments'] as const) {
+    const sha = 'Ab'.repeat(length / 2);
+    const values = {
+      ...initialFormValues(section),
+      gitResources: [
+        { ...emptyGitResource(), url: repositoryURL, checkoutType: 'commit' as const, checkoutValue: sha },
+      ],
+    };
+    expect(createManagedEntityBody(section, values).resources).toEqual([
+      { type: 'github_repository', url: repositoryURL, checkout: { type: 'commit', sha } },
+    ]);
+  }
+});
 
 test('creates Session and Deployment Git resources with optional credentials', () => {
   for (const section of ['sessions', 'deployments'] as const) {

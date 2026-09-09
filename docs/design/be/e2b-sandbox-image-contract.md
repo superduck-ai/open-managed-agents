@@ -84,10 +84,8 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 Token 当前固定一小时有效且不刷新；长生命周期 Sandbox 的续签不属于此镜像合同。
 
 
-## Git 资源准备失败与 Claude 启动
+## Git 资源准备
 
-Runner 向 `startup_context.continue_on_git_resource_error` 写入显式策略：交互式 Session 为 true；具有 Deployment ID/UUID 的 Session 为 false。旧 Environment Manager 不识别该字段时仍按原严格语义执行，因此此能力需要匹配的 Manager artifact / 本地 Sandbox 镜像。
+Environment Manager 复用既有 sources 编排，在启动 Claude 前准备 Git 工作树。OMA 下发 `git_info.ref` 和 `mount_path`，默认分支省略 ref，指定分支使用 `refs/heads/<name>`，提交仅接受完整 SHA；Git 凭据由已有 OMA 代理注入，不进入启动参数。新建工作树的浅克隆约定见 [Git runtime source contract](ccrv2/git-runtime-resources.md)。
 
-匹配的 Environment Manager 对显式挂载 Git 资源的网络、鉴权、ref 不存在和超时错误记录 warning 并继续后续资源，Claude 收到不可用资源摘要。失败资源是默认 CWD 时回退到 `/workspace`，并在初始化完成后更新 Claude 的执行配置。Deployment 和 setup-only 仍要求资源全部成功；路径/符号链接/origin 冲突、对象校验失败及取消始终中止。远端错误只映射为固定的脱敏原因，不将凭据或完整 stderr 送进提示或 Session 事件。
-
-验收应覆盖：交互式首个仓库失败但后续仓库成功；全部失败仍能从 `/workspace` 启动 Claude；Deployment 同样输入会中止；安全错误与取消不降级。正式 artifact pin 的更新是独立发布步骤，本地镜像验证不代表已发布。
+Git 准备失败沿用既有初始化失败流程，不下发继续启动开关，不改写 Claude settings 或注入资源告警 hook。源码变更需构建匹配的 Manager artifact 才会进入新 Sandbox；本轮未更新运行镜像。

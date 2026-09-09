@@ -123,8 +123,8 @@ export function GitRepositoryFields({
               error={
                 resource.checkoutType === 'commit' &&
                 resource.checkoutValue &&
-                !/^[a-fA-F0-9]{7,64}$/.test(resource.checkoutValue.trim())
-                  ? msg('managedAgents.git.shaError', 'Enter a commit SHA with 7 to 64 hexadecimal characters.')
+                !/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(resource.checkoutValue.trim())
+                  ? msg('managedAgents.git.shaError', 'Enter a full commit SHA with 40 or 64 hexadecimal characters.')
                   : undefined
               }
               onChange={(event) => patch({ checkoutValue: event.target.value })}

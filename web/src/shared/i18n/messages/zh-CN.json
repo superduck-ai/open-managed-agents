@@ -1926,6 +1926,6 @@
   "managedAgents.git.updateToken": "更新授权令牌",
   "managedAgents.git.url": "URL",
   "managedAgents.git.urlError": "请输入 HTTPS 仓库地址，不含内嵌凭证、查询参数或片段。",
-  "managedAgents.git.shaError": "请输入 7 至 64 位十六进制提交 SHA。",
+  "managedAgents.git.shaError": "请输入完整的 40 或 64 位十六进制提交 SHA。",
   "managedAgents.git.optionalToken": "授权令牌（公开仓库可不填）"
 }

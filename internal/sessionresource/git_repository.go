@@ -22,7 +22,7 @@ const GitRepositoryType = "github_repository"
 
 var ErrGitTokenCrypto = errors.New("git token cryptographic operation failed")
 
-var gitCommitSHA = regexp.MustCompile(`^[a-fA-F0-9]{7,64}$`)
+var gitCommitSHA = regexp.MustCompile(`^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$`)
 
 type GitRepositoryCheckout struct {
 	Type string `json:"type"`
@@ -115,7 +115,7 @@ func validateGitRepositoryCheckout(checkout *GitRepositoryCheckout) error {
 		}
 	case "commit":
 		if checkout.Name != "" || !gitCommitSHA.MatchString(checkout.SHA) {
-			return errors.New("checkout.sha must be a 7–64 character hexadecimal commit SHA and checkout.name must be omitted")
+			return errors.New("checkout.sha must be a full 40- or 64-character hexadecimal commit SHA and checkout.name must be omitted")
 		}
 		checkout.SHA = strings.ToLower(checkout.SHA)
 	default:

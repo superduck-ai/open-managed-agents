@@ -43,7 +43,8 @@ export function gitResourceValid(resource: GitRepositoryResourceFormValue) {
   return (
     gitResourceURLValid(resource.url) &&
     (!resource.checkoutType || Boolean(resource.checkoutValue.trim())) &&
-    (resource.checkoutType !== 'commit' || /^[a-fA-F0-9]{7,64}$/.test(resource.checkoutValue.trim())) &&
+    (resource.checkoutType !== 'commit' ||
+      /^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(resource.checkoutValue.trim())) &&
     gitResourceMountPathValid(resource.mountPath)
   );
 }

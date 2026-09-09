@@ -16,15 +16,15 @@ type managedAgentRuntimeResources struct {
 }
 
 type gitRepositoryRuntimeSource struct {
-	Type      string                                 `json:"type"`
-	GitInfo   gitRepositoryRuntimeInfo               `json:"git_info"`
-	MountPath string                                 `json:"mount_path"`
-	Checkout  *sessionresource.GitRepositoryCheckout `json:"checkout,omitempty"`
+	Type      string                   `json:"type"`
+	GitInfo   gitRepositoryRuntimeInfo `json:"git_info"`
+	MountPath string                   `json:"mount_path"`
 }
 
 type gitRepositoryRuntimeInfo struct {
 	Repo string `json:"repo"`
 	URL  string `json:"url"`
+	Ref  string `json:"ref,omitempty"`
 }
 
 // resolveManagedAgentRuntimeResources excludes tokens; the outbound proxy injects credentials.
@@ -49,13 +49,22 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (manage
 				workDirResource = resource
 				resolved.workDir = spec.MountPath
 			}
+			// The EM wire contract uses the existing string ref. Preserve the
+			// public branch intent with a fully qualified ref to avoid tag ambiguity.
+			var ref string
+			if spec.Checkout != nil {
+				ref = spec.Checkout.SHA
+				if spec.Checkout.Type == "branch" {
+					ref = "refs/heads/" + spec.Checkout.Name
+				}
+			}
 			repositoryURL, _ := url.Parse(spec.URL)
 			source, err := json.Marshal(gitRepositoryRuntimeSource{
 				Type: "git_repository",
 				GitInfo: gitRepositoryRuntimeInfo{
-					Repo: strings.TrimPrefix(repositoryURL.Path, "/"), URL: spec.URL,
+					Repo: strings.TrimPrefix(repositoryURL.Path, "/"), URL: spec.URL, Ref: ref,
 				},
-				MountPath: spec.MountPath, Checkout: spec.Checkout,
+				MountPath: spec.MountPath,
 			})
 			if err != nil {
 				return managedAgentRuntimeResources{}, err

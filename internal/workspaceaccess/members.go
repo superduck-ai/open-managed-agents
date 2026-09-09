@@ -10,12 +10,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
-type MemberStore interface {
-	WithWorkspaceMemberTx(context.Context, string, string, string, string, func(*db.WorkspaceMemberTx) error) error
-}
-
 // ChangeMember 先锁定组织成员，再锁定工作区，校验和写入共享一个事务。
-func ChangeMember(ctx context.Context, database MemberStore, principal auth.Principal, workspaceID, userID, role, operation string) (db.AdminWorkspaceMember, error) {
+func ChangeMember(ctx context.Context, database *db.DB, principal auth.Principal, workspaceID, userID, role, operation string) (db.AdminWorkspaceMember, error) {
 	var result db.AdminWorkspaceMember
 	err := database.WithWorkspaceMemberTx(ctx, principal.OrganizationUUID, principal.UserExternalID, userID, workspaceID, func(tx *db.WorkspaceMemberTx) error {
 		workspace, err := tx.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)

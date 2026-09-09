@@ -152,6 +152,10 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 			status int
 		}{
 			{"/v1/organizations/users", http.StatusForbidden},
+			{"/v1/organizations/workspaces/" + workspace.ID + "/members/user_missing", http.StatusNotFound},
+			{"/v1/organizations/workspaces/" + workspace.ID + "/members/" + billingID, http.StatusNotFound},
+			{"/v1/organizations/workspaces/" + workspace.ID + "/members/" + userID, http.StatusOK},
+			{"/v1/organizations/workspaces/" + workspace.ID + "/members/" + principal.UserExternalID, http.StatusOK},
 			{"/v1/organizations/workspaces/" + workspace.ID + "/members", http.StatusOK},
 		} {
 			response := app.platformRequest(t, http.MethodGet, test.path, nil, cookies)
@@ -165,6 +169,24 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 		response.Body.Close()
 		if response.StatusCode != http.StatusNotFound {
 			t.Fatalf("无显式成员更新 status = %d", response.StatusCode)
+		}
+	})
+	t.Run("批量角色排除历史默认成员和跨组织数据", func(t *testing.T) {
+		user, err := app.db.GetAdminUser(ctx, refs.OrganizationUUID, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ordinary, err := app.db.GetAdminWorkspace(ctx, refs.OrganizationUUID, workspace.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foreign, err := app.db.ListUserWorkspaceRoles(ctx, "bb000000-0000-4000-8000-000000000001", user.UUID)
+		if err != nil || len(foreign) != 0 {
+			t.Fatalf("跨组织角色 = %+v, err = %v", foreign, err)
+		}
+		facts, err := app.db.ListUserWorkspaceRoles(ctx, refs.OrganizationUUID, user.UUID)
+		if err != nil || len(facts) != 1 || facts[0].WorkspaceUUID != ordinary.UUID || facts[0].Role != "workspace_admin" {
+			t.Fatalf("角色 = %+v, err = %v", facts, err)
 		}
 	})
 	t.Run("工作区Key独立于创建者但归档拒绝新请求", func(t *testing.T) {

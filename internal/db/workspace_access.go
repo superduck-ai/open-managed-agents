@@ -63,3 +63,7 @@ func (tx *WorkspaceMemberTx) DeleteMember(ctx context.Context, orgUUID, workspac
 func (d *DB) ListWorkspaceMemberFacts(ctx context.Context, orgUUID, workspaceUUID string) ([]WorkspaceMemberFact, error) {
 	return NewWorkspaceAccessMapper(d.mapperDB).ListMemberFacts(ctx, orgUUID, workspaceUUID)
 }
+
+func (d *DB) ListUserWorkspaceRoles(ctx context.Context, organizationUUID, userUUID string) ([]WorkspaceRoleFact, error) {
+	return NewWorkspaceAccessMapper(d.mapperDB).ListUserRoles(ctx, organizationUUID, userUUID)
+}

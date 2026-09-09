@@ -11,7 +11,13 @@ type WorkspaceMemberFact struct {
 	ExplicitRole     string `db:"explicit_role"`
 }
 
+type WorkspaceRoleFact struct {
+	WorkspaceUUID string `db:"workspace_uuid"`
+	Role          string `db:"workspace_role"`
+}
+
 type WorkspaceAccessMapper interface {
+	ListUserRoles(ctx context.Context, organizationUUID, userUUID string) ([]WorkspaceRoleFact, error)
 	LockUsers(ctx context.Context, organizationUUID, actorID, targetID string) ([]AdminUser, error)
 	LockWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) (string, error)
 	ListMemberFacts(ctx context.Context, organizationUUID, workspaceUUID string) ([]WorkspaceMemberFact, error)

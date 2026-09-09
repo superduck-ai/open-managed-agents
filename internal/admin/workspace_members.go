@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -24,19 +25,28 @@ func (s *Service) DeleteWorkspaceMember(ctx context.Context, principal auth.Prin
 	return map[string]string{"type": "workspace_member_deleted", "user_id": member.UserExternalID, "workspace_id": member.WorkspaceExternalID}, nil
 }
 
-func (s *Service) workspaceMembers(ctx context.Context, principal auth.Principal, workspaceID string) ([]workspaceMemberResponse, error) {
+func (s *Service) memberManagementWorkspace(ctx context.Context, principal auth.Principal, workspaceID string) (db.AdminWorkspace, error) {
 	if !principal.WorkspaceAccess.ManageOrganization() {
-		_, access, err := workspaceaccess.New(s.db).Resolve(ctx, principal.OrganizationUUID, principal.UserExternalID, workspaceID)
+		workspace, access, err := workspaceaccess.New(s.db).Resolve(ctx, principal.OrganizationUUID, principal.UserExternalID, workspaceID)
 		if err != nil {
-			return nil, mapAdminDBError(err, "Workspace not found")
+			return db.AdminWorkspace{}, mapAdminDBError(err, "Workspace not found")
 		}
 		if !access.ManageMembers() {
-			return nil, mapAdminDBError(workspaceaccess.ErrDenied, "Workspace not found")
+			return db.AdminWorkspace{}, mapAdminDBError(workspaceaccess.ErrDenied, "Workspace not found")
 		}
+		return workspace, nil
 	}
 	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
 	if err != nil {
-		return nil, mapAdminDBError(err, "Workspace not found")
+		return db.AdminWorkspace{}, mapAdminDBError(err, "Workspace not found")
+	}
+	return workspace, nil
+}
+
+func (s *Service) workspaceMembers(ctx context.Context, principal auth.Principal, workspaceID string) ([]workspaceMemberResponse, error) {
+	workspace, err := s.memberManagementWorkspace(ctx, principal, workspaceID)
+	if err != nil {
+		return nil, err
 	}
 	facts, err := s.db.ListWorkspaceMemberFacts(ctx, principal.OrganizationUUID, workspace.UUID)
 	if err != nil {
@@ -56,16 +66,18 @@ func (s *Service) workspaceMembers(ctx context.Context, principal auth.Principal
 }
 
 func (s *Service) GetWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string) (workspaceMemberResponse, error) {
-	members, err := s.workspaceMembers(ctx, principal, workspaceID)
+	workspace, err := s.memberManagementWorkspace(ctx, principal, workspaceID)
 	if err != nil {
 		return workspaceMemberResponse{}, err
 	}
-	for _, member := range members {
-		if member.UserID == userID {
-			return member, nil
-		}
+	_, access, err := workspaceaccess.New(s.db).Resolve(ctx, principal.OrganizationUUID, userID, workspace.ExternalID)
+	if errors.Is(err, workspaceaccess.ErrDenied) {
+		return workspaceMemberResponse{}, notFound("Workspace member not found")
 	}
-	return workspaceMemberResponse{}, notFound("Workspace member not found")
+	if err != nil {
+		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace member not found")
+	}
+	return workspaceMemberFromRecord(db.AdminWorkspaceMember{WorkspaceExternalID: workspace.ExternalID, UserExternalID: userID, WorkspaceRole: access.Role}), nil
 }
 
 func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Principal, workspaceID, afterID, beforeID string, limit int) (cursorPageResponse[workspaceMemberResponse], error) {

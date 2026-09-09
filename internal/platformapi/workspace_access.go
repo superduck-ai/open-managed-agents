@@ -1,7 +1,9 @@
 package platformapi
 
 import (
+	"context"
 	"errors"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -18,22 +20,39 @@ func requireOrganizationAdministrator(w http.ResponseWriter, r *http.Request) bo
 }
 
 func accessibleConsoleWorkspaces(r *http.Request, store OrganizationStore, workspaces []ConsoleWorkspace) ([]ConsoleWorkspace, error) {
-	accessStore, ok := store.(workspaceaccess.Store)
+	accessStore, ok := store.(interface {
+		ListUserWorkspaceRoles(context.Context, string, string) ([]db.WorkspaceRoleFact, error)
+	})
 	if !ok {
 		return nil, workspaceaccess.ErrDenied
 	}
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok {
+	if !ok || principal.UserUUID == "" {
 		return nil, workspaceaccess.ErrDenied
 	}
-	resolver := workspaceaccess.New(accessStore)
+	roles := map[string]string{}
+	if !principal.WorkspaceAccess.ManageOrganization() {
+		facts, err := accessStore.ListUserWorkspaceRoles(r.Context(), principal.OrganizationUUID, principal.UserUUID)
+		if err != nil {
+			return nil, err
+		}
+		for _, fact := range facts {
+			roles[fact.WorkspaceUUID] = fact.Role
+		}
+	}
 	result := make([]ConsoleWorkspace, 0, len(workspaces))
 	for _, workspace := range workspaces {
+		if workspace.OrgUUID != principal.OrganizationUUID {
+			continue
+		}
 		if workspace.ArchivedAt != nil && principal.WorkspaceAccess.ManageOrganization() {
 			result = append(result, workspace)
 			continue
 		}
-		_, access, err := resolver.Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspace.ExternalID)
+		if workspace.ArchivedAt != nil {
+			continue
+		}
+		access, err := workspaceaccess.Effective(principal.WorkspaceAccess.OrganizationRole, workspace.IsDefault, roles[workspace.UUID])
 		if errors.Is(err, workspaceaccess.ErrDenied) {
 			continue
 		}

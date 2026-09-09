@@ -11,6 +11,17 @@ import (
 func TestWorkspaceAccessMapperBindings(t *testing.T) {
 	const org = "aa000000-0000-4000-8000-000000000001"
 	const workspace = "aa000000-0000-4000-8000-000000000002"
+	t.Run("用户显式角色批量绑定和扫描", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{
+			columns: []string{"workspace_uuid", "workspace_role"}, rows: [][]driver.Value{{workspace, "workspace_admin"}},
+		})
+		facts, err := NewWorkspaceAccessMapper(executor).ListUserRoles(t.Context(), org, "aa000000-0000-4000-8000-000000000003")
+		if err != nil || len(facts) != 1 || facts[0].WorkspaceUUID != workspace || facts[0].Role != "workspace_admin" {
+			t.Fatalf("facts = %+v, err = %v", facts, err)
+		}
+		assertMapperTestExecution(t, executor, "WorkspaceAccessMapper.ListUserRoles", yourbatis.StatementSelect,
+			[]any{org, "aa000000-0000-4000-8000-000000000003"}, "wm.organization_uuid = $1 AND wm.user_uuid = $2", "wm.deleted_at IS NULL", "NOT w.is_default", "w.archived_at IS NULL")
+	})
 	t.Run("成员投影绑定和扫描", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: []string{"user_uuid", "user_external_id", "organization_role", "explicit_role"},

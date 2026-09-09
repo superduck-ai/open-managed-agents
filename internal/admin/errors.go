@@ -48,3 +48,10 @@ func notFound(message string) error {
 func conflict(message string) error {
 	return &serviceError{status: http.StatusConflict, typ: "conflict_error", message: message}
 }
+
+func authenticatedPrincipalRequired() error {
+	return &serviceError{status: http.StatusUnauthorized, typ: "authentication_error", message: "Missing authenticated principal"}
+}
+func billingAccessRequired() error {
+	return &serviceError{status: http.StatusForbidden, typ: "permission_error", message: "Organization billing access required"}
+}

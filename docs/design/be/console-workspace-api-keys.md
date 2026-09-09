@@ -54,7 +54,7 @@ POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/api_keys
 `request.Context`。会话解析逻辑在 `internal/api/server.go` 的 `authenticatePlatformSession`
 中，详见 [auth-credential-routing.md](./auth-credential-routing.md)。
 
-Handler 内部依次做两层校验：
+Handler 内部依次做三层校验：
 
 1. **组织归属** — `visibleOrgUUID` 从 URL 取 `orgUuid`，与 principal 持有的
    `OrganizationUUID` 比对。不匹配返回 404（而非 403，避免泄露组织存在性）。
@@ -63,6 +63,10 @@ Handler 内部依次做两层校验：
    （可以是 external_id 如 `wrkspc_...`，也可以是 UUID，或字面量 `default`），查库列出该
    组织下所有未归档 workspace，再通过 `ResolveWorkspaceScope` 匹配出 `WorkspaceScope`。
    匹配失败返回 404。
+
+3. **动作权限** — `consoleWorkspaceScopeFromRequest` 对真实目标空间调用统一授权服务，
+   检查当前用户的 `Develop()` 能力；无权或空间已归档返回 403。此检查覆盖工作区 Key 的
+   列表、创建、更新和计数，在 `CreateConsoleAPIKey` 等 DB 操作前完成。
 
 通过校验后，handler 直接读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`，连同 org UUID、
 workspace UUID、name 和 expires_at 一起传入 DB 层。这里不接受前端提交的创建者，也不使用

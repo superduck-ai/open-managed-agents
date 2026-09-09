@@ -269,6 +269,9 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 	name := current.Name
 	if req.Name != nil {
 		name = strings.TrimSpace(*req.Name)
+		if strings.EqualFold(name, "default") {
+			return workspaceResponse{}, invalidRequest("Default Workspace name is reserved")
+		}
 		if name == "" {
 			return workspaceResponse{}, invalidRequest("name must be non-empty")
 		}

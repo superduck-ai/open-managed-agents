@@ -35,6 +35,41 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 	billingID := seedAdminUser(t, app.pool, "billing-"+uniqueAdminSuffix()+"@example.local", "billing")
 	userID := seedAdminUser(t, app.pool, "user-"+uniqueAdminSuffix()+"@example.local", "user")
 
+	t.Run("报表与限流仅允许组织计费角色", func(t *testing.T) {
+		paths := []string{"/rate_limits", "/workspaces/" + workspace.ID + "/rate_limits", "/usage_report/messages", "/usage_report/claude_code", "/cost_report"}
+		for _, actor := range []struct {
+			user   string
+			status int
+		}{{userID, http.StatusForbidden}, {billingID, http.StatusOK}, {principal.UserExternalID, http.StatusOK}} {
+			cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, actor.user)
+			for _, path := range paths {
+				query := "?starting_at=2026-01-01T00:00:00Z&bucket_width=1d"
+				if path == "/usage_report/claude_code" {
+					query = "?starting_at=2026-01-01"
+				}
+				response := app.platformRequest(t, http.MethodGet, "/v1/organizations"+path+query, nil, cookies)
+				response.Body.Close()
+				if response.StatusCode != actor.status {
+					t.Fatalf("%s %s: %d", actor.user, path, response.StatusCode)
+				}
+			}
+		}
+	})
+	t.Run("普通空间重命名不能使用默认保留名称", func(t *testing.T) {
+		cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, principal.UserExternalID)
+		validName := "ordinary-renamed-" + uniqueAdminSuffix()
+		for _, name := range []string{"default", "DEFAULT", "  DeFaUlT  ", validName} {
+			response := app.platformRequest(t, http.MethodPost, "/v1/organizations/workspaces/"+workspace.ID, strings.NewReader(`{"name":"`+name+`"}`), cookies)
+			response.Body.Close()
+			expected := http.StatusBadRequest
+			if name == validName {
+				expected = http.StatusOK
+			}
+			if response.StatusCode != expected {
+				t.Fatalf("name=%q status=%d", name, response.StatusCode)
+			}
+		}
+	})
 	t.Run("普通成员未分配以及组织不匹配拒绝", func(t *testing.T) {
 		for _, org := range []string{refs.OrganizationUUID, "bb000000-0000-4000-8000-000000000001"} {
 			if _, _, err := resolver.Resolve(ctx, org, userID, workspace.ID); !errors.Is(err, workspaceaccess.ErrDenied) {

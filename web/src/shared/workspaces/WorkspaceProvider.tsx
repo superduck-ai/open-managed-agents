@@ -150,7 +150,7 @@ function readStoredWorkspaceId() {
 }
 
 function writeStoredWorkspaceId(workspaceId: string) {
-  if (typeof window === 'undefined') {
+  if (typeof window === 'undefined' || !workspaceId) {
     return;
   }
   try {

@@ -22,6 +22,7 @@ type gitRepositoryRuntimeSource struct {
 }
 
 type gitRepositoryRuntimeInfo struct {
+	Type string `json:"type"`
 	Repo string `json:"repo"`
 	URL  string `json:"url"`
 	Ref  string `json:"ref,omitempty"`
@@ -62,6 +63,9 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (manage
 			source, err := json.Marshal(gitRepositoryRuntimeSource{
 				Type: "git_repository",
 				GitInfo: gitRepositoryRuntimeInfo{
+					// URL-based resources use a generic Git type; signing requires it,
+					// while EM uses the explicit URL to access the repository.
+					Type: "git",
 					Repo: strings.TrimPrefix(repositoryURL.Path, "/"), URL: spec.URL, Ref: ref,
 				},
 				MountPath: spec.MountPath,

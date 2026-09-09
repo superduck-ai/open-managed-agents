@@ -147,7 +147,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 	want := []any{
 		map[string]any{
 			"type":       "git_repository",
-			"git_info":   map[string]any{"repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git", "ref": "refs/heads/main"},
+			"git_info":   map[string]any{"type": "git", "repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git", "ref": "refs/heads/main"},
 			"mount_path": "/workspace/widgets",
 		},
 		map[string]any{
@@ -182,6 +182,32 @@ func TestManagedAgentRuntimeResourcesRejectInvalidGit(t *testing.T) {
 			_, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(raw)}})
 			if err == nil {
 				t.Fatal("invalid persisted Git resource accepted")
+			}
+		})
+	}
+}
+
+func TestManagedAgentGitSourcesIncludeSigningType(t *testing.T) {
+	for _, repositoryURL := range []string{
+		"https://github.com/acme/widgets.git",
+		"https://gitlab.com/group/subgroup/widgets.git",
+		"https://git.internal:443/group/subgroup/widgets.git",
+	} {
+		t.Run(repositoryURL, func(t *testing.T) {
+			payload, err := json.Marshal(map[string]string{"url": repositoryURL, "mount_path": "/workspace/widgets"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resources := mustResolveRuntimeResources(t, []db.SessionResource{{ResourceType: "github_repository", Payload: payload}})
+			var source gitRepositoryRuntimeSource
+			if err := json.Unmarshal(resources.sources[0], &source); err != nil {
+				t.Fatal(err)
+			}
+			if source.Type != "git_repository" || source.GitInfo.Type != "git" || source.GitInfo.Repo == "" {
+				t.Fatalf("source does not satisfy signing metadata contract: %+v", source)
+			}
+			if source.GitInfo.URL != repositoryURL {
+				t.Fatalf("clone URL = %q, want %q", source.GitInfo.URL, repositoryURL)
 			}
 		})
 	}

@@ -22,8 +22,6 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"e2b.api_url",
 		"env",
 		"nats",
-		"nats.connect_timeout",
-		"nats.drain_timeout",
 		"nats.url",
 		"redis",
 		"redis.url",

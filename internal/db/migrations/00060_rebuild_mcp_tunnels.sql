@@ -2,7 +2,7 @@
 
 -- The legacy tunnel resource was a pre-release placeholder. The old Tunnel
 -- schema reached its current shape at version 45 and remains unchanged through
--- the shared version 58 baseline, so version 59 deliberately discards every legacy tunnel,
+-- the shared version 59 baseline, so version 60 deliberately discards every legacy tunnel,
 -- connector token, and certificate row instead of migrating plaintext tokens,
 -- nullable workspace ownership, or obsolete IDs into the public contract.
 -- The certificate table itself is retained for the existing API boundary.
@@ -79,8 +79,8 @@ create index mcp_tunnel_token_versions_tunnel_created_v1_idx
 
 -- +goose Down
 
--- Rolling back returns the migration series to version 58 and restores the
--- pre-version-59 Tunnel schema. Data discarded by the Up migration
+-- Rolling back returns the migration series to version 59 and restores the
+-- pre-version-60 Tunnel schema. Data discarded by the Up migration
 -- cannot be reconstructed.
 
 drop table if exists mcp_tunnel_token_versions;

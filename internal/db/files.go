@@ -2,8 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -34,16 +32,6 @@ type ListFilesPageParams struct {
 	AfterID       string
 	BeforeID      string
 	Limit         int
-}
-
-type ObjectCleanupJob struct {
-	UUID           string
-	ExternalID     string
-	WorkspaceUUID  string
-	Bucket         string
-	Key            string
-	FileExternalID string
-	Attempts       int
 }
 
 func (d *DB) WorkspaceStorageBytes(ctx context.Context, workspaceUUID string) (int64, error) {
@@ -101,34 +89,6 @@ func (d *DB) ListFilesPage(ctx context.Context, params ListFilesPageParams) ([]F
 
 func (d *DB) SoftDeleteFile(ctx context.Context, workspaceUUID string, fileExternalID string) error {
 	return softDeleteFile(ctx, d.mapperDB, workspaceUUID, fileExternalID)
-}
-
-func (d *DB) EnqueueObjectCleanupJob(ctx context.Context, workspaceUUID string, bucket, key, fileExternalID string) error {
-	return d.EnqueueObjectCleanupResourceJob(ctx, workspaceUUID, bucket, key, "file", fileExternalID)
-}
-
-func (d *DB) EnqueueObjectCleanupResourceJob(ctx context.Context, workspaceUUID string, bucket, key, resourceType, resourceID string) error {
-	return enqueueObjectCleanupResourceJob(
-		ctx,
-		d.mapperDB,
-		workspaceUUID,
-		bucket,
-		key,
-		resourceType,
-		resourceID,
-	)
-}
-
-func (d *DB) LeaseObjectCleanupJobs(ctx context.Context, workerID string, limit int) ([]ObjectCleanupJob, error) {
-	return leaseObjectCleanupJobs(ctx, d.mapperDB, workerID, limit)
-}
-
-func (d *DB) CompleteObjectCleanupJob(ctx context.Context, jobUUID string) error {
-	return completeObjectCleanupJob(ctx, d.mapperDB, jobUUID)
-}
-
-func (d *DB) FailObjectCleanupJob(ctx context.Context, jobUUID string, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {
-	return failObjectCleanupJob(ctx, d.mapperDB, jobUUID, attempts, reason, retryDelay, maxAttempts)
 }
 
 // createFile 在同一个 Yourbatis 事务里写入文件记录并同步增加 workspace
@@ -288,82 +248,5 @@ func softDeleteFile(
 			return err
 		}
 		return applyWorkspaceStorageDeltaTx(ctx, executor, workspaceUUID, -file.SizeBytes, 0, 0)
-	})
-}
-
-func enqueueObjectCleanupResourceJob(
-	ctx context.Context,
-	database yourbatis.Executor,
-	workspaceUUID string,
-	bucket, objectKey, resourceType, resourceID string,
-) error {
-	fileExternalID := ""
-	if resourceType == "file" {
-		fileExternalID = resourceID
-	}
-	payload, err := json.Marshal(map[string]string{
-		"bucket":        bucket,
-		"key":           objectKey,
-		"file_id":       fileExternalID,
-		"resource_type": resourceType,
-		"resource_id":   resourceID,
-	})
-	if err != nil {
-		return fmt.Errorf("encode object cleanup job payload: %w", err)
-	}
-	mapper := NewFileMapper(database)
-	return mapper.EnqueueObjectCleanupJob(ctx, workspaceUUID, payload)
-}
-
-func leaseObjectCleanupJobs(
-	ctx context.Context,
-	database yourbatis.Executor,
-	workerID string,
-	limit int,
-) ([]ObjectCleanupJob, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-	mapper := NewFileMapper(database)
-	rows, err := mapper.LeaseObjectCleanupJobs(ctx, workerID, limit)
-	if err != nil {
-		return nil, err
-	}
-	if rows == nil {
-		return nil, nil
-	}
-	jobs := make([]ObjectCleanupJob, 0, len(rows))
-	for _, row := range rows {
-		jobs = append(jobs, row.job())
-	}
-	return jobs, nil
-}
-
-func completeObjectCleanupJob(ctx context.Context, database yourbatis.Executor, jobUUID string) error {
-	mapper := NewFileMapper(database)
-	return mapper.CompleteObjectCleanupJob(ctx, jobUUID)
-}
-
-func failObjectCleanupJob(
-	ctx context.Context,
-	database yourbatis.Executor,
-	jobUUID string,
-	attempts int,
-	reason string,
-	retryDelay time.Duration,
-	maxAttempts int,
-) error {
-	nextAttempts := attempts + 1
-	status := "retry"
-	if nextAttempts >= maxAttempts {
-		status = "failed"
-	}
-	mapper := NewFileMapper(database)
-	return mapper.FailObjectCleanupJob(ctx, objectCleanupJobFailureParams{
-		JobUUID:  jobUUID,
-		Status:   status,
-		RunAfter: time.Now().UTC().Add(retryDelay),
-		Attempts: nextAttempts,
-		Reason:   reason,
 	})
 }

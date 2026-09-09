@@ -50,17 +50,17 @@ func TestMCPTunnelMigrationFollowsCurrentMain(t *testing.T) {
 	var previousFound, tunnelFound bool
 	for _, entry := range entries {
 		switch entry.Name() {
-		case "00058_simplify_sandbox_reclamation.sql":
+		case "00059_remove_code_session_inbound_events.sql":
 			previousFound = true
-		case "00059_rebuild_mcp_tunnels.sql":
+		case "00060_rebuild_mcp_tunnels.sql":
 			tunnelFound = true
 			if !previousFound {
-				t.Fatal("MCP Tunnel migration must follow upstream migration 58")
+				t.Fatal("MCP Tunnel migration must follow upstream migration 59")
 			}
 		}
 	}
 	if !tunnelFound {
-		t.Fatal("embedded migrations do not include 00059_rebuild_mcp_tunnels.sql")
+		t.Fatal("embedded migrations do not include 00060_rebuild_mcp_tunnels.sql")
 	}
 }
 
@@ -71,21 +71,23 @@ func TestRebuildMCPTunnelsMigration(t *testing.T) {
 	}
 
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
-	if _, err := provider.UpTo(ctx, 58); err != nil {
-		t.Fatalf("migrate fixture database to 58: %v", err)
+	if _, err := provider.UpTo(ctx, 59); err != nil {
+		t.Fatalf("migrate fixture database to 59: %v", err)
 	}
 	if _, err := database.ExecContext(ctx, tunnelMigrationFixtureSQL); err != nil {
 		t.Fatalf("seed legacy Tunnel fixture: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 59); err != nil {
-		t.Fatalf("rebuild MCP Tunnels at migration 59: %v", err)
+	if _, err := provider.UpTo(ctx, 60); err != nil {
+		t.Fatalf("rebuild MCP Tunnels at migration 60: %v", err)
 	}
 
-	assertTunnelMigration59State(t, ctx, database)
+	assertTunnelMigration60State(t, ctx, database)
+	assertMigrationTableExists(t, ctx, database, "code_session_inbound_events", false)
+	assertMigrationTableExists(t, ctx, database, "event_outbox", false)
 	assertTunnelIDConstraint(t, ctx, database)
 
 	if _, err := provider.Down(ctx); err != nil {
-		t.Fatalf("roll back MCP Tunnel migration 59: %v", err)
+		t.Fatalf("roll back MCP Tunnel migration 60: %v", err)
 	}
 	assertMigrationColumnExists(t, ctx, database, "mcp_tunnels", "token_id", true)
 	assertMigrationColumnExists(t, ctx, database, "mcp_tunnels", "tunnel_token", true)
@@ -97,12 +99,12 @@ func TestRebuildMCPTunnelsMigration(t *testing.T) {
 	assertTableRowCount(t, ctx, database, "mcp_tunnel_certificates", 0)
 
 	if _, err := provider.Up(ctx); err != nil {
-		t.Fatalf("reapply MCP Tunnel migration 59: %v", err)
+		t.Fatalf("reapply MCP Tunnel migration 60: %v", err)
 	}
-	assertTunnelMigration59State(t, ctx, database)
+	assertTunnelMigration60State(t, ctx, database)
 }
 
-func assertTunnelMigration59State(t *testing.T, ctx context.Context, database *sql.DB) {
+func assertTunnelMigration60State(t *testing.T, ctx context.Context, database *sql.DB) {
 	t.Helper()
 	for _, tableName := range []string{"mcp_tunnels", "mcp_tunnel_token_versions", "mcp_tunnel_certificates"} {
 		assertTableRowCount(t, ctx, database, tableName, 0)
@@ -208,7 +210,7 @@ func assertTunnelIDConstraint(t *testing.T, ctx context.Context, database *sql.D
 		"tnl_0123456789abcdef0123456789abcdef",
 		"invalid-id.tunnel.invalid",
 	); err == nil {
-		t.Fatal("migration 59 accepted a legacy tnl_ Tunnel ID")
+		t.Fatal("migration 60 accepted a legacy tnl_ Tunnel ID")
 	}
 	if _, err := database.ExecContext(
 		ctx,
@@ -216,7 +218,7 @@ func assertTunnelIDConstraint(t *testing.T, ctx context.Context, database *sql.D
 		"tunnel_g123456789abcdef0123456789abcde",
 		"non-hex-id.tunnel.invalid",
 	); err == nil {
-		t.Fatal("migration 59 accepted a non-hexadecimal Tunnel ID")
+		t.Fatal("migration 60 accepted a non-hexadecimal Tunnel ID")
 	}
 	if _, err := database.ExecContext(
 		ctx,
@@ -224,7 +226,7 @@ func assertTunnelIDConstraint(t *testing.T, ctx context.Context, database *sql.D
 		"tunnel_0123456789abcdef0123456789abcdef",
 		"valid-id.tunnel.invalid",
 	); err != nil {
-		t.Fatalf("migration 59 rejected a valid Tunnel ID: %v", err)
+		t.Fatalf("migration 60 rejected a valid Tunnel ID: %v", err)
 	}
 	if _, err := database.ExecContext(ctx, `delete from mcp_tunnels`); err != nil {
 		t.Fatalf("clear Tunnel ID constraint fixture: %v", err)

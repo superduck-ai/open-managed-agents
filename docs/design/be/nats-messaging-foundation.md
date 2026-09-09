@@ -1,55 +1,93 @@
 # NATS 消息基础设施
 
-## 当前边界
+## 运行边界
 
-应用在组装层创建一条全局 NATS 连接，确认目标账号已启用 JetStream，并在进程退出时 drain。Session SSE 的实时 fanout 固定使用这条连接上的 Core NATS Pub/Sub；code-session worker 入站事件使用同一连接上的 JetStream。MCP Tunnel 也复用此连接：命令使用 R3 WorkQueue，控制/终态使用独立 KV，原等待进程通知使用 Core NATS。River job、最终事件和 worker delivery 状态由 PostgreSQL 持久化；平台登录会话使用 Redis。后续 producer 和 consumer 应复用这条连接，不得在 handler 或每次请求内重新连接。
+应用在组装层创建一条全局 NATS 连接，确认目标账号已启用 JetStream，并在退出时 drain。Session SSE
+preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一连接上的 JetStream。handler
+和业务 service 不建立独立连接池。
+
+MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue，控制与终态使用独立 KV，响应通知使用 Core NATS。
+Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain；Tunnel 不依赖 Redis。
 
 ```mermaid
 flowchart LR
-    yaml["nats YAML"] --> loader["config.Load"]
-    loader --> main["main assembly"]
-    main --> client["natsclient.Open"]
-    client --> core["NATS connection"]
-    client --> js["JetStream readiness check"]
-    core --> fanout["Core NATS session fanout"]
-    fanout --> hub["instance Hub → SSE"]
-    js --> workerStream["OMA_WORKER_INBOUND stream"]
-    workerStream --> workerSSE["temporary pull consumer → worker SSE"]
-    main --> drain["graceful drain on shutdown"]
+    Config["nats.url"] --> Client["全局 NATS connection"]
+    Client --> Core["Core NATS：Session preview"]
+    Client --> JS["JetStream：OMA_WORKER_INBOUND"]
+    Producer["Code Session 入站生产方"] -->|直接 Publish，等待 PubAck| JS
+    JS --> Durable["每 Code Session durable consumer"]
+    Durable --> Worker["worker SSE"]
 ```
 
-`nats.url` 是部署必填项，可使用逗号分隔多个种子 URL；`nats.enabled` 已从配置合同移除。服务采用 fail-closed 启动：所有种子都无法连接或 JetStream 不可用时，HTTP server 不会开始监听，也不会回退到 Redis。默认连接超时为 5 秒，排空超时为 10 秒。
+`nats.url` 是部署必填项，可包含逗号分隔的多个种子 URL。全部种子不可连接或 JetStream 不可用时，
+HTTP server 不开始监听，也不回退到 Redis。连接关闭 reconnect publish buffer，避免断线期间积累的
+过期 preview 在重连后发送。可靠入站发布必须等待 JetStream PubAck。
 
-升级部署前应为所有 API 实例提供可用的 NATS URL，并让已有 SSE 客户端在切换后重新连接、通过历史 API 同步最终事件。Redis 仍是其他运行时能力的依赖，但不再承载 Session SSE 事件传输。
+## 本地与生产拓扑
 
-NATS 连接关闭 reconnect publish buffer，避免断线期间累积的过期 preview 在重连后发送。Core 发布失败由已有 fanout 边界记录；JetStream producer 等待服务端 publish ACK，并以 PostgreSQL inbound event ID 作为 `Nats-Msg-Id`。fanout 只维护按 subject 的共享 subscription state 和本地 SSE 引用计数；消息排队、异步回调串行化和断线后的 subscription 恢复都由 nats.go 负责。确认首次订阅的 NATS round trip 在 registry 锁外执行，同 subject 的并发订阅共享一次确认。fanout 在连接 drain 前关闭自己的订阅，不关闭其他组件共享的连接。具体事件与故障合同见 [Worker SSE fanout](ccrv2/ccr-v2-worker-sse-fanout.md) 和 [Worker delivery ACK](ccrv2/ccr-v2-worker-events-delivery-backend-design.md)。
+Docker Compose 使用三个独立 NATS 节点组成 `oma-nats` JetStream 集群。节点分别持有 named volume，
+通过 6222 route 互联；客户端端口是 loopback 上的 4222、4223、4224，监控端口是
+8222、8223、8224。
 
-## 本地拓扑
+本地拓扑不启用认证或 TLS，不得暴露到非受信网络。生产环境必须配置独立账号与凭证、TLS、网络
+策略和容量告警。三节点集群只是创建 3 replicas Stream 的前提，不替代生产安全配置。
 
-Docker Compose 使用 `docker.io/library/nats:2.14.6-alpine` 启动三个 JetStream 节点。节点共用 `oma-nats` cluster name，通过 Compose 内网的 `6222` route 端口互联，并分别使用 `natsdata`、`natsdata2`、`natsdata3` named volume；三个节点不得共用 store directory。客户端和监控端口只绑定宿主机 loopback：
+## Worker 入站 Stream
 
-- `127.0.0.1:4222` / `4223` / `4224`：三个 NATS 客户端种子地址。
-- `127.0.0.1:8222` / `8223` / `8224`：各节点的监控与 `/healthz?js-enabled-only=true` 健康检查。
+应用启动时创建或校验共享 Stream `OMA_WORKER_INBOUND`：
 
-当前本地拓扑不启用认证或 TLS，因此不得把上述端口发布到非受信网络。三节点只提供本地故障切换拓扑，不等于生产安全配置。生产部署必须使用独立账号与凭证、TLS、网络策略和资源配额；凭证可由 NATS URL 或后续独立凭证字段承载，但不得写入日志或受跟踪示例。后续创建 JetStream stream 时还必须显式选择合适的 replica 数；集群不会自动把单副本 stream 变成三副本。
+- subjects：`oma.worker.inbound.v2.>`；
+- retention：`WorkQueuePolicy`；
+- storage：file；replicas：3；
+- capacity：10 GiB；discard：`DiscardNew`；
+- 单消息上限：1 MiB；duplicate window：24 小时；
+- `MaxAge=0`。
 
-## Worker 入站事件 stream
+`MaxAge=0` 避免服务端静默删除未处理消息。30 天逻辑期限由 envelope 的 `expires_at` 和应用 expiry
+worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没有 PostgreSQL outbox 或后台补发。
 
-应用启动时创建或校验固定 stream `OMA_WORKER_INBOUND`：subject 为 `oma.worker.inbound.v1.>`，file storage，3 replicas，`LimitsPolicy + DiscardOld`，`MaxAge=1h`，`MaxBytes=1GiB`，duplicate window 为 1 小时。该 subject 不与 Core NATS 的 `oma.s.>` 重叠。无法满足 3 副本时应用 fail closed，单节点和双节点 JetStream 不属于受支持部署。
+每条版本 2 envelope 包含 Code Session ID、稳定 transport event ID、可选 payload event ID、事件
+类型、`expires_at`，以及内联 payload 或对象存储引用。生产方直接使用稳定 `Nats-Msg-Id` 发布并
+等待 PubAck。PubAck 响应丢失时，调用方重试由 duplicate window 去重。
 
-每条 `event` 消息使用版本 1 的完整 JSON 信封，包含 code session ID、数据库 event ID、payload event ID、sequence、event type/subtype 和完整 payload。信封可能包含用户内容，只允许存留在上述短期 stream 中，不得写入运行日志。Compose 的 NATS 节点通过 `deploy/docker-compose/nats.conf` 将 `max_payload` 设为 2 MiB；合法 HTTP payload 超过节点配置的限制时，PostgreSQL 写入仍成功，JetStream 发布只记录不含 payload 的 Warn。
+`sequence_num` 在存储 envelope 中为 0，由 consumer 读取 JetStream metadata 后填入 Stream sequence。它是
+共享 Stream 的全局序号，单个 Code Session 看到间断是正常的。
 
-PostgreSQL 是权威账本。写路径先提交 PostgreSQL，再发布 JetStream；publish 失败不回滚请求，不使用 outbox、后台 republish、DLQ 或周期性数据库扫描。worker 重连时从 PostgreSQL 补历史；健康连接若从后续 JetStream 消息发现 sequence 缺口，也会按 cursor 从 PostgreSQL 顺序补齐。若失败消息之后没有新消息，则等下一次 worker 重连恢复。
+## Subject 与 consumer
 
-每条 worker SSE 连接先创建 `DeliverNew + AckExplicit`、按 code session subject 过滤的临时 pull consumer，再查询 PostgreSQL backlog。这保证补历史期间的新消息被 consumer 缓存。SSE 写出并沿用数据库 `MarkSent*` 后才 ACK JetStream；重复 sequence 直接 ACK。请求结束时删除 consumer，并用一分钟 inactive threshold 兜底清理异常断开的 consumer。JetStream 只承载数据库入站事件；旧 worker stream 通过 15 秒 keepalive 对 PostgreSQL epoch 的校验退出。
+每个 Code Session 使用独立 subject 和唯一稳定 durable pull consumer。consumer 的精确 filter
+互不重叠，满足 `WorkQueuePolicy` 限制。配置为 `DeliverAll`、`AckExplicit`、
+`MaxAckPending=1`、无限 `MaxDeliver`，退避 1 分钟、5 分钟、15 分钟，之后保持 15 分钟。
 
-## 后续接入约束
+SSE 断开不删除 consumer。worker 上报 `received` 或 `processing` 时发送 InProgress；只有
+`processed` 才 DoubleAck。终止或 30 天过期时删除该 consumer，并按 subject 清空消息。
 
-其他可靠业务队列接入前必须先定义 subject 命名、消息 schema/version、幂等键、投递与 ack 策略、重试/backoff、dead-letter 流和租户隔离。Core NATS 的 at-most-once 语义不能被误当成持久队列；需要持久化、重试的路径必须使用 JetStream，并为失败和重复投递补充测试。Session SSE preview 仍不落 JetStream；不要创建捕获 `oma.s.>` 的 stream 而意外持久化预览内容。
+`workerevents.Delivery` 只携带 envelope 和 ACK subject。InProgress、DoubleAck 由 `Broker` 按
+ACK subject 执行，不在 delivery 中保存 SDK 方法或函数回调。SSE 或后台扫描发现过期时，必须先
+成功提交 PG 终止与凭证撤销，再删除 consumer、purge subject。不能提前 TERM 或 ACK，否则 PG
+失败时会丢失重试依据，且可能向同一 worker 放行下一条消息。
+
+后台每分钟按 subject 查找下一条实际存储消息，一轮最多检查 512 条；序号空洞不占预算。坏
+envelope 会告警，但不阻塞其他 Session 的扫描。其所属 Session 仍阻塞消费，以可信的 subject
+和存储时间加 30 天兜底终止；任何终止或队列清理失败都保留批次游标重试。
+
+## 数据安全与大消息
+
+JetStream envelope 可能包含用户内容，不得写入运行日志。编码后超过 900 KiB 的 payload 存入对象
+存储，envelope 只携带租户作用域 key、字节数、SHA-256 和 cleanup job ID；引用 envelope 仍不得
+超过 1 MiB。Redis 只保存短期 ACK subject，不保存 payload，也不是消息事实源。
+
+## 其他消息能力的接入约束
+
+其他可靠业务队列接入前必须先定义 subject、schema/version、幂等键、ACK、重试、过期行为和租户
+隔离。Core NATS 的 at-most-once 语义不能作为持久队列。Session preview 继续使用 Core NATS，
+不得创建捕获 `oma.s.>` 的 Stream。
 
 ## 验收
 
-连接层测试以内嵌 NATS Server 分别覆盖空 URL、JetStream 未启用和成功连接。Compose 验收使用：
+连接层测试覆盖空 URL、JetStream 未启用和成功连接。worker event 测试使用内嵌三节点集群验证
+Stream 配置、duplicate window、durable consumer、全局 Stream sequence 和严格串行 ACK。
+过期测试覆盖序号空洞、损坏 envelope 隔离，以及 PG 终止失败保留队列、恢复后重新终止和清理。
 
 ```bash
 docker compose up -d nats nats-2 nats-3
@@ -58,7 +96,7 @@ curl --fail 'http://127.0.0.1:8222/healthz?js-enabled-only=true'
 curl --fail 'http://127.0.0.1:8223/healthz?js-enabled-only=true'
 curl --fail 'http://127.0.0.1:8224/healthz?js-enabled-only=true'
 just generate
-TEST_NATS_URL=nats://127.0.0.1:4222,nats://127.0.0.1:4223,nats://127.0.0.1:4224 go test ./internal/sessions -run TestNATSFanout -count=1 -v
+go test ./internal/workerevents -count=1
 ```
 
-MCP Tunnel 的 stream/KV、2 MiB payload、容量和故障合同详见 [MCP Tunnels](mcp-tunnels.md)。Broker 仅关闭自身订阅，不 drain 共享连接。
+MCP Tunnel 的 stream/KV、2 MiB 节点 payload 要求、容量和故障合同详见 [MCP Tunnels](mcp-tunnels.md)。

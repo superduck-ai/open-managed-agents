@@ -53,7 +53,6 @@ func newSandboxLifecycleFixture(t *testing.T) sandboxLifecycleFixture {
 	}
 	f := sandboxLifecycleFixture{app: app, code: code, session: record, epoch: epoch, target: db.SandboxReclaimTarget{
 		OrganizationUUID: code.OrganizationUUID, WorkspaceUUID: code.WorkspaceUUID, SandboxUUID: sandbox.UUID, ProviderSandboxID: *sandbox.ProviderSandboxID}}
-	f.exec(t, `UPDATE code_session_inbound_events SET delivery_status = 'processed', processed_at = NOW() WHERE code_session_uuid = $1`, code.UUID)
 	f.exec(t, `UPDATE code_sessions SET idle_since = NOW() - interval '25 hours' WHERE uuid = $1`, code.UUID)
 	return f
 }
@@ -82,19 +81,11 @@ func TestSandboxReclamationRejectsUnsafeCandidates(t *testing.T) {
 		{"terminated", `UPDATE code_sessions SET status = 'terminated' WHERE uuid = $1`},
 		{"archived session", `UPDATE sessions SET archived_at = NOW() WHERE uuid = (SELECT session_uuid FROM code_sessions WHERE uuid = $1)`},
 		{"self hosted", `UPDATE environments SET config = '{"type":"self_hosted"}' WHERE uuid = (SELECT environment_uuid FROM code_sessions WHERE uuid = $1)`},
-		{"queued input", `UPDATE code_session_inbound_events SET delivery_status = 'queued' WHERE code_session_uuid = $1`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSandboxLifecycleFixture(t)
-			if tc.name == "queued input" {
-				// Keep an old idle timestamp so the inbound queue itself must reject the claim.
-				sendSessionEvents(t, f.app, f.session.ExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"still pending"}]}]}`, defaultTestKey)
-			}
 			f.exec(t, tc.query, f.code.UUID)
-			if tc.name == "queued input" {
-				f.exec(t, `UPDATE code_sessions SET idle_since = NOW() - interval '25 hours' WHERE uuid = $1`, f.code.UUID)
-			}
 			_, ok, err := f.app.db.BeginSandboxReclamation(context.Background(), f.target, time.Now().Add(-24*time.Hour), true)
 			if err != nil || ok {
 				t.Fatalf("unsafe claim = %t, %v", ok, err)
@@ -319,7 +310,6 @@ func TestSandboxReclamationRecoveryRejectsIneligibleTargets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSandboxLifecycleFixture(t)
 			f.exec(t, `UPDATE environment_sandboxes SET state = $2, stop_reason = $3 WHERE uuid = $1`, f.target.SandboxUUID, tc.state, tc.reason)
-			f.exec(t, `UPDATE code_session_inbound_events SET delivery_status = 'queued' WHERE code_session_uuid = $1`, f.code.UUID)
 			if tc.archived {
 				f.exec(t, `UPDATE sessions SET archived_at = NOW() WHERE uuid = $1`, f.session.UUID)
 			}

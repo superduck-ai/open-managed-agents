@@ -643,7 +643,7 @@ OMA 主要代码：
 | `internal/mcpcatalogs/handler.go`                      | Agent 工具 catalog、Tunnel scope 校验与 last-good 保存  |
 | `internal/db/mcp_tunnels.go` 及 Mapper/XML             | Tunnel 与 token version 持久化                          |
 | `internal/db/mcp_tunnel_certificates.go` 及 Mapper/XML | API-only Certificate 持久化                             |
-| `internal/db/migrations/00059_rebuild_mcp_tunnels.sql` | 当前 Tunnel schema                                      |
+| `internal/db/migrations/00060_rebuild_mcp_tunnels.sql` | 当前 Tunnel schema                                      |
 | `internal/codesessions/mcp_proxy.go`                   | Runtime Gateway、Snapshot URL 解析和 TunnelInvoker 分支 |
 | `internal/codesessions/session_credentials.go`         | SessionIngressToken 的签发与身份校验                |
 | `internal/environments/managed_agent_mcp_config.go`    | MCP 配置生成、工具权限映射与 Session Gateway 投影       |

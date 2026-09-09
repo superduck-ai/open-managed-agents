@@ -14,10 +14,11 @@ database:
 redis:
   url: redis://localhost:6379
 
+# Worker event 和 MCP Tunnel 共用 JetStream 集群的 seed URL；多个 URL 用于启动期故障转移，
+# connect_timeout / drain_timeout 等可选字段见 docs/configuration-reference.yaml。
 nats:
   url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
-  connect_timeout: 5s
-  drain_timeout: 10s
+
 # Stable origin used in locally generated MCP Tunnel URLs. Keep this aligned
 # with the browser-reachable server address when changing server.addr.
 tunnel:

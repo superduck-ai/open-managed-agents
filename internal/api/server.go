@@ -101,6 +101,7 @@ type ServerDeps struct {
 	SessionEventBus        sessionfanout.EventBus
 	WorkerEventBroker      workerevents.Broker
 	TunnelBroker           *tunnelsapi.Broker
+	WorkerEventAcks        workerevents.AckStore
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -115,8 +116,15 @@ func NewServer(deps ServerDeps) *Server {
 		platformStore = platformsession.NewMemoryStore()
 	}
 	codeSessionLogger := componentLogger("codesessions")
+	// ACK store 由 main 统一构造注入（与 WorkerEventBroker 同源）；未注入的组装
+	// 方（如部分测试）回退到进程内实现。
+	workerEventAcks := deps.WorkerEventAcks
+	if workerEventAcks == nil {
+		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
+	}
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
+		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)

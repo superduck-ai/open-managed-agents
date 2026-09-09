@@ -27,57 +27,10 @@ const (
 	codeSessionWorkerLeaseTTL   = 60 * time.Second
 	codeSessionWorkerLeaseGrace = 10 * time.Second
 	internalEventsPageSize      = 500
+	// workerEpochValidationInterval 是 SSE 流上 epoch 校验的共享节流间隔；
+	// ticker 与逐消息校验都按该窗口执行，epoch 变更的可见延迟上界一致。
+	workerEpochValidationInterval = time.Second
 )
-
-func (h *Handler) handleCodeSessionHTTPPoll(w http.ResponseWriter, r *http.Request) error {
-	codeSessionID := chi.URLParam(r, "code_session_id")
-	// legacy WebSocket ingress 已移除。必须在请求进入旧的 30 秒 HTTP poll
-	// 之前拒绝 WebSocket upgrade，避免退化成长轮询请求。
-	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
-		return codeSessionRouteNotFound()
-	}
-	if err := h.authorizeSessionIngressRequest(r, codeSessionID); err != nil {
-		return err
-	}
-	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
-		return err
-	}
-	if err := h.db.MarkCodeSessionWorkerConnected(r.Context(), codeSessionID); err != nil && !errors.Is(err, db.ErrNotFound) {
-		h.logger.ErrorContext(r.Context(), "mark code session http poll connected", "code_session_id", codeSessionID, "error", err)
-	}
-
-	deadline := time.NewTimer(30 * time.Second)
-	defer deadline.Stop()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		events, err := h.db.ListQueuedCodeSessionInboundEvents(r.Context(), codeSessionID)
-		if err != nil {
-			return codeSessionEventsLoadError(err, codeSessionID)
-		}
-		if len(events) > 0 {
-			payloads := make([]json.RawMessage, 0, len(events))
-			for _, event := range events {
-				payloads = append(payloads, event.Payload)
-			}
-			httpapi.WriteJSON(w, http.StatusOK, map[string]any{"events": payloads})
-			for _, event := range events {
-				if err := h.db.MarkCodeSessionInboundEventSent(r.Context(), event.ExternalID); err != nil && !errors.Is(err, db.ErrNotFound) {
-					h.logger.ErrorContext(r.Context(), "mark code session http poll event sent", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
-				}
-			}
-			return nil
-		}
-		select {
-		case <-r.Context().Done():
-			return nil
-		case <-deadline.C:
-			httpapi.WriteJSON(w, http.StatusOK, map[string]any{"events": []any{}})
-			return nil
-		case <-ticker.C:
-		}
-	}
-}
 
 func (h *Handler) handlePutCodeSessionWorker(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
@@ -211,7 +164,8 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	if !authorized {
 		return
 	}
-	if _, err := h.requireCodeSession(r.Context(), codeSessionID); err != nil {
+	codeSession, err := h.requireCodeSession(r.Context(), codeSessionID)
+	if err != nil {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
@@ -223,9 +177,12 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 		epoch = claims.WorkerEpoch
 		hasEpoch = true
 	}
-	fromSequence, err := parseCodeSessionWorkerStreamFromSequence(r)
-	if err != nil {
+	if err = parseCodeSessionWorkerStreamFromSequence(r); err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		return
+	}
+	if !hasEpoch || epoch <= 0 {
+		h.writeWorkerEpochDBError(w, r, codeSessionID, db.ErrWorkerEpochMismatch, "Could not connect code session worker stream")
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -233,36 +190,36 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Streaming is not supported"))
 		return
 	}
+	if err := h.db.MarkCodeSessionWorkerConnectedForEpoch(r.Context(), codeSessionID, epoch); err != nil {
+		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not connect code session worker stream")
+		return
+	}
+	disconnect := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := h.db.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, epoch); err != nil && !errors.Is(err, db.ErrNotFound) && !errors.Is(err, db.ErrWorkerEpochMismatch) {
+			h.logger.ErrorContext(r.Context(), "mark code session worker stream disconnected", "code_session_id", codeSessionID, "error", err)
+		}
+	}
 	subscription, err := h.service.workerEvents.Subscribe(r.Context(), codeSessionID)
 	if err != nil {
+		disconnect()
 		h.errorAdapter.Write(w, r, workerEventStreamUnavailable(err))
 		return
 	}
+	defer disconnect()
 	defer func() {
 		if err := subscription.Close(); err != nil {
 			h.logger.WarnContext(r.Context(), "close code session worker event subscription", "code_session_id", codeSessionID, "error", err)
 		}
 	}()
-	if hasEpoch {
-		if err := h.db.MarkCodeSessionWorkerConnectedForEpoch(r.Context(), codeSessionID, epoch); err != nil {
-			h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not connect code session worker stream")
-			return
-		}
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := h.db.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, epoch); err != nil && !errors.Is(err, db.ErrNotFound) && !errors.Is(err, db.ErrWorkerEpochMismatch) {
-				h.logger.ErrorContext(r.Context(), "mark code session worker stream disconnected", "code_session_id", codeSessionID, "error", err)
-			}
-		}()
-	}
 	header := w.Header()
 	header.Set("Content-Type", "text/event-stream")
 	header.Set("Cache-Control", "no-cache")
 	header.Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	h.streamCodeSessionWorkerEvents(r.Context(), w, flusher, subscription, codeSessionID, epoch, hasEpoch, fromSequence)
+	h.streamCodeSessionWorkerEvents(r.Context(), w, flusher, subscription, codeSession, epoch)
 }
 
 func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http.Request) {
@@ -300,112 +257,80 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 }
 
 func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher,
-	subscription workerevents.Subscription, codeSessionID string, epoch int64, epochScoped bool, fromSequence int64) {
+	subscription workerevents.Subscription, codeSession db.CodeSession, epoch int64) {
 
 	keepAlive := time.NewTicker(15 * time.Second)
 	defer keepAlive.Stop()
-	lastSentSequence := fromSequence
-	var ok bool
-	lastSentSequence, ok = h.sendCodeSessionWorkerBacklog(ctx, w, flusher, codeSessionID, epoch, epochScoped, lastSentSequence)
-	if !ok {
-		return
-	}
+	epochValidation := time.NewTicker(workerEpochValidationInterval)
+	defer epochValidation.Stop()
+	// 消息分支的 epoch 校验与 ticker 共享同一过期窗口：距上次校验不足一个间隔时
+	// 直接复用结果，避免每条事件一次同步 DB 查询。
+	var lastEpochValidation time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case err, open := <-subscription.Errors():
 			if open && err != nil && !errors.Is(err, context.Canceled) {
-				h.logger.WarnContext(ctx, "consume code session worker event", "code_session_id", codeSessionID, "error", err)
+				h.logger.WarnContext(ctx, "consume code session worker event", "code_session_id", codeSession.ExternalID, "error", err)
 			}
 			return
 		case delivery, open := <-subscription.Messages():
 			if !open {
 				return
 			}
+			if time.Since(lastEpochValidation) >= workerEpochValidationInterval {
+				if err := h.db.ValidateCodeSessionWorkerEpoch(ctx, codeSession.ExternalID, epoch); err != nil {
+					return
+				}
+				lastEpochValidation = time.Now()
+			}
 			envelope := delivery.Envelope
-			if envelope.Version != 1 || envelope.CodeSessionID != codeSessionID {
-				h.logger.WarnContext(ctx, "reject code session worker event envelope", "code_session_id", codeSessionID, "event_id", envelope.EventID)
+			if envelope.Version != 2 || envelope.CodeSessionID != codeSession.ExternalID {
+				h.logger.WarnContext(ctx, "reject code session worker event envelope", "code_session_id", codeSession.ExternalID, "event_id", envelope.EventID)
 				return
 			}
-			if envelope.SequenceNum <= lastSentSequence {
-				_ = delivery.Ack()
-				continue
-			}
-			if envelope.SequenceNum > lastSentSequence+1 {
-				lastSentSequence, ok = h.sendCodeSessionWorkerBacklog(ctx, w, flusher, codeSessionID, epoch, epochScoped, lastSentSequence)
-				if !ok {
-					return
+			if envelope.IsExpired(time.Now().UTC()) {
+				if err := h.service.expireWorkerEvent(ctx, codeSession, envelope); err != nil {
+					h.logger.ErrorContext(ctx, "expire code session worker event", "code_session_id", codeSession.ExternalID, "error", err)
 				}
+				return
 			}
-			if envelope.SequenceNum > lastSentSequence {
-				event := codeSessionEventFromWorkerEnvelope(envelope)
-				lastSentSequence, ok = h.sendCodeSessionWorkerEvents(ctx, w, flusher, codeSessionID, epoch, epochScoped, lastSentSequence, []db.CodeSessionEvent{event})
-				if !ok {
-					return
-				}
+			loaded, loadErr := h.service.loadOffloadedPayload(ctx, envelope)
+			if loadErr != nil {
+				h.logger.ErrorContext(ctx, "load offloaded code session worker event", "code_session_id", codeSession.ExternalID, "event_id", envelope.EventID, "error", loadErr)
+				return
 			}
-			if err := delivery.Ack(); err != nil {
-				h.logger.WarnContext(ctx, "ack code session worker event", "code_session_id", codeSessionID, "event_id", envelope.EventID, "error", err)
+			envelope = loaded
+			// ACK 映射的 key 与 SSE event_id 必须一致：worker 回执携带的是它从 SSE
+			// 看到的 ID，两者共用同一推导，避免回执查不到映射而被忽略。
+			event := codeSessionEventFromWorkerEnvelope(envelope)
+			eventID := codeSessionWorkerSSEEventID(event)
+			cleanupJobID := ""
+			if envelope.PayloadRef != nil {
+				cleanupJobID = envelope.PayloadRef.CleanupJobID
+			}
+			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID}); err != nil {
+				h.logger.WarnContext(ctx, "store code session worker event ACK", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
+				return
+			}
+			if err := writeCodeSessionWorkerSSEEvent(w, flusher, event); err != nil {
+				// 保留到 TTL：旧连接写失败时，新连接可能已重投并覆盖同一个 key。
+				// 无条件删除会抹掉新投递的 ACK 定位；未 flush 的映射本身不会 ACK 消息。
 				return
 			}
 		case <-keepAlive.C:
-			if epochScoped {
-				if err := h.db.ValidateCodeSessionWorkerEpoch(ctx, codeSessionID, epoch); err != nil {
-					return
-				}
-			}
 			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
+		case <-epochValidation.C:
+			if err := h.db.ValidateCodeSessionWorkerEpoch(ctx, codeSession.ExternalID, epoch); err != nil {
+				return
+			}
+			lastEpochValidation = time.Now()
 		}
 	}
-}
-
-func (h *Handler) sendCodeSessionWorkerBacklog(ctx context.Context, w io.Writer, flusher http.Flusher, codeSessionID string, epoch int64, epochScoped bool, afterSequence int64) (int64, bool) {
-	var events []db.CodeSessionEvent
-	var err error
-	if epochScoped {
-		events, err = h.db.ListCodeSessionInboundEventsForWorkerStream(ctx, codeSessionID, epoch, afterSequence)
-	} else {
-		events, err = h.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
-	}
-	if err != nil {
-		if !errors.Is(err, db.ErrWorkerEpochMismatch) && !errors.Is(err, db.ErrNotFound) && !errors.Is(err, context.Canceled) {
-			h.logger.ErrorContext(ctx, "list queued code session worker stream events", "code_session_id", codeSessionID, "error", err)
-		}
-		return afterSequence, false
-	}
-	return h.sendCodeSessionWorkerEvents(ctx, w, flusher, codeSessionID, epoch, epochScoped, afterSequence, events)
-}
-
-func (h *Handler) sendCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher, codeSessionID string, epoch int64, epochScoped bool, lastSequence int64, events []db.CodeSessionEvent) (int64, bool) {
-	for _, event := range events {
-		if event.SequenceNum <= lastSequence {
-			continue
-		}
-		if err := writeCodeSessionWorkerSSEEvent(w, flusher, event); err != nil {
-			h.logger.ErrorContext(ctx, "write code session worker stream event", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
-			return lastSequence, false
-		}
-		lastSequence = event.SequenceNum
-		markCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		var err error
-		if epochScoped {
-			err = h.db.MarkCodeSessionInboundEventSentForEpoch(markCtx, codeSessionID, event.ExternalID, epoch)
-		} else {
-			err = h.db.MarkCodeSessionInboundEventSent(markCtx, event.ExternalID)
-		}
-		cancel()
-		if errors.Is(err, db.ErrWorkerEpochMismatch) {
-			return lastSequence, false
-		}
-		if err != nil && !errors.Is(err, db.ErrNotFound) {
-			h.logger.ErrorContext(ctx, "mark code session worker stream event sent", "code_session_id", codeSessionID, "event_id", event.ExternalID, "error", err)
-		}
-	}
-	return lastSequence, true
 }
 
 func codeSessionEventFromWorkerEnvelope(envelope workerevents.EnvelopeV1) db.CodeSessionEvent {
@@ -445,6 +370,11 @@ func (h *Handler) handleCodeSessionWorkerEvents(w http.ResponseWriter, r *http.R
 			h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker events")
 			return
 		}
+		if errors.Is(err, ErrWorkerEventUnavailable) {
+			h.logger.ErrorContext(r.Context(), "publish code session worker response", "code_session_id", codeSessionID, "error", err)
+			h.errorAdapter.Write(w, r, err)
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "append code session worker events", "code_session_id", codeSessionID, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append code session worker events"))
 		return
@@ -466,7 +396,7 @@ func (h *Handler) handleCodeSessionWorkerDelivery(w http.ResponseWriter, r *http
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	result, err := h.db.ApplyCodeSessionWorkerDeliveryUpdates(r.Context(), codeSessionID, workerReq.epoch, updates)
+	result, err := h.service.applyWorkerDeliveryUpdates(r.Context(), codeSessionID, workerReq.epoch, updates)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "delivery updates are invalid"))
@@ -474,6 +404,11 @@ func (h *Handler) handleCodeSessionWorkerDelivery(w http.ResponseWriter, r *http
 		}
 		if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
 			h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not apply code session worker delivery")
+			return
+		}
+		if errors.Is(err, ErrWorkerEventUnavailable) {
+			h.logger.ErrorContext(r.Context(), "acknowledge code session worker event", "code_session_id", codeSessionID, "error", err)
+			h.errorAdapter.Write(w, r, err)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "apply code session worker delivery", "code_session_id", codeSessionID, "error", err)
@@ -1040,24 +975,23 @@ func parseOptionalWorkerEpochFromRequestWithSource(r *http.Request) (int64, bool
 	return epoch, true, source, value, nil
 }
 
-func parseCodeSessionWorkerStreamFromSequence(r *http.Request) (int64, error) {
+func parseCodeSessionWorkerStreamFromSequence(r *http.Request) error {
 	value := strings.TrimSpace(r.URL.Query().Get("from_sequence_num"))
 	if value == "" {
 		value = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
 	}
 	if value == "" {
-		return 0, nil
+		return nil
 	}
 	for _, ch := range value {
 		if ch < '0' || ch > '9' {
-			return 0, errors.New("from_sequence_num must be a non-negative integer")
+			return errors.New("from_sequence_num must be a non-negative integer")
 		}
 	}
-	sequence, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || sequence < 0 {
-		return 0, errors.New("from_sequence_num must be a non-negative integer")
+	if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+		return errors.New("from_sequence_num must be a non-negative integer")
 	}
-	return sequence, nil
+	return nil
 }
 
 func parseWorkerEpochRaw(raw json.RawMessage) (int64, error) {
@@ -1229,7 +1163,7 @@ func (epoch *workerEpoch) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func decodeCodeSessionWorkerDeliveryPayload(body []byte) ([]db.CodeSessionWorkerDeliveryUpdate, error) {
+func decodeCodeSessionWorkerDeliveryPayload(body []byte) ([]workerDeliveryUpdate, error) {
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
 		return nil, errors.New("delivery body is required")
@@ -1255,7 +1189,7 @@ func decodeCodeSessionWorkerDeliveryPayload(body []byte) ([]db.CodeSessionWorker
 	if len(items) > 64 {
 		return nil, errors.New("updates must contain at most 64 items")
 	}
-	updates := make([]db.CodeSessionWorkerDeliveryUpdate, 0, len(items))
+	updates := make([]workerDeliveryUpdate, 0, len(items))
 	for _, item := range items {
 		eventID := strings.TrimSpace(item.EventID)
 		if eventID == "" {
@@ -1267,7 +1201,7 @@ func decodeCodeSessionWorkerDeliveryPayload(body []byte) ([]db.CodeSessionWorker
 		default:
 			return nil, errors.New("updates[].status must be received, processing, or processed")
 		}
-		updates = append(updates, db.CodeSessionWorkerDeliveryUpdate{
+		updates = append(updates, workerDeliveryUpdate{
 			EventID: eventID,
 			Status:  status,
 		})

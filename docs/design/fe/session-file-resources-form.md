@@ -10,25 +10,25 @@
 
 后端的 filesystem、输入引用、只读挂载和 Files API 投影统一由 [Filestore 设计](../be/filestore.md)定义，本文只描述前端接口。
 
-## GitHub Repository 资源
+## Git Repository 资源
 
-Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File 或 GitHub repository；Deployment 保留 Memory Store 选择器。
+Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File 或 Git repository；Deployment 保留 Memory Store 选择器。Git 资源支持 GitHub 及自托管 HTTPS Git 仓库。
 
-GitHub repository 的公开请求字段为：
+Git repository 的公开请求字段如下；API 类型沿用 `github_repository`，不限制仓库托管平台：
 
 ```json
 {
   "type": "github_repository",
-  "url": "https://github.com/owner/repo",
+  "url": "https://git.example.com/group/subgroup/repo.git",
   "authorization_token": "<write-only token>",
   "checkout": {"type": "branch", "name": "main"},
   "mount_path": "/workspace/repo"
 }
 ```
 
-- URL 必须使用 `https://github.com/owner/repo`，不带 `.git`、尾斜杠或查询参数。
+- URL 必须使用 HTTPS 和默认端口 443，包含有效仓库路径；支持自托管域名、嵌套路径、`.git` 后缀和尾斜杠。不得包含内嵌用户名或密码、查询参数或片段。
 - Authorization token 可选；公开仓库留空，提交时省略该字段。使用密码输入，不从读取响应回填，不保存到浏览器存储。
-- Checkout 为 None、Branch 或 Commit；None 不发送 `checkout`，Branch 发送 `name`，Commit 发送 `sha`。
+- Checkout 为 None、Branch 或 Commit；None 不发送 `checkout`，Branch 发送 `name`，Commit 发送完整的 40 或 64 位十六进制 `sha`，不接受短 SHA。
 - Mount path 可省略，默认由服务端按仓库名生成 `/workspace/<repo>`。它与 File 的 `/mnt/session/uploads` 路径规则分开；Git 表单接受 `/workspace` 下的绝对路径。
 - 前端检查必填字段、URL、SHA 和基础路径形状；Git ref、跨仓库路径冲突、资源数量与完整安全规则以后端为权威。
 

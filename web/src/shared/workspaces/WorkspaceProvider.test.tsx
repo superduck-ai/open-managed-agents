@@ -132,7 +132,7 @@ test('连续快速切换时旧组织迟到响应不能覆盖最后选择', async
   }) as typeof fetch;
   mount();
   await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('ready'));
-  let first!: Promise<void>;
+  let first!: Promise<boolean>;
   await act(async () => {
     first = organizations.switchOrganization('b');
   });
@@ -140,7 +140,7 @@ test('连续快速切换时旧组织迟到响应不能覆盖最后选择', async
   await act(async () => organizations.switchOrganization('c'));
   await act(async () => {
     completeB(Response.json(workspaces('b')));
-    await first;
+    expect(await first).toBe(false);
   });
   expect(screen.getByTestId('scope').textContent).toBe('c:ws-c:self-c');
   expect(getConsoleRequestContext().organizationUuid).toBe('c');
@@ -188,4 +188,35 @@ test('网络失败显示可重试状态且不会自动循环', async () => {
   mockWorkspaces();
   await act(async () => organizations.retry());
   expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a');
+});
+
+test('403恢复失败后不受后续403触发，显式重试才能恢复', async () => {
+  mockWorkspaces();
+  const refresh = mock(async (): Promise<{ account: AuthAccount }> => {
+    throw new TypeError('offline');
+  });
+  mount({ refresh });
+  await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('ready'));
+  const context = { organizationUuid: 'a', workspaceId: 'ws-a' };
+  await act(async () => reportApiAuthFailure(403, context));
+  expect(screen.getByTestId('state').textContent).toBe('error');
+  await act(async () => reportApiAuthFailure(403, context));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  refresh.mockImplementation(async () => ({ account }));
+  await act(async () => expect(await organizations.retry()).toBe(true));
+  expect(screen.getByTestId('state').textContent).toBe('ready');
+});
+
+test('目标组织加载失败返回false，不提交新scope，重试成功返回true', async () => {
+  mockWorkspaces();
+  mount();
+  await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('ready'));
+  globalThis.fetch = mock(async () => {
+    throw new TypeError('offline');
+  }) as typeof fetch;
+  await act(async () => expect(await organizations.switchOrganization('b')).toBe(false));
+  expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a');
+  mockWorkspaces();
+  await act(async () => expect(await organizations.retry()).toBe(true));
+  expect(screen.getByTestId('scope').textContent).toBe('b:ws-b:self-b');
 });

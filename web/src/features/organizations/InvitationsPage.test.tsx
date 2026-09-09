@@ -33,7 +33,7 @@ function mount(path = '/agents/original', status: AuthStatus = 'authenticated') 
   resetTestDom('https://oma.duck.ai' + path);
   Object.assign(globalThis, { scrollTo: () => {} });
   const refresh = mock(async () => undefined);
-  const switchOrganization = mock(async () => {});
+  const switchOrganization = mock(async () => true);
   const root = createRootRoute({ component: InvitationEntryGate });
   const routes = [
     createRoute({ getParentRoute: () => root, path: '/', component: () => <h1>控制台首页</h1> }),
@@ -70,7 +70,7 @@ function mount(path = '/agents/original', status: AuthStatus = 'authenticated') 
             switching: false,
             error: new Error('旧组织已失效'),
             switchOrganization,
-            retry: async () => {},
+            retry: async () => true,
           }}
         >
           <RouterProvider router={router} />
@@ -140,6 +140,26 @@ test('稍后处理返回原页面，本次打开不会反复跳转；重新打�
   cleanup();
   mount('/');
   await screen.findByRole('heading', { name: '接受组织邀请' });
+});
+
+test('进入组织失败保留邀请页，再次进入成功才导航', async () => {
+  let accepted = false;
+  globalThis.fetch = mock(async (input) => {
+    if (String(input).endsWith('/accept')) {
+      accepted = true;
+      return Response.json({ id: invitation.id });
+    }
+    return Response.json({ data: accepted ? [] : [invitation] });
+  }) as typeof fetch;
+  const { router, switchOrganization } = mount('/invites');
+  fireEvent.click(await screen.findByRole('button', { name: '接受', exact: true }));
+  const enter = await screen.findByRole('button', { name: '进入组织' });
+  switchOrganization.mockResolvedValueOnce(false);
+  fireEvent.click(enter);
+  await screen.findByText('进入组织失败，请重试“进入组织”。');
+  expect(router.state.location.pathname).toBe('/invites');
+  fireEvent.click(enter);
+  await screen.findByText('控制台首页');
 });
 
 test('多份邀请独立处理；接受后不切换，点击进入组织才到首页', async () => {

@@ -137,20 +137,22 @@ sequenceDiagram
 
 初始化已有详情链接时保留路由；显式跨组织/工作区切换时，详情与编辑页回到对应列表，不能携带旧资源 ID。切换期间暂停业务界面；迟到的读取或写入响应不能更新新上下文。取消未保存内容提示不会改变当前组织。
 
+切换接口仅在有效组织和工作区提交完成后返回 `true`；失败、被后续切换取代或没有可用工作区时返回 `false`。独立邀请页只在成功时进入首页，失败留在邀请页提示再次进入。403 恢复统一使用空闲、检查中、失败三种状态：检查中合并并发错误，普通权限不足检查完成回到空闲，恢复失败后仅显式重试或选择组织/工作区才能重新开始，不再通过每个成功读取响应广播重置。
+
 业务请求返回 403 后，先刷新身份与可访问工作区区分普通权限不足和成员关系失效：组织失效优先回注册组织，其次其他有效组织；仅工作区失效则在当前组织回退。恢复失败提供重试与退出登录入口，不创建组织或恢复已移除成员。所有按钮和身份展示仅供交互使用，服务端仍对每次请求独立授权。
 
 ## PostgreSQL 验收
 
 `tests/organization_joining_test.go` 使用现有 `newTestAppWithStore`、测试邮箱验证码 HTTP 登录、真实 PostgreSQL 和 fake object store。不能调用 `platformLoginCookies`，因为该辅助函数预写 seed 组织用户，不能证明首次登录注册组织行为。
 
-测试入口限定主代理提供的 `/tmp/oma338-test-config.yaml`，数据库为隔离测试实例。fixture 使用随机邮箱和独立注册组织，不操作当前 Demo 用户。配置缺失时跳过不算验收通过。数据库 fixture 写入通过现有 DB/Yourbatis API，SQL 读取仅用于验证当前测试组织中的持久化结果。
+测试复用 `tests/config_test_main_test.go` 的配置入口：显式 `CONFIG_FILE` 优先，否则使用 `config/config.example.yaml`。运行前必须将配置指向隔离测试数据库；不再按配置文件名跳过，配置或依赖不可用时测试失败。fixture 使用随机邮箱和独立注册组织，不操作当前 Demo 用户。数据库 fixture 写入通过现有 DB/Yourbatis API，SQL 读取仅用于验证当前测试组织中的持久化结果。
 
 覆盖未登录、跨邮箱伪造、缺失/错误/跨 session CSRF、过期/撤销、首次登录、邀请列表字段、接受/拒绝幂等、移除后重放、账号 UUID 稳定、重复登录、stale header/cookie 上下文、403 不清 cookie，以及 files、skills、vault、memory、agent、environment、session 创建。会话记录必须使用目标组织 user UUID，资源创建者不得伪装成 API key。Default 成员保持零条；`api_keys` 与 `console_api_keys` 对照接受前的基线，区分既有注册流程创建的 key 与接受邀请产生的副作用。模型配置为无效域名占位，仅创建资源和未执行的会话，不提交消息、不启动 worker、不调用真实 LLM。
 
 主代理统一完成生成后运行：
 
 ```sh
-CONFIG_FILE=/tmp/oma338-test-config.yaml go test ./tests -run '^TestOrganizationJoining' -count=1 -v
+CONFIG_FILE=/path/to/isolated-test-config.yaml go test ./tests -run '^TestOrganizationJoining' -count=1 -v
 ```
 
 生成、`just lint`、`just dead-code` 及全套测试由主代理集中串行执行，避免多代理同时清空生成文件。迁移验收使用隔离 `TEST_MIGRATION_DATABASE_URL`，不得连接业务库。测试通过状态以实际运行结果为准，本设计说明不代替验收日志。
@@ -158,6 +160,8 @@ CONFIG_FILE=/tmp/oma338-test-config.yaml go test ./tests -run '^TestOrganization
 2026-09-08 在指定隔离配置下执行上述命令，三个 `TestOrganizationJoining*` 测试全部通过，包含四组失败子场景。直接运行 `golangci-lint run --config .golangci.yml ./tests/...` 返回 `0 issues`。本记录只确认该测试文件覆盖的 HTTP/PostgreSQL 验收，前端缓存交互、全套门禁与迁移专项结果由主代理汇总。
 
 ## 实现验收记录（2026-09-08）
+
+2026-09-09 PR 审查修正：切换结果、邀请页失败保留与 403 单一恢复状态的前端定向测试共 37 项通过，生产构建通过；使用 `/tmp/oma338-review-config.yaml` 和新建隔离 PostgreSQL 实例执行三个 `TestOrganizationJoining*` 全部通过，确认无需原临时文件名。Go lint、死代码、重复代码、复杂度、前端格式和大文件检查通过。全量 Bun 测试仍在 ConsoleShell 套件退出 133，不计为全量验收通过。
 
 正式改动保存在 `codex/338-organization-joining`，基于 #339 的 `ad9b3e4`；原工作区未提交 Demo 不属于正式交付，也未被回退。数据库新增 00061（declined）与 00062（注册来源标记）迁移，历史已应用迁移未修改。
 

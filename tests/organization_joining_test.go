@@ -3,7 +3,6 @@ package tests
 import (
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -45,10 +44,7 @@ type joiningFixture struct {
 
 func newJoiningFixture(t *testing.T) joiningFixture {
 	t.Helper()
-	// 此验收会迁移和 seed，只允许主代理提供的临时配置。
-	if os.Getenv("CONFIG_FILE") != "/tmp/oma338-test-config.yaml" {
-		t.Skip("组织加入验收需要 CONFIG_FILE=/tmp/oma338-test-config.yaml 隔离数据库")
-	}
+	// 与其他 HTTP 集成测试共用测试配置；运行时必须指向隔离数据库。
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)

@@ -26,7 +26,7 @@ afterEach(() => {
 
 function mount() {
   resetTestDom('https://oma.duck.ai/dashboard');
-  const switchOrganization = mock(async () => {});
+  const switchOrganization = mock(async () => true);
   const refresh = mock(async () => ({ account: null }));
   const account = {
     uuid: 'account',
@@ -44,7 +44,7 @@ function mount() {
             switching: false,
             error: null,
             switchOrganization,
-            retry: async () => {},
+            retry: async () => true,
           }}
         >
           <DropdownMenu defaultOpen>

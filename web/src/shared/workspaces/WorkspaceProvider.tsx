@@ -35,8 +35,7 @@ export function WorkspaceProvider({
   const [error, setError] = useState<unknown>(null);
   const generation = useRef(0);
   const attempted = useRef<string | undefined>(undefined);
-  const recoveryUsed = useRef(false);
-  const recoveryInFlight = useRef(false);
+  const recovery = useRef<'idle' | 'checking' | 'failed'>('idle');
   const authRef = useRef(auth);
   authRef.current = auth;
   const scopeRef = useRef(scope);
@@ -44,9 +43,9 @@ export function WorkspaceProvider({
 
   const installScope = useCallback(
     async (next: Scope, ticket: number, navigate = true) => {
-      if (ticket !== generation.current) return;
+      if (ticket !== generation.current) return false;
       await queryClient.cancelQueries({ predicate: isBusinessQuery });
-      if (ticket !== generation.current) return;
+      if (ticket !== generation.current) return false;
       queryClient.removeQueries({ predicate: isBusinessQuery });
       const { account, csrfToken } = authRef.current;
       setConsoleRequestContext({
@@ -55,11 +54,12 @@ export function WorkspaceProvider({
         csrfToken,
       });
       if (navigate && next.activeWorkspaceId) await navigateScope?.(next.activeWorkspaceId);
-      if (ticket !== generation.current) return;
+      if (ticket !== generation.current) return false;
       if (account && next.orgUuid) savePreference(account.uuid, next.orgUuid, next.activeWorkspaceId);
       scopeRef.current = next;
       setScope(next);
       setSwitching(false);
+      return Boolean(next.orgUuid && next.activeWorkspaceId);
     },
     [navigateScope, queryClient],
   );
@@ -67,6 +67,7 @@ export function WorkspaceProvider({
   const switchOrganization = useCallback(
     async (requested?: string, refresh = true, navigate = true, knownAccount?: AuthAccount | null) => {
       attempted.current = requested;
+      recovery.current = 'idle';
       const ticket = ++generation.current;
       setSwitching(true);
       setError(null);
@@ -74,7 +75,7 @@ export function WorkspaceProvider({
       await queryClient.cancelQueries({ predicate: isBusinessQuery });
       try {
         const bootstrap = refresh ? await authRef.current.refresh() : undefined;
-        if (ticket !== generation.current) return;
+        if (ticket !== generation.current) return false;
         const account = refresh
           ? (bootstrap?.account ?? null)
           : knownAccount === undefined
@@ -82,17 +83,18 @@ export function WorkspaceProvider({
             : knownAccount;
         const orgUuid = fallbackOrganization(account, requested);
         if (!orgUuid || !account) {
-          await installScope(emptyScope, ticket, navigate);
-          return;
+          return await installScope(emptyScope, ticket, navigate);
         }
         const workspaces = await listConsoleWorkspaces(orgUuid);
         const preferred = !navigate && initialWorkspaceId ? initialWorkspaceId : readPreference(account.uuid, orgUuid);
         const selected = chooseWorkspace(workspaces, preferred);
-        await installScope({ orgUuid, workspaces, activeWorkspaceId: selected?.id ?? '' }, ticket, navigate);
+        return await installScope({ orgUuid, workspaces, activeWorkspaceId: selected?.id ?? '' }, ticket, navigate);
       } catch (cause) {
-        if (ticket !== generation.current) return;
+        if (ticket !== generation.current) return false;
+        recovery.current = 'failed';
         setError(cause);
         setSwitching(false);
+        return false;
       }
     },
     [initialWorkspaceId, installScope, queryClient],
@@ -100,7 +102,7 @@ export function WorkspaceProvider({
 
   const accountUuid = auth.account?.uuid;
   useEffect(() => {
-    recoveryUsed.current = false;
+    recovery.current = 'idle';
     if (accountUuid) void switchOrganization(readPreference(accountUuid), false, false);
     else {
       ++generation.current;
@@ -126,20 +128,14 @@ export function WorkspaceProvider({
   useEffect(
     () =>
       onApiAuthFailure((status, context) => {
-        if (status === 200 && context.workspaceId === scopeRef.current.activeWorkspaceId) {
-          recoveryUsed.current = false;
-          return;
-        }
         if (
           status !== 403 ||
           context.workspaceId !== scopeRef.current.activeWorkspaceId ||
           context.organizationUuid !== scopeRef.current.orgUuid ||
-          recoveryUsed.current ||
-          recoveryInFlight.current
+          recovery.current !== 'idle'
         )
           return;
-        recoveryUsed.current = true;
-        recoveryInFlight.current = true;
+        recovery.current = 'checking';
         const ticket = generation.current;
         const current = scopeRef.current;
         void (async () => {
@@ -160,10 +156,12 @@ export function WorkspaceProvider({
               setScope({ ...current, workspaces });
             }
           } catch (cause) {
-            if (ticket === generation.current) setError(cause);
+            if (ticket === generation.current) {
+              recovery.current = 'failed';
+              setError(cause);
+            }
           } finally {
-            recoveryInFlight.current = false;
-            if (ticket === generation.current) recoveryUsed.current = false;
+            if (ticket === generation.current && recovery.current === 'checking') recovery.current = 'idle';
           }
         })();
       }),
@@ -175,7 +173,7 @@ export function WorkspaceProvider({
       const current = scopeRef.current;
       if (!current.workspaces.some((workspace) => workspace.id === workspaceId)) return;
       const ticket = ++generation.current;
-      recoveryUsed.current = false;
+      recovery.current = 'idle';
       cancelScopeRequests();
       setSwitching(true);
       setError(null);

@@ -13,9 +13,9 @@ afterEach(() => {
 
 test('空 context 的账号请求不携带旧组织工作区且邀请保留 CSRF cookie', async () => {
   const requests: RequestInit[] = [];
-  globalThis.fetch = mock(async (_input, options) => {
+  globalThis.fetch = mock(async (input, options) => {
     requests.push(options!);
-    return Response.json({ data: [] });
+    return Response.json(String(input).endsWith('/workspaces') ? [] : { data: [] });
   }) as typeof fetch;
   setConsoleRequestContext({ organizationUuid: 'old', workspaceId: 'old-ws', csrfToken: 'csrf' });
   await fetchBootstrap();

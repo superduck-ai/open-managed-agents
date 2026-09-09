@@ -6,8 +6,8 @@ export type OrganizationContextValue = {
   orgUuid?: string;
   switching: boolean;
   error: unknown;
-  switchOrganization: (orgUuid: string) => Promise<void>;
-  retry: () => Promise<void>;
+  switchOrganization: (orgUuid: string) => Promise<boolean>;
+  retry: () => Promise<boolean>;
 };
 
 export const OrganizationContext = createContext<OrganizationContextValue | null>(null);

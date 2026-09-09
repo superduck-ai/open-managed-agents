@@ -44,10 +44,6 @@ export function reportApiAuthFailure(status: number, context: ConsoleRequestCont
   if (status === 401 || status === 403) failureListeners.forEach((listener) => listener(status, context));
 }
 
-export function reportScopeSuccess(context: ConsoleRequestContext) {
-  failureListeners.forEach((listener) => listener(200, context));
-}
-
 export function setConsoleRequestContext(context: ConsoleRequestContext) {
   consoleRequestContext = context;
 }
@@ -192,7 +188,6 @@ async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
   const data = (await response.json()) as T;
   if (scoped) scopeSignal.throwIfAborted();
   signal?.throwIfAborted();
-  if (scoped && readOnly) reportScopeSuccess(context);
   return data;
 }
 

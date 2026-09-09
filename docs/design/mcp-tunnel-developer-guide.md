@@ -77,7 +77,7 @@ flowchart LR
 | Connector API      | 校验 Tunnel token，处理 metadata、poll 和 response wire                             |
 | Runtime Gateway    | 只允许 Sandbox 访问当前 Code Session Snapshot 中按名称配置的 MCP Server             |
 | TunnelInvoker      | 识别 canonical Tunnel URL，在 OMA 进程内直接进入 Broker，避免 HTTP 回环             |
-| NATS Broker       | presence、排队、原子 claim、响应状态、通知、超时、预算和进程亲和                    |
+| NATS Broker        | presence、排队、原子 claim、响应状态、通知、超时、预算和进程亲和                    |
 | PostgreSQL         | 保存 Tunnel、租户归属、归档状态和加密的 token version                               |
 | `tunnel-client`    | 出站长轮询、并发与背压、本地 MCP 转发、通知与终态响应回传                           |
 | Private MCP Server | 真正执行 `initialize`、`tools/list`、`tools/call` 等 MCP 请求                       |
@@ -152,12 +152,12 @@ MCP Tunnel 有多套凭据，因为每套凭据保护的是不同的信任边界
 
 | 边界                    | 路由                                                                           | 凭据                                                               | 绑定范围                                           |
 | ----------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------ | -------------------------------------------------- |
-| Tunnel 管理面       | `/v1/tunnels...`                                                               | workspace API key，支持 `X-Api-Key` 或 Bearer 入口                 | organization + workspace                           |
+| Tunnel 管理面           | `/v1/tunnels...`                                                               | workspace API key，支持 `X-Api-Key` 或 Bearer 入口                 | organization + workspace                           |
 | Console 管理面          | `/api/console/organizations/{orgUuid}/workspaces/{workspaceId}/mcp_tunnels...` | 平台 cookie Session；非安全方法再校验 `X-CSRF-Token`               | 当前可见 organization + workspace                  |
 | 直接 MCP Ingress        | `/v1/mcp/{tunnel_id}[/{channel}]`                                              | 必须显式提供 workspace `X-Api-Key`                                 | organization + workspace + Tunnel                  |
 | Connector metadata/poll | `/connector/v1/tunnels/{tunnel_id}...`                                         | `Authorization: Bearer <tunnel token>`                             | 精确 Tunnel + active token version                 |
 | Connector response      | `/connector/v1/tunnels/{tunnel_id}/response`                                   | Bearer tunnel token；允许已 retired 的领取版本完成在途请求         | 精确 Tunnel + claim 绑定                           |
-| Agent Runtime Gateway   | `/v2/ccr-sessions/{code_session_id}/mcp/{server_name}`                         | `sk-ant-si-` 前缀的 session-scoped Ed25519 JWT                    | Code Session + worker epoch + Snapshot server name |
+| Agent Runtime Gateway   | `/v2/ccr-sessions/{code_session_id}/mcp/{server_name}`                         | `sk-ant-si-` 前缀的 session-scoped Ed25519 JWT                     | Code Session + worker epoch + Snapshot server name |
 | Private MCP Server      | `tunnel-client` 配置的私网 URL/stdio                                           | 下游 `Authorization`、client 本地静态 Header、mTLS 或 MCP 自身方案 | Private MCP Server 自己的权限模型                  |
 
 ### 4.1 Workspace API key
@@ -456,15 +456,18 @@ sequenceDiagram
     Gateway-->>Sandbox: 重写为 Sandbox 可访问的 resource metadata
 ```
 
-Session 启动时，原始 Tunnel canonical URL 只保存在固定 Agent Snapshot 中。写入 Sandbox 的 MCP config
-只把确认属于当前 OMA 的 Tunnel server 投影为：
+Agent Snapshot 与 Code Session metadata 保存原始 MCP 源声明。Session 启动或恢复取得当前身份后，
+构建器先识别目标类型，再分别构建普通 MCP 和 Tunnel MCP。Tunnel 条目固定使用 `type: "http"`，地址为：
 
 ```text
 {code_session.sandbox_api_base_url}/v2/ccr-sessions/{code_session_id}/mcp/{server_name}
 ```
 
-并只在该 Tunnel 条目中放入 SessionIngressToken。普通 Directory/自定义 MCP 的 URL、Header 和工具配置保持
+并只在该 Tunnel 条目中放入当前 SessionIngressToken。Channel 名为 `sse` 或 `stdio` 也不会改变该 HTTP 传输类型。
+普通 Directory/自定义 MCP 使用自己的传输规则，URL、Header 和工具配置保持
 原样，通过 Sandbox HTTP(S) Proxy/MITM 与 Vault 注入；启动 payload 顶层 `mcp_servers` 也完整保留。
+最终文档用于生成权限为 `0600` 的配置文件和启动参数。`session_context` 通过鉴权后使用同一构建器和当前
+Session 凭据返回文档，并禁止缓存；持久化源声明不包含运行时 Gateway 地址或 Token。
 
 Console Agent Picker 允许同一个 Tunnel 绑定多个 Channel，但不扩展 Agent API。所有 Channel 统一使用
 `tunnel_<32hex>.<channel>` 作为 server name，因此 main 为 `tunnel_<32hex>.main`。URL 分别保存为
@@ -478,7 +481,7 @@ Gateway 只在 URL origin 与 `tunnel.public_base_url` 精确一致且 path 是 
 TunnelInvoker 在进程内调用 Broker；受控 origin 和 suffix 校验防止第三方 host 被误认为 Tunnel。
 
 `server_name` 使用 Snapshot 中的原值做精确索引，不接受首尾空白。畸形 URL、非规范名称或重复名称都会让
-Snapshot policy 编译失败；Runner 投影非空 MCP URL 时也不会吞掉 URL 解析错误。上述失败都不会回退成
+Snapshot policy 编译失败；运行时构建非空 MCP URL 时也不会吞掉 URL 解析错误。上述失败都不会回退成
 unrestricted、普通 MCP 或部分放行。
 
 ## 9. 命令类型与 MCP 传输语义
@@ -590,18 +593,18 @@ Ingress 请求 denylist 至少包括：
 
 默认限制：
 
-| 项目                          | 默认值 |
-| ----------------------------- | ------ |
+| 项目                                      | 默认值 |
+| ----------------------------------------- | ------ |
 | 请求或 terminal response 的 MCP JSON body | 1 MiB  |
-| Connector response 外层协议包 | 2 MiB |
-| Header 总量                   | 32 KiB |
-| 单个 Header value             | 8 KiB  |
-| 每 Tunnel pending 请求        | 256    |
-| 每 Tunnel pending payload     | 32 MiB |
-| poll timeout                  | 30 秒  |
-| MCP 总 deadline               | 2 分钟 |
-| presence TTL     | 60 秒  |
-| terminal tombstone            | 5 分钟 |
+| Connector response 外层协议包             | 2 MiB  |
+| Header 总量                               | 32 KiB |
+| 单个 Header value                         | 8 KiB  |
+| 每 Tunnel pending 请求                    | 256    |
+| 每 Tunnel pending payload                 | 32 MiB |
+| poll timeout                              | 30 秒  |
+| MCP 总 deadline                           | 2 分钟 |
+| presence TTL                              | 60 秒  |
+| terminal tombstone                        | 5 分钟 |
 
 `max_pending_requests` 允许配置为 `1..512`。Tunnel OAuth protected-resource discovery 走 Connector 的
 `oauth_discovery` command，并受 Tunnel 请求总 deadline 约束；named Gateway 不为普通 MCP 发起 metadata 请求。
@@ -612,16 +615,16 @@ MCP payload、tool argument、response 及被转发的 Authorization 会经过 O
 
 ## 13. 错误与故障语义
 
-| 现象                                                | 对外状态             | 含义                                  |
-| --------------------------------------------------- | -------------------- | ------------------------------------- |
+| 现象                                                         | 对外状态             | 含义                                  |
+| ------------------------------------------------------------ | -------------------- | ------------------------------------- |
 | workspace、Console、SessionIngressToken 或 Tunnel token 无效 | 401/403              | 对应信任边界鉴权失败                  |
-| Tunnel 不属于 scope、已归档或 response 绑定不匹配   | 404 或资源不可见语义 | 防止跨租户和内部状态泄漏              |
-| GET MCP SSE                                         | 405                  | Tunnel 只支持同请求内 SSE             |
-| body/Header 超限                                    | 413                  | 请求未入队或响应被拒绝                |
-| pending 数量或 payload 预算超限                     | 429                  | Broker 背压                           |
-| 没有 live Connector                                 | 503                  | 快速失败，不排队等待客户端上线        |
-| NATS / JetStream 不可用                                        | 503                  | 不回退到进程内队列                    |
-| 统一 deadline 到期                                  | 504                  | 请求已被 cancel/expired，迟到响应无效 |
+| Tunnel 不属于 scope、已归档或 response 绑定不匹配            | 404 或资源不可见语义 | 防止跨租户和内部状态泄漏              |
+| GET MCP SSE                                                  | 405                  | Tunnel 只支持同请求内 SSE             |
+| body/Header 超限                                             | 413                  | 请求未入队或响应被拒绝                |
+| pending 数量或 payload 预算超限                              | 429                  | Broker 背压                           |
+| 没有 live Connector                                          | 503                  | 快速失败，不排队等待客户端上线        |
+| NATS / JetStream 不可用                                      | 503                  | 不回退到进程内队列                    |
+| 统一 deadline 到期                                           | 504                  | 请求已被 cancel/expired，迟到响应无效 |
 
 `/healthz` 只表示 OMA 进程存活；`/readyz` 同时检查 PostgreSQL 和 Tunnel NATS（`tunnel_nats`）；Console presence 只说明近期
 有 poll。要证明 Tunnel 可用，应至少执行 Console probe 或真实 `initialize` + `tools/list`。要证明 Managed
@@ -634,26 +637,28 @@ poll 和实际 MCP 请求为准。
 
 OMA 主要代码：
 
-| 路径                                                   | 内容                                                    |
-| ------------------------------------------------------ | ------------------------------------------------------- |
-| `internal/tunnels/management_handler.go`               | Tunnel 管理 API 与 beta gate                        |
-| `internal/tunnels/management_service.go`               | create/reveal/rotate/archive 编排                       |
-| `internal/tunnels/certificate_handler.go`              | Certificate Create/Get/List/Archive HTTP 合同           |
-| `internal/tunnels/certificate_service.go`              | X.509 校验、fingerprint 和独立持久化编排                |
-| `internal/tunnels/connector_handler.go`                | Tunnel token、metadata、poll、response                  |
-| `internal/tunnels/ingress_handler.go`                  | direct ingress、TunnelInvoker、SSE 和 OAuth rewrite     |
-| `internal/tunnels/broker_nats.go`、`broker_control.go`、`broker_poll.go`、`broker_sessions.go`      | NATS 状态机、控制记录 CAS、presence/affinity             |
-| `internal/tunnels/protocol.go`                         | command、response 和 channel wire 类型                  |
-| `internal/tunnels/probe.go`                            | Console/catalog initialize/tools/list Broker 探测       |
-| `internal/mcpcatalogs/handler.go`                      | Agent 工具 catalog、Tunnel scope 校验与 last-good 保存  |
-| `internal/db/mcp_tunnels.go` 及 Mapper/XML             | Tunnel 与 token version 持久化                          |
-| `internal/db/mcp_tunnel_certificates.go` 及 Mapper/XML | API-only Certificate 持久化                             |
-| `internal/db/migrations/00060_rebuild_mcp_tunnels.sql` | 当前 Tunnel schema                                      |
-| `internal/codesessions/mcp_proxy.go`                   | Runtime Gateway、Snapshot URL 解析和 TunnelInvoker 分支 |
-| `internal/codesessions/session_credentials.go`         | SessionIngressToken 的签发与身份校验                |
-| `internal/environments/managed_agent_mcp_config.go`    | MCP 配置生成、工具权限映射与 Session Gateway 投影       |
-| `internal/environments/environment_manager.go`         | environment-manager 启动 payload 与命令封装             |
-| `web/src/features/mcp-tunnels/`                        | Console 列表、详情、共享动作与 canonical 路由 UI        |
+| 路径                                                                                           | 内容                                                    |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `internal/tunnels/management_handler.go`                                                       | Tunnel 管理 API 与 beta gate                            |
+| `internal/tunnels/management_service.go`                                                       | create/reveal/rotate/archive 编排                       |
+| `internal/tunnels/certificate_handler.go`                                                      | Certificate Create/Get/List/Archive HTTP 合同           |
+| `internal/tunnels/certificate_service.go`                                                      | X.509 校验、fingerprint 和独立持久化编排                |
+| `internal/tunnels/connector_handler.go`                                                        | Tunnel token、metadata、poll、response                  |
+| `internal/tunnels/ingress_handler.go`                                                          | direct ingress、TunnelInvoker、SSE 和 OAuth rewrite     |
+| `internal/tunnels/broker_nats.go`、`broker_control.go`、`broker_poll.go`、`broker_sessions.go` | NATS 状态机、控制记录 CAS、presence/affinity            |
+| `internal/tunnels/protocol.go`                                                                 | command、response 和 channel wire 类型                  |
+| `internal/tunnels/probe.go`                                                                    | Console/catalog initialize/tools/list Broker 探测       |
+| `internal/mcpcatalogs/handler.go`                                                              | Agent 工具 catalog、Tunnel scope 校验与 last-good 保存  |
+| `internal/db/mcp_tunnels.go` 及 Mapper/XML                                                     | Tunnel 与 token version 持久化                          |
+| `internal/db/mcp_tunnel_certificates.go` 及 Mapper/XML                                         | API-only Certificate 持久化                             |
+| `internal/db/migrations/00060_rebuild_mcp_tunnels.sql`                                         | 当前 Tunnel schema                                      |
+| `internal/codesessions/mcp_proxy.go`                                                           | Runtime Gateway、Snapshot URL 解析和 TunnelInvoker 分支 |
+| `internal/codesessions/session_credentials.go`                                                 | SessionIngressToken 的签发与身份校验                    |
+| `internal/codesessions/mcp_runtime_config.go`                                                  | 目标识别、普通 MCP 与 Tunnel MCP 独立构建               |
+| `internal/codesessions/mcp_runtime_tools.go`                                                   | MCP 工具权限映射                                        |
+| `internal/environments/managed_agent_mcp_config.go`                                            | MCP 配置文件与启动字段封装                              |
+| `internal/environments/environment_manager.go`                                                 | environment-manager 启动 payload 与命令封装             |
+| `web/src/features/mcp-tunnels/`                                                                | Console 列表、详情、共享动作与 canonical 路由 UI        |
 
 独立 `tunnel-client` 仓库主要代码：
 

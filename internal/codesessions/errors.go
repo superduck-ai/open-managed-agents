@@ -11,6 +11,9 @@ import (
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
 var (
+	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
+	ErrMCPGatewayMissing              = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
+	ErrMCPRuntimeIdentityMissing      = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")
 	errInboundPayloadTooLarge         = errors.New("worker event payload exceeds 16 MiB")
 	errLargePayloadStorageUnavailable = errors.New("worker event payload object storage is unavailable")
 	errLargePayloadDigestMismatch     = errors.New("worker event payload digest mismatch")
@@ -23,6 +26,10 @@ func codeSessionNotFound(cause error) error {
 
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
+}
+
+func sessionMCPConfigFailure(cause error) error {
+	return internalError("Could not build session MCP configuration", cause)
 }
 
 func codeSessionRouteNotFound() error {

@@ -6,11 +6,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
+	"testing"
+
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"strings"
-	"testing"
 )
 
 func TestManagedAgentMCPLaunchFailureCleansOnlyNewSession(t *testing.T) {
@@ -21,7 +22,7 @@ func TestManagedAgentMCPLaunchFailureCleansOnlyNewSession(t *testing.T) {
 			_, err := runner.createManagedAgentRuntimeLaunch(t.Context(), db.Environment{}, db.EnvironmentWork{}, managedAgentLaunchPreparation{
 				SessionConfig: mcpConfigTestSource(), RecoveryCodeSessionID: recoveryID,
 			})
-			if !errors.Is(err, errManagedAgentMCPIdentityMissing) {
+			if !errors.Is(err, codesessions.ErrMCPRuntimeIdentityMissing) {
 				t.Fatalf("launch error: %v", err)
 			}
 			if (len(runtime.terminated) == 1) != (recoveryID == "") {
@@ -60,6 +61,12 @@ func TestManagedAgentMCPLaunchUsesRuntimeConfigWithoutPersistingCredentials(t *t
 			}
 			if err := json.Unmarshal(mcpConfigField(t, launch.Manager.Payload, "startup_context", "mcp_config", "mcpServers", "local", "headers", "Authorization"), &auth); err != nil {
 				t.Fatal(err)
+			}
+			var transport, remoteTransport string
+			_ = json.Unmarshal(mcpConfigField(t, launch.Manager.Payload, "startup_context", "mcp_config", "mcpServers", "local", "type"), &transport)
+			_ = json.Unmarshal(mcpConfigField(t, launch.Manager.Payload, "startup_context", "mcp_config", "mcpServers", "remote", "type"), &remoteTransport)
+			if transport != "http" || remoteTransport != "sse" {
+				t.Fatalf("Tunnel transport=%s, remote transport=%s", transport, remoteTransport)
 			}
 			if url != "http://gateway.test/v2/ccr-sessions/cse_test/mcp/local" || auth != "Bearer current-ingress-token" {
 				t.Fatal("launch did not receive the current Gateway target and credential")
@@ -115,7 +122,7 @@ func mcpConfigTestRuntimeConfig() config.Config {
 	return config.Config{Tunnel: config.TunnelConfig{PublicBaseURL: "https://oma.example"}, CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://gateway.test"}}
 }
 func mcpConfigTestSource() json.RawMessage {
-	return json.RawMessage(`{"mcp_config":{"mcpServers":{"local":{"type":"http","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}}}}`)
+	return json.RawMessage(`{"mcp_servers":[{"name":"local","type":"url","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef/sse"},{"name":"remote","type":"url","url":"https://docs.example/sse"}]}`)
 }
 
 func TestManagedAgentMCPConfigRejectsInvalidRuntimeInput(t *testing.T) {
@@ -130,12 +137,12 @@ func TestManagedAgentMCPConfigRejectsInvalidRuntimeInput(t *testing.T) {
 	}{
 		{name: "malformed startup JSON", source: `{`},
 		{name: "malformed MCP document", source: `{"mcp_config":[]}`},
-		{name: "missing session", source: target, token: "test-token", want: errManagedAgentMCPIdentityMissing},
-		{name: "missing token", source: target, session: "cse_test", want: errManagedAgentMCPIdentityMissing},
-		{name: "missing launchable config", source: `{"mcp_servers":[{"url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}]}`, want: errManagedAgentMCPConfigMissing},
+		{name: "missing session", source: target, token: "test-token", want: codesessions.ErrMCPRuntimeIdentityMissing},
+		{name: "missing token", source: target, session: "cse_test", want: codesessions.ErrMCPRuntimeIdentityMissing},
+		{name: "missing server name", source: `{"mcp_servers":[{"url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}]}`, want: codesessions.ErrMCPDeclarationInvalid},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := projectManagedAgentRuntimeMCPConfig(json.RawMessage(test.source), test.session, test.token, cfg)
+			_, err := buildManagedAgentRuntimeMCPConfig(json.RawMessage(test.source), test.session, test.token, cfg)
 			if err == nil || (test.want != nil && !errors.Is(err, test.want)) {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -150,7 +157,7 @@ func TestManagedAgentSessionConfigReturnsEncodingFailure(t *testing.T) {
 	}
 }
 
-func TestManagedAgentMCPProjectionPreservesExtensionsAndRefreshesIdentity(t *testing.T) {
+func TestManagedAgentMCPBuildPreservesExtensionsAndRefreshesIdentity(t *testing.T) {
 	source := json.RawMessage(`{
   "extension":{"precise":9007199254740993,"empty":[],"optional":null},
   "mcp_servers":[{"name":"local","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}],
@@ -169,40 +176,50 @@ func TestManagedAgentMCPProjectionPreservesExtensionsAndRefreshesIdentity(t *tes
 		CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://gateway.test"},
 	}
 	for _, token := range []string{"first-epoch-token", "recovered-epoch-token"} {
-		projected, err := projectManagedAgentRuntimeMCPConfig(source, "cse_test", token, cfg)
+		built, err := buildManagedAgentRuntimeMCPConfig(source, "cse_test", token, cfg)
 		if err != nil {
 			t.Fatal(err)
+		}
+		payload, err := buildEnvironmentManagerV0Payload("cse_test", token, "oauth", 1, "", built, cfg, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range [][]string{{"extension"}, {"mcp_config"}, {"claude_code_args", "custom"}} {
+			payloadPath := append([]string{"startup_context"}, path...)
+			if !bytes.Equal(mcpConfigField(t, built, path...), mcpConfigField(t, payload, payloadPath...)) {
+				t.Fatalf("payload changed exact field %v", path)
+			}
 		}
 		for _, path := range [][]string{
 			{"extension"}, {"mcp_servers"}, {"mcp_config", "vendor_extension"},
 			{"mcp_config", "mcpServers", "docs"}, {"mcp_config", "mcpServers", "local", "vendor_extension"},
 			{"mcp_config", "mcpServers", "local", "tools"}, {"claude_code_args", "custom"},
 		} {
-			if !bytes.Equal(mcpConfigField(t, source, path...), mcpConfigField(t, projected, path...)) {
+			if !bytes.Equal(mcpConfigField(t, source, path...), mcpConfigField(t, built, path...)) {
 				t.Fatalf("field %v changed", path)
 			}
 		}
 		var auth string
-		if err := json.Unmarshal(mcpConfigField(t, projected, "mcp_config", "mcpServers", "local", "headers", "Authorization"), &auth); err != nil {
+		if err := json.Unmarshal(mcpConfigField(t, built, "mcp_config", "mcpServers", "local", "headers", "Authorization"), &auth); err != nil {
 			t.Fatal(err)
 		}
 		if auth != "Bearer "+token {
 			t.Fatal("runtime configuration did not use the current credential")
 		}
 		var file managedAgentMCPConfigFile
-		if err := json.Unmarshal(mcpConfigField(t, projected, "mcp_config_file"), &file); err != nil {
+		if err := json.Unmarshal(mcpConfigField(t, built, "mcp_config_file"), &file); err != nil {
 			t.Fatal(err)
 		}
 		content, err := base64.StdEncoding.DecodeString(file.Content)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(content, mcpConfigField(t, projected, "mcp_config")) {
+		if !bytes.Equal(content, mcpConfigField(t, built, "mcp_config")) {
 			t.Fatal("MCP config file differs from the startup MCP document")
 		}
 	}
 	if !bytes.Equal(source, original) {
-		t.Fatal("runtime projection mutated the persisted source")
+		t.Fatal("runtime build mutated the persisted source")
 	}
 }
 
@@ -226,30 +243,30 @@ func mcpConfigField(t *testing.T, raw json.RawMessage, path ...string) json.RawM
 	return compact.Bytes()
 }
 
-func TestProjectManagedAgentRuntimeMCPConfigPreservesOrdinaryMCPBytes(t *testing.T) {
+func TestBuildManagedAgentRuntimeMCPConfigPreservesOrdinaryMCPFields(t *testing.T) {
 	source := json.RawMessage(`{
 		"mcp_servers":[{"name":"docs","type":"url","url":"https://mcp.example/mcp"}],
 		"mcp_config":{"mcpServers":{"docs":{"type":"http","url":"https://mcp.example/mcp","headers":{"X-Existing":"value"}}}},
 		"mcp_config_file":{"path":"/tmp/existing.json","content":"existing","mode":384}
 	}`)
-	projected, err := projectManagedAgentRuntimeMCPConfig(source, "", "", config.Config{})
+	built, err := buildManagedAgentRuntimeMCPConfig(source, "", "", config.Config{})
 	if err != nil {
-		t.Fatalf("projectManagedAgentRuntimeMCPConfig() error = %v", err)
+		t.Fatalf("buildManagedAgentRuntimeMCPConfig() error = %v", err)
 	}
-	if !bytes.Equal(projected, source) {
-		t.Fatalf("ordinary MCP config changed:\n got: %s\nwant: %s", projected, source)
+	if !bytes.Equal(mcpConfigField(t, built, "mcp_config", "mcpServers", "docs"), mcpConfigField(t, source, "mcp_config", "mcpServers", "docs")) {
+		t.Fatal("ordinary MCP options changed")
 	}
 }
 
-func TestProjectManagedAgentRuntimeMCPConfigRequiresSandboxReachableBaseURLForTunnel(t *testing.T) {
+func TestBuildManagedAgentRuntimeMCPConfigRequiresSandboxReachableBaseURLForTunnel(t *testing.T) {
 	source := json.RawMessage(`{"mcp_config":{"mcpServers":{"local":{"type":"http","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}}}}`)
 	cfg := config.Config{Tunnel: config.TunnelConfig{PublicBaseURL: "https://oma.example", DomainSuffix: "tunnel.example"}}
-	if _, err := projectManagedAgentRuntimeMCPConfig(source, "cse_test", "sk-ant-si-secret", cfg); err == nil {
-		t.Fatal("projectManagedAgentRuntimeMCPConfig() accepted an empty sandbox API base URL for a Tunnel")
+	if _, err := buildManagedAgentRuntimeMCPConfig(source, "cse_test", "sk-ant-si-secret", cfg); err == nil {
+		t.Fatal("buildManagedAgentRuntimeMCPConfig() accepted an empty sandbox API base URL for a Tunnel")
 	}
 }
 
-func TestProjectManagedAgentRuntimeMCPConfigProjectsOnlyTunnel(t *testing.T) {
+func TestBuildManagedAgentRuntimeMCPConfigSeparatesConnections(t *testing.T) {
 	source := json.RawMessage(`{
 		"mcp_servers":[
 			{"name":"docs","type":"url","url":"https://mcp.example/mcp"},
@@ -262,7 +279,7 @@ func TestProjectManagedAgentRuntimeMCPConfigProjectsOnlyTunnel(t *testing.T) {
 		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
 		"claude_code_args":{"mcp-config":"/tmp/stale.json"}
 	}`)
-	projected, err := projectManagedAgentRuntimeMCPConfig(
+	built, err := buildManagedAgentRuntimeMCPConfig(
 		source,
 		"cse_test",
 		"sk-ant-si-secret",
@@ -272,15 +289,15 @@ func TestProjectManagedAgentRuntimeMCPConfigProjectsOnlyTunnel(t *testing.T) {
 		},
 	)
 	if err != nil {
-		t.Fatalf("projectManagedAgentRuntimeMCPConfig() error = %v", err)
+		t.Fatalf("buildManagedAgentRuntimeMCPConfig() error = %v", err)
 	}
 	var startup map[string]any
-	if err := json.Unmarshal(projected, &startup); err != nil {
-		t.Fatalf("decode projected config: %v", err)
+	if err := json.Unmarshal(built, &startup); err != nil {
+		t.Fatalf("decode built config: %v", err)
 	}
 	mcpServers := startup["mcp_servers"].([]any)
 	if len(mcpServers) != 2 || mcpServers[0].(map[string]any)["name"] != "docs" || mcpServers[1].(map[string]any)["name"] != "local_tunnel" {
-		t.Fatalf("projected top-level mcp_servers = %#v", mcpServers)
+		t.Fatalf("built top-level mcp_servers = %#v", mcpServers)
 	}
 	mcpConfig := startup["mcp_config"].(map[string]any)
 	servers := mcpConfig["mcpServers"].(map[string]any)
@@ -295,34 +312,34 @@ func TestProjectManagedAgentRuntimeMCPConfigProjectsOnlyTunnel(t *testing.T) {
 	server := servers["local_tunnel"].(map[string]any)
 	wantURL := "http://host.docker.internal:38080/v2/ccr-sessions/cse_test/mcp/local_tunnel"
 	if server["url"] != wantURL || server["type"] != "http" {
-		t.Fatalf("projected MCP server = %#v", server)
+		t.Fatalf("built MCP server = %#v", server)
 	}
 	headers := server["headers"].(map[string]any)
 	if headers["Authorization"] != "Bearer sk-ant-si-secret" {
-		t.Fatalf("projected MCP headers = %#v", headers)
+		t.Fatalf("built MCP headers = %#v", headers)
 	}
-	if !strings.Contains(string(projected), "https://mcp.example/mcp") {
-		t.Fatalf("projected config lost ordinary MCP target: %s", projected)
+	if !strings.Contains(string(built), "https://mcp.example/mcp") {
+		t.Fatalf("built config lost ordinary MCP target: %s", built)
 	}
 	if strings.Contains(string(source), "sk-ant-si-secret") {
-		t.Fatal("projection mutated the persisted source config")
+		t.Fatal("build mutated the persisted source config")
 	}
 	file := startup["mcp_config_file"].(map[string]any)
 	if file["path"] != managedAgentMCPConfigPath || file["mode"] != float64(0o600) {
-		t.Fatalf("projected MCP config file = %#v", file)
+		t.Fatalf("built MCP config file = %#v", file)
 	}
 	content, err := base64.StdEncoding.DecodeString(file["content"].(string))
 	if err != nil {
-		t.Fatalf("decode projected MCP config file: %v", err)
+		t.Fatalf("decode built MCP config file: %v", err)
 	}
 	if !strings.Contains(string(content), wantURL) || !strings.Contains(string(content), "sk-ant-si-secret") || !strings.Contains(string(content), "https://mcp.example/mcp") || !strings.Contains(string(content), "X-Existing") {
-		t.Fatalf("projected MCP config file content = %s", content)
+		t.Fatalf("built MCP config file content = %s", content)
 	}
 }
 
-func TestProjectManagedAgentRuntimeMCPConfigEscapesServerNamePath(t *testing.T) {
+func TestBuildManagedAgentRuntimeMCPConfigEscapesServerNamePath(t *testing.T) {
 	source := json.RawMessage(`{"mcp_config":{"mcpServers":{"team/tools":{"type":"http","url":"https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"}}}}`)
-	projected, err := projectManagedAgentRuntimeMCPConfig(
+	built, err := buildManagedAgentRuntimeMCPConfig(
 		source,
 		"cse_test",
 		"sk-ant-si-secret",
@@ -332,38 +349,10 @@ func TestProjectManagedAgentRuntimeMCPConfigEscapesServerNamePath(t *testing.T) 
 		},
 	)
 	if err != nil {
-		t.Fatalf("projectManagedAgentRuntimeMCPConfig() error = %v", err)
+		t.Fatalf("buildManagedAgentRuntimeMCPConfig() error = %v", err)
 	}
-	if !strings.Contains(string(projected), `/v2/ccr-sessions/cse_test/mcp/team%2Ftools`) {
-		t.Fatalf("projected config did not escape the server name path: %s", projected)
-	}
-}
-
-func TestManagedAgentMCPURLTunnelRecognition(t *testing.T) {
-	t.Parallel()
-	cfg := config.TunnelConfig{PublicBaseURL: "https://oma.example", DomainSuffix: "tunnel.example"}
-	for _, test := range []struct {
-		name       string
-		url        string
-		recognized bool
-		wantError  bool
-	}{
-		{name: "malformed URL escape", url: "https://oma.example/v1/mcp/%zz", wantError: true},
-		{name: "invalid canonical query", url: "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef?x=1", recognized: true, wantError: true},
-		{name: "canonical", url: "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef", recognized: true},
-		{name: "hostname alias", url: "https://abc.tunnel.example/main", recognized: true},
-		{name: "third party matching path", url: "https://third-party.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef", recognized: false},
-		{name: "ordinary", url: "https://mcp.example/mcp", recognized: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			recognized, err := managedAgentMCPURLIsTunnel(test.url, cfg)
-			if (err != nil) != test.wantError {
-				t.Fatalf("managedAgentMCPURLIsTunnel() error = %v, wantError %v", err, test.wantError)
-			}
-			if recognized != test.recognized {
-				t.Fatalf("managedAgentMCPURLIsTunnel() = %v, want %v", recognized, test.recognized)
-			}
-		})
+	if !strings.Contains(string(built), `/v2/ccr-sessions/cse_test/mcp/team%2Ftools`) {
+		t.Fatalf("built config did not escape the server name path: %s", built)
 	}
 }
 
@@ -381,4 +370,15 @@ func managedAgentRuntimeSourceValues(
 		t.Fatalf("decode runtime sources: %v", err)
 	}
 	return values
+}
+
+func TestManagedAgentWithoutMCPDoesNotCreateConfigFile(t *testing.T) {
+	source := json.RawMessage(`{"mcp_servers":[],"tools":[],"extension":9007199254740993}`)
+	runtime, err := buildManagedAgentRuntimeMCPConfig(source, "", "", config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(runtime, source) {
+		t.Fatal("empty MCP source acquired launch fields")
+	}
 }

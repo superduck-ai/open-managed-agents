@@ -44,6 +44,9 @@ import (
 // This deliberately owns a separate database: newTestApp replaces test LLM
 // providers, so pointing it at a developer's existing database is unsafe.
 func TestManagedAgentNATSTunnelE2E(t *testing.T) {
+	// A channel name is not a transport hint: exercise the full launch path with
+	// the name that would otherwise be mistaken for legacy SSE.
+	const channel = "sse"
 	if os.Getenv("TEST_MANAGED_TUNNEL_E2E") != "1" {
 		t.Skip("real sandbox and model calls require TEST_MANAGED_TUNNEL_E2E=1")
 	}
@@ -143,12 +146,12 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 		})
 	privateHTTP := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return privateMCP }, &mcp.StreamableHTTPOptions{JSONResponse: true}))
 	t.Cleanup(privateHTTP.Close)
-	managedTunnelConnector(t, app.baseURL, tunnel.ID, token.TunnelToken, privateHTTP.URL)
+	managedTunnelConnector(t, app.baseURL, tunnel.ID, token.TunnelToken, privateHTTP.URL, channel)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		result, _, probeErr := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker, tunnels.NewCleanupJobs(app.deploymentJobs)).ProbeTarget(ctx, tunnels.ConsoleScope{
 			OrganizationUUID: getDefaultDBIDs(t, app.pool).OrganizationUUID, WorkspaceUUID: getDefaultDBIDs(t, app.pool).WorkspaceUUID,
-		}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+tunnel.ID)
+		}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+tunnel.ID+"/"+channel)
 		if probeErr == nil && len(result.Tools) == 1 {
 			break
 		}
@@ -157,7 +160,7 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	agent := createAgent(t, app, fmt.Sprintf(`{"model":%q,"name":"Managed tunnel proof","system":"Use the requested MCP tool and return its result.","mcp_servers":[{"type":"url","name":"tunnel","url":%q}],"tools":[{"type":"mcp_toolset","mcp_server_name":"tunnel","configs":[{"name":"tunnel_proof","enabled":true,"permission_policy":{"type":"always_allow"}}]}]}`, os.Getenv("TEST_CLAUDE_MODEL"), cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+tunnel.ID))
+	agent := createAgent(t, app, fmt.Sprintf(`{"model":%q,"name":"Managed tunnel proof","system":"Use the requested MCP tool and return its result.","mcp_servers":[{"type":"url","name":"tunnel","url":%q}],"tools":[{"type":"mcp_toolset","mcp_server_name":"tunnel","configs":[{"name":"tunnel_proof","enabled":true,"permission_policy":{"type":"always_allow"}}]}]}`, os.Getenv("TEST_CLAUDE_MODEL"), cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+tunnel.ID+"/"+channel))
 	environment, err := client.Beta.Environments.New(ctx, anthropic.BetaEnvironmentNewParams{
 		Name: marker,
 		Config: anthropic.BetaEnvironmentNewParamsConfigUnion{OfCloud: &anthropic.BetaCloudConfigParams{
@@ -303,13 +306,14 @@ func waitForManagedTunnelProof(t *testing.T, ctx context.Context, app *testApp, 
 	}
 }
 
-func managedTunnelConnector(t *testing.T, controlURL, tunnelID, token, privateURL string) {
+func managedTunnelConnector(t *testing.T, controlURL, tunnelID, token, privateURL, channel string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	command := exec.CommandContext(ctx, os.Getenv("TEST_TUNNEL_CLIENT_BINARY"), "run", "--profile-dir", t.TempDir(),
 		"--control-plane.base-url", controlURL, "--control-plane.url-path", "/connector", "--control-plane.tunnel-id", tunnelID,
 		"--control-plane.api-key", "env:OMA_MANAGED_TEST_TOKEN", "--control-plane.poll-timeout", "1s",
-		"--mcp.server-url", "url="+privateURL, "--health.listen-addr", "127.0.0.1:0", "--log.level", "warn")
+		"--mcp.server-url", "url="+privateURL,
+		"--mcp.server-url", "channel="+channel+",url="+privateURL, "--health.listen-addr", "127.0.0.1:0", "--log.level", "warn")
 	command.Env = append(os.Environ(), "OMA_MANAGED_TEST_TOKEN="+token)
 	if err := command.Start(); err != nil {
 		cancel()

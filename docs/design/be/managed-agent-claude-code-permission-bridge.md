@@ -29,8 +29,9 @@ Claude Code 运行在 `environment-manager` 中，它通过 MCP config 加载 MC
 
 ### 2.1 连接层
 
-`managedAgentSessionConfig` 先从 Agent Snapshot 生成逻辑 MCP config。Code Session 创建或恢复后，Runner
-只把 canonical Tunnel MCP URL 投影成按 server name 寻址的 Session Runtime Gateway URL：
+`managedAgentSessionConfig` 从 Agent Snapshot 准备原始 MCP 与工具声明。Code Session 创建或恢复后，Runner
+传入当前身份与 SessionIngressToken，由 Code Session 包的同一构建器先识别目标，再分别构建普通 MCP 和 Tunnel MCP。
+普通 MCP 保留自己的连接协议；Tunnel MCP 固定使用 HTTP，按 server name 生成 Session Runtime Gateway URL：
 
 ```json
 {
@@ -46,7 +47,11 @@ Claude Code 运行在 `environment-manager` 中，它通过 MCP config 加载 MC
 }
 ```
 
-session config 继续通过现有字段传给 `environment-manager`：
+Tunnel Channel 名为 `sse` 或 `stdio` 也使用上述 HTTP 连接配置。工具权限与非连接扩展选项保留；
+运行时地址和 Token 只进入最终配置，不写回 Agent Snapshot 或 Code Session 源声明。
+`session_context` 通过鉴权后使用同一构建器和当前凭据返回配置，并设置 `Cache-Control: no-store`。
+
+最终配置通过以下字段传给 `environment-manager`：
 
 ```json
 {
@@ -101,7 +106,7 @@ Claude Code 执行工具前发出内部事件：
     "subtype": "can_use_tool",
     "tool_name": "mcp__weather_service__get_weather",
     "tool_use_id": "tool_...",
-    "input": {"location": "Beijing"}
+    "input": { "location": "Beijing" }
   }
 }
 ```
@@ -121,12 +126,12 @@ Claude Code 执行工具前发出内部事件：
 内部派生类型：
 
 ```ts
-type ResolvedToolPermission = 'allow' | 'ask' | 'deny'
+type ResolvedToolPermission = "allow" | "ask" | "deny";
 
 type ToolIdentity =
-  | { kind: 'mcp'; serverName: string; toolName: string }
-  | { kind: 'agent_toolset'; toolName: string }
-  | { kind: 'unknown'; toolName: string }
+  | { kind: "mcp"; serverName: string; toolName: string }
+  | { kind: "agent_toolset"; toolName: string }
+  | { kind: "unknown"; toolName: string };
 ```
 
 ### 3.1 Tool identity
@@ -148,15 +153,15 @@ mcp__weather_service__get_weather
 agent toolset 的工具名需要归一化到 Managed Agents 配置使用的名字。建议建立显式映射，避免大小写或 Claude Code 内部命名差异造成误判：
 
 | Managed Agent name | Claude Code tool name examples |
-|---|---|
-| `bash` | `Bash` |
-| `edit` | `Edit`, `MultiEdit` |
-| `read` | `Read` |
-| `write` | `Write` |
-| `glob` | `Glob` |
-| `grep` | `Grep` |
-| `web_fetch` | `WebFetch` |
-| `web_search` | `WebSearch` |
+| ------------------ | ------------------------------ |
+| `bash`             | `Bash`                         |
+| `edit`             | `Edit`, `MultiEdit`            |
+| `read`             | `Read`                         |
+| `write`            | `Write`                        |
+| `glob`             | `Glob`                         |
+| `grep`             | `Grep`                         |
+| `web_fetch`        | `WebFetch`                     |
+| `web_search`       | `WebSearch`                    |
 
 无法识别的工具按 `unknown` 处理。`unknown` 不应被默认放行；除非后续有明确产品决策，默认按 `ask` 或 deny-safe 策略处理。
 
@@ -180,12 +185,12 @@ agent toolset：
 
 最终映射：
 
-| Managed Agent effective config | Runtime permission |
-|---|---|
-| `enabled=false` | `deny` |
-| `permission_policy.type=always_allow` | `allow` |
-| `permission_policy.type=always_ask` | `ask` |
-| 缺失或无法解析 | `ask`，并记录诊断日志 |
+| Managed Agent effective config        | Runtime permission    |
+| ------------------------------------- | --------------------- |
+| `enabled=false`                       | `deny`                |
+| `permission_policy.type=always_allow` | `allow`               |
+| `permission_policy.type=always_ask`   | `ask`                 |
+| 缺失或无法解析                        | `ask`，并记录诊断日志 |
 
 `enabled=false` 优先级高于 permission policy。也就是说，即使 policy 是 `always_allow`，只要 tool 被禁用，运行时也必须 deny。
 
@@ -209,7 +214,7 @@ agent toolset：
     "response": {
       "behavior": "allow",
       "toolUseID": "tool_...",
-      "updatedInput": {"location": "Beijing"}
+      "updatedInput": { "location": "Beijing" }
     }
   }
 }
@@ -274,13 +279,13 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 本设计保留 `claude_code_args["mcp-config"]` 作为必需启动参数。其他 Claude Code 权限参数只作为可选优化或诊断手段。
 
-| Claude Code 参数 | 设计定位 |
-|---|---|
-| `--mcp-config` | 必需，用于加载 Managed Agent MCP servers。 |
-| `--allowed-tools` | 可选优化，只适合显式已知 allow tools。 |
-| `--disallowed-tools` | 可选优化，只适合显式已知 disabled tools。 |
-| `--permission-mode dontAsk` | 不用于 Managed Agents 默认实现，会把 ask 变成自动 deny，不符合确认事件契约。 |
-| `--permission-mode bypassPermissions` | 仅限本地排障，不作为 `always_allow` 的产品实现。 |
+| Claude Code 参数                      | 设计定位                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------------------- |
+| `--mcp-config`                        | 必需，用于加载 Managed Agent MCP servers。                                   |
+| `--allowed-tools`                     | 可选优化，只适合显式已知 allow tools。                                       |
+| `--disallowed-tools`                  | 可选优化，只适合显式已知 disabled tools。                                    |
+| `--permission-mode dontAsk`           | 不用于 Managed Agents 默认实现，会把 ask 变成自动 deny，不符合确认事件契约。 |
+| `--permission-mode bypassPermissions` | 仅限本地排障，不作为 `always_allow` 的产品实现。                             |
 
 原因：
 
@@ -296,7 +301,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 实现应集中在 `claude-api-server`：
 
-- Managed Agent session config 生成 MCP config file 和 `claude_code_args["mcp-config"]`；Runner 在取得 Code Session identity 后只投影 canonical Tunnel 条目，普通 MCP 与持久化 Snapshot 保留原始 URL。
+- Managed Agent 准备阶段只保存 MCP 源声明；Runner 在取得当前 Code Session identity 后分别构建普通 MCP 与 Tunnel MCP，再生成 MCP config file 和 `claude_code_args["mcp-config"]`。普通 SSE 保持 SSE，Tunnel 的 `sse` Channel 使用 HTTP；恢复时使用新凭据，持久化源配置保持原样。
 - Code Session handler 负责 SessionIngressToken 的 JWT/path/正数 epoch 绑定；加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 的 server name → exact URL 与 Environment host/port policy 编译为单一授权对象。named Runtime Gateway 授权后只执行 TunnelInvoker；普通 MCP 使用 query-based proxy、拨号期 SSRF 防护和 Vault 凭据注入。
 - Code session service 新增 policy-aware permission handler。
 - Session events 接收 `user.tool_confirmation` / `user.custom_tool_result` 后，从 Code Session 私有 worker metadata 恢复生成 Claude Code `control_response` 所需的请求上下文。

@@ -623,7 +623,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
 	}
-	runtimeSessionConfig, err := projectManagedAgentRuntimeMCPConfig(
+	runtimeSessionConfig, err := buildManagedAgentRuntimeMCPConfig(
 		preparation.SessionConfig,
 		local.CodeSessionID,
 		local.SessionIngressToken,

@@ -528,7 +528,7 @@ func buildEnvironmentManagerPayloadStartupContext(t *testing.T, sessionConfig js
 	return body["startup_context"].(map[string]any)
 }
 
-func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
+func TestManagedAgentSessionConfigDefersMCPBuildUntilLaunch(t *testing.T) {
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{
 			"model":{"id":"claude-opus-4-8"},
@@ -547,6 +547,13 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	}
 
 	raw, err := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"mcp_config"`) || strings.Contains(string(raw), `"mcp_config_file"`) {
+		t.Fatal("persisted source contains a prematurely built MCP client configuration")
+	}
+	raw, err = buildManagedAgentRuntimeMCPConfig(raw, "cse_test", "test-token", config.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

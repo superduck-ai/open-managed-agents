@@ -95,4 +95,24 @@ func TestOrganizationMemberChangesPostgreSQL(t *testing.T) {
 			t.Fatalf("other organization changed: %v", err)
 		}
 	})
+	t.Run("超过千人的目录保留资料与租户边界", func(t *testing.T) {
+		execMapperFixtureSQL(t, ctx, database.mapperDB, `ALTER TABLE workspace_members ADD COLUMN workspace_role text`)
+		execMapperFixtureSQL(t, ctx, database.mapperDB, `INSERT INTO users (external_id, organization_uuid, role, name, email)
+    SELECT 'user_bulk_' || n, $1, 'user', '成员' || n, 'member' || n || '@example.com' FROM generate_series(1, 1001) n`, otherOrgUUID)
+		execMapperFixtureSQL(t, ctx, database.mapperDB, `INSERT INTO workspaces (uuid, organization_uuid) VALUES ('55555555-5555-4555-8555-555555555555', $1)`, otherOrgUUID)
+		facts, err := database.ListWorkspaceMemberFacts(ctx, otherOrgUUID, "55555555-5555-4555-8555-555555555555")
+		if err != nil || len(facts) != 1002 {
+			t.Fatalf("facts count = %d, error = %v", len(facts), err)
+		}
+		for _, fact := range facts {
+			if fact.UserExternalID != "user_other" && (fact.Name == "" || fact.Email == "") {
+				t.Fatalf("missing profile: %+v", fact)
+			}
+		}
+		facts, err = database.ListWorkspaceMemberFacts(ctx, orgUUID, "55555555-5555-4555-8555-555555555555")
+		if err != nil || len(facts) != 0 {
+			t.Fatalf("cross-org facts = %v, error = %v", facts, err)
+		}
+	})
+
 }

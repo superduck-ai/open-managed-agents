@@ -24,11 +24,11 @@ func TestWorkspaceAccessMapperBindings(t *testing.T) {
 	})
 	t.Run("成员投影绑定和扫描", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{
-			columns: []string{"user_uuid", "user_external_id", "organization_role", "explicit_role"},
-			rows:    [][]driver.Value{{"aa000000-0000-4000-8000-000000000003", "user_member", "billing", "workspace_admin"}},
+			columns: []string{"user_uuid", "user_external_id", "name", "email", "organization_role", "explicit_role"},
+			rows:    [][]driver.Value{{"aa000000-0000-4000-8000-000000000003", "user_member", "成员", "member@example.com", "billing", "workspace_admin"}},
 		})
 		facts, err := NewWorkspaceAccessMapper(executor).ListMemberFacts(context.Background(), org, workspace)
-		if err != nil || len(facts) != 1 || facts[0].ExplicitRole != "workspace_admin" {
+		if err != nil || len(facts) != 1 || facts[0].ExplicitRole != "workspace_admin" || facts[0].Name != "成员" || facts[0].Email != "member@example.com" {
 			t.Fatalf("facts = %+v, err = %v", facts, err)
 		}
 		assertMapperTestExecution(t, executor, "WorkspaceAccessMapper.ListMemberFacts", yourbatis.StatementSelect,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +15,8 @@ import (
 )
 
 const (
+	maxTunnelProbePages       = 20
+	maxTunnelProbeTools       = 512
 	tunnelProbeTimeout        = 30 * time.Second
 	tunnelProbeCleanupTimeout = 5 * time.Second
 )
@@ -42,7 +45,8 @@ type tunnelProbeRPCResponse struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		} `json:"serverInfo"`
-		Tools []TunnelProbeTool `json:"tools"`
+		Tools      []TunnelProbeTool `json:"tools"`
+		NextCursor string            `json:"nextCursor"`
 	} `json:"result"`
 	Error json.RawMessage `json:"error"`
 }
@@ -158,18 +162,24 @@ func (s *Service) Probe(ctx context.Context, scope tunnelScope, tunnelID, channe
 	if _, err := s.executeProbeCommand(probeCtx, tunnel, channel, sessionID, CommandTypeJSONRPC, initializedBody); err != nil {
 		return TunnelProbeResult{}, err
 	}
-	toolsBody := json.RawMessage(`{"jsonrpc":"2.0","id":"oma-probe-tools","method":"tools/list","params":{}}`)
-	toolsResponse, err := s.executeProbeCommand(probeCtx, tunnel, channel, sessionID, CommandTypeJSONRPC, toolsBody)
+	tools, err := collectProbeTools(probeCtx, func(ctx context.Context, cursor string, page int) (tunnelProbeRPCResponse, error) {
+		id := fmt.Sprintf("oma-probe-tools-%d", page)
+		body, err := json.Marshal(tunnelProbeToolsRequest{JSONRPC: "2.0", ID: id, Method: "tools/list", Params: tunnelProbeToolsParams{Cursor: cursor}})
+		if err != nil {
+			return tunnelProbeRPCResponse{}, err
+		}
+		response, err := s.executeProbeCommand(ctx, tunnel, channel, sessionID, CommandTypeJSONRPC, body)
+		if err != nil {
+			return tunnelProbeRPCResponse{}, err
+		}
+		var rpc tunnelProbeRPCResponse
+		if err := decodeTunnelProbeResponse(response, id, &rpc); err != nil {
+			return rpc, probeToolsResponseError(err)
+		}
+		return rpc, nil
+	})
 	if err != nil {
 		return TunnelProbeResult{}, err
-	}
-	var toolsRPC tunnelProbeRPCResponse
-	if err := decodeTunnelProbeResponse(toolsResponse, "oma-probe-tools", &toolsRPC); err != nil {
-		return TunnelProbeResult{}, unavailable("Tunnel MCP tools/list failed", err)
-	}
-	tools := toolsRPC.Result.Tools
-	if tools == nil {
-		tools = []TunnelProbeTool{}
 	}
 	return TunnelProbeResult{
 		Status:          "ok",
@@ -248,4 +258,44 @@ func (s *Service) terminateProbeSession(tunnel db.MCPTunnel, channel, sessionID 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, _ = s.executeProbeCommand(ctx, tunnel, channel, sessionID, CommandTypeSessionTermination, nil)
+}
+
+// MCP cursors are opaque. Bound both the work and the retained tool list, and
+// reject an incomplete result instead of saving the first pages as a full catalog.
+type tunnelProbeToolsParams struct {
+	Cursor string `json:"cursor,omitempty"`
+}
+type tunnelProbeToolsRequest struct {
+	JSONRPC string                 `json:"jsonrpc"`
+	ID      string                 `json:"id"`
+	Method  string                 `json:"method"`
+	Params  tunnelProbeToolsParams `json:"params"`
+}
+
+func collectProbeTools(ctx context.Context, fetch func(context.Context, string, int) (tunnelProbeRPCResponse, error)) ([]TunnelProbeTool, error) {
+	tools := make([]TunnelProbeTool, 0)
+	seen := make(map[string]struct{})
+	cursor := ""
+	for page := 0; page < maxTunnelProbePages; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result, err := fetch(ctx, cursor, page)
+		if err != nil {
+			return nil, err
+		}
+		if len(tools)+len(result.Result.Tools) > maxTunnelProbeTools {
+			return nil, probePaginationError()
+		}
+		tools = append(tools, result.Result.Tools...)
+		cursor = result.Result.NextCursor
+		if cursor == "" {
+			return tools, nil
+		}
+		if _, duplicate := seen[cursor]; duplicate {
+			return nil, probePaginationError()
+		}
+		seen[cursor] = struct{}{}
+	}
+	return nil, probePaginationError()
 }

@@ -154,3 +154,11 @@ func connectorTokenRecoveryError(err error) error {
 	}
 	return unavailable("Could not restore tunnel token state", err)
 }
+
+func probePaginationError() error {
+	return unavailable("Tunnel MCP tool list exceeds pagination limits", errors.New("tool count, page count, or cursor cycle limit exceeded"))
+}
+
+func probeToolsResponseError(err error) error {
+	return unavailable("Tunnel MCP tools/list failed", err)
+}

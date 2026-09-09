@@ -86,6 +86,6 @@ Token 当前固定一小时有效且不刷新；长生命周期 Sandbox 的续�
 
 ## Git 资源准备
 
-Environment Manager 复用既有 sources 编排，在启动 Claude 前准备 Git 工作树。OMA 下发 `git_info.ref` 和 `mount_path`，默认分支省略 ref，指定分支使用 `refs/heads/<name>`，提交仅接受完整 SHA；Git 凭据由已有 OMA 代理注入，不进入启动参数。新建工作树的浅克隆约定见 [Git runtime source contract](ccrv2/git-runtime-resources.md)。
+Environment Manager 复用既有 sources 编排，在启动 Claude 前准备 Git 工作树。OMA 下发 `git_info.ref` 和 `mount_path`，默认分支省略 ref，指定分支使用 `refs/heads/<name>`，提交仅接受完整的 40 或 64 位十六进制 SHA；Git 凭据由已有 OMA 代理注入，不进入启动参数。
 
 Git 准备失败沿用既有初始化失败流程，不下发继续启动开关，不改写 Claude settings 或注入资源告警 hook。源码变更需构建匹配的 Manager artifact 才会进入新 Sandbox；本轮未更新运行镜像。

@@ -142,7 +142,7 @@ describe('Organization members settings', () => {
     expect(screen.getByRole('combobox', { name: 'Role for Ada Lovelace' })).toBeTruthy();
   });
 
-  test.skip('retries both members and pending invites after a shared table load failure', async () => {
+  test('retries both members and pending invites after a shared table load failure', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     const api = mockMembersApi({ failMembersOnce: true, failInvitesOnce: true });
 
@@ -163,7 +163,7 @@ describe('Organization members settings', () => {
     await waitFor(() => expect(api.inviteListRequests).toBe(2));
   });
 
-  test.skip('does not render inline status chrome for invite actions', async () => {
+  test('does not render inline status chrome for invite actions', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     mockMembersApi();
 

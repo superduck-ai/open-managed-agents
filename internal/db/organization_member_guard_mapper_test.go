@@ -25,6 +25,14 @@ func TestOrganizationMemberGuardMapperBuilders(t *testing.T) {
 			wantSQLFragments:  []string{"organization_uuid = $1", "deleted_at IS NULL", "external_id = $2", "CAST(uuid AS text) = $4"},
 		},
 		{
+			statement:         organizationMemberGuardMapperFindMemberByReferenceStatement,
+			bound:             buildOrganizationMemberGuardMapperFindMemberByReference(yourbatis.DialectPostgres, "org", "user"),
+			wantID:            "OrganizationMemberGuardMapper.FindMemberByReference",
+			wantKind:          yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "userReference", "userReference", "userReference"},
+			wantSQLFragments:  []string{"organization_uuid = $1", "deleted_at IS NULL", "external_id = $2", "CAST(uuid AS text) = $4"},
+		},
+		{
 			statement:         organizationMemberGuardMapperCountAdminsStatement,
 			bound:             buildOrganizationMemberGuardMapperCountAdmins(yourbatis.DialectPostgres, "org"),
 			wantID:            "OrganizationMemberGuardMapper.CountAdmins",

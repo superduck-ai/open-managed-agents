@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MoreVertical, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { useI18n } from '../../shared/i18n';
 import { MemberRemovalDialog } from './MemberRemovalDialog';
 import { Button } from '../../shared/ui/button';
 import {
@@ -25,6 +26,7 @@ export function OrganizationMemberRemoval({
   csrfToken?: string;
   disabled?: boolean;
 }) {
+  const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const removal = useMutation({
@@ -32,7 +34,7 @@ export function OrganizationMemberRemoval({
     onSuccess: async () => {
       setOpen(false);
       await queryClient.invalidateQueries({ queryKey: ['console', 'organization-members', orgUuid] });
-      toast.success('Member removed.');
+      toast.success(msg('members.removedToast', 'Member removed.'));
     },
   });
 
@@ -41,7 +43,15 @@ export function OrganizationMemberRemoval({
       <DropdownMenu>
         <DropdownMenuTrigger
           disabled={disabled}
-          render={<Button variant="ghost" size="icon" aria-label={`More actions for ${member.name || member.email}`} />}
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={msg('members.moreActionsFor', `More actions for ${member.name || member.email}`, {
+                name: member.name || member.email,
+              })}
+            />
+          }
         >
           <MoreVertical className="size-4" aria-hidden />
         </DropdownMenuTrigger>
@@ -54,21 +64,23 @@ export function OrganizationMemberRemoval({
             }}
           >
             <Trash2 className="size-4" aria-hidden />
-            Remove member
+            {msg('members.removeMember', 'Remove member')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <MemberRemovalDialog
         open={open}
-        title="Remove member?"
+        title={msg('members.orgRemoveDialogTitle', 'Remove member?')}
         pending={removal.isPending}
         error={removal.error?.message}
         onClose={() => setOpen(false)}
         onConfirm={() => removal.mutate()}
       >
-        Remove {member.email} from {organizationName}? They will lose access to this organization and all its
-        workspaces. Workspace API keys, credential vaults, resources and team sessions will remain. Their membership in
-        other organizations will not change.
+        {msg(
+          'members.orgRemoveDialogBody',
+          'Remove {email} from {organization}? They will lose access to this organization and all its workspaces. Workspace API keys, credential vaults, resources and team sessions will remain. Their membership in other organizations will not change.',
+          { email: member.email, organization: organizationName },
+        )}
       </MemberRemovalDialog>
     </>
   );

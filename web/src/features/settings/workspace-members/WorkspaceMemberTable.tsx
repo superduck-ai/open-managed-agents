@@ -1,4 +1,5 @@
 import { ArrowUpDown, MoreVertical, Trash2 } from 'lucide-react';
+import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { Table, TableHeader, TableHead, TableRow, TableBody, TableCell } from '../../../shared/ui/table';
 import {
@@ -29,8 +30,14 @@ export function WorkspaceMemberTable({
   onRole: (member: WorkspaceMember, role: WorkspaceMemberRole) => void;
   onRemove: (member: WorkspaceMember) => void;
 }) {
+  const { msg } = useI18n();
+  const columnLabels = {
+    name: msg('members.table.name', 'Name'),
+    email: msg('members.email', 'Email'),
+    workspace_role: msg('members.role', 'Role'),
+  } as const;
   return (
-    <Table aria-label="Workspace members">
+    <Table aria-label={msg('members.table.workspaceMembers', 'Workspace members')}>
       <TableHeader>
         <TableRow>
           {(['name', 'email', 'workspace_role'] as const).map((field) => (
@@ -40,25 +47,25 @@ export function WorkspaceMemberTable({
                 size="sm"
                 onClick={() => setSort({ field, descending: sort.field === field && !sort.descending })}
               >
-                {field === 'workspace_role' ? 'Role' : field === 'name' ? 'Name' : 'Email'}
+                {columnLabels[field]}
                 <ArrowUpDown className="size-3" aria-hidden />
               </Button>
             </TableHead>
           ))}
           <TableHead className="w-12">
-            <span className="sr-only">Actions</span>
+            <span className="sr-only">{msg('members.table.actions', 'Actions')}</span>
           </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {loading ? (
           <TableRow>
-            <TableCell colSpan={4}>Loading members...</TableCell>
+            <TableCell colSpan={4}>{msg('members.table.loading', 'Loading members...')}</TableCell>
           </TableRow>
         ) : null}
         {!loading && !failed && members.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={4}>No members found.</TableCell>
+            <TableCell colSpan={4}>{msg('members.table.empty', 'No members found.')}</TableCell>
           </TableRow>
         ) : null}
         {members.map((member) => (
@@ -71,16 +78,24 @@ export function WorkspaceMemberTable({
                   value={member.workspace_role}
                   billing={member.organization_role === 'billing'}
                   disabled={pending}
-                  label={`Role for ${member.name || member.email}`}
+                  label={msg('members.roleFor', `Role for ${member.name || member.email}`, {
+                    name: member.name || member.email,
+                  })}
                   onChange={(role) => {
                     if (role !== member.workspace_role) onRole(member, role);
                   }}
                 />
               ) : (
-                workspaceMemberRoles.find((role) => role.value === member.workspace_role)?.label
+                msg(
+                  `members.workspaceRole.${member.workspace_role}`,
+                  workspaceMemberRoles.find((role) => role.value === member.workspace_role)?.label ??
+                    member.workspace_role,
+                )
               )}
               {member.role_source === 'organization' ? (
-                <span className="mt-1 block text-xs text-muted-foreground">Inherited from organization</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {msg('members.table.inheritedFromOrganization', 'Inherited from organization')}
+                </span>
               ) : null}
             </TableCell>
             <TableCell>
@@ -91,7 +106,9 @@ export function WorkspaceMemberTable({
                       <Button
                         size="icon"
                         variant="ghost"
-                        aria-label={`More actions for ${member.name || member.email}`}
+                        aria-label={msg('members.moreActionsFor', `More actions for ${member.name || member.email}`, {
+                          name: member.name || member.email,
+                        })}
                       />
                     }
                   >
@@ -105,7 +122,7 @@ export function WorkspaceMemberTable({
                       }}
                     >
                       <Trash2 className="size-4" aria-hidden />
-                      Remove member
+                      {msg('members.removeMember', 'Remove member')}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

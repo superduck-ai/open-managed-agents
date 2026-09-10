@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useI18n } from '../../shared/i18n';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import {
   AlertDialog,
@@ -27,6 +28,7 @@ export function MemberRemovalDialog({
   onClose: () => void;
   onConfirm: () => void;
 }) {
+  const { msg } = useI18n();
   return (
     <AlertDialog
       open={open}
@@ -46,10 +48,10 @@ export function MemberRemovalDialog({
         ) : null}
         <AlertDialogFooter>
           <Button variant="outline" disabled={pending} onClick={onClose}>
-            Cancel
+            {msg('members.cancel', 'Cancel')}
           </Button>
           <Button variant="destructive" disabled={pending} onClick={onConfirm}>
-            {pending ? 'Removing...' : 'Remove member'}
+            {pending ? msg('members.removing', 'Removing...') : msg('members.removeMember', 'Remove member')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -128,7 +128,7 @@ export function WorkspaceMembersPage() {
       ) : null}
       <MemberRemovalDialog
         open={Boolean(removing)}
-        title="Remove from workspace?"
+        title={msg('members.removeDialogTitle', 'Remove from workspace?')}
         pending={mutation.isPending}
         error={mutation.error?.message}
         onClose={() => setRemoving(null)}
@@ -137,8 +137,11 @@ export function WorkspaceMembersPage() {
             mutation.mutate({ operation: 'delete', userId: removing.user_id, role: removing.workspace_role });
         }}
       >
-        {removing?.email} will lose access to this workspace. Their organization membership, other workspaces and this
-        workspace’s team resources will remain.
+        {msg(
+          'members.removeDialogBody',
+          "{email} will lose access to this workspace. Their organization membership, other workspaces and this workspace's team resources will remain.",
+          { email: removing?.email ?? '' },
+        )}
       </MemberRemovalDialog>
     </ConsolePageFrame>
   );

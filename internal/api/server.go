@@ -268,7 +268,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
-			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
+			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db, invitations.NewMailer(s.cfg.Auth, s.db, s.logger.With("component", "invitation_mail")))
 			mcpCatalogHandler.RegisterRoutes(r)
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {

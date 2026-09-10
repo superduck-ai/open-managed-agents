@@ -3,12 +3,149 @@ package workerevents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
+
+func TestReplyDecodeFailureClosesBothReadersWithoutAcknowledging(t *testing.T) {
+	servers := runNATSCluster(t)
+	connection := connectNATS(t, servers[0].ClientURL())
+	broker, err := NewJetStream(t.Context(), connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineSubscriptions := connection.NumSubscriptions()
+	const sessionID = "cse_reply_decode_failure"
+	sub, err := broker.Subscribe(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sub.Close() })
+	subject, _ := replyLane.subject(sessionID)
+	ack, err := broker.js.Publish(t.Context(), subject, []byte(`{`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-sub.Errors():
+		if err == nil || errors.Is(err, context.Canceled) {
+			t.Fatalf("expected reply decode error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("missing reply decode error")
+	}
+	assertWorkerSubscriptionClosed(t, sub)
+	assertNATSSubscriptionsReleased(t, connection, baselineSubscriptions)
+	stream, err := broker.js.Stream(t.Context(), StreamName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.GetMsg(t.Context(), ack.Sequence); err != nil {
+		t.Fatalf("decode failure must retain the unacknowledged reply: %v", err)
+	}
+}
+
+func TestWorkerSubscriptionCloseReleasesIdleAndBlockedReaders(t *testing.T) {
+	servers := runNATSCluster(t)
+	connection := connectNATS(t, servers[0].ClientURL())
+	broker, err := NewJetStream(t.Context(), connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, queued := range []bool{false, true} {
+		name := "idle"
+		if queued {
+			name = "blocked"
+		}
+		t.Run(name, func(t *testing.T) {
+			baselineSubscriptions := connection.NumSubscriptions()
+			sessionID := "cse_close_" + name
+			sub, err := broker.Subscribe(t.Context(), sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = sub.Close() })
+			if queued {
+				publishControlTestEvent(t, broker, sessionID, "task", "user", "")
+				publishControlTestEvent(t, broker, sessionID, "reply", "control_response", "success")
+				// Leave the merged channel unread so both readers block on handoff.
+				deadline := time.Now().Add(5 * time.Second)
+				for _, lane := range deliveryLanes {
+					consumer, err := broker.js.Consumer(t.Context(), StreamName, lane.consumerName(sessionID))
+					if err != nil {
+						t.Fatal(err)
+					}
+					for {
+						info, err := consumer.Info(t.Context())
+						if err != nil {
+							t.Fatal(err)
+						}
+						if info.NumAckPending == 1 {
+							break
+						}
+						if time.Now().After(deadline) {
+							t.Fatal("reader did not pull queued message")
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
+				}
+			}
+			if err := sub.Close(); err != nil {
+				t.Fatal(err)
+			}
+			assertWorkerSubscriptionClosed(t, sub)
+			assertNATSSubscriptionsReleased(t, connection, baselineSubscriptions)
+			if queued {
+				stream, err := broker.js.Stream(t.Context(), StreamName)
+				if err != nil {
+					t.Fatal(err)
+				}
+				info, err := stream.Info(t.Context())
+				if err != nil || info.State.Msgs != 2 {
+					t.Fatalf("Close must preserve both unacknowledged lanes: %+v %v", info, err)
+				}
+			}
+		})
+	}
+}
+
+func assertWorkerSubscriptionClosed(t *testing.T, sub Subscription) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	messages, errs := sub.Messages(), sub.Errors()
+	for messages != nil || errs != nil {
+		select {
+		case _, open := <-messages:
+			if !open {
+				messages = nil
+			}
+		case _, open := <-errs:
+			if !open {
+				errs = nil
+			}
+		case <-deadline:
+			t.Fatal("subscription readers did not terminate")
+		}
+	}
+}
+
+func assertNATSSubscriptionsReleased(t *testing.T, connection *nats.Conn, want int) {
+	t.Helper()
+	// Fetch closes its output before its deferred NATS Unsubscribe returns.
+	// Check eventual release, not the ordering of those two deferred operations.
+	deadline := time.Now().Add(5 * time.Second)
+	for connection.NumSubscriptions() != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("NATS subscriptions leaked: got %d, want %d", connection.NumSubscriptions(), want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestReplyPurgeRetainsMessagesWhenConsumerDeletionFails(t *testing.T) {
 	servers := runNATSCluster(t)
@@ -56,6 +193,64 @@ func TestReplyPurgeRetainsMessagesWhenConsumerDeletionFails(t *testing.T) {
 	info, err = stream.Info(t.Context())
 	if err != nil || info.State.Msgs != 0 || info.State.Consumers != 0 {
 		t.Fatalf("purge retry did not complete: %+v %v", info, err)
+	}
+}
+
+func TestSessionPurgeRetriesAfterSecondLaneFailure(t *testing.T) {
+	servers := runNATSCluster(t)
+	connection := connectNATS(t, servers[0].ClientURL())
+	broker, err := NewJetStream(t.Context(), connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "cse_partial_purge"
+	now := time.Now().UTC()
+	expired := EventEnvelope(sessionID, "expired-task", "expired-task", "user", "", json.RawMessage(`{}`), now.Add(-time.Second))
+	if err := broker.Publish(t.Context(), "expired-task", expired); err != nil {
+		t.Fatal(err)
+	}
+	publishControlTestEvent(t, broker, sessionID, "reply", "control_response", "success")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	purges := 0
+	broker.js, err = jetstream.New(connection, jetstream.WithClientTrace(&jetstream.ClientTrace{RequestSent: func(subject string, _ []byte) {
+		if strings.Contains(subject, ".STREAM.PURGE.") {
+			purges++
+			if purges == 2 {
+				cancel()
+			}
+		}
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.PurgeSession(ctx, sessionID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected interrupted second purge, got %v", err)
+	}
+	broker.js, err = jetstream.New(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := broker.js.Stream(t.Context(), StreamName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := stream.Info(t.Context())
+	if err != nil || info.State.Msgs != 1 {
+		t.Fatalf("failed reply purge must retain the reply: %+v %v", info, err)
+	}
+	// The expired task is already gone; the reply remains covered by its own
+	// retention deadline even if the caller does not retry the failed purge.
+	events, _, err := broker.ScanExpired(t.Context(), 0, 10, now.Add(2*time.Hour))
+	if err != nil || len(events) != 1 || events[0].Envelope.EventID != "reply" {
+		t.Fatalf("remaining reply must stay visible to expiry: %+v %v", events, err)
+	}
+	if err := broker.PurgeSession(t.Context(), sessionID); err != nil {
+		t.Fatal(err)
+	}
+	info, err = stream.Info(t.Context())
+	if err != nil || info.State.Msgs != 0 {
+		t.Fatalf("purge retry did not remove remaining reply: %+v %v", info, err)
 	}
 }
 

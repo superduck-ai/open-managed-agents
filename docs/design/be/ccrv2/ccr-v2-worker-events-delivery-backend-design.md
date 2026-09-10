@@ -173,6 +173,9 @@ JetStream 不使用 `MaxAge` 静默删除。每个 envelope 带 `expires_at`，�
 发现过期消息时先提交 Code Session 终止与凭证撤销，再删除两路 durable consumer、按两个精确 subject 清空消息、
 加速关联对象清理并输出 Error 日志。PG 失败时不得先 TERM、ACK 或 purge；consumer 删除失败时
 不得先 purge，否则会丢失下一轮扫描的重试依据。该批次任何终止/清理失败都不推进扫描游标。
+两个 subject 的 purge 不构成原子操作；第二路失败时返回错误，重复调用可完成清理。
+若触发清理的过期消息已被第一路 purge 移除，未清理的另一路仍由其自身 `expires_at` 兜底，
+不能把“不推进扫描游标”理解为保证下一轮立即重试该 Session 的全部清理。
 
 扫描按 subject 查找实际存储的下一条消息，一轮最多 512 条，已 ACK 的序号空洞不占扫描预算。
 坏 JSON、版本/身份/期限无效时告警，并继续检查其他 Session。坏消息本身不 ACK；以可信 subject
@@ -209,6 +212,8 @@ consumer ACK floor。
 - activation 与普通发布都等待 PubAck；
 - 模糊 PubAck 的稳定 ID 重试只保留一条消息；
 - per-session 两个 durable consumer 重连并分别保持 `MaxAckPending=1`；
+- 空闲或阻塞时关闭订阅、任一路解码失败，均会结束两路读取并释放 NATS 订阅，保留未 ACK 消息；
+- 第二路 purge 失败后可幂等重试，残留消息仍受自身到期规则覆盖；
 - Stream sequence 正确写入 SSE；控制回应越过排队输入，含重连后的较小序号输入仍可完成；
 - 真实 Worker 手动/自动 allow、deny、中断和未知 request ID 回应不形成循环等待；
 - Redis 丢失、epoch 接管、InProgress 与 DoubleAck；

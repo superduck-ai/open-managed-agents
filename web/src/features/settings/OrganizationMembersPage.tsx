@@ -29,7 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
-import { useAuth } from '../../shared/auth/context';
+import { useAuth, type AuthContextValue } from '../../shared/auth/context';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
@@ -42,6 +42,7 @@ import {
   listOrganizationMembers,
   resendOrganizationInvite,
   updateOrganizationMemberRole,
+  type DeletedOrganizationInvite,
   type OrganizationInvite,
   type OrganizationMember,
 } from './membersApi';
@@ -61,6 +62,132 @@ const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => 
   label: role.label,
   description: role.description,
 }));
+
+type UpdateOrganizationMemberRoleMutation = ReturnType<
+  typeof useMutation<OrganizationMember, Error, { member: OrganizationMember; role: PlatformRole }>
+>;
+type OrganizationInviteActionMutation =
+  | ReturnType<typeof useMutation<OrganizationInvite, Error, OrganizationInvite>>
+  | ReturnType<typeof useMutation<DeletedOrganizationInvite, Error, OrganizationInvite>>;
+type MemberOrganization = NonNullable<
+  NonNullable<NonNullable<AuthContextValue['account']>['memberships']>[number]['organization']
+>;
+
+function buildOrganizationMemberColumns({
+  account,
+  canManage,
+  activeOrgUuid,
+  activeOrganization,
+  csrfToken,
+  pendingRoleMemberId,
+  updateRoleMutation,
+  resendInviteMutation,
+  deleteInviteMutation,
+  onInviteResend,
+  onInviteRevoke,
+}: {
+  account: AuthContextValue['account'];
+  canManage: boolean;
+  activeOrgUuid?: string;
+  activeOrganization?: MemberOrganization;
+  csrfToken?: string;
+  pendingRoleMemberId: string | null;
+  updateRoleMutation: UpdateOrganizationMemberRoleMutation;
+  resendInviteMutation: OrganizationInviteActionMutation;
+  deleteInviteMutation: OrganizationInviteActionMutation;
+  onInviteResend: (invite: OrganizationInvite) => void;
+  onInviteRevoke: (invite: OrganizationInvite) => void;
+}) {
+  const orgUuid = activeOrgUuid ?? '';
+  const organizationName = activeOrganization?.name ?? 'this organization';
+  return [
+    memberColumnHelper.display({
+      id: 'name',
+      header: 'Name',
+      cell: ({ row }) => {
+        if (isInviteRow(row.original)) {
+          return (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-muted-foreground">–</span>
+              <Badge variant="secondary" className="rounded-md px-1.5">
+                Pending
+              </Badge>
+            </div>
+          );
+        }
+
+        const name = row.original.name;
+        return (
+          <div className="flex min-w-0 items-center gap-3">
+            <MemberAvatar member={row.original} />
+            <span className="truncate text-foreground">{name || row.original.email}</span>
+          </div>
+        );
+      },
+    }),
+    memberColumnHelper.display({
+      id: 'email',
+      header: 'Email',
+      cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
+    }),
+    memberColumnHelper.display({
+      id: 'role',
+      header: 'Role',
+      cell: ({ row }) => {
+        if (isInviteRow(row.original)) {
+          return <span className="text-foreground">{roleLabel(normalizePlatformRole(row.original.role))}</span>;
+        }
+
+        const member = row.original;
+        const role = normalizePlatformRole(member.role);
+        const isSelf = isCurrentAccountMember(account, member);
+
+        if (!canManage || isSelf) {
+          return <span className="text-foreground">{roleLabel(role)}</span>;
+        }
+
+        return (
+          <RoleSelect
+            ariaLabel={`Role for ${displayMemberName(member)}`}
+            value={role}
+            disabled={pendingRoleMemberId === member.id || updateRoleMutation.isPending}
+            className="min-w-[144px]"
+            contentClassName="min-w-[300px]"
+            onChange={(nextRole) => {
+              if (nextRole !== role) {
+                updateRoleMutation.mutate({ member, role: nextRole });
+              }
+            }}
+          />
+        );
+      },
+    }),
+    memberColumnHelper.display({
+      id: 'actions',
+      header: '',
+      cell: ({ row }) =>
+        isInviteRow(row.original) ? (
+          <InviteActionsMenu
+            invite={row.original}
+            disabled={resendInviteMutation.isPending || deleteInviteMutation.isPending}
+            onResend={onInviteResend}
+            onRevoke={onInviteRevoke}
+          />
+        ) : !canManage || isCurrentAccountMember(account, row.original) ? (
+          <span aria-hidden className="block h-8 w-8" />
+        ) : (
+          <OrganizationMemberRemoval
+            key={row.original.id}
+            orgUuid={orgUuid}
+            organizationName={organizationName}
+            member={row.original}
+            csrfToken={csrfToken}
+            disabled={updateRoleMutation.isPending}
+          />
+        ),
+    }),
+  ];
+}
 
 export function OrganizationMembersPage() {
   const { account, csrfToken } = useAuth();
@@ -159,100 +286,37 @@ export function OrganizationMembersPage() {
   };
 
   const columns = useMemo(
-    () => [
-      memberColumnHelper.display({
-        id: 'name',
-        header: 'Name',
-        cell: ({ row }) => {
-          if (isInviteRow(row.original)) {
-            return (
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-muted-foreground">–</span>
-                <Badge variant="secondary" className="rounded-md px-1.5">
-                  Pending
-                </Badge>
-              </div>
-            );
-          }
-
-          const name = row.original.name;
-          return (
-            <div className="flex min-w-0 items-center gap-3">
-              <MemberAvatar member={row.original} />
-              <span className="truncate text-foreground">{name || row.original.email}</span>
-            </div>
-          );
+    () =>
+      buildOrganizationMemberColumns({
+        account,
+        canManage,
+        activeOrgUuid,
+        activeOrganization,
+        csrfToken,
+        pendingRoleMemberId,
+        updateRoleMutation,
+        resendInviteMutation,
+        deleteInviteMutation,
+        onInviteResend: (invite) => {
+          setInviteActionError(null);
+          resendInviteMutation.mutate(invite);
+        },
+        onInviteRevoke: (invite) => {
+          setInviteActionError(null);
+          setInviteToRevoke(invite);
         },
       }),
-      memberColumnHelper.display({
-        id: 'email',
-        header: 'Email',
-        cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
-      }),
-      memberColumnHelper.display({
-        id: 'role',
-        header: 'Role',
-        cell: ({ row }) => {
-          if (isInviteRow(row.original)) {
-            return <span className="text-foreground">{roleLabel(normalizePlatformRole(row.original.role))}</span>;
-          }
-
-          const member = row.original;
-          const role = normalizePlatformRole(member.role);
-          const isSelf = isCurrentAccountMember(account, member);
-
-          if (!canManage || isSelf) {
-            return <span className="text-foreground">{roleLabel(role)}</span>;
-          }
-
-          return (
-            <RoleSelect
-              ariaLabel={`Role for ${displayMemberName(member)}`}
-              value={role}
-              disabled={pendingRoleMemberId === member.id || updateRoleMutation.isPending}
-              className="min-w-[144px]"
-              contentClassName="min-w-[300px]"
-              onChange={(nextRole) => {
-                if (nextRole !== role) {
-                  updateRoleMutation.mutate({ member, role: nextRole });
-                }
-              }}
-            />
-          );
-        },
-      }),
-      memberColumnHelper.display({
-        id: 'actions',
-        header: '',
-        cell: ({ row }) =>
-          isInviteRow(row.original) ? (
-            <InviteActionsMenu
-              invite={row.original}
-              disabled={resendInviteMutation.isPending || deleteInviteMutation.isPending}
-              onResend={(invite) => {
-                setInviteActionError(null);
-                resendInviteMutation.mutate(invite);
-              }}
-              onRevoke={(invite) => {
-                setInviteActionError(null);
-                setInviteToRevoke(invite);
-              }}
-            />
-          ) : isCurrentAccountMember(account, row.original) ? (
-            <span aria-hidden className="block h-8 w-8" />
-          ) : (
-            <OrganizationMemberRemoval
-              key={row.original.id}
-              orgUuid={activeOrgUuid ?? ''}
-              organizationName={activeOrganization?.name ?? 'this organization'}
-              member={row.original}
-              csrfToken={csrfToken}
-              disabled={updateRoleMutation.isPending}
-            />
-          ),
-      }),
+    [
+      account,
+      activeOrganization,
+      activeOrgUuid,
+      canManage,
+      csrfToken,
+      deleteInviteMutation,
+      pendingRoleMemberId,
+      resendInviteMutation,
+      updateRoleMutation,
     ],
-    [account, canManage, deleteInviteMutation, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
   );
 
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
@@ -305,56 +369,12 @@ export function OrganizationMembersPage() {
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
       <div className="overflow-hidden border-y border-border">
-        <Table className="table-fixed text-left" aria-label="Members">
-          <TableHeader className="text-muted-foreground">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} className={headerClassName(header.column.id)}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {isInitialLoading ? <MembersSkeletonRows /> : null}
-            {!isInitialLoading && hasTableError ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-3 py-10">
-                  <Alert variant="destructive" className="mx-auto max-w-xl">
-                    <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                    <AlertTitle>Members could not be loaded.</AlertTitle>
-                    <AlertDescription>
-                      <p>Try again.</p>
-                      <Button type="button" variant="outline" size="sm" className="mt-3" onClick={handleRetry}>
-                        Try again
-                      </Button>
-                    </AlertDescription>
-                  </Alert>
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  No members found.
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {!isInitialLoading && !hasTableError
-              ? table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id} className="border-border last:border-b-0">
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} className={cellClassName(cell.column.id)}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : null}
-          </TableBody>
-        </Table>
+        <OrganizationMembersTable
+          table={table}
+          isInitialLoading={isInitialLoading}
+          hasTableError={hasTableError}
+          onRetry={handleRetry}
+        />
       </div>
 
       <InviteMembersDialog
@@ -385,6 +405,71 @@ export function OrganizationMembersPage() {
         }}
       />
     </section>
+  );
+}
+
+function OrganizationMembersTable({
+  table,
+  isInitialLoading,
+  hasTableError,
+  onRetry,
+}: {
+  table: ReturnType<typeof useReactTable<OrganizationMemberRow>>;
+  isInitialLoading: boolean;
+  hasTableError: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <Table className="table-fixed text-left" aria-label="Members">
+      <TableHeader className="text-muted-foreground">
+        {table.getHeaderGroups().map((headerGroup) => (
+          <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
+            {headerGroup.headers.map((header) => (
+              <TableHead key={header.id} className={headerClassName(header.column.id)}>
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+              </TableHead>
+            ))}
+          </TableRow>
+        ))}
+      </TableHeader>
+      <TableBody>
+        {isInitialLoading ? <MembersSkeletonRows /> : null}
+        {!isInitialLoading && hasTableError ? (
+          <TableRow>
+            <TableCell colSpan={4} className="px-3 py-10">
+              <Alert variant="destructive" className="mx-auto max-w-xl">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <AlertTitle>Members could not be loaded.</AlertTitle>
+                <AlertDescription>
+                  <p>Try again.</p>
+                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetry}>
+                    Try again
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            </TableCell>
+          </TableRow>
+        ) : null}
+        {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
+              No members found.
+            </TableCell>
+          </TableRow>
+        ) : null}
+        {!isInitialLoading && !hasTableError
+          ? table.getRowModel().rows.map((row) => (
+              <TableRow key={row.id} className="border-border last:border-b-0">
+                {row.getVisibleCells().map((cell) => (
+                  <TableCell key={cell.id} className={cellClassName(cell.column.id)}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          : null}
+      </TableBody>
+    </Table>
   );
 }
 

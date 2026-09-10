@@ -21,9 +21,24 @@ import {
   type WorkspaceMemberRole,
 } from './workspace-members/api';
 
+function resolveOrganizationName(
+  account:
+    | {
+        memberships?: Array<{ organization?: { uuid?: string; name?: string } }>;
+      }
+    | null
+    | undefined,
+  orgUuid: string | null | undefined,
+): string {
+  return (
+    account?.memberships?.find((membership) => membership.organization?.uuid === orgUuid)?.organization?.name ??
+    'this organization'
+  );
+}
+
 export function WorkspaceMembersPage() {
   const { msg } = useI18n();
-  const { csrfToken } = useAuth();
+  const { account, csrfToken } = useAuth();
   const queryClient = useQueryClient();
   const { activeWorkspace, orgUuid, isLoading } = useWorkspace();
   const isDefault = activeWorkspace.is_default === true;
@@ -33,6 +48,7 @@ export function WorkspaceMembersPage() {
   const [sort, setSort] = useState<MemberSort>({ field: 'name', descending: false });
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<WorkspaceMember | null>(null);
+  const organizationName = resolveOrganizationName(account, orgUuid);
 
   const directoryKey = ['console', 'workspace-members', orgUuid, workspaceId] as const;
   const directory = useQuery({
@@ -128,7 +144,7 @@ export function WorkspaceMembersPage() {
       ) : null}
       <MemberRemovalDialog
         open={Boolean(removing)}
-        title={msg('members.removeDialogTitle', 'Remove from workspace?')}
+        title={msg('members.removeDialogTitle', 'Remove member?')}
         pending={mutation.isPending}
         error={mutation.error?.message}
         onClose={() => setRemoving(null)}
@@ -137,11 +153,10 @@ export function WorkspaceMembersPage() {
             mutation.mutate({ operation: 'delete', userId: removing.user_id, role: removing.workspace_role });
         }}
       >
-        {msg(
-          'members.removeDialogBody',
-          "{email} will lose access to this workspace. Their organization membership, other workspaces and this workspace's team resources will remain.",
-          { email: removing?.email ?? '' },
-        )}
+        {msg('members.removeDialogBody', 'Are you sure you want to remove {email} from {organization}?', {
+          email: removing?.email ?? '',
+          organization: organizationName,
+        })}
       </MemberRemovalDialog>
     </ConsolePageFrame>
   );

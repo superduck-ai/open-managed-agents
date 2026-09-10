@@ -76,11 +76,10 @@ export function OrganizationMemberRemoval({
         onClose={() => setOpen(false)}
         onConfirm={() => removal.mutate()}
       >
-        {msg(
-          'members.orgRemoveDialogBody',
-          'Remove {email} from {organization}? They will lose access to this organization and all its workspaces. Workspace API keys, credential vaults, resources and team sessions will remain. Their membership in other organizations will not change.',
-          { email: member.email, organization: organizationName },
-        )}
+        {msg('members.orgRemoveDialogBody', 'Are you sure you want to remove {email} from {organization}?', {
+          email: member.email,
+          organization: organizationName,
+        })}
       </MemberRemovalDialog>
     </>
   );

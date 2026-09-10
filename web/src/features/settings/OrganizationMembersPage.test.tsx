@@ -55,7 +55,7 @@ describe('Organization members settings', () => {
     }) as typeof fetch;
     renderRemoval();
     await openRemoval();
-    expect(screen.getByText(/Workspace API keys/)).toBeTruthy();
+    expect(screen.getByText(/Are you sure you want to remove/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() =>
       expect(Boolean(document.querySelector('[data-slot="alert-dialog-content"][data-open]'))).toBe(false),
@@ -73,7 +73,7 @@ describe('Organization members settings', () => {
     renderRemoval();
     await openRemoval();
     expect(request).toBeUndefined();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove member', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove', exact: true }));
     await waitFor(() =>
       expect(Boolean(document.querySelector('[data-slot="alert-dialog-content"][data-open]'))).toBe(false),
     );
@@ -91,7 +91,7 @@ describe('Organization members settings', () => {
       )) as typeof fetch;
     renderRemoval();
     await openRemoval();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove member', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove', exact: true }));
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getByRole('alertdialog')).toBeTruthy();
     globalThis.fetch = removalOriginalFetch;

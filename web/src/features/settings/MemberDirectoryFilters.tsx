@@ -31,11 +31,11 @@ export function MemberDirectoryFilters({
           if (value) onRole(value);
         }}
       >
-        <SelectTrigger aria-label={msg('members.filterByRole', 'Filter by role')} className="w-auto min-w-28">
+        <SelectTrigger aria-label={msg('members.roleFilterLabel', 'Role')} className="w-auto min-w-28">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">{msg('members.allRoles', 'All roles')}</SelectItem>
+          <SelectItem value="all">{msg('members.roleFilterAll', 'All')}</SelectItem>
           {roles.map((option) => (
             <SelectItem key={option.value} value={option.value}>
               {msg(`members.workspaceRole.${option.value}`, option.label)}

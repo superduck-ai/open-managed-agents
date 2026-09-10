@@ -42,7 +42,7 @@ test('取消移除不会发送请求', async () => {
   }) as typeof fetch;
   renderRemoval();
   await openRemoval();
-  expect(screen.getByText(/Workspace API keys/)).toBeTruthy();
+  expect(screen.getByText(/Are you sure you want to remove/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   await waitFor(() =>
     expect(Boolean(document.querySelector('[data-slot="alert-dialog-content"][data-open]'))).toBe(false),
@@ -61,7 +61,7 @@ test('后端拒绝最后管理员移除时保留弹窗和错误', async () => {
     )) as typeof fetch;
   renderRemoval();
   await openRemoval();
-  fireEvent.click(screen.getByRole('button', { name: 'Remove member', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove', exact: true }));
   expect(await screen.findByRole('alert')).toBeTruthy();
   expect(screen.getByRole('alertdialog')).toBeTruthy();
 });
@@ -75,7 +75,7 @@ test('确认后向当前组织发送带 CSRF 的 DELETE', async () => {
   renderRemoval();
   await openRemoval();
   expect(request).toBeUndefined();
-  fireEvent.click(screen.getByRole('button', { name: 'Remove member', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove', exact: true }));
   await waitFor(() =>
     expect(Boolean(document.querySelector('[data-slot="alert-dialog-content"][data-open]'))).toBe(false),
   );

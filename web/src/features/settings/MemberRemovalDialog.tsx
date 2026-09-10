@@ -51,7 +51,7 @@ export function MemberRemovalDialog({
             {msg('members.cancel', 'Cancel')}
           </Button>
           <Button variant="destructive" disabled={pending} onClick={onConfirm}>
-            {pending ? msg('members.removing', 'Removing...') : msg('members.removeMember', 'Remove member')}
+            {pending ? msg('members.removing', 'Removing...') : msg('members.remove', 'Remove')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -150,6 +150,19 @@ mcp__weather_service__get_weather
 => toolName = get_weather
 ```
 
+API 允许 server name 使用 `A-Za-z0-9_.-`。已核对的 Claude Code `2.1.251` 会把其中的 `.`
+替换为 `_`，所以配置名 `tunnel_<id>.main` 在权限请求中表现为 `mcp__tunnel_<id>_main__<tool>`。
+不能直接拿运行时名查 `mcp_server_name`，也不能只按第一个 `__` 切分：连续点会变成连续下划线。
+
+权限边界从当前 session snapshot 的 `mcp_servers[].name` 与 `mcp_toolset.mcp_server_name` 收集
+已声明 server，以完整的原名或运行时前缀匹配。只有唯一匹配才恢复配置中的 server name 并计算
+权限；未知名、归一化重名或多个 server 前缀都能匹配时保持 `ask`，不让精确拼写优先取得另一方
+的 allow。缺少 toolset 的 server 也参与歧义检查；只含 toolset 的旧 snapshot 继续可用。
+
+工具后缀完整保留（包括 `__`），单工具覆盖仍按原有精确名称匹配。公开的 `agent.mcp_tool_use`
+使用恢复后的配置 server name，Worker `request_id`、原始工具名与确认关联保持不变。此转换只用于
+权限身份识别，不改写 Agent Snapshot、Tunnel 地址或 Runtime Gateway 的精确路由名。
+
 agent toolset 的工具名需要归一化到 Managed Agents 配置使用的名字。建议建立显式映射，避免大小写或 Claude Code 内部命名差异造成误判：
 
 | Managed Agent name | Claude Code tool name examples |
@@ -169,7 +182,7 @@ agent toolset 的工具名需要归一化到 Managed Agents 配置使用的名�
 
 MCP tool：
 
-1. 解析 `mcp__<server>__<tool>`。
+1. 根据 snapshot 中的 server 声明唯一解析 `mcp__<server>__<tool>`；无法唯一归属时返回 ask。
 2. 在 agent snapshot 的 `tools[]` 中找到 `type=mcp_toolset` 且 `mcp_server_name=<server>` 的 toolset。
 3. 如果存在 `configs[]` 且 `name=<tool>`，使用该 config。
 4. 否则使用该 toolset 的 `default_config`。
@@ -324,7 +337,9 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 - MCP `configs[]` 覆盖 `default_config`。
 - MCP `default_config=always_allow` 且 `configs=[]` 自动 allow。
-- MCP 无 toolset 或旧 snapshot 默认 ask。
+- MCP 带点、连续点及开头点的 server name 能恢复到 snapshot 声明，兼容保留原名的 Worker。
+- 归一化重名、重叠 server 前缀、未知 server 与空工具后缀不自动放行；无 toolset 的声明也参与检查。
+- MCP 无 toolset 的旧 snapshot 默认 ask。
 - MCP `enabled=false` 自动 deny。
 - agent toolset 默认 allow。
 - agent toolset 单工具 config 可覆盖为 ask 或 deny。
@@ -338,6 +353,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 - 单事件 worker append 路径和 batch 路径行为一致。
 - worker `result.stop_reason` 为字符串时，public `session.status_idle.stop_reason` 会规范化为 SDK 对象 union，例如 `{ "type": "end_turn" }`。
 - `always_allow` 生成 inbound `control_response`，source 为 `auto-approve`。
+- 带点 Tunnel 名和连续点 server 名生成 allow 回应且不产生 requires_action，public event 保留配置名。
 - duplicate worker event 不重复生成 auto response。
 - ephemeral 与隐藏 worker output 不落库；durable public output 依靠稳定 public event ID 去重。
 - `always_ask` 不 auto approve。
@@ -389,7 +405,7 @@ tools:
 - 当 `weather_service` 是 Tunnel 时，`/tmp/managed-agent-mcp-config.json` 中只有该条目被改为 named Runtime Gateway，并附加本次运行共用的 SessionIngressToken；普通 MCP 条目保持原始 URL。
 - Claude Code init event 显示 MCP server connected。
 - 调用 `mcp__weather_service__get_weather` 时不再卡在 permission prompt。
-- DB 中只保存对应 auto `control_response` inbound，不保存 `can_use_tool` outbound 日志。
+- 生成对应 auto `control_response` 并写入入站队列，不保存 `can_use_tool` outbound 日志。
 
 再将 `mcp_toolset.default_config.permission_policy` 改为 `always_ask` 后新建 session，期望：
 
@@ -403,6 +419,9 @@ tools:
 ## 8. 兼容性说明
 
 已创建的 session/code session 使用创建时的 agent snapshot，不会自动跟随 agent 最新配置变化。验证权限配置修改时必须新建 session。
+
+本次修复权限身份匹配，不迁移既有对话。`control_response` 能否在原任务完成前到达 Worker 属于
+独立的入站投递修复；只修正权限决策，不能解除共享 `MaxAckPending=1` consumer 的循环等待。
 
 旧 snapshot 中如果存在 `mcp_servers` 但缺少对应 `mcp_toolset`，按 MCP 默认 `always_ask` 处理，避免无意放行。
 

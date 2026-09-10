@@ -68,6 +68,9 @@ export function OrganizationMembersPage() {
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrgUuid = orgUuid ?? bootstrapOrganization?.uuid;
+  const activeOrganization =
+    account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
+    bootstrapOrganization;
   const canManage = canManageMembers(account, activeOrgUuid);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
@@ -241,7 +244,7 @@ export function OrganizationMembersPage() {
             <OrganizationMemberRemoval
               key={row.original.id}
               orgUuid={activeOrgUuid ?? ''}
-              organizationName={bootstrapOrganization?.name ?? 'this organization'}
+              organizationName={activeOrganization?.name ?? 'this organization'}
               member={row.original}
               csrfToken={csrfToken}
               disabled={updateRoleMutation.isPending}

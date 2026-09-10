@@ -20,12 +20,7 @@ def expect_status(label: str, fn, status: int) -> None:
 
 
 def main() -> None:
-    client = Anthropic(
-        api_key=API_KEY,
-        base_url=BASE_URL,
-        max_retries=0,
-        default_headers={"anthropic-beta": "files-api-2025-04-14"},
-    )
+    client = Anthropic(api_key=API_KEY, base_url=BASE_URL, max_retries=0)
 
     expect_status(
         "missing file metadata",

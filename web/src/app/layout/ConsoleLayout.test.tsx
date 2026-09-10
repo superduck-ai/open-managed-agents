@@ -513,6 +513,34 @@ describe('ConsoleShell', () => {
     await waitFor(() => expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy());
   });
 
+  test.each([false, true])('工作区操作入口遵循管理权限：%s', async (canManageWorkspaces) => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    const navigate = mock(async () => undefined);
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/dashboard"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com' }}
+        onLogout={() => undefined}
+        onNavigate={navigate}
+      >
+        <div>Dashboard</div>
+      </ConsoleShell>,
+      { canManageWorkspaces, locale: 'zh-CN' },
+    );
+    fireEvent.click(getWorkspaceMenuButton(/Default/i));
+    if (!canManageWorkspaces) {
+      expect(screen.queryByRole('menuitem', { name: '管理工作区' })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: /创建工作区/ })).toBeNull();
+      return;
+    }
+    expect(screen.getByRole('menuitem', { name: /创建工作区/ })).toBeTruthy();
+    const manage = screen.getByRole('menuitem', { name: '管理工作区' });
+    expect(manage.getAttribute('href')).toBe('/settings/workspaces');
+    fireEvent.click(manage);
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/settings/workspaces'));
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: '管理工作区' })).toBeNull());
+  });
+
   test('creates a workspace with color and US residency', async () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     const createWorkspace = mock(async (input: CreateWorkspaceInput) => ({
@@ -583,18 +611,28 @@ function testAccount(role = 'admin'): AuthAccount {
 
 function renderWithWorkspaces(
   children: ReactNode,
-  options: { createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>; locale?: Locale } = {},
+  options: {
+    createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
+    locale?: Locale;
+    canManageWorkspaces?: boolean;
+  } = {},
 ) {
-  const tree = <WorkspaceHarness createWorkspace={options.createWorkspace}>{children}</WorkspaceHarness>;
+  const tree = (
+    <WorkspaceHarness createWorkspace={options.createWorkspace} canManageWorkspaces={options.canManageWorkspaces}>
+      {children}
+    </WorkspaceHarness>
+  );
   return render(options.locale ? <I18nProvider initialLocale={options.locale}>{tree}</I18nProvider> : tree);
 }
 
 function WorkspaceHarness({
   children,
   createWorkspace,
+  canManageWorkspaces = true,
 }: {
   children: ReactNode;
   createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
+  canManageWorkspaces?: boolean;
 }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([
     defaultWorkspace,
@@ -612,7 +650,7 @@ function WorkspaceHarness({
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       orgUuid: 'org_test',
-      canManageWorkspaces: true,
+      canManageWorkspaces,
       workspaces,
       activeWorkspace,
       activeWorkspaceId,
@@ -636,7 +674,7 @@ function WorkspaceHarness({
       },
       refreshWorkspaces: async () => undefined,
     }),
-    [activeWorkspace, activeWorkspaceId, createWorkspace, workspaces],
+    [activeWorkspace, activeWorkspaceId, canManageWorkspaces, createWorkspace, workspaces],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

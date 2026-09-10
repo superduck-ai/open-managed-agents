@@ -559,23 +559,36 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
               </div>
             </DropdownMenuGroup>
 
-            <DropdownMenuSeparator />
-
             {canManageWorkspaces ? (
-              <DropdownMenuItem
-                className="gap-2 p-2"
-                onClick={() => {
-                  setOpen(false);
-                  setCreateOpen(true);
-                }}
-              >
-                <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
-                  <Plus className="size-4" aria-hidden />
-                </span>
-                <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
-                  {msg('workspace.create.title', 'Create workspace')}
-                </span>
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  onClick={() => {
+                    setOpen(false);
+                    setCreateOpen(true);
+                  }}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                    <Plus className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.create.title', 'Create workspace')}
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  render={<ShellLink href="/settings/workspaces" onNavigate={onNavigate} />}
+                  onClick={() => setOpen(false)}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
+                    <Settings className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.manage.title', 'Manage workspaces')}
+                  </span>
+                </DropdownMenuItem>
+              </>
             ) : null}
 
             {isLoading ? (

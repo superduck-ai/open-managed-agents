@@ -30,6 +30,7 @@ import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
+import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -115,7 +116,7 @@ export function OrganizationMembersPage() {
           current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite],
       );
       setInviteActionError(null);
-      toast.success('Invite reminder sent.');
+      notifyInvitationDelivery([updatedInvite]);
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
@@ -353,7 +354,7 @@ export function OrganizationMembersPage() {
             ...createdInvites,
             ...(current ?? []),
           ]);
-          toast.success(createdInvites.length === 1 ? 'Invite sent.' : `${createdInvites.length} invites sent.`);
+          notifyInvitationDelivery(createdInvites);
         }}
       />
       <InviteRevokeDialog

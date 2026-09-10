@@ -113,8 +113,12 @@ lifecycle processing 和 processed 必须使用 SSE 暴露的同一个 ID。
 GET /v1/code/sessions/{code_session_id}/worker/events/stream?worker_epoch=<epoch>
 ```
 
-服务端从该 Session 的 durable consumer 拉取一条消息，完成大 payload 校验与还原，在 Redis 写入
-ACK subject 后才 flush SSE。consumer 的 `MaxAckPending=1`，因此当前消息 processed 前不会投递下一条。
+服务端分别从该 Session 的任务和回应 durable consumer 拉取消息，完成大 payload 校验与还原，在 Redis 写入
+ACK subject 后才 flush SSE。两路 consumer 各自的 `MaxAckPending=1`，因此只阻塞同一路的下一条消息。控制回应可以在
+当前用户命令 processed 之前到达，解除工具审批等待；两路仍复用一条 SSE 和同一个 delivery API。
+
+SSE 的序号保留 Stream sequence。控制回应越过排队输入时序号可能非单调，不能用最大序号
+过滤尚未处理的输入。ACK 定位仍按 session、epoch 和 event ID 隔离，能够指向任一路 consumer。
 
 SSE 断开不会删除 consumer。`from_sequence_num` 与 `Last-Event-ID` 仍接受非负整数，但不修改
 JetStream ACK floor。旧 `GET /v1/code/sessions/{code_session_id}` poll 入口已经移除。

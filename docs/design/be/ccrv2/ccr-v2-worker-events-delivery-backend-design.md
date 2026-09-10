@@ -1,9 +1,12 @@
 # CCR v2 Worker 入站投递后端设计
 
+> 2026-09-10 修复：控制回应使用独立的可靠投递名额，避免与正在等待它的任务循环等待。
+> 原因和真实 Worker 实验见 [投递阻塞调查](worker-control-delivery-deadlock-investigation.md)。
+
 ## 目标
 
-Code Session 入站事件直接发布到共享 JetStream Stream，并通过每 Session 独立 durable consumer
-实现 at-least-once、串行消费。PostgreSQL 不保存入站消息、发布记录或 delivery 状态；Redis 只保存
+Code Session 入站事件直接发布到共享 JetStream Stream，并通过每 Session 两个独立 durable consumer
+实现 at-least-once、各通道内串行消费。PostgreSQL 不保存入站消息、发布记录或 delivery 状态；Redis 只保存
 短期 ACK subject；大 payload 放入对象存储。
 
 核心不变量：
@@ -11,7 +14,8 @@ Code Session 入站事件直接发布到共享 JetStream Stream，并通过每 S
 - 普通入站请求只有获得 JetStream PubAck 后才成功；
 - activation 只有在 initialize 和完整启动历史全部获得 PubAck 后才切换 active；
 - 同一 Code Session 的直接发布与 termination 通过 Code Session 行锁串行；
-- 每 Session consumer 的 `MaxAckPending=1`，当前消息 ACK 前不交付下一条；
+- 任务与回应各自的 consumer 保持 `MaxAckPending=1`，各通道内当前消息 ACK 前不交付下一条；
+- `control_response` 和 `control_request/interrupt` 进入回应通道，不受任务的未完成 ACK 阻塞；
 - worker epoch 的强一致来源仍是 PostgreSQL；
 - Redis 丢失、API 重启或 SSE 断开只造成重投；
 - `processed` 是唯一完成 ACK，`received` 与 `processing` 只延长处理窗口。
@@ -71,8 +75,17 @@ Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发�
 `OMA_WORKER_INBOUND` 捕获 `oma.worker.inbound.v2.>`，使用 `WorkQueuePolicy`、file storage、
 3 replicas、10 GiB、`DiscardNew`、1 MiB 单消息上限、24 小时 duplicate window 和 `MaxAge=0`。
 
-每个 Code Session 的 subject 是 `oma.worker.inbound.v2.<code-session-id>`。每个 Session 创建一个
-精确过滤该 subject 的 durable pull consumer：
+每个 Code Session 使用两条互不重叠的 subject，各创建一个精确过滤的 durable pull consumer：
+
+- 任务：`oma.worker.inbound.v2.<code-session-id>`，consumer 为 `oma_worker_<code-session-id>`；
+- 回应：`oma.worker.inbound.v2.<code-session-id>.reply`，consumer 为 `oma_worker_<code-session-id>_reply`。
+
+`internal/workerevents/lanes.go` 集中定义分类。`control_response`（包括审批和已转换的自定义工具结果）
+及 `control_request` 中 subtype 为 `interrupt` 的消息进入回应通道；initialize、启动历史、用户输入
+和未知类型留在任务通道。原始公共事件的 payload 转换合同不变，不把所有 control_request 放行。
+
+两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。每路最多一条未完成消息，
+不会为了寻找回应而把用户输入全部预取到内存。两个 consumer 均使用：
 
 - `DeliverAll`；
 - `AckExplicit`；
@@ -85,8 +98,10 @@ SSE 断开只关闭当前 pull subscription，不删除 consumer。新的 API �
 未 ACK 消息。
 
 envelope 存储时的 `sequence_num` 为 0；消费时以 JetStream metadata 的 Stream sequence 覆盖它。
-因此 SSE sequence 在共享 Stream 内全局单调，单个 Session 可以有间断。它用于事件标识和诊断，不是
-可由客户端修改的 ACK cursor。
+该 sequence 标识共享 Stream 的存储位置，单个 Session 可以有间断，跨通道的 SSE 发送顺序允许
+非单调：例如用户输入 seq=2、排队输入 seq=3、审批回应 seq=4，可以按 2、4、3 发送。不能按最大
+已见序号丢弃较小但尚未处理的输入；重连仍由各 durable consumer 的 ACK 状态决定重投，
+`from_sequence_num` 和 `Last-Event-ID` 不参与完成判定。Worker 使用稳定 event ID 做业务幂等。
 
 ## Envelope
 
@@ -155,7 +170,7 @@ SSE 读取时限制为声明长度加一字节，并校验对象报告大小、�
 ## 30 天逻辑期限
 
 JetStream 不使用 `MaxAge` 静默删除。每个 envelope 带 `expires_at`，应用每分钟扫描 Stream。
-发现过期消息时先提交 Code Session 终止与凭证撤销，再删除 durable consumer、按 subject 清空消息、
+发现过期消息时先提交 Code Session 终止与凭证撤销，再删除两路 durable consumer、按两个精确 subject 清空消息、
 加速关联对象清理并输出 Error 日志。PG 失败时不得先 TERM、ACK 或 purge；consumer 删除失败时
 不得先 purge，否则会丢失下一轮扫描的重试依据。该批次任何终止/清理失败都不推进扫描游标。
 
@@ -193,10 +208,31 @@ consumer ACK floor。
 
 - activation 与普通发布都等待 PubAck；
 - 模糊 PubAck 的稳定 ID 重试只保留一条消息；
-- per-session durable consumer 重连并保持 `MaxAckPending=1`；
-- 全局 Stream sequence 正确写入 SSE；
+- per-session 两个 durable consumer 重连并分别保持 `MaxAckPending=1`；
+- Stream sequence 正确写入 SSE；控制回应越过排队输入，含重连后的较小序号输入仍可完成；
+- 真实 Worker 手动/自动 allow、deny、中断和未知 request ID 回应不形成循环等待；
 - Redis 丢失、epoch 接管、InProgress 与 DoubleAck；
 - 900 KiB 边界、外置 payload 加载（loadOffloadedPayload）完整性和清理；
 - 30 天到期终止与 subject 清理；
 - schema 不含旧入站表、outbox 表或 PG 入站 sequence；
 - 旧 poll 路由不可用，idle-stop 后新输入触发恢复。
+
+## 升级边界
+
+旧 subject 中可能已有被任务阻塞的控制回应。仅增加新 consumer 不会自动移动这些存量消息。
+本次不提供存量迁移，也不自动恢复或删除旧对话。旧的卡住对话由用户停止后删除并新建；
+当前删除 API 拒绝 `running/rescheduling` 状态，需要先停止。新版本发布的控制回应使用独立通道。
+
+部署时先停止旧 API 实例，再启动新版本，避免旧实例继续写入旧 subject，或将 `.reply` subject
+当作无效消息清理。不支持新旧版本混跑；此要求与是否迁移存量消息无关。
+
+新增真实 Worker 验收入口：
+
+```sh
+OMA_WORKER_CONTROL_PROBE=1 go test ./internal/workerevents -run TestRealWorkerControlDelivery -count=1 -v
+LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE=/path/to/test-config.yaml go test ./tests/liveworker -run TestRealWorkerToolPermissions -count=1 -v
+```
+
+前者使用独立三节点 NATS、生产 Broker 与确定性 CCR/model fixture；后者连接独立 OMA API、
+PostgreSQL、Redis、JetStream，以真实 Worker 验证权限决策和回执，只替换模型输出。
+都需要本地已有 sandbox 镜像和 Docker。测试不应指向生产或有用户正在工作的环境。

@@ -165,7 +165,7 @@ func NewJetStream(ctx context.Context, connection *nats.Conn) (*JetStreamBroker,
 }
 
 func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) error {
-	subjectName, err := Subject(envelope.CodeSessionID)
+	subjectName, err := laneForEvent(envelope).subject(envelope.CodeSessionID)
 	if err != nil {
 		return err
 	}
@@ -186,11 +186,34 @@ func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelop
 }
 
 func (b *JetStreamBroker) Subscribe(ctx context.Context, codeSessionID string) (Subscription, error) {
-	filter, err := Subject(codeSessionID)
+	consumers := make([]jetstream.Consumer, 0, len(deliveryLanes))
+	for _, lane := range deliveryLanes {
+		consumer, err := b.laneConsumer(ctx, codeSessionID, lane)
+		if err != nil {
+			return nil, err
+		}
+		consumers = append(consumers, consumer)
+	}
+	subCtx, cancel := context.WithCancel(ctx)
+	s := &jetStreamSubscription{ctx: subCtx, cancel: cancel, messages: make(chan Delivery), errors: make(chan error, 1)}
+	var readers sync.WaitGroup
+	for _, consumer := range consumers {
+		readers.Go(func() { s.receive(consumer) })
+	}
+	go func() {
+		readers.Wait()
+		close(s.messages)
+		close(s.errors)
+	}()
+	return s, nil
+}
+
+func (b *JetStreamBroker) laneConsumer(ctx context.Context, codeSessionID string, lane deliveryLane) (jetstream.Consumer, error) {
+	filter, err := lane.subject(codeSessionID)
 	if err != nil {
 		return nil, err
 	}
-	name := consumerName(codeSessionID)
+	name := lane.consumerName(codeSessionID)
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
 		Name:            name,
 		Durable:         name,
@@ -205,10 +228,7 @@ func (b *JetStreamBroker) Subscribe(ctx context.Context, codeSessionID string) (
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event consumer: %w", err)
 	}
-	subCtx, cancel := context.WithCancel(ctx)
-	s := &jetStreamSubscription{consumer: consumer, ctx: subCtx, cancel: cancel, messages: make(chan Delivery), errors: make(chan error, 1)}
-	go s.receive()
-	return s, nil
+	return consumer, nil
 }
 
 func (b *JetStreamBroker) InProgress(_ context.Context, ackSubject string) error {
@@ -278,9 +298,8 @@ func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit 
 
 func storedWorkerEvent(message *jetstream.RawStreamMsg) ExpiredEvent {
 	event := ExpiredEvent{StreamSequence: message.Sequence}
-	sessionID := strings.TrimPrefix(message.Subject, subjectPrefix)
-	subject, subjectErr := Subject(sessionID)
-	if subjectErr != nil || subject != message.Subject {
+	sessionID, valid := sessionFromSubject(message.Subject)
+	if !valid {
 		event.InvalidSubject = true
 		return event
 	}
@@ -294,8 +313,7 @@ func storedWorkerEvent(message *jetstream.RawStreamMsg) ExpiredEvent {
 }
 
 func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string) error {
-	filter, err := Subject(codeSessionID)
-	if err != nil {
+	if _, err := Subject(codeSessionID); err != nil {
 		return err
 	}
 	stream, err := b.js.Stream(ctx, StreamName)
@@ -303,14 +321,21 @@ func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string
 		return err
 	}
 	// 先删除 consumer；若删除失败，消息仍保留，可被 expiry 再次发现并重试。
-	if err := b.js.DeleteConsumer(ctx, StreamName, consumerName(codeSessionID)); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
-		return err
+	for _, lane := range deliveryLanes {
+		if err := b.js.DeleteConsumer(ctx, StreamName, lane.consumerName(codeSessionID)); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
+			return err
+		}
 	}
-	return stream.Purge(ctx, jetstream.WithPurgeSubject(filter))
+	for _, lane := range deliveryLanes {
+		filter, _ := lane.subject(codeSessionID)
+		if err := stream.Purge(ctx, jetstream.WithPurgeSubject(filter)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type jetStreamSubscription struct {
-	consumer  jetstream.Consumer
 	ctx       context.Context
 	cancel    context.CancelFunc
 	messages  chan Delivery
@@ -321,11 +346,10 @@ type jetStreamSubscription struct {
 func (s *jetStreamSubscription) Messages() <-chan Delivery { return s.messages }
 func (s *jetStreamSubscription) Errors() <-chan error      { return s.errors }
 
-func (s *jetStreamSubscription) receive() {
-	defer close(s.messages)
-	defer close(s.errors)
+func (s *jetStreamSubscription) receive(consumer jetstream.Consumer) {
+	defer s.cancel()
 	for s.ctx.Err() == nil {
-		batch, err := s.consumer.Fetch(1, jetstream.FetchContext(s.ctx))
+		batch, err := consumer.Fetch(1, jetstream.FetchContext(s.ctx))
 		if err != nil {
 			if s.ctx.Err() == nil {
 				s.report(err)
@@ -397,7 +421,9 @@ func NewMemory() *MemoryBroker {
 func (b *MemoryBroker) Pending(codeSessionID string) []EnvelopeV1 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	queue := b.queues[codeSessionID]
+	queue := append([]*memoryMessage(nil), b.queues[codeSessionID]...)
+	queue = append(queue, b.queues[codeSessionID+string(replyLane)]...)
+	sort.Slice(queue, func(i, j int) bool { return queue[i].id < queue[j].id })
 	result := make([]EnvelopeV1, len(queue))
 	for i, message := range queue {
 		result[i] = message.envelope
@@ -414,6 +440,9 @@ func (b *MemoryBroker) Publish(ctx context.Context, messageID string, envelope E
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if _, err := Subject(envelope.CodeSessionID); err != nil {
+		return err
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, exists := b.messageIDs[messageID]; messageID != "" && exists {
@@ -422,7 +451,8 @@ func (b *MemoryBroker) Publish(ctx context.Context, messageID string, envelope E
 	b.nextID++
 	envelope.SequenceNum = int64(b.nextID)
 	message := &memoryMessage{id: b.nextID, envelope: envelope}
-	b.queues[envelope.CodeSessionID] = append(b.queues[envelope.CodeSessionID], message)
+	queueKey := envelope.CodeSessionID + string(laneForEvent(envelope))
+	b.queues[queueKey] = append(b.queues[queueKey], message)
 	if messageID != "" {
 		now := time.Now()
 		b.evictStaleMessageIDsLocked(now)
@@ -458,11 +488,17 @@ func (b *MemoryBroker) Subscribe(ctx context.Context, codeSessionID string) (Sub
 		default:
 		}
 	}
-	s := &memorySubscription{broker: b, codeSessionID: codeSessionID, messages: make(chan Delivery, 1), errors: make(chan error, 1), done: make(chan struct{})}
+	s := &memorySubscription{broker: b, codeSessionID: codeSessionID, messages: make(chan Delivery, len(deliveryLanes)), errors: make(chan error, 1), done: make(chan struct{})}
 	b.subs[codeSessionID] = s
 	b.dispatchLocked(codeSessionID)
 	b.mu.Unlock()
-	go func() { <-ctx.Done(); _ = s.Close() }()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = s.Close()
+		case <-s.done:
+		}
+	}()
 	return s, nil
 }
 
@@ -479,13 +515,14 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 		return errMemoryAckNotFound
 	}
 	sessionID := message.envelope.CodeSessionID
-	queue := b.queues[sessionID]
+	queueKey := sessionID + string(laneForEvent(message.envelope))
+	queue := b.queues[queueKey]
 	if len(queue) == 0 || queue[0] != message {
 		return errMemoryAckNotQueueHead
 	}
 	delete(b.ackSubjectMap, ackSubject)
 	queue[0] = nil
-	b.queues[sessionID] = queue[1:]
+	b.queues[queueKey] = queue[1:]
 	b.dispatchLocked(sessionID)
 	return nil
 }
@@ -493,12 +530,14 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 // undeliverHeadLocked 将队头消息重置回未投递状态并清除其 ACK subject 映射，
 // 供订阅被抢占或关闭后重新投递使用。
 func (b *MemoryBroker) undeliverHeadLocked(codeSessionID string) {
-	queue := b.queues[codeSessionID]
-	if len(queue) == 0 {
-		return
+	for _, lane := range deliveryLanes {
+		queue := b.queues[codeSessionID+string(lane)]
+		if len(queue) == 0 {
+			continue
+		}
+		queue[0].delivered = false
+		delete(b.ackSubjectMap, b.ackSubject(queue[0]))
 	}
-	queue[0].delivered = false
-	delete(b.ackSubjectMap, b.ackSubject(queue[0]))
 }
 
 func (b *MemoryBroker) ScanExpired(_ context.Context, cursor uint64, limit int, now time.Time) ([]ExpiredEvent, uint64, error) {
@@ -531,20 +570,30 @@ func (b *MemoryBroker) ScanExpired(_ context.Context, cursor uint64, limit int, 
 func (b *MemoryBroker) PurgeSession(_ context.Context, codeSessionID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, message := range b.queues[codeSessionID] {
-		delete(b.ackSubjectMap, b.ackSubject(message))
+	for _, lane := range deliveryLanes {
+		queueKey := codeSessionID + string(lane)
+		for _, message := range b.queues[queueKey] {
+			delete(b.ackSubjectMap, b.ackSubject(message))
+		}
+		delete(b.queues, queueKey)
 	}
-	delete(b.queues, codeSessionID)
 	return nil
 }
 
 func (b *MemoryBroker) dispatchLocked(codeSessionID string) {
 	subscription := b.subs[codeSessionID]
-	queue := b.queues[codeSessionID]
-	if subscription == nil || len(queue) == 0 || queue[0].delivered {
+	if subscription == nil {
 		return
 	}
-	message := queue[0]
+	for _, lane := range deliveryLanes {
+		queue := b.queues[codeSessionID+string(lane)]
+		if len(queue) != 0 && !queue[0].delivered {
+			b.dispatchHeadLocked(subscription, queue[0])
+		}
+	}
+}
+
+func (b *MemoryBroker) dispatchHeadLocked(subscription *memorySubscription, message *memoryMessage) {
 	message.delivered = true
 	ackSubject := b.ackSubject(message)
 	b.ackSubjectMap[ackSubject] = message

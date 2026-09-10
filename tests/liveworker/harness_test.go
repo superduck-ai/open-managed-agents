@@ -102,6 +102,9 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	e.credentials, err = codesessions.NewSessionCredentials(cfg)
 	requireOK(t, err)
 	e.service = codesessions.NewServiceWithCredentials(e.database, e.credentials, nil).WithWorkerEventBroker(e.broker).WithWorkerEventState(e.acks, e.objects)
+	if os.Getenv("LIVE_WORKER_REAL_CLAUDE") == "1" {
+		ensureRealWorkerProvider(t, e, cfg)
+	}
 	var created struct {
 		ID string `json:"id"`
 	}
@@ -164,12 +167,15 @@ type liveSession struct {
 }
 
 func (e *liveEnv) newSession(t *testing.T) *liveSession {
+	return e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-opus-4-6"}}`))
+}
+
+func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage) *liveSession {
 	t.Helper()
 	ctx := t.Context()
 	now := time.Now().UTC()
 	org, workspace := e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String()
 	sessionID := "sesn_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	snapshot := json.RawMessage(`{"model":{"id":"claude-opus-4-6"}}`)
 	// A stopped work record prevents the shared runner from starting an actual
 	// sandbox that would compete with this protocol client for the same queue.
 	session, _, _, _, err := e.database.CreateSession(ctx, db.CreateSessionInput{

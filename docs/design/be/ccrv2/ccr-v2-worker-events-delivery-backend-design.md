@@ -1,7 +1,6 @@
 # CCR v2 Worker 入站投递后端设计
 
 > 2026-09-10 修复：控制回应使用独立的可靠投递名额，避免与正在等待它的任务循环等待。
-> 原因和真实 Worker 实验见 [投递阻塞调查](worker-control-delivery-deadlock-investigation.md)。
 
 ## 目标
 
@@ -84,11 +83,9 @@ Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发�
 及 `control_request` 中 subtype 为 `interrupt` 的消息进入回应通道；initialize、启动历史、用户输入
 和未知类型留在任务通道，不把所有 control_request 放行。
 
-公共 API 继续接受 `user.interrupt`。active 会话的实时入队边界将它转换为 Worker 支持的
-`control_request` + `request.subtype=interrupt`，使用已持久化事件 UUID 作为稳定的 payload UUID
-和 request ID，再由上述规则送到回应通道。原始 `user.interrupt` 不是 Claude Code 支持的 wire
-消息类型；仅调整 subject 不足以让停止生效。启动历史沿用原有转换，避免历史停止操作变成新的
-中断指令并越过 initialize。公共工具确认和自定义工具结果继续使用已有的控制回应转换。
+公共工具确认和自定义工具结果继续使用已有的控制回应转换。本次修复只改变投递通道；
+`control_request/interrupt` 指已经转换成 Worker 协议的中断消息。公共 `user.interrupt`
+到该协议的转换属于独立问题，不在本次修复范围内，不能据此声称停止按钮已经修复。
 
 两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。每路最多一条未完成消息，
 不会为了寻找回应而把用户输入全部预取到内存。两个 consumer 均使用：
@@ -108,6 +105,18 @@ envelope 存储时的 `sequence_num` 为 0；消费时以 JetStream metadata 的
 非单调：例如用户输入 seq=2、排队输入 seq=3、审批回应 seq=4，可以按 2、4、3 发送。不能按最大
 已见序号丢弃较小但尚未处理的输入；重连仍由各 durable consumer 的 ACK 状态决定重投，
 `from_sequence_num` 和 `Last-Event-ID` 不参与完成判定。Worker 使用稳定 event ID 做业务幂等。
+
+### 与 PR #340 的关系及方案选择
+
+PR #340 将未完成消息的唯一可靠存储收敛到 JetStream，只有 Worker 上报 `processed` 才 ACK。
+原来的单通道 `MaxAckPending=1` 由此形成循环等待：任务等待审批回应才完成，而审批回应必须等
+任务完成 ACK 才能投递。自动批准也需要把回应送回 Worker，因此同样受影响。
+
+本次保留 #340 的持久化、完成 ACK、epoch fencing 和每路限流，只拆开存在依赖的两类消息。
+提高为任意有限窗口仍可能被排队输入占满；改成无限窗口则允许全部输入提前进入 Worker，改变
+任务串行和故障隔离语义。真实 Worker 实验中，无限窗口下 20 条排队输入在原任务完成前进入下一次
+模型请求；坏 payload 对照实验也显示后续输入可以越过未确认的坏消息。因此采用两路各一条，
+既让回应解除等待，又保留用户输入的背压。不提前 ACK，也不重新引入 PostgreSQL outbox。
 
 ## Envelope
 
@@ -163,7 +172,7 @@ SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，�
 5. 再次校验引用 envelope 小于 1 MiB。
 
 SSE 读取时限制为声明长度加一字节，并校验对象报告大小、实际大小和 SHA-256。缺失、截断、篡改或
-读取失败都不发送、不 ACK；`MaxAckPending=1` 使后续消息继续阻塞。PubAck 失败可能是模糊成功，
+读取失败都不发送、不 ACK；`MaxAckPending=1` 使同通道的后续消息继续阻塞。PubAck 失败可能是模糊成功，
 所以不立即清理对象。processed 后加速清理；否则最迟 30 天清理。
 确定未尝试发布的对象可以加速清理。清理调度在行锁事务外使用不继承请求取消的 5 秒上下文；失败
 只告警，由上传前已提交的到期任务兜底，不能依赖已经取消的请求完成清理。
@@ -186,8 +195,8 @@ JetStream 不使用 `MaxAge` 静默删除。每个 envelope 带 `expires_at`，�
 扫描按 subject 查找实际存储的下一条消息，一轮最多 512 条，已 ACK 的序号空洞不占扫描预算。
 坏 JSON、版本/身份/期限无效时告警，并继续检查其他 Session。坏消息本身不 ACK；以可信 subject
 定位其 Session，以 JetStream 存储时间加 30 天作为兜底期限，不使用损坏 envelope 的对象引用。
-PG 记录已不存在时直接清理对应队列，不执行空租户 UUID 的终止 SQL。单条过期或毒消息不能跳过
-继续执行同一 Session 的后续输入。
+PG 记录已不存在时直接清理对应队列，不执行空租户 UUID 的终止 SQL。毒消息不能被跳过并继续执行
+同一通道的后续消息；消息过期则终止整个 Code Session。
 
 ## 故障语义
 
@@ -196,7 +205,7 @@ PG 记录已不存在时直接清理对应队列，不执行空租户 UUID 的�
 - PubAck 响应丢失：调用方以稳定 message ID 重试，JetStream 去重；
 - activation 部分发布：状态仍 initializing，重试补齐并去重；
 - Redis 丢失：delivery ignored，之后重投；
-- S3 校验失败：不 ACK，阻塞该 Session；
+- S3 校验失败：不 ACK，阻塞该 Session 同通道的后续消息；
 - worker 断线：durable consumer 保留；
 - 30 天到期：整个 Code Session 终止并清空消息；
 - termination 与正在发布的请求竞争：两者通过 Code Session 行锁确定先后。
@@ -231,19 +240,23 @@ consumer ACK floor。
 ## 升级边界
 
 旧 subject 中可能已有被任务阻塞的控制回应。仅增加新 consumer 不会自动移动这些存量消息。
-本次不提供存量迁移，也不自动恢复或删除旧对话。旧的卡住对话由用户停止后删除并新建；
-当前删除 API 拒绝 `running/rescheduling` 状态，需要先停止。新版本发布的控制回应使用独立通道。
+本次不提供存量迁移，也不自动恢复或删除旧对话，由用户另行处理。当前删除 API 拒绝
+`running/rescheduling` 状态；本次不改变删除限制，也不包含停止按钮修复。
+新版本发布的控制回应使用独立通道。
 
 部署时先停止旧 API 实例，再启动新版本，避免旧实例继续写入旧 subject，或将 `.reply` subject
 当作无效消息清理。不支持新旧版本混跑；此要求与是否迁移存量消息无关。
 
-新增真实 Worker 验收入口：
+真实 Worker 验收统一使用 `tests/liveworker`。先以测试配置在 `127.0.0.1:18080` 启动独立 OMA API，
+再运行：
 
 ```sh
-OMA_WORKER_CONTROL_PROBE=1 go test ./internal/workerevents -run TestRealWorkerControlDelivery -count=1 -v
-LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE=/path/to/test-config.yaml go test ./tests/liveworker -run TestRealWorkerToolPermissions -count=1 -v
+LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE=/path/to/test-config.yaml go test ./tests/liveworker -run '^TestRealWorkerControlDelivery$' -count=1 -v
 ```
 
-前者使用独立三节点 NATS、生产 Broker 与确定性 CCR/model fixture；后者连接独立 OMA API、
-PostgreSQL、Redis、JetStream，以真实 Worker 验证权限决策和回执，只替换模型输出。
-都需要本地已有 sandbox 镜像和 Docker。测试不应指向生产或有用户正在工作的环境。
+测试连接真实 OMA API、PostgreSQL、Redis、JetStream，使用真实 Worker，只替换模型输出。
+七种场景覆盖手动/自动 allow 与 deny、规范协议中断、未知 request ID 回应和纯文本任务。
+手动批准还在等待审批时及批准后分别断开 SSE，证明更大序号的回应被处理后，较小序号的排队输入
+仍能在重连后作为独立任务执行。中断与未知回应通过生产入队服务注入；不验证公共停止按钮。
+需要本地已有 sandbox 镜像和 Docker，可通过 `OMA_WORKER_CONTROL_IMAGE` 固定镜像。
+测试不应指向生产或有用户正在工作的环境，结束后停止专用测试 API 和依赖。

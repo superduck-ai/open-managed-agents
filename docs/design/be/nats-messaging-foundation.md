@@ -12,7 +12,7 @@ flowchart LR
     Client --> Core["Core NATS：Session preview"]
     Client --> JS["JetStream：OMA_WORKER_INBOUND"]
     Producer["Code Session 入站生产方"] -->|直接 Publish，等待 PubAck| JS
-    JS --> Durable["每 Code Session durable consumer"]
+    JS --> Durable["每 Code Session 任务与回应两个 durable consumer"]
     Durable --> Worker["worker SSE"]
 ```
 
@@ -48,16 +48,19 @@ worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没�
 等待 PubAck。PubAck 响应丢失时，调用方重试由 duplicate window 去重。
 
 `sequence_num` 在存储 envelope 中为 0，由 consumer 读取 JetStream metadata 后填入 Stream sequence。它是
-共享 Stream 的全局序号，单个 Code Session 看到间断是正常的。
+共享 Stream 的全局序号，单个 Code Session 看到间断是正常的；跨通道的交付序号可以非单调。
 
 ## Subject 与 consumer
 
-每个 Code Session 使用独立 subject 和唯一稳定 durable pull consumer。consumer 的精确 filter
-互不重叠，满足 `WorkQueuePolicy` 限制。配置为 `DeliverAll`、`AckExplicit`、
+每个 Code Session 使用任务 subject `oma.worker.inbound.v2.<code-session-id>` 和回应 subject
+`oma.worker.inbound.v2.<code-session-id>.reply`，各创建一个稳定 durable pull consumer。精确 filter
+互不重叠，满足 `WorkQueuePolicy` 限制。两路均配置为 `DeliverAll`、`AckExplicit`、
 `MaxAckPending=1`、无限 `MaxDeliver`，退避 1 分钟、5 分钟、15 分钟，之后保持 15 分钟。
+各路内部串行；控制回应可以越过未完成任务及排队输入，解除循环等待。分类及顺序约束见
+[Worker 入站投递设计](ccrv2/ccr-v2-worker-events-delivery-backend-design.md#stream-与顺序)。
 
 SSE 断开不删除 consumer。worker 上报 `received` 或 `processing` 时发送 InProgress；只有
-`processed` 才 DoubleAck。终止或 30 天过期时删除该 consumer，并按 subject 清空消息。
+`processed` 才 DoubleAck。终止或 30 天过期时删除两个 consumer，并按两个精确 subject 清空消息。
 
 `workerevents.Delivery` 只携带 envelope 和 ACK subject。InProgress、DoubleAck 由 `Broker` 按
 ACK subject 执行，不在 delivery 中保存 SDK 方法或函数回调。SSE 或后台扫描发现过期时，必须先
@@ -65,7 +68,7 @@ ACK subject 执行，不在 delivery 中保存 SDK 方法或函数回调。SSE �
 失败时会丢失重试依据，且可能向同一 worker 放行下一条消息。
 
 后台每分钟按 subject 查找下一条实际存储消息，一轮最多检查 512 条；序号空洞不占预算。坏
-envelope 会告警，但不阻塞其他 Session 的扫描。其所属 Session 仍阻塞消费，以可信的 subject
+envelope 会告警，但不阻塞其他 Session 的扫描。同通道后续消息仍阻塞消费，以可信的 subject
 和存储时间加 30 天兜底终止；任何终止或队列清理失败都保留批次游标重试。
 
 ## 数据安全与大消息
@@ -83,7 +86,7 @@ JetStream envelope 可能包含用户内容，不得写入运行日志。编码�
 ## 验收
 
 连接层测试覆盖空 URL、JetStream 未启用和成功连接。worker event 测试使用内嵌三节点集群验证
-Stream 配置、duplicate window、durable consumer、全局 Stream sequence 和严格串行 ACK。
+Stream 配置、duplicate window、durable consumer、全局 Stream sequence、各通道串行 ACK 及回应越过排队输入。
 过期测试覆盖序号空洞、损坏 envelope 隔离，以及 PG 终止失败保留队列、恢复后重新终止和清理。
 
 ```bash

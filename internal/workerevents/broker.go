@@ -568,6 +568,9 @@ func (b *MemoryBroker) ScanExpired(_ context.Context, cursor uint64, limit int, 
 }
 
 func (b *MemoryBroker) PurgeSession(_ context.Context, codeSessionID string) error {
+	if _, err := Subject(codeSessionID); err != nil {
+		return err
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, lane := range deliveryLanes {

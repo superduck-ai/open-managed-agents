@@ -172,6 +172,15 @@ func (e *liveEnv) newSession(t *testing.T) *liveSession {
 
 func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage) *liveSession {
 	t.Helper()
+	var agentConfig struct {
+		Model struct {
+			ID string `json:"id"`
+		} `json:"model"`
+	}
+	requireOK(t, json.Unmarshal(snapshot, &agentConfig))
+	if agentConfig.Model.ID == "" {
+		t.Fatal("test agent snapshot must select a model")
+	}
 	ctx := t.Context()
 	now := time.Now().UTC()
 	org, workspace := e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String()
@@ -190,7 +199,7 @@ func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage)
 			t.Errorf("delete test session: %v", err)
 		}
 	})
-	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: "claude-opus-4-6", PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(uuid.NewString()), InitialWorkerEpoch: 1, CreatedAt: now})
+	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(uuid.NewString()), InitialWorkerEpoch: 1, CreatedAt: now})
 	requireOK(t, err)
 	f := &liveSession{env: e, session: session, code: code}
 	t.Cleanup(func() {

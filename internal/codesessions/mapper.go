@@ -11,6 +11,24 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
+// Only a live input can interrupt the currently executing command. Activation
+// retains its existing history conversion and never replays an old stop as a
+// new control request that could overtake initialization.
+func workerPayloadForQueuedPublicEvent(codeSessionID string, event db.SessionEvent) (json.RawMessage, error) {
+	if event.EventType != "user.interrupt" {
+		return workerPayloadForPublicEvent(codeSessionID, event.Payload, event.UUID, event.ProcessedAt)
+	}
+	return marshalRaw(map[string]any{
+		"type":       "control_request",
+		"uuid":       event.UUID,
+		"session_id": codeSessionID,
+		"created_at": formatTime(event.ProcessedAt),
+		"timestamp":  formatTime(event.ProcessedAt),
+		"request_id": event.UUID,
+		"request":    map[string]string{"subtype": "interrupt"},
+	})
+}
+
 func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallbackUUID string, fallback time.Time) (json.RawMessage, error) {
 	fields, err := decodeRawJSONObject(raw)
 	if err != nil {

@@ -32,13 +32,14 @@ func TestRealWorkerToolPermissions(t *testing.T) {
 	}
 	e := newLiveEnv(t)
 	for _, scenario := range []struct {
-		name, policy, decision  string
-		enabled, manual, writes bool
+		name, policy, decision             string
+		enabled, manual, writes, interrupt bool
 	}{
-		{"manual_deny", "always_ask", "deny", true, true, false},
-		{"automatic_deny", "always_allow", "", false, false, false},
-		{"manual_allow_with_queued_input", "always_ask", "allow", true, true, true},
-		{"automatic_allow", "always_allow", "", true, false, true},
+		{"public_interrupt_with_queued_input", "always_ask", "", true, true, false, true},
+		{"manual_deny", "always_ask", "deny", true, true, false, false},
+		{"automatic_deny", "always_allow", "", false, false, false, false},
+		{"manual_allow_with_queued_input", "always_ask", "allow", true, true, true, false},
+		{"automatic_allow", "always_allow", "", true, false, true, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			snapshot, err := json.Marshal(map[string]any{
@@ -93,13 +94,18 @@ func TestRealWorkerToolPermissions(t *testing.T) {
 				e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{
 					"events": []any{map[string]any{"type": "user.message", "content": []any{map[string]string{"type": "text", "text": "Reply queued done after the previous task."}}}},
 				}, 200)
-				info := f.consumer(t)
-				if info.Config.MaxAckPending != 1 || info.NumAckPending != 1 || info.NumPending != 1 {
-					t.Fatalf("expected blocked task lane: %+v", info)
+				waitRealWorker(t, "blocked task lane", func() bool {
+					info := f.consumer(t)
+					if info.Config.MaxAckPending != 1 {
+						t.Fatal("delivery window changed")
+					}
+					return info.NumAckPending == 1 && info.NumPending == 1
+				})
+				input := map[string]string{"type": "user.tool_confirmation", "tool_use_id": publicToolID, "result": scenario.decision}
+				if scenario.interrupt {
+					input = map[string]string{"type": "user.interrupt"}
 				}
-				e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{
-					"events": []any{map[string]string{"type": "user.tool_confirmation", "tool_use_id": publicToolID, "result": scenario.decision}},
-				}, 200)
+				e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{"events": []any{input}}, 200)
 			}
 			waitRealWorker(t, "all input and response ACKs", func() bool {
 				if modelCalls.Load() < 2 {

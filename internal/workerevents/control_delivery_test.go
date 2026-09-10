@@ -12,6 +12,27 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+func TestMemoryPurgeRejectsInvalidSessionWithoutRemovingReply(t *testing.T) {
+	broker := NewMemory()
+	const sessionID = "cse_purge_identity"
+	sub, err := broker.Subscribe(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sub.Close() })
+	publishControlTestEvent(t, broker, sessionID, "reply", "control_response", "success")
+	reply := receiveWorkerDelivery(t, sub)
+	if err := broker.PurgeSession(t.Context(), sessionID+".reply"); err == nil {
+		t.Fatal("invalid session ID must not alias another session's reply lane")
+	}
+	if len(broker.Pending(sessionID)) != 1 {
+		t.Fatal("invalid purge removed the valid session's reply")
+	}
+	if err := broker.DoubleAck(t.Context(), reply.AckSubject); err != nil {
+		t.Fatalf("invalid purge removed the valid session's ACK mapping: %v", err)
+	}
+}
+
 func TestReplyDecodeFailureClosesBothReadersWithoutAcknowledging(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())

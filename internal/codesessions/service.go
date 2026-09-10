@@ -111,7 +111,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			queued = true
 			continue
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.UUID, event.ProcessedAt)
+		payload, err := workerPayloadForQueuedPublicEvent(codeSession.ExternalID, event)
 		if err != nil {
 			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}

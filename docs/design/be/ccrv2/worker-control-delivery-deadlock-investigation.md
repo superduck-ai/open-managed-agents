@@ -85,7 +85,13 @@ flowchart LR
 
 `internal/workerevents/lanes.go` 集中分类：`control_response` 和 `control_request/interrupt`
 进入回应通道。initialize、启动历史、普通用户输入与未知类型保持任务顺序；公共工具确认和
-自定义工具结果沿用现有 payload 转换，不更改公共 API 合同。
+自定义工具结果沿用现有 payload 转换。实时 `user.interrupt` 在公共事件入队边界转换成
+`control_request/interrupt`，沿用持久化事件 UUID，公共 API 请求格式不变。启动历史不将旧的
+停止事件转换成新的中断指令，避免它抢先取消新 Worker 的任务。
+
+补充验证发现：真实 Worker 对原始 `user.interrupt` 只回报 received，并记录未知消息类型，
+不会停止当前命令。修复前，完整 API 的“等待审批、再排队输入、点击停止”测试超时；修复后
+标准中断通过回应通道到达，原任务取消、排队输入继续，两个通道均完成 ACK。
 
 两路读取使用有界 Subscription，交给原有 SSE 单写入循环；关闭或一路读取失败会取消两路。
 ACK 仍按 Session、epoch 和 event ID 定位原始 ACK subject，`processed` 才完成各自消息。
@@ -112,13 +118,14 @@ Stream sequence 继续表示存储位置，合并后的发送序号允许非单�
 ## 回归与验收
 
 默认测试覆盖 Memory/JetStream 两路顺序、回应连续 ACK、未知类型分类、到期扫描、两路
-purge 及 consumer 删除失败后保留消息。真实 Worker 的 opt-in 回归覆盖：
+purge、非法会话 ID 拒绝及 consumer 删除失败后保留消息。真实 Worker 的 opt-in 回归覆盖：
 
 - 五个隔离场景：未知 request ID 回应后再审批、中断等待中的任务、普通审批、回应越过排队
   输入并重连、纯文本。审批先以较大序号到达，重连后较小序号输入仍执行完成。
-- 四个完整 OMA API 场景：手动拒绝、自动拒绝、手动允许且有排队输入、自动允许。使用真实
-  API、PostgreSQL、Redis、JetStream 与 Worker，仅模型输出使用 fixture；公共 tool-use ID
-  经过实际审批状态映射。允许时验证文件内容，拒绝时验证文件不存在。
+- 五个完整 OMA API 场景：等待审批且有排队输入时发送公共停止事件、手动拒绝、自动拒绝、
+  手动允许且有排队输入、自动允许。使用真实 API、PostgreSQL、Redis、JetStream 与 Worker，
+  仅模型输出使用 fixture；公共 tool-use ID 经过实际审批状态映射。允许时验证文件内容，拒绝
+  或中断时验证文件不存在，并确认后续输入执行完成。
 - 原有九个 liveworker 协议场景：覆盖真实重投、Redis ACK 丢失、旧 epoch、大 payload
   完整性与对象清理、Session 隔离及后台到期终止。
 

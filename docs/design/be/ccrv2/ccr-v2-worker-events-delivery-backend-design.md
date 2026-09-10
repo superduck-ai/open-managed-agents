@@ -82,7 +82,13 @@ Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发�
 
 `internal/workerevents/lanes.go` 集中定义分类。`control_response`（包括审批和已转换的自定义工具结果）
 及 `control_request` 中 subtype 为 `interrupt` 的消息进入回应通道；initialize、启动历史、用户输入
-和未知类型留在任务通道。原始公共事件的 payload 转换合同不变，不把所有 control_request 放行。
+和未知类型留在任务通道，不把所有 control_request 放行。
+
+公共 API 继续接受 `user.interrupt`。active 会话的实时入队边界将它转换为 Worker 支持的
+`control_request` + `request.subtype=interrupt`，使用已持久化事件 UUID 作为稳定的 payload UUID
+和 request ID，再由上述规则送到回应通道。原始 `user.interrupt` 不是 Claude Code 支持的 wire
+消息类型；仅调整 subject 不足以让停止生效。启动历史沿用原有转换，避免历史停止操作变成新的
+中断指令并越过 initialize。公共工具确认和自定义工具结果继续使用已有的控制回应转换。
 
 两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。每路最多一条未完成消息，
 不会为了寻找回应而把用户输入全部预取到内存。两个 consumer 均使用：

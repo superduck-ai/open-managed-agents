@@ -89,7 +89,7 @@ export function AddWorkspaceMemberDialog({
             ))}
           </SelectContent>
         </Select>
-        {!candidates.isLoading && filtered.length === 0 ? (
+        {!candidates.isLoading && !candidates.isError && filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {msg('members.addDialog.noEligible', 'No eligible organization members found.')}
           </p>

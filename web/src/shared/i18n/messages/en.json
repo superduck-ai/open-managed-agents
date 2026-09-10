@@ -1913,6 +1913,7 @@
   "managedAgents.git.checkout.none": "None",
   "managedAgents.git.keepResources": "Keep existing resources",
   "managedAgents.git.mount": "Mount path (optional)",
+  "managedAgents.git.mountPlaceholder": "/workspace/repo-name (default)",
   "managedAgents.git.mountError": "Use a directory under /workspace, without relative or reserved path segments.",
   "managedAgents.git.remove": "Remove Git repository {index}",
   "managedAgents.git.replaceHelp": "This replaces the entire resource list. Re-enter tokens for private repositories; leave blank for anonymous access.",

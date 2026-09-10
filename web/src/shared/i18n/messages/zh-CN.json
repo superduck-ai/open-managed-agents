@@ -1913,6 +1913,7 @@
   "managedAgents.git.checkout.none": "不指定",
   "managedAgents.git.keepResources": "保留现有资源",
   "managedAgents.git.mount": "挂载路径（可选）",
+  "managedAgents.git.mountPlaceholder": "/workspace/repo-name（默认）",
   "managedAgents.git.mountError": "请使用 /workspace 下的目录，不含相对或保留路径段。",
   "managedAgents.git.remove": "移除 Git 仓库 {index}",
   "managedAgents.git.replaceHelp": "这将替换整个资源列表。私有仓库需重新填写令牌；留空则匿名访问。",

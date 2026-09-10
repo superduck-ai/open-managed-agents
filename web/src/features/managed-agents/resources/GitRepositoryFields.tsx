@@ -14,7 +14,13 @@ function GitInputField({ label, error, ...props }: ComponentProps<typeof Input> 
   return (
     <Field data-invalid={Boolean(error)}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input {...props} id={id} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} />
+      <Input
+        {...props}
+        className="font-mono"
+        id={id}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? `${id}-error` : undefined}
+      />
       {error ? (
         <FieldDescription id={`${id}-error`} className="text-destructive">
           {error}
@@ -68,7 +74,7 @@ export function GitRepositoryFields({
           type="url"
           required
           value={resource.url}
-          placeholder="https://git.example.com/group/repo.git"
+          placeholder="https://github.com/owner/repo"
           onChange={(event) => patch({ url: event.target.value })}
           error={
             resource.url && !gitResourceURLValid(resource.url)
@@ -84,6 +90,7 @@ export function GitRepositoryFields({
           type="password"
           autoComplete="new-password"
           value={resource.authorizationToken}
+          placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
           maxLength={8192}
           onChange={(event) => patch({ authorizationToken: event.target.value })}
         />
@@ -118,7 +125,7 @@ export function GitRepositoryFields({
                   : msg('managedAgents.git.branch', 'Branch name')
               }
               value={resource.checkoutValue}
-              placeholder={resource.checkoutType === 'commit' ? 'Commit SHA' : 'main'}
+              placeholder={resource.checkoutType === 'commit' ? 'abc123...' : 'main'}
               maxLength={resource.checkoutType === 'commit' ? 64 : 255}
               error={
                 resource.checkoutType === 'commit' &&
@@ -134,7 +141,7 @@ export function GitRepositoryFields({
         <GitInputField
           label={msg('managedAgents.git.mount', 'Mount path (optional)')}
           value={resource.mountPath}
-          placeholder="/workspace/repo-name"
+          placeholder={msg('managedAgents.git.mountPlaceholder', '/workspace/repo-name (default)')}
           onChange={(event) => patch({ mountPath: event.target.value })}
           error={
             !gitResourceMountPathValid(resource.mountPath)

@@ -155,6 +155,8 @@ func TestSignCommitHTTPContract(t *testing.T) {
 		{name: "empty contents", sessionID: "cse_test", token: managedToken, body: `{"contents":""}`, wantStatus: http.StatusBadRequest},
 		{name: "invalid object format", sessionID: "cse_test", token: managedToken, body: `{"contents":"commit","git_object_format":"md5"}`, wantStatus: http.StatusBadRequest},
 		{name: "invalid source", sessionID: "cse_test", token: managedToken, body: `{"contents":"commit","source":{"type":"url"}}`, wantStatus: http.StatusBadRequest},
+		{name: "missing git type", sessionID: "cse_test", token: managedToken, body: `{"contents":"commit","source":{"type":"git_repository","git_info":{"repo":"group/widgets"}}}`, wantStatus: http.StatusBadRequest},
+		{name: "missing git repo", sessionID: "cse_test", token: managedToken, body: `{"contents":"commit","source":{"type":"git_repository","git_info":{"type":"git"}}}`, wantStatus: http.StatusBadRequest},
 	}
 	for _, test := range failures {
 		t.Run("failure "+test.name, func(t *testing.T) {
@@ -173,42 +175,44 @@ func TestSignCommitHTTPContract(t *testing.T) {
 		}
 	})
 
-	t.Run("success", func(t *testing.T) {
-		contents := "  exact commit contents\n"
-		body, err := json.Marshal(signCommitRequest{
-			Contents: contents,
-			Source: &signCommitSource{
-				Type: "git_repository",
-				GitInfo: &signCommitGitInfo{
-					Type: "github",
-					Repo: "superduck-ai/open-managed-agents",
-					Ref:  "refs/heads/main",
+	for _, gitType := range []string{"github", "gitlab", "git"} {
+		t.Run("success "+gitType, func(t *testing.T) {
+			contents := "  exact commit contents\n"
+			body, err := json.Marshal(signCommitRequest{
+				Contents: contents,
+				Source: &signCommitSource{
+					Type: "git_repository",
+					GitInfo: &signCommitGitInfo{
+						Type: gitType,
+						Repo: "superduck-ai/open-managed-agents",
+						Ref:  "refs/heads/main",
+					},
 				},
-			},
-			GitObjectFormat: "sha256",
+				GitObjectFormat: "sha256",
+			})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			response := performSignCommitRequest(t, router, "cse_test", managedToken, string(body))
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+			}
+			var decoded signCommitResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			parsed := parseTestSSHSIG(t, decoded.Signature)
+			digest := sha512.Sum512([]byte(contents))
+			signedData := append([]byte(nil), sshSignatureMagic...)
+			signedData = appendSSHString(signedData, []byte(parsed.namespace))
+			signedData = appendSSHString(signedData, parsed.reserved)
+			signedData = appendSSHString(signedData, []byte(parsed.hashAlgorithm))
+			signedData = appendSSHString(signedData, digest[:])
+			if !ed25519.Verify(parsed.publicKey, signedData, parsed.signature) {
+				t.Fatal("HTTP response did not sign the exact contents")
+			}
 		})
-		if err != nil {
-			t.Fatalf("marshal request: %v", err)
-		}
-		response := performSignCommitRequest(t, router, "cse_test", managedToken, string(body))
-		if response.Code != http.StatusOK {
-			t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
-		}
-		var decoded signCommitResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
-			t.Fatalf("decode response: %v", err)
-		}
-		parsed := parseTestSSHSIG(t, decoded.Signature)
-		digest := sha512.Sum512([]byte(contents))
-		signedData := append([]byte(nil), sshSignatureMagic...)
-		signedData = appendSSHString(signedData, []byte(parsed.namespace))
-		signedData = appendSSHString(signedData, parsed.reserved)
-		signedData = appendSSHString(signedData, []byte(parsed.hashAlgorithm))
-		signedData = appendSSHString(signedData, digest[:])
-		if !ed25519.Verify(parsed.publicKey, signedData, parsed.signature) {
-			t.Fatal("HTTP response did not sign the exact contents")
-		}
-	})
+	}
 }
 
 func configForCodeSigningTest() config.Config {

@@ -83,17 +83,6 @@ func nullableStringFromRaw(raw json.RawMessage, name string) (*string, error) {
 	return &value, nil
 }
 
-func optionalStringWithDefault(raw json.RawMessage, fallback, name string) (string, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return fallback, nil
-	}
-	value, err := parseRequiredRawString(raw, name)
-	if err != nil {
-		return "", err
-	}
-	return value, nil
-}
-
 func copyOptionalPayloadString(payload map[string]any, raw json.RawMessage, name string) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return

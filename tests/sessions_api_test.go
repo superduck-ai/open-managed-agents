@@ -1367,7 +1367,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("make session projection stale: %v", err)
 	}
 	retryService := newCodeSessionService(app, nil, nil)
-	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, nil)
+	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, app.vaultSecrets, nil)
 	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
 		t.Fatalf("retry existing running event projection: %v", err)
 	}

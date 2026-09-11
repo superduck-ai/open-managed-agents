@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
@@ -33,11 +34,12 @@ const (
 )
 
 type Handler struct {
-	db           *db.DB
-	deployments  *Store
-	webhooks     webhookEnqueuer
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	secretService *secrets.Service
+	db            *db.DB
+	deployments   *Store
+	webhooks      webhookEnqueuer
+	errorAdapter  *httpapi.ErrorAdapter
+	router        chi.Router
 }
 
 type webhookEnqueuer interface {
@@ -91,12 +93,6 @@ type deploymentMutationRequest struct {
 	Resources     json.RawMessage `json:"resources"`
 	Schedule      json.RawMessage `json:"schedule"`
 	VaultIDs      json.RawMessage `json:"vault_ids"`
-}
-
-type deploymentCheckoutRequest struct {
-	Name json.RawMessage `json:"name"`
-	SHA  json.RawMessage `json:"sha"`
-	Type json.RawMessage `json:"type"`
 }
 
 type deploymentRunResponse struct {
@@ -234,9 +230,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, secretService *secrets.Service, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, secretService: secretService, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -1557,26 +1553,6 @@ func normalizeOutcomeRubric(raw json.RawMessage) (*deploymentOutcomeRubric, erro
 		return nil, err
 	}
 	return rubric, nil
-}
-
-func validateCheckout(raw json.RawMessage) error {
-	var checkout deploymentCheckoutRequest
-	if err := json.Unmarshal(raw, &checkout); err != nil {
-		return errors.New("checkout must be an object")
-	}
-	checkoutType, err := parseRequiredRawString(checkout.Type, "type")
-	if err != nil {
-		return err
-	}
-	switch checkoutType {
-	case "branch":
-		_, err = parseRequiredRawString(checkout.Name, "name")
-	case "commit":
-		_, err = parseRequiredRawString(checkout.SHA, "sha")
-	default:
-		err = errors.New("checkout.type must be branch or commit")
-	}
-	return err
 }
 
 func deploymentAPIContractEnabled(r *http.Request) bool {

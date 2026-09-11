@@ -1,8 +1,12 @@
 package environments
 
 import (
+	"errors"
+
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 )
+
+var errGitResourcesRequireMITM = errors.New("git resources require code_session.upstream_proxy_mitm_enabled")
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

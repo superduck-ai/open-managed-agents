@@ -44,6 +44,7 @@ sequenceDiagram
 
 - `contents` 必须非空，并按解码后的原始 UTF-8 字节签名；不得修剪空白。
 - `source` 可省略，仅作为已脱敏的仓库元数据，不进入签名或授权决策。提供时必须是带 provider 和 repo 的 `git_repository`。
+- OMA 从 Session/Deployment 的 URL 型 Git 资源生成 EM source 时，统一填入 `git_info.type: "git"`，表示通过显式 URL 访问的通用 Git 仓库；GitHub、GitLab 和自建主机都适用，不根据域名猜测 provider。`repo` 保留仓库 URL 的路径（含嵌套分组和可选 `.git` 后缀），clone 继续使用 `git_info.url`。EM 将非空 type 与 repo 传入签名请求，省略 URL 和凭据。已有 `github`、`gitlab` 等非空类型仍被签名接口接受，空类型继续返回 400。
 - `git_object_format` 可省略，默认 `sha1`；可选值为 `sha1`、`sha256`。该字段描述 Git 仓库对象格式，SSHSIG 自身始终使用 SHA-512 摘要。
 
 成功响应为 HTTP 200：
@@ -72,3 +73,7 @@ just print-code-session-signing-public-key \
 ## environment-manager 行为
 
 environment-manager 全局配置 `gpg.format=ssh`、`gpg.ssh.program=/tmp/code-sign`、`user.signingkey=~/.ssh/commit_signing_key.pub` 和 `commit.gpgsign=true`。Anthropic 模板仓库也保留本地 `commit.gpgsign=true`；仅模板初始提交显式使用 `--no-gpg-sign`，避免环境初始化与 codesign MCP 并行启动时发生竞态。此后的普通 `git commit` 必须获得远程签名，服务不可用时提交失败而不是降级为未签名提交。
+
+## 合同回归
+
+`internal/environments` 的 `TestManagedAgentGitSourcesIncludeSigningType` 覆盖 GitHub、GitLab 和自建主机的 source 生成；`internal/codesessions` 的 `TestSignCommitHTTPContract` 覆盖通用 `git` 元数据的签名和签名验证，并保留缺失 type/repo 的失败校验。该修复由 OMA 在生成启动 payload 时生效，当前 em-rs 已能透传此字段，无需升级 Sandbox 镜像；已有 Sandbox 的签名上下文不会随 OMA 源码更新而自动改变，需通过新建 Session 验证。

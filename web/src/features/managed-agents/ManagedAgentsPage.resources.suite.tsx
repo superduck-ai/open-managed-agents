@@ -2120,7 +2120,7 @@ export function registerManagedAgentsResourceTests() {
 
     const dialog = screen.getByRole('dialog', { name: 'Create session' });
     fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: 'Console session' } });
-    expect(within(dialog).getByText('Mount files into the session uploads directory.')).toBeTruthy();
+    expect(within(dialog).getByText('Mount files and Git repositories into the session.')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
     const createSessionButton = within(dialog).getByRole('button', { name: 'Create session' });

@@ -5,8 +5,6 @@ package sessionresource
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
@@ -46,7 +44,7 @@ type filePayload struct {
 // API object in its own workspace and error-mapping boundary.
 func ParseFileID(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 {
-		return "", errors.New("file_id is required")
+		return "", requiredFieldError("file_id")
 	}
 	return requiredString(raw, "file_id")
 }
@@ -55,7 +53,7 @@ func ParseFileID(raw json.RawMessage) (string, error) {
 // caller has resolved fileID in the current workspace.
 func NormalizeFileSpec(fileID, filename string, sourceRaw, mountPathRaw json.RawMessage) (FileSpec, error) {
 	if strings.TrimSpace(fileID) == "" {
-		return FileSpec{}, errors.New("file_id must be non-empty")
+		return FileSpec{}, emptyFieldError("file_id")
 	}
 	if _, err := sandboxmount.NormalizeFileSource(sourceRaw); err != nil {
 		return FileSpec{}, err
@@ -80,16 +78,16 @@ func NormalizeFileSpec(fileID, filename string, sourceRaw, mountPathRaw json.Raw
 func ParseStoredFileSpec(raw json.RawMessage) (FileSpec, error) {
 	var payload filePayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return FileSpec{}, errors.New("stored file resource is invalid")
+		return FileSpec{}, errStoredFileResource
 	}
 	if payload.Type != FileType {
-		return FileSpec{}, fmt.Errorf("stored file resource type must be %q", FileType)
+		return FileSpec{}, errStoredFileResourceType
 	}
 	if strings.TrimSpace(payload.FileID) == "" {
-		return FileSpec{}, errors.New("stored file resource file_id is required")
+		return FileSpec{}, errStoredFileIDRequired
 	}
 	if payload.Source != sandboxmount.FileSource {
-		return FileSpec{}, fmt.Errorf("stored file resource source must be %q", sandboxmount.FileSource)
+		return FileSpec{}, errStoredFileResourceSource
 	}
 	if err := sandboxmount.ValidateFileMountPath(payload.MountPath); err != nil {
 		return FileSpec{}, err
@@ -110,7 +108,7 @@ func ParseFilePayload(raw json.RawMessage, resourceID string) (FileSpec, error) 
 		payload.Type != FileType ||
 		strings.TrimSpace(payload.FileID) == "" ||
 		payload.Source != sandboxmount.FileSource {
-		return FileSpec{}, errors.New("file resource payload is invalid")
+		return FileSpec{}, errFileResourcePayload
 	}
 	if err := sandboxmount.ValidateFileMountPath(payload.MountPath); err != nil {
 		return FileSpec{}, err
@@ -155,7 +153,7 @@ func (s FileSpec) SessionFileBinding(resourceID string) (SessionFileBinding, err
 // mount-path conflict contract to normalized specs.
 func ValidateFileSpecs(specs []FileSpec) error {
 	if len(specs) > MaxFileResources {
-		return fmt.Errorf("at most %d managed-agent file resources are allowed", MaxFileResources)
+		return errTooManyFileResources
 	}
 	mountPaths := make([]string, 0, len(specs))
 	for _, spec := range specs {
@@ -166,14 +164,14 @@ func ValidateFileSpecs(specs []FileSpec) error {
 
 func requiredString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || isJSONNull(raw) {
-		return "", fmt.Errorf("%s is required", name)
+		return "", requiredFieldError(name)
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", fmt.Errorf("%s must be a string", name)
+		return "", stringFieldTypeError(name)
 	}
 	if strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("%s must be non-empty", name)
+		return "", emptyFieldError(name)
 	}
 	return value, nil
 }

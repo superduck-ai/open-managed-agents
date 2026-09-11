@@ -618,13 +618,13 @@ export function AgentsResourcePage({
             onAction={retryAgentsLoad}
           />
         ) : isAgentsPage ? (
-          <Table className={dataTableClassName}>
+          <Table className={cn(dataTableClassName, 'min-w-[1063px]')}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
                 <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>
                   {managedColumnLabel('ID', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-auto')}>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[200px]')}>
                   {managedColumnLabel('Name', msg)}
                 </TableHead>
                 <TableHead className={cn(dataTableHeaderCellClassName, 'w-[210px]')}>

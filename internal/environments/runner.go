@@ -549,7 +549,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 		return nil, err
 	}
 	runtimeResources := resolveManagedAgentRuntimeResources(resources)
-	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
+	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources)
+	if err != nil {
+		return nil, fmt.Errorf("derive managed agent launch config: %w", err)
+	}
 	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)
 	if err != nil {
 		return nil, err

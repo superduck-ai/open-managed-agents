@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -45,7 +46,11 @@ These rules describe the current sandbox environment and do not replace your ass
 func managedAgentSessionConfig(
 	session db.Session,
 	runtimeResources managedAgentRuntimeResources,
-) json.RawMessage {
+) (json.RawMessage, error) {
+	toolArgs, err := agentsnapshot.ClaudeToolArgsFromSnapshot(session.AgentSnapshot)
+	if err != nil {
+		return nil, err
+	}
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
@@ -55,6 +60,13 @@ func managedAgentSessionConfig(
 		"sources":              runtimeResources.sources,
 		"outcomes":             []any{},
 		"append_system_prompt": managedAgentEnvironmentPrompt,
+		"claude_code_args": map[string]string{
+			"tools": toolArgs.Tools,
+		},
+	}
+	claudeCodeArgs := body["claude_code_args"].(map[string]string)
+	if toolArgs.AllowedTools != "" {
+		claudeCodeArgs["allowed-tools"] = toolArgs.AllowedTools
 	}
 	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
 		body["system_prompt"] = system
@@ -64,7 +76,7 @@ func managedAgentSessionConfig(
 		if mcpConfig := managedAgentMCPConfig(mcpServers, tools); len(mcpConfig) > 0 {
 			body["mcp_config"] = mcpConfig
 			body["mcp_config_file"] = managedAgentMCPConfigFile(mcpConfig)
-			body["claude_code_args"] = map[string]string{"mcp-config": managedAgentMCPConfigPath}
+			claudeCodeArgs["mcp-config"] = managedAgentMCPConfigPath
 		}
 	}
 	if len(tools) > 0 {
@@ -73,8 +85,7 @@ func managedAgentSessionConfig(
 	if len(session.VaultIDs) > 0 {
 		body["vault_ids"] = session.VaultIDs
 	}
-	raw, _ := json.Marshal(body)
-	return raw
+	return json.Marshal(body)
 }
 
 func managedAgentMCPConfig(mcpServers []any, tools []any) map[string]any {

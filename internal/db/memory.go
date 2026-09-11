@@ -9,6 +9,9 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+// maxMemoriesPerStore 是官方契约：每 store 最多 2,000 条 memory。
+const maxMemoriesPerStore = 2000
+
 type MemoryStore struct {
 	UUID                string
 	ExternalID          string
@@ -314,6 +317,13 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 		if txErr = ensureMemoryPathAvailable(ctx, memoryMapper, store.WorkspaceUUID, store.UUID, memory.Path, ""); txErr != nil {
 			return txErr
 		}
+		count, txErr := memoryMapper.CountActive(ctx, store.WorkspaceUUID, store.ExternalID)
+		if txErr != nil {
+			return txErr
+		}
+		if count >= maxMemoriesPerStore {
+			return ErrMemoryStoreLimit
+		}
 
 		row, txErr := memoryMapper.Insert(ctx, insertMemoryParams{
 			UUID:                     memory.UUID,
@@ -335,6 +345,14 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 		}
 		insertedMemory, txErr := memoryFromMapperRow(row, txErr)
 		if txErr != nil {
+			return txErr
+		}
+		// 30 天版本保留：每次写入时惰性清理过期版本（官方 memory.md 契约）。
+		if _, txErr = versionMapper.DeleteOlderThan(ctx, deleteMemoryVersionsOlderThanParams{
+			WorkspaceUUID:         store.WorkspaceUUID,
+			MemoryStoreExternalID: store.ExternalID,
+			CreatedBefore:         memory.CreatedAt.Add(-memoryVersionRetention),
+		}); txErr != nil {
 			return txErr
 		}
 
@@ -606,6 +624,9 @@ func (d *DB) GetMemoryVersion(ctx context.Context, workspaceUUID, memoryStoreExt
 	row, err := mapper.FindByExternalID(ctx, workspaceUUID, memoryStoreExternalID, versionExternalID)
 	return memoryVersionFromMapperRow(row, err)
 }
+
+// memoryVersionRetention is the official 30-day version retention window.
+const memoryVersionRetention = 30 * 24 * time.Hour
 
 func (d *DB) ListMemoryVersionsPage(ctx context.Context, params ListMemoryVersionsPageParams) ([]MemoryVersion, bool, error) {
 	if params.Limit <= 0 {

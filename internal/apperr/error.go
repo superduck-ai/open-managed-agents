@@ -29,7 +29,9 @@ type Error struct {
 	Kind Kind
 	// PublicMessage must be non-empty and safe to expose to clients.
 	PublicMessage string
-	cause         error
+	// ErrorType overrides the wire error code chosen by transport adapters.
+	ErrorType string
+	cause     error
 }
 
 // New creates a client-presentable application error while preserving its
@@ -38,6 +40,17 @@ func New(kind Kind, publicMessage string, cause error) *Error {
 	return &Error{
 		Kind:          kind,
 		PublicMessage: publicMessage,
+		cause:         cause,
+	}
+}
+
+// NewWithType creates an application error with an explicit wire error type,
+// used when the transport must emit a code more specific than the kind default.
+func NewWithType(kind Kind, errorType, publicMessage string, cause error) *Error {
+	return &Error{
+		Kind:          kind,
+		PublicMessage: publicMessage,
+		ErrorType:     errorType,
 		cause:         cause,
 	}
 }

@@ -35,6 +35,7 @@ var (
 	ErrStorageLimitExceeded     = errors.New("storage limit exceeded")
 	ErrStorageUsageUnderflow    = errors.New("storage usage underflow")
 	ErrLimitExceeded            = errors.New("limit exceeded")
+	ErrMemoryStoreLimit         = errors.New("memory store limit exceeded")
 	ErrFileInUse                = errors.New("file is in use")
 	ErrFileReferenceNotFound    = errors.New("file reference not found")
 	ErrStaleSchedule            = errors.New("stale deployment schedule")

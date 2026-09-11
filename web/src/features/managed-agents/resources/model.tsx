@@ -331,8 +331,24 @@ export function initialFormValues(
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
     memoryStoreIds: entity ? entityMemoryStoreIds(entity) : [],
+    memoryAccess: entity ? entityMemoryAccess(entity) : 'read_write',
     fileResources: [],
   };
+}
+
+export function entityMemoryAccess(entity: ManagedEntityApiResponse): 'read_write' | 'read_only' {
+  if (!('resources' in entity) || !Array.isArray(entity.resources)) {
+    return 'read_write';
+  }
+  for (const resource of entity.resources) {
+    if (resource && typeof resource === 'object' && (resource as { type?: unknown }).type === 'memory_store') {
+      const access = (resource as { access?: 'read_write' | 'read_only' }).access;
+      if (access === 'read_write' || access === 'read_only') {
+        return access;
+      }
+    }
+  }
+  return 'read_write';
 }
 
 export function entityDisplayName(section: ManagedEntitySection, entity: ManagedEntityApiResponse) {

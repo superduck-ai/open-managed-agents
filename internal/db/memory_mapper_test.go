@@ -262,6 +262,13 @@ func TestMemoryMapperBuilderContracts(t *testing.T) {
 			argumentNames: []string{"workspaceUUID", "storeUUID"},
 			fragments:     []string{"DELETE FROM memories", "workspace_uuid = $1", "memory_store_uuid = $2"},
 		},
+		{
+			statement: memoryMapperCountActiveStatement,
+			bound:     buildMemoryMapperCountActive(yourbatis.DialectPostgres, "workspace-uuid", "store-id"),
+			id:        "MemoryMapper.CountActive", kind: yourbatis.StatementSelect,
+			argumentNames: []string{"workspaceUUID", "memoryStoreExternalID"},
+			fragments:     []string{"CAST(COUNT(*) AS integer)", "workspace_uuid = $1", "memory_store_external_id = $2"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.id, func(t *testing.T) {

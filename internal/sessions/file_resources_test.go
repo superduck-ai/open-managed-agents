@@ -127,3 +127,24 @@ func testNormalizedFileResource(t *testing.T, mountPath string) normalizedSessio
 		fileSpec: &spec,
 	}
 }
+
+func TestValidateNormalizedSessionResourcesMemoryStoreLimit(t *testing.T) {
+	// 失败场景先行：超过 8 个 memory_store 必须报错
+	memoryStore := normalizedSessionResource{resource: db.SessionResource{ResourceType: "memory_store"}}
+	var nineStores []normalizedSessionResource
+	for i := 0; i < 9; i++ {
+		nineStores = append(nineStores, memoryStore)
+	}
+	if err := validateNormalizedSessionResources(nineStores); err == nil {
+		t.Fatal("9 个 memory_store 应报错")
+	}
+
+	// 成功场景：8 个以内通过
+	var eightStores []normalizedSessionResource
+	for i := 0; i < 8; i++ {
+		eightStores = append(eightStores, memoryStore)
+	}
+	if err := validateNormalizedSessionResources(eightStores); err != nil {
+		t.Fatalf("8 个 memory_store 应通过: %v", err)
+	}
+}

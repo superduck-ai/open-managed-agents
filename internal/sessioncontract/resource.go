@@ -5,6 +5,13 @@ package sessioncontract
 const (
 	FileResourceType = "file"
 
+	// MemoryStoreResourceType is the Session resource type for memory stores.
+	MemoryStoreResourceType = "memory_store"
+
+	// MaxMemoryStoresPerSession is the official Claude managed-agents ceiling
+	// for memory stores attached to one session.
+	MaxMemoryStoresPerSession = 8
+
 	// MaxResources is the official Claude managed-agents ceiling for the top-level
 	// Session/Deployment resources array (mixed types).
 	MaxResources = 500

@@ -1808,6 +1808,10 @@ func (h *Handler) writeMemoryMutationError(w http.ResponseWriter, r *http.Reques
 		writeMemorySpecificError(w, r, http.StatusConflict, "memory_path_conflict_error", "Memory path conflicts with existing memory", nil)
 		return
 	}
+	if errors.Is(err, db.ErrMemoryStoreLimit) {
+		writeMemorySpecificError(w, r, http.StatusConflict, "memory_store_limit_error", "Memory store limit exceeded (max 2000 memories)", nil)
+		return
+	}
 	h.logger.ErrorContext(r.Context(), "memory mutation", "error", err)
 	writeAPIError(w, r, "Memory mutation failed")
 }

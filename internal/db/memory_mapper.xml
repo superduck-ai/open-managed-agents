@@ -218,6 +218,14 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="CountActive" result="scalar">
+        SELECT CAST(COUNT(*) AS integer)
+        FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
+        AND deleted_at IS NULL
+    </select>
+
     <delete id="DeleteByStoreUUID" result="exec">
         DELETE FROM memories
         WHERE workspace_uuid = #{workspaceUUID}

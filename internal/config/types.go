@@ -89,7 +89,8 @@ type NATSConfig struct {
 }
 
 type AuthConfig struct {
-	SMTP EmailSMTPConfig `yaml:"smtp"`
+	SMTP       EmailSMTPConfig `yaml:"smtp"`
+	ConsoleURL string          `yaml:"console_url"`
 }
 
 type EmailSMTPConfig struct {

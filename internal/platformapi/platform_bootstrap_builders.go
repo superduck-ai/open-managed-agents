@@ -1,12 +1,11 @@
 package platformapi
 
 func buildAccount(user UserRecord, orgs []UserOrganizationRecord, preferredOrgUUID string) (Account, string, error) {
-	if len(orgs) == 0 {
-		return Account{}, "", ErrNotFound
-	}
-
 	memberships := make([]Membership, 0, len(orgs))
-	selectedOrgUUID := orgs[0].UUID
+	selectedOrgUUID := ""
+	if len(orgs) > 0 {
+		selectedOrgUUID = orgs[0].UUID
+	}
 	for _, org := range orgs {
 		if org.UUID == preferredOrgUUID {
 			selectedOrgUUID = org.UUID
@@ -14,6 +13,8 @@ func buildAccount(user UserRecord, orgs []UserOrganizationRecord, preferredOrgUU
 		createdAt := isoTime(org.AddedAt)
 		organization := buildOrganization(org.OrganizationRecord)
 		memberships = append(memberships, Membership{
+			UserUUID:                org.UserUUID,
+			UserID:                  org.UserExternalID,
 			Organization:            organization,
 			Role:                    firstNonEmpty(org.Role, "admin"),
 			SeatTier:                "enterprise_standard",
@@ -30,6 +31,7 @@ func buildAccount(user UserRecord, orgs []UserOrganizationRecord, preferredOrgUU
 	}
 
 	account := Account{
+		DefaultOrganizationUUID:   selectedOrgUUID,
 		TaggedID:                  taggedUserID(user.UUID),
 		UUID:                      user.UUID,
 		EmailAddress:              user.Email,

@@ -1,4 +1,7 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
+import { InvitationEntryGate } from '../features/organizations/InvitationEntryGate';
+import { InvitationsPage } from '../features/organizations/InvitationsPage';
+import { invitationReturnTo } from '../features/organizations/api';
 import { ConsoleLayout } from './layout/ConsoleLayout';
 import { ProtectedConsoleLayout } from './layout/ProtectedConsoleLayout';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
@@ -13,7 +16,16 @@ import { WorkbenchPage } from '../features/workbench/WorkbenchPage';
 import { normalizeReturnTo } from '../shared/auth/redirects';
 
 const rootRoute = createRootRoute({
-  component: () => <Outlet />,
+  component: InvitationEntryGate,
+});
+
+const invitationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'invites',
+  validateSearch: (search: Record<string, unknown>) => ({
+    returnTo: invitationReturnTo(typeof search.returnTo === 'string' ? search.returnTo : undefined),
+  }),
+  component: InvitationsPage,
 });
 
 const loginRoute = createRoute({
@@ -469,6 +481,7 @@ const settingsFallbackRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  invitationsRoute,
   protectedRoute.addChildren([
     consoleRoute.addChildren([
       dashboardRoute,

@@ -72,13 +72,14 @@ type organizationResponse struct {
 }
 
 type inviteResponse struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	ExpiresAt string `json:"expires_at"`
-	InvitedAt string `json:"invited_at"`
-	Role      string `json:"role"`
-	Status    string `json:"status"`
-	Type      string `json:"type"`
+	EmailDelivery string `json:"email_delivery,omitempty"`
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	ExpiresAt     string `json:"expires_at"`
+	InvitedAt     string `json:"invited_at"`
+	Role          string `json:"role"`
+	Status        string `json:"status"`
+	Type          string `json:"type"`
 }
 
 type userResponse struct {

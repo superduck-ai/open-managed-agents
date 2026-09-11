@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { AuthAccount, BootstrapResponse } from './api';
 
-export type AuthStatus = 'loading' | 'authenticated' | 'anonymous';
+export type AuthStatus = 'loading' | 'authenticated' | 'anonymous' | 'error';
 
 export type AuthContextValue = {
   account: AuthAccount | null;

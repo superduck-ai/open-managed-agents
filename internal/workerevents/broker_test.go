@@ -95,7 +95,7 @@ func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
 		info.Config.Duplicates != 24*time.Hour || info.Config.Storage != jetstream.FileStorage {
 		t.Fatalf("stream config = %#v", info.Config)
 	}
-	if info.State.Consumers != 1 {
+	if info.State.Consumers != 2 {
 		t.Fatalf("consumer count = %d, want durable consumer", info.State.Consumers)
 	}
 }

@@ -30,6 +30,7 @@ import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth, type AuthContextValue } from '../../shared/auth/context';
+import { useI18n } from '../../shared/i18n';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
@@ -83,6 +84,7 @@ function buildOrganizationMemberColumns({
   updateRoleMutation,
   resendInviteMutation,
   deleteInviteMutation,
+  msg,
   onInviteResend,
   onInviteRevoke,
 }: {
@@ -97,20 +99,21 @@ function buildOrganizationMemberColumns({
   deleteInviteMutation: OrganizationInviteActionMutation;
   onInviteResend: (invite: OrganizationInvite) => void;
   onInviteRevoke: (invite: OrganizationInvite) => void;
+  msg: ReturnType<typeof useI18n>['msg'];
 }) {
   const orgUuid = activeOrgUuid ?? '';
-  const organizationName = activeOrganization?.name ?? 'this organization';
+  const organizationName = activeOrganization?.name ?? msg('members.fallbackOrgName', 'this organization');
   return [
     memberColumnHelper.display({
       id: 'name',
-      header: 'Name',
+      header: msg('members.name', 'Name'),
       cell: ({ row }) => {
         if (isInviteRow(row.original)) {
           return (
             <div className="flex min-w-0 items-center gap-2">
               <span className="text-muted-foreground">–</span>
               <Badge variant="secondary" className="rounded-md px-1.5">
-                Pending
+                {msg('members.pendingBadge', 'Pending')}
               </Badge>
             </div>
           );
@@ -127,12 +130,12 @@ function buildOrganizationMemberColumns({
     }),
     memberColumnHelper.display({
       id: 'email',
-      header: 'Email',
+      header: msg('members.email', 'Email'),
       cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
     }),
     memberColumnHelper.display({
       id: 'role',
-      header: 'Role',
+      header: msg('members.role', 'Role'),
       cell: ({ row }) => {
         if (isInviteRow(row.original)) {
           return <span className="text-foreground">{roleLabel(normalizePlatformRole(row.original.role))}</span>;
@@ -148,7 +151,7 @@ function buildOrganizationMemberColumns({
 
         return (
           <RoleSelect
-            ariaLabel={`Role for ${displayMemberName(member)}`}
+            ariaLabel={msg('members.roleFor', 'Role for {name}', { name: displayMemberName(member) })}
             value={role}
             disabled={pendingRoleMemberId === member.id || updateRoleMutation.isPending}
             className="min-w-[144px]"
@@ -190,6 +193,7 @@ function buildOrganizationMemberColumns({
 }
 
 export function OrganizationMembersPage() {
+  const { msg } = useI18n();
   const { account, csrfToken } = useAuth();
   const { orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
@@ -247,10 +251,10 @@ export function OrganizationMembersPage() {
           current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite],
       );
       setInviteActionError(null);
-      notifyInvitationDelivery([updatedInvite]);
+      notifyInvitationDelivery([updatedInvite], msg);
     },
     onError: (error) => {
-      setInviteActionError(errorMessage(error));
+      setInviteActionError(errorMessage(error, msg('common.somethingWentWrong', 'Something went wrong. Try again.')));
     },
   });
 
@@ -263,10 +267,10 @@ export function OrganizationMembersPage() {
       );
       setInviteToRevoke(null);
       setInviteActionError(null);
-      toast.success('Invitation revoked.');
+      toast.success(msg('members.revokedToast', 'Invitation revoked.'));
     },
     onError: (error) => {
-      setInviteActionError(errorMessage(error));
+      setInviteActionError(errorMessage(error, msg('common.somethingWentWrong', 'Something went wrong. Try again.')));
     },
   });
 
@@ -305,6 +309,7 @@ export function OrganizationMembersPage() {
           setInviteActionError(null);
           setInviteToRevoke(invite);
         },
+        msg,
       }),
     [
       account,
@@ -316,6 +321,7 @@ export function OrganizationMembersPage() {
       pendingRoleMemberId,
       resendInviteMutation,
       updateRoleMutation,
+      msg,
     ],
   );
 
@@ -332,10 +338,12 @@ export function OrganizationMembersPage() {
       <section className="mx-auto w-full max-w-[1180px]">
         <Card>
           <CardHeader>
-            <h1 className="text-xl font-semibold tracking-normal text-foreground">Members</h1>
+            <h1 className="text-xl font-semibold tracking-normal text-foreground">{msg('members.title', 'Members')}</h1>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">No organization is available for this session.</p>
+            <p className="text-sm text-muted-foreground">
+              {msg('organizations.noOrgAvailable', 'No organization is available for this session.')}
+            </p>
           </CardContent>
         </Card>
       </section>
@@ -346,7 +354,7 @@ export function OrganizationMembersPage() {
     <section className="mx-auto w-full max-w-[1180px]" data-testid="organization-members-page">
       <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
         <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
-          <span>Members</span>
+          <span>{msg('members.title', 'Members')}</span>
           <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
             {titleCount}
           </Badge>
@@ -360,12 +368,16 @@ export function OrganizationMembersPage() {
             }}
           >
             <Plus className="size-4" aria-hidden />
-            Invite
+            {msg('members.invite', 'Invite')}
           </Button>
         ) : null}
       </div>
 
-      {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}
+      {updateRoleMutation.isError ? (
+        <InlineNotice>
+          {errorMessage(updateRoleMutation.error, msg('common.somethingWentWrong', 'Something went wrong. Try again.'))}
+        </InlineNotice>
+      ) : null}
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
       <div className="overflow-hidden border-y border-border">
@@ -387,7 +399,7 @@ export function OrganizationMembersPage() {
             ...createdInvites,
             ...(current ?? []),
           ]);
-          notifyInvitationDelivery(createdInvites);
+          notifyInvitationDelivery(createdInvites, msg);
         }}
       />
       <InviteRevokeDialog
@@ -419,8 +431,9 @@ function OrganizationMembersTable({
   hasTableError: boolean;
   onRetry: () => void;
 }) {
+  const { msg } = useI18n();
   return (
-    <Table className="table-fixed text-left" aria-label="Members">
+    <Table className="table-fixed text-left" aria-label={msg('members.title', 'Members')}>
       <TableHeader className="text-muted-foreground">
         {table.getHeaderGroups().map((headerGroup) => (
           <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
@@ -439,11 +452,11 @@ function OrganizationMembersTable({
             <TableCell colSpan={4} className="px-3 py-10">
               <Alert variant="destructive" className="mx-auto max-w-xl">
                 <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <AlertTitle>Members could not be loaded.</AlertTitle>
+                <AlertTitle>{msg('members.loadFailed', 'Members could not be loaded.')}</AlertTitle>
                 <AlertDescription>
-                  <p>Try again.</p>
+                  <p>{msg('members.tryAgainHint', 'Try again.')}</p>
                   <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetry}>
-                    Try again
+                    {msg('members.tryAgain', 'Try again')}
                   </Button>
                 </AlertDescription>
               </Alert>
@@ -453,7 +466,7 @@ function OrganizationMembersTable({
         {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
           <TableRow>
             <TableCell colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
-              No members found.
+              {msg('members.table.empty', 'No members found.')}
             </TableCell>
           </TableRow>
         ) : null}
@@ -486,6 +499,7 @@ function InviteMembersDialog({
   onOpenChange: (open: boolean) => void;
   onInvited: (createdInvites: OrganizationInvite[]) => void;
 }) {
+  const { msg } = useI18n();
   const [emailsValue, setEmailsValue] = useState('');
   const [role, setRole] = useState<PlatformRole>('user');
   const [submitValidationError, setSubmitValidationError] = useState<InviteValidationError | null>(null);
@@ -546,12 +560,12 @@ function InviteMembersDialog({
         initialFocus={textareaRef}
       >
         <DialogHeader>
-          <DialogTitle>Invite members</DialogTitle>
+          <DialogTitle>{msg('members.inviteTitle', 'Invite members')}</DialogTitle>
         </DialogHeader>
         <form className="space-y-5" onSubmit={handleSubmit}>
           <div>
             <Label htmlFor="invite-emails" className="mb-2">
-              Email addresses
+              {msg('members.emailsLabel', 'Email addresses')}
             </Label>
             <Textarea
               ref={textareaRef}
@@ -568,14 +582,14 @@ function InviteMembersDialog({
               aria-describedby="invite-emails-help"
             />
             <p id="invite-emails-help" className="mt-2 text-xs leading-5 text-muted-foreground">
-              Separate addresses with commas, spaces, or new lines. Up to 50 at once.
+              {msg('members.emailsHelp', 'Separate addresses with commas, spaces, or new lines. Up to 50 at once.')}
             </p>
           </div>
 
           <div>
-            <Label className="mb-2">Role</Label>
+            <Label className="mb-2">{msg('members.role', 'Role')}</Label>
             <RoleSelect
-              ariaLabel="Role"
+              ariaLabel={msg('members.role', 'Role')}
               value={role}
               disabled={inviteMutation.isPending}
               className="w-full"
@@ -588,11 +602,15 @@ function InviteMembersDialog({
           </div>
 
           {submitValidationError ? <InviteValidationNotice error={submitValidationError} /> : null}
-          {inviteMutation.isError ? <InlineNotice>{errorMessage(inviteMutation.error)}</InlineNotice> : null}
+          {inviteMutation.isError ? (
+            <InlineNotice>
+              {errorMessage(inviteMutation.error, msg('common.somethingWentWrong', 'Something went wrong. Try again.'))}
+            </InlineNotice>
+          ) : null}
 
           <div className="flex justify-end">
             <Button type="submit" size="lg" disabled={!canSubmit}>
-              {inviteMutation.isPending ? 'Inviting...' : 'Invite'}
+              {inviteMutation.isPending ? msg('members.inviting', 'Inviting...') : msg('members.invite', 'Invite')}
             </Button>
           </div>
         </form>
@@ -647,10 +665,15 @@ function RoleSelect({
 }
 
 function MembersSkeletonRows() {
+  const { msg } = useI18n();
   return (
     <>
       {[0, 1, 2].map((index) => (
-        <TableRow key={index} className="border-border last:border-b-0" aria-label="Loading member">
+        <TableRow
+          key={index}
+          className="border-border last:border-b-0"
+          aria-label={msg('members.loadingRow', 'Loading member')}
+        >
           <TableCell className="px-3 py-3">
             <Skeleton className="h-5 w-44" />
           </TableCell>
@@ -678,23 +701,31 @@ function InviteActionsMenu({
   onResend: (invite: OrganizationInvite) => void;
   onRevoke: (invite: OrganizationInvite) => void;
 }) {
+  const { msg } = useI18n();
   return (
     <div className="flex justify-end">
       <DropdownMenu>
         <DropdownMenuTrigger
           disabled={disabled}
-          render={<Button variant="ghost" size="icon" className="text-muted-foreground" aria-label="More actions" />}
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground"
+              aria-label={msg('members.moreActions', 'More actions')}
+            />
+          }
         >
           <MoreVertical className="size-4" aria-hidden />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuItem onClick={() => onResend(invite)}>
             <Send className="size-4" aria-hidden />
-            <span>Resend invite</span>
+            <span>{msg('members.resend', 'Resend invite')}</span>
           </DropdownMenuItem>
           <DropdownMenuItem variant="destructive" onClick={() => onRevoke(invite)}>
             <Trash2 className="size-4" aria-hidden />
-            <span>Revoke invitation</span>
+            <span>{msg('members.revoke', 'Revoke invitation')}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -713,6 +744,7 @@ function InviteRevokeDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { msg } = useI18n();
   if (!invite) {
     return null;
   }
@@ -728,17 +760,19 @@ function InviteRevokeDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Revoke invitation?</AlertDialogTitle>
+          <AlertDialogTitle>{msg('members.revokeTitle', 'Revoke invitation?')}</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to revoke the invitation for {invite.email}?
+            {msg('members.revokeBody', 'Are you sure you want to revoke the invitation for {email}?', {
+              email: invite.email,
+            })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isSubmitting} onClick={onCancel}>
-            Cancel
+            {msg('members.cancel', 'Cancel')}
           </AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={isSubmitting} onClick={onConfirm}>
-            {isSubmitting ? 'Revoking...' : 'Revoke'}
+            {isSubmitting ? msg('members.revoking', 'Revoking...') : msg('members.revokeConfirm', 'Revoke')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -747,11 +781,12 @@ function InviteRevokeDialog({
 }
 
 function InviteValidationNotice({ error }: { error: InviteValidationError }) {
+  const { msg } = useI18n();
   if (error.type === 'too-many') {
     return (
       <Alert variant="destructive">
         <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <AlertDescription>Invite up to 50 email addresses at once.</AlertDescription>
+        <AlertDescription>{msg('members.tooMany', 'Invite up to 50 email addresses at once.')}</AlertDescription>
       </Alert>
     );
   }
@@ -759,12 +794,16 @@ function InviteValidationNotice({ error }: { error: InviteValidationError }) {
   return (
     <Alert variant="destructive">
       <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertTitle>{error.emails.length === 1 ? 'Invalid email address:' : 'Invalid email addresses:'}</AlertTitle>
+      <AlertTitle>
+        {error.emails.length === 1
+          ? msg('members.invalidEmailOne', 'Invalid email address:')
+          : msg('members.invalidEmailMany', 'Invalid email addresses:')}
+      </AlertTitle>
       <AlertDescription>
         {error.emails.map((email) => (
           <p key={email}>{email}</p>
         ))}
-        <p>Please remove or fix before sending invitations.</p>
+        <p>{msg('members.invalidEmailHint', 'Please remove or fix before sending invitations.')}</p>
       </AlertDescription>
     </Alert>
   );
@@ -872,9 +911,9 @@ function titleizeRole(role: string) {
     .join(' ');
 }
 
-function errorMessage(error: unknown) {
+function errorMessage(error: unknown, fallback: string) {
   if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
     return error.message;
   }
-  return 'Something went wrong.';
+  return fallback;
 }

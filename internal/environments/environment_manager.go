@@ -14,7 +14,7 @@ import (
 
 const (
 	defaultEnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	defaultClaudeAgentVersion     = "2.1.120"
+	defaultClaudeAgentVersion     = "2.1.251"
 	defaultClaudePath             = "/opt/claude-code/bin/claude"
 	defaultEnvironmentWorkDir     = "/home/user"
 	launcherSettingsPath          = "/root/.claude/launcher-settings.json"

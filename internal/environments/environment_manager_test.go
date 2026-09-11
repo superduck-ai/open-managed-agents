@@ -236,7 +236,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
 			ManagerPath:        "/opt/env manager/bin/environment-manager",
-			ClaudeAgentVersion: "2.1.120",
+			ClaudeAgentVersion: "2.1.251",
 			ClaudePath:         "/opt/claude path/bin/claude",
 			GitSSHtoHTTPSHosts: []string{"gitlab.xxxx.cn"},
 		},
@@ -354,7 +354,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"export GIT_EDITOR=true",
 		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
 		"export GIT_TERMINAL_PROMPT=0",
-		"Claude binary version mismatch: expected 2.1.120",
+		"Claude binary version mismatch: expected 2.1.251",
 		"> '/tmp/claude-code-sessions/cse_session_with_'\"'\"'quote'\"'\"'_and_slash/environment-manager.log' 2>&1",
 	} {
 		if !strings.Contains(allCommands, want) {

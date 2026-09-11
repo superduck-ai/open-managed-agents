@@ -38,6 +38,17 @@ type Binding struct {
 	CredentialExternalID string
 }
 
+// TunnelBinding is the authenticated context for one MCP tunnel connector
+// token. It deliberately has its own schema instead of overloading the
+// vault-specific Binding fields; existing vault ciphertext therefore keeps
+// exactly the same AAD bytes and remains decryptable.
+type TunnelBinding struct {
+	OrganizationUUID string
+	WorkspaceUUID    string
+	TunnelExternalID string
+	TokenExternalID  string
+}
+
 // Envelope is the sealed form of a secret. Vault credentials map these fields
 // to columns; Git resources store their JSON form. All fields are required for Open.
 type Envelope struct {
@@ -66,16 +77,43 @@ func (s *Service) Seal(ctx context.Context, binding Binding, plaintext []byte) (
 	if err := validateBinding(binding); err != nil {
 		return Envelope{}, err
 	}
-	return s.seal(ctx, aadBytes(binding, envelopeFormatVersion), plaintext)
+	return s.sealWithAAD(ctx, plaintext, aadBytes(binding, envelopeFormatVersion))
 }
 
-func (s *Service) seal(ctx context.Context, aad, plaintext []byte) (Envelope, error) {
-	dek, err := randomBytes(32) // AES-256
+// Open decrypts an envelope back to plaintext. Any tamper with the ciphertext,
+// nonce, wrapped DEK, AAD binding, format version, or provider/version mismatch
+// fails closed and returns an error; there is never a plaintext fallback.
+func (s *Service) Open(ctx context.Context, binding Binding, envelope Envelope) ([]byte, error) {
+	if err := validateBinding(binding); err != nil {
+		return nil, err
+	}
+	return s.openWithAAD(ctx, envelope, aadBytes(binding, envelope.FormatVersion))
+}
+
+// SealTunnel encrypts a connector token under a fresh DEK and binds the
+// ciphertext to its organization, workspace, tunnel, and token identities.
+func (s *Service) SealTunnel(ctx context.Context, binding TunnelBinding, plaintext []byte) (Envelope, error) {
+	if err := validateTunnelBinding(binding); err != nil {
+		return Envelope{}, err
+	}
+	return s.sealWithAAD(ctx, plaintext, tunnelAADBytes(binding, envelopeFormatVersion))
+}
+
+// OpenTunnel decrypts a connector token and fails closed if any tunnel binding
+// field or envelope metadata was changed.
+func (s *Service) OpenTunnel(ctx context.Context, binding TunnelBinding, envelope Envelope) ([]byte, error) {
+	if err := validateTunnelBinding(binding); err != nil {
+		return nil, err
+	}
+	return s.openWithAAD(ctx, envelope, tunnelAADBytes(binding, envelope.FormatVersion))
+}
+
+func (s *Service) sealWithAAD(ctx context.Context, plaintext, aad []byte) (Envelope, error) {
+	dek, err := randomBytes(32)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: generate DEK: %w", err)
 	}
 	defer clear(dek)
-
 	gcm, err := newAESGCM(dek)
 	if err != nil {
 		return Envelope{}, err
@@ -98,17 +136,7 @@ func (s *Service) seal(ctx context.Context, aad, plaintext []byte) (Envelope, er
 	}, nil
 }
 
-// Open decrypts an envelope back to plaintext. Any tamper with the ciphertext,
-// nonce, wrapped DEK, AAD binding, format version, or provider/version mismatch
-// fails closed and returns an error; there is never a plaintext fallback.
-func (s *Service) Open(ctx context.Context, binding Binding, envelope Envelope) ([]byte, error) {
-	if err := validateBinding(binding); err != nil {
-		return nil, err
-	}
-	return s.open(ctx, aadBytes(binding, envelope.FormatVersion), envelope)
-}
-
-func (s *Service) open(ctx context.Context, aad []byte, envelope Envelope) ([]byte, error) {
+func (s *Service) openWithAAD(ctx context.Context, envelope Envelope, aad []byte) ([]byte, error) {
 	if envelope.FormatVersion != envelopeFormatVersion {
 		return nil, fmt.Errorf("%w: %d", ErrUnknownEnvelopeFormat, envelope.FormatVersion)
 	}
@@ -120,7 +148,6 @@ func (s *Service) open(ctx context.Context, aad []byte, envelope Envelope) ([]by
 		return nil, err
 	}
 	defer clear(dek)
-
 	gcm, err := newAESGCM(dek)
 	if err != nil {
 		return nil, err
@@ -150,6 +177,21 @@ func validateBinding(b Binding) error {
 	}
 }
 
+func validateTunnelBinding(b TunnelBinding) error {
+	switch {
+	case b.OrganizationUUID == "":
+		return fmt.Errorf("%w: organization_uuid", ErrIncompleteBinding)
+	case b.WorkspaceUUID == "":
+		return fmt.Errorf("%w: workspace_uuid", ErrIncompleteBinding)
+	case b.TunnelExternalID == "":
+		return fmt.Errorf("%w: tunnel_external_id", ErrIncompleteBinding)
+	case b.TokenExternalID == "":
+		return fmt.Errorf("%w: token_external_id", ErrIncompleteBinding)
+	default:
+		return nil
+	}
+}
+
 // aadBytes derives the deterministic AAD from the binding and format version.
 // UUID and external ID strings are length-prefixed so different field values
 // cannot collide. The format version is included so it is integrity-protected;
@@ -161,6 +203,17 @@ func aadBytes(b Binding, formatVersion int) []byte {
 	writePrefixString(&buf, b.WorkspaceUUID)
 	writePrefixString(&buf, b.VaultExternalID)
 	writePrefixString(&buf, b.CredentialExternalID)
+	_ = binary.Write(&buf, binary.BigEndian, int32(formatVersion))
+	return buf.Bytes()
+}
+
+func tunnelAADBytes(b TunnelBinding, formatVersion int) []byte {
+	var buf bytes.Buffer
+	writePrefixString(&buf, "mcp_tunnel_token")
+	writePrefixString(&buf, b.OrganizationUUID)
+	writePrefixString(&buf, b.WorkspaceUUID)
+	writePrefixString(&buf, b.TunnelExternalID)
+	writePrefixString(&buf, b.TokenExternalID)
 	_ = binary.Write(&buf, binary.BigEndian, int32(formatVersion))
 	return buf.Bytes()
 }

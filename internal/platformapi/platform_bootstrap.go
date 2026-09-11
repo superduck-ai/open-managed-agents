@@ -40,7 +40,13 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 				orgUUID = selectedOrgUUID
 			}
 		}
-		writeJSON(w, http.StatusOK, buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r)))
+		response := buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r))
+		if account != nil {
+			if sessionKey := auth.ExtractPlatformSessionKey(r); sessionKey != "" {
+				response.CSRFToken = auth.PlatformCSRFToken(sessionKey)
+			}
+		}
+		writeJSON(w, http.StatusOK, response)
 	}
 }
 

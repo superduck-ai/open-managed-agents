@@ -1887,95 +1887,108 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 }
 
 func TestCodeSessionMCPDefaultAllowAutoApprovesWorkerPermissionRequest(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-mcp-default-allow-bucket"))
-	defer app.close()
+	for _, scenario := range []struct {
+		name, serverName, runtimeName string
+	}{
+		{"unchanged", "weather_service", "weather_service"},
+		{"dotted_tunnel", "tunnel_0123456789abcdef0123456789abcdef.main", "tunnel_0123456789abcdef0123456789abcdef_main"},
+		{"consecutive_dots", "weather..service", "weather__service"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-mcp-default-allow-bucket"))
+			defer app.close()
 
-	agent := createAgent(t, app, `{
+			agent := createAgent(t, app, `{
 		"model":"claude-opus-4-6",
 		"name":"sessions-worker-mcp-default-allow-agent",
-		"mcp_servers":[{"type":"url","name":"weather_service","url":"http://host.docker.internal:39090/mcp"}],
+		"mcp_servers":[{"type":"url","name":`+quoteJSON(scenario.serverName)+`,"url":"http://host.docker.internal:39090/mcp"}],
 		"tools":[
 			{"type":"agent_toolset_20260401"},
 			{
 				"type":"mcp_toolset",
-				"mcp_server_name":"weather_service",
+				"mcp_server_name":`+quoteJSON(scenario.serverName)+`,
 				"configs":[],
 				"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}
 			}
 		]
 	}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-worker-mcp-default-allow-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
-	suffix := strings.TrimPrefix(session.ID, "sesn_")
-	toolUseID := "toolu_weather_" + suffix
-	requestID := "req_weather_" + suffix
+			defer cleanupAgentRows(t, app.pool, agent.ID)
+			env := createEnvironment(t, app, `{"name":"sessions-worker-mcp-default-allow-env"}`)
+			defer cleanupEnvironmentRows(t, app.pool, env.ID)
+			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+			codeSessionID := launchLocalCodeSession(t, app, session.ID)
+			workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+			suffix := strings.TrimPrefix(session.ID, "sesn_")
+			toolUseID := "toolu_weather_" + suffix
+			requestID := "req_weather_" + suffix
 
-	controlBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":{` +
-		`"type":"control_request",` +
-		`"uuid":"control-weather-` + suffix + `",` +
-		`"request_id":` + quoteJSON(requestID) + `,` +
-		`"request":{"subtype":"can_use_tool","tool_name":"mcp__weather_service__get_weather","tool_use_id":` + quoteJSON(toolUseID) + `,"input":{"location":"Beijing"}}` +
-		`}}]}`
-	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
-	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
-	autoApproveCount := countQueuedCodeSessionInboundEvents(app, codeSessionID, "control_response", requestID)
-	if autoApproveCount != 1 {
-		t.Fatalf("retried control request produced %d auto responses, want one deduplicated delivery", autoApproveCount)
-	}
-	var responseEventIDs []string
-	for _, envelope := range app.workerEvents.Pending(codeSessionID) {
-		if envelope.EventType == "control_response" && bytes.Contains(envelope.Payload, []byte(requestID)) {
-			responseEventIDs = append(responseEventIDs, envelope.PayloadEventID)
-		}
-	}
-	if len(responseEventIDs) != 1 || responseEventIDs[0] == "" {
-		t.Fatalf("retried control response event IDs = %#v, want one stable non-empty ID", responseEventIDs)
-	}
+			controlBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":{` +
+				`"type":"control_request",` +
+				`"uuid":"control-weather-` + suffix + `",` +
+				`"request_id":` + quoteJSON(requestID) + `,` +
+				`"request":{"subtype":"can_use_tool","tool_name":` + quoteJSON("mcp__"+scenario.runtimeName+"__get_weather") + `,"tool_use_id":` + quoteJSON(toolUseID) + `,"input":{"location":"Beijing"}}` +
+				`}}]}`
+			postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+			postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+			autoApproveCount := countQueuedCodeSessionInboundEvents(app, codeSessionID, "control_response", requestID)
+			if autoApproveCount != 1 {
+				t.Fatalf("retried control request produced %d auto responses, want one deduplicated delivery", autoApproveCount)
+			}
+			var responseEventIDs []string
+			for _, envelope := range app.workerEvents.Pending(codeSessionID) {
+				if envelope.EventType == "control_response" && bytes.Contains(envelope.Payload, []byte(requestID)) {
+					responseEventIDs = append(responseEventIDs, envelope.PayloadEventID)
+				}
+			}
+			if len(responseEventIDs) != 1 || responseEventIDs[0] == "" {
+				t.Fatalf("retried control response event IDs = %#v, want one stable non-empty ID", responseEventIDs)
+			}
 
-	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
-	if eventType != "control_response" {
-		t.Fatalf("auto response event_type = %q, want control_response payload=%s", eventType, payload)
-	}
-	var object map[string]any
-	if err := json.Unmarshal(payload, &object); err != nil {
-		t.Fatalf("decode auto response payload: %v", err)
-	}
-	response := object["response"].(map[string]any)
-	if response["request_id"] != requestID {
-		t.Fatalf("auto response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
-	}
-	nested := response["response"].(map[string]any)
-	if nested["behavior"] != "allow" || nested["toolUseID"] != toolUseID {
-		t.Fatalf("auto response nested = %#v, want allow for %s; payload=%s", nested, toolUseID, payload)
-	}
+			eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
+			if eventType != "control_response" {
+				t.Fatalf("auto response event_type = %q, want control_response payload=%s", eventType, payload)
+			}
+			var object map[string]any
+			if err := json.Unmarshal(payload, &object); err != nil {
+				t.Fatalf("decode auto response payload: %v", err)
+			}
+			response := object["response"].(map[string]any)
+			if response["request_id"] != requestID {
+				t.Fatalf("auto response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
+			}
+			nested := response["response"].(map[string]any)
+			if nested["behavior"] != "allow" || nested["toolUseID"] != toolUseID {
+				t.Fatalf("auto response nested = %#v, want allow for %s; payload=%s", nested, toolUseID, payload)
+			}
 
-	allPublicEvents := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
-	if eventPageContains(allPublicEvents, "control-weather-"+suffix) {
-		t.Fatalf("control_request leaked into public session events: %+v", allPublicEvents.Data)
-	}
-	toolEvent := sessionEventObjectByType(t, allPublicEvents, "agent.mcp_tool_use")
-	toolEventID, _ := toolEvent["id"].(string)
-	if toolEventID == "" || toolEvent["name"] != "get_weather" || toolEvent["mcp_server_name"] != "weather_service" || toolEvent["evaluated_permission"] != "allow" {
-		t.Fatalf("canonical allow tool event = %#v", toolEvent)
-	}
-	assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
+			allPublicEvents := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
+			if eventPageContains(allPublicEvents, "control-weather-"+suffix) {
+				t.Fatalf("control_request leaked into public session events: %+v", allPublicEvents.Data)
+			}
+			toolEvent := sessionEventObjectByType(t, allPublicEvents, "agent.mcp_tool_use")
+			toolEventID, _ := toolEvent["id"].(string)
+			if toolEventID == "" || toolEvent["name"] != "get_weather" || toolEvent["mcp_server_name"] != scenario.serverName || toolEvent["evaluated_permission"] != "allow" {
+				t.Fatalf("canonical allow tool event = %#v", toolEvent)
+			}
+			assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
+			if eventPageContains(allPublicEvents, `"requires_action"`) {
+				t.Fatalf("always_allow unexpectedly requested approval: %+v", allPublicEvents.Data)
+			}
 
-	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
-		`"type":"user",`+
-		`"uuid":"result-weather-`+suffix+`",`+
-		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":`+quoteJSON(toolUseID)+`,"content":[{"type":"text","text":"Sunny"}]}]}`+
-		`}}]}`)
-	allPublicEvents = listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
-	resultEvent := sessionEventObjectByType(t, allPublicEvents, "agent.tool_result")
-	if resultEvent["tool_use_id"] != toolEventID {
-		t.Fatalf("tool result tool_use_id = %#v, want public event id %s: %#v", resultEvent["tool_use_id"], toolEventID, resultEvent)
-	}
-	if eventPageContains(allPublicEvents, toolUseID) {
-		t.Fatalf("provider tool id leaked into public events: %+v", allPublicEvents.Data)
+			postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
+				`"type":"user",`+
+				`"uuid":"result-weather-`+suffix+`",`+
+				`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":`+quoteJSON(toolUseID)+`,"content":[{"type":"text","text":"Sunny"}]}]}`+
+				`}}]}`)
+			allPublicEvents = listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
+			resultEvent := sessionEventObjectByType(t, allPublicEvents, "agent.tool_result")
+			if resultEvent["tool_use_id"] != toolEventID {
+				t.Fatalf("tool result tool_use_id = %#v, want public event id %s: %#v", resultEvent["tool_use_id"], toolEventID, resultEvent)
+			}
+			if eventPageContains(allPublicEvents, toolUseID) {
+				t.Fatalf("provider tool id leaked into public events: %+v", allPublicEvents.Data)
+			}
+		})
 	}
 }
 
@@ -1986,12 +1999,12 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	agent := createAgent(t, app, `{
 		"model":"claude-opus-4-6",
 		"name":"sessions-worker-mcp-default-ask-agent",
-		"mcp_servers":[{"type":"url","name":"weather_service","url":"http://host.docker.internal:39090/mcp"}],
+		"mcp_servers":[{"type":"url","name":"weather.service","url":"http://host.docker.internal:39090/mcp"}],
 		"tools":[
 			{"type":"agent_toolset_20260401"},
 			{
 				"type":"mcp_toolset",
-				"mcp_server_name":"weather_service",
+				"mcp_server_name":"weather.service",
 				"configs":[],
 				"default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}}
 			}
@@ -2023,7 +2036,7 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	for _, want := range []string{
 		`"type":"agent.mcp_tool_use"`,
 		`"name":"get_weather"`,
-		`"mcp_server_name":"weather_service"`,
+		`"mcp_server_name":"weather.service"`,
 		`"evaluated_permission":"ask"`,
 		`"type":"session.status_idle"`,
 		`"type":"requires_action"`,

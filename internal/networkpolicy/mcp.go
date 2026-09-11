@@ -20,6 +20,7 @@ type agentSnapshotSchema struct {
 }
 
 type mcpServerSchema struct {
+	Name string `json:"name"`
 	Type string `json:"type"`
 	URL  string `json:"url"`
 }
@@ -27,8 +28,9 @@ type mcpServerSchema struct {
 type mcpServerListSchema []mcpServerSchema
 
 type mcpServerTargets struct {
-	hosts []string
-	urls  []string
+	hosts      []string
+	urls       []string
+	urlsByName map[string]string
 }
 
 func (s *mcpServerListSchema) UnmarshalJSON(raw []byte) error {
@@ -62,6 +64,7 @@ func parseMCPServerTargets(agentSnapshot json.RawMessage) (mcpServerTargets, err
 	}
 	var hosts []string
 	var urls []string
+	urlsByName := map[string]string{}
 	for _, server := range snapshot.MCPServers {
 		host, err := mcpServerHost(server)
 		if err != nil {
@@ -72,11 +75,22 @@ func parseMCPServerTargets(agentSnapshot json.RawMessage) (mcpServerTargets, err
 		}
 		if rawURL := strings.TrimSpace(server.URL); rawURL != "" {
 			urls = append(urls, rawURL)
+			name := server.Name
+			if strings.TrimSpace(name) != name {
+				return mcpServerTargets{}, fmt.Errorf("%w: MCP server name %q must not contain surrounding whitespace", ErrMalformedAgentSnapshot, name)
+			}
+			if name != "" {
+				if _, exists := urlsByName[name]; exists {
+					return mcpServerTargets{}, fmt.Errorf("%w: duplicate MCP server name %q", ErrMalformedAgentSnapshot, name)
+				}
+				urlsByName[name] = rawURL
+			}
 		}
 	}
 	return mcpServerTargets{
-		hosts: collections.UniqueTrimmedStrings(hosts),
-		urls:  collections.UniqueTrimmedStrings(urls),
+		hosts:      collections.UniqueTrimmedStrings(hosts),
+		urls:       collections.UniqueTrimmedStrings(urls),
+		urlsByName: urlsByName,
 	}, nil
 }
 

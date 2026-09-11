@@ -102,6 +102,9 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	e.credentials, err = codesessions.NewSessionCredentials(cfg)
 	requireOK(t, err)
 	e.service = codesessions.NewServiceWithCredentials(e.database, e.credentials, nil).WithWorkerEventBroker(e.broker).WithWorkerEventState(e.acks, e.objects)
+	if os.Getenv("LIVE_WORKER_REAL_CLAUDE") == "1" {
+		ensureRealWorkerProvider(t, e, cfg)
+	}
 	var created struct {
 		ID string `json:"id"`
 	}
@@ -164,12 +167,24 @@ type liveSession struct {
 }
 
 func (e *liveEnv) newSession(t *testing.T) *liveSession {
+	return e.newSessionWithSnapshot(t, json.RawMessage(`{"model":{"id":"claude-opus-4-6"}}`))
+}
+
+func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage) *liveSession {
 	t.Helper()
+	var agentConfig struct {
+		Model struct {
+			ID string `json:"id"`
+		} `json:"model"`
+	}
+	requireOK(t, json.Unmarshal(snapshot, &agentConfig))
+	if agentConfig.Model.ID == "" {
+		t.Fatal("test agent snapshot must select a model")
+	}
 	ctx := t.Context()
 	now := time.Now().UTC()
 	org, workspace := e.key.OrganizationUUID.String(), e.key.WorkspaceUUID.String()
 	sessionID := "sesn_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	snapshot := json.RawMessage(`{"model":{"id":"claude-opus-4-6"}}`)
 	// A stopped work record prevents the shared runner from starting an actual
 	// sandbox that would compete with this protocol client for the same queue.
 	session, _, _, _, err := e.database.CreateSession(ctx, db.CreateSessionInput{
@@ -184,7 +199,7 @@ func (e *liveEnv) newSession(t *testing.T) *liveSession {
 			t.Errorf("delete test session: %v", err)
 		}
 	})
-	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: "claude-opus-4-6", PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(uuid.NewString()), InitialWorkerEpoch: 1, CreatedAt: now})
+	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(uuid.NewString()), InitialWorkerEpoch: 1, CreatedAt: now})
 	requireOK(t, err)
 	f := &liveSession{env: e, session: session, code: code}
 	t.Cleanup(func() {

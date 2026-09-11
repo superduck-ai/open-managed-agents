@@ -560,7 +560,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 			}
 		}
 	}
-	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
+	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources)
+	if err != nil {
+		return nil, err
+	}
 	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)
 	if err != nil {
 		return nil, err
@@ -631,16 +634,25 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
 	}
-	payload, err := buildEnvironmentManagerV0Payload(
+	runtimeSessionConfig, err := buildManagedAgentRuntimeMCPConfig(
+		preparation.SessionConfig,
 		local.CodeSessionID,
 		local.SessionIngressToken,
-		local.OAuthAccessToken,
-		local.WorkerEpoch,
-		preparation.WorkDir,
-		preparation.SessionConfig,
 		r.cfg,
-		preparation.EnvPlaceholders,
 	)
+	var payload []byte
+	if err == nil {
+		payload, err = buildEnvironmentManagerV0Payload(
+			local.CodeSessionID,
+			local.SessionIngressToken,
+			local.OAuthAccessToken,
+			local.WorkerEpoch,
+			preparation.WorkDir,
+			runtimeSessionConfig,
+			r.cfg,
+			preparation.EnvPlaceholders,
+		)
+	}
 	if err != nil {
 		if preparation.RecoveryCodeSessionID == "" {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

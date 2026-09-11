@@ -17,7 +17,7 @@ func (s *Service) SealResource(ctx context.Context, binding ResourceBinding, pla
 	if err != nil {
 		return Envelope{}, err
 	}
-	return s.seal(ctx, aad, plaintext)
+	return s.sealWithAAD(ctx, plaintext, aad)
 }
 
 func (s *Service) OpenResource(ctx context.Context, binding ResourceBinding, envelope Envelope) ([]byte, error) {
@@ -25,7 +25,7 @@ func (s *Service) OpenResource(ctx context.Context, binding ResourceBinding, env
 	if err != nil {
 		return nil, err
 	}
-	return s.open(ctx, aad, envelope)
+	return s.openWithAAD(ctx, envelope, aad)
 }
 
 // resourceAAD encoding is part of the ciphertext compatibility contract; resource IDs are excluded.

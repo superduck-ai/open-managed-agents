@@ -36,23 +36,18 @@ import { Textarea } from '../../../shared/ui/textarea';
 import { relativeTime } from '../agents/AgentsResourcePage';
 import {
   archiveManagedEntity,
-  archiveVaultCredential,
   createMemory,
-  createVaultCredential,
   deleteManagedEntity,
   deleteMemory,
-  deleteVaultCredential,
   listDeploymentRuns,
   listMemories,
   listSessionEvents,
   listSessionResources,
   listSessionThreads,
-  listVaultCredentials,
   retrieveManagedEntity,
   retrieveMemory,
   updateManagedEntity,
   updateMemory,
-  updateVaultCredential,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import {
@@ -61,7 +56,6 @@ import {
   DetailTableCard,
   ManagedTextArea,
   ManagedTextField,
-  NestedRows,
   StatusPill,
 } from '../components/common';
 import {
@@ -73,7 +67,6 @@ import {
   resourceTitle,
 } from '../labels';
 import {
-  type CredentialFormValues,
   type DeploymentApiResponse,
   type DeploymentRunApiResponse,
   type EnvironmentApiResponse,
@@ -104,10 +97,10 @@ import {
   managedEntityDetailHref,
   managedEntityListHref,
 } from '../utils';
-import { CredentialDialog, MemoryDialog } from './dialogs';
+import { MemoryDialog } from './dialogs';
+import { VaultCredentialsPanel } from './vault-credentials-panel';
 import {
   buildMemoryTreeNodes,
-  credentialAuthLabel,
   deploymentRunStatus,
   detailRowsForEntity,
   entityDescription,
@@ -289,6 +282,25 @@ export function ManagedEntityDetailPage({
     );
   }
 
+  if (config.section === 'credential-vaults') {
+    return (
+      <VaultDetailPage
+        config={config}
+        vault={entity as VaultApiResponse}
+        workspaceId={activeWorkspaceId}
+        listHref={listHref}
+        listLabel={listLabel}
+        refreshKey={refreshKey}
+        mutationError={mutationError}
+        busyAction={busyAction}
+        onRefresh={() => setRefreshKey((value) => value + 1)}
+        onVaultUpdated={setEntity}
+        onMutationError={setMutationError}
+        onBusyAction={setBusyAction}
+      />
+    );
+  }
+
   const archived = Boolean(entity.archived_at);
 
   return (
@@ -422,6 +434,242 @@ export function ManagedEntityDetailPage({
             onRefresh={() => setRefreshKey((value) => value + 1)}
           />
         </>
+      )}
+    </section>
+  );
+}
+
+function vaultDetailDateLabel(
+  value: string,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return '—';
+  }
+  return formatDate(value, { month: 'short', day: 'numeric' });
+}
+
+function VaultDetailPage({
+  config,
+  vault,
+  workspaceId,
+  listHref,
+  listLabel,
+  refreshKey,
+  mutationError,
+  busyAction,
+  onRefresh,
+  onVaultUpdated,
+  onMutationError,
+  onBusyAction,
+}: {
+  config: ResourceConfig;
+  vault: VaultApiResponse;
+  workspaceId: string;
+  listHref: string;
+  listLabel: string;
+  refreshKey: number;
+  mutationError: string | null;
+  busyAction: 'archive' | 'delete' | null;
+  onRefresh: () => void;
+  onVaultUpdated: (entity: ManagedEntityApiResponse) => void;
+  onMutationError: (error: string | null) => void;
+  onBusyAction: (action: 'archive' | 'delete' | null) => void;
+}) {
+  const { msg } = useI18n();
+  const formatters = useFormatters();
+  const [editing, setEditing] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'archive' | 'delete' | null>(null);
+  const [credentialDialog, setCredentialDialog] = useState<{
+    mode: 'create' | 'edit';
+    credential?: VaultCredentialApiResponse;
+    firstCredential?: boolean;
+  } | null>(null);
+
+  const archived = Boolean(vault.archived_at);
+  const label = entityDisplayName('credential-vaults', vault);
+  const createdLabel = vaultDetailDateLabel(vault.created_at, formatters.date);
+  const updatedLabel = vaultDetailDateLabel(vault.updated_at, formatters.date);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('addCredential') !== '1') {
+      return;
+    }
+    setCredentialDialog({ mode: 'create', firstCredential: true });
+    params.delete('addCredential');
+    const search = params.toString();
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`,
+    );
+  }, []);
+
+  const handleArchive = async () => {
+    onBusyAction('archive');
+    onMutationError(null);
+    try {
+      const updated = await archiveManagedEntity('credential-vaults', vault.id, workspaceId);
+      onVaultUpdated(updated);
+      setEditing(false);
+      setConfirmAction(null);
+      toast.success(managedToastMessage('credential-vaults', 'archived', msg));
+    } catch (error) {
+      onMutationError(errorMessage(error));
+      setConfirmAction(null);
+    } finally {
+      onBusyAction(null);
+    }
+  };
+
+  const handleDelete = async () => {
+    onBusyAction('delete');
+    onMutationError(null);
+    try {
+      await deleteManagedEntity('credential-vaults', vault.id, workspaceId);
+      setConfirmAction(null);
+      onBusyAction(null);
+      window.location.assign(listHref);
+    } catch (error) {
+      onMutationError(errorMessage(error));
+      setConfirmAction(null);
+      onBusyAction(null);
+    }
+  };
+
+  const handleSave = async (values: ManagedEntityFormValues) => {
+    onMutationError(null);
+    const updated = await updateManagedEntity('credential-vaults', vault.id, values, workspaceId);
+    onVaultUpdated(updated);
+    setEditing(false);
+    toast.success(managedToastMessage('credential-vaults', 'updated', msg));
+    onRefresh();
+  };
+
+  return (
+    <section className="min-h-[calc(100vh-48px)] text-foreground">
+      {confirmAction ? (
+        <ConfirmEntityDialog
+          action={confirmAction}
+          section="credential-vaults"
+          entity={vault}
+          busy={busyAction === confirmAction}
+          onCancel={() => {
+            if (!busyAction) {
+              setConfirmAction(null);
+            }
+          }}
+          onConfirm={() => {
+            if (confirmAction === 'archive') {
+              void handleArchive();
+              return;
+            }
+            void handleDelete();
+          }}
+        />
+      ) : null}
+
+      <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} currentLabel={label} className="mb-5" />
+
+      <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <h1 className="truncate text-[28px] font-semibold leading-tight text-foreground">{label}</h1>
+            <StatusPill tone={statusPillTone('credential-vaults', vault)}>
+              {archived ? msg('common.archived', 'Archived') : msg('common.active', 'Active')}
+            </StatusPill>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span className="rounded-md bg-secondary px-2 py-1 font-mono text-[13px] text-foreground">{vault.id}</span>
+            <span>
+              {msg('common.created', 'Created')} {createdLabel}
+              <span className="mx-1.5 text-muted-foreground/70">·</span>
+              {msg('managedAgents.common.updated', 'Updated')} {updatedLabel}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="lg"
+            disabled={archived || editing}
+            onClick={() => setCredentialDialog({ mode: 'create' })}
+          >
+            <Plus className="size-4" aria-hidden />
+            {msg('managedAgents.credentialVaults.credentialDialog.add', 'Add credential')}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-lg"
+                  aria-label={msg('managedAgents.common.moreActions', 'More actions')}
+                  disabled={Boolean(busyAction)}
+                  className="text-foreground disabled:cursor-wait disabled:text-muted-foreground/70"
+                />
+              }
+            >
+              <MoreVertical className="size-4" aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[154px]">
+              <DropdownMenuItem disabled={archived || editing} onClick={() => setEditing(true)}>
+                <Pencil className="size-4" aria-hidden />
+                {msg('common.edit', 'Edit')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={archived || busyAction === 'archive'}
+                onClick={() => setConfirmAction('archive')}
+              >
+                <Archive className="size-4" aria-hidden />
+                {msg('common.archive', 'Archive')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={busyAction === 'delete'}
+                onClick={() => setConfirmAction('delete')}
+              >
+                <X className="size-4" aria-hidden />
+                {msg('common.delete', 'Delete')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+
+      {mutationError ? (
+        <Alert variant="destructive" className="mb-4 max-w-xl">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <AlertDescription>{mutationError}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {editing ? (
+        <ManagedEntityInlineEditor
+          section="credential-vaults"
+          entity={vault}
+          workspaceId={workspaceId}
+          onCancel={() => setEditing(false)}
+          onSaved={(updated) => {
+            onVaultUpdated(updated);
+            setEditing(false);
+            toast.success(managedToastMessage('credential-vaults', 'updated', msg));
+            onRefresh();
+          }}
+          onSubmit={handleSave}
+        />
+      ) : (
+        <VaultCredentialsPanel
+          vault={vault}
+          workspaceId={workspaceId}
+          refreshKey={refreshKey}
+          onRefresh={onRefresh}
+          dialog={credentialDialog}
+          onDialogChange={setCredentialDialog}
+        />
       )}
     </section>
   );
@@ -830,195 +1078,6 @@ export function SessionNestedPanel({
         ])}
       />
     </div>
-  );
-}
-
-export function VaultCredentialsPanel({
-  vault,
-  workspaceId,
-  refreshKey,
-  onRefresh,
-}: {
-  vault: VaultApiResponse;
-  workspaceId: string;
-  refreshKey: number;
-  onRefresh: () => void;
-}) {
-  const { msg } = useI18n();
-  const formatters = useFormatters();
-  const { orgUuid } = useWorkspace();
-  const [state, setState] = useState<{ loading: boolean; error: string | null; data: VaultCredentialApiResponse[] }>({
-    loading: true,
-    error: null,
-    data: [],
-  });
-  const [dialog, setDialog] = useState<{
-    mode: 'create' | 'edit';
-    credential?: VaultCredentialApiResponse;
-    firstCredential?: boolean;
-  } | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{
-    action: 'archive' | 'delete';
-    credential: VaultCredentialApiResponse;
-  } | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('addCredential') !== '1') {
-      return;
-    }
-    setDialog({ mode: 'create', firstCredential: true });
-    params.delete('addCredential');
-    const search = params.toString();
-    window.history.replaceState(
-      null,
-      '',
-      `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`,
-    );
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    setState((current) => ({ ...current, loading: true, error: null }));
-    void listVaultCredentials(vault.id, workspaceId)
-      .then((page) => active && setState({ loading: false, error: null, data: page.data ?? [] }))
-      .catch((error) => active && setState({ loading: false, error: errorMessage(error), data: [] }));
-    return () => {
-      active = false;
-    };
-  }, [refreshKey, vault.id, workspaceId]);
-
-  const submit = async (values: CredentialFormValues, credential?: VaultCredentialApiResponse) => {
-    const updated = credential
-      ? await updateVaultCredential(vault.id, credential.id, values, workspaceId)
-      : await createVaultCredential(vault.id, values, workspaceId);
-    setState((current) => ({ ...current, data: [updated, ...current.data.filter((item) => item.id !== updated.id)] }));
-    setDialog(null);
-    onRefresh();
-  };
-
-  const remove = async (credential: VaultCredentialApiResponse, action: 'archive' | 'delete') => {
-    setBusyId(credential.id);
-    try {
-      if (action === 'archive') {
-        await archiveVaultCredential(vault.id, credential.id, workspaceId);
-      } else {
-        await deleteVaultCredential(vault.id, credential.id, workspaceId);
-      }
-      setState((current) => ({ ...current, data: current.data.filter((item) => item.id !== credential.id) }));
-      setConfirmAction(null);
-      onRefresh();
-    } catch (error) {
-      setState((current) => ({ ...current, error: errorMessage(error) }));
-      setConfirmAction(null);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  return (
-    <>
-      {confirmAction ? (
-        <ConfirmEntityDialog
-          action={confirmAction.action}
-          section="credential-vaults"
-          entity={confirmAction.credential}
-          labelOverride={msg('managedAgents.credentialVaults.credentialKind', 'credential')}
-          busy={busyId === confirmAction.credential.id}
-          onCancel={() => {
-            if (!busyId) {
-              setConfirmAction(null);
-            }
-          }}
-          onConfirm={() => {
-            void remove(confirmAction.credential, confirmAction.action);
-          }}
-        />
-      ) : null}
-      <DetailCard
-        title={msg('managedAgents.credentialVaults.credentials.title', 'Credentials')}
-        description={msg(
-          'managedAgents.credentialVaults.credentials.description',
-          'Credentials available to agents that attach this vault.',
-        )}
-        action={
-          <Button type="button" size="lg" onClick={() => setDialog({ mode: 'create' })}>
-            <Plus className="size-4" aria-hidden />
-            {msg('managedAgents.credentialVaults.credentialDialog.add', 'Add credential')}
-          </Button>
-        }
-      >
-        <NestedRows
-          loading={state.loading}
-          error={state.error}
-          emptyTitle={msg('managedAgents.credentialVaults.credentials.empty', 'No credentials yet')}
-          columns={['ID', 'Name', 'Auth', 'Created', 'Actions'].map((column) => managedColumnLabel(column, msg))}
-          rows={state.data.map((credential) => [
-            compactEntityId(credential.id),
-            credential.display_name,
-            credentialAuthLabel(credential.auth, msg),
-            relativeTime(credential.created_at, formatters.relativeTime),
-            <div key={credential.id} className="flex justify-end">
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon-sm"
-                      aria-label={msg('managedAgents.common.moreActions', 'More actions')}
-                      className="text-foreground"
-                      disabled={busyId === credential.id}
-                    />
-                  }
-                >
-                  <MoreVertical className="size-4" aria-hidden />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-[164px]">
-                  <DropdownMenuItem className="h-9" onClick={() => setDialog({ mode: 'edit', credential })}>
-                    <Pencil className="size-4" aria-hidden />
-                    {msg('common.edit', 'Edit')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="h-9"
-                    disabled={busyId === credential.id}
-                    onClick={() => setConfirmAction({ action: 'archive', credential })}
-                  >
-                    <Archive className="size-4" aria-hidden />
-                    {msg('common.archive', 'Archive')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="h-9"
-                    variant="destructive"
-                    disabled={busyId === credential.id}
-                    onClick={() => setConfirmAction({ action: 'delete', credential })}
-                  >
-                    <X className="size-4" aria-hidden />
-                    {msg('common.delete', 'Delete')}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>,
-          ])}
-        />
-      </DetailCard>
-      {dialog ? (
-        <CredentialDialog
-          credential={dialog.credential}
-          vaultId={vault.id}
-          workspaceId={workspaceId}
-          orgUuid={orgUuid}
-          firstCredential={dialog.firstCredential}
-          onClose={() => setDialog(null)}
-          onSubmit={(values) => submit(values, dialog.credential)}
-          onOAuthComplete={() => {
-            setDialog(null);
-            onRefresh();
-          }}
-        />
-      ) : null}
-    </>
   );
 }
 

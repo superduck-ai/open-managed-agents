@@ -9,6 +9,7 @@ import {
 } from '../types';
 import {
   credentialAuthBody,
+  credentialDisplayName,
   credentialEnvInjectionMissing,
   credentialFormReady,
   credentialFormValues,
@@ -18,6 +19,16 @@ import {
   patchCredentialFormValues,
   statusPillTone,
   vaultOAuthErrorMessage,
+  vaultCredentialNames,
+  vaultCreatedAbsoluteLabel,
+  vaultCreatedLabel,
+  vaultCredentialSummary,
+  vaultCredentialSummaryFromNames,
+  vaultCredentialSummaryCacheKey,
+  vaultCredentialSummariesForWorkspace,
+  vaultCredentialSummaryPendingIds,
+  vaultCredentialSummaryPresentation,
+  vaultSelectionEquals,
 } from './model';
 
 const msgFallback: I18nMsg = ((_key, fallback) => fallback) as I18nMsg;
@@ -229,6 +240,11 @@ describe('credentialAuthBody environment_variable', () => {
     });
   });
 
+  test('credentialFormValues defaults create forms to MCP OAuth', () => {
+    expect(credentialFormValues().authType).toBe('mcp_oauth');
+    expect(emptyCredentialFormValues().authType).toBe('mcp_oauth');
+  });
+
   test('credentialFormValues round-trips networking and injection_location', () => {
     expect(
       credentialFormValues({
@@ -257,7 +273,8 @@ describe('credentialAuthBody environment_variable', () => {
   });
 
   test('credentialFormReady requires hosts for limited and at least one injection location', () => {
-    expect(credentialFormReady(envValues({ displayName: '' }), 'create', true)).toBe(false);
+    expect(credentialFormReady(envValues({ authType: '' }), 'create', true)).toBe(false);
+    expect(credentialFormReady(envValues({ displayName: '' }), 'create', true)).toBe(true);
     expect(credentialFormReady(envValues({ allowedHostsText: '' }), 'create', true)).toBe(false);
     expect(credentialFormReady(envValues({ networkType: 'unrestricted', allowedHostsText: '' }), 'create', true)).toBe(
       true,
@@ -268,6 +285,28 @@ describe('credentialAuthBody environment_variable', () => {
     expect(credentialFormReady(envValues({ injectHeader: false, injectBody: true }), 'create', true)).toBe(true);
     expect(credentialFormReady(envValues({ secretValue: '' }), 'edit', true)).toBe(true);
     expect(credentialFormReady(envValues({ secretName: '', secretValue: 'x' }), 'create', true)).toBe(false);
+  });
+
+  test('credentialDisplayName falls back when Name is blank', () => {
+    expect(credentialDisplayName(envValues({ displayName: '  Named  ' }))).toBe('Named');
+    expect(credentialDisplayName(envValues({ displayName: '   ' }))).toBe('API_KEY');
+    expect(credentialDisplayName(envValues({ displayName: '', secretName: '' }))).toBe('Environment variable');
+    expect(
+      credentialDisplayName({
+        ...emptyCredentialFormValues(),
+        displayName: '',
+        authType: 'mcp_oauth',
+        mcpServerUrl: 'https://mcp.example.com/path',
+      }),
+    ).toBe('mcp.example.com');
+    expect(
+      credentialDisplayName({
+        ...emptyCredentialFormValues(),
+        displayName: '',
+        authType: 'static_bearer',
+        mcpServerUrl: '',
+      }),
+    ).toBe('Static bearer credential');
   });
 });
 
@@ -408,5 +447,169 @@ describe('vaultOAuthErrorMessage', () => {
     expect(vaultOAuthErrorMessage('verification_request_failed', msgFallback)).toContain('verification failed');
     expect(vaultOAuthErrorMessage('mystery_code', msgFallback)).toBe('Could not complete OAuth. Try again.');
     expect(vaultOAuthErrorMessage(' mystery_code ', msgFallback)).toBe('Could not complete OAuth. Try again.');
+  });
+});
+
+describe('vaultCreatedLabel', () => {
+  test('uses relative time for recent vaults and short date for older ones', () => {
+    const formatRelative = (value: number, unit: Intl.RelativeTimeFormatUnit) => `${value}:${unit}`;
+    const formatDate = (_value: string | number | Date, options?: Intl.DateTimeFormatOptions) =>
+      options?.month === 'short' && options.day === 'numeric' && !options.year ? 'Aug 6' : 'Aug 6, 2026, 4:56 PM GMT+8';
+
+    expect(vaultCreatedLabel(new Date().toISOString(), formatRelative, formatDate)).toBe('0:second');
+    expect(
+      vaultCreatedLabel(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), formatRelative, formatDate),
+    ).toBe('-3:day');
+    expect(
+      vaultCreatedLabel(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), formatRelative, formatDate),
+    ).toBe('Aug 6');
+    expect(vaultCreatedAbsoluteLabel('2026-08-06T08:56:00Z', formatDate)).toBe('Aug 6, 2026, 4:56 PM GMT+8');
+  });
+});
+
+describe('vaultCredentialSummary', () => {
+  const msgInterpolate: I18nMsg = ((_, fallback, vars) => {
+    let out = fallback;
+    if (vars) {
+      for (const [key, value] of Object.entries(vars)) {
+        out = out.replaceAll(`{${key}}`, String(value));
+      }
+    }
+    return out;
+  }) as I18nMsg;
+
+  test('summarizes empty and named credentials for vault pickers', () => {
+    expect(vaultCredentialSummary([], msgInterpolate)).toBe('No credentials');
+    expect(vaultCredentialSummaryFromNames([], msgInterpolate)).toBe('No credentials');
+    expect(
+      vaultCredentialNames(
+        [
+          {
+            id: 'vcrd_1',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'GitLab',
+            auth: { type: 'environment_variable', secret_name: 'GITLAB_TOKEN' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+        ],
+        msgInterpolate,
+      ),
+    ).toEqual(['GitLab']);
+    expect(
+      vaultCredentialSummary(
+        [
+          {
+            id: 'vcrd_1',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'GitLab',
+            auth: { type: 'environment_variable', secret_name: 'GITLAB_TOKEN' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+        ],
+        msgInterpolate,
+      ),
+    ).toBe('GitLab');
+    expect(
+      vaultCredentialSummary(
+        [
+          {
+            id: 'vcrd_1',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'A',
+            auth: { type: 'static_bearer' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+          {
+            id: 'vcrd_2',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'B',
+            auth: { type: 'static_bearer' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+          {
+            id: 'vcrd_3',
+            type: 'vault_credential',
+            vault_id: 'vlt_1',
+            display_name: 'C',
+            auth: { type: 'static_bearer' },
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            archived_at: null,
+          },
+        ],
+        msgInterpolate,
+      ),
+    ).toBe('A, B, C');
+  });
+
+  test('vaultSelectionEquals is order-insensitive', () => {
+    expect(vaultSelectionEquals(['a', 'b'], ['b', 'a'])).toBe(true);
+    expect(vaultSelectionEquals(['a'], ['a', 'b'])).toBe(false);
+    expect(vaultSelectionEquals(['a'], ['b'])).toBe(false);
+  });
+
+  test('vaultCredentialSummaryCacheKey ignores order', () => {
+    expect(vaultCredentialSummaryCacheKey(['b', 'a'])).toBe(vaultCredentialSummaryCacheKey(['a', 'b']));
+    expect(vaultCredentialSummaryCacheKey([])).toBe('');
+  });
+
+  test('vaultCredentialSummaryPendingIds retries cancelled loading and skips ready', () => {
+    expect(
+      vaultCredentialSummaryPendingIds(['a', 'b', 'c'], {
+        a: { status: 'ready', names: ['A'] },
+        b: { status: 'loading' },
+        c: { status: 'error' },
+      }),
+    ).toEqual(['b', 'c']);
+    expect(vaultCredentialSummaryPendingIds(['d'], {})).toEqual(['d']);
+  });
+
+  test('vaultCredentialSummariesForWorkspace hides foreign workspace cache', () => {
+    const cache = {
+      workspaceId: 'ws_1',
+      summaries: { vlt_a: { status: 'ready' as const, names: ['Secret'] } },
+    };
+    expect(vaultCredentialSummariesForWorkspace(cache, 'ws_1').vlt_a).toEqual({
+      status: 'ready',
+      names: ['Secret'],
+    });
+    expect(vaultCredentialSummariesForWorkspace(cache, 'ws_2')).toEqual({});
+  });
+
+  test('vaultCredentialSummaryPresentation maps load states', () => {
+    expect(vaultCredentialSummaryPresentation({ status: 'idle' }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'Loading...',
+      detail: 'Loading...',
+    });
+    expect(vaultCredentialSummaryPresentation({ status: 'loading' }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'Loading...',
+      detail: 'Loading...',
+    });
+    expect(vaultCredentialSummaryPresentation({ status: 'error' }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'No credentials',
+      detail: 'No credentials',
+    });
+    expect(
+      vaultCredentialSummaryPresentation({ status: 'ready', names: ['A', 'B'] }, 'Loading...', msgInterpolate),
+    ).toEqual({
+      trailing: 'A, B',
+      detail: 'A\nB',
+    });
+    expect(vaultCredentialSummaryPresentation({ status: 'ready', names: [] }, 'Loading...', msgInterpolate)).toEqual({
+      trailing: 'No credentials',
+      detail: 'No credentials',
+    });
   });
 });

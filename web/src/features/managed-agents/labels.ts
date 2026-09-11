@@ -242,6 +242,8 @@ export function managedColumnLabel(column: string, msg: I18nMsg) {
       return msg('common.actions', 'Actions');
     case 'Auth':
       return msg('managedAgents.common.auth', 'Auth');
+    case 'Updated':
+      return msg('managedAgents.common.updated', 'Updated');
     case 'Payload':
       return msg('managedAgents.common.payload', 'Payload');
     default:

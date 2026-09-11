@@ -46,3 +46,40 @@ export function buildCreateWorkspaceInput(name: string, displayColor: string): C
     },
   };
 }
+
+// 切换作用域时丢弃旧资源 ID、筛选条件和详情标签，避免请求其他工作区的资源。
+export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
+  const path = currentPath.split(/[?#]/)[0];
+  const scope = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
+  const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks)(?:\/|$)/);
+  if (settings) return `/settings${scope}/${settings[1]}`;
+  const scoped = path.match(/^\/workspaces\/[^/]+\/([^/]+)/);
+  if (scoped) return `${scope}/${scoped[1]}`;
+  const section = path.split('/')[1];
+  if (section === 'workbench') return '/workbench';
+  const aliases: Record<string, string> = {
+    'api-keys': 'keys',
+    webhooks: 'webhooks',
+    quickstart: 'agent-quickstart',
+    'credential-vaults': 'vaults',
+  };
+  if (section === 'api-keys' || section === 'webhooks') return `/settings${scope}/${aliases[section]}`;
+  const workspaceSections = [
+    'llm-models',
+    'playground',
+    'files',
+    'skills',
+    'batches',
+    'agents',
+    'sessions',
+    'observability',
+    'deployments',
+    'environments',
+    'memory-stores',
+    'dreams',
+    'cost',
+    'logs',
+  ];
+  if (aliases[section] || workspaceSections.includes(section)) return `${scope}/${aliases[section] || section}`;
+  return path;
+}

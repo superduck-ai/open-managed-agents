@@ -1,3 +1,4 @@
+import { canManageMembers } from '../permissions/members';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { setConsoleRequestContext } from '../api/client';
@@ -31,11 +32,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () =>
       workspaces.some((workspace) => workspace.id === preferredWorkspaceId)
         ? preferredWorkspaceId
-        : defaultWorkspace.id,
+        : (workspaces.find((workspace) => workspace.is_default)?.id ?? ''),
     [preferredWorkspaceId, workspaces],
   );
   const activeWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? defaultWorkspace,
+    () =>
+      workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? {
+        id: '',
+        type: 'workspace' as const,
+        name: '',
+      },
     [activeWorkspaceId, workspaces],
   );
 
@@ -84,6 +90,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       orgUuid,
+      canManageWorkspaces: canManageMembers(account),
       workspaces,
       activeWorkspace,
       activeWorkspaceId,
@@ -94,6 +101,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       refreshWorkspaces,
     }),
     [
+      account,
       activeWorkspace,
       activeWorkspaceId,
       createWorkspace,
@@ -110,16 +118,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 }
 
 function normalizeWorkspaces(apiWorkspaces: Workspace[] = []) {
-  const seen = new Set([defaultWorkspace.id]);
-  const workspaces = [defaultWorkspace];
+  const seen = new Set<string>();
+  const workspaces: Workspace[] = [];
   for (const workspace of apiWorkspaces) {
-    const id = workspace.id?.trim();
-    if (!id || seen.has(id) || workspace.name.trim().toLowerCase() === defaultWorkspace.id) {
+    const id = workspace.is_default ? defaultWorkspace.id : workspace.id?.trim();
+    if (!id || seen.has(id)) {
       continue;
     }
     seen.add(id);
     workspaces.push({
       ...workspace,
+      id,
+      name: workspace.is_default ? defaultWorkspace.name : workspace.name,
+      external_id: workspace.id,
       display_color: workspace.display_color || workspace.color || defaultWorkspace.display_color,
       color: workspace.color || workspace.display_color || defaultWorkspace.color,
     });
@@ -139,11 +150,11 @@ function readStoredWorkspaceId() {
 }
 
 function writeStoredWorkspaceId(workspaceId: string) {
-  if (typeof window === 'undefined') {
+  if (typeof window === 'undefined' || !workspaceId) {
     return;
   }
   try {
-    window.localStorage.setItem(activeWorkspaceStorageKey, workspaceId || defaultWorkspace.id);
+    window.localStorage.setItem(activeWorkspaceStorageKey, workspaceId);
   } catch {
     // Some embedded browser/test environments can deny storage access.
   }

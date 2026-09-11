@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -49,7 +51,7 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 		r.Get("/{workspace_id}", h.getWorkspace)
 		r.Post("/{workspace_id}", h.updateWorkspace)
 		r.Post("/{workspace_id}/archive", h.archiveWorkspace)
-		r.Get("/{workspace_id}/rate_limits", h.listWorkspaceRateLimits)
+		r.With(h.requireBillingAccess).Get("/{workspace_id}/rate_limits", h.listWorkspaceRateLimits)
 		r.Route("/{workspace_id}/members", func(r chi.Router) {
 			r.Post("/", h.createWorkspaceMember)
 			r.Get("/", h.listWorkspaceMembers)
@@ -58,7 +60,7 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 			r.Delete("/{user_id}", h.deleteWorkspaceMember)
 		})
 	})
-	router.Get("/rate_limits", h.listOrganizationRateLimits)
+	router.With(h.requireBillingAccess).Get("/rate_limits", h.listOrganizationRateLimits)
 	router.Route("/api_keys", func(r chi.Router) {
 		r.Get("/", h.listAPIKeys)
 		r.Get("/{api_key_id}", h.getAPIKey)
@@ -73,10 +75,11 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 		r.Post("/{external_key_id}/validate", h.validateExternalKey)
 	})
 	router.Route("/usage_report", func(r chi.Router) {
+		r.Use(h.requireBillingAccess)
 		r.Get("/messages", h.messagesUsageReport)
 		r.Get("/claude_code", h.claudeCodeUsageReport)
 	})
-	router.Get("/cost_report", h.costReport)
+	router.With(h.requireBillingAccess).Get("/cost_report", h.costReport)
 	router.Route("/tunnels", func(r chi.Router) {
 		r.Use(h.requireTunnelsBeta)
 		r.Get("/", h.listTunnels)
@@ -562,8 +565,13 @@ func (h *Handler) requireTunnelsBeta(next http.Handler) http.Handler {
 
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || principal.CredentialType != "api_key" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing authenticated principal"))
+		return auth.Principal{}, false
+	}
+	memberRoute := strings.Contains(chi.RouteContext(r.Context()).RoutePattern(), "/workspaces/{workspace_id}/members")
+	if !principal.WorkspaceAccess.ManageOrganization() && !memberRoute {
+		h.writeError(w, r, organizationAdministratorRequired())
 		return auth.Principal{}, false
 	}
 	return principal, true
@@ -653,4 +661,26 @@ func reportQueryFromRequest(r *http.Request) reportQuery {
 		Limit:       limit,
 		Page:        query.Get("page"),
 	}
+}
+
+// requireBillingAccess 统一保护用量、成本和限流读取，工作区入口同时校验真实目标范围。
+func (h *Handler) requireBillingAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := auth.PrincipalFromContext(r.Context())
+		if !ok {
+			h.writeError(w, r, authenticatedPrincipalRequired())
+			return
+		}
+		if !principal.WorkspaceAccess.Billing() {
+			h.writeError(w, r, billingAccessRequired())
+			return
+		}
+		if workspaceID := chi.URLParam(r, "workspace_id"); workspaceID != "" {
+			if _, _, err := workspaceaccess.New(h.service.db).Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID); err != nil {
+				h.writeError(w, r, mapAdminDBError(err, "Workspace not found"))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }

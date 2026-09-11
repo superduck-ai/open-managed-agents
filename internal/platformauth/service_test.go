@@ -57,9 +57,6 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 		if len(tx.workspaces) != 1 || tx.workspaces[0].Name != "default" || !strings.HasPrefix(tx.workspaces[0].ExternalID, "wrkspc_") {
 			t.Fatalf("workspaces = %#v, want default workspace", tx.workspaces)
 		}
-		if len(tx.members) != 1 || tx.members[0].WorkspaceRole != "workspace_admin" || !strings.HasPrefix(tx.members[0].ExternalID, "wmem_") {
-			t.Fatalf("members = %#v, want workspace admin member", tx.members)
-		}
 		if len(tx.apiKeys) != 1 || tx.apiKeys[0].Name != "default" || tx.apiKeys[0].Status != "active" || !strings.HasPrefix(tx.apiKeys[0].ExternalID, "api_key_") {
 			t.Fatalf("api keys = %#v, want default active api key", tx.apiKeys)
 		}
@@ -88,7 +85,6 @@ type fakePlatformAuthTx struct {
 	organizations []db.PlatformAuthOrganizationInput
 	users         []db.PlatformAuthUserInput
 	workspaces    []db.PlatformAuthWorkspaceInput
-	members       []db.PlatformAuthWorkspaceMemberInput
 	apiKeys       []db.PlatformAuthAPIKeyInput
 }
 
@@ -122,11 +118,6 @@ func (tx *fakePlatformAuthTx) InsertUser(_ context.Context, input db.PlatformAut
 func (tx *fakePlatformAuthTx) InsertWorkspace(_ context.Context, input db.PlatformAuthWorkspaceInput) (db.PlatformAuthWorkspaceRef, error) {
 	tx.workspaces = append(tx.workspaces, input)
 	return db.PlatformAuthWorkspaceRef{UUID: input.UUID}, nil
-}
-
-func (tx *fakePlatformAuthTx) InsertWorkspaceMember(_ context.Context, input db.PlatformAuthWorkspaceMemberInput) error {
-	tx.members = append(tx.members, input)
-	return nil
 }
 
 func (tx *fakePlatformAuthTx) InsertAPIKey(_ context.Context, input db.PlatformAuthAPIKeyInput) error {

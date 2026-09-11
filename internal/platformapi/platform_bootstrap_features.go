@@ -3,6 +3,7 @@ package platformapi
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,7 +36,7 @@ func buildBootstrapCompatibilityResponse(account *Account, orgScoped bool, growt
 		Growthbook:          &growthbook,
 		OrgStatsig:          statsig,
 		OrgGrowthbook:       growthbook,
-		CurrentUserAccess:   buildCurrentUserAccess(),
+		CurrentUserAccess:   buildCurrentUserAccess(auth.WorkspaceAccess{}),
 		IntercomAccountHash: nil,
 		Locale:              locale,
 		SystemPrompts:       map[string]any{},
@@ -304,30 +305,17 @@ func growthbookDJB2FeatureKey(name string) string {
 	return strconv.FormatUint(uint64(hash), 10)
 }
 
-func buildCurrentUserAccess() CurrentUserAccess {
-	permissions := ownerAccountPermissions()
+func buildCurrentUserAccess(access auth.WorkspaceAccess) CurrentUserAccess {
+	permissions := access.Permissions()
 	accountPermissions := make([]CurrentAccountPermission, 0, len(permissions))
 	for _, permission := range permissions {
 		accountPermissions = append(accountPermissions, CurrentAccountPermission{Permission: permission, Status: "available"})
 	}
 	return CurrentUserAccess{
 		Permissions:        permissions,
-		Role:               "owner",
+		Role:               access.OrganizationRole,
 		Features:           currentUserFeatures(),
 		AccountPermissions: accountPermissions,
-	}
-}
-
-func ownerAccountPermissions() []string {
-	return []string{
-		"members:view", "members:manage", "api:view", "api:manage", "integrations:manage",
-		"billing:view", "billing:manage", "cost:view", "usage:view", "invoices:view",
-		"organization:manage", "organization:manage_settings", "export:data", "export:members",
-		"owners:manage", "workspaces:view", "workspaces:manage", "enterprise_auth:view",
-		"enterprise_auth:manage", "limits:view", "membership_admins:manage", "export:audit_logs",
-		"security_keys:manage", "compliance:manage", "privacy:view", "privacy:manage",
-		"scoped_api_keys:manage", "scim1p:manage", "analytics:view", "workbench:view",
-		"library:manage", "workspace:api:resource_manage",
 	}
 }
 

@@ -34,6 +34,7 @@ describe('Workspaces settings page', () => {
     const { container } = renderWorkspacesSettings({
       workspaceValue: {
         orgUuid: 'org_test',
+        canManageWorkspaces: true,
         workspaces: [defaultWorkspace, fooWorkspace],
         activeWorkspace: fooWorkspace,
         activeWorkspaceId: fooWorkspace.id,
@@ -81,6 +82,7 @@ describe('Workspaces settings page', () => {
     renderWorkspacesSettings({
       workspaceValue: {
         orgUuid: 'org_test',
+        canManageWorkspaces: true,
         workspaces: [defaultWorkspace],
         activeWorkspace: defaultWorkspace,
         activeWorkspaceId: defaultWorkspace.id,

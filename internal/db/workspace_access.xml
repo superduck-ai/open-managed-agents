@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WorkspaceAccessMapper">
+    <select id="LockUsers" resultType="AdminUser">
+        SELECT uuid, external_id, organization_uuid, email, name, role, added_at
+        FROM users
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id IN (#{actorID}, #{targetID}) AND deleted_at IS NULL
+        ORDER BY uuid FOR UPDATE
+    </select>
+    <select id="LockWorkspace" resultType="string">
+        SELECT uuid FROM workspaces
+        WHERE organization_uuid = #{organizationUUID} AND uuid = #{workspaceUUID}
+        FOR UPDATE
+    </select>
+    <select id="ListMemberFacts" resultType="WorkspaceMemberFact">
+        SELECT u.uuid AS user_uuid, u.external_id AS user_external_id,
+            u.role AS organization_role, COALESCE(wm.workspace_role, '') AS explicit_role
+        FROM users u
+        JOIN workspaces w ON w.organization_uuid = u.organization_uuid AND w.uuid = #{workspaceUUID}
+        LEFT JOIN workspace_members wm ON NOT w.is_default
+            AND wm.organization_uuid = u.organization_uuid AND wm.workspace_uuid = w.uuid
+            AND wm.user_uuid = u.uuid AND wm.deleted_at IS NULL
+        WHERE u.organization_uuid = #{organizationUUID} AND u.deleted_at IS NULL
+        ORDER BY u.added_at DESC, u.uuid DESC
+    </select>
+    <select id="ListUserRoles" resultType="WorkspaceRoleFact">
+        SELECT wm.workspace_uuid, wm.workspace_role
+        FROM workspace_members wm
+        JOIN workspaces w ON w.uuid = wm.workspace_uuid AND w.organization_uuid = wm.organization_uuid
+        WHERE wm.organization_uuid = #{organizationUUID} AND wm.user_uuid = #{userUUID}
+        AND wm.deleted_at IS NULL AND NOT w.is_default AND w.archived_at IS NULL
+    </select>
+</mapper>

@@ -313,7 +313,7 @@ func TestAdminAPI(t *testing.T) {
 		otherKey := "sk-ant-admin-other-" + suffix
 		seedWorkspaceKey(t, app.pool, "org_admin_other_"+suffix, "workspace_admin_other_"+suffix, "api_key_admin_other_"+suffix, otherKey)
 		resp := adminDo(t, app, http.MethodGet, "/v1/organizations/workspaces/workspace_default", nil, otherKey, "")
-		assertError(t, resp, http.StatusNotFound, "not_found_error")
+		assertError(t, resp, http.StatusForbidden, "permission_error")
 	})
 
 	t.Run("success organization me", func(t *testing.T) {
@@ -381,9 +381,9 @@ func TestAdminAPI(t *testing.T) {
 		}
 
 		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/workspaces/"+workspace.ID+"/members/"+userID, map[string]any{
-			"workspace_role": "workspace_billing",
+			"workspace_role": "workspace_admin",
 		}, defaultTestKey, ""), &member)
-		if member.WorkspaceRole != "workspace_billing" {
+		if member.WorkspaceRole != "workspace_admin" {
 			t.Fatalf("updated workspace member role = %s", member.WorkspaceRole)
 		}
 
@@ -667,7 +667,11 @@ func adminDo(t *testing.T, app *testApp, method, path string, body any, key, bet
 	if err != nil {
 		t.Fatalf("new admin request: %v", err)
 	}
-	if key != "" {
+	if key == "sk-ant-local-default" {
+		sessionKey := "admin-test-session"
+		app.seedPlatformSession(t, sessionKey)
+		req.AddCookie(&http.Cookie{Name: "sessionKey", Value: sessionKey})
+	} else if key != "" {
 		req.Header.Set("X-Api-Key", key)
 	}
 	if beta != "" {

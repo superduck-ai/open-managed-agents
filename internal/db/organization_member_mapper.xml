@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<mapper namespace="OrganizationMemberGuardMapper">
+<mapper namespace="OrganizationMemberMapper">
     <select id="LockOrganization" result="scalar">
         SELECT uuid FROM organizations WHERE uuid = #{organizationUUID} FOR UPDATE
     </select>

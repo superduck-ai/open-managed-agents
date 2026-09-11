@@ -10,6 +10,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 const (
@@ -49,6 +50,7 @@ type rcloneMultimountConfig struct {
 
 type rcloneFilestoreLaunch struct {
 	ConfigPayload []byte
+	MemoryMounts  []memoryRuntimeMount
 }
 
 // prepareRcloneFilestoreLaunch resolves the Session filesystem authority and
@@ -57,6 +59,7 @@ type rcloneFilestoreLaunch struct {
 func (r *Runner) prepareRcloneFilestoreLaunch(
 	ctx context.Context,
 	session db.Session,
+	memoryMounts []memoryRuntimeMount,
 ) (rcloneFilestoreLaunch, error) {
 	serviceURL := codeSessionSandboxAPIBaseURL(r.cfg)
 	if serviceURL == "" {
@@ -75,11 +78,11 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("issue managed-agent filestore readonly token: %w", err)
 	}
-	configPayload, err := json.Marshal(buildRcloneMultimountConfig(scope.FilesystemExternalID, serviceURL, readWriteToken, readonlyToken))
+	configPayload, err := json.Marshal(buildRcloneMultimountConfig(scope.FilesystemExternalID, serviceURL, readWriteToken, readonlyToken, memoryMounts))
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("encode managed-agent filestore config: %w", err)
 	}
-	return rcloneFilestoreLaunch{ConfigPayload: configPayload}, nil
+	return rcloneFilestoreLaunch{ConfigPayload: configPayload, MemoryMounts: memoryMounts}, nil
 }
 
 func filestoreTokenIdentityFromScope(scope db.FilestoreTokenScope) filestore.TokenIdentity {
@@ -98,7 +101,8 @@ func filestoreTokenIdentityFromScope(scope db.FilestoreTokenScope) filestore.Tok
 
 // buildRcloneMultimountConfig 把 sandbox 内五个固定挂载点映射到同一个
 // filestore filesystem：outputs 读写，其余目录按最小权限原则只读挂载。
-func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, readonlyToken string) rcloneMultimountConfig {
+// 有 memory store 时追加 source=/memory/{slug} → destination=/mnt/memory/{slug}。
+func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, readonlyToken string, memoryMounts []memoryRuntimeMount) rcloneMultimountConfig {
 	mount := func(source, destination string, cacheSeconds float64, readonly bool, token string) rcloneMountConfig {
 		return rcloneMountConfig{
 			CacheDurationSeconds: cacheSeconds,
@@ -115,14 +119,29 @@ func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, reado
 			VFSCacheMode:         "full",
 		}
 	}
+	mounts := []rcloneMountConfig{
+		mount("/outputs", "/mnt/user-data/outputs", 3600, false, readWriteToken),
+		mount("/uploads", rcloneUploadsDestination, 1, true, readonlyToken),
+		mount("/transcripts", "/mnt/transcripts", 10, true, readonlyToken),
+		mount("/tool_results", "/mnt/user-data/tool_results", 3, true, readonlyToken),
+		mount("/skills", rcloneSkillsDestination, 60, true, readonlyToken),
+	}
+	for _, item := range memoryMounts {
+		readonly := item.Access == sessionresource.MemoryAccessReadOnly
+		token := readWriteToken
+		if readonly {
+			token = readonlyToken
+		}
+		mounts = append(mounts, mount(
+			memoryFilestoreSource(item.Slug),
+			item.MountPath,
+			memoryRcloneCacheSeconds,
+			readonly,
+			token,
+		))
+	}
 	return rcloneMultimountConfig{
-		Mounts: []rcloneMountConfig{
-			mount("/outputs", "/mnt/user-data/outputs", 3600, false, readWriteToken),
-			mount("/uploads", rcloneUploadsDestination, 1, true, readonlyToken),
-			mount("/transcripts", "/mnt/transcripts", 10, true, readonlyToken),
-			mount("/tool_results", "/mnt/user-data/tool_results", 3, true, readonlyToken),
-			mount("/skills", rcloneSkillsDestination, 60, true, readonlyToken),
-		},
+		Mounts:     mounts,
 		ReadyFile:  rcloneReadyPath,
 		ServiceURL: strings.TrimRight(strings.TrimSpace(serviceURL), "/"),
 		StateDir:   rcloneStateDirectory,

@@ -31,6 +31,23 @@ func TestSessionFileResourceMapperBuildsPostgresArguments(t *testing.T) {
 			},
 		},
 		{
+			name: "active memory store duplicate count",
+			bound: buildSessionResourceMapperCountSessionMemoryStoresByStoreID(
+				yourbatis.DialectPostgres,
+				"00000000-0000-4000-8000-000000000042",
+				"session_test",
+				"memstore_test",
+			),
+			wantArgCount: 3,
+			wantClauses: []string{
+				"workspace_uuid = $1",
+				"session_external_id = $2",
+				"resource_type = 'memory_store'",
+				"payload->>'memory_store_id' = $3",
+				"payload IS NOT NULL",
+			},
+		},
+		{
 			name: "input resource mount conflict",
 			bound: buildSessionResourceMapperFindMountConflict(yourbatis.DialectPostgres, sessionResourcePathParams{
 				WorkspaceUUID: "00000000-0000-4000-8000-000000000001",

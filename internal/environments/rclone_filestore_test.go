@@ -21,7 +21,7 @@ func TestBuildRcloneMultimountConfig(t *testing.T) {
 		readWrite    = "rw-token"
 		readonly     = "ro-token"
 	)
-	got := buildRcloneMultimountConfig(filesystemID, serviceURL, readWrite, readonly)
+	got := buildRcloneMultimountConfig(filesystemID, serviceURL, readWrite, readonly, nil)
 	if got.ReadyFile != rcloneReadyPath || got.StateDir != rcloneStateDirectory || got.ServiceURL != "http://host.docker.internal:38080" {
 		t.Fatalf("unexpected multimount envelope: %+v", got)
 	}
@@ -69,7 +69,7 @@ func TestRcloneReadyProbeContract(t *testing.T) {
 
 func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	const secret = "filestore-secret-token"
-	configPayload, err := json.Marshal(buildRcloneMultimountConfig("fs_test", "http://service.test", secret, secret))
+	configPayload, err := json.Marshal(buildRcloneMultimountConfig("fs_test", "http://service.test", secret, secret, nil))
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
@@ -179,6 +179,92 @@ func TestStartRcloneFilestoreFailures(t *testing.T) {
 	}
 }
 
+func TestStartManagedAgentSessionFilesystemWritesLocalMemoryMarkdown(t *testing.T) {
+	const secretMarker = "provider-secret-marker"
+	providerFailure := errors.New("provider failed with " + secretMarker)
+	mounts := []memoryRuntimeMount{{
+		Name:         "user-preferences",
+		Description:  "个人对西餐的喜好",
+		Instructions: "问饮食或语言先读此目录",
+		Access:       "read_write",
+		MountPath:    "/mnt/memory/user-preferences",
+		Slug:         "user-preferences",
+	}}
+	configPayload, err := json.Marshal(buildRcloneMultimountConfig("fs_test", "http://service.test", "rw", "ro", mounts))
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	launch := rcloneFilestoreLaunch{ConfigPayload: configPayload, MemoryMounts: mounts}
+
+	t.Run("writes mkdir and markdown after rclone ready", func(t *testing.T) {
+		provider := &rcloneTestProvider{ready: true}
+		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch); err != nil {
+			t.Fatalf("startManagedAgentSessionFilesystem() error = %v", err)
+		}
+		if len(provider.runCommands) == 0 || provider.runCommands[0] != memoryRootMkdirCommand() {
+			t.Fatalf("commands = %#v, want mkdir first", provider.runCommands)
+		}
+		if got := provider.fileData(memoryMarkdownSandboxPath); got != renderMemoryMarkdown(mounts) {
+			t.Fatalf("MEMORY.md = %q", got)
+		}
+		if provider.fileData(rcloneConfigPath) == "" {
+			t.Fatal("missing rclone config write")
+		}
+		for _, command := range provider.runCommands {
+			if strings.Contains(command, "cp ") || strings.Contains(command, "rclone copy") {
+				t.Fatalf("startup copied store files: %s", command)
+			}
+		}
+	})
+
+	t.Run("skips local memory root without stores", func(t *testing.T) {
+		provider := &rcloneTestProvider{ready: true}
+		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		emptyLaunch := rcloneFilestoreLaunch{ConfigPayload: []byte(`{"mounts":[]}`)}
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", emptyLaunch); err != nil {
+			t.Fatalf("startManagedAgentSessionFilesystem() error = %v", err)
+		}
+		for _, command := range provider.runCommands {
+			if strings.Contains(command, "/mnt/memory") {
+				t.Fatalf("created /mnt/memory without stores: %s", command)
+			}
+		}
+		if provider.fileData(memoryMarkdownSandboxPath) != "" {
+			t.Fatal("wrote MEMORY.md without stores")
+		}
+	})
+
+	t.Run("markdown write failure is fail-closed", func(t *testing.T) {
+		provider := &rcloneTestProvider{
+			ready: true,
+			writeErrByPath: map[string]error{
+				memoryMarkdownSandboxPath: providerFailure,
+			},
+		}
+		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch)
+		if !errors.Is(err, errMemoryMarkdownWrite) {
+			t.Fatalf("error = %v, want %v", err, errMemoryMarkdownWrite)
+		}
+		if strings.Contains(err.Error(), secretMarker) {
+			t.Fatalf("leaked provider error: %v", err)
+		}
+	})
+
+	t.Run("mkdir failure is fail-closed before rclone", func(t *testing.T) {
+		provider := &rcloneTestProvider{runErrors: []error{providerFailure}}
+		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch)
+		if !errors.Is(err, errMemoryRootCreate) {
+			t.Fatalf("error = %v, want %v", err, errMemoryRootCreate)
+		}
+		if provider.fileData(rcloneConfigPath) != "" {
+			t.Fatal("rclone config was written after mkdir failure")
+		}
+	})
+}
+
 func TestWaitForRcloneReady(t *testing.T) {
 	t.Run("polls until ready", func(t *testing.T) {
 		provider := &rcloneTestProvider{
@@ -205,6 +291,7 @@ func TestWaitForRcloneReady(t *testing.T) {
 
 type rcloneTestProvider struct {
 	writeErr        error
+	writeErrByPath  map[string]error
 	fileExistsErr   error
 	backgroundErr   error
 	backgroundCalls int
@@ -216,6 +303,7 @@ type rcloneTestProvider struct {
 	runCommands     []string
 	writePath       string
 	writeData       []byte
+	writes          map[string][]byte
 	configExists    bool
 }
 
@@ -234,10 +322,24 @@ func (*rcloneTestProvider) Resolve(db.Environment, *db.EnvironmentWork) (e2brunt
 func (p *rcloneTestProvider) WriteFile(_ context.Context, _ string, path string, data []byte) error {
 	p.writePath = path
 	p.writeData = append([]byte(nil), data...)
+	if p.writes == nil {
+		p.writes = map[string][]byte{}
+	}
+	p.writes[path] = append([]byte(nil), data...)
+	if err := p.writeErrByPath[path]; err != nil {
+		return err
+	}
 	if p.writeErr == nil && path == rcloneConfigPath {
 		p.configExists = true
 	}
 	return p.writeErr
+}
+
+func (p *rcloneTestProvider) fileData(path string) string {
+	if p == nil || p.writes == nil {
+		return ""
+	}
+	return string(p.writes[path])
 }
 
 func (p *rcloneTestProvider) FileExists(_ context.Context, _ string, path string) (bool, error) {

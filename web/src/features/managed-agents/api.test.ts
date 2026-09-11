@@ -3,6 +3,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { setAnthropicClientForTest } from '@/shared/api/anthropic';
 import {
   addSessionFileResource,
+  listMemoryStoreOptions,
   listSessionFileOptions,
   mergeSessionEventCache,
   mergeSessionEventsById,
@@ -600,6 +601,34 @@ describe('managed agents API', () => {
     expect(page).toMatchObject({ first_id: 'file_0', has_more: false, last_id: 'file_1000' });
   });
 
+  test('loads every memory store page for session attach options', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => memoryStore(index));
+    const extraStore = memoryStore(100);
+    const requestedPages: Array<string | null> = [];
+    const requestedLimits: string[] = [];
+    globalThis.fetch = (async (input) => {
+      const url = new URL(requestURL(input), 'http://127.0.0.1');
+      requestedPages.push(url.searchParams.get('page'));
+      requestedLimits.push(url.searchParams.get('limit') ?? '');
+      const response = url.searchParams.get('page')
+        ? { data: [extraStore], next_page: null }
+        : { data: firstPage, next_page: 'memory_100' };
+      return new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    setAnthropicClientForTest(null);
+
+    const page = await listMemoryStoreOptions('workspace_123');
+
+    expect(requestedLimits).toEqual(['100', '100']);
+    expect(requestedPages).toEqual([null, 'memory_100']);
+    expect(page.data).toHaveLength(101);
+    expect(page.data.at(-1)?.id).toBe('memstore_100');
+    expect(page.next_page).toBeNull();
+  });
+
   test('adds a file through the session resource endpoint', async () => {
     let capturedInput: RequestInfo | URL = '';
     let capturedInit: RequestInit | undefined;
@@ -647,5 +676,17 @@ function fileMetadata(index: number) {
     mime_type: 'text/plain',
     size_bytes: index,
     type: 'file' as const,
+  };
+}
+
+function memoryStore(index: number) {
+  return {
+    id: `memstore_${index}`,
+    archived_at: null,
+    created_at: '2026-08-24T00:00:00Z',
+    description: `Store ${index}`,
+    name: `Memory ${index}`,
+    type: 'memory_store' as const,
+    updated_at: '2026-08-24T00:00:00Z',
   };
 }

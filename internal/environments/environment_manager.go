@@ -73,6 +73,9 @@ func managedAgentSessionConfig(
 	if len(session.VaultIDs) > 0 {
 		body["vault_ids"] = session.VaultIDs
 	}
+	if env := memorySessionEnvironment(runtimeResources.memoryMounts); len(env) > 0 {
+		body["environment_variables"] = env
+	}
 	raw, _ := json.Marshal(body)
 	return raw
 }

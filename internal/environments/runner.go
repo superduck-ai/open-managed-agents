@@ -29,6 +29,9 @@ var (
 	errRcloneConfigPermissions = errors.New("rclone-filestore config permission update failed")
 	errRcloneProcessStart      = errors.New("rclone-filestore process start failed")
 	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
+	errMemoryRootCreate        = errors.New("local memory mount root create failed")
+	errMemoryMarkdownWrite     = errors.New("memory markdown write failed")
+	errMemorySnapshotInvalid   = errors.New("memory mount snapshot is invalid")
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
 )
 
@@ -83,6 +86,7 @@ type managedAgentLaunchPreparation struct {
 	Title                 string
 	RecoveryCodeSessionID string
 	EnvPlaceholders       map[string]string
+	MemoryMounts          []memoryRuntimeMount
 }
 
 type managedAgentRuntimeLaunch struct {
@@ -299,16 +303,17 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 	}
 
-	// 只有 Cloud Session Managed Agent 使用固定的四组 Filestore 挂载。
-	// 必须等 rclone ready 后才能继续，确保 Claude 启动时 uploads、outputs、
-	// transcripts 和 tool_results 已经可用。
+	// Cloud Session Managed Agent 使用五个固定 Filestore 挂载，外加本次
+	// attach 的 memory store。必须等 rclone ready 且 MEMORY.md 写好后才能
+	// 继续，确保 Claude 启动时 uploads、outputs、transcripts、tool_results、
+	// skills 和记忆目录已经可用。
 	if preparation != nil {
-		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.Session)
+		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.Session, preparation.MemoryMounts)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("prepare rclone-filestore launch: %w", err)
 		}
-		if err := r.startRcloneFilestore(ctx, providerSandboxID, rcloneLaunch); err != nil {
+		if err := r.startManagedAgentSessionFilesystem(ctx, providerSandboxID, rcloneLaunch); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
@@ -549,6 +554,17 @@ func (r *Runner) prepareManagedAgentLaunch(
 		return nil, err
 	}
 	runtimeResources := resolveManagedAgentRuntimeResources(resources)
+	if len(runtimeResources.invalidMemoryResources) > 0 {
+		return nil, r.logManagedAgentRuntimeStageFailure(
+			ctx,
+			"memory_mount_resolve",
+			errMemorySnapshotInvalid,
+			fmt.Errorf(
+				"unparseable memory snapshots on session resources %s",
+				strings.Join(runtimeResources.invalidMemoryResources, ", "),
+			),
+		)
+	}
 	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
 	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)
 	if err != nil {
@@ -573,6 +589,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 		Title:                 title,
 		RecoveryCodeSessionID: recoveryCodeSessionID,
 		EnvPlaceholders:       envPlaceholders,
+		MemoryMounts:          runtimeResources.memoryMounts,
 	}, nil
 }
 
@@ -673,6 +690,24 @@ func (r *Runner) publishManagedAgentRuntime(
 		metadataPatch,
 		metadataPatch,
 	)
+}
+
+func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
+	if len(launch.MemoryMounts) > 0 {
+		if err := r.runSandboxCommand(ctx, sandboxID, memoryRootMkdirCommand(), rcloneCommandGraceTimeout); err != nil {
+			return r.logManagedAgentRuntimeStageFailure(ctx, "memory_root_mkdir", errMemoryRootCreate, err)
+		}
+	}
+	if err := r.startRcloneFilestore(ctx, sandboxID, launch); err != nil {
+		return err
+	}
+	if len(launch.MemoryMounts) == 0 {
+		return nil
+	}
+	if err := r.provider.WriteFile(ctx, sandboxID, memoryMarkdownSandboxPath, []byte(renderMemoryMarkdown(launch.MemoryMounts))); err != nil {
+		return r.logManagedAgentRuntimeStageFailure(ctx, "memory_markdown_write", errMemoryMarkdownWrite, err)
+	}
+	return nil
 }
 
 func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {

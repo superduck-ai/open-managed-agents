@@ -23,6 +23,7 @@ import {
   type VaultCredentialApiResponse,
 } from '../types';
 import { formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
+import { entityMemoryAttaches } from './memory-attach';
 
 export { sectionPathSegment };
 
@@ -58,7 +59,8 @@ export function memoryBranchFromPage(page: PageResponse<MemoryApiResponse>): Mem
 export function memoryRowsFromPage(page: PageResponse<MemoryApiResponse>) {
   const rows = (page.data ?? [])
     .map(normalizeMemoryRow)
-    .filter((memory): memory is MemoryApiResponse => Boolean(memory));
+    .filter((memory): memory is MemoryApiResponse => Boolean(memory))
+    .filter((memory) => memory.type !== 'memory' || !isPlatformMemoryMarkdownPath(memory.path));
   const existingPaths = new Set(
     rows.map((memory) => (memory.type === 'memory_prefix' ? normalizeMemoryFolderPath(memory.path) : memory.path)),
   );
@@ -178,6 +180,9 @@ export function buildMemoryTreeNodes(
   const appendRows = (rows: MemoryApiResponse[], depth: number) => {
     const seenFolders = new Set<string>();
     for (const row of sortMemoryRows(rows)) {
+      if (row.type === 'memory' && isPlatformMemoryMarkdownPath(row.path)) {
+        continue;
+      }
       if (row.type === 'memory_prefix') {
         const path = normalizeMemoryFolderPath(row.path);
         if (seenFolders.has(path)) {
@@ -330,7 +335,7 @@ export function initialFormValues(
     cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
-    memoryStoreIds: entity ? entityMemoryStoreIds(entity) : [],
+    memoryAttaches: entity ? entityMemoryAttaches(entity) : [],
     fileResources: [],
   };
 }
@@ -467,19 +472,9 @@ export function entityInitialMessage(entity: ManagedEntityApiResponse) {
   return '';
 }
 
-export function entityMemoryStoreIds(entity: ManagedEntityApiResponse) {
-  if (!('resources' in entity) || !Array.isArray(entity.resources)) {
-    return [];
-  }
-  return entity.resources
-    .map((resource) =>
-      resource &&
-      typeof resource === 'object' &&
-      typeof (resource as { memory_store_id?: unknown }).memory_store_id === 'string'
-        ? (resource as { memory_store_id: string }).memory_store_id
-        : null,
-    )
-    .filter((item): item is string => Boolean(item));
+export function isPlatformMemoryMarkdownPath(path: string) {
+  const trimmed = path.trim();
+  return trimmed === '/MEMORY.md' || trimmed === 'MEMORY.md';
 }
 
 export function entityTriggerType(entity: ManagedEntityApiResponse): ManagedEntityFormValues['triggerType'] {

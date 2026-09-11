@@ -18,7 +18,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, localTimezone, startMCPVaultAuth } from '../api';
+import { listAgents, listManagedEntities, listMemoryStoreOptions, localTimezone, startMCPVaultAuth } from '../api';
 import {
   DeploymentAddSelectField,
   DeploymentSelectField,
@@ -43,18 +43,19 @@ import {
   type MemoryApiResponse,
   type MemoryFormValues,
   type MemoryStoreApiResponse,
-  type PageResponse,
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from '../types';
 import { errorMessage } from '../utils';
-import { areSessionFileResourcesValid, SessionFileResourcesField } from '../sessions/SessionFileResourcesField';
+import { SessionFileResourcesField } from '../sessions/SessionFileResourcesField';
 import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
+import { managedEntityDialogCanSubmit } from './entity-dialog-ready';
 import {
   credentialAuthTypeLabel,
   credentialFormReady,
   credentialFormValues,
   initialFormValues,
+  isPlatformMemoryMarkdownPath,
   parseCredentialAuthType,
   patchCredentialFormValues,
   vaultOAuthErrorMessage,
@@ -598,7 +599,7 @@ export function MemoryDialog({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canSubmit = values.path.trim() && values.content.length > 0;
+  const canSubmit = values.path.trim() && values.content.length > 0 && !isPlatformMemoryMarkdownPath(values.path);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) {
@@ -638,6 +639,14 @@ export function MemoryDialog({
               onChange={(path) => setValues((current) => ({ ...current, path }))}
               autoFocus
             />
+            {isPlatformMemoryMarkdownPath(values.path) ? (
+              <p className="text-sm text-destructive" role="alert">
+                {msg(
+                  'managedAgents.memoryStores.memoryDialog.platformMemoryMd',
+                  'Platform MEMORY.md is created in the sandbox and cannot be added to a store.',
+                )}
+              </p>
+            ) : null}
             <ManagedTextArea
               label={msg('managedAgents.memoryStores.memoryDialog.content', 'Content')}
               value={values.content}
@@ -733,9 +742,7 @@ function GenericManagedEntityDialog({
           lockedAgent ? Promise.resolve({ data: [], next_page: null } as AgentPageResponse) : listAgents(workspaceId),
           listManagedEntities('environments', workspaceId),
           listManagedEntities('credential-vaults', workspaceId),
-          section === 'deployments'
-            ? listManagedEntities('memory-stores', workspaceId)
-            : Promise.resolve({ data: [], next_page: null } as PageResponse<ManagedEntityApiResponse>),
+          listMemoryStoreOptions(workspaceId),
         ]);
         if (!active) {
           return;
@@ -791,27 +798,11 @@ function GenericManagedEntityDialog({
     };
   }, [lockedAgent, needsReferences, section, workspaceId]);
 
-  const canSubmit =
-    section === 'deployments'
-      ? values.name.trim().length > 0 &&
-        values.agentId.trim().length > 0 &&
-        values.environmentId.trim().length > 0 &&
-        values.initialMessage.trim().length > 0 &&
-        (values.triggerType === 'manual' ||
-          (values.triggerType === 'schedule' &&
-            values.cronExpression.trim().length > 0 &&
-            values.timezone.trim().length > 0)) &&
-        !submitting &&
-        !loadingOptions
-      : section === 'sessions'
-        ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
-          areSessionFileResourcesValid(values.fileResources) &&
-          !submitting &&
-          !loadingOptions
-        : values.name.trim().length > 0 &&
-          (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
-          !submitting &&
-          !loadingOptions;
+  const canSubmit = managedEntityDialogCanSubmit(section, values, {
+    submitting,
+    loadingOptions,
+    needsReferences,
+  });
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -904,15 +895,12 @@ function GenericManagedEntityDialog({
                 manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
                 onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
               />
-              <DeploymentAddSelectField
-                label={msg('managedAgents.memoryStores.title', 'Memory stores')}
-                optional
-                valueLabel={msg('managedAgents.memoryStores.kind', 'memory store')}
-                selectedIds={values.memoryStoreIds}
-                options={memoryStores}
-                manageHref={`/workspaces/${workspaceId}/memory-stores`}
-                manageLabel={msg('managedAgents.memoryStores.manage', 'Manage memory stores')}
-                onChange={(memoryStoreIds) => setValues((current) => ({ ...current, memoryStoreIds }))}
+              <SessionFileResourcesField
+                resources={[]}
+                memoryAttaches={values.memoryAttaches}
+                memoryStoreOptions={memoryStores}
+                workspaceId={workspaceId}
+                onMemoryAttachesChange={(memoryAttaches) => setValues((current) => ({ ...current, memoryAttaches }))}
               />
               <DeploymentSelectField
                 label={msg('managedAgents.common.trigger', 'Trigger')}
@@ -1024,13 +1012,14 @@ function GenericManagedEntityDialog({
                   selectedIds={values.vaultIds}
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
-                {section === 'sessions' ? (
-                  <SessionFileResourcesField
-                    resources={values.fileResources}
-                    workspaceId={workspaceId}
-                    onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
-                  />
-                ) : null}
+                <SessionFileResourcesField
+                  resources={values.fileResources}
+                  memoryAttaches={values.memoryAttaches}
+                  memoryStoreOptions={memoryStores}
+                  workspaceId={workspaceId}
+                  onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
+                  onMemoryAttachesChange={(memoryAttaches) => setValues((current) => ({ ...current, memoryAttaches }))}
+                />
               </>
             ) : null}
 

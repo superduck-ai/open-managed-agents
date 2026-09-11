@@ -245,6 +245,7 @@ func (i *Injector) resolveFromPlan(
 	excluded map[string]struct{},
 	forceRefresh map[string]struct{},
 ) (*resolvedInjection, error) {
+	var lastResolveErr error
 	for _, cred := range plan.matches {
 		if _, skip := excluded[cred.ExternalID]; skip {
 			continue
@@ -253,6 +254,7 @@ func (i *Injector) resolveFromPlan(
 		result, err := i.resolveInjectableToken(ctx, cred, force)
 		if err != nil {
 			i.logger.WarnContext(ctx, "skip injectable vault credential", "credential_id", cred.ExternalID, "auth_type", cred.AuthType, "error", err)
+			lastResolveErr = err
 			continue
 		}
 		result.planCredID = cred.ExternalID
@@ -260,6 +262,10 @@ func (i *Injector) resolveFromPlan(
 		return result, nil
 	}
 	if plan.hostCovered {
+		// 匹配凭证全部解析失败是内部错误，需带 cause 与「无匹配凭证」的裸拒绝区分。
+		if lastResolveErr != nil {
+			return nil, injectionRejected(fmt.Errorf("all matched credentials failed to resolve: %w", lastResolveErr))
+		}
 		return nil, injectionRejected(nil)
 	}
 	return nil, nil

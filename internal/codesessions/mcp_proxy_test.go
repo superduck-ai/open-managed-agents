@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -254,4 +255,48 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestMCPSessionErrorPayload(t *testing.T) {
+	// 连接失败：mcp_connection_failed_error + retryable
+	payload, err := mcpSessionErrorPayload("mcp_connection_failed_error", "mcp.example.com", "retryable", "MCP upstream is unavailable")
+	if err != nil {
+		t.Fatalf("mcpSessionErrorPayload: %v", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if object["type"] != "session.error" {
+		t.Fatalf("type = %v, want session.error", object["type"])
+	}
+	errorObject := object["error"].(map[string]any)
+	if errorObject["type"] != "mcp_connection_failed_error" || errorObject["mcp_server_name"] != "mcp.example.com" || errorObject["retry_status"] != "retryable" {
+		t.Fatalf("error = %#v, want 连接失败契约", errorObject)
+	}
+
+	// 认证失败：mcp_authentication_failed_error + not_retryable
+	payload, err = mcpSessionErrorPayload("mcp_authentication_failed_error", "mcp.example.com", "not_retryable", "MCP upstream credentials are unavailable")
+	if err != nil {
+		t.Fatalf("mcpSessionErrorPayload: %v", err)
+	}
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	errorObject = object["error"].(map[string]any)
+	if errorObject["type"] != "mcp_authentication_failed_error" || errorObject["retry_status"] != "not_retryable" {
+		t.Fatalf("error = %#v, want 认证失败契约", errorObject)
+	}
+}
+
+func TestMCPAuthRejectedDistinguishesInternalCause(t *testing.T) {
+	if mcpAuthRejected(vaults.NewInjectionRejected(errors.New("load credentials: db down"))) {
+		t.Fatal("带内部 cause 的拒绝应归为内部错误，不是认证失败")
+	}
+	if !mcpAuthRejected(vaults.NewInjectionRejected(nil)) {
+		t.Fatal("无匹配凭证的拒绝应判定为认证失败")
+	}
+	if mcpAuthRejected(errors.New("other")) {
+		t.Fatal("无关错误不应判定为认证失败")
+	}
 }

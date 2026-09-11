@@ -53,11 +53,36 @@ var (
 	errCredentialStoreUnavailable = errors.New("credential store is unavailable")
 )
 
-func injectionRejected(cause error) error {
-	if cause == nil {
-		return ErrInjectionRejected
+// InjectionRejectedError 是 ErrInjectionRejected 的具体包装类型：
+// Cause 为 nil 表示 host 需要注入但无匹配凭证（认证失败语义）；
+// 非 nil 表示内部故障（vault 读取、解密、refresh），调用方可据此区分。
+type InjectionRejectedError struct {
+	cause error
+}
+
+func (e *InjectionRejectedError) Error() string {
+	if e.cause == nil {
+		return ErrInjectionRejected.Error()
 	}
-	return fmt.Errorf("%w: %w", ErrInjectionRejected, cause)
+	return ErrInjectionRejected.Error() + ": " + e.cause.Error()
+}
+
+func (e *InjectionRejectedError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{ErrInjectionRejected}
+	}
+	return []error{ErrInjectionRejected, e.cause}
+}
+
+func (e *InjectionRejectedError) Cause() error { return e.cause }
+
+func injectionRejected(cause error) error {
+	return &InjectionRejectedError{cause: cause}
+}
+
+// NewInjectionRejected 构造注入拒绝错误，供跨包测试与判定使用。
+func NewInjectionRejected(cause error) error {
+	return &InjectionRejectedError{cause: cause}
 }
 
 func substitutionRejected(cause error) error {

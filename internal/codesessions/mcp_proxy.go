@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -18,6 +19,9 @@ import (
 )
 
 const maxMCPProxyURLBytes = 2048
+
+// mcpErrorEventPublishTimeout 限制错误事件发布的同步等待上界，避免拖慢 502 响应。
+const mcpErrorEventPublishTimeout = 2 * time.Second
 
 // mcpProxyTransportWrapper wraps the MCP upstream RoundTripper for vault
 // inject + mcp_oauth 401 refresh retry. This is the sole production credential
@@ -104,18 +108,57 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out.Host = target.Host
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
-			if errors.Is(err, vaults.ErrInjectionRejected) {
+			// 带内部 cause 的注入拒绝（vault 读取/解密故障）是内部错误，不误报为认证失败。
+			if mcpAuthRejected(err) {
 				h.logger.ErrorContext(request.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
+				h.publishMCPErrorEvent(request.Context(), codeSessionID, "mcp_authentication_failed_error", target.Hostname(), "not_retryable", vaults.InjectionUnavailablePublicMessage)
 				httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", vaults.InjectionUnavailablePublicMessage))
 				return
 			}
+			// 客户端主动断开不是上游故障，与日志守卫一致，不发错误事件。
 			if request.Context().Err() == nil {
 				h.logger.WarnContext(request.Context(), "proxy MCP upstream request", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
+				h.publishMCPErrorEvent(request.Context(), codeSessionID, "mcp_connection_failed_error", target.Hostname(), "retryable", "MCP upstream is unavailable")
 			}
 			httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", "MCP upstream is unavailable"))
 		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// mcpAuthRejected 判定注入拒绝是否为认证失败：Cause 为 nil 表示「host 需要注入但无匹配凭证」，
+// 带内部 cause（vault 读取/解密/refresh 故障）的拒绝是内部错误，不误报为认证失败。
+func mcpAuthRejected(err error) bool {
+	rejected, ok := errors.AsType[*vaults.InjectionRejectedError](err)
+	return ok && rejected.Cause() == nil
+}
+
+// publishMCPErrorEvent 在 MCP 代理失败时向 session 事件流发布 session.error（best-effort，
+// 2 秒超时上界，不显著阻塞 502 响应）。走 publishPublicPayloads → PublishCodeSessionEvents。
+func (h *Handler) publishMCPErrorEvent(ctx context.Context, codeSessionID, errorType, serverName, retryStatus, message string) {
+	payload, err := mcpSessionErrorPayload(errorType, serverName, retryStatus, message)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "build MCP session error payload", "code_session_id", codeSessionID, "error", err)
+		return
+	}
+	publishCtx, cancel := context.WithTimeout(ctx, mcpErrorEventPublishTimeout)
+	defer cancel()
+	if err := h.service.publishPublicPayloads(publishCtx, codeSessionID, []json.RawMessage{payload}); err != nil {
+		h.logger.ErrorContext(ctx, "publish MCP session error event", "code_session_id", codeSessionID, "error", err)
+	}
+}
+
+// mcpSessionErrorPayload 构造 MCP 失败事件的 session.error payload（官方契约：type + mcp_server_name + retry_status + message）。
+func mcpSessionErrorPayload(errorType, serverName, retryStatus, message string) (json.RawMessage, error) {
+	return marshalRaw(map[string]any{
+		"type": "session.error",
+		"error": map[string]any{
+			"type":            errorType,
+			"mcp_server_name": serverName,
+			"retry_status":    retryStatus,
+			"message":         message,
+		},
+	})
 }
 
 func parseMCPProxyTarget(rawQuery string) (*url.URL, string, error) {

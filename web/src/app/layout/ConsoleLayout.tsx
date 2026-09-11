@@ -804,20 +804,6 @@ export function AccountMenu({
               <DropdownMenuLabel className="truncate px-3 py-2 text-xs">{identity.email}</DropdownMenuLabel>
             </DropdownMenuGroup>
 
-            <DropdownMenuRadioGroup value={activeWorkspace.id}>
-              <DropdownMenuRadioItem
-                value={activeWorkspace.id}
-                closeOnClick={false}
-                className="h-12 items-start gap-3 px-3 py-2.5 text-foreground"
-              >
-                <Building2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{activeWorkspace.name}</span>
-                  <span className="block text-xs text-muted-foreground">{msg('account.apiPlan', 'API plan')}</span>
-                </span>
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-
             <OrganizationMenu />
 
             <DropdownMenuSeparator />

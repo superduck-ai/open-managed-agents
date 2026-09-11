@@ -71,7 +71,7 @@ test('邀请加载失败可以重试，不自动循环', async () => {
   expect(await screen.findByText('受邀组织')).toBeTruthy();
 });
 
-test('接受邀请减少待处理数量并刷新bootstrap，不自动切换，进入组织由用户触发', async () => {
+test('接受邀请刷新bootstrap，不自动切换且不提供二次进入按钮', async () => {
   let accepted = false;
   globalThis.fetch = mock(async (input) => {
     if (String(input).endsWith('/accept')) {
@@ -83,12 +83,11 @@ test('接受邀请减少待处理数量并刷新bootstrap，不自动切换，�
   const { switchOrganization, refresh } = mount();
   fireEvent.click(await screen.findByRole('menuitem', { name: '组织邀请 (1)' }));
   fireEvent.click(await screen.findByRole('button', { name: '接受', exact: true }));
-  await screen.findByText('已加入 受邀组织');
+  await screen.findByText('没有待处理邀请。');
   expect(switchOrganization).not.toHaveBeenCalled();
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole('button', { name: '接受', exact: true })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: '进入组织' }));
-  await waitFor(() => expect(switchOrganization).toHaveBeenCalledWith('new-org'));
+  expect(screen.queryByRole('button', { name: '进入组织' })).toBeNull();
 });
 
 test('拒绝邀请后保持当前组织，失败操作仍可重试', async () => {

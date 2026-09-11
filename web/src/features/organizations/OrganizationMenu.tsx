@@ -75,7 +75,6 @@ function ConnectedOrganizationMenu({ organizations }: { organizations: Organizat
             error={invitations.error}
             loading={invitations.isLoading}
             retry={() => void invitations.refetch()}
-            enter={enter}
           />
         </DialogContent>
       </Dialog>

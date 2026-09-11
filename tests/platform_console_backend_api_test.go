@@ -67,8 +67,8 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			t.Fatalf("bootstrap app_start org_growthbook = %#v, want djb2 hashing", appStart["org_growthbook"])
 		}
 		currentUserAccess, ok := appStart["current_user_access"].(map[string]any)
-		if !ok || currentUserAccess["role"] != "owner" {
-			t.Fatalf("bootstrap app_start current_user_access = %#v, want owner role", appStart["current_user_access"])
+		if !ok || currentUserAccess["role"] != "admin" {
+			t.Fatalf("bootstrap app_start current_user_access = %#v, want admin role", appStart["current_user_access"])
 		}
 		memberships, ok := account["memberships"].([]any)
 		if !ok || len(memberships) == 0 {
@@ -852,8 +852,8 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			if workspace["id"] == "workspace_console_backend_other_default" {
 				t.Fatalf("workspaces = %#v, want only current organization workspaces", workspaces)
 			}
-			if strings.EqualFold(stringValue(workspace["name"]), "default") {
-				t.Fatalf("workspaces = %#v, want built-in default workspace hidden from console list", workspaces)
+			if strings.EqualFold(stringValue(workspace["name"]), "default") && workspace["is_default"] != true {
+				t.Fatalf("default workspace is not marked: %#v", workspace)
 			}
 			if workspace["type"] != "workspace" || workspace["id"] == "" {
 				t.Fatalf("workspace = %#v, want source-compatible workspace shape", workspace)

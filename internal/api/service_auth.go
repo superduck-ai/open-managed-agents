@@ -17,10 +17,23 @@ func (s *Server) authenticateService(r *http.Request) (auth.Principal, *httpapi.
 		return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key")
 	}
 	principal, found, apiErr := s.authenticateWorkspaceAPIKey(r, apiKey)
-	if found || apiErr != nil {
-		return principal, apiErr
+	if apiErr != nil {
+		return auth.Principal{}, apiErr
 	}
-	return s.authenticateScopedServiceCredential(r, apiKey)
+	if !found {
+		principal, apiErr = s.authenticateScopedServiceCredential(r, apiKey)
+		if apiErr != nil {
+			return auth.Principal{}, apiErr
+		}
+	}
+	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID)
+	if errors.Is(err, db.ErrNotFound) || workspace.ArchivedAt != nil {
+		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
+	}
+	if err != nil {
+		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+	}
+	return principal, nil
 }
 
 type filestoreProtocolError struct {
@@ -157,6 +170,10 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 	// 这里校验的是 CMEK 配置状态；具体密钥选择和 S3 加密参数仍属于对象存储边界。
 	if !filestoreapi.OrgTaintsEqual(scope.OrgTaints, claims.OrgTaints) ||
 		scope.WorkspaceCMEKEnabled != claims.WorkspaceCMEKEnabled {
+		return filestoreapi.Principal{}, invalidFilestoreBearerToken()
+	}
+	workspace, workspaceErr := s.db.GetAdminWorkspace(r.Context(), scope.OrganizationUUID, scope.WorkspaceUUID)
+	if workspaceErr != nil || workspace.ArchivedAt != nil {
 		return filestoreapi.Principal{}, invalidFilestoreBearerToken()
 	}
 	readonly := claims.Readonly != nil && *claims.Readonly

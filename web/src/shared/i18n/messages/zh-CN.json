@@ -3,7 +3,12 @@
   "account.logout": "退出登录",
   "account.loggingOut": "正在退出...",
   "account.organizationSettings": "组织设置",
-  "account.subtitle": "管理员 · {workspaceName}",
+  "account.subtitle": "{role} · {workspaceName}",
+  "account.role.workspace_admin": "工作区管理员",
+  "account.role.workspace_developer": "开发者",
+  "account.role.workspace_restricted_developer": "受限开发者",
+  "account.role.workspace_user": "用户",
+  "account.role.unknown": "成员",
   "analytics.caching.title": "缓存",
   "analytics.caching.alreadyCaching": "已经在使用缓存？新的用量可能需要几分钟才会显示。",
   "analytics.caching.body": "将 {code} 添加到符合条件的提示块，以复用常用上下文并降低输入成本。",
@@ -1655,6 +1660,7 @@
   "workspace.create.body": "工作区可帮助你按使用场景隔离 API 密钥和配置。",
   "workspace.create.error": "创建工作区失败。",
   "workspace.create.namePlaceholder": "输入工作区名称",
+  "workspace.manage.title": "管理工作区",
   "workspace.create.title": "创建工作区",
   "workspace.geo": "工作区地域",
   "workspace.geoHelp": "控制工作区数据的存储位置，包括文件、对话历史和工作区产物。创建后无法更改。",
@@ -1905,5 +1911,9 @@
   "observability.kind.tool_wait": "等待用户",
   "observability.kind.tool_execution": "工具执行",
   "observability.kind.hook": "Hook",
-  "observability.kind.other": "其他"
+  "observability.kind.other": "其他",
+  "members.defaultNotice": "默认工作区的成员在组织级别管理。",
+  "members.organizationSettings": "前往组织设置",
+  "members.userId": "用户 ID",
+  "workspace.create.reservedName": "Default 是默认工作区的保留名称，请使用其他名称。"
 }

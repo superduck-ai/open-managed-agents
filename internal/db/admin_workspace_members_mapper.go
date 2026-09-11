@@ -25,15 +25,6 @@ type updateAdminWorkspaceMemberRoleParams struct {
 	WorkspaceRole       string
 }
 
-type seedAdminWorkspaceMemberParams struct {
-	ExternalID          string
-	OrganizationUUID    string
-	WorkspaceUUID       string
-	WorkspaceExternalID string
-	UserUUID            string
-	UserExternalID      string
-}
-
 type AdminWorkspaceMemberMapper interface {
 	Insert(ctx context.Context, params insertAdminWorkspaceMemberParams) (AdminWorkspaceMember, error)
 	FindByUserExternalID(ctx context.Context, organizationUUID,
@@ -46,5 +37,4 @@ type AdminWorkspaceMemberMapper interface {
 		params updateAdminWorkspaceMemberRoleParams) (AdminWorkspaceMember, error)
 	SoftDeleteByUserExternalID(ctx context.Context, organizationUUID,
 		workspaceExternalID, userExternalID string) (AdminWorkspaceMember, error)
-	SeedDefault(ctx context.Context, params seedAdminWorkspaceMemberParams) error
 }

@@ -18,8 +18,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 
 export function WorkspacesSettingsPage() {
   const { msg } = useI18n();
-  const { orgUuid, workspaces, activeWorkspaceId, createWorkspace, error, isLoading, refreshWorkspaces } =
-    useWorkspace();
+  const {
+    canManageWorkspaces,
+    orgUuid,
+    workspaces,
+    activeWorkspaceId,
+    createWorkspace,
+    error,
+    isLoading,
+    refreshWorkspaces,
+  } = useWorkspace();
   const [createOpen, setCreateOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
@@ -40,7 +48,7 @@ export function WorkspacesSettingsPage() {
     <section className="mx-auto w-full max-w-[1100px]" data-testid="settings-workspaces-page">
       <Card>
         <CardHeader>
-          {orgUuid ? (
+          {orgUuid && canManageWorkspaces ? (
             <CardAction>
               <CreateWorkspaceDialog
                 open={createOpen}

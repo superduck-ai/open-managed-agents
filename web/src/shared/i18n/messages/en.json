@@ -3,7 +3,12 @@
   "account.logout": "Log out",
   "account.loggingOut": "Logging out...",
   "account.organizationSettings": "Organization settings",
-  "account.subtitle": "Admin · {workspaceName}",
+  "account.subtitle": "{role} · {workspaceName}",
+  "account.role.workspace_admin": "Workspace admin",
+  "account.role.workspace_developer": "Developer",
+  "account.role.workspace_restricted_developer": "Restricted developer",
+  "account.role.workspace_user": "User",
+  "account.role.unknown": "Member",
   "analytics.caching.title": "Caching",
   "analytics.caching.alreadyCaching": "Already caching? It can take a few minutes for new usage to appear.",
   "analytics.caching.body": "Add {code} to eligible prompt blocks to reuse common context and reduce input costs.",
@@ -1655,6 +1660,7 @@
   "workspace.create.body": "Workspaces allow you to separate API Keys and configurations by use case.",
   "workspace.create.error": "Failed to create workspace.",
   "workspace.create.namePlaceholder": "Enter a name for your workspace",
+  "workspace.manage.title": "Manage workspaces",
   "workspace.create.title": "Create workspace",
   "workspace.geo": "Workspace geo",
   "workspace.geoHelp": "Control where your workspace data, including files, conversation history, and workspace artifacts, is stored. This can't be changed after creation.",
@@ -1905,5 +1911,9 @@
   "observability.kind.tool_wait": "Waiting on user",
   "observability.kind.tool_execution": "Tool execution",
   "observability.kind.hook": "Hook",
-  "observability.kind.other": "Other"
+  "observability.kind.other": "Other",
+  "members.defaultNotice": "Members for the default workspace are managed at the organization level.",
+  "members.organizationSettings": "Go to organization settings",
+  "members.userId": "User ID",
+  "workspace.create.reservedName": "Default is reserved for the default workspace. Choose another name."
 }

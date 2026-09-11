@@ -40,12 +40,14 @@ import (
 	webhooksapi "github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 )
 
 type Server struct {
+	workspaceAccess      *workspaceaccess.Service
 	cfg                  config.Config
 	db                   *db.DB
 	logger               *slog.Logger
@@ -135,6 +137,7 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	s := &Server{
+		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
 		db:                   deps.DB,
 		logger:               componentLogger("api"),
@@ -352,6 +355,10 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, r, err)
 			return
 		}
+		if !platformActionAllowed(r, principal.WorkspaceAccess) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Action not allowed"))
+			return
+		}
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)
@@ -368,7 +375,9 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 		}
 		principal, err := s.authenticatePlatformSession(r)
 		if err != nil {
-			clearPlatformSessionCookies(w)
+			if err.Status == http.StatusUnauthorized {
+				clearPlatformSessionCookies(w)
+			}
 			if err.Status >= http.StatusInternalServerError {
 				httpapi.WriteError(w, r, err)
 				return
@@ -450,53 +459,21 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 
 func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
 	workspaceID := platformRequestWorkspaceID(r)
-	if workspaceID == "" || workspaceID == "default" {
-		workspaceID = principal.WorkspaceExternalID
+	if workspaceID == "" {
+		workspaceID = "default"
 	}
-	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
+	workspace, access, err := s.workspaceAccess.Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not found")
+		if errors.Is(err, workspaceaccess.ErrDenied) {
+			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
 		}
-		s.logger.ErrorContext(r.Context(), "load requested platform workspace", "error", err)
+		s.logger.ErrorContext(r.Context(), "resolve workspace access", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	if workspace.ArchivedAt != nil {
-		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace is archived")
-	}
-	if accessErr := s.authorizePlatformWorkspaceAccess(r, principal, workspace); accessErr != nil {
-		return auth.Principal{}, accessErr
 	}
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
+	principal.WorkspaceAccess = access
 	return principal, nil
-}
-
-func (s *Server) authorizePlatformWorkspaceAccess(r *http.Request, principal auth.Principal, workspace db.AdminWorkspace) *httpapi.Error {
-	user, err := s.db.GetAdminUser(r.Context(), principal.OrganizationUUID, principal.UserExternalID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
-		}
-		s.logger.ErrorContext(r.Context(), "load platform user workspace access", "error", err)
-		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	if strings.EqualFold(user.Role, "admin") {
-		return nil
-	}
-	if _, err := s.db.GetAdminWorkspaceMember(
-		r.Context(),
-		principal.OrganizationUUID,
-		workspace.ExternalID,
-		principal.UserExternalID,
-	); err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
-		}
-		s.logger.ErrorContext(r.Context(), "load platform workspace membership", "error", err)
-		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	return nil
 }
 
 func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {

@@ -30,6 +30,7 @@ func Load() (Config, error) {
 	}
 	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
 	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
+	cfg.Auth.ConsoleURL = strings.TrimSpace(cfg.Auth.ConsoleURL)
 	cfg.E2B.APIKey = strings.TrimSpace(cfg.E2B.APIKey)
 	cfg.E2B.AccessToken = strings.TrimSpace(cfg.E2B.AccessToken)
 	cfg.E2B.Domain = strings.TrimSpace(cfg.E2B.Domain)
@@ -108,6 +109,12 @@ func validate(cfg Config) error {
 }
 
 func validateAuthConfig(cfg AuthConfig) error {
+	if cfg.ConsoleURL != "" {
+		u, err := url.Parse(cfg.ConsoleURL)
+		if err != nil || u.Hostname() == "" || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return errors.New("auth.console_url must be an HTTPS origin without userinfo, path, query or fragment")
+		}
+	}
 	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
 		return nil
 	}

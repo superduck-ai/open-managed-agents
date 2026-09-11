@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
@@ -23,11 +25,12 @@ type Handler struct {
 	service *Service
 	router  chi.Router
 	logger  *slog.Logger
+	mailer  *invitations.Mailer
 }
 
 func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{service: NewService(cfg, database), logger: logger}
+	h := &Handler{service: NewService(cfg, database), logger: logger, mailer: invitations.NewMailer(cfg.Auth, database, logger)}
 	router := chi.NewRouter()
 	router.NotFound(routeNotFound)
 	router.MethodNotAllowed(routeNotFound)
@@ -125,6 +128,13 @@ func (h *Handler) createInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, err := h.service.CreateInvite(r.Context(), principal, req)
+	if err == nil {
+		expiry, parseErr := time.Parse(time.RFC3339, value.ExpiresAt)
+		value.EmailDelivery = "failed"
+		if parseErr == nil {
+			value.EmailDelivery = h.mailer.Notify(r.Context(), principal, value.Email, expiry)
+		}
+	}
 	h.respond(w, r, value, err)
 }
 

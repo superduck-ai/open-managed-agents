@@ -22,6 +22,7 @@ nats:
 # Optional SMTP email verification. When omitted, any non-empty verification
 # code is accepted. Configure all three fields together for real email delivery.
 # auth:
+#   console_url: https://oma.example.com
 #   smtp:
 #     addr: smtp.example.com:587
 #     username: sender@example.com

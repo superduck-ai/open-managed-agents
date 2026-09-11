@@ -135,23 +135,22 @@ func handleVerifyMagicLink(store platformMagicLinkStore, authProvider emailLogin
 			return
 		}
 
-		account, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), store, userUUID, orgUUID)
-		if err != nil {
-			internalError(w, "failed to load verified account")
-			return
-		}
-
 		created := true
 		sessionKey := "sk-ant-sid-session-key-" + uuid.NewV4().String()
 		expiresAt := time.Now().UTC().Add(time.Duration(25920000) * time.Second)
 		session, err := store.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
 			SessionKey: sessionKey,
-			UserUUID:   account.UUID,
-			OrgUUID:    selectedOrgUUID,
+			UserUUID:   userUUID,
+			OrgUUID:    orgUUID,
 			ExpiresAt:  &expiresAt,
 		})
 		if err != nil {
 			internalError(w, "failed to create session")
+			return
+		}
+		account, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), store, session)
+		if err != nil {
+			internalError(w, "failed to load verified account")
 			return
 		}
 		if err := sessions.Save(r.Context(), sessionKey, session); err != nil {

@@ -30,6 +30,8 @@ import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
+import { useI18n } from '../../shared/i18n';
+import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -61,6 +63,7 @@ const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => 
 }));
 
 export function OrganizationMembersPage() {
+  const { msg } = useI18n();
   const { account, csrfToken } = useAuth();
   const { orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
@@ -115,7 +118,7 @@ export function OrganizationMembersPage() {
           current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite],
       );
       setInviteActionError(null);
-      toast.success('Invite reminder sent.');
+      notifyInvitationDelivery([updatedInvite], msg);
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
@@ -353,7 +356,7 @@ export function OrganizationMembersPage() {
             ...createdInvites,
             ...(current ?? []),
           ]);
-          toast.success(createdInvites.length === 1 ? 'Invite sent.' : `${createdInvites.length} invites sent.`);
+          notifyInvitationDelivery(createdInvites, msg);
         }}
       />
       <InviteRevokeDialog
@@ -736,6 +739,7 @@ function isCurrentAccountMember(account: ReturnType<typeof useAuth>['account'], 
     return false;
   }
   return (
+    account.memberships?.some((membership) => member.id === membership.user_id || member.id === membership.user_uuid) ||
     member.id === account.uuid ||
     member.id === account.tagged_id ||
     (member.email !== '' && member.email.toLowerCase() === account.email_address.toLowerCase())

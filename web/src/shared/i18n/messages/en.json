@@ -1,4 +1,6 @@
 {
+  "invitations.delivery.unconfirmed": "Invitations saved, but delivery of {count, plural, one {# email} other {# emails}} is unconfirmed. Check your email configuration and resend.",
+  "invitations.delivery.sent": "Invitation emails submitted for sending. Remind recipients to check their inbox.",
   "workspaces.resources.empty": "No resources to display.",
   "account.apiPlan": "API plan",
   "account.logout": "Log out",

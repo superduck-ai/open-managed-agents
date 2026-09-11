@@ -28,6 +28,8 @@ nats:
 # Optional. Omit the entire auth.smtp block to accept any non-empty verification
 # code without sending email. Configure every SMTP field together for real email.
 auth:
+  # 邀请邮件按钮使用的控制台 HTTPS origin；未配置时只创建站内邀请。
+  console_url: ""
   smtp:
     # Required host:port. Surrounding whitespace is removed during loading.
     addr: smtp.example.com:587

@@ -45,6 +45,7 @@ type bootstrapUserRow struct {
 }
 
 type ConsoleUserMapper interface {
+	ListBootstrapOrganizationsByEmail(ctx context.Context, email string) ([]consoleOrganizationRow, error)
 	ExistsActiveByUUID(ctx context.Context, orgUUID, userUUID string) (bool, error)
 	ListOrganizationMembers(ctx context.Context, orgUUID string, limit int) ([]consoleMemberRow, error)
 	UpdateOrganizationRole(ctx context.Context, params updateConsoleUserRoleParams) (consoleMemberRow, error)

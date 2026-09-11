@@ -1,4 +1,6 @@
 {
+  "invitations.delivery.unconfirmed": "邀请已保存，但 {count} 封邮件未确认发送。请检查邮件配置后重发邀请。",
+  "invitations.delivery.sent": "邀请邮件已提交发送，请提醒收件人检查邮箱。",
   "workspaces.resources.empty": "暂无可展示的资源。",
   "account.apiPlan": "API 方案",
   "account.logout": "退出登录",

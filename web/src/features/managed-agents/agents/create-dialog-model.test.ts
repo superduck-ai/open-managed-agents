@@ -5,6 +5,7 @@ import {
   addBuiltInToolset,
   addMcpServer,
   createAgentDraftSchema,
+  normalizeCreateAgentDraft,
   removeToolset,
   setToolPermission,
   setToolsetPermission,
@@ -26,6 +27,32 @@ const baseDraft: CreateAgentInput = {
 };
 
 describe('create agent draft model', () => {
+  test('disables AskUserQuestion by default without overriding an explicit choice', () => {
+    expect(normalizeCreateAgentDraft(baseDraft).tools[0]).toEqual({
+      type: 'agent_toolset_20260401',
+      configs: [
+        {
+          name: 'ask_user_question',
+          enabled: false,
+          permission_policy: { type: 'always_allow' },
+        },
+      ],
+    });
+
+    const explicitlyEnabled = {
+      ...baseDraft,
+      tools: [
+        {
+          type: 'agent_toolset_20260401' as const,
+          configs: [
+            { name: 'ask_user_question' as const, enabled: true, permission_policy: { type: 'always_ask' as const } },
+          ],
+        },
+      ],
+    };
+    expect(normalizeCreateAgentDraft(explicitlyEnabled).tools).toEqual(explicitlyEnabled.tools);
+  });
+
   test('rejects Raw MCP URLs that the rendered form rejects', () => {
     for (const url of [
       'ftp://internal.example/mcp',
@@ -61,6 +88,23 @@ describe('create agent draft model', () => {
       ok: false,
       errors: { name: 'invalid' },
     });
+  });
+
+  test('rejects duplicate tool configs', () => {
+    const draft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'search', type: 'url', url: 'https://example.com/mcp' }],
+      tools: [
+        ...baseDraft.tools,
+        {
+          type: 'mcp_toolset',
+          mcp_server_name: 'search',
+          configs: [{ name: 'query' }, { name: 'query' }],
+        },
+      ],
+    };
+
+    expect(createAgentDraftSchema.safeParse(draft).success).toBe(false);
   });
 
   test('preserves untouched skill payloads while toggling another skill', () => {
@@ -118,7 +162,7 @@ describe('create agent draft model', () => {
       const parsed = parseCreateAgentConfigText(createAgentConfigText(input, format), format);
       expect(parsed.ok).toBe(true);
       if (parsed.ok) {
-        expect(parsed.input).toEqual(input);
+        expect(parsed.input).toEqual(normalizeCreateAgentDraft(input));
       }
     }
 
@@ -271,7 +315,18 @@ describe('create agent draft model', () => {
   test('restores the removed built-in toolset without duplicating it', () => {
     const withoutBuiltIns = removeToolset(baseDraft, 'agent_toolset_20260401');
 
-    expect(addBuiltInToolset(withoutBuiltIns).tools).toEqual([{ type: 'agent_toolset_20260401' }]);
+    expect(addBuiltInToolset(withoutBuiltIns).tools).toEqual([
+      {
+        type: 'agent_toolset_20260401',
+        configs: [
+          {
+            name: 'ask_user_question',
+            enabled: false,
+            permission_policy: { type: 'always_allow' },
+          },
+        ],
+      },
+    ]);
     expect(addBuiltInToolset(baseDraft)).toBe(baseDraft);
   });
 
@@ -289,6 +344,65 @@ describe('create agent draft model', () => {
     ]);
     expect(toolsetPermission(askBash.tools[0], ['bash', 'read'], 'always_allow')).toBe('custom');
     expect(setToolPermission(askBash, () => true, 'bash', 'always_allow', 'always_allow').tools[0].configs).toEqual([]);
+  });
+
+  test('preserves an explicit always-allow choice for AskUserQuestion', () => {
+    const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
+    const allowed = setToolPermission(normalizedDraft, () => true, 'ask_user_question', 'always_allow', 'always_allow');
+
+    expect(allowed.tools[0].configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: true,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
+    expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
+  });
+
+  test('accepts the full pinned built-in tool permission surface while rejecting web search', () => {
+    const configs = [
+      'task',
+      'ask_user_question',
+      'bash',
+      'cron_create',
+      'cron_delete',
+      'cron_list',
+      'edit',
+      'enter_plan_mode',
+      'enter_worktree',
+      'exit_plan_mode',
+      'exit_worktree',
+      'glob',
+      'grep',
+      'notebook_edit',
+      'read',
+      'schedule_wakeup',
+      'skill',
+      'task_output',
+      'task_stop',
+      'todo_write',
+      'web_fetch',
+      'write',
+    ].map((name) => ({ name, enabled: true, permission_policy: { type: 'always_allow' as const } }));
+
+    expect(
+      createAgentDraftSchema.safeParse({
+        ...baseDraft,
+        tools: [{ type: 'agent_toolset_20260401', configs }],
+      }).success,
+    ).toBe(true);
+    expect(
+      createAgentDraftSchema.safeParse({
+        ...baseDraft,
+        tools: [
+          {
+            type: 'agent_toolset_20260401',
+            configs: [{ name: 'web_search', enabled: true, permission_policy: { type: 'always_allow' } }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 
   test('keeps invalid custom tool schemas observable without offering a create helper', () => {

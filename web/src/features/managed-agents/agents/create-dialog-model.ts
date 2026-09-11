@@ -110,11 +110,41 @@ const permissionConfigSchema = z
   })
   .strict();
 
-const builtInToolNameSchema = z.enum(['bash', 'edit', 'read', 'write', 'glob', 'grep', 'web_fetch', 'web_search']);
+const builtInToolNameSchema = z.enum([
+  'task',
+  'ask_user_question',
+  'bash',
+  'cron_create',
+  'cron_delete',
+  'cron_list',
+  'edit',
+  'enter_plan_mode',
+  'enter_worktree',
+  'exit_plan_mode',
+  'exit_worktree',
+  'glob',
+  'grep',
+  'notebook_edit',
+  'read',
+  'schedule_wakeup',
+  'skill',
+  'task_output',
+  'task_stop',
+  'todo_write',
+  'web_fetch',
+  'write',
+]);
 
 const builtInToolConfigSchema = permissionConfigSchema.extend({ name: builtInToolNameSchema }).strict();
 
-const mcpToolConfigSchema = permissionConfigSchema.extend({ name: z.string().trim().min(1).max(128) }).strict();
+const mcpToolConfigSchema = permissionConfigSchema
+  .extend({
+    name: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_.-]{1,128}$/),
+  })
+  .strict();
 
 const builtInToolsetSchema = z
   .object({
@@ -181,6 +211,15 @@ export const createAgentDraftSchema = z
       context.addIssue({ code: 'custom', message: 'Toolsets must be unique.', path: ['tools'] });
     }
     const toolsets = draft.tools.filter((tool) => tool.type === 'mcp_toolset');
+    for (const tool of draft.tools) {
+      if (!('configs' in tool) || !Array.isArray(tool.configs)) {
+        continue;
+      }
+      const configNames = tool.configs.map((config) => config.name);
+      if (new Set(configNames).size !== configNames.length) {
+        context.addIssue({ code: 'custom', message: 'Tool config names must be unique.', path: ['tools'] });
+      }
+    }
     for (const toolset of toolsets) {
       if (!serverNames.includes(String(toolset.mcp_server_name))) {
         context.addIssue({
@@ -219,7 +258,7 @@ export function normalizeCreateAgentDraft(input: CreateAgentInput): CreateAgentI
     model: normalizeDraftModel(parsed.model),
     system: nullableString(parsed.system),
     mcp_servers: cloneJsonValue(parsed.mcp_servers),
-    tools: cloneJsonValue(parsed.tools),
+    tools: parsed.tools.map(withAskUserQuestionDisabledByDefault),
     skills: cloneJsonValue(parsed.skills),
     ...(parsed.metadata ? { metadata: { ...parsed.metadata } } : {}),
     ...(parsed.multiagent === undefined ? {} : { multiagent: cloneJsonValue(parsed.multiagent) }),
@@ -295,7 +334,10 @@ export function addBuiltInToolset(draft: CreateAgentInput): CreateAgentInput {
   if (draft.tools.some((tool) => tool.type === 'agent_toolset_20260401')) {
     return draft;
   }
-  return { ...draft, tools: [{ type: 'agent_toolset_20260401' }, ...draft.tools] };
+  return {
+    ...draft,
+    tools: [withAskUserQuestionDisabledByDefault({ type: 'agent_toolset_20260401' }), ...draft.tools],
+  };
 }
 
 export function removeToolset(draft: CreateAgentInput, key: string): CreateAgentInput {
@@ -369,10 +411,14 @@ export function setToolPermission(
         ? tool.configs.map(toRecord).filter((config): config is Record<string, unknown> => Boolean(config))
         : [];
       const others = existing.filter((config) => config.name !== name);
+      const requiresExplicitPermission = tool.type === 'agent_toolset_20260401' && name === 'ask_user_question';
       return {
         ...tool,
         default_config: toRecord(tool.default_config) ?? permissionConfig(defaultPermission),
-        configs: permission === defaultPermission ? others : [...others, { name, ...permissionConfig(permission) }],
+        configs:
+          permission === defaultPermission && !requiresExplicitPermission
+            ? others
+            : [...others, { name, ...permissionConfig(permission) }],
       };
     }),
   };
@@ -386,6 +432,21 @@ export function permissionConfig(permission: EditablePermission) {
   return permission === 'always_deny'
     ? { enabled: false, permission_policy: { type: 'always_allow' } }
     : { enabled: true, permission_policy: { type: permission } };
+}
+
+function withAskUserQuestionDisabledByDefault<T extends Record<string, unknown>>(tool: T): T {
+  const cloned = cloneJsonValue(tool);
+  if (cloned.type !== 'agent_toolset_20260401') {
+    return cloned;
+  }
+  const configs = Array.isArray(cloned.configs) ? cloned.configs : [];
+  if (configs.some((config) => toRecord(config)?.name === 'ask_user_question')) {
+    return cloned;
+  }
+  return {
+    ...cloned,
+    configs: [...configs, { name: 'ask_user_question', ...permissionConfig('always_deny') }],
+  };
 }
 
 function validateMcpServerInput(draft: CreateAgentInput, name: string, url: string): McpServerInputErrors {

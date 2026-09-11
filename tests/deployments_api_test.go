@@ -135,7 +135,8 @@ func TestDeploymentsAPI(t *testing.T) {
 			{name: "outcome rubric is not an object", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.define_outcome","description":"ship it","rubric":"be correct"}]`)},
 			{name: "github token is missing", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git"}]`)},
 			{name: "memory instructions are not a string", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":42}]`)},
-			{name: "memory instructions are too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 4097))+`}]`)},
+			{name: "memory instructions are too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 501))+`}]`)},
+			{name: "memory mount_path is client-assigned", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"mount_path":"/mnt/memory/custom"}]`)},
 		}
 
 		for _, test := range tests {

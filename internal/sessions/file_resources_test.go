@@ -26,6 +26,18 @@ func TestMapFileResourcePersistenceErrorMapsTypedConflicts(t *testing.T) {
 			wantType:   "invalid_request_error",
 		},
 		{
+			name:       "memory store limit",
+			err:        &db.SessionMemoryStoreLimitError{Limit: db.MaxSessionMemoryStores},
+			wantStatus: http.StatusBadRequest,
+			wantType:   "invalid_request_error",
+		},
+		{
+			name:       "memory store duplicate",
+			err:        &db.SessionMemoryStoreDuplicateError{},
+			wantStatus: http.StatusBadRequest,
+			wantType:   "invalid_request_error",
+		},
+		{
 			name: "managed resource path conflict",
 			err: &db.SessionFileMountConflictError{
 				Path:            "/uploads/workspace",

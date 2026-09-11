@@ -142,27 +142,31 @@ test('稍后处理返回原页面，本次打开不会反复跳转；重新打�
   await screen.findByRole('heading', { name: '接受组织邀请' });
 });
 
-test('进入组织失败保留邀请页，再次进入成功才导航', async () => {
+test('接受后刷新失败留在邀请页，重试只刷新不重复接受', async () => {
   let accepted = false;
+  let accepts = 0;
   globalThis.fetch = mock(async (input) => {
     if (String(input).endsWith('/accept')) {
       accepted = true;
+      accepts++;
       return Response.json({ id: invitation.id });
     }
     return Response.json({ data: accepted ? [] : [invitation] });
   }) as typeof fetch;
-  const { router, switchOrganization } = mount('/invites');
+  const { router, switchOrganization, refresh } = mount('/invites');
+  refresh.mockImplementationOnce(async () => {
+    throw new TypeError('offline');
+  });
   fireEvent.click(await screen.findByRole('button', { name: '接受', exact: true }));
-  const enter = await screen.findByRole('button', { name: '进入组织' });
-  switchOrganization.mockResolvedValueOnce(false);
-  fireEvent.click(enter);
-  await screen.findByText('进入组织失败，请重试“进入组织”。');
+  const retry = await screen.findByRole('button', { name: '重试刷新' });
   expect(router.state.location.pathname).toBe('/invites');
-  fireEvent.click(enter);
+  fireEvent.click(retry);
   await screen.findByText('控制台首页');
+  expect(accepts).toBe(1);
+  expect(switchOrganization).not.toHaveBeenCalled();
 });
 
-test('多份邀请独立处理；接受后不切换，点击进入组织才到首页', async () => {
+test('拒绝后仍有邀请继续展示，接受后直接回原组织首页', async () => {
   let pending = [invitation, { ...invitation, id: 'invite-second', organization_name: '另一组织' }];
   globalThis.fetch = mock(async (input) => {
     const path = String(input);
@@ -182,17 +186,15 @@ test('多份邀请独立处理；接受后不切换，点击进入组织才到�
   fireEvent.click(screen.getAllByRole('button', { name: '拒绝', exact: true })[1]);
   await waitFor(() => expect(pending.map((item) => item.id)).toEqual(['invite-first']));
   await waitFor(() => expect(Boolean(screen.queryByText('管理员邀请你加入 另一组织'))).toBe(false));
-  fireEvent.click(screen.getByRole('button', { name: '接受', exact: true }));
-  await screen.findByText('已加入 受邀组织');
   expect(router.state.location.pathname).toBe('/invites');
+  fireEvent.click(screen.getByRole('button', { name: '接受', exact: true }));
+  await screen.findByText('控制台首页');
   expect(switchOrganization).not.toHaveBeenCalled();
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
-  fireEvent.click(screen.getByRole('button', { name: '进入组织' }));
-  await screen.findByText('控制台首页');
-  expect(switchOrganization).toHaveBeenCalledWith('new-org');
+  expect(screen.queryByRole('button', { name: '进入组织' })).toBeNull();
 });
 
-test('拒绝最后邀请呈现空态；不接受外部或自循环返回地址', async () => {
+test('拒绝最后邀请直接回原组织首页，不使用外部返回地址', async () => {
   let declined = false;
   globalThis.fetch = mock(async (input) => {
     if (String(input).endsWith('/decline')) {
@@ -201,10 +203,31 @@ test('拒绝最后邀请呈现空态；不接受外部或自循环返回地址',
     }
     return Response.json({ data: declined ? [] : [invitation] });
   }) as typeof fetch;
-  mount('/invites?returnTo=https://evil.example');
+  const { switchOrganization } = mount('/invites?returnTo=https://evil.example');
   fireEvent.click(await screen.findByRole('button', { name: '拒绝', exact: true }));
-  await screen.findByText('没有待处理邀请。');
-  fireEvent.click(screen.getByRole('button', { name: '返回控制台', exact: true }));
   await screen.findByText('控制台首页');
+  expect(switchOrganization).not.toHaveBeenCalled();
   expect(invitationReturnTo('/invites?returnTo=/invites')).toBe('/');
+});
+
+test('直达邀请页没有邀请时直接回首页', async () => {
+  globalThis.fetch = mock(async () => Response.json({ data: [] })) as typeof fetch;
+  mount('/invites');
+  await screen.findByText('控制台首页');
+});
+
+test('接受后即使仍有其他邀请也返回原组织首页', async () => {
+  let pending = [invitation, { ...invitation, id: 'other', organization_name: '其他组织' }];
+  globalThis.fetch = mock(async (input) => {
+    if (String(input).endsWith('/accept')) {
+      pending = pending.filter((item) => item.id !== invitation.id);
+      return Response.json({ id: invitation.id });
+    }
+    return Response.json({ data: pending });
+  }) as typeof fetch;
+  const { switchOrganization } = mount('/invites');
+  fireEvent.click((await screen.findAllByRole('button', { name: '接受', exact: true }))[0]);
+  await screen.findByText('控制台首页');
+  expect(pending).toHaveLength(1);
+  expect(switchOrganization).not.toHaveBeenCalled();
 });

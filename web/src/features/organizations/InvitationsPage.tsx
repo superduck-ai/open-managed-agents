@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../shared/auth/context';
 import { loginHrefForReturnTo, returnToFromSearch } from '../../shared/auth/redirects';
-import { useOrganizations } from '../../shared/organizations/context';
 import { Button } from '../../shared/ui/button';
 import { InvitationList } from './InvitationList';
 import { invitationReturnTo, listInvitations } from './api';
@@ -39,33 +38,27 @@ export function InvitationsPage() {
 }
 
 function AuthenticatedInvitationsPage() {
-  const [entryFailed, setEntryFailed] = useState(false);
   const { account, logout } = useAuth();
-  const organizations = useOrganizations();
   const location = useLocation();
   const navigate = useNavigate();
   const invitations = useQuery({ queryKey: ['invitations', account?.uuid], queryFn: listInvitations, retry: false });
   const returnTo = invitationReturnTo(returnToFromSearch(location.searchStr));
-  const enter = async (orgUuid: string) => {
-    if (!organizations) return;
-    setEntryFailed(false);
-    if (!(await organizations.switchOrganization(orgUuid))) {
-      setEntryFailed(true);
-      return;
-    }
-    // 加入目标组织后进入首页，不能携带旧组织的资源详情路径。
-    await navigate({ href: '/', replace: true });
-  };
+  const onResolved = useCallback(
+    async (action: 'accept' | 'decline' | null, remaining: number) => {
+      // 接受只增加成员身份；返回首页时保留原组织和工作区。
+      if (action === 'accept' || remaining === 0) await navigate({ href: '/', replace: true });
+    },
+    [navigate],
+  );
   return (
     <>
       <h1 className="text-xl font-medium">接受组织邀请</h1>
-      {entryFailed && <p role="alert">进入组织失败，请重试“进入组织”。</p>}
       <InvitationList
         invitations={invitations.data?.data}
         error={invitations.error}
         loading={invitations.isLoading}
         retry={() => void invitations.refetch()}
-        enter={(orgUuid) => void enter(orgUuid)}
+        onResolved={onResolved}
         standalone
       />
       <div className="flex flex-col items-center gap-2">

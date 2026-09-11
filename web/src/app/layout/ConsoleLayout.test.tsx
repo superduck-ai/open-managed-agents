@@ -292,7 +292,7 @@ describe('ConsoleShell', () => {
 
     const menu = screen.getAllByRole('menu')[0];
     expect(menu.closest('[data-sidebar-state]')).toBeNull();
-    expect(screen.getByRole('menuitemradio', { name: /Default API plan/i }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByRole('menuitemradio', { name: /Default API plan/i })).toBeNull();
     expect(screen.getByRole('menuitem', { name: 'Organization settings' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Language' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Feedback' })).toBeNull();

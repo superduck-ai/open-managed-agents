@@ -9,7 +9,7 @@ import (
 // 组织行锁让 Console 和 Admin 的降级、删除按同一顺序执行，避免并发删除全部管理员。
 func (d *DB) withOrganizationMemberChange(ctx context.Context, organizationUUID, userID string, nextRole *string, change func(yourbatis.Executor) error) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewOrganizationMemberGuardMapper(executor)
+		mapper := NewOrganizationMemberMapper(executor)
 		if _, err := mapper.LockOrganization(ctx, organizationUUID); err != nil {
 			return mapNoRows(err)
 		}
@@ -32,7 +32,7 @@ func (d *DB) withOrganizationMemberChange(ctx context.Context, organizationUUID,
 
 // 授权策略由资源层回调决定；DB 只在持锁事务中读取操作者的最新组织角色。
 func validateOrganizationMemberActor(ctx context.Context, executor yourbatis.Executor, organizationUUID, actorID string, validate func(string) error) error {
-	role, err := NewOrganizationMemberGuardMapper(executor).FindRole(ctx, organizationUUID, actorID)
+	role, err := NewOrganizationMemberMapper(executor).FindRole(ctx, organizationUUID, actorID)
 	if err != nil {
 		return mapNoRows(err)
 	}
@@ -44,6 +44,6 @@ func (d *DB) FindOrgMemberByReference(ctx context.Context, organizationUUID, use
 	if d == nil || d.mapperDB == nil || organizationUUID == "" || userReference == "" {
 		return AdminUser{}, ErrNotFound
 	}
-	user, err := NewOrganizationMemberGuardMapper(d.mapperDB).FindMemberByReference(ctx, organizationUUID, userReference)
+	user, err := NewOrganizationMemberMapper(d.mapperDB).FindMemberByReference(ctx, organizationUUID, userReference)
 	return user, mapNoRows(err)
 }

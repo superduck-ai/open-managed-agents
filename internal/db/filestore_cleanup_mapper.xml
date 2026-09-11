@@ -5,7 +5,7 @@
         kind, path, parent_path, size_bytes, media_type, detected_mime_type,
         metadata, authorization_metadata, tags_json, downloadable, md5, sha256,
         s3_bucket, s3_key, s3_etag, s3_version_id, expires_at,
-        source_file_uuid, created_at, updated_at, deleted_at
+        file_uuid, file_ownership, created_at, updated_at, deleted_at
     </sql>
 
     <sql id="resourceFileSource">
@@ -22,9 +22,8 @@
             CAST(COALESCE(to_jsonb(file.tags), CAST('[]' AS jsonb)) AS text) AS tags_json,
             COALESCE(file.downloadable, false) AS downloadable,
             file.md5, file.sha256, file.s3_bucket, file.s3_key, file.s3_etag,
-            file.s3_version_id, resource.expires_at,
-            CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
-                AS source_file_uuid,
+            file.s3_version_id, resource.expires_at, resource.file_uuid,
+            resource.file_ownership,
             resource.created_at, resource.updated_at, resource.deleted_at
         FROM session_resources resource
         LEFT JOIN files file ON file.uuid = resource.file_uuid

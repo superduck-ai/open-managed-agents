@@ -51,7 +51,7 @@ func TestWorkspaceStorageUsageMapperBuilderContracts(t *testing.T) {
 				wantID:            "WorkspaceStorageUsageMapper.ReconcileWorkspaceStorageUsage",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"workspaceUUID", "workspaceUUID", "workspaceUUID", "workspaceUUID"},
-				wantSQLFragments:  []string{"AS files_bytes", "AS filestore_bytes", "resource.payload IS NULL"},
+				wantSQLFragments:  []string{"AS files_bytes", "AS filestore_bytes", "resource.file_ownership = 'owned'", "resource.resource_type = 'skill_archive'"},
 			},
 		},
 		{

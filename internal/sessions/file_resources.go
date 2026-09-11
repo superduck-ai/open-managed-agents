@@ -35,6 +35,7 @@ func sessionResourceWriteInput(resource normalizedSessionResource) (db.CreateSes
 	input.FileMount = &db.SessionFileMount{
 		ResourceExternalID: binding.ResourceID,
 		FileExternalID:     binding.FileID,
+		MountPath:          binding.MountPath,
 		Path:               binding.Path,
 	}
 	return input, nil

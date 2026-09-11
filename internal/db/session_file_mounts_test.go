@@ -27,7 +27,7 @@ func TestSessionFileResourceMapperBuildsPostgresArguments(t *testing.T) {
 				"workspace_uuid = $1",
 				"session_external_id = $2",
 				"resource_type = $3",
-				"payload IS NOT NULL",
+				"file_ownership = 'referenced'",
 			},
 		},
 		{

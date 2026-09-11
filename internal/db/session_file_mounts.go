@@ -98,6 +98,7 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	}
 	if mount == nil ||
 		mount.ResourceExternalID != resource.ExternalID ||
+		mount.MountPath == "" ||
 		mount.Path == "/uploads" ||
 		!filestorePathIsDescendant("/uploads", mount.Path) {
 		return SessionResource{}, ErrPreconditionFailed
@@ -133,6 +134,7 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	row, err := resourceMapper.BindSessionFileResource(ctx, sessionFileResourceBindingParams{
 		EntryPath:     mount.Path,
 		ParentPath:    filestoreParentPath(mount.Path),
+		MountPath:     mount.MountPath,
 		FileUUID:      file.UUID,
 		UpdatedAt:     filestoreNow(resource.CreatedAt),
 		ResourceUUID:  resource.UUID,
@@ -145,7 +147,14 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	if err != nil {
 		return SessionResource{}, err
 	}
-	return row.resource(), nil
+	bound := row.resource()
+	bound.File = &SessionResourceFileReference{
+		FileID:        file.ExternalID,
+		NamespacePath: mount.Path,
+		MountPath:     mount.MountPath,
+		Ownership:     SessionResourceFileOwnershipReferenced,
+	}
+	return bound, nil
 }
 
 func rejectSessionFileMountConflictTx(

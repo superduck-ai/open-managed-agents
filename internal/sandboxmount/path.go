@@ -17,9 +17,32 @@ const (
 	FileSource = "/uploads"
 	// SandboxUploadsMount 是 FileSource 在 Sandbox 中的挂载点。
 	SandboxUploadsMount = "/mnt/session/uploads"
-	// OutputsRoot 是 session 输出文件的 Filestore 命名空间。
+	// OutputsRoot 是用户可下载输出在 Filestore 中的固定 namespace。
 	OutputsRoot = "/outputs"
+	// SandboxOutputsMount 是 OutputsRoot 在 Sandbox 中的挂载点。
+	SandboxOutputsMount = "/mnt/user-data/outputs"
 )
+
+// SandboxPath 将公开的输入、输出 namespace 路径映射为 Sandbox 绝对路径。
+// 其他 namespace 保持不变，避免把 transcripts、tool_results 等内部路径
+// 错误投影到输入或输出挂载点。
+func SandboxPath(namespacePath string) string {
+	for _, mapping := range []struct {
+		namespace string
+		mount     string
+	}{
+		{namespace: FileSource, mount: SandboxUploadsMount},
+		{namespace: OutputsRoot, mount: SandboxOutputsMount},
+	} {
+		if namespacePath == mapping.namespace {
+			return mapping.mount
+		}
+		if strings.HasPrefix(namespacePath, mapping.namespace+"/") {
+			return mapping.mount + strings.TrimPrefix(namespacePath, mapping.namespace)
+		}
+	}
+	return namespacePath
+}
 
 // NormalizeFileSource 为省略的 source 补默认值，并拒绝 null 或其他 namespace。
 func NormalizeFileSource(raw json.RawMessage) (string, error) {

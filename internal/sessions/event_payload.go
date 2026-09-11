@@ -59,7 +59,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	if strings.TrimSpace(value) == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return "", fmt.Errorf("%s must be non-empty", name)
 	}
 	return value, nil
@@ -92,16 +93,6 @@ func optionalStringWithDefault(raw json.RawMessage, fallback, name string) (stri
 		return "", err
 	}
 	return value, nil
-}
-
-func copyOptionalPayloadString(payload map[string]any, raw json.RawMessage, name string) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return
-	}
-	var value string
-	if json.Unmarshal(raw, &value) == nil {
-		payload[name] = value
-	}
 }
 
 func validateMetadataEntries(metadata map[string]string) error {

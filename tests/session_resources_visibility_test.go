@@ -2,7 +2,6 @@ package tests
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -38,7 +37,6 @@ func seedSessionResourceVisibility(t *testing.T) sessionResourceVisibilityFixtur
 	inputFileID := mustNewTestID(t, "file_")
 	inputResourceID := mustNewTestID(t, "sesrsc_")
 	repositoryID := mustNewTestID(t, "sesrsc_")
-	scopeType := "session"
 	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
 	if err := app.db.CreateFile(ctx, db.FileRecord{
 		UUID:                uuid.NewString(),
@@ -50,8 +48,6 @@ func seedSessionResourceVisibility(t *testing.T) sessionResourceVisibilityFixtur
 		SHA256:              strings.Repeat("c", 64),
 		S3Bucket:            app.store.Name(),
 		S3Key:               "visibility/" + inputFileID,
-		ScopeType:           &scopeType,
-		ScopeID:             &input.Session.ExternalID,
 		CreatedByAPIKeyUUID: apiKeyUUID,
 		CreatedAt:           input.Session.CreatedAt,
 	}); err != nil {
@@ -59,18 +55,21 @@ func seedSessionResourceVisibility(t *testing.T) sessionResourceVisibilityFixtur
 	}
 	input.Resources = []db.CreateSessionResourceInput{
 		{
-			Resource: newVisibilityResource(input, inputResourceID, db.SessionResourceTypeFile,
-				`{"type":"file","file_id":"`+inputFileID+`","mount_path":"/uploads/data.csv"}`),
+			Resource: newVisibilityResource(input, inputResourceID, db.SessionResourceTypeFile),
 			FileMount: &db.SessionFileMount{
 				ResourceExternalID: inputResourceID,
 				FileExternalID:     inputFileID,
+				MountPath:          "/uploads/data.csv",
 				Path:               "/uploads/data.csv",
 			},
 		},
 		{
-			Resource: newVisibilityResource(input, repositoryID, "github_repository",
-				`{"type":"github_repository","url":"https://github.com/example/repo","mount_path":"/workspace/repo"}`),
+			Resource: newVisibilityResource(input, repositoryID, "github_repository"),
 		},
+	}
+	input.Resources[1].Resource.GitHubRepository = &db.SessionResourceGitHubRepository{
+		URL:       "https://github.com/example/repo",
+		MountPath: "/workspace/repo",
 	}
 	created, _, _, _, err := app.db.CreateSession(ctx, input)
 	if err != nil {
@@ -92,7 +91,6 @@ func newVisibilityResource(
 	input db.CreateSessionInput,
 	externalID string,
 	resourceType string,
-	payload string,
 ) db.SessionResource {
 	return db.SessionResource{
 		UUID:              uuid.NewString(),
@@ -101,8 +99,6 @@ func newVisibilityResource(
 		WorkspaceUUID:     input.Session.WorkspaceUUID,
 		SessionExternalID: input.Session.ExternalID,
 		ResourceType:      resourceType,
-		Payload:           json.RawMessage(payload),
-		SecretPayload:     json.RawMessage(`{}`),
 		CreatedAt:         input.Session.CreatedAt,
 		UpdatedAt:         input.Session.CreatedAt,
 	}
@@ -327,14 +323,11 @@ func TestSessionResourceVisibilityWithPostgres(t *testing.T) {
 		if !found {
 			t.Fatal("active output file is not visible")
 		}
-		if resource.Path != "/outputs/reports/summary.txt" {
-			t.Fatalf("output resource path = %q, want /outputs/reports/summary.txt", resource.Path)
+		if resource.File == nil || resource.File.NamespacePath != "/outputs/reports/summary.txt" {
+			t.Fatalf("output resource File = %+v, want /outputs/reports/summary.txt", resource.File)
 		}
-		if resource.FileExternalID != fixture.outputFileID {
-			t.Fatalf("output resource file external id = %q, want %q", resource.FileExternalID, fixture.outputFileID)
-		}
-		if len(resource.Payload) != 0 {
-			t.Fatalf("output resource payload = %s, want empty", resource.Payload)
+		if resource.File.FileID != fixture.outputFileID || resource.File.Ownership != db.SessionResourceFileOwnershipOwned {
+			t.Fatalf("output resource File = %+v, want owned %q", resource.File, fixture.outputFileID)
 		}
 	})
 
@@ -344,18 +337,18 @@ func TestSessionResourceVisibilityWithPostgres(t *testing.T) {
 		if !found {
 			t.Fatal("input file resource is not visible")
 		}
-		if inputResource.Path != "/uploads/data.csv" {
-			t.Fatalf("input resource path = %q, want /uploads/data.csv", inputResource.Path)
+		if inputResource.File == nil || inputResource.File.NamespacePath != "/uploads/data.csv" {
+			t.Fatalf("input resource File = %+v, want /uploads/data.csv", inputResource.File)
 		}
-		if inputResource.FileExternalID != fixture.inputFileID {
-			t.Fatalf("input resource file external id = %q, want %q", inputResource.FileExternalID, fixture.inputFileID)
+		if inputResource.File.FileID != fixture.inputFileID || inputResource.File.Ownership != db.SessionResourceFileOwnershipReferenced {
+			t.Fatalf("input resource File = %+v, want referenced %q", inputResource.File, fixture.inputFileID)
 		}
 		repository, found := resources[fixture.repositoryID]
 		if !found {
 			t.Fatal("github_repository resource is not visible")
 		}
-		if repository.Path != "" || repository.FileExternalID != "" {
-			t.Fatalf("github_repository resource = %+v, want empty path and file external id", repository)
+		if repository.File != nil || repository.GitHubRepository == nil {
+			t.Fatalf("github_repository resource = %+v, want typed repository without File", repository)
 		}
 	})
 
@@ -369,7 +362,8 @@ func TestSessionResourceVisibilityWithPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetSessionResource(output) error = %v", err)
 		}
-		if resource.FileExternalID != fixture.outputFileID || resource.Path != "/outputs/reports/summary.txt" {
+		if resource.File == nil || resource.File.FileID != fixture.outputFileID ||
+			resource.File.NamespacePath != "/outputs/reports/summary.txt" {
 			t.Fatalf("GetSessionResource(output) = %+v, want the output file mapping", resource)
 		}
 	})
@@ -427,15 +421,16 @@ func TestSessionResourceListCapsOutputFiles(t *testing.T) {
 		)
 		insert into session_resources (
 			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
-			session_external_id, resource_type, payload, secret_payload,
-			path, parent_path, file_uuid, created_at, updated_at
+			session_external_id, resource_type, secret_payload,
+			path, parent_path, mount_path, file_uuid, file_ownership, created_at, updated_at
 		)
 		select gen_random_uuid(),
 			'sesrsc_cap_' || right(inserted_file.external_id, 4),
 			session_scope.organization_uuid, session_scope.workspace_uuid, session_scope.uuid,
-			session_scope.external_id, 'file', null, null,
+			session_scope.external_id, 'file', null,
 			'/outputs/cap-' || right(inserted_file.external_id, 4) || '.txt', '/outputs',
-			inserted_file.uuid,
+			'/outputs/cap-' || right(inserted_file.external_id, 4) || '.txt',
+			inserted_file.uuid, 'owned',
 			$4::timestamptz + right(inserted_file.external_id, 4)::int * interval '1 second',
 			$4::timestamptz + right(inserted_file.external_id, 4)::int * interval '1 second'
 		from inserted_file cross join session_scope
@@ -446,7 +441,7 @@ func TestSessionResourceListCapsOutputFiles(t *testing.T) {
 	resources := fixture.listResources(t)
 	outputs := 0
 	for _, resource := range resources {
-		if len(resource.Payload) == 0 {
+		if resource.File != nil && resource.File.Ownership == db.SessionResourceFileOwnershipOwned {
 			outputs++
 		}
 	}

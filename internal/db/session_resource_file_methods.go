@@ -4,7 +4,17 @@ package db
 // 拥有和计费的 Source File。这类节点不能通过通用 Filestore mutation
 // 删除或替换，也不能删除 Source File 对象或扣减其用量。
 func (entry *SessionResourceFile) ReferencesSourceFile() bool {
-	return entry != nil && entry.SourceFileUUID != nil
+	return entry != nil &&
+		entry.Kind == SessionResourceFileKindFile &&
+		entry.FileOwnership == SessionResourceFileOwnershipReferenced
+}
+
+// OwnsFile 表示该普通 File 节点承担 Filestore 计费和对象清理责任。
+// 未知或缺失 ownership 必须失败关闭，不能回退为“非 referenced 即 owned”。
+func (entry *SessionResourceFile) OwnsFile() bool {
+	return entry != nil &&
+		entry.Kind == SessionResourceFileKindFile &&
+		entry.FileOwnership == SessionResourceFileOwnershipOwned
 }
 
 // OwnedBytes 返回该节点计入 Session Owned File 的字节数。
@@ -12,8 +22,7 @@ func (entry *SessionResourceFile) ReferencesSourceFile() bool {
 // 都只引用其他资源拥有的对象。
 func (entry *SessionResourceFile) OwnedBytes() int64 {
 	if entry == nil ||
-		entry.Kind != SessionResourceFileKindFile ||
-		entry.ReferencesSourceFile() {
+		!entry.OwnsFile() {
 		return 0
 	}
 	return filestoreInt64(entry.SizeBytes)

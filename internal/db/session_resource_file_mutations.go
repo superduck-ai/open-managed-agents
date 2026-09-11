@@ -97,7 +97,7 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 			if source.Kind != SessionResourceFileKindFile {
 				return FilestoreMutationResult{}, ErrFilestoreNotFile
 			}
-			if source.ReferencesSourceFile() {
+			if !source.OwnsFile() {
 				// Input Resource 禁止通用 Filestore mutation。CopyFilestoreFile 的语义是
 				// 把对象存储端已完成的 server-side copy 落库为 Owned File，
 				// 不允许把 Source File 隐式物化为新的 Owned File。
@@ -155,7 +155,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 			if source.Kind != SessionResourceFileKindFile {
 				return FilestoreMutationResult{}, ErrFilestoreNotFile
 			}
-			if source.ReferencesSourceFile() {
+			if !source.OwnsFile() {
 				return FilestoreMutationResult{}, ErrPreconditionFailed
 			}
 			if input.SourcePath == input.DestinationPath {
@@ -171,7 +171,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 				return FilestoreMutationResult{}, err
 			}
 			if found {
-				if destination.ReferencesSourceFile() {
+				if !destination.OwnsFile() {
 					return FilestoreMutationResult{}, ErrPreconditionFailed
 				}
 				if destination.Kind != SessionResourceFileKindFile {
@@ -353,7 +353,7 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveSessionResourc
 			if entry.Kind != SessionResourceFileKindFile {
 				return FilestoreMutationResult{}, ErrFilestoreNotFile
 			}
-			if entry.ReferencesSourceFile() {
+			if !entry.OwnsFile() {
 				return FilestoreMutationResult{}, ErrPreconditionFailed
 			}
 			job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{

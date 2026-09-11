@@ -1,3 +1,4 @@
+import { BillingWorkspaceContent } from '../../features/settings/BillingWorkspaceContent';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import {
   ArrowLeft,
@@ -187,7 +188,7 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
                 : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0',
           )}
         >
-          {children}
+          <BillingWorkspaceContent currentPath={currentPath}>{children}</BillingWorkspaceContent>
         </div>
       </SidebarInset>
     </SidebarProvider>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="OrganizationMemberGuardMapper">
+    <select id="LockOrganization" result="scalar">
+        SELECT uuid FROM organizations WHERE uuid = #{organizationUUID} FOR UPDATE
+    </select>
+    <select id="FindRole" result="scalar">
+        SELECT role FROM users
+        WHERE organization_uuid = #{organizationUUID}
+        AND deleted_at IS NULL
+        AND (external_id = #{userReference}
+            OR 'user_' || LEFT(REPLACE(CAST(uuid AS text), '-', ''), 24) = #{userReference}
+            OR CAST(uuid AS text) = #{userReference})
+    </select>
+    <select id="FindMemberByReference" resultType="AdminUser">
+        SELECT uuid, external_id, organization_uuid, email, name, role, added_at
+        FROM users
+        WHERE organization_uuid = #{organizationUUID}
+        AND deleted_at IS NULL
+        AND (external_id = #{userReference}
+            OR 'user_' || LEFT(REPLACE(CAST(uuid AS text), '-', ''), 24) = #{userReference}
+            OR CAST(uuid AS text) = #{userReference})
+    </select>
+    <select id="CountAdmins" result="scalar">
+        SELECT COUNT(*) FROM users
+        WHERE organization_uuid = #{organizationUUID} AND deleted_at IS NULL AND role = 'admin'
+    </select>
+</mapper>

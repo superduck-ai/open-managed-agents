@@ -28,16 +28,23 @@ func (d *DB) ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]pla
 	return out, nil
 }
 
-func (d *DB) UpdateOrgUserRole(ctx context.Context, orgUUID string, userID string, role string) (*platform.OrgUser, error) {
+func (d *DB) UpdateOrgUserRole(ctx context.Context, orgUUID, userID, role, actorID string, validate func(string) error) (*platform.OrgUser, error) {
 	if d == nil || d.mapperDB == nil || orgUUID == "" || userID == "" {
 		return nil, nil
 	}
-	mapper := NewConsoleUserMapper(d.mapperDB)
-	row, err := mapper.UpdateOrganizationRole(ctx, updateConsoleUserRoleParams{
-		OrgUUID:  orgUUID,
-		UserID:   userID,
-		UserUUID: tryParseDBUUIDIdentifierString(userID),
-		Role:     role,
+	var row consoleMemberRow
+	err := d.withOrganizationMemberChange(ctx, orgUUID, userID, &role, func(executor yourbatis.Executor) error {
+		if err := validateOrganizationMemberActor(ctx, executor, orgUUID, actorID, validate); err != nil {
+			return err
+		}
+		var err error
+		row, err = NewConsoleUserMapper(executor).UpdateOrganizationRole(ctx, updateConsoleUserRoleParams{
+			OrgUUID:  orgUUID,
+			UserID:   userID,
+			UserUUID: tryParseDBUUIDIdentifierString(userID),
+			Role:     role,
+		})
+		return err
 	})
 	if err != nil {
 		err = mapNoRows(err)
@@ -50,7 +57,7 @@ func (d *DB) UpdateOrgUserRole(ctx context.Context, orgUUID string, userID strin
 	return &user, nil
 }
 
-func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (bool, error) {
+func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID, userID, actorID string, validate func(string) error) (bool, error) {
 	if d == nil || d.mapperDB == nil || orgUUID == "" || userID == "" {
 		return false, nil
 	}
@@ -60,7 +67,10 @@ func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (
 		UserUUID: tryParseDBUUIDIdentifierString(userID),
 	}
 	removed := false
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+	err := d.withOrganizationMemberChange(ctx, orgUUID, userID, nil, func(executor yourbatis.Executor) error {
+		if err := validateOrganizationMemberActor(ctx, executor, orgUUID, actorID, validate); err != nil {
+			return err
+		}
 		userMapper := NewConsoleUserMapper(executor)
 		workspaceMemberMapper := NewConsoleWorkspaceMemberMapper(executor)
 		rowsAffected, err := userMapper.SoftDeleteOrganizationMember(ctx, params)

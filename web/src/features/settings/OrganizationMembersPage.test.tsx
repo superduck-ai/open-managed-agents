@@ -1,3 +1,4 @@
+import '../../test/setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
@@ -6,6 +7,7 @@ import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
+import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
 import { OrganizationMembersPage } from './OrganizationMembersPage';
 import type { OrganizationInvite, OrganizationMember } from './membersApi';
 
@@ -20,6 +22,81 @@ afterEach(() => {
 });
 
 describe('Organization members settings', () => {
+  const removalOriginalFetch = globalThis.fetch;
+
+  function renderRemoval() {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <OrganizationMemberRemoval
+          orgUuid="org_one"
+          organizationName="Team One"
+          csrfToken="csrf-test"
+          member={{ id: 'user_member', name: 'Member', email: 'member@example.com', role: 'user' }}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  async function openRemoval() {
+    const trigger = screen.getByRole('button', { name: 'More actions for Member' });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove member' }));
+    await screen.findByRole('alertdialog');
+  }
+
+  test('移除成员取消时不发送请求', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return Response.json({});
+    }) as typeof fetch;
+    renderRemoval();
+    await openRemoval();
+    expect(screen.getByText(/Are you sure you want to remove/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(Boolean(document.querySelector('[data-slot="alert-dialog-content"][data-open]'))).toBe(false),
+    );
+    expect(calls).toBe(0);
+    globalThis.fetch = removalOriginalFetch;
+  });
+
+  test('移除成员确认后向当前组织发送带 CSRF 的 DELETE', async () => {
+    let request: { url: string; init?: RequestInit } | undefined;
+    globalThis.fetch = (async (url, init) => {
+      request = { url: String(url), init };
+      return Response.json({ id: 'user_member', type: 'user_deleted' });
+    }) as typeof fetch;
+    renderRemoval();
+    await openRemoval();
+    expect(request).toBeUndefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove', exact: true }));
+    await waitFor(() =>
+      expect(Boolean(document.querySelector('[data-slot="alert-dialog-content"][data-open]'))).toBe(false),
+    );
+    expect(request?.url).toContain('/api/console/organizations/org_one/members/user_member');
+    expect(request?.init?.method).toBe('DELETE');
+    expect(new Headers(request?.init?.headers).get('X-CSRF-Token')).toBe('csrf-test');
+    globalThis.fetch = removalOriginalFetch;
+  });
+
+  test('后端拒绝最后管理员移除时保留弹窗和错误', async () => {
+    globalThis.fetch = (async () =>
+      Response.json(
+        { error: 'last_organization_admin', message: 'The last organization administrator cannot be removed.' },
+        { status: 409 },
+      )) as typeof fetch;
+    renderRemoval();
+    await openRemoval();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove', exact: true }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    globalThis.fetch = removalOriginalFetch;
+  });
+
   test('renders the official members shell and table from the console API', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     mockMembersApi();

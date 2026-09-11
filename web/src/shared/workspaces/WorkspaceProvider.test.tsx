@@ -10,6 +10,14 @@ import { getConsoleRequestContext, reportApiAuthFailure, setConsoleRequestContex
 import type { AuthAccount } from '../auth/api';
 import { useScopeUnsavedChanges } from '../organizations/unsaved';
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router';
+import { workspaceSwitchPath } from './presentation';
 
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
@@ -52,6 +60,7 @@ function Probe({ dirty = false }: { dirty?: boolean }) {
       </output>
       <output data-testid="workspace-name">{workspace.activeWorkspace.name}</output>
       <button onClick={() => confirmation.request(() => void organizations.switchOrganization('b'))}>切换 B</button>
+      <button onClick={() => confirmation.request(() => workspace.selectWorkspace('ws-next'))}>切换工作区</button>
       {confirmation.dialog}
     </>
   );
@@ -198,6 +207,89 @@ test('网络失败显示可重试状态且不会自动循环', async () => {
   await act(async () => organizations.retry());
   expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a');
 });
+
+test('组织不匹配或缺少组织标识的403不触发恢复', async () => {
+  mockWorkspaces();
+  const refresh = mock(async () => ({ account }));
+  mount({ refresh });
+  await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a'));
+  await act(async () => {
+    reportApiAuthFailure(403, { workspaceId: 'ws-a' });
+    reportApiAuthFailure(403, { organizationUuid: 'b', workspaceId: 'ws-a' });
+  });
+  expect(refresh).not.toHaveBeenCalled();
+});
+
+for (const workspaceId of [undefined, '']) {
+  test(`空工作区403允许同组织恢复：${String(workspaceId)}`, async () => {
+    globalThis.fetch = mock(async () => Response.json([])) as typeof fetch;
+    const refresh = mock(async () => ({ account }));
+    mount({ refresh });
+    await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('a::self-a'));
+    mockWorkspaces();
+    await act(async () => reportApiAuthFailure(403, { organizationUuid: 'a', workspaceId }));
+    await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+}
+
+for (const path of ['/workspaces/ws-a/agents', '/workspaces/ws-a/agents/agent-detail']) {
+  test(`真实Provider切换工作区只导航一次并移除详情标识：${path}`, async () => {
+    resetTestDom(`https://oma.duck.ai${path}`);
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'scrollTo');
+    Object.assign(globalThis, { scrollTo: () => {} });
+    globalThis.fetch = mock(async () =>
+      Response.json([...workspaces('a'), { ...workspaces('a')[0], id: 'ws-next', is_default: false }]),
+    ) as typeof fetch;
+    const root = createRootRoute();
+    const route = createRoute({
+      getParentRoute: () => root,
+      path: '/workspaces/$workspaceId/agents/{-$agentId}',
+      component: () => null,
+    });
+    const router = createRouter({
+      routeTree: root.addChildren([route]),
+      history: createMemoryHistory({ initialEntries: [path] }),
+    });
+    await router.load();
+    const navigate = mock(async (workspaceId: string) => {
+      await router.navigate({
+        href: workspaceSwitchPath(router.state.location.pathname, workspaceId),
+        replace: true,
+        ignoreBlocker: true,
+      });
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider
+          value={{
+            account,
+            status: 'authenticated',
+            csrfToken: 'csrf',
+            refresh: async () => ({ account }),
+            logout: async () => {},
+          }}
+        >
+          <WorkspaceProvider navigateScope={navigate} initialWorkspaceId="ws-a">
+            <Probe />
+            <RouterProvider router={router} />
+          </WorkspaceProvider>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a'));
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '切换工作区' }));
+    await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('a:ws-next:self-a'));
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(router.state.location.pathname).toBe('/workspaces/ws-next/agents');
+    expect(getConsoleRequestContext().workspaceId).toBe('ws-next');
+    cleanup();
+    if (scrollDescriptor) Object.defineProperty(globalThis, 'scrollTo', scrollDescriptor);
+    else Reflect.deleteProperty(globalThis, 'scrollTo');
+  });
+}
 
 test('403恢复失败后不受后续403触发，显式重试才能恢复', async () => {
   mockWorkspaces();

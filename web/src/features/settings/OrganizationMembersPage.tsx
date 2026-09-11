@@ -30,6 +30,7 @@ import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
+import { useI18n } from '../../shared/i18n';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
@@ -62,6 +63,7 @@ const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => 
 }));
 
 export function OrganizationMembersPage() {
+  const { msg } = useI18n();
   const { account, csrfToken } = useAuth();
   const { orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
@@ -116,7 +118,7 @@ export function OrganizationMembersPage() {
           current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite],
       );
       setInviteActionError(null);
-      notifyInvitationDelivery([updatedInvite]);
+      notifyInvitationDelivery([updatedInvite], msg);
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
@@ -354,7 +356,7 @@ export function OrganizationMembersPage() {
             ...createdInvites,
             ...(current ?? []),
           ]);
-          notifyInvitationDelivery(createdInvites);
+          notifyInvitationDelivery(createdInvites, msg);
         }}
       />
       <InviteRevokeDialog

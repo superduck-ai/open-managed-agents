@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -235,6 +236,7 @@ func normalizeInputEvent(
 	session db.Session,
 	raw json.RawMessage,
 	now time.Time,
+	validateRubricFile func(workspaceUUID, fileID string) error,
 ) (db.SessionEvent, json.RawMessage, bool, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -243,6 +245,11 @@ func normalizeInputEvent(
 	eventType, _ := payload["type"].(string)
 	if !allowedPublicEventType(eventType) {
 		return db.SessionEvent{}, nil, false, errors.New("event type is not accepted by this endpoint")
+	}
+	if eventType == "user.define_outcome" {
+		if err := requireIntegerPayloadField(payload, "max_iterations"); err != nil {
+			return db.SessionEvent{}, nil, false, err
+		}
 	}
 	if err := validatePublicInputEvent(eventType, payload); err != nil {
 		return db.SessionEvent{}, nil, false, err
@@ -261,6 +268,17 @@ func normalizeInputEvent(
 	}
 	outcomesChanged := false
 	if eventType == "user.define_outcome" {
+		if validateRubricFile != nil {
+			if rubric, ok := payload["rubric"].(map[string]any); ok && rubric["type"] == "file" {
+				fileID, ok := rubric["file_id"].(string)
+				if !ok || strings.TrimSpace(fileID) == "" {
+					return db.SessionEvent{}, nil, false, errors.New("rubric.file_id must be a non-empty string")
+				}
+				if err := validateRubricFile(session.WorkspaceUUID, fileID); err != nil {
+					return db.SessionEvent{}, nil, false, err
+				}
+			}
+		}
 		outcomeID, _ := payload["outcome_id"].(string)
 		if outcomeID == "" {
 			outcomeID, err = ids.New("outc_")
@@ -273,11 +291,10 @@ func normalizeInputEvent(
 		if rawMax, ok := payload["max_iterations"].(float64); ok && rawMax > 0 {
 			maxIterations = int(rawMax)
 		}
-		if maxIterations > 20 {
-			return db.SessionEvent{}, nil, false, errors.New("max_iterations must be at most 20")
-		}
 		payload["max_iterations"] = maxIterations
-		outcomes, err := appendOutcomeEvaluation(session.OutcomeEvaluations, outcomeID, maxIterations, now)
+		description, _ := payload["description"].(string)
+		rubric, _ := payload["rubric"].(map[string]any)
+		outcomes, err := appendOutcomeEvaluation(session.OutcomeEvaluations, outcomeID, maxIterations, now, description, rubric)
 		if err != nil {
 			return db.SessionEvent{}, nil, false, err
 		}
@@ -368,13 +385,28 @@ func validateDefineOutcomePayload(payload map[string]any) error {
 	if !ok || rubric == nil {
 		return errors.New("rubric is required")
 	}
-	if rubricText, ok := rubric.(string); ok && strings.TrimSpace(rubricText) == "" {
-		return errors.New("rubric is required")
+	rubricObject, ok := rubric.(map[string]any)
+	if !ok {
+		return errors.New("rubric must be an object")
+	}
+	switch rubricType, _ := rubricObject["type"].(string); rubricType {
+	case "text":
+		content, _ := rubricObject["content"].(string)
+		if strings.TrimSpace(content) == "" {
+			return errors.New("rubric.content is required for text rubric")
+		}
+	case "file":
+		fileID, _ := rubricObject["file_id"].(string)
+		if strings.TrimSpace(fileID) == "" {
+			return errors.New("rubric.file_id is required for file rubric")
+		}
+	default:
+		return errors.New("rubric.type must be text or file")
 	}
 	if rawMax, ok := payload["max_iterations"]; ok && rawMax != nil {
 		max, ok := rawMax.(float64)
-		if !ok || max < 1 || max != float64(int(max)) {
-			return errors.New("max_iterations must be a positive integer")
+		if !ok || max < 1 || max > 20 {
+			return errors.New("max_iterations must be between 1 and 20")
 		}
 	}
 	return nil
@@ -425,21 +457,48 @@ func requiredStringValue(payload map[string]any, field string) string {
 	return strings.TrimSpace(value)
 }
 
-func appendOutcomeEvaluation(raw json.RawMessage, outcomeID string, maxIterations int, now time.Time) (json.RawMessage, error) {
+func requireIntegerPayloadField(payload map[string]any, field string) error {
+	raw, ok := payload[field]
+	if !ok || raw == nil {
+		return nil
+	}
+	value, ok := raw.(float64)
+	if !ok || math.Trunc(value) != value {
+		return fmt.Errorf("%s must be an integer", field)
+	}
+	return nil
+}
+
+func appendOutcomeEvaluation(
+	raw json.RawMessage,
+	outcomeID string,
+	maxIterations int,
+	now time.Time,
+	description string,
+	rubric map[string]any,
+) (json.RawMessage, error) {
 	var outcomes []map[string]any
 	if len(raw) > 0 && !httpapi.IsJSONNull(raw) {
 		if err := json.Unmarshal(raw, &outcomes); err != nil {
 			return nil, errors.New("stored outcome evaluations are invalid")
 		}
 	}
-	outcomes = append(outcomes, map[string]any{
+	// 存完整目标定义，供后续消费。
+	evaluation := map[string]any{
 		"id":             outcomeID,
 		"outcome_id":     outcomeID,
 		"max_iterations": maxIterations,
 		"status":         "pending",
 		"type":           "outcome_evaluation",
 		"updated_at":     now.Format(time.RFC3339),
-	})
+	}
+	if description != "" {
+		evaluation["description"] = description
+	}
+	if rubric != nil {
+		evaluation["rubric"] = rubric
+	}
+	outcomes = append(outcomes, evaluation)
 	return httpapi.MarshalRaw(outcomes)
 }
 

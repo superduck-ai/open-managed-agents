@@ -2,6 +2,7 @@ package tests
 
 import (
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -344,16 +345,40 @@ func TestOrganizationJoiningResourceIdentity(t *testing.T) {
 	}
 	agent := create("/v1/agents", `{"name":"加入组织验收","model":"claude-opus-4-6"}`)
 	environment := create("/v1/environments", `{"name":"加入组织验收"}`)
-	create("/v1/vaults", `{"display_name":"加入组织验收"}`)
-	create("/v1/memory_stores", `{"name":"加入组织验收"}`)
+	vault := create("/v1/vaults", `{"display_name":"加入组织验收"}`)
+	memory := create("/v1/memory_stores", `{"name":"加入组织验收"}`)
+	var file, skill struct {
+		ID string `json:"id"`
+	}
 	fileBody, contentType := multipartBody(t, "joining.txt", "text/plain", []byte("组织隔离验收"), false)
 	headers["Content-Type"] = contentType
-	f.request(t, http.MethodPost, "/v1/files?beta=true", fileBody, headers, http.StatusOK)
+	decodeJSON(t, f.request(t, http.MethodPost, "/v1/files?beta=true", fileBody, headers, http.StatusOK).Body, &file)
 	skillBody, contentType := skillMultipartBody(t, "Joining Skill", []skillUploadFile{{Filename: "joining/SKILL.md", Content: "---\nname: Joining Skill\ndescription: 组织加入验收\n---\n# 验收\n"}})
 	headers["Content-Type"] = contentType
-	f.request(t, http.MethodPost, "/v1/skills?beta=true", skillBody, headers, http.StatusOK)
+	decodeJSON(t, f.request(t, http.MethodPost, "/v1/skills?beta=true", skillBody, headers, http.StatusOK).Body, &skill)
 	headers["Content-Type"] = "application/json"
 	sessionID := create("/v1/sessions", `{"agent":`+quoteJSON(agent)+`,"environment_id":`+quoteJSON(environment)+`}`)
+	for resource, id := range map[string]string{
+		"files": file.ID, "skills": skill.ID, "vaults": vault, "memory_stores": memory,
+		"agents": agent, "environments": environment, "sessions": sessionID,
+	} {
+		t.Run(resource+"跨组织读取隔离", func(t *testing.T) {
+			if id == "" {
+				t.Fatal("创建资源未返回 ID")
+			}
+			path := "/v1/" + resource + "/" + id + "?beta=true"
+			other := maps.Clone(headers)
+			other["X-Organization-UUID"] = f.bootstrap.Account.DefaultOrganizationUUID
+			f.request(t, http.MethodGet, path, nil, other, http.StatusNotFound)
+			var result struct {
+				ID string `json:"id"`
+			}
+			decodeJSON(t, f.request(t, http.MethodGet, path, nil, headers, http.StatusOK).Body, &result)
+			if result.ID != id {
+				t.Fatalf("目标组织读取资源不匹配：%q != %q", result.ID, id)
+			}
+		})
+	}
 	session, found, err := f.app.db.GetSession(t.Context(), workspace.UUID, sessionID)
 	if err != nil || !found || session.RuntimeUserUUID != member.UserUUID || session.CreatedByAPIKeyUUID != "" {
 		t.Fatalf("会话必须绑定目标组织用户：%+v %t %v", session, found, err)

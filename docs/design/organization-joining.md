@@ -47,6 +47,8 @@ sequenceDiagram
 
 列表仅返回当前邮箱可处理的 pending 邀请，空列表保持 `data:[]`。时间使用 RFC 3339。响应可以提供组织成员信息作为附加字段，客户端不能把它当作全局账号身份。
 
+邀请资源统一返回 `Cache-Control: no-store`，包括读取、接受、拒绝及资源级错误响应，防止浏览器或代理存储与邮箱身份关联的邀请数据。每次读取重新使用服务端已验证邮箱，前端邀请查询仍按稳定账号 UUID 隔离。管理员 Console 默认列表排除 `declined`；显式查询 `status=deleted` 时保留并映射为兼容的 `deleted` 状态。
+
 ```mermaid
 stateDiagram-v2
     [*] --> pending
@@ -123,7 +125,7 @@ sequenceDiagram
     participant P as WorkspaceProvider
     participant Q as 查询与请求层
     participant B as 后端
-    U->>M: 选择组织或进入已接受的组织
+    U->>M: 从账号菜单选择组织
     M->>U: 存在未保存内容时确认离开
     U->>M: 确认继续
     M->>P: 切换目标组织
@@ -140,9 +142,13 @@ sequenceDiagram
 
 初始化已有详情链接时保留路由；显式跨组织/工作区切换时，详情与编辑页回到对应列表，不能携带旧资源 ID。切换期间暂停业务界面；迟到的读取或写入响应不能更新新上下文。取消未保存内容提示不会改变当前组织。
 
+工作区切换沿 `selectWorkspace → installScope → navigateScope` 统一导航，侧栏不重复导航。回归使用真实 WorkspaceProvider、TanStack 内存路由和生产路由映射，分别验证列表及详情切换后 URL、请求作用域一致且只导航一次。
+
 切换接口仅在有效组织和工作区提交完成后返回 `true`；失败、被后续切换取代或没有可用工作区时返回 `false`。独立邀请页返回首页不调用组织切换。403 恢复统一使用空闲、检查中、失败三种状态：检查中合并并发错误，普通权限不足检查完成回到空闲，恢复失败后仅显式重试或选择组织/工作区才能重新开始，不再通过每个成功读取响应广播重置。
 
 业务请求返回 403 后，先刷新身份与可访问工作区区分普通权限不足和成员关系失效：组织失效优先回注册组织，其次其他有效组织；仅工作区失效则在当前组织回退。恢复失败提供重试与退出登录入口，不创建组织或恢复已移除成员。所有按钮和身份展示仅供交互使用，服务端仍对每次请求独立授权。
+
+403 比较将请求上下文中缺省工作区 `undefined` 统一视为空字符串，与 Provider 的空工作区状态一致；组织标识必须存在并匹配当前组织，其他组织的迟到错误不能触发恢复。
 
 ## PostgreSQL 验收
 
@@ -151,6 +157,8 @@ sequenceDiagram
 测试复用 `tests/config_test_main_test.go` 的配置入口：显式 `CONFIG_FILE` 优先，否则使用 `config/config.example.yaml`。运行前必须将配置指向隔离测试数据库；不再按配置文件名跳过，配置或依赖不可用时测试失败。fixture 使用随机邮箱和独立注册组织，不操作当前 Demo 用户。数据库 fixture 写入通过现有 DB/Yourbatis API，SQL 读取仅用于验证当前测试组织中的持久化结果。
 
 覆盖未登录、跨邮箱伪造、缺失/错误/跨 session CSRF、过期/撤销、首次登录、邀请列表字段、接受/拒绝幂等、移除后重放、账号 UUID 稳定、重复登录、stale header/cookie 上下文、403 不清 cookie，以及 files、skills、vault、memory、agent、environment、session 创建。会话记录必须使用目标组织 user UUID，资源创建者不得伪装成 API key。Default 成员保持零条；`api_keys` 与 `console_api_keys` 对照接受前的基线，区分既有注册流程创建的 key 与接受邀请产生的副作用。模型配置为无效域名占位，仅创建资源和未执行的会话，不提交消息、不启动 worker、不调用真实 LLM。
+
+资源身份回归还逐项覆盖 File、Skill、Vault、Memory Store、Agent、Environment、Session 的详情读取：同一登录会话在自己的注册组织访问受邀组织资源应返回 404，再切回目标组织读取相同 ID 必须返回 200 且 ID 一致，避免将无效路由的 404 误判为租户隔离。
 
 主代理统一完成生成后运行：
 
@@ -163,6 +171,8 @@ CONFIG_FILE=/path/to/isolated-test-config.yaml go test ./tests -run '^TestOrgani
 2026-09-08 在指定隔离配置下执行上述命令，三个 `TestOrganizationJoining*` 测试全部通过，包含四组失败子场景。直接运行 `golangci-lint run --config .golangci.yml ./tests/...` 返回 `0 issues`。本记录只确认该测试文件覆盖的 HTTP/PostgreSQL 验收，前端缓存交互、全套门禁与迁移专项结果由主代理汇总。
 
 ## 实现验收记录（2026-09-08）
+
+2026-09-11 审查增量验证：在隔离 PostgreSQL/MinIO 配置下执行全量 `just test` 通过，包含七类资源详情的跨组织 404 与目标组织 200 配对验证、declined 默认过滤与显式 deleted 兼容。前端六个相关测试文件逐文件运行共 54 项通过，涵盖中英文投递提示、邀请交互、403 边界、真实 Provider 路由联动和请求隔离；生产构建通过。全量 `bun test` 仍在既有 `ConsoleLayout.test.tsx` 套件退出 133，不计为通过。本轮没有修改迁移，也没有把自动化测试当作真实收件箱投递验收；下列旧版本验收中的“接受后进入组织”交互已由本文当前规则替代。
 
 2026-09-09 PR 审查修正：切换结果、邀请页失败保留与 403 单一恢复状态的前端定向测试共 37 项通过，生产构建通过；使用 `/tmp/oma338-review-config.yaml` 和新建隔离 PostgreSQL 实例执行三个 `TestOrganizationJoining*` 全部通过，确认无需原临时文件名。Go lint、死代码、重复代码、复杂度、前端格式和大文件检查通过。全量 Bun 测试仍在 ConsoleShell 套件退出 133，不计为全量验收通过。
 

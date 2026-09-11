@@ -1,11 +1,23 @@
 import { toast } from '../../shared/ui/sonner';
 import type { OrganizationInvite } from './membersApi';
+import type { I18nContextValue } from '../../shared/i18n/context';
 
-export function notifyInvitationDelivery(invites: OrganizationInvite[]) {
+export function notifyInvitationDelivery(invites: OrganizationInvite[], msg: I18nContextValue['msg']) {
   const unsent = invites.filter((invite) => invite.email_delivery !== 'sent').length;
   if (unsent) {
-    toast.warning(`邀请已保存，但 ${unsent} 封邮件未确认发送。请检查邮件配置后重发邀请。`);
+    toast.warning(
+      msg(
+        'invitations.delivery.unconfirmed',
+        'Invitations saved, but delivery of {count, plural, one {# email} other {# emails}} is unconfirmed. Check your email configuration and resend.',
+        { count: unsent },
+      ),
+    );
   } else {
-    toast.success('邀请邮件已提交发送，请提醒收件人检查邮箱。');
+    toast.success(
+      msg(
+        'invitations.delivery.sent',
+        'Invitation emails submitted for sending. Remind recipients to check their inbox.',
+      ),
+    );
   }
 }

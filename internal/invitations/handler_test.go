@@ -17,11 +17,37 @@ type testStore struct {
 	id     string
 	accept bool
 	err    error
+	rows   map[string][]db.Invitation
 }
 
 func (s *testStore) ListInvitations(_ context.Context, email string) ([]db.Invitation, error) {
 	s.email = email
+	if s.rows != nil {
+		return s.rows[email], s.err
+	}
 	return []db.Invitation{{ID: "invite_test", OrganizationUUID: "org_uuid", Email: email}}, s.err
+}
+
+func TestInvitationListDoesNotReusePreviousAccount(t *testing.T) {
+	email := "first@example.com"
+	store := &testStore{rows: map[string][]db.Invitation{
+		"first@example.com":  {{ID: "invite_first"}},
+		"second@example.com": {{ID: "invite_second"}},
+	}}
+	router := chi.NewRouter()
+	router.Route("/api/invitations", NewHandler(store, func(*http.Request) (string, bool) { return email, true }, nil).RegisterRoutes)
+	for _, account := range []struct{ email, id, excluded string }{
+		{"first@example.com", "invite_first", "invite_second"},
+		{"second@example.com", "invite_second", "invite_first"},
+	} {
+		email = account.email
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/invitations", nil))
+		if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" ||
+			!strings.Contains(recorder.Body.String(), account.id) || strings.Contains(recorder.Body.String(), account.excluded) {
+			t.Fatalf("账号隔离或缓存策略错误：%d %s", recorder.Code, recorder.Body.String())
+		}
+	}
 }
 
 func (s *testStore) RespondToInvitation(_ context.Context, id, email string, accept bool) (db.Invitation, error) {
@@ -57,6 +83,9 @@ func TestInvitationHandlers(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path+"?email=attacker@example.com", strings.NewReader(`{"email":"attacker@example.com"}`))
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, request)
+			if recorder.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("邀请成功及错误响应均不得缓存")
+			}
 			if recorder.Code != test.status {
 				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 			}

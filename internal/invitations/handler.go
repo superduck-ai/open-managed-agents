@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
@@ -29,6 +30,7 @@ func NewHandler(store Store, verifiedEmail func(*http.Request) (string, bool), l
 
 // RegisterRoutes 注册相对资源路由；调用方负责登录身份与写请求 CSRF 校验。
 func (h *Handler) RegisterRoutes(router chi.Router) {
+	router.Use(middleware.SetHeader("Cache-Control", "no-store"))
 	router.Get("/", h.errors.Wrap(h.list))
 	router.Post("/{id}/accept", h.errors.Wrap(func(w http.ResponseWriter, r *http.Request) error { return h.respond(w, r, true) }))
 	router.Post("/{id}/decline", h.errors.Wrap(func(w http.ResponseWriter, r *http.Request) error { return h.respond(w, r, false) }))

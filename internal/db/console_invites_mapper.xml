@@ -18,6 +18,7 @@
             <choose>
                 <when test="status == ''">
                     AND deleted_at IS NULL
+                    AND status &lt;&gt; 'declined'
                 </when>
                 <when test="status == 'pending'">
                     AND deleted_at IS NULL

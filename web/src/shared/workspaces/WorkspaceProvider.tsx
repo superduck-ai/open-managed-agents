@@ -130,7 +130,8 @@ export function WorkspaceProvider({
       onApiAuthFailure((status, context) => {
         if (
           status !== 403 ||
-          context.workspaceId !== scopeRef.current.activeWorkspaceId ||
+          !context.organizationUuid ||
+          (context.workspaceId ?? '') !== scopeRef.current.activeWorkspaceId ||
           context.organizationUuid !== scopeRef.current.orgUuid ||
           recovery.current !== 'idle'
         )

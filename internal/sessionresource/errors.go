@@ -3,9 +3,18 @@ package sessionresource
 import (
 	"errors"
 	"fmt"
+
+	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 )
 
 var (
+	errStoredFileResource       = errors.New("stored file resource is invalid")
+	errStoredFileResourceType   = fmt.Errorf("stored file resource type must be %q", FileType)
+	errStoredFileIDRequired     = errors.New("stored file resource file_id is required")
+	errStoredFileResourceSource = fmt.Errorf("stored file resource source must be %q", sandboxmount.FileSource)
+	errFileResourcePayload      = errors.New("file resource payload is invalid")
+	errTooManyFileResources     = fmt.Errorf("at most %d managed-agent file resources are allowed", MaxFileResources)
+
 	ErrGitTokenCrypto               = errors.New("git token cryptographic operation failed")
 	errGitRepositoryURL             = errors.New("url must be an HTTPS repository URL without credentials, query, or fragment")
 	errGitRepositoryPort            = errors.New("git repository URL must use HTTPS port 443")
@@ -30,4 +39,16 @@ func gitMountPathError(err error) error {
 
 func gitTokenCryptoError(err error) error {
 	return fmt.Errorf("%w: %w", ErrGitTokenCrypto, err)
+}
+
+func requiredFieldError(name string) error {
+	return fmt.Errorf("%s is required", name)
+}
+
+func stringFieldTypeError(name string) error {
+	return fmt.Errorf("%s must be a string", name)
+}
+
+func emptyFieldError(name string) error {
+	return fmt.Errorf("%s must be non-empty", name)
 }

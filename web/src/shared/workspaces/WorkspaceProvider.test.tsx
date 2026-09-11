@@ -1,3 +1,4 @@
+import { canManageMembers } from '../permissions/members';
 import { afterEach, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../test/setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -49,6 +50,7 @@ function Probe({ dirty = false }: { dirty?: boolean }) {
       <output data-testid="state">
         {organizations.switching ? 'loading' : organizations.error ? 'error' : 'ready'}
       </output>
+      <output data-testid="workspace-name">{workspace.activeWorkspace.name}</output>
       <button onClick={() => confirmation.request(() => void organizations.switchOrganization('b'))}>切换 B</button>
       {confirmation.dialog}
     </>
@@ -92,6 +94,13 @@ function mount({
 function mockWorkspaces() {
   globalThis.fetch = mock(async (input) => Response.json(workspaces(String(input).split('/').at(-2)!))) as typeof fetch;
 }
+
+test('保留前置分支的 Default 展示名但不改写真实工作区标识', async () => {
+  mockWorkspaces();
+  mount();
+  await waitFor(() => expect(screen.getByTestId('workspace-name').textContent).toBe('Default'));
+  expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a');
+});
 
 test('取消未保存确认前不触碰 context、不刷新 bootstrap、不取消旧查询', async () => {
   mockWorkspaces();
@@ -220,3 +229,41 @@ test('目标组织加载失败返回false，不提交新scope，重试成功返�
   await act(async () => expect(await organizations.retry()).toBe(true));
   expect(screen.getByTestId('scope').textContent).toBe('b:ws-b:self-b');
 });
+
+test('显式空权限不回退管理员身份，缺失字段才兼容角色', () => {
+  expect(canManageMembers({ ...account, permissions: [] })).toBe(false);
+  expect(canManageMembers({ ...account, permissions: ['workspaces:view'] })).toBe(false);
+  expect(canManageMembers({ ...account, permissions: ['members:manage'] })).toBe(true);
+  expect(canManageMembers(account)).toBe(true);
+});
+
+for (const fail of [true, false]) {
+  test(`工作区加载及${fail ? '失败' : '成功'}期间保留按组织隔离的偏好`, async () => {
+    let finish!: (response: Response) => void;
+    globalThis.fetch = mock(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    ) as typeof fetch;
+    const { queryClient } = mount();
+    const key = 'oma.workspace.account.a';
+    window.localStorage.setItem(key, 'ws-saved');
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(window.localStorage.getItem(key)).toBe('ws-saved');
+    await act(async () => {
+      finish(
+        fail
+          ? new Response('{}', { status: 500 })
+          : Response.json([
+              ...workspaces('a'),
+              { id: 'ws-saved', name: 'Saved', type: 'workspace', effective_role: 'workspace_developer' },
+            ]),
+      );
+    });
+    await waitFor(() => expect(screen.getByTestId('state').textContent).toBe(fail ? 'error' : 'ready'));
+    expect(window.localStorage.getItem(key)).toBe('ws-saved');
+    if (!fail) expect(screen.getByTestId('scope').textContent).toBe('a:ws-saved:self-a');
+    queryClient.clear();
+  });
+}

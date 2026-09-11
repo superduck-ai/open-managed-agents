@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -367,6 +368,59 @@ func TestWorkspaceMemoryReadsRejectOtherWorkspace(t *testing.T) {
 				if response.StatusCode != scenario.status {
 					t.Fatalf("%s: %d, want %d", path, response.StatusCode, scenario.status)
 				}
+			}
+		})
+	}
+}
+
+func TestArchivedWorkspaceAdminRequests(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("archived-workspace-admin"))
+	defer app.close()
+	ctx := t.Context()
+	refs := getAdminDefaultIDs(t, app.pool)
+	app.seedPlatformSession(t, "archived-workspace-admin-session")
+	session, err := app.sessions.Get(ctx, "archived-workspace-admin-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, session.Principal().UserExternalID)
+	workspace := createAdminWorkspace(t, app, "归档管理测试-"+uniqueAdminSuffix(), nil, nil)
+	archived, err := app.db.ArchiveAdminWorkspace(ctx, refs.OrganizationUUID, workspace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ name, method, suffix, body string }{
+		{"改名", http.MethodPost, "", `{"name":"renamed-` + uniqueAdminSuffix() + `"}`},
+		{"修改标签", http.MethodPost, "", `{"tags":{"team":"archived"}}`},
+		{"修改数据驻留", http.MethodPost, "", `{"data_residency":{"allowed_inference_geos":"unrestricted","default_inference_geo":"us"}}`},
+		{"成员列表", http.MethodGet, "/members", ""},
+		{"单成员读取", http.MethodGet, "/members/" + session.Principal().UserExternalID, ""},
+	}
+	for _, id := range []string{archived.ExternalID, archived.UUID} {
+		for _, tc := range cases {
+			t.Run(id+"/"+tc.name, func(t *testing.T) {
+				response := app.platformRequest(t, tc.method, "/v1/organizations/workspaces/"+id+tc.suffix, strings.NewReader(tc.body), cookies)
+				defer response.Body.Close()
+				if response.StatusCode != http.StatusForbidden {
+					t.Errorf("归档空间请求状态 = %d，期望 403", response.StatusCode)
+				}
+			})
+		}
+	}
+	current, err := app.db.GetAdminWorkspace(ctx, refs.OrganizationUUID, workspace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(current, archived) {
+		t.Error("拒绝请求后归档空间记录发生变化")
+	}
+	active := createAdminWorkspace(t, app, "有效管理测试-"+uniqueAdminSuffix(), nil, nil)
+	for _, tc := range cases {
+		t.Run("有效空间/"+tc.name, func(t *testing.T) {
+			response := app.platformRequest(t, tc.method, "/v1/organizations/workspaces/"+active.ID+tc.suffix, strings.NewReader(tc.body), cookies)
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				t.Errorf("有效空间请求状态 = %d，期望 200", response.StatusCode)
 			}
 		})
 	}

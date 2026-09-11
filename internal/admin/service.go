@@ -244,6 +244,9 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
+	if current.ArchivedAt != nil {
+		return workspaceResponse{}, mapAdminDBError(workspaceaccess.ErrDenied, "Workspace not found")
+	}
 	if current.IsDefault && req.Name != nil {
 		return workspaceResponse{}, invalidRequest(workspaceaccess.ErrDefaultProtected.Error())
 	}

@@ -263,6 +263,6 @@ flowchart LR
 
 平台用户每次请求通过 `workspaceaccess.Service` 读取有效组织成员和工作区事实。Default 依据 `is_default` 解析，完全忽略历史成员；普通空间按组织继承与显式成员计算，Billing 仅允许显式 Admin 覆盖。结果仅放在本次 Principal，session 不保存权限快照。
 
-Workspace API Key 不依赖创建者的当前组织身份，不能取得组织管理权限。当前没有独立 Admin Key 类型，组织管理接口要求有效 Org Admin 用户权限，工作区成员接口也允许目标空间的 Workspace Admin；旧版 Workspace Key 能调用组织管理接口的行为不再保留。专用 service 凭据保留原用途约束，所有凭据都检查目标空间未归档。
+Workspace API Key 不依赖创建者的当前组织身份，不能取得组织管理权限。当前没有独立 Admin Key 类型，组织管理接口要求有效 Org Admin 用户权限，工作区成员接口也允许目标空间的 Workspace Admin；旧版 Workspace Key 能调用组织管理接口的行为不再保留。专用 service 凭据保留原用途约束，所有凭据都检查目标空间未归档。 Admin API 更新工作区、列出成员和读取单个成员时，还必须检查路径指定的目标空间；即使组织管理员持有另一个有效空间的会话，已归档目标也统一返回 `403`，不得修改其名称、标签或数据驻留配置。`tests/workspace_authorization_test.go` 通过真实 PostgreSQL 覆盖 UUID 与外部 ID 两种路径及有效空间对照。
 
 完整角色、发布兼容和测试合同见 [组织与工作区权限管理](./组织与工作区权限管理实现计划.md)。

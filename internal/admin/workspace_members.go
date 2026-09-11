@@ -40,6 +40,9 @@ func (s *Service) memberManagementWorkspace(ctx context.Context, principal auth.
 	if err != nil {
 		return db.AdminWorkspace{}, mapAdminDBError(err, "Workspace not found")
 	}
+	if workspace.ArchivedAt != nil {
+		return db.AdminWorkspace{}, mapAdminDBError(workspaceaccess.ErrDenied, "Workspace not found")
+	}
 	return workspace, nil
 }
 

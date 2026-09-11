@@ -138,7 +138,12 @@ function buildOrganizationMemberColumns({
       header: msg('members.role', 'Role'),
       cell: ({ row }) => {
         if (isInviteRow(row.original)) {
-          return <span className="text-foreground">{roleLabel(normalizePlatformRole(row.original.role))}</span>;
+          const inviteRole = normalizePlatformRole(row.original.role);
+          return (
+            <span className="text-foreground">
+              {msg(`members.organizationRole.${inviteRole}`, roleLabel(inviteRole))}
+            </span>
+          );
         }
 
         const member = row.original;
@@ -161,6 +166,7 @@ function buildOrganizationMemberColumns({
                 updateRoleMutation.mutate({ member, role: nextRole });
               }
             }}
+            msg={msg}
           />
         );
       },
@@ -598,6 +604,7 @@ function InviteMembersDialog({
                 setRole(nextRole);
                 inviteMutation.reset();
               }}
+              msg={msg}
             />
           </div>
 
@@ -626,6 +633,7 @@ function RoleSelect({
   className,
   contentClassName,
   onChange,
+  msg,
 }: {
   ariaLabel: string;
   value: PlatformRole;
@@ -633,11 +641,15 @@ function RoleSelect({
   className?: string;
   contentClassName?: string;
   onChange: (value: PlatformRole) => void;
+  msg: ReturnType<typeof useI18n>['msg'];
 }) {
   return (
     <Select<PlatformRole>
       value={value}
-      items={roleSelectOptions.map((option) => ({ value: option.value, label: option.label }))}
+      items={roleSelectOptions.map((option) => ({
+        value: option.value,
+        label: msg(`members.organizationRole.${option.value}`, option.label),
+      }))}
       disabled={disabled}
       onValueChange={(nextValue) => {
         if (nextValue !== null) {
@@ -650,11 +662,18 @@ function RoleSelect({
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} className={contentClassName}>
         {roleSelectOptions.map((option) => (
-          <SelectItem key={option.value} value={option.value} label={option.label} disabled={option.disabled}>
+          <SelectItem
+            key={option.value}
+            value={option.value}
+            label={msg(`members.organizationRole.${option.value}`, option.label)}
+            disabled={option.disabled}
+          >
             <span className="block">
-              <span className="block leading-5">{option.label}</span>
+              <span className="block leading-5">{msg(`members.organizationRole.${option.value}`, option.label)}</span>
               {option.description ? (
-                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
+                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
+                  {msg(`members.organizationRoleDescription.${option.value}`, String(option.description))}
+                </span>
               ) : null}
             </span>
           </SelectItem>

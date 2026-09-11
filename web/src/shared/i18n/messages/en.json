@@ -1,12 +1,10 @@
 {
-  "workspaces.resources.empty": "No resources to display.",
   "account.apiPlan": "API plan",
   "account.logout": "Log out",
   "account.loggingOut": "Logging out...",
   "account.organizationSettings": "Organization settings",
   "account.subtitle": "{role} · {workspaceName}",
   "account.role.workspace_admin": "Workspace admin",
-  "account.role.workspace_billing": "Billing",
   "account.role.workspace_developer": "Developer",
   "account.role.workspace_restricted_developer": "Restricted developer",
   "account.role.workspace_user": "User",

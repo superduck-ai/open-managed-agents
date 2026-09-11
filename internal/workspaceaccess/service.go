@@ -58,14 +58,7 @@ func Effective(organizationRole string, isDefault bool, explicitRole string) (au
 	if isDefault || organizationRole == "admin" {
 		return access, nil
 	}
-	if organizationRole == "billing" {
-		if explicitRole == "workspace_admin" {
-			access.Role = explicitRole
-			access.Source = "billing_override"
-		}
-		return access, nil
-	}
-	if !Assignable(explicitRole) {
+	if !Assignable(explicitRole) && explicitRole != "workspace_billing" {
 		return auth.WorkspaceAccess{}, ErrDenied
 	}
 	access.Role = explicitRole

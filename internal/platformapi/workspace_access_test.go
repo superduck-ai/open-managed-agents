@@ -41,10 +41,9 @@ func TestConsoleWorkspaceBatchAccess(t *testing.T) {
 		wantCount, wantCalls int
 		fail                 bool
 	}{
-		{name: "查询失败不返回部分授权", orgRole: "billing", wantCalls: 1, fail: true},
+		{name: "查询失败不返回部分授权", orgRole: "user", wantCalls: 1, fail: true},
 		{name: "未知角色不能继承", orgRole: "unknown", wantCalls: 1},
 		{name: "普通成员仅见默认和显式空间", orgRole: "user", wantCount: 2, wantCalls: 1},
-		{name: "计费继承和显式提权只查一次", orgRole: "billing", wantCount: 101, wantCalls: 1},
 		{name: "组织管理员无需查询显式角色", orgRole: "admin", wantCount: 102},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,9 +61,7 @@ func TestConsoleWorkspaceBatchAccess(t *testing.T) {
 				if workspace.UUID == "0" && workspace.EffectiveRole != "workspace_admin" {
 					t.Fatalf("显式授权丢失: %+v", workspace)
 				}
-				if workspace.IsDefault && tc.orgRole == "billing" && workspace.EffectiveRole != "workspace_billing" {
-					t.Fatalf("默认继承错误: %+v", workspace)
-				}
+
 			}
 		})
 	}

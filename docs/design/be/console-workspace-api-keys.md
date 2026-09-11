@@ -173,6 +173,6 @@ db.GetAPIKey(keyHash)  →  SELECT ... FROM api_keys WHERE key_hash = $1
 
 ## #339 授权补充
 
-空间解析成功后，还需针对 URL 中的真实目标空间调用统一授权服务，并检查开发或管理 API Key 的能力。Org Billing 仅继承 Billing，不能创建或管理 Key；普通空间显式提升为 Workspace Admin 后才具有相应能力。全组织 Key 列表仅 Org Admin 可访问。
+空间解析成功后，还需针对 URL 中的真实目标空间调用统一授权服务，并检查开发或管理 API Key 的能力。Billing 的新增权限规则由独立 PR 承接，本 PR 沿用既有资源能力，但必须先通过通用作用域和有效成员校验。全组织 Key 列表仅 Org Admin 可访问。
 
-Default 通过数据库 `is_default` 标记解析，不从名称猜测，不读取历史默认成员。Workspace Key 的有效性独立于创建者是否仍是组织成员；目标工作区归档后拒绝新业务请求。不能由 Key 的创建者信息推导组织管理权限。角色变更与 Billing 恢复继承的完整合同见 [组织与工作区权限管理](./组织与工作区权限管理实现计划.md)。
+Default 通过数据库 `is_default` 标记解析，不从名称猜测，不读取历史默认成员。Workspace Key 的有效性独立于创建者是否仍是组织成员；目标工作区归档后拒绝新业务请求。不能由 Key 的创建者信息推导组织管理权限。通用权限与兼容合同见 [组织与工作区通用权限](./workspace-permissions.md)。

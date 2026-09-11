@@ -33,15 +33,15 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	billingID := seedAdminUser(t, app.pool, "billing-"+uniqueAdminSuffix()+"@example.local", "billing")
+	otherUserID := seedAdminUser(t, app.pool, "other-"+uniqueAdminSuffix()+"@example.local", "user")
 	userID := seedAdminUser(t, app.pool, "user-"+uniqueAdminSuffix()+"@example.local", "user")
 
-	t.Run("报表与限流仅允许组织计费角色", func(t *testing.T) {
+	t.Run("报表与限流拒绝普通成员", func(t *testing.T) {
 		paths := []string{"/rate_limits", "/workspaces/" + workspace.ID + "/rate_limits", "/usage_report/messages", "/usage_report/claude_code", "/cost_report"}
 		for _, actor := range []struct {
 			user   string
 			status int
-		}{{userID, http.StatusForbidden}, {billingID, http.StatusOK}, {principal.UserExternalID, http.StatusOK}} {
+		}{{userID, http.StatusForbidden}, {principal.UserExternalID, http.StatusOK}} {
 			cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, actor.user)
 			for _, path := range paths {
 				query := "?starting_at=2026-01-01T00:00:00Z&bucket_width=1d"
@@ -103,24 +103,7 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 			t.Fatalf("同名创建: %d", response.StatusCode)
 		}
 	})
-	t.Run("未提权计费用户不能自行提权", func(t *testing.T) {
-		user, err := app.db.GetAdminUser(ctx, refs.OrganizationUUID, billingID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		actor := auth.Principal{OrganizationUUID: refs.OrganizationUUID, UserUUID: user.UUID, UserExternalID: billingID}
-		if _, err := workspaceaccess.ChangeMember(ctx, app.db, actor, workspace.ID, billingID, "workspace_admin", "update"); !errors.Is(err, workspaceaccess.ErrDenied) {
-			t.Fatalf("err = %v", err)
-		}
-	})
-	t.Run("计费继承不可删除或降级", func(t *testing.T) {
-		for _, operation := range []string{"delete", "update"} {
-			_, err := workspaceaccess.ChangeMember(ctx, app.db, principal, workspace.ID, billingID, "workspace_user", operation)
-			if !errors.Is(err, workspaceaccess.ErrInheritedRole) {
-				t.Fatalf("err = %v", err)
-			}
-		}
-	})
+
 	t.Run("历史默认管理员记录不参与授权且不被改写", func(t *testing.T) {
 		user, err := app.db.GetAdminUser(ctx, refs.OrganizationUUID, userID)
 		if err != nil {
@@ -143,33 +126,7 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 			t.Fatalf("历史成员改变: %+v, %v", retained, err)
 		}
 	})
-	t.Run("计费提权与恢复幂等且无需继承记录", func(t *testing.T) {
-		assertEffectiveWorkspaceRole(t, resolver, refs.OrganizationUUID, billingID, workspace.ID, "workspace_billing")
-		for _, role := range []string{"workspace_admin", "workspace_admin", "workspace_billing", "workspace_billing"} {
-			if _, err := workspaceaccess.ChangeMember(ctx, app.db, principal, workspace.ID, billingID, role, "update"); err != nil {
-				t.Fatal(err)
-			}
-			assertEffectiveWorkspaceRole(t, resolver, refs.OrganizationUUID, billingID, workspace.ID, role)
-		}
-		if _, err := app.db.GetAdminWorkspaceMember(ctx, refs.OrganizationUUID, workspace.ID, billingID); !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("恢复继承后仍有显式成员: %v", err)
-		}
-	})
-	t.Run("组织降级保留显式授权移除后立即拒绝", func(t *testing.T) {
-		if _, err := workspaceaccess.ChangeMember(ctx, app.db, principal, workspace.ID, billingID, "workspace_admin", "update"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := app.db.UpdateAdminUserRole(ctx, refs.OrganizationUUID, billingID, "developer"); err != nil {
-			t.Fatal(err)
-		}
-		assertEffectiveWorkspaceRole(t, resolver, refs.OrganizationUUID, billingID, workspace.ID, "workspace_admin")
-		if _, err := workspaceaccess.ChangeMember(ctx, app.db, principal, workspace.ID, billingID, "", "delete"); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := resolver.Resolve(ctx, refs.OrganizationUUID, billingID, workspace.ID); !errors.Is(err, workspaceaccess.ErrDenied) {
-			t.Fatalf("err = %v", err)
-		}
-	})
+
 	t.Run("用户接口不能使用历史默认授权创建资源", func(t *testing.T) {
 		cookies := workspaceUserCookies(t, app, refs.OrganizationUUID, userID)
 		response := app.platformRequest(t, http.MethodGet, "/v1/files?beta=true", nil, cookies)
@@ -189,7 +146,7 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 		}{
 			{"/v1/organizations/users", http.StatusForbidden},
 			{"/v1/organizations/workspaces/" + workspace.ID + "/members/user_missing", http.StatusNotFound},
-			{"/v1/organizations/workspaces/" + workspace.ID + "/members/" + billingID, http.StatusNotFound},
+			{"/v1/organizations/workspaces/" + workspace.ID + "/members/" + otherUserID, http.StatusNotFound},
 			{"/v1/organizations/workspaces/" + workspace.ID + "/members/" + userID, http.StatusOK},
 			{"/v1/organizations/workspaces/" + workspace.ID + "/members/" + principal.UserExternalID, http.StatusOK},
 			{"/v1/organizations/workspaces/" + workspace.ID + "/members", http.StatusOK},
@@ -200,7 +157,7 @@ func TestWorkspaceAuthorizationInheritance(t *testing.T) {
 				t.Fatalf("%s: status = %d", test.path, response.StatusCode)
 			}
 		}
-		response := app.platformRequest(t, http.MethodPost, "/v1/organizations/workspaces/"+workspace.ID+"/members/"+billingID,
+		response := app.platformRequest(t, http.MethodPost, "/v1/organizations/workspaces/"+workspace.ID+"/members/"+otherUserID,
 			strings.NewReader(`{"workspace_role":"workspace_user"}`), cookies)
 		response.Body.Close()
 		if response.StatusCode != http.StatusNotFound {

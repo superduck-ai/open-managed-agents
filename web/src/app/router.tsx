@@ -6,6 +6,7 @@ import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../f
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
+import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
@@ -131,6 +132,30 @@ const workspaceBatchesRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/batches',
   component: () => <DashboardPage section="batches" />,
+});
+
+const mcpServersRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'mcp-servers',
+  component: MCPServersPage,
+});
+
+const workspaceMCPServersRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/mcp-servers',
+  component: MCPServersPage,
+});
+
+const workspaceMCPServerNewRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/mcp-servers/new',
+  component: CreateMCPServerPage,
+});
+
+const workspaceMCPServerDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/mcp-servers/$mcpServerId',
+  component: MCPServerDetailPage,
 });
 
 const apiKeysRoute = createRoute({
@@ -488,6 +513,10 @@ const routeTree = rootRoute.addChildren([
       batchesRoute,
       workspaceBatchesRoute,
       workspaceLLMModelsRoute,
+      mcpServersRoute,
+      workspaceMCPServersRoute,
+      workspaceMCPServerNewRoute,
+      workspaceMCPServerDetailRoute,
       apiKeysRoute,
       quickstartRoute,
       workspaceAgentQuickstartRoute,

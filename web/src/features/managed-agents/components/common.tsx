@@ -405,7 +405,7 @@ export function DeploymentFieldHeader({
   const { msg } = useI18n();
 
   return (
-    <div className="mb-2 flex items-center justify-between gap-4">
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
       <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
         {label}{' '}
         {optional ? (
@@ -420,7 +420,7 @@ export function DeploymentFieldHeader({
           target="_blank"
           rel="noreferrer"
           aria-label={msg('managedAgents.common.opensInNewTab', '{label} (opens in new tab)', { label: manageLabel })}
-          className="inline-flex items-center gap-0.5 text-xs leading-4 text-[#6da7ec] underline-offset-2 hover:underline"
+          className="inline-flex items-center gap-0.5 text-xs leading-4 text-primary underline-offset-2 hover:underline"
         >
           {manageLabel}
           <ArrowUpRight className="size-3" aria-hidden />
@@ -443,7 +443,7 @@ export function DeploymentTextField({
   autoFocus?: boolean;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-field-${useId()}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -452,7 +452,7 @@ export function DeploymentTextField({
         value={value}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        className="h-8 border-white/10 bg-transparent px-3 text-sm text-foreground ring-1 ring-white/10 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-9 bg-background"
         onChange={(event) => onChange(event.target.value)}
       />
     </div>
@@ -472,7 +472,7 @@ export function DeploymentTextArea({
   helpText?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-field-${useId()}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -481,7 +481,7 @@ export function DeploymentTextArea({
         value={value}
         rows={2}
         placeholder={placeholder}
-        className="min-h-14 resize-none border-white/10 bg-white/10 px-3 py-2 text-sm leading-5 text-foreground ring-1 ring-white/10 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+        className="min-h-20 resize-y bg-background"
         onChange={(event) => onChange(event.target.value)}
       />
       {helpText ? <p className="mt-1.5 text-xs leading-4 text-muted-foreground">{helpText}</p> : null}
@@ -508,7 +508,7 @@ export function DeploymentSelectField({
   manageLabel?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-select-${useId()}`;
   const selected = options.find((option) => option.id === value);
   const items = [
     { value: '', label: placeholder },
@@ -532,18 +532,17 @@ export function DeploymentSelectField({
           }
         }}
       >
-        <SelectTrigger
-          id={id}
-          className="h-8 w-full border-0 bg-white/10 px-3 text-sm ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <SelectTrigger id={id} className="h-9 w-full min-w-0 bg-background">
           <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {selected?.label ?? placeholder}
           </SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
-          <SelectItem value="" label={placeholder}>
-            {placeholder}
-          </SelectItem>
+          {placeholder ? (
+            <SelectItem value="" label={placeholder}>
+              {placeholder}
+            </SelectItem>
+          ) : null}
           {options.map((option) => (
             <SelectItem key={option.id} value={option.id} label={option.label}>
               {option.label}
@@ -575,7 +574,7 @@ export function DeploymentAddSelectField({
   onChange: (value: string[]) => void;
 }) {
   const { msg } = useI18n();
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-select-${useId()}`;
   const availableOptions = options.filter((option) => !selectedIds.includes(option.id));
   const selectedOptions = options.filter((option) => selectedIds.includes(option.id));
   const placeholder = availableOptions.length
@@ -605,10 +604,7 @@ export function DeploymentAddSelectField({
           }
         }}
       >
-        <SelectTrigger
-          id={id}
-          className="h-8 w-full border-0 bg-white/10 pl-3 pr-2 text-sm text-muted-foreground ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground"
-        >
+        <SelectTrigger id={id} className="h-9 w-full min-w-0 bg-background text-muted-foreground">
           <Plus className="size-4 text-muted-foreground" aria-hidden />
           <SelectValue className="text-muted-foreground">{placeholder}</SelectValue>
         </SelectTrigger>

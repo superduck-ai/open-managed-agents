@@ -1,9 +1,15 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { type ReactNode } from 'react';
 import { StatusPill } from '../components/common';
-import { type ManagedEntityApiResponse, type ManagedEntitySection, type SessionApiResponse } from '../types';
+import {
+  type DeploymentApiResponse,
+  type ManagedEntityApiResponse,
+  type ManagedEntitySection,
+  type SessionApiResponse,
+} from '../types';
 import { objectRecord, optionalNumericValueFromKeys, sessionListCost } from '../utils';
 import { cellsForEntity, entityDisplayName, statusPillTone } from './model';
+import { DeploymentTriggerCell } from './deployment-list';
 import { localizedRelativeTime } from './environment-model';
 
 export function useManagedEntityCells(
@@ -33,6 +39,12 @@ export function useManagedEntityCells(
       ) : (
         '—'
       ),
+    };
+  }
+  if (section === 'deployments') {
+    return {
+      ...cellsForEntity(section, entity, msg, formatters.relativeTime),
+      Trigger: <DeploymentTriggerCell deployment={entity as DeploymentApiResponse} />,
     };
   }
   if (section !== 'environments') {

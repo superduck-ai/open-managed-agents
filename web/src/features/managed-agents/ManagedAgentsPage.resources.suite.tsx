@@ -2193,6 +2193,52 @@ export function registerManagedAgentsResourceTests() {
     expect(createRequest?.headers['x-workspace-id']).toBe('default');
   });
 
+  test('validates graphical and custom schedules before submitting the cron payload', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="deployments" />);
+    await screen.findByText('Deployment one');
+    fireEvent.click(screen.getByRole('button', { name: 'Create deployment' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create deployment' });
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Scheduled triage' } });
+    await selectManagedComboboxOption(dialog, 'Agent', 'Option agent');
+    await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
+    fireEvent.change(within(dialog).getByLabelText('Initial message'), { target: { value: 'Summarize tickets.' } });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Scheduled' }));
+    expect(within(dialog).getByText('Next 5 runs')).toBeTruthy();
+    expect(dialog.querySelectorAll('time')).toHaveLength(5);
+    await selectManagedComboboxOption(dialog, 'Frequency', 'Weekly');
+    await selectManagedComboboxOption(dialog, 'On', 'Friday');
+    fireEvent.click(within(dialog).getByLabelText('At'));
+    const timePicker = await screen.findByRole('dialog', { name: 'Choose time' });
+    await selectManagedComboboxOption(timePicker, 'Hour (24h)', '16');
+    await selectManagedComboboxOption(timePicker, 'Minute', '30');
+    fireEvent.click(within(timePicker).getByRole('button', { name: 'Done' }));
+    expect(within(dialog).getByText('30 16 * * 5')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit cron' }));
+    fireEvent.change(within(dialog).getByLabelText('Cron expression'), { target: { value: 'invalid' } });
+    expect(within(dialog).getByRole('alert').textContent).toContain('five-field');
+    expect(within(dialog).getByRole('button', { name: 'Create deployment' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Cron expression'), { target: { value: '*/15 9-17 * * 1-5' } });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Manual' }));
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Scheduled' }));
+    expect(within(dialog).getByLabelText('Cron expression').getAttribute('value')).toBe('*/15 9-17 * * 1-5');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const request = api.requests.find(
+      (request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST',
+    );
+    expect(request?.body?.schedule).toEqual({
+      type: 'cron',
+      expression: '*/15 9-17 * * 1-5',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+  });
+
   test('renders the official-style create deployment dialog and submits deployment payload', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
     const api = mockManagedResourceApi();
@@ -2225,8 +2271,8 @@ export function registerManagedAgentsResourceTests() {
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
     await selectManagedComboboxOption(dialog, /Credential vaults/, 'Vault one');
     await selectManagedComboboxOption(dialog, /Memory stores/, 'Memory one');
-    await selectManagedComboboxOption(dialog, 'Trigger', 'Manual');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(within(dialog).getByRole('tab', { name: 'Manual' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
 
     await waitFor(() =>
       expect(

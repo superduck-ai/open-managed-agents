@@ -74,6 +74,7 @@ import {
   managedEntityDetailHref,
   navigateToInternalHref,
 } from '../utils';
+import { DeploymentEmptyState } from './deployment-list';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
@@ -760,11 +761,15 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     <section
       className={cn(
         'relative min-h-[calc(100vh-48px)] text-foreground',
-        config.section === 'sessions' && 'mx-auto w-full max-w-[1600px]',
+        (config.section === 'sessions' || config.section === 'deployments') && 'mx-auto w-full max-w-[1600px]',
       )}
     >
       <header
-        className={cn('flex items-start justify-between', config.section === 'sessions' ? 'mb-2 gap-4' : 'mb-5 gap-6')}
+        className={cn(
+          'flex items-start justify-between',
+          config.section === 'sessions' ? 'mb-2 gap-4' : 'mb-5 gap-6',
+          config.section === 'deployments' && 'flex-wrap',
+        )}
       >
         <div>
           <h1
@@ -798,7 +803,12 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         ) : null}
       </header>
 
-      <div className={cn('flex flex-wrap items-center gap-2', config.section === 'sessions' ? 'mb-2' : 'mb-7')}>
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2',
+          config.section === 'sessions' || config.section === 'deployments' ? 'mb-3' : 'mb-7',
+        )}
+      >
         <ManagedSearchField
           id={`${config.section}-search`}
           value={search}
@@ -812,8 +822,14 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       {loadError ? <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert> : null}
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
-      <div>
-        <Table className={cn(dataTableClassName, config.section === 'sessions' && 'min-w-[1080px]')}>
+      <div className={config.section === 'deployments' ? 'overflow-hidden rounded-lg border border-border' : undefined}>
+        <Table
+          className={cn(
+            dataTableClassName,
+            config.section === 'sessions' && 'min-w-[1080px]',
+            config.section === 'deployments' && 'min-w-[880px]',
+          )}
+        >
           <TableHeader>
             <TableRow className={dataTableHeaderRowClassName}>
               {config.columns.map((column) => (
@@ -877,7 +893,16 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           </TableBody>
         </Table>
 
-        {!loading && !visibleEntities.length ? <EmptyState config={config} /> : null}
+        {!loading && !visibleEntities.length ? (
+          config.section === 'deployments' ? (
+            <DeploymentEmptyState
+              filtered={Boolean(search || deploymentAgentFilter || deploymentStatusFilter !== 'all')}
+              onCreate={() => setDialogState({ mode: 'create' })}
+            />
+          ) : (
+            <EmptyState config={config} />
+          )
+        ) : null}
       </div>
 
       <div className="mt-9 flex items-center gap-2">

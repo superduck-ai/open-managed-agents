@@ -37,10 +37,14 @@ flowchart LR
 - 编辑既有模型 ID 时保留 `model.speed`；已有 `self`、固定 Agent 版本和固定 Skill 版本会展示并保留。
 - MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；自定义 MCP 名称只允许字母、数字、下划线、连字符和句点且不得包含连续两个下划线 `__`，并通过不含内嵌凭据或 fragment 的 HTTP/HTTPS URL 添加，创建阶段不探测工具列表。
 - Rendered 不提供新增 Custom Tool 的入口，但继续允许编辑和移除已有 Custom Tool，Raw 往返不丢失其定义。
+- Tunnel 也复用 Create 的内联 Channel 配置：多/零
+  实时 Channel 的待确认卡片阻止 Save 和切换 Raw；已配置 Channel 只在 Apply 或选择有效建议后原子迁移 server/toolset
+  引用，保留既有权限和其他字段，并对已连接 Tunnel 重新发现工具。
 - 内置工具只展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`；Raw 可继续保留后端合同允许的其他既有配置。
 
 ## 布局与验收
 
 - Edit 与 Create 共用 `880px` 最大宽度、近全高滚动区、`220px + 控件列` 的桌面布局和固定底栏；窄屏回退单列。
-- 组件测试覆盖默认 Rendered、Raw YAML/JSON、无改动禁用保存、并发失败保留 Draft、固定引用与模型修饰项保留、旧配置回退 Raw。
+- 组件测试覆盖默认 Rendered、Raw YAML/JSON、无改动禁用保存、并发失败保留 Draft、固定引用与模型修饰项保留、
+  Tunnel Channel 待确认阻断与原子迁移，以及旧配置回退 Raw。
 - 纯函数测试覆盖 Rendered 兼容性判断，避免未来扩展 schema 时误将不可表达的配置带入表单。

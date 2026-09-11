@@ -13,6 +13,7 @@ import {
   toolsetPermission,
   updateCustomTool,
   updateDraftModelID,
+  updateMcpServer,
 } from './create-dialog-model';
 
 const baseDraft: CreateAgentInput = {
@@ -266,6 +267,117 @@ describe('create agent draft model', () => {
       configs: [],
     });
     expect(removeToolset(withMcp, 'github')).toEqual(baseDraft);
+  });
+
+  test('updates an MCP server and matching toolset atomically without losing permissions', () => {
+    const withMcpResult = addMcpServer(baseDraft, {
+      name: 'tunnel_example.main',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example',
+    });
+    if (!withMcpResult.ok) throw new Error('MCP fixture must be valid');
+    const withMcp = withMcpResult.draft;
+    const withPermission = setToolPermission(
+      withMcp,
+      (tool) => tool.type === 'mcp_toolset',
+      'search_records',
+      'always_allow',
+      'always_ask',
+    );
+    const updated = updateMcpServer(withPermission, 'tunnel_example.main', {
+      slug: 'tunnel_example.secondary',
+      displayName: 'Private tools',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example/secondary',
+      toolNames: [],
+    });
+
+    expect(updated.mcp_servers).toEqual([
+      {
+        name: 'tunnel_example.secondary',
+        type: 'url',
+        url: 'https://oma.example.com/v1/mcp/tunnel_example/secondary',
+      },
+    ]);
+    expect(updated.tools[1]).toEqual({
+      type: 'mcp_toolset',
+      mcp_server_name: 'tunnel_example.secondary',
+      default_config: { enabled: true, permission_policy: { type: 'always_ask' } },
+      configs: [{ name: 'search_records', enabled: true, permission_policy: { type: 'always_allow' } }],
+    });
+  });
+
+  test('updates every matching MCP toolset reference without changing their permissions or order', () => {
+    const withMcpResult = addMcpServer(baseDraft, {
+      name: 'tunnel_example.main',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example',
+    });
+    if (!withMcpResult.ok) throw new Error('MCP fixture must be valid');
+    const withMcp = withMcpResult.draft;
+    const duplicateReference = {
+      ...withMcp,
+      tools: [
+        ...withMcp.tools,
+        {
+          type: 'mcp_toolset' as const,
+          mcp_server_name: 'tunnel_example.main',
+          default_config: { permission_policy: { type: 'always_allow' as const } },
+          configs: [],
+        },
+      ],
+    };
+
+    const updated = updateMcpServer(duplicateReference, 'tunnel_example.main', {
+      slug: 'tunnel_example.secondary',
+      displayName: 'Private tools',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example/secondary',
+      toolNames: [],
+    });
+
+    expect(
+      updated.tools
+        .filter((tool) => tool.type === 'mcp_toolset')
+        .map((tool) => ({ name: tool.mcp_server_name, default_config: tool.default_config })),
+    ).toEqual([
+      {
+        name: 'tunnel_example.secondary',
+        default_config: { enabled: true, permission_policy: { type: 'always_ask' } },
+      },
+      {
+        name: 'tunnel_example.secondary',
+        default_config: { permission_policy: { type: 'always_allow' } },
+      },
+    ]);
+  });
+
+  test('does not update an MCP server to a duplicate or orphan its toolset', () => {
+    const firstResult = addMcpServer(baseDraft, {
+      name: 'first',
+      url: 'https://first.example.com/mcp',
+    });
+    if (!firstResult.ok) throw new Error('MCP fixture must be valid');
+    const first = firstResult.draft;
+    const secondResult = addMcpServer(first, {
+      name: 'second',
+      url: 'https://second.example.com/mcp',
+    });
+    if (!secondResult.ok) throw new Error('MCP fixture must be valid');
+    const second = secondResult.draft;
+
+    expect(
+      updateMcpServer(second, 'first', {
+        slug: 'second',
+        displayName: 'Duplicate',
+        url: 'https://duplicate.example.com/mcp',
+        toolNames: [],
+      }),
+    ).toBe(second);
+    expect(
+      updateMcpServer(baseDraft, 'missing', {
+        slug: 'replacement',
+        displayName: 'Replacement',
+        url: 'https://replacement.example.com/mcp',
+        toolNames: [],
+      }),
+    ).toBe(baseDraft);
   });
 
   test('restores the removed built-in toolset without duplicating it', () => {

@@ -227,7 +227,7 @@ func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMes
 		"public_session_id":              input.Session.ExternalID,
 		"environment_id":                 input.Environment.ExternalID,
 		"title":                          input.Title,
-		"config":                         rawObject(input.Config),
+		"config":                         input.Config,
 		"dangerously_skip_permissions":   input.DangerouslySkipPermissions,
 		"managed_agent_session_work_dir": strings.TrimSpace(input.WorkDir),
 	})

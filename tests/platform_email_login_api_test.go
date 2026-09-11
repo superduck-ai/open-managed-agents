@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -371,6 +372,12 @@ func (a *testApp) platformRequestWithHeaders(t *testing.T, method string, path s
 	}
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
+	}
+	_, csrfHeaderSupplied := headers["X-CSRF-Token"]
+	if !csrfHeaderSupplied && strings.HasPrefix(path, "/api/console/") && method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions && req.Header.Get("X-CSRF-Token") == "" {
+		if sessionCookie := responseCookie(cookies, "sessionKey"); sessionCookie != nil {
+			req.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(sessionCookie.Value))
+		}
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {

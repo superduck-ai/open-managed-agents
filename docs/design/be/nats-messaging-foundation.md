@@ -6,6 +6,9 @@
 preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一连接上的 JetStream。handler
 和业务 service 不建立独立连接池。
 
+MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue，控制与终态使用独立 KV，响应通知使用 Core NATS。
+Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain；Tunnel 不依赖 Redis。
+
 ```mermaid
 flowchart LR
     Config["nats.url"] --> Client["全局 NATS connection"]
@@ -98,3 +101,5 @@ curl --fail 'http://127.0.0.1:8224/healthz?js-enabled-only=true'
 just generate
 go test ./internal/workerevents -count=1
 ```
+
+MCP Tunnel 的 stream/KV、2 MiB 节点 payload 要求、容量和故障合同详见 [MCP Tunnels](mcp-tunnels.md)。

@@ -11,6 +11,7 @@ import {
   BUILT_IN_AGENT_TOOLSETS,
   aggregateToolPermissions,
   effectiveToolPermission,
+  type McpDirectoryServer,
   type ToolPermissionState,
 } from './tools/model';
 
@@ -289,6 +290,41 @@ export function addMcpServer(draft: CreateAgentInput, input: McpServerInput): Ad
     ],
   };
   return { ok: true, draft: nextDraft };
+}
+
+export function updateMcpServer(
+  draft: CreateAgentInput,
+  currentName: string,
+  server: McpDirectoryServer,
+): CreateAgentInput {
+  if (
+    !server.url ||
+    currentName === server.slug ||
+    draft.mcp_servers.some((value) => {
+      const name = toRecord(value)?.name;
+      return name !== currentName && name === server.slug;
+    })
+  ) {
+    return draft;
+  }
+  const serverIndex = draft.mcp_servers.findIndex((value) => toRecord(value)?.name === currentName);
+  const hasMatchingToolset = draft.tools.some(
+    (tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === currentName,
+  );
+  if (serverIndex < 0 || !hasMatchingToolset) {
+    return draft;
+  }
+  return {
+    ...draft,
+    mcp_servers: draft.mcp_servers.map((value, index) =>
+      index === serverIndex ? { name: server.slug, type: 'url', url: server.url } : value,
+    ),
+    tools: draft.tools.map((tool) =>
+      tool.type === 'mcp_toolset' && tool.mcp_server_name === currentName
+        ? { ...tool, mcp_server_name: server.slug }
+        : tool,
+    ),
+  };
 }
 
 export function addBuiltInToolset(draft: CreateAgentInput): CreateAgentInput {

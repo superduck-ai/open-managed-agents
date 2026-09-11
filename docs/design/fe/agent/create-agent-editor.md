@@ -40,6 +40,15 @@ flowchart LR
 - 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API；自定义 MCP 在创建阶段不探测工具列表，只提供 Toolset 级权限。
 - MCP 候选项优先加载 Directory 明确提供的 HTTP/HTTPS 图片 `icon_url`；若该字段是网页或图片加载失败，则依次尝试其同源 `/favicon.ico` 和基于该 Directory 公开主机名的公共 favicon 服务，仍不可用时回退到 Server 图标。自定义 MCP 不向图标组件提供 URL，因此前端不会探测 Agent 配置的 MCP 主机，也不会把自定义主机名发送给第三方。
 - Directory 加载失败不阻止使用自定义 MCP；关闭、取消或按 Escape 会丢弃尚未提交的名称和 URL，但不会关闭外层 Agent 编辑弹窗或修改 Draft。
+- Tunnel 在 Picker 中仍以一个 Tunnel 一个候选项展示。选择后在 MCP 工具卡中固定展示 Channel Combobox 和连接状态，
+  Channel 下方以无独立边框的弱提示行展示解析后的 canonical MCP URL，再展示工具权限；不使用独立
+  Channel Dialog，也不按实时 Channel 拆成多个 Picker 候选。
+- Tunnel 恰好一个实时 Channel 时自动选择实际值；多于一个或没有实时 Channel 时生成不进入 Draft 的待确认卡片，
+  Channel 初始为空并自动聚焦。`main` 在没有实时 Channel 时仅作为 placeholder/建议，不作为默认值。
+- 待确认 Tunnel Channel 会阻止创建和切换 Raw；取消不修改 Draft，模板或 Describe 整体替换 Draft 时清除待确认状态。
+  同一 Tunnel 可以配置多个不同 Channel，同一 Tunnel + Channel 不得重复。
+- 已配置 Tunnel 的 Channel 使用本地编辑缓冲；Apply 或选择有效建议后，原子更新 `mcp_server` 的名称和 URL 以及
+  `mcp_toolset.mcp_server_name`，保留权限与顺序，并在已连接时重新发现工具。
 - 内置工具仅展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`，默认 `always_allow`；新 MCP 默认 `always_ask`。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
 - Toolset 级权限写入 `default_config` 并清空逐工具覆盖；逐工具权限与默认值一致时不保留冗余覆盖。
@@ -61,6 +70,6 @@ flowchart LR
 
 - YAML 与 JSON 可往返全部支持字段，未知顶层字段和 `model.effort` 被拒绝。
 - Rendered 可完成 General、Multiagent、Skills、内置工具与 Directory/自定义 MCP 配置；既有 Custom Tool 可继续编辑和移除。
-- MCP 与 toolset 始终成对，权限聚合和 deny 序列化与运行时一致。
+- MCP 与 toolset 始终成对；Tunnel Channel 的待确认状态不会污染 Draft，Channel 迁移不会丢失权限；权限聚合和 deny 序列化与运行时一致。
 - 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
 - 弹窗支持键盘导航、浅深主题和窄屏单列布局。

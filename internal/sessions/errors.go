@@ -7,6 +7,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func invalidRequest(err error) error {
@@ -74,20 +75,36 @@ func mapResourceBuildError(err error) error {
 	if mapped, ok := mapFileResourcePersistenceError(err); ok {
 		return mapped
 	}
+	if mapped, ok := mapMemoryAttachError(err); ok {
+		return mapped
+	}
 	var refErr resourceReferenceError
 	if !errors.As(err, &refErr) {
 		return invalidRequest(err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrNotFound) {
 		return memoryStoreNotFound(refErr.ResourceID, err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrInvalidState) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "memory store must not be archived", err)
 	}
 	return internalError(
 		"Could not validate session resource",
 		fmt.Errorf("validate %s reference %q: %w", refErr.ResourceType, refErr.ResourceID, refErr.Err),
 	)
+}
+
+func mapMemoryAttachError(err error) (error, bool) {
+	switch {
+	case errors.Is(err, sessionresource.ErrMemoryStoreClientIdentity),
+		errors.Is(err, sessionresource.ErrMemoryStoreAccess),
+		errors.Is(err, sessionresource.ErrMemoryStoreInstructionsTooLong),
+		errors.Is(err, sessionresource.ErrMemoryStoreLimit),
+		errors.Is(err, sessionresource.ErrMemoryStoreDuplicate):
+		return invalidRequest(err), true
+	default:
+		return nil, false
+	}
 }
 
 func mapSessionLoadError(err error, sessionID string) error {
@@ -117,6 +134,14 @@ func mapFileResourcePersistenceError(err error) (error, bool) {
 	}
 	if errors.Is(err, db.ErrFilestorePathExists) {
 		return apperr.New(apperr.Conflict, "File resource mount_path conflicts with the session filesystem", err), true
+	}
+	var memoryLimitErr *db.SessionMemoryStoreLimitError
+	if errors.As(err, &memoryLimitErr) {
+		return invalidRequest(memoryLimitErr), true
+	}
+	var memoryDuplicateErr *db.SessionMemoryStoreDuplicateError
+	if errors.As(err, &memoryDuplicateErr) {
+		return invalidRequest(memoryDuplicateErr), true
 	}
 	return nil, false
 }

@@ -50,6 +50,7 @@ type readOnlyPathBackend interface {
 
 type pathRouter struct {
 	persistent pathBackend
+	memory     pathBackend
 	readOnly   []readOnlyPathBackend
 }
 
@@ -57,6 +58,11 @@ func (r pathRouter) backendFor(operation readOperation, value string) pathBacken
 	for _, backend := range r.readOnly {
 		if backend.matchesRead(operation, value) {
 			return backend
+		}
+	}
+	if r.memory != nil {
+		if _, claimed := parseMemoryFilestorePath(value); claimed {
+			return r.memory
 		}
 	}
 	return r.persistent

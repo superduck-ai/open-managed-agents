@@ -66,7 +66,7 @@ func (h *Handler) applySessionEventProjection(ctx context.Context, event db.Sess
 			return err
 		}
 	}
-	if err := h.db.SetSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := h.db.SetSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, status); err != nil && !ignoreSessionStatusMutationError(err) {
 		return err
 	}
 	return nil
@@ -96,7 +96,7 @@ func (h *Handler) projectAggregatedSessionStatus(ctx context.Context, workspaceU
 		switch thread.Status {
 		case "running":
 			status = "running"
-			if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+			if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !ignoreSessionStatusMutationError(err) {
 				return err
 			}
 			return nil
@@ -110,7 +110,7 @@ func (h *Handler) projectAggregatedSessionStatus(ctx context.Context, workspaceU
 			}
 		}
 	}
-	if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !ignoreSessionStatusMutationError(err) {
 		return err
 	}
 	return nil
@@ -176,4 +176,8 @@ func (h *Handler) simpleSessionEvent(eventType, sessionID string, threadID *stri
 		ProcessedAt:      now,
 		CreatedAt:        now,
 	}, nil
+}
+
+func ignoreSessionStatusMutationError(err error) bool {
+	return errors.Is(err, db.ErrNotFound) || errors.Is(err, db.ErrInvalidStateTransition)
 }

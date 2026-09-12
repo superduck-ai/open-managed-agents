@@ -287,11 +287,14 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"},"system":"You are a concise coding assistant."}`),
 	}
-	withoutStores := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	withoutStores, err := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertSessionConfigPromptExcludesMemory(t, withoutStores, "")
 	assertSessionConfigMemoryEnv(t, withoutStores, false)
 
-	withStores := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources([]db.SessionResource{
+	withStores, err := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources([]db.SessionResource{
 		memoryStoreSessionResource(
 			"user-preferences",
 			"user-preferences",
@@ -300,6 +303,9 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 			"问饮食或语言先读此目录",
 		),
 	}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertSessionConfigPromptExcludesMemory(t, withStores, "user-preferences")
 	assertSessionConfigMemoryEnv(t, withStores, true)
 

@@ -41,6 +41,13 @@ export type McpDirectoryServer = {
   url?: string;
   iconUrl?: string;
   toolNames: string[];
+  source?: 'directory' | 'tunnel';
+  group?: string;
+  tunnel?: {
+    id: string;
+    connectionState: 'connected' | 'disconnected' | 'unknown';
+    channels: string[];
+  };
 };
 
 type ResolvedMcpServer = Omit<McpDirectoryServer, 'url'> & {
@@ -409,22 +416,21 @@ export function normalizeRuntimeToolName(value: string) {
 }
 
 function resolveMcpServer(name: string, url: string, directoryServers: McpDirectoryServer[]): ResolvedMcpServer {
-  if (name.startsWith('tunnel:')) {
-    return {
-      slug: name,
-      displayName: urlHost(url) || name.slice('tunnel:'.length),
-      url,
-      toolNames: [],
-    };
-  }
-
   const metadata =
-    directoryServers.find((server) => server.slug === name) ??
-    FALLBACK_MCP_SERVERS.find((server) => server.slug === name);
+    directoryServers.find((server) => server.slug === name && server.url === url) ??
+    FALLBACK_MCP_SERVERS.find((server) => server.slug === name && server.url === url);
   // 展示元数据优先级：在线 Directory > 内置 GitHub/Slack fallback > 名称格式化；
   // 实际 URL 始终以当前 Agent 版本配置为准。
   if (metadata) {
     return { ...metadata, slug: name, url };
+  }
+  if (name.startsWith('tunnel_')) {
+    return {
+      slug: name,
+      displayName: urlHost(url) || name.slice('tunnel_'.length),
+      url,
+      toolNames: [],
+    };
   }
   return {
     slug: name,

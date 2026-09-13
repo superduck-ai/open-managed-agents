@@ -633,7 +633,14 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now)
+	memoryStores, err := loadDeploymentMemoryStores(r.Context(), h.db, principal.WorkspaceUUID, deployment.Resources)
+	if err != nil {
+		if failure := memoryStoreLoadFailure(err); failure != nil {
+			return h.writeRunReferenceFailure(w, r, principal, deployment, failure)
+		}
+		return deploymentLoadError(err, deploymentID)
+	}
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now, memoryStores)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)

@@ -66,9 +66,15 @@ const (
 	// Session. It is distinct from FilestoreEntryKindFile, which classifies
 	// filesystem nodes.
 	SessionResourceTypeFile = sessioncontract.FileResourceType
+	// SessionResourceTypeMemoryStore identifies a Memory Store attached to a
+	// Session. Snapshot fields live in payload, not Filestore path columns.
+	SessionResourceTypeMemoryStore = sessioncontract.MemoryStoreResourceType
 	// MaxSessionFileResources is the write-time limit for active File resources
 	// attached to one Session.
 	MaxSessionFileResources = sessioncontract.MaxFileResources
+	// MaxSessionMemoryStores is the write-time limit for active Memory Store
+	// resources attached to one Session.
+	MaxSessionMemoryStores = sessioncontract.MaxMemoryStores
 	// MaxSessionOutputFileResources caps the output files ListSessionResources
 	// returns. Output files bypass the write-time limit, so without this cap the
 	// resources array would grow unbounded. files.list(scope_id) stays complete.
@@ -195,6 +201,24 @@ type SessionFileResourceLimitError struct {
 
 func (e *SessionFileResourceLimitError) Error() string {
 	return fmt.Sprintf("at most %d managed-agent file resources are allowed", e.Limit)
+}
+
+// SessionMemoryStoreLimitError reports that an atomic resource mutation would
+// exceed the maximum number of active Memory Store resources for one Session.
+type SessionMemoryStoreLimitError struct {
+	Limit int
+}
+
+func (e *SessionMemoryStoreLimitError) Error() string {
+	return fmt.Sprintf("at most %d memory stores are allowed", e.Limit)
+}
+
+// SessionMemoryStoreDuplicateError reports that a Session already has an
+// active resource for the same memory_store_id.
+type SessionMemoryStoreDuplicateError struct{}
+
+func (e *SessionMemoryStoreDuplicateError) Error() string {
+	return "memory_store_id must be unique"
 }
 
 // SessionFileMountConflictError reports a conflict between two active

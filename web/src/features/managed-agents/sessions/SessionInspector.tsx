@@ -38,7 +38,7 @@ import { Separator } from '../../../shared/ui/separator';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
-import { Ban, CheckCircle2, ChevronDown, CircleHelp, File, Plus, Search, X } from 'lucide-react';
+import { Ban, CheckCircle2, ChevronDown, CircleHelp, Database, File, Plus, Search, X } from 'lucide-react';
 import { retrieveAgent, retrieveFileMetadata, retrieveManagedEntity } from '../api';
 import {
   type AgentApiResponse,
@@ -1459,7 +1459,8 @@ function InspectorResourcesPanel({
   const canSave = draftResources.length === 1 && areSessionFileResourcesValid(draftResources);
   const resources = session.resources.filter((resource) => {
     const file = resource.file_id ? filenamesByFileId[resource.file_id] : undefined;
-    const value = `${resource.mount_path ?? ''} ${file?.name ?? ''} ${resource.file_id ?? ''}`.toLowerCase();
+    const value =
+      `${resource.mount_path ?? ''} ${file?.name ?? ''} ${resource.file_id ?? ''} ${resource.name ?? ''} ${resource.memory_store_id ?? ''}`.toLowerCase();
     return value.includes(query.trim().toLowerCase());
   });
   return (
@@ -1513,6 +1514,29 @@ function InspectorResourcesPanel({
         </TableHeader>
         <TableBody>
           {resources.map((resource, index) => {
+            if (resource.type === 'memory_store') {
+              const name = resource.name || '—';
+              const storeId = resource.memory_store_id || '—';
+              const mountPath = resource.mount_path || '—';
+              const title = `${name} ${storeId} ${mountPath}`;
+              return (
+                <TableRow key={resource.id ?? storeId ?? index}>
+                  <TableCell className="h-auto min-w-0 px-1.5 py-1.5 font-mono" title={title}>
+                    <span className="flex min-w-0 items-start gap-1.5">
+                      <Database className="mt-0.5 size-3.5 flex-none text-muted-foreground" aria-hidden />
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <span className="truncate font-sans text-foreground">{name}</span>
+                        <span className="truncate text-muted-foreground">{storeId}</span>
+                        <span className="truncate text-muted-foreground">{mountPath}</span>
+                      </span>
+                    </span>
+                  </TableCell>
+                  <TableCell className="h-auto min-w-0 truncate px-1.5 py-1.5 text-right font-mono text-muted-foreground">
+                    —
+                  </TableCell>
+                </TableRow>
+              );
+            }
             const file = resource.file_id ? filenamesByFileId[resource.file_id] : undefined;
             const path = resource.mount_path || file?.name || resource.file_id || '—';
             return (

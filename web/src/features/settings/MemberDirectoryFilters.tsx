@@ -8,12 +8,14 @@ export function MemberDirectoryFilters({
   role,
   onRole,
   roles,
+  roleLabelPrefix = 'members.workspaceRole',
 }: {
   search: string;
   onSearch: (value: string) => void;
   role: string;
   onRole: (value: string) => void;
   roles: readonly { value: string; label: string }[];
+  roleLabelPrefix?: string;
 }) {
   const { msg } = useI18n();
   return (
@@ -35,14 +37,14 @@ export function MemberDirectoryFilters({
           <SelectValue>
             {role === 'all'
               ? msg('members.roleFilterAll', 'All')
-              : msg(`members.workspaceRole.${role}`, roles.find((option) => option.value === role)?.label ?? role)}
+              : msg(`${roleLabelPrefix}.${role}`, roles.find((option) => option.value === role)?.label ?? role)}
           </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">{msg('members.roleFilterAll', 'All')}</SelectItem>
           {roles.map((option) => (
             <SelectItem key={option.value} value={option.value}>
-              {msg(`members.workspaceRole.${option.value}`, option.label)}
+              {msg(`${roleLabelPrefix}.${option.value}`, option.label)}
             </SelectItem>
           ))}
         </SelectContent>

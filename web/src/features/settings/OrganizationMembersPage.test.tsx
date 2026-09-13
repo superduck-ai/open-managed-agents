@@ -142,6 +142,30 @@ describe('Organization members settings', () => {
     expect(screen.getByRole('combobox', { name: 'Role for Ada Lovelace' })).toBeTruthy();
   });
 
+  test('filters the member directory by search keyword', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+
+    render(
+      <OrganizationMembersHarness>
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Members 3' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Role' })).toBeTruthy();
+
+    const table = screen.getByRole('table', { name: 'Members' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: 'Ada' } });
+    expect(within(table).getByText('Ada Lovelace')).toBeTruthy();
+    expect(within(table).queryByText('Current User')).toBeNull();
+    expect(within(table).queryByText('pending@example.com')).toBeNull();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search members' }), { target: { value: '' } });
+    expect(within(table).getByText('Current User')).toBeTruthy();
+    expect(within(table).getByText('pending@example.com')).toBeTruthy();
+  });
+
   test('retries both members and pending invites after a shared table load failure', async () => {
     resetTestDom('https://oma.duck.ai/settings/members');
     const api = mockMembersApi({ failMembersOnce: true, failInvitesOnce: true });

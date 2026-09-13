@@ -28,6 +28,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
+import {
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+  DataTableRow,
+  DataTableCell,
+} from '../../shared/ui/data-table-interactions';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth, type AuthContextValue } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
@@ -35,6 +42,7 @@ import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { MemberDirectoryFilters } from './MemberDirectoryFilters';
 import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
 import {
   createOrganizationInvite,
@@ -43,7 +51,6 @@ import {
   listOrganizationMembers,
   resendOrganizationInvite,
   updateOrganizationMemberRole,
-  type DeletedOrganizationInvite,
   type OrganizationInvite,
   type OrganizationMember,
 } from './membersApi';
@@ -64,26 +71,16 @@ const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => 
   description: role.description,
 }));
 
-type UpdateOrganizationMemberRoleMutation = ReturnType<
-  typeof useMutation<OrganizationMember, Error, { member: OrganizationMember; role: PlatformRole }>
->;
-type OrganizationInviteActionMutation =
-  | ReturnType<typeof useMutation<OrganizationInvite, Error, OrganizationInvite>>
-  | ReturnType<typeof useMutation<DeletedOrganizationInvite, Error, OrganizationInvite>>;
-type MemberOrganization = NonNullable<
-  NonNullable<NonNullable<AuthContextValue['account']>['memberships']>[number]['organization']
->;
-
 function buildOrganizationMemberColumns({
   account,
   canManage,
   activeOrgUuid,
-  activeOrganization,
+  organizationName,
   csrfToken,
   pendingRoleMemberId,
-  updateRoleMutation,
-  resendInviteMutation,
-  deleteInviteMutation,
+  rolePending,
+  onRoleChange,
+  invitePending,
   msg,
   onInviteResend,
   onInviteRevoke,
@@ -91,18 +88,17 @@ function buildOrganizationMemberColumns({
   account: AuthContextValue['account'];
   canManage: boolean;
   activeOrgUuid?: string;
-  activeOrganization?: MemberOrganization;
+  organizationName?: string;
   csrfToken?: string;
   pendingRoleMemberId: string | null;
-  updateRoleMutation: UpdateOrganizationMemberRoleMutation;
-  resendInviteMutation: OrganizationInviteActionMutation;
-  deleteInviteMutation: OrganizationInviteActionMutation;
+  rolePending: boolean;
+  onRoleChange: (input: { member: OrganizationMember; role: PlatformRole }) => void;
+  invitePending: boolean;
   onInviteResend: (invite: OrganizationInvite) => void;
   onInviteRevoke: (invite: OrganizationInvite) => void;
   msg: ReturnType<typeof useI18n>['msg'];
 }) {
   const orgUuid = activeOrgUuid ?? '';
-  const organizationName = activeOrganization?.name ?? msg('members.fallbackOrgName', 'this organization');
   return [
     memberColumnHelper.display({
       id: 'name',
@@ -158,12 +154,12 @@ function buildOrganizationMemberColumns({
           <RoleSelect
             ariaLabel={msg('members.roleFor', 'Role for {name}', { name: displayMemberName(member) })}
             value={role}
-            disabled={pendingRoleMemberId === member.id || updateRoleMutation.isPending}
+            disabled={pendingRoleMemberId === member.id || rolePending}
             className="min-w-[144px]"
             contentClassName="min-w-[300px]"
             onChange={(nextRole) => {
               if (nextRole !== role) {
-                updateRoleMutation.mutate({ member, role: nextRole });
+                onRoleChange({ member, role: nextRole });
               }
             }}
             msg={msg}
@@ -178,7 +174,7 @@ function buildOrganizationMemberColumns({
         isInviteRow(row.original) ? (
           <InviteActionsMenu
             invite={row.original}
-            disabled={resendInviteMutation.isPending || deleteInviteMutation.isPending}
+            disabled={invitePending}
             onResend={onInviteResend}
             onRevoke={onInviteRevoke}
           />
@@ -188,10 +184,10 @@ function buildOrganizationMemberColumns({
           <OrganizationMemberRemoval
             key={row.original.id}
             orgUuid={orgUuid}
-            organizationName={organizationName}
+            organizationName={organizationName ?? msg('members.fallbackOrgName', 'this organization')}
             member={row.original}
             csrfToken={csrfToken}
-            disabled={updateRoleMutation.isPending}
+            disabled={rolePending}
           />
         ),
     }),
@@ -213,6 +209,8 @@ export function OrganizationMembersPage() {
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
   const [inviteToRevoke, setInviteToRevoke] = useState<OrganizationInvite | null>(null);
   const [pendingRoleMemberId, setPendingRoleMemberId] = useState<string | null>(null);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
   const membersQueryKey = ['console', 'organization-members', activeOrgUuid] as const;
   const invitesQueryKey = ['console', 'organization-invites', activeOrgUuid, 'pending'] as const;
 
@@ -284,6 +282,19 @@ export function OrganizationMembersPage() {
     () => [...(canManage ? (invitesQuery.data ?? []) : []), ...(membersQuery.data ?? [])],
     [canManage, invitesQuery.data, membersQuery.data],
   );
+  const filteredRows = useMemo<OrganizationMemberRow[]>(() => {
+    const keyword = memberSearch.trim().toLowerCase();
+    return tableRows.filter((row) => {
+      if (roleFilter !== 'all' && normalizePlatformRole(row.role) !== roleFilter) {
+        return false;
+      }
+      if (!keyword) {
+        return true;
+      }
+      const name = isInviteRow(row) ? '' : (row.name ?? '').toLowerCase();
+      return name.includes(keyword) || row.email.toLowerCase().includes(keyword);
+    });
+  }, [memberSearch, roleFilter, tableRows]);
   const isInitialLoading =
     (membersQuery.isLoading && !membersQuery.data) || (canManage && invitesQuery.isLoading && !invitesQuery.data);
   const hasTableError = membersQuery.isError || (canManage && invitesQuery.isError);
@@ -301,12 +312,12 @@ export function OrganizationMembersPage() {
         account,
         canManage,
         activeOrgUuid,
-        activeOrganization,
+        organizationName: activeOrganization?.name,
         csrfToken,
         pendingRoleMemberId,
-        updateRoleMutation,
-        resendInviteMutation,
-        deleteInviteMutation,
+        rolePending: updateRoleMutation.isPending,
+        onRoleChange: updateRoleMutation.mutate,
+        invitePending: resendInviteMutation.isPending || deleteInviteMutation.isPending,
         onInviteResend: (invite) => {
           setInviteActionError(null);
           resendInviteMutation.mutate(invite);
@@ -334,14 +345,14 @@ export function OrganizationMembersPage() {
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: tableRows,
+    data: filteredRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
   if (!activeOrgUuid) {
     return (
-      <section className="mx-auto w-full max-w-[1180px]">
+      <section className="w-full">
         <Card>
           <CardHeader>
             <h1 className="text-xl font-semibold tracking-normal text-foreground">{msg('members.title', 'Members')}</h1>
@@ -357,7 +368,7 @@ export function OrganizationMembersPage() {
   }
 
   return (
-    <section className="mx-auto w-full max-w-[1180px]" data-testid="organization-members-page">
+    <section className="w-full" data-testid="organization-members-page">
       <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
         <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
           <span>{msg('members.title', 'Members')}</span>
@@ -378,6 +389,17 @@ export function OrganizationMembersPage() {
           </Button>
         ) : null}
       </div>
+      <p className="mb-4 text-sm text-muted-foreground">
+        {msg('members.subtitle', 'Invite people to your organization and manage their roles.')}
+      </p>
+      <MemberDirectoryFilters
+        search={memberSearch}
+        onSearch={setMemberSearch}
+        role={roleFilter}
+        onRole={setRoleFilter}
+        roles={roleSelectOptions}
+        roleLabelPrefix="members.organizationRole"
+      />
 
       {updateRoleMutation.isError ? (
         <InlineNotice>
@@ -386,14 +408,14 @@ export function OrganizationMembersPage() {
       ) : null}
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
-      <div className="overflow-hidden border-y border-border">
+      <section className="min-w-0">
         <OrganizationMembersTable
           table={table}
           isInitialLoading={isInitialLoading}
           hasTableError={hasTableError}
           onRetry={handleRetry}
         />
-      </div>
+      </section>
 
       <InviteMembersDialog
         open={inviteOpen}
@@ -439,12 +461,18 @@ function OrganizationMembersTable({
 }) {
   const { msg } = useI18n();
   return (
-    <Table className="table-fixed text-left" aria-label={msg('members.title', 'Members')}>
-      <TableHeader className="text-muted-foreground">
+    <Table className={dataTableClassName} aria-label={msg('members.title', 'Members')}>
+      <colgroup>
+        <col className="w-[34%]" />
+        <col className="w-[38%]" />
+        <col className="w-[22%]" />
+        <col className="w-[6%]" />
+      </colgroup>
+      <TableHeader>
         {table.getHeaderGroups().map((headerGroup) => (
-          <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
+          <TableRow key={headerGroup.id} className={dataTableHeaderRowClassName}>
             {headerGroup.headers.map((header) => (
-              <TableHead key={header.id} className={headerClassName(header.column.id)}>
+              <TableHead key={header.id} className={dataTableHeaderCellClassName}>
                 {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
               </TableHead>
             ))}
@@ -471,20 +499,24 @@ function OrganizationMembersTable({
         ) : null}
         {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
+            <TableCell colSpan={4} className="h-24 px-3 py-6 text-sm text-muted-foreground">
               {msg('members.table.empty', 'No members found.')}
             </TableCell>
           </TableRow>
         ) : null}
         {!isInitialLoading && !hasTableError
           ? table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id} className="border-border last:border-b-0">
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id} className={cellClassName(cell.column.id)}>
+              <DataTableRow key={row.id}>
+                {row.getVisibleCells().map((cell, cellIndex, cells) => (
+                  <DataTableCell
+                    key={cell.id}
+                    edge={cellIndex === 0 ? 'start' : cellIndex === cells.length - 1 ? 'end' : undefined}
+                    className={cellClassName(cell.column.id)}
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
+                  </DataTableCell>
                 ))}
-              </TableRow>
+              </DataTableRow>
             ))
           : null}
       </TableBody>
@@ -850,28 +882,15 @@ function isInviteRow(row: OrganizationMemberRow): row is OrganizationInvite {
   return row.type === 'invite';
 }
 
-function headerClassName(columnId: string) {
-  switch (columnId) {
-    case 'name':
-      return 'w-[34%] px-3 py-2.5 text-muted-foreground';
-    case 'email':
-      return 'w-[38%] px-3 py-2.5 text-muted-foreground';
-    case 'role':
-      return 'w-[22%] px-3 py-2.5 text-muted-foreground';
-    default:
-      return 'w-10 px-3 py-2.5 text-muted-foreground';
-  }
-}
-
 function cellClassName(columnId: string) {
   switch (columnId) {
     case 'name':
     case 'email':
-      return 'min-w-0 whitespace-normal px-3 py-2.5';
+      return 'min-w-0 whitespace-normal';
     case 'role':
-      return 'px-3 py-2.5';
+      return undefined;
     default:
-      return 'px-3 py-2.5';
+      return undefined;
   }
 }
 

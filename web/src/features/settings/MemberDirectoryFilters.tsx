@@ -32,7 +32,11 @@ export function MemberDirectoryFilters({
         }}
       >
         <SelectTrigger aria-label={msg('members.roleFilterLabel', 'Role')} className="w-auto min-w-28">
-          <SelectValue />
+          <SelectValue>
+            {role === 'all'
+              ? msg('members.roleFilterAll', 'All')
+              : msg(`members.workspaceRole.${role}`, roles.find((option) => option.value === role)?.label ?? role)}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">{msg('members.roleFilterAll', 'All')}</SelectItem>

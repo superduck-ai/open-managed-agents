@@ -236,7 +236,8 @@ export function WorkspacesSettingsPage() {
                   }}
                 >
                   <SelectTrigger aria-label={msg('settings.workspaces.statusFilter', 'Status')} className="w-[150px]">
-                    <SelectValue>
+                    <span className="text-muted-foreground">{msg('settings.workspaces.statusFilter', 'Status')}</span>
+                    <SelectValue className="font-medium text-foreground">
                       <span>{statusOptions.find((option) => option.value === statusFilter)?.label}</span>
                     </SelectValue>
                   </SelectTrigger>

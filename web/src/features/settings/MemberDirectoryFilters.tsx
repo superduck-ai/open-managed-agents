@@ -34,7 +34,8 @@ export function MemberDirectoryFilters({
         }}
       >
         <SelectTrigger aria-label={msg('members.roleFilterLabel', 'Role')} className="w-auto min-w-28">
-          <SelectValue>
+          <span className="text-muted-foreground">{msg('members.roleFilterLabel', 'Role')}</span>
+          <SelectValue className="font-medium text-foreground">
             {role === 'all'
               ? msg('members.roleFilterAll', 'All')
               : msg(`${roleLabelPrefix}.${role}`, roles.find((option) => option.value === role)?.label ?? role)}

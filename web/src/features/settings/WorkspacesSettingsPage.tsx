@@ -139,7 +139,9 @@ export function WorkspacesSettingsPage() {
                     <TableHead className="w-[18%]">{msg('settings.workspaces.created', 'Created')}</TableHead>
                     <TableHead className="w-[10%]">{msg('settings.workspaces.apiKeysCount', 'API keys')}</TableHead>
                     <TableHead className="w-[14%]">{msg('settings.workspaces.residency', 'Residency')}</TableHead>
-                    <TableHead className="w-[10%] text-right">{msg('common.actions', 'Actions')}</TableHead>
+                    <TableHead className="w-[10%]">
+                      <span className="sr-only">{msg('common.actions', 'Actions')}</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

@@ -1,6 +1,7 @@
 import { AlertCircle, Box, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useI18n } from '../../shared/i18n';
+import { useFormatters } from '../../shared/i18n/formatters';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import {
   buildCreateWorkspaceInput,
@@ -18,6 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 
 export function WorkspacesSettingsPage() {
   const { msg } = useI18n();
+  const formatters = useFormatters();
   const {
     canManageWorkspaces,
     orgUuid,
@@ -128,12 +130,15 @@ export function WorkspacesSettingsPage() {
             </div>
           ) : workspaces.length > 0 ? (
             <div className="overflow-x-auto">
-              <Table aria-label={msg('nav.workspaces', 'Workspaces')} className="min-w-[780px]">
+              <Table aria-label={msg('nav.workspaces', 'Workspaces')} className="min-w-[880px] table-fixed">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead>{msg('settings.workspaces.workspace', 'Workspace')}</TableHead>
-                    <TableHead>{msg('settings.workspaces.residency', 'Residency')}</TableHead>
-                    <TableHead className="text-right">{msg('common.actions', 'Actions')}</TableHead>
+                    <TableHead className="w-[24%]">{msg('settings.workspaces.workspace', 'Workspace')}</TableHead>
+                    <TableHead className="w-[24%]">ID</TableHead>
+                    <TableHead className="w-[18%]">{msg('settings.workspaces.created', 'Created')}</TableHead>
+                    <TableHead className="w-[10%]">{msg('settings.workspaces.apiKeysCount', 'API keys')}</TableHead>
+                    <TableHead className="w-[14%]">{msg('settings.workspaces.residency', 'Residency')}</TableHead>
+                    <TableHead className="w-[10%] text-right">{msg('common.actions', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -151,19 +156,22 @@ export function WorkspacesSettingsPage() {
                                 <Badge variant="secondary">{msg('settings.workspaces.current', 'Current')}</Badge>
                               ) : null}
                             </div>
-                            <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{workspace.id}</div>
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <div className="text-sm text-foreground">
-                          {geoLabel(workspace.data_residency?.workspace_geo)}
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {msg('settings.workspaces.defaultInference', 'Default inference: {value}', {
-                            value: geoLabel(workspace.data_residency?.default_inference_geo),
-                          })}
-                        </div>
+                      <TableCell className="min-w-0">
+                        <span className="block truncate font-mono text-xs text-muted-foreground">{workspace.id}</span>
+                      </TableCell>
+                      <TableCell className="text-sm text-foreground">
+                        {workspace.created_at
+                          ? formatters.date(workspace.created_at, { dateStyle: 'medium', timeStyle: 'short' })
+                          : '–'}
+                      </TableCell>
+                      <TableCell className="text-sm text-foreground">
+                        {formatters.number(workspace.api_keys_count ?? 0)}
+                      </TableCell>
+                      <TableCell className="text-sm text-foreground">
+                        {geoLabel(workspace.data_residency?.workspace_geo)}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex flex-wrap justify-end gap-2">

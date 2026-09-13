@@ -27,6 +27,10 @@ type consoleWorkspaceLister interface {
 	ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeArchived bool) ([]ConsoleWorkspace, error)
 }
 
+type consoleAPIKeyOrganizationCounter interface {
+	CountConsoleAPIKeysByOrganization(ctx context.Context, orgUUID string) (map[string]int, error)
+}
+
 type consoleWorkspaceCreator interface {
 	CreateConsoleWorkspace(ctx context.Context, input CreateConsoleWorkspaceInput) (ConsoleWorkspace, error)
 }
@@ -63,6 +67,7 @@ func registerConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationSto
 
 func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
 	workspaceLister, _ := store.(consoleWorkspaceLister)
+	apiKeyCounter, _ := store.(consoleAPIKeyOrganizationCounter)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
@@ -84,9 +89,19 @@ func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to resolve workspace access")
 			return
 		}
+		apiKeyCounts := map[string]int{}
+		if apiKeyCounter != nil {
+			apiKeyCounts, err = apiKeyCounter.CountConsoleAPIKeysByOrganization(r.Context(), orgUUID)
+			if err != nil {
+				internalError(w, "failed to count workspace api keys")
+				return
+			}
+		}
 		out := make([]map[string]any, 0, len(workspaces))
 		for _, workspace := range workspaces {
-			out = append(out, formatConsoleWorkspace(workspace))
+			entry := formatConsoleWorkspace(workspace)
+			entry["api_keys_count"] = apiKeyCounts[workspace.UUID]
+			out = append(out, entry)
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

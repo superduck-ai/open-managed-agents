@@ -1419,6 +1419,8 @@
   "billing.visibility.dialogLabel": "Visibility",
   "billing.visibility.dialogTitle": "Configure cost visibility",
   "billing.visibility.title": "Cost visibility",
+  "settings.workspaces.apiKeysCount": "API keys",
+  "settings.workspaces.created": "Created",
   "settings.workspaces.current": "Current",
   "settings.workspaces.defaultInference": "Default inference: {value}",
   "settings.workspaces.description": "Review workspace-specific API keys, webhooks, residency, and create new workspaces from one settings view.",
@@ -2139,5 +2141,9 @@
   "organizations.allowApiKeysDescription": "Allow users to create new API keys in the default workspace. Disabling this setting does not affect existing API keys or disable Workbench usage.",
   "invitations.delivery.unconfirmed": "Invitations saved, but {count} emails were not confirmed as sent. Check your mail configuration and resend the invitations.",
   "invitations.delivery.sent": "Invitation emails submitted for delivery. Ask recipients to check their inboxes.",
-  "common.somethingWentWrong": "Something went wrong. Try again."
+  "common.somethingWentWrong": "Something went wrong. Try again.",
+  "members.addDialog.title": "Add member to {workspaceName}",
+  "members.addDialog.member": "Member",
+  "members.addDialog.role": "Role",
+  "members.addDialog.select": "Select"
 }

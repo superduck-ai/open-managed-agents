@@ -167,6 +167,22 @@ func (d *DB) CountConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceU
 	return int(count), nil
 }
 
+func (d *DB) CountConsoleAPIKeysByOrganization(ctx context.Context, orgUUID string) (map[string]int, error) {
+	if d == nil || d.mapperDB == nil || orgUUID == "" {
+		return map[string]int{}, nil
+	}
+	mapper := NewConsoleAPIKeyMapper(d.mapperDB)
+	counts, err := mapper.CountByOrganization(ctx, orgUUID)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int, len(counts))
+	for _, row := range counts {
+		result[row.WorkspaceUUID] = int(row.KeyCount)
+	}
+	return result, nil
+}
+
 func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateConsoleWorkspaceInput) (platform.ConsoleWorkspace, error) {
 	if d == nil || d.mapperDB == nil || input.OrgUUID == "" || input.Name == "" {
 		return platform.ConsoleWorkspace{}, platform.ErrNotFound

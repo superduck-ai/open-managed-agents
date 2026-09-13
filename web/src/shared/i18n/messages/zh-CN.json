@@ -1419,6 +1419,8 @@
   "billing.visibility.dialogLabel": "可见范围",
   "billing.visibility.dialogTitle": "配置成本可见性",
   "billing.visibility.title": "成本可见性",
+  "settings.workspaces.apiKeysCount": "API 密钥",
+  "settings.workspaces.created": "创建时间",
   "settings.workspaces.current": "当前",
   "settings.workspaces.defaultInference": "默认推理区域：{value}",
   "settings.workspaces.description": "在同一个设置页面中查看工作区 API 密钥、Webhook、数据地域，并创建新工作区。",
@@ -2139,5 +2141,9 @@
   "organizations.allowApiKeysDescription": "允许用户在默认工作区创建新的 API 密钥。关闭此设置不影响已有 API 密钥，也不会禁用 Workbench。",
   "invitations.delivery.unconfirmed": "邀请已保存，但 {count} 封邮件未确认发送。请检查邮件配置后重发邀请。",
   "invitations.delivery.sent": "邀请邮件已提交发送，请提醒收件人检查邮箱。",
-  "common.somethingWentWrong": "出错了，请重试。"
+  "common.somethingWentWrong": "出错了，请重试。",
+  "members.addDialog.title": "添加成员到 {workspaceName}",
+  "members.addDialog.member": "成员",
+  "members.addDialog.role": "角色",
+  "members.addDialog.select": "选择"
 }

@@ -8,6 +8,8 @@ export type Workspace = {
   id: string;
   type: 'workspace';
   name: string;
+  created_at?: string;
+  api_keys_count?: number;
   display_color?: string;
   color?: string;
   data_residency?: {

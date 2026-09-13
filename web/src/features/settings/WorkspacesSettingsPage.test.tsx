@@ -23,6 +23,8 @@ describe('Workspaces settings page', () => {
       id: 'wrkspc_foo',
       type: 'workspace',
       name: 'foo',
+      created_at: '2026-02-03T07:12:00Z',
+      api_keys_count: 2,
       display_color: '#8CCDB5',
       color: '#8CCDB5',
       data_residency: {
@@ -50,10 +52,16 @@ describe('Workspaces settings page', () => {
     expect(screen.getByRole('button', { name: 'Create workspace' })).toBeTruthy();
     const table = screen.getByRole('table', { name: 'Workspaces' });
     expect(within(table).getByRole('columnheader', { name: 'Workspace' })).toBeTruthy();
+    expect(within(table).getByRole('columnheader', { name: 'ID' })).toBeTruthy();
+    expect(within(table).getByRole('columnheader', { name: 'Created' })).toBeTruthy();
+    expect(within(table).getByRole('columnheader', { name: 'API keys' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'Residency' })).toBeTruthy();
     expect(within(table).getByText('Default')).toBeTruthy();
     expect(within(table).getByText('foo')).toBeTruthy();
     expect(within(table).getByText('Current')).toBeTruthy();
+    expect(within(table).getByText('wrkspc_foo')).toBeTruthy();
+    expect(within(table).getAllByText(/2026/).length).toBeGreaterThan(0);
+    expect(within(table).getByText('2')).toBeTruthy();
     const apiKeyLinks = within(table).getAllByRole('link', { name: 'API keys' });
     const webhookLinks = within(table).getAllByRole('link', { name: 'Webhooks' });
     expect(apiKeyLinks[0].getAttribute('href')).toBe('/settings/workspaces/default/keys');

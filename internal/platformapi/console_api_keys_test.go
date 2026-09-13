@@ -2,10 +2,12 @@ package platformapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -97,6 +99,7 @@ type consoleAPIKeyScopeStore struct {
 	apiKeyListCalls    int
 	workspaceUUID      *string
 	createInput        *CreateConsoleAPIKeyInput
+	apiKeyCounts       map[string]int
 }
 
 func (s *consoleAPIKeyScopeStore) ListConsoleWorkspaces(
@@ -131,6 +134,69 @@ func (s *consoleAPIKeyScopeStore) UpdateConsoleAPIKeyStatus(
 	UpdateConsoleAPIKeyStatusInput,
 ) (ConsoleAPIKey, error) {
 	return ConsoleAPIKey{}, nil
+}
+
+func (s *consoleAPIKeyScopeStore) CountConsoleAPIKeysByOrganization(
+	context.Context,
+	string,
+) (map[string]int, error) {
+	return s.apiKeyCounts, nil
+}
+
+func (s *consoleAPIKeyScopeStore) ListUserWorkspaceRoles(
+	context.Context,
+	string,
+	string,
+) ([]db.WorkspaceRoleFact, error) {
+	return []db.WorkspaceRoleFact{}, nil
+}
+
+func TestListConsoleWorkspacesReturnsCreatedAtAndAPIKeyCounts(t *testing.T) {
+	workspaceUUID := "00000000-0000-4000-8000-000000000001"
+	store := &consoleAPIKeyScopeStore{
+		workspaces: []ConsoleWorkspace{{
+			UUID:       workspaceUUID,
+			ExternalID: "workspace_test",
+			Name:       "test workspace",
+			OrgUUID:    "org_test",
+			CreatedAt:  time.Date(2026, 2, 3, 7, 12, 0, 0, time.UTC),
+		}},
+		apiKeyCounts: map[string]int{workspaceUUID: 3},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/organizations/org_test/workspaces", nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("orgUuid", "org_test")
+	requestContext := context.WithValue(request.Context(), chi.RouteCtxKey, routeContext)
+	requestContext = auth.WithPrincipal(requestContext, auth.Principal{
+		OrganizationUUID: "org_test",
+		UserUUID:         "00000000-0000-4000-8000-000000000003",
+		UserExternalID:   "user_external",
+		WorkspaceAccess:  auth.WorkspaceAccess{OrganizationRole: "admin"},
+	})
+	request = request.WithContext(requestContext)
+	recorder := httptest.NewRecorder()
+
+	handleListConsoleWorkspaces(store).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("unmarshal response %s: %v", recorder.Body.String(), err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0]["id"] != "workspace_test" {
+		t.Fatalf("id = %v, want workspace_test", entries[0]["id"])
+	}
+	if entries[0]["created_at"] != "2026-02-03T07:12:00Z" {
+		t.Fatalf("created_at = %v, want 2026-02-03T07:12:00Z", entries[0]["created_at"])
+	}
+	if entries[0]["api_keys_count"].(float64) != 3 {
+		t.Fatalf("api_keys_count = %v, want 3", entries[0]["api_keys_count"])
+	}
 }
 
 func (s *consoleAPIKeyScopeStore) CountConsoleAPIKeys(context.Context, string, string) (int, error) {

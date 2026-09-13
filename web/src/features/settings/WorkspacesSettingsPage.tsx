@@ -1,19 +1,20 @@
-import { AlertCircle, Box, Plus } from 'lucide-react';
+import { AlertCircle, Box, KeyRound, MoreVertical, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useI18n } from '../../shared/i18n';
 import { useFormatters } from '../../shared/i18n/formatters';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
-import {
-  buildCreateWorkspaceInput,
-  workspaceApiKeysPath,
-  workspaceColor,
-  workspaceWebhooksPath,
-} from '../../shared/workspaces/presentation';
+import { buildCreateWorkspaceInput, workspaceApiKeysPath, workspaceColor } from '../../shared/workspaces/presentation';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
-import { Button, ButtonLink } from '../../shared/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader } from '../../shared/ui/card';
+import { Button } from '../../shared/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../shared/ui/dropdown-menu';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 
@@ -174,13 +175,29 @@ export function WorkspacesSettingsPage() {
                         {geoLabel(workspace.data_residency?.workspace_geo)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <ButtonLink variant="outline" size="sm" href={workspaceApiKeysPath(workspace.id)}>
-                            {msg('nav.apiKeys', 'API keys')}
-                          </ButtonLink>
-                          <ButtonLink variant="ghost" size="sm" href={workspaceWebhooksPath(workspace.id)}>
-                            {msg('nav.webhooks', 'Webhooks')}
-                          </ButtonLink>
+                        <div className="flex justify-end">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-muted-foreground"
+                                  aria-label={msg('settings.workspaces.rowActions', 'Workspace actions')}
+                                />
+                              }
+                            >
+                              <MoreVertical className="size-4" aria-hidden />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuItem
+                                onClick={() => window.location.assign(workspaceApiKeysPath(workspace.id))}
+                              >
+                                <KeyRound className="size-4" aria-hidden />
+                                <span>{msg('settings.workspaces.manageApiKeys', 'Manage API keys')}</span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>

@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe('Workspaces settings page', () => {
-  test('renders the settings-shell workspace table with current badge and action links', () => {
+  test('renders the settings-shell workspace table with current badge and action links', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces');
 
     const fooWorkspace: Workspace = {
@@ -62,14 +62,9 @@ describe('Workspaces settings page', () => {
     expect(within(table).getByText('wrkspc_foo')).toBeTruthy();
     expect(within(table).getAllByText(/2026/).length).toBeGreaterThan(0);
     expect(within(table).getByText('2')).toBeTruthy();
-    const apiKeyLinks = within(table).getAllByRole('link', { name: 'API keys' });
-    const webhookLinks = within(table).getAllByRole('link', { name: 'Webhooks' });
-    expect(apiKeyLinks[0].getAttribute('href')).toBe('/settings/workspaces/default/keys');
-    expect(apiKeyLinks[1].getAttribute('href')).toBe('/settings/workspaces/wrkspc_foo/keys');
-    expect(webhookLinks[0].getAttribute('href')).toBe('/settings/workspaces/default/webhooks');
-    expect(webhookLinks[1].getAttribute('href')).toBe('/settings/workspaces/wrkspc_foo/webhooks');
-    expect(apiKeyLinks[0].getAttribute('data-slot')).toBe('button');
-    expect(webhookLinks[0].getAttribute('data-slot')).toBe('button');
+    const actionButtons = within(table).getAllByRole('button', { name: 'Workspace actions' });
+    expect(actionButtons.length).toBe(2);
+    expect(actionButtons[1].getAttribute('aria-haspopup')).toBe('menu');
     expect(container.querySelector('.surface-card')).toBeNull();
   });
 

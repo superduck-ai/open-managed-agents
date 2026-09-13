@@ -64,7 +64,7 @@ export function OrganizationMemberRemoval({
             }}
           >
             <Trash2 className="size-4" aria-hidden />
-            {msg('members.removeMember', 'Remove member')}
+            <span className="whitespace-nowrap">{msg('members.removeMember', 'Remove member')}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

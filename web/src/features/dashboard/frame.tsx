@@ -40,11 +40,11 @@ export function ConsolePageFrame({
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
               {eyebrow ? <Badge>{eyebrow}</Badge> : null}
+              {meta}
             </div>
             {description ? (
               <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
             ) : null}
-            {meta ? <div className="mt-3">{meta}</div> : null}
           </div>
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}

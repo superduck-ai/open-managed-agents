@@ -6,7 +6,7 @@ import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from '../
 import { buildCreateWorkspaceInput } from '../../shared/workspaces/presentation';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
-import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
+import { filterWorkspaces, WorkspacesSettingsPage } from './WorkspacesSettingsPage';
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
@@ -48,15 +48,26 @@ describe('Workspaces settings page', () => {
       },
     });
 
-    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Workspaces 2' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create workspace' })).toBeTruthy();
     const table = screen.getByRole('table', { name: 'Workspaces' });
     expect(within(table).getByRole('columnheader', { name: 'Workspace' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'ID' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'Created' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'API keys' })).toBeTruthy();
-    expect(within(table).getByRole('columnheader', { name: 'Residency' })).toBeTruthy();
+    expect(within(table).queryByRole('columnheader', { name: 'Residency' })).toBeNull();
     expect(within(table).getByText('Default')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /collaborative spaces/i })).toBeTruthy();
+    expect(
+      within(table).getByRole('button', { name: 'The default workspace is not editable and cannot be removed' }),
+    ).toBeTruthy();
+    const overviewTrigger = screen.getByRole('button', { name: /collaborative spaces/i });
+    expect(overviewTrigger.closest('[data-slot="tooltip-trigger"]')).toBeTruthy();
+    expect(
+      within(table)
+        .getByRole('button', { name: 'The default workspace is not editable and cannot be removed' })
+        .closest('[data-slot="tooltip-trigger"]'),
+    ).toBeTruthy();
     expect(within(table).getByText('foo')).toBeTruthy();
     expect(within(table).getByText('Current')).toBeTruthy();
     expect(within(table).getByText('wrkspc_foo')).toBeTruthy();
@@ -66,6 +77,68 @@ describe('Workspaces settings page', () => {
     expect(actionButtons.length).toBe(2);
     expect(actionButtons[1].getAttribute('aria-haspopup')).toBe('menu');
     expect(container.querySelector('.surface-card')).toBeNull();
+  });
+
+  test('filters workspaces by search keyword and archived status', async () => {
+    resetTestDom('https://oma.duck.ai/settings/workspaces');
+
+    const fooWorkspace: Workspace = {
+      id: 'wrkspc_foo',
+      type: 'workspace',
+      name: 'foo',
+      created_at: '2026-02-03T07:12:00Z',
+      api_keys_count: 2,
+    };
+    const archivedWorkspace: Workspace = {
+      id: 'wrkspc_archived',
+      type: 'workspace',
+      name: 'legacy',
+      created_at: '2025-06-01T00:00:00Z',
+      api_keys_count: 0,
+      archived_at: '2026-01-01T00:00:00Z',
+    };
+
+    renderWorkspacesSettings({
+      withSettingsShell: false,
+      workspaceValue: {
+        orgUuid: 'org_test',
+        canManageWorkspaces: true,
+        workspaces: [defaultWorkspace, fooWorkspace, archivedWorkspace],
+        activeWorkspace: fooWorkspace,
+        activeWorkspaceId: fooWorkspace.id,
+        isLoading: false,
+        error: null,
+        selectWorkspace: () => undefined,
+        createWorkspace: async () => fooWorkspace,
+        refreshWorkspaces: async () => undefined,
+      },
+    });
+
+    const table = screen.getByRole('table', { name: 'Workspaces' });
+    expect(within(table).queryByText('legacy')).toBeNull();
+
+    const searchBox = screen.getByRole('searchbox', { name: 'Search workspaces' });
+    fireEvent.change(searchBox, { target: { value: 'foo' } });
+    expect(within(table).getByText('foo')).toBeTruthy();
+    expect(within(table).queryByText('Default')).toBeNull();
+
+    fireEvent.change(searchBox, { target: { value: '' } });
+    expect(
+      filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], '', 'active').map(
+        (workspace) => workspace.name,
+      ),
+    ).toEqual(['Default', 'foo']);
+    expect(
+      filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], '', 'archived').map(
+        (workspace) => workspace.name,
+      ),
+    ).toEqual(['legacy']);
+    expect(
+      filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], 'wrkspc_archived', 'archived').map(
+        (workspace) => workspace.name,
+      ),
+    ).toEqual(['legacy']);
+    expect(filterWorkspaces([defaultWorkspace, fooWorkspace, archivedWorkspace], 'no-hit', 'active')).toEqual([]);
   });
 
   test('builds the shared workspace create payload with name, color, and US residency', () => {

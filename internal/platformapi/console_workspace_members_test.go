@@ -1,10 +1,10 @@
 package platformapi
 
 import (
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 )
 
@@ -24,9 +24,24 @@ func TestConsoleWorkspaceMemberPermissions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := formatConsoleWorkspaceMember(db.WorkspaceMemberFact{OrganizationRole: tc.orgRole}, access, platform.OrgUser{Email: "member@example.com"}, tc.manage)
+			result := formatConsoleWorkspaceMember(db.WorkspaceMemberFact{OrganizationRole: tc.orgRole, Email: "member@example.com"}, access, tc.manage)
 			if result["can_edit"] != tc.edit || result["can_remove"] != tc.remove {
 				t.Fatalf("unexpected permissions: %v", result)
+			}
+		})
+	}
+}
+
+func TestConsoleWorkspaceMemberName(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"", "member@example.com"},
+		{"   ", "member@example.com"},
+		{"成员", "成员"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := formatConsoleWorkspaceMember(db.WorkspaceMemberFact{Name: tc.name, Email: "member@example.com"}, auth.WorkspaceAccess{}, false)
+			if result["name"] != tc.want || result["email"] != "member@example.com" {
+				t.Fatalf("成员资料不匹配: %v", result)
 			}
 		})
 	}

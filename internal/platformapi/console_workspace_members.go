@@ -1,7 +1,6 @@
 package platformapi
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -12,12 +11,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 )
-
-type consoleWorkspaceMemberStore interface {
-	workspaceaccess.Store
-	FindOrgMemberByReference(ctx context.Context, orgUUID, userReference string) (db.AdminUser, error)
-	ListWorkspaceMemberFacts(ctx context.Context, orgUUID, workspaceUUID string) ([]db.WorkspaceMemberFact, error)
-}
 
 type createConsoleWorkspaceMemberRequest struct {
 	UserID        string `json:"user_id"`
@@ -38,7 +31,7 @@ func RegisterConsoleWorkspaceMemberRoutes(r chi.Router, store OrganizationStore)
 
 func handleListConsoleWorkspaceMembers(store OrganizationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		memberStore, _, ok := consoleMemberChangeStore(w, store)
+		memberStore, ok := consoleMemberChangeStore(w, store)
 		if !ok {
 			return
 		}
@@ -62,8 +55,7 @@ func handleListConsoleWorkspaceMembers(store OrganizationStore) http.HandlerFunc
 			if accessErr != nil {
 				continue
 			}
-			profile := platform.OrgUser{Email: fact.Email, FullName: new(fact.Name)}
-			members = append(members, formatConsoleWorkspaceMember(fact, memberAccess, profile, access.ManageMembers()))
+			members = append(members, formatConsoleWorkspaceMember(fact, memberAccess, access.ManageMembers()))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"workspace_id":       workspace.ExternalID,
@@ -76,7 +68,7 @@ func handleListConsoleWorkspaceMembers(store OrganizationStore) http.HandlerFunc
 
 func handleListConsoleWorkspaceMemberCandidates(store OrganizationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		memberStore, _, ok := consoleMemberChangeStore(w, store)
+		memberStore, ok := consoleMemberChangeStore(w, store)
 		if !ok {
 			return
 		}
@@ -142,7 +134,7 @@ func handleDeleteConsoleWorkspaceMember(store OrganizationStore) http.HandlerFun
 }
 
 func applyConsoleWorkspaceMemberChange(w http.ResponseWriter, r *http.Request, store OrganizationStore, userID, role, operation string) {
-	memberStore, database, ok := consoleMemberChangeStore(w, store)
+	memberStore, ok := consoleMemberChangeStore(w, store)
 	if !ok {
 		return
 	}
@@ -160,7 +152,7 @@ func applyConsoleWorkspaceMemberChange(w http.ResponseWriter, r *http.Request, s
 		writeConsoleWorkspaceMemberError(w, err)
 		return
 	}
-	if _, err := workspaceaccess.ChangeMember(r.Context(), database, principal, workspace.ExternalID, target.ExternalID, role, operation); err != nil {
+	if _, err := workspaceaccess.ChangeMember(r.Context(), memberStore, principal, workspace.ExternalID, target.ExternalID, role, operation); err != nil {
 		writeConsoleWorkspaceMemberError(w, err)
 		return
 	}
@@ -182,22 +174,17 @@ func applyConsoleWorkspaceMemberChange(w http.ResponseWriter, r *http.Request, s
 		writeConsoleWorkspaceMemberError(w, accessErr)
 		return
 	}
-	fact := db.WorkspaceMemberFact{UserUUID: target.UUID, UserExternalID: target.ExternalID, OrganizationRole: target.Role, ExplicitRole: explicitRole}
-	writeJSON(w, http.StatusOK, formatConsoleWorkspaceMember(fact, memberAccess, platform.OrgUser{UserUUID: target.UUID, Email: target.Email, FullName: nullableName(target.Name), Role: target.Role}, true))
+	fact := db.WorkspaceMemberFact{UserUUID: target.UUID, UserExternalID: target.ExternalID, OrganizationRole: target.Role, ExplicitRole: explicitRole, Name: target.Name, Email: target.Email}
+	writeJSON(w, http.StatusOK, formatConsoleWorkspaceMember(fact, memberAccess, true))
 }
 
-func consoleMemberChangeStore(w http.ResponseWriter, store OrganizationStore) (consoleWorkspaceMemberStore, *db.DB, bool) {
-	memberStore, ok := store.(consoleWorkspaceMemberStore)
-	if !ok {
-		internalError(w, "failed to manage workspace members")
-		return nil, nil, false
-	}
+func consoleMemberChangeStore(w http.ResponseWriter, store OrganizationStore) (*db.DB, bool) {
 	database, ok := store.(*db.DB)
 	if !ok {
 		internalError(w, "failed to manage workspace members")
-		return nil, nil, false
+		return nil, false
 	}
-	return memberStore, database, true
+	return database, true
 }
 
 func resolveConsoleWorkspace(w http.ResponseWriter, r *http.Request, store workspaceaccess.Store, orgUUID, userID, workspaceID string) (db.AdminWorkspace, auth.WorkspaceAccess, bool) {
@@ -213,29 +200,22 @@ func resolveConsoleWorkspace(w http.ResponseWriter, r *http.Request, store works
 	return workspace, access, true
 }
 
-func formatConsoleWorkspaceMember(fact db.WorkspaceMemberFact, access auth.WorkspaceAccess, profile platform.OrgUser, canManage bool) map[string]any {
+func formatConsoleWorkspaceMember(fact db.WorkspaceMemberFact, access auth.WorkspaceAccess, canManage bool) map[string]any {
 	canChange := canManage && fact.OrganizationRole != "admin"
-	name := profile.FullName
-	if name == nil || strings.TrimSpace(*name) == "" {
-		name = &profile.Email
+	name := fact.Name
+	if strings.TrimSpace(name) == "" {
+		name = fact.Email
 	}
 	return map[string]any{
 		"user_id":           taggedUserID(fact.UserUUID),
-		"name":              *name,
-		"email":             profile.Email,
+		"name":              name,
+		"email":             fact.Email,
 		"organization_role": consoleMemberRole(fact.OrganizationRole),
 		"workspace_role":    access.Role,
 		"role_source":       access.Source,
 		"can_edit":          canChange,
 		"can_remove":        canChange && fact.OrganizationRole != "billing",
 	}
-}
-
-func nullableName(value string) *string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return &value
 }
 
 func writeConsoleWorkspaceMemberError(w http.ResponseWriter, err error) {

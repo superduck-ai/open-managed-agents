@@ -217,6 +217,41 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 	return row.workspace()
 }
 
+func (d *DB) UpdateConsoleWorkspace(ctx context.Context, orgUUID, workspaceID, name, displayColor string) (platform.ConsoleWorkspace, error) {
+	if d == nil || d.mapperDB == nil || orgUUID == "" || workspaceID == "" || name == "" {
+		return platform.ConsoleWorkspace{}, platform.ErrNotFound
+	}
+	if displayColor == "" {
+		displayColor = "#9B87F5"
+	}
+	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
+	row, err := mapper.UpdateByIdentifier(ctx, updateConsoleWorkspaceParams{
+		OrgUUID:      orgUUID,
+		ExternalID:   workspaceID,
+		Name:         name,
+		DisplayColor: displayColor,
+	})
+	if isUniqueViolation(err) {
+		return platform.ConsoleWorkspace{}, ErrDuplicate
+	}
+	if err != nil {
+		return platform.ConsoleWorkspace{}, mapNoRows(err)
+	}
+	return row.workspace()
+}
+
+func (d *DB) ArchiveConsoleWorkspace(ctx context.Context, orgUUID, workspaceID string) (platform.ConsoleWorkspace, error) {
+	if d == nil || d.mapperDB == nil || orgUUID == "" || workspaceID == "" {
+		return platform.ConsoleWorkspace{}, platform.ErrNotFound
+	}
+	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
+	row, err := mapper.ArchiveByIdentifier(ctx, orgUUID, workspaceID)
+	if err != nil {
+		return platform.ConsoleWorkspace{}, mapNoRows(err)
+	}
+	return row.workspace()
+}
+
 func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeArchived bool) ([]platform.ConsoleWorkspace, error) {
 	if d == nil || d.mapperDB == nil || orgUUID == "" {
 		return []platform.ConsoleWorkspace{}, nil

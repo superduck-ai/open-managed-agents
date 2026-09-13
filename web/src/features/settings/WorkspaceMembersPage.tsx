@@ -82,7 +82,7 @@ export function WorkspaceMembersPage() {
         directory.data && !directory.data.is_default
           ? msg(
               'members.workspaceNotice',
-              'Organization admins inherit the workspace admin role. Billing members can be promoted to workspace admin.',
+              'Organization admins inherit the workspace admin role. Accounts with the billing role inherit a workspace billing role, but can be promoted to workspace admin.',
             )
           : undefined
       }
@@ -217,7 +217,6 @@ function WorkspaceMemberDirectoryPanel({
         <WorkspaceMemberTable
           members={members}
           loading={directory.isPending}
-          failed={false}
           pending={mutation.isPending}
           sort={sort}
           setSort={onSort}

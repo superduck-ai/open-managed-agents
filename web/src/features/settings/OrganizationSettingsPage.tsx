@@ -9,7 +9,6 @@ import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Button } from '../../shared/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../shared/ui/card';
 import { Field, FieldLabel } from '../../shared/ui/field';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
@@ -263,17 +262,15 @@ export function OrganizationSettingsContent() {
 
   if (!activeOrgUuid) {
     return (
-      <section className="mx-auto w-full max-w-[1100px]">
-        <Card>
-          <CardHeader>
-            <CardTitle>{msg('organizations.title', 'Organization')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              {msg('organizations.noOrgAvailable', 'No organization is available for this session.')}
-            </p>
-          </CardContent>
-        </Card>
+      <section className="mx-auto w-full max-w-[830px] space-y-6">
+        <h1 className="text-xl font-semibold tracking-normal text-foreground">
+          {msg('organizations.title', 'Organization')}
+        </h1>
+        <div>
+          <p className="text-sm text-muted-foreground">
+            {msg('organizations.noOrgAvailable', 'No organization is available for this session.')}
+          </p>
+        </div>
       </section>
     );
   }
@@ -282,26 +279,26 @@ export function OrganizationSettingsContent() {
     (organizationQuery.isLoading || profileQuery.isLoading) && (!organizationQuery.data || !profileQuery.data);
 
   return (
-    <section className="mx-auto w-full max-w-[1100px] space-y-4" data-testid="organization-settings-page">
-      <Card>
-        <CardHeader>
+    <section className="mx-auto w-full max-w-[830px] space-y-8" data-testid="organization-settings-page">
+      <div>
+        <header className="mb-6">
           <h1 className="text-xl font-semibold tracking-normal text-foreground">
             {msg('organizations.title', 'Organization')}
           </h1>
-        </CardHeader>
-        <CardContent className="space-y-7">
+        </header>
+        <div className="space-y-5">
           {isInitialLoading ? (
             <div
               className="space-y-4"
               aria-label={msg('organizations.loadingSettings', 'Loading organization settings')}
             >
-              <Skeleton className="h-10 w-[428px] max-w-full" />
-              <Skeleton className="h-10 w-[428px] max-w-full" />
-              <Skeleton className="h-10 w-[720px] max-w-full" />
+              <Skeleton className="h-10 w-[480px] max-w-full" />
+              <Skeleton className="h-10 w-[480px] max-w-full" />
+              <Skeleton className="h-10 w-[480px] max-w-full" />
             </div>
           ) : (
             <>
-              <Field className="max-w-[428px] gap-2">
+              <Field className="max-w-[480px] gap-2">
                 <FieldLabel htmlFor="organization-name">
                   {msg('organizations.nameLabel', 'Organization name')}
                 </FieldLabel>
@@ -312,11 +309,11 @@ export function OrganizationSettingsContent() {
                 />
               </Field>
 
-              <div className="space-y-6">
+              <div className="max-w-[480px] space-y-4">
                 <div className="text-sm font-medium text-foreground">
                   {msg('organizations.addressTitle', 'Primary business address')}
                 </div>
-                <div className="grid gap-3 lg:grid-cols-[208px_208px]">
+                <div className="grid gap-3">
                   <TextInput
                     aria-label={msg('organizations.addressLine1', 'Primary business address line 1')}
                     placeholder={msg('organizations.line1Placeholder', 'Line 1')}
@@ -331,22 +328,7 @@ export function OrganizationSettingsContent() {
                   />
                 </div>
 
-                <div className="grid gap-3 lg:grid-cols-[208px_208px_minmax(180px,1fr)_96px]">
-                  <div>
-                    <Label id="country-label" className="mb-2">
-                      {msg('organizations.country', 'Country')}
-                    </Label>
-                    <CountryCombobox
-                      value={form.country}
-                      onChange={(country) => setForm((current) => ({ ...current, country }))}
-                    />
-                  </div>
-                  <TextField
-                    id="state"
-                    label={msg('organizations.state', 'State or province')}
-                    value={form.state}
-                    onChange={(state) => setForm((current) => ({ ...current, state }))}
-                  />
+                <div className="grid gap-3 sm:grid-cols-[1fr_1fr_104px]">
                   <TextField
                     id="city"
                     label={msg('organizations.city', 'City')}
@@ -354,10 +336,25 @@ export function OrganizationSettingsContent() {
                     onChange={(city) => setForm((current) => ({ ...current, city }))}
                   />
                   <TextField
+                    id="state"
+                    label={msg('organizations.state', 'State or province')}
+                    value={form.state}
+                    onChange={(state) => setForm((current) => ({ ...current, state }))}
+                  />
+                  <TextField
                     id="postal-code"
                     label={msg('organizations.postalCode', 'Postal code')}
                     value={form.postalCode}
                     onChange={(postalCode) => setForm((current) => ({ ...current, postalCode }))}
+                  />
+                </div>
+                <div>
+                  <Label id="country-label" className="mb-2">
+                    {msg('organizations.country', 'Country')}
+                  </Label>
+                  <CountryCombobox
+                    value={form.country}
+                    onChange={(country) => setForm((current) => ({ ...current, country }))}
                   />
                 </div>
 
@@ -413,36 +410,34 @@ export function OrganizationSettingsContent() {
               ) : null}
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card>
-        <CardContent className="flex items-start justify-between gap-8">
-          <div className="max-w-[760px]">
-            <h2 className="text-xl font-semibold tracking-normal text-foreground">
-              {msg('organizations.allowApiKeysTitle', 'Allow creating new API keys in default workspace')}
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              {msg(
-                'organizations.allowApiKeysDescription',
-                'Allow users to create new API keys in the default workspace. Disabling this setting does not affect existing API keys or disable Workbench usage.',
-              )}
-            </p>
-            {switchError ? (
-              <Alert variant="destructive" className="mt-3">
-                <AlertDescription>{switchError}</AlertDescription>
-              </Alert>
-            ) : null}
-          </div>
-          <Switch
-            checked={allowApiKeys}
-            aria-label={msg('organizations.allowApiKeysTitle', 'Allow creating new API keys in default workspace')}
-            className="mt-1"
-            disabled={updateOrganizationMutation.isPending}
-            onCheckedChange={() => void handleApiKeysToggle()}
-          />
-        </CardContent>
-      </Card>
+      <div className="flex items-center justify-between gap-6 border-t border-border pt-8">
+        <div className="max-w-[760px]">
+          <h2 className="text-sm font-medium text-foreground">
+            {msg('organizations.allowApiKeysTitle', 'Allow creating new API keys in default workspace')}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {msg(
+              'organizations.allowApiKeysDescription',
+              'Allow users to create new API keys in the default workspace. Disabling this setting does not affect existing API keys or disable Workbench usage.',
+            )}
+          </p>
+          {switchError ? (
+            <Alert variant="destructive" className="mt-3">
+              <AlertDescription>{switchError}</AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
+        <Switch
+          checked={allowApiKeys}
+          aria-label={msg('organizations.allowApiKeysTitle', 'Allow creating new API keys in default workspace')}
+          className="mt-1"
+          disabled={updateOrganizationMutation.isPending}
+          onCheckedChange={() => void handleApiKeysToggle()}
+        />
+      </div>
     </section>
   );
 }

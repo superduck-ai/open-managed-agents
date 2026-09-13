@@ -104,6 +104,57 @@ function mockWorkspaces() {
   globalThis.fetch = mock(async (input) => Response.json(workspaces(String(input).split('/').at(-2)!))) as typeof fetch;
 }
 
+test('组织管理员在继承角色的工作区获得工作区管理权限', async () => {
+  globalThis.fetch = mock(async () =>
+    Response.json([
+      {
+        id: 'ws-a',
+        name: 'a',
+        type: 'workspace',
+        is_default: true,
+        effective_role: 'workspace_admin',
+        role_source: 'organization',
+      },
+      {
+        id: 'ws-qa',
+        name: 'Member QA',
+        type: 'workspace',
+        is_default: false,
+        effective_role: 'workspace_admin',
+        role_source: 'organization',
+      },
+    ]),
+  ) as typeof fetch;
+  let managed: boolean | undefined;
+  const ManageProbe = () => {
+    managed = useWorkspace().canManageWorkspaces;
+    return null;
+  };
+  resetTestDom('https://oma.duck.ai/workspaces/ws-a/agents/agent-detail');
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const auth: AuthContextValue = {
+    account,
+    csrfToken: 'csrf',
+    status: 'authenticated',
+    logout: async () => {},
+    refresh: async () => ({ account }),
+  };
+  const { render } = await import('@testing-library/react');
+  const { cleanup } = await import('@testing-library/react');
+  render(
+    <QueryClientProvider client={queryClient}>
+      <AuthContext.Provider value={auth}>
+        <WorkspaceProvider>
+          <ManageProbe />
+        </WorkspaceProvider>
+      </AuthContext.Provider>
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(managed).toBe(true));
+  cleanup();
+  globalThis.fetch = originalFetch;
+});
+
 test('保留前置分支的 Default 展示名但不改写真实工作区标识', async () => {
   mockWorkspaces();
   mount();

@@ -228,3 +228,163 @@ func (s *consoleAPIKeyScopeStore) GetAdminWorkspace(_ context.Context, orgUUID, 
 func (s *consoleAPIKeyScopeStore) GetAdminWorkspaceMember(context.Context, string, string, string) (db.AdminWorkspaceMember, error) {
 	return db.AdminWorkspaceMember{}, db.ErrNotFound
 }
+
+type consoleWorkspaceMutationStore struct {
+	updated      ConsoleWorkspace
+	updateErr    error
+	archived     ConsoleWorkspace
+	archiveErr   error
+	updateCalls  int
+	updateOrg    string
+	updateID     string
+	updateName   string
+	updateColor  string
+	archiveCalls int
+	archiveOrg   string
+	archiveID    string
+}
+
+func (s *consoleWorkspaceMutationStore) UpdateConsoleWorkspace(
+	_ context.Context, orgUUID, workspaceID, name, displayColor string,
+) (ConsoleWorkspace, error) {
+	s.updateCalls++
+	s.updateOrg, s.updateID, s.updateName, s.updateColor = orgUUID, workspaceID, name, displayColor
+	if s.updateErr != nil {
+		return ConsoleWorkspace{}, s.updateErr
+	}
+	return s.updated, nil
+}
+
+func (s *consoleWorkspaceMutationStore) ArchiveConsoleWorkspace(
+	_ context.Context, orgUUID, workspaceID string,
+) (ConsoleWorkspace, error) {
+	s.archiveCalls++
+	s.archiveOrg, s.archiveID = orgUUID, workspaceID
+	if s.archiveErr != nil {
+		return ConsoleWorkspace{}, s.archiveErr
+	}
+	return s.archived, nil
+}
+
+func consoleWorkspaceMutationRequest(method, workspaceID, body string) *http.Request {
+	const organizationUUID = "00000000-0000-4000-8000-000000000002"
+	request := httptest.NewRequest(
+		method,
+		"/api/organizations/"+organizationUUID+"/workspaces/"+workspaceID,
+		strings.NewReader(body),
+	)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("orgUuid", organizationUUID)
+	routeContext.URLParams.Add("workspaceId", workspaceID)
+	contextWithRoute := context.WithValue(request.Context(), chi.RouteCtxKey, routeContext)
+	return request.WithContext(auth.WithPrincipal(contextWithRoute, auth.Principal{
+		OrganizationUUID: organizationUUID,
+		UserUUID:         "00000000-0000-4000-8000-000000000003",
+		UserExternalID:   "user_external",
+		WorkspaceAccess:  auth.WorkspaceAccess{OrganizationRole: "admin"},
+	}))
+}
+
+func TestUpdateConsoleWorkspaceRenamesAndRecolors(t *testing.T) {
+	updatedAt := time.Date(2026, 9, 11, 8, 0, 0, 0, time.UTC)
+	store := &consoleWorkspaceMutationStore{
+		updated: ConsoleWorkspace{
+			UUID: "00000000-0000-4000-8000-000000000001", ExternalID: "wrkspc_test", OrgUUID: "org_test",
+			Name: "renamed", DisplayColor: "#123456", Color: "#123456", UpdatedAt: updatedAt,
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	handleUpdateConsoleWorkspace(store).ServeHTTP(
+		recorder,
+		consoleWorkspaceMutationRequest(http.MethodPatch, "wrkspc_test", `{"name":"renamed","display_color":"#123456"}`),
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if store.updateCalls != 1 || store.updateOrg != "00000000-0000-4000-8000-000000000002" || store.updateID != "wrkspc_test" ||
+		store.updateName != "renamed" || store.updateColor != "#123456" {
+		t.Fatalf("update input = %v/%v/%v/%v, unexpected", store.updateOrg, store.updateID, store.updateName, store.updateColor)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &entry); err != nil {
+		t.Fatalf("unmarshal response %s: %v", recorder.Body.String(), err)
+	}
+	if entry["name"] != "renamed" || entry["display_color"] != "#123456" {
+		t.Fatalf("entry = %v, want renamed workspace", entry)
+	}
+}
+
+func TestUpdateConsoleWorkspaceReservesDefaultName(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	handleUpdateConsoleWorkspace(&consoleWorkspaceMutationStore{}).ServeHTTP(
+		recorder,
+		consoleWorkspaceMutationRequest(http.MethodPatch, "wrkspc_test", `{"name":"Default"}`),
+	)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
+func TestUpdateConsoleWorkspaceReturnsNotFoundForMissingWorkspace(t *testing.T) {
+	store := &consoleWorkspaceMutationStore{updateErr: db.ErrNotFound}
+
+	recorder := httptest.NewRecorder()
+	handleUpdateConsoleWorkspace(store).ServeHTTP(
+		recorder,
+		consoleWorkspaceMutationRequest(http.MethodPatch, "wrkspc_missing", `{"name":"renamed"}`),
+	)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
+func TestArchiveConsoleWorkspaceReturnsArchivedWorkspace(t *testing.T) {
+	archivedAt := time.Date(2026, 9, 11, 9, 30, 0, 0, time.UTC)
+	store := &consoleWorkspaceMutationStore{
+		archived: ConsoleWorkspace{
+			UUID: "00000000-0000-4000-8000-000000000001", ExternalID: "wrkspc_test", OrgUUID: "org_test",
+			Name: "legacy", ArchivedAt: &archivedAt, UpdatedAt: archivedAt,
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	handleArchiveConsoleWorkspace(store).ServeHTTP(
+		recorder,
+		consoleWorkspaceMutationRequest(http.MethodPost, "wrkspc_test", ""),
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if store.archiveCalls != 1 || store.archiveOrg != "00000000-0000-4000-8000-000000000002" || store.archiveID != "wrkspc_test" {
+		t.Fatalf("archive input = %v/%v/%v, unexpected", store.archiveOrg, store.archiveID, store.archiveCalls)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &entry); err != nil {
+		t.Fatalf("unmarshal response %s: %v", recorder.Body.String(), err)
+	}
+	if entry["archived_at"] != "2026-09-11T09:30:00Z" {
+		t.Fatalf("archived_at = %v, want 2026-09-11T09:30:00Z", entry["archived_at"])
+	}
+}
+
+func TestArchiveConsoleWorkspaceRejectsDefaultWorkspace(t *testing.T) {
+	store := &consoleWorkspaceMutationStore{archiveErr: db.ErrNotFound}
+
+	recorder := httptest.NewRecorder()
+	handleArchiveConsoleWorkspace(store).ServeHTTP(
+		recorder,
+		consoleWorkspaceMutationRequest(http.MethodPost, "default", ""),
+	)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+	if store.archiveCalls != 1 {
+		t.Fatalf("archive calls = %d, want 1", store.archiveCalls)
+	}
+}

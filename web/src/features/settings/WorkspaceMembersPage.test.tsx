@@ -173,5 +173,5 @@ test('无可添加组织成员时禁用提交', async () => {
   const addButton = await screen.findByRole('button', { name: 'Add to Workspace' });
   fireEvent.click(addButton);
   await screen.findByText('No eligible organization members found.');
-  expect((screen.getByRole('button', { name: 'Add member' }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getAllByRole('button', { name: 'Add to Workspace' }).at(-1) as HTMLButtonElement).disabled).toBe(true);
 });

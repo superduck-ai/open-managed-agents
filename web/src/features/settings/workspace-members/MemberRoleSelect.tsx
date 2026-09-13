@@ -8,12 +8,16 @@ export function MemberRoleSelect({
   disabled,
   onChange,
   label,
+  id,
+  className,
 }: {
   value: WorkspaceMemberRole;
   billing?: boolean;
   disabled?: boolean;
   onChange: (value: WorkspaceMemberRole) => void;
   label: string;
+  id?: string;
+  className?: string;
 }) {
   const { msg } = useI18n();
   const roles = workspaceMemberRoles.filter((role) =>
@@ -29,7 +33,7 @@ export function MemberRoleSelect({
         if (next) onChange(next as WorkspaceMemberRole);
       }}
     >
-      <SelectTrigger aria-label={label}>
+      <SelectTrigger id={id} className={className} aria-label={label}>
         <SelectValue>
           {msg(
             `members.workspaceRole.${value}`,

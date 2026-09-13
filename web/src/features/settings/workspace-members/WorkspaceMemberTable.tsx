@@ -1,6 +1,13 @@
 import { ArrowUpDown, MoreVertical, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
+import {
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+  DataTableCell,
+  DataTableRow,
+} from '../../../shared/ui/data-table-interactions';
 import { Table, TableHeader, TableHead, TableRow, TableBody, TableCell } from '../../../shared/ui/table';
 import {
   DropdownMenu,
@@ -14,7 +21,6 @@ export type MemberSort = { field: 'name' | 'email' | 'workspace_role'; descendin
 export function WorkspaceMemberTable({
   members,
   loading,
-  failed,
   pending,
   sort,
   setSort,
@@ -23,7 +29,6 @@ export function WorkspaceMemberTable({
 }: {
   members: WorkspaceMember[];
   loading: boolean;
-  failed: boolean;
   pending: boolean;
   sort: MemberSort;
   setSort: (sort: MemberSort) => void;
@@ -37,11 +42,17 @@ export function WorkspaceMemberTable({
     workspace_role: msg('members.role', 'Role'),
   } as const;
   return (
-    <Table aria-label={msg('members.table.workspaceMembers', 'Workspace members')}>
+    <Table className={dataTableClassName} aria-label={msg('members.table.workspaceMembers', 'Workspace members')}>
+      <colgroup>
+        <col className="w-[30%]" />
+        <col className="w-[32%]" />
+        <col className="w-[26%]" />
+        <col className="w-[12%]" />
+      </colgroup>
       <TableHeader>
-        <TableRow>
+        <TableRow className={dataTableHeaderRowClassName}>
           {(['name', 'email', 'workspace_role'] as const).map((field) => (
-            <TableHead key={field}>
+            <TableHead key={field} className={dataTableHeaderCellClassName}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -52,7 +63,7 @@ export function WorkspaceMemberTable({
               </Button>
             </TableHead>
           ))}
-          <TableHead className="w-12">
+          <TableHead className={dataTableHeaderCellClassName}>
             <span className="sr-only">{msg('members.table.actions', 'Actions')}</span>
           </TableHead>
         </TableRow>
@@ -63,16 +74,18 @@ export function WorkspaceMemberTable({
             <TableCell colSpan={4}>{msg('members.table.loading', 'Loading members...')}</TableCell>
           </TableRow>
         ) : null}
-        {!loading && !failed && members.length === 0 ? (
+        {!loading && members.length === 0 ? (
           <TableRow>
             <TableCell colSpan={4}>{msg('members.table.empty', 'No members found.')}</TableCell>
           </TableRow>
         ) : null}
         {members.map((member) => (
-          <TableRow key={member.user_id}>
-            <TableCell className="max-w-80 truncate">{member.name || member.email}</TableCell>
-            <TableCell className="max-w-80 truncate">{member.email}</TableCell>
-            <TableCell>
+          <DataTableRow key={member.user_id}>
+            <DataTableCell edge="start" className="max-w-80 truncate">
+              {member.name || member.email}
+            </DataTableCell>
+            <DataTableCell className="max-w-80 truncate">{member.email}</DataTableCell>
+            <DataTableCell>
               {member.can_edit ? (
                 <MemberRoleSelect
                   value={member.workspace_role}
@@ -92,8 +105,8 @@ export function WorkspaceMemberTable({
                     member.workspace_role,
                 )
               )}
-            </TableCell>
-            <TableCell>
+            </DataTableCell>
+            <DataTableCell edge="end">
               {member.can_remove ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger
@@ -117,13 +130,13 @@ export function WorkspaceMemberTable({
                       }}
                     >
                       <Trash2 className="size-4" aria-hidden />
-                      {msg('members.removeMember', 'Remove member')}
+                      <span className="whitespace-nowrap">{msg('members.removeMember', 'Remove member')}</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
-            </TableCell>
-          </TableRow>
+            </DataTableCell>
+          </DataTableRow>
         ))}
       </TableBody>
     </Table>

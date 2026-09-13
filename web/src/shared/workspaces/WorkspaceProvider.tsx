@@ -232,7 +232,7 @@ export function WorkspaceProvider({
           value={{
             ...scope,
             activeWorkspace,
-            canManageWorkspaces: canManageMembers(account),
+            canManageWorkspaces: canManageMembers(account, scope.orgUuid),
             isLoading: switching,
             error,
             selectWorkspace,

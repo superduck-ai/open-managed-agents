@@ -92,11 +92,6 @@ export function WorkspaceMemberTable({
                     member.workspace_role,
                 )
               )}
-              {member.role_source === 'organization' ? (
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  {msg('members.table.inheritedFromOrganization', 'Inherited from organization')}
-                </span>
-              ) : null}
             </TableCell>
             <TableCell>
               {member.can_remove ? (

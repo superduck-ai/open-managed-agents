@@ -2059,7 +2059,6 @@
   "members.table.actions": "Actions",
   "members.table.loading": "Loading members...",
   "members.table.empty": "No members found.",
-  "members.table.inheritedFromOrganization": "Inherited from organization",
   "members.moreActionsFor": "More actions for {name}",
   "members.roleFor": "Role for {name}",
   "members.removeMember": "Remove member",

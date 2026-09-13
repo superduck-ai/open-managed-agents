@@ -2059,7 +2059,6 @@
   "members.table.actions": "操作",
   "members.table.loading": "成员加载中…",
   "members.table.empty": "暂无成员。",
-  "members.table.inheritedFromOrganization": "继承自组织",
   "members.moreActionsFor": "{name} 的更多操作",
   "members.roleFor": "{name} 的角色",
   "members.removeMember": "移除成员",

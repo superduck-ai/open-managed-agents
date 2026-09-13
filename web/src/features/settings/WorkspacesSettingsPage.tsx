@@ -113,29 +113,31 @@ export function WorkspacesSettingsPage() {
     <TooltipProvider>
       <section className="w-full">
         <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
-          <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
-            <span>{msg('nav.workspaces', 'Workspaces')}</span>
-            <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
-              {workspaces.length}
-            </Badge>
-          </h1>
-          <Tooltip>
-            <TooltipTrigger className="cursor-help text-muted-foreground">
-              <Info className="size-4" aria-hidden />
-              <span className="sr-only">
+          <div className="flex min-w-0 items-center gap-2">
+            <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
+              <span>{msg('nav.workspaces', 'Workspaces')}</span>
+              <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
+                {workspaces.length}
+              </Badge>
+            </h1>
+            <Tooltip>
+              <TooltipTrigger className="cursor-help text-muted-foreground">
+                <Info className="size-4" aria-hidden />
+                <span className="sr-only">
+                  {msg(
+                    'settings.workspaces.overview',
+                    'Workspaces are collaborative spaces where teams can separate API resources by use case.',
+                  )}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
                 {msg(
                   'settings.workspaces.overview',
                   'Workspaces are collaborative spaces where teams can separate API resources by use case.',
                 )}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs">
-              {msg(
-                'settings.workspaces.overview',
-                'Workspaces are collaborative spaces where teams can separate API resources by use case.',
-              )}
-            </TooltipContent>
-          </Tooltip>
+              </TooltipContent>
+            </Tooltip>
+          </div>
           {orgUuid && canManageWorkspaces ? (
             <CreateWorkspaceDialog
               open={createOpen}

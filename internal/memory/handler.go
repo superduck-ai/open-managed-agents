@@ -33,9 +33,8 @@ import (
 )
 
 const (
-	maxMemoryBodySize     = 1 << 20
-	maxMemoryContentBytes = 102400
-	maxMemoryPathBytes    = 1024
+	maxMemoryBodySize  = 1 << 20
+	maxMemoryPathBytes = 1024
 )
 
 type Handler struct {
@@ -778,7 +777,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			return
 		}
 		versionUUID := uuid.NewV4().String()
-		objectKey := memoryObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
+		objectKey := db.MemoryContentObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
 		contentBytes := []byte(targetContent)
 		contentSHA := sha256Hex(contentBytes)
 		if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(contentBytes), storage.UploadOptions{Size: int64(len(contentBytes)), ContentType: "text/plain; charset=utf-8"}); err != nil {
@@ -1039,7 +1038,7 @@ func (h *Handler) readObjectContent(ctx context.Context, key string, expectedSiz
 		return "", err
 	}
 	defer object.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(object.Body, maxMemoryContentBytes+1))
+	data, err := io.ReadAll(io.LimitReader(object.Body, db.MaxMemoryContentBytes+1))
 	if err != nil {
 		return "", err
 	}
@@ -1060,12 +1059,8 @@ func (h *Handler) newMemoryObjectIDs(workspaceUUID, storeUUID string) (memoryID,
 	}
 	memoryUUID = uuid.NewV4().String()
 	versionUUID = uuid.NewV4().String()
-	objectKey = memoryObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID)
+	objectKey = db.MemoryContentObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID)
 	return memoryID, versionID, memoryUUID, versionUUID, objectKey, nil
-}
-
-func memoryObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID string) string {
-	return fmt.Sprintf("workspaces/%s/memory_stores/%s/memories/%s/versions/%s/content", workspaceUUID, storeUUID, memoryUUID, versionUUID)
 }
 
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, ref db.ObjectRef) {
@@ -1158,7 +1153,7 @@ func principalActor(principal auth.Principal) db.MemoryActor {
 		return db.MemoryActor{Type: "user_actor", UserID: principal.UserExternalID}
 	}
 	return db.MemoryActor{
-		Type:             "api_actor",
+		Type:             db.MemoryActorTypeAPI,
 		APIKeyUUID:       principal.APIKeyUUID,
 		APIKeyExternalID: principal.APIKeyExternalID,
 	}
@@ -1245,7 +1240,7 @@ func parseRequiredContent(raw json.RawMessage, name string) (string, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	if len([]byte(value)) > maxMemoryContentBytes {
+	if len([]byte(value)) > db.MaxMemoryContentBytes {
 		return "", fmt.Errorf("%s must be at most 102400 bytes", name)
 	}
 	return value, nil
@@ -1262,7 +1257,7 @@ func parseOptionalContent(raw json.RawMessage, name string) (string, bool, error
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", false, fmt.Errorf("%s must be a string", name)
 	}
-	if len([]byte(value)) > maxMemoryContentBytes {
+	if len([]byte(value)) > db.MaxMemoryContentBytes {
 		return "", false, fmt.Errorf("%s must be at most 102400 bytes", name)
 	}
 	return value, true, nil
@@ -1794,6 +1789,10 @@ func (h *Handler) writeMemoryMutationError(w http.ResponseWriter, r *http.Reques
 	}
 	if errors.Is(err, db.ErrInvalidState) {
 		writeBadRequest(w, r, errors.New("memory store must not be archived"))
+		return
+	}
+	if errors.Is(err, db.ErrLimitExceeded) {
+		writeMemorySpecificError(w, r, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("Memory store may contain at most %d memories", db.MaxMemoryItemsPerStore), nil)
 		return
 	}
 	if errors.Is(err, db.ErrNotFound) {

@@ -196,6 +196,16 @@
         ORDER BY path ASC, uuid ASC
     </select>
 
+    <select id="FindByPath" result="optional" resultType="memoryRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
+        AND path = #{path}
+        AND deleted_at IS NULL
+    </select>
+
     <select id="FindPathConflict" result="optional" resultType="string">
         SELECT external_id
         FROM memories
@@ -215,6 +225,14 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND memory_store_external_id = #{memoryStoreExternalID}
         AND current_version_uuid = #{versionUUID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="CountActiveByStore" result="scalar">
+        SELECT CAST(COUNT(*) AS integer)
+        FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
         AND deleted_at IS NULL
     </select>
 

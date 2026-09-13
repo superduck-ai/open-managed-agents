@@ -5,8 +5,8 @@
 控制台补齐 Session 输入文件的最短操作路径：
 
 1. 在当前 Workspace 的 Files 页面上传文件；
-2. 在 Create Session 对话框添加 File Resource，并从当前 Workspace 的文件列表中查询选择；
-3. 提交现有 `POST /v1/sessions` 的 `resources` 字段。
+2. 在 Create Session 对话框的 Resources 里用 `+ Resource` 添加 File 或 Memory store，并从当前 Workspace 的列表中选择；
+3. 提交现有 `POST /v1/sessions` 的 `resources` 字段。Memory Store 的 Access / Instructions 见 [Memory Store Attach 表单](memory-store-attach-form.md)，走同一套 Resource 卡片，不走独立多选。
 
 后端的 filesystem、输入引用、只读挂载和 Files API 投影统一由 [Filestore 设计](../be/filestore.md)定义，本文只描述前端接口。
 

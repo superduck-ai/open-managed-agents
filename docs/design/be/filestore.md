@@ -24,7 +24,7 @@
 
 Filestore 是现有单体中的独立资源切片。handler 负责 wire contract 和流式 HTTP，service 负责校验及业务编排，`internal/db` 负责事务和租户范围内的持久化。对象读写、错误分类和版本清理统一交给绑定单个 bucket 的 `internal/storage.ObjectStore`；生产环境由共享 `storage.Client` 复用 AWS SDK 连接，再按名称派生轻量对象存储。
 
-Service 在完成请求校验和 filesystem 租户鉴权后，通过 `pathRouter` 把 list、file read 和 metadata read 分发给持久化 backend 或只读虚拟 backend。普通 namespace 的读取由持久化 backend 访问数据库和对象存储，`/skills` 的 archive 索引、缓存与成员读取由独立 skill backend 处理。虚拟 backend 自己声明读取匹配范围，router 则统一拒绝对其整棵 namespace 的 mutation；普通写入仍由 Service 编排既有数据库事务和对象存储操作。这样新增只读虚拟 namespace 时只需注册新的 backend，不需要在每个 Filestore API 入口增加特例。
+Service 在完成请求校验和 filesystem 租户鉴权后，通过 `pathRouter` 把 list、file read 和 metadata read 分发给持久化 backend、只读虚拟 backend 或可写 Memory backend。普通 namespace 的读取由持久化 backend 访问数据库和对象存储，`/skills` 的 archive 索引、缓存与成员读取由独立 skill backend 处理，`/memory/{slug}` 由 Memory backend 映射到当前 Session 已挂载 store 的三表头与 S3 正文。虚拟只读 backend 自己声明读取匹配范围，router 则统一拒绝对其整棵 namespace 的 mutation；`/memory/{slug}` 的写入走 Memory backend，写入 Memory 三表而不是 filesystem 固定根。覆盖式 `moveFile` 在同一事务中软删目标并改源 path；相同正文的 `createFile` 不新建 version，并丢弃刚上传、未被引用的 object；非 0 `ttlSeconds` 拒绝，因为 Memory 没有 Filestore 过期。普通写入仍由 Service 编排既有数据库事务和对象存储操作。JWT 仍然只绑定 filesystem，不含 slug；slug 是否已挂载由 Session 快照在请求时解析。
 
 Filestore 还拥有独立的 `filestore.Principal`。API 中间件完成专用 JWT 验证与数据库回查后，只把资源所需的租户、account、filesystem 和策略范围映射到该类型，并通过 Filestore 私有的 context key 交给 handler。全局 `auth.Principal` 不保存 `filesystem_id`、`readonly`、`org_taints` 或 CMEK 等 Filestore 专属状态；Filestore handler/service 也不依赖全局 Principal。
 
@@ -37,10 +37,13 @@ flowchart LR
     S --> PR["pathRouter"]
     PR --> PB["persistent read backend"]
     PR --> SB["skill read backend"]
+    PR --> MB["memory path backend"]
     PB --> D
     PB --> T
     SB --> D
     SB --> T
+    MB --> D
+    MB --> T
     S --> D["PostgreSQL namespace"]
     S --> T["default storage.ObjectStore"]
     SC["shared storage.Client"] --> T
@@ -118,7 +121,7 @@ curl -H "Authorization: Bearer ${FILESTORE_TOKEN}" http://127.0.0.1:38080/v1/fil
 
 当前公开合同没有 filesystem 创建接口，Filestore 鉴权也不会根据其他凭证惰性建档。public Session 创建事务会自动建立唯一 filesystem，并在同一事务中建立 `/outputs`、`/skills`、`/uploads`、`/transcripts`、`/tool_results` 五个固定一级目录；JWT 在 sandbox 启动等受信边界按需签发，不持久化。请求改用同 workspace 的其他 filesystem、同名 filesystem 已被其他 Session 绑定，或数据库记录尚未创建时，都必须拒绝，不能改绑或泄露其存在性。每次鉴权还会回查所属 Session；Session 一旦归档、终止或删除，既有 JWT 立即失效。
 
-五个一级目录是 Sandbox 运行时合同，不是普通用户目录：通用 Filestore mutation 不能移动或删除固定根、覆盖固定根，也不能把目录跨固定根边界移动；同一普通固定根内部的目录移动和删除仍按既有规则执行。`/skills` 进一步保留为全树只读命名空间，其后代由 Skill Archive Resource 动态生成，任何以 `/skills` 为 source 或 destination 的 mutation 都由服务层拒绝。
+五个一级目录是 Sandbox 运行时合同，不是普通用户目录：通用 Filestore mutation 不能移动或删除固定根、覆盖固定根，也不能把目录跨固定根边界移动；同一普通固定根内部的目录移动和删除仍按既有规则执行。`/skills` 进一步保留为全树只读命名空间，其后代由 Skill Archive Resource 动态生成，任何以 `/skills` 为 source 或 destination 的 mutation 都由服务层拒绝。`/memory/{slug}` 不是第六个 filesystem 固定根：它不出现在 Session 建档的五个目录里，也不进入 JWT；只有当前 Session 快照已挂载的 slug 才由 Memory backend 承接读写，并写入 Memory 三表与对象存储。`/memory` 本身和 `/memory/MEMORY.md` 不属于该命名空间。
 
 `filesystemId` 同时允许 tagged external ID 和 UUID。查询同时命中两列时必须优先选择精确 `external_id`，仅在 external ID 未命中时才按内部 UUID 解析；JWT scope 回查与资源层查询使用相同优先级，避免跨命名空间的非确定选择。
 
@@ -135,12 +138,13 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 | `/transcripts`  | `/mnt/transcripts`            | 只读 | 10s            |
 | `/tool_results` | `/mnt/user-data/tool_results` | 只读 | 3s             |
 | `/skills`       | `/root/.claude/skills`        | 只读 | 60s            |
+| `/memory/{slug}` | `/mnt/memory/{slug}`        | 快照 `read_write` / `read_only` | 1s |
 
-五个挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token 并设置 `readonly=true`；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
+五个固定挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个固定 source 共享只读 Token 并设置 `readonly=true`。有 memory store 时，rclone 按 Session 快照追加 N 条 `/memory/{slug}` → `/mnt/memory/{slug}`：`read_write` 使用读写 Token，`read_only` 使用只读 Token 且 `readonly=true`；cache 为 `1s`。父目录 `/mnt/memory` 由 Runner `mkdir -p` 创建在本地盘上，不是 Filestore mount，也不是第 N+1 条 rclone。两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。ready marker 表示配置中的全部 mount（5+N）已可用；随后 Runner 才把 `MEMORY.md` 写到本地 `/mnt/memory/MEMORY.md`。
 
 OMA 在 Managed Agent 的 `appendSystemPrompt` 中同步声明这组公开路径与 sandbox 路径的映射：上传输入使用 `/mnt/session/uploads/<relative-path>`，用户可下载的输出使用 `/mnt/user-data/outputs/<relative-path>`。提示词为用户提到的文件名或相对路径规定固定查找顺序：先尝试 `/mnt/session/uploads/<relative-path>`，必要时调用显式设置 `path=/mnt/session/uploads` 的 Glob 递归查找，只有 uploads 未命中后才搜索工作目录；两处都检查前不得报告文件不存在。Claude 只能使用实际命中的上传路径，不截断、改名或从 `file_id` 推断文件名；写入输出挂载的文件会投影为 `/outputs/<relative-path>` 并进入该 Session 的 Files API Catalog。普通仓库编辑仍留在工作目录，只有用户交付物写入 outputs。
 
-Runner 不执行独立的 mount preparation；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
+Runner 不为五个固定盘单独准备挂载目录；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。有 memory store 时 Runner 会先 `mkdir -p /mnt/memory`，再启动 rclone。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
 
@@ -404,7 +408,7 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 
 ## 验收
 
-自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。
+自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期，以及 `tests/environments_memory_sandbox_e2e_test.go` 的跨 Session memory 寿命。
 
 ## 长期 idle 回收的文件边界
 

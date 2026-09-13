@@ -46,11 +46,12 @@ type filestoreDatabase interface {
 // Service 编排 Filestore 的鉴权上下文、元数据事务与对象存储操作。
 // 数据库负责命名空间一致性，对象存储负责字节内容，两者通过持久化清理任务实现最终一致。
 type Service struct {
-	cfg   config.Config
-	db    filestoreDatabase
-	store storage.ObjectStore
-	now   func() time.Time
-	paths pathRouter
+	cfg    config.Config
+	db     filestoreDatabase
+	store  storage.ObjectStore
+	now    func() time.Time
+	paths  pathRouter
+	memory *memoryPathBackend
 }
 
 type readFileResult struct {
@@ -67,16 +68,26 @@ func NewService(cfg config.Config, database filestoreDatabase, store storage.Obj
 		store: store,
 		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
 	}
-	return &Service{
+	service := &Service{
 		cfg:   cfg,
 		db:    database,
 		store: store,
 		now:   time.Now,
-		paths: pathRouter{
-			persistent: persistent,
-			readOnly:   []readOnlyPathBackend{skills},
-		},
 	}
+	memory := &memoryPathBackend{
+		store: store,
+		now:   func() time.Time { return service.now() },
+	}
+	if memories, ok := database.(memoryFilestoreStore); ok {
+		memory.memories = memories
+	}
+	service.memory = memory
+	service.paths = pathRouter{
+		persistent: persistent,
+		memory:     memory,
+		readOnly:   []readOnlyPathBackend{skills},
+	}
+	return service
 }
 
 // ListDirectory 按路径与内部 ID 的稳定顺序列出目录，使用键集游标避免 offset 分页漂移。
@@ -112,6 +123,9 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
+	if parsed, ok := parseMemoryFilestorePath(request.Path); ok {
+		return s.memory.makeDirectory(ctx, principal, filesystem, parsed, request.Path)
+	}
 	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
@@ -136,6 +150,9 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return apiErr
+	}
+	if parsed, ok := parseMemoryFilestorePath(request.Path); ok {
+		return s.memory.removeDirectory(ctx, principal, filesystem, parsed)
 	}
 	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return apiErr
@@ -165,6 +182,9 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, params.FilesystemID)
 	if apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if parsed, ok := parseMemoryFilestorePath(params.Path); ok {
+		return s.memory.createFile(ctx, principal, filesystem, parsed, params, body)
 	}
 	if apiErr := s.paths.authorizeMutation(params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
@@ -252,6 +272,13 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
+	sourcePath, destPath, sameStore, claimed := classifyMemoryTransfer(request.Source, request.Destination)
+	if claimed && !sameStore {
+		return fileResponse{}, invalidArgument("cannot copy or move across the memory namespace boundary")
+	}
+	if sameStore {
+		return s.memory.copyFile(ctx, principal, filesystem, sourcePath, destPath)
+	}
 	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -325,6 +352,13 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
+	sourcePath, destPath, sameStore, claimed := classifyMemoryTransfer(request.Source, request.Destination)
+	if claimed && !sameStore {
+		return fileResponse{}, invalidArgument("cannot copy or move across the memory namespace boundary")
+	}
+	if sameStore {
+		return s.memory.moveFile(ctx, principal, filesystem, sourcePath, destPath)
+	}
 	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -360,6 +394,9 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
+	}
+	if _, _, _, claimed := classifyMemoryTransfer(request.Source, request.Destination); claimed {
+		return directoryResponse{}, failedPrecondition("memory namespace directories are virtual")
 	}
 	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return directoryResponse{}, apiErr
@@ -398,6 +435,9 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return apiErr
+	}
+	if parsed, ok := parseMemoryFilestorePath(request.Path); ok {
+		return s.memory.removeFile(ctx, principal, filesystem, parsed)
 	}
 	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return apiErr

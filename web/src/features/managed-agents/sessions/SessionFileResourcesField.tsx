@@ -1,4 +1,4 @@
-import { ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Database, FileText, Plus, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '@/shared/i18n';
 import { Button, ButtonLink } from '@/shared/ui/button';
@@ -15,7 +15,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/shared/ui/input-group';
 import { listSessionFileOptions } from '../api';
-import type { FileMetadataApiResponse, SessionFileResourceFormValue } from '../types';
+import { MemoryStoreResourceCards } from '../resources/MemoryStoresAttachField';
+import { emptyMemoryAttach, MAX_MEMORY_ATTACHES } from '../resources/memory-attach';
+import type {
+  EntityOption,
+  FileMetadataApiResponse,
+  MemoryAttachFormValue,
+  SessionFileResourceFormValue,
+} from '../types';
 import { formatBytes } from '../utils';
 import { hasSessionFileMountPath, isValidSessionFileMountPath, SESSION_FILE_UPLOADS_ROOT } from './file-resource-path';
 
@@ -24,27 +31,35 @@ export function SessionFileResourcesField({
   showAddButton = true,
   workspaceId,
   onChange,
+  memoryAttaches = [],
+  memoryStoreOptions = [],
+  onMemoryAttachesChange,
 }: {
   resources: SessionFileResourceFormValue[];
   showAddButton?: boolean;
   workspaceId: string;
-  onChange: (resources: SessionFileResourceFormValue[]) => void;
+  onChange?: (resources: SessionFileResourceFormValue[]) => void;
+  memoryAttaches?: MemoryAttachFormValue[];
+  memoryStoreOptions?: EntityOption[];
+  onMemoryAttachesChange?: (attaches: MemoryAttachFormValue[]) => void;
 }) {
   const { msg } = useI18n();
+  const includeFiles = Boolean(onChange);
+  const includeMemory = Boolean(onMemoryAttachesChange);
   const filesQuery = useQuery({
     queryKey: ['managed-agents', 'session-file-options', workspaceId],
     queryFn: () => listSessionFileOptions(workspaceId),
-    enabled: resources.length > 0 && Boolean(workspaceId),
+    enabled: includeFiles && resources.length > 0 && Boolean(workspaceId),
     retry: false,
   });
   const files = filesQuery.data?.data ?? [];
   const updateResource = (index: number, patch: Partial<SessionFileResourceFormValue>) => {
-    onChange(
+    onChange?.(
       resources.map((resource, resourceIndex) => (resourceIndex === index ? { ...resource, ...patch } : resource)),
     );
   };
   const removeResource = (index: number) => {
-    onChange(resources.filter((_, resourceIndex) => resourceIndex !== index));
+    onChange?.(resources.filter((_, resourceIndex) => resourceIndex !== index));
   };
 
   return (
@@ -54,97 +69,108 @@ export function SessionFileResourcesField({
           {msg('managedAgents.sessions.resources.title', 'Resources')}
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          {msg('managedAgents.sessions.resources.description', 'Mount files into the session uploads directory.')}
+          {msg('managedAgents.sessions.resources.description', 'Mount files or memory stores into the session.')}
         </p>
       </div>
 
-      {resources.map((resource, index) => {
-        const selectedFilename = files.find((file) => file.id === resource.fileId)?.filename;
-        const mountPathInvalid =
-          hasSessionFileMountPath(resource.mountPath) && !isValidSessionFileMountPath(resource.mountPath);
-        return (
-          <Card key={index} size="sm" className="mx-px gap-3 py-3">
-            <CardHeader className="grid-cols-[1fr_auto] items-center px-3">
-              <CardTitle className="flex items-center gap-2 text-sm">
-                <FileText className="size-4 text-muted-foreground" aria-hidden />
-                {msg('managedAgents.sessions.resources.typeFile', 'File')}
-              </CardTitle>
-              <CardAction>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={msg('managedAgents.sessions.resources.removeFile', 'Remove file resource {index}', {
-                    index: index + 1,
-                  })}
-                  onClick={() => removeResource(index)}
-                >
-                  <Trash2 aria-hidden />
-                </Button>
-              </CardAction>
-            </CardHeader>
-            <CardContent className="space-y-3 px-3">
-              <Field>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-1">
-                    <FieldLabel htmlFor={`session-file-id-${index}`}>
-                      {msg('managedAgents.sessions.resources.fileId', 'File ID')}
+      {includeFiles
+        ? resources.map((resource, index) => {
+            const selectedFilename = files.find((file) => file.id === resource.fileId)?.filename;
+            const mountPathInvalid =
+              hasSessionFileMountPath(resource.mountPath) && !isValidSessionFileMountPath(resource.mountPath);
+            return (
+              <Card key={`file-${index}`} size="sm" className="mx-px gap-3 py-3">
+                <CardHeader className="grid-cols-[1fr_auto] items-center px-3">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <FileText className="size-4 text-muted-foreground" aria-hidden />
+                    {msg('managedAgents.sessions.resources.typeFile', 'File')}
+                  </CardTitle>
+                  <CardAction>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={msg('managedAgents.sessions.resources.removeFile', 'Remove file resource {index}', {
+                        index: index + 1,
+                      })}
+                      onClick={() => removeResource(index)}
+                    >
+                      <Trash2 aria-hidden />
+                    </Button>
+                  </CardAction>
+                </CardHeader>
+                <CardContent className="space-y-3 px-3">
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-1">
+                        <FieldLabel htmlFor={`session-file-id-${index}`}>
+                          {msg('managedAgents.sessions.resources.fileId', 'File ID')}
+                        </FieldLabel>
+                        <span className="text-destructive" aria-hidden>
+                          *
+                        </span>
+                      </div>
+                      <ButtonLink
+                        href={`/workspaces/${encodeURIComponent(workspaceId)}/files`}
+                        target="_blank"
+                        rel="noreferrer"
+                        variant="link"
+                        size="xs"
+                      >
+                        {msg('managedAgents.sessions.resources.manageFiles', 'Manage files')}
+                      </ButtonLink>
+                    </div>
+                    <SessionFileCombobox
+                      id={`session-file-id-${index}`}
+                      files={files}
+                      loading={filesQuery.isPending}
+                      failed={filesQuery.isError}
+                      value={resource.fileId}
+                      onChange={(fileId) => updateResource(index, { fileId })}
+                    />
+                  </Field>
+                  <Field data-invalid={mountPathInvalid}>
+                    <FieldLabel htmlFor={`session-file-mount-path-${index}`}>
+                      {msg('managedAgents.sessions.resources.mountPathOptional', 'Mount path (optional)')}
                     </FieldLabel>
-                    <span className="text-destructive" aria-hidden>
-                      *
-                    </span>
-                  </div>
-                  <ButtonLink
-                    href={`/workspaces/${encodeURIComponent(workspaceId)}/files`}
-                    target="_blank"
-                    rel="noreferrer"
-                    variant="link"
-                    size="xs"
-                  >
-                    {msg('managedAgents.sessions.resources.manageFiles', 'Manage files')}
-                  </ButtonLink>
-                </div>
-                <SessionFileCombobox
-                  id={`session-file-id-${index}`}
-                  files={files}
-                  loading={filesQuery.isPending}
-                  failed={filesQuery.isError}
-                  value={resource.fileId}
-                  onChange={(fileId) => updateResource(index, { fileId })}
-                />
-              </Field>
-              <Field data-invalid={mountPathInvalid}>
-                <FieldLabel htmlFor={`session-file-mount-path-${index}`}>
-                  {msg('managedAgents.sessions.resources.mountPathOptional', 'Mount path (optional)')}
-                </FieldLabel>
-                <InputGroup>
-                  <InputGroupAddon align="inline-start" className="shrink-0 pr-0">
-                    <InputGroupText className="text-foreground">{SESSION_FILE_UPLOADS_ROOT}/</InputGroupText>
-                  </InputGroupAddon>
-                  <InputGroupInput
-                    id={`session-file-mount-path-${index}`}
-                    value={resource.mountPath}
-                    placeholder={
-                      selectedFilename ?? msg('managedAgents.sessions.resources.mountPlaceholder', 'filename')
-                    }
-                    aria-invalid={mountPathInvalid}
-                    onChange={(event) => updateResource(index, { mountPath: event.currentTarget.value })}
-                  />
-                </InputGroup>
-                <FieldDescription>
-                  {msg(
-                    'managedAgents.sessions.resources.mountHelp',
-                    'Files are mounted in the container under {path}.',
-                    {
-                      path: `${SESSION_FILE_UPLOADS_ROOT}/`,
-                    },
-                  )}
-                </FieldDescription>
-              </Field>
-            </CardContent>
-          </Card>
-        );
-      })}
+                    <InputGroup>
+                      <InputGroupAddon align="inline-start" className="shrink-0 pr-0">
+                        <InputGroupText className="text-foreground">{SESSION_FILE_UPLOADS_ROOT}/</InputGroupText>
+                      </InputGroupAddon>
+                      <InputGroupInput
+                        id={`session-file-mount-path-${index}`}
+                        value={resource.mountPath}
+                        placeholder={
+                          selectedFilename ?? msg('managedAgents.sessions.resources.mountPlaceholder', 'filename')
+                        }
+                        aria-invalid={mountPathInvalid}
+                        onChange={(event) => updateResource(index, { mountPath: event.currentTarget.value })}
+                      />
+                    </InputGroup>
+                    <FieldDescription>
+                      {msg(
+                        'managedAgents.sessions.resources.mountHelp',
+                        'Files are mounted in the container under {path}.',
+                        {
+                          path: `${SESSION_FILE_UPLOADS_ROOT}/`,
+                        },
+                      )}
+                    </FieldDescription>
+                  </Field>
+                </CardContent>
+              </Card>
+            );
+          })
+        : null}
+
+      {includeMemory && onMemoryAttachesChange ? (
+        <MemoryStoreResourceCards
+          attaches={memoryAttaches}
+          options={memoryStoreOptions}
+          workspaceId={workspaceId}
+          onChange={onMemoryAttachesChange}
+        />
+      ) : null}
 
       {showAddButton ? (
         <DropdownMenu>
@@ -158,10 +184,21 @@ export function SessionFileResourcesField({
             }
           />
           <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => onChange([...resources, { fileId: '', mountPath: '' }])}>
-              <FileText aria-hidden />
-              {msg('managedAgents.sessions.resources.typeFile', 'File')}
-            </DropdownMenuItem>
+            {includeFiles ? (
+              <DropdownMenuItem onClick={() => onChange?.([...resources, { fileId: '', mountPath: '' }])}>
+                <FileText aria-hidden />
+                {msg('managedAgents.sessions.resources.typeFile', 'File')}
+              </DropdownMenuItem>
+            ) : null}
+            {includeMemory ? (
+              <DropdownMenuItem
+                disabled={memoryAttaches.length >= MAX_MEMORY_ATTACHES}
+                onClick={() => onMemoryAttachesChange?.([...memoryAttaches, emptyMemoryAttach()])}
+              >
+                <Database aria-hidden />
+                {msg('managedAgents.memoryStores.kindTitle', 'Memory store')}
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}

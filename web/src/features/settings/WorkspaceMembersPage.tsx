@@ -102,9 +102,9 @@ export function WorkspaceMembersPage() {
     >
       {isDefault ? (
         <Alert>
-          <Info aria-hidden />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
+            <span className="flex items-center gap-2">
+              <Info aria-hidden className="size-4 shrink-0" />
               {msg('members.defaultNotice', 'Members for the default workspace are managed at the organization level.')}
             </span>
             <ButtonLink href="/settings/members" variant="secondary" className="shrink-0">
@@ -135,6 +135,7 @@ export function WorkspaceMembersPage() {
         <AddWorkspaceMemberDialog
           orgUuid={orgUuid ?? ''}
           workspaceId={workspaceId}
+          workspaceName={activeWorkspace.name}
           open
           onClose={() => setAdding(false)}
           pending={mutation.isPending}

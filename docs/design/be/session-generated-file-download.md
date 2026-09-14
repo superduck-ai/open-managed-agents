@@ -44,7 +44,7 @@ OMA 现状：
 - 上传文件：`internal/files` 硬编码 `Downloadable: false`（对齐官方实际行为 ✅）
 - 生成文件：通过 rclone FUSE / filestore 路径写入，已作为 Owned File 落库（`files` 表，`Downloadable: true`）✅
 - **缺口 1（#261）**：生成文件是否真正能通过 `GET /v1/files/{id}/content` 下载，未经验证
-- **缺口 2（#258）**：`GET /v1/sessions/{session_id}` 的 `resources[]` 对输出文件（`payload` 为 NULL）只返回 `{id,type,created_at,updated_at}`，**缺 `file_id` 与 `mount_path`**，前端无法展示输出文件
+- **缺口 2（#258）**：`GET /v1/sessions/{session_id}` 的 `resources[]` 尚未纳入 `file_ownership='owned'` 的 `/outputs/` 文件，前端无法展示输出文件
 
 本方案目标是**打通生成文件的下载闭环（#261，对齐官方），并补齐 Get Session 资源中的 `file_id`/`mount_path`（#258，OMA 前端展示增强——官方契约仅要求 `files.list(scope_id)` 能列出输出文件，未要求 Get Session 返回它们）**。
 
@@ -62,28 +62,28 @@ OMA 现状：
 
 ### 2. `files.list` 的可见性已由 `visibleFilePredicate` 限定（对齐官方）
 
-`internal/db/file_mapper.xml:9-22` 的 `visibleFilePredicate`：
+`internal/db/file_mapper.xml` 的 `visibleFilePredicate`：
 
 ```sql
 AND (
     NOT EXISTS (
-        -- 普通文件（payload 非空）恒可见
-        SELECT 1 FROM session_resources owner
-        WHERE owner.file_uuid = files.uuid AND owner.workspace_uuid = files.workspace_uuid
-          AND owner.payload IS NULL
+                -- Filestore-owned File 与 Skill Archive 不走普通 Files 列表规则
+                SELECT 1 FROM session_resources owner
+                WHERE owner.file_uuid = files.uuid AND owner.workspace_uuid = files.workspace_uuid
+                  AND (owner.file_ownership = 'owned' OR owner.resource_type = 'skill_archive')
     )
     OR EXISTS (
-        -- Owned File（payload IS NULL）仅当：活动（未删除、未过期）且路径在 /outputs/ 下可见
-        SELECT 1 FROM session_resources owner
-        WHERE owner.file_uuid = files.uuid AND owner.workspace_uuid = files.workspace_uuid
-          AND owner.payload IS NULL AND owner.deleted_at IS NULL
+                -- Owned File 仅当活动且位于 /outputs/ 下可见
+                SELECT 1 FROM session_resources owner
+                WHERE owner.file_uuid = files.uuid AND owner.workspace_uuid = files.workspace_uuid
+                  AND owner.file_ownership = 'owned' AND owner.deleted_at IS NULL
           AND (owner.expires_at IS NULL OR owner.expires_at > now())
           AND left(owner.path, char_length('/outputs/')) = '/outputs/'
     )
 )
 ```
 
-语义：**上传文件（payload 非空）与 `/outputs` 下活动 Owned File 在 Files API 可见**；已删除、过期、或移出 `/outputs` 的生成文件不可见。这是官方「生成文件可下载、上传文件不可下载」的 SQL 级实现。
+语义：**未被 owned/Skill Archive 节点占有的普通 File，以及 `/outputs` 下活动 Owned File 在 Files API 可见**；Skill Archive 和已删除、过期或移出 `/outputs` 的生成文件不可见。可见性与对象生命周期由显式 `file_ownership` 决定，不依赖公开 Resource 字段。
 
 ### 3. 下载端点逻辑完整，理论上已支持生成文件
 
@@ -95,22 +95,11 @@ AND (
 
 生成文件满足「可见（在 `/outputs`）+ `Downloadable=true`」→ **理论上已能下载**。上传文件 `Downloadable=false` → 400（对齐官方）。
 
-### 4. 真正的缺口：Get Session 不返回输出文件，且资源缺 `file_id`
+### 4. 真正的缺口：公开 Session 查询未投影 Output File
 
-**缺口 4a（比缺 `file_id` 更严重）**：`SessionResourceMapper.List`（`session_resource_mapper.xml:37-45`）带 **`AND payload IS NOT NULL`** 过滤——**Output Resource（payload 为 NULL）根本不会被 `ListSessionResources` 返回**。因此 `GET /v1/sessions/{id}` 的 `resources[]` **当前完全不包含输出文件**，#258 验收项 2「输出文件出现在同一资源集合」**未实现**。
+Session Resource 已使用显式列描述各种资源：普通文件由 `file_uuid`、`file_ownership`、`path` 与 `mount_path` 表达，GitHub Repository 和 Memory Store 也各有专用列。缺口不再是解析某个通用 JSON 字段，而是公开查询尚未把活动的 `owned + /outputs/` 节点连同对应 File 一起投影。
 
-**缺口 4b（缺 `file_id` 的根因）**：`SessionResourceFileMapper.resourceFileSource`（`session_resource_file_mapper.xml:5-47`）的 `source_file_uuid` 定义为：
-
-```sql
-CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
-```
-
-- **Input Resource**（payload 非空）：`source_file_uuid` 指向 Source File（上传文件），`file_id` 在 payload 中 ✅
-- **Output Resource**（payload 为 NULL）：`file_uuid` 指向 Owned File（生成文件），但该投影**未暴露 Owned File 的 `external_id`（`file_` ID）** ❌
-
-同时 `sessionResourceColumns`（`session_resource_mapper.xml:3-7`）**不含 `path` 字段**，`SessionResource` 行结构既没有公开路径也没有 Owned File 的 `external_id`（`session_resource_mapper.go` 仅有写入参数）。因此改动前的 `responseFromResource` 对输出文件只能返回 `{id, type, created_at, updated_at}`，无法回填 `file_id`/`mount_path`。
-
-`resource_type` 语义（`session_resource_mapper.xml:147,190,321`）：**Output Resource 的 `resource_type='file'`，payload=NULL**；目录、skill archive 各有独立类型。这为「去掉 payload 过滤后区分输出文件」提供了依据。
+公开查询必须在同一个 JOIN 中取得 File 的 `external_id`，并按 `resource_type` 与显式字段构造响应；目录、Skill Archive、过期节点和 File 已退休的残缺节点必须失败关闭。
 
 ## 方案
 
@@ -128,7 +117,7 @@ CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
 
 **读取原子性前提（评审后修正）**：Owned File 的 `external_id` 必须与 Session Resource **同批读出**。`retireSessionResourceFileTx`（`session_resource_file_helpers.go:425-443`）在同一事务里先退休 `files` 行再退休 `session_resources` 行，因此稳态下不存在「File 已删、Resource 仍活」；但**分两次独立查询**会在事务提交的间隙返回缺少 `file_id` 的输出资源，违反 #258 验收项。同时 Session 列表逐条构造响应（`service.go:229`，limit 上限 1000），额外一次 File 查询会把既有 N 次放大到 2N。两个问题的同一个解法是 **JOIN**：
 
-1. **`List` / `FindByExternalID` 改为 `LEFT JOIN files` 并收窄可见性**（`session_resource_mapper.xml`）：
+1. **`List` / `FindByExternalID` 使用 `LEFT JOIN files` 并收窄可见性**（`session_resource_mapper.xml`）：
    ```sql
    FROM session_resources resource
    LEFT JOIN files file
@@ -139,43 +128,48 @@ CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
    AND resource.session_external_id = #{sessionExternalID}
    AND resource.deleted_at IS NULL
    AND (
-       resource.payload IS NOT NULL
-       OR (
-           resource.resource_type = 'file'
-           AND left(resource.path, char_length('/outputs/')) = '/outputs/'
+       (resource.resource_type = 'file' AND file.uuid IS NOT NULL
            AND (resource.expires_at IS NULL OR resource.expires_at > now())
-           AND file.uuid IS NOT NULL
-       )
+           AND (
+               (resource.file_ownership = 'referenced' AND resource.path LIKE '/uploads/%')
+               OR (resource.file_ownership = 'owned' AND resource.path LIKE '/outputs/%')
+           ))
+       OR (resource.resource_type = 'github_repository'
+           AND resource.github_repository_url IS NOT NULL
+           AND resource.mount_path IS NOT NULL)
+       OR (resource.resource_type = 'memory_store' AND memory_store.uuid IS NOT NULL)
    )
    ```
    - 目录、skill archive 等其他资源**仍被排除**（不进入返回集合），无需在响应层二次区分
    - `expires_at` 过滤与 `visibleFilePredicate`（`file_mapper.xml:9-29`）对齐，带 TTL 的过期输出文件不可见
    - `file.uuid IS NOT NULL` 保证输出资源必然带 `file_id`，不会返回残缺资源
-   - `SessionResource` 新增 `Path` 与 `FileExternalID` 字段（`sessionResourceListColumns` 含 `resource.path` 与 `file.external_id AS file_external_id`）；写入语句的 RETURNING 保持原列集，避免引用未插入列
+   - Mapper 行把 `file.external_id`、`resource.path` 与 `resource.file_ownership` 映射为命名的 `SessionResource.File` 领域对象；写入语句的 RETURNING 保持自己的列集
    - 两条读取语句都走 JOIN，因此单资源 GET 与列表行为一致，不需要额外加载步骤
 
 2. **`responseFromResource` 回填**（`service_helpers.go`）：
-   - `isOutputResource` 判断：**path 前缀 `/outputs/`**（`strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")`，与 SQL 的 `/outputs/` 判断一致）
-   - Output Resource：直接使用同批 JOIN 出的 `resource.FileExternalID` 作为 `file_id`，`resource.Path` 作为 `mount_path`（`/outputs/<relative-path>`）
-   - Input Resource（payload 非空，`file_id` 在 payload）：保持现状
-   - Output Resource 的 payload 为空，**跳过 `json.Unmarshal`**（空 payload 必然失败，白做）；直接建空 map
+   - File Resource 无论 referenced Input 还是 owned Output，都直接读取 `resource.File.FileID` 与 `resource.File.NamespacePath`
+   - GitHub Repository 与 Memory Store 从各自命名领域对象构造，不依赖 File 字段
    - 保持纯函数签名 `responseFromResource(resource)`，不需要传入预加载映射
 
 **性能结论**：每个 Session 仍是 1 次资源查询，Session 列表维持既有 N 次往返，不引入新的 N+1。JOIN 只多取 `files.external_id` 一列，且 CLAUDE.md 允许「确实读取目标表字段」的 JOIN。
 
-**响应长度上限（评审后补齐）**：改动前 `resources[]` 被写入侧的 500 上限兜住（`sessionresource.ValidateFileSpecs` + `enforceSessionFileResourceCapacityTx`）。输出资源不吃这个配额——`CountSessionFileResources`（`session_resource_mapper.xml`）带 `payload IS NOT NULL`，Filestore 写入侧只校验 workspace 字节配额、不限文件数——所以让输出文件进入 `resources[]` 会把长度变成无上限，并被 List Sessions（limit 上限 1000）放大。`List` 因此在 SQL 层自己截断：
+**响应长度上限（评审后补齐）**：referenced Input 在写入侧受 500 上限保护；Filestore-owned Output 只校验 workspace 字节配额、不限文件数。因此 `List` 在 SQL 层单独截断 Output：
 
 ```sql
 SELECT ... , row_number() OVER (
-    PARTITION BY (resource.payload IS NULL)
+    PARTITION BY (
+        resource.resource_type = 'file'
+        AND resource.file_ownership = 'owned'
+        AND resource.path LIKE '/outputs/%'
+    )
     ORDER BY resource.created_at DESC, resource.uuid DESC
 ) AS output_rank
 ...
-WHERE resource.payload IS NOT NULL
-OR resource.output_rank <= #{maxOutputResources}
+WHERE resource.file_ownership IS DISTINCT FROM 'owned'
+   OR resource.output_rank <= #{maxOutputResources}
 ```
 
-- `PARTITION BY (resource.payload IS NULL)` 让用户资源与输出文件各自排名，**用户资源不受截断**（它们已有写入侧上限）
+- 显式 owned `/outputs/` 条件让普通用户资源与输出文件各自排名，**用户资源不受截断**
 - 输出文件保留 `created_at DESC` 最近的 `MaxSessionOutputFileResources` 条（`db.MaxSessionOutputFileResources = sessioncontract.MaxFileResources`，即 500），与写入侧同一水位，正常用量下行为与改动前完全一致
 - 超过上限时是**静默截断**：`resources[]` 只承载最近 500 个输出文件，**完整集合以 `files.list(scope_id)` 为准**（官方契约本身也只要求 `files.list` 能列全输出文件）
 - `FindByExternalID` 不需要截断（单行查询），因此被截断的输出资源仍可按 ID 单独取回
@@ -184,13 +178,13 @@ OR resource.output_rank <= #{maxOutputResources}
 
 ### 改动 3（评审补充）：输出资源在单资源路由上的语义
 
-去掉 `payload IS NOT NULL` 后，输出资源开始能被 `FindByExternalID` 查到，三条单资源路由的行为随之变化：
+公开可见性加入 owned Output 后，三条单资源路由的行为如下：
 
 | 路由 | 改动前 | 改动后 | 依据 |
 |---|---|---|---|
-| `GET /v1/sessions/{id}/resources/{rid}` | 404（被 payload 过滤挡住） | 200，带 `file_id`/`mount_path` | `FindByExternalID` 走同一可见性 SQL |
+| `GET /v1/sessions/{id}/resources/{rid}` | 404 | 200，带 `file_id`/`mount_path` | `FindByExternalID` 走同一显式可见性 SQL |
 | `PATCH .../resources/{rid}` | 404 | 400 `only github_repository resources can be updated` | `service.go:683` 的类型检查 |
-| `DELETE .../resources/{rid}` | 404 | **仍是 404** | `GetSessionResourceForMutation`（`session_resource_mapper.xml:132`）保留 `payload IS NOT NULL` |
+| `DELETE .../resources/{rid}` | 404 | **仍是 404** | mutation 查询只允许可变更的 referenced/GitHub/Memory Store 资源，拒绝 owned Output |
 
 GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属于 Filestore/Files API（`RemoveFilestoreFile` 与清理 worker 成对退休 `files` 与 `session_resources`），不允许通过 Session Resource 路由单边删除 Resource 行而留下孤立 File 行。读取路径开放、写入路径继续拒绝，是这个所有权边界的直接体现。
 
@@ -204,7 +198,7 @@ GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属�
 |---|---|
 | **FUSE/rclone 写入** | 透明。sandbox 写 `/outputs` → rclone FUSE → `PutFilestoreFile` → `InsertOwnedFileAndResource`。OMA 下载侧不感知 FUSE，对象定位直接用 `record.S3Key`（`filestores/...` 前缀） |
 | **上传文件不可下载** | `handler.go:155` 固定 `Downloadable=false` 不动 |
-| **可见性** | `visibleFilePredicate` 已限定：普通文件恒可见、Owned File 仅 `/outputs` 下活动可见 |
+| **可见性** | `visibleFilePredicate` 已限定：普通 File 与 `/outputs` 下活动 Owned File 可见，Skill Archive 隐藏 |
 | **workspace 隔离** | `GetFile`/`GetFileByUUID` 均按 `workspace_uuid` 过滤（`file_mapper.xml:70,106`）；Session 资源回填只读当前 session 的 Owned File |
 | **下载不越权** | 下载走 `GetFile`（带 `visibleFilePredicate`），已删除/过期/非 outputs 的生成文件返回 404 |
 | **配额/清理** | 生成文件已有 filestore 配额与清理链路，下载不新增对象、不重复计费 |
@@ -212,7 +206,7 @@ GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属�
 | **N+1 风险** | 输出文件的 `file_id` 由 `List`/`FindByExternalID` 的 `LEFT JOIN files` 同批取出，每个 Session 仍是 1 次资源查询；Session 列表（limit 上限 1000）维持既有 N 次往返，不叠加 File 查询 |
 | **残缺输出资源** | `file.uuid IS NOT NULL` 使 File 行已退休的输出资源整条不可见，避免返回没有 `file_id` 的资源 |
 | **响应长度上限** | 输出文件不吃写入侧的 `MaxFileResources` 配额，因此 `List` 在 SQL 层按 `output_rank` 截断到 `MaxSessionOutputFileResources`（500）；用户资源不受截断，完整输出集合以 `files.list(scope_id)` 为准 |
-| **Output 识别** | `isOutputResource` 用 **path 前缀 `/outputs/`** 判断（`sandboxmount.OutputsRoot` 常量），与 SQL `List` 的 `/outputs/` 判断一致，不依赖 payload 空这个伴随特征 |
+| **Output 识别** | 同时要求 `resource_type='file'`、`file_ownership='owned'` 与路径前缀 `/outputs/`，响应层读取已验证的 `SessionResource.File` |
 | **`OutputsRoot` 常量** | 新增 `sandboxmount.OutputsRoot = "/outputs"`（与 `FileSource = "/uploads"` 并列，挂载路径合同归属地） |
 | **改过滤的回归风险** | `ListSessionResources` 过滤改为「用户资源 + `/outputs/` 下活动 Output 文件」后，目录、skill archive **仍被排除**（SQL 层保证）；前端 `ResourceTable` 依赖 `file_id`/`mount_path`，为 NULL 时显示 `—`（现状兜底，`SessionEntityPanels.tsx:428-430`） |
 | **`visibleFilePredicate` 子查询性能** | `GetFile`（单行）场景开销可忽略；`ListSessionFilesPage`（列表）对每行做 `session_resources` 的 EXISTS 子查询，若验证发现慢，需确认 `session_resources(file_uuid, workspace_uuid, deleted_at)` 索引覆盖（filestore 既有投影依赖） |
@@ -222,7 +216,7 @@ GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属�
 
 1. **生成文件可下载**：sandbox 生成文件（写入 `/mnt/user-data/outputs` ↔ 公开 `/outputs/`）→ `GET /v1/files/{file_id}/content` 返回 200 与文件内容
 2. **上传文件不可下载**：`GET /v1/files/{file_id}/content` 返回 400 `File is not downloadable`（对齐官方实际行为）
-3. **Get Session 资源带 file_id**：`GET /v1/sessions/{session_id}` 的 `resources[]` 中**输出文件出现**，并包含 `file_id`（`file_...`）与 `mount_path`（`/outputs/<relative-path>`）；**目录、skill archive 资源不出现**（负向断言，防去 payload 过滤回归）
+3. **Get Session 资源带 file_id**：`GET /v1/sessions/{session_id}` 的 `resources[]` 中**输出文件出现**，并包含 `file_id`（`file_...`）与 sandbox `mount_path`（`/mnt/user-data/outputs/<relative-path>`）；**目录、skill archive 资源不出现**（负向断言）
 4. **不越权**：其他 workspace 的 file_id 返回 404；已删除/过期的输出文件不可见
 5. **上传文件语义不变**：`/uploads` 下的 Input Resource 仍返回 `file_id` + `mount_path`（现状）
 6. **file_id 一致性**：Get Session 返回的输出文件 `file_id` 与 `files.list(scope_id=session.id)` 返回的 `f.id` **一致**（前端 `useSessionFileNames` 依赖此一致性反查文件名）
@@ -232,10 +226,10 @@ GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属�
 - **单测**：
   - `List`/`FindByExternalID` 的 builder 断言覆盖 `LEFT JOIN files`、`file.external_id AS file_external_id`、`expires_at` 过滤与 `file.uuid IS NOT NULL`
   - `responseFromResource` 对 Output Resource 回填 `file_id`/`mount_path`；Input Resource、目录、archive 保持现状
-  - JSON 字面量 `null` payload 不触发 nil-map panic
+  - 缺失对应命名配置的异常 Resource 不触发 panic，并保持失败关闭
 - **真实 PostgreSQL（`tests/session_resources_visibility_test.go`）**：同一 Session 内种入 Input 文件、活动 Output 文件、过期 Output 文件、`/outputs/` 目录、skill archive、`/tool_results/` 下 Owned File 和 `github_repository`，断言：
   - `List` 只返回用户资源与活动 Output 文件；目录、skill archive、过期 Output 不出现
-  - Output 资源的 `path` 与 `file_external_id` 正确扫描；`github_repository` 的两个 nullable 列扫描为空串
+  - Output 资源的 `SessionResource.File` 正确扫描；GitHub Repository 与 Memory Store 的命名字段不受影响
   - 只退休 `files` 行后，该 Output 资源在 `List` 与 `GetSessionResource` 中都不可见（覆盖两次独立查询会返回残缺资源的场景）
   - `FindByExternalID` 对隐藏资源返回 `ErrNotFound`
   - 种入 501 个输出文件后 `List` 只返回 500 个，最旧那条被截断，Input 与 `github_repository` 资源不受影响
@@ -252,6 +246,6 @@ GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属�
 - 不做 `/transcripts`、`/tool_results`、`/skills` 的下载（filestore.md 明确不进入 Files Catalog）
 - 不做前端「可下载」标记与下载入口（另行 sub-issue/sub-PR；前端表格已能展示 `file_id`/`mount_path`）
 - 不做文件预览、分片下载等增强（仅打通下载闭环）
-- **单资源接口返回 Output Resource**（已随本 PR 修复）：`GET /v1/sessions/{id}/resources/{rid}` 曾因 `FindByExternalID` 的 `payload IS NOT NULL` 过滤查不到 Output Resource——本次已改为与 `List` 相同的 JOIN 与可见性条件，`file_id` 同批取出（原 sub-issue #266 已关闭）。`PATCH`/`DELETE` 的语义见「改动 3」
+- **单资源接口返回 Output Resource**（已随本 PR 修复）：`GET /v1/sessions/{id}/resources/{rid}` 使用与 `List` 相同的 JOIN 与显式 ownership 可见性条件，`file_id` 同批取出（原 sub-issue #266 已关闭）。`PATCH`/`DELETE` 的语义见「改动 3」
 - 不让输出文件计入写入侧的 `MaxFileResources` 配额（会让 agent 写满后 `/outputs/` 写入失败，失败语义需穿过 rclone FUSE，另行设计）；本期改为读取侧截断，见「改动 2」
 - 不给 `resources[]` 加分页（官方 session 对象里 `resources` 是裸数组，分页会偏离官方形状）

@@ -57,7 +57,7 @@ func TestFileMapperBuildsPostgresArguments(t *testing.T) {
 			name:         "get visible file",
 			bound:        buildFileMapperGetFile(yourbatis.DialectPostgres, workspaceUUID, file.ExternalID),
 			wantArgCount: 2,
-			wantClauses:  []string{"owner.payload IS NULL", "'/outputs/'"},
+			wantClauses:  []string{"owner.file_ownership = 'owned'", "owner.resource_type = 'skill_archive'", "'/outputs/'"},
 		},
 		{
 			name:         "list scoped files",
@@ -212,7 +212,11 @@ func TestFileMapperOwnedBuilderContracts(t *testing.T) {
 				wantID:            "FileMapper.GetFileForShare",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"workspaceUUID", "fileExternalID"},
-				wantSQLFragments:  []string{"workspace_uuid = $1", "external_id = $2", "FOR SHARE"},
+				wantSQLFragments: []string{
+					"workspace_uuid = $1", "external_id = $2",
+					"owner.file_ownership = 'owned'", "owner.resource_type = 'skill_archive'", "FOR SHARE",
+				},
+				wantSQLAbsent: []string{"owner.deleted_at IS NULL"},
 			},
 		},
 		{
@@ -250,7 +254,7 @@ func TestFileMapperOwnedBuilderContracts(t *testing.T) {
 				wantID:            "FileMapper.RetireOwnedFile",
 				wantKind:          yourbatis.StatementUpdate,
 				wantArgumentNames: []string{"params.RetiredAt", "params.WorkspaceUUID", "params.ResourceUUID", "params.WorkspaceUUID"},
-				wantSQLFragments:  []string{"UPDATE files", "deleted_at = COALESCE(file.deleted_at, $1)", "resource.payload IS NULL"},
+				wantSQLFragments:  []string{"UPDATE files", "deleted_at = COALESCE(file.deleted_at, $1)", "resource.file_ownership = 'owned'"},
 			},
 		},
 		{
@@ -312,7 +316,7 @@ func TestFileMapperFileAndSkillBuilderContracts(t *testing.T) {
 			wantID:            "FileMapper.GetFile",
 			wantKind:          yourbatis.StatementSelect,
 			wantArgumentNames: []string{"workspaceUUID", "fileExternalID"},
-			wantSQLFragments:  []string{"workspace_uuid = $1", "external_id = $2", "owner.payload IS NULL"},
+			wantSQLFragments:  []string{"workspace_uuid = $1", "external_id = $2", "owner.file_ownership = 'owned'", "owner.resource_type = 'skill_archive'"},
 		}},
 		{name: "list files", contract: mapperBuilderContract{
 			statement:         fileMapperListFilesStatement,

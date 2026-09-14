@@ -65,22 +65,7 @@ func TestParseStoredFileSpecRejectsNonCanonicalPayload(t *testing.T) {
 	}
 }
 
-func TestParseFilePayloadRejectsMismatchedResourceID(t *testing.T) {
-	t.Parallel()
-
-	raw := json.RawMessage(`{
-		"id":"sesrsc_other",
-		"type":"file",
-		"file_id":"file_test",
-		"source":"/uploads",
-		"mount_path":"/workspace/data.csv"
-	}`)
-	if _, err := ParseFilePayload(raw, "sesrsc_expected"); err == nil {
-		t.Fatal("ParseFilePayload() succeeded")
-	}
-}
-
-func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
+func TestFileSpecBuildsCanonicalMount(t *testing.T) {
 	t.Parallel()
 
 	spec, err := NormalizeFileSpec("file_test", "report.csv", nil, nil)
@@ -91,18 +76,7 @@ func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 		t.Fatalf("spec = %#v", spec)
 	}
 
-	fields := spec.PayloadFields("sesrsc_test")
-	raw, err := json.Marshal(fields)
-	if err != nil {
-		t.Fatalf("marshal fields: %v", err)
-	}
-	parsed, err := ParseFilePayload(raw, "sesrsc_test")
-	if err != nil {
-		t.Fatalf("ParseFilePayload(): %v", err)
-	}
-	if parsed != spec {
-		t.Fatalf("parsed = %#v, want %#v", parsed, spec)
-	}
+	raw := json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/uploads/report.csv"}`)
 	stored, err := ParseStoredFileSpec(raw)
 	if err != nil {
 		t.Fatalf("ParseStoredFileSpec(): %v", err)
@@ -117,6 +91,7 @@ func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 	}
 	if mount.ResourceID != "sesrsc_test" ||
 		mount.FileID != "file_test" ||
+		mount.MountPath != "/uploads/report.csv" ||
 		mount.Path != "/uploads/report.csv" {
 		t.Fatalf("mount = %#v", mount)
 	}

@@ -46,7 +46,7 @@ func TestFilestoreCleanupMapperBuildsPostgresArguments(t *testing.T) {
 			name:         "filesystem entries",
 			bound:        buildFilestoreCleanupMapperListFilesystemFiles(yourbatis.DialectPostgres, batch),
 			wantArgCount: 3,
-			wantClauses:  []string{"LEFT JOIN files", "kind = 'file'", "ORDER BY uuid", "LIMIT $3"},
+			wantClauses:  []string{"LEFT JOIN files", "resource.file_ownership", "kind = 'file'", "ORDER BY uuid", "LIMIT $3"},
 		},
 		{
 			name:         "retire namespace",

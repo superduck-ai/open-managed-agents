@@ -23,7 +23,7 @@ func TestFixtureFileResourceMatchesOfficialResponseContract(t *testing.T) {
 	}
 	assertFixtureResourceString(t, resource, "id", "sesrsc_fixture")
 	assertFixtureResourceString(t, resource, "file_id", "file_011CNha8iCJcU1wXNR6q4V8w")
-	assertFixtureResourceString(t, resource, "mount_path", "/uploads/receipt.pdf")
+	assertFixtureResourceString(t, resource, "mount_path", "/mnt/session/uploads/receipt.pdf")
 	assertFixtureResourceString(t, resource, "type", "file")
 
 	for _, field := range []string{"created_at", "updated_at"} {

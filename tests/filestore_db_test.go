@@ -42,15 +42,79 @@ func TestSessionNamespaceUsesResourcesAndFiles(t *testing.T) {
 				and column_name = any($3::text[]))
 		from information_schema.columns
 		where table_schema = current_schema()
-	`, []string{"path", "parent_path", "file_uuid", "expires_at"},
+	`, []string{"path", "parent_path", "file_uuid", "file_ownership", "expires_at"},
 		[]string{"detected_mime_type", "metadata", "authorization_metadata", "tags", "md5", "s3_etag", "s3_version_id"},
 		[]string{"attached", "cataloged", "namespace_role", "filesystem_uuid", "source_file_uuid", "session_file_external_id", "skill_version_uuid", "skill_source", "skill_id", "skill_size_bytes", "skill_sha256", "skill_s3_bucket", "skill_s3_key"},
 	).Scan(&resourceColumns, &fileColumns, &forbiddenColumns); err != nil {
 		t.Fatalf("query unified namespace columns: %v", err)
 	}
-	if resourceColumns != 4 || fileColumns != 7 || forbiddenColumns != 0 {
+	if resourceColumns != 5 || fileColumns != 7 || forbiddenColumns != 0 {
 		t.Fatalf("unified columns = resources %d files %d forbidden %d", resourceColumns, fileColumns, forbiddenColumns)
 	}
+}
+
+func TestSessionResourceFileOwnershipConstraints(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("filestore-ownership-constraints"))
+	t.Cleanup(app.close)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
+	session, _, _, _, err := app.db.CreateSession(context.Background(), input)
+	if err != nil {
+		t.Fatalf("create ownership constraint Session: %v", err)
+	}
+	cleanupFilestoreSession(t, app, workspaceUUID, session.ExternalID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceUUID, session.ExternalID)
+	if err != nil {
+		t.Fatalf("load ownership constraint filesystem: %v", err)
+	}
+
+	t.Run("failure directory cannot carry File ownership", func(t *testing.T) {
+		if _, err := app.pool.Exec(context.Background(), `
+			update session_resources
+			set file_ownership = 'owned'
+			where workspace_uuid = $1 and session_uuid = $2 and path = '/outputs'
+		`, workspaceUUID, session.UUID); err == nil {
+			t.Fatal("directory accepted owned File ownership")
+		}
+	})
+
+	result, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceUUID:  workspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/owned.txt",
+		Blob:           workspaceStorageBlob(5, nil),
+	})
+	if err != nil {
+		t.Fatalf("create owned File for constraint tests: %v", err)
+	}
+
+	t.Run("failure namespace File requires ownership", func(t *testing.T) {
+		if _, err := app.pool.Exec(context.Background(), `
+			update session_resources set file_ownership = null where uuid = $1
+		`, result.Node.UUID); err == nil {
+			t.Fatal("namespace File accepted NULL ownership")
+		}
+	})
+
+	t.Run("failure ownership value is closed", func(t *testing.T) {
+		if _, err := app.pool.Exec(context.Background(), `
+			update session_resources set file_ownership = 'borrowed' where uuid = $1
+		`, result.Node.UUID); err == nil {
+			t.Fatal("namespace File accepted unknown ownership")
+		}
+	})
+
+	t.Run("success owned File remains explicit", func(t *testing.T) {
+		entry, err := app.db.GetSessionResourceFile(
+			context.Background(),
+			workspaceUUID,
+			filesystem.UUID,
+			"/outputs/owned.txt",
+		)
+		if err != nil || !entry.OwnsFile() || entry.ReferencesSourceFile() {
+			t.Fatalf("owned File after rejected constraint writes = (%+v, %v)", entry, err)
+		}
+	})
 }
 
 func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
@@ -68,8 +132,6 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 				OrganizationUUID: organizationUUID,
 				WorkspaceUUID:    workspaceUUID,
 				ResourceType:     db.SessionResourceTypeFile,
-				Payload:          json.RawMessage(`{}`),
-				SecretPayload:    json.RawMessage(`{}`),
 				CreatedAt:        input.Session.CreatedAt,
 				UpdatedAt:        input.Session.CreatedAt,
 			},
@@ -764,12 +826,22 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 			entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID,
 			entryAPIKeyUUID, entrySessionUUID, entryCodeSessionUUID)
 	}
-
 	if _, err := app.db.DeleteSession(context.Background(), workspaceUUID, created.ExternalID); err != nil {
 		t.Fatalf("DeleteSession() error = %v", err)
 	}
 	if _, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceUUID, created.ExternalID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("deleted session filesystem lookup error = %v, want ErrNotFound", err)
+	}
+	var ownedAwaitingCleanup bool
+	if err := app.pool.QueryRow(context.Background(), `
+		select deleted_at is null
+		from session_resources
+		where workspace_uuid = $1 and session_uuid = $2 and path = '/results/output.txt'
+	`, workspaceUUID, filesystem.SessionUUID).Scan(&ownedAwaitingCleanup); err != nil {
+		t.Fatalf("load owned Resource after Session delete: %v", err)
+	}
+	if !ownedAwaitingCleanup {
+		t.Fatal("Session delete retired owned Resource before object cleanup")
 	}
 	var parentJobs, objectJobs int
 	if err := app.pool.QueryRow(context.Background(), `
@@ -975,7 +1047,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		entry.Path != "/skills/demo" ||
 		entry.ParentPath == nil ||
 		*entry.ParentPath != "/skills" ||
-		entry.SourceFileUUID != nil ||
+		entry.FileOwnership != "" ||
 		entry.S3Key == nil ||
 		*entry.S3Key != "catalog/demo.zip" ||
 		metadata.SkillSource != "custom" {

@@ -255,7 +255,13 @@ func TestFilestoreObjectIdentityIncludesVersion(t *testing.T) {
 	bucket := "filestore"
 	key := "objects/file"
 	version := "version-1"
-	entry := SessionResourceFile{S3Bucket: &bucket, S3Key: &key, S3VersionID: &version}
+	entry := SessionResourceFile{
+		Kind:          SessionResourceFileKindFile,
+		FileOwnership: SessionResourceFileOwnershipOwned,
+		S3Bucket:      &bucket,
+		S3Key:         &key,
+		S3VersionID:   &version,
+	}
 
 	if !sameFilestoreObject(entry, FilestoreFileBlob{S3Bucket: bucket, S3Key: key, S3VersionID: version}) {
 		t.Fatal("same exact object version was not recognized")

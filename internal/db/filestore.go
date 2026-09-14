@@ -18,6 +18,15 @@ const (
 	filestoreFilesystemCleanupJobType = "filestore_filesystem_cleanup"
 )
 
+// SessionResourceFileOwnership 明确普通 namespace File 的对象生命周期责任。
+// 空值只允许用于 Directory、Skill Archive 或尚未绑定 namespace 的 Resource。
+type SessionResourceFileOwnership string
+
+const (
+	SessionResourceFileOwnershipReferenced SessionResourceFileOwnership = "referenced"
+	SessionResourceFileOwnershipOwned      SessionResourceFileOwnership = "owned"
+)
+
 var (
 	ErrFilestorePathExists              = errors.New("filestore path already exists")
 	ErrFilestoreParentMissing           = errors.New("filestore parent directory does not exist")
@@ -85,6 +94,8 @@ type SessionResourceFile struct {
 	Kind                  string
 	Path                  string
 	ParentPath            *string
+	FileUUID              *string
+	FileOwnership         SessionResourceFileOwnership
 	SizeBytes             *int64
 	MediaType             *string
 	DetectedMimeType      *string
@@ -99,7 +110,6 @@ type SessionResourceFile struct {
 	S3ETag                *string
 	S3VersionID           *string
 	ExpiresAt             *time.Time
-	SourceFileUUID        *string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 	DeletedAt             *time.Time

@@ -109,7 +109,9 @@ Filestore 路径访问。
 
 Session filesystem 删除后沿用现有有界 cleanup job。最后一批 Owned File 退休后，同一事务
 软删除该 Session 的内部 directory、Skill Archive Resources 及其 File 快照。Skill File 借用
-catalog 中的不可变对象，不会产生 Filestore 对象清理任务或容量扣减。
+catalog 中的不可变对象，`session_resources.file_ownership` 固定为 `NULL`，不会被当作普通
+Filestore Owned File，也不会产生 Filestore 对象清理任务或容量扣减。Files 普通列表仍显式隐藏
+Skill Archive File，不能只按 ownership 是否为 `owned` 推导可见性。
 
 Runner 每次全量替换 `/skills` Resources 时，会在同一事务中软删除旧 Resource/File 集合并
 插入新集合。活动读取只考虑 `deleted_at is null` 的记录；历史 Skill File 不拥有 catalog
@@ -136,7 +138,10 @@ archive，也不会触发对象回收。
 迁移 `00047_unify_session_resources_and_files.sql` 把活动的旧 Archive 节点转换为
 `resource_type='skill_archive'` 的内部 Resource。迁移 `00048_snapshot_session_skills.sql`
 随后从 catalog version 创建 ZIP File 快照、回填 Resource 的通用 `file_uuid`，并删除 Skill
-Version UUID。Resource + File 成为 Session 内唯一的 Skill 快照事实；schema 不创建
+Version UUID。迁移 `00054_add_session_resource_file_ownership.sql` 保持 Skill Archive ownership
+为 `NULL`，并拒绝将 Skill File 作为 referenced Input Source。迁移 `00055_remove_session_resource_payload.sql`
+删除通用 Resource payload 后，Skill Archive 仍不携带 GitHub Repository、Memory Store 或 `mount_path`
+显式配置，也不会因此进入普通 Session Resource 响应。Resource + File 成为 Session 内唯一的 Skill 快照事实；schema 不创建
 PostgreSQL 外键。
 
 ## 验收重点

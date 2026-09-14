@@ -8,13 +8,11 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestResponseFromResourceHandlesNullPayload(t *testing.T) {
-	// payload 为 JSON null 时 Unmarshal 成功但 map 为 nil，不做守卫会 panic。
+func TestResponseFromResourceHandlesMissingExplicitConfig(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	resource := db.SessionResource{
 		ExternalID:   "sesrsc_null_1",
 		ResourceType: "memory_store",
-		Payload:      json.RawMessage(`null`),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -32,13 +30,16 @@ func TestResponseFromResourceHandlesNullPayload(t *testing.T) {
 func TestResponseFromResourceBackfillsOutputFileID(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	resource := db.SessionResource{
-		ExternalID:     "sesrsc_output_1",
-		ResourceType:   "file",
-		Payload:        nil,
-		Path:           "/outputs/report.pdf",
-		FileExternalID: "file_owned_1",
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ExternalID:   "sesrsc_output_1",
+		ResourceType: "file",
+		File: &db.SessionResourceFileReference{
+			FileID:        "file_owned_1",
+			NamespacePath: "/outputs/report.pdf",
+			MountPath:     "/outputs/report.pdf",
+			Ownership:     db.SessionResourceFileOwnershipOwned,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	raw := responseFromResource(resource)
@@ -50,21 +51,20 @@ func TestResponseFromResourceBackfillsOutputFileID(t *testing.T) {
 	assertFixtureResourceString(t, out, "id", "sesrsc_output_1")
 	assertFixtureResourceString(t, out, "type", "file")
 	assertFixtureResourceString(t, out, "file_id", "file_owned_1")
-	assertFixtureResourceString(t, out, "mount_path", "/outputs/report.pdf")
+	assertFixtureResourceString(t, out, "mount_path", "/mnt/user-data/outputs/report.pdf")
 }
 
-func TestResponseFromResourceKeepsInputResourcePayload(t *testing.T) {
+func TestResponseFromResourceKeepsInputResourceFields(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	resource := db.SessionResource{
 		ExternalID:   "sesrsc_input_1",
 		ResourceType: "file",
-		Payload: json.RawMessage(`{
-			"id": "sesrsc_input_1",
-			"type": "file",
-			"file_id": "file_uploaded_1",
-			"source": "/uploads",
-			"mount_path": "/uploads/data.csv"
-		}`),
+		File: &db.SessionResourceFileReference{
+			FileID:        "file_uploaded_1",
+			NamespacePath: "/uploads/data.csv",
+			MountPath:     "/uploads/data.csv",
+			Ownership:     db.SessionResourceFileOwnershipReferenced,
+		},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -76,7 +76,7 @@ func TestResponseFromResourceKeepsInputResourcePayload(t *testing.T) {
 		t.Fatalf("解析响应：%v", err)
 	}
 	assertFixtureResourceString(t, out, "file_id", "file_uploaded_1")
-	assertFixtureResourceString(t, out, "mount_path", "/uploads/data.csv")
+	assertFixtureResourceString(t, out, "mount_path", "/mnt/session/uploads/data.csv")
 	if _, exists := out["source"]; exists {
 		t.Fatalf("Input Resource 泄漏内部 source 字段：%s", raw)
 	}
@@ -87,12 +87,8 @@ func TestResponseFromResourceLeavesNonFileResourcesUntouched(t *testing.T) {
 	resource := db.SessionResource{
 		ExternalID:   "sesrsc_dir_1",
 		ResourceType: "directory",
-		Payload:      json.RawMessage(`{"id":"sesrsc_dir_1","type":"directory","path":"/outputs"}`),
-		// 目录即使位于 /outputs/ 下也不应被当成输出文件回填。
-		Path:           "/outputs/reports",
-		FileExternalID: "file_owned_1",
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	raw := responseFromResource(resource)

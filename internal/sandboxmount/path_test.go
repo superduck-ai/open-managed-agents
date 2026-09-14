@@ -118,3 +118,24 @@ func TestDefaultFileMountPath(t *testing.T) {
 		t.Fatalf("fallback mount path = %q", mountPath)
 	}
 }
+
+func TestSandboxPath(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		namespacePath string
+		want          string
+	}{
+		{name: "uploads root", namespacePath: "/uploads", want: "/mnt/session/uploads"},
+		{name: "input file", namespacePath: "/uploads/reports/input.csv", want: "/mnt/session/uploads/reports/input.csv"},
+		{name: "outputs root", namespacePath: "/outputs", want: "/mnt/user-data/outputs"},
+		{name: "output file", namespacePath: "/outputs/reports/result.csv", want: "/mnt/user-data/outputs/reports/result.csv"},
+		{name: "similar prefix", namespacePath: "/uploads-copy/file.txt", want: "/uploads-copy/file.txt"},
+		{name: "other namespace", namespacePath: "/transcripts/session.jsonl", want: "/transcripts/session.jsonl"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := SandboxPath(test.namespacePath); got != test.want {
+				t.Fatalf("SandboxPath(%q) = %q, want %q", test.namespacePath, got, test.want)
+			}
+		})
+	}
+}

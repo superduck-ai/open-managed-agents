@@ -25,6 +25,7 @@ import (
 var (
 	ErrNotFound                 = platform.ErrNotFound
 	ErrInvalidState             = errors.New("invalid state")
+	ErrInvalidStateTransition   = errors.New("invalid state transition")
 	ErrPreconditionFailed       = errors.New("precondition failed")
 	ErrDuplicate                = errors.New("duplicate")
 	ErrVersionConflict          = errors.New("version conflict")
@@ -40,6 +41,10 @@ var (
 	ErrStaleSchedule            = errors.New("stale deployment schedule")
 	ErrWorkspaceArchived        = errors.New("workspace archived")
 )
+
+func newInvalidStateTransition(from, to string) error {
+	return fmt.Errorf("%w: cannot transition from %q to %q", ErrInvalidStateTransition, from, to)
+}
 
 type DB struct {
 	pool     *pgxpool.Pool

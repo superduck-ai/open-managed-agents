@@ -9,6 +9,7 @@ export function useCreateAgentDraft(initialDraft: CreateAgentInput) {
   const [format, setFormatState] = useState<CodeFormat>('YAML');
   const [rawText, setRawText] = useState(() => createAgentConfigText(normalizeCreateAgentDraft(initialDraft), 'YAML'));
   const [rawError, setRawError] = useState<string | null>(null);
+  const [replacementRevision, setReplacementRevision] = useState(0);
 
   const draftError = useMemo(() => {
     const result = createAgentDraftSchema.safeParse(draft);
@@ -30,6 +31,7 @@ export function useCreateAgentDraft(initialDraft: CreateAgentInput) {
       setDraftState(normalized);
       setRawText(createAgentConfigText(normalized, format));
       setRawError(null);
+      setReplacementRevision((current) => current + 1);
     },
     [format],
   );
@@ -98,5 +100,6 @@ export function useCreateAgentDraft(initialDraft: CreateAgentInput) {
     updateRawText,
     validateRawText,
     draftError,
+    replacementRevision,
   };
 }

@@ -25,6 +25,14 @@ export function workspaceWebhooksPath(workspaceId: string) {
   return `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/webhooks`;
 }
 
+export function workspaceMcpTunnelsPath(workspaceId: string) {
+  return `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/mcp-tunnels`;
+}
+
+export function workspaceMcpTunnelDetailPath(workspaceId: string, tunnelId: string) {
+  return `${workspaceMcpTunnelsPath(workspaceId)}/${encodeURIComponent(tunnelId)}`;
+}
+
 export function workspaceIdFromPath(pathname: string) {
   const workspaceId = pathname.match(/^\/(?:settings\/)?workspaces\/([^/]+)/)?.[1];
   if (!workspaceId) {

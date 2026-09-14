@@ -32,7 +32,7 @@ S3 I/O 位于 `internal/eventpayload` service 边界，DB 仅通过 Yourbatis �
 
 历史对象使用 `event-payload/` 前缀，不复用 worker 临时传输对象的 30 天清理策略。只要任一未删除事件引用该对象，就不自动到期。后台在 registry 超过 24 小时且两张事件表均无活跃引用时，原子标记 deleting 并创建对象清理任务。附着操作与清理通过 registry 行锁互斥，已被清理抢占的引用不能提交。删除全部对象版本；首次认领时在同一事务中只创建一个清理任务，失败沿用现有有限重试机制。deleting 墓碑不再被认领，任务完成后不再新增任务。上传超时为 2 分钟，清理前至少等待 24 小时；不额外安排延后补偿，不承诺回收首次清理后才完成的异常迟到上传。
 
-migration 00060 添加 registry、引用列和工具关联列。既有 payload 保持内联，不自动上传历史数据；旧行继续可读。存在外置引用时禁止回滚 migration，必须先还原完整 payload。部署需保留历史对象所在 bucket/prefix，不应给该前缀配置固定 TTL。
+migration 00061 添加 registry、引用列和工具关联列。既有 payload 保持内联，不自动上传历史数据；旧行继续可读。存在外置引用时禁止回滚 migration，必须先还原完整 payload。部署需保留历史对象所在 bucket/prefix，不应给该前缀配置固定 TTL。
 
 ## 验收
 

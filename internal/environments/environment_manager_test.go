@@ -31,22 +31,6 @@ func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
 	}
 }
 
-func managedAgentRuntimeSourceValues(
-	t *testing.T,
-	sources []json.RawMessage,
-) []any {
-	t.Helper()
-	raw, err := json.Marshal(sources)
-	if err != nil {
-		t.Fatalf("marshal runtime sources: %v", err)
-	}
-	var values []any
-	if err := json.Unmarshal(raw, &values); err != nil {
-		t.Fatalf("decode runtime sources: %v", err)
-	}
-	return values
-}
-
 func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 	resources := []db.SessionResource{
 		{
@@ -544,7 +528,7 @@ func buildEnvironmentManagerPayloadStartupContext(t *testing.T, sessionConfig js
 	return body["startup_context"].(map[string]any)
 }
 
-func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
+func TestManagedAgentSessionConfigDefersMCPBuildUntilLaunch(t *testing.T) {
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{
 			"model":{"id":"claude-opus-4-8"},
@@ -562,7 +546,17 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 		VaultIDs: []string{"vault_cred_123"},
 	}
 
-	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	raw, err := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"mcp_config"`) || strings.Contains(string(raw), `"mcp_config_file"`) {
+		t.Fatal("persisted source contains a prematurely built MCP client configuration")
+	}
+	raw, err = buildManagedAgentRuntimeMCPConfig(raw, "cse_test", "test-token", config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode session config: %v", err)
@@ -578,11 +572,11 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	}
 	toolConfigs := notion["tools"].([]any)
 	search := toolConfigs[0].(map[string]any)
-	if search["name"] != "search" || search["enabled"] != true || search["permission_policy"] != "allow" {
+	if search["name"] != "search" || search["enabled"] != true || search["permission_policy"] != "always_allow" {
 		t.Fatalf("unexpected search tool config: %#v", search)
 	}
 	deletePage := toolConfigs[1].(map[string]any)
-	if deletePage["name"] != "delete_page" || deletePage["enabled"] != false || deletePage["permission_policy"] != "ask" {
+	if deletePage["name"] != "delete_page" || deletePage["enabled"] != false || deletePage["permission_policy"] != "always_ask" {
 		t.Fatalf("unexpected delete_page tool config: %#v", deletePage)
 	}
 	vaultIDs := body["vault_ids"].([]any)

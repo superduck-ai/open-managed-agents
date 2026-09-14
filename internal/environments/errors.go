@@ -1,6 +1,8 @@
 package environments
 
-import "github.com/superduck-ai/open-managed-agents/internal/apperr"
+import (
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+)
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

@@ -40,7 +40,10 @@ func TestSessionContextFromCodeSessionUsesStoredConfig(t *testing.T) {
 		}`),
 	}
 
-	context := sessionContextFromCodeSession(record)
+	context, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{}, config.TunnelConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if context["cwd"] != "/workspace/repo" || context["model"] != "claude-opus-4-8" {
 		t.Fatalf("unexpected base context: %#v", context)
 	}
@@ -50,7 +53,10 @@ func TestSessionContextFromCodeSessionUsesStoredConfig(t *testing.T) {
 	if len(context["outcomes"].([]any)) != 1 {
 		t.Fatalf("unexpected outcomes: %#v", context["outcomes"])
 	}
-	mcpConfig := context["mcp_config"].(map[string]any)
+	var mcpConfig map[string]any
+	if err := json.Unmarshal(context["mcp_config"].(json.RawMessage), &mcpConfig); err != nil {
+		t.Fatal(err)
+	}
 	servers := mcpConfig["mcpServers"].(map[string]any)
 	notion := servers["notion"].(map[string]any)
 	if notion["type"] != "http" || notion["url"] != "https://mcp.notion.com/mcp" {

@@ -19,7 +19,7 @@ flowchart LR
     Producer["入站生产方"] --> Prepare["锁外准备 payload / cleanup job / S3"]
     Prepare --> Lock["锁定 active Code Session"]
     Lock -->|直接 Publish，等待 PubAck| JS["共享 JetStream Stream"]
-    JS --> Durable["每 Code Session 独立 durable consumer"]
+    JS --> Durable["每 Code Session 任务与回应两个 durable consumer"]
     Durable --> SSE["worker SSE"]
     SSE -->|ACK subject，TTL 20 分钟| Redis["Redis 临时定位"]
     Worker["worker"] -->|received / processing / processed| Delivery["delivery API"]
@@ -65,15 +65,18 @@ ID；JetStream 在 24 小时窗口内去重，窗口外可能再次投递，但 
 
 ## Stream、subject、consumer 与序号
 
-所有消息进入共享 Stream `OMA_WORKER_INBOUND`，subject 为
-`oma.worker.inbound.v2.<code-session-id>`。每个 Code Session 创建一个稳定、精确过滤该 subject 的
-durable pull consumer。这些 filter 互不重叠，适用于 `WorkQueuePolicy`。
+所有消息进入共享 Stream `OMA_WORKER_INBOUND`。任务 subject 为
+`oma.worker.inbound.v2.<code-session-id>`，回应 subject 为其后追加 `.reply`；每路各有一个稳定、
+精确过滤的 durable pull consumer。这些 filter 互不重叠，适用于 `WorkQueuePolicy`。
+这是对 PR #340 单通道设计的修正，防止任务与其控制回应互相等待完成 ACK；分类与方案选择见
+[Worker 入站投递设计](ccr-v2-worker-events-delivery-backend-design.md#stream-与顺序)。
 
 consumer 使用 `DeliverAll`、`AckExplicit`、`MaxAckPending=1`、无限 `MaxDeliver`，退避为 1 分钟、
 5 分钟、15 分钟，之后保持 15 分钟。SSE 断开不删除 consumer。
 
 `sequence_num` 直接取 JetStream Stream sequence，不再由 PostgreSQL 分配。它在整个共享 Stream 内
-单调递增，所以单个 Code Session 看到间断序号是正常现象。`MaxAckPending=1` 保证同一 consumer
+单调递增，但两路交付的序号可以非单调；不能按最大已见序号过滤尚未完成的输入。
+单个 Code Session 看到间断序号是正常现象。`MaxAckPending=1` 保证同一 consumer
 一次只交付一条，但并发生产方获得 Code Session 行锁的顺序不保证等于 `session_events` 的提交顺序。
 若业务以后要求严格复现并发提交顺序，需要持久发布游标或单写者调度，当前无 outbox 方案不提供它。
 
@@ -107,7 +110,7 @@ response 也先在锁外准备对象，再锁定 active Code Session 发布。�
 - PubAck 成功但响应丢失：稳定 `Nats-Msg-Id` 使重试可去重；
 - 调用方不重试：已提交到 `session_events` 的事件不会自动进入 JetStream；
 - Redis 丢失：只导致重投，不永久丢消息；
-- S3 缺失、读取失败或摘要不匹配：不发送、不 ACK，同 Session 后续消息被阻塞；
+- S3 缺失、读取失败或摘要不匹配：不发送、不 ACK，同 Session 同通道后续消息被阻塞；
 - 事件 30 天仍未 processed：终止 Code Session、撤销凭证、删除 consumer 和 subject 消息，并加速对象清理；
 - Code Session 终止：与直接 Publish 通过同一行锁串行，状态更新后清空该 Session 的 consumer 和消息。
 
@@ -140,7 +143,7 @@ Sandbox 时，沿用既有 recovery 流程重建 Sandbox。
 
 - activation 在全部 PubAck 后才 active，模糊 PubAck 重试不产生第二条消息；
 - 普通直接发布失败返回 503，稳定 ID 重试由 JetStream 去重；
-- 三节点 Stream 配置、per-session durable consumer 与 `MaxAckPending=1`；
+- 三节点 Stream 配置、每 Session 两个 durable consumer 与各自的 `MaxAckPending=1`；
 - Stream sequence 暴露为 SSE sequence，允许单 Session 出现间断；
 - Redis 丢失安全重投、epoch fence、DoubleAck；
 - 大 payload 透明还原与清理；

@@ -277,7 +277,7 @@ export function createAgentDetailDeployment(
       environment_id: values.environmentId,
       vault_ids: values.vaultIds,
       metadata: {},
-      resources: deploymentResources(values.memoryStoreIds),
+      resources: deploymentResources(values.memoryStoreIds, values.memoryAccess),
       initial_events: deploymentInitialEvents(values.initialMessage),
       schedule: deploymentSchedule(values),
     },
@@ -1842,7 +1842,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: deploymentResources(values.memoryStoreIds),
+        resources: deploymentResources(values.memoryStoreIds, values.memoryAccess),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
       };
@@ -1890,7 +1890,7 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
         vault_ids: values.vaultIds,
-        resources: deploymentResources(values.memoryStoreIds),
+        resources: deploymentResources(values.memoryStoreIds, values.memoryAccess),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
       };
@@ -1912,10 +1912,11 @@ export function deploymentInitialEvents(initialMessage: string) {
   ];
 }
 
-export function deploymentResources(memoryStoreIds: string[]) {
+export function deploymentResources(memoryStoreIds: string[], memoryAccess?: 'read_write' | 'read_only') {
   return memoryStoreIds.map((memoryStoreId) => ({
     type: 'memory_store',
     memory_store_id: memoryStoreId,
+    ...(memoryAccess ? { access: memoryAccess } : {}),
   }));
 }
 

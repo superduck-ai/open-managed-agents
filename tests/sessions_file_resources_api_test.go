@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -1740,4 +1741,48 @@ func assertOutputResourceResponse(
 		payload.FileID != wantFileID || payload.MountPath != wantMountPath {
 		t.Fatalf("output resource = %+v, want %q/%q", payload, wantFileID, wantMountPath)
 	}
+}
+
+func TestSessionCreateMemoryStoreLimitHTTP(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("session-memory-limit-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"memory-limit-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"memory-limit-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	base := `"agent":` + quoteJSON(agent.ID) + `,"environment_id":` + quoteJSON(env.ID)
+
+	var storeIDs []string
+	for i := 0; i < 9; i++ {
+		store := createMemoryStore(t, app, fmt.Sprintf("session-limit-store-%d", i))
+		defer deleteMemoryStore(t, app, store.ID)
+		storeIDs = append(storeIDs, store.ID)
+	}
+
+	memoryStores := func(ids []string) string {
+		var parts []string
+		for _, id := range ids {
+			parts = append(parts, `{"type":"memory_store","memory_store_id":`+quoteJSON(id)+`}`)
+		}
+		return `"resources":[` + strings.Join(parts, ",") + `]`
+	}
+
+	t.Run("failure ninth memory store returns 409 memory_store_limit_error", func(t *testing.T) {
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/sessions?beta=true",
+			strings.NewReader(`{`+base+`,`+memoryStores(storeIDs)+`}`),
+			defaultTestKey,
+			true,
+		)
+		assertError(t, resp, http.StatusConflict, "memory_store_limit_error")
+	})
+
+	t.Run("success eight memory stores pass", func(t *testing.T) {
+		created := createSession(t, app, `{`+base+`,`+memoryStores(storeIDs[:8])+`}`)
+		defer deleteSession(t, app, created.ID)
+	})
 }

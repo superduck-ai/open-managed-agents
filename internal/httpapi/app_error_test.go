@@ -188,3 +188,18 @@ func assertAppError(t *testing.T, recorder *httptest.ResponseRecorder, response 
 		t.Fatalf("error = (%q, %q), want (%q, %q)", gotType, gotMessage, errorType, message)
 	}
 }
+
+func TestErrorAdapterHonorsCustomWireErrorType(t *testing.T) {
+	adapter, logs := testErrorAdapter()
+	recorder := httptest.NewRecorder()
+	request := testErrorRequest()
+	err := apperr.NewWithType(apperr.Conflict, "memory_store_limit_error", "at most 8 memory stores are supported per session", nil)
+
+	adapter.Write(recorder, request, err)
+
+	response := decodeAppErrorResponse(t, recorder)
+	assertAppError(t, recorder, response, http.StatusConflict, "memory_store_limit_error", "at most 8 memory stores are supported per session")
+	if logs.Len() != 0 {
+		t.Fatalf("4xx error must not be logged, got: %s", logs.String())
+	}
+}

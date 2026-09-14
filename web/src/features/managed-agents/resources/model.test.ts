@@ -13,8 +13,10 @@ import {
   credentialFormReady,
   credentialFormValues,
   emptyCredentialFormValues,
+  entityMemoryAccess,
   environmentConfigBody,
   environmentEditValues,
+  initialFormValues,
   patchCredentialFormValues,
   statusPillTone,
   vaultOAuthErrorMessage,
@@ -408,5 +410,48 @@ describe('vaultOAuthErrorMessage', () => {
     expect(vaultOAuthErrorMessage('verification_request_failed', msgFallback)).toContain('verification failed');
     expect(vaultOAuthErrorMessage('mystery_code', msgFallback)).toBe('Could not complete OAuth. Try again.');
     expect(vaultOAuthErrorMessage(' mystery_code ', msgFallback)).toBe('Could not complete OAuth. Try again.');
+  });
+});
+
+describe('entityMemoryAccess', () => {
+  const deploymentWith = (resources: unknown[]): DeploymentApiResponse =>
+    ({
+      id: 'depl_test',
+      name: 'depl',
+      created_at: '2026-08-01T00:00:00Z',
+      updated_at: '2026-08-01T00:00:00Z',
+      status: 'active',
+      resources,
+    }) as DeploymentApiResponse;
+
+  test('falls back to read_write when no memory store resource carries access', () => {
+    expect(entityMemoryAccess(deploymentWith([]))).toBe('read_write');
+    expect(entityMemoryAccess(deploymentWith([{ type: 'file', file_id: 'file_x' }]))).toBe('read_write');
+    expect(entityMemoryAccess(deploymentWith([{ type: 'memory_store', memory_store_id: 'memstr_1' }]))).toBe(
+      'read_write',
+    );
+  });
+
+  test('restores the access of the first memory store resource', () => {
+    const entity = deploymentWith([
+      { type: 'memory_store', memory_store_id: 'memstr_1', access: 'read_only' },
+      { type: 'memory_store', memory_store_id: 'memstr_2', access: 'read_write' },
+    ]);
+    expect(entityMemoryAccess(entity)).toBe('read_only');
+  });
+
+  test('restores the common access when all stores agree', () => {
+    const entity = deploymentWith([
+      { type: 'memory_store', memory_store_id: 'memstr_1', access: 'read_only' },
+      { type: 'memory_store', memory_store_id: 'memstr_2', access: 'read_only' },
+    ]);
+    expect(entityMemoryAccess(entity)).toBe('read_only');
+  });
+
+  test('initialFormValues restores access for an existing deployment', () => {
+    const entity = deploymentWith([{ type: 'memory_store', memory_store_id: 'memstr_1', access: 'read_only' }]);
+    const values = initialFormValues('deployments', entity);
+    expect(values.memoryAccess).toBe('read_only');
+    expect(values.memoryStoreIds).toEqual(['memstr_1']);
   });
 });

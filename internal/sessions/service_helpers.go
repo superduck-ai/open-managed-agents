@@ -202,7 +202,14 @@ func (h *Handler) resourceFromRequest(
 			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
 		}
 		payload["memory_store_id"] = memoryStoreID
-		copyOptionalPayloadString(payload, body.Access, "access")
+		access, err := optionalStringWithDefault(body.Access, "read_write", "access")
+		if err != nil {
+			return normalizedSessionResource{}, err
+		}
+		if access != "read_write" && access != "read_only" {
+			return normalizedSessionResource{}, errors.New("access must be read_write or read_only")
+		}
+		payload["access"] = access
 		copyOptionalPayloadString(payload, body.Description, "description")
 		copyOptionalPayloadString(payload, body.Instructions, "instructions")
 		copyOptionalPayloadString(payload, body.MountPath, "mount_path")

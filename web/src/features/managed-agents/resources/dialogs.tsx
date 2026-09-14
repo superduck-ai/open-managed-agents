@@ -915,6 +915,18 @@ function GenericManagedEntityDialog({
                 onChange={(memoryStoreIds) => setValues((current) => ({ ...current, memoryStoreIds }))}
               />
               <DeploymentSelectField
+                label={msg('managedAgents.memoryStores.access', 'Memory access')}
+                value={values.memoryAccess}
+                placeholder="read_write"
+                options={[
+                  { id: 'read_write', label: 'read_write' },
+                  { id: 'read_only', label: 'read_only' },
+                ]}
+                onChange={(memoryAccess) =>
+                  setValues((current) => ({ ...current, memoryAccess: memoryAccess as 'read_write' | 'read_only' }))
+                }
+              />
+              <DeploymentSelectField
                 label={msg('managedAgents.common.trigger', 'Trigger')}
                 value={values.triggerType}
                 placeholder={msg('managedAgents.deployments.selectTrigger', 'Select a trigger')}

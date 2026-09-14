@@ -18,6 +18,7 @@ func TestMapSessionLoadError(t *testing.T) {
 		{name: "not found", cause: db.ErrNotFound, kind: apperr.NotFound, message: "Session not found: session_test"},
 		{name: "invalid state", cause: db.ErrInvalidState, kind: apperr.InvalidArgument, message: "session state does not allow this operation"},
 		{name: "file path conflict", cause: db.ErrFilestorePathExists, kind: apperr.Conflict, message: "File resource mount_path conflicts with the session filesystem"},
+		{name: "memory store limit", cause: db.ErrMemoryStoreLimit, kind: apperr.Conflict, message: "at most 8 memory stores are supported per session"},
 		{name: "unexpected failure", cause: errors.New("database failed"), kind: apperr.Internal, message: "Session operation failed"},
 	}
 	for _, test := range tests {
@@ -34,5 +35,16 @@ func TestMapSessionLoadError(t *testing.T) {
 				t.Fatalf("errors.Is(%v, cause) = false", mapped)
 			}
 		})
+	}
+}
+
+func TestMapSessionLoadErrorMemoryStoreLimitWireType(t *testing.T) {
+	mapped := mapSessionLoadError(db.ErrMemoryStoreLimit, "session_test")
+	appErr, ok := errors.AsType[*apperr.Error](mapped)
+	if !ok {
+		t.Fatalf("error type = %T, want *apperr.Error", mapped)
+	}
+	if appErr.ErrorType != "memory_store_limit_error" {
+		t.Fatalf("ErrorType = %q, want memory_store_limit_error", appErr.ErrorType)
 	}
 }

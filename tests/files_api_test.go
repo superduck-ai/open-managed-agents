@@ -1172,7 +1172,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("create vault secrets service: %v", err)
 	}
-	deploymentStore := deploymentsapi.NewStore(database)
+	deploymentStore := deploymentsapi.NewStore(database).WithEventPayloadStorage(store)
 	workers := river.NewWorkers()
 	deploymentsapi.RegisterWorkers(workers, deploymentStore)
 	deploymentJobs, err := riverjobs.NewClient(database, logger, workers, map[string]river.QueueConfig{
@@ -1669,6 +1669,7 @@ func imageConfig(t *testing.T, content []byte) (int, int) {
 }
 
 type fakeStore struct {
+	uploadErr      error
 	bucket         string
 	objects        map[string]fakeObject
 	getOverride    storage.Object
@@ -1690,6 +1691,9 @@ func (s *fakeStore) Ensure(context.Context) error {
 }
 
 func (s *fakeStore) Upload(_ context.Context, key string, body io.Reader, options storage.UploadOptions) (storage.UploadResult, error) {
+	if s.uploadErr != nil {
+		return storage.UploadResult{}, s.uploadErr
+	}
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return storage.UploadResult{}, err

@@ -49,6 +49,7 @@
             COALESCE(j.payload-&gt;&gt;'bucket', '') AS bucket,
             COALESCE(j.payload-&gt;&gt;'key', '') AS object_key,
             COALESCE(j.payload-&gt;&gt;'file_id', '') AS file_external_id,
+            COALESCE(j.payload-&gt;&gt;'resource_type', '') AS resource_type,
             j.attempts
     </update>
 

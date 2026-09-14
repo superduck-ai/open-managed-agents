@@ -147,6 +147,9 @@ func insertSessionEventsTx(
 				return nil, insertErr
 			}
 			if found {
+				if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
+					return nil, err
+				}
 				created = append(created, row.event())
 			}
 			continue
@@ -154,6 +157,9 @@ func insertSessionEventsTx(
 		row, insertErr := eventMapper.Insert(ctx, params)
 		if insertErr != nil {
 			return nil, insertErr
+		}
+		if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
+			return nil, err
 		}
 		created = append(created, row.event())
 	}
@@ -210,6 +216,7 @@ func sessionEventWriteParameters(event SessionEvent) sessionEventWriteParams {
 		WorkspaceUUID: event.WorkspaceUUID, SessionUUID: event.SessionUUID,
 		SessionExternalID: event.SessionExternalID, ThreadUUID: event.ThreadUUID,
 		ThreadExternalID: event.ThreadExternalID, EventType: event.EventType,
+		PayloadBlobUUID: event.PayloadBlobUUID, ToolUseID: event.ToolUseID,
 		Payload: agentJSONArg(event.Payload), ProcessedAt: event.ProcessedAt, CreatedAt: event.CreatedAt,
 	}
 }
@@ -308,6 +315,7 @@ func (r sessionEventRow) event() SessionEvent {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
+		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
 		Payload: bytes.Clone(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }

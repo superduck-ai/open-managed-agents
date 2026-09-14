@@ -61,9 +61,8 @@ func (s *Service) prepareInboundEvent(
 		expiresAt,
 	)
 	cleanupJobID := ""
-	// 按 payload 长度估算外置阈值，全量编码留给 Publish；未外置的 envelope 加上
-	// 固定字段余量也远小于单条消息上限。
-	if workerevents.LikelyExceedsLargePayload(len(metadata.Payload)) {
+	// Count the actual payload bytes; still validate the final transport envelope.
+	if workerevents.ExceedsLargePayload(len(metadata.Payload)) {
 		cleanupJobID, err = s.offloadInboundPayload(ctx, codeSession, source, eventID, expiresAt, &envelope)
 		if err != nil {
 			return preparedInboundEvent{}, err

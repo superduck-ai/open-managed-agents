@@ -25,15 +25,16 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 		eventBus = sessionfanout.NewLocal()
 	}
 	h := &Handler{
-		cfg:          cfg,
-		db:           database,
-		codeSessions: codeSessionService,
-		webhooks:     webhookEvents,
-		logger:       logger,
-		errorAdapter: httpapi.NewErrorAdapter(logger),
-		streams:      newStreamHub(),
-		eventBus:     eventBus,
-		previews:     newWorkerPreviewConverter(),
+		eventPayloads: codeSessionService.EventPayloadStore(),
+		cfg:           cfg,
+		db:            database,
+		codeSessions:  codeSessionService,
+		webhooks:      webhookEvents,
+		logger:        logger,
+		errorAdapter:  httpapi.NewErrorAdapter(logger),
+		streams:       newStreamHub(),
+		eventBus:      eventBus,
+		previews:      newWorkerPreviewConverter(),
 	}
 	eventBus.Register(h.receiveFanout, h.resetFanout)
 	codeSessionService.SetPublicEventSink(h)

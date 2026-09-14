@@ -13,6 +13,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 const (
@@ -24,12 +26,8 @@ const (
 	streamSubject = subjectPrefix + ">"
 	// MaxMessageBytes 是编码后单条 envelope 的大小上限：1 MiB。
 	MaxMessageBytes = 1 << 20
-	// LargePayloadThreshold 是编码后 envelope 的外置阈值：超过 900 KiB 时，
-	// 将 payload 存入对象存储，envelope 只保留引用，再检查完整 envelope 的大小上限。
-	LargePayloadThreshold = 900 << 10
-	// envelopeOverheadAllowance 是 envelope 固定字段编码长度的估算上界，
-	// 供按 payload 长度估算 envelope 大小时使用。
-	envelopeOverheadAllowance = 512
+	// LargePayloadThreshold counts actual payload bytes, excluding envelope overhead.
+	LargePayloadThreshold = storage.EventPayloadThreshold
 	// MaxOffloadedPayloadBytes 是允许外置到对象存储的单个 payload 大小上限。
 	// payload 不只来自 ingress 请求体（activation 历史来自 session_events），
 	// 因此该契约属于 worker event 传输层，而不是 HTTP body 限制。
@@ -77,12 +75,9 @@ func (e EnvelopeV1) IsExpired(now time.Time) bool {
 	return !e.ExpiresAt.IsZero() && !now.Before(e.ExpiresAt)
 }
 
-// LikelyExceedsLargePayload 按未编码 payload 的长度估算 envelope 是否可能超过
-// LargePayloadThreshold。payload 内嵌 RawMessage，编码只会 compact 而不会变长，
-// 长度加固定字段余量的判定方向保守（宁可多外置也不漏判），调用方因此不必为了
-// 判大小先做一次全量 JSON 编码。
-func LikelyExceedsLargePayload(payloadSize int) bool {
-	return payloadSize+envelopeOverheadAllowance > LargePayloadThreshold
+// ExceedsLargePayload uses the same actual-byte threshold as durable event storage.
+func ExceedsLargePayload(payloadSize int) bool {
+	return payloadSize > LargePayloadThreshold
 }
 
 type ExpiredEvent struct {

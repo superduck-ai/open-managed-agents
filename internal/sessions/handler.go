@@ -8,6 +8,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -18,16 +19,17 @@ import (
 const maxSessionBodySize = 4 << 20
 
 type Handler struct {
-	cfg          config.Config
-	db           *db.DB
-	codeSessions *codesessions.Service
-	webhooks     webhookEnqueuer
-	logger       *slog.Logger
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
-	streams      *streamHub
-	eventBus     sessionfanout.EventBus
-	previews     *workerPreviewConverter
+	eventPayloads *eventpayload.Store
+	cfg           config.Config
+	db            *db.DB
+	codeSessions  *codesessions.Service
+	webhooks      webhookEnqueuer
+	logger        *slog.Logger
+	errorAdapter  *httpapi.ErrorAdapter
+	router        chi.Router
+	streams       *streamHub
+	eventBus      sessionfanout.EventBus
+	previews      *workerPreviewConverter
 }
 
 type webhookEnqueuer interface {

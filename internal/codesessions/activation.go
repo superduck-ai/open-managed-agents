@@ -99,7 +99,11 @@ func (s *Service) prepareActivation(ctx context.Context, snapshot activationSnap
 		if !maevents.IsPublicWorkerInputEvent(event.EventType) {
 			continue
 		}
-		inbound, err := s.convertSessionEventToInbound(ctx, snapshot.codeSession, event)
+		restored, err := s.eventPayloads.RestorePublic(ctx, event)
+		if err != nil {
+			return err
+		}
+		inbound, err := s.convertSessionEventToInbound(ctx, snapshot.codeSession, restored)
 		if err != nil {
 			return err
 		}
@@ -115,10 +119,17 @@ func (s activationSnapshot) matches(other activationSnapshot) bool {
 	for i, event := range s.events {
 		// 历史通常只追加；同时比较 payload，避免修订或软删除期间使用过期快照。
 		candidate := other.events[i]
-		if event.UUID != candidate.UUID || event.EventType != candidate.EventType ||
+		if event.UUID != candidate.UUID || !samePayloadBlob(event.PayloadBlobUUID, candidate.PayloadBlobUUID) || event.EventType != candidate.EventType ||
 			!event.ProcessedAt.Equal(candidate.ProcessedAt) || !bytes.Equal(event.Payload, candidate.Payload) {
 			return false
 		}
 	}
 	return true
+}
+
+func samePayloadBlob(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }

@@ -91,7 +91,7 @@ Redis 不保存权威消息，也不能替代 PostgreSQL lifecycle/epoch fence�
 20 分钟是定位缓存 TTL，不是消息的 ACK 等待时间。worker 应在一分钟首次重投窗口前持续上报
 processing（建议每 20–30 秒）。SSE 写失败时保留映射直到 TTL，避免旧连接删除新重投写入的映射。
 
-envelope 超过 900 KiB 时，payload 先上传到租户隔离的 S3 key。key 包含稳定 event ID 和随机 cleanup
+原始 payload 实际字节数超过 32 KiB 时，payload 先上传到租户隔离的 S3 key。key 包含稳定 event ID 和随机 cleanup
 job ID，避免重试对象之间互相清理。JetStream 只保存 key、size、SHA-256 和 cleanup job ID，单条
 消息仍小于 1 MiB。PubAck 失败是模糊结果，因此不会立即删除对象；processed 后立即加速清理，最迟
 在 30 天逻辑期限清理。

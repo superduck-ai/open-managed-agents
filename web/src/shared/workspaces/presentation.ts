@@ -49,8 +49,5 @@ export function buildCreateWorkspaceInput(name: string, displayColor: string): C
   return {
     name,
     display_color: displayColor,
-    data_residency: {
-      workspace_geo: 'us',
-    },
   };
 }

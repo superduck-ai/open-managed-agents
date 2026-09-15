@@ -73,7 +73,7 @@ func TestAgentMapperInsertBindsJSONArguments(t *testing.T) {
 		UUID:                agent.UUID,
 		ExternalID:          agent.ExternalID,
 		WorkspaceUUID:       agent.WorkspaceUUID,
-		CreatedByAPIKeyUUID: agent.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: nullableString(agent.CreatedByAPIKeyUUID),
 		Config:              newAgentConfigParams(agent),
 		CreatedAt:           createdAt,
 	})

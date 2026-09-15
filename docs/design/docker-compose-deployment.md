@@ -11,13 +11,18 @@ docker compose
 ├── e2b-local (:3099)    — 沙箱网关（host 网络，管理 sandbox 容器）
 ├── postgres (:5432)     — 元数据存储
 ├── redis (:6379)        — 平台 session 存储
-└── minio (:9000/9001)   — S3 兼容对象存储
+├── nats × 3             — JetStream 三节点集群
+│   ├── node 1 (:4222/8222)
+│   ├── node 2 (:4223/8223)
+│   └── node 3 (:4224/8224)
+├── minio (:9000/9001)   — S3 兼容对象存储
+└── openobserve (:5082)  — OTel Logs、Metrics 和 Traces 存储，仅回环地址开放调试入口
 ```
 
 **依赖关系**：
 
 ```text
-caddy ──→ oma-server ──→ postgres / redis / minio
+caddy ──→ oma-server ──→ postgres / redis / nats cluster / minio
                     └──→ e2b-local (host.docker.internal:3099)
                               └──→ Docker daemon (宿主机)
                                        └──→ sandbox 容器 (managed-agent-sandbox 镜像)
@@ -30,9 +35,11 @@ caddy ──→ oma-server ──→ postgres / redis / minio
 | caddy | `docker.io/library/caddy:alpine` | 官方镜像 |
 | postgres | `docker.io/library/postgres:17` | 官方镜像 |
 | redis | `docker.io/library/redis:8` | 官方镜像 |
+| nats × 3 | `docker.io/library/nats:2.14.6-alpine` | 官方镜像，启用 JetStream 集群 |
 | minio | `docker.io/pgsty/minio:latest` | 社区维护 fork（原版已归档） |
 | oma-server | `Dockerfile`（多阶段构建） | Go 后端 + 前端 bun build |
 | e2b-local | `Dockerfile`（多阶段构建） | Go 后端 + envd 二进制 |
+| openobserve | `public.ecr.aws/zinclabs/openobserve:v0.91.1` | 固定版本的单节点 OTel 存储 |
 
 所有服务镜像均为公开可拉取，无需本地编译。
 
@@ -115,9 +122,17 @@ Caddy 配置更简洁，与项目技术栈一致（都是 Go），Caddyfile 仅 
 
 受 Git 跟踪的 `deploy/docker-compose/oma-server.yaml` 是不含真实密钥的完整模板。`just init-compose-config` 首次运行时以 `0600` 权限将它复制为已加入 `.gitignore` 的 `deploy/docker-compose/oma-server.local.yaml`，目标已经存在时保持原文件不变。Compose 只读挂载该本地文件，并仅通过 `CONFIG_FILE` 告知进程配置路径。
 
+从包含旧 OTLP 本地文件日志配置的版本升级时，必须手动从 `oma-server.local.yaml` 删除 `code_session.otlp_file_log_enabled`、`code_session.otlp_log_root` 和 `code_session.otlp_log_body_preview_bytes`。文件日志功能及这三个字段已经移除，严格 YAML 解析会拒绝残留字段；`just init-compose-config` 为避免覆盖密钥不会自动改写已有本地配置。
+
 本地文件是完整运行配置，不是局部 overlay；应用不会合并模板与本地文件。数据库、Redis、S3、E2B 和上游凭证等业务字段全部由本地 YAML 提供，不再由进程环境变量逐项覆盖。真实 API key、access token 和 signing key 只能进入本地文件，不能写回受跟踪模板。生产部署可通过 Compose override 或平台 Secret Manager 将另一份受控的完整 YAML 只读挂载到同一个容器目标路径。
 
 oma-server 在容器内监听 `:8080`，Compose 通过 `38080:8080` 发布到宿主机。本地 sandbox 位于该容器网络之外，因此回调地址显式配置为 `code_session.sandbox_api_base_url: http://host.docker.internal:38080`。这里不能从 `server.addr` 推导：前者是 sandbox 可达的宿主机地址和发布端口，后者只是进程在容器内的监听地址。配置合同测试会同时校验监听端口、Compose 端口映射和回调 URL，防止三者漂移。
+
+Tunnel 的 public 地址是相反方向的部署合同：模板使用 `tunnel.public_base_url: http://localhost:38080`，
+供宿主机 MCP 客户端访问；生产必须改为外部 HTTPS origin。`code_session.sandbox_api_base_url` 供 sandbox
+回调 Runtime Gateway，`tunnel.public_base_url` 供 MCP 客户端保存 canonical URL，两者不能互换。
+Compose healthcheck 调用 `/readyz`，只有 PostgreSQL 与 Tunnel NATS 都可用时才让 Caddy 继续启动；
+`/healthz` 仍只用于进程存活检查。
 
 ### 4.7 明确采用本地开发凭证姿态
 
@@ -128,6 +143,7 @@ oma-server 在容器内监听 `:8080`，Compose 通过 `38080:8080` 发布到宿
 1. 将本地运行 YAML 改为 `env: prod`，并设置 `database.auto_migrate: false`。
 2. 生成或从 Secret Manager 提供稳定的 PKCS#8 Ed25519 私钥，将其只读挂载到 oma-server 容器，例如 `/run/secrets/code-session-jwt-ed25519.pem`。
 3. 在完整运行 YAML 中设置 `code_session.jwt_signing_private_key_file: /run/secrets/code-session-jwt-ed25519.pem`。生产模式缺少该字段时服务必须拒绝启动。
+4. 将 `tunnel.public_base_url` 改为 MCP 客户端实际访问的外部 HTTPS origin，并确保该 origin 的 `/v1/mcp/*` 与 `/.well-known/oauth-protected-resource/*` 都路由到 OMA。
 
 稳定私钥不得写入受跟踪模板或 `oma-server.local.yaml` 正文；YAML 只保存容器内只读 Secret 路径。私钥轮换属于会主动失效既有 session-ingress JWT 的运维操作，必须显式安排。
 
@@ -182,21 +198,33 @@ docker compose down -v     # 同时删除数据卷
 | oma API | `http://localhost:38080` |
 | e2b-local | `http://localhost:3099` |
 | MinIO Web | `http://localhost:9001` |
+| NATS monitoring | `http://localhost:8222` / `8223` / `8224` |
+| OpenObserve 调试入口 | `http://localhost:5082` |
+
+OpenObserve 数据保存在独立的 `openobservedata` named volume。Compose 设置
+`ZO_COMPACT_DATA_RETENTION_DAYS=61` 和 `ZO_IGNORE_FILE_RETENTION_BY_STREAM=true`，确保 Logs、Metrics 和
+Traces 统一保存 61 天——Analytics 需要对比最大 30 天当前窗口与上一等长窗口，保留期必须覆盖两个窗口，且
+Stream 设置不能延长全局保留期。本地调试端口只绑定 `127.0.0.1`；OMA 服务间访问
+使用 `http://openobserve:5080`。
+
+新生成的 `oma-server.local.yaml` 默认启用 Observability 和内容采集，并使用 Compose 的
+OpenObserve 本地账号。修改 Compose 账号时需同步修改该文件；生产环境必须使用独立 Secret。
+`just init-compose-config` 不覆盖已有文件，旧部署升级时需手动补齐开关和凭据。
 
 ## 8. 本地开发模式
 
-本地开发推荐只用 Docker Compose 启动 PostgreSQL、Redis 和 MinIO；e2b-local、oma-server 与 Vite 都直接从宿主机源码启动。这样 oma-server 可以直接访问 Docker Sandbox 暴露在宿主机 loopback 上的动态 envd 端口，也可以直接验证 e2b-local 的最新源码。
+本地开发推荐只用 Docker Compose 启动 PostgreSQL、Redis、NATS 和 MinIO；e2b-local、oma-server 与 Vite 都直接从宿主机源码启动。这样 oma-server 可以直接访问 Docker Sandbox 暴露在宿主机 loopback 上的动态 envd 端口，也可以直接验证 e2b-local 的最新源码。
 
 ### 8.1 启动基础设施
 
-先停止完整 Compose 拓扑中的应用进程，避免端口冲突或两个 Environment Runner 竞争同一任务，再启动三个基础设施服务：
+先停止完整 Compose 拓扑中的应用进程，避免端口冲突或两个 Environment Runner 竞争同一任务，再启动四个基础设施服务：
 
 ```bash
 docker compose stop caddy oma-server e2b-local
-docker compose up -d postgres redis minio
+docker compose up -d postgres redis nats nats-2 nats-3 minio
 ```
 
-PostgreSQL、Redis 和 MinIO 分别发布到宿主机的 `5432`、`6379`、`9000`/`9001`。
+PostgreSQL、Redis 和 MinIO 分别发布到宿主机的 `5432`、`6379`、`9000`/`9001`。NATS 三个节点的客户端端口为 `4222`、`4223`、`4224`，监控端口为 `8222`、`8223`、`8224`；监控端口仅用于本地诊断与 JetStream 健康检查。节点间通过 Compose 内网的 `6222` route 端口组成 `oma-nats` 集群，该端口不发布到宿主机。
 
 ### 8.2 从源码启动 e2b-local
 
@@ -242,6 +270,9 @@ database:
 redis:
   url: redis://localhost:6379
 
+nats:
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
+
 storage:
   s3:
     endpoint: http://localhost:9000
@@ -275,3 +306,5 @@ curl http://127.0.0.1:38080/healthz
 Vite 默认监听 `http://127.0.0.1:5173`，并把 `/api`、`/v1`、`/auth`、`/oauth`、`/web-api` 请求代理到 `http://127.0.0.1:38080`。可用 `VITE_API_PROXY_TARGET` 覆盖代理目标。
 
 本模式不使用 Caddy 和 oma-server 容器；Vite 代替 Caddy 提供前端和开发代理，本地 Go 进程代替容器化 oma-server。
+
+Tunnel Broker 要求三节点 JetStream；所有 NATS 节点加载 `deploy/docker-compose/nats.conf`，把 `max_payload` 设为 2 MiB。

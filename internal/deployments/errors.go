@@ -6,6 +6,12 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+)
+
+var (
+	errStoreNotConfigured         = errors.New("deployment store is not configured")
+	errScheduleNoFutureOccurrence = errors.New("schedule.expression has no future occurrence")
 )
 
 func invalidRequest(err error) error {
@@ -48,6 +54,9 @@ func environmentLoadError(err error, environmentID string) error {
 }
 
 func resourceBuildError(err error) error {
+	if errors.Is(err, sessionresource.ErrGitTokenCrypto) {
+		return internalError("Could not secure Git resource token", err)
+	}
 	var refErr resourceReferenceError
 	if !errors.As(err, &refErr) {
 		return invalidRequest(err)

@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"net"
 	"net/mail"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	DefaultAPIKey             = "sk-ant-local-default"
 	OfficialSDKResourceAPIKey = "my-anthropic-api-key"
+	MaxTunnelPendingRequests  = 512
 )
 
 func Load() (Config, error) {
@@ -29,6 +33,12 @@ func Load() (Config, error) {
 	}
 	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
 	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
+	cfg.E2B.APIKey = strings.TrimSpace(cfg.E2B.APIKey)
+	cfg.E2B.AccessToken = strings.TrimSpace(cfg.E2B.AccessToken)
+	cfg.E2B.Domain = strings.TrimSpace(cfg.E2B.Domain)
+	cfg.E2B.APIURL = strings.TrimSpace(cfg.E2B.APIURL)
+	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
+	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err
@@ -55,6 +65,9 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Redis.URL) == "" {
 		return errors.New("redis.url is required")
 	}
+	if strings.TrimSpace(cfg.NATS.URL) == "" {
+		return errors.New("nats.url is required")
+	}
 	if err := validateAuthConfig(cfg.Auth); err != nil {
 		return err
 	}
@@ -79,7 +92,19 @@ func validate(cfg Config) error {
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
 	}
+	if err := validateTunnelDomainSuffix(cfg.Tunnel.DomainSuffix); err != nil {
+		return err
+	}
+	if err := validateTunnelPublicBaseURL(cfg.Tunnel.PublicBaseURL); err != nil {
+		return err
+	}
 	if err := validateVaultMasterKey(cfg.Vault); err != nil {
+		return err
+	}
+	if err := validateObservabilityConfig(cfg.Observability); err != nil {
+		return err
+	}
+	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession, cfg.Observability.Enabled); err != nil {
 		return err
 	}
 	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
@@ -200,6 +225,49 @@ func validateGitSSHtoHTTPSHostLabel(label string) error {
 	return nil
 }
 
+func validateTunnelPublicBaseURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return errors.New("tunnel.public_base_url must not contain surrounding whitespace")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.Hostname() == "" {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(value, "#") || (parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if port := parsed.Port(); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return errors.New("tunnel.public_base_url port must be between 1 and 65535")
+		}
+	}
+	return nil
+}
+
+func validateTunnelDomainSuffix(value string) error {
+	if value == "" {
+		return errors.New("tunnel.domain_suffix is required")
+	}
+	if value != strings.ToLower(value) || strings.TrimSpace(value) != value || len(value) > 253 {
+		return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+			}
+		}
+	}
+	return nil
+}
+
 func (m MasterKeyConfig) inlineKEKSet() bool {
 	return strings.TrimSpace(m.Kek) != ""
 }
@@ -263,13 +331,48 @@ func validateVaultMasterKey(cfg VaultConfig) error {
 	return nil
 }
 
+// validateCodeSessionSandboxAPIBaseURL 校验 sandbox 回连 OMA 的地址
+// （启动 payload 里的 startup_context.api_base_url）。常规会话流量走
+// environment-manager relay，不依赖该地址，所以平时可以为空；但开启
+// observability 后 worker 要用它拼 OTLP 导出 endpoint 把遥测送回 OMA，
+// 为空会导致 sandbox 内导出静默失败、数据永远不到达，因此升级为启动期硬错误。
+func validateCodeSessionSandboxAPIBaseURL(environment string, cfg CodeSessionConfig, observabilityEnabled bool) error {
+	baseURL := strings.TrimSpace(cfg.SandboxAPIBaseURL)
+	if baseURL == "" {
+		if observabilityEnabled {
+			return errors.New("code_session.sandbox_api_base_url is required when observability.enabled is true")
+		}
+		return nil
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("code_session.sandbox_api_base_url must be an absolute HTTP(S) URL")
+	}
+	if environment == EnvironmentProd && parsed.Scheme != "https" {
+		return errors.New("code_session.sandbox_api_base_url must use HTTPS in production")
+	}
+	return nil
+}
+
 func validatePositiveValues(cfg Config) error {
 	checks := []struct {
 		name  string
 		valid bool
 	}{
 		{name: "storage.max_file_bytes", valid: cfg.Storage.MaxFileBytes > 0},
+		{name: "nats.connect_timeout", valid: cfg.NATS.ConnectTimeout > 0},
+		{name: "nats.drain_timeout", valid: cfg.NATS.DrainTimeout > 0},
 		{name: "storage.workspace_limit_bytes", valid: cfg.Storage.WorkspaceLimitBytes > 0},
+		{name: "tunnel.poll_timeout", valid: cfg.Tunnel.PollTimeout > 0 && cfg.Tunnel.PollTimeout <= 30*time.Second},
+		{name: "tunnel.request_timeout", valid: cfg.Tunnel.RequestTimeout >= time.Second && cfg.Tunnel.RequestTimeout <= 10*time.Minute},
+		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
+		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
+		{name: "tunnel.max_pending_requests", valid: cfg.Tunnel.MaxPendingRequests > 0 && cfg.Tunnel.MaxPendingRequests <= MaxTunnelPendingRequests},
+		{name: "tunnel.max_stored_requests", valid: cfg.Tunnel.MaxStoredRequests >= cfg.Tunnel.MaxPendingRequests && cfg.Tunnel.MaxStoredRequests <= 65536},
+		{name: "tunnel.max_pending_bytes", valid: cfg.Tunnel.MaxPendingBytes > 0},
+		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
+		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
+		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},
 		{name: "batch.worker_concurrency", valid: cfg.Batch.WorkerConcurrency > 0},
 		{name: "batch.max_requests", valid: cfg.Batch.MaxRequests > 0},
 		{name: "batch.max_body_bytes", valid: cfg.Batch.MaxBodyBytes > 0},
@@ -279,17 +382,64 @@ func validatePositiveValues(cfg Config) error {
 		{name: "batch.job_lease_heartbeat_interval", valid: cfg.Batch.JobLeaseHeartbeatInterval > 0},
 		{name: "batch.expiry_sweep_interval", valid: cfg.Batch.ExpirySweepInterval > 0},
 		{name: "e2b.request_timeout", valid: cfg.E2B.RequestTimeout > 0},
+		{name: "sandbox_lifecycle.idle_timeout", valid: cfg.SandboxLifecycle.IdleTimeout > 0},
 		{name: "e2b.sandbox_timeout", valid: cfg.E2B.SandboxTimeout > 0},
 		{name: "environment_runner.concurrency", valid: cfg.EnvironmentRunner.Concurrency > 0},
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
-		{name: "code_session.otlp_log_body_preview_bytes", valid: cfg.CodeSession.OTLPLogBodyPreviewBytes > 0},
+		{name: "observability.otlp.max_request_bytes", valid: cfg.Observability.OTLP.MaxRequestBytes > 0},
+		{name: "observability.otlp.forward_timeout", valid: cfg.Observability.OTLP.ForwardTimeout > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},
 	}
 	for _, check := range checks {
 		if !check.valid {
+			if check.name == "tunnel.max_pending_requests" {
+				return fmt.Errorf("%s must be between 1 and %d", check.name, MaxTunnelPendingRequests)
+			}
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
+	}
+	return nil
+}
+
+func validateObservabilityConfig(cfg ObservabilityConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	switch strings.TrimSpace(cfg.Backend) {
+	case ObservabilityBackendOpenObserve:
+		return validateOpenObserveConfig(cfg.OpenObserve)
+	default:
+		return fmt.Errorf("observability.backend must be %q when observability.enabled is true", ObservabilityBackendOpenObserve)
+	}
+}
+
+func validateOpenObserveConfig(cfg OpenObserveConfig) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "observability.openobserve.base_url", value: cfg.BaseURL},
+		{name: "observability.openobserve.organization", value: cfg.Organization},
+		{name: "observability.openobserve.logs_stream", value: cfg.LogsStream},
+		{name: "observability.openobserve.traces_stream", value: cfg.TracesStream},
+		{name: "observability.openobserve.ingestion.username", value: cfg.Ingestion.Username},
+		{name: "observability.openobserve.ingestion.password", value: cfg.Ingestion.Password},
+		{name: "observability.openobserve.query.username", value: cfg.Query.Username},
+		{name: "observability.openobserve.query.password", value: cfg.Query.Password},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required when observability.enabled is true", field.name)
+		}
+	}
+	if cfg.Query.Timeout <= 0 {
+		return errors.New("observability.openobserve.query.timeout must be greater than zero")
+	}
+	baseURL, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
+	if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") ||
+		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return errors.New("observability.openobserve.base_url must be an absolute HTTP(S) URL without userinfo, query, or fragment")
 	}
 	return nil
 }

@@ -19,9 +19,11 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
@@ -32,10 +34,12 @@ const (
 )
 
 type Handler struct {
-	db           *db.DB
-	webhooks     webhookEnqueuer
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
+	secretService *secrets.Service
+	db            *db.DB
+	deployments   *Store
+	webhooks      webhookEnqueuer
+	errorAdapter  *httpapi.ErrorAdapter
+	router        chi.Router
 }
 
 type webhookEnqueuer interface {
@@ -74,7 +78,7 @@ type deploymentAgentReference struct {
 }
 
 type deploymentScheduleResponse struct {
-	deploymentSchedule
+	deploymentjobs.Schedule
 	LastRunAt      *string  `json:"last_run_at"`
 	UpcomingRunsAt []string `json:"upcoming_runs_at"`
 }
@@ -89,12 +93,6 @@ type deploymentMutationRequest struct {
 	Resources     json.RawMessage `json:"resources"`
 	Schedule      json.RawMessage `json:"schedule"`
 	VaultIDs      json.RawMessage `json:"vault_ids"`
-}
-
-type deploymentCheckoutRequest struct {
-	Name json.RawMessage `json:"name"`
-	SHA  json.RawMessage `json:"sha"`
-	Type json.RawMessage `json:"type"`
 }
 
 type deploymentRunResponse struct {
@@ -232,9 +230,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, secretService *secrets.Service, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, webhooks: webhookEvents, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, secretService: secretService, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -359,12 +357,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
 	}
 	now := time.Now().UTC()
-	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
+	created, err := h.deployments.Create(r.Context(), db.Deployment{
 		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      principal.OrganizationUUID,
 		WorkspaceUUID:         principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+		RuntimeUserUUID:       principal.UserUUID,
 		EnvironmentUUID:       env.UUID,
 		EnvironmentExternalID: env.ExternalID,
 		AgentUUID:             agent.record.UUID,
@@ -558,7 +557,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
+	updated, err := h.deployments.Update(r.Context(), principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
 		Deployment: next, ScheduleProvided: scheduleProvided,
 	})
 	if err != nil {
@@ -575,7 +574,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	archived, err := h.db.ArchiveDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
+	archived, err := h.deployments.Archive(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -589,7 +588,7 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
 	reason := json.RawMessage(`{"type":"manual"}`)
-	paused, err := h.db.PauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
+	paused, err := h.deployments.Pause(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -602,7 +601,7 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
+	unpaused, err := h.deployments.Unpause(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -630,14 +629,14 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)
 		}
 		return h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 	}
-	run, session, thread, createdEvents, err := h.db.CreateManualDeploymentRun(r.Context(), db.CreateManualDeploymentRunInput{
+	run, session, thread, createdEvents, err := h.deployments.CreateManualRun(r.Context(), db.CreateManualDeploymentRunInput{
 		DeploymentExternalID: deployment.ExternalID,
 		Session:              preparedRun.Session,
 		Events:               preparedRun.Events,
@@ -1112,17 +1111,17 @@ func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now tim
 	if len(scheduleRaw) == 0 || jsonx.IsNull(scheduleRaw) {
 		return nil
 	}
-	config, err := jsonx.Decode[deploymentSchedule](scheduleRaw)
+	config, err := jsonx.Decode[deploymentjobs.Schedule](scheduleRaw)
 	if err != nil {
 		return nil
 	}
 	response := &deploymentScheduleResponse{
-		deploymentSchedule: config,
-		LastRunAt:          httpapi.OptionalTime(lastRunAt),
-		UpcomingRunsAt:     []string{},
+		Schedule:       config,
+		LastRunAt:      httpapi.OptionalTime(lastRunAt),
+		UpcomingRunsAt: []string{},
 	}
-	if schedule, err := parseDeploymentSchedule(scheduleRaw); err == nil {
-		response.UpcomingRunsAt = upcomingRuns(schedule.cron, now, inactive)
+	if schedule, err := deploymentjobs.Parse(scheduleRaw); err == nil {
+		response.UpcomingRunsAt = upcomingRuns(schedule.Cron, now, inactive)
 	}
 	return response
 }
@@ -1554,26 +1553,6 @@ func normalizeOutcomeRubric(raw json.RawMessage) (*deploymentOutcomeRubric, erro
 		return nil, err
 	}
 	return rubric, nil
-}
-
-func validateCheckout(raw json.RawMessage) error {
-	var checkout deploymentCheckoutRequest
-	if err := json.Unmarshal(raw, &checkout); err != nil {
-		return errors.New("checkout must be an object")
-	}
-	checkoutType, err := parseRequiredRawString(checkout.Type, "type")
-	if err != nil {
-		return err
-	}
-	switch checkoutType {
-	case "branch":
-		_, err = parseRequiredRawString(checkout.Name, "name")
-	case "commit":
-		_, err = parseRequiredRawString(checkout.SHA, "sha")
-	default:
-		err = errors.New("checkout.type must be branch or commit")
-	}
-	return err
 }
 
 func deploymentAPIContractEnabled(r *http.Request) bool {

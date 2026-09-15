@@ -203,7 +203,5 @@ func (r platformSessionIdentityRow) session() platformsession.Session {
 		WorkspaceExternalID: r.WorkspaceExternalID,
 		UserUUID:            r.UserUUID,
 		UserExternalID:      r.UserExternalID,
-		APIKeyUUID:          r.APIKeyUUID,
-		APIKeyExternalID:    r.APIKeyExternalID,
 	}
 }

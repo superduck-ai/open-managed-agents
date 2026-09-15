@@ -6,6 +6,8 @@ import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../f
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
+import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
+import { McpTunnelDetailPage } from '../features/mcp-tunnels/McpTunnelDetailPage';
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
@@ -170,8 +172,12 @@ const workspaceSessionsRoute = createRoute({
 });
 
 const sessionDetailSearch = (search: Record<string, unknown>) => ({
-  segment: search.segment === 'debug' ? 'debug' : undefined,
+  segment: search.segment === 'debug' || search.segment === 'trace' ? search.segment : undefined,
   event: typeof search.event === 'string' && search.event.trim() ? search.event.trim() : undefined,
+  trace_id:
+    typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
+      ? search.trace_id.trim()
+      : undefined,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -179,6 +185,18 @@ const workspaceSessionDetailRoute = createRoute({
   path: 'workspaces/$workspaceId/sessions/$sessionId',
   validateSearch: sessionDetailSearch,
   component: () => <ManagedAgentsPage section="sessions" />,
+});
+
+const observabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'observability',
+  component: () => <ManagedAgentsPage section="observability" />,
+});
+
+const workspaceObservabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/observability',
+  component: () => <ManagedAgentsPage section="observability" />,
 });
 
 const deploymentsRoute = createRoute({
@@ -397,10 +415,16 @@ const webhooksRoute = createRoute({
   component: () => <DashboardPage section="webhooks" />,
 });
 
-const mcpTunnelsRoute = createRoute({
+const settingsWorkspaceMcpTunnelsRoute = createRoute({
   getParentRoute: () => consoleRoute,
-  path: 'mcp-tunnels',
-  component: () => <DashboardPage section="mcp-tunnels" />,
+  path: 'settings/workspaces/$workspaceId/mcp-tunnels',
+  component: McpTunnelsPage,
+});
+
+const settingsWorkspaceMcpTunnelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/workspaces/$workspaceId/mcp-tunnels/$tunnelId',
+  component: McpTunnelDetailPage,
 });
 
 const tagsRoute = createRoute({
@@ -482,6 +506,8 @@ const routeTree = rootRoute.addChildren([
       sessionsRoute,
       workspaceSessionsRoute,
       workspaceSessionDetailRoute,
+      observabilityRoute,
+      workspaceObservabilityRoute,
       deploymentsRoute,
       workspaceDeploymentsRoute,
       workspaceDeploymentDetailRoute,
@@ -514,7 +540,8 @@ const routeTree = rootRoute.addChildren([
       privacyControlsRoute,
       securityRoute,
       webhooksRoute,
-      mcpTunnelsRoute,
+      settingsWorkspaceMcpTunnelsRoute,
+      settingsWorkspaceMcpTunnelDetailRoute,
       tagsRoute,
       settingsWorkspaceKeysRoute,
       settingsWorkspaceWebhooksRoute,

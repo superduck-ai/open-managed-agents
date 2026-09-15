@@ -14,6 +14,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -92,6 +94,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			OrganizationUUID:      principal.OrganizationUUID,
 			WorkspaceUUID:         principal.WorkspaceUUID,
 			CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+			RuntimeUserUUID:       principal.UserUUID,
 			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
 			AgentUUID:             agent.UUID,
@@ -467,7 +470,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	records, hasMore, err := h.db.ListSessionEventsPage(r.Context(), db.ListSessionEventsPageParams{
+	records, hasMore, err := h.eventPayloads.ListSessionEventsPage(r.Context(), db.ListSessionEventsPageParams{
 		WorkspaceUUID:     workspaceUUIDFromRequest(r),
 		SessionExternalID: sessionID,
 		ThreadExternalID:  threadID,
@@ -556,7 +559,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
@@ -567,6 +570,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
+			return queueCodeSessionEventsError(err)
 		}
 	}
 	if outcomesChanged {
@@ -599,6 +603,13 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error
 	body, err := httpapi.DecodeObjectBodyAs[sessionResourceRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		return invalidRequest(err)
+	}
+	resourceType, err := parseRequiredRawString(body.Type, "type")
+	if err != nil {
+		return invalidRequest(err)
+	}
+	if resourceType == sessionresource.GitRepositoryType {
+		return invalidRequest(errors.New("git repositories must be bound when creating the session"))
 	}
 	resource, err := h.resourceFromRequest(r, session, body, time.Now().UTC())
 	if err != nil {
@@ -679,11 +690,21 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return invalidRequest(err)
 	}
-	token, err := parseRequiredRawString(body.AuthorizationToken, "authorization_token")
+	// An explicit empty string or null clears the token; an omitted field is rejected.
+	if len(body.AuthorizationToken) == 0 {
+		return gitTokenUpdateRequiredError()
+	}
+	token, err := sessionresource.ParseGitTokenInput(body.AuthorizationToken)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	secret, _ := httpapi.MarshalRaw(map[string]any{"authorization_token": token})
+	secret, err := sessionresource.EncryptGitToken(r.Context(), h.secretService, secrets.ResourceBinding{
+		OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
+	}, token)
+	if err != nil {
+		return mapResourceBuildError(err)
+	}
+	// Keep the running repository configuration unchanged; update only credentials.
 	updated, err := h.db.UpdateSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID, current.Payload, secret)
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
@@ -702,6 +723,13 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if h.isFixtureResource(r, sessionID, resourceID) {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: resourceID, Type: "session_resource_deleted"})
 		return nil
+	}
+	resource, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
+	if err != nil {
+		return mapResourceLoadError(err, resourceID)
+	}
+	if resource.ResourceType == sessionresource.GitRepositoryType {
+		return invalidRequest(errors.New("git repositories cannot be removed from a session"))
 	}
 	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {

@@ -200,7 +200,7 @@ export function registerManagedAgentsResourceTests() {
     expect(within(dialog).getByRole('button', { name: 'Create memory store' })).toBeTruthy();
   });
 
-  test('renders the new session viewer with a persistent five-tab inspector', async () => {
+  test('renders the new session viewer with a persistent six-tab inspector', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     mockManagedResourceApi();
     const clipboardWrites: string[] = [];
@@ -236,6 +236,7 @@ export function registerManagedAgentsResourceTests() {
     expect(within(inspectorTabs).getByRole('tab', { name: 'Tools' })).toBeTruthy();
     expect(within(inspectorTabs).getByRole('tab', { name: 'Resources' })).toBeTruthy();
     expect(within(inspectorTabs).getByRole('tab', { name: 'Threads' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Traces' })).toBeTruthy();
     expect(inspector.className).toContain('overflow-hidden');
     expect(inspectorTabs.className).toContain('h-8');
     expect(inspectorTabs.className).toContain('overflow-x-auto');
@@ -668,7 +669,89 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete session/i })).toBeNull());
   });
 
-  test('sends messages and exposes session context through the five-tab inspector', async () => {
+  test('keeps the selected session trace in the URL', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    mockManagedResourceApi();
+    const managedFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      if (url === '/api/organizations/org_test/observability/dashboard') {
+        return new Response(JSON.stringify({ version: 1, tabs: [], queries: [] }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.startsWith('/api/organizations/org_test/observability/traces/trace_session_1?')) {
+        return new Response(
+          JSON.stringify({
+            trace_id: 'trace_session_1',
+            data_as_of: '2026-08-17T00:00:00Z',
+            truncated: false,
+            spans: [
+              {
+                span_id: 'span_1',
+                parent_span_id: '',
+                kind: 'server',
+                name: 'claude-code interaction',
+                start_time: '2026-08-17T00:00:00Z',
+                end_time: '2026-08-17T00:00:01Z',
+                duration_ms: 1000,
+                status: 'ok',
+                attributes: {},
+              },
+            ],
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.startsWith('/api/organizations/org_test/observability/traces?')) {
+        return new Response(
+          JSON.stringify({
+            data_as_of: '2026-08-17T00:00:00Z',
+            has_more: false,
+            items: [
+              {
+                trace_id: 'trace_session_1',
+                session_id: 'sesn_one123456',
+                start_time: '2026-08-17T00:00:00Z',
+                duration_ms: 1000,
+                tokens: 42,
+                llm_calls: 1,
+                tool_calls: 0,
+                status: 'ok',
+              },
+            ],
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return managedFetch(input, init);
+    }) as unknown as typeof fetch;
+
+    renderManagedAgentsPage('sessions');
+    fireEvent.click(await screen.findByRole('tab', { name: 'Traces' }));
+    fireEvent.click(await screen.findByText('trace_session_1'));
+
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBe('trace_session_1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBeNull());
+
+    fireEvent.click(screen.getByText('trace_session_1'));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBe('trace_session_1'));
+    fireEvent.click(within(screen.getByTestId('session-inspector')).getByRole('tab', { name: 'Session' }));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBeNull());
+  });
+
+  test('shows the disabled state for session traces when observability is off', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('sessions');
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Traces' }));
+
+    expect(await screen.findByText('Observability is not enabled')).toBeTruthy();
+  });
+
+  test('sends messages and exposes session context through the six-tab inspector', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi({
       agent: {
@@ -751,7 +834,7 @@ export function registerManagedAgentsResourceTests() {
     expect(bashToolCells[2]?.textContent).toBe('2');
     expect(bashToolCells[3]?.textContent).toBe('0');
     expect(bashToolCells[4]?.textContent).toBe('1.0s');
-    expect(within(inspector).getByText('9 tools · 5 used · 6 calls')).toBeTruthy();
+    expect(inspector.textContent).toContain('7 tools · 5 used · 6 calls');
     expect(within(inspector).getByText('Overview')).toBeTruthy();
     expect(within(inspector).getByText('Time in tools · Total')).toBeTruthy();
 
@@ -2058,7 +2141,7 @@ export function registerManagedAgentsResourceTests() {
 
     const dialog = screen.getByRole('dialog', { name: 'Create session' });
     fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Console session' } });
-    expect(within(dialog).getByText('Mount files into the session uploads directory.')).toBeTruthy();
+    expect(within(dialog).getByText('Mount files and Git repositories into the session.')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
     const createSessionButton = within(dialog).getByRole('button', { name: 'Create session' });

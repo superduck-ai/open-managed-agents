@@ -16,7 +16,7 @@
         payload_uuid,
         agent_id,
         is_compaction,
-        payload,
+        payload, payload_blob_uuid,
         payload_hash,
         idempotency_key,
         event_metadata,
@@ -37,7 +37,7 @@
         e.payload_uuid,
         e.agent_id,
         e.is_compaction,
-        e.payload,
+        e.payload, e.payload_blob_uuid,
         e.payload_hash,
         e.idempotency_key,
         e.event_metadata,
@@ -58,7 +58,7 @@
             payload_uuid,
             agent_id,
             is_compaction,
-            payload,
+            payload, payload_blob_uuid,
             payload_hash,
             idempotency_key,
             event_metadata,
@@ -75,7 +75,7 @@
             #{params.PayloadUUID},
             #{params.AgentID},
             #{params.IsCompaction},
-            CAST(#{params.Payload,sensitive=true} AS jsonb),
+            CAST(#{params.Payload,sensitive=true} AS jsonb), #{params.PayloadBlobUUID},
             #{params.PayloadHash,sensitive=true},
             #{params.IdempotencyKey},
             CAST(#{params.EventMetadata,sensitive=true} AS jsonb),
@@ -88,6 +88,14 @@
         RETURNING
         <include refid="eventColumns"/>
     </insert>
+
+    <select id="ExistsByIdempotencyKey" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM code_session_internal_events
+            WHERE workspace_uuid = #{workspaceUUID} AND idempotency_key = #{idempotencyKey}
+              AND idempotency_key &lt;&gt; '' AND deleted_at IS NULL
+        )
+    </select>
 
     <select id="ListPage" resultType="codeSessionInternalEventRow">
         WITH boundaries AS (

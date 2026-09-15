@@ -6,12 +6,29 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
+		NATS: NATSConfig{
+			ConnectTimeout: 5 * time.Second,
+			DrainTimeout:   10 * time.Second,
+		},
 		Storage: StorageConfig{
 			MaxFileBytes:        500 * 1024 * 1024,
 			WorkspaceLimitBytes: 500 * 1024 * 1024 * 1024,
 			S3: S3Config{
 				ForcePathStyle: true,
 			},
+		},
+		Tunnel: TunnelConfig{
+			DomainSuffix:        "tunnel.invalid",
+			PollTimeout:         30 * time.Second,
+			RequestTimeout:      2 * time.Minute,
+			PresenceTTL:         60 * time.Second,
+			TombstoneTTL:        5 * time.Minute,
+			MaxPendingRequests:  256,
+			MaxStoredRequests:   4096,
+			MaxPendingBytes:     32 * 1024 * 1024,
+			MaxBodyBytes:        1024 * 1024,
+			MaxHeaderBytes:      32 * 1024,
+			MaxHeaderValueBytes: 8 * 1024,
 		},
 		Batch: BatchConfig{
 			WorkerEnabled:             true,
@@ -24,6 +41,7 @@ func defaultConfig() Config {
 			JobLeaseHeartbeatInterval: 30 * time.Second,
 			ExpirySweepInterval:       5 * time.Minute,
 		},
+		SandboxLifecycle: SandboxLifecycleConfig{Enabled: true, DryRun: true, IdleTimeout: 24 * time.Hour},
 		E2B: E2BConfig{
 			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,
@@ -34,12 +52,25 @@ func defaultConfig() Config {
 			Concurrency:             2,
 			PackageProvisionTimeout: 2 * time.Minute,
 			ManagerPath:             "/usr/local/bin/environment-manager",
-			ClaudeAgentVersion:      "2.1.120",
+			ClaudeAgentVersion:      "2.1.251",
 			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
-		CodeSession: CodeSessionConfig{
-			OTLPLogRoot:             "logs",
-			OTLPLogBodyPreviewBytes: 256 * 1024,
+		Observability: ObservabilityConfig{
+			ContentCaptureEnabled: true,
+			OTLP: ObservabilityOTLPConfig{
+				MaxRequestBytes: 16 << 20,
+				ForwardTimeout:  8 * time.Second,
+			},
+			Backend: ObservabilityBackendOpenObserve,
+			OpenObserve: OpenObserveConfig{
+				BaseURL:      "http://openobserve:5080",
+				Organization: "oma",
+				LogsStream:   "oma_claude_code",
+				TracesStream: "oma_claude_code",
+				Query: BackendQueryConfig{
+					Timeout: 15 * time.Second,
+				},
+			},
 		},
 		Webhook: WebhookConfig{
 			EventTypes:  defaultWebhookEventTypes(),
@@ -77,10 +108,6 @@ func defaultConfig() Config {
 }
 
 func defaultDatabaseAutoMigrate(appEnv string) bool {
-	return appEnv != EnvironmentProd
-}
-
-func defaultCodeSessionOTLPFileLogEnabled(appEnv string) bool {
 	return appEnv != EnvironmentProd
 }
 

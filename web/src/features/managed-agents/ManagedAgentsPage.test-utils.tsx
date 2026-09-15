@@ -1,5 +1,6 @@
 import { expect, mock } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
+import type { QueryClient as QueryClientType } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { resetTestDom } from '../../test/setup';
 import type { AuthContextValue } from '../../shared/auth/context';
@@ -40,6 +41,20 @@ const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
   managedAgentsTestFallbackRoute,
 ]);
 
+type TestAgentModel = { id: string; displayName?: string };
+
+type ManagedAgentsRenderOptions = {
+  workspaceId?: string;
+  models?: TestAgentModel[];
+  auth?: AuthContextValue;
+  seedModels?: boolean;
+};
+
+const defaultTestAgentModels: TestAgentModel[] = [
+  { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+  { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+];
+
 export const { act, cleanup, fireEvent, screen, waitFor, within } = testingLibrary;
 const originalFetch = globalThis.fetch;
 const managedAgentsAuthContextValue: AuthContextValue = {
@@ -55,10 +70,72 @@ const managedAgentsAuthContextValue: AuthContextValue = {
   logout: async () => undefined,
 };
 
+function mockObservabilityDashboard() {
+  return {
+    version: 1,
+    tabs: [
+      {
+        id: 'overview',
+        title_key: 'observability.tab.overview',
+        panels: [
+          {
+            id: 'overview.active_sessions',
+            title_key: 'observability.panel.overview.active_sessions',
+            render_type: 'stat',
+            unit: 'count',
+            query_ref: 'overview.active_sessions',
+            grid: { x: 0, y: 0, w: 2, h: 1 },
+            options: {},
+          },
+          {
+            id: 'overview.token_total',
+            title_key: 'observability.panel.overview.token_total',
+            render_type: 'stat',
+            unit: 'tokens',
+            query_ref: 'overview.token_total',
+            grid: { x: 4, y: 0, w: 2, h: 1 },
+            options: {},
+          },
+        ],
+      },
+      { id: 'model', title_key: 'observability.tab.model', panels: [] },
+      { id: 'tool', title_key: 'observability.tab.tool', panels: [] },
+    ],
+    queries: [
+      {
+        query_ref: 'overview.active_sessions',
+        variables: [
+          { name: 'start_time', type: 'time', required: true },
+          { name: 'end_time', type: 'time', required: true },
+          { name: 'agent_id', type: 'string', required: false },
+        ],
+      },
+      {
+        query_ref: 'overview.token_total',
+        variables: [
+          { name: 'start_time', type: 'time', required: true },
+          { name: 'end_time', type: 'time', required: true },
+          { name: 'agent_id', type: 'string', required: false },
+        ],
+      },
+    ],
+  };
+}
+
+function mockObservabilityPanelResult(queryRef: string) {
+  const current = queryRef === 'overview.token_total' ? 12345 : 3;
+  return {
+    query_ref: queryRef,
+    render_type: 'stat',
+    data_as_of: '2026-08-13T00:00:00.000Z',
+    data: { current, previous: 2, change_percent: 50 },
+  };
+}
+
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
-  queryOptions: { auth?: AuthContextValue; seedModels?: boolean } = {},
+  queryOptions: ManagedAgentsRenderOptions = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -66,13 +143,8 @@ export function render(
       mutations: { retry: false },
     },
   });
-  const models = [
-    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-  ];
   if (queryOptions.seedModels !== false) {
-    queryClient.setQueryData(['create-agent', 'models', 'default'], models);
-    queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
+    seedCreateAgentModels(queryClient, queryOptions.workspaceId ?? 'default', queryOptions.models);
   }
   return testingLibrary.render(
     <AuthContext.Provider value={queryOptions.auth ?? managedAgentsAuthContextValue}>
@@ -142,7 +214,9 @@ export function setAgentConfigEditorValue(container: HTMLElement, value: string,
 export function renderManagedAgentsPage(
   section: Parameters<typeof ManagedAgentsPage>[0]['section'],
   locale: 'en' | 'zh-CN' = 'en',
+  options: ManagedAgentsRenderOptions = {},
 ) {
+  const workspaceId = options.workspaceId ?? 'default';
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -150,26 +224,29 @@ export function renderManagedAgentsPage(
       },
     },
   });
-  const models = [
-    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-  ];
-  queryClient.setQueryData(['create-agent', 'models', 'default'], models);
-  queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
+  seedCreateAgentModels(queryClient, workspaceId, options.models);
   const history = createBrowserHistory({ window });
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
     <ManagedAgentsTestRouterProvider router={router}>
       <QueryClientProvider client={queryClient}>
         <I18nProvider initialLocale={locale}>
-          <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+          <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
             <ManagedAgentsPage section={section} />
           </WorkspaceContext.Provider>
         </I18nProvider>
       </QueryClientProvider>
     </ManagedAgentsTestRouterProvider>,
+    undefined,
+    { workspaceId, models: options.models },
   );
-  return Object.assign(result, { router });
+  return Object.assign(result, { queryClient, router });
+}
+
+function seedCreateAgentModels(queryClient: QueryClientType, workspaceId: string, models?: TestAgentModel[]) {
+  const values = (models ?? defaultTestAgentModels).map((model) => ({ ...model }));
+  queryClient.setQueryData(['create-agent', 'models', workspaceId], values);
+  queryClient.setQueryData(['agent-quickstart', 'models', workspaceId], values);
 }
 
 function ManagedAgentsTestRouterProvider({
@@ -240,13 +317,14 @@ export type MockAgentsApiOptions = {
   deployments?: DeploymentFixture[];
   skills?: SkillFixture[];
   mcpDirectoryServers?: Array<Record<string, unknown>>;
+  mcpTunnels?: Array<Record<string, unknown>>;
+  mcpTunnelProbeResult?: Record<string, unknown>;
   mcpDirectoryErrorOnce?: boolean;
+  mcpTunnelsErrorOnce?: boolean;
   mcpToolCatalogs?: Array<Record<string, unknown>>;
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
   mcpToolCatalogRefreshWait?: Promise<void>;
-  analyticsOverview?: Record<string, unknown>;
-  analyticsTimeseries?: Array<Record<string, unknown>>;
   modelsErrorOnce?: boolean;
   modelsNotConfigured?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
@@ -273,6 +351,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentsSearchErrorsRemaining = options.agentsSearchErrorOnce ? 1 : 0;
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
+  let mcpTunnelsErrorsRemaining = options.mcpTunnelsErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
   let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
   let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
@@ -398,6 +477,27 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'MCP directory unavailable' } }, 503);
       }
       return jsonResponse({ servers: options.mcpDirectoryServers ?? [] });
+    }
+
+    if (url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\?/) && method === 'GET') {
+      if (mcpTunnelsErrorsRemaining > 0) {
+        mcpTunnelsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'MCP tunnels unavailable' } }, 503);
+      }
+      return jsonResponse(options.mcpTunnels ?? []);
+    }
+
+    if (
+      url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\/[^/]+\/probe$/) &&
+      method === 'POST'
+    ) {
+      return jsonResponse(
+        options.mcpTunnelProbeResult ?? {
+          status: 'ok',
+          channel: typeof body?.channel === 'string' ? body.channel : 'main',
+          tools: [],
+        },
+      );
     }
 
     if (url.startsWith('/v1/agents?') && method === 'GET') {
@@ -645,27 +745,17 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       return jsonResponse({ data: [], next_page: null });
     }
 
-    if (url.startsWith('/api/organizations/org_test/analytics/sessions/overview') && method === 'GET') {
-      return jsonResponse(
-        options.analyticsOverview ?? {
-          sessions_count: 0,
-          error_rate: 0,
-          input_tokens: { total: 0, p50: 0, p95: 0 },
-          output_tokens: { total: 0, p50: 0, p95: 0 },
-          duration: { p50: 0, p95: 0 },
-          active_time: { p50: 0, p95: 0 },
-          input_tokens_per_session: { p50: 0, p95: 0 },
-          output_tokens_per_session: { p50: 0, p95: 0 },
-          turns_per_session: { p50: 0, p95: 0 },
-          tool_call_counts: {},
-          stop_reason_counts: {},
-          data_as_of: null,
-        },
-      );
+    if (url === '/api/organizations/org_test/observability/dashboard' && method === 'GET') {
+      return jsonResponse(mockObservabilityDashboard());
     }
 
-    if (url.startsWith('/api/organizations/org_test/analytics/sessions/timeseries') && method === 'GET') {
-      return jsonResponse({ data: options.analyticsTimeseries ?? [] });
+    if (url === '/api/organizations/org_test/observability/panels/query' && method === 'POST') {
+      const queryRef = typeof body?.query_ref === 'string' ? body.query_ref : 'overview.active_sessions';
+      return jsonResponse(mockObservabilityPanelResult(queryRef));
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/traces') && method === 'GET') {
+      return jsonResponse({ data_as_of: '2026-08-13T00:00:00.000Z', has_more: false, items: [] });
     }
 
     const sessionEventsMatch = url.match(/^\/v1\/sessions\/([^/]+)\/events\?beta=true/);

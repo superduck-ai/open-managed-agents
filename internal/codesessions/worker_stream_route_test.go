@@ -3,12 +3,13 @@ package codesessions
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestPublishWorkerStreamPayloadsUsesProvidedRouteWithoutDatabase(t *testing.T) {
+func TestApplyWorkerOutputEventsPublishesStreamPayloadsIndividuallyInOrder(t *testing.T) {
 	service := newTestService(t, nil)
 	sink := &recordingWorkerStreamSink{}
 	service.SetPublicEventSink(sink)
@@ -17,30 +18,48 @@ func TestPublishWorkerStreamPayloadsUsesProvidedRouteWithoutDatabase(t *testing.
 		WorkspaceUUID:     "workspace-test",
 		SessionExternalID: "session-test",
 	}
-	payloads := []json.RawMessage{json.RawMessage(`{"type":"stream_event"}`)}
+	actions := []preparedWorkerOutputEvent{
+		preparedStreamAction{payload: json.RawMessage(`{"sequence":1}`)},
+		preparedStreamAction{payload: json.RawMessage(`{"sequence":2}`)},
+	}
 
-	service.publishWorkerStreamPayloads(context.Background(), route, 7, payloads)
+	if err := service.applyWorkerOutputEvents(context.Background(), route, 7, actions); err != nil {
+		t.Fatalf("applyWorkerOutputEvents() error = %v", err)
+	}
 
-	if !sink.called || sink.route != route || sink.workerEpoch != 7 || len(sink.payloads) != 1 {
-		t.Fatalf("stream publication = %#v, want supplied route and payload", sink)
+	if len(sink.publications) != 2 {
+		t.Fatalf("stream publications = %#v, want two individual publications", sink.publications)
+	}
+	for index, publication := range sink.publications {
+		if publication.route != route || publication.workerEpoch != 7 {
+			t.Fatalf("stream publication %d = %#v, want supplied route", index, publication)
+		}
+		want := fmt.Sprintf(`{"sequence":%d}`, index+1)
+		if string(publication.payload) != want {
+			t.Fatalf("stream publication %d payload = %s, want %s", index, publication.payload, want)
+		}
 	}
 }
 
 type recordingWorkerStreamSink struct {
-	called      bool
+	publications []workerStreamPublication
+}
+
+type workerStreamPublication struct {
 	route       CodeSessionStreamRoute
 	workerEpoch int64
-	payloads    []json.RawMessage
+	payload     json.RawMessage
 }
 
 func (s *recordingWorkerStreamSink) PublishCodeSessionEvents(context.Context, db.CodeSession, []json.RawMessage) error {
 	return nil
 }
 
-func (s *recordingWorkerStreamSink) PublishCodeSessionStreamEvents(_ context.Context, route CodeSessionStreamRoute, workerEpoch int64, payloads []json.RawMessage) error {
-	s.called = true
-	s.route = route
-	s.workerEpoch = workerEpoch
-	s.payloads = payloads
+func (s *recordingWorkerStreamSink) PublishCodeSessionStreamEvent(_ context.Context, route CodeSessionStreamRoute, workerEpoch int64, payload json.RawMessage) error {
+	s.publications = append(s.publications, workerStreamPublication{
+		route:       route,
+		workerEpoch: workerEpoch,
+		payload:     append(json.RawMessage(nil), payload...),
+	})
 	return nil
 }

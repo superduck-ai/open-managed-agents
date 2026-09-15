@@ -60,14 +60,11 @@ func TestConsoleInvitesAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("success recovers mirrored official organization uuid", func(t *testing.T) {
+	t.Run("success accepts mirrored official organization uuid with valid session", func(t *testing.T) {
 		aliasCookies := app.platformLoginCookies(t, "console-invites-alias@example.com")
 		sessionCookie := responseCookie(aliasCookies, "sessionKey")
 		if sessionCookie == nil {
 			t.Fatalf("platform login cookies = %#v, want sessionKey", aliasCookies)
-		}
-		if err := app.sessions.Delete(context.Background(), sessionCookie.Value); err != nil {
-			t.Fatalf("delete platform session: %v", err)
 		}
 		officialOrgPath := "/api/console/organizations/7294b4e5-c50b-48d9-bef8-c7a19423262c/invites"
 		email := "mirrored-org-" + uniqueAdminSuffix() + "@example.com"

@@ -32,6 +32,13 @@ describe('session inspector event order', () => {
     );
   });
 
+  test('opens trace deep links in the traces tab and clears the trace when leaving it', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test?trace_id=trace_1');
+
+    expect(readSessionInspectorTab()).toBe('traces');
+    expect(sessionInspectorTabHref('events')).toBe('/workspaces/default/sessions/sesn_test?inspector=events');
+  });
+
   test('preserves the backend response order when timestamps run backwards', () => {
     const events: QuickstartSessionEvent[] = [
       { id: 'sevt_first', type: 'user.message', processed_at: '2026-08-27T08:00:02.000Z' },

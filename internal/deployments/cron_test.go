@@ -4,17 +4,19 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 )
 
 func TestParseDeploymentScheduleAcceptsSunday(t *testing.T) {
 	now := time.Date(2026, time.August, 22, 10, 0, 0, 0, time.UTC)
 	want := time.Date(2026, time.August, 23, 9, 0, 0, 0, time.UTC)
 	for _, expression := range []string{"0 9 * * 0", "0 9 * * 7", "0 9 * * 5-7"} {
-		schedule, err := parseDeploymentSchedule(json.RawMessage(`{"type":"cron","expression":"` + expression + `","timezone":"UTC"}`))
+		schedule, err := deploymentjobs.Parse(json.RawMessage(`{"type":"cron","expression":"` + expression + `","timezone":"UTC"}`))
 		if err != nil {
-			t.Fatalf("parseDeploymentSchedule(%q) error = %v", expression, err)
+			t.Fatalf("deploymentjobs.Parse(%q) error = %v", expression, err)
 		}
-		if next := schedule.cron.Next(now); !next.Equal(want) {
+		if next := schedule.Cron.Next(now); !next.Equal(want) {
 			t.Fatalf("Schedule.Next(%q) = %v, want %v", expression, next, want)
 		}
 	}
@@ -29,8 +31,8 @@ func TestParseDeploymentScheduleRejectsUnsupportedSyntax(t *testing.T) {
 		"@daily",
 	} {
 		raw := json.RawMessage(`{"type":"cron","expression":"` + expression + `","timezone":"UTC"}`)
-		if _, err := parseDeploymentSchedule(raw); err == nil {
-			t.Errorf("parseDeploymentSchedule(%q) error = nil", expression)
+		if _, err := deploymentjobs.Parse(raw); err == nil {
+			t.Errorf("deploymentjobs.Parse(%q) error = nil", expression)
 		}
 	}
 }
@@ -42,19 +44,19 @@ func TestParseDeploymentScheduleRequiresIANATimezone(t *testing.T) {
 		json.RawMessage(`{"type":"cron","expression":"0 9 * * *","timezone":"  "}`),
 		json.RawMessage(`{"type":"cron","expression":"0 9 * * *","timezone":"Local"}`),
 	} {
-		if _, err := parseDeploymentSchedule(raw); err == nil {
-			t.Errorf("parseDeploymentSchedule(%s) error = nil", raw)
+		if _, err := deploymentjobs.Parse(raw); err == nil {
+			t.Errorf("deploymentjobs.Parse(%s) error = nil", raw)
 		}
 	}
 }
 
 func TestUpcomingRuns(t *testing.T) {
-	schedule, err := parseDeploymentSchedule(json.RawMessage(`{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
+	schedule, err := deploymentjobs.Parse(json.RawMessage(`{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
 	if err != nil {
 		t.Fatalf("parse schedule: %v", err)
 	}
 	runs := upcomingRuns(
-		schedule.cron,
+		schedule.Cron,
 		time.Date(2026, time.August, 11, 0, 0, 0, 0, time.UTC),
 		false,
 	)
@@ -66,6 +68,7 @@ func TestUpcomingRuns(t *testing.T) {
 func TestNormalizeOptionalScheduleRejectsUnsupportedSyntax(t *testing.T) {
 	tests := []string{
 		`{"type":"cron","expression":"bad","timezone":"UTC"}`,
+		`{"type":"cron","expression":"0 0 31 2 *","timezone":"UTC"}`,
 		`{"type":"cron","expression":"0 0 * * *","timezone":"not/a-zone"}`,
 	}
 	for _, raw := range tests {
@@ -76,11 +79,11 @@ func TestNormalizeOptionalScheduleRejectsUnsupportedSyntax(t *testing.T) {
 }
 
 func TestParseDeploymentScheduleDoesNotRewriteInput(t *testing.T) {
-	schedule, err := parseDeploymentSchedule(json.RawMessage(`{"type":"cron","expression":" */10 * * * *","timezone":"UTC"}`))
+	schedule, err := deploymentjobs.Parse(json.RawMessage(`{"type":"cron","expression":" */10 * * * *","timezone":"UTC"}`))
 	if err != nil {
 		t.Fatalf("parse schedule: %v", err)
 	}
-	if schedule.config.Expression != " */10 * * * *" {
-		t.Fatalf("expression = %q, want original input", schedule.config.Expression)
+	if schedule.Config.Expression != " */10 * * * *" {
+		t.Fatalf("expression = %q, want original input", schedule.Config.Expression)
 	}
 }

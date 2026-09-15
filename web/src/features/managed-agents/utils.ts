@@ -36,7 +36,7 @@ export function currentPathname() {
 
 export function managedWorkspaceIdFromPath(pathname: string) {
   const match = pathname.match(
-    /^\/workspaces\/([^/]+)\/(?:agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)(?:\/|$)/,
+    /^\/workspaces\/([^/]+)\/(?:agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)(?:\/|$)/,
   );
   return match ? decodeURIComponent(match[1]) : undefined;
 }

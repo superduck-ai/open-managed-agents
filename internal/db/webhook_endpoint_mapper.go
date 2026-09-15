@@ -14,7 +14,7 @@ type webhookEndpointRow struct {
 	ExternalID          string         `db:"external_id"`
 	OrganizationUUID    string         `db:"organization_uuid"`
 	WorkspaceUUID       string         `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string         `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string        `db:"created_by_api_key_uuid"`
 	URL                 string         `db:"url"`
 	Name                string         `db:"name"`
 	Description         string         `db:"description"`
@@ -33,7 +33,7 @@ type insertWebhookEndpointParams struct {
 	ExternalID          string
 	OrganizationUUID    string
 	WorkspaceUUID       string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	URL                 string
 	Name                string
 	Description         string

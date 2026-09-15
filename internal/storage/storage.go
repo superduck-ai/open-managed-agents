@@ -20,6 +20,8 @@ import (
 )
 
 const (
+	// EventPayloadThreshold is the common actual-byte limit for inline event payloads.
+	EventPayloadThreshold         = 32 * 1024
 	multipartPartSizeBytes  int64 = 16 * 1024 * 1024
 	multipartAbortTimeout         = 10 * time.Second
 	s3ResponseHeaderTimeout       = 30 * time.Second

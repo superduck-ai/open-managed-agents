@@ -3,6 +3,7 @@ import { useFormatters, useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
   dataTableClassName,
   dataTableHeaderCellClassName,
@@ -24,7 +25,7 @@ import {
   listVaultCredentials,
   updateVaultCredential,
 } from '../api';
-import { AgentFilterDropdown, AgentStatusBadge, ConfirmEntityDialog, ManagedSearchField } from '../components/common';
+import { AgentStatusBadge, ConfirmEntityDialog } from '../components/common';
 import { managedColumnLabel } from '../labels';
 import { type CredentialFormValues, type VaultApiResponse, type VaultCredentialApiResponse } from '../types';
 import { compactEntityId, errorMessage } from '../utils';
@@ -198,13 +199,13 @@ export function VaultCredentialsPanel({
       ) : null}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <ManagedSearchField
+        <ResourceSearchField
           id="vault-credential-search"
           value={search}
           placeholder={msg('managedAgents.credentialVaults.credentials.searchPlaceholder', 'Find credential by ID')}
           onChange={setSearch}
         />
-        <AgentFilterDropdown
+        <ResourceFilterDropdown
           label={msg('managedAgents.filters.status', 'Status')}
           valueLabel={statusValueLabel}
           options={statusOptions}

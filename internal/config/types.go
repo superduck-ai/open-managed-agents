@@ -3,9 +3,10 @@ package config
 import "time"
 
 const (
-	EnvironmentDev  = "dev"
-	EnvironmentProd = "prod"
-	StorageTypeS3   = "s3"
+	EnvironmentDev                  = "dev"
+	EnvironmentProd                 = "prod"
+	StorageTypeS3                   = "s3"
+	ObservabilityBackendOpenObserve = "openobserve"
 )
 
 type Config struct {
@@ -13,12 +14,16 @@ type Config struct {
 	Server            ServerConfig            `yaml:"server"`
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
+	NATS              NATSConfig              `yaml:"nats"`
 	Auth              AuthConfig              `yaml:"auth"`
+	Tunnel            TunnelConfig            `yaml:"tunnel"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
+	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       CodeSessionConfig       `yaml:"code_session"`
+	Observability     ObservabilityConfig     `yaml:"observability"`
 	Webhook           WebhookConfig           `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
@@ -78,6 +83,12 @@ type RedisConfig struct {
 	URL string `yaml:"url"`
 }
 
+type NATSConfig struct {
+	URL            string        `yaml:"url"`
+	ConnectTimeout time.Duration `yaml:"connect_timeout"`
+	DrainTimeout   time.Duration `yaml:"drain_timeout"`
+}
+
 type AuthConfig struct {
 	SMTP EmailSMTPConfig `yaml:"smtp"`
 }
@@ -86,6 +97,21 @@ type EmailSMTPConfig struct {
 	Addr     string `yaml:"addr"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+type TunnelConfig struct {
+	PublicBaseURL       string        `yaml:"public_base_url"`
+	DomainSuffix        string        `yaml:"domain_suffix"`
+	PollTimeout         time.Duration `yaml:"poll_timeout"`
+	RequestTimeout      time.Duration `yaml:"request_timeout"`
+	PresenceTTL         time.Duration `yaml:"presence_ttl"`
+	TombstoneTTL        time.Duration `yaml:"tombstone_ttl"`
+	MaxPendingRequests  int           `yaml:"max_pending_requests"`
+	MaxStoredRequests   int           `yaml:"max_stored_requests"`
+	MaxPendingBytes     int64         `yaml:"max_pending_bytes"`
+	MaxBodyBytes        int64         `yaml:"max_body_bytes"`
+	MaxHeaderBytes      int64         `yaml:"max_header_bytes"`
+	MaxHeaderValueBytes int64         `yaml:"max_header_value_bytes"`
 }
 
 type StorageConfig struct {
@@ -144,9 +170,6 @@ type EnvironmentRunnerConfig struct {
 
 type CodeSessionConfig struct {
 	SandboxAPIBaseURL        string `yaml:"sandbox_api_base_url"`
-	OTLPFileLogEnabled       bool   `yaml:"otlp_file_log_enabled"`
-	OTLPLogRoot              string `yaml:"otlp_log_root"`
-	OTLPLogBodyPreviewBytes  int    `yaml:"otlp_log_body_preview_bytes"`
 	JWTSigningPrivateKeyFile string `yaml:"jwt_signing_private_key_file"`
 	// UpstreamProxyMITMEnabled 开启后，CCR CONNECT 会在服务端终止客户端 TLS，按 HTTP 转发，再独立验证真实上游 TLS。
 	UpstreamProxyMITMEnabled bool `yaml:"upstream_proxy_mitm_enabled"`
@@ -155,6 +178,43 @@ type CodeSessionConfig struct {
 	UpstreamProxyCAKeyFile string `yaml:"upstream_proxy_ca_key_file"`
 	// UpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
 	UpstreamProxyDisableSSRFProtection bool `yaml:"upstream_proxy_disable_ssrf_protection"`
+}
+
+type ObservabilityConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// ContentCaptureEnabled defaults to true. It authorizes prompt originals,
+	// model output, and tool input/output payloads to enter the observability
+	// store. Set false to keep structural telemetry only (spans, durations,
+	// tokens, tool names).
+	ContentCaptureEnabled bool                    `yaml:"content_capture_enabled"`
+	OTLP                  ObservabilityOTLPConfig `yaml:"otlp"`
+	Backend               string                  `yaml:"backend"`
+	OpenObserve           OpenObserveConfig       `yaml:"openobserve"`
+}
+
+type OpenObserveConfig struct {
+	BaseURL      string                   `yaml:"base_url"`
+	Organization string                   `yaml:"organization"`
+	LogsStream   string                   `yaml:"logs_stream"`
+	TracesStream string                   `yaml:"traces_stream"`
+	Ingestion    BackendCredentialsConfig `yaml:"ingestion"`
+	Query        BackendQueryConfig       `yaml:"query"`
+}
+
+type BackendCredentialsConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type BackendQueryConfig struct {
+	Username string        `yaml:"username"`
+	Password string        `yaml:"password"`
+	Timeout  time.Duration `yaml:"timeout"`
+}
+
+type ObservabilityOTLPConfig struct {
+	MaxRequestBytes int64         `yaml:"max_request_bytes"`
+	ForwardTimeout  time.Duration `yaml:"forward_timeout"`
 }
 
 type WebhookConfig struct {
@@ -198,4 +258,11 @@ type SDKFixtureConfig struct {
 type SeedAPIKey struct {
 	ExternalID string `yaml:"external_id"`
 	Key        string `yaml:"key"`
+}
+
+// SandboxLifecycleConfig controls long-idle managed sandbox reclamation.
+type SandboxLifecycleConfig struct {
+	Enabled     bool          `yaml:"enabled"`
+	DryRun      bool          `yaml:"dry_run"`
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
 }

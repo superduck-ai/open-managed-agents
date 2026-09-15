@@ -24,6 +24,8 @@
 - `internal/db/db.go`
 - `tests/sessions_api_test.go`
 
+长期 idle 的主动销毁独立于 heartbeat 租约，采用 [沙箱生命周期协议](../sandbox-lifecycle.md)。回收会递增 epoch 并撤销 lease；heartbeat 不更新 `idle_since`。默认 dry-run，只观察，不销毁。
+
 ## API 行为
 
 ### 请求

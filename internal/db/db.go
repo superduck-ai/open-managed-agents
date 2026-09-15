@@ -150,6 +150,13 @@ func (d *DB) SQLDB() *sql.DB {
 	return d.mapperDB.SQLDB()
 }
 
+// ListenerPool exposes the existing pool for integration-owned LISTEN connections.
+// Callers must not close it or use it for application queries. Stop integrations
+// before DB.Close so their dedicated listener connections are also closed.
+func (d *DB) ListenerPool() *pgxpool.Pool {
+	return d.pool
+}
+
 func EnsureDatabase(ctx context.Context, databaseURL string) error {
 	var candidates []string
 	for _, maintenanceDB := range []string{"postgres", "template1"} {

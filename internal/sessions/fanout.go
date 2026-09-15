@@ -28,11 +28,11 @@ type sessionStreamEvent struct {
 }
 
 type codeSessionStreamFanout struct {
-	WorkspaceUUID     string            `json:"workspace_uuid"`
-	SessionExternalID string            `json:"session_id"`
-	CodeSessionID     string            `json:"code_session_id"`
-	WorkerEpoch       int64             `json:"worker_epoch"`
-	Payloads          []json.RawMessage `json:"payloads"`
+	WorkspaceUUID     string          `json:"workspace_uuid"`
+	SessionExternalID string          `json:"session_id"`
+	CodeSessionID     string          `json:"code_session_id"`
+	WorkerEpoch       int64           `json:"worker_epoch"`
+	Payload           json.RawMessage `json:"payload"`
 }
 
 func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionEvent) {
@@ -58,8 +58,8 @@ func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionE
 	}
 }
 
-func (h *Handler) PublishCodeSessionStreamEvents(ctx context.Context, route codesessions.CodeSessionStreamRoute, workerEpoch int64, payloads []json.RawMessage) error {
-	if len(payloads) == 0 {
+func (h *Handler) PublishCodeSessionStreamEvent(ctx context.Context, route codesessions.CodeSessionStreamRoute, workerEpoch int64, streamPayload json.RawMessage) error {
+	if len(streamPayload) == 0 {
 		return nil
 	}
 	payload := codeSessionStreamFanout{
@@ -67,12 +67,9 @@ func (h *Handler) PublishCodeSessionStreamEvents(ctx context.Context, route code
 		SessionExternalID: route.SessionExternalID,
 		CodeSessionID:     route.CodeSessionID,
 		WorkerEpoch:       workerEpoch,
-		Payloads:          payloads,
+		Payload:           streamPayload,
 	}
-	if err := h.publishFanout(ctx, route.SessionExternalID, sessionfanout.KindCodeSessionStream, payload); err != nil {
-		h.logger.WarnContext(ctx, "publish code session stream fanout", "code_session_id", route.CodeSessionID, "worker_epoch", workerEpoch, "event_count", len(payloads), "error", err)
-	}
-	return nil
+	return h.publishFanout(ctx, route.SessionExternalID, sessionfanout.KindCodeSessionStream, payload)
 }
 
 func (h *Handler) publishFanout(ctx context.Context, sessionID string, kind sessionfanout.Kind, payload any) error {
@@ -86,7 +83,7 @@ func (h *Handler) publishFanout(ctx context.Context, sessionID string, kind sess
 	})
 }
 
-func (h *Handler) receiveFanout(ctx context.Context, envelope sessionfanout.Envelope) {
+func (h *Handler) receiveFanout(ctx context.Context, _ string, envelope sessionfanout.Envelope) {
 	switch envelope.Kind {
 	case sessionfanout.KindSessionEvents:
 		var payload sessionEventsFanout
@@ -94,20 +91,20 @@ func (h *Handler) receiveFanout(ctx context.Context, envelope sessionfanout.Enve
 			h.logger.WarnContext(ctx, "discard session events fanout", "error", err)
 			return
 		}
-		h.receiveSessionEventsFanout(ctx, payload.Events)
+		h.receiveSessionEventsFanout(payload.Events)
 	case sessionfanout.KindCodeSessionStream:
 		var payload codeSessionStreamFanout
 		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
 			h.logger.WarnContext(ctx, "discard code session stream fanout", "error", err)
 			return
 		}
-		for _, event := range h.previews.convert(payload) {
+		if event, emit := h.previews.convert(payload); emit {
 			h.streams.broadcastEvent(event)
 		}
 	}
 }
 
-func (h *Handler) receiveSessionEventsFanout(ctx context.Context, events []sessionStreamEvent) {
+func (h *Handler) receiveSessionEventsFanout(events []sessionStreamEvent) {
 	terminalSessionID := ""
 	for _, event := range events {
 		h.streams.broadcastEvent(event)
@@ -118,14 +115,12 @@ func (h *Handler) receiveSessionEventsFanout(ctx context.Context, events []sessi
 	if terminalSessionID == "" {
 		return
 	}
-	if err := h.eventBus.Unsubscribe(ctx, terminalSessionID); err != nil {
-		h.logger.WarnContext(ctx, "unsubscribe terminated session fanout", "session_id", terminalSessionID, "error", err)
-	}
+	h.previews.resetSession(terminalSessionID)
 }
 
-func (h *Handler) resetFanout() {
-	h.previews.reset()
-	h.streams.reset()
+func (h *Handler) resetFanout(_ context.Context, sessionID string) {
+	h.previews.resetSession(sessionID)
+	h.streams.resetSession(sessionID)
 }
 
 func sessionStreamEventFrom(event db.SessionEvent) sessionStreamEvent {

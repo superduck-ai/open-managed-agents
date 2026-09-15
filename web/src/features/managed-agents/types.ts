@@ -8,6 +8,7 @@ export type ManagedAgentSection =
   | 'quickstart'
   | 'agents'
   | 'sessions'
+  | 'observability'
   | 'deployments'
   | 'environments'
   | 'credential-vaults'
@@ -126,7 +127,7 @@ export type AgentUpdateInput = {
   multiagent: unknown | null;
 };
 
-export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams'>;
+export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams' | 'observability'>;
 
 export type PageResponse<T> = {
   data: T[];
@@ -563,6 +564,17 @@ export type ManagedEntityFormValues = {
   vaultIds: string[];
   memoryStoreIds: string[];
   fileResources: SessionFileResourceFormValue[];
+  gitResources: GitRepositoryResourceFormValue[];
+  originalResources: SessionResourceApiResponse[];
+  resourcesChanged: boolean;
+};
+
+export type GitRepositoryResourceFormValue = {
+  url: string;
+  authorizationToken: string;
+  checkoutType: '' | 'branch' | 'commit';
+  checkoutValue: string;
+  mountPath: string;
 };
 
 export type SessionFileResourceFormValue = {
@@ -722,7 +734,7 @@ export type HighlightLanguage =
   'bash' | 'bash-yaml' | 'javascript' | 'json' | 'plaintext' | 'python' | 'typescript' | 'yaml';
 
 export type ResourceConfig = {
-  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>;
+  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams' | 'observability'>;
   title: string;
   description: string;
   createLabel?: string;

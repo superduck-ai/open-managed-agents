@@ -59,7 +59,7 @@ func sessionFilesystemInsertParameters(session Session, externalID string, creat
 		SessionUUID:          session.UUID,
 		OrganizationUUID:     session.OrganizationUUID,
 		WorkspaceUUID:        session.WorkspaceUUID,
-		CreatedByAPIKeyUUID:  session.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID:  nullableString(session.CreatedByAPIKeyUUID),
 		CreatedAt:            createdAt,
 	}
 }

@@ -98,7 +98,22 @@ func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 		if err := mapper.LockWorkspace(ctx, provider.OrganizationUUID, provider.WorkspaceUUID); err != nil {
 			return err
 		}
-		if err := validateLLMProviderModelOwnership(ctx, mapper, provider, provider.ExternalID); err != nil {
+		currentRow, err := mapper.FindByExternalID(
+			ctx,
+			provider.OrganizationUUID,
+			provider.WorkspaceUUID,
+			provider.ExternalID,
+		)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		current, err := currentRow.provider()
+		if err != nil {
+			return err
+		}
+		candidate := provider
+		candidate.ModelIDs = addedLLMProviderModelIDs(provider.ModelIDs, current.ModelIDs)
+		if err := validateLLMProviderModelOwnership(ctx, mapper, candidate, provider.ExternalID); err != nil {
 			return err
 		}
 		row, err := mapper.UpdateByExternalID(ctx, params)
@@ -112,6 +127,20 @@ func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 		return err
 	})
 	return updated, err
+}
+
+func addedLLMProviderModelIDs(next, current []string) []string {
+	existing := make(map[string]struct{}, len(current))
+	for _, modelID := range current {
+		existing[modelID] = struct{}{}
+	}
+	added := make([]string, 0, len(next))
+	for _, modelID := range next {
+		if _, ok := existing[modelID]; !ok {
+			added = append(added, modelID)
+		}
+	}
+	return added
 }
 
 func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, workspaceUUID, externalID string) error {

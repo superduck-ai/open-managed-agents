@@ -25,7 +25,6 @@ type codeSessionRow struct {
 	Status                      string     `db:"status"`
 	Metadata                    []byte     `db:"metadata"`
 	ConnectionStatus            string     `db:"connection_status"`
-	LastInboundSequenceNum      int64      `db:"last_inbound_sequence_num"`
 	LastInternalSequenceNum     int64      `db:"last_internal_sequence_num"`
 	LastWorkerConnectedAt       *time.Time `db:"last_worker_connected_at"`
 	LastWorkerActivityAt        *time.Time `db:"last_worker_activity_at"`
@@ -149,6 +148,7 @@ type resumeCodeSessionWorkerLeaseParams struct {
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
+	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) error
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
 	FindCredentialByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (codeSessionCredentialContextRow, error)
 	FindCredentialForIssue(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionCredentialContextRow, error)
@@ -166,11 +166,9 @@ type CodeSessionMapper interface {
 	HeartbeatWorkerByUUID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
 	ResumeWorkerLeaseForSandbox(ctx context.Context, params resumeCodeSessionWorkerLeaseParams) (int64, error)
 	UpdateWorkerState(ctx context.Context, params updateCodeSessionWorkerStateParams) (codeSessionRow, error)
-	UpdateCodeSessionInboundSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) (int64, error)
 	UpdateCodeSessionInternalSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) error
 	ActivateCodeSession(ctx context.Context, codeSessionUUID string, now time.Time) (int64, error)
 	TouchWorkerActivityByUUID(ctx context.Context, codeSessionUUID string, now time.Time) error
-	TouchWorkerActivityForActiveLease(ctx context.Context, codeSessionExternalID string, epoch int64, now time.Time) (int64, error)
 	TouchWorkerActivity(ctx context.Context, codeSessionExternalID string, requiredEpoch *int64, now time.Time) (int64, error)
 	UpdateConnection(ctx context.Context, params updateCodeSessionConnectionParams) (int64, error)
 	CountActiveIngressWorkerEpoch(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string, workerEpoch int64) (int64, error)
@@ -198,7 +196,6 @@ func (r codeSessionRow) session() CodeSession {
 		Status:                      r.Status,
 		Metadata:                    bytes.Clone(r.Metadata),
 		ConnectionStatus:            r.ConnectionStatus,
-		LastInboundSequenceNum:      r.LastInboundSequenceNum,
 		LastInternalSequenceNum:     r.LastInternalSequenceNum,
 		LastWorkerConnectedAt:       r.LastWorkerConnectedAt,
 		LastWorkerActivityAt:        r.LastWorkerActivityAt,

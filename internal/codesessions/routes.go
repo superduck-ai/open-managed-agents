@@ -22,6 +22,7 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 	h.registerSessionIngressRoutes(router)
 	router.Get("/sessions/{code_session_id}", h.handleSessionContext)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp", http.HandlerFunc(h.handleMCPProxy))
+	router.Handle("/ccr-sessions/{code_session_id}/mcp/*", http.HandlerFunc(h.handleNamedMCPProxy))
 }
 
 func (h *Handler) registerRuntimeRoutes(router chi.Router) {
@@ -35,9 +36,12 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 	// code-session ID 只在资源根路径声明一次；worker 作为该 session 的子资源注册，
 	// 避免通过字符串拼接重复完整路径，并让后续资源级中间件可以挂载在明确的 chi 子路由上。
 	router.Route("/code/sessions/{code_session_id}", func(sessionRouter chi.Router) {
-		sessionRouter.Get("/", h.errorAdapter.Wrap(h.handleCodeSessionHTTPPoll))
 		sessionRouter.Post("/", h.handleSessionIngressPersistence)
 		sessionRouter.Put("/", h.handleSessionIngressPersistence)
+		// The former root GET poll endpoint is intentionally unavailable. Keep a
+		// resource-scoped method response so it cannot fall through to the generic
+		// /v1 API-key authentication fallback.
+		sessionRouter.MethodNotAllowed(handleRemovedCodeSessionPoll)
 		sessionRouter.Post("/sign-commit", h.errorAdapter.Wrap(h.handleSignCommit))
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
@@ -51,8 +55,14 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 			workerRouter.Post("/heartbeat", h.handleCodeSessionWorkerHeartbeat)
 			workerRouter.Post("/otlp/metrics", h.handleCodeSessionWorkerOTLP)
 			workerRouter.Post("/otlp/logs", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/v1/logs", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/v1/traces", h.handleCodeSessionWorkerOTLP)
 		})
 	})
+}
+
+func handleRemovedCodeSessionPoll(w http.ResponseWriter, r *http.Request) {
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusMethodNotAllowed, "method_not_allowed_error", "Method not allowed"))
 }
 
 func (h *Handler) registerSessionIngressRoutes(router chi.Router) {

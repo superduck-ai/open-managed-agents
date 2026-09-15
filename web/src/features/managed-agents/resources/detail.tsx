@@ -143,7 +143,7 @@ export function ManagedEntityDetailPage({
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmAction, setConfirmAction] = useState<'archive' | 'delete' | null>(null);
-  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<'archive' | 'delete' | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -285,7 +285,6 @@ export function ManagedEntityDetailPage({
   if (config.section === 'credential-vaults') {
     return (
       <VaultDetailPage
-        config={config}
         vault={entity as VaultApiResponse}
         workspaceId={activeWorkspaceId}
         listHref={listHref}
@@ -451,7 +450,6 @@ function vaultDetailDateLabel(
 }
 
 function VaultDetailPage({
-  config,
   vault,
   workspaceId,
   listHref,
@@ -464,7 +462,6 @@ function VaultDetailPage({
   onMutationError,
   onBusyAction,
 }: {
-  config: ResourceConfig;
   vault: VaultApiResponse;
   workspaceId: string;
   listHref: string;

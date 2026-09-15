@@ -29,11 +29,6 @@ type FileMapper interface {
 	RetireOwnedFilesInSubtree(ctx context.Context, params sessionResourceSubtreeParams) error
 	RetireSkillArchiveFiles(ctx context.Context, params sessionSkillArchiveRetireParams) error
 	InsertSkillArchiveFile(ctx context.Context, params sessionSkillArchiveInsertParams) error
-
-	EnqueueObjectCleanupJob(ctx context.Context, workspaceUUID string, payload []byte) error
-	LeaseObjectCleanupJobs(ctx context.Context, workerID string, limit int) ([]objectCleanupJobRow, error)
-	CompleteObjectCleanupJob(ctx context.Context, jobUUID string) error
-	FailObjectCleanupJob(ctx context.Context, params objectCleanupJobFailureParams) error
 }
 
 type fileMapperRecordParams struct {
@@ -49,7 +44,7 @@ type fileMapperRecordParams struct {
 	Downloadable        bool
 	ScopeType           *string
 	ScopeID             *string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	CreatedAt           time.Time
 }
 
@@ -66,14 +61,6 @@ type fileMapperListParams struct {
 	Before           bool
 }
 
-type objectCleanupJobFailureParams struct {
-	JobUUID  string
-	Status   string
-	RunAfter time.Time
-	Attempts int
-	Reason   string
-}
-
 type fileRecordRow struct {
 	UUID                string    `db:"uuid"`
 	ExternalID          string    `db:"external_id"`
@@ -87,23 +74,13 @@ type fileRecordRow struct {
 	Downloadable        bool      `db:"downloadable"`
 	ScopeType           *string   `db:"scope_type"`
 	ScopeID             *string   `db:"scope_id"`
-	CreatedByAPIKeyUUID string    `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string   `db:"created_by_api_key_uuid"`
 	CreatedAt           time.Time `db:"created_at"`
 }
 
 type filePageCursorRow struct {
 	UUID      string    `db:"uuid"`
 	CreatedAt time.Time `db:"created_at"`
-}
-
-type objectCleanupJobRow struct {
-	UUID           string `db:"uuid"`
-	ExternalID     string `db:"external_id"`
-	WorkspaceUUID  string `db:"workspace_uuid"`
-	Bucket         string `db:"bucket"`
-	Key            string `db:"object_key"`
-	FileExternalID string `db:"file_external_id"`
-	Attempts       int    `db:"attempts"`
 }
 
 func fileMapperRecordParameters(file FileRecord) fileMapperRecordParams {
@@ -120,7 +97,7 @@ func fileMapperRecordParameters(file FileRecord) fileMapperRecordParams {
 		Downloadable:        file.Downloadable,
 		ScopeType:           file.ScopeType,
 		ScopeID:             file.ScopeID,
-		CreatedByAPIKeyUUID: file.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: nullableString(file.CreatedByAPIKeyUUID),
 		CreatedAt:           file.CreatedAt,
 	}
 }
@@ -172,19 +149,7 @@ func (r fileRecordRow) record() FileRecord {
 		Downloadable:        r.Downloadable,
 		ScopeType:           r.ScopeType,
 		ScopeID:             r.ScopeID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		CreatedAt:           r.CreatedAt,
-	}
-}
-
-func (r objectCleanupJobRow) job() ObjectCleanupJob {
-	return ObjectCleanupJob{
-		UUID:           r.UUID,
-		ExternalID:     r.ExternalID,
-		WorkspaceUUID:  r.WorkspaceUUID,
-		Bucket:         r.Bucket,
-		Key:            r.Key,
-		FileExternalID: r.FileExternalID,
-		Attempts:       r.Attempts,
 	}
 }

@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
@@ -25,6 +27,8 @@ import (
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
+	"github.com/superduck-ai/open-managed-agents/internal/observability"
+	"github.com/superduck-ai/open-managed-agents/internal/observability/openobserve"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
@@ -34,9 +38,11 @@ import (
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	tunnelsapi "github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
 	webhooksapi "github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	workbenchapi "github.com/superduck-ai/open-managed-agents/internal/workbench"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
@@ -55,6 +61,8 @@ type Server struct {
 	agents               *agents.Handler
 	batch                *batches.Handler
 	codeSessions         *codesessions.Handler
+	connector            *tunnelsapi.ConnectorHandler
+	consoleTunnels       *tunnelsapi.ConsoleHandler
 	deployments          *deploymentsapi.Handler
 	deploymentRuns       *deploymentsapi.RunsHandler
 	envs                 *environments.Handler
@@ -65,6 +73,9 @@ type Server struct {
 	models               *modelsapi.Handler
 	sessions             *sessionsapi.Handler
 	skills               *skillsapi.Handler
+	tunnels              *tunnelsapi.Handler
+	tunnelIngress        *tunnelsapi.IngressHandler
+	tunnelBroker         *tunnelsapi.Broker
 	vaults               *vaultsapi.Handler
 	webhooks             *webhooksapi.Handler
 }
@@ -76,6 +87,7 @@ type Server struct {
 type ServerDeps struct {
 	Config                 config.Config
 	DB                     *db.DB
+	Deployments            *deploymentsapi.Store
 	ObjectStore            storage.ObjectStore
 	Logger                 *slog.Logger
 	PlatformStore          platformsession.Store
@@ -87,6 +99,10 @@ type ServerDeps struct {
 	VaultSecrets           *secrets.Service
 	Redis                  *redis.Client
 	SessionEventBus        sessionfanout.EventBus
+	WorkerEventBroker      workerevents.Broker
+	TunnelBroker           *tunnelsapi.Broker
+	TunnelCleanupJobs      *tunnelsapi.CleanupJobs
+	WorkerEventAcks        workerevents.AckStore
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -101,7 +117,15 @@ func NewServer(deps ServerDeps) *Server {
 		platformStore = platformsession.NewMemoryStore()
 	}
 	codeSessionLogger := componentLogger("codesessions")
+	// ACK store 由 main 统一构造注入（与 WorkerEventBroker 同源）；未注入的组装
+	// 方（如部分测试）回退到进程内实现。
+	workerEventAcks := deps.WorkerEventAcks
+	if workerEventAcks == nil {
+		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
+	}
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
+		WithWorkerEventBroker(deps.WorkerEventBroker).
+		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
@@ -129,10 +153,10 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreCredentials: deps.FilestoreCredentials,
 		vaultSecrets:         deps.VaultSecrets,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
-		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
+		agents:               agents.NewHandler(deps.Config, deps.DB, deps.Deployments, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease),
-		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, componentLogger("deployments")),
+		deployments:          deploymentsapi.NewHandler(deps.DB, deps.Deployments, webhookEnqueuer, deps.VaultSecrets, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
@@ -140,11 +164,13 @@ func NewServer(deps ServerDeps) *Server {
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")),
 		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, componentLogger("messages")),
 		models:               modelsapi.NewHandler(deps.DB),
-		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, componentLogger("sessions")),
+		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
 		skills:               skillsapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("skills")),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")),
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
+		tunnelBroker:         deps.TunnelBroker,
 	}
+	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelCleanupJobs)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
 	router.Use(requestLoggingMiddleware(componentLogger("http")))
@@ -154,10 +180,39 @@ func NewServer(deps ServerDeps) *Server {
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	router.Get("/readyz", s.handleReadiness)
+	if s.connector != nil {
+		router.Mount("/connector", s.connector)
+		router.With(s.v1AuthMiddleware).Get("/.well-known/oauth-protected-resource/v1/mcp/{tunnel_id}", s.tunnelIngress.HandleOAuthProtectedResource)
+		router.With(s.v1AuthMiddleware).Get("/.well-known/oauth-protected-resource/v1/mcp/{tunnel_id}/{channel}", s.tunnelIngress.HandleOAuthProtectedResource)
+	}
+	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", s.codeSessions.HandleMCPProtectedResource)
 	s.registerVersionedAPIRoutes(router)
 	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler)
 	s.router = router
 	return s
+}
+
+func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	checks := map[string]string{"database": "ok", "tunnel_nats": "ok"}
+	ready := true
+	if s.db == nil || s.db.SQLDB().PingContext(ctx) != nil {
+		checks["database"] = "unavailable"
+		ready = false
+	}
+	if s.tunnelBroker == nil || s.tunnelBroker.Ping(ctx) != nil {
+		checks["tunnel_nats"] = "unavailable"
+		ready = false
+	}
+	status := http.StatusOK
+	state := "ready"
+	if !ready {
+		status = http.StatusServiceUnavailable
+		state = "not_ready"
+	}
+	httpapi.WriteJSON(w, status, map[string]any{"status": state, "checks": checks})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -224,10 +279,16 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
 			platformapi.RegisterOrganizationExperienceRoutes(r)
 			platformapi.RegisterOrganizationBillingRoutes(r)
-			platformapi.RegisterOrganizationAnalyticsRoutes(r)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets)
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
+			if s.cfg.Observability.Enabled {
+				obsLogger := s.logger.With("component", "observability")
+				// 配置校验保证 enabled 时 backend 只会是受支持的值。
+				backend := openobserve.New(s.cfg.Observability.OpenObserve, obsLogger)
+				handler := observability.NewHandler(backend, observability.DBStore{DB: s.db}, obsLogger)
+				platformapi.RegisterOrganizationObservabilityRoutes(r, handler, obsLogger)
+			}
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {
 			platformapi.RegisterOrganizationOAuthEnvironmentRoutes(r)
@@ -240,11 +301,30 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
+			if s.consoleTunnels != nil {
+				r.With(platformCSRFMiddleware).Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
+			}
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
 			s.files.RegisterPlatformRoutes(r)
 		})
 		r.Get("/web-api/sessions/{sessionId}/stream", s.handlePlatformWebSessionStream)
+	})
+}
+
+func platformCSRFMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		sessionKey := auth.ExtractPlatformSessionKey(r)
+		if sessionKey == "" || !auth.ValidatePlatformCSRFToken(sessionKey, r.Header.Get("X-CSRF-Token")) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Invalid CSRF token"))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -256,12 +336,18 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/environments", s.envs)
 	r.Mount("/files", s.files)
 	r.Mount("/memory_stores", s.memory)
+	if s.tunnelIngress != nil {
+		r.Mount("/mcp", s.tunnelIngress)
+	}
 	r.Post("/messages", s.messages.Create)
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)
 	r.Mount("/sessions", s.sessions)
 	r.Mount("/skills", s.skills)
+	if s.tunnels != nil {
+		r.Mount("/tunnels", s.tunnels)
+	}
 	r.Mount("/vaults", s.vaults)
 	r.Mount("/webhooks", s.webhooks)
 }
@@ -326,22 +412,7 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, err := s.authenticatePlatformSession(r)
 		if err != nil {
-			if recovered, recoveredOrgAlias, recoveredErr, ok := s.recoverPlatformMirrorSession(r); ok {
-				if recoveredErr == nil {
-					setPlatformRecoveredSessionCookies(w, recovered)
-					ctx := auth.WithPrincipal(r.Context(), recovered)
-					if recoveredOrgAlias != "" {
-						ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, recoveredOrgAlias)
-					}
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-				if recoveredErr.Status >= http.StatusInternalServerError {
-					httpapi.WriteError(w, r, recoveredErr)
-					return
-				}
-			}
-			if auth.ExtractPlatformSessionKey(r) != "" {
+			if err.Status == http.StatusUnauthorized && auth.ExtractPlatformSessionKey(r) != "" {
 				clearPlatformSessionCookies(w)
 			}
 			httpapi.WriteError(w, r, err)
@@ -401,19 +472,6 @@ func clearPlatformSessionCookies(w http.ResponseWriter) {
 	}
 }
 
-func setPlatformRecoveredSessionCookies(w http.ResponseWriter, principal auth.Principal) {
-	orgUUID := strings.TrimSpace(principal.OrganizationUUID)
-	if orgUUID == "" {
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:   "lastActiveOrg",
-		Value:  orgUUID,
-		Path:   "/",
-		MaxAge: int(platformsession.DefaultTTL.Seconds()),
-	})
-}
-
 func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *httpapi.Error) {
 	sessionKey := auth.ExtractPlatformSessionKey(r)
 	if sessionKey == "" {
@@ -427,7 +485,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	if session.APIKeyUUID == "" || session.UserUUID == "" {
+	if session.UserUUID == "" || session.WorkspaceUUID == "" {
 		refreshed, refreshErr := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
 			SessionKey: sessionKey,
 			UserUUID:   session.UserExternalID,
@@ -453,75 +511,61 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if orgErr != nil {
 		return auth.Principal{}, orgErr
 	}
-	workspaceID := platformWorkspaceOverrideID(r)
-	if workspaceID == "" || workspaceID == "default" || workspaceID == principal.WorkspaceExternalID || workspaceID == principal.WorkspaceUUID {
-		return principal, nil
+	return s.resolvePlatformWorkspaceScope(r, principal)
+}
+
+func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
+	return s.resolvePlatformWorkspace(r, principal, platformRequestWorkspaceID(r))
+}
+
+func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Principal, workspaceID string) (auth.Principal, *httpapi.Error) {
+	if workspaceID == "" || workspaceID == "default" {
+		workspaceID = principal.WorkspaceExternalID
 	}
 	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not found")
 		}
-		s.logger.ErrorContext(r.Context(), "load platform workspace override", "error", err)
+		s.logger.ErrorContext(r.Context(), "load requested platform workspace", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if workspace.ArchivedAt != nil {
 		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace is archived")
+	}
+	if accessErr := s.authorizePlatformWorkspaceAccess(r, principal, workspace); accessErr != nil {
+		return auth.Principal{}, accessErr
 	}
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
 	return principal, nil
 }
 
-func (s *Server) recoverPlatformMirrorSession(r *http.Request) (auth.Principal, string, *httpapi.Error, bool) {
-	sessionKey := auth.ExtractPlatformSessionKey(r)
-	if sessionKey == "" || s.db == nil || s.platformStore == nil {
-		return auth.Principal{}, "", nil, false
-	}
-	preferredOrgID := platformSessionRecoveryOrgID(r)
-	if preferredOrgID == "" && isPlatformAPIRequestPath(r.URL.Path) {
-		return auth.Principal{}, "", nil, false
-	}
-
-	recoveredOrgAlias := ""
-	userExternalID, orgUUID, err := s.db.FindBootstrapUserContext(r.Context(), preferredOrgID)
+func (s *Server) authorizePlatformWorkspaceAccess(r *http.Request, principal auth.Principal, workspace db.AdminWorkspace) *httpapi.Error {
+	user, err := s.db.GetAdminUser(r.Context(), principal.OrganizationUUID, principal.UserExternalID)
 	if err != nil {
-		if preferredOrgID != "" {
-			userExternalID, orgUUID, err = s.db.FindBootstrapUserContext(r.Context(), "")
-			if err == nil {
-				recoveredOrgAlias = preferredOrgID
-			}
+		if errors.Is(err, db.ErrNotFound) {
+			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
 		}
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
-				return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
-			}
-			s.logger.ErrorContext(r.Context(), "recover platform session context", "error", err)
-			return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
+		s.logger.ErrorContext(r.Context(), "load platform user workspace access", "error", err)
+		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+	}
+	if strings.EqualFold(user.Role, "admin") {
+		return nil
+	}
+	if _, err := s.db.GetAdminWorkspaceMember(
+		r.Context(),
+		principal.OrganizationUUID,
+		workspace.ExternalID,
+		principal.UserExternalID,
+	); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
 		}
+		s.logger.ErrorContext(r.Context(), "load platform workspace membership", "error", err)
+		return httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	session, err := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
-		SessionKey: sessionKey,
-		UserUUID:   userExternalID,
-		OrgUUID:    orgUUID,
-	})
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
-			return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
-		}
-		s.logger.ErrorContext(r.Context(), "recover platform session identity", "error", err)
-		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
-	}
-	if err := s.platformStore.Save(r.Context(), sessionKey, session); err != nil {
-		s.logger.ErrorContext(r.Context(), "save recovered platform session", "error", err)
-		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
-	}
-	principal := session.Principal()
-	principal, orgErr := s.applyPlatformOrganizationOverride(r, principal)
-	if orgErr != nil {
-		return auth.Principal{}, "", orgErr, true
-	}
-	return principal, recoveredOrgAlias, nil, true
+	return nil
 }
 
 func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
@@ -578,19 +622,6 @@ func platformOrganizationOverrideID(r *http.Request) string {
 	return ""
 }
 
-func platformSessionRecoveryOrgID(r *http.Request) string {
-	if segment := platformAPIPathOrganizationID(r.URL.Path); segment != "" {
-		return segment
-	}
-	if value := platformOrganizationOverrideID(r); value != "" {
-		return value
-	}
-	if cookie, err := r.Cookie("lastActiveOrg"); err == nil {
-		return strings.TrimSpace(cookie.Value)
-	}
-	return ""
-}
-
 func platformAPIPathOrganizationID(path string) string {
 	for _, prefix := range []string{
 		"/api/console/organizations/",
@@ -623,7 +654,7 @@ func platformGenericAPIOrgSegment(segment string) bool {
 	return len(segment) == 36 && strings.Count(segment, "-") == 4
 }
 
-func platformWorkspaceOverrideID(r *http.Request) string {
+func platformRequestWorkspaceID(r *http.Request) string {
 	for _, value := range []string{
 		r.Header.Get("X-Workspace-ID"),
 		r.URL.Query().Get("workspace_id"),
@@ -633,15 +664,6 @@ func platformWorkspaceOverrideID(r *http.Request) string {
 		}
 	}
 	return ""
-}
-
-func isPlatformAPIRequestPath(path string) bool {
-	for _, prefix := range []string{"/api", "/v1", "/auth", "/oauth", "/web-api"} {
-		if path == prefix || strings.HasPrefix(path, prefix+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func isEnvironmentWorkPath(path string) bool {

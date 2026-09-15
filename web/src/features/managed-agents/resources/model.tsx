@@ -23,6 +23,7 @@ import {
   type VaultCredentialApiResponse,
 } from '../types';
 import { formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
+import { resourceFormValues } from './git-resource';
 
 export { sectionPathSegment };
 
@@ -330,8 +331,7 @@ export function initialFormValues(
     cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
-    memoryStoreIds: entity ? entityMemoryStoreIds(entity) : [],
-    fileResources: [],
+    ...resourceFormValues(entity && 'resources' in entity ? entity.resources : []),
   };
 }
 
@@ -465,21 +465,6 @@ export function entityInitialMessage(entity: ManagedEntityApiResponse) {
     }
   }
   return '';
-}
-
-export function entityMemoryStoreIds(entity: ManagedEntityApiResponse) {
-  if (!('resources' in entity) || !Array.isArray(entity.resources)) {
-    return [];
-  }
-  return entity.resources
-    .map((resource) =>
-      resource &&
-      typeof resource === 'object' &&
-      typeof (resource as { memory_store_id?: unknown }).memory_store_id === 'string'
-        ? (resource as { memory_store_id: string }).memory_store_id
-        : null,
-    )
-    .filter((item): item is string => Boolean(item));
 }
 
 export function entityTriggerType(entity: ManagedEntityApiResponse): ManagedEntityFormValues['triggerType'] {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
@@ -30,11 +32,15 @@ const (
 	maxAgentBodySize = 4 << 20
 )
 
-var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var (
+	customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	mcpNamePattern        = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+)
 
 type Handler struct {
 	cfg          config.Config
 	db           *db.DB
+	deployments  *deployments.Store
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
 }
@@ -100,9 +106,9 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, deploymentStore *deployments.Store, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{cfg: cfg, db: database, deployments: deploymentStore, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -369,7 +375,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
 		return nil
 	}
-	record, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
+	record, err := h.deployments.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return agentNotFound(agentID, err)
@@ -812,6 +818,9 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if len(name) > 255 {
 			return nil, errors.New("mcp_servers.name must be at most 255 characters")
 		}
+		if !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
+			return nil, errors.New("mcp_servers.name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+		}
 		if _, ok := seen[name]; ok {
 			return nil, errors.New("mcp_servers.name must be unique")
 		}
@@ -830,9 +839,19 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if len(url) > 2048 {
 			return nil, errors.New("mcp_servers.url must be at most 2048 characters")
 		}
+		if !validMCPServerURL(url) {
+			return nil, errors.New("mcp_servers.url must be an HTTP or HTTPS absolute URL without credentials or fragment")
+		}
 		normalized = append(normalized, map[string]string{"name": name, "type": "url", "url": url})
 	}
 	return jsonx.Encode(normalized)
+}
+
+func validMCPServerURL(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil &&
+		(parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		parsed.IsAbs() && parsed.Hostname() != "" && parsed.User == nil && parsed.Fragment == ""
 }
 
 func validateMetadata(metadata map[string]string) error {
@@ -899,6 +918,7 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 		return nil, err
 	}
 	referencedMCPServers := map[string]struct{}{}
+	seenMCPToolsets := map[string]struct{}{}
 	normalized := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		total++
@@ -920,9 +940,16 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if name == "" {
 				return nil, errors.New("mcp_toolset.mcp_server_name is required")
 			}
+			if len(name) > 255 || !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
+				return nil, errors.New("mcp_toolset.mcp_server_name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+			}
 			if _, ok := serverNames[name]; !ok {
 				return nil, errors.New("mcp_toolset.mcp_server_name must reference an MCP server")
 			}
+			if _, exists := seenMCPToolsets[name]; exists {
+				return nil, errors.New("mcp toolset server names must be unique")
+			}
+			seenMCPToolsets[name] = struct{}{}
 			referencedMCPServers[name] = struct{}{}
 			defaultConfig, err := normalizeDefaultConfig(tool["default_config"], "always_ask")
 			if err != nil {

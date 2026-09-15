@@ -93,10 +93,13 @@ func (h *streamHub) broadcastToSession(workspaceUUID, sessionID string, delivery
 	}
 }
 
-func (h *streamHub) reset() {
+func (h *streamHub) resetSession(sessionID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for id, sub := range h.subscribers {
+		if sub.sessionID != sessionID {
+			continue
+		}
 		h.enqueue(id, sub, streamResetDelivery{})
 	}
 }
@@ -236,7 +239,12 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		h.errorAdapter.Write(w, r, internalError("Could not subscribe to session event stream", err))
 		return
 	}
-	defer h.streams.unsubscribe(subID)
+	defer func() {
+		h.streams.unsubscribe(subID)
+		if err := h.eventBus.Unsubscribe(session.ExternalID); err != nil {
+			h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
+		}
+	}()
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

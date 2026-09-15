@@ -266,13 +266,15 @@ func readVaultCredentialEnvelope(t *testing.T, app *testApp, credentialID string
 	if err != nil {
 		t.Fatalf("read credential envelope: %v", err)
 	}
-	return secrets.Envelope{
+	envelope := secrets.Envelope{
 		Ciphertext: ciphertext, Nonce: nonce, WrappedDEK: wrappedDEK,
 		FormatVersion: int(formatVersion.Int32), KeyProvider: keyProvider.String, KeyVersion: keyVersion.Int64,
-	}, secrets.Binding{
+	}
+	binding := secrets.Binding{
 		OrganizationUUID: orgUUID, WorkspaceUUID: wsUUID,
 		VaultExternalID: vaultExt, CredentialExternalID: credExt,
 	}
+	return envelope, binding
 }
 
 func insertEnvelopeLessCredential(t *testing.T, app *testApp, vaultID, credentialKey string) string {

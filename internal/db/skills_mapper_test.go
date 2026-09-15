@@ -22,7 +22,7 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 		UUID:                skillUUID,
 		ExternalID:          externalID,
 		WorkspaceUUID:       workspaceUUID,
-		CreatedByAPIKeyUUID: "00000000-0000-4000-8000-000000000003",
+		CreatedByAPIKeyUUID: nullableString("00000000-0000-4000-8000-000000000003"),
 		DisplayTitle:        &displayTitle,
 		LatestVersion:       latestVersion,
 		CreatedAt:           now,
@@ -163,7 +163,7 @@ func TestSkillVersionMapperCRUDBuilderContracts(t *testing.T) {
 		WorkspaceUUID: workspaceUUID, SkillUUID: skillUUID, SkillExternalID: externalID,
 		Version: version, Name: "test", Description: "description", Directory: "test",
 		S3Bucket: "bucket", S3Key: "skills/test", SizeBytes: 42, SHA256: strings.Repeat("a", 64),
-		CreatedByAPIKeyUUID: "00000000-0000-4000-8000-000000000004",
+		CreatedByAPIKeyUUID: nullableString("00000000-0000-4000-8000-000000000004"),
 		CreatedAt:           time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC),
 	}
 	tests := []struct {

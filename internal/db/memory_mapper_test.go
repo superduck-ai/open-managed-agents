@@ -27,7 +27,7 @@ func TestMemoryStoreMapperBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	insertParams := insertMemoryStoreParams{
 		UUID: "store-uuid", ExternalID: "store-id", OrganizationUUID: "org-uuid",
-		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: "key-uuid",
+		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: nullableString("key-uuid"),
 		Name: "store", Description: "description", Metadata: []byte(`{"key":"value"}`), CreatedAt: now,
 	}
 	updateParams := updateMemoryStoreParams{

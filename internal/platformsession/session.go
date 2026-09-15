@@ -41,8 +41,6 @@ type Store interface {
 func (s Session) Principal() auth.Principal {
 	return auth.Principal{
 		CredentialType:            auth.CredentialTypePlatformSession,
-		APIKeyUUID:                s.APIKeyUUID,
-		APIKeyExternalID:          s.APIKeyExternalID,
 		OrganizationUUID:          s.OrganizationUUID,
 		WorkspaceUUID:             s.WorkspaceUUID,
 		WorkspaceExternalID:       s.WorkspaceExternalID,

@@ -11,10 +11,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("platform-console-backend-bucket"))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	// 该测试断言 observability 关闭时相关路由不注册（404）；显式固定开关，
+	// 不依赖本地 config.yaml 的取值。
+	cfg.Observability.Enabled = false
+	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-console-backend-bucket"))
 	defer app.close()
 
 	orgUUID := loadDefaultOrganizationUUID(t, app)
@@ -142,10 +151,10 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			t.Fatalf("empty organization name status = %d, want 400: %s", emptyNameResp.StatusCode, readAll(t, emptyNameResp.Body))
 		}
 
-		updateOrgResp := app.platformRequest(t, http.MethodPut, orgPath, strings.NewReader(`{
+		updateOrgResp := app.platformRequestWithHeaders(t, http.MethodPut, orgPath, strings.NewReader(`{
 			"name": " Open Managed Agent Labs ",
 			"default_workspace_settings": {"enable_api_keys": false}
-		}`), cookies)
+		}`), cookies, map[string]string{"X-CSRF-Token": ""})
 		defer updateOrgResp.Body.Close()
 		if updateOrgResp.StatusCode != http.StatusOK {
 			t.Fatalf("update organization status = %d, want 200: %s", updateOrgResp.StatusCode, readAll(t, updateOrgResp.Body))
@@ -447,32 +456,18 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			}
 		}
 
-		sessionOverviewResp := app.platformRequest(t, http.MethodGet, orgPath+"/analytics/sessions/overview?agent_id=agent_test123", nil, cookies)
+		sessionOverviewResp := app.platformRequest(t, http.MethodGet, orgPath+"/observability/dashboard", nil, cookies)
 		defer sessionOverviewResp.Body.Close()
-		if sessionOverviewResp.StatusCode != http.StatusOK {
-			t.Fatalf("session analytics overview status = %d, want 200: %s", sessionOverviewResp.StatusCode, readAll(t, sessionOverviewResp.Body))
+		if sessionOverviewResp.StatusCode != http.StatusNotFound {
+			t.Fatalf("observability dashboard status = %d, want 404 when observability is disabled: %s", sessionOverviewResp.StatusCode, readAll(t, sessionOverviewResp.Body))
 		}
-		var sessionOverview map[string]any
-		decodeJSON(t, sessionOverviewResp.Body, &sessionOverview)
-		if sessionsCount, ok := sessionOverview["sessions_count"].(map[string]any); !ok || sessionsCount["value"] != float64(0) {
-			t.Fatalf("session analytics sessions_count = %#v, want zero value bucket", sessionOverview["sessions_count"])
-		}
-		if inputTokens, ok := sessionOverview["input_tokens"].(map[string]any); !ok || inputTokens["p95"] == nil {
-			t.Fatalf("session analytics input_tokens = %#v, want quantile bucket", sessionOverview["input_tokens"])
-		}
-
-		sessionTimeseriesResp := app.platformRequest(t, http.MethodGet, orgPath+"/analytics/sessions/timeseries?agent_id=agent_test123&group_by=agent_version", nil, cookies)
-		defer sessionTimeseriesResp.Body.Close()
-		if sessionTimeseriesResp.StatusCode != http.StatusOK {
-			t.Fatalf("session analytics timeseries status = %d, want 200: %s", sessionTimeseriesResp.StatusCode, readAll(t, sessionTimeseriesResp.Body))
-		}
-		var sessionTimeseries map[string]any
-		decodeJSON(t, sessionTimeseriesResp.Body, &sessionTimeseries)
-		if sessionTimeseries["group_by"] != "agent_version" {
-			t.Fatalf("session analytics timeseries = %#v, want requested group_by", sessionTimeseries)
-		}
-		if dataPoints, ok := sessionTimeseries["data_points"].([]any); !ok || len(dataPoints) != 0 {
-			t.Fatalf("session analytics data_points = %#v, want empty array", sessionTimeseries["data_points"])
+		for _, path := range []string{"/analytics/sessions/overview", "/analytics/sessions/timeseries"} {
+			resp := app.platformRequest(t, http.MethodGet, orgPath+path, nil, cookies)
+			if resp.StatusCode != http.StatusNotFound {
+				resp.Body.Close()
+				t.Fatalf("retired analytics route %s status = %d, want 404", path, resp.StatusCode)
+			}
+			resp.Body.Close()
 		}
 	})
 
@@ -811,6 +806,194 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 		}
 	})
 
+	t.Run("failure console workspace mcp tunnel write without CSRF", func(t *testing.T) {
+		path := consoleOrgPath + "/workspaces/default/mcp_tunnels"
+		missingCSRFResp := app.platformRequestWithHeaders(
+			t, http.MethodPost, path, strings.NewReader(`{"display_name":"Missing CSRF"}`), cookies,
+			map[string]string{"X-CSRF-Token": ""},
+		)
+		defer missingCSRFResp.Body.Close()
+		if missingCSRFResp.StatusCode != http.StatusForbidden {
+			t.Fatalf("missing CSRF tunnel create status = %d, want 403: %s", missingCSRFResp.StatusCode, readAll(t, missingCSRFResp.Body))
+		}
+	})
+
+	t.Run("success console workspace mcp tunnel lifecycle and scope", func(t *testing.T) {
+		path := consoleOrgPath + "/workspaces/default/mcp_tunnels"
+		unauthorizedResp := app.platformRequest(t, http.MethodGet, path, nil, nil)
+		defer unauthorizedResp.Body.Close()
+		if unauthorizedResp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("unauthorized tunnel list status = %d, want 401: %s", unauthorizedResp.StatusCode, readAll(t, unauthorizedResp.Body))
+		}
+
+		otherOrgResp := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+otherOrgUUID+"/workspaces/default/mcp_tunnels", nil, cookies)
+		defer otherOrgResp.Body.Close()
+		if otherOrgResp.StatusCode != http.StatusNotFound {
+			t.Fatalf("other organization tunnel list status = %d, want 404: %s", otherOrgResp.StatusCode, readAll(t, otherOrgResp.Body))
+		}
+
+		missingWorkspaceResp := app.platformRequest(t, http.MethodGet, consoleOrgPath+"/workspaces/wrkspc_missing/mcp_tunnels", nil, cookies)
+		defer missingWorkspaceResp.Body.Close()
+		if missingWorkspaceResp.StatusCode != http.StatusNotFound {
+			t.Fatalf("missing workspace tunnel list status = %d, want 404: %s", missingWorkspaceResp.StatusCode, readAll(t, missingWorkspaceResp.Body))
+		}
+
+		createResp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"display_name":" Console tools "}`), cookies)
+		defer createResp.Body.Close()
+		if createResp.StatusCode != http.StatusOK {
+			t.Fatalf("create tunnel status = %d, want 200: %s", createResp.StatusCode, readAll(t, createResp.Body))
+		}
+		var created map[string]any
+		decodeJSON(t, createResp.Body, &created)
+		tunnelID := stringValue(created["id"])
+		if !tunnelIDPattern.MatchString(tunnelID) || created["type"] != "tunnel" || created["display_name"] != "Console tools" {
+			t.Fatalf("created tunnel = %#v, want normalized tunnel resource", created)
+		}
+		if created["tunnel_token"] != nil || !strings.HasSuffix(stringValue(created["mcp_url"]), "/v1/mcp/"+tunnelID) {
+			t.Fatalf("created tunnel = %#v, want canonical URL without token", created)
+		}
+		connection, ok := created["connection"].(map[string]any)
+		if !ok || connection["state"] != "disconnected" {
+			t.Fatalf("created tunnel connection = %#v, want disconnected", created["connection"])
+		}
+
+		listResp := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+		defer listResp.Body.Close()
+		if listResp.StatusCode != http.StatusOK {
+			t.Fatalf("list tunnels status = %d, want 200: %s", listResp.StatusCode, readAll(t, listResp.Body))
+		}
+		var listed []map[string]any
+		decodeJSON(t, listResp.Body, &listed)
+		if !containsConsoleTunnel(listed, tunnelID, false) {
+			t.Fatalf("listed tunnels = %#v, want active tunnel %s", listed, tunnelID)
+		}
+		listedTunnel := findConsoleTunnel(listed, tunnelID)
+		if listedTunnel == nil {
+			t.Fatalf("listed tunnels = %#v, want tunnel %s", listed, tunnelID)
+		}
+		listedConnection, _ := listedTunnel["connection"].(map[string]any)
+		if listedConnection["state"] != "unknown" {
+			t.Fatalf("listed tunnel connection = %#v, want unknown without broker", listedConnection)
+		}
+		if strings.Contains(fmt.Sprint(listed), "tunnel_token") {
+			t.Fatalf("listed tunnels contain token field: %#v", listed)
+		}
+
+		detailResp := app.platformRequest(t, http.MethodGet, path+"/"+tunnelID, nil, cookies)
+		defer detailResp.Body.Close()
+		if detailResp.StatusCode != http.StatusOK {
+			t.Fatalf("retrieve tunnel status = %d, want 200: %s", detailResp.StatusCode, readAll(t, detailResp.Body))
+		}
+		var detail map[string]any
+		decodeJSON(t, detailResp.Body, &detail)
+		detailConnection, _ := detail["connection"].(map[string]any)
+		if detail["id"] != tunnelID || detailConnection["state"] != "unknown" || detail["tunnel_token"] != nil {
+			t.Fatalf("retrieved tunnel = %#v, want scoped tunnel with unknown connection and no token", detail)
+		}
+
+		workspaceResp := app.platformRequest(
+			t, http.MethodPost, consoleOrgPath+"/workspaces",
+			strings.NewReader(`{"name":"Tunnel scope","display_color":"#1A8961"}`), cookies,
+		)
+		defer workspaceResp.Body.Close()
+		if workspaceResp.StatusCode != http.StatusOK {
+			t.Fatalf("create tunnel scope workspace status = %d, want 200: %s", workspaceResp.StatusCode, readAll(t, workspaceResp.Body))
+		}
+		var scopedWorkspace map[string]any
+		decodeJSON(t, workspaceResp.Body, &scopedWorkspace)
+		crossWorkspaceResp := app.platformRequest(
+			t, http.MethodGet,
+			consoleOrgPath+"/workspaces/"+stringValue(scopedWorkspace["id"])+"/mcp_tunnels/"+tunnelID, nil, cookies,
+		)
+		defer crossWorkspaceResp.Body.Close()
+		if crossWorkspaceResp.StatusCode != http.StatusNotFound {
+			t.Fatalf("cross-workspace tunnel detail status = %d, want 404: %s", crossWorkspaceResp.StatusCode, readAll(t, crossWorkspaceResp.Body))
+		}
+
+		missingDetailResp := app.platformRequest(
+			t, http.MethodGet, path+"/tunnel_00000000000000000000000000000000", nil, cookies,
+		)
+		defer missingDetailResp.Body.Close()
+		if missingDetailResp.StatusCode != http.StatusNotFound {
+			t.Fatalf("missing tunnel detail status = %d, want 404: %s", missingDetailResp.StatusCode, readAll(t, missingDetailResp.Body))
+		}
+
+		probeResp := app.platformRequest(t, http.MethodPost, path+"/"+tunnelID+"/probe", strings.NewReader(`{"channel":"main"}`), cookies)
+		defer probeResp.Body.Close()
+		var probeError map[string]any
+		decodeJSON(t, probeResp.Body, &probeError)
+		if probeResp.StatusCode != http.StatusServiceUnavailable || probeError["error"] != "unavailable" {
+			t.Fatalf("probe without broker = status %d body %#v, want 503 unavailable", probeResp.StatusCode, probeError)
+		}
+
+		revealResp := app.platformRequest(t, http.MethodPost, path+"/"+tunnelID+"/reveal_token", nil, cookies)
+		defer revealResp.Body.Close()
+		if revealResp.StatusCode != http.StatusOK || revealResp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("reveal token status = %d cache-control = %q, want 200/no-store: %s", revealResp.StatusCode, revealResp.Header.Get("Cache-Control"), readAll(t, revealResp.Body))
+		}
+		var revealed map[string]any
+		decodeJSON(t, revealResp.Body, &revealed)
+		initialToken := stringValue(revealed["tunnel_token"])
+		if initialToken == "" {
+			t.Fatalf("revealed token = %#v, want plaintext token", revealed)
+		}
+
+		rotateResp := app.platformRequest(t, http.MethodPost, path+"/"+tunnelID+"/rotate_token", strings.NewReader(`{}`), cookies)
+		defer rotateResp.Body.Close()
+		if rotateResp.StatusCode != http.StatusOK || rotateResp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("rotate token status = %d cache-control = %q, want 200/no-store: %s", rotateResp.StatusCode, rotateResp.Header.Get("Cache-Control"), readAll(t, rotateResp.Body))
+		}
+		var rotated map[string]any
+		decodeJSON(t, rotateResp.Body, &rotated)
+		if rotatedToken := stringValue(rotated["tunnel_token"]); rotatedToken == "" || rotatedToken == initialToken {
+			t.Fatalf("rotated token = %#v, want new plaintext token", rotated)
+		}
+
+		archiveResp := app.platformRequest(t, http.MethodPost, path+"/"+tunnelID+"/archive", nil, cookies)
+		defer archiveResp.Body.Close()
+		if archiveResp.StatusCode != http.StatusOK {
+			t.Fatalf("archive tunnel status = %d, want 200: %s", archiveResp.StatusCode, readAll(t, archiveResp.Body))
+		}
+		var archived map[string]any
+		decodeJSON(t, archiveResp.Body, &archived)
+		if archived["archived_at"] == nil {
+			t.Fatalf("archived tunnel = %#v, want archived_at", archived)
+		}
+
+		archivedDetailResp := app.platformRequest(t, http.MethodGet, path+"/"+tunnelID, nil, cookies)
+		defer archivedDetailResp.Body.Close()
+		if archivedDetailResp.StatusCode != http.StatusOK {
+			t.Fatalf("retrieve archived tunnel status = %d, want 200: %s", archivedDetailResp.StatusCode, readAll(t, archivedDetailResp.Body))
+		}
+		var archivedDetail map[string]any
+		decodeJSON(t, archivedDetailResp.Body, &archivedDetail)
+		if archivedDetail["archived_at"] == nil {
+			t.Fatalf("retrieved archived tunnel = %#v, want archived_at", archivedDetail)
+		}
+
+		activeResp := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+		defer activeResp.Body.Close()
+		if activeResp.StatusCode != http.StatusOK {
+			t.Fatalf("active tunnel list status = %d, want 200: %s", activeResp.StatusCode, readAll(t, activeResp.Body))
+		}
+		var active []map[string]any
+		decodeJSON(t, activeResp.Body, &active)
+		if containsConsoleTunnel(active, tunnelID, true) {
+			t.Fatalf("active tunnels = %#v, archived tunnel must be hidden", active)
+		}
+
+		archivedListResp := app.platformRequest(t, http.MethodGet, path+"?include_archived=true", nil, cookies)
+		defer archivedListResp.Body.Close()
+		if archivedListResp.StatusCode != http.StatusOK {
+			t.Fatalf("archived tunnel list status = %d, want 200: %s", archivedListResp.StatusCode, readAll(t, archivedListResp.Body))
+		}
+		var archivedList []map[string]any
+		decodeJSON(t, archivedListResp.Body, &archivedList)
+		if !containsConsoleTunnel(archivedList, tunnelID, true) {
+			t.Fatalf("archived tunnels = %#v, want tunnel %s", archivedList, tunnelID)
+		}
+	})
+
 	t.Run("success console workspace create route", func(t *testing.T) {
 		path := consoleOrgPath + "/workspaces"
 		workspaceName := fmt.Sprintf("Docs %d", time.Now().UnixNano())
@@ -904,6 +1087,20 @@ func containsConsoleAPIKeyStatus(keys []map[string]any, keyID string, status str
 		}
 	}
 	return false
+}
+
+func containsConsoleTunnel(tunnels []map[string]any, tunnelID string, archived bool) bool {
+	tunnel := findConsoleTunnel(tunnels, tunnelID)
+	return tunnel != nil && (tunnel["archived_at"] != nil) == archived
+}
+
+func findConsoleTunnel(tunnels []map[string]any, tunnelID string) map[string]any {
+	for _, tunnel := range tunnels {
+		if tunnel["id"] == tunnelID {
+			return tunnel
+		}
+	}
+	return nil
 }
 
 type fakePlatformMCPOAuthServer struct {

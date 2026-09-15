@@ -76,11 +76,6 @@ func RegisterOrganizationBillingRoutes(r chi.Router) {
 	r.Get("/cache_analytics", handlePromptCacheAnalytics)
 }
 
-func RegisterOrganizationAnalyticsRoutes(r chi.Router) {
-	r.Get("/analytics/sessions/overview", handleSessionAnalyticsOverview)
-	r.Get("/analytics/sessions/timeseries", handleSessionAnalyticsTimeseries)
-}
-
 func RegisterConsoleOrganizationWorkspaceRoutes(r chi.Router, store OrganizationStore) {
 	r.Get("/workspaces", handleListConsoleWorkspaces(store))
 }
@@ -108,44 +103,6 @@ func handleCurrentSpend(w http.ResponseWriter, _ *http.Request) {
 		"total":          0,
 		"resets_at":      resetsAt,
 	})
-}
-
-func handleSessionAnalyticsOverview(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"sessions_count":            analyticsValue(0),
-		"error_rate":                analyticsValue(0),
-		"input_tokens":              analyticsMetricBucket(),
-		"output_tokens":             analyticsMetricBucket(),
-		"duration":                  analyticsMetricBucket(),
-		"active_time":               analyticsMetricBucket(),
-		"input_tokens_per_session":  analyticsMetricBucket(),
-		"output_tokens_per_session": analyticsMetricBucket(),
-		"turns_per_session":         analyticsMetricBucket(),
-		"tool_call_counts":          map[string]any{},
-		"stop_reason_counts":        map[string]any{},
-		"data_as_of":                nil,
-	})
-}
-
-func handleSessionAnalyticsTimeseries(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data":        []any{},
-		"data_points": []any{},
-		"group_by":    strings.TrimSpace(r.URL.Query().Get("group_by")),
-	})
-}
-
-func analyticsMetricBucket() map[string]any {
-	return map[string]any{
-		"total": analyticsValue(0),
-		"p50":   analyticsValue(0),
-		"p90":   analyticsValue(0),
-		"p95":   analyticsValue(0),
-	}
-}
-
-func analyticsValue(value int) map[string]any {
-	return map[string]any{"value": value}
 }
 
 func nextMonthlyResetAt(now time.Time) string {

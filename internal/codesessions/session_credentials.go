@@ -23,7 +23,7 @@ import (
 const (
 	// OAuth-compatible token 只在 OMA 内部代理中使用，不代表 Anthropic 官方 OAuth token。
 	oauthCompatibleTokenPrefix = "sk-ant-oat01-"
-	// session-ingress token 在前缀后承载 Ed25519 JWT，供 worker、relay 和 upstream proxy 使用。
+	// session-ingress token 在前缀后承载 Ed25519 JWT，供 worker、relay、MCP Gateway 和 upstream proxy 使用。
 	sessionIngressTokenPrefix = "sk-ant-si-"
 	sessionIngressIssuer      = "session-ingress"
 	sessionIngressAudience    = "anthropic-api"
@@ -166,7 +166,7 @@ func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, 
 	token.Header["kid"] = c.kid
 	signed, err := token.SignedString(c.privateKey)
 	if err != nil {
-		return "", fmt.Errorf("sign code-session ingress token: %w", err)
+		return "", fmt.Errorf("sign session ingress token: %w", err)
 	}
 	return sessionIngressTokenPrefix + signed, nil
 }

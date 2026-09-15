@@ -31,22 +31,6 @@ func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
 	}
 }
 
-func managedAgentRuntimeSourceValues(
-	t *testing.T,
-	sources []json.RawMessage,
-) []any {
-	t.Helper()
-	raw, err := json.Marshal(sources)
-	if err != nil {
-		t.Fatalf("marshal runtime sources: %v", err)
-	}
-	var values []any
-	if err := json.Unmarshal(raw, &values); err != nil {
-		t.Fatalf("decode runtime sources: %v", err)
-	}
-	return values
-}
-
 func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 	resources := []db.SessionResource{
 		{
@@ -62,35 +46,8 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 			Payload:      json.RawMessage(`{"type":"future_resource","mount_path":"/workspace/future"}`),
 		},
 	}
-	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
+	if workDir := mustResolveRuntimeResources(t, resources).workDir; workDir != defaultEnvironmentWorkDir {
 		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
-	}
-}
-
-func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
-	resources := []db.SessionResource{
-		{
-			UUID:         "00000000-0000-0000-0000-000000000001",
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":`),
-		},
-		{
-			UUID:         "00000000-0000-0000-0000-000000000002",
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"  "}`),
-		},
-	}
-	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
-		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
-	}
-
-	resources = append(resources, db.SessionResource{
-		UUID:         "00000000-0000-0000-0000-000000000003",
-		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/valid"}`),
-	})
-	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/valid" {
-		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/valid")
 	}
 }
 
@@ -98,7 +55,7 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 	repository := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000002",
 		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":" /workspace/repository "}`),
+		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/repository","mount_path":"/workspace/repository"}`),
 	}
 	file := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000001",
@@ -115,7 +72,7 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 		"repository last":  {memoryStore, file, repository},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/repository" {
+			if workDir := mustResolveRuntimeResources(t, resources).workDir; workDir != "/workspace/repository" {
 				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/repository")
 			}
 		})
@@ -128,14 +85,14 @@ func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 		UUID:         "00000000-0000-0000-0000-000000000010",
 		ExternalID:   "sesrsc_first",
 		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/first"}`),
+		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/first","mount_path":"/workspace/first"}`),
 		CreatedAt:    createdAt,
 	}
 	later := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000011",
 		ExternalID:   "sesrsc_later",
 		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/later"}`),
+		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/later","mount_path":"/workspace/later"}`),
 		CreatedAt:    createdAt.Add(time.Minute),
 	}
 	sameTimeLater := later
@@ -148,7 +105,7 @@ func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 		"same timestamp reversed":  {first, sameTimeLater},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/first" {
+			if workDir := mustResolveRuntimeResources(t, resources).workDir; workDir != "/workspace/first" {
 				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/first")
 			}
 		})
@@ -163,7 +120,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 		},
 		{
 			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":" https://github.com/acme/widgets ","mount_path":" /workspace/widgets ","checkout":"main"}`),
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://git.internal:443/group/subgroup/widgets.git","mount_path":"/workspace/widgets","checkout":{"type":"branch","name":"main"}}`),
 		},
 		{
 			ResourceType: "memory_store",
@@ -174,9 +131,8 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 	want := []any{
 		map[string]any{
 			"type":       "git_repository",
-			"url":        "https://github.com/acme/widgets",
+			"git_info":   map[string]any{"type": "git", "repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git", "ref": "refs/heads/main"},
 			"mount_path": "/workspace/widgets",
-			"checkout":   "main",
 		},
 		map[string]any{
 			"type":            "memory_store",
@@ -189,40 +145,65 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 	}
 	sources := managedAgentRuntimeSourceValues(
 		t,
-		resolveManagedAgentRuntimeResources(resources).sources,
+		mustResolveRuntimeResources(t, resources).sources,
 	)
 	if !reflect.DeepEqual(sources, want) {
 		t.Fatalf("managedAgentSources() = %#v, want %#v", sources, want)
 	}
 }
 
-func TestManagedAgentRuntimeResourcesSkipInvalidSources(t *testing.T) {
-	resources := []db.SessionResource{
-		{
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":`),
-		},
-		{
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":"  ","mount_path":"/workspace/empty-url"}`),
-		},
-		{
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/empty-path","mount_path":"  "}`),
-		},
-		{
-			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":`),
-		},
-		{
-			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`null`),
-		},
+func TestManagedAgentRuntimeResourcesRejectInvalidGit(t *testing.T) {
+	for _, raw := range []string{
+		`{"url":`,
+		`{"url":"","mount_path":"/workspace/repo"}`,
+		`{"url":"https://github.com/acme/repo","mount_path":""}`,
+		`{"url":"https://github.com/acme/repo","mount_path":" /workspace/repo "}`,
+		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":"main"}`,
+		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":{"type":"commit","sha":"abcdef0"}}`,
+		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/../outside"}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			_, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(raw)}})
+			if err == nil {
+				t.Fatal("invalid persisted Git resource accepted")
+			}
+		})
 	}
+}
 
-	if sources := resolveManagedAgentRuntimeResources(resources).sources; len(sources) != 0 {
-		t.Fatalf("managedAgentSources() = %#v, want no sources", sources)
+func TestManagedAgentGitSourcesIncludeSigningType(t *testing.T) {
+	for _, repositoryURL := range []string{
+		"https://github.com/acme/widgets.git",
+		"https://gitlab.com/group/subgroup/widgets.git",
+		"https://git.internal:443/group/subgroup/widgets.git",
+	} {
+		t.Run(repositoryURL, func(t *testing.T) {
+			payload, err := json.Marshal(map[string]string{"url": repositoryURL, "mount_path": "/workspace/widgets"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resources := mustResolveRuntimeResources(t, []db.SessionResource{{ResourceType: "github_repository", Payload: payload}})
+			var source gitRepositoryRuntimeSource
+			if err := json.Unmarshal(resources.sources[0], &source); err != nil {
+				t.Fatal(err)
+			}
+			if source.Type != "git_repository" || source.GitInfo.Type != "git" || source.GitInfo.Repo == "" {
+				t.Fatalf("source does not satisfy signing metadata contract: %+v", source)
+			}
+			if source.GitInfo.URL != repositoryURL {
+				t.Fatalf("clone URL = %q, want %q", source.GitInfo.URL, repositoryURL)
+			}
+		})
 	}
+}
+
+func mustResolveRuntimeResources(t *testing.T, resources []db.SessionResource) managedAgentRuntimeResources {
+	t.Helper()
+	resolved, err := resolveManagedAgentRuntimeResources(resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
@@ -230,14 +211,18 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		CodeSession: config.CodeSessionConfig{
 			SandboxAPIBaseURL: "http://host.docker.internal:18081/",
 		},
+		Observability: config.ObservabilityConfig{
+			Enabled:               true,
+			ContentCaptureEnabled: true,
+		},
 		EnvironmentRunner: config.EnvironmentRunnerConfig{
 			ManagerPath:        "/opt/env manager/bin/environment-manager",
-			ClaudeAgentVersion: "2.1.120",
+			ClaudeAgentVersion: "2.1.251",
 			ClaudePath:         "/opt/claude path/bin/claude",
 			GitSSHtoHTTPSHosts: []string{"gitlab.xxxx.cn"},
 		},
 	}
-	sessionConfig := json.RawMessage(`{"model":"kimi-k2.5","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
+	sessionConfig := json.RawMessage(`{"model":"kimi-k2.5","sources":[{"type":"git_repository","url":"https://git.internal:443/group/subgroup/widgets.git"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, 1, "/workspace/widgets", sessionConfig, cfg, nil)
@@ -280,16 +265,29 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
 		startupEnv["OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/metrics" ||
 		startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
 		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/logs" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
+		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
+		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "1" ||
+		startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] != "" {
 		t.Fatalf("unexpected otlp environment variables: %#v", startupEnv)
 	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_HEADERS"]; ok {
-		t.Fatalf("unexpected generic otlp headers: %#v", startupEnv)
+	if startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" ||
+		startupEnv["OTEL_LOG_TOOL_DETAILS"] != "1" ||
+		startupEnv["OTEL_LOG_TOOL_CONTENT"] != "1" {
+		t.Fatalf("content capture grants missing from startup environment: %#v", startupEnv)
+	}
+	otlpBaseURL := "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp"
+	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "" ||
+		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != otlpBaseURL+"/metrics" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != otlpBaseURL+"/logs" ||
+		startupEnv["BETA_TRACING_ENDPOINT"] != otlpBaseURL {
+		t.Fatalf("unexpected managed OTLP endpoints: %#v", startupEnv)
+	}
+	for _, key := range []string{"OTEL_EXPORTER_OTLP_METRICS_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} {
+		if startupEnv[key] != "Authorization=Bearer "+sessionIngressToken {
+			t.Fatalf("%s = %q, want managed session ingress authorization", key, startupEnv[key])
+		}
 	}
 	auths := body["auth"].([]any)
 	sessionAuth := auths[0].(map[string]any)
@@ -337,7 +335,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		"export GIT_EDITOR=true",
 		"export GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt",
 		"export GIT_TERMINAL_PROMPT=0",
-		"Claude binary version mismatch: expected 2.1.120",
+		"Claude binary version mismatch: expected 2.1.251",
 		"> '/tmp/claude-code-sessions/cse_session_with_'\"'\"'quote'\"'\"'_and_slash/environment-manager.log' 2>&1",
 	} {
 		if !strings.Contains(allCommands, want) {
@@ -407,7 +405,7 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 	}
 	startup := body["startup_context"].(map[string]any)
 	claudeArgs := startup["claude_code_args"].(map[string]any)
-	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["mcp-config"] != managedAgentMCPConfigPath {
+	if claudeArgs["mcp-config"] != managedAgentMCPConfigPath {
 		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
 	}
 	mcpConfig := startup["mcp_config"].(map[string]any)
@@ -440,120 +438,82 @@ func TestClaudeRuntimeModelEnvironment(t *testing.T) {
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
+func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) {
+	cfg := config.Config{
+		CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example.test"},
+		Observability: config.ObservabilityConfig{
+			Enabled:               true,
+			ContentCaptureEnabled: false,
+		},
+	}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
+		"CLAUDE_CODE_ENABLE_TELEMETRY":"",
 		"OTEL_METRICS_EXPORTER":"console",
-		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
+		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com",
+		"OTEL_EXPORTER_OTLP_METRICS_HEADERS":"Authorization=Bearer stale",
+		"OTEL_METRICS_INCLUDE_SESSION_ID":"false",
+		"OTEL_LOG_USER_PROMPTS":"1",
+		"OTEL_LOG_RAW_API_BODIES":"1"
 	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
+	startup := buildEnvironmentManagerPayloadStartupContext(t, sessionConfig, cfg)
 	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "console" {
-		t.Fatalf("OTEL_METRICS_EXPORTER = %q, want console", startupEnv["OTEL_METRICS_EXPORTER"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"]; ok {
-		t.Fatalf("unexpected default otlp metrics endpoint for custom exporter: %#v", startupEnv)
+	// 用户设置的值优先；未设置的键才补平台默认值。
+	if startupEnv["OTEL_METRICS_EXPORTER"] != "console" ||
+		startupEnv["OTEL_METRICS_INCLUDE_SESSION_ID"] != "false" {
+		t.Fatalf("user telemetry preferences were overridden: %#v", startupEnv)
 	}
 	if startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/logs" {
-		t.Fatalf("unexpected default otlp logs environment variables: %#v", startupEnv)
+		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
+		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "" {
+		t.Fatalf("user telemetry values or platform defaults mismatch: %#v", startupEnv)
 	}
-	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want existing custom value only", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
+	if got := startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "" {
+		t.Fatalf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %#v, want empty so Claude can export OTEL", got)
 	}
-	if startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_LOGS_HEADERS = %q, want signal auth", startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"])
+	// 用户可以保留采集偏好；连接 OMA 的 signal-specific endpoint/header
+	// 由平台覆盖，使不会动态配置 OTLP 的旧版 environment-manager 也能工作。
+	if startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"] != "https://collector.example.com" ||
+		startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" {
+		t.Fatalf("user telemetry variables were removed: %#v", startupEnv)
 	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"]; ok {
-		t.Fatalf("unexpected metrics headers for custom metrics exporter: %#v", startupEnv)
+	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "https://oma.example.test/v1/code/sessions/cse_test/worker/otlp/metrics" ||
+		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token" {
+		t.Fatalf("managed OTLP connection was not applied: %#v", startupEnv)
 	}
 	if startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
 		t.Fatalf("CLAUDE_CODE_WORKER_EPOCH = %q, want 1", startupEnv["CLAUDE_CODE_WORKER_EPOCH"])
 	}
-}
-
-func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_LOGS_EXPORTER":"console",
-		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
-	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_LOGS_EXPORTER"] != "console" {
-		t.Fatalf("OTEL_LOGS_EXPORTER = %q, want console", startupEnv["OTEL_LOGS_EXPORTER"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"]; ok {
-		t.Fatalf("unexpected default otlp logs endpoint for custom exporter: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/metrics" {
-		t.Fatalf("unexpected default otlp metrics environment variables: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want existing custom value only", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_METRICS_HEADERS = %q, want signal auth", startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"]; ok {
-		t.Fatalf("unexpected logs headers for custom logs exporter: %#v", startupEnv)
-	}
-}
-
-func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
-	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"] != "https://collector.example.com" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q, want custom collector", startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"])
-	}
-	for _, key := range []string{
-		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-		"OTEL_EXPORTER_OTLP_HEADERS",
-		"OTEL_EXPORTER_OTLP_METRICS_HEADERS",
-		"OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-	} {
+	// 内容采集关闭时平台不补授权默认值，但不删用户自己设置的键。
+	for _, key := range []string{"OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_TOOL_CONTENT"} {
 		if _, ok := startupEnv[key]; ok {
-			t.Fatalf("unexpected injected %s with custom generic endpoint: %#v", key, startupEnv)
+			t.Fatalf("content capture grant %s injected while content capture is disabled: %#v", key, startupEnv)
 		}
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
+func TestBuildEnvironmentManagerPayloadKeepsUserTelemetryWhenDisabled(t *testing.T) {
 	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://collector.example.com/v1/metrics"
+		"CLAUDE_CODE_ENABLE_TELEMETRY":"1",
+		"OTEL_METRICS_EXPORTER":"console",
+		"OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer stale",
+		"OTEL_LOG_USER_PROMPTS":"1"
 	}}`)
+	startup := buildEnvironmentManagerPayloadStartupContext(t, sessionConfig, config.Config{})
+	startupEnv := startup["environment_variables"].(map[string]any)
+	// observability 关闭时不注入平台默认值，用户自己的遥测配置原样保留。
+	if startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "1" ||
+		startupEnv["OTEL_METRICS_EXPORTER"] != "console" ||
+		startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "Authorization=Bearer stale" ||
+		startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" {
+		t.Fatalf("user telemetry variables were changed when observability is disabled: %#v", startupEnv)
+	}
+	if _, ok := startupEnv["OTEL_LOGS_EXPORTER"]; ok {
+		t.Fatalf("platform defaults injected while observability is disabled: %#v", startupEnv)
+	}
+}
+
+func buildEnvironmentManagerPayloadStartupContext(t *testing.T, sessionConfig json.RawMessage, cfg config.Config) map[string]any {
+	t.Helper()
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
 	if err != nil {
 		t.Fatalf("build payload: %v", err)
@@ -562,52 +522,10 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint
 	if err := json.Unmarshal(payload, &body); err != nil {
 		t.Fatalf("decode payload: %v", err)
 	}
-	startup := body["startup_context"].(map[string]any)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "https://collector.example.com/v1/metrics" {
-		t.Fatalf("custom metrics endpoint was not preserved: %#v", startupEnv)
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"]; ok {
-		t.Fatalf("unexpected metrics auth headers for custom metrics endpoint: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_LOGS_HEADERS = %q, want default logs auth", startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_HEADERS"]; ok {
-		t.Fatalf("unexpected generic otlp headers with custom metrics endpoint: %#v", startupEnv)
-	}
+	return body["startup_context"].(map[string]any)
 }
 
-func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://collector.example.com/v1/logs"
-	}}`)
-	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", 1, "", sessionConfig, cfg, nil)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	startup := body["startup_context"].(map[string]any)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "https://collector.example.com/v1/logs" {
-		t.Fatalf("custom logs endpoint was not preserved: %#v", startupEnv)
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"]; ok {
-		t.Fatalf("unexpected logs auth headers for custom logs endpoint: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token,x-worker-epoch=1" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_METRICS_HEADERS = %q, want default metrics auth", startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"])
-	}
-	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_HEADERS"]; ok {
-		t.Fatalf("unexpected generic otlp headers with custom logs endpoint: %#v", startupEnv)
-	}
-}
-
-func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
+func TestManagedAgentSessionConfigDefersMCPBuildUntilLaunch(t *testing.T) {
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{
 			"model":{"id":"claude-opus-4-8"},
@@ -625,7 +543,17 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 		VaultIDs: []string{"vault_cred_123"},
 	}
 
-	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	raw, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"mcp_config"`) || strings.Contains(string(raw), `"mcp_config_file"`) {
+		t.Fatal("persisted source contains a prematurely built MCP client configuration")
+	}
+	raw, err = buildManagedAgentRuntimeMCPConfig(raw, "cse_test", "test-token", config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode session config: %v", err)
@@ -641,11 +569,11 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	}
 	toolConfigs := notion["tools"].([]any)
 	search := toolConfigs[0].(map[string]any)
-	if search["name"] != "search" || search["enabled"] != true || search["permission_policy"] != "allow" {
+	if search["name"] != "search" || search["enabled"] != true || search["permission_policy"] != "always_allow" {
 		t.Fatalf("unexpected search tool config: %#v", search)
 	}
 	deletePage := toolConfigs[1].(map[string]any)
-	if deletePage["name"] != "delete_page" || deletePage["enabled"] != false || deletePage["permission_policy"] != "ask" {
+	if deletePage["name"] != "delete_page" || deletePage["enabled"] != false || deletePage["permission_policy"] != "always_ask" {
 		t.Fatalf("unexpected delete_page tool config: %#v", deletePage)
 	}
 	vaultIDs := body["vault_ids"].([]any)
@@ -670,5 +598,31 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fileConfig, mcpConfig) {
 		t.Fatalf("mcp config file = %#v, want %#v", fileConfig, mcpConfig)
+	}
+}
+
+func TestManagedAgentRuntimeGitRef(t *testing.T) {
+	for _, test := range []struct{ name, checkout, ref string }{
+		{"default", "null", ""},
+		{"branch", `{"type":"branch","name":"release/v1"}`, "refs/heads/release/v1"},
+		{"commit sha1", `{"type":"commit","sha":"` + strings.Repeat("A", 40) + `"}`, strings.Repeat("a", 40)},
+		{"commit sha256", `{"type":"commit","sha":"` + strings.Repeat("B", 64) + `"}`, strings.Repeat("b", 64)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resources := []db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`)}}
+			sources := mustResolveRuntimeResources(t, resources).sources
+			var source struct {
+				GitInfo struct {
+					Ref string `json:"ref"`
+				} `json:"git_info"`
+				Checkout json.RawMessage `json:"checkout"`
+			}
+			if err := json.Unmarshal(sources[0], &source); err != nil {
+				t.Fatal(err)
+			}
+			if source.GitInfo.Ref != test.ref || source.Checkout != nil {
+				t.Fatalf("unexpected runtime source: %s", sources[0])
+			}
+		})
 	}
 }

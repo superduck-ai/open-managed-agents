@@ -291,7 +291,7 @@ function LoginShell({ children }: { children: ReactNode }) {
             {topNavItems.map((item) => (
               <ButtonLink
                 key={item.id}
-                href={`https://oma.mintlify.site/docs/${docsLocale}/${item.path}`}
+                href={`https://oma.mintlifysite.com/docs/${docsLocale}/${item.path}`}
                 rel="noreferrer"
                 size="sm"
                 target="_blank"

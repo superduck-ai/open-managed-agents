@@ -75,6 +75,7 @@ import type { Workspace } from '../../shared/workspaces/api';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import {
   buildCreateWorkspaceInput,
+  workspaceMcpTunnelsPath,
   workspaceApiKeysPath,
   workspaceColor,
   workspaceIdFromPath,
@@ -632,7 +633,7 @@ function SidebarFooter({
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            render={<a href="https://oma.mintlify.site/" target="_blank" rel="noreferrer" />}
+            render={<a href="https://oma.mintlifysite.com/" target="_blank" rel="noreferrer" />}
             tooltip={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
             aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}
@@ -844,11 +845,18 @@ const managedAgentPathByHref: Record<string, string> = {
   '/quickstart': 'agent-quickstart',
   '/agents': 'agents',
   '/sessions': 'sessions',
+  '/observability': 'observability',
   '/deployments': 'deployments',
   '/environments': 'environments',
   '/credential-vaults': 'vaults',
   '/memory-stores': 'memory-stores',
   '/dreams': 'dreams',
+};
+
+const workspaceSettingsResourceByHref: Record<string, string> = {
+  '/api-keys': 'keys',
+  '/webhooks': 'webhooks',
+  '/mcp-tunnels': 'mcp-tunnels',
 };
 
 const workspaceBuildPathByHref: Record<string, string> = {
@@ -865,6 +873,9 @@ function navigationHref(href: string, workspaceId: string) {
   }
   if (href === '/webhooks') {
     return workspaceWebhooksPath(workspaceId);
+  }
+  if (href === '/mcp-tunnels') {
+    return workspaceMcpTunnelsPath(workspaceId);
   }
 
   const buildPath = workspaceBuildPathByHref[href];
@@ -888,6 +899,8 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
     nextPath = workspaceApiKeysPath(workspaceId);
   } else if (currentPath === '/webhooks') {
     nextPath = workspaceWebhooksPath(workspaceId);
+  } else if (/^\/settings\/workspaces\/[^/]+\/mcp-tunnels(?:\/[^/]+)?\/?$/.test(currentPath)) {
+    nextPath = workspaceMcpTunnelsPath(workspaceId);
   } else {
     for (const [href, buildPath] of Object.entries(workspaceBuildPathByHref)) {
       if (currentPath === href) {
@@ -907,12 +920,13 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
   nextPath ??= currentPath
     .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
     .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
+    .replace(/^\/settings\/workspaces\/[^/]+\/mcp-tunnels(?:\/[^/]+)?/, workspaceMcpTunnelsPath(workspaceId))
     .replace(
       /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|batches)/,
       `/workspaces/${encodedWorkspaceId}/$1`,
     )
     .replace(
-      /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)/,
+      /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)/,
       `/workspaces/${encodedWorkspaceId}/$1`,
     );
 
@@ -943,11 +957,9 @@ function isActivePath(currentPath: string, href: string) {
   if (href === '/dashboard') {
     return currentPath === '/' || currentPath === '/dashboard';
   }
-  if (href === '/api-keys') {
-    return currentPath === '/api-keys' || /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath);
-  }
-  if (href === '/webhooks') {
-    return currentPath === '/webhooks' || /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath);
+  const workspaceSettingsResource = workspaceSettingsResourceByHref[href];
+  if (workspaceSettingsResource) {
+    return isWorkspaceSettingsNavActive(currentPath, href, workspaceSettingsResource);
   }
   if (href === '/usage') {
     return currentPath === '/usage';
@@ -989,6 +1001,7 @@ function isWideConsolePath(currentPath: string) {
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
     currentPath === '/webhooks' ||
     /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath) ||
+    isMcpTunnelsPath(currentPath) ||
     isBuildPath(currentPath) ||
     isAnalyticsPath(currentPath) ||
     isManagedAgentsPath(currentPath)
@@ -1018,19 +1031,29 @@ function isAnalyticsPath(currentPath: string) {
   );
 }
 
+function isMcpTunnelsPath(currentPath: string) {
+  return /^\/settings\/workspaces\/[^/]+\/mcp-tunnels(\/|$)/.test(currentPath);
+}
+
+function isWorkspaceSettingsNavActive(currentPath: string, href: string, resource: string) {
+  const canonicalPath = new RegExp(`^/settings/workspaces/[^/]+/${resource}`).test(currentPath);
+  return href === '/mcp-tunnels' ? canonicalPath : currentPath === href || canonicalPath;
+}
+
 function isManagedAgentsPath(currentPath: string) {
   return (
     [
       '/quickstart',
       '/agents',
       '/sessions',
+      '/observability',
       '/deployments',
       '/environments',
       '/credential-vaults',
       '/memory-stores',
       '/dreams',
     ].includes(currentPath) ||
-    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
+    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
       currentPath,
     )
   );

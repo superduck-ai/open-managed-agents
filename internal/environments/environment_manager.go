@@ -1,7 +1,6 @@
 package environments
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	urlpkg "net/url"
 	"path"
@@ -14,11 +13,10 @@ import (
 
 const (
 	defaultEnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	defaultClaudeAgentVersion     = "2.1.120"
+	defaultClaudeAgentVersion     = "2.1.251"
 	defaultClaudePath             = "/opt/claude-code/bin/claude"
 	defaultEnvironmentWorkDir     = "/home/user"
 	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
-	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 	managedAgentEnvironmentPrompt = `# Managed-agent environment
 
 These rules describe the current sandbox environment and do not replace your assigned role.
@@ -45,10 +43,18 @@ These rules describe the current sandbox environment and do not replace your ass
 func managedAgentSessionConfig(
 	session db.Session,
 	runtimeResources managedAgentRuntimeResources,
-) json.RawMessage {
+) (json.RawMessage, error) {
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
-	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
-	tools := arrayValue(agentSnapshot["tools"])
+	var mcpSource struct {
+		MCPServers json.RawMessage `json:"mcp_servers"`
+		Tools      json.RawMessage `json:"tools"`
+	}
+	if len(session.AgentSnapshot) > 0 {
+		if err := json.Unmarshal(session.AgentSnapshot, &mcpSource); err != nil {
+			return nil, err
+		}
+	}
+	mcpServers, tools := mcpSource.MCPServers, mcpSource.Tools
 	body := map[string]any{
 		"origin":               "managed_agents_api",
 		"model":                modelIDFromAgentSnapshot(session.AgentSnapshot),
@@ -61,11 +67,6 @@ func managedAgentSessionConfig(
 	}
 	if len(mcpServers) > 0 {
 		body["mcp_servers"] = mcpServers
-		if mcpConfig := managedAgentMCPConfig(mcpServers, tools); len(mcpConfig) > 0 {
-			body["mcp_config"] = mcpConfig
-			body["mcp_config_file"] = managedAgentMCPConfigFile(mcpConfig)
-			body["claude_code_args"] = map[string]string{"mcp-config": managedAgentMCPConfigPath}
-		}
 	}
 	if len(tools) > 0 {
 		body["tools"] = tools
@@ -73,121 +74,7 @@ func managedAgentSessionConfig(
 	if len(session.VaultIDs) > 0 {
 		body["vault_ids"] = session.VaultIDs
 	}
-	raw, _ := json.Marshal(body)
-	return raw
-}
-
-func managedAgentMCPConfig(mcpServers []any, tools []any) map[string]any {
-	toolsets := mcpToolsetsByServer(tools)
-	servers := map[string]any{}
-	for _, value := range mcpServers {
-		server, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		name := stringFromMap(server, "name")
-		serverURL := stringFromMap(server, "url")
-		if name == "" || serverURL == "" {
-			continue
-		}
-		config := map[string]any{
-			"type": mcpServerTransportType(stringFromMap(server, "type"), serverURL),
-			"url":  serverURL,
-		}
-		if toolset, ok := toolsets[name]; ok {
-			if toolConfigs := mcpServerToolConfigs(toolset["configs"]); len(toolConfigs) > 0 {
-				config["tools"] = toolConfigs
-			}
-		}
-		servers[name] = config
-	}
-	if len(servers) == 0 {
-		return nil
-	}
-	return map[string]any{"mcpServers": servers}
-}
-
-func managedAgentMCPConfigFile(mcpConfig map[string]any) map[string]any {
-	content, err := json.Marshal(mcpConfig)
-	if err != nil {
-		return nil
-	}
-	return map[string]any{
-		"path":    managedAgentMCPConfigPath,
-		"content": base64.StdEncoding.EncodeToString(content),
-		"mode":    0o600,
-	}
-}
-
-func mcpToolsetsByServer(tools []any) map[string]map[string]any {
-	out := map[string]map[string]any{}
-	for _, value := range tools {
-		tool, ok := value.(map[string]any)
-		if !ok || stringFromMap(tool, "type") != "mcp_toolset" {
-			continue
-		}
-		serverName := stringFromMap(tool, "mcp_server_name")
-		if serverName == "" {
-			continue
-		}
-		out[serverName] = tool
-	}
-	return out
-}
-
-func mcpServerToolConfigs(value any) []any {
-	configs := arrayValue(value)
-	out := make([]any, 0, len(configs))
-	for _, item := range configs {
-		config, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		name := stringFromMap(config, "name")
-		if name == "" {
-			continue
-		}
-		tool := map[string]any{"name": name}
-		if enabled, ok := config["enabled"].(bool); ok {
-			tool["enabled"] = enabled
-		}
-		if policy := mcpPermissionPolicy(config["permission_policy"]); policy != "" {
-			tool["permission_policy"] = policy
-		}
-		out = append(out, tool)
-	}
-	return out
-}
-
-func mcpPermissionPolicy(value any) string {
-	object, ok := value.(map[string]any)
-	if !ok {
-		return ""
-	}
-	switch stringFromMap(object, "type") {
-	case "always_allow", "allow":
-		return "allow"
-	case "always_ask", "ask":
-		return "ask"
-	default:
-		return ""
-	}
-}
-
-func mcpServerTransportType(serverType string, rawURL string) string {
-	switch strings.TrimSpace(strings.ToLower(serverType)) {
-	case "sse":
-		return "sse"
-	case "http", "ws":
-		return strings.TrimSpace(strings.ToLower(serverType))
-	case "websocket":
-		return "ws"
-	}
-	parsed, err := urlpkg.Parse(strings.TrimSpace(rawURL))
-	if err == nil && strings.HasSuffix(strings.TrimRight(strings.ToLower(parsed.Path), "/"), "/sse") {
-		return "sse"
-	}
-	return "http"
+	return json.Marshal(body)
 }
 
 func rawJSONObject(raw json.RawMessage) map[string]any {
@@ -217,11 +104,6 @@ func mapStringAnyValue(value any) map[string]any {
 	return map[string]any{}
 }
 
-func arrayValue(value any) []any {
-	values, _ := value.([]any)
-	return values
-}
-
 func modelIDFromAgentSnapshot(raw json.RawMessage) string {
 	var snapshot map[string]any
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
@@ -235,17 +117,40 @@ func modelIDFromAgentSnapshot(raw json.RawMessage) string {
 // vaultEnvPlaceholders 为 Environment Variable Credential 的 secret_name→Opaque Placeholder；平台保留名不会被覆盖。
 func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken string, oauthAccessToken string, workerEpoch int64, workDir string, sessionConfig json.RawMessage, cfg config.Config, vaultEnvPlaceholders map[string]string) ([]byte, error) {
 	startupContext := map[string]any{}
+	sourceFields := map[string]json.RawMessage{}
 	if len(sessionConfig) > 0 && string(sessionConfig) != "null" {
-		if err := json.Unmarshal(sessionConfig, &startupContext); err != nil {
+		if err := json.Unmarshal(sessionConfig, &sourceFields); err != nil {
 			return nil, err
+		}
+		for name, value := range sourceFields {
+			startupContext[name] = value
+		}
+		// Only the fields edited below need a structured view; other startup data
+		// (including the MCP document) remains opaque and keeps exact JSON numbers.
+		for _, name := range []string{"environment_variables", "model"} {
+			if raw, ok := sourceFields[name]; ok {
+				var value any
+				if err := json.Unmarshal(raw, &value); err != nil {
+					return nil, err
+				}
+				startupContext[name] = value
+			}
 		}
 	}
 	apiBaseURL := codeSessionSandboxAPIBaseURL(cfg)
 	startupContext["api_base_url"] = apiBaseURL
 	startupContext["use_code_sessions"] = true
 	startupContext["session_id"] = codeSessionID
-	claudeCodeArgs := mapStringAnyValue(startupContext["claude_code_args"])
-	claudeCodeArgs["settings"] = launcherSettingsPath
+	claudeCodeArgs := make(map[string]json.RawMessage)
+	if raw := sourceFields["claude_code_args"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &claudeCodeArgs); err != nil {
+			return nil, err
+		}
+	}
+	if claudeCodeArgs == nil {
+		claudeCodeArgs = make(map[string]json.RawMessage)
+	}
+	claudeCodeArgs["settings"], _ = json.Marshal(launcherSettingsPath)
 	startupContext["claude_code_args"] = claudeCodeArgs
 	environmentVariables := mapStringAnyValue(startupContext["environment_variables"])
 	environmentVariables["CLAUDE_CODE_REMOTE"] = "true" // 进入 remote-session 路径并初始化 CCR relay。
@@ -259,7 +164,7 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
-	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, sessionIngressToken, workerEpochText)
+	applyCodeSessionOTLPEnvironment(environmentVariables, cfg.Observability, apiBaseURL, codeSessionID, sessionIngressToken)
 	for key, placeholder := range vaultEnvPlaceholders {
 		if _, exists := environmentVariables[key]; exists {
 			continue
@@ -309,99 +214,46 @@ func claudeRuntimeModelEnvironment(modelID string) map[string]string {
 	}
 }
 
-func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string, workerEpoch string) {
-	if environmentVariables == nil {
+// applyCodeSessionOTLPEnvironment 对采集选项只补默认值；连接 OMA 所需的
+// endpoint 和 Authorization 由平台覆盖，兼容不会动态配置 OTLP 的旧版
+// environment-manager。OTLP ingress 仍会校验 session token 与 active lease。
+func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg config.ObservabilityConfig, apiBaseURL, codeSessionID, sessionIngressToken string) {
+	if !cfg.Enabled {
 		return
 	}
-	requiredHeaders := []string{
-		"Authorization=Bearer " + sessionIngressToken,
-		"x-worker-epoch=" + workerEpoch,
+	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_ENABLE_TELEMETRY", "1")
+	// Runner shell defaults this to 1 to skip marketplace/auto-update. Claude Code
+	// treats a non-empty value as "essential traffic only" and will not export OTEL.
+	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
+	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+	setDefaultEnvironmentVariable(environmentVariables, "ENABLE_BETA_TRACING_DETAILED", "1")
+	if cfg.ContentCaptureEnabled {
+		// Without these grants Claude Code exports user_prompt="<REDACTED>" and
+		// omits tool input/output; detailed tracing alone only carries structure.
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_USER_PROMPTS", "1")
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_DETAILS", "1")
+		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_CONTENT", "1")
 	}
-	metricsInjected := false
-	logsInjected := false
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		exporters := stringFromMap(environmentVariables, "OTEL_METRICS_EXPORTER")
-		if exporters == "" || commaListContains(exporters, "otlp") {
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL, codeSessionID))
-			metricsInjected = true
-		}
-	}
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		exporters := stringFromMap(environmentVariables, "OTEL_LOGS_EXPORTER")
-		if exporters == "" || commaListContains(exporters, "otlp") {
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
-			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", codeSessionWorkerOTLPLogsEndpoint(apiBaseURL, codeSessionID))
-			logsInjected = true
-		}
-	}
-	if metricsInjected {
-		environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = ensureOTLPHeaders(
-			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_HEADERS"),
-			requiredHeaders,
-		)
-	}
-	if logsInjected {
-		environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = ensureOTLPHeaders(
-			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_HEADERS"),
-			requiredHeaders,
-		)
-	}
-}
 
-func codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL string, codeSessionID string) string {
-	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/metrics"
-}
-
-func codeSessionWorkerOTLPLogsEndpoint(apiBaseURL string, codeSessionID string) string {
-	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/logs"
+	otlpBaseURL := strings.TrimRight(apiBaseURL, "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp"
+	headers := "Authorization=Bearer " + sessionIngressToken
+	environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ""
+	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] = otlpBaseURL + "/metrics"
+	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = headers
+	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] = otlpBaseURL + "/logs"
+	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = headers
+	environmentVariables["BETA_TRACING_ENDPOINT"] = otlpBaseURL
+	environmentVariables["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = headers
 }
 
 func setDefaultEnvironmentVariable(environmentVariables map[string]any, key string, value string) {
-	if stringFromMap(environmentVariables, key) == "" {
+	if _, configured := environmentVariables[key]; !configured {
 		environmentVariables[key] = value
 	}
-}
-
-func ensureOTLPHeaders(raw string, required []string) string {
-	pairs := make([]string, 0, len(required)+2)
-	seen := map[string]struct{}{}
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		pairs = append(pairs, pair)
-		key, _, ok := strings.Cut(pair, "=")
-		if ok {
-			seen[strings.ToLower(strings.TrimSpace(key))] = struct{}{}
-		}
-	}
-	for _, pair := range required {
-		key, _, ok := strings.Cut(pair, "=")
-		if !ok {
-			continue
-		}
-		normalizedKey := strings.ToLower(strings.TrimSpace(key))
-		if _, ok := seen[normalizedKey]; ok {
-			continue
-		}
-		pairs = append(pairs, pair)
-		seen[normalizedKey] = struct{}{}
-	}
-	return strings.Join(pairs, ",")
-}
-
-func commaListContains(raw string, want string) bool {
-	want = strings.TrimSpace(strings.ToLower(want))
-	for _, item := range strings.Split(raw, ",") {
-		if strings.TrimSpace(strings.ToLower(item)) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func codeSessionSandboxAPIBaseURL(cfg config.Config) string {

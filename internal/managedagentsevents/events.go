@@ -54,6 +54,17 @@ func IsClientInput(eventType string) bool {
 	}
 }
 
+// IsPublicWorkerInputEvent reports whether a persisted public event must be
+// forwarded to the managed worker and therefore interrupts an idle period.
+func IsPublicWorkerInputEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "user.message", "user.interrupt", "user.custom_tool_result", "user.tool_confirmation", "user.tool_result":
+		return true
+	default:
+		return false
+	}
+}
+
 func IsPersistedManagedAgentEvent(eventType string) bool {
 	category := CategoryFor(eventType)
 	return category != CategoryUnknown && category != CategoryStreamDelta

@@ -90,7 +90,7 @@ code-session token 只有在以下条件全部满足时才通过鉴权：
 - CCR v2 `worker_lease_expires_at > now()`；
 - 请求方法和路径严格对应 `POST /v1/messages`。
 
-environment-manager 在启动 Claude Code 前调用 `/worker/register`，建立首个 60 秒 lease；Claude 之后每 20 秒调用 `/worker/heartbeat` 续租。Claude 异常退出时不再续租，OAuth-compatible Messages 凭证最多在最后一个 lease TTL 内继续有效。session-ingress JWT 校验签名、固定 claims 和请求路径绑定；managed-agent JWT 还携带 `worker_epoch`，入口会按租户回查 active Code Session 的 `current_worker_epoch`。heartbeat grace 和 OTLP lease 仍由各自 handler 的状态机判断。
+environment-manager 在启动 Claude Code 前调用 `/worker/register`，建立首个 60 秒 lease；Claude 之后每 20 秒调用 `/worker/heartbeat` 续租。Claude 异常退出时不再续租，OAuth-compatible Messages 凭证最多在最后一个 lease TTL 内继续有效。session-ingress JWT 校验签名、固定 claims 和请求路径绑定；managed-agent JWT 还携带 `worker_epoch`，入口会按租户回查 active Code Session 的 `current_worker_epoch`。heartbeat grace 和 OTLP active lease 仍由各自 handler 的状态机判断；OTLP 不读取单独的 epoch header。
 
 code-session 请求来自受信任的沙箱调用方。公共 Messages 入口完整扫描有界请求体的顶层对象，只读取唯一的 `model` 以选择 Provider；其余字段仍由上游按 Anthropic Messages 合同校验。本服务负责入口鉴权、请求大小限制、header 清洗、Provider 解析和响应流式代理。
 

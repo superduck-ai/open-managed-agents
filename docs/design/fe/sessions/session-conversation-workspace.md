@@ -17,7 +17,7 @@ Session 画布占满 `SidebarInset` 的全部剩余宽度，不设置页面级 `
 Viewer 包含两个区域：
 
 1. **转录区**：按 speaker turn 和 model iteration 展示 User/Agent 消息、Thinking 摘要、紧凑工具调用行、线程 lane、minimap、消息输入框和待处理 Action Card。
-2. **Session Inspector**：默认打开，提供 `Session / Events / Tools / Resources / Threads` 五个页签以及关闭按钮。Inspector 关闭后，转录区占满可用宽度，并在工具栏显示重新打开入口。
+2. **Session Inspector**：默认打开，提供 `Session / Events / Tools / Resources / Threads / Traces` 六个页签以及关闭按钮。Inspector 关闭后，转录区占满可用宽度，并在工具栏显示重新打开入口。
 
 全局控制台侧边栏不属于 Viewer。进入 Session 时必须保持用户原有展开状态，不得因路由切换自动收起、展开或改成临时抽屉。
 
@@ -52,13 +52,14 @@ Inspector 的默认宽度为 `480px`，最小宽度为 `360px`，最大不超过
 
 Inspector header 与 tab 控件共用 `32px` 总高度。外壳始终使用 panel surface 和 `overflow-hidden`；普通页签各自只使用一个 Base UI ScrollArea。Tab list 可以在极窄宽度下横向移动，隐藏原生 scrollbar，并将活动 tab 自动滚入视图。每个 tab 使用带 `inspector` query 的真实链接：普通点击只切换 Base UI tab，modifier click 保留浏览器新窗口/新标签行为，刷新后恢复合法页签。关闭 Inspector 时，若焦点原本位于 Inspector 内，则转移到重新打开入口；从该入口打开后焦点转移到关闭按钮。Inspector header 只保留页签和关闭按钮，不提供额外的 Full height/More 状态。
 
-五个页签的职责如下：
+六个页签的职责如下：
 
 1. **Session**：ID、状态、创建/更新时间、Agent、Environment、Vault、Deployment 和 Cost。关联实体名称可导航到 OMA 对应详情页；metadata 请求失败时继续用原始 ID 提供同一链接，不能降级成不可点击文本或数量。
 2. **Events**：按后端返回顺序排列原始事件，直接使用 `Event / Preview / Time` 粘性表头、`192px` 事件列和 `24px` 紧凑行。FilterCombobox 的 `Transcript events` 与 wire type 使用交集语义；筛选只隐藏行，不重新排序，也不清除仍存在但暂时不可见的已选 detail。Time 列只展示时间，不影响顺序；`processed_at` 为空时显示 queued，不回退到 `created_at`。选择事件后使用 Claude 的纵向 list/detail split：列表至少保留 `120px`，详情默认 `360px` 并可拖动；为满足 OMA 已确认的交互要求，详情在首次出现或切换事件时播放 `180ms ease-out` 的 `translateY(8px) + opacity` 上浮动画，并以顶部 hairline 和轻量向上阴影表达层级；它仍是 Inspector 内的普通分栏，不改成 drawer 或脱离滚动模型的 overlay。`prefers-reduced-motion` 下禁用动画。Agent message/thinking 详情默认展示 Raw JSON；当前浏览器标签页实时捕获到增量帧时可切换 Deltas 紧凑表格，历史事件不伪造增量，也不维护字符缺失/重复比对算法。详情由唯一的 viewport 统一滚动。
 3. **Tools**：展示 Name、Permission、Calls、Failed、p50，并提供工具搜索和 `All threads / Current agent / Current thread` Scope；`Current agent` 只按 Lane 的既有 `group` 归属筛选，不按名称猜测。配置工具按 Built-in、Custom 和 MCP Server 分组，未出现在当前 Agent 配置中的实际调用单列为 `Called, not configured`；只有主 Agent 配置可用时才展示其 `Configured on`。默认 detail 是带 `64×64` CSS conic-gradient 结果环的 Overview；Failed 非零时同时展示失败率，Failed/Denied 为零时使用国际化 `none`，Completed 始终保留数字。选择工具后展示调用表，调用行与转录的选择和悬浮状态联动，清除选择后回到 Overview。调用表仅在存在审批时展示 Waited，仅在当前 Scope 跨多个线程时展示 Thread。Time in tools、Executing 和 Waiting 对同一线程内重叠的调用区间做并集合并，不重复累计同一 Tool Batch 中的并行墙钟时间；不同线程分别累计。
 4. **Resources**：提供常驻资源筛选，按 Path/Size 展示 Session 挂载资源，并通过 `+ Resource → File` 挂载已有文件；当前产品不展示 GitHub Repository 或 Memory Store 入口。
 5. **Threads**：展示有真实数据来源的 Thread、Status、Context；在后端提供线程级费用前不展示 Cost 占位列。detail 始终绑定 active thread，不提供本地关闭态。detail 显示 Agent、Model、Effort 和 `140px`、step-after area 的 Context usage 图；图上 model-request point hover 与 Transcript/Events 使用同一个 event ID 联动。单时间点只显示一个 X 轴标签，短会话显示秒，避免重复时间标签叠加。
+6. **Traces**：仅在 `observability.enabled=true` 时查询当前 Session 的 OpenObserve traces。选中 trace 后使用 `trace_id` 查询参数保存详情状态；返回列表或切换到其他 Inspector 页签时删除该参数。observability 路由返回 404 时展示 “Observability is not enabled”，不使用通用加载错误。
 
 Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的纵向 split。拖拽条使用 `7px` 命中带和居中的 `1px` hairline，并在 hover、键盘焦点和拖动时显示语义强调色。用户调整后的 detail 高度按页签在当前 Session Viewer 生命周期内分别记忆；不写入浏览器存储，也不跨 Session 恢复。三者关闭语义不同：Events 清除 event 选择；Tools 清除 tool 选择并回到 Overview；Threads 始终绑定 active thread。只有由消息/事件选择触发的 Events detail 播放上述轻量上浮动画；分栏尺寸、滚动所有权和关闭语义保持不变。
 

@@ -25,7 +25,7 @@ type preparedDeploymentExecution struct {
 
 func prepareDeploymentExecution(
 	deployment db.Deployment,
-	createdByAPIKeyUUID string,
+	createdByAPIKeyUUID, runtimeUserUUID string,
 	now time.Time,
 ) (preparedDeploymentExecution, error) {
 	sessionID, threadID, workID, runID, err := newRunIDs()
@@ -36,7 +36,7 @@ func prepareDeploymentExecution(
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
+	resources, err := sessionResourcesFromDeployment(sessionID, deployment, now)
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
@@ -53,6 +53,7 @@ func prepareDeploymentExecution(
 				UUID: uuid.NewV4().String(), ExternalID: sessionID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
 				CreatedByAPIKeyUUID: createdByAPIKeyUUID,
+				RuntimeUserUUID:     runtimeUserUUID,
 				EnvironmentUUID:     deployment.EnvironmentUUID, EnvironmentExternalID: deployment.EnvironmentExternalID,
 				AgentUUID: deployment.AgentUUID, AgentExternalID: deployment.AgentExternalID,
 				AgentVersion: deployment.AgentVersion, AgentSnapshot: deployment.AgentSnapshot,

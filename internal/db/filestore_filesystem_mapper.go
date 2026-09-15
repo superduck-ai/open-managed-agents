@@ -48,7 +48,7 @@ type sessionFilesystemInsertParams struct {
 	SessionUUID          string
 	OrganizationUUID     string
 	WorkspaceUUID        string
-	CreatedByAPIKeyUUID  string
+	CreatedByAPIKeyUUID  *string
 	CreatedAt            time.Time
 }
 

@@ -110,6 +110,25 @@ func TestWorkerOutputEventPolicy(t *testing.T) {
 	}
 }
 
+func TestPublicWorkerInputEventPolicy(t *testing.T) {
+	for _, eventType := range []string{
+		"user.message",
+		"user.interrupt",
+		"user.custom_tool_result",
+		"user.tool_confirmation",
+		"user.tool_result",
+	} {
+		if !IsPublicWorkerInputEvent(eventType) {
+			t.Fatalf("IsPublicWorkerInputEvent(%q) = false, want true", eventType)
+		}
+	}
+	for _, eventType := range []string{"user.define_outcome", "system.message", "agent.message", ""} {
+		if IsPublicWorkerInputEvent(eventType) {
+			t.Fatalf("IsPublicWorkerInputEvent(%q) = true, want false", eventType)
+		}
+	}
+}
+
 func TestPublicSessionHistoryEventPolicy(t *testing.T) {
 	allowed := []string{
 		"assistant",

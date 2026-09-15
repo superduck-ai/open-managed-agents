@@ -162,8 +162,7 @@ SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，�
 
 ## 大 payload
 
-原始 payload 超过 16 MiB 时在存储前拒绝，与 hydrate 的大小上限一致。实现按 payload 长度加
-512 字节 envelope 余量保守估算 900 KiB 阈值；超过估算阈值时：
+原始 payload 超过 16 MiB 时在存储前拒绝，与 hydrate 的大小上限一致。实现按原始 payload 的实际字节数判断 32 KiB（32768 bytes）阈值；严格超过时：
 
 1. 创建最迟在 `expires_at` 执行的 object cleanup job；
 2. 把原始 payload 上传到租户隔离 key；
@@ -232,7 +231,7 @@ consumer ACK floor。
 - Stream sequence 正确写入 SSE；控制回应越过排队输入，含重连后的较小序号输入仍可完成；
 - 真实 Worker 手动/自动 allow、deny、中断和未知 request ID 回应不形成循环等待；
 - Redis 丢失、epoch 接管、InProgress 与 DoubleAck；
-- 900 KiB 边界、外置 payload 加载（loadOffloadedPayload）完整性和清理；
+- 32 KiB 边界、外置 payload 加载（loadOffloadedPayload）完整性和清理；
 - 30 天到期终止与 subject 清理；
 - schema 不含旧入站表、outbox 表或 PG 入站 sequence；
 - 旧 poll 路由不可用，idle-stop 后新输入触发恢复。

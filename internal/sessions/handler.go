@@ -8,6 +8,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
@@ -20,6 +21,7 @@ const maxSessionBodySize = 4 << 20
 
 type Handler struct {
 	secretService *secrets.Service
+	eventPayloads *eventpayload.Store
 	cfg           config.Config
 	db            *db.DB
 	codeSessions  *codesessions.Service

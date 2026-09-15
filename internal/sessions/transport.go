@@ -27,6 +27,7 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 	}
 	h := &Handler{
 		secretService: secretService,
+		eventPayloads: codeSessionService.EventPayloadStore(),
 		cfg:           cfg,
 		db:            database,
 		codeSessions:  codeSessionService,

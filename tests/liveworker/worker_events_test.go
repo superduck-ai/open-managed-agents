@@ -158,7 +158,7 @@ func TestLiveWorkerEvents(t *testing.T) {
 		f := e.newSession(t)
 		s := f.connect(t, "0")
 		f.ackInitialize(t, s)
-		for _, size := range []int{900*1024 - 513, 900*1024 - 512, 900*1024 - 511, 1024 * 1024} {
+		for _, size := range []int{32*1024 - 1, 32 * 1024, 32*1024 + 1, 1024 * 1024} {
 			id := strings.Repeat("x", 8) + time.Now().Format("150405.000000000")
 			base := payloadFor(id, "")
 			payload := payloadFor(id, strings.Repeat("a", size-len(base)))
@@ -166,7 +166,7 @@ func TestLiveWorkerEvents(t *testing.T) {
 				t.Fatal("incorrect boundary fixture")
 			}
 			envelope := f.queue(t, payload)
-			wantOffload := size+512 > 900*1024
+			wantOffload := size > 32*1024
 			if (envelope.PayloadRef != nil) != wantOffload {
 				t.Fatalf("size=%d offload=%t want=%t", size, envelope.PayloadRef != nil, wantOffload)
 			}

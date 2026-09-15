@@ -76,7 +76,7 @@ envelope 会告警，但不阻塞其他 Session 的扫描。同通道后续消�
 
 ## 数据安全与大消息
 
-JetStream envelope 可能包含用户内容，不得写入运行日志。编码后超过 900 KiB 的 payload 存入对象
+JetStream envelope 可能包含用户内容，不得写入运行日志。原始字节数超过 32 KiB 的 payload 存入对象
 存储，envelope 只携带租户作用域 key、字节数、SHA-256 和 cleanup job ID；引用 envelope 仍不得
 超过 1 MiB。Redis 只保存短期 ACK subject，不保存 payload，也不是消息事实源。
 

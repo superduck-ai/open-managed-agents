@@ -169,8 +169,8 @@ func TestActivationRechecksHistoryAfterOffloadWithOneConnection(t *testing.T) {
 	if len(pending) != 3 || pending[1].PayloadRef == nil || !strings.Contains(string(pending[2].Payload), "arrived during upload") {
 		t.Fatalf("activation missed history cutover: %d events", len(pending))
 	}
-	if store.uploads != 2 {
-		t.Fatalf("uploads = %d, want snapshot preparation and re-preparation", store.uploads)
+	if store.uploads != 3 {
+		t.Fatalf("uploads = %d, want history archive plus snapshot preparation and re-preparation", store.uploads)
 	}
 }
 

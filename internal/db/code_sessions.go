@@ -123,6 +123,7 @@ type CodeSessionEvent struct {
 }
 
 type CodeSessionInternalEvent struct {
+	PayloadBlobUUID       *string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
@@ -144,16 +145,17 @@ type CodeSessionInternalEvent struct {
 }
 
 type AppendCodeSessionInternalEventInput struct {
-	ExternalID     string
-	EventType      string
-	PayloadUUID    string
-	AgentID        *string
-	IsCompaction   bool
-	Payload        json.RawMessage
-	PayloadHash    string
-	IdempotencyKey string
-	EventMetadata  json.RawMessage
-	CreatedAt      time.Time
+	PayloadBlobUUID *string
+	ExternalID      string
+	EventType       string
+	PayloadUUID     string
+	AgentID         *string
+	IsCompaction    bool
+	Payload         json.RawMessage
+	PayloadHash     string
+	IdempotencyKey  string
+	EventMetadata   json.RawMessage
+	CreatedAt       time.Time
 }
 
 type ListCodeSessionInternalEventsPageParams struct {
@@ -777,6 +779,7 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 				AgentID:               input.AgentID,
 				IsCompaction:          input.IsCompaction,
 				Payload:               input.Payload,
+				PayloadBlobUUID:       input.PayloadBlobUUID,
 				PayloadHash:           input.PayloadHash,
 				IdempotencyKey:        input.IdempotencyKey,
 				EventMetadata:         input.EventMetadata,
@@ -786,6 +789,9 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 				continue
 			}
 			if err != nil {
+				return err
+			}
+			if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, input.PayloadBlobUUID); err != nil {
 				return err
 			}
 			sequence = nextSequence
@@ -969,4 +975,9 @@ func mergeCodeSessionWorkerExternalMetadata(base json.RawMessage, patch json.Raw
 func rawIsJSONNull(raw json.RawMessage) bool {
 	raw = bytes.TrimSpace(raw)
 	return len(raw) == 0 || bytes.Equal(raw, []byte("null"))
+}
+
+// HasCodeSessionInternalEvent uses the same scope and predicate as insert deduplication.
+func (d *DB) HasCodeSessionInternalEvent(ctx context.Context, workspaceUUID, idempotencyKey string) (bool, error) {
+	return NewCodeSessionInternalEventMapper(d.mapperDB).ExistsByIdempotencyKey(ctx, workspaceUUID, idempotencyKey)
 }

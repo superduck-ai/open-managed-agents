@@ -32,6 +32,7 @@ type scheduledObjectCleanupJobParams struct {
 }
 
 type objectCleanupJobRow struct {
+	ResourceType   string `db:"resource_type"`
 	UUID           string `db:"uuid"`
 	ExternalID     string `db:"external_id"`
 	WorkspaceUUID  string `db:"workspace_uuid"`
@@ -43,6 +44,7 @@ type objectCleanupJobRow struct {
 
 func (r objectCleanupJobRow) job() ObjectCleanupJob {
 	return ObjectCleanupJob{
+		ResourceType:   r.ResourceType,
 		UUID:           r.UUID,
 		ExternalID:     r.ExternalID,
 		WorkspaceUUID:  r.WorkspaceUUID,

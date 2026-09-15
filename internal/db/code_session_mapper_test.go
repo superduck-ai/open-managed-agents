@@ -210,7 +210,7 @@ func TestCodeSessionEventMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.CodeSessionUUID",
 				"params.CodeSessionExternalID", "params.SequenceNum", "params.EventType", "params.PayloadUUID",
-				"params.AgentID", "params.IsCompaction", "params.Payload", "params.PayloadHash",
+				"params.AgentID", "params.IsCompaction", "params.Payload", "params.PayloadBlobUUID", "params.PayloadHash",
 				"params.IdempotencyKey", "params.EventMetadata", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Payload", "params.PayloadHash", "params.EventMetadata"},
@@ -236,4 +236,14 @@ func TestCodeSessionInternalEventMapperBuildsScopePages(t *testing.T) {
 		assertMapperSQLContains(t, bound, "b.agent_id IS NOT DISTINCT FROM e.agent_id")
 		assertMapperSQLContains(t, bound, "GREATEST( CAST($9 AS bigint), COALESCE(b.sequence_num - 1, 0) )")
 	}
+}
+
+func TestInternalEventIdempotencyLookupBindings(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionInternalEventMapperExistsByIdempotencyKeyStatement,
+		bound:     buildCodeSessionInternalEventMapperExistsByIdempotencyKey(yourbatis.DialectPostgres, "workspace", "key"),
+		wantID:    "CodeSessionInternalEventMapper.ExistsByIdempotencyKey", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "idempotencyKey"},
+		wantSQLFragments:  []string{"workspace_uuid = $1", "idempotency_key = $2", "idempotency_key <> ''", "deleted_at IS NULL"},
+	})
 }

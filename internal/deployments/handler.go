@@ -636,7 +636,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		return h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 	}
-	run, session, thread, createdEvents, err := h.db.CreateManualDeploymentRun(r.Context(), db.CreateManualDeploymentRunInput{
+	run, session, thread, createdEvents, err := h.deployments.CreateManualRun(r.Context(), db.CreateManualDeploymentRunInput{
 		DeploymentExternalID: deployment.ExternalID,
 		Session:              preparedRun.Session,
 		Events:               preparedRun.Events,

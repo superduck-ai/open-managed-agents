@@ -107,7 +107,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 			return
 		}
-		created, err := h.db.AppendCodeSessionInternalEvents(r.Context(), codeSessionID, epoch, events)
+		created, err := h.service.eventPayloads.AppendInternal(r.Context(), record, epoch, events)
 		if err != nil {
 			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
 				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker internal events")
@@ -134,7 +134,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	events, hasMore, err := h.db.ListCodeSessionInternalEventsPage(r.Context(), db.ListCodeSessionInternalEventsPageParams{
+	events, hasMore, err := h.service.eventPayloads.ListCodeSessionInternalEventsPage(r.Context(), db.ListCodeSessionInternalEventsPageParams{
 		WorkspaceUUID:         record.WorkspaceUUID,
 		CodeSessionExternalID: codeSessionID,
 		Subagents:             strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("subagents")), "true"),

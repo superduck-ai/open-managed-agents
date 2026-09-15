@@ -171,7 +171,7 @@ func run(logger *slog.Logger) error {
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
 	tunnels.RegisterCleanupWorker(workers, database, tunnelBroker, logger.With("component", "tunnel_cleanup"))
-	deploymentStore := deployments.NewStore(database)
+	deploymentStore := deployments.NewStore(database).WithEventPayloadStorage(objectStore)
 	deployments.RegisterWorkers(workers, deploymentStore)
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))

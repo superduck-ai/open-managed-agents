@@ -419,6 +419,7 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
 		{name: "removed NATS enable flag", overrides: "nats:\n  enabled: false\n", wantField: "enabled"},
+		{name: "removed Claude version", overrides: "environment_runner:\n  claude_agent_version: 2.1.251\n", wantField: "claude_agent_version"},
 		{name: "optional list item field", overrides: "bootstrap:\n  seed_api_keys:\n    - external_idd: typo\n      key: secret\n", wantField: "external_idd"},
 		// D7 迁移后废弃的平铺凭据键不得被静默接受。
 		{name: "retired flat openobserve key", overrides: "observability:\n  openobserve:\n    ingestion_username: leftover\n", wantField: "ingestion_username"},

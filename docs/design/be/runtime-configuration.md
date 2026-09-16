@@ -80,7 +80,8 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `BATCH_*`                                                           | `batch.*`                                                                  | 后缀转为小写 snake case，例如 `BATCH_UPSTREAM_TIMEOUT` → `batch.upstream_timeout` |
 | `E2B_*`                                                             | `e2b.*`                                                                    | 后缀保持小写 snake case；包括连接、debug、template 和 timeout 字段                |
 | `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY`     | `environment_runner.enabled` / `concurrency`                               | 仅在覆盖代码默认值时配置                                                          |
-| `ENVIRONMENT_MANAGER_PATH` / `CLAUDE_AGENT_VERSION` / `CLAUDE_PATH` | `environment_runner.manager_path` / `claude_agent_version` / `claude_path` | 路径可使用 YAML 路径展开语法                                                      |
+| `ENVIRONMENT_MANAGER_PATH` / `CLAUDE_PATH` | `environment_runner.manager_path` / `claude_path` | 路径可使用 YAML 路径展开语法 |
+| `CLAUDE_AGENT_VERSION` | 无 | 已删除；Claude Code 版本由 Environment 镜像决定 |
 | `CODE_SESSION_SANDBOX_API_BASE_URL`                                 | `code_session.sandbox_api_base_url`                                        | 必须是 sandbox 实际可达地址，不从监听地址推导                                     |
 | `CODE_SESSION_JWT_SIGNING_KEY_FILE`                                 | `code_session.jwt_signing_private_key_file`                                | 字段改名；生产环境必须指向稳定只读私钥                                            |
 | `CODE_SESSION_UPSTREAM_PROXY_*`                                     | `code_session.upstream_proxy_*`                                            | 迁移 MITM、CA 私钥路径和 SSRF 诊断开关                                            |
@@ -90,6 +91,8 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `OFFICIAL_SDK_FIXTURE_*`                                            | `sdk_fixtures.*`                                                           | 只在兼容测试需要覆盖稳定 fixture 时迁移                                           |
 
 `POSTGRES_ADMIN_URL`、`PUBLIC_BASE_URL` 和 `CODE_SESSION_API_BASE_URL` 没有 YAML 对应字段。数据库和角色应在部署前准备好；首次启动回退只使用 `database.url` 派生的 maintenance 连接。客户端响应 URL 根据请求地址及受信任反向代理设置的 `X-Forwarded-*` header 构造；sandbox 回调则显式使用 `code_session.sandbox_api_base_url`。
+
+`environment_runner.claude_agent_version` 已删除，升级前须从部署 YAML 中移除；保留该字段会触发未知字段错误，阻止服务启动。
 
 升级步骤：
 

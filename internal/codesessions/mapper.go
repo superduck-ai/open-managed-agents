@@ -604,7 +604,9 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
 		}
 		statusEventType := "session.thread_status_idle"
-		if status := strings.ToLower(schema.Status); status == "failed" || status == "error" || status == "terminated" {
+		workerStatus := strings.ToLower(schema.Status)
+		failed := workerStatus == "failed" || workerStatus == "error" || workerStatus == "terminated"
+		if failed {
 			statusEventType = "session.thread_status_terminated"
 		}
 		status := publicPayloadWithType(object, statusEventType)
@@ -615,7 +617,23 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 			"type":   firstNonEmpty(schema.Status, "completed"),
 			"detail": schema.Summary,
 		}
-		return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + threadID}}
+		if !failed {
+			return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + threadID}}
+		}
+		// error.type 与 stop_reason.type 同源（schema.Status），保持两事件表述一致。
+		errorEvent := publicPayloadWithType(object, "session.error")
+		errorEvent["session_thread_id"] = threadID
+		errorEvent["task_id"] = schema.TaskID
+		errorEvent["tool_use_id"] = schema.ToolUseID
+		errorEvent["error"] = map[string]any{
+			"type":         workerStatus,
+			"retry_status": "not_retryable",
+			"message":      firstNonEmpty(schema.Summary, "task "+workerStatus),
+		}
+		return []publicPayloadCandidate{
+			{payload: errorEvent, seedSuffix: "task_notification:error:" + threadID},
+			{payload: status, seedSuffix: "task_notification:thread_status:" + threadID, timeOffset: time.Millisecond},
+		}
 	default:
 		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
 	}

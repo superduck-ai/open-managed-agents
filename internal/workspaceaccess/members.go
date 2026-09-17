@@ -59,10 +59,16 @@ func validateMemberChange(orgRole, role, operation string) error {
 	if orgRole == "admin" {
 		return ErrInheritedRole
 	}
+	if orgRole == "billing" {
+		if operation != "update" || (role != "workspace_admin" && role != "workspace_billing") {
+			return ErrInheritedRole
+		}
+		return nil
+	}
 	if _, err := Effective(orgRole, true, ""); err != nil {
 		return err
 	}
-	if operation != "delete" && !Assignable(role) && !(operation == "update" && role == "workspace_billing") {
+	if operation != "delete" && !Assignable(role) {
 		return ErrInvalidRole
 	}
 	return nil
@@ -74,6 +80,14 @@ func writeMemberChange(ctx context.Context, tx *db.WorkspaceMemberTx, workspace 
 	if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return member, err
 	}
+	if user.Role == "billing" && role == "workspace_billing" {
+		if found {
+			if _, err := tx.DeleteMember(ctx, workspace.OrganizationUUID, workspace.ExternalID, user.ExternalID); err != nil {
+				return member, err
+			}
+		}
+		return db.AdminWorkspaceMember{WorkspaceExternalID: workspace.ExternalID, UserExternalID: user.ExternalID, WorkspaceRole: role}, nil
+	}
 	if operation == "delete" {
 		return tx.DeleteMember(ctx, workspace.OrganizationUUID, workspace.ExternalID, user.ExternalID)
 	}
@@ -83,7 +97,7 @@ func writeMemberChange(ctx context.Context, tx *db.WorkspaceMemberTx, workspace 
 		}
 		return tx.UpdateMember(ctx, workspace.OrganizationUUID, workspace.ExternalID, user.ExternalID, role)
 	}
-	if operation == "update" {
+	if operation == "update" && user.Role != "billing" {
 		return member, db.ErrNotFound
 	}
 	externalID, err := ids.New("wmem_")

@@ -1,4 +1,5 @@
 {
+  "workspaces.resources.empty": "暂无可展示的资源。",
   "account.apiPlan": "API 方案",
   "account.logout": "退出登录",
   "account.loggingOut": "正在退出...",

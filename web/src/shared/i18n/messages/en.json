@@ -1,4 +1,5 @@
 {
+  "workspaces.resources.empty": "No resources to display.",
   "account.apiPlan": "API plan",
   "account.logout": "Log out",
   "account.loggingOut": "Logging out...",

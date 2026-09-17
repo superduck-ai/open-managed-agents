@@ -28,6 +28,10 @@ func platformActionAllowed(r *http.Request, access auth.WorkspaceAccess) bool {
 		return access.Develop()
 	}
 	if strings.Contains(path, "/members") || strings.Contains(path, "/invites") || strings.Contains(path, "/invitations") {
+		if strings.Contains(path, "/workspaces/") && strings.Contains(path, "/members") {
+			// 工作区成员接口由资源层按目标空间鉴权，不能要求组织管理员身份。
+			return true
+		}
 		return access.ManageOrganization()
 	}
 	if strings.Contains(path, "/billing") || strings.Contains(path, "/cost_report") {

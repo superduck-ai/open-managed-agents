@@ -92,7 +92,7 @@ func handleListConsoleWorkspaceMemberCandidates(store OrganizationStore) http.Ha
 		}
 		candidates := make([]map[string]any, 0, len(facts))
 		for _, fact := range facts {
-			if fact.OrganizationRole == "admin" || fact.OrganizationRole == "billing" || fact.ExplicitRole != "" {
+			if fact.OrganizationRole == "admin" || fact.ExplicitRole != "" {
 				continue
 			}
 			candidates = append(candidates, map[string]any{
@@ -214,7 +214,7 @@ func formatConsoleWorkspaceMember(fact db.WorkspaceMemberFact, access auth.Works
 		"workspace_role":    access.Role,
 		"role_source":       access.Source,
 		"can_edit":          canChange,
-		"can_remove":        canChange && fact.OrganizationRole != "billing",
+		"can_remove":        canChange,
 	}
 }
 

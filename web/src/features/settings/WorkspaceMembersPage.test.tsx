@@ -175,3 +175,31 @@ test('无可添加组织成员时禁用提交', async () => {
   await screen.findByText('No eligible organization members found.');
   expect((screen.getAllByRole('button', { name: 'Add to Workspace' }).at(-1) as HTMLButtonElement).disabled).toBe(true);
 });
+
+test('Billing 显式成员可移除并选择普通角色，不显示继承提权专属选项', async () => {
+  globalThis.fetch = mock(async () =>
+    Response.json(
+      directoryResponse({
+        members: [
+          {
+            user_id: 'user_billing',
+            name: 'Billing',
+            email: 'billing@example.com',
+            organization_role: 'billing',
+            workspace_role: 'workspace_billing',
+            role_source: 'membership',
+            can_edit: true,
+            can_remove: true,
+          },
+        ],
+      }),
+    ),
+  ) as unknown as typeof fetch;
+  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false });
+  expect(await screen.findByRole('button', { name: 'More actions for Billing' })).toBeTruthy();
+  const select = screen.getByRole('combobox', { name: 'Role for Billing' });
+  select.focus();
+  fireEvent.keyDown(select, { key: 'ArrowDown' });
+  expect(await screen.findByRole('option', { name: 'Workspace Developer', exact: true })).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'Workspace Billing', exact: true })).toBeTruthy();
+});

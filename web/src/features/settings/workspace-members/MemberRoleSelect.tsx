@@ -4,7 +4,7 @@ import { workspaceMemberRoles, type WorkspaceMemberRole } from './api';
 
 export function MemberRoleSelect({
   value,
-  billing = false,
+  includeBilling = false,
   disabled,
   onChange,
   label,
@@ -12,7 +12,7 @@ export function MemberRoleSelect({
   className,
 }: {
   value: WorkspaceMemberRole;
-  billing?: boolean;
+  includeBilling?: boolean;
   disabled?: boolean;
   onChange: (value: WorkspaceMemberRole) => void;
   label: string;
@@ -20,11 +20,7 @@ export function MemberRoleSelect({
   className?: string;
 }) {
   const { msg } = useI18n();
-  const roles = workspaceMemberRoles.filter((role) =>
-    billing
-      ? role.value === 'workspace_billing' || role.value === 'workspace_admin'
-      : role.value !== 'workspace_billing',
-  );
+  const roles = workspaceMemberRoles.filter((role) => includeBilling || role.value !== 'workspace_billing');
   return (
     <Select
       value={value}

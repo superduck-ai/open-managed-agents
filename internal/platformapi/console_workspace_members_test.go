@@ -15,8 +15,8 @@ func TestConsoleWorkspaceMemberPermissions(t *testing.T) {
 	}{
 		{"只读操作者", "user", "workspace_user", false, false, false},
 		{"继承管理员", "admin", "", true, false, false},
-		{"继承计费可提权", "billing", "", true, true, false},
-		{"提权计费可恢复但不可移除", "billing", "workspace_admin", true, true, false},
+		{"显式计费成员", "billing", "workspace_billing", true, true, true},
+		{"计费账号显式管理员可移除", "billing", "workspace_admin", true, true, true},
 		{"显式成员", "user", "workspace_user", true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -89,7 +89,7 @@ export function WorkspaceMemberTable({
               {member.can_edit ? (
                 <MemberRoleSelect
                   value={member.workspace_role}
-                  billing={member.organization_role === 'billing'}
+                  includeBilling
                   disabled={pending}
                   label={msg('members.roleFor', `Role for ${member.name || member.email}`, {
                     name: member.name || member.email,

@@ -1,6 +1,6 @@
 # 组织与工作区成员管理（#336）
 
-本功能依赖 #339（PR #346）的统一权限计算及成员事务、#338（PR #347）的组织加入与切换上下文。#336 在两者交付的 `workspaceaccess` 服务、Default 标记与 Console 路由骨架上补齐差异。
+本功能依赖 #339（PR #346）的通用权限及成员事务、#338（PR #347）的组织加入与切换上下文。当前栈为 main → #346 → #347 → #350；Billing 专项 #354 与 #347 并列依赖 #346，不纳入本 PR。
 
 ## 产品与权限边界
 
@@ -24,9 +24,11 @@ sequenceDiagram
   API-->>UI: 成功或保留错误弹窗
 ```
 
-普通工作区按 #339 的最新合同执行：组织 Admin 继承 Workspace Admin，不能编辑或移除；Billing 继承 Workspace Billing，可提升为 Workspace Admin，再选择 Workspace Billing 撤销显式授权，不允许删除继承访问。其他组织成员通过显式工作区角色加入。Default 的权限全部来自组织角色，历史显式关系不参与计算，不提供独立成员管理操作。
+普通工作区按拆分后的 #346 基线执行：组织 Admin 继承 Workspace Admin，不能编辑或移除；其他组织成员（包括 Billing）通过显式工作区角色加入，可以修改角色或移除显式成员。更新为 Workspace Billing 保留显式关系，不表示恢复继承。Default 的权限全部来自组织角色，历史显式关系不参与计算，不提供独立成员管理操作。
 
 ## 工作区 Console 合同
+
+全局会话中间件不对工作区成员路由要求组织管理权限；目录和候选接口在资源层解析 URL 中的目标工作区，写入接口在事务内复查目标工作区的成员管理权限。组织普通成员获授 Workspace Admin 后可以管理该空间成员，但不能管理组织或未授权的其他空间，且不能依赖会话当前工作区的角色替代目标空间校验。
 
 路径前缀为 `/api/console/organizations/{organizationUuid}/workspaces/{workspaceId}`。
 
@@ -35,10 +37,10 @@ sequenceDiagram
 | GET `/members` | 返回 `workspace_id`、`is_default`、`can_manage_members`、`members` |
 | GET `/member-candidates` | 返回同组织内尚可添加的成员，字段为 `user_id`、`name`、`email` |
 | POST `/members` | 以 `user_id`、`workspace_role` 添加显式成员 |
-| POST `/members/{userId}` | 更新 `workspace_role`，包括 Billing 提权和恢复继承 |
+| POST `/members/{userId}` | 更新显式 `workspace_role`，不触发 Billing 恢复继承 |
 | DELETE `/members/{userId}` | 移除显式成员 |
 
-每个成员返回身份、姓名、邮箱、组织角色、有效工作区角色、角色来源及 `can_edit`、`can_remove`。界面消费服务端权限，不自行复制继承算法。目录与候选查询复用 `ListWorkspaceMemberFacts`；添加、改角色和移除统一走 `workspaceaccess.ChangeMember`（组织成员行锁 → 工作区锁 → 操作者授权 → Default 保护 → Billing 规则）。组织 Admin 的继承访问不可编辑或移除；Billing 可编辑以提权或恢复继承，但始终不可移除；候选列表只返回可显式添加的组织成员（排除 Admin/Billing 与已有显式成员）。
+每个成员返回身份、姓名、邮箱、组织角色、有效工作区角色、角色来源及 `can_edit`、`can_remove`。界面消费服务端权限，不自行复制继承算法。目录与候选查询复用 `ListWorkspaceMemberFacts`；添加、改角色和移除统一走 `workspaceaccess.ChangeMember`（组织成员行锁 → 工作区锁 → 操作者授权 → Default 保护 → 显式角色规则）。组织 Admin 的继承访问不可编辑或移除；Billing 显式成员可编辑和移除；候选列表排除 Admin 与已有显式成员，包含尚未加入的 Billing 账号。添加角色不包含 Workspace Billing，更新已有成员时按基线兼容合同提供该角色。
 
 ## 组织成员 Console 合同
 
@@ -56,11 +58,17 @@ sequenceDiagram
 - Console 组织管理员中间件与错误合同由 `internal/platformapi/console_member_authorization_test.go` 覆盖。
 - 组织移除取消、CSRF、后端 409 保持弹窗由前端组织成员页测试覆盖；工作区只读、Default 提示、继承角色、搜索和空候选状态由工作区成员页测试覆盖。
 - `TestConsoleMembersAPI` 覆盖组织成员列表、改角色、移除；工作区成员 Console 合同由真实 HTTP 验收补充覆盖（见 PR 验收评论）。
-- 全量测试在独立 PostgreSQL + Redis + 三节点 NATS 环境执行；仅 Official SDK fixture（401）与内嵌 JetStream 集群 placement 为基线环境限制，与本功能无关。
+- 历史全量测试结果及截图按对应提交保留在 PR 验收评论；本轮同步后的验证结果单独记录，不沿用历史结果声明当前提交全绿。
 - 本阶段不处理长连接撤权、运行中任务迁移或凭据归属模型变更。
 
 成员资料与权限事实由一次带组织和工作区范围的查询返回，不再拼接截断为 1000 人的组织资料列表；候选成员复用同一查询。工作区页面只保留路由实际使用的 `settings/WorkspaceMembersPage.tsx`。
 
-审查回归覆盖：Billing 继承与提权状态下的编辑/移除能力、Admin API 最后管理员冲突映射、1002 人目录的真实 PostgreSQL 资料扫描与跨组织拒绝。
+审查回归覆盖：Billing 显式成员的编辑/移除能力、Admin API 最后管理员冲突映射、1002 人目录的真实 PostgreSQL 资料扫描与跨组织拒绝。
 
 2026-09-13 按 CMA 添加成员弹窗截图对齐：标题包含当前工作区名称，成员和角色选择器占满表单宽度，默认角色为 Workspace Developer；移除独立搜索框、说明段落及取消按钮，保留右上角关闭和底部添加到工作区按钮。候选加载、错误及空态保护保持不变。
+
+## 2026-09-17 拆分跟进
+
+同步 #347 的邀请隐私、处理后返回/重试与邮件投递提示，恢复由 #347 维护的账号菜单邀请入口。#350 保留组织/工作区成员管理、工作区设置界面及目标空间授权修复，不再承载 Billing 专项继承和恢复规则。
+
+后续组合 #354 时须联动验证成员候选、编辑/移除标记、角色选项、继承说明及 scopePermissions；不能仅凭 Git 无冲突认定完成。历史 Billing 截图属于拆分前实现，不作为当前 #350 合同证据，专项证据归 #354。本轮不改历史 Default 成员数据，不重启其他 worktree 或现有 LaunchAgent 服务。

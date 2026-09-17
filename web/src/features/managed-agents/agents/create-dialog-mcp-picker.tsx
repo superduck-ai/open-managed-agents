@@ -1,4 +1,4 @@
-import { ChevronsUpDown, Plus } from 'lucide-react';
+import { Cable, ChevronsUpDown, Plus } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
@@ -21,6 +21,7 @@ export function CreateDialogMcpPicker({
   directoryLoading,
   directoryError,
   onRetryDirectory,
+  onSelectTunnel,
   onChange,
 }: {
   draft: CreateAgentInput;
@@ -28,6 +29,7 @@ export function CreateDialogMcpPicker({
   directoryLoading: boolean;
   directoryError: boolean;
   onRetryDirectory: () => void;
+  onSelectTunnel: (server: McpDirectoryServer) => void;
   onChange: (next: CreateAgentInput) => void;
 }) {
   const { msg } = useI18n();
@@ -46,7 +48,7 @@ export function CreateDialogMcpPicker({
     return typeof serverName === 'string' ? [serverName] : [];
   });
   const availableServers = directoryServers.filter(
-    (server) => server.url && !configuredServerNames.includes(server.slug),
+    (server) => server.url && (server.source === 'tunnel' || !configuredServerNames.includes(server.slug)),
   );
   const normalizedSearch = searchValue.trim().toLowerCase();
   const filteredServers = normalizedSearch
@@ -85,6 +87,11 @@ export function CreateDialogMcpPicker({
   const addDirectoryServer = (id: string) => {
     const server = availableServers.find((candidate) => candidate.slug === id);
     if (!server?.url) {
+      return;
+    }
+    if (server.source === 'tunnel') {
+      onSelectTunnel(server);
+      close();
       return;
     }
     const result = addMcpServer(draft, { name: server.slug, url: server.url });
@@ -144,9 +151,20 @@ export function CreateDialogMcpPicker({
               options={filteredServers.map((server) => ({
                 id: server.slug,
                 label: server.displayName,
-                description: server.url,
+                description:
+                  server.source === 'tunnel'
+                    ? `${msg(`mcpTunnels.connection.${server.tunnel?.connectionState ?? 'unknown'}`, 'Unknown')} · ${server.url ?? ''}`
+                    : server.url,
+                group: server.group,
                 disabled: atLimit,
-                icon: <RemoteServerIcon directoryIconUrl={server.iconUrl} className="size-8" iconClassName="size-4" />,
+                icon:
+                  server.source === 'tunnel' ? (
+                    <span className="flex size-8 items-center justify-center rounded-lg border border-border bg-background">
+                      <Cable className="size-4" aria-hidden />
+                    </span>
+                  ) : (
+                    <RemoteServerIcon directoryIconUrl={server.iconUrl} className="size-8" iconClassName="size-4" />
+                  ),
               }))}
               selectedIds={[]}
               loading={directoryLoading}

@@ -80,7 +80,7 @@ export function CredentialMcpServerField({
         value={value}
         placeholder={msg(
           'managedAgents.credentialVaults.credentialDialog.mcpServerUrlPlaceholder',
-          'https://example.com/mcp',
+          'https://mcp.example.com',
         )}
         disabled
         onChange={() => undefined}
@@ -151,7 +151,7 @@ export function CredentialMcpServerField({
             value={customDraft}
             placeholder={msg(
               'managedAgents.credentialVaults.credentialDialog.mcpServerUrlPlaceholder',
-              'https://example.com/mcp',
+              'https://mcp.example.com',
             )}
             aria-label={label}
             className="bg-transparent"
@@ -220,10 +220,7 @@ export function CredentialMcpServerField({
           }
         >
           <span className="truncate text-muted-foreground">
-            {msg(
-              'managedAgents.credentialVaults.credentialDialog.mcpDirectoryPlaceholder',
-              'Choose from directory or custom server',
-            )}
+            {msg('managedAgents.credentialVaults.credentialDialog.mcpServerUrlPlaceholder', 'https://mcp.example.com')}
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         </PopoverTrigger>

@@ -34,3 +34,10 @@ test('旧入口与未指定工作区仍使用兼容路由', () => {
   expect(workspaceSwitchPath('/quickstart', 'other')).toBe('/workspaces/other/agent-quickstart');
   expect(workspaceSwitchPath('/workbench/old', 'other')).toBe('/workbench');
 });
+
+test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_old?tab=old'])(
+  '切换 MCP Tunnel 工作区时清除旧详情：%s',
+  (path) => {
+    expect(workspaceSwitchPath(path, 'other')).toBe('/settings/workspaces/other/mcp-tunnels');
+  },
+);

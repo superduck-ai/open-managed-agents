@@ -13,6 +13,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -105,7 +107,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 			return
 		}
-		created, err := h.db.AppendCodeSessionInternalEvents(r.Context(), codeSessionID, epoch, events)
+		created, err := h.service.eventPayloads.AppendInternal(r.Context(), record, epoch, events)
 		if err != nil {
 			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
 				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker internal events")
@@ -132,7 +134,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	events, hasMore, err := h.db.ListCodeSessionInternalEventsPage(r.Context(), db.ListCodeSessionInternalEventsPageParams{
+	events, hasMore, err := h.service.eventPayloads.ListCodeSessionInternalEventsPage(r.Context(), db.ListCodeSessionInternalEventsPageParams{
 		WorkspaceUUID:         record.WorkspaceUUID,
 		CodeSessionExternalID: codeSessionID,
 		Subagents:             strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("subagents")), "true"),
@@ -620,12 +622,37 @@ func (h *Handler) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		h.writeIngressLoadError(w, r, err)
 		return
 	}
+	sessionContext, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{
+		CodeSessionID:       record.ExternalID,
+		SessionIngressToken: auth.ExtractAPIKey(r),
+		APIBaseURL:          h.cfg.CodeSession.SandboxAPIBaseURL,
+	}, h.cfg.Tunnel)
+	if err != nil {
+		h.errorAdapter.Write(w, r, sessionMCPConfigFailure(err))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
-		"session_context": sessionContextFromCodeSession(record),
+		"session_context": sessionContext,
 	})
 }
 
-func sessionContextFromCodeSession(record db.CodeSession) map[string]any {
+func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIdentity, cfg config.TunnelConfig) (map[string]any, error) {
+	var metadata struct {
+		Config json.RawMessage `json:"config"`
+	}
+	if len(record.Metadata) > 0 {
+		if err := json.Unmarshal(record.Metadata, &metadata); err != nil {
+			return nil, err
+		}
+	}
+	mcpConfig, err := BuildMCPRuntimeConfig(metadata.Config, identity, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if len(mcpConfig) == 0 {
+		mcpConfig = json.RawMessage(`{}`)
+	}
 	config := codeSessionConfig(record.Metadata)
 	return map[string]any{
 		"cwd":                  record.WorkDir,
@@ -633,8 +660,8 @@ func sessionContextFromCodeSession(record db.CodeSession) map[string]any {
 		"custom_system_prompt": stringField(config, "custom_system_prompt"),
 		"append_system_prompt": stringField(config, "append_system_prompt"),
 		"model":                firstNonEmpty(record.Model, stringField(config, "model")),
-		"mcp_config":           objectConfigValue(config["mcp_config"]),
-	}
+		"mcp_config":           mcpConfig,
+	}, nil
 }
 
 func (h *Handler) codeSessionWorkerState(record db.CodeSession, r *http.Request, epoch int64) map[string]any {
@@ -752,14 +779,6 @@ func arrayConfigValue(value any) []any {
 		return []any{}
 	}
 	return items
-}
-
-func objectConfigValue(value any) map[string]any {
-	object, ok := value.(map[string]any)
-	if !ok || object == nil {
-		return map[string]any{}
-	}
-	return object
 }
 
 func (h *Handler) requireCodeSession(ctx context.Context, codeSessionID string) (db.CodeSession, error) {

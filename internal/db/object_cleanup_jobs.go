@@ -8,6 +8,7 @@ import (
 )
 
 type ObjectCleanupJob struct {
+	ResourceType   string
 	UUID           string
 	ExternalID     string
 	WorkspaceUUID  string

@@ -356,6 +356,18 @@ export const anthropicBetaApi = {
       },
     },
     resources: {
+      update<T>(sessionId: string, resourceId: string, authorizationToken: string, workspaceId?: string) {
+        return sdkCall(() =>
+          getAnthropicClient().beta.sessions.resources.update(
+            resourceId,
+            {
+              session_id: sessionId,
+              authorization_token: authorizationToken,
+            },
+            requestOptions(workspaceId),
+          ),
+        ) as Promise<T>;
+      },
       add<T>(sessionId: string, params: Record<string, unknown>, workspaceId?: string) {
         return sdkCall(() =>
           getAnthropicClient().beta.sessions.resources.add(sessionId, sdkParams(params), requestOptions(workspaceId)),

@@ -100,21 +100,75 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 	if !found {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
 	}
-	return resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, claudeToolName), parseClaudeToolIdentity(claudeToolName), nil
+	permission, identity := resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, claudeToolName)
+	return permission, identity, nil
 }
 
-func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claudeToolName string) resolvedToolPermission {
-	snapshot := rawObject(agentSnapshot)
-	tools := arrayField(snapshot, "tools")
+type toolPermissionToolset struct {
+	Type          string               `json:"type"`
+	ServerName    string               `json:"mcp_server_name"`
+	Configs       []mcpToolDeclaration `json:"configs"`
+	DefaultConfig mcpToolDeclaration   `json:"default_config"`
+}
+
+type toolPermissionSnapshot struct {
+	MCPServers []mcpServerDeclaration  `json:"mcp_servers"`
+	Tools      []toolPermissionToolset `json:"tools"`
+}
+
+func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claudeToolName string) (resolvedToolPermission, toolIdentity) {
 	identity := parseClaudeToolIdentity(claudeToolName)
-	switch identity.Kind {
-	case "mcp":
-		return resolveMCPToolPermission(tools, identity.ServerName, identity.ToolName)
-	case "agent_toolset":
-		return resolveAgentToolPermission(tools, identity.ToolName)
-	default:
-		return resolvedToolPermissionAsk
+	var snapshot toolPermissionSnapshot
+	if err := json.Unmarshal(agentSnapshot, &snapshot); err != nil {
+		return resolvedToolPermissionAsk, identity
 	}
+	switch {
+	case strings.HasPrefix(claudeToolName, "mcp__"):
+		canonical, found := resolveMCPToolIdentity(snapshot, claudeToolName)
+		if !found {
+			return resolvedToolPermissionAsk, identity
+		}
+		return resolveMCPToolPermission(snapshot.Tools, canonical.ServerName, canonical.ToolName), canonical
+	case identity.Kind == "agent_toolset":
+		return resolveAgentToolPermission(snapshot.Tools, identity.ToolName), identity
+	default:
+		return resolvedToolPermissionAsk, identity
+	}
+}
+
+// Claude Code replaces dots in API-valid server names with underscores. Match
+// complete declared server prefixes, since consecutive dots can become "__".
+// An exact spelling must not override another server with the same wire name.
+func resolveMCPToolIdentity(snapshot toolPermissionSnapshot, claudeToolName string) (toolIdentity, bool) {
+	serverNames := make(map[string]struct{}, len(snapshot.MCPServers))
+	for _, server := range snapshot.MCPServers {
+		serverNames[server.Name] = struct{}{}
+	}
+	// Older snapshots can contain toolsets without a separate server list.
+	for _, toolset := range snapshot.Tools {
+		if toolset.Type == "mcp_toolset" {
+			serverNames[toolset.ServerName] = struct{}{}
+		}
+	}
+	var identity toolIdentity
+	for serverName := range serverNames {
+		if serverName == "" {
+			continue
+		}
+		toolName, found := strings.CutPrefix(claudeToolName, "mcp__"+serverName+"__")
+		if !found {
+			runtimeName := strings.ReplaceAll(serverName, ".", "_")
+			toolName, found = strings.CutPrefix(claudeToolName, "mcp__"+runtimeName+"__")
+		}
+		if !found || toolName == "" {
+			continue
+		}
+		if identity.ServerName != "" {
+			return toolIdentity{}, false
+		}
+		identity = toolIdentity{Kind: "mcp", ServerName: serverName, ToolName: toolName}
+	}
+	return identity, identity.ServerName != ""
 }
 
 func parseClaudeToolIdentity(toolName string) toolIdentity {
@@ -154,43 +208,39 @@ func managedAgentToolName(claudeToolName string) string {
 	}
 }
 
-func resolveMCPToolPermission(tools []any, serverName string, toolName string) resolvedToolPermission {
-	for _, value := range tools {
-		toolset, ok := value.(map[string]any)
-		if !ok || stringField(toolset, "type") != "mcp_toolset" || stringField(toolset, "mcp_server_name") != serverName {
+func resolveMCPToolPermission(tools []toolPermissionToolset, serverName string, toolName string) resolvedToolPermission {
+	for _, toolset := range tools {
+		if toolset.Type != "mcp_toolset" || toolset.ServerName != serverName {
 			continue
 		}
-		if config, ok := findToolConfig(toolset["configs"], toolName); ok {
+		if config, ok := findToolConfig(toolset.Configs, toolName); ok {
 			return permissionFromToolConfig(config, "always_ask")
 		}
-		return permissionFromToolConfig(objectField(toolset, "default_config"), "always_ask")
+		return permissionFromToolConfig(toolset.DefaultConfig, "always_ask")
 	}
 	return resolvedToolPermissionAsk
 }
 
-func resolveAgentToolPermission(tools []any, toolName string) resolvedToolPermission {
-	for _, value := range tools {
-		toolset, ok := value.(map[string]any)
-		if !ok || stringField(toolset, "type") != "agent_toolset_20260401" {
+func resolveAgentToolPermission(tools []toolPermissionToolset, toolName string) resolvedToolPermission {
+	for _, toolset := range tools {
+		if toolset.Type != "agent_toolset_20260401" {
 			continue
 		}
-		if config, ok := findToolConfig(toolset["configs"], toolName); ok {
+		if config, ok := findToolConfig(toolset.Configs, toolName); ok {
 			return permissionFromToolConfig(config, "always_allow")
 		}
-		return permissionFromToolConfig(objectField(toolset, "default_config"), "always_allow")
+		return permissionFromToolConfig(toolset.DefaultConfig, "always_allow")
 	}
 	return resolvedToolPermissionAllow
 }
 
-func permissionFromToolConfig(config map[string]any, fallbackPolicy string) resolvedToolPermission {
-	if enabled, ok := config["enabled"].(bool); ok && !enabled {
+func permissionFromToolConfig(config mcpToolDeclaration, fallbackPolicy string) resolvedToolPermission {
+	if config.Enabled != nil && !*config.Enabled {
 		return resolvedToolPermissionDeny
 	}
-	policy := fallbackPolicy
-	if object := objectField(config, "permission_policy"); len(object) > 0 {
-		if policyType := stringField(object, "type"); policyType != "" {
-			policy = policyType
-		}
+	policy := config.PermissionPolicy.Type
+	if policy == "" {
+		policy = fallbackPolicy
 	}
 	switch policy {
 	case "always_allow", "allow":
@@ -202,16 +252,13 @@ func permissionFromToolConfig(config map[string]any, fallbackPolicy string) reso
 	}
 }
 
-func findToolConfig(value any, toolName string) (map[string]any, bool) {
-	toolName = strings.TrimSpace(toolName)
-	for _, item := range arrayValue(value) {
-		config, ok := item.(map[string]any)
-		if !ok || stringField(config, "name") != toolName {
-			continue
+func findToolConfig(configs []mcpToolDeclaration, toolName string) (mcpToolDeclaration, bool) {
+	for _, config := range configs {
+		if config.Name == toolName {
+			return config, true
 		}
-		return config, true
 	}
-	return nil, false
+	return mcpToolDeclaration{}, false
 }
 
 func objectField(object map[string]any, field string) map[string]any {
@@ -252,18 +299,6 @@ func workerOutputSessionThreadID(payload *workerControlRequestPayload) string {
 		payload.Metadata.SessionThreadID,
 		payload.Metadata.ThreadID,
 	)
-}
-
-func arrayField(object map[string]any, field string) []any {
-	if object == nil {
-		return nil
-	}
-	return arrayValue(object[field])
-}
-
-func arrayValue(value any) []any {
-	items, _ := value.([]any)
-	return items
 }
 
 func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, codeSession db.CodeSession, event db.SessionEvent) (bool, error) {

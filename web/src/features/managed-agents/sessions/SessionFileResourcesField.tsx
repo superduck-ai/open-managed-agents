@@ -22,11 +22,13 @@ import { hasSessionFileMountPath, isValidSessionFileMountPath, SESSION_FILE_UPLO
 export function SessionFileResourcesField({
   resources,
   showAddButton = true,
+  showHeading = true,
   workspaceId,
   onChange,
 }: {
   resources: SessionFileResourceFormValue[];
   showAddButton?: boolean;
+  showHeading?: boolean;
   workspaceId: string;
   onChange: (resources: SessionFileResourceFormValue[]) => void;
 }) {
@@ -48,15 +50,17 @@ export function SessionFileResourcesField({
   };
 
   return (
-    <section className="space-y-3" aria-labelledby="session-resources-title">
-      <div>
-        <h3 id="session-resources-title" className="text-sm font-semibold text-foreground">
-          {msg('managedAgents.sessions.resources.title', 'Resources')}
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg('managedAgents.sessions.resources.description', 'Mount files into the session uploads directory.')}
-        </p>
-      </div>
+    <section className="space-y-3" aria-labelledby={showHeading ? 'session-resources-title' : undefined}>
+      {showHeading ? (
+        <div>
+          <h3 id="session-resources-title" className="text-sm font-semibold text-foreground">
+            {msg('managedAgents.sessions.resources.title', 'Resources')}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {msg('managedAgents.sessions.resources.description', 'Mount files into the session uploads directory.')}
+          </p>
+        </div>
+      ) : null}
 
       {resources.map((resource, index) => {
         const selectedFilename = files.find((file) => file.id === resource.fileId)?.filename;

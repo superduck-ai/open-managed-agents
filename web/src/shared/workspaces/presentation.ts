@@ -25,6 +25,14 @@ export function workspaceWebhooksPath(workspaceId: string) {
   return `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/webhooks`;
 }
 
+export function workspaceMcpTunnelsPath(workspaceId: string) {
+  return `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/mcp-tunnels`;
+}
+
+export function workspaceMcpTunnelDetailPath(workspaceId: string, tunnelId: string) {
+  return `${workspaceMcpTunnelsPath(workspaceId)}/${encodeURIComponent(tunnelId)}`;
+}
+
 export function workspaceIdFromPath(pathname: string) {
   const workspaceId = pathname.match(/^\/(?:settings\/)?workspaces\/([^/]+)/)?.[1];
   if (!workspaceId) {
@@ -51,7 +59,7 @@ export function buildCreateWorkspaceInput(name: string, displayColor: string): C
 export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
   const path = currentPath.split(/[?#]/)[0];
   const scope = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
-  const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks)(?:\/|$)/);
+  const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks|mcp-tunnels)(?:\/|$)/);
   if (settings) return `/settings${scope}/${settings[1]}`;
   const scoped = path.match(/^\/workspaces\/[^/]+\/([^/]+)/);
   if (scoped) return `${scope}/${scoped[1]}`;

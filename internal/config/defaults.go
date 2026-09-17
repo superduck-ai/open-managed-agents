@@ -17,6 +17,19 @@ func defaultConfig() Config {
 				ForcePathStyle: true,
 			},
 		},
+		Tunnel: TunnelConfig{
+			DomainSuffix:        "tunnel.invalid",
+			PollTimeout:         30 * time.Second,
+			RequestTimeout:      2 * time.Minute,
+			PresenceTTL:         60 * time.Second,
+			TombstoneTTL:        5 * time.Minute,
+			MaxPendingRequests:  256,
+			MaxStoredRequests:   4096,
+			MaxPendingBytes:     32 * 1024 * 1024,
+			MaxBodyBytes:        1024 * 1024,
+			MaxHeaderBytes:      32 * 1024,
+			MaxHeaderValueBytes: 8 * 1024,
+		},
 		Batch: BatchConfig{
 			WorkerEnabled:             true,
 			WorkerConcurrency:         2,
@@ -39,7 +52,7 @@ func defaultConfig() Config {
 			Concurrency:             2,
 			PackageProvisionTimeout: 2 * time.Minute,
 			ManagerPath:             "/usr/local/bin/environment-manager",
-			ClaudeAgentVersion:      "2.1.120",
+			ClaudeAgentVersion:      "2.1.251",
 			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
 		Observability: ObservabilityConfig{

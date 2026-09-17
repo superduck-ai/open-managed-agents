@@ -21,6 +21,7 @@ type codeSessionInternalEventRow struct {
 	AgentID               *string    `db:"agent_id"`
 	IsCompaction          bool       `db:"is_compaction"`
 	Payload               []byte     `db:"payload"`
+	PayloadBlobUUID       *string    `db:"payload_blob_uuid"`
 	PayloadHash           string     `db:"payload_hash"`
 	IdempotencyKey        string     `db:"idempotency_key"`
 	EventMetadata         []byte     `db:"event_metadata"`
@@ -41,6 +42,7 @@ type codeSessionInternalEventInsertParams struct {
 	AgentID               *string
 	IsCompaction          bool
 	Payload               []byte
+	PayloadBlobUUID       *string
 	PayloadHash           string
 	IdempotencyKey        string
 	EventMetadata         []byte
@@ -56,6 +58,7 @@ type listCodeSessionInternalEventsParams struct {
 }
 
 type CodeSessionInternalEventMapper interface {
+	ExistsByIdempotencyKey(ctx context.Context, workspaceUUID, idempotencyKey string) (bool, error)
 	Insert(ctx context.Context, params codeSessionInternalEventInsertParams) (codeSessionInternalEventRow, error)
 	ListPage(ctx context.Context, params listCodeSessionInternalEventsParams) ([]codeSessionInternalEventRow, error)
 }
@@ -74,6 +77,7 @@ func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {
 		AgentID:               r.AgentID,
 		IsCompaction:          r.IsCompaction,
 		Payload:               bytes.Clone(r.Payload),
+		PayloadBlobUUID:       r.PayloadBlobUUID,
 		PayloadHash:           r.PayloadHash,
 		IdempotencyKey:        r.IdempotencyKey,
 		EventMetadata:         bytes.Clone(r.EventMetadata),

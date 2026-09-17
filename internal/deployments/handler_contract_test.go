@@ -1,25 +1,72 @@
 package deployments
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func TestSessionResourcesFromDeploymentRejectsInvalidSecrets(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{})
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
 	}
 }
 
 func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
-	_, err := sessionResourcesFromDeployment(db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
+	}
+}
+
+func TestSessionResourcesFromDeploymentRejectsPlaintextToken(t *testing.T) {
+	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{
+		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo","mount_path":"/workspace/repo"}]`),
+		ResourceSecrets: json.RawMessage(`{"0":{"authorization_token":"legacy"}}`),
+	}, time.Time{})
+	if err == nil {
+		t.Fatal("plaintext token was copied into a session")
+	}
+}
+
+func TestSessionResourcesFromDeploymentCopiesEncryptedToken(t *testing.T) {
+	service, err := secrets.NewLocalService(context.Background(), make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := secrets.ResourceBinding{OrganizationUUID: "org", WorkspaceUUID: "ws"}
+	encrypted, err := sessionresource.EncryptGitToken(context.Background(), service, binding, "git-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := db.Deployment{
+		OrganizationUUID: "org", WorkspaceUUID: "ws",
+		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo","mount_path":"/workspace/repo"}]`),
+		ResourceSecrets: append(append([]byte(`{"0":`), encrypted...), '}'),
+	}
+	for _, sessionID := range []string{"ses_one", "ses_two"} {
+		resources, err := sessionResourcesFromDeployment(sessionID, deployment, time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(resources) != 1 {
+			t.Fatalf("resource count=%d", len(resources))
+		}
+		resource := resources[0].Resource
+		if resource.SessionExternalID != sessionID || string(resource.SecretPayload) != string(encrypted) {
+			t.Fatal("deployment did not copy the encrypted token into the requested session")
+		}
+		token, err := sessionresource.DecryptGitToken(context.Background(), service, binding, resource.SecretPayload)
+		if err != nil || token != "git-token" {
+			t.Fatalf("copied token could not be opened: %v", err)
+		}
 	}
 }
 

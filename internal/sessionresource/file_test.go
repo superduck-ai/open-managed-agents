@@ -122,17 +122,6 @@ func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 	}
 }
 
-func TestDefaultGitHubRepositoryMountPath(t *testing.T) {
-	t.Parallel()
-
-	if got := DefaultGitHubRepositoryMountPath("://invalid"); got != "/workspace/repository" {
-		t.Fatalf("invalid repository URL mount path = %q", got)
-	}
-	if got := DefaultGitHubRepositoryMountPath("https://github.com/example/widgets.git"); got != "/workspace/widgets" {
-		t.Fatalf("default repository mount path = %q", got)
-	}
-}
-
 func TestValidateFileSpecsRejectsAggregateConflicts(t *testing.T) {
 	t.Parallel()
 

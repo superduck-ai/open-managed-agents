@@ -47,6 +47,11 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 				account.Permissions = principal.WorkspaceAccess.Permissions()
 			}
 		}
+		if account != nil {
+			if sessionKey := auth.ExtractPlatformSessionKey(r); sessionKey != "" {
+				response.CSRFToken = auth.PlatformCSRFToken(sessionKey)
+			}
+		}
 		writeJSON(w, http.StatusOK, response)
 	}
 }

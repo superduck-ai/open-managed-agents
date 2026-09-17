@@ -65,6 +65,9 @@ func (w *Worker) Start(ctx context.Context) {
 
 // RunOnce leases and processes one batch of object cleanup jobs.
 func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
+	if err := w.database.ScheduleEventPayloadCleanup(ctx, defaultBatchSize); err != nil {
+		return err
+	}
 	jobs, err := w.database.LeaseObjectCleanupJobs(ctx, workerID, defaultBatchSize)
 	if err != nil {
 		return err
@@ -79,7 +82,7 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 			continue
 		}
 
-		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{}); err != nil {
+		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{AllVersions: job.ResourceType == "event_payload"}); err != nil {
 			delay := retryDelay(job.Attempts + 1)
 			if markErr := w.database.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s retry: %w", job.ExternalID, markErr))

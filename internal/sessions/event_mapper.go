@@ -229,7 +229,7 @@ func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, session db.Sess
 	if len(candidates) == 0 {
 		return "", nil
 	}
-	events, _, err := h.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+	events, _, err := h.eventPayloads.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 		WorkspaceUUID:     session.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		PrimaryOnly:       true,

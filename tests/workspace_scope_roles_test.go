@@ -51,10 +51,14 @@ func TestWorkspaceScopeChecksAllRoles(t *testing.T) {
 			request("/v1/organizations/users", workspace.ExternalID, http.StatusForbidden)
 			request("/v1/memory_stores/"+store.ID+"?beta=true", workspace.ExternalID, http.StatusNotFound)
 			request("/v1/files?beta=true", workspace.ExternalID, http.StatusOK)
+			tunnelPath := "/api/console/organizations/" + refs.OrganizationUUID + "/workspaces/" + workspace.ExternalID + "/mcp_tunnels"
+			request(tunnelPath, "default", http.StatusOK)
+
 			if _, err := app.db.ArchiveAdminWorkspace(ctx, refs.OrganizationUUID, workspace.ExternalID); err != nil {
 				t.Fatal(err)
 			}
 			request("/v1/files?beta=true", workspace.ExternalID, http.StatusForbidden)
+			request(tunnelPath, "default", http.StatusForbidden)
 			if _, err := app.db.DeleteAdminUser(ctx, refs.OrganizationUUID, userID); err != nil {
 				t.Fatal(err)
 			}

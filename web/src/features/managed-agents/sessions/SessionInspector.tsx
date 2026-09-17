@@ -90,6 +90,7 @@ import {
 } from './sessionInspectorModel';
 import { EventDetailPanel } from './SessionTracePanel';
 import { areSessionFileResourcesValid, SessionFileResourcesField } from './SessionFileResourcesField';
+import { SessionGitResources } from './SessionGitResources';
 import { sessionEventProcessedTimestamp, sessionEventTimestamp } from './sessionTraceModel';
 import { SessionTraceObservability } from '../../observability/traces/SessionTraceObservability';
 
@@ -1459,7 +1460,8 @@ function InspectorResourcesPanel({
   const canSave = draftResources.length === 1 && areSessionFileResourcesValid(draftResources);
   const resources = session.resources.filter((resource) => {
     const file = resource.file_id ? filenamesByFileId[resource.file_id] : undefined;
-    const value = `${resource.mount_path ?? ''} ${file?.name ?? ''} ${resource.file_id ?? ''}`.toLowerCase();
+    const value =
+      `${resource.mount_path ?? ''} ${resource.url ?? ''} ${file?.name ?? ''} ${resource.file_id ?? ''}`.toLowerCase();
     return value.includes(query.trim().toLowerCase());
   });
   return (
@@ -1502,6 +1504,12 @@ function InspectorResourcesPanel({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <SessionGitResources
+        resources={resources.filter((resource) => resource.type === 'github_repository')}
+        sessionId={session.id}
+        workspaceId={workspaceId}
+        archived={Boolean(session.archived_at)}
+      />
       <Table className="table-fixed text-xs">
         <TableHeader className="sticky top-0 z-10 bg-card">
           <TableRow className="hover:bg-transparent">
@@ -1512,23 +1520,25 @@ function InspectorResourcesPanel({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {resources.map((resource, index) => {
-            const file = resource.file_id ? filenamesByFileId[resource.file_id] : undefined;
-            const path = resource.mount_path || file?.name || resource.file_id || '—';
-            return (
-              <TableRow key={resource.id ?? resource.file_id ?? index}>
-                <TableCell className="h-8 min-w-0 truncate px-1.5 py-0 font-mono" title={path}>
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <File className="size-3.5 flex-none text-muted-foreground" aria-hidden />
-                    <span className="truncate">{path}</span>
-                  </span>
-                </TableCell>
-                <TableCell className="h-8 min-w-0 truncate px-1.5 py-0 text-right font-mono text-muted-foreground">
-                  {file ? formatters.bytes(file.size) : '—'}
-                </TableCell>
-              </TableRow>
-            );
-          })}
+          {resources
+            .filter((resource) => resource.type !== 'github_repository')
+            .map((resource, index) => {
+              const file = resource.file_id ? filenamesByFileId[resource.file_id] : undefined;
+              const path = resource.mount_path || file?.name || resource.file_id || '—';
+              return (
+                <TableRow key={resource.id ?? resource.file_id ?? index}>
+                  <TableCell className="h-8 min-w-0 truncate px-1.5 py-0 font-mono" title={path}>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <File className="size-3.5 flex-none text-muted-foreground" aria-hidden />
+                      <span className="truncate">{path}</span>
+                    </span>
+                  </TableCell>
+                  <TableCell className="h-8 min-w-0 truncate px-1.5 py-0 text-right font-mono text-muted-foreground">
+                    {file ? formatters.bytes(file.size) : '—'}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
         </TableBody>
       </Table>
       {!resources.length ? (

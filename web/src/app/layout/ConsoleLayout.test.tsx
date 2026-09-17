@@ -5,6 +5,7 @@ import type { AuthAccount } from '../../shared/auth/api';
 import { I18nProvider, type Locale } from '../../shared/i18n';
 import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
+import { consoleNavigation } from './navigation';
 
 const testingLibrary = await import('@testing-library/react');
 const { ConsoleShell } = await import('./ConsoleLayout');
@@ -16,6 +17,42 @@ afterEach(() => {
 });
 
 describe('ConsoleShell', () => {
+  test.each([
+    ['en', 'Billing'],
+    ['zh-CN', '计费'],
+  ] as const)('既有 Billing 角色在 %s 显示正确名称', (locale, label) => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/dashboard" account={testAccount('billing')} onLogout={() => undefined}>
+        <div>Dashboard content</div>
+      </ConsoleShell>,
+      { locale, effectiveRole: 'workspace_billing' },
+    );
+    expect(screen.getByText(`${label} · Default`)).toBeTruthy();
+    expect(screen.queryByText('Member · Default')).toBeNull();
+  });
+
+  test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_test'])(
+    'uses the full-width console layout for %s',
+    (currentPath) => {
+      resetTestDom(`https://oma.duck.ai${currentPath}`);
+      renderWithWorkspaces(
+        <ConsoleShell
+          currentPath={currentPath}
+          account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+          onLogout={() => undefined}
+        >
+          <div>MCP tunnels content</div>
+        </ConsoleShell>,
+      );
+
+      const contentContainer = screen.getByText('MCP tunnels content').parentElement;
+
+      expect(contentContainer?.classList.contains('lg:px-8')).toBe(true);
+      expect(contentContainer?.classList.contains('max-w-[928px]')).toBe(false);
+    },
+  );
+
   test('renders the complete Open Managed Agents sidebar', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
@@ -49,7 +86,16 @@ describe('ConsoleShell', () => {
     );
     expect(screen.queryByRole('link', { name: /Playground/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Dreams/i })).toBeNull();
-    expect(screen.queryByRole('link', { name: /MCP tunnels/i })).toBeNull();
+    expect(screen.getByRole('link', { name: /MCP tunnels/i }).getAttribute('href')).toBe(
+      '/settings/workspaces/default/mcp-tunnels',
+    );
+    expect(screen.getByText('Preview')).toBeTruthy();
+    const managedAgents = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Managed Agents');
+    const manage = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Manage');
+    expect(managedAgents?.type === 'group' && managedAgents.children.some((item) => item.href === '/mcp-tunnels')).toBe(
+      false,
+    );
+    expect(manage?.type === 'group' && manage.children.some((item) => item.href === '/mcp-tunnels')).toBe(true);
     expect(screen.queryByRole('link', { name: 'Tags' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Feedback' })).toBeNull();
   });
@@ -614,11 +660,16 @@ function renderWithWorkspaces(
   options: {
     createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
     locale?: Locale;
+    effectiveRole?: string;
     canManageWorkspaces?: boolean;
   } = {},
 ) {
   const tree = (
-    <WorkspaceHarness createWorkspace={options.createWorkspace} canManageWorkspaces={options.canManageWorkspaces}>
+    <WorkspaceHarness
+      createWorkspace={options.createWorkspace}
+      canManageWorkspaces={options.canManageWorkspaces}
+      effectiveRole={options.effectiveRole}
+    >
       {children}
     </WorkspaceHarness>
   );
@@ -629,13 +680,15 @@ function WorkspaceHarness({
   children,
   createWorkspace,
   canManageWorkspaces = true,
+  effectiveRole,
 }: {
   children: ReactNode;
   createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
   canManageWorkspaces?: boolean;
+  effectiveRole?: string;
 }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([
-    defaultWorkspace,
+    { ...defaultWorkspace, effective_role: effectiveRole },
     {
       id: 'wrkspc_foo',
       type: 'workspace',

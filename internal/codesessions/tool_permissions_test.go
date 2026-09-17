@@ -94,7 +94,7 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := resolveToolPermissionFromAgentSnapshot(json.RawMessage(tt.snapshot), tt.toolName)
+			got, _ := resolveToolPermissionFromAgentSnapshot(json.RawMessage(tt.snapshot), tt.toolName)
 			if got != tt.want {
 				t.Fatalf("permission = %s, want %s", got, tt.want)
 			}
@@ -113,6 +113,111 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	identity = parseClaudeToolIdentity("MultiEdit")
 	if identity.Kind != "agent_toolset" || identity.ToolName != "edit" {
 		t.Fatalf("identity = %+v", identity)
+	}
+}
+
+func TestResolveMCPToolPermissionForRuntimeNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		snapshot string
+		toolName string
+		want     resolvedToolPermission
+	}{
+		{
+			name:     "malformed permission configuration does not allow",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"enabled":"false","permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "empty tool suffix does not allow",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "unknown runtime server still asks",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__other_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "colliding runtime names cannot use the exact name allow policy",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"enabled":false}},{"type":"mcp_toolset","mcp_server_name":"weather_service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "unconfigured server participates in collision detection",
+			snapshot: `{"mcp_servers":[{"name":"weather.service"},{"name":"weather_service"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"weather_service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "overlapping server prefixes cannot borrow a longer server policy",
+			snapshot: `{"mcp_servers":[{"name":"weather"},{"name":"weather..service"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"weather..service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather__service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "disabled dotted server tool overrides allow default",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","configs":[{"name":"delete_weather","enabled":false}],"default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__delete_weather",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "dotted server tool ask overrides allow default",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","configs":[{"name":"get_weather","permission_policy":{"type":"always_ask"}}],"default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "disabled dotted server default denies",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"enabled":false,"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "dotted tunnel server default allows",
+			snapshot: `{"mcp_servers":[{"name":"tunnel_0123456789abcdef0123456789abcdef.main"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"tunnel_0123456789abcdef0123456789abcdef.main","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__tunnel_0123456789abcdef0123456789abcdef_main__echo",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "dotted server tool allow overrides ask default",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","configs":[{"name":"get_weather","permission_policy":{"type":"always_allow"}}],"default_config":{"permission_policy":{"type":"always_ask"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "consecutive dots in server do not become the tool separator",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"tunnel_0123456789abcdef0123456789abcdef.internal..tools","configs":[{"name":"echo__text","permission_policy":{"type":"always_allow"}}]}]}`,
+			toolName: "mcp__tunnel_0123456789abcdef0123456789abcdef_internal__tools__echo__text",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "leading dots do not hide the MCP server",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"..weather","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp____weather__get_weather",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "unchanged worker name remains supported",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather.service__get_weather",
+			want:     resolvedToolPermissionAllow,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, _ := resolveToolPermissionFromAgentSnapshot(json.RawMessage(tt.snapshot), tt.toolName)
+			if got != tt.want {
+				t.Fatalf("permission = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
 

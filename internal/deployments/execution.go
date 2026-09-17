@@ -36,7 +36,7 @@ func prepareDeploymentExecution(
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
+	resources, err := sessionResourcesFromDeployment(sessionID, deployment, now)
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}

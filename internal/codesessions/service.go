@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
@@ -22,6 +23,7 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
+	eventPayloads          *eventpayload.Store
 	db                     *db.DB
 	credentials            *SessionCredentials
 	logger                 *slog.Logger
@@ -41,7 +43,8 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	logger = logging.LoggerOrDefault(logger)
 	broker := workerevents.NewMemory()
 	return &Service{
-		db: database, credentials: credentials, logger: logger,
+		eventPayloads: eventpayload.New(database, nil),
+		db:            database, credentials: credentials, logger: logger,
 		workerEvents: broker, workerEventAcks: workerevents.NewMemoryAcknowledgementStore(),
 	}
 }
@@ -62,6 +65,7 @@ func (s *Service) WithWorkerEventState(acks workerevents.AckStore, objects stora
 		s.workerEventAcks = acks
 	}
 	s.workerEventObjects = objects
+	s.eventPayloads = eventpayload.New(s.db, objects)
 	return s
 }
 
@@ -491,7 +495,7 @@ func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession
 	payloads := make([]json.RawMessage, 0, 32)
 	afterSequence := int64(0)
 	for {
-		events, hasMore, err := s.db.ListCodeSessionInternalEventsPage(ctx, db.ListCodeSessionInternalEventsPageParams{
+		events, hasMore, err := s.eventPayloads.ListCodeSessionInternalEventsPage(ctx, db.ListCodeSessionInternalEventsPageParams{
 			WorkspaceUUID:         codeSession.WorkspaceUUID,
 			CodeSessionExternalID: codeSession.ExternalID,
 			Subagents:             true,
@@ -536,7 +540,7 @@ func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession
 }
 
 func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
-	events, _, err := s.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+	events, _, err := s.eventPayloads.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 		WorkspaceUUID:     codeSession.WorkspaceUUID,
 		SessionExternalID: codeSession.SessionExternalID,
 		PrimaryOnly:       true,
@@ -599,3 +603,6 @@ func derivedPrimarySessionEventID(codeSessionID, eventID, eventType string) stri
 func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
+
+// EventPayloadStore shares durable event storage with the public session handler.
+func (s *Service) EventPayloadStore() *eventpayload.Store { return s.eventPayloads }

@@ -13,7 +13,7 @@ import (
 )
 
 func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {
-	created, err := h.db.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
+	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return
@@ -65,7 +65,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		return events[i].ExternalID < events[j].ExternalID
 	})
-	created, err := h.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events)
+	created, err := h.eventPayloads.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return nil
@@ -83,7 +83,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		stored, ok := persisted[event.ExternalID]
 		var eventErr error
 		if !ok {
-			stored, eventErr = h.db.GetSessionEvent(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
+			stored, eventErr = h.eventPayloads.GetSessionEvent(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
 		}
 		if eventErr == nil {
 			eventErr = h.applySessionEventProjection(ctx, stored)

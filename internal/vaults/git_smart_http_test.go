@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestIsGitSmartHTTPRequest(t *testing.T) {
+func TestGitSmartHTTPRepositoryPath(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -27,6 +27,9 @@ func TestIsGitSmartHTTPRequest(t *testing.T) {
 		{name: "GET git-receive-pack rejected", method: http.MethodGet, url: "https://gitlab.example.com/group/repo.git/git-receive-pack", want: false},
 		{name: "POST git-upload-pack trailing slash", method: http.MethodPost, url: "https://gitlab.example.com/group/repo.git/git-upload-pack/", want: true},
 		{name: "POST git-receive-pack trailing slash", method: http.MethodPost, url: "https://gitlab.example.com/group/repo.git/git-receive-pack/", want: true},
+		{name: "encoded discovery endpoint", method: http.MethodGet, url: "https://gitlab.example.com/group/repo.git/info/%72efs?service=git-upload-pack", want: false},
+		{name: "encoded transfer endpoint", method: http.MethodPost, url: "https://gitlab.example.com/group/repo.git/git-upload-%70ack", want: false},
+		{name: "missing repository", method: http.MethodGet, url: "https://gitlab.example.com/info/refs?service=git-upload-pack", want: false},
 		{name: "LFS batch path", method: http.MethodPost, url: "https://gitlab.example.com/group/repo.git/info/lfs/objects/batch", want: false},
 		{name: "Git REST API", method: http.MethodGet, url: "https://gitlab.example.com/api/v4/user", want: false},
 		{name: "suffix lookalike upload-pack", method: http.MethodPost, url: "https://gitlab.example.com/group/repo.git/not-git-upload-pack", want: false},
@@ -39,22 +42,22 @@ func TestIsGitSmartHTTPRequest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRequest: %v", err)
 			}
-			if got := isGitSmartHTTPRequest(req); got != tc.want {
-				t.Fatalf("isGitSmartHTTPRequest(%s %q) = %v, want %v", tc.method, tc.url, got, tc.want)
+			if got := gitSmartHTTPRepositoryPath(req) != ""; got != tc.want {
+				t.Fatalf("gitSmartHTTPRepositoryPath(%s %q) = %v, want %v", tc.method, tc.url, got, tc.want)
 			}
 		})
 	}
 
 	t.Run("nil request", func(t *testing.T) {
 		t.Parallel()
-		if isGitSmartHTTPRequest(nil) {
+		if gitSmartHTTPRepositoryPath(nil) != "" {
 			t.Fatal("nil request must be false")
 		}
 	})
 	t.Run("nil URL", func(t *testing.T) {
 		t.Parallel()
 		req := &http.Request{Method: http.MethodGet}
-		if isGitSmartHTTPRequest(req) {
+		if gitSmartHTTPRepositoryPath(req) != "" {
 			t.Fatal("nil URL must be false")
 		}
 	})

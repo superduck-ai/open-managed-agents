@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
@@ -22,7 +23,8 @@ func TestPlatformIdentityMiddleware(t *testing.T) {
 		{"缺失跨站请求令牌", http.MethodPost, "identity-test", "", http.StatusForbidden},
 		{"错误跨站请求令牌", http.MethodPost, "identity-test", "wrong", http.StatusForbidden},
 		{"独立登录查询", http.MethodGet, "identity-test", "", http.StatusNoContent},
-		{"合法跨站请求令牌", http.MethodPost, "identity-test", platformsession.CSRFToken("identity-test"), http.StatusNoContent},
+		{"旧版邀请令牌不可复用", http.MethodPost, "identity-test", auth.HashSecret("csrf:identity-test"), http.StatusForbidden},
+		{"合法跨站请求令牌", http.MethodPost, "identity-test", auth.PlatformCSRFToken("identity-test"), http.StatusNoContent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := platformsession.NewMemoryStore()

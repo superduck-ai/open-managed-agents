@@ -40,7 +40,7 @@ func TestBootstrapSessionAndCurrentPermissions(t *testing.T) {
 			continue
 		}
 		if body.Account == nil || body.Account.UUID != session.UserUUID || len(body.Account.Memberships) != 0 ||
-			body.CSRFToken != platformsession.CSRFToken("trusted-session-key") ||
+			body.CSRFToken != auth.PlatformCSRFToken("trusted-session-key") ||
 			!slices.Equal(body.Account.Permissions, access.Permissions()) ||
 			!slices.Equal(body.CurrentUserAccess.Permissions, access.Permissions()) {
 			t.Fatalf("会话与权限映射错误: %+v", body)

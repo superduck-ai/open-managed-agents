@@ -44,7 +44,28 @@ describe('组织作用域策略', () => {
     expect(projected?.uuid).toBe('account');
     expect(scopePermissions('user', 'workspace_admin')).not.toContain('members:manage');
     expect(scopePermissions('admin', 'workspace_admin')).toContain('members:manage');
-    expect(scopePermissions('billing', 'workspace_billing')).not.toContain('workbench:view');
+  });
+  test('未授权工作区不能因组织 Billing 身份获得权限', () => {
+    expect(scopePermissions('billing')).toEqual([]);
+    expect(scopePermissions('user', 'workspace_user')).not.toContain('api:manage');
+    expect(scopePermissions('user', 'workspace_billing')).not.toContain('api:manage');
+  });
+  test('Billing 切换仅投影当前组织权限并保持 #346 基线', () => {
+    const projected = scopedAccount(
+      {
+        ...account,
+        memberships: [...account.memberships!, { organization: { uuid: 'c' }, role: 'billing', user_id: 'user-c' }],
+      },
+      'c',
+      { id: 'ws-c', type: 'workspace', name: 'Workspace', effective_role: 'workspace_billing' },
+    );
+    expect(projected?.memberships?.[0]?.user_id).toBe('user-c');
+    expect(projected?.permissions).toEqual(scopePermissions('billing', 'workspace_billing'));
+    expect(projected?.permissions).not.toContain('members:manage');
+    expect(projected?.permissions).not.toContain('workspace:members:manage');
+    expect(projected?.permissions).toContain('workbench:view');
+    expect(projected?.permissions).toContain('api:manage');
+    expect(projected?.permissions).toContain('billing:view');
   });
   test('所有业务前缀均被取消且保留账号级查询', () => {
     for (const prefix of [

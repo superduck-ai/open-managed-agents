@@ -32,9 +32,12 @@ export function scopePermissions(organizationRole?: string, workspaceRole?: stri
       'workspaces:manage',
     );
   if (workspaceRole === 'workspace_admin') permissions.push('workspace:members:manage');
-  if (['workspace_admin', 'workspace_developer', 'workspace_restricted_developer'].includes(workspaceRole))
+  if (
+    organizationRole === 'billing' ||
+    ['workspace_admin', 'workspace_developer', 'workspace_restricted_developer'].includes(workspaceRole)
+  )
     permissions.push('api:view', 'api:manage', 'workspace:api:resource_manage');
-  if (workspaceRole !== 'workspace_billing') permissions.push('workbench:view');
+  permissions.push('workbench:view');
   if (organizationRole === 'admin' || organizationRole === 'billing')
     permissions.push('billing:view', 'billing:manage', 'cost:view', 'usage:view', 'invoices:view');
   return permissions;

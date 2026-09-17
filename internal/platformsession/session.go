@@ -45,10 +45,6 @@ func SessionFromContext(ctx context.Context) (Session, bool) {
 	return session, ok
 }
 
-func CSRFToken(sessionKey string) string {
-	return auth.HashSecret("csrf:" + sessionKey)
-}
-
 type Store interface {
 	Save(ctx context.Context, sessionKey string, session Session) error
 	Get(ctx context.Context, sessionKey string) (Session, error)

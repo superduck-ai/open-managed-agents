@@ -3,8 +3,6 @@ package platformsession
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/superduck-ai/open-managed-agents/internal/auth"
 )
 
 func TestStableSessionIdentity(t *testing.T) {
@@ -24,9 +22,6 @@ func TestStableSessionIdentity(t *testing.T) {
 	got, ok := SessionFromContext(WithSession(t.Context(), restored))
 	if !ok || got != session {
 		t.Fatalf("会话身份未完整保留: %+v", got)
-	}
-	if CSRFToken("key") != auth.HashSecret("csrf:key") || CSRFToken("key") == CSRFToken("other") {
-		t.Fatal("CSRF 派生值错误")
 	}
 }
 

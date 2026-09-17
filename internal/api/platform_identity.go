@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"errors"
 	"net/http"
 	"uuid"
@@ -80,8 +79,7 @@ func (s *Server) platformIdentityMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			expected := platformsession.CSRFToken(auth.ExtractPlatformSessionKey(r))
-			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(expected)) != 1 {
+			if !auth.ValidatePlatformCSRFToken(auth.ExtractPlatformSessionKey(r), r.Header.Get("X-CSRF-Token")) {
 				httpapi.WriteError(w, r, platformCSRFRejected())
 				return
 			}

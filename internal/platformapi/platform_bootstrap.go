@@ -29,9 +29,6 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 			orgUUID = selectedOrgUUID
 		}
 		response := buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r))
-		if cookie, err := r.Cookie("sessionKey"); err == nil && account != nil {
-			response.CSRFToken = platformsession.CSRFToken(cookie.Value)
-		}
 		if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
 			response.CurrentUserAccess = buildCurrentUserAccess(principal.WorkspaceAccess)
 			if account != nil {

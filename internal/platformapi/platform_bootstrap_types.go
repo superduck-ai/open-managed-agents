@@ -36,7 +36,6 @@ type Membership struct {
 type BootstrapCompatibilityResponse struct {
 	CSRFToken                string                 `json:"csrf_token"`
 	Account                  *Account               `json:"account"`
-	CSRFToken                string                 `json:"csrf_token,omitempty"`
 	Statsig                  *BootstrapStatsig      `json:"statsig,omitempty"`
 	Growthbook               *BootstrapGrowthbook   `json:"growthbook,omitempty"`
 	OrgStatsig               BootstrapStatsig       `json:"org_statsig"`

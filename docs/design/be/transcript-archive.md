@@ -42,3 +42,9 @@ CONFIG_FILE=/path/to/config.yaml go run ./cmd/transcript-archive -mode restore \
 导出按序合并 attached 段和 PG 中尚未归档的历史。payload 原始 JSON 可以含格式换行，因此文件是按记录分隔的 JSON 文档流；应使用流式 JSON decoder，不能按物理换行 split。还原逐段校验对象，保留原始 UUID、external_id、sequence_num、payload_uuid、幂等键、worker payload_hash 和时间戳。大 payload 经现有 eventpayload 写入新 blob 后再原子关联；即使旧 blob 已被 GC 删除，也能恢复。已存在的活跃行不覆盖，冲突会返回错误；每批最多 500 条，不推进 append 序号水位。
 
 软删除观察期内且旧 blob 尚存时可用 deleted_at=NULL 取消软删除。旧 blob 已被 GC 回收后，必须使用还原工具重建引用，不能只清空 deleted_at。本测试覆盖段→物理删除→旧 blob GC→还原回 PG→ListPage 一致，以及还原幂等和跨 workspace 隔离。
+
+## 配置与组装
+
+`transcript_archive.enabled=false`、`dry_run=true` 是默认值；模式 B 开关默认开启但仍受总开关控制，模式 A 和物理删除默认关闭。`terminal_dwell` 必须大于零，`archive_min_age` 至少 168h，`soft_delete_window` 允许零。段目标为 1..32 MiB，删除批量为 1..500，单 job 行数为 1..50000。读回解压上限为 64 MiB，阻止不受控分配。
+
+主程序复用现有 ObjectStore 和 River client，注入 component=transcript-archive logger，队列并发为 2。每 5 分钟的 durable sweep 使用 UUID 游标按 100 个 code session 扫描；归档和物理删除是不同 job，已排队任务也读取启动时配置中的开关。配置变更需要重启实例。既有 cleanup worker 每 30 秒认领超过 24 小时的 pending 段，在同一事务中置 deleting 并写 object_cleanup job；attached 不参与回收，对象删除清理全部版本。

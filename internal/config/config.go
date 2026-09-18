@@ -399,7 +399,7 @@ func validatePositiveValues(cfg Config) error {
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
 	}
-	return nil
+	return ValidateTranscriptArchive(cfg.TranscriptArchive)
 }
 
 func validateObservabilityConfig(cfg ObservabilityConfig) error {

@@ -205,4 +205,19 @@
  DELETE FROM code_session_internal_events WHERE <include refid="archiveBatchScope"/>
  AND deleted_at &lt; #{batch.Cutoff}
  </delete>
+
+ <select id="ListDeletionCandidates" resultType="transcriptScopeRow">
+ SELECT DISTINCT organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id
+ FROM code_session_internal_events WHERE deleted_at &lt; #{cutoff}
+ <if test="afterUUID != ''">AND code_session_uuid &gt; #{afterUUID}</if>
+ ORDER BY code_session_uuid LIMIT #{limit}
+ </select>
+ <select id="HasUnprotectedDeleted" result="scalar">
+ SELECT EXISTS (SELECT 1 FROM code_session_internal_events e
+ WHERE e.organization_uuid = #{scope.OrganizationUUID} AND e.workspace_uuid = #{scope.WorkspaceUUID}
+ AND e.code_session_uuid = #{scope.CodeSessionUUID} AND e.deleted_at &lt; #{cutoff}
+ AND NOT EXISTS (SELECT 1 FROM transcript_archives a WHERE a.organization_uuid = e.organization_uuid
+ AND a.workspace_uuid = e.workspace_uuid AND a.code_session_uuid = e.code_session_uuid
+ AND a.state = 'attached' AND e.sequence_num BETWEEN a.from_sequence_num AND a.to_sequence_num))
+ </select>
 </mapper>

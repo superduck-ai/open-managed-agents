@@ -186,3 +186,15 @@ func (d *DB) ReadTranscriptArchiveRange(ctx context.Context, query TranscriptArc
 	rows, err := NewCodeSessionInternalEventMapper(d.mapperDB).ReadArchiveRange(ctx, query)
 	return codeSessionInternalEvents(rows), err
 }
+
+func (d *DB) ListTranscriptDeletionCandidates(ctx context.Context, afterUUID string, cutoff time.Time, limit int) ([]TranscriptScope, error) {
+	rows, err := NewCodeSessionInternalEventMapper(d.mapperDB).ListDeletionCandidates(ctx, afterUUID, cutoff, limit)
+	scopes := make([]TranscriptScope, len(rows))
+	for i := range rows {
+		scopes[i] = TranscriptScope(rows[i])
+	}
+	return scopes, err
+}
+func (d *DB) HasUnprotectedDeletedTranscript(ctx context.Context, scope TranscriptScope, cutoff time.Time) (bool, error) {
+	return NewCodeSessionInternalEventMapper(d.mapperDB).HasUnprotectedDeleted(ctx, scope, cutoff)
+}

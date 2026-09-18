@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"errors"
 	"os"
 	"testing"
@@ -25,6 +24,9 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := a.Scope()
+	seedTranscriptArchiveSession(t, database, scope)
+	seedTranscriptArchiveEvent(t, store, scope, 1, nil, false, time.Now().Add(-8*24*time.Hour))
+	seedTranscriptArchiveEvent(t, store, scope, 2, nil, true, time.Now().Add(-8*24*time.Hour))
 	foreign := scope
 	foreign.WorkspaceUUID = a.OrganizationUUID
 	if _, found, err := store.FindTranscriptArchive(ctx, foreign, 1); err != nil || found {
@@ -40,8 +42,8 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 	duplicate := a
 	duplicate.UUID = "52000000-0000-0000-0000-000000000091"
 	duplicate.ExternalID = "tarc_duplicate"
-	if err := store.RegisterTranscriptArchive(ctx, duplicate); err == nil {
-		t.Fatal("duplicate range accepted")
+	if err := store.RegisterTranscriptArchive(ctx, duplicate); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("duplicate range: %v, want ErrDuplicate", err)
 	}
 	rollback := errors.New("rollback")
 	err := store.mapperDB.Transaction(ctx, func(tx yourbatis.Executor) error {
@@ -67,16 +69,48 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 	if err != nil || len(archives) != 1 {
 		t.Fatalf("list: %d %v", len(archives), err)
 	}
-	for _, hard := range []bool{false, true} {
-		var err error
-		if hard {
-			_, err = store.HardDeleteInternalEventsBatch(ctx, batch)
-		} else {
-			_, err = store.SoftDeleteInternalEventsBatch(ctx, batch)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
+	// Failed batches must leave the eligible row untouched, including when a
+	// valid sequence appears before an uncovered sequence in the same request.
+	denied := batch
+	denied.Scope = foreign
+	if _, err := store.SoftDeleteInternalEventsBatch(ctx, denied); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("foreign soft delete: %v", err)
+	}
+	denied = batch
+	denied.Sequences = []int64{1, 3}
+	if _, err := store.SoftDeleteInternalEventsBatch(ctx, denied); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("mixed coverage: %v", err)
+	}
+	query := TranscriptArchiveQuery{Scope: scope, ToSequence: 2, Limit: 10}
+	rows, err := store.ReadTranscriptArchiveRange(ctx, query)
+	if err != nil || len(rows) != 2 || rows[0].DeletedAt != nil {
+		t.Fatalf("failed batch changed rows: %+v %v", rows, err)
+	}
+	if count, err := store.SoftDeleteInternalEventsBatch(ctx, batch); err != nil || count != 1 {
+		t.Fatalf("soft delete: %d %v, want 1", count, err)
+	}
+	rows, err = store.ReadTranscriptArchiveRange(ctx, query)
+	if err != nil || len(rows) != 2 || rows[0].DeletedAt == nil || rows[1].DeletedAt != nil {
+		t.Fatalf("soft delete state: %+v %v", rows, err)
+	}
+	if count, err := store.SoftDeleteInternalEventsBatch(ctx, batch); err != nil || count != 0 {
+		t.Fatalf("repeat soft delete: %d %v", count, err)
+	}
+	// Strict cutoff: an event deleted exactly at cutoff is still retained.
+	batch.Cutoff = *rows[0].DeletedAt
+	if count, err := store.HardDeleteInternalEventsBatch(ctx, batch); err != nil || count != 0 {
+		t.Fatalf("observation window: %d %v", count, err)
+	}
+	batch.Cutoff = batch.Cutoff.Add(time.Microsecond)
+	if count, err := store.HardDeleteInternalEventsBatch(ctx, batch); err != nil || count != 1 {
+		t.Fatalf("hard delete: %d %v, want 1", count, err)
+	}
+	rows, err = store.ReadTranscriptArchiveRange(ctx, query)
+	if err != nil || len(rows) != 1 || rows[0].SequenceNum != 2 || rows[0].DeletedAt != nil {
+		t.Fatalf("hard delete state: %+v %v", rows, err)
+	}
+	if count, err := store.HardDeleteInternalEventsBatch(ctx, batch); err != nil || count != 0 {
+		t.Fatalf("repeat hard delete: %d %v", count, err)
 	}
 	batch.Sequences = []int64{3}
 	if _, err := store.HardDeleteInternalEventsBatch(ctx, batch); !errors.Is(err, ErrInvalidState) {
@@ -99,23 +133,5 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 	// Verify the schema rollback guard without discarding the only archive copy.
 	if _, err := provider.Down(ctx); err == nil {
 		t.Fatal("attached migration rollback accepted")
-	}
-	query := TranscriptArchiveQuery{Scope: scope, Limit: 10, ToSequence: 2, Cutoff: time.Now()}
-	for _, terminal := range []bool{false, true} {
-		query.Terminal = terminal
-		testTranscriptQueries(t, ctx, store, query)
-	}
-}
-
-func testTranscriptQueries(t *testing.T, ctx context.Context, store *DB, query TranscriptArchiveQuery) {
-	t.Helper()
-	if _, err := store.ListArchivableTranscriptSessions(ctx, query); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.ListArchivableInternalEvents(ctx, query); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.ReadTranscriptArchiveRange(ctx, query); err != nil {
-		t.Fatal(err)
 	}
 }

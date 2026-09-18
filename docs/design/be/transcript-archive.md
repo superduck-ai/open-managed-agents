@@ -27,3 +27,18 @@
 模式 A 由独立开关启用，默认关闭。每个 foreground / agent_id scope 独立计算最新 compaction，只归档严格小于边界且 created_at 早于 archive_min_age 的行；无边界的 scope 和边界本身保留。边界前移不会使已选历史重新可达。即使不同 scope 序号交错，也在空洞处分段并按对象内逐条序号删除，不能把起止区间当作实际成员列表。
 
 删除行也会删除幂等键。安全论证依赖 worker lease 60 秒、epoch 围栏拒绝旧 worker（409）、当前 worker 仅持有本次新产生 entry，以及默认 7 天 archive_min_age 远大于 worker 生命周期。若未来改到小时级，必须重做该论证；本实现配置校验不允许小于 7 天。
+
+## 导出与还原
+
+先在所有实例禁用归档/删除并等待运行中任务结束，再在受信环境运行以下命令。CLI 复用配置中的现有 bucket，不创建 bucket、不启动 HTTP 服务、不改 resume 路径。
+
+```sh
+CONFIG_FILE=/path/to/config.yaml go run ./cmd/transcript-archive -mode export \
+  -organization ORGANIZATION_UUID -workspace WORKSPACE_UUID -code-session CODE_SESSION_UUID > history.jsonl
+CONFIG_FILE=/path/to/config.yaml go run ./cmd/transcript-archive -mode restore \
+  -organization ORGANIZATION_UUID -workspace WORKSPACE_UUID -code-session CODE_SESSION_UUID
+```
+
+导出按序合并 attached 段和 PG 中尚未归档的历史。payload 原始 JSON 可以含格式换行，因此文件是按记录分隔的 JSON 文档流；应使用流式 JSON decoder，不能按物理换行 split。还原逐段校验对象，保留原始 UUID、external_id、sequence_num、payload_uuid、幂等键、worker payload_hash 和时间戳。大 payload 经现有 eventpayload 写入新 blob 后再原子关联；即使旧 blob 已被 GC 删除，也能恢复。已存在的活跃行不覆盖，冲突会返回错误；每批最多 500 条，不推进 append 序号水位。
+
+软删除观察期内且旧 blob 尚存时可用 deleted_at=NULL 取消软删除。旧 blob 已被 GC 回收后，必须使用还原工具重建引用，不能只清空 deleted_at。本测试覆盖段→物理删除→旧 blob GC→还原回 PG→ListPage 一致，以及还原幂等和跨 workspace 隔离。

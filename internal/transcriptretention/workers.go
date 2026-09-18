@@ -32,6 +32,7 @@ func (archiveArgs) InsertOpts() river.InsertOpts {
 func (s *Service) Register(workers *river.Workers) {
 	river.AddWorker(workers, &sweepWorker{service: s})
 	river.AddWorker(workers, &archiveWorker{service: s})
+	river.AddWorker(workers, &deleteWorker{service: s})
 }
 
 func (s *Service) Configure(ctx context.Context, client *river.Client[*sql.Tx]) error {
@@ -58,7 +59,7 @@ func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[sweepArgs]) error {
 			return err
 		}
 	}
-	return nil
+	return s.enqueueDeletes(ctx, client)
 }
 
 func (s *Service) enqueue(ctx context.Context, client *river.Client[*sql.Tx], terminal bool) error {

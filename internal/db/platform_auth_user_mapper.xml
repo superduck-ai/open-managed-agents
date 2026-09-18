@@ -4,8 +4,7 @@
         SELECT u.external_id AS user_external_id, u.organization_uuid AS org_uuid
         FROM users u
         WHERE LOWER(u.email) = LOWER(#{email})
-        AND u.deleted_at IS NULL
-        ORDER BY u.added_at ASC, u.uuid ASC
+        ORDER BY u.registration_identity DESC, u.added_at ASC, u.uuid ASC
         LIMIT 1
     </select>
 
@@ -17,18 +16,19 @@
     </update>
 
     <insert id="Insert" result="returning" resultType="string">
-        INSERT INTO users (uuid, external_id, organization_uuid, email, name, role)
+        INSERT INTO users (uuid, external_id, organization_uuid, email, name, role, registration_identity)
         VALUES (#{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID},
-            #{params.Email}, #{params.Name}, #{params.Role})
+            #{params.Email}, #{params.Name}, #{params.Role}, true)
         RETURNING uuid
     </insert>
 
     <select id="ResolveSessionIdentity" resultType="platformSessionIdentityRow">
         SELECT u.organization_uuid AS organization_uuid,
-            w.uuid AS workspace_uuid, w.external_id AS workspace_external_id,
-            u.uuid AS user_uuid, u.external_id AS user_external_id
+            COALESCE(CAST(w.uuid AS text), '') AS workspace_uuid, COALESCE(w.external_id, '') AS workspace_external_id,
+            u.uuid AS user_uuid, u.external_id AS user_external_id,
+            LOWER(u.email) AS verified_email, u.organization_uuid AS home_organization_uuid
         FROM users u
-        JOIN LATERAL (
+        LEFT JOIN LATERAL (
             SELECT uuid, external_id FROM workspaces
             WHERE organization_uuid = u.organization_uuid AND archived_at IS NULL AND is_default
             ORDER BY CASE WHEN external_id = 'workspace_default' THEN 0 ELSE 1 END,
@@ -36,12 +36,21 @@
             LIMIT 1
         ) w ON TRUE
         WHERE u.organization_uuid = #{organizationUUID}
-        AND u.deleted_at IS NULL
         AND (
             u.external_id = #{userID}
             <if test="userUUID != nil">OR u.uuid = #{userUUID}</if>
             OR 'user_' || LEFT(REPLACE(CAST(u.uuid AS text), '-', ''), 24) = #{userID}
         )
+        LIMIT 1
+    </select>
+
+    <select id="FindActiveByEmail" resultType="AdminUser">
+        SELECT u.uuid, u.external_id, u.organization_uuid, u.email, u.name, u.role, u.added_at
+        FROM users u
+        JOIN organizations o ON o.uuid = u.organization_uuid
+        WHERE u.organization_uuid = #{organizationUUID}
+        AND LOWER(u.email) = LOWER(#{email}) AND u.deleted_at IS NULL
+        ORDER BY u.added_at ASC, u.uuid ASC
         LIMIT 1
     </select>
 </mapper>

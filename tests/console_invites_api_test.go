@@ -6,10 +6,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func TestConsoleInvitesAPI(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("console-invites-bucket"))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 此接口测试仅校验未配置状态，不向真实邮箱发送邮件。
+	cfg.Auth = config.AuthConfig{}
+	app := newTestAppWithStore(t, &cfg, newFakeStore("console-invites-bucket"))
 	defer app.close()
 	cookies := app.platformLoginCookies(t, "console-invites@example.com")
 
@@ -86,6 +94,9 @@ func TestConsoleInvitesAPI(t *testing.T) {
 		}
 		var resent map[string]any
 		decodeJSON(t, resendResp.Body, &resent)
+		if resent["email_delivery"] != "not_configured" {
+			t.Fatalf("重发不得将更新时间误报为邮件发送成功：%v", resent["email_delivery"])
+		}
 		if resent["id"] != createdID || resent["email"] != email || resent["status"] != "pending" {
 			t.Fatalf("mirrored official org resent invite = %#v", resent)
 		}
@@ -121,6 +132,9 @@ func TestConsoleInvitesAPI(t *testing.T) {
 		}
 		var created map[string]any
 		decodeJSON(t, createResp.Body, &created)
+		if created["email_delivery"] != "not_configured" {
+			t.Fatalf("未配置邮件服务时不得声称已发送：%v", created["email_delivery"])
+		}
 		createdID, _ := created["id"].(string)
 		if !strings.HasPrefix(createdID, "invite_") ||
 			created["type"] != "invite" ||

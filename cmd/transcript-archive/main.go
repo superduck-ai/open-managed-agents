@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"uuid"
@@ -48,7 +49,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	logger := logging.LoggerOrDefault(nil).With("component", "transcript-archive-cli")
+	logger := slog.New(logging.NewConsoleHandler(stderr, slog.LevelInfo)).With("component", "transcript-archive-cli")
+	slog.SetDefault(logger)
 	database, err := db.Open(context.Background(), cfg, logger)
 	if err != nil {
 		return err

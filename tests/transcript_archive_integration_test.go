@@ -68,6 +68,11 @@ func TestTranscriptArchiveTerminalSafety(t *testing.T) {
 			app := newPayloadIntegrationApp(t, objects)
 			session, _ := newPayloadIntegrationSession(t, app)
 			seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 3))
+			if scenario.name == "terminated_to_running" {
+				if _, err := app.pool.Exec(t.Context(), "update sessions set status='terminated' where uuid=$1", session.SessionUUID); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, err := app.pool.Exec(t.Context(), scenario.sessionSQL, session.SessionUUID); err != nil {
 				t.Fatal(err)
 			}

@@ -3,6 +3,7 @@ package transcriptretention
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -36,7 +37,14 @@ func (s *Service) Register(workers *river.Workers) {
 }
 
 func (s *Service) Configure(ctx context.Context, client *river.Client[*sql.Tx]) error {
-	_, err := client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{ID: sweepID, Kind: sweepID, Queue: Queue, Schedule: &river.DurablePeriodicJobSchedule{CronExpression: "*/5 * * * *", CronTimezone: "UTC"}})
+	existing, err := client.DurablePeriodicJobGet(ctx, sweepID)
+	if err != nil && !errors.Is(err, river.ErrNotFound) {
+		return err
+	}
+	if err == nil && existing.CronExpression != nil && *existing.CronExpression == "*/5 * * * *" && existing.CronTimezone == "UTC" && existing.Kind == sweepID && existing.Queue == Queue && existing.PausedAt == nil {
+		return nil
+	}
+	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{ID: sweepID, Kind: sweepID, Queue: Queue, Schedule: &river.DurablePeriodicJobSchedule{CronExpression: "*/5 * * * *", CronTimezone: "UTC"}})
 	return err
 }
 

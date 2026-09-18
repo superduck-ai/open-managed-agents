@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -11,6 +12,9 @@ import (
 func (s *Service) HardDelete(ctx context.Context, scope db.TranscriptScope) error {
 	if !s.policy.Enabled || s.policy.DryRun || !s.policy.HardDeleteEnabled {
 		return nil
+	}
+	if err := config.ValidateTranscriptArchive(s.policy); err != nil {
+		return err
 	}
 	unprotected, err := s.database.HasUnprotectedDeletedTranscript(ctx, scope, time.Now().UTC().Add(-s.policy.SoftDeleteWindow))
 	if err != nil {

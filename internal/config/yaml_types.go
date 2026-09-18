@@ -35,6 +35,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
 	Env               string                  `yaml:"env"`
 	Server            ServerConfig            `yaml:"server"`
 	Database          yamlDatabaseConfig      `yaml:"database"`
@@ -111,6 +112,7 @@ func newYAMLConfig() yamlConfig {
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
 		SandboxLifecycle:  defaults.SandboxLifecycle,
+		TranscriptArchive: defaults.TranscriptArchive,
 		EnvironmentRunner: defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
@@ -157,6 +159,7 @@ func (input yamlConfig) resolve() Config {
 		Batch:             input.Batch,
 		E2B:               input.E2B,
 		SandboxLifecycle:  input.SandboxLifecycle,
+		TranscriptArchive: input.TranscriptArchive,
 		EnvironmentRunner: input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,

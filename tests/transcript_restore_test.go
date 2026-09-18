@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
@@ -73,6 +74,21 @@ func TestTranscriptArchiveRestoreAfterBlobGC(t *testing.T) {
 			t.Fatal("ListPage changed after restore")
 		}
 	}
+	rows, err := app.db.ReadTranscriptArchiveRange(t.Context(), db.TranscriptArchiveQuery{Scope: scope, ToSequence: 3, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatal("restored rows missing")
+	}
+	large, err := eventpayload.New(app.db, objects).RestoreInternal(t.Context(), rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(large.Payload, []byte(sizedPrivatePayload("large", 65536))) {
+		t.Fatal("restored blob bytes differ")
+	}
+
 	var after bytes.Buffer
 	if err := service.Export(t.Context(), scope, &after); err != nil {
 		t.Fatal(err)

@@ -43,6 +43,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			external_id text NOT NULL UNIQUE,
 			organization_uuid uuid NOT NULL,
 			name text NOT NULL,
+            is_default boolean NOT NULL DEFAULT false,
 			created_at timestamptz NOT NULL,
 			updated_at timestamptz NOT NULL,
 			archived_at timestamptz,

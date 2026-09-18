@@ -54,7 +54,7 @@ POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/api_keys
 `request.Context`。会话解析逻辑在 `internal/api/server.go` 的 `authenticatePlatformSession`
 中，详见 [auth-credential-routing.md](./auth-credential-routing.md)。
 
-Handler 内部依次做两层校验：
+Handler 内部依次做三层校验：
 
 1. **组织归属** — `visibleOrgUUID` 从 URL 取 `orgUuid`，与 principal 持有的
    `OrganizationUUID` 比对。不匹配返回 404（而非 403，避免泄露组织存在性）。
@@ -63,6 +63,10 @@ Handler 内部依次做两层校验：
    （可以是 external_id 如 `wrkspc_...`，也可以是 UUID，或字面量 `default`），查库列出该
    组织下所有未归档 workspace，再通过 `ResolveWorkspaceScope` 匹配出 `WorkspaceScope`。
    匹配失败返回 404。
+
+3. **动作权限** — `consoleWorkspaceScopeFromRequest` 对真实目标空间调用统一授权服务，
+   检查当前用户的 `Develop()` 能力；无权或空间已归档返回 403。此检查覆盖工作区 Key 的
+   列表、创建、更新和计数，在 `CreateConsoleAPIKey` 等 DB 操作前完成。
 
 通过校验后，handler 直接读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`，连同 org UUID、
 workspace UUID、name 和 expires_at 一起传入 DB 层。这里不接受前端提交的创建者，也不使用
@@ -166,3 +170,9 @@ db.GetAPIKey(keyHash)  →  SELECT ... FROM api_keys WHERE key_hash = $1
 | `internal/auth/auth.go` | `HashAPIKey`（SHA-256）、`ExtractAPIKey`（从请求头提取） |
 | `internal/api/service_auth.go` | `authenticateWorkspaceAPIKey`（运行时认证，查 `api_keys`） |
 | `internal/api/server.go` | 路由挂载、`platformAuthMiddleware`、`authenticatePlatformSession` |
+
+## #339 授权补充
+
+空间解析成功后，还需针对 URL 中的真实目标空间调用统一授权服务，并检查开发或管理 API Key 的能力。Billing 的新增权限规则由独立 PR 承接，本 PR 沿用既有资源能力，但必须先通过通用作用域和有效成员校验。全组织 Key 列表仅 Org Admin 可访问。
+
+Default 通过数据库 `is_default` 标记解析，不从名称猜测，不读取历史默认成员。Workspace Key 的有效性独立于创建者是否仍是组织成员；目标工作区归档后拒绝新业务请求。不能由 Key 的创建者信息推导组织管理权限。通用权限与兼容合同见 [组织与工作区通用权限](./workspace-permissions.md)。

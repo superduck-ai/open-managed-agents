@@ -59,13 +59,6 @@ func TestMemoryStoreMapperBuilderContracts(t *testing.T) {
 			fragments:     []string{"FROM memory_stores", "workspace_uuid = $1", "external_id = $2", "deleted_at IS NULL"},
 		},
 		{
-			statement: memoryStoreMapperFindByOrganizationAndExternalIDStatement,
-			bound:     buildMemoryStoreMapperFindByOrganizationAndExternalID(yourbatis.DialectPostgres, "org-uuid", "store-id"),
-			id:        "MemoryStoreMapper.FindByOrganizationAndExternalID", kind: yourbatis.StatementSelect,
-			argumentNames: []string{"organizationUUID", "externalID"},
-			fragments:     []string{"FROM memory_stores", "organization_uuid = $1", "external_id = $2", "deleted_at IS NULL"},
-		},
-		{
 			statement: memoryStoreMapperFindForUpdateStatement,
 			bound:     buildMemoryStoreMapperFindForUpdate(yourbatis.DialectPostgres, "workspace-uuid", "store-id"),
 			id:        "MemoryStoreMapper.FindForUpdate", kind: yourbatis.StatementSelect,
@@ -442,10 +435,6 @@ func TestMemoryMapperExecutionModes(t *testing.T) {
 		}},
 		{statementID: "MemoryStoreMapper.FindByExternalID", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			_, err := NewMemoryStoreMapper(executor).FindByExternalID(ctx, "workspace", "store")
-			return err
-		}},
-		{statementID: "MemoryStoreMapper.FindByOrganizationAndExternalID", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewMemoryStoreMapper(executor).FindByOrganizationAndExternalID(ctx, "org", "store")
 			return err
 		}},
 		{statementID: "MemoryStoreMapper.FindForUpdate", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {

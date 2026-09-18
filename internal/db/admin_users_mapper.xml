@@ -81,6 +81,7 @@
         WHERE organization_uuid = #{organizationUUID}
         AND user_uuid = #{userUUID}
         AND deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM workspaces w WHERE w.uuid = workspace_members.workspace_uuid AND NOT w.is_default)
     </update>
 
     <insert id="SeedDefault" result="returning" resultType="string">

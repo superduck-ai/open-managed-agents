@@ -52,9 +52,6 @@ func (s *Service) query(scope db.TranscriptScope, terminal bool) db.TranscriptAr
 }
 
 func (s *Service) Archive(ctx context.Context, scope db.TranscriptScope, terminal bool) error {
-	if !terminal {
-		return nil
-	}
 	if !s.policy.Enabled || (terminal && !s.policy.TerminalSweepEnabled) || (!terminal && !s.policy.BoundarySweepEnabled) {
 		return nil
 	}

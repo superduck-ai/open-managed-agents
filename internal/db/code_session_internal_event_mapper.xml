@@ -220,4 +220,16 @@
  AND a.workspace_uuid = e.workspace_uuid AND a.code_session_uuid = e.code_session_uuid
  AND a.state = 'attached' AND e.sequence_num BETWEEN a.from_sequence_num AND a.to_sequence_num))
  </select>
+ <insert id="RestoreArchived" result="rows">
+ INSERT INTO code_session_internal_events (uuid, external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
+ sequence_num, event_type, payload_uuid, agent_id, is_compaction, payload, payload_blob_uuid, payload_hash, idempotency_key, event_metadata, created_at, updated_at)
+ VALUES (#{event.UUID}, #{event.ExternalID}, #{event.OrganizationUUID}, #{event.WorkspaceUUID}, #{event.CodeSessionUUID}, #{event.CodeSessionExternalID},
+ #{event.SequenceNum}, #{event.EventType}, #{event.PayloadUUID}, #{event.AgentID}, #{event.IsCompaction}, CAST(#{event.Payload,sensitive=true} AS jsonb),
+ #{event.PayloadBlobUUID}, #{event.PayloadHash,sensitive=true}, #{event.IdempotencyKey}, CAST(#{event.EventMetadata,sensitive=true} AS jsonb), #{event.CreatedAt}, #{event.UpdatedAt})
+ ON CONFLICT (uuid) DO UPDATE SET payload = excluded.payload, payload_blob_uuid = excluded.payload_blob_uuid, deleted_at = NULL
+ WHERE code_session_internal_events.organization_uuid = excluded.organization_uuid AND code_session_internal_events.workspace_uuid = excluded.workspace_uuid
+ AND code_session_internal_events.code_session_uuid = excluded.code_session_uuid AND code_session_internal_events.sequence_num = excluded.sequence_num
+ AND code_session_internal_events.deleted_at IS NOT NULL
+ </insert>
+
 </mapper>

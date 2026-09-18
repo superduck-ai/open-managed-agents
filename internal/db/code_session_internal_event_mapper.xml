@@ -187,6 +187,19 @@
  <update id="SoftDeleteArchived" result="rows">
  UPDATE code_session_internal_events SET deleted_at = now()
  WHERE <include refid="archiveBatchScope"/> AND deleted_at IS NULL
+ AND EXISTS (SELECT 1 FROM code_session_internal_events e
+ JOIN code_sessions cs ON cs.uuid = e.code_session_uuid AND cs.organization_uuid = e.organization_uuid AND cs.workspace_uuid = e.workspace_uuid
+ WHERE e.uuid = code_session_internal_events.uuid
+ <choose><when test="batch.Eligibility.Terminal">AND EXISTS (SELECT 1 FROM sessions s
+ WHERE s.uuid = cs.session_uuid AND s.organization_uuid = cs.organization_uuid AND s.workspace_uuid = cs.workspace_uuid
+ AND (s.archived_at &lt; #{batch.Eligibility.Cutoff} OR s.deleted_at &lt; #{batch.Eligibility.Cutoff})
+ AND NOT EXISTS (SELECT 1 FROM code_sessions active WHERE active.session_uuid = s.uuid
+ AND active.organization_uuid = s.organization_uuid AND active.workspace_uuid = s.workspace_uuid
+ AND (active.worker_lease_expires_at &gt;= now() OR active.worker_status &lt;&gt; 'idle')))</when>
+ <otherwise>AND e.created_at &lt; #{batch.Eligibility.Cutoff} AND EXISTS (SELECT 1 FROM code_session_internal_events boundary
+ WHERE boundary.organization_uuid = e.organization_uuid AND boundary.workspace_uuid = e.workspace_uuid
+ AND boundary.code_session_uuid = e.code_session_uuid AND boundary.agent_id IS NOT DISTINCT FROM e.agent_id
+ AND boundary.deleted_at IS NULL AND boundary.is_compaction AND boundary.sequence_num &gt; e.sequence_num)</otherwise></choose>)
  </update>
  <delete id="HardDeleteArchived" result="rows">
  DELETE FROM code_session_internal_events WHERE <include refid="archiveBatchScope"/>

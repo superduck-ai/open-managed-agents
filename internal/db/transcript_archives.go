@@ -133,6 +133,7 @@ func (d *DB) ListArchivableInternalEvents(ctx context.Context, query TranscriptA
 // TranscriptDeleteBatch contains ONLY sequences read back from a verified attached object.
 // A sparse segment range is not evidence that every row in that range was archived.
 type TranscriptDeleteBatch struct {
+	Eligibility TranscriptArchiveQuery
 	Scope       TranscriptScope
 	ArchiveUUID string
 	Sequences   []int64

@@ -41,3 +41,9 @@ migration 00061 添加 registry、引用列和工具关联列。既有 payload �
 集成测试使用独立 PostgreSQL schema，覆盖 API 完整正文往返、32767/32768/32769 字节及 16 MiB 上限、UTF-8 preview、混合内联/外置分页、workspace 隔离、伪造引用、上传失败/尺寸不符、上传期间 epoch 变化导致整批回滚、并发幂等与序号一致性、对象丢失/损坏及恢复，以及真实清理 worker 的等待、活跃引用保护、任务入队失败时事务回滚、失败重试和单次任务终止。故障注入使用可控 ObjectStore，数据库和 HTTP 路由均为真实实现。
 
 运行 `go test ./tests -run '^TestEventPayloadIntegration' -count=1`（干净 checkout 先执行 `./scripts/generate-go.sh`）。设置 `TEST_EVENT_PAYLOAD_S3=1` 可同时运行配置中的真实 S3 兼容存储往返测试；测试只删除自己登记的 UUID 对象，结束时删除临时 schema。现有 activation/worker 传输回归测试继续验证恢复时的历史变化与 32 KiB 传输边界。
+
+## 私有 transcript 归档的 blob 合并
+
+[Transcript 归档](transcript-archive.md) 将满足保留条件的私有事件还原为完整 payload，再逐字写入压缩段。归档使用现有 bucket 的 `transcript-archive/` 前缀；该前缀同样不得配置固定 TTL。仅在回读校验、注册表 attached 后才软删除原事件，归档段独立保留全部 payload 与恢复所需元数据。
+
+软删除后旧 blob 不再有活跃事件引用，沿用既有 24 小时 registry 年龄与引用检查 GC，不引入新 blob 回收规则。这意味着旧 blob 可能早于 transcript 的 14 天物理删除观察期被清理。需要回滚时通过还原 CLI 从归档段重建 blob 并在事务中附着；仅设置 deleted_at=NULL 不能恢复已删除对象。公开事件 payload 的生命周期不变。

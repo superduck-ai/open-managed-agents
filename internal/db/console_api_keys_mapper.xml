@@ -55,6 +55,19 @@
         AND archived_at IS NULL
     </select>
 
+    <resultMap id="consoleAPIKeyWorkspaceCountResult" type="consoleAPIKeyWorkspaceCountRow">
+        <result column="workspace_uuid" property="WorkspaceUUID"/>
+        <result column="key_count" property="KeyCount"/>
+    </resultMap>
+
+    <select id="CountByOrganization" resultMap="consoleAPIKeyWorkspaceCountResult">
+        SELECT workspace_uuid, COUNT(*) AS key_count
+        FROM console_api_keys
+        WHERE organization_uuid = #{organizationUUID}
+        AND archived_at IS NULL
+        GROUP BY workspace_uuid
+    </select>
+
     <insert id="Insert" result="returning" resultMap="consoleAPIKeyResult">
         INSERT INTO console_api_keys (
             external_id,

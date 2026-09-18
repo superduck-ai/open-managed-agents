@@ -16,6 +16,13 @@ type insertConsoleWorkspaceParams struct {
 	DataResidency []byte
 }
 
+type updateConsoleWorkspaceParams struct {
+	OrgUUID      string
+	ExternalID   string
+	Name         string
+	DisplayColor string
+}
+
 type consoleWorkspaceRow struct {
 	IsDefault     bool       `db:"is_default"`
 	UUID          string     `db:"uuid"`
@@ -35,4 +42,6 @@ type consoleWorkspaceRow struct {
 type ConsoleWorkspaceMapper interface {
 	Insert(ctx context.Context, params insertConsoleWorkspaceParams) (consoleWorkspaceRow, error)
 	List(ctx context.Context, orgUUID string, includeArchived bool) ([]consoleWorkspaceRow, error)
+	UpdateByIdentifier(ctx context.Context, params updateConsoleWorkspaceParams) (consoleWorkspaceRow, error)
+	ArchiveByIdentifier(ctx context.Context, orgUUID string, externalID string) (consoleWorkspaceRow, error)
 }

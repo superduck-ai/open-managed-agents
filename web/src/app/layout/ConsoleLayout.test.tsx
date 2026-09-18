@@ -471,13 +471,18 @@ describe('ConsoleShell', () => {
     await waitFor(() => expect(screen.queryByRole('menuitem', { name: /Default/i })).toBeNull());
   });
 
-  test('selects a workspace and updates the account subtitle', async () => {
+  test('账号按钮副标题显示当前组织的角色与名称', async () => {
     resetTestDom('https://oma.duck.ai/dashboard');
 
     renderWithWorkspaces(
       <ConsoleShell
         currentPath="/dashboard"
-        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        account={{
+          uuid: 'acct_test',
+          email_address: 'test@example.com',
+          display_name: 'test',
+          memberships: [{ organization: { uuid: 'org_test', name: 'Member QA' }, role: 'admin' }],
+        }}
         onLogout={() => undefined}
       >
         <div>Dashboard content</div>
@@ -485,18 +490,9 @@ describe('ConsoleShell', () => {
     );
 
     await act(async () => {
-      fireEvent.click(getWorkspaceMenuButton(/Default/i));
-    });
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: /foo/i })).toBeTruthy());
-    await act(async () => {
-      fireEvent.click(screen.getByRole('menuitem', { name: /foo/i }));
-    });
-    expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
-
-    await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /test/i }));
     });
-    expect(screen.getByText('Member · foo')).toBeTruthy();
+    expect(screen.getByText('管理员 · Member QA')).toBeTruthy();
   });
 
   test('uses client navigation when selecting a workspace on managed routes', async () => {

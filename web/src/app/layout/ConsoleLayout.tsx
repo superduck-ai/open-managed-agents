@@ -1,5 +1,6 @@
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
 import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
+import { organizationRoleLabel } from '../../features/organizations/api';
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
 import { useOrganizations } from '../../shared/organizations/context';
 import {
@@ -733,9 +734,10 @@ export function AccountMenu({
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const identity = getIdentity(account);
-  const { activeWorkspace } = useWorkspace();
+  const { orgUuid } = useWorkspace();
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
+  const membership = account?.memberships?.find((entry) => entry.organization?.uuid === orgUuid);
 
   const handleMenuNavigation = async (href: string) => {
     setOpen(false);
@@ -783,9 +785,9 @@ export function AccountMenu({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="block truncate text-xs text-sidebar-foreground/70">
-                    {msg('account.subtitle', '{role} · {workspaceName}', {
-                      role: msg(`account.role.${activeWorkspace.effective_role || 'unknown'}`, 'Member'),
-                      workspaceName: activeWorkspace.name,
+                    {msg('account.subtitle', '{role} · {orgName}', {
+                      role: organizationRoleLabel(membership?.role),
+                      orgName: membership?.organization?.name ?? '',
                     })}
                   </span>
                 </span>

@@ -69,6 +69,30 @@ func TestConsoleAPIKeyMapperCountUnarchived(t *testing.T) {
 	)
 }
 
+func TestConsoleAPIKeyMapperCountByOrganization(t *testing.T) {
+	organizationUUID := "11111111-1111-4111-8111-111111111111"
+	executor := newMapperTestExecutor(t, mapperTestResponse{
+		columns: []string{"workspace_uuid", "key_count"},
+		rows:    [][]driver.Value{{"22222222-2222-4222-8222-222222222222", int64(3)}},
+	})
+
+	counts, err := NewConsoleAPIKeyMapper(executor).CountByOrganization(
+		context.Background(),
+		organizationUUID,
+	)
+	if err != nil || len(counts) != 1 || counts[0].WorkspaceUUID != "22222222-2222-4222-8222-222222222222" || counts[0].KeyCount != 3 {
+		t.Fatalf("CountByOrganization() = (%v, %v), want one workspace with 3 keys", counts, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"ConsoleAPIKeyMapper.CountByOrganization",
+		yourbatis.StatementSelect,
+		[]any{organizationUUID},
+		"archived_at IS NULL",
+	)
+}
+
 func TestConsoleUserMapperExistsActiveByUUID(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
 	creatorUUID := "44444444-4444-4444-8444-444444444444"

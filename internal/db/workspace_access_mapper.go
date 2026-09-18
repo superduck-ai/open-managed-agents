@@ -5,6 +5,8 @@ import "context"
 //go:generate go tool sqlmapgen -dir $PWD -mapper WorkspaceAccessMapper -sql ./workspace_access.xml -out ./workspace_access.sqlmap.gen.go -dialect postgres
 
 type WorkspaceMemberFact struct {
+	Name             string `db:"name"`
+	Email            string `db:"email"`
 	UserUUID         string `db:"user_uuid"`
 	UserExternalID   string `db:"user_external_id"`
 	OrganizationRole string `db:"organization_role"`

@@ -28,13 +28,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
 import { Skeleton } from '../../shared/ui/skeleton';
+import {
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+  DataTableRow,
+  DataTableCell,
+} from '../../shared/ui/data-table-interactions';
 import { toast } from '../../shared/ui/sonner';
-import { useAuth } from '../../shared/auth/context';
+import { useAuth, type AuthContextValue } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { canManageMembers } from '../../shared/permissions/members';
 import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { MemberDirectoryFilters } from './MemberDirectoryFilters';
+import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
 import {
   createOrganizationInvite,
   deleteOrganizationInvite,
@@ -62,6 +71,129 @@ const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => 
   description: role.description,
 }));
 
+function buildOrganizationMemberColumns({
+  account,
+  canManage,
+  activeOrgUuid,
+  organizationName,
+  csrfToken,
+  pendingRoleMemberId,
+  rolePending,
+  onRoleChange,
+  invitePending,
+  msg,
+  onInviteResend,
+  onInviteRevoke,
+}: {
+  account: AuthContextValue['account'];
+  canManage: boolean;
+  activeOrgUuid?: string;
+  organizationName?: string;
+  csrfToken?: string;
+  pendingRoleMemberId: string | null;
+  rolePending: boolean;
+  onRoleChange: (input: { member: OrganizationMember; role: PlatformRole }) => void;
+  invitePending: boolean;
+  onInviteResend: (invite: OrganizationInvite) => void;
+  onInviteRevoke: (invite: OrganizationInvite) => void;
+  msg: ReturnType<typeof useI18n>['msg'];
+}) {
+  const orgUuid = activeOrgUuid ?? '';
+  return [
+    memberColumnHelper.display({
+      id: 'name',
+      header: msg('members.name', 'Name'),
+      cell: ({ row }) => {
+        if (isInviteRow(row.original)) {
+          return (
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-muted-foreground">–</span>
+              <Badge variant="secondary" className="rounded-md px-1.5">
+                {msg('members.pendingBadge', 'Pending')}
+              </Badge>
+            </div>
+          );
+        }
+
+        const name = row.original.name;
+        return (
+          <div className="flex min-w-0 items-center gap-3">
+            <MemberAvatar member={row.original} />
+            <span className="truncate text-foreground">{name || row.original.email}</span>
+          </div>
+        );
+      },
+    }),
+    memberColumnHelper.display({
+      id: 'email',
+      header: msg('members.email', 'Email'),
+      cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
+    }),
+    memberColumnHelper.display({
+      id: 'role',
+      header: msg('members.role', 'Role'),
+      cell: ({ row }) => {
+        if (isInviteRow(row.original)) {
+          const inviteRole = normalizePlatformRole(row.original.role);
+          return (
+            <span className="text-foreground">
+              {msg(`members.organizationRole.${inviteRole}`, roleLabel(inviteRole))}
+            </span>
+          );
+        }
+
+        const member = row.original;
+        const role = normalizePlatformRole(member.role);
+        const isSelf = isCurrentAccountMember(account, member);
+
+        if (!canManage || isSelf) {
+          return <span className="text-foreground">{roleLabel(role)}</span>;
+        }
+
+        return (
+          <RoleSelect
+            ariaLabel={msg('members.roleFor', 'Role for {name}', { name: displayMemberName(member) })}
+            value={role}
+            disabled={pendingRoleMemberId === member.id || rolePending}
+            className="min-w-[144px]"
+            contentClassName="min-w-[300px]"
+            onChange={(nextRole) => {
+              if (nextRole !== role) {
+                onRoleChange({ member, role: nextRole });
+              }
+            }}
+            msg={msg}
+          />
+        );
+      },
+    }),
+    memberColumnHelper.display({
+      id: 'actions',
+      header: '',
+      cell: ({ row }) =>
+        isInviteRow(row.original) ? (
+          <InviteActionsMenu
+            invite={row.original}
+            disabled={invitePending}
+            onResend={onInviteResend}
+            onRevoke={onInviteRevoke}
+          />
+        ) : !canManage || isCurrentAccountMember(account, row.original) ? (
+          <span aria-hidden className="block h-8 w-8" />
+        ) : (
+          <OrganizationMemberRemoval
+            key={row.original.id}
+            orgUuid={orgUuid}
+            organizationName={organizationName ?? msg('members.fallbackOrgName', 'this organization')}
+            member={row.original}
+            csrfToken={csrfToken}
+            disabled={rolePending}
+          />
+        ),
+    }),
+  ];
+}
+
 export function OrganizationMembersPage() {
   const { msg } = useI18n();
   const { account, csrfToken } = useAuth();
@@ -69,11 +201,16 @@ export function OrganizationMembersPage() {
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrgUuid = orgUuid ?? bootstrapOrganization?.uuid;
-  const canManage = canManageMembers(account);
+  const activeOrganization =
+    account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
+    bootstrapOrganization;
+  const canManage = canManageMembers(account, activeOrgUuid);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
   const [inviteToRevoke, setInviteToRevoke] = useState<OrganizationInvite | null>(null);
   const [pendingRoleMemberId, setPendingRoleMemberId] = useState<string | null>(null);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
   const membersQueryKey = ['console', 'organization-members', activeOrgUuid] as const;
   const invitesQueryKey = ['console', 'organization-invites', activeOrgUuid, 'pending'] as const;
 
@@ -121,7 +258,7 @@ export function OrganizationMembersPage() {
       notifyInvitationDelivery([updatedInvite], msg);
     },
     onError: (error) => {
-      setInviteActionError(errorMessage(error));
+      setInviteActionError(errorMessage(error, msg('common.somethingWentWrong', 'Something went wrong. Try again.')));
     },
   });
 
@@ -134,10 +271,10 @@ export function OrganizationMembersPage() {
       );
       setInviteToRevoke(null);
       setInviteActionError(null);
-      toast.success('Invitation revoked.');
+      toast.success(msg('members.revokedToast', 'Invitation revoked.'));
     },
     onError: (error) => {
-      setInviteActionError(errorMessage(error));
+      setInviteActionError(errorMessage(error, msg('common.somethingWentWrong', 'Something went wrong. Try again.')));
     },
   });
 
@@ -145,6 +282,19 @@ export function OrganizationMembersPage() {
     () => [...(canManage ? (invitesQuery.data ?? []) : []), ...(membersQuery.data ?? [])],
     [canManage, invitesQuery.data, membersQuery.data],
   );
+  const filteredRows = useMemo<OrganizationMemberRow[]>(() => {
+    const keyword = memberSearch.trim().toLowerCase();
+    return tableRows.filter((row) => {
+      if (roleFilter !== 'all' && normalizePlatformRole(row.role) !== roleFilter) {
+        return false;
+      }
+      if (!keyword) {
+        return true;
+      }
+      const name = isInviteRow(row) ? '' : (row.name ?? '').toLowerCase();
+      return name.includes(keyword) || row.email.toLowerCase().includes(keyword);
+    });
+  }, [memberSearch, roleFilter, tableRows]);
   const isInitialLoading =
     (membersQuery.isLoading && !membersQuery.data) || (canManage && invitesQuery.isLoading && !invitesQuery.data);
   const hasTableError = membersQuery.isError || (canManage && invitesQuery.isError);
@@ -157,110 +307,60 @@ export function OrganizationMembersPage() {
   };
 
   const columns = useMemo(
-    () => [
-      memberColumnHelper.display({
-        id: 'name',
-        header: 'Name',
-        cell: ({ row }) => {
-          if (isInviteRow(row.original)) {
-            return (
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-muted-foreground">–</span>
-                <Badge variant="secondary" className="rounded-md px-1.5">
-                  Pending
-                </Badge>
-              </div>
-            );
-          }
-
-          const name = row.original.name;
-          return (
-            <div className="flex min-w-0 items-center gap-3">
-              <MemberAvatar member={row.original} />
-              <span className="truncate text-foreground">{name || row.original.email}</span>
-            </div>
-          );
+    () =>
+      buildOrganizationMemberColumns({
+        account,
+        canManage,
+        activeOrgUuid,
+        organizationName: activeOrganization?.name,
+        csrfToken,
+        pendingRoleMemberId,
+        rolePending: updateRoleMutation.isPending,
+        onRoleChange: updateRoleMutation.mutate,
+        invitePending: resendInviteMutation.isPending || deleteInviteMutation.isPending,
+        onInviteResend: (invite) => {
+          setInviteActionError(null);
+          resendInviteMutation.mutate(invite);
         },
-      }),
-      memberColumnHelper.display({
-        id: 'email',
-        header: 'Email',
-        cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
-      }),
-      memberColumnHelper.display({
-        id: 'role',
-        header: 'Role',
-        cell: ({ row }) => {
-          if (isInviteRow(row.original)) {
-            return <span className="text-foreground">{roleLabel(normalizePlatformRole(row.original.role))}</span>;
-          }
-
-          const member = row.original;
-          const role = normalizePlatformRole(member.role);
-          const isSelf = isCurrentAccountMember(account, member);
-
-          if (!canManage || isSelf) {
-            return <span className="text-foreground">{roleLabel(role)}</span>;
-          }
-
-          return (
-            <RoleSelect
-              ariaLabel={`Role for ${displayMemberName(member)}`}
-              value={role}
-              disabled={pendingRoleMemberId === member.id || updateRoleMutation.isPending}
-              className="min-w-[144px]"
-              contentClassName="min-w-[300px]"
-              onChange={(nextRole) => {
-                if (nextRole !== role) {
-                  updateRoleMutation.mutate({ member, role: nextRole });
-                }
-              }}
-            />
-          );
+        onInviteRevoke: (invite) => {
+          setInviteActionError(null);
+          setInviteToRevoke(invite);
         },
+        msg,
       }),
-      memberColumnHelper.display({
-        id: 'actions',
-        header: '',
-        cell: ({ row }) =>
-          isInviteRow(row.original) ? (
-            <InviteActionsMenu
-              invite={row.original}
-              disabled={resendInviteMutation.isPending || deleteInviteMutation.isPending}
-              onResend={(invite) => {
-                setInviteActionError(null);
-                resendInviteMutation.mutate(invite);
-              }}
-              onRevoke={(invite) => {
-                setInviteActionError(null);
-                setInviteToRevoke(invite);
-              }}
-            />
-          ) : (
-            <span aria-hidden className="block h-8 w-8" />
-          ),
-      }),
+    [
+      account,
+      activeOrganization,
+      activeOrgUuid,
+      canManage,
+      csrfToken,
+      deleteInviteMutation,
+      pendingRoleMemberId,
+      resendInviteMutation,
+      updateRoleMutation,
+      msg,
     ],
-    [account, canManage, deleteInviteMutation, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
   );
 
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: tableRows,
+    data: filteredRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
   if (!activeOrgUuid) {
     return (
-      <section className="mx-auto w-full max-w-[1180px]">
+      <section className="w-full">
         <Card>
           <CardHeader>
-            <h1 className="text-xl font-semibold tracking-normal text-foreground">Members</h1>
+            <h1 className="text-xl font-semibold tracking-normal text-foreground">{msg('members.title', 'Members')}</h1>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">No organization is available for this session.</p>
+            <p className="text-sm text-muted-foreground">
+              {msg('organizations.noOrgAvailable', 'No organization is available for this session.')}
+            </p>
           </CardContent>
         </Card>
       </section>
@@ -268,10 +368,10 @@ export function OrganizationMembersPage() {
   }
 
   return (
-    <section className="mx-auto w-full max-w-[1180px]" data-testid="organization-members-page">
+    <section className="w-full" data-testid="organization-members-page">
       <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
         <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
-          <span>Members</span>
+          <span>{msg('members.title', 'Members')}</span>
           <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
             {titleCount}
           </Badge>
@@ -285,66 +385,37 @@ export function OrganizationMembersPage() {
             }}
           >
             <Plus className="size-4" aria-hidden />
-            Invite
+            {msg('members.invite', 'Invite')}
           </Button>
         ) : null}
       </div>
+      <p className="mb-4 text-sm text-muted-foreground">
+        {msg('members.subtitle', 'Invite people to your organization and manage their roles.')}
+      </p>
+      <MemberDirectoryFilters
+        search={memberSearch}
+        onSearch={setMemberSearch}
+        role={roleFilter}
+        onRole={setRoleFilter}
+        roles={roleSelectOptions}
+        roleLabelPrefix="members.organizationRole"
+      />
 
-      {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}
+      {updateRoleMutation.isError ? (
+        <InlineNotice>
+          {errorMessage(updateRoleMutation.error, msg('common.somethingWentWrong', 'Something went wrong. Try again.'))}
+        </InlineNotice>
+      ) : null}
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
-      <div className="overflow-hidden border-y border-border">
-        <Table className="table-fixed text-left" aria-label="Members">
-          <TableHeader className="text-muted-foreground">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} className={headerClassName(header.column.id)}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {isInitialLoading ? <MembersSkeletonRows /> : null}
-            {!isInitialLoading && hasTableError ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-3 py-10">
-                  <Alert variant="destructive" className="mx-auto max-w-xl">
-                    <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                    <AlertTitle>Members could not be loaded.</AlertTitle>
-                    <AlertDescription>
-                      <p>Try again.</p>
-                      <Button type="button" variant="outline" size="sm" className="mt-3" onClick={handleRetry}>
-                        Try again
-                      </Button>
-                    </AlertDescription>
-                  </Alert>
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  No members found.
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {!isInitialLoading && !hasTableError
-              ? table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id} className="border-border last:border-b-0">
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} className={cellClassName(cell.column.id)}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : null}
-          </TableBody>
-        </Table>
-      </div>
+      <section className="min-w-0">
+        <OrganizationMembersTable
+          table={table}
+          isInitialLoading={isInitialLoading}
+          hasTableError={hasTableError}
+          onRetry={handleRetry}
+        />
+      </section>
 
       <InviteMembersDialog
         open={inviteOpen}
@@ -377,6 +448,82 @@ export function OrganizationMembersPage() {
   );
 }
 
+function OrganizationMembersTable({
+  table,
+  isInitialLoading,
+  hasTableError,
+  onRetry,
+}: {
+  table: ReturnType<typeof useReactTable<OrganizationMemberRow>>;
+  isInitialLoading: boolean;
+  hasTableError: boolean;
+  onRetry: () => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <Table className={dataTableClassName} aria-label={msg('members.title', 'Members')}>
+      <colgroup>
+        <col className="w-[34%]" />
+        <col className="w-[38%]" />
+        <col className="w-[22%]" />
+        <col className="w-[6%]" />
+      </colgroup>
+      <TableHeader>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <TableRow key={headerGroup.id} className={dataTableHeaderRowClassName}>
+            {headerGroup.headers.map((header) => (
+              <TableHead key={header.id} className={dataTableHeaderCellClassName}>
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+              </TableHead>
+            ))}
+          </TableRow>
+        ))}
+      </TableHeader>
+      <TableBody>
+        {isInitialLoading ? <MembersSkeletonRows /> : null}
+        {!isInitialLoading && hasTableError ? (
+          <TableRow>
+            <TableCell colSpan={4} className="px-3 py-10">
+              <Alert variant="destructive" className="mx-auto max-w-xl">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <AlertTitle>{msg('members.loadFailed', 'Members could not be loaded.')}</AlertTitle>
+                <AlertDescription>
+                  <p>{msg('members.tryAgainHint', 'Try again.')}</p>
+                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onRetry}>
+                    {msg('members.tryAgain', 'Try again')}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            </TableCell>
+          </TableRow>
+        ) : null}
+        {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={4} className="h-24 px-3 py-6 text-sm text-muted-foreground">
+              {msg('members.table.empty', 'No members found.')}
+            </TableCell>
+          </TableRow>
+        ) : null}
+        {!isInitialLoading && !hasTableError
+          ? table.getRowModel().rows.map((row) => (
+              <DataTableRow key={row.id}>
+                {row.getVisibleCells().map((cell, cellIndex, cells) => (
+                  <DataTableCell
+                    key={cell.id}
+                    edge={cellIndex === 0 ? 'start' : cellIndex === cells.length - 1 ? 'end' : undefined}
+                    className={cellClassName(cell.column.id)}
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </DataTableCell>
+                ))}
+              </DataTableRow>
+            ))
+          : null}
+      </TableBody>
+    </Table>
+  );
+}
+
 function InviteMembersDialog({
   open,
   activeOrgUuid,
@@ -390,6 +537,7 @@ function InviteMembersDialog({
   onOpenChange: (open: boolean) => void;
   onInvited: (createdInvites: OrganizationInvite[]) => void;
 }) {
+  const { msg } = useI18n();
   const [emailsValue, setEmailsValue] = useState('');
   const [role, setRole] = useState<PlatformRole>('user');
   const [submitValidationError, setSubmitValidationError] = useState<InviteValidationError | null>(null);
@@ -450,12 +598,12 @@ function InviteMembersDialog({
         initialFocus={textareaRef}
       >
         <DialogHeader>
-          <DialogTitle>Invite members</DialogTitle>
+          <DialogTitle>{msg('members.inviteTitle', 'Invite members')}</DialogTitle>
         </DialogHeader>
         <form className="space-y-5" onSubmit={handleSubmit}>
           <div>
             <Label htmlFor="invite-emails" className="mb-2">
-              Email addresses
+              {msg('members.emailsLabel', 'Email addresses')}
             </Label>
             <Textarea
               ref={textareaRef}
@@ -472,14 +620,14 @@ function InviteMembersDialog({
               aria-describedby="invite-emails-help"
             />
             <p id="invite-emails-help" className="mt-2 text-xs leading-5 text-muted-foreground">
-              Separate addresses with commas, spaces, or new lines. Up to 50 at once.
+              {msg('members.emailsHelp', 'Separate addresses with commas, spaces, or new lines. Up to 50 at once.')}
             </p>
           </div>
 
           <div>
-            <Label className="mb-2">Role</Label>
+            <Label className="mb-2">{msg('members.role', 'Role')}</Label>
             <RoleSelect
-              ariaLabel="Role"
+              ariaLabel={msg('members.role', 'Role')}
               value={role}
               disabled={inviteMutation.isPending}
               className="w-full"
@@ -488,15 +636,20 @@ function InviteMembersDialog({
                 setRole(nextRole);
                 inviteMutation.reset();
               }}
+              msg={msg}
             />
           </div>
 
           {submitValidationError ? <InviteValidationNotice error={submitValidationError} /> : null}
-          {inviteMutation.isError ? <InlineNotice>{errorMessage(inviteMutation.error)}</InlineNotice> : null}
+          {inviteMutation.isError ? (
+            <InlineNotice>
+              {errorMessage(inviteMutation.error, msg('common.somethingWentWrong', 'Something went wrong. Try again.'))}
+            </InlineNotice>
+          ) : null}
 
           <div className="flex justify-end">
             <Button type="submit" size="lg" disabled={!canSubmit}>
-              {inviteMutation.isPending ? 'Inviting...' : 'Invite'}
+              {inviteMutation.isPending ? msg('members.inviting', 'Inviting...') : msg('members.invite', 'Invite')}
             </Button>
           </div>
         </form>
@@ -512,6 +665,7 @@ function RoleSelect({
   className,
   contentClassName,
   onChange,
+  msg,
 }: {
   ariaLabel: string;
   value: PlatformRole;
@@ -519,11 +673,15 @@ function RoleSelect({
   className?: string;
   contentClassName?: string;
   onChange: (value: PlatformRole) => void;
+  msg: ReturnType<typeof useI18n>['msg'];
 }) {
   return (
     <Select<PlatformRole>
       value={value}
-      items={roleSelectOptions.map((option) => ({ value: option.value, label: option.label }))}
+      items={roleSelectOptions.map((option) => ({
+        value: option.value,
+        label: msg(`members.organizationRole.${option.value}`, option.label),
+      }))}
       disabled={disabled}
       onValueChange={(nextValue) => {
         if (nextValue !== null) {
@@ -536,11 +694,18 @@ function RoleSelect({
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} className={contentClassName}>
         {roleSelectOptions.map((option) => (
-          <SelectItem key={option.value} value={option.value} label={option.label} disabled={option.disabled}>
+          <SelectItem
+            key={option.value}
+            value={option.value}
+            label={msg(`members.organizationRole.${option.value}`, option.label)}
+            disabled={option.disabled}
+          >
             <span className="block">
-              <span className="block leading-5">{option.label}</span>
+              <span className="block leading-5">{msg(`members.organizationRole.${option.value}`, option.label)}</span>
               {option.description ? (
-                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
+                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
+                  {msg(`members.organizationRoleDescription.${option.value}`, String(option.description))}
+                </span>
               ) : null}
             </span>
           </SelectItem>
@@ -551,10 +716,15 @@ function RoleSelect({
 }
 
 function MembersSkeletonRows() {
+  const { msg } = useI18n();
   return (
     <>
       {[0, 1, 2].map((index) => (
-        <TableRow key={index} className="border-border last:border-b-0" aria-label="Loading member">
+        <TableRow
+          key={index}
+          className="border-border last:border-b-0"
+          aria-label={msg('members.loadingRow', 'Loading member')}
+        >
           <TableCell className="px-3 py-3">
             <Skeleton className="h-5 w-44" />
           </TableCell>
@@ -582,23 +752,31 @@ function InviteActionsMenu({
   onResend: (invite: OrganizationInvite) => void;
   onRevoke: (invite: OrganizationInvite) => void;
 }) {
+  const { msg } = useI18n();
   return (
     <div className="flex justify-end">
       <DropdownMenu>
         <DropdownMenuTrigger
           disabled={disabled}
-          render={<Button variant="ghost" size="icon" className="text-muted-foreground" aria-label="More actions" />}
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground"
+              aria-label={msg('members.moreActions', 'More actions')}
+            />
+          }
         >
           <MoreVertical className="size-4" aria-hidden />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuItem onClick={() => onResend(invite)}>
             <Send className="size-4" aria-hidden />
-            <span>Resend invite</span>
+            <span>{msg('members.resend', 'Resend invite')}</span>
           </DropdownMenuItem>
           <DropdownMenuItem variant="destructive" onClick={() => onRevoke(invite)}>
             <Trash2 className="size-4" aria-hidden />
-            <span>Revoke invitation</span>
+            <span>{msg('members.revoke', 'Revoke invitation')}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -617,6 +795,7 @@ function InviteRevokeDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { msg } = useI18n();
   if (!invite) {
     return null;
   }
@@ -632,17 +811,19 @@ function InviteRevokeDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Revoke invitation?</AlertDialogTitle>
+          <AlertDialogTitle>{msg('members.revokeTitle', 'Revoke invitation?')}</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to revoke the invitation for {invite.email}?
+            {msg('members.revokeBody', 'Are you sure you want to revoke the invitation for {email}?', {
+              email: invite.email,
+            })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isSubmitting} onClick={onCancel}>
-            Cancel
+            {msg('members.cancel', 'Cancel')}
           </AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={isSubmitting} onClick={onConfirm}>
-            {isSubmitting ? 'Revoking...' : 'Revoke'}
+            {isSubmitting ? msg('members.revoking', 'Revoking...') : msg('members.revokeConfirm', 'Revoke')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -651,11 +832,12 @@ function InviteRevokeDialog({
 }
 
 function InviteValidationNotice({ error }: { error: InviteValidationError }) {
+  const { msg } = useI18n();
   if (error.type === 'too-many') {
     return (
       <Alert variant="destructive">
         <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <AlertDescription>Invite up to 50 email addresses at once.</AlertDescription>
+        <AlertDescription>{msg('members.tooMany', 'Invite up to 50 email addresses at once.')}</AlertDescription>
       </Alert>
     );
   }
@@ -663,12 +845,16 @@ function InviteValidationNotice({ error }: { error: InviteValidationError }) {
   return (
     <Alert variant="destructive">
       <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertTitle>{error.emails.length === 1 ? 'Invalid email address:' : 'Invalid email addresses:'}</AlertTitle>
+      <AlertTitle>
+        {error.emails.length === 1
+          ? msg('members.invalidEmailOne', 'Invalid email address:')
+          : msg('members.invalidEmailMany', 'Invalid email addresses:')}
+      </AlertTitle>
       <AlertDescription>
         {error.emails.map((email) => (
           <p key={email}>{email}</p>
         ))}
-        <p>Please remove or fix before sending invitations.</p>
+        <p>{msg('members.invalidEmailHint', 'Please remove or fix before sending invitations.')}</p>
       </AlertDescription>
     </Alert>
   );
@@ -696,28 +882,15 @@ function isInviteRow(row: OrganizationMemberRow): row is OrganizationInvite {
   return row.type === 'invite';
 }
 
-function headerClassName(columnId: string) {
-  switch (columnId) {
-    case 'name':
-      return 'w-[34%] px-3 py-2.5 text-muted-foreground';
-    case 'email':
-      return 'w-[38%] px-3 py-2.5 text-muted-foreground';
-    case 'role':
-      return 'w-[22%] px-3 py-2.5 text-muted-foreground';
-    default:
-      return 'w-10 px-3 py-2.5 text-muted-foreground';
-  }
-}
-
 function cellClassName(columnId: string) {
   switch (columnId) {
     case 'name':
     case 'email':
-      return 'min-w-0 whitespace-normal px-3 py-2.5';
+      return 'min-w-0 whitespace-normal';
     case 'role':
-      return 'px-3 py-2.5';
+      return undefined;
     default:
-      return 'px-3 py-2.5';
+      return undefined;
   }
 }
 
@@ -776,9 +949,9 @@ function titleizeRole(role: string) {
     .join(' ');
 }
 
-function errorMessage(error: unknown) {
+function errorMessage(error: unknown, fallback: string) {
   if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
     return error.message;
   }
-  return 'Something went wrong.';
+  return fallback;
 }

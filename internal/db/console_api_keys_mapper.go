@@ -47,9 +47,15 @@ type consoleAPIKeyRow struct {
 	UpdatedAt           time.Time      `db:"updated_at"`
 }
 
+type consoleAPIKeyWorkspaceCountRow struct {
+	WorkspaceUUID string `db:"workspace_uuid"`
+	KeyCount      int64  `db:"key_count"`
+}
+
 type ConsoleAPIKeyMapper interface {
 	List(ctx context.Context, organizationUUID, workspaceUUID string) ([]consoleAPIKeyRow, error)
 	CountUnarchived(ctx context.Context, organizationUUID, workspaceUUID string) (int64, error)
+	CountByOrganization(ctx context.Context, organizationUUID string) ([]consoleAPIKeyWorkspaceCountRow, error)
 	Insert(ctx context.Context, params insertConsoleAPIKeyQuery) (consoleAPIKeyRow, error)
 	UpdateStatus(ctx context.Context, params updateConsoleAPIKeyStatusQuery) (consoleAPIKeyRow, error)
 }

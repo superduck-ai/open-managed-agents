@@ -67,6 +67,14 @@ describe('组织作用域策略', () => {
     expect(projected?.permissions).toContain('api:manage');
     expect(projected?.permissions).toContain('billing:view');
   });
+  test('工作区角色缺失时回退当前组织角色判权', () => {
+    // 工作区列表未加载或 activeWorkspace 为占位对象时，scope 推导不出权限；
+    // 此时不能写入空 permissions 短路判权，应回退到当前组织的 membership 角色。
+    const projected = scopedAccount(account, 'a', { id: '', type: 'workspace', name: '' });
+    expect(projected?.permissions).toBeUndefined();
+    expect(canManageMembers(projected, 'a')).toBe(true);
+    expect(canManageMembers(scopedAccount(account, 'b', { id: '', type: 'workspace', name: '' }), 'b')).toBe(false);
+  });
   test('所有业务前缀均被取消且保留账号级查询', () => {
     for (const prefix of [
       'console',

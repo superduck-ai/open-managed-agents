@@ -15,8 +15,10 @@ export function scopedAccount(
 ): AuthAccount | null {
   if (!account) return null;
   const memberships = account.memberships?.filter((item) => item.organization?.uuid === orgUuid) ?? [];
+  const permissions = scopePermissions(memberships[0]?.role, workspace?.effective_role);
   // bootstrap 的组织权限不能带入另一个组织；成员角色来自当前 membership。
-  return { ...account, permissions: scopePermissions(memberships[0]?.role, workspace?.effective_role), memberships };
+  // 推导结果为空时显式清空 permissions（避免账号级权限泄漏），判权回退到当前组织的 membership 角色。
+  return { ...account, permissions: permissions.length ? permissions : undefined, memberships };
 }
 
 // 与 #339 WorkspaceAccess.Permissions 合同一致；后端仍负责最终授权。

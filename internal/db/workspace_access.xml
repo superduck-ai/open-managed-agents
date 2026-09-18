@@ -14,6 +14,7 @@
     </select>
     <select id="ListMemberFacts" resultType="WorkspaceMemberFact">
         SELECT u.uuid AS user_uuid, u.external_id AS user_external_id,
+            u.name, u.email,
             u.role AS organization_role, COALESCE(wm.workspace_role, '') AS explicit_role
         FROM users u
         JOIN workspaces w ON w.organization_uuid = u.organization_uuid AND w.uuid = #{workspaceUUID}

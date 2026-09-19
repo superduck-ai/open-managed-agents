@@ -29,7 +29,7 @@ func CategoryFor(eventType string) Category {
 		return CategoryThreadCoordination
 	case "session.status_running", "session.status_idle", "session.status_rescheduled", "session.status_terminated",
 		"session.status_run_started", "session.status_idled", "session.running", "session.idled", "session.requires_action",
-		"session.deleted", "session.updated", "session.error":
+		"session.deleted", "session.updated", "session.error", "session.outcome_evaluation_ended":
 		return CategorySessionStatus
 	case "session.thread_status_running", "session.thread_status_idle", "session.thread_status_rescheduled", "session.thread_status_terminated",
 		"session.thread_idled", "session.thread_terminated":

@@ -35,7 +35,6 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 	store := newFakeStore("runner-cloud-bucket")
 	app := newTestAppWithStore(t, &cfg, store)
@@ -586,7 +585,6 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.EnvironmentRunner.PackageProvisionTimeout = cfgPackageProvisionTimeoutForTest
 	cfg.E2B.Template = "fake-template"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-package-bucket"))
@@ -839,7 +837,6 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	store := newFakeStore("runner-cloud-skills-bucket")
@@ -941,7 +938,6 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	store := newFakeStore("runner-cloud-missing-resolver-bucket")
@@ -1027,7 +1023,6 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-network-order-bucket"))
@@ -1118,7 +1113,6 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 			cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 			cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-			cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 			cfg.E2B.Template = "fake-template"
 
 			app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-stale-mcp-bucket"))
@@ -1207,7 +1201,6 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-resolve-failure-bucket"))

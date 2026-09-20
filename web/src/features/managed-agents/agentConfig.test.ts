@@ -12,6 +12,21 @@ import {
 } from './agentConfig';
 
 describe('localized create-agent template configs', () => {
+  test('disables AskUserQuestion in new Agent templates', () => {
+    for (const config of Object.values(createDialogTemplateConfigs)) {
+      expect(config.tools[0]).toEqual({
+        type: 'agent_toolset_20260401',
+        configs: [
+          {
+            name: 'ask_user_question',
+            enabled: false,
+            permission_policy: { type: 'always_allow' },
+          },
+        ],
+      });
+    }
+  });
+
   test('keeps the English and Chinese template catalogs structurally aligned', () => {
     expect(Object.keys(createDialogTemplateConfigsZh).sort()).toEqual(Object.keys(createDialogTemplateConfigs).sort());
 

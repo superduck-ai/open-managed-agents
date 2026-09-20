@@ -92,6 +92,9 @@ func validate(cfg Config) error {
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
 	}
+	if err := ValidateTranscriptArchive(cfg.TranscriptArchive); err != nil {
+		return err
+	}
 	if err := validateTunnelDomainSuffix(cfg.Tunnel.DomainSuffix); err != nil {
 		return err
 	}
@@ -399,7 +402,7 @@ func validatePositiveValues(cfg Config) error {
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
 	}
-	return ValidateTranscriptArchive(cfg.TranscriptArchive)
+	return nil
 }
 
 func validateObservabilityConfig(cfg ObservabilityConfig) error {

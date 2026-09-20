@@ -18,7 +18,7 @@
 
 `TestTranscriptArchiveTerminalSafety` 覆盖非不可逆终态、未过期 lease、运行 worker 和不足静置期；`TestTranscriptArchiveTerminalRetry` 覆盖 dry-run、大 payload 合并和上传后中断恢复。生产统计 T0 经用户明确指示跳过，模式 B 收益和压缩比尚未测量。
 
-同次执行中，新段复用已恢复的 payload；对象上传后只回读校验一次，校验结果用于 attached 和分批软删。重试仍重新读取并校验对象；每批删除仍由数据库重新检查资格。按字节切段所需的记录编码与最终段编码保持独立，未据此放宽 River 的任务超时。
+同次执行中，新段复用已恢复的 payload；对象上传后只回读校验一次，校验结果用于 attached 和分批软删。重试仍重新读取并校验对象；每批删除仍由数据库重新检查资格。按字节切段所需的记录编码与最终段编码保持独立。归档和物理删除 worker 显式覆盖 River 超时为 10 分钟，为多段上传、回读和删除事务留出时间；sweep 和其他队列仍使用共享 client 的 2 分钟超时。单段上传仍受 2 分钟子超时与任务剩余时间共同约束。10 分钟不是吞吐保证；生产启用前需使用真实 S3、默认 5 万行预算测量耗时、attempt 数和每次新增处理行数，必要时降低预算。
 
 ## 物理删除
 
@@ -28,9 +28,9 @@
 
 模式 A 由独立开关启用，默认关闭。每个 foreground / agent_id scope 独立计算最新 compaction，只归档严格小于边界且 created_at 早于 archive_min_age 的行；无边界的 scope 和边界本身保留。边界前移不会使已选历史重新可达。即使不同 scope 序号交错，也在空洞处分段并按对象内逐条序号删除，不能把起止区间当作实际成员列表。
 
-删除行也会删除幂等键。安全论证依赖 worker lease 60 秒、epoch 围栏拒绝旧 worker（409）、当前 worker 仅持有本次新产生 entry，以及默认 7 天 archive_min_age 远大于 worker 生命周期。若未来改到小时级，必须重做该论证。`transcriptretention.New` 返回 `(*Service, error)`，在创建服务前拒绝 `archive_min_age < 7 天`（含零值和负值），不静默设置默认值；关闭开关或 dry-run 也不豁免校验，调用方必须显式提供合法策略并处理初始化错误。
+删除行也会删除幂等键。安全论证依赖 worker lease 60 秒、epoch 围栏拒绝旧 worker（409）、当前 worker 仅持有本次新产生 entry，以及默认 7 天 archive_min_age 远大于 worker 生命周期。若未来改到小时级，必须重做该论证。`transcriptretention.New` 返回 `(*Service, error)`，在创建服务前使用配置包的全量校验，拒绝非法年龄、静置期、观察期、段大小、批量及行数预算（包括 `archive_min_age < 7 天`、零值和负值），不静默设置默认值；关闭开关或 dry-run 也不豁免校验，调用方必须显式提供合法策略并处理初始化错误。服务持有策略值副本，Archive/HardDelete 不再重复校验不可变配置；配置加载仍独立校验，以尽早报告启动错误。
 
-`TestNewRejectsUnsafeArchiveMinAge` / `TestNewAcceptsSafeArchiveMinAge` 覆盖非法值、开关组合和七天边界；`TestTranscriptArchiveBoundaryMinAgePreservesIdempotency` 覆盖非法策略拒绝创建服务、七天策略保留新事件，以及同 epoch 重试不会将边界前历史重新插入为可见事件。
+`TestNewRejectsInvalidPolicy` / `TestNewAcceptsValidPolicy` 覆盖非法值、开关组合和七天边界；`TestTranscriptArchiveBoundaryMinAgePreservesIdempotency` 覆盖非法策略拒绝创建服务、七天策略保留新事件，以及同 epoch 重试不会将边界前历史重新插入为可见事件。
 
 ## 删除查询与失败恢复
 

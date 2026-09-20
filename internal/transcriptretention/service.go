@@ -30,8 +30,8 @@ type Service struct {
 
 // New rejects unsafe retention policies before any workers can be registered.
 func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) (*Service, error) {
-	if policy.ArchiveMinAge < 7*24*time.Hour {
-		return nil, errArchiveMinAge
+	if err := config.ValidateTranscriptArchive(policy); err != nil {
+		return nil, err
 	}
 	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}, nil
 }
@@ -47,9 +47,6 @@ func (s *Service) query(scope db.TranscriptScope, terminal bool) db.TranscriptAr
 func (s *Service) Archive(ctx context.Context, scope db.TranscriptScope, terminal bool) error {
 	if !s.policy.Enabled || (terminal && !s.policy.TerminalSweepEnabled) || (!terminal && !s.policy.BoundarySweepEnabled) {
 		return nil
-	}
-	if err := config.ValidateTranscriptArchive(s.policy); err != nil {
-		return err
 	}
 	query := s.query(scope, terminal)
 	remaining := s.policy.MaxRowsPerJob

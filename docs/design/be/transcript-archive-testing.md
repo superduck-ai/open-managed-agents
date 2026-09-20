@@ -32,3 +32,11 @@ DB 区间覆盖检查并不代替对象内容校验。上层必须传入经过�
 ## 删除索引、冷却与预算
 
 `TestTranscriptDeletionIndexPlans` 在隔离 schema 中创建 20,001 行（100 行已软删除），对两个删除查询执行 EXPLAIN (ANALYZE, BUFFERS)，检查选择性数据下使用新增部分索引；该测试不代表生产数据的耗时承诺。`TestDeleteWorkerRepairCooldown` 检查包装错误分类、24 小时 snooze 和首次结构化告警；瞬时错误与成功路径保持原结果。`TestTranscriptArchiveResumeWithSmallerBudget` 覆盖上传后中断、降低预算后 pending/attached 段的多次分批恢复。
+
+## Resume 与复活拒绝的非空覆盖
+
+`TestTranscriptArchivePreservesIdleReclaimResume` 使用独立 schema：先创建边界前旧事件、compaction 边界和边界后事件，再 idle reclaim，通过边界模式归档。测试必须断言旧事件形成 attached 段且被软删除、两个可见事件仍存在，并比较归档前、归档后和新 sandbox 恢复后的 HTTP 字节；不能使用不具备 terminal 资格的会话证明归档安全。
+
+`TestTranscriptArchiveTerminalSafety/terminated_to_running` 先设置过期 archived_at、idle worker 和过期租约，确认查询返回三个可归档事件，再切换 session 与 worker 到 running（租约仍过期，以隔离 worker 状态守卫），断言无归档、无删除。
+
+运行 `go test ./tests -run '^TestTranscript' -count=1`；构造期非法策略与有效边界、worker 超时覆盖、周期调度不匹配/暂停修复分别由 `internal/transcriptretention` 和 `internal/riverjobs` 单测验证。真实 S3 下的 5 万行吞吐与重试次数仍需 staging 验证，本地 fake store 测试不构成性能承诺。

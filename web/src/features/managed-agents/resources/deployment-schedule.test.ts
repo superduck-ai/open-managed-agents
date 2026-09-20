@@ -5,7 +5,19 @@ const now = new Date('2026-09-06T12:00:00Z');
 
 describe('deployment schedule', () => {
   test('rejects unsupported syntax, invalid dates and timezones', () => {
-    for (const cron of ['', 'bad', '0 0 0 * * *', '0 9 ? * *', '0 0 L * *', '@daily', '60 9 * * *', '0 0 31 2 *']) {
+    for (const cron of [
+      '',
+      'bad',
+      '0 0 0 * * *',
+      '0 9 ? * *',
+      '0 0 L * *',
+      '0 9 W * *',
+      '0 9 * * 1#2',
+      'H * * * *',
+      '@daily',
+      '60 9 * * *',
+      '0 0 31 2 *',
+    ]) {
       expect(previewSchedule(cron, 'UTC', now).error).toBe('cron');
     }
     for (const timezone of ['', 'Local', 'not/a-zone']) {
@@ -17,6 +29,13 @@ describe('deployment schedule', () => {
 
   test('preserves custom expressions instead of guessing a graphical frequency', () => {
     expect(cronToSchedule('*/15 9-17 * * 1-5').frequency).toBe('custom');
+  });
+
+  test('previews month and weekday aliases without treating letters as extensions', () => {
+    for (const expression of ['0 9 * * WED', '0 9 * JUL *', '0 9 * * THU']) {
+      expect(previewSchedule(expression, 'UTC', now).error).toBeNull();
+      expect(previewSchedule(expression, 'UTC', now).runs).toHaveLength(5);
+    }
   });
 
   test('round trips all graphical frequencies and Sunday alias', () => {

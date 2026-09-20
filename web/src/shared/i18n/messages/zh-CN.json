@@ -2058,6 +2058,7 @@
   "managedAgents.deployments.schedule.editCron": "编辑 Cron",
   "managedAgents.deployments.schedule.nextRuns": "接下来 5 次运行",
   "managedAgents.deployments.schedule.cronHelp": "分钟 · 小时 · 日期 · 月份 · 星期（0–7，周日为 0 或 7）。",
+  "managedAgents.deployments.schedule.invalid": "无效的排程",
   "managedAgents.deployments.schedule.invalidCron": "请输入有效的五段 Cron 表达式，并确保存在未来运行时间。",
   "managedAgents.deployments.schedule.invalidTimezone": "请选择有效的时区。",
   "managedAgents.deployments.schedule.noTimezones": "没有匹配的时区。",

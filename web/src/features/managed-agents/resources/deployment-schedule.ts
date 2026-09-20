@@ -42,6 +42,30 @@ export function cronToSchedule(expression: string): ScheduleControls {
 
 export type SchedulePreview = { runs: Date[]; error: 'cron' | 'timezone' | null };
 
+function cronFieldTokens(field: string): string[] {
+  return field.split(',').flatMap((item) => item.split('/'));
+}
+
+function isUnsupportedCronToken(token: string): boolean {
+  return (
+    token.startsWith('@') ||
+    token.includes('#') ||
+    token === 'L' ||
+    token === 'W' ||
+    token === '?' ||
+    token === 'H' ||
+    token === 'LW' ||
+    /^\d+L$/.test(token) ||
+    /^\d+W$/.test(token) ||
+    /^H\(.*\)$/.test(token)
+  );
+}
+
+function hasUnsupportedCronSyntax(expression: string): boolean {
+  const fields = expression.trim().split(/\s+/);
+  return fields.length !== 5 || fields.some((field) => cronFieldTokens(field).some(isUnsupportedCronToken));
+}
+
 export function previewSchedule(expression: string, timezone: string, now = new Date()): SchedulePreview {
   try {
     if (!timezone || timezone === 'Local') throw new Error('Invalid timezone');
@@ -50,8 +74,8 @@ export function previewSchedule(expression: string, timezone: string, now = new 
     return { runs: [], error: 'timezone' };
   }
   try {
-    // Match the API's five-field POSIX contract; cron-parser also accepts extensions the API rejects.
-    if (expression.trim().split(/\s+/).length !== 5 || /[LW#?@H]/.test(expression)) throw new Error('Invalid cron');
+    // Reject Quartz/Jenkins tokens, not letters inside month or weekday names such as THU.
+    if (hasUnsupportedCronSyntax(expression)) throw new Error('Invalid cron');
     return { runs: nextScheduleRuns(expression, timezone, now), error: null };
   } catch {
     return { runs: [], error: 'cron' };

@@ -2058,6 +2058,7 @@
   "managedAgents.deployments.schedule.editCron": "Edit cron",
   "managedAgents.deployments.schedule.nextRuns": "Next 5 runs",
   "managedAgents.deployments.schedule.cronHelp": "Minute · hour · day of month · month · day of week (0–7, Sunday = 0 or 7).",
+  "managedAgents.deployments.schedule.invalid": "Invalid schedule",
   "managedAgents.deployments.schedule.invalidCron": "Enter a valid five-field cron expression with a future run.",
   "managedAgents.deployments.schedule.invalidTimezone": "Choose a valid timezone.",
   "managedAgents.deployments.schedule.noTimezones": "No matching timezones.",

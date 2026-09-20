@@ -21,7 +21,7 @@ type Policy struct {
 	Enabled              bool `yaml:"enabled"`
 	DryRun               bool `yaml:"dry_run"`
 	TerminalSweepEnabled bool `yaml:"terminal_sweep_enabled"`
-	// T6 enables boundary archival; T5 consumes hard-delete policy below.
+	// Terminal, boundary, and hard-delete policies are independent.
 	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
 	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
 	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
@@ -40,8 +40,12 @@ type Service struct {
 	logger   *slog.Logger
 }
 
-func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) *Service {
-	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}
+// New rejects unsafe retention policies before any workers can be registered.
+func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) (*Service, error) {
+	if policy.ArchiveMinAge < 7*24*time.Hour {
+		return nil, errArchiveMinAge
+	}
+	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}, nil
 }
 
 func (s *Service) query(scope db.TranscriptScope, terminal bool) db.TranscriptArchiveQuery {
@@ -53,10 +57,7 @@ func (s *Service) query(scope db.TranscriptScope, terminal bool) db.TranscriptAr
 }
 
 func (s *Service) Archive(ctx context.Context, scope db.TranscriptScope, terminal bool) error {
-	if !terminal {
-		return nil
-	}
-	if !s.policy.Enabled || !s.policy.TerminalSweepEnabled {
+	if !s.policy.Enabled || (terminal && !s.policy.TerminalSweepEnabled) || (!terminal && !s.policy.BoundarySweepEnabled) {
 		return nil
 	}
 	query := s.query(scope, terminal)

@@ -12,7 +12,7 @@
 
 上传只尝试一次，重跑只读取已有对象，不覆盖同名 key。上传之前进程退出或上传失败留下的 pending 段，由现有 object cleanup worker 周期调度：超过 24 小时后，在同一事务中标为 deleting 并入队对象清理，释放区间后下一轮使用新 UUID 重建。清理删除对象的所有版本，attached 段不参与回收；上传完成但确认丢失时，重跑可直接校验并 attached。对象读取失败返回错误，不删除数据。
 
-生产配置默认关闭且 dry-run，由 T8 组装；T4 的 Policy 由调用方显式传入。T5 使用硬删除相关字段，T6 开放 boundary sweep，当前只执行终态归档，硬删除由独立开关控制；关闭终态 sweep 不会关闭硬删除调度。段按解压字节切分；超目标大小的单条事件独占段。序号空洞处额外分段，使区间不会覆盖其他 scope 的未归档事件。单任务有总行数上限，重试优先完成已有段的软删除。
+生产配置默认关闭且 dry-run，由 T8 组装；T4 的 Policy 由调用方显式传入。T5 使用硬删除相关字段，T6 开放 boundary sweep；终态、boundary 和硬删除调度分别由独立开关控制。段按解压字节切分；超目标大小的单条事件独占段。序号空洞处额外分段，使区间不会覆盖其他 scope 的未归档事件。单任务有总行数上限，重试优先完成已有段的软删除。
 
 ## 验证
 
@@ -23,6 +23,14 @@
 ## 物理删除
 
 独立 `transcript_archive_delete` job 受 `hard_delete_enabled` 控制，默认关闭。观察期默认 14 天，设为零也仍先软删除，再由物理删除任务处理。每次先检查是否有已过观察期却没有 attached 覆盖的行；发现 deleting/missing 注册表即返回错误。随后逐段重新读取并校验对象，逐行匹配 UUID 与序号，最多每批 500 行、独立事务，事务内再次锁定 attached 段并执行 HasAttachedCovering。对象丢失或损坏均拒绝删除并记录错误。单任务遵守总删除行数预算。
+
+## Compaction 边界增量归档
+
+模式 A 由独立开关启用，默认关闭。每个 foreground / agent_id scope 独立计算最新 compaction，只归档严格小于边界且 created_at 早于 archive_min_age 的行；无边界的 scope 和边界本身保留。边界前移不会使已选历史重新可达。即使不同 scope 序号交错，也在空洞处分段并按对象内逐条序号删除，不能把起止区间当作实际成员列表。
+
+删除行也会删除幂等键。安全论证依赖 worker lease 60 秒、epoch 围栏拒绝旧 worker（409）、当前 worker 仅持有本次新产生 entry，以及默认 7 天 archive_min_age 远大于 worker 生命周期。若未来改到小时级，必须重做该论证。`transcriptretention.New` 返回 `(*Service, error)`，在创建服务前拒绝 `archive_min_age < 7 天`（含零值和负值），不静默设置默认值；关闭开关或 dry-run 也不豁免校验，调用方必须显式提供合法策略并处理初始化错误。
+
+`TestNewRejectsUnsafeArchiveMinAge` / `TestNewAcceptsSafeArchiveMinAge` 覆盖非法值、开关组合和七天边界；`TestTranscriptArchiveBoundaryMinAgePreservesIdempotency` 覆盖非法策略拒绝创建服务、七天策略保留新事件，以及同 epoch 重试不会将边界前历史重新插入为可见事件。
 
 ## 删除查询与失败恢复
 

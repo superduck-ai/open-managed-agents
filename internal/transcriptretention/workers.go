@@ -51,8 +51,11 @@ func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[sweepArgs]) error {
 		return nil
 	}
 	client := river.ClientFromContext[*sql.Tx](ctx)
-	if s.policy.TerminalSweepEnabled {
-		if err := s.enqueue(ctx, client, true); err != nil {
+	for _, terminal := range []bool{true, false} {
+		if terminal && !s.policy.TerminalSweepEnabled || !terminal && !s.policy.BoundarySweepEnabled {
+			continue
+		}
+		if err := s.enqueue(ctx, client, terminal); err != nil {
 			return err
 		}
 	}

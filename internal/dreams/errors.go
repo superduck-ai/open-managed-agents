@@ -8,6 +8,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var errDreamAlreadyTerminal = errors.New("dream contract already closed")
+
 func invalidRequest(err error) error { return apperr.New(apperr.InvalidArgument, err.Error(), err) }
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
@@ -55,21 +57,4 @@ func reviewSessionError(session db.Session) error {
 		return dreamInternalSessionSelected()
 	}
 	return nil
-}
-
-const dreamErrorInputSessionUnavailable = "input_session_unavailable"
-
-type permanentError struct {
-	errorType string
-	err       error
-}
-
-func (e *permanentError) Error() string { return e.err.Error() }
-func (e *permanentError) Unwrap() error { return e.err }
-
-func permanentDreamErrorOfType(errorType string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return &permanentError{errorType: errorType, err: err}
 }

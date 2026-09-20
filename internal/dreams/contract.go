@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -218,27 +217,3 @@ func responseFromDream(value db.Dream) dreamResponse {
 }
 
 var errDreamInputsShape = errors.New("Dream inputs must contain one memory_store")
-
-type dreamOutputValue struct {
-	MemoryStoreID     string `json:"memory_store_id"`
-	InternalSessionID string `json:"internal_session_id"`
-}
-
-func dreamOutput(raw json.RawMessage) (dreamOutputValue, error) {
-	var values []dreamOutputValue
-	if err := json.Unmarshal(raw, &values); err != nil || len(values) != 1 || values[0].MemoryStoreID == "" || values[0].InternalSessionID == "" {
-		return dreamOutputValue{}, errors.New("Dream output is incomplete")
-	}
-	return values[0], nil
-}
-
-func dreamInterruptEvent(dream db.Dream, session db.Session, now time.Time) (db.SessionEvent, error) {
-	eventID := "sevt_cancel_" + strings.TrimPrefix(dream.ExternalID, "drm_")
-	payload, err := json.Marshal(map[string]any{"id": eventID, "type": "user.interrupt", "created_at": now.Format(time.RFC3339), "processed_at": now.Format(time.RFC3339)})
-	if err != nil {
-		return db.SessionEvent{}, err
-	}
-	return db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: eventID, OrganizationUUID: session.OrganizationUUID,
-		WorkspaceUUID: session.WorkspaceUUID, SessionUUID: session.UUID, SessionExternalID: session.ExternalID,
-		EventType: "user.interrupt", Payload: payload, ProcessedAt: now, CreatedAt: now}, nil
-}

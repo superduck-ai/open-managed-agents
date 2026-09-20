@@ -28,6 +28,13 @@ type SessionRuntimeStopper struct {
 	killer sandboxKiller
 }
 
+func NewSessionRuntimeStopper(database *db.DB, killer sandboxKiller) *SessionRuntimeStopper {
+	if database == nil || killer == nil {
+		return nil
+	}
+	return &SessionRuntimeStopper{store: database, killer: killer}
+}
+
 func (s *SessionRuntimeStopper) StopSessionRuntime(ctx context.Context, workspaceUUID, sessionUUID string) error {
 	if s == nil || s.store == nil {
 		return nil

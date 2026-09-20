@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
+	"github.com/superduck-ai/open-managed-agents/internal/dreams"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -171,6 +172,8 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("create environment runner: %w", err)
 	}
 	environmentRunner.Start(ctx)
+	dreams.NewPendingWorker(database, storageClient, objectStore, runnerCodeSessions, cfg.Dreams.KeepRuntime, logger.With("component", "dream_pending_worker")).Start(ctx)
+	dreams.NewRunningWorker(database, runnerCodeSessions, environments.NewSessionRuntimeStopper(database, sandboxProvider), cfg.Dreams.RunTimeout, cfg.Dreams.KeepRuntime, logger.With("component", "dream_running_worker")).Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
 	tunnels.RegisterCleanupWorker(workers, database, tunnelBroker, logger.With("component", "tunnel_cleanup"))

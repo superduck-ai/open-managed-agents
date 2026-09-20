@@ -157,6 +157,234 @@ func (d *DB) ArchiveDream(ctx context.Context, workspaceUUID, externalID string)
 	return archived, err
 }
 
+// RecordPendingDreamResources persists setup progress without exposing it as a
+// public status. Pending remains the contractual state until /dream is queued.
+func (d *DB) RecordPendingDreamResources(ctx context.Context, workspaceUUID, externalID, workerID, outputMemoryStoreUUID, outputMemoryStoreID, internalSessionUUID, internalSessionID string, transcripts []DreamSessionTranscript, now time.Time) (Dream, bool, error) {
+	var recorded Dream
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		transcriptMapper := NewDreamSessionTranscriptMapper(executor)
+		for _, transcript := range transcripts {
+			if _, err := transcriptMapper.Insert(ctx, insertDreamSessionTranscriptParams{
+				UUID: transcript.UUID, DreamUUID: transcript.DreamUUID, WorkspaceUUID: transcript.WorkspaceUUID,
+				SourceSessionUUID: transcript.SourceSessionUUID, SourceSessionExternalID: transcript.SourceSessionExternalID,
+				Ordinal: transcript.Ordinal, CreatedAt: transcript.CreatedAt,
+			}); err != nil {
+				return err
+			}
+		}
+		row, err := NewDreamMapper(executor).RecordPendingResources(ctx, recordDreamResourcesParams{
+			WorkspaceUUID: workspaceUUID, ExternalID: externalID, WorkerID: workerID,
+			OutputMemoryStoreUUID: outputMemoryStoreUUID, OutputMemoryStoreID: outputMemoryStoreID,
+			InternalSessionUUID: internalSessionUUID, InternalSessionID: internalSessionID, Now: now,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			return errDreamPreparationLost
+		}
+		if err != nil {
+			return err
+		}
+		var convertErr error
+		recorded, convertErr = dreamFromMapperRow(row, nil)
+		return convertErr
+	})
+	if errors.Is(err, errDreamPreparationLost) {
+		return Dream{}, false, nil
+	}
+	return recorded, err == nil, err
+}
+
+func (d *DB) MarkClaimedDreamFailed(ctx context.Context, dream Dream, workerID string, errorJSON json.RawMessage, now time.Time) (Dream, bool, error) {
+	var failed Dream
+	won := false
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, txErr := NewDreamMapper(executor).MarkClaimedFailed(ctx, markClaimedDreamFailedParams{
+			WorkspaceUUID: dream.WorkspaceUUID, ExternalID: dream.ExternalID, WorkerID: workerID,
+			Error: dreamJSONArg(errorJSON), Usage: dreamJSONArg(json.RawMessage(`{}`)), Now: now,
+		})
+		if errors.Is(txErr, sql.ErrNoRows) {
+			return nil
+		}
+		if txErr != nil {
+			return txErr
+		}
+		failed, txErr = dreamFromMapperRow(row, nil)
+		if txErr != nil {
+			return txErr
+		}
+		won = true
+		return nil
+	})
+	return failed, won, err
+}
+
+func (d *DB) ListDreamsByStatus(ctx context.Context, status string, limit int) ([]Dream, error) {
+	rows, err := NewDreamMapper(d.mapperDB).ListByStatus(ctx, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	return dreamsFromMapperRows(rows)
+}
+
+// ListStoppedDreamsWithActiveSession returns canceled or failed Dreams whose
+// internal Session is still running, so the worker can re-deliver the stop
+// interrupt that did not reach the Code Session.
+func (d *DB) ListStoppedDreamsWithActiveSession(ctx context.Context, limit int) ([]Dream, error) {
+	rows, err := NewDreamMapper(d.mapperDB).ListStoppedWithActiveSession(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return dreamsFromMapperRows(rows)
+}
+
+// ListDreamsAwaitingRuntimeReclaim returns terminal Dreams whose internal
+// Session still has unstopped Environment Work or is still running, so the
+// running worker can kill leftover sandboxes before the archiver runs.
+func (d *DB) ListDreamsAwaitingRuntimeReclaim(ctx context.Context, limit int) ([]Dream, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := NewDreamMapper(d.mapperDB).ListTerminalAwaitingRuntimeReclaim(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return dreamsFromMapperRows(rows)
+}
+
+func (d *DB) ClaimNextPendingDream(ctx context.Context, workerID string, claimFor time.Duration) (*Dream, error) {
+	row, err := NewDreamMapper(d.mapperDB).ClaimNextPending(ctx, claimPendingDreamParams{
+		WorkerID: workerID, ClaimExpiresAt: time.Now().UTC().Add(claimFor),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	dream, err := dreamFromMapperRow(row, nil)
+	return &dream, err
+}
+
+func (d *DB) RenewPendingDreamClaim(ctx context.Context, dream Dream, workerID string, claimFor time.Duration) (bool, error) {
+	now := time.Now().UTC()
+	rows, err := NewDreamMapper(d.mapperDB).RenewPendingClaim(ctx, renewPendingDreamClaimParams{
+		WorkspaceUUID: dream.WorkspaceUUID, ExternalID: dream.ExternalID, WorkerID: workerID,
+		ClaimExpiresAt: now.Add(claimFor), Now: now,
+	})
+	return rows == 1, err
+}
+
+func (d *DB) SchedulePendingDreamRetry(ctx context.Context, dream Dream, workerID string, nextAttemptAt time.Time, cause error) (bool, error) {
+	message := "Dream preparation failed"
+	if cause != nil {
+		message = cause.Error()
+	}
+	row, err := NewDreamMapper(d.mapperDB).SchedulePendingRetry(ctx, schedulePendingDreamRetryParams{
+		WorkspaceUUID: dream.WorkspaceUUID, ExternalID: dream.ExternalID, WorkerID: workerID,
+		NextAttemptAt: nextAttemptAt, LastError: message, Now: time.Now().UTC(),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	_, err = dreamFromMapperRow(row, err)
+	return err == nil, err
+}
+
+func (d *DB) ListDreamsAwaitingInternalSessionArchive(ctx context.Context, limit int) ([]Dream, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := NewDreamMapper(d.mapperDB).ListAwaitingInternalSessionArchive(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return dreamsFromMapperRows(rows)
+}
+
+// StartDream atomically exposes the Dream as running and appends its stable
+// command event. Publishing to the active Code Session happens after commit and
+// may be retried from the durable Session event.
+func (d *DB) StartDream(ctx context.Context, dream Dream, workerID, outputMemoryStoreID string, session Session, event SessionEvent, now time.Time) (Dream, SessionEvent, bool, error) {
+	var started Dream
+	var command SessionEvent
+	won := false
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, txErr := NewDreamMapper(executor).MarkRunning(ctx, markDreamRunningParams{
+			WorkspaceUUID: dream.WorkspaceUUID, ExternalID: dream.ExternalID, WorkerID: workerID,
+			OutputMemoryStoreID: outputMemoryStoreID, InternalSessionID: session.ExternalID, Now: now,
+		})
+		if errors.Is(txErr, sql.ErrNoRows) {
+			return nil
+		}
+		if txErr != nil {
+			return txErr
+		}
+		started, txErr = dreamFromMapperRow(row, nil)
+		if txErr != nil {
+			return txErr
+		}
+
+		sessionRow, found, txErr := NewSessionMapper(executor).LockSessionForEvents(ctx, session.WorkspaceUUID, session.ExternalID)
+		if txErr != nil {
+			return txErr
+		}
+		if !found {
+			return ErrNotFound
+		}
+		lockedSession := sessionRow.session()
+		if lockedSession.ArchivedAt != nil {
+			return ErrInvalidState
+		}
+		created, txErr := insertSessionEventsTx(ctx, executor, lockedSession, []SessionEvent{event}, true)
+		if txErr != nil {
+			return txErr
+		}
+		if len(created) > 0 {
+			command = created[0]
+		} else {
+			existing, loadErr := NewSessionEventMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
+			if loadErr != nil {
+				return loadErr
+			}
+			command = existing.event()
+		}
+		won = true
+		return nil
+	})
+	return started, command, won, err
+}
+
+func (d *DB) UpdateRunningDreamUsage(ctx context.Context, workspaceUUID, externalID string, usage json.RawMessage, now time.Time) (Dream, bool, error) {
+	row, err := NewDreamMapper(d.mapperDB).UpdateRunningUsage(ctx, updateRunningDreamUsageParams{
+		WorkspaceUUID: workspaceUUID, ExternalID: externalID, Usage: dreamJSONArg(usage), Now: now,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return Dream{}, false, nil
+	}
+	value, err := dreamFromMapperRow(row, err)
+	return value, err == nil, err
+}
+
+func (d *DB) MarkDreamTerminal(ctx context.Context, workspaceUUID, externalID, status string, errorJSON, usage json.RawMessage, now time.Time) (Dream, bool, error) {
+	var value Dream
+	won := false
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, txErr := NewDreamMapper(executor).MarkTerminal(ctx, markDreamTerminalParams{WorkspaceUUID: workspaceUUID, ExternalID: externalID, Status: status, Error: dreamJSONArg(errorJSON), Usage: dreamJSONArg(usage), Now: now})
+		if errors.Is(txErr, sql.ErrNoRows) {
+			return nil
+		}
+		if txErr != nil {
+			return txErr
+		}
+		value, txErr = dreamFromMapperRow(row, nil)
+		if txErr != nil {
+			return txErr
+		}
+		won = true
+		return nil
+	})
+	return value, won, err
+}
+
 // CancelDream atomically closes the public Dream contract and persists the
 // stable interrupt when an internal Session exists. The Session and sandbox
 // stay available for inspection until the user archives the Dream.
@@ -214,42 +442,6 @@ func (d *DB) CancelDream(ctx context.Context, dream Dream, session *Session, int
 	return canceled, persistedInterrupt, won, err
 }
 
-// RecordPendingDreamResources persists setup progress without exposing it as a
-// public status. Pending remains the contractual state until /dream is queued.
-func (d *DB) RecordPendingDreamResources(ctx context.Context, workspaceUUID, externalID, workerID, outputMemoryStoreUUID, outputMemoryStoreID, internalSessionUUID, internalSessionID string, transcripts []DreamSessionTranscript, now time.Time) (Dream, bool, error) {
-	var recorded Dream
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		transcriptMapper := NewDreamSessionTranscriptMapper(executor)
-		for _, transcript := range transcripts {
-			if _, err := transcriptMapper.Insert(ctx, insertDreamSessionTranscriptParams{
-				UUID: transcript.UUID, DreamUUID: transcript.DreamUUID, WorkspaceUUID: transcript.WorkspaceUUID,
-				SourceSessionUUID: transcript.SourceSessionUUID, SourceSessionExternalID: transcript.SourceSessionExternalID,
-				Ordinal: transcript.Ordinal, CreatedAt: transcript.CreatedAt,
-			}); err != nil {
-				return err
-			}
-		}
-		row, err := NewDreamMapper(executor).RecordPendingResources(ctx, recordDreamResourcesParams{
-			WorkspaceUUID: workspaceUUID, ExternalID: externalID, WorkerID: workerID,
-			OutputMemoryStoreUUID: outputMemoryStoreUUID, OutputMemoryStoreID: outputMemoryStoreID,
-			InternalSessionUUID: internalSessionUUID, InternalSessionID: internalSessionID, Now: now,
-		})
-		if errors.Is(err, sql.ErrNoRows) {
-			return errDreamPreparationLost
-		}
-		if err != nil {
-			return err
-		}
-		var convertErr error
-		recorded, convertErr = dreamFromMapperRow(row, nil)
-		return convertErr
-	})
-	if errors.Is(err, errDreamPreparationLost) {
-		return Dream{}, false, nil
-	}
-	return recorded, err == nil, err
-}
-
 func (d *DB) CreateDreamSessionTranscripts(ctx context.Context, transcripts []DreamSessionTranscript) error {
 	if len(transcripts) == 0 {
 		return nil
@@ -290,6 +482,18 @@ func dreamJSONArg(raw json.RawMessage) []byte {
 		return []byte("[]")
 	}
 	return raw
+}
+
+func dreamsFromMapperRows(rows []dreamRow) ([]Dream, error) {
+	values := make([]Dream, 0, len(rows))
+	for _, row := range rows {
+		value, err := dreamFromMapperRow(row, nil)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, nil
 }
 
 func dreamFromMapperRow(row dreamRow, err error) (Dream, error) {

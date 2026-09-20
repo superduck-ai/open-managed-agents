@@ -163,9 +163,56 @@ describe('agent tool display model', () => {
 
     expect(configuredAgentToolPermission(agent, 'Bash')).toBe('always_ask');
     expect(configuredAgentToolPermission(agent, 'Read')).toBe('always_deny');
+    expect(configuredAgentToolPermission(agent, 'AskUserQuestion')).toBe('always_deny');
     expect(configuredAgentToolPermission(agent, 'mcp__private_docs__search')).toBe('always_allow');
     expect(configuredAgentToolPermission(agent, 'mcp__private_docs__delete_page')).toBe('always_deny');
     expect(configuredAgentToolPermission(agent, 'lookup_customer')).toBeUndefined();
+  });
+
+  test('treats unconfigured built-in AskUserQuestion as deny without using the toolset default', () => {
+    const agent = agentFixture({
+      mcp_servers: [{ name: 'private_docs', url: 'https://docs.example.com/mcp' }],
+      tools: [
+        {
+          type: 'agent_toolset_20260401',
+          default_config: { permission_policy: { type: 'always_allow' } },
+        },
+        {
+          type: 'mcp_toolset',
+          mcp_server_name: 'private_docs',
+          default_config: { permission_policy: { type: 'always_ask' } },
+        },
+      ],
+    });
+    const [builtIn, mcp] = buildAgentToolDisplayCards(agent, [
+      {
+        slug: 'private_docs',
+        displayName: 'Private Docs',
+        url: 'https://docs.example.com/mcp',
+        toolNames: ['ask_user_question'],
+      },
+    ]);
+
+    expect(builtIn.tools.find((tool) => tool.name === 'ask_user_question')?.permission).toBe('always_deny');
+    expect(builtIn.tools.find((tool) => tool.name === 'bash')?.permission).toBe('always_allow');
+    expect(configuredAgentToolPermission(agent, 'AskUserQuestion')).toBe('always_deny');
+    expect(mcp.tools.find((tool) => tool.name === 'ask_user_question')?.permission).toBe('always_ask');
+  });
+
+  test('keeps an explicit built-in AskUserQuestion allow', () => {
+    const agent = agentFixture({
+      tools: [
+        {
+          type: 'agent_toolset_20260401',
+          default_config: { permission_policy: { type: 'always_allow' } },
+          configs: [{ name: 'ask_user_question', enabled: true, permission_policy: { type: 'always_allow' } }],
+        },
+      ],
+    });
+    const [card] = buildAgentToolDisplayCards(agent);
+
+    expect(card.tools.find((tool) => tool.name === 'ask_user_question')?.permission).toBe('always_allow');
+    expect(configuredAgentToolPermission(agent, 'AskUserQuestion')).toBe('always_allow');
   });
 
   test('uses the MCP runtime default when directory tools have no matching toolset', () => {

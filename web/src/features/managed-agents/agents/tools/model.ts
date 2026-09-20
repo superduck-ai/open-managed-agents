@@ -427,11 +427,17 @@ function toolPermissionForName(
     return fallback;
   }
   // 与运行时保持 first-wins：按配置顺序取首个同名项。内置工具兼容 legacy tool_name，
-  // MCP 只匹配 name；未命中时再使用 default_config。
+  // MCP 只匹配 name。内置 ask_user_question 未配置时与运行时一样 deny，不回落 default_config。
   const override = arrayRecords(toolset.configs).find(
     (config) => (stringValue(config.name) || (allowLegacyToolName ? stringValue(config.tool_name) : '')) === toolName,
   );
-  return effectiveToolPermission(override ?? optionalRecordValue(toolset.default_config), fallback);
+  if (override) {
+    return effectiveToolPermission(override, fallback);
+  }
+  if (allowLegacyToolName && toolName === 'ask_user_question') {
+    return 'always_deny';
+  }
+  return effectiveToolPermission(optionalRecordValue(toolset.default_config), fallback);
 }
 
 export function normalizeRuntimeToolName(value: string) {

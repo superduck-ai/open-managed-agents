@@ -30,7 +30,7 @@ func TestWorkerPublicMappingRollsBackThreadsAndEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, nil)
+	sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, app.vaultSecrets, nil)
 	childID := "sthr_" + uuid.NewV4().String()
 	payloads := []json.RawMessage{
 		json.RawMessage(`{"id":"sevt_create_` + uuid.NewV4().String() + `","type":"session.thread_created","session_thread_id":` + quoteJSON(childID) + `,"agent_name":"child"}`),
@@ -188,7 +188,7 @@ func TestDelayedThreadMappingMaterializesFullTranscriptAcrossPages(t *testing.T)
 	// Put the target mapping on page two. Both raw materialization and direct
 	// public owner inference must find it without changing the primary scope.
 	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, nil)
+	sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, app.vaultSecrets, nil)
 	payloads := make([]json.RawMessage, 500)
 	for i := range payloads {
 		payloads[i] = json.RawMessage(fmt.Sprintf(`{"id":"sevt_%s","type":"session.thread_created","session_thread_id":"sthr_%s","task_id":"other-%d"}`, uuid.NewV4(), uuid.NewV4(), i))

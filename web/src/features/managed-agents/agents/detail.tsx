@@ -469,6 +469,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         <AgentEditDialog
           agent={agentEditSource(configAgent, agent)}
           baselineVersion={agent.version}
+          orgUuid={orgUuid}
           workspaceId={workspaceId}
           onClose={() => setEditOpen(false)}
           onSaved={handleSaved}
@@ -1519,12 +1520,14 @@ function AgentDetailErrorAlert({
 export function AgentEditDialog({
   agent,
   baselineVersion,
+  orgUuid,
   workspaceId,
   onClose,
   onSaved,
 }: {
   agent: AgentApiResponse;
   baselineVersion: number;
+  orgUuid?: string;
   workspaceId: string;
   onClose: () => void;
   onSaved: (agent: AgentApiResponse) => void;
@@ -1534,6 +1537,7 @@ export function AgentEditDialog({
   const editDraft = useAgentEditDraft(initialConfig);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [mcpTunnelChannelPending, setMcpTunnelChannelPending] = useState(false);
   const modelsQuery = useQuery({
     queryKey: ['agent-config', 'models', workspaceId],
     queryFn: () => listCreateAgentModels(workspaceId),
@@ -1551,7 +1555,7 @@ export function AgentEditDialog({
   const renderedValidationError = editDraft.view === 'rendered' ? editDraft.renderedDraftError : null;
 
   const submit = useCallback(async () => {
-    if (submitting || editDraft.rawError || renderedValidationError || !isDirty) {
+    if (submitting || editDraft.rawError || renderedValidationError || mcpTunnelChannelPending || !isDirty) {
       return;
     }
 
@@ -1564,7 +1568,17 @@ export function AgentEditDialog({
       setSaveError(agentEditSaveErrorMessage(submitError));
       setSubmitting(false);
     }
-  }, [agent.id, currentUpdate, editDraft.rawError, isDirty, onSaved, renderedValidationError, submitting, workspaceId]);
+  }, [
+    agent.id,
+    currentUpdate,
+    editDraft.rawError,
+    isDirty,
+    mcpTunnelChannelPending,
+    onSaved,
+    renderedValidationError,
+    submitting,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1577,8 +1591,19 @@ export function AgentEditDialog({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [submit]);
 
-  const displayedError = saveError ?? renderedValidationError;
-  const saveDisabled = submitting || Boolean(editDraft.rawError) || Boolean(renderedValidationError) || !isDirty;
+  const pendingTunnelError = mcpTunnelChannelPending
+    ? msg(
+        'managedAgents.agents.createDialog.mcpTunnelChannelPending',
+        'Finish choosing a Tunnel channel before continuing.',
+      )
+    : null;
+  const displayedError = saveError ?? renderedValidationError ?? pendingTunnelError;
+  const saveDisabled =
+    submitting ||
+    Boolean(editDraft.rawError) ||
+    Boolean(renderedValidationError) ||
+    mcpTunnelChannelPending ||
+    !isDirty;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -1628,7 +1653,9 @@ export function AgentEditDialog({
                   <TabsTrigger value="rendered" disabled={Boolean(editDraft.renderedError)}>
                     {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
                   </TabsTrigger>
-                  <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
+                  <TabsTrigger value="raw" disabled={mcpTunnelChannelPending}>
+                    {msg('managedAgents.agents.createDialog.raw', 'Raw')}
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
             </div>
@@ -1646,9 +1673,11 @@ export function AgentEditDialog({
                   </AgentDetailErrorAlert>
                 ) : null}
                 <AgentConfigRenderedEditor
+                  orgUuid={orgUuid}
                   workspaceId={workspaceId}
                   draft={editDraft.renderedDraft}
                   modelOptions={modelsQuery.data ?? []}
+                  onPendingTunnelChange={setMcpTunnelChannelPending}
                   onChange={(next) => {
                     setSaveError(null);
                     editDraft.setRenderedDraft(next);

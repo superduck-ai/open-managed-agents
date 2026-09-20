@@ -9,12 +9,11 @@ import json from 'highlight.js/lib/languages/json';
 import python from 'highlight.js/lib/languages/python';
 import typescript from 'highlight.js/lib/languages/typescript';
 import yamlLanguage from 'highlight.js/lib/languages/yaml';
-import { Check, Copy } from 'lucide-react';
-import { useState } from 'react';
 import { templateBody, templateTitle } from '../labels';
 import { looksLikeJson } from '../sessions/sessionTraceModel';
 import { type AgentTemplate, type CodeFormat, type HighlightLanguage } from '../types';
-import { copyText } from '../utils';
+
+export { CopyButton } from '../../../shared/ui/copy-button';
 
 hljs.registerLanguage('bash', bash);
 
@@ -218,30 +217,6 @@ export function FormatSelect({
         ))}
       </SelectContent>
     </Select>
-  );
-}
-
-export function CopyButton({ value, label }: { value: string; label: string }) {
-  const { msg } = useI18n();
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    await copyText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 900);
-  };
-
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      aria-label={copied ? msg('common.copied', 'Copied') : label}
-      className="text-foreground hover:bg-accent hover:text-foreground"
-      onClick={handleCopy}
-    >
-      {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
-    </Button>
   );
 }
 

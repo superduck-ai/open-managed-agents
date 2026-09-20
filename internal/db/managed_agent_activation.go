@@ -9,15 +9,14 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
-// ManagedAgentEventTx keeps Session events, threads and worker delivery in one
+// ManagedAgentEventTx keeps Session events, threads and worker state in one
 // transaction, using the same Session -> Code Session lock order for every writer.
 type ManagedAgentEventTx struct {
-	executor                      yourbatis.Executor
-	codeSessionMapper             CodeSessionMapper
-	codeSessionInboundEventMapper CodeSessionInboundEventMapper
-	sessionMapper                 SessionMapper
-	sessionEventMapper            SessionEventMapper
-	sessionThreadMapper           SessionThreadMapper
+	executor            yourbatis.Executor
+	codeSessionMapper   CodeSessionMapper
+	sessionMapper       SessionMapper
+	sessionEventMapper  SessionEventMapper
+	sessionThreadMapper SessionThreadMapper
 }
 
 // WithManagedAgentEventTx owns the database transaction lifecycle while
@@ -28,13 +27,29 @@ func (d *DB) WithManagedAgentEventTx(
 ) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		return fn(ManagedAgentEventTx{
-			executor:                      executor,
-			codeSessionMapper:             NewCodeSessionMapper(executor),
-			codeSessionInboundEventMapper: NewCodeSessionInboundEventMapper(executor),
-			sessionMapper:                 NewSessionMapper(executor),
-			sessionEventMapper:            NewSessionEventMapper(executor),
-			sessionThreadMapper:           NewSessionThreadMapper(executor),
+			executor:            executor,
+			codeSessionMapper:   NewCodeSessionMapper(executor),
+			sessionMapper:       NewSessionMapper(executor),
+			sessionEventMapper:  NewSessionEventMapper(executor),
+			sessionThreadMapper: NewSessionThreadMapper(executor),
 		})
+	})
+}
+
+// WithLockedActiveCodeSession serializes direct JetStream publication with
+// other Code Session lifecycle changes. The callback runs while the row lock is
+// held, so termination cannot purge the subject between the status check and
+// PubAck.
+func (d *DB) WithLockedActiveCodeSession(
+	ctx context.Context,
+	codeSessionExternalID string,
+	fn func(CodeSession) error,
+) error {
+	return d.withLockedCodeSession(ctx, codeSessionExternalID, func(_ yourbatis.Executor, row codeSessionRow) error {
+		if row.Status != "active" {
+			return ErrInvalidState
+		}
+		return fn(row.session())
 	})
 }
 
@@ -163,4 +178,9 @@ func (tx ManagedAgentEventTx) GetSessionEvent(ctx context.Context, session Sessi
 func (tx ManagedAgentEventTx) ListSessionThreads(ctx context.Context, session Session) ([]SessionThread, error) {
 	rows, err := tx.sessionThreadMapper.List(ctx, session.WorkspaceUUID, session.ExternalID)
 	return sessionThreadsFromRows(rows), err
+}
+
+// EventPayloadsMatch compares full JSON restored at the object-storage boundary.
+func (tx ManagedAgentEventTx) EventPayloadsMatch(ctx context.Context, stored, incoming []byte, ignoredFields []string) (bool, error) {
+	return tx.sessionEventMapper.PayloadsMatch(ctx, stored, incoming, ignoredFields)
 }

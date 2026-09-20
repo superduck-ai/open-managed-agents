@@ -111,6 +111,9 @@ func TestSessionIdlePreservesPendingChildActions(t *testing.T) {
 		t.Helper()
 		postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+epoch+`,"events":[{"payload":{"type":"session.thread_status_running","uuid":`+quoteJSON("start-"+requestID)+`,"session_thread_id":`+quoteJSON(childID)+`,"agent_name":"child"}},{"payload":{"type":"control_request","uuid":`+quoteJSON(requestID)+`,"request_id":`+quoteJSON(requestID)+`,"session_thread_id":`+quoteJSON(childID)+`,"request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":`+quoteJSON("tool-"+requestID)+`,"input":{"command":"pwd"}}}}]}`)
 		page := listSessionEvents(t, app, response.ID, "types[]=agent.tool_use&limit=100", defaultTestKey)
+		if len(page.Data) == 0 {
+			t.Fatal("missing tool permission event")
+		}
 		var event struct {
 			ID string `json:"id"`
 		}

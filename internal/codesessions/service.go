@@ -10,19 +10,20 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
+	eventPayloads          *eventpayload.Store
 	db                     *db.DB
 	credentials            *SessionCredentials
 	logger                 *slog.Logger
@@ -30,6 +31,8 @@ type Service struct {
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	sandboxTimeout         time.Duration
 	workerEvents           workerevents.Broker
+	workerEventAcks        workerevents.AckStore
+	workerEventObjects     storage.ObjectStore
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
@@ -38,7 +41,12 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 		panic("codesessions: session credentials are required")
 	}
 	logger = logging.LoggerOrDefault(logger)
-	return &Service{db: database, credentials: credentials, logger: logger, workerEvents: workerevents.NewMemory()}
+	broker := workerevents.NewMemory()
+	return &Service{
+		eventPayloads: eventpayload.New(database, nil),
+		db:            database, credentials: credentials, logger: logger,
+		workerEvents: broker, workerEventAcks: workerevents.NewMemoryAcknowledgementStore(),
+	}
 }
 
 // WithWorkerEventBroker wires the live transport copy of durable inbound events.
@@ -46,6 +54,18 @@ func (s *Service) WithWorkerEventBroker(broker workerevents.Broker) *Service {
 	if s != nil && broker != nil {
 		s.workerEvents = broker
 	}
+	return s
+}
+
+func (s *Service) WithWorkerEventState(acks workerevents.AckStore, objects storage.ObjectStore) *Service {
+	if s == nil {
+		return s
+	}
+	if acks != nil {
+		s.workerEventAcks = acks
+	}
+	s.workerEventObjects = objects
+	s.eventPayloads = eventpayload.New(s.db, objects)
 	return s
 }
 
@@ -60,91 +80,56 @@ func (s *Service) WithSandboxTimeoutExtender(extender SandboxTimeoutExtender, ti
 	return s
 }
 
-// SendPublicSessionEvents commits public input and active worker delivery together.
-// Initializing workers replay these events under the same Session lock at activation.
-func (s *Service) SendPublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent, outcomes json.RawMessage) ([]db.SessionEvent, error) {
-	var created []db.SessionEvent
-	var codeSession db.CodeSession
-	var hasInputs bool
-	err := s.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
-		lockedSession, err := tx.LockSessionForEvents(ctx, session.WorkspaceUUID, session.ExternalID)
-		if err != nil {
-			return err
-		}
-		var found bool
-		codeSession, found, err = tx.LockLatestCodeSession(ctx, lockedSession)
-		if err != nil {
-			return err
-		}
-		created, err = tx.AppendSessionEvents(ctx, lockedSession, events, outcomes)
-		if err != nil {
-			return err
-		}
-		if !found || codeSession.Status != "active" {
+func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
+	if s == nil || len(events) == 0 {
+		return nil
+	}
+	codeSession, err := s.db.GetCodeSessionBySessionExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
 			return nil
 		}
-		inputs, clearedRequests, err := s.publicSessionInboundInputs(codeSession, created)
-		if err != nil {
-			return err
-		}
-		hasInputs = len(inputs) > 0
-		if err := tx.AppendCodeSessionInboundEvents(ctx, codeSession, inputs); err != nil {
-			return err
-		}
-		return tx.ClearWorkerMetadata(ctx, codeSession, clearedRequests)
-	})
-	if err != nil {
-		return nil, err
+		return err
 	}
-	if hasInputs {
-		s.publishQueuedInboundEvents(ctx, codeSession.ExternalID)
-		if err := s.resumeSandboxForCodeSession(ctx, codeSession); err != nil {
-			s.logger.WarnContext(ctx, "resume sandbox for committed session input", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
-		}
+	if codeSession.Status != "active" {
+		return nil
 	}
-	return created, nil
-}
-
-func (s *Service) publicSessionInboundInputs(codeSession db.CodeSession, events []db.SessionEvent) ([]db.AppendCodeSessionEventInput, []string, error) {
-	var legacyMetadata legacyToolPermissionMetadata
-	if len(codeSession.WorkerExternalMetadata) > 0 {
-		if err := json.Unmarshal(codeSession.WorkerExternalMetadata, &legacyMetadata); err != nil {
-			return nil, nil, err
-		}
-	}
-	inputs := make([]db.AppendCodeSessionEventInput, 0, len(events))
-	var clearedRequests []string
+	payloads := make([]json.RawMessage, 0, len(events))
+	queued := false
 	for _, event := range events {
 		if !maevents.IsPublicWorkerInputEvent(event.EventType) {
 			continue
 		}
-		var control *db.AppendCodeSessionEventInput
-		var requestID string
-		var err error
+		handled := false
+		var controlErr error
 		switch event.EventType {
 		case "user.tool_confirmation":
-			control, requestID, err = controlResponseForToolConfirmation(codeSession, event)
+			handled, controlErr = s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
 		case "user.custom_tool_result":
-			control, requestID, err = controlResponseForCustomToolResult(codeSession, event)
+			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, codeSession, event)
 		}
-		if err != nil {
-			return nil, nil, err
+		if controlErr != nil {
+			return controlErr
 		}
-		if control != nil {
-			inputs = append(inputs, *control)
-			clearedRequests = append(clearedRequests, toolPermissionRequestMetadataKey(requestID))
-			if legacyMetadata.Request.PublicEventID == requestID {
-				clearedRequests = append(clearedRequests, legacyToolPermissionRequestMetadataKey)
-			}
+		if handled {
+			queued = true
 			continue
 		}
-		input, err := s.convertSessionEventToInbound(codeSession.ExternalID, event)
+		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.UUID, event.ProcessedAt)
 		if err != nil {
-			return nil, nil, err
+			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}
-		inputs = append(inputs, input)
+		payloads = append(payloads, payload)
 	}
-	return inputs, clearedRequests, nil
+	if len(payloads) == 0 && !queued {
+		return nil
+	}
+	if len(payloads) > 0 {
+		if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
+			return err
+		}
+	}
+	return s.resumeSandboxForCodeSession(ctx, codeSession)
 }
 
 func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
@@ -196,6 +181,26 @@ func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession d
 		)
 	}
 	return nil
+}
+
+func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
+	if s == nil || len(payloads) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, workerPublicationTimeout)
+	defer cancel()
+	batch := &inboundPublicationBatch{service: s}
+	defer batch.cleanupUnpublished(ctx)
+	for _, payload := range payloads {
+		prepared, err := s.prepareInboundEvent(ctx, codeSession, payload, "public-session", "")
+		if err != nil {
+			return err
+		}
+		batch.events = append(batch.events, prepared)
+	}
+	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, func(db.CodeSession) error {
+		return batch.publish(ctx)
+	})
 }
 
 // AppendWorkerEvents is the legacy raw-payload entry point. Zero epoch retains
@@ -392,9 +397,14 @@ func transientWorkerEvent(meta EventMetadata, createdAt time.Time) db.CodeSessio
 	}
 }
 
-func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSession, configRaw json.RawMessage, now time.Time) error {
+func (s *Service) prepareInitializeEvent(
+	ctx context.Context,
+	codeSession db.CodeSession,
+	configRaw json.RawMessage,
+	now time.Time,
+) (preparedInboundEvent, error) {
 	configObject := rawObject(configRaw)
-	requestID := "initialize_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
+	requestID := "initialize_" + strings.TrimPrefix(codeSession.ExternalID, "cse_")
 	request := map[string]any{
 		"subtype": "initialize",
 	}
@@ -406,7 +416,7 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 	}
 	payload, err := marshalRaw(map[string]any{
 		"type":       "control_request",
-		"uuid":       uuid.NewV4().String(),
+		"uuid":       controlResponseUUID(codeSession.ExternalID, "initialize"),
 		"session_id": codeSession.ExternalID,
 		"created_at": formatTime(now),
 		"timestamp":  formatTime(now),
@@ -414,69 +424,20 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 		"request":    request,
 	})
 	if err != nil {
-		return err
+		return preparedInboundEvent{}, err
 	}
-	_, _, err = s.appendInboundPayload(ctx, codeSession.ExternalID, payload, "internal")
-	return err
+	return s.prepareInboundEvent(ctx, codeSession, payload, "internal", "initialize")
 }
 
-func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string, payload json.RawMessage, source string) (db.CodeSessionEvent, bool, error) {
-	input, err := newInboundEventInput(codeSessionID, payload, source)
-	if err != nil {
-		return db.CodeSessionEvent{}, false, err
+func (s *Service) publishPreparedInboundEvent(ctx context.Context, prepared preparedInboundEvent) error {
+	if err := s.workerEvents.Publish(ctx, prepared.messageID, prepared.envelope); err != nil {
+		// A failed PubAck is ambiguous: JetStream may already have persisted the
+		// event. Keep any referenced object until logical expiry so a redelivery
+		// can still load its offloaded payload, and let the caller retry with the
+		// same message ID.
+		return workerEventUnavailable(err)
 	}
-	event, duplicate, err := s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, input)
-	if err != nil {
-		return db.CodeSessionEvent{}, false, err
-	}
-	s.publishInboundEvent(ctx, event)
-	return event, duplicate, nil
-}
-
-func (s *Service) publishInboundEvent(ctx context.Context, event db.CodeSessionEvent) {
-	if s.workerEvents == nil {
-		return
-	}
-	payloadEventID := ""
-	if event.PayloadUUID != nil {
-		payloadEventID = *event.PayloadUUID
-	}
-	envelope := workerevents.EventEnvelope(
-		event.CodeSessionExternalID,
-		event.ExternalID,
-		payloadEventID,
-		event.SequenceNum,
-		event.EventType,
-		event.EventSubtype,
-		event.Payload,
-	)
-	if err := s.workerEvents.Publish(ctx, envelope); err != nil {
-		s.logger.WarnContext(ctx, "publish code session inbound event", "code_session_id", event.CodeSessionExternalID, "event_id", event.ExternalID, "sequence_num", event.SequenceNum, "error", err)
-	}
-}
-
-func newInboundEventInput(codeSessionID string, payload json.RawMessage, source string) (db.AppendCodeSessionEventInput, error) {
-	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
-	if err != nil {
-		return db.AppendCodeSessionEventInput{}, err
-	}
-	eventID, err := ids.New("csev_")
-	if err != nil {
-		return db.AppendCodeSessionEventInput{}, err
-	}
-	return db.AppendCodeSessionEventInput{
-		ExternalID:     eventID,
-		EventType:      meta.EventType,
-		EventSubtype:   meta.EventSubtype,
-		PayloadUUID:    meta.PayloadUUID,
-		RequestID:      meta.RequestID,
-		Payload:        meta.Payload,
-		PayloadHash:    meta.PayloadHash,
-		IdempotencyKey: meta.IdempotencyKey,
-		DeliveryStatus: "queued",
-		Source:         strings.TrimSpace(source),
-		CreatedAt:      time.Now().UTC(),
-	}, nil
+	return nil
 }
 
 // CommitWorkerSessionEvents commits raw transcript and its public projection
@@ -502,25 +463,27 @@ func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID s
 		workerEpoch = codeSession.CurrentWorkerEpoch
 	}
 	var created []db.SessionEvent
-	var inbound []db.AppendCodeSessionEventInput
-	err = s.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
+	var repliesToSend []toolPermissionReply
+	err = s.eventPayloads.WithEventTx(ctx, func(ctx context.Context, tx db.ManagedAgentEventTx) error {
+		created = nil
+		repliesToSend = nil
 		session, err := tx.LockSessionForEvents(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 		if err != nil {
 			return err
 		}
 		if session.ArchivedAt != nil {
-			return db.ErrInvalidState
+			return errSessionRejectsWorkerEvents
 		}
 		worker, err := tx.LockPublicEventWorker(ctx, session, db.SessionEventWorker{CodeSessionUUID: codeSession.UUID, Epoch: workerEpoch})
 		if err != nil {
 			return err
 		}
-		if _, err := tx.AppendCodeSessionInternalEvents(ctx, worker, internalInputs); err != nil {
+		if _, err := s.eventPayloads.AppendInternalTx(ctx, tx, worker, internalInputs); err != nil {
 			return err
 		}
 		for _, output := range outputs {
 			var public []db.SessionEvent
-			var replies []db.AppendCodeSessionEventInput
+			var replies []toolPermissionReply
 			switch prepared := output.(type) {
 			case preparedPublicAction:
 				public, err = s.sink.AppendCodeSessionEvents(ctx, tx, session, codeSessionID, prepared.payloads)
@@ -533,7 +496,7 @@ func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID s
 				return err
 			}
 			created = append(created, public...)
-			inbound = append(inbound, replies...)
+			repliesToSend = append(repliesToSend, replies...)
 			// Materialize after each output, preserving the same order whether
 			// the worker sends one batch or several individual requests.
 			subagentPayloads, err := s.subagentPublicPayloads(ctx, tx, worker)
@@ -547,14 +510,16 @@ func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID s
 			created = append(created, materialized...)
 		}
 
-		return tx.AppendCodeSessionInboundEvents(ctx, worker, inbound)
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 	s.sink.NotifyCodeSessionEvents(ctx, created)
-	if len(inbound) > 0 {
-		s.publishQueuedInboundEvents(ctx, codeSessionID)
+	for _, reply := range repliesToSend {
+		if err := s.respondToToolPermissionRequest(ctx, codeSessionID, reply.request, reply.permission, reply.source, "", ""); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -573,6 +538,10 @@ func (s *Service) subagentPublicPayloads(ctx context.Context, tx db.ManagedAgent
 			return nil, err
 		}
 		for _, event := range events {
+			event, err = s.eventPayloads.RestoreInternalTx(ctx, tx, event)
+			if err != nil {
+				return nil, err
+			}
 			if event.AgentID == nil {
 				continue
 			}
@@ -605,6 +574,10 @@ func (s *Service) subagentThreadMappings(ctx context.Context, tx db.ManagedAgent
 			return nil, err
 		}
 		for _, event := range events {
+			event, err = s.eventPayloads.RestorePublicTx(ctx, tx, event)
+			if err != nil {
+				return nil, err
+			}
 			var object workerThreadCreatedPayload
 			if err := json.Unmarshal(event.Payload, &object); err != nil {
 				return nil, fmt.Errorf("decode stored thread mapping: %w", err)
@@ -661,3 +634,6 @@ func derivedPrimarySessionEventID(codeSessionID, eventID, eventType string) stri
 func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
+
+// EventPayloadStore shares durable event storage with the public session handler.
+func (s *Service) EventPayloadStore() *eventpayload.Store { return s.eventPayloads }

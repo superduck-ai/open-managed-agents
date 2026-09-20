@@ -18,6 +18,7 @@ import {
 } from '../../../shared/ui/dropdown-menu';
 import { toast } from '../../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, ChevronLeft, ChevronRight, Copy, Pencil, Play, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -33,14 +34,7 @@ import {
   unpauseDeployment,
   updateManagedEntity,
 } from '../api';
-import {
-  AgentFilterDropdown,
-  AgentSelectionCheckbox,
-  ConfirmEntityDialog,
-  EmptyState,
-  ManagedErrorAlert,
-  ManagedSearchField,
-} from '../components/common';
+import { AgentSelectionCheckbox, ConfirmEntityDialog, EmptyState, ManagedErrorAlert } from '../components/common';
 import {
   entityActionLabel,
   entityKindLabel,
@@ -74,6 +68,7 @@ import {
   managedEntityDetailHref,
   navigateToInternalHref,
 } from '../utils';
+import { DeploymentEmptyState } from './deployment-list';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
@@ -542,7 +537,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     switch (filter) {
       case 'Created  All time':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-created`}
             label={msg('managedAgents.filters.created', 'Created')}
             valueLabel={createdFilterValueLabel}
@@ -557,7 +552,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         );
       case 'Agent  All':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-agent`}
             label={msg('managedAgents.common.agent', 'Agent')}
             valueLabel={config.section === 'sessions' ? sessionAgentValueLabel : deploymentAgentValueLabel}
@@ -574,7 +569,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         );
       case 'Deployment  All':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-deployment`}
             label={msg('managedAgents.deployments.kind', 'Deployment')}
             valueLabel={sessionDeploymentValueLabel}
@@ -590,7 +585,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       case 'Status  Active':
         if (config.section === 'sessions') {
           return (
-            <AgentFilterDropdown
+            <ResourceFilterDropdown
               key={`${config.section}-status`}
               label={msg('managedAgents.filters.status', 'Status')}
               valueLabel={sessionStatusValueLabel}
@@ -605,7 +600,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           );
         }
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-status`}
             label={msg('managedAgents.filters.status', 'Status')}
             valueLabel={genericStatusValueLabel}
@@ -621,7 +616,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       case 'Status  All':
         if (config.section === 'deployments') {
           return (
-            <AgentFilterDropdown
+            <ResourceFilterDropdown
               key={`${config.section}-status`}
               label={msg('managedAgents.filters.status', 'Status')}
               valueLabel={deploymentStatusValueLabel}
@@ -636,7 +631,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           );
         }
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-status`}
             label={msg('managedAgents.filters.status', 'Status')}
             valueLabel={genericStatusValueLabel}
@@ -760,11 +755,15 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     <section
       className={cn(
         'relative min-h-[calc(100vh-48px)] text-foreground',
-        config.section === 'sessions' && 'mx-auto w-full max-w-[1600px]',
+        (config.section === 'sessions' || config.section === 'deployments') && 'mx-auto w-full max-w-[1600px]',
       )}
     >
       <header
-        className={cn('flex items-start justify-between', config.section === 'sessions' ? 'mb-2 gap-4' : 'mb-5 gap-6')}
+        className={cn(
+          'flex items-start justify-between',
+          config.section === 'sessions' ? 'mb-2 gap-4' : 'mb-5 gap-6',
+          config.section === 'deployments' && 'flex-wrap',
+        )}
       >
         <div>
           <h1
@@ -798,8 +797,13 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         ) : null}
       </header>
 
-      <div className={cn('flex flex-wrap items-center gap-2', config.section === 'sessions' ? 'mb-2' : 'mb-7')}>
-        <ManagedSearchField
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2',
+          config.section === 'sessions' ? 'mb-2' : config.section === 'deployments' ? 'mb-3' : 'mb-7',
+        )}
+      >
+        <ResourceSearchField
           id={`${config.section}-search`}
           value={search}
           placeholder={searchPlaceholder}
@@ -812,8 +816,14 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       {loadError ? <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert> : null}
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
-      <div>
-        <Table className={cn(dataTableClassName, config.section === 'sessions' && 'min-w-[1080px]')}>
+      <div className={config.section === 'deployments' ? 'overflow-hidden rounded-lg border border-border' : undefined}>
+        <Table
+          className={cn(
+            dataTableClassName,
+            config.section === 'sessions' && 'min-w-[1080px]',
+            config.section === 'deployments' && 'min-w-[880px]',
+          )}
+        >
           <TableHeader>
             <TableRow className={dataTableHeaderRowClassName}>
               {config.columns.map((column) => (
@@ -877,7 +887,16 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           </TableBody>
         </Table>
 
-        {!loading && !visibleEntities.length ? <EmptyState config={config} /> : null}
+        {!loading && !visibleEntities.length ? (
+          config.section === 'deployments' ? (
+            <DeploymentEmptyState
+              filtered={Boolean(search || deploymentAgentFilter || deploymentStatusFilter !== 'all')}
+              onCreate={() => setDialogState({ mode: 'create' })}
+            />
+          ) : (
+            <EmptyState config={config} />
+          )
+        ) : null}
       </div>
 
       <div className="mt-9 flex items-center gap-2">

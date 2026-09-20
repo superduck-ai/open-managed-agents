@@ -103,6 +103,8 @@ type SessionEventStateChange struct {
 
 type SessionEvent struct {
 	StateChange       *SessionEventStateChange
+	PayloadBlobUUID   *string
+	ToolUseID         *string
 	UUID              string
 	ExternalID        string
 	OrganizationUUID  string
@@ -160,10 +162,11 @@ type ListSessionEventsPageParams struct {
 	Cursor            *SessionEventPageCursor
 	Order             string
 	Types             []string
-	CreatedAtGT       *time.Time
-	CreatedAtGTE      *time.Time
-	CreatedAtLT       *time.Time
-	CreatedAtLTE      *time.Time
+	// CreatedAt filters retain API names but bound the committed processed_at order.
+	CreatedAtGT  *time.Time
+	CreatedAtGTE *time.Time
+	CreatedAtLT  *time.Time
+	CreatedAtLTE *time.Time
 }
 
 type ListSessionThreadsPageParams struct {

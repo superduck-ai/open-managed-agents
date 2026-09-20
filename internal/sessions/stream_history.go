@@ -91,7 +91,7 @@ func (h *Handler) catchUpSessionEvents(w http.ResponseWriter, ctx context.Contex
 	for {
 		// ponytail: scan the Session log so cross-posted terminal controls reach
 		// every connection; use a scoped control query if fanout volume warrants it.
-		records, more, err := h.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+		records, more, err := h.eventPayloads.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 			WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID,
 			IncludeDeleted: true,
 			Limit:          256, Order: "asc", Cursor: page, CreatedAtGT: cursor, CreatedAtLTE: &watermark,
@@ -111,7 +111,7 @@ func (h *Handler) catchUpSessionEvents(w http.ResponseWriter, ctx context.Contex
 				continue
 			}
 			event := sessionStreamEventFrom(record)
-			if connection.accepts(event) {
+			if event.EventType == "session.deleted" || connection.accepts(event) {
 				if err := writeSSE(w, event, connection.threadID); err != nil {
 					return false, err
 				}

@@ -23,10 +23,10 @@ type threadIdleReason struct {
 
 // A worker reports thread facts. Aggregate transitions and new action requests
 // emit Session status in the same transaction; retries never reconsider old facts.
-func appendThreadStatusEvent(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, event db.SessionEvent) ([]db.SessionEvent, error) {
+func (h *Handler) appendThreadStatusEvent(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, event db.SessionEvent) ([]db.SessionEvent, error) {
 	ignoredTimes := []string{"created_at", "processed_at", "timestamp"}
 	if _, err := tx.GetSessionEvent(ctx, session, event.ExternalID); err == nil {
-		return tx.AppendSessionEventsIfAbsent(ctx, session, []db.SessionEvent{event}, ignoredTimes)
+		return h.eventPayloads.AppendPublicTx(ctx, tx, session, []db.SessionEvent{event}, ignoredTimes)
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func appendThreadStatusEvent(ctx context.Context, tx db.ManagedAgentEventTx, ses
 		}
 	}
 	if status == current.Status && !(status == "idle" && reason.Type == "requires_action") {
-		return tx.AppendSessionEventsIfAbsent(ctx, current, []db.SessionEvent{event}, ignoredTimes)
+		return h.eventPayloads.AppendPublicTx(ctx, tx, current, []db.SessionEvent{event}, ignoredTimes)
 	}
 	eventType := "session.status_" + status
 	if status == "rescheduling" {
@@ -107,5 +107,5 @@ func appendThreadStatusEvent(ctx context.Context, tx db.ManagedAgentEventTx, ses
 	if status == "idle" || status == "terminated" {
 		batch[0], batch[1] = batch[1], batch[0]
 	}
-	return tx.AppendSessionEventsIfAbsent(ctx, current, batch, ignoredTimes)
+	return h.eventPayloads.AppendPublicTx(ctx, tx, current, batch, ignoredTimes)
 }

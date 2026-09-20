@@ -245,29 +245,6 @@ func TestCodeSessionEventMapperBuilderContracts(t *testing.T) {
 		name     string
 		contract mapperBuilderContract
 	}{
-		{"worker stream", mapperBuilderContract{
-			statement: codeSessionInboundEventMapperListForWorkerStreamStatement,
-			bound: buildCodeSessionInboundEventMapperListForWorkerStream(
-				yourbatis.DialectPostgres, "codeses_test", 2, 10,
-			),
-			wantID: "CodeSessionInboundEventMapper.ListForWorkerStream", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{"codeSessionExternalID", "afterSequence", "epoch"},
-			wantSQLFragments:  []string{"JOIN code_sessions", "e.sequence_num > $2", "cs.current_worker_epoch = $3"},
-		}},
-		{"delivery update", mapperBuilderContract{
-			statement: codeSessionInboundEventMapperUpdateDeliveryStatement,
-			bound: buildCodeSessionInboundEventMapperUpdateDelivery(yourbatis.DialectPostgres, updateCodeSessionInboundDeliveryParams{
-				UUID: "event-uuid", TargetStatus: "processed", MarkReceived: true,
-				MarkProcessing: true, MarkProcessed: true, Epoch: 2, Now: now,
-			}),
-			wantID: "CodeSessionInboundEventMapper.UpdateDelivery", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames: []string{
-				"params.TargetStatus", "params.MarkReceived", "params.Now", "params.MarkProcessing",
-				"params.Now", "params.MarkProcessed", "params.Now", "params.Epoch", "params.Now",
-				"params.Now", "params.UUID",
-			},
-			wantSQLFragments: []string{"UPDATE code_session_inbound_events", "delivery_worker_epoch = $8", "uuid = $11"},
-		}},
 		{"internal insert", mapperBuilderContract{
 			statement: codeSessionInternalEventMapperInsertStatement,
 			bound: buildCodeSessionInternalEventMapperInsert(yourbatis.DialectPostgres, codeSessionInternalEventInsertParams{
@@ -280,7 +257,7 @@ func TestCodeSessionEventMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.CodeSessionUUID",
 				"params.CodeSessionExternalID", "params.SequenceNum", "params.EventType", "params.PayloadUUID",
-				"params.AgentID", "params.IsCompaction", "params.Payload", "params.PayloadHash",
+				"params.AgentID", "params.IsCompaction", "params.Payload", "params.PayloadBlobUUID", "params.PayloadHash",
 				"params.IdempotencyKey", "params.EventMetadata", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Payload", "params.PayloadHash", "params.EventMetadata"},
@@ -351,4 +328,13 @@ func TestInternalEventRetryMatchesContentAndOwnership(t *testing.T) {
 			t.Fatalf("MatchesRetry = %t, %v; want %t", got, err, matches)
 		}
 	}
+}
+func TestInternalEventIdempotencyLookupBindings(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionInternalEventMapperExistsByIdempotencyKeyStatement,
+		bound:     buildCodeSessionInternalEventMapperExistsByIdempotencyKey(yourbatis.DialectPostgres, "workspace", "key"),
+		wantID:    "CodeSessionInternalEventMapper.ExistsByIdempotencyKey", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "idempotencyKey"},
+		wantSQLFragments:  []string{"workspace_uuid = $1", "idempotency_key = $2", "idempotency_key <> ''", "deleted_at IS NULL"},
+	})
 }

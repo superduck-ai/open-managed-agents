@@ -102,7 +102,7 @@ func TestWorkerStatusSerializesConcurrentReports(t *testing.T) {
 	}
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+strconv.FormatInt(epoch, 10)+`,"worker_status":"idle"}`)
 	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, nil)
+	sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, app.vaultSecrets, nil)
 	results := make(chan error, 8)
 	var group sync.WaitGroup
 	for range 8 {

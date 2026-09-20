@@ -4,12 +4,13 @@
 
 ## 提交与读取
 
-- 复用 Session → Code Session 行锁及 Yourbatis 事务。原始记录、公共事件、线程/Session 状态、权限 metadata 与自动回复一起提交；失败整体回滚，提交后通知。
-- 用户输入与 active worker 入队一起提交；initializing worker 仍通过同一锁完成启动交接。
+- 复用 Session → Code Session 行锁及 Yourbatis 事务。原始记录、公共事件、线程/Session 状态与权限 metadata 一起提交；失败整体回滚，提交后通知。
+- 用户输入先提交数据库，再沿用 JetStream 投递；自动回复也在数据库提交后发布。投递失败返回错误，已经提交的历史不回滚；本层不提供 PostgreSQL 与 NATS 的跨系统事务或 outbox 保证。worker 重试自动回复沿用稳定消息 ID，由 JetStream 去重。initializing worker 沿用主干的快照复验与启动交接。
+- 大事件继续使用对象存储；事务内恢复已存正文并按 JSON 内容比较重试，复用已存 blob，新增引用随事件提交，失败上传由既有 GC 清理。发现需要上传的新正文时先回滚当前尝试，在锁外登记 pending blob 并上传，再重新加锁、复验 epoch 与状态后执行；准备期间的生成时间保持稳定，通知和 NATS 发布仅在最终提交后执行。事务内 blob 查询复用同一连接，能够读取本事务刚附加的正文。SSE 与历史均恢复完整正文。
 - 同 ID 同内容重试保留原记录和时间，不重新推进状态；异内容、不同归属冲突回滚整批。事务内复验 worker epoch，拒绝接管后的旧 worker。
-- migration 00059 新增 `sessions.last_event_at`。每条新事件使用 `GREATEST(clock_timestamp(), last_event_at + 1 microsecond)`，批次保持输入顺序，源时钟回拨不改变公开顺序。
+- migration 00064 新增 `sessions.last_event_at`。每条新事件使用 `GREATEST(clock_timestamp(), last_event_at + 1 microsecond)`，批次保持输入顺序，源时钟回拨不改变公开顺序。
 - 历史默认按 `processed_at` 升序，同时间旧记录以 event ID 稳定排序；分页游标固定快照水位，绑定租户、线程、方向和过滤条件。
-- SSE 初连仍为 live-only。NATS 只唤醒完整事件的数据库补读，每秒兜底补读覆盖丢通知；DB 失败断开后恢复，查询和写入有独立超时。
+- SSE 初连仍为 live-only，在订阅之前读取起始水位，首次补读覆盖订阅期间的提交。Session 删除是跨线程终止事件，各线程流先发出 `session.deleted` 再关闭。NATS 只唤醒完整事件的数据库补读，每秒兜底补读覆盖丢通知；DB 失败断开后恢复，查询和写入有独立超时。
 - 历史与 SSE 采用同一完整事件序列化。thinking 仅公开进度身份和时间，保留私有存储内容用于恢复/幂等比较。
 - 子线程 raw、线程映射及公共事件在事务内转换；历史 GET 只读，迟到映射在写入路径补齐，不再由刷新推进状态。
 

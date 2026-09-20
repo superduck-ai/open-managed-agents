@@ -274,3 +274,15 @@ func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 		t.Run(test.statementID, func(t *testing.T) { assertMapperExecutionError(t, test) })
 	}
 }
+
+func TestEventPayloadRetryComparisonBindings(t *testing.T) {
+	stored, incoming := []byte(`{"n":1}`), []byte(`{"n":1.0}`)
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperPayloadsMatchStatement,
+		bound:     buildSessionEventMapperPayloadsMatch(yourbatis.DialectPostgres, stored, incoming, []string{"created_at"}),
+		wantID:    "SessionEventMapper.PayloadsMatch", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames:          []string{"stored", "ignoredFields", "incoming", "ignoredFields"},
+		wantSensitiveArgumentNames: []string{"stored", "incoming"},
+		wantSQLFragments:           []string{"CAST($1 AS jsonb)", "CAST($3 AS jsonb)"},
+	})
+}

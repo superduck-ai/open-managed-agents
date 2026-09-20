@@ -64,30 +64,23 @@ func TestWorkerHTTPBatchCommitsTogether(t *testing.T) {
 			defer cancel()
 			stream := openSessionEventStream(t, app, ctx, "/v1/sessions/"+response.ID+"/events/stream?beta=true")
 			defer stream.Body.Close()
-			for _, stage := range []string{"public", "inbound"} {
-				var remove func()
-				if stage == "public" {
-					remove = rejectPublicSessionEventWrites(t, app, session.UUID, "agent.message")
-				} else {
-					remove = rejectSessionInputCommit(t, app, worker.UUID, "inbound")
-				}
-				defer remove()
-				assertError(t, post(), http.StatusInternalServerError, "api_error")
-				remove()
-				after, err := getCodeSession(app, t.Context(), codeSessionID)
-				if err != nil || after.LastInboundSequenceNum != worker.LastInboundSequenceNum || string(after.WorkerExternalMetadata) != string(worker.WorkerExternalMetadata) {
-					t.Fatalf("%s failure committed replies/metadata: %v", stage, err)
-				}
-				if got := listSessionEvents(t, app, response.ID, "limit=100", defaultTestKey); !reflect.DeepEqual(got.Data, before.Data) {
-					t.Fatalf("%s failure committed part of history", stage)
-				}
-				if threads := listSessionThreads(t, app, response.ID, defaultTestKey); len(threads.Data) != 1 || threads.Data[0].Status != "running" || mustSessionRecord(t, app, response.ID).Status != "running" {
-					t.Fatalf("%s failure committed thread/status", stage)
-				}
-				got, err := app.db.SessionEventWatermark(t.Context(), session.WorkspaceUUID, session.ExternalID)
-				if err != nil || !got.Equal(watermark) {
-					t.Fatalf("%s failure advanced clock: %v", stage, err)
-				}
+			remove := rejectPublicSessionEventWrites(t, app, session.UUID, "agent.message")
+			defer remove()
+			assertError(t, post(), http.StatusInternalServerError, "api_error")
+			remove()
+			afterFailure, err := getCodeSession(app, t.Context(), codeSessionID)
+			if err != nil || string(afterFailure.WorkerExternalMetadata) != string(worker.WorkerExternalMetadata) {
+				t.Fatalf("public failure committed replies/metadata: %v", err)
+			}
+			if got := listSessionEvents(t, app, response.ID, "limit=100", defaultTestKey); !reflect.DeepEqual(got.Data, before.Data) {
+				t.Fatalf("public failure committed part of history")
+			}
+			if threads := listSessionThreads(t, app, response.ID, defaultTestKey); len(threads.Data) != 1 || threads.Data[0].Status != "running" || mustSessionRecord(t, app, response.ID).Status != "running" {
+				t.Fatalf("public failure committed thread/status")
+			}
+			got, err := app.db.SessionEventWatermark(t.Context(), session.WorkspaceUUID, session.ExternalID)
+			if err != nil || !got.Equal(watermark) {
+				t.Fatalf("public failure advanced clock: %v", err)
 			}
 			resp := post()
 			resp.Body.Close()
@@ -100,16 +93,16 @@ func TestWorkerHTTPBatchCommitsTogether(t *testing.T) {
 				assertSessionEventJSONEqual(t, assertNextSessionFrameType(t, scanner, sessionEventStringField(t, raw, "type")), raw)
 			}
 			committed, err := getCodeSession(app, t.Context(), codeSessionID)
-			if err != nil || committed.LastInboundSequenceNum != worker.LastInboundSequenceNum+2 || !strings.Contains(string(committed.WorkerExternalMetadata), "batch-ask-tool") {
+			if err != nil || len(app.workerEvents.Pending(codeSessionID)) != 3 || !strings.Contains(string(committed.WorkerExternalMetadata), "batch-ask-tool") {
 				t.Fatalf("batch replies or ask did not commit: %v", err)
 			}
-			queued, err := app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSessionID)
+			queued, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			var commands []string
 			for _, event := range queued {
-				if event.Source == "auto-approve" {
+				if strings.Contains(string(event.Payload), "pwd-") {
 					commands = append(commands, string(event.Payload))
 				}
 			}
@@ -125,7 +118,7 @@ func TestWorkerHTTPBatchCommitsTogether(t *testing.T) {
 				t.Fatal("batch retry duplicated public events")
 			}
 			repeated, err := getCodeSession(app, t.Context(), codeSessionID)
-			if err != nil || repeated.LastInboundSequenceNum != committed.LastInboundSequenceNum || string(repeated.WorkerExternalMetadata) != string(committed.WorkerExternalMetadata) {
+			if err != nil || len(app.workerEvents.Pending(codeSessionID)) != 3 || string(repeated.WorkerExternalMetadata) != string(committed.WorkerExternalMetadata) {
 				t.Fatalf("batch retry duplicated replies/metadata: %v", err)
 			}
 		})

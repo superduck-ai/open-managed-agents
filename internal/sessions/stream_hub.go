@@ -229,6 +229,14 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		h.errorAdapter.Write(w, r, streamingUnsupported())
 		return
 	}
+	// Capture progress before subscribing; the first DB catch-up covers the gap.
+	progressCtx, cancelProgress := context.WithTimeout(r.Context(), 10*time.Second)
+	cursor, err := h.db.SessionEventWatermark(progressCtx, session.WorkspaceUUID, sessionID)
+	cancelProgress()
+	if err != nil {
+		h.errorAdapter.Write(w, r, internalError("Could not read event progress", err))
+		return
+	}
 	subID, ch := h.streams.subscribe(session.WorkspaceUUID, sessionID)
 	defer h.streams.unsubscribe(subID)
 	if err := h.eventBus.Subscribe(r.Context(), session.ExternalID); err != nil {
@@ -239,13 +247,6 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 				h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
 			}
 		}()
-	}
-	progressCtx, cancelProgress := context.WithTimeout(r.Context(), 10*time.Second)
-	cursor, err := h.db.SessionEventWatermark(progressCtx, session.WorkspaceUUID, sessionID)
-	cancelProgress()
-	if err != nil {
-		h.errorAdapter.Write(w, r, internalError("Could not read event progress", err))
-		return
 	}
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
 	connection.historyThreadID = threadID

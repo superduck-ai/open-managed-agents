@@ -22,6 +22,20 @@ func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Requ
 	return claims, token, true
 }
 
+func (h *Handler) authenticateMCPProxyRequest(w http.ResponseWriter, r *http.Request, codeSessionID string) (SessionCredentialClaims, bool) {
+	token := auth.ExtractAPIKey(r)
+	if token == "" {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing MCP proxy token"))
+		return SessionCredentialClaims{}, false
+	}
+	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, codeSessionID)
+	if err != nil || claims.SessionID != codeSessionID || claims.WorkerEpoch <= 0 {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid MCP proxy token"))
+		return SessionCredentialClaims{}, false
+	}
+	return claims, true
+}
+
 func (h *Handler) authorizeSessionIngress(w http.ResponseWriter, r *http.Request, codeSessionID string) bool {
 	_, ok := h.authorizeSessionIngressClaims(w, r, codeSessionID)
 	return ok
@@ -34,11 +48,6 @@ func (h *Handler) authorizeSessionIngressClaims(w http.ResponseWriter, r *http.R
 		return SessionCredentialClaims{}, false
 	}
 	return claims, true
-}
-
-func (h *Handler) authorizeSessionIngressRequest(r *http.Request, codeSessionID string) error {
-	_, err := h.sessionIngressClaims(r, codeSessionID)
-	return err
 }
 
 // sessionIngressClaims 返回鉴权后的 claims；OTLP ingress 需要 claims 并以 OTLP

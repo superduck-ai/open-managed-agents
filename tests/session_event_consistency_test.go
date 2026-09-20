@@ -26,6 +26,72 @@ func (b unavailableSessionBus) Subscribe(context.Context, string) error {
 	return errors.New("bus unavailable")
 }
 
+// The callback deterministically commits in the subscription setup window.
+type committingSessionBus struct {
+	*sessionfanout.LocalBus
+	commit func(context.Context) error
+}
+
+func (b committingSessionBus) Subscribe(ctx context.Context, sessionID string) error {
+	if err := b.commit(ctx); err != nil {
+		return err
+	}
+	return b.LocalBus.Subscribe(ctx, sessionID)
+}
+
+func TestSessionStreamIncludesCommitsDuringSubscription(t *testing.T) {
+	app, agent, env := newSessionEventTestApp(t, "subscription-race", `{"model":"claude-opus-4-6","name":"stream-regression"}`, `{"name":"subscription-race"}`)
+	response := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	session := mustSessionRecord(t, app, response.ID)
+	bus := committingSessionBus{LocalBus: sessionfanout.NewLocal(), commit: func(ctx context.Context) error {
+		event := consistencyTestEvent("during-subscribe", time.Now())
+		_, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{event}, nil)
+		return err
+	}}
+	handler := sessionsapi.NewHandler(app.cfg, app.db, newCodeSessionService(app, nil, nil), nil, bus, app.vaultSecrets, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal := auth.Principal{CredentialType: auth.CredentialTypeAPIKey, WorkspaceUUID: session.WorkspaceUUID, OrganizationUUID: session.OrganizationUUID}
+		handler.StreamEvents(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)), session.ExternalID)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseStream, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer responseStream.Body.Close()
+	history := listSessionEvents(t, app, session.ExternalID, "types[]=agent.message", defaultTestKey)
+	if len(history.Data) != 1 {
+		t.Fatalf("history length = %d", len(history.Data))
+	}
+	assertSessionEventJSONEqual(t, assertNextSessionFrameType(t, bufio.NewScanner(responseStream.Body), "agent.message"), history.Data[0])
+}
+
+func TestChildSessionStreamEmitsDeletionBeforeEOF(t *testing.T) {
+	app, agent, env := newSessionEventTestApp(t, "child-deletion", `{"model":"claude-opus-4-6","name":"stream-regression"}`, `{"name":"child-deletion"}`)
+	response := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeID := launchLocalCodeSession(t, app, response.ID)
+	childID := "sthr_" + uuid.NewV4().String()
+	postCodeSessionIngressEvents(t, app, codeID, `{"events":[{"type":"session.thread_created","uuid":"child-deletion","session_thread_id":`+quoteJSON(childID)+`,"agent_name":"child"}]}`)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	stream := openSessionEventStream(t, app, ctx, "/v1/sessions/"+response.ID+"/threads/"+childID+"/stream?beta=true")
+	defer stream.Body.Close()
+	deleteSession(t, app, response.ID)
+	scanner := bufio.NewScanner(stream.Body)
+	assertNextSessionFrameType(t, scanner, "session.deleted")
+	for scanner.Scan() {
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("stream did not close cleanly: %v", err)
+	}
+}
+
 func TestSessionStreamHistoryConsistency(t *testing.T) {
 	app, agent, env := newSessionEventTestApp(t, "session-event-consistency", `{"model":"claude-opus-4-6","name":"event-consistency"}`, `{"name":"event-consistency"}`)
 
@@ -38,8 +104,8 @@ func TestSessionStreamHistoryConsistency(t *testing.T) {
 			if mode == "unavailable-bus" {
 				bus = unavailableSessionBus{local}
 			}
-			service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-			handler := sessionsapi.NewHandler(app.cfg, app.db, service, nil, bus, nil)
+			service := newCodeSessionService(app, nil, nil)
+			handler := sessionsapi.NewHandler(app.cfg, app.db, service, nil, bus, app.vaultSecrets, nil)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				principal := auth.Principal{CredentialType: auth.CredentialTypeAPIKey, WorkspaceUUID: session.WorkspaceUUID, OrganizationUUID: session.OrganizationUUID}
 				handler.StreamEvents(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)), session.ExternalID)
@@ -71,7 +137,10 @@ func TestSessionStreamHistoryConsistency(t *testing.T) {
 					event.EventType = "agent.thinking"
 					event.Payload = json.RawMessage(`{"id":"` + event.ExternalID + `","type":"agent.thinking","content":[{"type":"thinking","thinking":"private-thinking"}],"message":{"content":"nested-thinking"},"signature":"private-signature","future_field":"extra-content"}`)
 				}
-				rows, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{event}, nil)
+				if label == "C" {
+					event.Payload = json.RawMessage(`{"id":"` + event.ExternalID + `","type":"agent.message","content":"` + strings.Repeat("x", 40000) + `"}`)
+				}
+				rows, err := service.EventPayloadStore().AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{event}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -237,8 +306,8 @@ func TestWorkerEpochSwitchBeforePublicCommitRejectsLateOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-			sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, nil)
+			service := newCodeSessionService(app, nil, nil)
+			sessionsapi.NewHandler(app.cfg, app.db, service, nil, nil, app.vaultSecrets, nil)
 			before, err := app.db.SessionEventWatermark(ctx, session.WorkspaceUUID, session.ExternalID)
 			if err != nil {
 				t.Fatal(err)
@@ -320,9 +389,9 @@ func TestWorkerEpochSwitchBeforePublicCommitRejectsLateOutput(t *testing.T) {
 	}
 }
 
-func TestSessionSendCommitsPublicInputAndWorkerQueueTogether(t *testing.T) {
+func TestSessionSendCommitsPublicInputBeforeWorkerDelivery(t *testing.T) {
 	app, agent, env := newSessionEventTestApp(t, "session-input-commit", `{"model":"claude-opus-4-6","name":"input-commit"}`, `{"name":"input-commit"}`)
-	for _, stage := range []string{"inbound", "metadata"} {
+	for _, stage := range []string{"public"} {
 		t.Run(stage, func(t *testing.T) {
 			response := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 			session := mustSessionRecord(t, app, response.ID)
@@ -356,7 +425,7 @@ func TestSessionSendCommitsPublicInputAndWorkerQueueTogether(t *testing.T) {
     {"type":"user.custom_tool_result","custom_tool_use_id":"sevt_answer","content":[{"type":"text","text":"{\"Color\":\"Blue\"}"}]},
     {"type":"user.message","content":[{"type":"text","text":"after confirmations"}]}
    ]}`
-			removeFailure := rejectSessionInputCommit(t, app, codeSession.UUID, stage)
+			removeFailure := rejectPublicSessionEventWrites(t, app, session.UUID, "user.message")
 			failed := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ExternalID+"/events?beta=true", strings.NewReader(body), defaultTestKey, true)
 			assertError(t, failed, http.StatusInternalServerError, "api_error")
 			after, err := app.db.SessionEventWatermark(t.Context(), session.WorkspaceUUID, session.ExternalID)
@@ -369,12 +438,12 @@ func TestSessionSendCommitsPublicInputAndWorkerQueueTogether(t *testing.T) {
 			if got := mustSessionRecord(t, app, session.ExternalID).OutcomeEvaluations; string(got) != "[]" {
 				t.Fatalf("failed input changed outcomes: %s", got)
 			}
-			queued, err := app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSession.ExternalID)
+			queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 			if err != nil || len(queued) != 0 {
 				t.Fatalf("failed input partially queued: %v, %v", queued, err)
 			}
 			reloaded, found, err := app.db.GetCodeSession(t.Context(), codeSession.ExternalID)
-			if err != nil || !found || reloaded.LastInboundSequenceNum != 0 || string(reloaded.WorkerExternalMetadata) != string(codeSession.WorkerExternalMetadata) {
+			if err != nil || !found || string(reloaded.WorkerExternalMetadata) != string(codeSession.WorkerExternalMetadata) {
 				t.Fatalf("failed input changed worker sequence/metadata: %v, %v", found, err)
 			}
 			removeFailure()
@@ -383,7 +452,7 @@ func TestSessionSendCommitsPublicInputAndWorkerQueueTogether(t *testing.T) {
 			if len(accepted.Data) != 5 {
 				t.Fatalf("accepted input count = %d", len(accepted.Data))
 			}
-			queued, err = app.db.ListQueuedCodeSessionInboundEvents(t.Context(), codeSession.ExternalID)
+			queued, err = listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 			if err != nil || len(queued) != 4 {
 				t.Fatalf("committed inputs: %v, %v", queued, err)
 			}
@@ -392,12 +461,9 @@ func TestSessionSendCommitsPublicInputAndWorkerQueueTogether(t *testing.T) {
 					t.Fatalf("input sequence = %d at %d", event.SequenceNum, i)
 				}
 			}
-			if queued[0].Source != "public-session" || queued[1].Source != "tool-confirmation" || queued[2].Source != "custom-tool-result" || queued[3].Source != "public-session" {
-				t.Fatalf("mixed batch changed input order: %v", queued)
-			}
 			reloaded, found, err = app.db.GetCodeSession(t.Context(), codeSession.ExternalID)
-			if err != nil || !found || reloaded.LastInboundSequenceNum != 4 {
-				t.Fatalf("committed worker sequence = %d, %v", reloaded.LastInboundSequenceNum, err)
+			if err != nil || !found || len(app.workerEvents.Pending(codeSession.ExternalID)) != 4 {
+				t.Fatalf("committed worker sequence = %d, %v", len(app.workerEvents.Pending(codeSession.ExternalID)), err)
 			}
 			var remaining map[string]json.RawMessage
 			if err := json.Unmarshal(reloaded.WorkerExternalMetadata, &remaining); err != nil {
@@ -417,15 +483,14 @@ func TestSessionSendCommitsPublicInputAndWorkerQueueTogether(t *testing.T) {
 	}
 }
 
-// Reject only this fixture's write, at either the queue or subsequent metadata
-// update. A later failure must roll back public events, queue, clock and outcomes.
+// Reject this fixture's permission metadata update to verify transaction rollback.
 func rejectSessionInputCommit(t *testing.T, app *testApp, codeSessionUUID, stage string) func() {
 	t.Helper()
-	name := `"test_input_commit_` + uuid.NewV4().String() + `"`
-	table, operation, condition := "code_session_inbound_events", "INSERT", "NEW.code_session_uuid::text = TG_ARGV[0]"
-	if stage == "metadata" {
-		table, operation, condition = "code_sessions", "UPDATE", "NEW.uuid::text = TG_ARGV[0] AND NEW.worker_external_metadata IS DISTINCT FROM OLD.worker_external_metadata"
+	if stage != "metadata" {
+		t.Fatalf("unsupported failure stage %s", stage)
 	}
+	name := `"test_input_commit_` + uuid.NewV4().String() + `"`
+	table, operation, condition := "code_sessions", "UPDATE", "NEW.uuid::text = TG_ARGV[0] AND NEW.worker_external_metadata IS DISTINCT FROM OLD.worker_external_metadata"
 	_, err := app.pool.Exec(t.Context(), `CREATE FUNCTION `+name+`() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF `+condition+` THEN RAISE EXCEPTION 'test rejected session input commit'; END IF; RETURN NEW; END $$`)
 	if err != nil {
 		t.Fatal(err)

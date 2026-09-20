@@ -23,13 +23,14 @@ func (s *Service) UpdateWorkerState(ctx context.Context, codeSessionID string, i
 	}
 	var updated db.CodeSession
 	var created []db.SessionEvent
-	err = s.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
+	err = s.eventPayloads.WithEventTx(ctx, func(ctx context.Context, tx db.ManagedAgentEventTx) error {
+		created = nil
 		session, err := tx.LockSessionForEvents(ctx, record.WorkspaceUUID, record.SessionExternalID)
 		if err != nil {
 			return err
 		}
 		if session.ArchivedAt != nil {
-			return db.ErrInvalidState
+			return errSessionRejectsWorkerEvents
 		}
 		worker, err := tx.LockPublicEventWorker(ctx, session, db.SessionEventWorker{CodeSessionUUID: record.UUID, Epoch: input.WorkerEpoch})
 		if err != nil {

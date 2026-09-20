@@ -35,12 +35,14 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
 	Env               string                  `yaml:"env"`
 	Server            ServerConfig            `yaml:"server"`
 	Database          yamlDatabaseConfig      `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
 	NATS              yamlNATSConfig          `yaml:"nats"`
 	Auth              AuthConfig              `yaml:"auth"`
+	Tunnel            TunnelConfig            `yaml:"tunnel"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
 	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
@@ -105,10 +107,12 @@ func newYAMLConfig() yamlConfig {
 			DrainTimeout:   defaults.NATS.DrainTimeout,
 		},
 		Auth:              defaults.Auth,
+		Tunnel:            defaults.Tunnel,
 		Storage:           defaults.Storage,
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
 		SandboxLifecycle:  defaults.SandboxLifecycle,
+		TranscriptArchive: defaults.TranscriptArchive,
 		EnvironmentRunner: defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
@@ -150,10 +154,12 @@ func (input yamlConfig) resolve() Config {
 			DrainTimeout:   input.NATS.DrainTimeout,
 		},
 		Auth:              input.Auth,
+		Tunnel:            input.Tunnel,
 		Storage:           input.Storage,
 		Batch:             input.Batch,
 		E2B:               input.E2B,
 		SandboxLifecycle:  input.SandboxLifecycle,
+		TranscriptArchive: input.TranscriptArchive,
 		EnvironmentRunner: input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,

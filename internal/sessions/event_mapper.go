@@ -196,6 +196,10 @@ func (h *Handler) populateThreadStatusAgentName(ctx context.Context, tx db.Manag
 	// subsequently updated. The complete payload is still checked for conflicts.
 	stored, err := tx.GetSessionEvent(ctx, session, spec.EventID)
 	if err == nil {
+		stored, err = h.eventPayloads.RestorePublicTx(ctx, tx, stored)
+		if err != nil {
+			return err
+		}
 		var payload struct {
 			AgentName *string `json:"agent_name"`
 		}
@@ -298,6 +302,10 @@ func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, tx db.ManagedAg
 			return "", err
 		}
 		for _, event := range events {
+			event, err = h.eventPayloads.RestorePublicTx(ctx, tx, event)
+			if err != nil {
+				return "", err
+			}
 			var object map[string]any
 			if err := json.Unmarshal(event.Payload, &object); err != nil {
 				return "", fmt.Errorf("decode stored thread mapping: %w", err)

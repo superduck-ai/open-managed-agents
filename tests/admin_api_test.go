@@ -3,8 +3,9 @@ package tests
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +26,12 @@ import (
 )
 
 const tunnelsBetaHeader = "mcp-tunnels-2026-05-19"
+
+var (
+	tunnelIDPattern            = regexp.MustCompile(`^tunnel_[0-9a-f]{32}$`)
+	tunnelCertificateIDPattern = regexp.MustCompile(`^tcrt_[0-9a-f]{32}$`)
+	tunnelFingerprintPattern   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
 
 type adminObject struct {
 	ID             string            `json:"id"`
@@ -40,7 +48,10 @@ type adminObject struct {
 	ProviderConfig json.RawMessage   `json:"provider_config"`
 	Domain         string            `json:"domain"`
 	TunnelToken    string            `json:"tunnel_token"`
+	TunnelID       string            `json:"tunnel_id"`
 	Fingerprint    string            `json:"fingerprint"`
+	CreatedAt      string            `json:"created_at"`
+	ExpiresAt      *string           `json:"expires_at"`
 	ArchivedAt     *string           `json:"archived_at"`
 	Tags           map[string]string `json:"tags"`
 }
@@ -296,17 +307,9 @@ func TestAdminAPI(t *testing.T) {
 		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
 
-	t.Run("failure tunnel requires beta header", func(t *testing.T) {
-		resp := adminDo(t, app, http.MethodGet, "/v1/organizations/tunnels", nil, defaultTestKey, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
-	})
-
-	t.Run("failure tunnel certificate rejects invalid pem", func(t *testing.T) {
-		tunnelID := seedAdminTunnel(t, app.pool, "tunnel_bad_cert_"+suffix, "bad-cert-"+suffix+".local", nil)
-		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/certificates", map[string]any{
-			"ca_certificate_pem": "not a certificate",
-		}, defaultTestKey, tunnelsBetaHeader)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	t.Run("failure legacy tunnel route is removed", func(t *testing.T) {
+		resp := adminDo(t, app, http.MethodGet, "/v1/organizations/tunnels", nil, defaultTestKey, tunnelsBetaHeader)
+		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
 
 	t.Run("failure cross organization isolation", func(t *testing.T) {
@@ -553,60 +556,120 @@ func TestAdminAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("success tunnel token certificate limits and archive", func(t *testing.T) {
-		workspace := createAdminWorkspace(t, app, "tunnel-"+suffix, nil, nil)
-		tunnelID := seedAdminTunnel(t, app.pool, "tunnel_"+suffix, "tunnel-"+suffix+".local", &workspace.ID)
-
+	t.Run("success Claude-compatible tunnel lifecycle", func(t *testing.T) {
 		var tunnel adminObject
-		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/tunnels/"+tunnelID, nil, defaultTestKey, tunnelsBetaHeader), &tunnel)
-		if tunnel.ID != tunnelID || tunnel.WorkspaceID == nil || *tunnel.WorkspaceID != workspace.ID {
-			t.Fatalf("tunnel = %+v", tunnel)
+		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/tunnels", map[string]any{
+			"display_name": "Tunnel " + suffix,
+		}, defaultTestKey, tunnelsBetaHeader), &tunnel)
+		if !tunnelIDPattern.MatchString(tunnel.ID) || tunnel.Type != "tunnel" || tunnel.Domain == "" {
+			t.Fatalf("created tunnel = %+v", tunnel)
 		}
 
 		var token adminObject
-		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/reveal_token", nil, defaultTestKey, tunnelsBetaHeader), &token)
+		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/tunnels/"+tunnel.ID+"/reveal_token", nil, defaultTestKey, tunnelsBetaHeader), &token)
 		if token.Type != "tunnel_token" || token.TunnelToken == "" {
 			t.Fatalf("revealed token = %+v", token)
 		}
 		firstToken := token.TunnelToken
 
-		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/rotate_token", map[string]any{"reason": "test"}, defaultTestKey, tunnelsBetaHeader), &token)
+		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/tunnels/"+tunnel.ID+"/rotate_token", map[string]any{"reason": "routine rotation"}, defaultTestKey, tunnelsBetaHeader), &token)
 		if token.TunnelToken == "" || token.TunnelToken == firstToken {
 			t.Fatalf("rotated token = %+v, want new token", token)
 		}
 
-		certPEM := newTestCertificatePEM(t, "admin-one-"+suffix)
-		certPEM2 := newTestCertificatePEM(t, "admin-two-"+suffix)
-		certPEM3 := newTestCertificatePEM(t, "admin-three-"+suffix)
-		var cert adminObject
-		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/certificates", map[string]any{
-			"ca_certificate_pem": certPEM,
-		}, defaultTestKey, tunnelsBetaHeader), &cert)
-		if cert.Type != "tunnel_certificate" || cert.Fingerprint == "" {
-			t.Fatalf("certificate = %+v", cert)
+		var page adminTokenPage
+		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/tunnels?limit=1000", nil, defaultTestKey, tunnelsBetaHeader), &page)
+		if !containsAdminObject(page.Data, tunnel.ID) {
+			t.Fatalf("tunnel %s missing from list: %+v", tunnel.ID, page)
 		}
 
-		var second adminObject
-		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/certificates", map[string]any{
-			"ca_certificate_pem": certPEM2,
-		}, defaultTestKey, tunnelsBetaHeader), &second)
-		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/certificates", map[string]any{
-			"ca_certificate_pem": certPEM3,
-		}, defaultTestKey, tunnelsBetaHeader)
-		assertError(t, resp, http.StatusConflict, "conflict_error")
+		certificatePEM := newAdminTestTunnelCAPEM(t)
+		var certificate adminObject
+		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/tunnels/"+tunnel.ID+"/certificates?beta=true", map[string]any{
+			"ca_certificate_pem": certificatePEM,
+		}, defaultTestKey, tunnelsBetaHeader), &certificate)
+		if !tunnelCertificateIDPattern.MatchString(certificate.ID) ||
+			certificate.Type != "tunnel_certificate" ||
+			certificate.TunnelID != tunnel.ID ||
+			!tunnelFingerprintPattern.MatchString(certificate.Fingerprint) ||
+			certificate.CreatedAt == "" ||
+			certificate.ExpiresAt == nil ||
+			certificate.ArchivedAt != nil {
+			t.Fatalf("created tunnel certificate = %+v", certificate)
+		}
+
+		var retrievedCertificate adminObject
+		adminDecodeOK(t, adminDo(
+			t,
+			app,
+			http.MethodGet,
+			"/v1/tunnels/"+tunnel.ID+"/certificates/"+certificate.ID+"?beta=true",
+			nil,
+			defaultTestKey,
+			tunnelsBetaHeader,
+		), &retrievedCertificate)
+		if retrievedCertificate.ID != certificate.ID || retrievedCertificate.Fingerprint != certificate.Fingerprint {
+			t.Fatalf("retrieved tunnel certificate = %+v, want %+v", retrievedCertificate, certificate)
+		}
+
+		var certificatePage adminTokenPage
+		adminDecodeOK(t, adminDo(
+			t,
+			app,
+			http.MethodGet,
+			"/v1/tunnels/"+tunnel.ID+"/certificates?limit=1&beta=true",
+			nil,
+			defaultTestKey,
+			tunnelsBetaHeader,
+		), &certificatePage)
+		if !containsAdminObject(certificatePage.Data, certificate.ID) {
+			t.Fatalf("certificate %s missing from list: %+v", certificate.ID, certificatePage)
+		}
 
 		var archived adminObject
-		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/archive", nil, defaultTestKey, tunnelsBetaHeader), &archived)
+		adminDecodeOK(t, adminDo(t, app, http.MethodPost, "/v1/tunnels/"+tunnel.ID+"/archive", nil, defaultTestKey, tunnelsBetaHeader), &archived)
 		if archived.ArchivedAt == nil {
 			t.Fatalf("archived tunnel = %+v, want archived_at", archived)
 		}
 
-		var certs adminTokenPage
-		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/tunnels/"+tunnelID+"/certificates?include_archived=true", nil, defaultTestKey, tunnelsBetaHeader), &certs)
-		for _, archivedCert := range certs.Data {
-			if archivedCert.ArchivedAt == nil {
-				t.Fatalf("certificate after tunnel archive = %+v, want archived_at", archivedCert)
-			}
+		adminDecodeOK(t, adminDo(
+			t,
+			app,
+			http.MethodGet,
+			"/v1/tunnels/"+tunnel.ID+"/certificates/"+certificate.ID+"?beta=true",
+			nil,
+			defaultTestKey,
+			tunnelsBetaHeader,
+		), &retrievedCertificate)
+		if retrievedCertificate.ArchivedAt != nil {
+			t.Fatalf("archiving tunnel changed independent certificate = %+v", retrievedCertificate)
+		}
+
+		var archivedCertificate adminObject
+		adminDecodeOK(t, adminDo(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/tunnels/"+tunnel.ID+"/certificates/"+certificate.ID+"/archive?beta=true",
+			nil,
+			defaultTestKey,
+			tunnelsBetaHeader,
+		), &archivedCertificate)
+		if archivedCertificate.ArchivedAt == nil {
+			t.Fatalf("archived tunnel certificate = %+v, want archived_at", archivedCertificate)
+		}
+
+		adminDecodeOK(t, adminDo(
+			t,
+			app,
+			http.MethodGet,
+			"/v1/tunnels/"+tunnel.ID+"/certificates?include_archived=true&beta=true",
+			nil,
+			defaultTestKey,
+			tunnelsBetaHeader,
+		), &certificatePage)
+		if !containsAdminObject(certificatePage.Data, certificate.ID) {
+			t.Fatalf("archived certificate %s missing from include-archived list: %+v", certificate.ID, certificatePage)
 		}
 	})
 
@@ -651,6 +714,28 @@ func TestAdminAPI(t *testing.T) {
 			t.Fatalf("tunnel reference columns = %d UUID and %d legacy, want 4 and 0", uuidColumnCount, legacyColumnCount)
 		}
 	})
+}
+
+func newAdminTestTunnelCAPEM(t *testing.T) string {
+	t.Helper()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate test tunnel CA key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "OMA admin API tunnel test CA"},
+		NotBefore:             time.Now().UTC().Add(-time.Minute),
+		NotAfter:              time.Now().UTC().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("create test tunnel CA certificate: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}))
 }
 
 func adminDo(t *testing.T, app *testApp, method, path string, body any, key, beta string) *http.Response {
@@ -801,34 +886,6 @@ func seedAdminAPIKey(t *testing.T, pool *pgxpool.Pool, suffix, rawKey string) (s
 	return apiKeyID, rawKey
 }
 
-func seedAdminTunnel(t *testing.T, pool *pgxpool.Pool, tunnelID, domain string, workspaceExternalID *string) string {
-	t.Helper()
-	ids := getAdminDefaultIDs(t, pool)
-	var workspaceUUID *string
-	if workspaceExternalID != nil {
-		var loadedWorkspaceUUID string
-		if err := pool.QueryRow(context.Background(), `
-			select CAST(uuid AS text)
-			from workspaces
-			where external_id = $1
-				and organization_uuid = CAST($2 AS uuid)
-		`, *workspaceExternalID, ids.OrganizationUUID).Scan(&loadedWorkspaceUUID); err != nil {
-			t.Fatalf("load tunnel workspace: %v", err)
-		}
-		workspaceUUID = &loadedWorkspaceUUID
-	}
-	displayName := "Tunnel " + tunnelID
-	if _, err := pool.Exec(context.Background(), `
-		insert into mcp_tunnels (
-			external_id, organization_uuid, workspace_uuid, workspace_external_id, display_name, domain
-		)
-		values ($1, $2, $3, $4, $5, $6)
-	`, tunnelID, ids.OrganizationUUID, workspaceUUID, workspaceExternalID, displayName, domain); err != nil {
-		t.Fatalf("seed admin tunnel: %v", err)
-	}
-	return tunnelID
-}
-
 func getAdminDefaultIDs(t *testing.T, pool *pgxpool.Pool) adminDefaultIDs {
 	t.Helper()
 	var ids adminDefaultIDs
@@ -841,29 +898,6 @@ func getAdminDefaultIDs(t *testing.T, pool *pgxpool.Pool) adminDefaultIDs {
 		t.Fatalf("load admin default ids: %v", err)
 	}
 	return ids
-}
-
-func newTestCertificatePEM(t *testing.T, commonName string) string {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate cert key: %v", err)
-	}
-	now := time.Now().UTC()
-	template := x509.Certificate{
-		SerialNumber:          big.NewInt(now.UnixNano()),
-		Subject:               pkix.Name{CommonName: commonName},
-		NotBefore:             now.Add(-time.Minute),
-		NotAfter:              now.Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create cert: %v", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
 func containsAdminObject(items []adminObject, id string) bool {

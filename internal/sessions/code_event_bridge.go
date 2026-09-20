@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {
-	created, err := h.db.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
+	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return
@@ -23,7 +23,7 @@ func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, 
 // Returned events are safe to notify only after that transaction commits.
 func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, payloads []json.RawMessage) ([]db.SessionEvent, error) {
 	var created []db.SessionEvent
-	now := time.Now().UTC()
+	now := eventpayload.EventTime(ctx)
 	for _, raw := range payloads {
 		if maevents.IsStreamDelta(rawSessionEventType(raw)) {
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, tx, session, codeSessionID, raw, now)
@@ -42,7 +42,7 @@ func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgen
 		}
 		if _, status := maevents.ThreadStatus(rawSessionEventType(raw)); status {
 			for _, event := range batch {
-				inserted, err := appendThreadStatusEvent(ctx, tx, session, codeSessionID, event)
+				inserted, err := h.appendThreadStatusEvent(ctx, tx, session, codeSessionID, event)
 				if err != nil {
 					return nil, err
 				}
@@ -50,7 +50,7 @@ func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgen
 			}
 			continue
 		}
-		inserted, err := tx.AppendSessionEventsIfAbsent(ctx, session, batch, []string{"created_at", "processed_at", "timestamp"})
+		inserted, err := h.eventPayloads.AppendPublicTx(ctx, tx, session, batch, []string{"created_at", "processed_at", "timestamp"})
 		if err != nil {
 			return nil, err
 		}

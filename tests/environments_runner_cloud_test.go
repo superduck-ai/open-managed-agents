@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -188,7 +187,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if codeSession.Model != "claude-opus-4-8" {
 		t.Fatalf("local code session model = %q, want agent model unchanged", codeSession.Model)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
 	}
@@ -352,8 +351,8 @@ These rules describe the current sandbox environment and do not replace your ass
 // TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation 对应 #189：
 // Session 已可发消息，但 Code Session 在 Runner 后半段才创建。
 // 在 provider.Create 时发送（prepare 已完成、Code Session 尚不存在）：
-// 消息应进入 session_events，且 Runner 结束后也应出现在 code_session_inbound_events
-// （initialize 之后）。修复前该窗口内只有 session_events，inbound 往往只有 initialize。
+// 消息应进入 session_events，且 Runner 结束后也应直接发布到 JetStream
+// （initialize 之后）。修复前该窗口内只有 session_events，worker 往往只能看到 initialize。
 func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := config.Load()
@@ -406,7 +405,7 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	if err != nil {
 		t.Fatalf("load Code Session after runner startup: %v", err)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
 	}
@@ -1319,7 +1318,7 @@ func newManagedAgentRunner(
 		DB:              app.db,
 		Provider:        provider,
 		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(app.db, app.credentials, nil),
+		CodeSessions:    newCodeSessionService(app, nil, nil),
 		Skills:          skillsapi.NewRuntimeResolver(app.db),
 		FilestoreTokens: app.filestoreCredentials,
 	})

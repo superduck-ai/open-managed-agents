@@ -177,7 +177,10 @@ func run(logger *slog.Logger) error {
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
 	lifecycle.Register(workers)
-	transcripts := transcriptretention.New(database, objectStore, cfg.TranscriptArchive, logger.With("component", "transcript-archive"))
+	transcripts, err := transcriptretention.New(database, objectStore, cfg.TranscriptArchive, logger.With("component", "transcript-archive"))
+	if err != nil {
+		return fmt.Errorf("create transcript archive service: %w", err)
+	}
 	transcripts.Register(workers)
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
 		map[string]river.QueueConfig{tunnels.CleanupQueue: {MaxWorkers: 2}, deploymentjobs.Queue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}, transcriptretention.Queue: {MaxWorkers: 2}})
@@ -230,9 +233,13 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	return serveHTTP(ctx, server, logger)
+}
+
+func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("claude api server listening", "addr", cfg.Server.Addr)
+		logger.Info("claude api server listening", "addr", server.Addr)
 		errCh <- server.ListenAndServe()
 	}()
 

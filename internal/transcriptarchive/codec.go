@@ -62,7 +62,7 @@ func entryFromEvent(event db.CodeSessionInternalEvent) DecodedEvent {
 // EncodeRecord preserves payload bytes even when the JSON contains insignificant whitespace.
 func EncodeRecord(event db.CodeSessionInternalEvent) ([]byte, error) {
 	if !json.Valid(event.Payload) || !json.Valid(event.EventMetadata) || event.SequenceNum <= 0 {
-		return nil, errInvalidSegment
+		return nil, ErrInvalidSegment
 	}
 	entry := entryFromEvent(event)
 	trimmed := bytes.Trim(event.Payload, " \t\r\n")
@@ -77,7 +77,10 @@ func EncodeRecord(event db.CodeSessionInternalEvent) ([]byte, error) {
 	}
 	// Remove the two known final null fields and append raw JSON values verbatim.
 	suffix := []byte(`,"payload":null,"event_metadata":null}`)
-	header = bytes.TrimSuffix(header, suffix)
+	header, ok := bytes.CutSuffix(header, suffix)
+	if !ok {
+		return nil, ErrInvalidSegment
+	}
 	body := append(header, []byte(`,"payload":`)...)
 	body = append(body, event.Payload...)
 	body = append(body, []byte(`,"event_metadata":`)...)
@@ -87,20 +90,20 @@ func EncodeRecord(event db.CodeSessionInternalEvent) ([]byte, error) {
 
 func Encode(events []db.CodeSessionInternalEvent) (EncodedSegment, error) {
 	if len(events) == 0 {
-		return EncodedSegment{}, errInvalidSegment
+		return EncodedSegment{}, ErrInvalidSegment
 	}
 	var raw bytes.Buffer
 	var previous int64
 	for _, event := range events {
 		if event.SequenceNum <= previous {
-			return EncodedSegment{}, errInvalidSegment
+			return EncodedSegment{}, ErrInvalidSegment
 		}
 		record, err := EncodeRecord(event)
 		if err != nil {
 			return EncodedSegment{}, err
 		}
 		if raw.Len()+len(record) > maxSegmentBytes {
-			return EncodedSegment{}, errInvalidSegment
+			return EncodedSegment{}, ErrInvalidSegment
 		}
 		raw.Write(record)
 		previous = event.SequenceNum
@@ -117,7 +120,7 @@ func Encode(events []db.CodeSessionInternalEvent) (EncodedSegment, error) {
 
 func Decode(body io.Reader, expect SegmentExpectation) (map[int64]DecodedEvent, error) {
 	if expect.Size <= 0 || expect.Size > maxSegmentBytes || expect.RawBytes <= 0 || expect.RawBytes > maxSegmentBytes || expect.EventCount <= 0 {
-		return nil, errInvalidSegment
+		return nil, ErrInvalidSegment
 	}
 	compressed, err := io.ReadAll(io.LimitReader(body, expect.Size+1))
 	if err != nil {
@@ -125,19 +128,19 @@ func Decode(body io.Reader, expect SegmentExpectation) (map[int64]DecodedEvent, 
 	}
 	digest := sha256.Sum256(compressed)
 	if int64(len(compressed)) != expect.Size || hex.EncodeToString(digest[:]) != expect.SHA256 {
-		return nil, errIntegrity
+		return nil, ErrIntegrity
 	}
 	decoder, err := zstd.NewReader(bytes.NewReader(compressed), zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(maxSegmentBytes))
 	if err != nil {
-		return nil, err
+		return nil, invalidSegment(err)
 	}
 	defer decoder.Close()
 	raw, err := io.ReadAll(io.LimitReader(decoder, expect.RawBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, invalidSegment(err)
 	}
 	if int64(len(raw)) != expect.RawBytes {
-		return nil, errIntegrity
+		return nil, ErrIntegrity
 	}
 	return decodeRecords(raw, expect)
 }
@@ -153,23 +156,23 @@ func decodeRecords(raw []byte, expect SegmentExpectation) (map[int64]DecodedEven
 			break
 		}
 		if err != nil {
-			return nil, errInvalidSegment
+			return nil, ErrInvalidSegment
 		}
 		if event.SequenceNum <= previous || !json.Valid(event.Payload) || !json.Valid(event.EventMetadata) {
-			return nil, errIntegrity
+			return nil, ErrIntegrity
 		}
 		if len(events) == 0 && event.SequenceNum != expect.FromSequence {
-			return nil, errIntegrity
+			return nil, ErrIntegrity
 		}
 		event.Payload = append(append([]byte(event.PayloadLeading), event.Payload...), []byte(event.PayloadTrailing)...)
 		if !json.Valid(event.Payload) {
-			return nil, errIntegrity
+			return nil, ErrIntegrity
 		}
 		events[event.SequenceNum] = event
 		previous = event.SequenceNum
 	}
 	if len(events) != expect.EventCount || previous != expect.ToSequence {
-		return nil, errIntegrity
+		return nil, ErrIntegrity
 	}
 	return events, nil
 }

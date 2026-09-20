@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func TestTranscriptArchiveCorruptReadback(t *testing.T) {
@@ -21,7 +20,7 @@ func TestTranscriptArchiveCorruptReadback(t *testing.T) {
 		objects.objects[key] = object
 		return nil
 	}
-	service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err == nil {
 		t.Fatal("corrupt object accepted")
 	}
@@ -37,7 +36,7 @@ func TestTranscriptArchiveSegmentsUseRawBytes(t *testing.T) {
 	makeArchiveTerminal(t, app, session)
 	policy := transcriptPolicy()
 	policy.TargetSegmentRawBytes = 1024
-	service := transcriptretention.New(app.db, objects, policy, nil)
+	service := newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 		t.Fatal(err)
 	}

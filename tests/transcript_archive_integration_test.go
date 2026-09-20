@@ -10,11 +10,21 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func transcriptPolicy() transcriptretention.Policy {
 	return transcriptretention.Policy{Enabled: true, TerminalSweepEnabled: true, BoundarySweepEnabled: true, TerminalDwell: 24 * time.Hour, ArchiveMinAge: 7 * 24 * time.Hour, SoftDeleteWindow: 14 * 24 * time.Hour, TargetSegmentRawBytes: 8 * 1024 * 1024, DeleteBatchRows: 2, MaxRowsPerJob: 50000}
+}
+
+func newTranscriptRetentionService(t *testing.T, app *testApp, objects storage.ObjectStore, policy transcriptretention.Policy) *transcriptretention.Service {
+	t.Helper()
+	service, err := transcriptretention.New(app.db, objects, policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
 }
 
 func transcriptScope(session db.CodeSession) db.TranscriptScope {
@@ -81,7 +91,7 @@ func TestTranscriptArchiveTerminalSafety(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+			service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 			if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 				t.Fatal(err)
 			}
@@ -99,13 +109,13 @@ func TestTranscriptArchiveTerminalRetry(t *testing.T) {
 	makeArchiveTerminal(t, app, session)
 	policy := transcriptPolicy()
 	policy.DryRun = true
-	service := transcriptretention.New(app.db, objects, policy, nil)
+	service := newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 		t.Fatal(err)
 	}
 	assertPayloadSQLCount(t, app, "select count(*) from transcript_archives", 0)
 	policy.DryRun = false
-	service = transcriptretention.New(app.db, objects, policy, nil)
+	service = newTranscriptRetentionService(t, app, objects, policy)
 	objects.afterUpload = func(string) error { return errors.New("interrupted after upload") }
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err == nil {
 		t.Fatal("upload failure accepted")

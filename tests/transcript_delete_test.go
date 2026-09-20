@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func TestTranscriptArchivePhysicalDelete(t *testing.T) {
@@ -15,7 +14,7 @@ func TestTranscriptArchivePhysicalDelete(t *testing.T) {
 	seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 5))
 	makeArchiveTerminal(t, app, session)
 	policy := transcriptPolicy()
-	service := transcriptretention.New(app.db, objects, policy, nil)
+	service := newTranscriptRetentionService(t, app, objects, policy)
 	scope := transcriptScope(session)
 	if err := service.Archive(t.Context(), scope, true); err != nil {
 		t.Fatal(err)
@@ -25,7 +24,7 @@ func TestTranscriptArchivePhysicalDelete(t *testing.T) {
 	}
 	assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events", 5)
 	policy.HardDeleteEnabled = true
-	service = transcriptretention.New(app.db, objects, policy, nil)
+	service = newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.HardDelete(t.Context(), scope); err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +50,13 @@ func TestTranscriptArchivePhysicalDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy.MaxRowsPerJob = 2
-	service = transcriptretention.New(app.db, objects, policy, nil)
+	service = newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.HardDelete(t.Context(), scope); err != nil {
 		t.Fatal(err)
 	}
 	assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events", 3)
 	policy.DryRun = true
-	service = transcriptretention.New(app.db, objects, policy, nil)
+	service = newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.HardDelete(t.Context(), scope); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +64,7 @@ func TestTranscriptArchivePhysicalDelete(t *testing.T) {
 	policy.DryRun = false
 	policy.SoftDeleteWindow = 0
 	policy.MaxRowsPerJob = 50000
-	service = transcriptretention.New(app.db, objects, policy, nil)
+	service = newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.HardDelete(t.Context(), scope); err != nil {
 		t.Fatal(err)
 	}

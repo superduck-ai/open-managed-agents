@@ -10,7 +10,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func transcriptHTTPBytes(t *testing.T, app *testApp, id, suffix string) []byte {
@@ -39,7 +38,7 @@ func TestTranscriptArchivePreservesIdleReclaimResume(t *testing.T) {
 	if reason != "idle_timeout" {
 		t.Fatalf("stop reason: %s", reason)
 	}
-	service := transcriptretention.New(f.app.db, f.app.store, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, f.app, f.app.store, transcriptPolicy())
 	if err := service.Archive(t.Context(), transcriptScope(f.code), true); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +78,7 @@ func TestTranscriptArchiveConcurrentCompactionAndEpoch(t *testing.T) {
 		expected[1] = transcriptHTTPBytes(t, app, session.ExternalID, "internal-events?subagents=true")
 		return nil
 	}
-	service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 	if err := service.Archive(t.Context(), transcriptScope(session), false); err != nil {
 		t.Fatal(err)
 	}

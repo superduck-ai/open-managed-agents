@@ -28,7 +28,9 @@
 
 模式 A 由独立开关启用，默认关闭。每个 foreground / agent_id scope 独立计算最新 compaction，只归档严格小于边界且 created_at 早于 archive_min_age 的行；无边界的 scope 和边界本身保留。边界前移不会使已选历史重新可达。即使不同 scope 序号交错，也在空洞处分段并按对象内逐条序号删除，不能把起止区间当作实际成员列表。
 
-删除行也会删除幂等键。安全论证依赖 worker lease 60 秒、epoch 围栏拒绝旧 worker（409）、当前 worker 仅持有本次新产生 entry，以及默认 7 天 archive_min_age 远大于 worker 生命周期。若未来改到小时级，必须重做该论证；本实现配置校验不允许小于 7 天。
+删除行也会删除幂等键。安全论证依赖 worker lease 60 秒、epoch 围栏拒绝旧 worker（409）、当前 worker 仅持有本次新产生 entry，以及默认 7 天 archive_min_age 远大于 worker 生命周期。若未来改到小时级，必须重做该论证。`transcriptretention.New` 返回 `(*Service, error)`，在创建服务前拒绝 `archive_min_age < 7 天`（含零值和负值），不静默设置默认值；关闭开关或 dry-run 也不豁免校验，调用方必须显式提供合法策略并处理初始化错误。
+
+`TestNewRejectsUnsafeArchiveMinAge` / `TestNewAcceptsSafeArchiveMinAge` 覆盖非法值、开关组合和七天边界；`TestTranscriptArchiveBoundaryMinAgePreservesIdempotency` 覆盖非法策略拒绝创建服务、七天策略保留新事件，以及同 epoch 重试不会将边界前历史重新插入为可见事件。
 
 ## 删除查询与失败恢复
 

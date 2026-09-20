@@ -8,7 +8,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func TestTranscriptArchiveMissingObjectRecovery(t *testing.T) {
@@ -17,7 +16,7 @@ func TestTranscriptArchiveMissingObjectRecovery(t *testing.T) {
 	session, _ := newPayloadIntegrationSession(t, app)
 	seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 3))
 	makeArchiveTerminal(t, app, session)
-	service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 	scope := transcriptScope(session)
 	objects.uploadErr = errors.New("failed before object creation")
 	if err := service.Archive(t.Context(), scope, true); err == nil {
@@ -90,7 +89,7 @@ func TestTranscriptArchiveReadsObjectsOncePerAttempt(t *testing.T) {
 	session, _ := newPayloadIntegrationSession(t, app)
 	seedArchiveEvents(t, app, session, []db.AppendCodeSessionInternalEventInput{{Payload: []byte(sizedPrivatePayload("blob", 65536))}})
 	makeArchiveTerminal(t, app, session)
-	service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 	clear(objects.reads)
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 		t.Fatal(err)
@@ -113,14 +112,14 @@ func TestTranscriptArchiveResumeWithSmallerBudget(t *testing.T) {
 	seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 5))
 	makeArchiveTerminal(t, app, session)
 	policy := transcriptPolicy()
-	service := transcriptretention.New(app.db, objects, policy, nil)
+	service := newTranscriptRetentionService(t, app, objects, policy)
 	objects.afterUpload = func(string) error { return errors.New("interrupted after upload") }
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err == nil {
 		t.Fatal("upload interruption ignored")
 	}
 	objects.afterUpload = nil
 	policy.MaxRowsPerJob = 2
-	service = transcriptretention.New(app.db, objects, policy, nil)
+	service = newTranscriptRetentionService(t, app, objects, policy)
 	for _, remaining := range []int{3, 1, 0, 0} {
 		if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 			t.Fatal(err)

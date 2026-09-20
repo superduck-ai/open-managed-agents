@@ -40,8 +40,12 @@ type Service struct {
 	logger   *slog.Logger
 }
 
-func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) *Service {
-	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}
+// New rejects unsafe retention policies before any workers can be registered.
+func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) (*Service, error) {
+	if policy.ArchiveMinAge < 7*24*time.Hour {
+		return nil, errArchiveMinAge
+	}
+	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}, nil
 }
 
 func (s *Service) query(scope db.TranscriptScope, terminal bool) db.TranscriptArchiveQuery {

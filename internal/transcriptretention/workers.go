@@ -46,19 +46,11 @@ type sweepWorker struct {
 
 func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[sweepArgs]) error {
 	s := w.service
-	if !s.policy.Enabled {
+	if !s.policy.Enabled || !s.policy.TerminalSweepEnabled {
 		return nil
 	}
 	client := river.ClientFromContext[*sql.Tx](ctx)
-	for _, terminal := range []bool{true} {
-		if terminal && !s.policy.TerminalSweepEnabled || !terminal && !s.policy.BoundarySweepEnabled {
-			continue
-		}
-		if err := s.enqueue(ctx, client, terminal); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.enqueue(ctx, client, true)
 }
 
 func (s *Service) enqueue(ctx context.Context, client *river.Client[*sql.Tx], terminal bool) error {

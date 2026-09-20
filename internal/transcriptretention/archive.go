@@ -28,10 +28,14 @@ func (s *Service) archiveNew(ctx context.Context, query db.TranscriptArchiveQuer
 			if err != nil {
 				return err
 			}
-			if err := s.attachVerified(ctx, a, segment); err != nil {
+			decoded, err := s.ReadSegment(ctx, a)
+			if err != nil {
 				return err
 			}
-			if _, err := s.softDeleteSegment(ctx, a, query, segment); err != nil {
+			if err := s.attachVerified(ctx, a, segment, decoded); err != nil {
+				return err
+			}
+			if _, err := s.softDeleteSegment(ctx, a, query, segment, decoded); err != nil {
 				return err
 			}
 			s.logSegment(ctx, query.Scope, len(segment), a.RawBytes, a.Size)
@@ -95,12 +99,22 @@ func (s *Service) finishRegistered(ctx context.Context, query db.TranscriptArchi
 			if a.EventCount > budget-used {
 				return used, errBudget
 			}
+			decoded, err := s.ReadSegment(ctx, a)
+			if err != nil {
+				return used, err
+			}
 			if a.State == "pending" {
-				if err := s.attachVerified(ctx, a, rows); err != nil {
+				for i := range rows {
+					rows[i], err = s.restorePayload(ctx, rows[i])
+					if err != nil {
+						return used, err
+					}
+				}
+				if err := s.attachVerified(ctx, a, rows, decoded); err != nil {
 					return used, err
 				}
 			}
-			if _, err := s.softDeleteSegment(ctx, a, query, rows); err != nil {
+			if _, err := s.softDeleteSegment(ctx, a, query, rows, decoded); err != nil {
 				return used, err
 			}
 			used += len(rows)
@@ -110,11 +124,7 @@ func (s *Service) finishRegistered(ctx context.Context, query db.TranscriptArchi
 	return used, nil
 }
 
-func (s *Service) softDeleteSegment(ctx context.Context, a db.TranscriptArchive, query db.TranscriptArchiveQuery, rows []db.CodeSessionInternalEvent) (int, error) {
-	decoded, err := s.ReadSegment(ctx, a)
-	if err != nil {
-		return 0, err
-	}
+func (s *Service) softDeleteSegment(ctx context.Context, a db.TranscriptArchive, query db.TranscriptArchiveQuery, rows []db.CodeSessionInternalEvent, decoded map[int64]transcriptarchive.DecodedEvent) (int, error) {
 	sequences := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		event, ok := decoded[row.SequenceNum]

@@ -87,6 +87,52 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 			toolName: "MysteryTool",
 			want:     resolvedToolPermissionAsk,
 		},
+		{
+			name:     "ask user question without config defaults to deny",
+			snapshot: `{"tools":[{"type":"agent_toolset_20260401"}]}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "ask user question without toolset defaults to deny",
+			snapshot: `{"tools":[]}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name: "ask user question explicit allow is preserved",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_allow"}}],
+					"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name: "ask user question explicit ask is preserved",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name: "ask user question enabled false denies",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":false,"permission_policy":{"type":"always_allow"}}]
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
 	}
 
 	for _, tt := range tests {

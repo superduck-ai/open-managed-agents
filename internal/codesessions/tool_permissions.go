@@ -257,7 +257,13 @@ func resolveAgentToolPermission(tools []toolPermissionToolset, toolName string) 
 		if config, ok := findToolConfig(toolset.Configs, toolName); ok {
 			return permissionFromToolConfig(config, "always_allow")
 		}
+		if toolName == "ask_user_question" {
+			return resolvedToolPermissionDeny
+		}
 		return permissionFromToolConfig(toolset.DefaultConfig, "always_allow")
+	}
+	if toolName == "ask_user_question" {
+		return resolvedToolPermissionDeny
 	}
 	return resolvedToolPermissionAllow
 }

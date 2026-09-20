@@ -448,7 +448,9 @@ describe('create agent draft model', () => {
       enabled: false,
       permission_policy: { type: 'always_allow' },
     });
-    expect(groupDenied.tools[0].configs).toEqual([]);
+    expect(groupDenied.tools[0].configs).toEqual([
+      { name: 'ask_user_question', enabled: false, permission_policy: { type: 'always_allow' } },
+    ]);
 
     const askBash = setToolPermission(baseDraft, () => true, 'bash', 'always_ask', 'always_allow');
     expect(askBash.tools[0].configs).toEqual([
@@ -461,6 +463,19 @@ describe('create agent draft model', () => {
   test('preserves an explicit always-allow choice for AskUserQuestion', () => {
     const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
     const allowed = setToolPermission(normalizedDraft, () => true, 'ask_user_question', 'always_allow', 'always_allow');
+
+    expect(allowed.tools[0].configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: true,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
+    expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
+  });
+
+  test('keeps an explicit AskUserQuestion config when setting group permission', () => {
+    const allowed = setToolsetPermission(normalizeCreateAgentDraft(baseDraft), () => true, 'always_allow');
 
     expect(allowed.tools[0].configs).toEqual([
       {

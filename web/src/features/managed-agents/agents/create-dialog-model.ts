@@ -423,9 +423,14 @@ export function setToolsetPermission(
 ): CreateAgentInput {
   return {
     ...draft,
-    tools: draft.tools.map((tool) =>
-      predicate(tool) ? { ...tool, default_config: permissionConfig(permission), configs: [] } : tool,
-    ),
+    tools: draft.tools.map((tool) => {
+      if (!predicate(tool)) {
+        return tool;
+      }
+      const configs =
+        tool.type === 'agent_toolset_20260401' ? [{ name: 'ask_user_question', ...permissionConfig(permission) }] : [];
+      return { ...tool, default_config: permissionConfig(permission), configs };
+    }),
   };
 }
 

@@ -291,35 +291,6 @@ func toolPermissionRequestMetadataKey(publicEventID string) string {
 	return legacyToolPermissionRequestMetadataKey + ":" + publicEventID
 }
 
-// PendingToolActionEventIDs reads the same pending requests that confirmations
-// consume. Unrelated worker metadata is not part of the public waiting state.
-func PendingToolActionEventIDs(raw json.RawMessage) ([]string, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &metadata); err != nil {
-		return nil, err
-	}
-	var ids []string
-	for key, value := range metadata {
-		if key != legacyToolPermissionRequestMetadataKey && !strings.HasPrefix(key, legacyToolPermissionRequestMetadataKey+":") {
-			continue
-		}
-		var request toolPermissionRequest
-		decoder := json.NewDecoder(bytes.NewReader(value))
-		decoder.UseNumber()
-		if err := decoder.Decode(&request); err != nil {
-			return nil, err
-		}
-		if request.PublicEventID != "" && request.RequestID != "" && request.ToolUseID != "" {
-			ids = append(ids, request.PublicEventID)
-		}
-	}
-	slices.Sort(ids)
-	return slices.Compact(ids), nil
-}
-
 func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string) (toolPermissionRequest, error) {
 	if len(raw) == 0 {
 		return toolPermissionRequest{}, db.ErrNotFound
@@ -397,7 +368,7 @@ func customToolResultAnswers(payload userCustomToolResultPayload) (map[string]an
 	var answers map[string]any
 	decoder := json.NewDecoder(strings.NewReader(text))
 	decoder.UseNumber()
-	if err := decoder.Decode(&answers); err != nil || answers == nil || !json.Valid([]byte(text)) {
+	if err := decoder.Decode(&answers); err != nil || answers == nil {
 		return nil, ErrProtocol
 	}
 	return answers, nil

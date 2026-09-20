@@ -19,6 +19,8 @@ func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, 
 	h.publishSessionEvents(r.Context(), created)
 }
 
+var sessionEventRetryIgnoredFields = []string{"created_at", "processed_at", "timestamp", "agent_name"}
+
 // AppendCodeSessionEvents maps and writes through the caller's locked transaction.
 // Returned events are safe to notify only after that transaction commits.
 func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, payloads []json.RawMessage) ([]db.SessionEvent, error) {
@@ -40,17 +42,7 @@ func (h *Handler) AppendCodeSessionEvents(ctx context.Context, tx db.ManagedAgen
 		for i := range batch {
 			batch[i].StateChange = sessionEventStateChange(batch[i])
 		}
-		if _, status := maevents.ThreadStatus(rawSessionEventType(raw)); status {
-			for _, event := range batch {
-				inserted, err := appendThreadStatusEvent(ctx, tx, session, codeSessionID, event)
-				if err != nil {
-					return nil, err
-				}
-				created = append(created, inserted...)
-			}
-			continue
-		}
-		inserted, err := tx.AppendSessionEventsIfAbsent(ctx, session, batch, []string{"created_at", "processed_at", "timestamp"})
+		inserted, err := tx.AppendSessionEventsIfAbsent(ctx, session, batch, sessionEventRetryIgnoredFields)
 		if err != nil {
 			return nil, err
 		}

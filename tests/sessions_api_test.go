@@ -464,7 +464,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	}
 	cfg.Webhook.EndpointURL = receiver.URL
 	cfg.Webhook.SigningKey = "whsec_c2VjcmV0Cg=="
-	cfg.Webhook.EventTypes = []string{"session.status_idled"}
+	cfg.Webhook.EventTypes = []string{"session.thread_status_idle"}
 	cfg.Webhook.WorkerEnabled = true
 	cfg.Webhook.AllowInsecure = true
 
@@ -489,7 +489,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	]}`)
 
 	events := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
-	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
+	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.thread_status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
 	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
@@ -679,7 +679,6 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 		`"from_agent_name":"Translate to Chinese"`,
 		`你好，世界`,
 		`"type":"session.thread_status_idle"`,
-		`"type":"session.status_idle"`,
 		childThreadID,
 	} {
 		if !eventPageContains(events, want) {
@@ -1366,19 +1365,19 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
 		t.Fatalf("primary thread status after running = %+v, want running", threads.Data)
 	}
-	runningEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	runningEvents := listSessionEvents(t, app, session.ID, "types[]=session.thread_status_running", defaultTestKey)
 	if len(runningEvents.Data) != 1 {
-		t.Fatalf("session.status_running events = %d, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
+		t.Fatalf("session.thread_status_running events = %d, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
 	}
-	runningEvent := sessionEventObjectByType(t, runningEvents, "session.status_running")
+	runningEvent := sessionEventObjectByType(t, runningEvents, "session.thread_status_running")
 	if runningEvent["id"] == "" || runningEvent["processed_at"] == "" {
-		t.Fatalf("session.status_running missing persisted fields: %#v", runningEvent)
+		t.Fatalf("session.thread_status_running missing persisted fields: %#v", runningEvent)
 	}
 	if _, ok := runningEvent["stop_reason"]; ok {
-		t.Fatalf("session.status_running unexpectedly contains stop_reason: %#v", runningEvent)
+		t.Fatalf("session.thread_status_running unexpectedly contains stop_reason: %#v", runningEvent)
 	}
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
-	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.thread_status_running", defaultTestKey)
 	if len(runningEvents.Data) != 1 {
 		t.Fatalf("duplicate running state produced %d events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
 	}
@@ -1405,7 +1404,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
 		t.Fatalf("primary thread status after projection retry = %+v, want running", threads.Data)
 	}
-	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.thread_status_running", defaultTestKey)
 	if len(runningEvents.Data) != 1 {
 		t.Fatalf("projection retry produced %d running events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
 	}
@@ -1486,7 +1485,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("download output = %q, want %q", got, outputContent)
 	}
 
-	idleEventsBefore := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	idleEventsBefore := listSessionEvents(t, app, session.ID, "types[]=session.thread_status_idle", defaultTestKey)
 	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
 	if idleState.Worker.WorkerStatus != "idle" || !rawMessageIsJSONNull(idleState.Worker.RequiresActionDetails) {
 		t.Fatalf("idle worker state = %+v, details=%s; want idle with cleared details", idleState.Worker, idleState.Worker.RequiresActionDetails)
@@ -1501,16 +1500,16 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
 		t.Fatalf("primary thread status after idle = %+v, want idle", threads.Data)
 	}
-	idleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	idleEvents := listSessionEvents(t, app, session.ID, "types[]=session.thread_status_idle", defaultTestKey)
 	if len(idleEvents.Data) != len(idleEventsBefore.Data)+1 {
 		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
 	}
-	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
+	idleEvent := sessionEventObjectByType(t, idleEvents, "session.thread_status_idle")
 	if reason, ok := idleEvent["stop_reason"].(map[string]any); !ok || reason["type"] != "end_turn" || len(reason) != 1 {
-		t.Fatalf("worker session.status_idle requires an end_turn stop_reason: %#v", idleEvent)
+		t.Fatalf("worker session.thread_status_idle requires an end_turn stop_reason: %#v", idleEvent)
 	}
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
-	duplicateIdleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
+	duplicateIdleEvents := listSessionEvents(t, app, session.ID, "types[]=session.thread_status_idle", defaultTestKey)
 	if len(duplicateIdleEvents.Data) != len(idleEvents.Data) {
 		t.Fatalf("duplicate idle state produced %d events, want %d: %+v", len(duplicateIdleEvents.Data), len(idleEvents.Data), duplicateIdleEvents.Data)
 	}
@@ -1573,7 +1572,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	}
 
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
-	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
+	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.thread_status_running", defaultTestKey)
 	if len(runningEvents.Data) != 2 {
 		t.Fatalf("second idle-to-running transition produced %d events, want 2: %+v", len(runningEvents.Data), runningEvents.Data)
 	}
@@ -2067,7 +2066,7 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 		`"name":"get_weather"`,
 		`"mcp_server_name":"weather_service"`,
 		`"evaluated_permission":"ask"`,
-		`"type":"session.status_idle"`,
+		`"type":"session.thread_status_idle"`,
 		`"type":"requires_action"`,
 	} {
 		if !eventPageContains(publicEvents, want) {
@@ -2086,10 +2085,10 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 		t.Fatalf("agent.mcp_tool_use id = %#v, want non-empty string: %#v", toolEvent["id"], toolEvent)
 	}
 	assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
-	statusEvent := sessionEventObjectByType(t, publicEvents, "session.status_idle")
+	statusEvent := sessionEventObjectByType(t, publicEvents, "session.thread_status_idle")
 	stopReason, ok := statusEvent["stop_reason"].(map[string]any)
 	if !ok {
-		t.Fatalf("session.status_idle stop_reason = %#v, want object: %#v", statusEvent["stop_reason"], statusEvent)
+		t.Fatalf("session.thread_status_idle stop_reason = %#v, want object: %#v", statusEvent["stop_reason"], statusEvent)
 	}
 	eventIDs := stringArrayField(stopReason, "event_ids")
 	if len(eventIDs) != 1 || eventIDs[0] != toolEventID {
@@ -2097,7 +2096,7 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	}
 	assertRequiresActionStopReasonSDKShape(t, stopReason)
 	if _, ok := statusEvent["requires_action_details"]; ok {
-		t.Fatalf("session.status_idle leaked private requires_action_details: %#v", statusEvent)
+		t.Fatalf("session.thread_status_idle leaked private requires_action_details: %#v", statusEvent)
 	}
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
 		`"type":"control_request",`+
@@ -2170,7 +2169,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("agent.custom_tool_use should not expose evaluated_permission: %#v", toolEvent)
 	}
 	assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
-	statusEvent := sessionEventObjectByType(t, publicEvents, "session.status_idle")
+	statusEvent := sessionEventObjectByType(t, publicEvents, "session.thread_status_idle")
 	stopReason, _ := statusEvent["stop_reason"].(map[string]any)
 	eventIDs := stringArrayField(stopReason, "event_ids")
 	if len(eventIDs) != 1 || eventIDs[0] != toolEventID {
@@ -2291,7 +2290,7 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	if count := toolUseEventCount(t, primaryEvents); count != 1 {
 		t.Fatalf("primary tool use public event count = %d, want 1: %+v", count, primaryEvents.Data)
 	}
-	primaryStatusEvent := sessionEventObjectByType(t, primaryEvents, "session.status_idle")
+	primaryStatusEvent := sessionEventObjectByType(t, primaryEvents, "session.thread_status_idle")
 	primaryStopReason, ok := primaryStatusEvent["stop_reason"].(map[string]any)
 	if !ok {
 		t.Fatalf("primary status stop_reason = %#v, want object: %#v", primaryStatusEvent["stop_reason"], primaryStatusEvent)

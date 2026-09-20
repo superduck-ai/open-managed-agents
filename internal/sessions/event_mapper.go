@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"uuid"
@@ -20,15 +19,13 @@ import (
 )
 
 func rawSessionEventType(raw json.RawMessage) string {
-	var payload map[string]json.RawMessage
+	var payload struct {
+		Type string `json:"type"`
+	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return ""
 	}
-	var eventType string
-	if err := json.Unmarshal(payload["type"], &eventType); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(eventType)
+	return strings.TrimSpace(payload.Type)
 }
 
 func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID string, raw json.RawMessage, now time.Time) (db.SessionEvent, error) {
@@ -108,7 +105,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, tx db
 	var payload map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil || !json.Valid(raw) {
+	if err := decoder.Decode(&payload); err != nil || payload == nil {
 		return nil, errors.New("code session event must be an object")
 	}
 	eventType, _ := payload["type"].(string)
@@ -192,29 +189,13 @@ func (h *Handler) populateThreadStatusAgentName(ctx context.Context, tx db.Manag
 	if sessionPayloadString(spec.Payload, "agent_name") != "" {
 		return nil
 	}
-	// Retry enrichment must use the committed name, even if the snapshot was
-	// subsequently updated. The complete payload is still checked for conflicts.
-	stored, err := tx.GetSessionEvent(ctx, session, spec.EventID)
-	if err == nil {
-		var payload struct {
-			AgentName *string `json:"agent_name"`
-		}
-		if err := json.Unmarshal(stored.Payload, &payload); err != nil {
-			return err
-		}
-		if payload.AgentName != nil {
-			spec.Payload["agent_name"] = *payload.AgentName
-		}
-		return nil
-	}
-	if !errors.Is(err, db.ErrNotFound) {
-		return err
-	}
 	name, err := h.agentNameForSessionThread(ctx, tx, session, sessionPayloadString(spec.Payload, "session_thread_id"))
 	if err != nil {
 		return err
 	}
-	spec.Payload["agent_name"] = name
+	if name != "" {
+		spec.Payload["agent_name"] = name
+	}
 	return nil
 }
 
@@ -284,44 +265,37 @@ func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, tx db.ManagedAg
 	if len(candidates) == 0 {
 		return "", nil
 	}
-	query := db.ListSessionEventsPageParams{
+	events, _, err := tx.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 		WorkspaceUUID:     session.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		PrimaryOnly:       true,
 		Limit:             500,
 		Order:             "asc",
 		Types:             []string{"session.thread_created"},
+	})
+	if err != nil {
+		return "", err
 	}
-	for {
-		events, more, err := tx.ListSessionEventsPage(ctx, query)
-		if err != nil {
-			return "", err
+	for _, event := range events {
+		var object map[string]any
+		if err := json.Unmarshal(event.Payload, &object); err != nil {
+			continue
 		}
-		for _, event := range events {
-			var object map[string]any
-			if err := json.Unmarshal(event.Payload, &object); err != nil {
-				return "", fmt.Errorf("decode stored thread mapping: %w", err)
-			}
-			threadID := sessionPayloadString(object, "session_thread_id")
-			if threadID == "" {
-				continue
-			}
-			for _, field := range []string{"agent_id", "agentId", "task_id"} {
-				if value := sessionPayloadString(object, field); value != "" {
-					if _, ok := candidates[value]; ok {
-						// 子线程内部事件有时只带 agent/task 标识。这里把它归还给对应
-						// session thread，避免普通工具调用被误写到 primary 线程。
-						return threadID, nil
-					}
+		threadID := sessionPayloadString(object, "session_thread_id")
+		if threadID == "" {
+			continue
+		}
+		for _, field := range []string{"agent_id", "agentId", "task_id"} {
+			if value := sessionPayloadString(object, field); value != "" {
+				if _, ok := candidates[value]; ok {
+					// 子线程内部事件有时只带 agent/task 标识。这里把它归还给对应
+					// session thread，避免普通工具调用被误写到 primary 线程。
+					return threadID, nil
 				}
 			}
 		}
-		if !more {
-			return "", nil
-		}
-		last := events[len(events)-1]
-		query.Cursor = &db.SessionEventPageCursor{ProcessedAt: last.ProcessedAt, ExternalID: last.ExternalID}
 	}
+	return "", nil
 }
 
 func (h *Handler) sessionEventCopySpecs(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, codeSessionID, eventType, eventID string, payload map[string]any, now time.Time) ([]sessionEventCopySpec, error) {

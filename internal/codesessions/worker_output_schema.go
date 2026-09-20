@@ -140,9 +140,6 @@ func decodeWorkerControlRequestPayload(raw json.RawMessage) (workerControlReques
 	if err := decoder.Decode(&payload); err != nil {
 		return workerControlRequestPayload{}, err
 	}
-	if !json.Valid(raw) {
-		return workerControlRequestPayload{}, ErrProtocol
-	}
 	return payload, nil
 }
 

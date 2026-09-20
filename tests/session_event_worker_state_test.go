@@ -34,7 +34,7 @@ func TestWorkerStateCommitsWithPublicStatus(t *testing.T) {
 			}
 			var removeFailure func()
 			if stage == "public" {
-				removeFailure = rejectPublicSessionEventWrites(t, app, session.UUID, "session.status_idle")
+				removeFailure = rejectPublicSessionEventWrites(t, app, session.UUID, "session.thread_status_idle")
 			} else {
 				removeFailure = rejectSessionInputCommit(t, app, before.UUID, "metadata")
 			}
@@ -118,7 +118,7 @@ func TestWorkerStatusSerializesConcurrentReports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := listSessionEvents(t, app, session.ExternalID, "types[]=session.status_running&limit=100", defaultTestKey); len(got.Data) != 1 {
+	if got := listSessionEvents(t, app, session.ExternalID, "types[]=session.thread_status_running&limit=100", defaultTestKey); len(got.Data) != 1 {
 		t.Fatalf("concurrent reports created %d running events", len(got.Data))
 	}
 	if _, err := service.UpdateWorkerState(t.Context(), codeSessionID, db.UpdateCodeSessionWorkerStateInput{WorkerEpoch: epoch, WorkerStatus: new("idle")}); err != nil {

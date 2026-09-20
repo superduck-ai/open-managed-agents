@@ -287,41 +287,17 @@ func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) 
 			payload = eventStartPayload(previewBlock{eventID: eventID, eventType: eventType})
 		}
 	}
-	if err := setStreamWriteDeadline(w); err != nil {
-		return err
-	}
 	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.EventType, payload); err != nil {
 		return err
 	}
-	return flushSessionStream(w)
-}
-
-func flushSessionStream(w http.ResponseWriter) error {
-	controller := http.NewResponseController(w)
-	err := controller.Flush()
-	clearErr := controller.SetWriteDeadline(time.Time{})
-	if errors.Is(clearErr, http.ErrNotSupported) {
-		clearErr = nil
-	}
-	return errors.Join(err, clearErr)
-}
-
-func setStreamWriteDeadline(w http.ResponseWriter) error {
-	err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Second))
-	if errors.Is(err, http.ErrNotSupported) {
-		return nil
-	}
-	return err
+	return http.NewResponseController(w).Flush()
 }
 
 func writeStreamComment(w http.ResponseWriter, comment string) error {
-	if err := setStreamWriteDeadline(w); err != nil {
-		return err
-	}
 	if _, err := fmt.Fprintf(w, ": %s\n\n", comment); err != nil {
 		return err
 	}
-	return flushSessionStream(w)
+	return http.NewResponseController(w).Flush()
 }
 
 func streamPreviewTarget(event sessionStreamEvent) (string, string) {

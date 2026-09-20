@@ -154,13 +154,3 @@ func (tx ManagedAgentEventTx) CreateSessionThreadIfAbsent(ctx context.Context, t
 func (tx ManagedAgentEventTx) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
 	return listSessionEventsPage(ctx, tx.sessionEventMapper, params)
 }
-
-func (tx ManagedAgentEventTx) GetSessionEvent(ctx context.Context, session Session, eventID string) (SessionEvent, error) {
-	row, err := tx.sessionEventMapper.FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, eventID)
-	return row.event(), mapNoRows(err)
-}
-
-func (tx ManagedAgentEventTx) ListSessionThreads(ctx context.Context, session Session) ([]SessionThread, error) {
-	rows, err := tx.sessionThreadMapper.List(ctx, session.WorkspaceUUID, session.ExternalID)
-	return sessionThreadsFromRows(rows), err
-}

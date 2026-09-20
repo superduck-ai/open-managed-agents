@@ -227,7 +227,7 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt 
 	var payload map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(payloadRaw))
 	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil || !json.Valid(payloadRaw) {
+	if err := decoder.Decode(&payload); err != nil || payload == nil {
 		return payloadRaw
 	}
 	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)

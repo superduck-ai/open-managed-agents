@@ -594,36 +594,29 @@ func (s *Service) subagentPublicPayloads(ctx context.Context, tx db.ManagedAgent
 }
 
 func (s *Service) subagentThreadMappings(ctx context.Context, tx db.ManagedAgentEventTx, codeSession db.CodeSession) (map[string]string, error) {
-	query := db.ListSessionEventsPageParams{
+	events, _, err := tx.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 		WorkspaceUUID: codeSession.WorkspaceUUID, SessionExternalID: codeSession.SessionExternalID,
 		PrimaryOnly: true, Limit: internalEventsPageSize, Order: "asc", Types: []string{"session.thread_created"},
+	})
+	if err != nil {
+		return nil, err
 	}
 	threadByAgent := make(map[string]string)
-	for {
-		events, more, err := tx.ListSessionEventsPage(ctx, query)
-		if err != nil {
-			return nil, err
+	for _, event := range events {
+		var object workerThreadCreatedPayload
+		if err := json.Unmarshal(event.Payload, &object); err != nil {
+			continue
 		}
-		for _, event := range events {
-			var object workerThreadCreatedPayload
-			if err := json.Unmarshal(event.Payload, &object); err != nil {
-				return nil, fmt.Errorf("decode stored thread mapping: %w", err)
-			}
-			if object.SessionThreadID == "" {
-				continue
-			}
-			for _, agentID := range []string{object.TaskID, object.AgentID, object.LegacyAgentID} {
-				if agentID != "" {
-					threadByAgent[agentID] = object.SessionThreadID
-				}
+		if object.SessionThreadID == "" {
+			continue
+		}
+		for _, agentID := range []string{object.TaskID, object.AgentID, object.LegacyAgentID} {
+			if agentID != "" {
+				threadByAgent[agentID] = object.SessionThreadID
 			}
 		}
-		if !more {
-			return threadByAgent, nil
-		}
-		last := events[len(events)-1]
-		query.Cursor = &db.SessionEventPageCursor{ProcessedAt: last.ProcessedAt, ExternalID: last.ExternalID}
 	}
+	return threadByAgent, nil
 }
 
 func isPublicWorkerOutputEvent(eventType string) bool {

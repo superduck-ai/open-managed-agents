@@ -54,7 +54,7 @@ func (s *Service) archiveNew(ctx context.Context, query db.TranscriptArchiveQuer
 			break
 		}
 		for _, event := range events {
-			restored, err := s.restorePayload(ctx, event)
+			restored, err := s.payloads.RestoreInternal(ctx, event)
 			if err != nil {
 				return err
 			}
@@ -96,16 +96,13 @@ func (s *Service) finishRegistered(ctx context.Context, query db.TranscriptArchi
 			if !live {
 				continue
 			}
-			if a.EventCount > budget-used {
-				return used, errBudget
-			}
 			decoded, err := s.ReadSegment(ctx, a)
 			if err != nil {
 				return used, err
 			}
 			if a.State == "pending" {
 				for i := range rows {
-					rows[i], err = s.restorePayload(ctx, rows[i])
+					rows[i], err = s.payloads.RestoreInternal(ctx, rows[i])
 					if err != nil {
 						return used, err
 					}
@@ -114,10 +111,16 @@ func (s *Service) finishRegistered(ctx context.Context, query db.TranscriptArchi
 					return used, err
 				}
 			}
-			if _, err := s.softDeleteSegment(ctx, a, query, rows, decoded); err != nil {
+			liveRows := slices.DeleteFunc(rows, func(e db.CodeSessionInternalEvent) bool { return e.DeletedAt != nil })
+			liveRows = liveRows[:min(len(liveRows), budget-used)]
+			count, err := s.softDeleteSegment(ctx, a, query, liveRows, decoded)
+			used += count
+			if err != nil {
 				return used, err
 			}
-			used += len(rows)
+			if used == budget {
+				return used, nil
+			}
 		}
 		after = archives[len(archives)-1].FromSequence
 	}

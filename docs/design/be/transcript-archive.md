@@ -12,10 +12,22 @@
 
 上传只尝试一次，重跑只读取已有对象，不覆盖同名 key。上传之前进程退出或上传失败留下的 pending 段，由现有 object cleanup worker 周期调度：超过 24 小时后，在同一事务中标为 deleting 并入队对象清理，释放区间后下一轮使用新 UUID 重建。清理删除对象的所有版本，attached 段不参与回收；上传完成但确认丢失时，重跑可直接校验并 attached。对象读取失败返回错误，不删除数据。
 
-生产配置默认关闭且 dry-run，由 T8 组装；T4 的 Policy 由调用方显式传入。T5 使用硬删除相关字段，T6 开放 boundary sweep，T4 只执行终态归档。段按解压字节切分；超目标大小的单条事件独占段。序号空洞处额外分段，使区间不会覆盖其他 scope 的未归档事件。单任务有总行数上限，重试优先完成已有段的软删除。
+生产配置默认关闭且 dry-run，由 T8 组装；T4 的 Policy 由调用方显式传入。T5 使用硬删除相关字段，T6 开放 boundary sweep，当前只执行终态归档，硬删除由独立开关控制；关闭终态 sweep 不会关闭硬删除调度。段按解压字节切分；超目标大小的单条事件独占段。序号空洞处额外分段，使区间不会覆盖其他 scope 的未归档事件。单任务有总行数上限，重试优先完成已有段的软删除。
 
 ## 验证
 
 `TestTranscriptArchiveTerminalSafety` 覆盖非不可逆终态、未过期 lease、运行 worker 和不足静置期；`TestTranscriptArchiveTerminalRetry` 覆盖 dry-run、大 payload 合并和上传后中断恢复。生产统计 T0 经用户明确指示跳过，模式 B 收益和压缩比尚未测量。
 
 同次执行中，新段复用已恢复的 payload；对象上传后只回读校验一次，校验结果用于 attached 和分批软删。重试仍重新读取并校验对象；每批删除仍由数据库重新检查资格。按字节切段所需的记录编码与最终段编码保持独立，未据此放宽 River 的任务超时。
+
+## 物理删除
+
+独立 `transcript_archive_delete` job 受 `hard_delete_enabled` 控制，默认关闭。观察期默认 14 天，设为零也仍先软删除，再由物理删除任务处理。每次先检查是否有已过观察期却没有 attached 覆盖的行；发现 deleting/missing 注册表即返回错误。随后逐段重新读取并校验对象，逐行匹配 UUID 与序号，最多每批 500 行、独立事务，事务内再次锁定 attached 段并执行 HasAttachedCovering。对象丢失或损坏均拒绝删除并记录错误。单任务遵守总删除行数预算。
+
+## 删除查询与失败恢复
+
+迁移 00063 为已软删除事件建立 `(code_session_uuid, deleted_at)` 部分索引，并包含租户、会话 external ID 和序号，支持候选分页与未覆盖行检查。索引只包含 `deleted_at IS NOT NULL` 的行。
+
+缺失对象、存储权限/配置错误、归档完整性失败及未覆盖行不会被视为删除成功。删除 worker 使用 River 的 24 小时 snooze 保留任务，scheduled 状态参与 scope 去重，阻止 sweep 重复入队。使用 River 持久化的 snoozes 元数据仅在首次拒绝时记录结构化错误；后续每天重新验证，修复后自动继续。网络、读取中断和数据库临时错误仍交给 River 正常重试。codec 导出 ErrInvalidSegment、ErrIntegrity，供边界使用 errors.Is 分类，流读取错误保持原样。
+
+归档恢复先完整校验既有段，再仅对剩余预算允许的存活行软删除；预算耗尽正常结束。即使配置预算调小到低于已有段的行数，后续运行也能分批完成。此规则不放宽 attached 覆盖和逐批资格检查。

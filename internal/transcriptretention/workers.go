@@ -32,6 +32,7 @@ func (archiveArgs) InsertOpts() river.InsertOpts {
 func (s *Service) Register(workers *river.Workers) {
 	river.AddWorker(workers, &sweepWorker{service: s})
 	river.AddWorker(workers, &archiveWorker{service: s})
+	river.AddWorker(workers, &deleteWorker{service: s})
 }
 
 func (s *Service) Configure(ctx context.Context, client *river.Client[*sql.Tx]) error {
@@ -46,11 +47,16 @@ type sweepWorker struct {
 
 func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[sweepArgs]) error {
 	s := w.service
-	if !s.policy.Enabled || !s.policy.TerminalSweepEnabled {
+	if !s.policy.Enabled {
 		return nil
 	}
 	client := river.ClientFromContext[*sql.Tx](ctx)
-	return s.enqueue(ctx, client, true)
+	if s.policy.TerminalSweepEnabled {
+		if err := s.enqueue(ctx, client, true); err != nil {
+			return err
+		}
+	}
+	return s.enqueueDeletes(ctx, client)
 }
 
 func (s *Service) enqueue(ctx context.Context, client *river.Client[*sql.Tx], terminal bool) error {

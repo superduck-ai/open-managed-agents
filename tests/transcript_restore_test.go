@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func TestTranscriptArchiveRestoreAfterBlobGC(t *testing.T) {
@@ -18,7 +17,7 @@ func TestTranscriptArchiveRestoreAfterBlobGC(t *testing.T) {
 	policy := transcriptPolicy()
 	policy.HardDeleteEnabled = true
 	policy.SoftDeleteWindow = 0
-	service := transcriptretention.New(app.db, objects, policy, nil)
+	service := newTranscriptRetentionService(t, app, objects, policy)
 	var before bytes.Buffer
 	if err := service.Export(t.Context(), scope, &before); err != nil {
 		t.Fatal(err)

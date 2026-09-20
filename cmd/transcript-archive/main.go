@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -62,7 +63,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	service := transcriptretention.New(database, objects, transcriptretention.Policy{}, logger)
+	service, err := transcriptretention.New(database, objects, transcriptretention.Policy{ArchiveMinAge: 7 * 24 * time.Hour}, logger)
+	if err != nil {
+		return err
+	}
 	if *mode == "restore" {
 		return service.Restore(context.Background(), scope)
 	}

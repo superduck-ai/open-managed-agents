@@ -98,7 +98,7 @@ func (s *Service) exportDatabaseRange(ctx context.Context, scope db.TranscriptSc
 			return err
 		}
 		for _, event := range events {
-			restored, err := s.restorePayload(ctx, event)
+			restored, err := s.payloads.RestoreInternal(ctx, event)
 			if err != nil {
 				return err
 			}

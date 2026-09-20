@@ -99,6 +99,7 @@
         AND external_id = #{threadExternalID}
         AND deleted_at IS NULL
         AND status NOT IN ('running', 'rescheduling')
+        AND archived_at IS NULL
         RETURNING <include refid="columns"/>
     </update>
 

@@ -11,9 +11,7 @@ export function WebhookEventPicker({
   selected,
   onChange,
   disabled,
-  initialEvents = [],
 }: {
-  initialEvents?: string[];
   selected: string[];
   onChange: (events: string[]) => void;
   disabled: boolean;
@@ -22,14 +20,8 @@ export function WebhookEventPicker({
   const pickerId = useId();
   const [copied, setCopied] = useState('');
   const [copyError, setCopyError] = useState(false);
-  const extraEvents = initialEvents.filter((event) => !allWebhookEventTypes.includes(event));
-  const groups = extraEvents.length
-    ? [
-        ...webhookEventGroups,
-        { label: 'Other subscribed events', events: extraEvents.map((type) => ({ type, label: type })) },
-      ]
-    : webhookEventGroups;
-  const availableTypes = groups.flatMap((group) => group.events.map((event) => event.type));
+  const groups = webhookEventGroups;
+  const availableTypes = allWebhookEventTypes;
 
   const toggle = (types: string[]) => {
     const next = new Set(selected);

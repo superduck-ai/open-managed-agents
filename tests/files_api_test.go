@@ -41,6 +41,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/jackc/pgx/v5"
@@ -1173,7 +1174,8 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("create vault secrets service: %v", err)
 	}
-	deploymentStore := deploymentsapi.NewStore(database).WithEventPayloadStorage(store)
+	webhookEnqueuer := webhooks.NewEnqueuer(database, cfg.Webhook, logger)
+	deploymentStore := deploymentsapi.NewStore(database, logger).WithEventPayloadStorage(store).WithWebhooks(webhookEnqueuer)
 	workers := river.NewWorkers()
 	tunnels.RegisterCleanupWorker(workers, database, nil, logger)
 	deploymentsapi.RegisterWorkers(workers, deploymentStore)
@@ -1193,6 +1195,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		Config:                 cfg,
 		DB:                     database,
 		Deployments:            deploymentStore,
+		WebhookEnqueuer:        webhookEnqueuer,
 		TunnelCleanupJobs:      tunnels.NewCleanupJobs(deploymentJobs),
 		ObjectStore:            store,
 		Logger:                 logger,

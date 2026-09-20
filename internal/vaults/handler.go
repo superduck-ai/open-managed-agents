@@ -327,20 +327,20 @@ func (h *Handler) archiveVaultRoute(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	credentials := h.loadVaultCredentialsForWebhook(r, principal.WorkspaceUUID, vaultID, false)
-	record, err := h.db.ArchiveVault(r.Context(), principal.WorkspaceUUID, vaultID)
+	result, err := h.db.ArchiveVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return vaultNotFound(vaultID, err)
 		}
 		return internalError("Could not archive vault", fmt.Errorf("archive vault %q: %w", vaultID, err))
 	}
-	h.enqueueWebhook(r, principal, "vault.archived", record.ExternalID, nil)
-	for _, credential := range credentials {
-		parentVaultID := record.ExternalID
-		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", credential.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
+	if result.Changed {
+		h.enqueueWebhook(r, principal, "vault.archived", result.Vault.ExternalID, nil)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromVault(record))
+	for _, credentialID := range result.CredentialIDs {
+		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", credentialID, webhooks.EventOptions{VaultID: &result.Vault.ExternalID})
+	}
+	httpapi.WriteJSON(w, http.StatusOK, responseFromVault(result.Vault))
 	return nil
 }
 
@@ -350,17 +350,17 @@ func (h *Handler) deleteVaultRoute(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	credentials := h.loadVaultCredentialsForWebhook(r, principal.WorkspaceUUID, vaultID, true)
-	if err := h.db.DeleteVault(r.Context(), principal.WorkspaceUUID, vaultID); err != nil {
+	credentialIDs, err := h.db.DeleteVault(r.Context(), principal.WorkspaceUUID, vaultID)
+	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return vaultNotFound(vaultID, err)
 		}
 		return internalError("Could not delete vault", fmt.Errorf("delete vault %q: %w", vaultID, err))
 	}
 	h.enqueueWebhook(r, principal, "vault.deleted", vaultID, nil)
-	for _, credential := range credentials {
+	for _, credentialID := range credentialIDs {
 		parentVaultID := vaultID
-		h.enqueueWebhookWithOptions(r, principal, "vault_credential.deleted", credential.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
+		h.enqueueWebhookWithOptions(r, principal, "vault_credential.deleted", credentialID, webhooks.EventOptions{VaultID: &parentVaultID})
 	}
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: vaultID, Type: "vault_deleted"})
 	return nil
@@ -562,7 +562,7 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
-	record, err := h.db.ArchiveVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID)
+	record, changed, err := h.db.ArchiveVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return credentialNotFound(credentialID, err)
@@ -570,7 +570,9 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 		return internalError("Could not archive credential", fmt.Errorf("archive credential %q: %w", credentialID, err))
 	}
 	parentVaultID := record.VaultExternalID
-	h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", record.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
+	if changed {
+		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", record.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
+	}
 	return h.writeCredentialResponse(w, record)
 }
 
@@ -609,20 +611,6 @@ func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Prin
 		ResourceID:          resourceID,
 		Options:             options,
 	})
-}
-
-func (h *Handler) loadVaultCredentialsForWebhook(r *http.Request, workspaceUUID, vaultID string, includeArchived bool) []db.VaultCredential {
-	records, _, err := h.db.ListVaultCredentialsPage(r.Context(), db.ListVaultCredentialsPageParams{
-		WorkspaceUUID:   workspaceUUID,
-		VaultExternalID: vaultID,
-		Limit:           1000,
-		IncludeArchived: includeArchived,
-	})
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list vault credentials for webhook", "vault_id", vaultID, "error", err)
-		return nil
-	}
-	return records
 }
 
 func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request) error {

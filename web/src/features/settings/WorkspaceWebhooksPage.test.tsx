@@ -95,9 +95,9 @@ describe('Workspace webhooks page', () => {
     expect(screen.getByText('0 of 17')).toBeTruthy();
   });
 
-  test('preserves extra subscribed events while allowing optional fields to be cleared', async () => {
+  test('edits canonical events while allowing optional fields to be cleared', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
-    const api = mockWebhooks([{ ...enabledWebhook, enabled_events: ['vault.created', 'session.error'] }]);
+    const api = mockWebhooks([{ ...enabledWebhook, enabled_events: ['vault.created', 'session.updated'] }]);
     render(
       <WorkspaceWebhooksHarness>
         <WorkspaceWebhooksContent />
@@ -106,15 +106,15 @@ describe('Workspace webhooks page', () => {
     await screen.findByText('Prod events');
     fireEvent.click(screen.getByRole('button', { name: 'Prod events https://example.com/prod' }));
     fireEvent.click(screen.getByRole('button', { name: 'Edit webhook' }));
-    const extraEvent = screen.getByRole('checkbox', { name: 'session.error' });
+    const extraEvent = screen.getByRole('checkbox', { name: 'session.updated' });
     expect(extraEvent.getAttribute('aria-checked')).toBe('true');
     await toggleCheckbox(extraEvent);
-    expect(screen.getByRole('checkbox', { name: 'session.error' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'session.updated' })).toBeTruthy();
     await toggleCheckbox(extraEvent);
     fireEvent.change(screen.getByLabelText('Name (optional)'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.lastUpdateFor('wh_enabled')?.name).toBe(''));
-    expect(api.lastUpdateFor('wh_enabled')?.enabled_events).toEqual(['vault.created', 'session.error']);
+    expect(api.lastUpdateFor('wh_enabled')?.enabled_events).toEqual(['session.updated', 'vault.created']);
   });
 
   test('filters IDs and sorts the returned endpoint list', async () => {

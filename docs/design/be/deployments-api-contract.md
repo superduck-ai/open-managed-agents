@@ -51,6 +51,14 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 公开合同没有说明的模糊行为保持不变，包括 `limit=0`、`schedule:null`、默认列表顺序，以及未记录的错误状态和幂等行为。
 
+## 创建 Session 的 Webhook 通知
+
+手动和定时运行都由 `Deployment Store` 在现有事务提交成功、实际创建 Session 后发送 `session.status_idled`。共享 Enqueuer 在 River worker 启动前完成注入，按 Session 的 workspace 选择订阅；HTTP Handler 不再自行发送创建通知。
+
+创建主线程不产生 `session.thread_created` / `session.thread_idled`，初始 `user.define_outcome` 不产生 `session.outcome_evaluation_ended`；真实子线程及评估结束仍走 Session 事件入口。失败运行、事务回滚、归档分支、过期或重复定时任务不新增通知；独立手动运行各自通知。既有全局配置仍可接收 `session.created` / `session.pending`，但它们不属于数据库订阅目录。
+
+本轮不增加 Deployment / Deployment Run 资源事件，不更改公开响应和调度事务。通知准备或入队失败不改变已成功提交的业务结果，业务写入与 Webhook 入队尚未原子化。`tests/deployment_webhooks_test.go` 使用真实 River worker 验证定时创建、重复 occurrence 与 SDK 验签；归档分支另通过 Store occurrence 入口验证。
+
 ## Scheduled Deployment 执行
 
 OMA 使用 River `v0.46.0`（当前替换为 `superduck-ai/river v0.46.0-oma-v0.0.1`）持久执行 schedule。River 官方 migrator 在应用 PostgreSQL database 的 `public` schema 中创建并升级 `river_job`、`river_periodic_job`、`river_queue`、`river_leader`、`river_notification` 和 `river_migration`；应用表仍由 Goose 管理。`river_migration` 持久记录已应用版本，进程启动只检查并应用缺失版本，不会重建 River 表。`cmd/migrate up` 和开发环境自动迁移会使用同一个数据库连接配置，依次推进两套 migration。River 内部表的 DDL 不复制到应用 migration，避免升级 River 时出现两套 schema 定义。

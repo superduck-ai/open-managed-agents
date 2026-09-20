@@ -149,8 +149,8 @@ webhook:
   signing_key: ""
   event_types:
     - session.created
-  # Derived default: true only when endpoint_url and signing_key are both set.
-  worker_enabled: false
+  # Database subscriptions work without a global endpoint/key. Set false to pause this instance.
+  worker_enabled: true
   timeout: 10s
   max_attempts: 10
   allow_insecure: false

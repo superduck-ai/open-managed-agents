@@ -63,66 +63,16 @@ export const webhookEventGroups: WebhookEventGroup[] = [
 
 export const allWebhookEventTypes = webhookEventGroups.flatMap((group) => group.events.map((event) => event.type));
 
-const webhookDetailEventGroups: WebhookEventGroup[] = [
-  ...webhookEventGroups,
-  {
-    label: 'Session record',
-    events: [
-      { label: 'Updated', type: 'session.record_updated' },
-      { label: 'Deleted', type: 'session.record_deleted' },
-    ],
-  },
-];
-
-const knownDetailEventTypes = new Set(
-  webhookDetailEventGroups.flatMap((group) => group.events.map((event) => event.type)),
-);
-
 export function orderedEvents(events: Set<string>) {
-  const orderedKnownEvents = allWebhookEventTypes.filter((eventType) => events.has(eventType));
-  const extraEvents = Array.from(events)
-    .filter((eventType) => !allWebhookEventTypes.includes(eventType))
-    .sort((left, right) => left.localeCompare(right));
-  return [...orderedKnownEvents, ...extraEvents];
+  return allWebhookEventTypes.filter((eventType) => events.has(eventType));
 }
 
 export function summarizeWebhookEvents(events: string[]): WebhookEventSummaryGroup[] {
   const selected = new Set(events);
-  const consumed = new Set<string>();
-  const groups: WebhookEventSummaryGroup[] = [];
-
-  webhookDetailEventGroups.forEach((group) => {
-    const labels: string[] = [];
-    group.events.forEach((event) => {
-      if (!selected.has(event.type)) {
-        return;
-      }
-      consumed.add(event.type);
-      if (!labels.includes(event.label)) {
-        labels.push(event.label);
-      }
-    });
-    if (labels.length > 0) {
-      const existing = groups.find((item) => item.label === group.label);
-      if (existing) existing.labels = [...new Set([...existing.labels, ...labels])];
-      else groups.push({ label: group.label, labels });
-    }
-  });
-
-  const unknownLabels = events
-    .filter((eventType) => !consumed.has(eventType) && !knownDetailEventTypes.has(eventType))
-    .map(prettyWebhookEventType);
-  if (unknownLabels.length > 0) {
-    groups.push({ label: 'Other', labels: unknownLabels });
-  }
-
-  return groups;
-}
-
-function prettyWebhookEventType(eventType: string) {
-  return eventType
-    .split(/[._-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+  return webhookEventGroups
+    .map((group) => ({
+      label: group.label,
+      labels: group.events.filter((event) => selected.has(event.type)).map((event) => event.label),
+    }))
+    .filter((group) => group.labels.length > 0);
 }

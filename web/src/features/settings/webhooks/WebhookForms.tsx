@@ -62,12 +62,7 @@ export function WebhookDetailEditForm({
         disabled={isSubmitting}
       />
 
-      <WebhookEventPicker
-        selected={selectedEvents}
-        initialEvents={webhook.enabled_events}
-        onChange={setSelectedEvents}
-        disabled={isSubmitting}
-      />
+      <WebhookEventPicker selected={selectedEvents} onChange={setSelectedEvents} disabled={isSubmitting} />
 
       {error ? <InlineError>{error}</InlineError> : null}
 

@@ -185,7 +185,7 @@ func (input yamlConfig) resolve() Config {
 		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
-	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")
+	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(true)
 	if input.Bootstrap.SeedAPIKeys.set {
 		cfg.Bootstrap.SeedAPIKeys = input.Bootstrap.SeedAPIKeys.value
 	} else {

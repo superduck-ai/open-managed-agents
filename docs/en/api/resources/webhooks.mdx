@@ -18,7 +18,7 @@ Every request requires `anthropic-beta: webhooks-2026-03-01`.
   "url": "https://hooks.example.com/oma",
   "name": "production-events",
   "description": "Session and vault lifecycle",
-  "enabled_events": ["session.status_idled", "session.error"]
+  "enabled_events": ["session.status_idled", "session.updated"]
 }
 ```
 
@@ -30,4 +30,6 @@ Endpoints belong to the authenticated workspace. List returns `{ "data": [...], 
 
 Create returns `signing_secret` once; rotation returns a replacement. List, retrieve, and update never expose it. The Console keeps it only in the one-time dialog state. Consumers verify the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers with the official SDK and handle duplicate delivery idempotently.
 
-For deployments using database subscriptions without a configured global endpoint/key, explicitly set `webhook.worker_enabled: true` to run delivery jobs. Managing an endpoint alone does not enable the worker.
+The delivery worker starts by default, including for database subscriptions without a global endpoint/key. Set `webhook.worker_enabled: false` to disable delivery on this instance. The API allowlist and Console both use the same 17 canonical event types; legacy `session.error` and `session.thread_status_*` subscriptions are rejected.
+
+Sessions created by manual or scheduled Deployment runs emit `session.status_idled` after the transaction commits. Creating the primary thread does not emit child-thread events, and defining an initial outcome does not emit `session.outcome_evaluation_ended`; that event follows an actual evaluation-end event. Failed runs and duplicate scheduled occurrences do not create new notifications. Two independent manual runs notify separately. Deployment resource events are not added by this behavior.

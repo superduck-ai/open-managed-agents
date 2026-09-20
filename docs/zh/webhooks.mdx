@@ -4,7 +4,9 @@ sidebarTitle: "订阅 Webhook"
 description: "无需轮询即可在重大事件发生时获得通知。"
 ---
 
-<Note>本指南描述对齐 Claude 的目标能力。OMA 当前完成的是既有事件白名单的订阅管理；下文 Agent、Deployment、Environment、Memory Store、预算等事件尚未全部开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
+<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 17 项 Session/Vault/Credential 事件的订阅管理与投递；下文 Agent、Deployment、Environment、Memory Store、预算等事件尚未全部开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
+
+Deployment 手动或定时运行创建 Session 后，在事务提交成功时产生 `session.status_idled`。创建主线程不会产生子线程事件，定义初始 outcome 不会产生 `session.outcome_evaluation_ended`，该通知由真实评估结束事件触发。失败运行和重复定时执行不新增通知，两次独立手动运行分别通知；这不代表已开放 Deployment 资源事件订阅。
 
 会话是长时间运行的交互。虽然大多数实时交互通过 [SSE 事件流](/docs/zh/events-and-streaming)进行，但 Webhook 会在发生重大状态变化时通知您。
 
@@ -99,7 +101,7 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
 
 选择 workspace 后点击 **Add webhook endpoint**。名称和描述可留空；事件默认不选，至少选择一项。表单支持分组选择、全选、协议名复制和 URL 校验。详情支持编辑 URL/元数据/事件、启停、删除与重置密钥；关闭密钥弹窗前需要自行保存一次性密钥。
 
-未配置全局 endpoint/key、仅使用数据库订阅时，需要显式设置 `webhook.worker_enabled: true` 开启投递。
+投递 worker 默认随主服务启动，仅使用数据库订阅时也无需配置全局 endpoint/key。通过 `webhook.worker_enabled: false` 可以关闭当前实例的投递。
 
 Webhook 端点由以下部分组成：
 

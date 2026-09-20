@@ -246,7 +246,7 @@ func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, session
 	return row.session(), true, nil
 }
 
-func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
+func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, bool, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
 		WorkspaceUUID: workspaceUUID,
@@ -256,7 +256,17 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID
 		Metadata:      agentJSONArg(next.Metadata),
 		UpdatedAt:     next.UpdatedAt,
 	})
-	return row.session(), mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.session(), err == nil, err
+	}
+	current, found, loadErr := d.GetSession(ctx, workspaceUUID, externalID)
+	if loadErr != nil {
+		return Session{}, false, loadErr
+	}
+	if !found || current.ArchivedAt != nil || current.Status != "idle" {
+		return Session{}, false, ErrNotFound
+	}
+	return current, false, nil
 }
 
 func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, externalID string, patch json.RawMessage) (Session, error) {
@@ -307,10 +317,19 @@ func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThre
 	return d.GetSessionThread(ctx, thread.WorkspaceUUID, thread.SessionExternalID, thread.ExternalID)
 }
 
-func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
-	mapper := NewSessionMapper(d.mapperDB)
-	row, err := mapper.Archive(ctx, workspaceUUID, externalID)
-	return row.session(), mapNoRows(err)
+func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, bool, error) {
+	row, err := NewSessionMapper(d.mapperDB).Archive(ctx, workspaceUUID, externalID)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.session(), err == nil, err
+	}
+	current, found, loadErr := d.GetSession(ctx, workspaceUUID, externalID)
+	if loadErr != nil {
+		return Session{}, false, loadErr
+	}
+	if !found || current.ArchivedAt == nil {
+		return Session{}, false, ErrNotFound
+	}
+	return current, false, nil
 }
 
 func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
@@ -408,10 +427,19 @@ func (d *DB) ListSessionThreads(ctx context.Context, workspaceUUID string, sessi
 	return sessionThreadsFromRows(rows), err
 }
 
-func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, error) {
-	mapper := NewSessionThreadMapper(d.mapperDB)
-	row, err := mapper.Archive(ctx, workspaceUUID, sessionExternalID, threadExternalID)
-	return row.thread(), mapNoRows(err)
+func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, bool, error) {
+	row, err := NewSessionThreadMapper(d.mapperDB).Archive(ctx, workspaceUUID, sessionExternalID, threadExternalID)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.thread(), err == nil, err
+	}
+	current, loadErr := d.GetSessionThread(ctx, workspaceUUID, sessionExternalID, threadExternalID)
+	if loadErr != nil {
+		return SessionThread{}, false, loadErr
+	}
+	if current.ArchivedAt == nil {
+		return SessionThread{}, false, ErrNotFound
+	}
+	return current, false, nil
 }
 
 func (d *DB) CreateSessionResource(

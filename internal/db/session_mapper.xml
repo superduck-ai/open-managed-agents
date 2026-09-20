@@ -77,6 +77,9 @@
         AND deleted_at IS NULL
         AND archived_at IS NULL
         AND status = 'idle'
+        AND (title IS DISTINCT FROM #{params.Title}
+            OR agent_snapshot IS DISTINCT FROM CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb)
+            OR (metadata - '_oma_runtime_user_uuid') IS DISTINCT FROM (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid'))
         RETURNING <include refid="columns"/>
     </update>
 
@@ -116,6 +119,7 @@
         AND external_id = #{sessionExternalID}
         AND deleted_at IS NULL
         AND status NOT IN ('running', 'rescheduling')
+        AND archived_at IS NULL
         RETURNING <include refid="columns"/>
     </update>
 

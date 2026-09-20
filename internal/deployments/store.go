@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/yourbatis"
 )
@@ -18,10 +20,12 @@ type Store struct {
 	eventPayloads *eventpayload.Store
 	database      *db.DB
 	client        *river.Client[*sql.Tx]
+	webhooks      webhookEnqueuer
+	logger        *slog.Logger
 }
 
-func NewStore(database *db.DB) *Store {
-	return &Store{database: database, eventPayloads: eventpayload.New(database, nil)}
+func NewStore(database *db.DB, logger *slog.Logger) *Store {
+	return &Store{database: database, eventPayloads: eventpayload.New(database, nil), logger: logging.LoggerOrDefault(logger)}
 }
 
 // Configure binds the shared River client before HTTP handlers or workers start.
@@ -109,7 +113,7 @@ func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplySche
 		return err
 	}
 	input.Events = prepared
-	return s.transaction(ctx, func(tx *yourbatis.Tx) error {
+	err = s.transaction(ctx, func(tx *yourbatis.Tx) error {
 		if err := s.database.ApplyScheduledOccurrenceTx(ctx, tx, input); err != nil {
 			return err
 		}
@@ -118,6 +122,10 @@ func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplySche
 		}
 		return nil
 	})
+	if err == nil && !input.ArchiveDeployment && input.Session != nil {
+		s.enqueueSessionCreated(ctx, input.Session.Session)
+	}
+	return err
 }
 
 // ArchiveAgent commits the root agent, its deployments, and schedule deletions together.
@@ -162,5 +170,6 @@ func (s *Store) CreateManualRun(ctx context.Context, input db.CreateManualDeploy
 	if err != nil {
 		return run, session, thread, nil, err
 	}
+	s.enqueueSessionCreated(ctx, session)
 	return run, session, thread, eventpayload.RestoreCreatedPublic(events, original), nil
 }

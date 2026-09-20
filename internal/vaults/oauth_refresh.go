@@ -11,6 +11,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
 const maxOAuthRefreshCASAttempts = 3
@@ -88,6 +89,9 @@ func (i *Injector) refreshMCPOAuthAttempt(
 		return secret.AccessToken, current, nil
 	}
 	if !hasMCPOAuthRefreshMaterial(publicAuth, secret) {
+		if secret.Refresh == nil || secret.Refresh.RefreshToken == "" {
+			return i.finishFailedMCPOAuthExchange(ctx, store, current, secret, now, errMCPOAuthRefreshTokenMissing)
+		}
 		return "", nil, errMCPOAuthRefreshUnavailable
 	}
 	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now, i.platformOAuthClients)
@@ -112,10 +116,16 @@ func (i *Injector) finishFailedMCPOAuthExchange(
 		return "", nil, exchangeErr
 	}
 	token, ok, err := i.usableReloadedMCPOAuth(ctx, current, exchangedFrom, now)
-	if err != nil || !ok {
+	if err != nil {
 		return "", nil, exchangeErr
 	}
-	return token, current, nil
+	if ok {
+		return token, current, nil
+	}
+	if permanentOAuthRefreshFailure(exchangeErr) && ctx.Err() == nil {
+		i.enqueueRefreshFailure(ctx, *current)
+	}
+	return "", nil, exchangeErr
 }
 
 // persistExchangedMCPOAuth writes an already-exchanged token. On version
@@ -316,4 +326,23 @@ func resolveExpiresAtAfterRefresh(now time.Time, previous *string, expiresIn OAu
 		return nil
 	}
 	return previous
+}
+
+func (i *Injector) enqueueRefreshFailure(ctx context.Context, credential db.VaultCredential) {
+	if i.webhooks == nil {
+		return
+	}
+	scope, err := i.store.GetWorkspaceIdentifiers(ctx, credential.WorkspaceUUID)
+	if err != nil {
+		i.logger.ErrorContext(ctx, "load workspace for oauth refresh webhook", "credential_id", credential.ExternalID, "error", err)
+		return
+	}
+	i.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
+		WorkspaceUUID:       credential.WorkspaceUUID,
+		OrganizationUUID:    scope.OrganizationUUID,
+		WorkspaceExternalID: scope.WorkspaceExternalID,
+		EventType:           "vault_credential.refresh_failed",
+		ResourceID:          credential.ExternalID,
+		Options:             webhooks.EventOptions{VaultID: &credential.VaultExternalID},
+	})
 }

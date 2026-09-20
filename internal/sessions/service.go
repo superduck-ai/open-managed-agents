@@ -16,7 +16,6 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
-	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -87,7 +86,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
+	created, _, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
 		Session: db.Session{
 			UUID:                  uuid.NewV4().String(),
 			ExternalID:            sessionID,
@@ -146,8 +145,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.created", created.ExternalID, nil)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.pending", created.ExternalID, nil)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil)
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_created", created.ExternalID, &thread.ExternalID)
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_idled", created.ExternalID, &thread.ExternalID)
 	response, err := h.responseFromSession(r, created)
 	if err != nil {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
@@ -302,13 +299,16 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
+	updated, changed, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
 	event, err := h.sessionUpdatedEvent(updated)
-	if err == nil {
+	if err == nil && changed {
 		h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+	}
+	if changed {
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.updated", updated.ExternalID, nil)
 	}
 	response, err := h.responseFromSession(r, updated)
 	if err != nil {
@@ -338,11 +338,13 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 	if current.Status == "running" || current.Status == "rescheduling" {
 		return invalidRequest(errors.New("running sessions cannot be archived"))
 	}
-	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	archived, changed, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
+	if changed {
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil)
+	}
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
@@ -573,15 +575,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 			return queueCodeSessionEventsError(err)
 		}
 	}
-	if outcomesChanged {
-		h.enqueueWebhook(r.Context(), webhooks.EnqueueInput{
-			WorkspaceUUID:       session.WorkspaceUUID,
-			OrganizationUUID:    organizationUUIDFromRequest(r),
-			WorkspaceExternalID: workspaceExternalIDFromRequest(r),
-			EventType:           "session.outcome_evaluation_ended",
-			ResourceID:          session.ExternalID,
-		})
-	}
+
 	data := make([]json.RawMessage, 0, len(created))
 	for _, event := range created {
 		data = append(data, sessionEventPayload(event))
@@ -824,11 +818,13 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
+	thread, changed, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
+	if changed && thread.ParentThreadUUID != nil {
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
+	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
 	return nil
 }

@@ -28,3 +28,9 @@ func TestDecodeSearchRequestDecodesObject(t *testing.T) {
 		t.Fatalf("decodeSearchRequest() = %#v", body)
 	}
 }
+
+func TestValidateMetadataRejectsReservedInternalKind(t *testing.T) {
+	if err := validateMetadata(map[string]string{"internal_kind": "dream_default_agent"}); err == nil {
+		t.Fatal("validateMetadata() error = nil, want reserved internal_kind rejection")
+	}
+}

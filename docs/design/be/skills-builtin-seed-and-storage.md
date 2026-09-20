@@ -2,12 +2,11 @@
 
 ## 背景
 
-Skills 资源现在分成两类：
+Skills 资源现在分成三类：
 
-- `source: "anthropic"`：全局只读 builtin skill，由管理员导入到数据库 catalog，并把 `.skill` archive 存在对象存储。
+- `source: "anthropic"` 且由 **OMA 产品代码** 携带：例如 `dream`。源文件在 git（`internal/skills/product/<skill_id>/SKILL.md`），进程启动时幂等 upsert 进 builtin catalog 和对象存储。发某个 OMA 版本即自带该版本的系统 skill。
+- `source: "anthropic"` 且由 **管理员导入**：xlsx / pdf 等 Anthropic 公共包。临时 `assets/skills/public` 只作为 `cmd/seed-builtin-skills` 的输入目录，不是服务运行时依赖，也不进入 git。
 - `source: "custom"`：workspace 自定义 skill，继续使用现有 `skills` / `skill_versions` 表和对象存储。
-
-临时 `assets/skills/public` 只作为管理员 seed 工具的输入目录，不是服务运行时依赖，也不进入 git。
 
 ## 数据模型
 
@@ -40,19 +39,22 @@ Skills 资源现在分成两类：
 
 ```mermaid
 flowchart LR
+  P["internal/skills/product/*/SKILL.md"] --> E["EnsureProductBuiltinSkills on boot"]
   A["Admin assets dir"] --> B["cmd/seed-builtin-skills"]
-  B --> C["Validate .skill archive"]
+  E --> C["Pack only SKILL.md"]
+  B --> C2["Validate .skill archive"]
   C --> D["Upload archive to S3-compatible storage"]
-  C --> E["Parse SKILL.md metadata"]
-  D --> F["builtin_skill_versions"]
-  E --> F
+  C2 --> D
+  C --> F["builtin_skill_versions"]
+  C2 --> F
+  D --> F
   F --> G["builtin_skills.latest_version"]
   G --> H["/v1/skills source=anthropic"]
 ```
 
 ## Seed 工具
 
-命令：
+Anthropic 公共 skill（xlsx / pdf 等）仍用独立 CLI 导入：
 
 ```bash
 go run ./cmd/seed-builtin-skills --dir /path/to/assets/skills/public --versions /path/to/versions.txt
@@ -65,6 +67,21 @@ go run ./cmd/seed-builtin-skills --dir /path/to/assets/skills/public --versions 
 - `--prune` 可选，软删除本次目录中缺失的 builtin skill/version；默认只 upsert，不删除旧项。
 
 CLI 会在导入前主动执行 goose migrations，不依赖服务端运行时的 `database.auto_migrate` 配置。这样管理员可以在新环境里先运行 seed 工具完成表结构和 catalog 初始化。
+
+## 产品 skill（随 OMA 版本）
+
+OMA 自有系统 skill（当前：`dream`）不走 CLI 上传。源文件是 `internal/skills/product/<skill_id>/SKILL.md`，由 `go:embed` 打进二进制。`.agents/skills/dream` 是指向同一目录的 symlink，只方便本机 agent 迭代。
+
+进程在对象存储 ready 之后、Dream worker 启动之前调用 `skills.EnsureProductBuiltinSkills`：
+
+1. 只打包每个产品目录下的 `SKILL.md`（忽略 `_bak` 和其他文件）。
+2. 版本号必须写在 SKILL.md frontmatter 的 `version` 字段；缺省则启动失败。
+3. 幂等 upsert 到与 CLI seed 相同的 catalog key：`builtin-skills/{skill_id}/versions/{version}/{sha256}.skill`。
+4. 同一 `skill_id + version` 但内容 sha 不同时启动失败，必须 bump `version`。
+5. Agent snapshot 仍引用 `dream@latest`；**之后新建的 Session** 在启动时解析到新 latest。已启动 Session 继续使用当时的 File 快照。
+6. `seed-builtin-skills --prune` 不会软删除产品 skill；keep 列表会并入 embed 中的 skill id。
+
+改说明书的操作是：编辑 `internal/skills/product/dream/SKILL.md`、bump `version`、随 OMA 发版。不要在生产控制台重新上传。
 
 Archive 校验规则：
 
@@ -125,6 +142,7 @@ Builtin 写操作保持只读：
 后端覆盖：
 
 - seed 成功导入、幂等重跑、同版本不同 sha 冲突。
+- 产品 skill `EnsureProductBuiltinSkills` 从 embed 导入 `dream`、幂等重跑、同版本不同内容冲突、zip 仅含 `dream/SKILL.md`。
 - seed archive 失败场景：缺 `SKILL.md`、多顶层目录、路径穿越。
 - `--prune` 软删除。
 - API 从 DB + S3-compatible storage 返回 builtin list/retrieve/version/content。

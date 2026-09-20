@@ -166,10 +166,22 @@ func TestRenderMemoryMarkdownMatchesDesignContract(t *testing.T) {
 		},
 	})
 	if strings.Contains(got, "下面列出的 rw 目录会跨会话保留") {
-		t.Fatalf("MEMORY.md must not include the lifetime preamble yet:\n%s", got)
+		t.Fatalf("MEMORY.md must not include the lifetime preamble:\n%s", got)
 	}
-	if !strings.HasPrefix(got, "<!-- oma-stores -->\n") {
-		t.Fatalf("MEMORY.md must start with the store marker:\n%s", got)
+	if !strings.HasPrefix(got, "<!-- oma-memory-blocks -->\n") {
+		t.Fatalf("MEMORY.md must start with the memory-block marker:\n%s", got)
+	}
+	for _, phrase := range []string{
+		"indexes attached memory blocks",
+		"not the index of individual memories",
+		"<mount_path>/MEMORY.md",
+		"auto-memory index rules",
+		"200 lines",
+		"~25KB",
+	} {
+		if !strings.Contains(got, phrase) {
+			t.Fatalf("MEMORY.md missing block-index guidance %q:\n%s", phrase, got)
+		}
 	}
 	markerIndex := strings.Index(got, "<!-- oma-stores -->")
 	if markerIndex < 0 {
@@ -209,15 +221,21 @@ func TestRenderMemoryMarkdownFlattensNewlines(t *testing.T) {
 	}
 }
 
-// memoryMarkdownStoreLine returns the single store line of a rendered
-// MEMORY.md, failing when the render split one store across lines.
+// memoryMarkdownStoreLine returns the single store line after the store
+// marker, failing when the render split one store across lines.
 func memoryMarkdownStoreLine(t *testing.T, rendered string) string {
 	t.Helper()
-	lines := strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
-	if len(lines) != 2 || lines[0] != "<!-- oma-stores -->" {
-		t.Fatalf("rendered MEMORY.md is not a marker plus one store line:\n%s", rendered)
+	const marker = "<!-- oma-stores -->"
+	markerIndex := strings.Index(rendered, marker)
+	if markerIndex < 0 {
+		t.Fatalf("missing store marker:\n%s", rendered)
 	}
-	return lines[1]
+	storeBlock := strings.TrimSpace(rendered[markerIndex+len(marker):])
+	lines := strings.Split(storeBlock, "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "- [") {
+		t.Fatalf("store block is not a single store line:\n%s", rendered)
+	}
+	return lines[0]
 }
 
 func TestRenderMemoryMarkdownOmitsSeparatorsForEmptyFields(t *testing.T) {

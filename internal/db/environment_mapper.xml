@@ -64,6 +64,19 @@
         AND deleted_at IS NULL
     </select>
 
+    <!-- Includes archived records so Dream preparation can restore and reuse
+         its own workspace-scoped public environment. -->
+    <select id="FindDreamDefault" resultType="environmentMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environments
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        AND metadata ->> 'internal_kind' = 'dream_default_environment'
+        ORDER BY created_at ASC, uuid ASC
+        LIMIT 1
+    </select>
+
     <select id="FindByUUID" resultType="environmentMapperRow">
         SELECT
         <include refid="columns"/>
@@ -100,6 +113,18 @@
         <include refid="columns"/>
     </update>
 
+    <update id="RestoreDreamDefault" result="returning" resultType="environmentMapperRow">
+        UPDATE environments
+        SET archived_at = NULL,
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{environmentUUID}
+        AND deleted_at IS NULL
+        AND metadata ->> 'internal_kind' = 'dream_default_environment'
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
     <select id="LockUUIDByExternalID" result="scalar">
         SELECT uuid
         FROM environments
@@ -127,6 +152,9 @@
             AND deleted_at IS NULL
             <if test="!params.IncludeArchived">
                 AND archived_at IS NULL
+            </if>
+            <if test="params.ExcludeInternalKind != ''">
+                AND COALESCE(metadata-&gt;&gt;'internal_kind', '') &lt;&gt; #{params.ExcludeInternalKind}
             </if>
             <if test="params.Cursor != nil">
                 AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})

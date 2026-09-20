@@ -67,6 +67,31 @@ func TestRcloneReadyProbeContract(t *testing.T) {
 	}
 }
 
+func TestDreamAutoMemoryRootMounts(t *testing.T) {
+	mount := memoryRuntimeMount{Access: "read_write", MountPath: "/mnt/memory/dream-output", Slug: "dream-output"}
+	dream := db.Session{Metadata: json.RawMessage(`{"internal_kind":"dream"}`)}
+	got, enabled := dreamAutoMemoryRootMounts(dream, []memoryRuntimeMount{mount})
+	if !enabled || len(got) != 1 || got[0].MountPath != "/mnt/memory" || got[0].Slug != mount.Slug {
+		t.Fatalf("Dream root mount = (%#v, %t)", got, enabled)
+	}
+	for _, test := range []struct {
+		name    string
+		session db.Session
+		mounts  []memoryRuntimeMount
+	}{
+		{name: "normal session", session: db.Session{Metadata: json.RawMessage(`{}`)}, mounts: []memoryRuntimeMount{mount}},
+		{name: "read-only", session: dream, mounts: []memoryRuntimeMount{{Access: "read_only", MountPath: mount.MountPath, Slug: mount.Slug}}},
+		{name: "multiple stores", session: dream, mounts: []memoryRuntimeMount{mount, mount}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, enabled := dreamAutoMemoryRootMounts(test.session, test.mounts)
+			if enabled || len(got) != len(test.mounts) || got[0].MountPath != test.mounts[0].MountPath {
+				t.Fatalf("unexpected root mount = (%#v, %t)", got, enabled)
+			}
+		})
+	}
+}
+
 func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	const secret = "filestore-secret-token"
 	configPayload, err := json.Marshal(buildRcloneMultimountConfig("fs_test", "http://service.test", secret, secret, nil))
@@ -232,6 +257,30 @@ func TestStartManagedAgentSessionFilesystemWritesLocalMemoryMarkdown(t *testing.
 		}
 		if provider.fileData(memoryMarkdownSandboxPath) != "" {
 			t.Fatal("wrote MEMORY.md without stores")
+		}
+	})
+
+	t.Run("Dream preserves the cloned Store index at the auto-memory root", func(t *testing.T) {
+		provider := &rcloneTestProvider{ready: true}
+		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		dreamMounts := append([]memoryRuntimeMount(nil), mounts...)
+		dreamMounts[0].MountPath = "/mnt/memory"
+		dreamConfig, err := json.Marshal(buildRcloneMultimountConfig("fs_test", "http://service.test", "rw", "ro", dreamMounts))
+		if err != nil {
+			t.Fatalf("marshal Dream config: %v", err)
+		}
+		dreamLaunch := rcloneFilestoreLaunch{ConfigPayload: dreamConfig, MemoryMounts: dreamMounts, AutoMemoryRoot: true}
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", dreamLaunch); err != nil {
+			t.Fatalf("startManagedAgentSessionFilesystem() error = %v", err)
+		}
+		if provider.fileData(memoryMarkdownSandboxPath) != "" {
+			t.Fatal("Dream runtime overwrote the cloned Store MEMORY.md")
+		}
+		if provider.fileData(rcloneConfigPath) == "" {
+			t.Fatal("missing rclone config write")
+		}
+		if !strings.Contains(provider.fileData(rcloneConfigPath), `"destination":"/mnt/memory"`) {
+			t.Fatalf("Dream config does not mount Store at auto-memory root: %s", provider.fileData(rcloneConfigPath))
 		}
 	})
 

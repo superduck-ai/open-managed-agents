@@ -8,7 +8,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只补运
 
 **方案**：每个 attach 的 store 挂到 `/mnt/memory/{slug}`。Agent 用普通文件工具读写；Filestore 把这些操作变成 Postgres 元数据 + S3 正文 + 不可变 version。
 
-`/mnt/memory/` 是记忆根目录。启动时在此写入 `MEMORY.md`（一行一个 store：路径、权限、description、instructions）。平台只配 store 和策略，不替 Agent 选落点，也不禁止 Agent 在 store 外写文件。
+`/mnt/memory/` 是记忆根目录。启动时在此写入 `MEMORY.md`（记忆块目录：哪块盘记什么；真正的记忆索引在各 `{slug}/MEMORY.md`）。平台只配 store 和策略，不替 Agent 选落点，也不禁止 Agent 在 store 外写文件。
 
 跨会话能不能留下，由**写到哪里**决定，不由策略禁写：
 
@@ -34,7 +34,7 @@ Session 默认没有跨会话记忆。需要：
 | 谁 | 做什么 |
 | --- | --- |
 | 平台 / 开发者 | 建 store、attach、写 description / instructions / access；启动时挂盘并生成 `MEMORY.md` |
-| Agent | 读 `MEMORY.md`，按职责把记忆写到合适的地方。命中 `rw` store 则跨会话；未命中则本 session 有效 |
+| Agent | 读根上 `MEMORY.md` 选记忆块，再读该块的 `MEMORY.md` 找具体记忆。命中 `rw` store 则跨会话并更新块内索引；未命中则本 session 有效 |
 
 平台不把 Agent 关进预设目录。没 attach 的 store 不存在；`ro` store 文件系统不让写。这两条是挂载硬边界，不是策略禁令。
 
@@ -69,13 +69,20 @@ ready = 五个固定 mount + 全部 memory store mount + `MEMORY.md` 已就位�
 
 ### 2.3 策略：`/mnt/memory/MEMORY.md`
 
-Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。模型会加载该文件，看到的是 store 目录段（路径、权限、description、instructions），不是寿命引导。`appendSystemPrompt` 只保留 uploads/outputs 环境说明，不追加记忆段落。
+Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。这份文件是**记忆块目录**：告诉 Agent 该去哪一块盘读什么，**不是**某块盘里有哪些记忆文件。真正的记忆索引在每个已挂 store 的 `{mount_path}/MEMORY.md`。`appendSystemPrompt` 只保留 uploads/outputs 环境说明，不追加记忆段落。
 
-这是本 Session 的启动产物，**不是**某个 store 里的 `mem_`。每次启动按本次 attach 快照整文件重写。控制台各 store 详情里看不到它。运行中 Agent 可以改它（自动记忆常会追加本 session 的索引）；这些改动和根上散文件一样，不进 store，下次启动被整份覆盖。
+根上这份是本 Session 的启动产物，**不是**某个 store 里的 `mem_`。每次启动按本次 attach 快照整文件重写。Agent 不应把它当记忆索引来改（改了也不进任何 store，下次启动被覆盖）。各 store 详情展示该 store 自己的 `/MEMORY.md` 索引；Add memory 可以创建或编辑这条路径。
 
-文件格式：一个 store 一行，禁止换行。固定引导（寿命、优先写 store、不要改目录段）**先不写入** `MEMORY.md`，只注入 `<!-- oma-stores -->` 和 store 行。落盘规则仍见 §2.4，不靠这段进上下文。Agent 可在 marker 后追加本 session 临时索引；不要改 `<!-- oma-stores -->` 这一段。
+文件格式：先写记忆块引导，再写 `<!-- oma-stores -->` 与一行一个 store，禁止 store 行换行。Agent 改记忆后必须按 auto-memory 规范立刻更新对应块内的 `MEMORY.md`（索引不是仓库：≤200 行且约 25KB，每条一行钩子）。不要改 `<!-- oma-stores -->` 这一段。
 
 ```text
+<!-- oma-memory-blocks -->
+This file indexes attached memory blocks: which store to read or write for a kind of memory. It is not the index of individual memories.
+
+The real memory index for a block is MEMORY.md inside that block (<mount_path>/MEMORY.md). Read that file to see which memories exist in the directory and how to find them.
+
+After you add, update, or prune memories in a block, update that block's MEMORY.md immediately using auto-memory index rules: keep it as an index (not a dump), under 200 lines and ~25KB, with one hook line per topic file (- [Title](file.md) — one-line hook). Never write memory content into the index. Do not treat this root file as a substitute for a block index.
+
 <!-- oma-stores -->
 - [user-preferences](/mnt/memory/user-preferences) rw — 用户的饮食与语言偏好。问饮食或语言先读此目录；有新偏好就更新对应文件。
 - [oma-project](/mnt/memory/oma-project) rw — 架构决策。开始任务前先读；新结论写入 decisions/。
@@ -87,10 +94,11 @@ Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。模型会加载该文
 | 路径 | `/mnt/memory/MEMORY.md`（父目录可写；本文件可被 Agent 改，下次启动覆盖） |
 | 何时写 | store mount ready 之后、Claude 起来之前 |
 | 怎么写 | runner 写本地文件，不走 Memory Store API |
-| 内容 | `<!-- oma-stores -->` + 一行一个 store；不写固定引导；每次启动整文件替换 |
+| 内容 | 记忆块引导 + `<!-- oma-stores -->` + 一行一个 store；每次启动整文件替换 |
 | 一行 | `[name](mount_path) access — description。instructions`；`description`/`instructions` 为空时省掉对应分隔符，不留悬空的 `— 。`；`name` 里的 `[` `]` `\` 转义，防止链接被名字截断 |
 | `instructions` | ≤ **500** 字（Unicode 码点）。超限 **400**，不截断 |
 | `description` | store 本体仍 ≤ 1024；挂载时快照进这一行 |
+| 块内索引 | `{mount_path}/MEMORY.md`，是该 store 的 `mem_`；控制台可见、可编辑 |
 | 不写什么 | 各 store 文件清单、记忆正文。正文靠 Agent Read `/mnt/memory/{slug}/...` |
 
 无 store 时：不写 `MEMORY.md`，不设 §2.5 后两个环境变量，不创建记忆根。此时没有自动记忆目录，本 session 草稿也只能落在工作区等普通沙箱路径，同样随重启丢掉。
@@ -103,7 +111,7 @@ Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。模型会加载该文
 
 | 情况 | 行为 |
 | --- | --- |
-| 有匹配的 `rw` store | 写入该 store `mount_path` 下，进 Filestore / version，跨会话 |
+| 有匹配的 `rw` store | 写入该 store `mount_path` 下，进 Filestore / version，跨会话；同时按 auto-memory 规范更新该块的 `MEMORY.md` |
 | 没有匹配的 store，或只有 `ro` | 允许写在 `/mnt/memory/` 根上或工作区；本 session 有效，不进 store |
 | 未挂任何 store | 不建记忆根；写入工作区等本地路径，本 session 有效 |
 | 一次性任务、能从代码推出的事实 | 引导仍建议不要记进 store；记到根上也不跨会话 |
@@ -311,7 +319,7 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 - 启动只灌 `MEMORY.md`，不灌各 store 目录。
 - 根上乱写进不了 store；寿命止于本沙箱。
 - JWT 不含 slug 授权；每请求回查 `session_resources`。
-- `MEMORY.md` 每次启动整份覆盖，策略以本次快照为准。平台只写 `<!-- oma-stores -->` 段；被改乱只影响本 session。
+- `MEMORY.md` 每次启动整份覆盖，策略以本次快照为准。平台写记忆块引导和 `<!-- oma-stores -->` 段；被改乱只影响本 session。块内索引是 `{mount_path}/MEMORY.md`，进 store，控制台可见。
 
 ---
 
@@ -323,13 +331,13 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 4. 双 Session 同 path：后写为头；后启动的 B 读到 A 已提交的写。
 5. 运行中改 store 名：已启动 Session 的 `mount_path` 与启动时写入的 `MEMORY.md` store 目录段不变（Agent 运行时改动除外）。
 6. 任一 memory mount 失败或 `MEMORY.md` 未写好 → 启动失败并清理 sandbox。
-7. 有 store：存在可写的 `/mnt/memory/` 与 `/mnt/memory/MEMORY.md`，一行一个 store；启动上下文含该文件；`appendSystemPrompt` 无记忆段落；写 `/mnt/memory/` 根下的文件成功，API / 控制台查不到该 path。
+7. 有 store：存在可写的 `/mnt/memory/` 与 `/mnt/memory/MEMORY.md`（记忆块引导 + 一行一个 store）；启动上下文含该文件；`appendSystemPrompt` 无记忆段落；写 `/mnt/memory/` 根下的文件成功，API / 控制台查不到该 path。
 8. 无 store：不设 §2.5 后两个环境变量；不写 `MEMORY.md`；不创建记忆根。
 9. 控制台能选 store、Access、Instructions；提交体不含 mount_path / name / description。
-10. 控制台 Add memory 的文件，Session 内 Agent 能 Read 到；Agent 写入匹配的 `rw` store 后详情页能看到。父目录和各 store 详情都没有平台 `MEMORY.md`。
+10. 控制台 Add memory 的文件，Session 内 Agent 能 Read 到；Agent 写入匹配的 `rw` store 后详情页能看到，包括该 store 的 `/MEMORY.md` 索引。父目录那份平台 `MEMORY.md` 仍不是 store 文件。
 11. `instructions` 501 字 → 400；500 字通过。
 12. 有 store 但无匹配职责时，用户要求「记住」可以在根上留下文件；该文件不出现在任何 store；下一 Session 不存在。未挂任何 store 时不产生 store 文件。
-13. Session A 写根文件并改 `MEMORY.md` 索引 → 销毁 → Session B attach 同一批 store：B 只有按快照重建的 `MEMORY.md`，没有 A 的根文件。
+13. Session A 写根文件并改父目录 `MEMORY.md` → 销毁 → Session B attach 同一批 store：B 只有按快照重建的块目录 `MEMORY.md`，没有 A 的根文件。A 写入 `{slug}/MEMORY.md` 的索引对 B 可见。
 
 测试先失败再成功。sessions / filestore（真 PostgreSQL）/ runner / 控制台 / E2E（A 写指定 store → B 读；A 写根 → B 看不到；`ro` store 写失败）各盖上表。
 

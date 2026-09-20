@@ -30,7 +30,7 @@ Create Session 的 Resources 与官方控制台一致：`+ Resource` 菜单里�
 
 ## Store 详情
 
-平台沙箱文件 `/MEMORY.md` 不是 store 内容。列表、树和 Add memory 都不展示该路径；Add memory 也不能提交 `/MEMORY.md`。
+每个 store 自己的 `/MEMORY.md` 是该记忆块的索引，列表、树和 Add memory 都展示并允许提交该路径。沙箱根上的 `/mnt/memory/MEMORY.md` 是平台生成的记忆块目录，不是 store 内容，不会出现在某个 store 的文件树里。
 
 ## 实现与验收
 
@@ -38,6 +38,6 @@ Create Session 的 Resources 与官方控制台一致：`+ Resource` 菜单里�
 - `web/src/features/managed-agents/resources/MemoryStoresAttachField.tsx`：Memory store Resource 卡片
 - `web/src/features/managed-agents/sessions/SessionFileResourcesField.tsx`：`+ Resource` 菜单（File / Memory store）
 - `web/src/features/managed-agents/api.ts`：Session 与 Deployment 创建、更新请求体；Store 选择器分页聚合
-- `web/src/features/managed-agents/resources/model.tsx`：过滤平台 `MEMORY.md`
+- `web/src/features/managed-agents/resources/model.tsx`：记忆树与列表
 
-测试覆盖 501 拦截、500 原样提交、`read_only`、Session / Deployment 提交体、编辑不回写禁字段、无 store 回归、详情隐藏 `MEMORY.md`、选择器聚合超过一页的 store。
+测试覆盖 501 拦截、500 原样提交、`read_only`、Session / Deployment 提交体、编辑不回写禁字段、无 store 回归、详情展示 store `/MEMORY.md` 索引、选择器聚合超过一页的 store。

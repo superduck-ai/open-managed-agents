@@ -146,7 +146,7 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load code session: %v", err)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil || len(queued) == 0 {
 		t.Fatalf("queued inbound events = %#v err=%v", queued, err)
 	}

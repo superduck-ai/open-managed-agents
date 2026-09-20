@@ -386,6 +386,7 @@ func validatePositiveValues(cfg Config) error {
 		{name: "e2b.sandbox_timeout", valid: cfg.E2B.SandboxTimeout > 0},
 		{name: "environment_runner.concurrency", valid: cfg.EnvironmentRunner.Concurrency > 0},
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
+		{name: "dreams.run_timeout", valid: cfg.Dreams.RunTimeout > 0},
 		{name: "observability.otlp.max_request_bytes", valid: cfg.Observability.OTLP.MaxRequestBytes > 0},
 		{name: "observability.otlp.forward_timeout", valid: cfg.Observability.OTLP.ForwardTimeout > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},

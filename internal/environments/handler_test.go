@@ -51,3 +51,9 @@ func TestDecodeEnvironmentWorkStopForceDecodesFirstObject(t *testing.T) {
 		t.Fatal("decodeEnvironmentWorkStopForce() = false, want true")
 	}
 }
+
+func TestValidateMetadataRejectsReservedInternalKind(t *testing.T) {
+	if err := validateMetadata(map[string]string{"internal_kind": "dream_default_environment"}); err == nil {
+		t.Fatal("validateMetadata() error = nil, want reserved internal_kind rejection")
+	}
+}

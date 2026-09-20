@@ -104,6 +104,7 @@ type EnvironmentWorkMapper interface {
 	CountActive(ctx context.Context, workspaceUUID, environmentUUID string) (int, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, environmentExternalID, workExternalID string) (environmentWorkMapperRow, error)
 	FindLatestBySession(ctx context.Context, workspaceUUID, environmentExternalID, sessionUUID string) (environmentWorkMapperRow, error)
+	ListUnstoppedBySession(ctx context.Context, workspaceUUID, sessionUUID string) ([]environmentWorkMapperRow, error)
 	ListPage(ctx context.Context, params environmentWorkPageMapperParams) ([]environmentWorkMapperRow, error)
 	ClaimForEnvironment(ctx context.Context, workspaceUUID, environmentExternalID string, workerID *string, claimExpiresAt time.Time) (environmentWorkMapperRow, error)
 	ClaimNext(ctx context.Context, workerID *string, claimExpiresAt time.Time) (environmentWorkMapperRow, error)
@@ -115,5 +116,6 @@ type EnvironmentWorkMapper interface {
 	Heartbeat(ctx context.Context, params environmentWorkHeartbeatParams) (environmentWorkMapperRow, error)
 	Stop(ctx context.Context, params environmentWorkStopParams) (environmentWorkMapperRow, error)
 	StopForDeletedSession(ctx context.Context, workspaceUUID, environmentExternalID, sessionUUID string) (int64, error)
+	RequestStopForSession(ctx context.Context, workspaceUUID, sessionUUID string) (int64, error)
 	Stats(ctx context.Context, workspaceUUID, environmentExternalID string) (environmentWorkStatsMapperRow, error)
 }

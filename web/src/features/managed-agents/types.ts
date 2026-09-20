@@ -174,6 +174,7 @@ export type SessionApiResponse = {
   stats?: unknown;
   status: string;
   title?: string | null;
+  metadata?: Record<string, string>;
   type: 'session';
   updated_at: string;
   usage?: unknown;

@@ -49,8 +49,9 @@ type rcloneMultimountConfig struct {
 }
 
 type rcloneFilestoreLaunch struct {
-	ConfigPayload []byte
-	MemoryMounts  []memoryRuntimeMount
+	ConfigPayload  []byte
+	MemoryMounts   []memoryRuntimeMount
+	AutoMemoryRoot bool
 }
 
 // prepareRcloneFilestoreLaunch resolves the Session filesystem authority and
@@ -78,11 +79,28 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("issue managed-agent filestore readonly token: %w", err)
 	}
-	configPayload, err := json.Marshal(buildRcloneMultimountConfig(scope.FilesystemExternalID, serviceURL, readWriteToken, readonlyToken, memoryMounts))
+	runtimeMemoryMounts, autoMemoryRoot := dreamAutoMemoryRootMounts(session, memoryMounts)
+	configPayload, err := json.Marshal(buildRcloneMultimountConfig(scope.FilesystemExternalID, serviceURL, readWriteToken, readonlyToken, runtimeMemoryMounts))
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("encode managed-agent filestore config: %w", err)
 	}
-	return rcloneFilestoreLaunch{ConfigPayload: configPayload, MemoryMounts: memoryMounts}, nil
+	return rcloneFilestoreLaunch{ConfigPayload: configPayload, MemoryMounts: runtimeMemoryMounts, AutoMemoryRoot: autoMemoryRoot}, nil
+}
+
+// dreamAutoMemoryRootMounts applies the special filesystem contract only to
+// internally-created Dream Sessions. Their sole writable output Store is the
+// auto-memory root itself, so the Store's cloned MEMORY.md remains authoritative
+// instead of being overwritten by the generic multi-Store index.
+func dreamAutoMemoryRootMounts(session db.Session, memoryMounts []memoryRuntimeMount) ([]memoryRuntimeMount, bool) {
+	var metadata struct {
+		InternalKind string `json:"internal_kind"`
+	}
+	if json.Unmarshal(session.Metadata, &metadata) != nil || metadata.InternalKind != "dream" || len(memoryMounts) != 1 || memoryMounts[0].Access != sessionresource.MemoryAccessReadWrite {
+		return memoryMounts, false
+	}
+	mounts := append([]memoryRuntimeMount(nil), memoryMounts...)
+	mounts[0].MountPath = sessionresource.MemoryMountRoot
+	return mounts, true
 }
 
 func filestoreTokenIdentityFromScope(scope db.FilestoreTokenScope) filestore.TokenIdentity {

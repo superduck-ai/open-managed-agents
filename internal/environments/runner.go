@@ -202,45 +202,22 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 
-	// 加载 Work 所属的 Environment，并生成本服务对外使用的 envsbx_ ID。
-	// 此时实际的 E2B Sandbox 尚未创建；失败只需停止 Work，不存在远端资源需要清理。
-	env, err := r.db.GetEnvironmentByUUID(ctx, work.WorkspaceUUID, work.EnvironmentUUID)
+	// Sandbox 创建前的全部准备失败只需停止 Work，不存在远端资源需要清理。
+	launch, stopRequested, err := r.planWorkLaunch(ctx, work)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
-	sandboxID, err := ids.New("envsbx_")
-	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
+	if stopRequested {
+		return true, nil
 	}
-
-	// 在 Provider 解析之前固化 Managed Agent 的网络 metadata。这样 Resolve 和
-	// 后续 Create 使用的是同一份 MCP allowlist，避免创建时网络策略发生漂移。
-	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
-	}
-	resolution, err := r.provider.Resolve(env, work)
-	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
-	}
-
-	// Cloud Session Work 还要读取 Session、resources、events 和 skills，准备
-	// rclone 与 Environment Manager 的启动数据。非 Cloud Environment 不进入
-	// Managed Agent runtime 分支。
-	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
-	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
-		return true, err
-	}
+	env, resolution, preparation := launch.env, launch.resolution, launch.preparation
 
 	// 先落一条 creating 状态的本地 Sandbox 记录，再请求 E2B 创建远端 Sandbox。
 	// 这样即使远端创建失败，数据库中仍有可查询的启动尝试和失败状态。
 	record, err := r.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
 		UUID:                  uuid.NewV4().String(),
-		ExternalID:            sandboxID,
+		ExternalID:            launch.sandboxID,
 		OrganizationUUID:      work.OrganizationUUID,
 		WorkspaceUUID:         work.WorkspaceUUID,
 		EnvironmentUUID:       work.EnvironmentUUID,
@@ -266,6 +243,16 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 	providerSandboxID := sandbox.ID
+	// 远端 Sandbox 创建耗时较长；取消可能已在此期间落库，需要再次确认后再继续。
+	stopRequested, err = r.refreshWorkStopRequested(ctx, work)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	if stopRequested {
+		r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
+		return true, nil
+	}
 
 	// 将 E2B ID 写入 Work metadata；Managed Agent preparation 可能还加入了 skill
 	// mount，所以即使 Provider ID 为空，也要为该分支持久化更新后的 metadata。
@@ -327,9 +314,14 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	}
 
 	// 首次 heartbeat 把 Work 推进为 active，并建立 60 秒运行租约。
-	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
+	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
+	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
+	}
+	if !heartbeat.LeaseExtended {
+		r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
+		return true, nil
 	}
 
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
@@ -363,6 +355,62 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 
 	// true 表示本轮确实消费了一条 Work；nil 表示所需启动阶段全部完成。
 	return true, nil
+}
+
+// workLaunchPlan 是 Sandbox 创建前算出的启动输入：Environment、本服务 envsbx_ ID、
+// Provider 解析结果，以及 Cloud Session 的 Managed Agent 启动数据（非 Cloud 为 nil）。
+type workLaunchPlan struct {
+	env         db.Environment
+	sandboxID   string
+	resolution  e2bruntime.Resolution
+	preparation *managedAgentLaunchPreparation
+}
+
+// planWorkLaunch 完成 Sandbox 创建前的全部准备，并在最后重新读取 Work，确认准备
+// 期间没有落库的停止请求。stopRequested 为 true 时调用方应直接结束本轮，不创建
+// Sandbox；error 表示准备失败，调用方负责停止 Work。
+func (r *Runner) planWorkLaunch(ctx context.Context, work *db.EnvironmentWork) (workLaunchPlan, bool, error) {
+	env, err := r.db.GetEnvironmentByUUID(ctx, work.WorkspaceUUID, work.EnvironmentUUID)
+	if err != nil {
+		return workLaunchPlan{}, false, err
+	}
+	sandboxID, err := ids.New("envsbx_")
+	if err != nil {
+		return workLaunchPlan{}, false, err
+	}
+	// 在 Provider 解析之前固化 Managed Agent 的网络 metadata。这样 Resolve 和
+	// 后续 Create 使用的是同一份 MCP allowlist，避免创建时网络策略发生漂移。
+	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
+		return workLaunchPlan{}, false, err
+	}
+	resolution, err := r.provider.Resolve(env, work)
+	if err != nil {
+		return workLaunchPlan{}, false, err
+	}
+	// Cloud Session Work 还要读取 Session、resources、events 和 skills，准备
+	// rclone 与 Environment Manager 的启动数据。非 Cloud Environment 不进入
+	// Managed Agent runtime 分支。
+	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
+	if err != nil {
+		return workLaunchPlan{}, false, err
+	}
+	stopRequested, err := r.refreshWorkStopRequested(ctx, work)
+	if err != nil {
+		return workLaunchPlan{}, false, err
+	}
+	return workLaunchPlan{env: env, sandboxID: sandboxID, resolution: resolution, preparation: preparation}, stopRequested, nil
+}
+
+// refreshWorkStopRequested 重新加载 Work 并报告是否已请求停止（stopping/stopped）。
+// Dream cancel 等停止请求只写数据库，Runner 在耗时步骤之后据此放弃启动，避免已取消的
+// Work 仍然创建或激活 Sandbox。
+func (r *Runner) refreshWorkStopRequested(ctx context.Context, work *db.EnvironmentWork) (bool, error) {
+	current, err := r.db.GetEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID)
+	if err != nil {
+		return false, err
+	}
+	*work = current
+	return work.State == "stopping" || work.State == "stopped", nil
 }
 
 func (r *Runner) provisionCreatedSandboxPackages(
@@ -542,6 +590,9 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if !found {
 		return nil, fmt.Errorf("load managed agent Session: %w", db.ErrNotFound)
 	}
+	if session.ArchivedAt != nil {
+		return nil, fmt.Errorf("load managed agent Session: %w", db.ErrInvalidState)
+	}
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return nil, fmt.Errorf("list managed agent Session resources: %w", err)
@@ -713,7 +764,7 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	if err := r.startRcloneFilestore(ctx, sandboxID, launch); err != nil {
 		return err
 	}
-	if len(launch.MemoryMounts) == 0 {
+	if len(launch.MemoryMounts) == 0 || launch.AutoMemoryRoot {
 		return nil
 	}
 	if err := r.provider.WriteFile(ctx, sandboxID, memoryMarkdownSandboxPath, []byte(renderMemoryMarkdown(launch.MemoryMounts))); err != nil {

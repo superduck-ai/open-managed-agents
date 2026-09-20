@@ -43,20 +43,22 @@ type AgentVersionPageCursor struct {
 }
 
 type ListAgentsPageParams struct {
-	WorkspaceUUID   string
-	Limit           int
-	Cursor          *AgentPageCursor
-	IncludeArchived bool
-	CreatedAtGTE    *time.Time
-	CreatedAtLTE    *time.Time
+	WorkspaceUUID       string
+	Limit               int
+	Cursor              *AgentPageCursor
+	IncludeArchived     bool
+	CreatedAtGTE        *time.Time
+	CreatedAtLTE        *time.Time
+	ExcludeInternalKind string
 }
 
 type SearchAgentsPageParams struct {
-	WorkspaceUUID   string
-	Name            string
-	Limit           int
-	Cursor          *AgentPageCursor
-	IncludeArchived bool
+	WorkspaceUUID       string
+	Name                string
+	Limit               int
+	Cursor              *AgentPageCursor
+	IncludeArchived     bool
+	ExcludeInternalKind string
 }
 
 type ListAgentVersionsPageParams struct {
@@ -84,6 +86,9 @@ func (d *DB) CreateAgent(ctx context.Context, agent Agent, versionExternalID str
 		created = row.agent()
 		return mapper.InsertVersion(ctx, newInsertAgentVersionParams(created, versionExternalID))
 	})
+	if isUniqueViolation(err) {
+		return Agent{}, ErrDuplicate
+	}
 	return created, err
 }
 
@@ -191,16 +196,28 @@ func (d *DB) ArchiveAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID
 	return row.agent(), nil
 }
 
+// ArchiveAgent archives an agent outside a caller-managed transaction.
+// Callers that also need to archive deployments atomically should use the
+// deployments Store instead.
+func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID, externalID string) (Agent, error) {
+	row, err := NewAgentMapper(d.mapperDB).ArchiveByExternalID(ctx, workspaceUUID, externalID)
+	if err != nil {
+		return Agent{}, mapNoRows(err)
+	}
+	return row.agent(), nil
+}
+
 func (d *DB) ListAgentsPage(ctx context.Context, params ListAgentsPageParams) ([]Agent, bool, error) {
 	limit := agentPageLimit(params.Limit)
 	mapper := NewAgentMapper(d.mapperDB)
 	rows, err := mapper.ListPage(ctx, agentPageFilter{
-		WorkspaceUUID:   params.WorkspaceUUID,
-		Limit:           limit + 1,
-		Cursor:          params.Cursor,
-		IncludeArchived: params.IncludeArchived,
-		CreatedAtGTE:    params.CreatedAtGTE,
-		CreatedAtLTE:    params.CreatedAtLTE,
+		WorkspaceUUID:       params.WorkspaceUUID,
+		Limit:               limit + 1,
+		Cursor:              params.Cursor,
+		IncludeArchived:     params.IncludeArchived,
+		CreatedAtGTE:        params.CreatedAtGTE,
+		CreatedAtLTE:        params.CreatedAtLTE,
+		ExcludeInternalKind: params.ExcludeInternalKind,
 	})
 	if err != nil {
 		return nil, false, err
@@ -212,11 +229,12 @@ func (d *DB) SearchAgentsPage(ctx context.Context, params SearchAgentsPageParams
 	limit := agentPageLimit(params.Limit)
 	mapper := NewAgentMapper(d.mapperDB)
 	rows, err := mapper.ListPage(ctx, agentPageFilter{
-		WorkspaceUUID:   params.WorkspaceUUID,
-		Name:            strings.TrimSpace(params.Name),
-		Limit:           limit + 1,
-		Cursor:          params.Cursor,
-		IncludeArchived: params.IncludeArchived,
+		WorkspaceUUID:       params.WorkspaceUUID,
+		Name:                strings.TrimSpace(params.Name),
+		Limit:               limit + 1,
+		Cursor:              params.Cursor,
+		IncludeArchived:     params.IncludeArchived,
+		ExcludeInternalKind: params.ExcludeInternalKind,
 	})
 	if err != nil {
 		return nil, false, err

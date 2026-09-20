@@ -131,6 +131,19 @@
         AND deleted_at IS NULL
     </select>
 
+    <!-- Includes archived records so Dream preparation can restore and reuse
+         its workspace-scoped system agent. -->
+    <select id="FindDreamDefault" resultType="agentRow">
+        SELECT
+        <include refid="agentColumns"/>
+        FROM agents
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        AND metadata ->> 'internal_kind' = 'dream_default_agent'
+        ORDER BY created_at ASC, uuid ASC
+        LIMIT 1
+    </select>
+
     <select id="FindVersion" resultType="agentRow">
         SELECT
         <include refid="agentVersionColumns"/>
@@ -181,6 +194,18 @@
         <include refid="agentColumns"/>
     </update>
 
+    <update id="RestoreDreamDefault" result="returning" resultType="agentRow">
+        UPDATE agents
+        SET archived_at = NULL,
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{agentUUID}
+        AND deleted_at IS NULL
+        AND metadata ->> 'internal_kind' = 'dream_default_agent'
+        RETURNING
+        <include refid="agentColumns"/>
+    </update>
+
     <select id="ListPage" resultType="agentRow">
         SELECT
         <include refid="agentColumns"/>
@@ -199,6 +224,9 @@
             </if>
             <if test="filter.Name != ''">
                 AND POSITION(LOWER(#{filter.Name}) IN LOWER(name)) &gt; 0
+            </if>
+            <if test="filter.ExcludeInternalKind != ''">
+                AND COALESCE(metadata-&gt;&gt;'internal_kind', '') &lt;&gt; #{filter.ExcludeInternalKind}
             </if>
             <if test="filter.Cursor != nil">
                 AND (created_at, uuid) &lt; (#{filter.Cursor.CreatedAt}, #{filter.Cursor.UUID})

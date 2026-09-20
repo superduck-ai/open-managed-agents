@@ -17,7 +17,6 @@ import {
   emptyCredentialFormValues,
   environmentConfigBody,
   environmentEditValues,
-  isPlatformMemoryMarkdownPath,
   memoryRowsFromPage,
   patchCredentialFormValues,
   statusPillTone,
@@ -415,25 +414,21 @@ describe('vaultOAuthErrorMessage', () => {
   });
 });
 
-describe('platform MEMORY.md filter', () => {
-  test('hides the sandbox policy file from store trees and ingest', () => {
-    expect(isPlatformMemoryMarkdownPath('/MEMORY.md')).toBe(true);
-    expect(isPlatformMemoryMarkdownPath('MEMORY.md')).toBe(true);
-    expect(isPlatformMemoryMarkdownPath('/notes/MEMORY.md')).toBe(false);
-
+describe('memory block MEMORY.md', () => {
+  test('keeps the store index visible in store trees', () => {
     const rows = memoryRowsFromPage({
-      data: [memoryRow('/MEMORY.md', 'mem_platform'), memoryRow('/project/brief.md', 'mem_brief')],
+      data: [memoryRow('/MEMORY.md', 'mem_index'), memoryRow('/project/brief.md', 'mem_brief')],
       prefixes: [],
       next_page: null,
     });
-    expect(rows.map((row) => row.path)).toEqual(['/project/brief.md']);
+    expect(rows.map((row) => row.path)).toEqual(['/MEMORY.md', '/project/brief.md']);
 
     const nodes = buildMemoryTreeNodes(
-      [memoryRow('/MEMORY.md', 'mem_platform'), memoryRow('/project/brief.md', 'mem_brief')],
+      [memoryRow('/MEMORY.md', 'mem_index'), memoryRow('/project/brief.md', 'mem_brief')],
       new Set(),
       {},
     );
-    expect(nodes.map((node) => node.label)).toEqual(['brief.md']);
+    expect(nodes.map((node) => node.label)).toEqual(['MEMORY.md', 'brief.md']);
   });
 });
 

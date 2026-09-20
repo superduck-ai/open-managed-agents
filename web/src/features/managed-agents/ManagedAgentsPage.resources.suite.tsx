@@ -2506,17 +2506,17 @@ export function registerManagedAgentsResourceTests() {
     expect(JSON.stringify(updateRequest?.body?.resources)).not.toContain('snapshot description');
   });
 
-  test('hides platform MEMORY.md from the memory store tree', async () => {
+  test('shows the memory-block MEMORY.md index in the memory store tree', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/memory-stores/memstore_one123456?memory=mem_one123456');
     const api = mockManagedResourceApi();
     api.resources.memories.unshift({
-      id: 'mem_platform123456',
-      content: 'platform policy',
-      content_sha256: 'memory-hash-platform',
-      content_size_bytes: 15,
+      id: 'mem_index123456',
+      content: '- [Brief](project/brief.md) — release plan',
+      content_sha256: 'memory-hash-index',
+      content_size_bytes: 42,
       created_at: new Date().toISOString(),
       memory_store_id: 'memstore_one123456',
-      memory_version_id: 'memver_platform123456',
+      memory_version_id: 'memver_index123456',
       path: '/MEMORY.md',
       type: 'memory',
       updated_at: new Date().toISOString(),
@@ -2525,13 +2525,14 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByRole('heading', { name: 'Memory one' })).toBeTruthy();
     expect(await screen.findByRole('heading', { name: '/project/brief.md' })).toBeTruthy();
-    expect(screen.queryByText('MEMORY.md')).toBeNull();
-    expect(screen.queryByRole('button', { name: /MEMORY\.md/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /MEMORY\.md/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add memory' }));
     const dialog = screen.getByRole('dialog', { name: 'Add memory' });
     fireEvent.change(within(dialog).getByLabelText('Path'), { target: { value: '/MEMORY.md' } });
-    fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: 'should not submit' } });
-    expect((within(dialog).getByRole('button', { name: 'Add memory' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Content'), {
+      target: { value: '- [Brief](project/brief.md) — release plan' },
+    });
+    expect((within(dialog).getByRole('button', { name: 'Add memory' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   test('opens deployment agent and status filters and refetches the list with the selected values', async () => {

@@ -22,6 +22,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/systemresource"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -240,10 +241,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListEnvironmentsPage(r.Context(), db.ListEnvironmentsPageParams{
-		WorkspaceUUID:   principal.WorkspaceUUID,
-		Limit:           limit,
-		Cursor:          cursor,
-		IncludeArchived: includeArchived,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		Limit:               limit,
+		Cursor:              cursor,
+		IncludeArchived:     includeArchived,
+		ExcludeInternalKind: systemresource.DreamDefaultEnvironmentKind,
 	})
 	if err != nil {
 		return internalError("Could not list environments", fmt.Errorf("list environments: %w", err))
@@ -285,6 +287,9 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID
 		}
 		return internalError("Could not retrieve environment", fmt.Errorf("retrieve environment %q: %w", environmentID, err))
 	}
+	if systemresource.IsDreamDefaultEnvironment(record.Metadata) {
+		return environmentNotFound(environmentID, db.ErrNotFound)
+	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(record))
 	return nil
 }
@@ -308,6 +313,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 			return environmentNotFound(environmentID, err)
 		}
 		return internalError("Could not update environment", fmt.Errorf("retrieve environment %q for update: %w", environmentID, err))
+	}
+	if systemresource.IsDreamDefaultEnvironment(current.Metadata) {
+		return environmentNotFound(environmentID, db.ErrNotFound)
 	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
@@ -373,6 +381,16 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, true))
 		return nil
 	}
+	current, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return environmentNotFound(environmentID, err)
+		}
+		return internalError("Could not archive environment", fmt.Errorf("retrieve environment %q for archive: %w", environmentID, err))
+	}
+	if systemresource.IsDreamDefaultEnvironment(current.Metadata) {
+		return environmentNotFound(environmentID, db.ErrNotFound)
+	}
 	record, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -393,6 +411,16 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	if h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: environmentID, Type: "environment_deleted"})
 		return nil
+	}
+	current, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return environmentNotFound(environmentID, err)
+		}
+		return internalError("Could not delete environment", fmt.Errorf("retrieve environment %q for delete: %w", environmentID, err))
+	}
+	if systemresource.IsDreamDefaultEnvironment(current.Metadata) {
+		return environmentNotFound(environmentID, db.ErrNotFound)
 	}
 	if err := h.db.DeleteEnvironment(r.Context(), principal.WorkspaceUUID, environmentID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
@@ -678,27 +706,9 @@ func decodeEnvironmentWorkStopForce(w http.ResponseWriter, r *http.Request) (boo
 }
 
 func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, work db.EnvironmentWork) error {
-	sandbox, err := h.db.GetActiveEnvironmentSandboxForWork(ctx, env.WorkspaceUUID, env.ExternalID, work.ExternalID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-	if sandbox.ProviderSandboxID == nil || strings.TrimSpace(*sandbox.ProviderSandboxID) == "" {
-		return nil
-	}
-	providerSandboxID := *sandbox.ProviderSandboxID
-	if err := h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceUUID, sandbox.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
-		return err
-	}
-	if err := e2bruntime.NewProvider(h.cfg.E2B).Kill(ctx, providerSandboxID); err != nil {
-		message := err.Error()
-		_ = h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceUUID, sandbox.ExternalID, "failed", &providerSandboxID, &message, nil)
-		return err
-	}
-	stoppedAt := time.Now().UTC()
-	return h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceUUID, sandbox.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt)
+	work.WorkspaceUUID = env.WorkspaceUUID
+	work.EnvironmentExternalID = env.ExternalID
+	return killActiveSandboxForWork(ctx, h.db, e2bruntime.NewProvider(h.cfg.E2B), work)
 }
 
 func (h *Handler) authorizeWork(r *http.Request) (db.Environment, error) {
@@ -731,6 +741,9 @@ func (h *Handler) authorizeWork(r *http.Request) (db.Environment, error) {
 			return db.Environment{}, environmentNotFound(environmentID, err)
 		}
 		return db.Environment{}, internalError("Could not retrieve environment", fmt.Errorf("authorize environment %q work: %w", environmentID, err))
+	}
+	if systemresource.IsDreamDefaultEnvironment(env.Metadata) {
+		return db.Environment{}, environmentNotFound(environmentID, db.ErrNotFound)
 	}
 	return env, nil
 }
@@ -1226,6 +1239,9 @@ func patchMetadata(current json.RawMessage, raw json.RawMessage) (json.RawMessag
 }
 
 func validateMetadata(metadata map[string]string) error {
+	if systemresource.IsReservedKind(metadata["internal_kind"]) {
+		return errors.New("metadata.internal_kind is reserved")
+	}
 	if len(metadata) > 16 {
 		return errors.New("metadata may contain at most 16 entries")
 	}

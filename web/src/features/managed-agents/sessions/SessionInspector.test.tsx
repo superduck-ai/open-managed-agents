@@ -202,6 +202,29 @@ describe('SessionInspector', () => {
     expect(screen.getByTestId('session-inspector-event-detail-content')).toBeTruthy();
   });
 
+  test('does not link Dream internal agent and environment', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_dream');
+    globalThis.fetch = mock(async () => {
+      throw new Error('metadata unavailable');
+    }) as typeof fetch;
+
+    renderInspector({
+      session: {
+        ...session(),
+        title: 'Dream drm_test',
+        metadata: { internal_kind: 'dream', dream_id: 'drm_test' },
+        agent: { id: 'agent_dream', version: 3 },
+        environment_id: 'env_dream',
+      },
+    });
+    await act(async () => Promise.resolve());
+
+    expect(screen.queryByRole('link', { name: 'agent_dream' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'env_dream' })).toBeNull();
+    expect(screen.getByText('agent_dream')).toBeTruthy();
+    expect(screen.getByText('env_dream')).toBeTruthy();
+  });
+
   test('keeps related entity links usable when metadata requests fail', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
     globalThis.fetch = mock(async () => {

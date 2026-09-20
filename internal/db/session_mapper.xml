@@ -144,7 +144,7 @@
                     SELECT 1 FROM session_resources sr
                     WHERE sr.workspace_uuid = s.workspace_uuid
                     AND sr.session_external_id = s.external_id
-                    AND sr.deleted_at IS NULL
+                    <if test="!params.IncludeDetachedMemoryStore">AND sr.deleted_at IS NULL</if>
                     AND sr.resource_type = 'memory_store'
                     AND (sr.payload-&gt;&gt;'memory_store_id' = #{params.MemoryStoreID}
                         OR sr.payload-&gt;&gt;'id' = #{params.MemoryStoreID})
@@ -158,6 +158,7 @@
             <if test="params.CreatedAtGTE != nil">AND s.created_at &gt;= #{params.CreatedAtGTE}</if>
             <if test="params.CreatedAtLT != nil">AND s.created_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND s.created_at &lt;= #{params.CreatedAtLTE}</if>
+            <if test="params.ExcludeInternalKind != ''">AND COALESCE(s.metadata-&gt;&gt;'internal_kind', '') &lt;&gt; #{params.ExcludeInternalKind}</if>
             <if test="params.Cursor != nil">
                 AND (s.created_at, s.uuid)
                 <choose>

@@ -82,10 +82,11 @@ func NewService(cfg config.Config, database filestoreDatabase, store storage.Obj
 		memory.memories = memories
 	}
 	service.memory = memory
+	readOnly := []readOnlyPathBackend{skills}
 	service.paths = pathRouter{
 		persistent: persistent,
 		memory:     memory,
-		readOnly:   []readOnlyPathBackend{skills},
+		readOnly:   readOnly,
 	}
 	return service
 }

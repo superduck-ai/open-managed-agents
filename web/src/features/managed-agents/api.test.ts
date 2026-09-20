@@ -3,6 +3,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { setAnthropicClientForTest } from '@/shared/api/anthropic';
 import {
   addSessionFileResource,
+  listDreamSessionOptions,
   listMemoryStoreOptions,
   listSessionFileOptions,
   mergeSessionEventCache,
@@ -626,6 +627,40 @@ describe('managed agents API', () => {
     expect(requestedPages).toEqual([null, 'memory_100']);
     expect(page.data).toHaveLength(101);
     expect(page.data.at(-1)?.id).toBe('memstore_100');
+    expect(page.next_page).toBeNull();
+  });
+
+  test('hides Dream internal Sessions from the review picker', async () => {
+    const requested: Array<{ limit: string | null; exclude: string | null }> = [];
+    globalThis.fetch = (async (input) => {
+      const url = new URL(requestURL(input), 'http://127.0.0.1');
+      requested.push({
+        limit: url.searchParams.get('limit'),
+        exclude: url.searchParams.get('exclude_internal_kind'),
+      });
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'sesn_user', type: 'session', title: '记忆评测—08' },
+            {
+              id: 'sesn_dream',
+              type: 'session',
+              title: 'Dream drm_02au9Lu4wC1UmbH1OiR9kgRG',
+              metadata: { internal_kind: 'dream' },
+            },
+            { id: 'sesn_prep', type: 'session', title: 'Dream preparation drm_O1CEGbMz1xITrtqSt79YaQhv' },
+          ],
+          next_page: null,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    setAnthropicClientForTest(null);
+
+    const page = await listDreamSessionOptions('workspace_123');
+
+    expect(requested).toEqual([{ limit: '100', exclude: 'dream' }]);
+    expect(page.data.map((session) => session.id)).toEqual(['sesn_user']);
     expect(page.next_page).toBeNull();
   });
 

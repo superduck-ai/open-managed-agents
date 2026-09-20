@@ -41,6 +41,13 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 			wantID:    "EnvironmentMapper.FindByExternalID", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{"workspaceUUID", "externalID"}, wantSQLFragments: []string{"FROM environments", "external_id = $2"},
 		}},
+		{"find Dream default", mapperBuilderContract{
+			statement: environmentMapperFindDreamDefaultStatement,
+			bound:     buildEnvironmentMapperFindDreamDefault(yourbatis.DialectPostgres, params.WorkspaceUUID),
+			wantID:    "EnvironmentMapper.FindDreamDefault", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID"},
+			wantSQLFragments:  []string{"metadata ->> 'internal_kind'", "dream_default_environment", "LIMIT 1"},
+		}},
 		{"find by UUID", mapperBuilderContract{
 			statement: environmentMapperFindByUUIDStatement,
 			bound:     buildEnvironmentMapperFindByUUID(yourbatis.DialectPostgres, params.WorkspaceUUID, params.UUID),
@@ -64,6 +71,13 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 			wantID:    "EnvironmentMapper.ArchiveByExternalID", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"workspaceUUID", "externalID"}, wantSQLFragments: []string{"archived_at = COALESCE", "RETURNING"},
 		}},
+		{"restore Dream default", mapperBuilderContract{
+			statement: environmentMapperRestoreDreamDefaultStatement,
+			bound:     buildEnvironmentMapperRestoreDreamDefault(yourbatis.DialectPostgres, params.WorkspaceUUID, params.UUID),
+			wantID:    "EnvironmentMapper.RestoreDreamDefault", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"workspaceUUID", "environmentUUID"},
+			wantSQLFragments:  []string{"archived_at = NULL", "metadata ->> 'internal_kind'", "RETURNING"},
+		}},
 		{"lock UUID", mapperBuilderContract{
 			statement: environmentMapperLockUUIDByExternalIDStatement,
 			bound:     buildEnvironmentMapperLockUUIDByExternalID(yourbatis.DialectPostgres, params.WorkspaceUUID, params.ExternalID),
@@ -81,6 +95,15 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 			wantID: "EnvironmentMapper.ListPage", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{"params.WorkspaceUUID", "params.Cursor.CreatedAt", "params.Cursor.UUID", "params.FetchLimit"},
 			wantSQLFragments:  []string{"archived_at IS NULL", "(created_at, uuid) < ($2, $3)", "LIMIT $4"},
+		}},
+		{"list page excludes internal kind", mapperBuilderContract{
+			statement: environmentMapperListPageStatement,
+			bound: buildEnvironmentMapperListPage(yourbatis.DialectPostgres, environmentPageMapperParams{
+				WorkspaceUUID: params.WorkspaceUUID, FetchLimit: 21, ExcludeInternalKind: "dream_default_environment",
+			}),
+			wantID: "EnvironmentMapper.ListPage", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"params.WorkspaceUUID", "params.ExcludeInternalKind", "params.FetchLimit"},
+			wantSQLFragments:  []string{"COALESCE(metadata->>'internal_kind', '') <> $2", "LIMIT $3"},
 		}},
 	}
 	for _, test := range tests {
@@ -191,6 +214,13 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"workspaceUUID", "environmentExternalID", "sessionUUID"},
 			wantSQLFragments:  []string{"work.session_uuid = $3", "ORDER BY work.created_at DESC", "JOIN sessions session"},
 		}},
+		{"list unstopped by session", mapperBuilderContract{
+			statement: environmentWorkMapperListUnstoppedBySessionStatement,
+			bound:     buildEnvironmentWorkMapperListUnstoppedBySession(yourbatis.DialectPostgres, params.WorkspaceUUID, params.SessionUUID),
+			wantID:    "EnvironmentWorkMapper.ListUnstoppedBySession", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"work.session_uuid = $2", "work.state <> 'stopped'", "ORDER BY work.created_at ASC", "JOIN sessions session"},
+		}},
 		{"list page", mapperBuilderContract{
 			statement: environmentWorkMapperListPageStatement, bound: buildEnvironmentWorkMapperListPage(yourbatis.DialectPostgres, page),
 			wantID: "EnvironmentWorkMapper.ListPage", wantKind: yourbatis.StatementSelect,
@@ -264,6 +294,13 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 				"params.State", "params.State", "params.WorkspaceUUID", "params.EnvironmentExternalID", "params.WorkExternalID",
 			},
 			wantSQLFragments: []string{"WITH changed AS", "WHEN $2 = 'stopped'", "RETURNING", "JOIN sessions session"},
+		}},
+		{"request stop for session", mapperBuilderContract{
+			statement: environmentWorkMapperRequestStopForSessionStatement,
+			bound:     buildEnvironmentWorkMapperRequestStopForSession(yourbatis.DialectPostgres, params.WorkspaceUUID, "00000000-0000-4000-8000-000000000010"),
+			wantID:    "EnvironmentWorkMapper.RequestStopForSession", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{"workspaceUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"WHEN state = 'queued' THEN 'stopped'", "ELSE 'stopping'", "claimed_by_worker_id = NULL", "session_uuid = $2"},
 		}},
 		{"stats", mapperBuilderContract{
 			statement: environmentWorkMapperStatsStatement,

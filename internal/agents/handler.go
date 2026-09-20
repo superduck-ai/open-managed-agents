@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/systemresource"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -207,12 +208,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	records, hasMore, err := h.db.ListAgentsPage(r.Context(), db.ListAgentsPageParams{
-		WorkspaceUUID:   principal.WorkspaceUUID,
-		Limit:           limit,
-		Cursor:          cursor,
-		IncludeArchived: includeArchived,
-		CreatedAtGTE:    createdAtGTE,
-		CreatedAtLTE:    createdAtLTE,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		Limit:               limit,
+		Cursor:              cursor,
+		IncludeArchived:     includeArchived,
+		CreatedAtGTE:        createdAtGTE,
+		CreatedAtLTE:        createdAtLTE,
+		ExcludeInternalKind: systemresource.DreamDefaultAgentKind,
 	})
 	if err != nil {
 		return internalError("Could not list agents", fmt.Errorf("list agents: %w", err))
@@ -249,11 +251,12 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	records, hasMore, err := h.db.SearchAgentsPage(r.Context(), db.SearchAgentsPageParams{
-		WorkspaceUUID:   principal.WorkspaceUUID,
-		Name:            strings.TrimSpace(body.Name),
-		Limit:           searchLimit(body.Limit),
-		Cursor:          cursor,
-		IncludeArchived: derefBool(body.IncludeArchived),
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		Name:                strings.TrimSpace(body.Name),
+		Limit:               searchLimit(body.Limit),
+		Cursor:              cursor,
+		IncludeArchived:     derefBool(body.IncludeArchived),
+		ExcludeInternalKind: systemresource.DreamDefaultAgentKind,
 	})
 	if err != nil {
 		return internalError("Could not search agents", fmt.Errorf("search agents: %w", err))
@@ -296,6 +299,9 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 		}
 		return internalError("Could not retrieve agent", fmt.Errorf("retrieve agent %q: %w", agentID, err))
 	}
+	if systemresource.IsDreamDefaultAgent(record.Metadata) {
+		return agentNotFound(agentID, db.ErrNotFound)
+	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(record))
 	return nil
 }
@@ -328,6 +334,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			return agentNotFound(agentID, err)
 		}
 		return internalError("Could not update agent", fmt.Errorf("retrieve agent %q for update: %w", agentID, err))
+	}
+	if systemresource.IsDreamDefaultAgent(current.Metadata) {
+		return agentNotFound(agentID, db.ErrNotFound)
 	}
 	nextState, err := h.stateFromUpdate(r, principal, current, body)
 	if err != nil {
@@ -375,6 +384,16 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
 		return nil
 	}
+	current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return agentNotFound(agentID, err)
+		}
+		return internalError("Could not archive agent", fmt.Errorf("retrieve agent %q for archive: %w", agentID, err))
+	}
+	if systemresource.IsDreamDefaultAgent(current.Metadata) {
+		return agentNotFound(agentID, db.ErrNotFound)
+	}
 	record, err := h.deployments.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -395,6 +414,16 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 	if h.isOfficialSDKFixtureID(principal, agentID) {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: []agentResponse{h.fixtureAgent(agentID, 1, false)}})
 		return nil
+	}
+	current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return agentNotFound(agentID, err)
+		}
+		return internalError("Could not list agent versions", fmt.Errorf("retrieve agent %q for versions: %w", agentID, err))
+	}
+	if systemresource.IsDreamDefaultAgent(current.Metadata) {
+		return agentNotFound(agentID, db.ErrNotFound)
 	}
 	limit, err := httpapi.ParseLimit(r, 100)
 	if err != nil {
@@ -639,10 +668,14 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 		return agentReference{ID: selfID, Type: "agent", Version: selfVersion}, false, nil
 	}
 	if version > 0 {
-		if _, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version); err != nil {
+		record, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version)
+		if err != nil {
 			if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureReference(principal, id) {
 				return agentReference{ID: id, Type: "agent", Version: version}, false, nil
 			}
+			return agentReference{}, false, errors.New("multiagent referenced agent version not found")
+		}
+		if systemresource.IsDreamDefaultAgent(record.Metadata) {
 			return agentReference{}, false, errors.New("multiagent referenced agent version not found")
 		}
 		return agentReference{ID: id, Type: "agent", Version: version}, false, nil
@@ -656,6 +689,9 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 	}
 	if record.ArchivedAt != nil {
 		return agentReference{}, false, errors.New("multiagent referenced agent must not be archived")
+	}
+	if systemresource.IsDreamDefaultAgent(record.Metadata) {
+		return agentReference{}, false, errors.New("multiagent referenced agent not found")
 	}
 	return agentReference{ID: id, Type: "agent", Version: record.CurrentVersion}, false, nil
 }
@@ -855,6 +891,9 @@ func validMCPServerURL(value string) bool {
 }
 
 func validateMetadata(metadata map[string]string) error {
+	if systemresource.IsReservedKind(metadata["internal_kind"]) {
+		return errors.New("metadata.internal_kind is reserved")
+	}
 	if len(metadata) > 16 {
 		return errors.New("metadata must contain at most 16 keys")
 	}

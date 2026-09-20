@@ -70,23 +70,26 @@ type insertAgentVersionParams struct {
 }
 
 type agentPageFilter struct {
-	WorkspaceUUID   string
-	Name            string
-	Limit           int
-	Cursor          *AgentPageCursor
-	IncludeArchived bool
-	CreatedAtGTE    *time.Time
-	CreatedAtLTE    *time.Time
+	WorkspaceUUID       string
+	Name                string
+	Limit               int
+	Cursor              *AgentPageCursor
+	IncludeArchived     bool
+	CreatedAtGTE        *time.Time
+	CreatedAtLTE        *time.Time
+	ExcludeInternalKind string
 }
 
 type AgentMapper interface {
 	Insert(ctx context.Context, params insertAgentParams) (agentRow, error)
 	InsertVersion(ctx context.Context, params insertAgentVersionParams) error
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (agentRow, error)
+	FindDreamDefault(ctx context.Context, workspaceUUID string) (agentRow, error)
 	FindVersion(ctx context.Context, workspaceUUID, externalID string, version int) (agentRow, error)
 	LockByExternalID(ctx context.Context, workspaceUUID, externalID string) (agentRow, error)
 	UpdateByExternalID(ctx context.Context, params updateAgentParams) (agentRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (agentRow, error)
+	RestoreDreamDefault(ctx context.Context, workspaceUUID, agentUUID string) (agentRow, error)
 	ListPage(ctx context.Context, filter agentPageFilter) ([]agentRow, error)
 	FindUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	ListVersionsPage(ctx context.Context, agentUUID string, cursor *AgentVersionPageCursor, limit int) ([]agentRow, error)

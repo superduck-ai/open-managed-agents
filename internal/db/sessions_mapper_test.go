@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,10 +182,27 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 		Cursor: &SessionPageCursor{CreatedAt: now, UUID: "session-uuid"}, Descending: true,
 		AgentExternalID: "agent_test", AgentVersion: &agentVersion, DeploymentID: "deployment_test",
 		MemoryStoreID: "memory_test", Statuses: []string{"idle", "running"}, CreatedAtGTE: &now,
+		ExcludeInternalKind: "dream",
 	})
 	assertMapperSQLContains(t, sessionBound, "s.status IN ( $7 , $8 )")
-	assertMapperSQLContains(t, sessionBound, "(s.created_at, s.uuid) < ($10, $11)")
+	assertMapperSQLContains(t, sessionBound, "COALESCE(s.metadata->>'internal_kind', '') <>")
+	assertMapperSQLContains(t, sessionBound, "(s.created_at, s.uuid) < ($11, $12)")
 	assertMapperSQLContains(t, sessionBound, "ORDER BY s.created_at DESC, s.uuid DESC")
+
+	ordinaryBound := buildSessionMapperListPage(yourbatis.DialectPostgres, sessionPageMapperParams{
+		WorkspaceUUID: "workspace-uuid", FetchLimit: 21, Descending: true,
+	})
+	if strings.Contains(ordinaryBound.SQL, "internal_kind") {
+		t.Fatalf("ordinary Session list must keep Dream internals visible: %s", ordinaryBound.SQL)
+	}
+
+	historicalBound := buildSessionMapperListPage(yourbatis.DialectPostgres, sessionPageMapperParams{
+		WorkspaceUUID: "workspace-uuid", FetchLimit: 4, Descending: true,
+		MemoryStoreID: "memory_test", IncludeDetachedMemoryStore: true,
+	})
+	if strings.Contains(historicalBound.SQL, "sr.deleted_at IS NULL") {
+		t.Fatalf("historical Memory Store query must include detached resources: %s", historicalBound.SQL)
+	}
 
 	eventBound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace-uuid", SessionExternalID: "ses_test", PrimaryOnly: true,

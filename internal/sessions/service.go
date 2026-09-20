@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/systemresource"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -50,6 +51,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
+	}
+	if systemresource.IsDreamDefaultEnvironment(env.Metadata) {
+		return invalidRequest(errors.New("environment not found"))
 	}
 	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
@@ -200,20 +204,21 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListSessionsPage(r.Context(), db.ListSessionsPageParams{
-		WorkspaceUUID:   principal.WorkspaceUUID,
-		Limit:           limit,
-		Cursor:          cursor,
-		Order:           order,
-		IncludeArchived: includeArchived,
-		AgentExternalID: strings.TrimSpace(r.URL.Query().Get("agent_id")),
-		AgentVersion:    agentVersion,
-		DeploymentID:    strings.TrimSpace(r.URL.Query().Get("deployment_id")),
-		MemoryStoreID:   strings.TrimSpace(r.URL.Query().Get("memory_store_id")),
-		Statuses:        statuses,
-		CreatedAtGT:     createdAtGT,
-		CreatedAtGTE:    createdAtGTE,
-		CreatedAtLT:     createdAtLT,
-		CreatedAtLTE:    createdAtLTE,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		Limit:               limit,
+		Cursor:              cursor,
+		Order:               order,
+		IncludeArchived:     includeArchived,
+		AgentExternalID:     strings.TrimSpace(r.URL.Query().Get("agent_id")),
+		AgentVersion:        agentVersion,
+		DeploymentID:        strings.TrimSpace(r.URL.Query().Get("deployment_id")),
+		MemoryStoreID:       strings.TrimSpace(r.URL.Query().Get("memory_store_id")),
+		Statuses:            statuses,
+		CreatedAtGT:         createdAtGT,
+		CreatedAtGTE:        createdAtGTE,
+		CreatedAtLT:         createdAtLT,
+		CreatedAtLTE:        createdAtLTE,
+		ExcludeInternalKind: strings.TrimSpace(r.URL.Query().Get("exclude_internal_kind")),
 	})
 	if err != nil {
 		return internalError("Could not list sessions", fmt.Errorf("list sessions: %w", err))

@@ -222,9 +222,11 @@ func sessionPageParameters(params ListSessionsPageParams) sessionPageMapperParam
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: params.Limit + 1,
 		Cursor: params.Cursor, Descending: params.Order != "asc", IncludeArchived: params.IncludeArchived,
 		AgentExternalID: params.AgentExternalID, AgentVersion: params.AgentVersion,
-		DeploymentID: params.DeploymentID, MemoryStoreID: params.MemoryStoreID, Statuses: params.Statuses,
+		DeploymentID: params.DeploymentID, MemoryStoreID: params.MemoryStoreID,
+		IncludeDetachedMemoryStore: params.IncludeDetachedMemoryStore, Statuses: params.Statuses,
 		CreatedAtGT: params.CreatedAtGT, CreatedAtGTE: params.CreatedAtGTE,
 		CreatedAtLT: params.CreatedAtLT, CreatedAtLTE: params.CreatedAtLTE,
+		ExcludeInternalKind: params.ExcludeInternalKind,
 	}
 }
 

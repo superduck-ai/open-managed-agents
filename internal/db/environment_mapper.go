@@ -44,18 +44,21 @@ type environmentWriteParams struct {
 }
 
 type environmentPageMapperParams struct {
-	WorkspaceUUID   string
-	FetchLimit      int
-	Cursor          *EnvironmentPageCursor
-	IncludeArchived bool
+	WorkspaceUUID       string
+	FetchLimit          int
+	Cursor              *EnvironmentPageCursor
+	IncludeArchived     bool
+	ExcludeInternalKind string
 }
 
 type EnvironmentMapper interface {
 	Insert(ctx context.Context, params environmentWriteParams) (environmentMapperRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (environmentMapperRow, error)
+	FindDreamDefault(ctx context.Context, workspaceUUID string) (environmentMapperRow, error)
 	FindByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (environmentMapperRow, error)
 	UpdateByExternalID(ctx context.Context, params environmentWriteParams) (environmentMapperRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (environmentMapperRow, error)
+	RestoreDreamDefault(ctx context.Context, workspaceUUID, environmentUUID string) (environmentMapperRow, error)
 	LockUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	SoftDeleteByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (int64, error)
 	ListPage(ctx context.Context, params environmentPageMapperParams) ([]environmentMapperRow, error)

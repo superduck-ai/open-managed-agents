@@ -72,6 +72,7 @@ import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
 import { columnWidth, entityAgentId, entityAgentLabel, entityDisplayName, entityStatusLabel } from './model';
+import { DreamingDrawer } from '../../dreams/DreamingDrawer';
 
 type ManagedFilterMenu = 'agent' | 'created' | 'deployment' | 'status';
 type DeploymentStatusFilter = NonNullable<ManagedEntityListFilters['status']>;
@@ -780,16 +781,19 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
             {description}
           </p>
         </div>
-        {createLabel ? (
-          <Button
-            type="button"
-            className={cn('shrink-0', config.section === 'sessions' ? 'h-8 px-3' : 'h-9')}
-            onClick={() => setDialogState({ mode: 'create' })}
-          >
-            <Plus className="size-4" aria-hidden />
-            {createLabel}
-          </Button>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-2">
+          {config.section === 'memory-stores' ? <DreamingDrawer workspaceId={activeWorkspaceId} /> : null}
+          {createLabel ? (
+            <Button
+              type="button"
+              className={cn(config.section === 'sessions' ? 'h-8 px-3' : 'h-9')}
+              onClick={() => setDialogState({ mode: 'create' })}
+            >
+              <Plus className="size-4" aria-hidden />
+              {createLabel}
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       <div className={cn('flex flex-wrap items-center gap-2', config.section === 'sessions' ? 'mb-2' : 'mb-7')}>

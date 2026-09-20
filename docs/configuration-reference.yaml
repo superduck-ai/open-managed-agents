@@ -219,3 +219,13 @@ sandbox_lifecycle:
   enabled: true
   dry_run: true
   idle_timeout: 24h
+
+# Dream execution budget. A running Dream that exceeds run_timeout (measured
+# from started_at) fails with error type `timeout`; the output Store is kept.
+# keep_runtime (default true) leaves the internal Session and sandbox after
+# terminal so the user can inspect consolidation quality and keep sending
+# commands. Archiving the Dream then archives that Session. Set false to
+# auto-reclaim the sandbox and archive the Session on terminal.
+dreams:
+  run_timeout: 6h
+  keep_runtime: true

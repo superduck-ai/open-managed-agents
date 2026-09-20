@@ -48,6 +48,7 @@ import {
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from './types';
+import { isDreamInternalSession } from '../dreams/internalSession';
 import { isContentSha256, objectRecord, toRecord } from './utils';
 
 export function workspaceHeaders(workspaceId: string) {
@@ -356,6 +357,8 @@ export function listManagedEntities(
 
 export const memoryStorePickerPageLimit = 100;
 
+export const dreamSessionPickerPageLimit = 100;
+
 export async function listMemoryStoreOptions(workspaceId: string): Promise<PageResponse<MemoryStoreApiResponse>> {
   const data: MemoryStoreApiResponse[] = [];
   let cursor: PageCursor = null;
@@ -379,6 +382,25 @@ export async function listMemoryStoreOptions(workspaceId: string): Promise<PageR
     }
     cursor = nextPage;
   }
+}
+
+export async function listDreamSessionOptions(workspaceId: string): Promise<PageResponse<SessionApiResponse>> {
+  const page = (await anthropicBetaApi.sessions.list<SessionApiResponse>(
+    { limit: dreamSessionPickerPageLimit, include_archived: false, exclude_internal_kind: 'dream' },
+    workspaceId,
+  )) as PageResponse<SessionApiResponse>;
+  return {
+    data: (page.data ?? []).filter((session) => !isDreamInternalSession(session)),
+    next_page: page.next_page ?? null,
+  };
+}
+
+export async function listDreamEnvironmentOptions(workspaceId: string): Promise<PageResponse<EnvironmentApiResponse>> {
+  const page = (await anthropicBetaApi.environments.list<EnvironmentApiResponse>(
+    { limit: dreamSessionPickerPageLimit, include_archived: false },
+    workspaceId,
+  )) as PageResponse<EnvironmentApiResponse>;
+  return { data: page.data ?? [], next_page: page.next_page ?? null };
 }
 
 export function retrieveManagedEntity(section: ManagedEntitySection, entityId: string, workspaceId: string) {

@@ -23,11 +23,24 @@ type Config struct {
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       CodeSessionConfig       `yaml:"code_session"`
+	Dreams            DreamsConfig            `yaml:"dreams"`
 	Observability     ObservabilityConfig     `yaml:"observability"`
 	Webhook           WebhookConfig           `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
 	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+}
+
+// DreamsConfig bounds Dream execution. RunTimeout is the runtime budget of a
+// running Dream measured from started_at; the running worker fails the Dream
+// with error type `timeout` once exceeded. KeepRuntime (default true) leaves
+// the internal Session and sandbox after a terminal status so the user can
+// inspect consolidation quality and keep sending commands. Archiving the Dream
+// then archives that Session; deletion is a separate Session action.
+// keep_runtime: false re-enables automatic sandbox reclaim and Session archive.
+type DreamsConfig struct {
+	RunTimeout  time.Duration `yaml:"run_timeout"`
+	KeepRuntime bool          `yaml:"keep_runtime"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and

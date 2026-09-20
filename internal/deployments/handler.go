@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/systemresource"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
@@ -348,6 +349,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
 	}
+	if systemresource.IsDreamDefaultEnvironment(env.Metadata) {
+		return invalidRequest(errors.New("environment not found"))
+	}
 	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`))
 	if err != nil {
 		return resourceBuildError(err)
@@ -510,6 +514,9 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		if env.ArchivedAt != nil {
 			return invalidRequest(errors.New("environment must not be archived"))
+		}
+		if systemresource.IsDreamDefaultEnvironment(env.Metadata) {
+			return invalidRequest(errors.New("environment not found"))
 		}
 		next.EnvironmentUUID = env.UUID
 		next.EnvironmentExternalID = env.ExternalID
@@ -732,6 +739,9 @@ func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID s
 	if agent.ArchivedAt != nil {
 		return classifyReferenceFailure("agent", nil, true)
 	}
+	if systemresource.IsDreamDefaultAgent(agent.Metadata) {
+		return classifyReferenceFailure("agent", db.ErrNotFound, false)
+	}
 	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
@@ -751,6 +761,9 @@ func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID
 			}
 			if subagent.ArchivedAt != nil {
 				return classifyReferenceFailure("agent", nil, true)
+			}
+			if systemresource.IsDreamDefaultAgent(subagent.Metadata) {
+				return classifyReferenceFailure("agent", db.ErrNotFound, false)
 			}
 		}
 	}
@@ -778,6 +791,9 @@ func validateSessionDependencies(ctx context.Context, database *db.DB, workspace
 	}
 	if env.ArchivedAt != nil {
 		return classifyReferenceFailure("environment", nil, true)
+	}
+	if systemresource.IsDreamDefaultEnvironment(env.Metadata) {
+		return classifyReferenceFailure("environment", db.ErrNotFound, false)
 	}
 	var vaultIDs []string
 	if len(deployment.VaultIDs) > 0 && !jsonx.IsNull(deployment.VaultIDs) {
@@ -920,6 +936,9 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	}
 	if agent.ArchivedAt != nil {
 		return resolvedAgent{}, errors.New("agent must not be archived")
+	}
+	if systemresource.IsDreamDefaultAgent(agent.Metadata) {
+		return resolvedAgent{}, errors.New("agent not found")
 	}
 	snapshot, err := agentsnapshot.FromAgent(agent)
 	if err != nil {

@@ -134,6 +134,18 @@
         LIMIT 1
     </select>
 
+    <select id="ListUnstoppedBySession" resultType="environmentWorkMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environment_work work
+        <include refid="sessionJoin"/>
+        WHERE work.workspace_uuid = #{workspaceUUID}
+        AND work.session_uuid = #{sessionUUID}
+        AND work.deleted_at IS NULL
+        AND work.state &lt;&gt; 'stopped'
+        ORDER BY work.created_at ASC, work.uuid ASC
+    </select>
+
     <select id="ListPage" resultType="environmentWorkMapperRow">
         SELECT
         <include refid="columns"/>
@@ -346,6 +358,27 @@
         AND session_uuid = #{sessionUUID}
         AND deleted_at IS NULL
         AND state &lt;&gt; 'stopped'
+    </update>
+
+    <update id="RequestStopForSession" result="rows">
+        UPDATE environment_work
+        SET state = CASE
+                WHEN state = 'queued' THEN 'stopped'
+                WHEN state = 'stopped' THEN state
+                ELSE 'stopping'
+            END,
+            stop_requested_at = COALESCE(stop_requested_at, NOW()),
+            stopped_at = CASE
+                WHEN state = 'queued' THEN COALESCE(stopped_at, NOW())
+                ELSE stopped_at
+            END,
+            claimed_by_worker_id = NULL,
+            claim_expires_at = NULL,
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND session_uuid = #{sessionUUID}
+          AND deleted_at IS NULL
+          AND state &lt;&gt; 'stopped'
     </update>
 
     <select id="Stats" resultType="environmentWorkStatsMapperRow">

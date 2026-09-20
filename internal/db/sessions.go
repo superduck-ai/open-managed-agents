@@ -141,11 +141,18 @@ type ListSessionsPageParams struct {
 	AgentVersion    *int
 	DeploymentID    string
 	MemoryStoreID   string
-	Statuses        []string
-	CreatedAtGT     *time.Time
-	CreatedAtGTE    *time.Time
-	CreatedAtLT     *time.Time
-	CreatedAtLTE    *time.Time
+	// IncludeDetachedMemoryStore keeps historical Store-to-Session evidence for
+	// consumers such as Dream recommendation. Ordinary Session listing remains
+	// limited to resources that are currently mounted.
+	IncludeDetachedMemoryStore bool
+	Statuses                   []string
+	CreatedAtGT                *time.Time
+	CreatedAtGTE               *time.Time
+	CreatedAtLT                *time.Time
+	CreatedAtLTE               *time.Time
+	// ExcludeInternalKind drops Sessions whose metadata.internal_kind matches.
+	// Ordinary Session listing leaves this empty so internals stay visible.
+	ExcludeInternalKind string
 }
 
 type ListSessionEventsPageParams struct {

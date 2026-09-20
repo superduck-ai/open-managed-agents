@@ -17,6 +17,7 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	"github.com/superduck-ai/open-managed-agents/internal/systemresource"
 )
 
 func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw json.RawMessage) (db.Agent, json.RawMessage, error) {
@@ -63,6 +64,9 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	}
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, nil, errors.New("agent must not be archived")
+	}
+	if systemresource.IsDreamDefaultAgent(agent.Metadata) {
+		return db.Agent{}, nil, errors.New("agent not found")
 	}
 	snapshot, err := agentsnapshot.FromAgent(agent)
 	if err != nil {

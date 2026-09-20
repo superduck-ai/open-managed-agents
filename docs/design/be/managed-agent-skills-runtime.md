@@ -115,7 +115,8 @@ Runner 每次全量替换 `/skills` Resources 时，会在同一事务中软删�
 插入新集合。活动读取只考虑 `deleted_at is null` 的记录；历史 Skill File 不拥有 catalog
 archive，也不会触发对象回收。
 
-删除 custom skill/version 或用 `seed-builtin-skills --prune` 软删除 built-in catalog row 时，
+删除 custom skill/version 或用 `seed-builtin-skills --prune` 软删除 built-in catalog row 时
+（`--prune` 会保留 OMA 产品 skill，例如 `dream`），
 不立即删除 archive 对象，也不创建通用 `object_cleanup` job。原因是已经启动的 Session
 可能仍通过 File 快照中的 bucket、key 与 SHA-256 读取该对象。读路径不再查询 catalog version，
 也不把 catalog 列表可见性当成 Session 快照可见性。物理 GC 必须先确认没有任何活动 Resource 引用，

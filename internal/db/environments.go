@@ -36,10 +36,11 @@ type EnvironmentPageCursor struct {
 }
 
 type ListEnvironmentsPageParams struct {
-	WorkspaceUUID   string
-	Limit           int
-	Cursor          *EnvironmentPageCursor
-	IncludeArchived bool
+	WorkspaceUUID       string
+	Limit               int
+	Cursor              *EnvironmentPageCursor
+	IncludeArchived     bool
+	ExcludeInternalKind string
 }
 
 type EnvironmentKey struct {
@@ -251,6 +252,14 @@ func (d *DB) GetLatestEnvironmentWorkForSession(ctx context.Context, workspaceUU
 		return EnvironmentWork{}, mapNoRows(err)
 	}
 	return row.work(), nil
+}
+
+func (d *DB) ListUnstoppedEnvironmentWorkBySession(ctx context.Context, workspaceUUID, sessionUUID string) ([]EnvironmentWork, error) {
+	rows, err := NewEnvironmentWorkMapper(d.mapperDB).ListUnstoppedBySession(ctx, workspaceUUID, sessionUUID)
+	if err != nil {
+		return nil, err
+	}
+	return environmentWorkFromRows(rows), nil
 }
 
 func (d *DB) ListEnvironmentWorkPage(ctx context.Context, params ListEnvironmentWorkPageParams) ([]EnvironmentWork, bool, error) {
@@ -579,6 +588,7 @@ func environmentPageParams(params ListEnvironmentsPageParams) environmentPageMap
 	return environmentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: params.Limit + 1,
 		Cursor: params.Cursor, IncludeArchived: params.IncludeArchived,
+		ExcludeInternalKind: params.ExcludeInternalKind,
 	}
 }
 

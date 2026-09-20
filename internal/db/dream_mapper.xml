@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="DreamMapper">
+    <sql id="columns">uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid, runtime_user_uuid, status, model, instructions, inputs, outputs, error, usage, output_memory_store_uuid, internal_session_uuid, created_at, updated_at, started_at, ended_at, archived_at, execution_state, attempt_count, next_attempt_at, claimed_by_worker_id, claim_expires_at, last_error</sql>
+    <insert id="Insert" result="returning" resultType="dreamRow">
+        INSERT INTO dreams (uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid, runtime_user_uuid, status, model, instructions, inputs, created_at, updated_at)
+        VALUES (#{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.CreatedByAPIKeyUUID}, #{params.RuntimeUserUUID}, #{params.Status}, #{params.Model}, #{params.Instructions}, CAST(#{params.Inputs,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt})
+        RETURNING <include refid="columns"/>
+    </insert>
+    <select id="FindByExternalID" resultType="dreamRow">
+        SELECT <include refid="columns"/> FROM dreams WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+    </select>
+    <select id="FindByInternalSessionUUID" resultType="dreamRow">
+        SELECT <include refid="columns"/> FROM dreams
+        WHERE workspace_uuid = #{workspaceUUID} AND internal_session_uuid = #{internalSessionUUID}
+    </select>
+    <select id="ListPage" resultType="dreamRow">
+        SELECT <include refid="columns"/> FROM dreams
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            <if test="!params.IncludeArchived">AND archived_at IS NULL</if>
+            <if test="params.HasCursor">AND (created_at &lt; #{params.CursorCreatedAt} OR (created_at = #{params.CursorCreatedAt} AND uuid &lt; #{params.CursorUUID}))</if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC LIMIT #{params.Limit}
+    </select>
+    <select id="ListByStatus" resultType="dreamRow">
+        SELECT <include refid="columns"/> FROM dreams
+        WHERE status = #{status} AND archived_at IS NULL
+        ORDER BY created_at ASC, uuid ASC LIMIT #{limit}
+    </select>
+    <select id="ListStoppedWithActiveSession" resultType="dreamRow">
+        SELECT <include refid="columns"/> FROM dreams
+        WHERE status IN ('canceled', 'failed')
+          AND archived_at IS NULL
+          AND internal_session_uuid IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM sessions
+              WHERE sessions.workspace_uuid = dreams.workspace_uuid
+                AND sessions.uuid = dreams.internal_session_uuid
+                AND sessions.archived_at IS NULL
+                AND sessions.status IN ('running', 'rescheduling')
+          )
+        ORDER BY ended_at ASC, uuid ASC
+        LIMIT #{limit}
+    </select>
+    <select id="ListTerminalAwaitingRuntimeReclaim" resultType="dreamRow">
+        SELECT <include refid="columns"/> FROM dreams
+        WHERE status IN ('completed', 'failed', 'canceled')
+          AND internal_session_uuid IS NOT NULL
+          AND (
+              EXISTS (
+                  SELECT 1 FROM environment_work
+                  WHERE environment_work.workspace_uuid = dreams.workspace_uuid
+                    AND environment_work.session_uuid = dreams.internal_session_uuid
+                    AND environment_work.deleted_at IS NULL
+                    AND environment_work.state &lt;&gt; 'stopped'
+              )
+              OR EXISTS (
+                  SELECT 1 FROM sessions
+                  WHERE sessions.workspace_uuid = dreams.workspace_uuid
+                    AND sessions.uuid = dreams.internal_session_uuid
+                    AND sessions.deleted_at IS NULL
+                    AND sessions.archived_at IS NULL
+                    AND sessions.status IN ('running', 'rescheduling')
+              )
+          )
+        ORDER BY ended_at ASC, uuid ASC
+        LIMIT #{limit}
+    </select>
+    <select id="ClaimNextPending" resultType="dreamRow">
+        WITH changed AS (
+            UPDATE dreams
+            SET execution_state = CASE
+                    WHEN internal_session_uuid IS NULL THEN 'preparing'
+                    ELSE 'dispatching'
+                END,
+                attempt_count = attempt_count + 1,
+                claimed_by_worker_id = #{params.WorkerID},
+                claim_expires_at = #{params.ClaimExpiresAt},
+                updated_at = NOW()
+            WHERE uuid = (
+                SELECT uuid
+                FROM dreams
+                WHERE status = 'pending'
+                  AND archived_at IS NULL
+                  AND (next_attempt_at IS NULL OR next_attempt_at &lt;= NOW())
+                  AND (claim_expires_at IS NULL OR claim_expires_at &lt;= NOW())
+                ORDER BY created_at ASC, uuid ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING <include refid="columns"/>
+        )
+        SELECT <include refid="columns"/> FROM changed
+    </select>
+    <update id="RenewPendingClaim" result="rows">
+        UPDATE dreams
+        SET claim_expires_at = #{params.ClaimExpiresAt},
+            updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND status = 'pending'
+          AND claimed_by_worker_id = #{params.WorkerID}
+          AND archived_at IS NULL
+    </update>
+    <update id="SchedulePendingRetry" result="returning" resultType="dreamRow">
+        UPDATE dreams
+        SET execution_state = CASE
+                WHEN internal_session_uuid IS NULL THEN 'queued'
+                ELSE 'dispatching'
+            END,
+            next_attempt_at = #{params.NextAttemptAt},
+            claimed_by_worker_id = NULL,
+            claim_expires_at = NULL,
+            last_error = #{params.LastError,sensitive=true},
+            updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND status = 'pending'
+          AND claimed_by_worker_id = #{params.WorkerID}
+          AND archived_at IS NULL
+        RETURNING <include refid="columns"/>
+    </update>
+    <select id="ListAwaitingInternalSessionArchive" resultType="dreamRow">
+        SELECT <include refid="columns"/> FROM dreams
+        WHERE status IN ('completed', 'failed', 'canceled')
+          AND internal_session_uuid IS NOT NULL
+          AND ended_at IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM sessions
+              WHERE sessions.uuid = dreams.internal_session_uuid
+                AND sessions.workspace_uuid = dreams.workspace_uuid
+                AND sessions.deleted_at IS NULL
+                AND sessions.archived_at IS NULL
+                AND sessions.status NOT IN ('running', 'rescheduling')
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM environment_work
+              WHERE environment_work.workspace_uuid = dreams.workspace_uuid
+                AND environment_work.session_uuid = dreams.internal_session_uuid
+                AND environment_work.deleted_at IS NULL
+                AND environment_work.state &lt;&gt; 'stopped'
+          )
+        ORDER BY ended_at ASC, uuid ASC
+        LIMIT #{limit}
+    </select>
+    <update id="RecordPendingResources" result="returning" resultType="dreamRow">
+        UPDATE dreams
+        SET output_memory_store_uuid = #{params.OutputMemoryStoreUUID},
+            internal_session_uuid = #{params.InternalSessionUUID},
+            outputs = jsonb_build_array(jsonb_build_object(
+                'type', 'memory_store',
+                'memory_store_id', CAST(#{params.OutputMemoryStoreID} AS text),
+                'internal_session_id', CAST(#{params.InternalSessionID} AS text)
+            )),
+            execution_state = 'dispatching',
+            updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND archived_at IS NULL
+          AND status = 'pending'
+          AND claimed_by_worker_id = #{params.WorkerID}
+          AND internal_session_uuid IS NULL
+        RETURNING <include refid="columns"/>
+    </update>
+    <update id="MarkRunning" result="returning" resultType="dreamRow">
+        UPDATE dreams
+        SET status = 'running',
+            execution_state = 'running',
+            started_at = COALESCE(started_at, #{params.Now}),
+            next_attempt_at = NULL,
+            claimed_by_worker_id = NULL,
+            claim_expires_at = NULL,
+            last_error = NULL,
+            updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND archived_at IS NULL
+          AND status = 'pending'
+          AND claimed_by_worker_id = #{params.WorkerID}
+          AND outputs-&gt;0-&gt;&gt;'memory_store_id' = #{params.OutputMemoryStoreID}
+          AND outputs-&gt;0-&gt;&gt;'internal_session_id' = #{params.InternalSessionID}
+        RETURNING <include refid="columns"/>
+    </update>
+    <update id="UpdateRunningUsage" result="returning" resultType="dreamRow">
+        UPDATE dreams
+        SET usage = CAST(#{params.Usage,sensitive=true} AS jsonb),
+            updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND archived_at IS NULL
+          AND status = 'running'
+        RETURNING <include refid="columns"/>
+    </update>
+    <update id="MarkTerminal" result="returning" resultType="dreamRow">
+        UPDATE dreams
+        SET status = #{params.Status},
+            execution_state = 'terminal',
+            error = CAST(#{params.Error,sensitive=true} AS jsonb),
+            usage = CAST(#{params.Usage,sensitive=true} AS jsonb),
+            ended_at = #{params.Now},
+            next_attempt_at = NULL,
+            claimed_by_worker_id = NULL,
+            claim_expires_at = NULL,
+            updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND archived_at IS NULL
+          AND status IN ('pending', 'running')
+        RETURNING <include refid="columns"/>
+    </update>
+    <update id="MarkClaimedFailed" result="returning" resultType="dreamRow">
+        UPDATE dreams
+        SET status = 'failed',
+            execution_state = 'terminal',
+            error = CAST(#{params.Error,sensitive=true} AS jsonb),
+            usage = CAST(#{params.Usage,sensitive=true} AS jsonb),
+            ended_at = #{params.Now},
+            next_attempt_at = NULL,
+            claimed_by_worker_id = NULL,
+            claim_expires_at = NULL,
+            updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+          AND external_id = #{params.ExternalID}
+          AND archived_at IS NULL
+          AND status = 'pending'
+          AND claimed_by_worker_id = #{params.WorkerID}
+        RETURNING <include refid="columns"/>
+    </update>
+    <update id="ArchiveByExternalID" result="returning" resultType="dreamRow">
+        UPDATE dreams SET archived_at = COALESCE(archived_at, NOW()), updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+        RETURNING <include refid="columns"/>
+    </update>
+</mapper>

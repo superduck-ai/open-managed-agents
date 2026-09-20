@@ -106,6 +106,24 @@ func TestAgentMapperStatements(t *testing.T) {
 			fragments: []string{"workspace_uuid = $1", "external_id = $2", "deleted_at IS NULL"},
 		},
 		{
+			name:      "find Dream default",
+			statement: agentMapperFindDreamDefaultStatement,
+			bound:     buildAgentMapperFindDreamDefault(yourbatis.DialectPostgres, insertParams.WorkspaceUUID),
+			id:        "AgentMapper.FindDreamDefault",
+			kind:      yourbatis.StatementSelect,
+			values:    []any{insertParams.WorkspaceUUID},
+			fragments: []string{"metadata ->> 'internal_kind'", "dream_default_agent", "LIMIT 1"},
+		},
+		{
+			name:      "restore Dream default",
+			statement: agentMapperRestoreDreamDefaultStatement,
+			bound:     buildAgentMapperRestoreDreamDefault(yourbatis.DialectPostgres, insertParams.WorkspaceUUID, insertParams.UUID),
+			id:        "AgentMapper.RestoreDreamDefault",
+			kind:      yourbatis.StatementUpdate,
+			values:    []any{insertParams.WorkspaceUUID, insertParams.UUID},
+			fragments: []string{"archived_at = NULL", "metadata ->> 'internal_kind'", "dream_default_agent", "RETURNING"},
+		},
+		{
 			name:      "find version",
 			statement: agentMapperFindVersionStatement,
 			bound: buildAgentMapperFindVersion(
@@ -169,6 +187,19 @@ func TestAgentMapperStatements(t *testing.T) {
 			kind:      yourbatis.StatementSelect,
 			values:    []any{insertParams.WorkspaceUUID, 11},
 			fragments: []string{"workspace_uuid = $1", "archived_at IS NULL", "ORDER BY created_at DESC, uuid DESC", "LIMIT $2"},
+		},
+		{
+			name:      "list page excludes internal kind",
+			statement: agentMapperListPageStatement,
+			bound: buildAgentMapperListPage(yourbatis.DialectPostgres, agentPageFilter{
+				WorkspaceUUID:       insertParams.WorkspaceUUID,
+				Limit:               11,
+				ExcludeInternalKind: "dream_default_agent",
+			}),
+			id:        "AgentMapper.ListPage",
+			kind:      yourbatis.StatementSelect,
+			values:    []any{insertParams.WorkspaceUUID, "dream_default_agent", 11},
+			fragments: []string{"COALESCE(metadata->>'internal_kind', '') <> $2", "LIMIT $3"},
 		},
 		{
 			name:      "find UUID",

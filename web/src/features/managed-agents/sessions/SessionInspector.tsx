@@ -39,6 +39,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import { Ban, CheckCircle2, ChevronDown, CircleHelp, Database, File, Plus, Search, X } from 'lucide-react';
+import { isDreamInternalSession } from '../../dreams/internalSession';
 import { retrieveAgent, retrieveFileMetadata, retrieveManagedEntity } from '../api';
 import {
   type AgentApiResponse,
@@ -135,6 +136,7 @@ export function SessionInspector({
   const related = useSessionInspectorEntities(session, workspaceId, refreshKey);
   const agentReference = objectRecord(session.agent);
   const sessionAgentId = typeof agentReference.id === 'string' ? agentReference.id : '';
+  const linkRelatedEntities = !isDreamInternalSession(session);
   const filenamesByFileId = useSessionInspectorFileMetadata(session, workspaceId);
   const tabsListRef = useRef<HTMLDivElement>(null);
   const [toolScope, setToolScope] = useState<InspectorToolScope>('all');
@@ -289,6 +291,7 @@ export function SessionInspector({
             agent={related.agent}
             agentId={sessionAgentId}
             hoveredEventId={hoveredEventId}
+            linkRelatedEntities={linkRelatedEntities}
             rows={threadRows}
             workspaceId={workspaceId}
             onHoverEvent={onHoverEvent}
@@ -334,6 +337,7 @@ function SessionOverviewPanel({
   const formatters = useFormatters();
   const agentReference = objectRecord(session.agent);
   const agentId = typeof agentReference.id === 'string' ? agentReference.id : '';
+  const linkRelatedEntities = !isDreamInternalSession(session);
   const costPoints = useMemo(() => buildInspectorCostPoints(events), [events]);
   const latestCostPoint = costPoints.at(-1);
   const listCost = latestCostPoint
@@ -353,7 +357,7 @@ function SessionOverviewPanel({
     [
       msg('managedAgents.sessions.detail.agentTab', 'Agent'),
       agentId ? (
-        <InspectorEntityLink href={agentDetailHref(workspaceId, agentId)}>
+        <InspectorEntityLink href={linkRelatedEntities ? agentDetailHref(workspaceId, agentId) : undefined}>
           {related.agent?.name || agentId}
         </InspectorEntityLink>
       ) : (
@@ -363,7 +367,13 @@ function SessionOverviewPanel({
     [
       msg('managedAgents.sessions.detail.environmentTab', 'Environment'),
       session.environment_id ? (
-        <InspectorEntityLink href={managedEntityDetailHref(workspaceId, 'environments', session.environment_id)}>
+        <InspectorEntityLink
+          href={
+            linkRelatedEntities
+              ? managedEntityDetailHref(workspaceId, 'environments', session.environment_id)
+              : undefined
+          }
+        >
           {related.environment?.name || session.environment_id}
         </InspectorEntityLink>
       ) : (
@@ -1515,8 +1525,11 @@ function InspectorResourcesPanel({
         <TableBody>
           {resources.map((resource, index) => {
             if (resource.type === 'memory_store') {
-              const name = resource.name || '—';
-              const storeId = resource.memory_store_id || '—';
+              const name = typeof resource.name === 'string' && resource.name ? resource.name : '—';
+              const storeId =
+                typeof resource.memory_store_id === 'string' && resource.memory_store_id
+                  ? resource.memory_store_id
+                  : '—';
               const mountPath = resource.mount_path || '—';
               const title = `${name} ${storeId} ${mountPath}`;
               return (
@@ -1610,6 +1623,7 @@ function InspectorThreadsPanel({
   agent,
   agentId,
   hoveredEventId,
+  linkRelatedEntities,
   onHoverEvent,
   onSelectLane,
   rows,
@@ -1619,6 +1633,7 @@ function InspectorThreadsPanel({
   agent: AgentApiResponse | null;
   agentId: string;
   hoveredEventId: string | null;
+  linkRelatedEntities: boolean;
   onHoverEvent: (eventId: string | null) => void;
   onSelectLane: (laneId: string) => void;
   rows: InspectorThreadRow[];
@@ -1690,7 +1705,9 @@ function InspectorThreadsPanel({
                     msg('managedAgents.sessions.detail.agentTab', 'Agent'),
                     selectedAgentId ? (
                       <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
-                        <InspectorEntityLink href={agentDetailHref(workspaceId, selectedAgentId)}>
+                        <InspectorEntityLink
+                          href={linkRelatedEntities ? agentDetailHref(workspaceId, selectedAgentId) : undefined}
+                        >
                           {selectedAgent?.name || selectedAgentId}
                         </InspectorEntityLink>
                         {selectedAgent ? <span className="text-muted-foreground">v{selectedAgent.version}</span> : null}
@@ -1979,7 +1996,10 @@ function formatInspectorDate(value: string, formatters: ReturnType<typeof useFor
   });
 }
 
-function InspectorEntityLink({ children, href }: { children: React.ReactNode; href: string }) {
+function InspectorEntityLink({ children, href }: { children: React.ReactNode; href?: string }) {
+  if (!href) {
+    return <span className="inline-block max-w-full truncate align-bottom">{children}</span>;
+  }
   return (
     <a
       href={href}

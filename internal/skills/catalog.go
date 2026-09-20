@@ -9,6 +9,7 @@ type skillMetadata struct {
 	Name        string
 	Description string
 	License     string
+	Version     string
 }
 
 func parseSkillMetadata(data []byte, fallbackName string) skillMetadata {
@@ -20,6 +21,7 @@ func parseSkillMetadata(data []byte, fallbackName string) skillMetadata {
 		Name:        name,
 		Description: description,
 		License:     meta["license"],
+		Version:     meta["version"],
 	}
 }
 

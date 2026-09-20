@@ -14,6 +14,14 @@ const (
 	claudeCoworkMemoryPathOverrideEnv = "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"
 	memoryFilestoreNamespace          = "/memory"
 	memoryRcloneCacheSeconds          = 1
+	memoryMarkdownBlockGuide          = `<!-- oma-memory-blocks -->
+This file indexes attached memory blocks: which store to read or write for a kind of memory. It is not the index of individual memories.
+
+The real memory index for a block is MEMORY.md inside that block (<mount_path>/MEMORY.md). Read that file to see which memories exist in the directory and how to find them.
+
+After you add, update, or prune memories in a block, update that block's MEMORY.md immediately using auto-memory index rules: keep it as an index (not a dump), under 200 lines and ~25KB, with one hook line per topic file (- [Title](file.md) — one-line hook). Never write memory content into the index. Do not treat this root file as a substitute for a block index.
+
+`
 )
 
 type memoryRuntimeMount struct {
@@ -58,7 +66,7 @@ func parseMemoryRuntimeMount(payload json.RawMessage) (memoryRuntimeMount, bool)
 
 func renderMemoryMarkdown(mounts []memoryRuntimeMount) string {
 	var builder strings.Builder
-	// 固定引导先不写入 MEMORY.md；只注入 store 目录段。
+	builder.WriteString(memoryMarkdownBlockGuide)
 	builder.WriteString("<!-- oma-stores -->\n")
 	for _, mount := range mounts {
 		fmt.Fprintf(

@@ -48,6 +48,7 @@ type yamlConfig struct {
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       yamlCodeSessionConfig   `yaml:"code_session"`
+	Dreams            DreamsConfig            `yaml:"dreams"`
 	Observability     ObservabilityConfig     `yaml:"observability"`
 	Webhook           yamlWebhookConfig       `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
@@ -119,6 +120,7 @@ func newYAMLConfig() yamlConfig {
 			UpstreamProxyCAKeyFile:             defaults.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: defaults.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
+		Dreams:        defaults.Dreams,
 		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
 			EndpointURL:   defaults.Webhook.EndpointURL,
@@ -165,6 +167,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
+		Dreams:        input.Dreams,
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
 			EndpointURL:   input.Webhook.EndpointURL,

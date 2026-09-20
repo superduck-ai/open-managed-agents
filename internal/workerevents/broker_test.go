@@ -21,6 +21,39 @@ func TestJetStreamBrokerRejectsInsufficientReplicas(t *testing.T) {
 	}
 }
 
+func TestJetStreamBrokerUsesLegacySubjectWithoutMutatingLegacyStream(t *testing.T) {
+	servers := runNATSCluster(t)
+	connection := connectNATS(t, servers[0].ClientURL())
+	js, err := jetstream.New(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.CreateStream(t.Context(), jetstream.StreamConfig{
+		Name: StreamName, Subjects: []string{"oma.worker.inbound.v1.>"}, Retention: jetstream.LimitsPolicy,
+		Storage: jetstream.FileStorage, Replicas: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := NewJetStream(t.Context(), connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Publish(t.Context(), "legacy-compatible", EventEnvelope("csess_upgrade", "csev_upgrade", "", "user.message", "", []byte(`{}`), time.Now().Add(time.Hour))); err != nil {
+		t.Fatalf("Publish() through legacy stream: %v", err)
+	}
+	stream, err := js.Stream(t.Context(), StreamName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := stream.Info(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Config.Retention != jetstream.LimitsPolicy || len(info.Config.Subjects) != 1 || info.Config.Subjects[0] != "oma.worker.inbound.v1.>" {
+		t.Fatalf("legacy stream config = %#v, want unchanged limits stream", info.Config)
+	}
+}
+
 func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
 	servers := runNATSCluster(t)
 	publisherConnection := connectNATS(t, servers[0].ClientURL())

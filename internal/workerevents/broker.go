@@ -20,6 +20,10 @@ const (
 	StreamName = "OMA_WORKER_INBOUND"
 	// subjectPrefix 后拼接 Code Session ID，组成当前 v2 协议的会话级 subject。
 	subjectPrefix = "oma.worker.inbound.v2."
+	// legacySubjectPrefix is retained only while an installed JetStream stream
+	// still accepts the pre-v2 subject. It lets an in-place upgrade keep
+	// delivering runtime events without recreating that stream destructively.
+	legacySubjectPrefix = "oma.worker.inbound.v1."
 	// streamSubject 使用 > 通配符，让共享 Stream 收集所有会话的入站事件。
 	streamSubject = subjectPrefix + ">"
 	// MaxMessageBytes 是编码后单条 envelope 的大小上限：1 MiB。
@@ -134,8 +138,9 @@ func Subject(codeSessionID string) (string, error) {
 func consumerName(codeSessionID string) string { return "oma_worker_" + codeSessionID }
 
 type JetStreamBroker struct {
-	connection *nats.Conn
-	js         jetstream.JetStream
+	connection    *nats.Conn
+	js            jetstream.JetStream
+	subjectPrefix string
 }
 
 func NewJetStream(ctx context.Context, connection *nats.Conn) (*JetStreamBroker, error) {
@@ -145,6 +150,24 @@ func NewJetStream(ctx context.Context, connection *nats.Conn) (*JetStreamBroker,
 	js, err := jetstream.New(connection)
 	if err != nil {
 		return nil, fmt.Errorf("create worker event JetStream client: %w", err)
+	}
+	// Retention is immutable in JetStream. Older local installations created
+	// this stream with limits retention; accepting that existing stream keeps a
+	// source upgrade from preventing the HTTP server from starting. New streams
+	// still use the work-queue contract below.
+	stream, streamErr := js.Stream(ctx, StreamName)
+	if streamErr == nil {
+		info, infoErr := stream.Info(ctx)
+		if infoErr != nil {
+			return nil, fmt.Errorf("inspect worker event stream: %w", infoErr)
+		}
+		if info.Config.Retention != jetstream.WorkQueuePolicy {
+			// Retention cannot be changed in place. Older installations also
+			// reserved their JetStream capacity, so even a harmless config update
+			// can be rejected. Publish on the v1 subject they already cover until
+			// an operator performs a deliberate stream migration.
+			return &JetStreamBroker{connection: connection, js: js, subjectPrefix: legacySubjectPrefix}, nil
+		}
 	}
 	_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:       StreamName,
@@ -161,11 +184,11 @@ func NewJetStream(ctx context.Context, connection *nats.Conn) (*JetStreamBroker,
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event stream: %w", err)
 	}
-	return &JetStreamBroker{connection: connection, js: js}, nil
+	return &JetStreamBroker{connection: connection, js: js, subjectPrefix: subjectPrefix}, nil
 }
 
 func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) error {
-	subjectName, err := laneForEvent(envelope).subject(envelope.CodeSessionID)
+	subjectName, err := b.laneSubject(laneForEvent(envelope), envelope.CodeSessionID)
 	if err != nil {
 		return err
 	}
@@ -209,7 +232,7 @@ func (b *JetStreamBroker) Subscribe(ctx context.Context, codeSessionID string) (
 }
 
 func (b *JetStreamBroker) laneConsumer(ctx context.Context, codeSessionID string, lane deliveryLane) (jetstream.Consumer, error) {
-	filter, err := lane.subject(codeSessionID)
+	filter, err := b.laneSubject(lane, codeSessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -327,12 +350,23 @@ func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string
 		}
 	}
 	for _, lane := range deliveryLanes {
-		filter, _ := lane.subject(codeSessionID)
+		filter, _ := b.laneSubject(lane, codeSessionID)
 		if err := stream.Purge(ctx, jetstream.WithPurgeSubject(filter)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (b *JetStreamBroker) laneSubject(lane deliveryLane, codeSessionID string) (string, error) {
+	if _, err := Subject(codeSessionID); err != nil {
+		return "", err
+	}
+	prefix := b.subjectPrefix
+	if prefix == "" {
+		prefix = subjectPrefix
+	}
+	return prefix + codeSessionID + string(lane), nil
 }
 
 type jetStreamSubscription struct {

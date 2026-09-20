@@ -116,20 +116,22 @@ type sessionUpdateParams struct {
 }
 
 type sessionPageMapperParams struct {
-	WorkspaceUUID   string
-	FetchLimit      int
-	Cursor          *SessionPageCursor
-	Descending      bool
-	IncludeArchived bool
-	AgentExternalID string
-	AgentVersion    *int
-	DeploymentID    string
-	MemoryStoreID   string
-	Statuses        []string
-	CreatedAtGT     *time.Time
-	CreatedAtGTE    *time.Time
-	CreatedAtLT     *time.Time
-	CreatedAtLTE    *time.Time
+	WorkspaceUUID              string
+	FetchLimit                 int
+	Cursor                     *SessionPageCursor
+	Descending                 bool
+	IncludeArchived            bool
+	AgentExternalID            string
+	AgentVersion               *int
+	DeploymentID               string
+	MemoryStoreID              string
+	IncludeDetachedMemoryStore bool
+	Statuses                   []string
+	CreatedAtGT                *time.Time
+	CreatedAtGTE               *time.Time
+	CreatedAtLT                *time.Time
+	CreatedAtLTE               *time.Time
+	ExcludeInternalKind        string
 }
 
 // SessionMapper contains queries whose primary table is sessions.

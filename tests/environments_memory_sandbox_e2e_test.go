@@ -482,7 +482,7 @@ func initializeAppendSystemPrompt(t *testing.T, app *testApp, sessionID string) 
 	if err != nil {
 		t.Fatalf("load code session for %s: %v", sessionID, err)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
 	}

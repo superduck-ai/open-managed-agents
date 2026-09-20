@@ -16,7 +16,7 @@
 
 `deployment-schedule.ts` 使用 cron-parser 解析 POSIX 表达式，使用 Luxon 解析指定时区的墙上时间。先在 UTC 中枚举日历 occurrence，再解析目标时区，以对齐后端 robfig 的夏令时语义：不存在的时间跳过，重复的时间返回两个 UTC 时刻。预览显示未来五次运行，每分钟刷新；闰日计划不受一年窗口限制。
 
-前端拒绝非五段表达式、无未来 occurrence 和无效时区。Quartz/Jenkins 扩展按字段 token 识别（`L`、`W`、`#`、`?`、`@`、Jenkins `H`），不按字符误伤 `WED`/`THU` 等别名。错误就地展示，定时配置无效时禁用提交。后端仍是参数校验和执行的最终权威；浏览器与服务器使用各自的 IANA 时区数据。
+前端拒绝非五段表达式、无未来 occurrence 和无效时区，并与 `deploymentjobs.Parse` 使用同一套字符过滤（`L` `W` `#` `?` `@`）：`WED`/`JUL` 在预览阶段即拒绝，`THU` 不含这些字符因而可预览。另拒绝 Jenkins `H` 字段，避免 parser 放行而后端 robfig 失败。错误就地展示，定时配置无效时禁用提交。后端仍是参数校验和执行的最终权威；浏览器与服务器使用各自的 IANA 时区数据。
 
 提交沿用现有 `ManagedEntityFormValues` → API 映射：手动为 `schedule: null`，定时为 `{type: "cron", expression, timezone}`。初始事件、资源引用和 Agent 版本映射不变。本次没有预算字段对应的后端支持，因此不提供预算输入。
 

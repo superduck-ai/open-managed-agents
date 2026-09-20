@@ -42,28 +42,11 @@ export function cronToSchedule(expression: string): ScheduleControls {
 
 export type SchedulePreview = { runs: Date[]; error: 'cron' | 'timezone' | null };
 
-function cronFieldTokens(field: string): string[] {
-  return field.split(',').flatMap((item) => item.split('/'));
-}
-
-function isUnsupportedCronToken(token: string): boolean {
-  return (
-    token.startsWith('@') ||
-    token.includes('#') ||
-    token === 'L' ||
-    token === 'W' ||
-    token === '?' ||
-    token === 'H' ||
-    token === 'LW' ||
-    /^\d+L$/.test(token) ||
-    /^\d+W$/.test(token) ||
-    /^H\(.*\)$/.test(token)
-  );
-}
-
 function hasUnsupportedCronSyntax(expression: string): boolean {
   const fields = expression.trim().split(/\s+/);
-  return fields.length !== 5 || fields.some((field) => cronFieldTokens(field).some(isUnsupportedCronToken));
+  // Same character filter as deploymentjobs.Parse: L W # ? @. THU is allowed; WED/JUL are not.
+  if (fields.length !== 5 || /[LW#?@]/.test(expression)) return true;
+  return fields.some((field) => field.split(/[,/]/).some((token) => token === 'H' || /^H\(.*\)$/.test(token)));
 }
 
 export function previewSchedule(expression: string, timezone: string, now = new Date()): SchedulePreview {
@@ -74,7 +57,6 @@ export function previewSchedule(expression: string, timezone: string, now = new 
     return { runs: [], error: 'timezone' };
   }
   try {
-    // Reject Quartz/Jenkins tokens, not letters inside month or weekday names such as THU.
     if (hasUnsupportedCronSyntax(expression)) throw new Error('Invalid cron');
     return { runs: nextScheduleRuns(expression, timezone, now), error: null };
   } catch {

@@ -13,6 +13,8 @@ describe('deployment schedule', () => {
       '0 0 L * *',
       '0 9 W * *',
       '0 9 * * 1#2',
+      '0 9 * * WED',
+      '0 9 * JUL *',
       'H * * * *',
       '@daily',
       '60 9 * * *',
@@ -31,11 +33,11 @@ describe('deployment schedule', () => {
     expect(cronToSchedule('*/15 9-17 * * 1-5').frequency).toBe('custom');
   });
 
-  test('previews month and weekday aliases without treating letters as extensions', () => {
-    for (const expression of ['0 9 * * WED', '0 9 * JUL *', '0 9 * * THU']) {
-      expect(previewSchedule(expression, 'UTC', now).error).toBeNull();
-      expect(previewSchedule(expression, 'UTC', now).runs).toHaveLength(5);
-    }
+  test('matches API rejection of W/L aliases and still allows THU', () => {
+    expect(previewSchedule('0 9 * * WED', 'UTC', now).error).toBe('cron');
+    expect(previewSchedule('0 9 * JUL *', 'UTC', now).error).toBe('cron');
+    expect(previewSchedule('0 9 * * THU', 'UTC', now).error).toBeNull();
+    expect(previewSchedule('0 9 * * THU', 'UTC', now).runs).toHaveLength(5);
   });
 
   test('round trips all graphical frequencies and Sunday alias', () => {

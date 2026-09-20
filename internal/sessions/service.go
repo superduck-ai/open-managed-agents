@@ -37,7 +37,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 
 	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
-		return invalidRequest(err)
+		return sessionAgentError(err)
 	}
 	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {

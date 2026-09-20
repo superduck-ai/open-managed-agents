@@ -133,6 +133,7 @@ func (d *DB) ListArchivableInternalEvents(ctx context.Context, query TranscriptA
 // TranscriptDeleteBatch contains ONLY sequences read back from a verified attached object.
 // A sparse segment range is not evidence that every row in that range was archived.
 type TranscriptDeleteBatch struct {
+	Eligibility TranscriptArchiveQuery
 	Scope       TranscriptScope
 	ArchiveUUID string
 	Sequences   []int64
@@ -184,4 +185,16 @@ func (d *DB) deleteTranscriptBatch(ctx context.Context, batch TranscriptDeleteBa
 func (d *DB) ReadTranscriptArchiveRange(ctx context.Context, query TranscriptArchiveQuery) ([]CodeSessionInternalEvent, error) {
 	rows, err := NewCodeSessionInternalEventMapper(d.mapperDB).ReadArchiveRange(ctx, query)
 	return codeSessionInternalEvents(rows), err
+}
+
+func (d *DB) ListTranscriptDeletionCandidates(ctx context.Context, afterUUID string, cutoff time.Time, limit int) ([]TranscriptScope, error) {
+	rows, err := NewCodeSessionInternalEventMapper(d.mapperDB).ListDeletionCandidates(ctx, afterUUID, cutoff, limit)
+	scopes := make([]TranscriptScope, len(rows))
+	for i := range rows {
+		scopes[i] = TranscriptScope(rows[i])
+	}
+	return scopes, err
+}
+func (d *DB) HasUnprotectedDeletedTranscript(ctx context.Context, scope TranscriptScope, cutoff time.Time) (bool, error) {
+	return NewCodeSessionInternalEventMapper(d.mapperDB).HasUnprotectedDeleted(ctx, scope, cutoff)
 }

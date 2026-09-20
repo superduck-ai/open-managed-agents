@@ -1,44 +1,60 @@
 package transcriptretention
 
 import (
-	"errors"
 	"testing"
 	"time"
 )
 
-func TestNewRejectsUnsafeArchiveMinAge(t *testing.T) {
-	for _, age := range []time.Duration{-time.Hour, 0, time.Hour, 7*24*time.Hour - time.Nanosecond} {
-		for _, mode := range []struct {
-			name   string
-			policy Policy
-		}{
-			{"enabled", Policy{Enabled: true, BoundarySweepEnabled: true}},
-			{"dry_run", Policy{Enabled: true, BoundarySweepEnabled: true, DryRun: true}},
-			{"disabled", Policy{}},
-			{"terminal_only", Policy{Enabled: true, TerminalSweepEnabled: true}},
-		} {
-			t.Run(mode.name+"/"+age.String(), func(t *testing.T) {
-				policy := mode.policy
-				policy.ArchiveMinAge = age
+func validTestPolicy() Policy {
+	return Policy{Enabled: true, TerminalSweepEnabled: true, BoundarySweepEnabled: true, TerminalDwell: 24 * time.Hour, ArchiveMinAge: 7 * 24 * time.Hour, SoftDeleteWindow: 14 * 24 * time.Hour, TargetSegmentRawBytes: 8 * 1024 * 1024, DeleteBatchRows: 500, MaxRowsPerJob: 50000}
+}
+
+func TestNewRejectsInvalidPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Policy)
+	}{
+		{"negative_age", func(p *Policy) { p.ArchiveMinAge = -time.Hour }},
+		{"zero_age", func(p *Policy) { p.ArchiveMinAge = 0 }},
+		{"short_age", func(p *Policy) { p.ArchiveMinAge = 7*24*time.Hour - time.Nanosecond }},
+		{"zero_dwell", func(p *Policy) { p.TerminalDwell = 0 }},
+		{"negative_dwell", func(p *Policy) { p.TerminalDwell = -time.Hour }},
+		{"negative_window", func(p *Policy) { p.SoftDeleteWindow = -time.Hour }},
+		{"zero_segment", func(p *Policy) { p.TargetSegmentRawBytes = 0 }},
+		{"large_segment", func(p *Policy) { p.TargetSegmentRawBytes = 32*1024*1024 + 1 }},
+		{"zero_batch", func(p *Policy) { p.DeleteBatchRows = 0 }},
+		{"large_batch", func(p *Policy) { p.DeleteBatchRows = 501 }},
+		{"zero_budget", func(p *Policy) { p.MaxRowsPerJob = 0 }},
+		{"large_budget", func(p *Policy) { p.MaxRowsPerJob = 50001 }},
+	} {
+		for _, mode := range []string{"enabled", "disabled", "dry_run", "terminal_only"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				policy := validTestPolicy()
+				policy.Enabled = mode != "disabled"
+				policy.DryRun = mode == "dry_run"
+				policy.BoundarySweepEnabled = mode != "terminal_only"
+				tc.mutate(&policy)
 				service, err := New(nil, nil, policy, nil)
-				if !errors.Is(err, errArchiveMinAge) || service != nil {
-					t.Fatalf("New returned %v, %v; want nil service and minimum-age error", service, err)
+				if err == nil || service != nil {
+					t.Fatalf("invalid policy accepted: service=%v, error=%v", service, err)
 				}
 			})
 		}
 	}
 }
 
-func TestNewAcceptsSafeArchiveMinAge(t *testing.T) {
+func TestNewAcceptsValidPolicy(t *testing.T) {
 	for _, age := range []time.Duration{7 * 24 * time.Hour, 7*24*time.Hour + time.Nanosecond, 14 * 24 * time.Hour} {
 		t.Run(age.String(), func(t *testing.T) {
-			policy := Policy{Enabled: true, BoundarySweepEnabled: true, ArchiveMinAge: age}
+			policy := validTestPolicy()
+			policy.ArchiveMinAge = age
+			policy.SoftDeleteWindow = 0
 			service, err := New(nil, nil, policy, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if service == nil || service.policy != policy {
-				t.Fatal("New must preserve the supplied valid policy")
+				t.Fatal("constructor changed the valid policy")
 			}
 		})
 	}

@@ -8,9 +8,8 @@ import (
 )
 
 var (
-	errStorage       = errors.New("transcript archive storage unavailable")
-	errIntegrity     = errors.New("transcript archive does not match persisted events")
-	errArchiveMinAge = errors.New("transcript archive_min_age must be at least 7 days")
+	errStorage   = errors.New("transcript archive storage unavailable")
+	errIntegrity = errors.New("transcript archive does not match persisted events")
 )
 
 func deletionNeedsRepair(err error) bool {

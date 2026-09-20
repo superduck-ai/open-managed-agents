@@ -7,9 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
-	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -49,7 +49,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	logger := logging.LoggerOrDefault(nil).With("component", "transcript-archive-cli")
+	logger := slog.New(logging.NewConsoleHandler(stderr, slog.LevelInfo)).With("component", "transcript-archive-cli")
+	slog.SetDefault(logger)
 	database, err := db.Open(context.Background(), cfg, logger)
 	if err != nil {
 		return err
@@ -63,7 +64,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	service, err := transcriptretention.New(database, objects, transcriptretention.Policy{ArchiveMinAge: 7 * 24 * time.Hour}, logger)
+	service, err := transcriptretention.New(database, objects, cfg.TranscriptArchive, logger)
 	if err != nil {
 		return err
 	}

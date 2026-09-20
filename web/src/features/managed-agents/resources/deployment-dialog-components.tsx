@@ -1,5 +1,6 @@
 import { useI18n } from '../../../shared/i18n';
-import { ManagedDialogHeader, ManagedDialogSubmitButton } from './dialog-components';
+import { Button } from '../../../shared/ui/button';
+import { ManagedDialogHeader } from './dialog-components';
 
 export function DeploymentDialogHeader({ title }: { title: string }) {
   const { msg } = useI18n();
@@ -23,14 +24,16 @@ export function DeploymentDialogActions({
   submitting: boolean;
   canSubmit: boolean;
 }) {
+  const { msg } = useI18n();
   return (
-    <div className="mt-5 flex justify-end">
-      <ManagedDialogSubmitButton
-        section="deployments"
-        editing={editing}
-        submitting={submitting}
-        canSubmit={canSubmit}
-      />
+    <div className="mt-6 flex shrink-0 justify-end border-t border-border pt-5">
+      <Button type="submit" disabled={!canSubmit}>
+        {submitting
+          ? msg('common.saving', 'Saving...')
+          : editing
+            ? msg('common.saveChanges', 'Save changes')
+            : msg('managedAgents.deployments.createLabel', 'Create deployment')}
+      </Button>
     </div>
   );
 }

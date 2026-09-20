@@ -20,3 +20,11 @@ TEST_MIGRATION_DATABASE_URL='postgresql://USER:PASSWORD@localhost:5432/TEST_DATA
 测试有效性可用临时故障验证：分别将软删、硬删实现替换为零行成功，将候选会话、候选事件查询替换为空集，新测试必须因行为断言失败。验证结束立即恢复实现，不提交故障代码。这四种故障均已在本次补测时被测试捕获。
 
 DB 区间覆盖检查并不代替对象内容校验。上层必须传入经过对象回读校验的序号；T4 接入归档任务后，每个删除批次均复查 terminal/boundary 资格，并验证“非终态”及“年龄不足”即使有 attached 段也不能软删。测试补强不改变这两个边界，也不改变终态整份归档的语义。
+
+## Codec 编码边界
+
+`EncodeRecord` 在拼入原始 payload 与 metadata 前，检查序列化头部是否具有预期后缀。若字段顺序或 JSON tag 的调整破坏该结构，编码立即返回 `errInvalidSegment`，不返回损坏的记录。正常记录的格式及解码行为保持不变；先生成 Mapper，再运行 `go test ./internal/transcriptarchive -count=1` 验证现有原始字节往返与完整性失败用例。
+
+## Pending 恢复与对象读取
+
+`TestTranscriptArchiveMissingObjectRecovery` 覆盖上传前失败、对象缺失时重试不删行、近期 pending 不回收、超龄 pending 经真实 cleanup worker 入队并清理、使用新 UUID/key 重建，以及 attached 段不被清理。`TestTranscriptArchiveReadsObjectsOncePerAttempt` 验证新段只读取一次外置 payload 和一次上传后的归档对象。已有上传后失败重试测试继续覆盖重新读取与校验路径。使用配置中的 PostgreSQL，执行 `go test ./tests -run TestTranscriptArchive -count=1`；每个 fixture 使用独立 schema。

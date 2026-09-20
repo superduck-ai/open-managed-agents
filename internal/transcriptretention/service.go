@@ -18,9 +18,10 @@ import (
 
 // Policy is evaluated by workers at execution time, including already queued jobs.
 type Policy struct {
-	Enabled               bool          `yaml:"enabled"`
-	DryRun                bool          `yaml:"dry_run"`
-	TerminalSweepEnabled  bool          `yaml:"terminal_sweep_enabled"`
+	Enabled              bool `yaml:"enabled"`
+	DryRun               bool `yaml:"dry_run"`
+	TerminalSweepEnabled bool `yaml:"terminal_sweep_enabled"`
+	// T6 enables boundary archival; T5 consumes hard-delete policy below.
 	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
 	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
 	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
@@ -55,7 +56,7 @@ func (s *Service) Archive(ctx context.Context, scope db.TranscriptScope, termina
 	if !terminal {
 		return nil
 	}
-	if !s.policy.Enabled || (terminal && !s.policy.TerminalSweepEnabled) || (!terminal && !s.policy.BoundarySweepEnabled) {
+	if !s.policy.Enabled || !s.policy.TerminalSweepEnabled {
 		return nil
 	}
 	query := s.query(scope, terminal)
@@ -116,21 +117,13 @@ func (s *Service) ReadSegment(ctx context.Context, a db.TranscriptArchive) (map[
 	return transcriptarchive.Decode(object.Body, transcriptarchive.SegmentExpectation{Size: a.Size, RawBytes: a.RawBytes, SHA256: a.SHA256, EventCount: a.EventCount, FromSequence: a.FromSequence, ToSequence: a.ToSequence})
 }
 
-func (s *Service) attachVerified(ctx context.Context, a db.TranscriptArchive, events []db.CodeSessionInternalEvent) error {
-	decoded, err := s.ReadSegment(ctx, a)
-	if err != nil {
-		return err
-	}
+func (s *Service) attachVerified(ctx context.Context, a db.TranscriptArchive, events []db.CodeSessionInternalEvent, decoded map[int64]transcriptarchive.DecodedEvent) error {
 	if len(decoded) != len(events) {
 		return errIntegrity
 	}
 	for _, event := range events {
-		restored, err := s.restorePayload(ctx, event)
-		if err != nil {
-			return err
-		}
 		archived, ok := decoded[event.SequenceNum]
-		if !ok || archived.UUID != event.UUID || !bytes.Equal(archived.Payload, restored.Payload) {
+		if !ok || archived.UUID != event.UUID || !bytes.Equal(archived.Payload, event.Payload) {
 			return errIntegrity
 		}
 	}

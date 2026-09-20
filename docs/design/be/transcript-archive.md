@@ -23,3 +23,11 @@
 ## 物理删除
 
 独立 `transcript_archive_delete` job 受 `hard_delete_enabled` 控制，默认关闭。观察期默认 14 天，设为零也仍先软删除，再由物理删除任务处理。每次先检查是否有已过观察期却没有 attached 覆盖的行；发现 deleting/missing 注册表即返回错误。随后逐段重新读取并校验对象，逐行匹配 UUID 与序号，最多每批 500 行、独立事务，事务内再次锁定 attached 段并执行 HasAttachedCovering。对象丢失或损坏均拒绝删除并记录错误。单任务遵守总删除行数预算。
+
+## 删除查询与失败恢复
+
+迁移 00063 为已软删除事件建立 `(code_session_uuid, deleted_at)` 部分索引，并包含租户、会话 external ID 和序号，支持候选分页与未覆盖行检查。索引只包含 `deleted_at IS NOT NULL` 的行。
+
+缺失对象、存储权限/配置错误、归档完整性失败及未覆盖行不会被视为删除成功。删除 worker 使用 River 的 24 小时 snooze 保留任务，scheduled 状态参与 scope 去重，阻止 sweep 重复入队。使用 River 持久化的 snoozes 元数据仅在首次拒绝时记录结构化错误；后续每天重新验证，修复后自动继续。网络、读取中断和数据库临时错误仍交给 River 正常重试。codec 导出 ErrInvalidSegment、ErrIntegrity，供边界使用 errors.Is 分类，流读取错误保持原样。
+
+归档恢复先完整校验既有段，再仅对剩余预算允许的存活行软删除；预算耗尽正常结束。即使配置预算调小到低于已有段的行数，后续运行也能分批完成。此规则不放宽 attached 覆盖和逐批资格检查。

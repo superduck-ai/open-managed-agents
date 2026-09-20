@@ -105,3 +105,27 @@ func TestTranscriptArchiveReadsObjectsOncePerAttempt(t *testing.T) {
 	}
 	assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events where deleted_at is null", 0)
 }
+
+func TestTranscriptArchiveResumeWithSmallerBudget(t *testing.T) {
+	objects := &payloadFaultStore{fakeStore: newFakeStore("archive-budget")}
+	app := newPayloadIntegrationApp(t, objects)
+	session, _ := newPayloadIntegrationSession(t, app)
+	seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 5))
+	makeArchiveTerminal(t, app, session)
+	policy := transcriptPolicy()
+	service := transcriptretention.New(app.db, objects, policy, nil)
+	objects.afterUpload = func(string) error { return errors.New("interrupted after upload") }
+	if err := service.Archive(t.Context(), transcriptScope(session), true); err == nil {
+		t.Fatal("upload interruption ignored")
+	}
+	objects.afterUpload = nil
+	policy.MaxRowsPerJob = 2
+	service = transcriptretention.New(app.db, objects, policy, nil)
+	for _, remaining := range []int{3, 1, 0, 0} {
+		if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
+			t.Fatal(err)
+		}
+		assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events where deleted_at is null", remaining)
+	}
+	assertPayloadSQLCount(t, app, "select count(*) from transcript_archives where state='attached'", 1)
+}

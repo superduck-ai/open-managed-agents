@@ -71,11 +71,6 @@ func (s *Service) Archive(ctx context.Context, scope db.TranscriptScope, termina
 	return s.archiveNew(ctx, query, remaining)
 }
 
-func (s *Service) restorePayload(ctx context.Context, event db.CodeSessionInternalEvent) (db.CodeSessionInternalEvent, error) {
-	restored, err := s.payloads.RestoreInternal(ctx, event)
-	return restored, err
-}
-
 func (s *Service) createSegment(ctx context.Context, scope db.TranscriptScope, events []db.CodeSessionInternalEvent) (db.TranscriptArchive, error) {
 	encoded, err := transcriptarchive.Encode(events)
 	if err != nil {

@@ -23,8 +23,12 @@ DB 区间覆盖检查并不代替对象内容校验。上层必须传入经过�
 
 ## Codec 编码边界
 
-`EncodeRecord` 在拼入原始 payload 与 metadata 前，检查序列化头部是否具有预期后缀。若字段顺序或 JSON tag 的调整破坏该结构，编码立即返回 `errInvalidSegment`，不返回损坏的记录。正常记录的格式及解码行为保持不变；先生成 Mapper，再运行 `go test ./internal/transcriptarchive -count=1` 验证现有原始字节往返与完整性失败用例。
+`EncodeRecord` 在拼入原始 payload 与 metadata 前，检查序列化头部是否具有预期后缀。若字段顺序或 JSON tag 的调整破坏该结构，编码立即返回 `ErrInvalidSegment`，不返回损坏的记录。正常记录的格式及解码行为保持不变；先生成 Mapper，再运行 `go test ./internal/transcriptarchive -count=1` 验证现有原始字节往返与完整性失败用例。
 
 ## Pending 恢复与对象读取
 
 `TestTranscriptArchiveMissingObjectRecovery` 覆盖上传前失败、对象缺失时重试不删行、近期 pending 不回收、超龄 pending 经真实 cleanup worker 入队并清理、使用新 UUID/key 重建，以及 attached 段不被清理。`TestTranscriptArchiveReadsObjectsOncePerAttempt` 验证新段只读取一次外置 payload 和一次上传后的归档对象。已有上传后失败重试测试继续覆盖重新读取与校验路径。使用配置中的 PostgreSQL，执行 `go test ./tests -run TestTranscriptArchive -count=1`；每个 fixture 使用独立 schema。
+
+## 删除索引、冷却与预算
+
+`TestTranscriptDeletionIndexPlans` 在隔离 schema 中创建 20,001 行（100 行已软删除），对两个删除查询执行 EXPLAIN (ANALYZE, BUFFERS)，检查选择性数据下使用新增部分索引；该测试不代表生产数据的耗时承诺。`TestDeleteWorkerRepairCooldown` 检查包装错误分类、24 小时 snooze 和首次结构化告警；瞬时错误与成功路径保持原结果。`TestTranscriptArchiveResumeWithSmallerBudget` 覆盖上传后中断、降低预算后 pending/attached 段的多次分批恢复。

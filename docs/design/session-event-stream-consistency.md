@@ -4,8 +4,8 @@
 
 ## 提交与读取
 
-- 复用 Session → Code Session 行锁及 Yourbatis 事务。原始记录、公共事件、线程/Session 状态与权限 metadata 一起提交；失败整体回滚，提交后通知。
-- 用户输入先提交数据库，再沿用 JetStream 投递；自动回复也在数据库提交后发布。投递失败返回错误，已经提交的历史不回滚；本层不提供 PostgreSQL 与 NATS 的跨系统事务或 outbox 保证。worker 重试自动回复沿用稳定消息 ID，由 JetStream 去重。initializing worker 沿用主干的快照复验与启动交接。
+- 复用 Session → Code Session 行锁及 Yourbatis 事务。worker 写入的原始记录、公共事件、线程/Session 状态与待确认权限 metadata 一起提交；失败整体回滚，提交后通知。
+- 用户输入先提交数据库，再沿用 JetStream 投递；自动回复也在数据库提交后发布。投递失败返回错误，已经提交的历史不回滚；本层不提供 PostgreSQL 与 NATS 的跨系统事务或 outbox 保证。worker 重试自动回复沿用稳定消息 ID，在 JetStream 去重窗口内去重。用户确认沿用主干顺序：先提交输入历史，再投递回复，成功后在独立数据库事务中清除对应权限 metadata；清理失败不撤回已投递的回复。initializing worker 沿用主干的快照复验与启动交接。
 - 大事件继续使用对象存储；事务内恢复已存正文并按 JSON 内容比较重试，复用已存 blob，新增引用随事件提交，失败上传由既有 GC 清理。发现需要上传的新正文时先回滚当前尝试，在锁外登记 pending blob 并上传，再重新加锁、复验 epoch 与状态后执行；准备期间的生成时间保持稳定，通知和 NATS 发布仅在最终提交后执行。事务内 blob 查询复用同一连接，能够读取本事务刚附加的正文。SSE 与历史均恢复完整正文。
 - 同 ID 同内容重试保留原记录和时间，不重新推进状态；异内容、不同归属冲突回滚整批。事务内复验 worker epoch，拒绝接管后的旧 worker。
 - migration 00064 新增 `sessions.last_event_at`。每条新事件使用 `GREATEST(clock_timestamp(), last_event_at + 1 microsecond)`，批次保持输入顺序，源时钟回拨不改变公开顺序。

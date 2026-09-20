@@ -26,6 +26,41 @@ func TestPathRouterRejectsReadOnlyNamespaceMutation(t *testing.T) {
 	}
 }
 
+func TestPathRouterSupportsDreamTranscriptVirtualSubtree(t *testing.T) {
+	t.Parallel()
+
+	persistent := &persistentPathBackend{}
+	transcripts := &dreamTranscriptPathBackend{}
+	router := pathRouter{
+		persistent: persistent,
+		readOnly:   []readOnlyPathBackend{transcripts},
+	}
+
+	for _, operation := range []readOperation{
+		readOperationListDirectory,
+		readOperationFile,
+		readOperationMetadata,
+	} {
+		if got := router.backendFor(operation, "/transcripts/dream/sesn_selected.jsonl"); got != transcripts {
+			t.Fatalf("backendFor(%d, dream transcript) = %T, want transcript virtual backend", operation, got)
+		}
+	}
+	if got := router.backendFor(readOperationListDirectory, "/transcripts"); got != transcripts {
+		t.Fatalf("backendFor(/transcripts list) = %T, want transcript virtual backend", got)
+	}
+	if got := router.backendFor(readOperationFile, "/transcripts/dream-notes.txt"); got != persistent {
+		t.Fatalf("backendFor(similar transcript path) = %T, want persistent backend", got)
+	}
+	for _, paths := range [][]string{
+		{"/transcripts/dream"},
+		{"/transcripts/dream/sesn_selected.jsonl"},
+		{"/outputs/result.txt", "/transcripts/dream/sesn_selected.jsonl"},
+	} {
+		apiErr := router.authorizeMutation(paths...)
+		assertServiceAPIError(t, apiErr, http.StatusForbidden, "permission_denied")
+	}
+}
+
 func TestPathRouterSelectsReadBackend(t *testing.T) {
 	t.Parallel()
 

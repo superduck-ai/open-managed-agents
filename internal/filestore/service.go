@@ -83,6 +83,9 @@ func NewService(cfg config.Config, database filestoreDatabase, store storage.Obj
 	}
 	service.memory = memory
 	readOnly := []readOnlyPathBackend{skills}
+	if transcripts, ok := database.(dreamTranscriptFilestoreStore); ok {
+		readOnly = append(readOnly, &dreamTranscriptPathBackend{store: transcripts, fallback: persistent, now: service.now})
+	}
 	service.paths = pathRouter{
 		persistent: persistent,
 		memory:     memory,

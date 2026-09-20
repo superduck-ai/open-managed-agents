@@ -145,6 +145,26 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 	return row.environment(), nil
 }
 
+// GetDreamDefaultEnvironment returns the Dream-owned public environment for a
+// workspace, including an archived record so callers can restore and reuse it.
+func (d *DB) GetDreamDefaultEnvironment(ctx context.Context, workspaceUUID string) (Environment, error) {
+	row, err := NewEnvironmentMapper(d.mapperDB).FindDreamDefault(ctx, workspaceUUID)
+	if err != nil {
+		return Environment{}, mapNoRows(err)
+	}
+	return row.environment(), nil
+}
+
+// RestoreDreamDefaultEnvironment only restores the Dream-owned environment;
+// it cannot revive an arbitrary archived environment.
+func (d *DB) RestoreDreamDefaultEnvironment(ctx context.Context, workspaceUUID, environmentUUID string) (Environment, error) {
+	row, err := NewEnvironmentMapper(d.mapperDB).RestoreDreamDefault(ctx, workspaceUUID, environmentUUID)
+	if err != nil {
+		return Environment{}, mapNoRows(err)
+	}
+	return row.environment(), nil
+}
+
 func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, error) {
 	params := environmentWriteParamsFrom(next)
 	params.WorkspaceUUID = workspaceUUID

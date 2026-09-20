@@ -9,28 +9,13 @@ import (
 	"unicode/utf8"
 	"uuid"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/systemresource"
 )
 
 const (
 	minDreamSessions = 1
 	maxDreamSessions = 100
 	maxModelChars    = 256
-
-	dreamDefaultEnvironmentName = "dream_env（Dream 内部环境）"
-	dreamDefaultEnvironmentKind = systemresource.DreamDefaultEnvironmentKind
-	dreamDefaultAgentName       = "dream_agent（Dream 内部 Agent）"
-	dreamDefaultAgentKind       = systemresource.DreamDefaultAgentKind
-)
-
-var (
-	dreamDefaultEnvironmentConfig = json.RawMessage(`{"type":"cloud","packages":{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":[]},"networking":{"type":"unrestricted"}}`)
-	dreamDefaultAgentSystem       *string
-	dreamDefaultAgentSkills       = json.RawMessage(`[{"type":"anthropic","skill_id":"dream","version":"latest"}]`)
-	dreamDefaultAgentMCPServers   = json.RawMessage(`[]`)
-	dreamDefaultAgentTools        = json.RawMessage(`[]`)
 )
 
 type dreamInputRequest struct {
@@ -256,18 +241,4 @@ func dreamInterruptEvent(dream db.Dream, session db.Session, now time.Time) (db.
 	return db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: eventID, OrganizationUUID: session.OrganizationUUID,
 		WorkspaceUUID: session.WorkspaceUUID, SessionUUID: session.UUID, SessionExternalID: session.ExternalID,
 		EventType: "user.interrupt", Payload: payload, ProcessedAt: now, CreatedAt: now}, nil
-}
-
-func dreamSessionAgentSnapshot(agent db.Agent, model string) (json.RawMessage, error) {
-	agent.Model = json.RawMessage(fmt.Sprintf(`{"id":%q}`, model))
-	return agentsnapshot.FromAgent(agent)
-}
-
-func firstConfiguredModel(models []string) (json.RawMessage, error) {
-	for _, model := range models {
-		if model = strings.TrimSpace(model); model != "" {
-			return json.RawMessage(fmt.Sprintf(`{"id":%q}`, model)), nil
-		}
-	}
-	return nil, errors.New("workspace has no configured model for Dream default agent")
 }

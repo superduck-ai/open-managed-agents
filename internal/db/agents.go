@@ -98,6 +98,19 @@ func (d *DB) GetAgent(ctx context.Context, workspaceUUID string, externalID stri
 	return agentFromRow(row, err)
 }
 
+// GetDreamDefaultAgent returns the Dream-owned system agent for a workspace,
+// including an archived record so preparation can restore and reuse it.
+func (d *DB) GetDreamDefaultAgent(ctx context.Context, workspaceUUID string) (Agent, error) {
+	row, err := NewAgentMapper(d.mapperDB).FindDreamDefault(ctx, workspaceUUID)
+	return agentFromRow(row, err)
+}
+
+// RestoreDreamDefaultAgent only restores the Dream-owned system agent.
+func (d *DB) RestoreDreamDefaultAgent(ctx context.Context, workspaceUUID, agentUUID string) (Agent, error) {
+	row, err := NewAgentMapper(d.mapperDB).RestoreDreamDefault(ctx, workspaceUUID, agentUUID)
+	return agentFromRow(row, err)
+}
+
 func (d *DB) GetAgentVersion(ctx context.Context, workspaceUUID string, externalID string, version int) (Agent, error) {
 	if version < 1 {
 		return Agent{}, ErrNotFound

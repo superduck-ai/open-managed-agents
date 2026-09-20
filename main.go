@@ -120,6 +120,9 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
+	if _, err := skillsapi.EnsureProductBuiltinSkills(ctx, database, objectStore, logger.With("component", "product_skill_seed")); err != nil {
+		return fmt.Errorf("ensure product builtin skills: %w", err)
+	}
 	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
 	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)

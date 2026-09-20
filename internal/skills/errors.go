@@ -10,6 +10,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var errProductSkillVersionMissing = errors.New("product skill SKILL.md must declare version in frontmatter")
+
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
 }

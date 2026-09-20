@@ -46,6 +46,21 @@ type DreamPageCursor struct {
 	UUID      string
 }
 
+// DreamSessionTranscript is the immutable authorization relation between a
+// Dream and one source Session. The transcript itself stays virtual: no JSONL
+// bytes are copied into object storage.
+type DreamSessionTranscript struct {
+	UUID                    string
+	DreamUUID               string
+	WorkspaceUUID           string
+	SourceSessionUUID       string
+	SourceSessionExternalID string
+	Ordinal                 int
+	CreatedAt               time.Time
+}
+
+var errDreamPreparationLost = errors.New("Dream preparation no longer pending")
+
 type ListDreamsPageParams struct {
 	WorkspaceUUID   string
 	Limit           int
@@ -65,6 +80,11 @@ func (d *DB) CreateDream(ctx context.Context, dream Dream) (Dream, error) {
 
 func (d *DB) GetDream(ctx context.Context, workspaceUUID, externalID string) (Dream, error) {
 	row, err := NewDreamMapper(d.mapperDB).FindByExternalID(ctx, workspaceUUID, externalID)
+	return dreamFromMapperRow(row, err)
+}
+
+func (d *DB) GetDreamByInternalSessionUUID(ctx context.Context, workspaceUUID, internalSessionUUID string) (Dream, error) {
+	row, err := NewDreamMapper(d.mapperDB).FindByInternalSessionUUID(ctx, workspaceUUID, internalSessionUUID)
 	return dreamFromMapperRow(row, err)
 }
 
@@ -192,6 +212,77 @@ func (d *DB) CancelDream(ctx context.Context, dream Dream, session *Session, int
 		return nil
 	})
 	return canceled, persistedInterrupt, won, err
+}
+
+// RecordPendingDreamResources persists setup progress without exposing it as a
+// public status. Pending remains the contractual state until /dream is queued.
+func (d *DB) RecordPendingDreamResources(ctx context.Context, workspaceUUID, externalID, workerID, outputMemoryStoreUUID, outputMemoryStoreID, internalSessionUUID, internalSessionID string, transcripts []DreamSessionTranscript, now time.Time) (Dream, bool, error) {
+	var recorded Dream
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		transcriptMapper := NewDreamSessionTranscriptMapper(executor)
+		for _, transcript := range transcripts {
+			if _, err := transcriptMapper.Insert(ctx, insertDreamSessionTranscriptParams{
+				UUID: transcript.UUID, DreamUUID: transcript.DreamUUID, WorkspaceUUID: transcript.WorkspaceUUID,
+				SourceSessionUUID: transcript.SourceSessionUUID, SourceSessionExternalID: transcript.SourceSessionExternalID,
+				Ordinal: transcript.Ordinal, CreatedAt: transcript.CreatedAt,
+			}); err != nil {
+				return err
+			}
+		}
+		row, err := NewDreamMapper(executor).RecordPendingResources(ctx, recordDreamResourcesParams{
+			WorkspaceUUID: workspaceUUID, ExternalID: externalID, WorkerID: workerID,
+			OutputMemoryStoreUUID: outputMemoryStoreUUID, OutputMemoryStoreID: outputMemoryStoreID,
+			InternalSessionUUID: internalSessionUUID, InternalSessionID: internalSessionID, Now: now,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			return errDreamPreparationLost
+		}
+		if err != nil {
+			return err
+		}
+		var convertErr error
+		recorded, convertErr = dreamFromMapperRow(row, nil)
+		return convertErr
+	})
+	if errors.Is(err, errDreamPreparationLost) {
+		return Dream{}, false, nil
+	}
+	return recorded, err == nil, err
+}
+
+func (d *DB) CreateDreamSessionTranscripts(ctx context.Context, transcripts []DreamSessionTranscript) error {
+	if len(transcripts) == 0 {
+		return nil
+	}
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewDreamSessionTranscriptMapper(executor)
+		for _, transcript := range transcripts {
+			if _, err := mapper.Insert(ctx, insertDreamSessionTranscriptParams{
+				UUID: transcript.UUID, DreamUUID: transcript.DreamUUID, WorkspaceUUID: transcript.WorkspaceUUID,
+				SourceSessionUUID: transcript.SourceSessionUUID, SourceSessionExternalID: transcript.SourceSessionExternalID,
+				Ordinal: transcript.Ordinal, CreatedAt: transcript.CreatedAt,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (d *DB) ListDreamSessionTranscripts(ctx context.Context, workspaceUUID, dreamUUID string) ([]DreamSessionTranscript, error) {
+	rows, err := NewDreamSessionTranscriptMapper(d.mapperDB).ListByDreamUUID(ctx, workspaceUUID, dreamUUID)
+	if err != nil {
+		return nil, err
+	}
+	transcripts := make([]DreamSessionTranscript, 0, len(rows))
+	for _, row := range rows {
+		transcripts = append(transcripts, DreamSessionTranscript{
+			UUID: row.UUID, DreamUUID: row.DreamUUID, WorkspaceUUID: row.WorkspaceUUID,
+			SourceSessionUUID: row.SourceSessionUUID, SourceSessionExternalID: row.SourceSessionExternalID,
+			Ordinal: row.Ordinal, CreatedAt: row.CreatedAt,
+		})
+	}
+	return transcripts, nil
 }
 
 func dreamJSONArg(raw json.RawMessage) []byte {

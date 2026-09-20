@@ -56,3 +56,20 @@ func reviewSessionError(session db.Session) error {
 	}
 	return nil
 }
+
+const dreamErrorInputSessionUnavailable = "input_session_unavailable"
+
+type permanentError struct {
+	errorType string
+	err       error
+}
+
+func (e *permanentError) Error() string { return e.err.Error() }
+func (e *permanentError) Unwrap() error { return e.err }
+
+func permanentDreamErrorOfType(errorType string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &permanentError{errorType: errorType, err: err}
+}

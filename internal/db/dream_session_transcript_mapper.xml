@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="DreamSessionTranscriptMapper">
+    <sql id="columns">uuid, dream_uuid, workspace_uuid, source_session_uuid, source_session_external_id, ordinal, created_at</sql>
+    <insert id="Insert" result="returning" resultType="dreamSessionTranscriptRow">
+        INSERT INTO dream_session_transcripts (
+            uuid, dream_uuid, workspace_uuid, source_session_uuid,
+            source_session_external_id, ordinal, created_at
+        ) VALUES (
+            #{params.UUID}, #{params.DreamUUID}, #{params.WorkspaceUUID}, #{params.SourceSessionUUID},
+            #{params.SourceSessionExternalID}, #{params.Ordinal}, #{params.CreatedAt}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+    <select id="ListByDreamUUID" resultType="dreamSessionTranscriptRow">
+        SELECT <include refid="columns"/>
+        FROM dream_session_transcripts
+        WHERE workspace_uuid = #{workspaceUUID} AND dream_uuid = #{dreamUUID}
+        ORDER BY ordinal ASC
+    </select>
+</mapper>

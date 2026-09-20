@@ -81,35 +81,8 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 		if version == "" {
 			version = defaultBuiltinSeedVersion(info.ModTime(), pkg.SHA256)
 		}
-		objectKey := fmt.Sprintf("builtin-skills/%s/versions/%s/%s.skill", sanitizeForKey(skillID), sanitizeForKey(version), pkg.SHA256)
-		if _, err := store.Upload(ctx, objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
-			return BuiltinSeedResult{}, fmt.Errorf("upload %s: %w", archivePath, err)
-		}
-
-		_, _, err = database.UpsertBuiltinSkillWithVersion(ctx, db.BuiltinSkill{
-			ExternalID:   skillID,
-			DisplayTitle: firstNonEmpty(pkg.Name, skillID),
-			CreatedAt:    now,
-		}, db.BuiltinSkillVersion{
-			ExternalID:  builtinVersionExternalID(skillID, version),
-			Version:     version,
-			Name:        firstNonEmpty(pkg.Name, skillID),
-			Description: pkg.Description,
-			Directory:   pkg.Directory,
-			S3Bucket:    store.Name(),
-			S3Key:       objectKey,
-			SizeBytes:   pkg.Size,
-			SHA256:      pkg.SHA256,
-			CreatedAt:   now,
-		})
-		if err != nil {
-			if deleteErr := store.Delete(ctx, objectKey, storage.DeleteOptions{}); deleteErr != nil {
-				logger.ErrorContext(ctx, "seed builtin skills: cleanup failed", "object_key", objectKey, "error", deleteErr)
-			}
-			if errors.Is(err, db.ErrVersionConflict) {
-				return BuiltinSeedResult{}, fmt.Errorf("%s version %s already exists with different content; choose a new version", skillID, version)
-			}
-			return BuiltinSeedResult{}, err
+		if err := publishBuiltinSkill(ctx, database, store, logger, skillID, version, pkg, now); err != nil {
+			return BuiltinSeedResult{}, fmt.Errorf("%s: %w", archivePath, err)
 		}
 		result.Imported++
 		result.Skills = append(result.Skills, skillID)
@@ -118,7 +91,11 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 	if opts.Prune {
 		// TODO: 将 prune 的 builtin archive 纳入 reference-aware catalog GC；
 		// 当前只软删除 catalog row，避免破坏活动 Session 借用的对象。
-		prunedVersions, err := database.SoftDeleteMissingBuiltinSkills(ctx, result.Skills, now)
+		keep, err := keepBuiltinSkillsForPrune(result.Skills)
+		if err != nil {
+			return BuiltinSeedResult{}, err
+		}
+		prunedVersions, err := database.SoftDeleteMissingBuiltinSkills(ctx, keep, now)
 		if err != nil {
 			return BuiltinSeedResult{}, err
 		}
@@ -177,6 +154,48 @@ func defaultBuiltinSeedVersion(modTime time.Time, sha string) string {
 		return modTime.UTC().Format("20060102")
 	}
 	return sha
+}
+
+func publishBuiltinSkill(
+	ctx context.Context,
+	database *db.DB,
+	store storage.ObjectStore,
+	logger *slog.Logger,
+	skillID, version string,
+	pkg skillPackage,
+	now time.Time,
+) error {
+	objectKey := fmt.Sprintf("builtin-skills/%s/versions/%s/%s.skill", sanitizeForKey(skillID), sanitizeForKey(version), pkg.SHA256)
+	if _, err := store.Upload(ctx, objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+
+	_, _, err := database.UpsertBuiltinSkillWithVersion(ctx, db.BuiltinSkill{
+		ExternalID:   skillID,
+		DisplayTitle: firstNonEmpty(pkg.Name, skillID),
+		CreatedAt:    now,
+	}, db.BuiltinSkillVersion{
+		ExternalID:  builtinVersionExternalID(skillID, version),
+		Version:     version,
+		Name:        firstNonEmpty(pkg.Name, skillID),
+		Description: pkg.Description,
+		Directory:   pkg.Directory,
+		S3Bucket:    store.Name(),
+		S3Key:       objectKey,
+		SizeBytes:   pkg.Size,
+		SHA256:      pkg.SHA256,
+		CreatedAt:   now,
+	})
+	if err != nil {
+		if deleteErr := store.Delete(ctx, objectKey, storage.DeleteOptions{}); deleteErr != nil {
+			logger.ErrorContext(ctx, "seed builtin skills: cleanup failed", "object_key", objectKey, "error", deleteErr)
+		}
+		if errors.Is(err, db.ErrVersionConflict) {
+			return fmt.Errorf("%s version %s already exists with different content; choose a new version", skillID, version)
+		}
+		return err
+	}
+	return nil
 }
 
 func builtinVersionExternalID(skillID, version string) string {

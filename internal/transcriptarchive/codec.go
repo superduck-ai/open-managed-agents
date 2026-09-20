@@ -77,7 +77,10 @@ func EncodeRecord(event db.CodeSessionInternalEvent) ([]byte, error) {
 	}
 	// Remove the two known final null fields and append raw JSON values verbatim.
 	suffix := []byte(`,"payload":null,"event_metadata":null}`)
-	header = bytes.TrimSuffix(header, suffix)
+	header, ok := bytes.CutSuffix(header, suffix)
+	if !ok {
+		return nil, errInvalidSegment
+	}
 	body := append(header, []byte(`,"payload":`)...)
 	body = append(body, event.Payload...)
 	body = append(body, []byte(`,"event_metadata":`)...)

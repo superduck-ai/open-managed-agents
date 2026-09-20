@@ -35,7 +35,7 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 	if err := store.AttachTranscriptArchive(ctx, foreign, a.UUID); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("foreign attach: %v", err)
 	}
-	batch := TranscriptDeleteBatch{Scope: scope, ArchiveUUID: a.UUID, Sequences: []int64{1}, Cutoff: time.Now()}
+	batch := TranscriptDeleteBatch{Scope: scope, ArchiveUUID: a.UUID, Sequences: []int64{1}, Cutoff: time.Now(), Eligibility: TranscriptArchiveQuery{Cutoff: time.Now().Add(-7 * 24 * time.Hour)}}
 	if _, err := store.SoftDeleteInternalEventsBatch(ctx, batch); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("pending deletion: %v", err)
 	}
@@ -68,6 +68,17 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 	archives, err := store.ListTranscriptArchives(ctx, scope, 0, 10, true)
 	if err != nil || len(archives) != 1 {
 		t.Fatalf("list: %d %v", len(archives), err)
+	}
+	// T4 rechecks eligibility in every batch, even with an attached manifest.
+	ineligible := batch
+	ineligible.Eligibility.Terminal = true
+	if count, err := store.SoftDeleteInternalEventsBatch(ctx, ineligible); err != nil || count != 0 {
+		t.Fatalf("non-terminal batch: %d %v", count, err)
+	}
+	ineligible = batch
+	ineligible.Eligibility.Cutoff = time.Now().Add(-9 * 24 * time.Hour)
+	if count, err := store.SoftDeleteInternalEventsBatch(ctx, ineligible); err != nil || count != 0 {
+		t.Fatalf("too-recent batch: %d %v", count, err)
 	}
 	// Failed batches must leave the eligible row untouched, including when a
 	// valid sequence appears before an uncovered sequence in the same request.

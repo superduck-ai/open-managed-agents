@@ -7,11 +7,35 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
+}
+
+func sessionAgentError(err error) error {
+	var appErr *apperr.Error
+	if errors.As(err, &appErr) {
+		return err
+	}
+	return invalidRequest(err)
+}
+
+func workspaceModelConfigError(err error) error {
+	if errors.Is(err, llmproviders.ErrNotConfigured) {
+		return apperr.New(
+			apperr.Unavailable,
+			"This workspace has no LLM provider configured",
+			err,
+		)
+	}
+	return apperr.New(
+		apperr.Internal,
+		"Workspace model configuration is unavailable",
+		err,
+	)
 }
 
 func internalError(message string, cause error) error {

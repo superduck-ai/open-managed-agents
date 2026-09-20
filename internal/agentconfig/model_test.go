@@ -1,4 +1,4 @@
-package agents
+package agentconfig
 
 import (
 	"encoding/json"
@@ -31,9 +31,9 @@ func TestNormalizeModelRejectsInvalidObjectFields(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := normalizeModel(json.RawMessage(testCase.raw))
+			_, err := NormalizeModel(json.RawMessage(testCase.raw))
 			if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
-				t.Fatalf("normalizeModel() error = %v, want %q", err, testCase.wantError)
+				t.Fatalf("NormalizeModel() error = %v, want %q", err, testCase.wantError)
 			}
 		})
 	}
@@ -43,38 +43,38 @@ func TestNormalizeModelPreservesRealID(t *testing.T) {
 	testCases := []struct {
 		name string
 		raw  string
-		want normalizedAgentModel
+		want Model
 	}{
 		{
 			name: "string model uses standard speed",
 			raw:  `"kimi-k2.5"`,
-			want: normalizedAgentModel{ID: "kimi-k2.5", Speed: "standard"},
+			want: Model{ID: "kimi-k2.5", Speed: "standard"},
 		},
 		{
 			name: "object model preserves fast speed",
 			raw:  `{"id":"kimi-k2.5","speed":"fast"}`,
-			want: normalizedAgentModel{ID: "kimi-k2.5", Speed: "fast"},
+			want: Model{ID: "kimi-k2.5", Speed: "fast"},
 		},
 		{
 			name: "string model keeps surrounding whitespace",
 			raw:  `" kimi-k2.5 "`,
-			want: normalizedAgentModel{ID: " kimi-k2.5 ", Speed: "standard"},
+			want: Model{ID: " kimi-k2.5 ", Speed: "standard"},
 		},
 		{
 			name: "object model keeps surrounding whitespace",
 			raw:  `{"id":" kimi-k2.5 ","speed":"fast"}`,
-			want: normalizedAgentModel{ID: " kimi-k2.5 ", Speed: "fast"},
+			want: Model{ID: " kimi-k2.5 ", Speed: "fast"},
 		},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			got, err := normalizeModel(json.RawMessage(testCase.raw))
+			got, err := NormalizeModel(json.RawMessage(testCase.raw))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != testCase.want {
-				t.Fatalf("normalizeModel() = %#v, want %#v", got, testCase.want)
+				t.Fatalf("NormalizeModel() = %#v, want %#v", got, testCase.want)
 			}
 		})
 	}

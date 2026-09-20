@@ -3,6 +3,7 @@ package transcriptretention
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -22,8 +23,18 @@ type deleteWorker struct {
 func (w *deleteWorker) Work(ctx context.Context, job *river.Job[deleteArgs]) error {
 	args := job.Args
 	err := w.service.HardDelete(ctx, db.TranscriptScope{OrganizationUUID: args.OrganizationUUID, WorkspaceUUID: args.WorkspaceUUID, CodeSessionUUID: args.CodeSessionUUID, CodeSessionExternalID: args.CodeSessionExternalID})
-	if err != nil {
-		w.service.logger.ErrorContext(ctx, "transcript physical deletion refused", "code_session_id", args.CodeSessionExternalID, "workspace_id", args.WorkspaceUUID, "error", err)
+	return w.handleResult(ctx, job, err)
+}
+
+func (w *deleteWorker) handleResult(ctx context.Context, job *river.Job[deleteArgs], err error) error {
+	if deletionNeedsRepair(err) {
+		var metadata struct {
+			Snoozes int `json:"snoozes"`
+		}
+		if json.Unmarshal(job.Metadata, &metadata) != nil || metadata.Snoozes == 0 {
+			w.service.logger.ErrorContext(ctx, "transcript physical deletion requires repair", "code_session_id", job.Args.CodeSessionExternalID, "workspace_id", job.Args.WorkspaceUUID, "error", err)
+		}
+		return river.JobSnooze(24 * time.Hour)
 	}
 	return err
 }

@@ -28,8 +28,12 @@ type Service struct {
 	logger   *slog.Logger
 }
 
-func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) *Service {
-	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}
+// New rejects unsafe retention policies before any workers can be registered.
+func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) (*Service, error) {
+	if err := config.ValidateTranscriptArchive(policy); err != nil {
+		return nil, err
+	}
+	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}, nil
 }
 
 func (s *Service) query(scope db.TranscriptScope, terminal bool) db.TranscriptArchiveQuery {
@@ -44,9 +48,6 @@ func (s *Service) Archive(ctx context.Context, scope db.TranscriptScope, termina
 	if !s.policy.Enabled || (terminal && !s.policy.TerminalSweepEnabled) || (!terminal && !s.policy.BoundarySweepEnabled) {
 		return nil
 	}
-	if err := config.ValidateTranscriptArchive(s.policy); err != nil {
-		return err
-	}
 	query := s.query(scope, terminal)
 	remaining := s.policy.MaxRowsPerJob
 	if !s.policy.DryRun {
@@ -57,11 +58,6 @@ func (s *Service) Archive(ctx context.Context, scope db.TranscriptScope, termina
 		remaining -= used
 	}
 	return s.archiveNew(ctx, query, remaining)
-}
-
-func (s *Service) restorePayload(ctx context.Context, event db.CodeSessionInternalEvent) (db.CodeSessionInternalEvent, error) {
-	restored, err := s.payloads.RestoreInternal(ctx, event)
-	return restored, err
 }
 
 func (s *Service) createSegment(ctx context.Context, scope db.TranscriptScope, events []db.CodeSessionInternalEvent) (db.TranscriptArchive, error) {
@@ -105,21 +101,13 @@ func (s *Service) ReadSegment(ctx context.Context, a db.TranscriptArchive) (map[
 	return transcriptarchive.Decode(object.Body, transcriptarchive.SegmentExpectation{Size: a.Size, RawBytes: a.RawBytes, SHA256: a.SHA256, EventCount: a.EventCount, FromSequence: a.FromSequence, ToSequence: a.ToSequence})
 }
 
-func (s *Service) attachVerified(ctx context.Context, a db.TranscriptArchive, events []db.CodeSessionInternalEvent) error {
-	decoded, err := s.ReadSegment(ctx, a)
-	if err != nil {
-		return err
-	}
+func (s *Service) attachVerified(ctx context.Context, a db.TranscriptArchive, events []db.CodeSessionInternalEvent, decoded map[int64]transcriptarchive.DecodedEvent) error {
 	if len(decoded) != len(events) {
 		return errIntegrity
 	}
 	for _, event := range events {
-		restored, err := s.restorePayload(ctx, event)
-		if err != nil {
-			return err
-		}
 		archived, ok := decoded[event.SequenceNum]
-		if !ok || archived.UUID != event.UUID || !bytes.Equal(archived.Payload, restored.Payload) {
+		if !ok || archived.UUID != event.UUID || !bytes.Equal(archived.Payload, event.Payload) {
 			return errIntegrity
 		}
 	}

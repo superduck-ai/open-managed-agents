@@ -30,6 +30,11 @@ func newSandboxLifecycleFixture(t *testing.T) sandboxLifecycleFixture {
 	t.Helper()
 	app := newTestAppWithStore(t, nil, newFakeStore("sandbox-lifecycle"))
 	t.Cleanup(app.close)
+	return newSandboxLifecycleFixtureWithApp(t, app)
+}
+
+func newSandboxLifecycleFixtureWithApp(t *testing.T, app *testApp) sandboxLifecycleFixture {
+	t.Helper()
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"lifecycle-agent"}`)
 	t.Cleanup(func() { cleanupAgentRows(t, app.pool, agent.ID) })
 	env := createEnvironment(t, app, `{"name":"lifecycle-environment"}`)

@@ -28,10 +28,14 @@ func (s *Service) archiveNew(ctx context.Context, query db.TranscriptArchiveQuer
 			if err != nil {
 				return err
 			}
-			if err := s.attachVerified(ctx, a, segment); err != nil {
+			decoded, err := s.ReadSegment(ctx, a)
+			if err != nil {
 				return err
 			}
-			if _, err := s.softDeleteSegment(ctx, a, query, segment); err != nil {
+			if err := s.attachVerified(ctx, a, segment, decoded); err != nil {
+				return err
+			}
+			if _, err := s.softDeleteSegment(ctx, a, query, segment, decoded); err != nil {
 				return err
 			}
 			s.logSegment(ctx, query.Scope, len(segment), a.RawBytes, a.Size)
@@ -50,7 +54,7 @@ func (s *Service) archiveNew(ctx context.Context, query db.TranscriptArchiveQuer
 			break
 		}
 		for _, event := range events {
-			restored, err := s.restorePayload(ctx, event)
+			restored, err := s.payloads.RestoreInternal(ctx, event)
 			if err != nil {
 				return err
 			}
@@ -92,29 +96,38 @@ func (s *Service) finishRegistered(ctx context.Context, query db.TranscriptArchi
 			if !live {
 				continue
 			}
-			if a.EventCount > budget-used {
-				return used, errBudget
+			decoded, err := s.ReadSegment(ctx, a)
+			if err != nil {
+				return used, err
 			}
 			if a.State == "pending" {
-				if err := s.attachVerified(ctx, a, rows); err != nil {
+				for i := range rows {
+					rows[i], err = s.payloads.RestoreInternal(ctx, rows[i])
+					if err != nil {
+						return used, err
+					}
+				}
+				if err := s.attachVerified(ctx, a, rows, decoded); err != nil {
 					return used, err
 				}
 			}
-			if _, err := s.softDeleteSegment(ctx, a, query, rows); err != nil {
+			liveRows := slices.DeleteFunc(rows, func(e db.CodeSessionInternalEvent) bool { return e.DeletedAt != nil })
+			liveRows = liveRows[:min(len(liveRows), budget-used)]
+			count, err := s.softDeleteSegment(ctx, a, query, liveRows, decoded)
+			used += count
+			if err != nil {
 				return used, err
 			}
-			used += len(rows)
+			if used == budget {
+				return used, nil
+			}
 		}
 		after = archives[len(archives)-1].FromSequence
 	}
 	return used, nil
 }
 
-func (s *Service) softDeleteSegment(ctx context.Context, a db.TranscriptArchive, query db.TranscriptArchiveQuery, rows []db.CodeSessionInternalEvent) (int, error) {
-	decoded, err := s.ReadSegment(ctx, a)
-	if err != nil {
-		return 0, err
-	}
+func (s *Service) softDeleteSegment(ctx context.Context, a db.TranscriptArchive, query db.TranscriptArchiveQuery, rows []db.CodeSessionInternalEvent, decoded map[int64]transcriptarchive.DecodedEvent) (int, error) {
 	sequences := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		event, ok := decoded[row.SequenceNum]

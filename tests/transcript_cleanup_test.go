@@ -6,7 +6,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func TestTranscriptArchiveOrphanCleanup(t *testing.T) {
@@ -15,7 +14,7 @@ func TestTranscriptArchiveOrphanCleanup(t *testing.T) {
 	session, _ := newPayloadIntegrationSession(t, app)
 	seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 3))
 	makeArchiveTerminal(t, app, session)
-	service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 	objects.afterUpload = func(string) error { return errors.New("lost confirmation") }
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err == nil {
 		t.Fatal("injected failure ignored")

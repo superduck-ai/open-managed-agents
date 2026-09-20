@@ -10,7 +10,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func transcriptHTTPBytes(t *testing.T, app *testApp, id, suffix string) []byte {
@@ -24,9 +23,13 @@ func transcriptHTTPBytes(t *testing.T, app *testApp, id, suffix string) []byte {
 }
 
 func TestTranscriptArchivePreservesIdleReclaimResume(t *testing.T) {
-	f := newSandboxLifecycleFixture(t)
-	seedArchiveEvents(t, f.app, f.code, make([]db.AppendCodeSessionInternalEventInput, 3))
+	f := newSandboxLifecycleFixtureWithApp(t, newPayloadIntegrationApp(t, newFakeStore("archive-resume")))
+	seedArchiveEvents(t, f.app, f.code, []db.AppendCodeSessionInternalEventInput{{}, {IsCompaction: true}, {}})
 	before := transcriptHTTPBytes(t, f.app, f.code.ExternalID, "internal-events")
+	page, _, err := f.app.db.ListCodeSessionInternalEventsPage(t.Context(), db.ListCodeSessionInternalEventsPageParams{WorkspaceUUID: f.code.WorkspaceUUID, CodeSessionExternalID: f.code.ExternalID, Limit: 500})
+	if err != nil || len(page) != 2 || !page[0].IsCompaction {
+		t.Fatalf("expected nonempty compacted resume history: %v, %v", page, err)
+	}
 	killer := newLifecycleProvider(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	lifecycle := environments.NewSandboxLifecycle(f.app.db, killer, config.SandboxLifecycleConfig{Enabled: true, IdleTimeout: 24 * time.Hour}, nil)
 	if err := lifecycle.Reclaim(t.Context(), f.target); err != nil {
@@ -39,10 +42,14 @@ func TestTranscriptArchivePreservesIdleReclaimResume(t *testing.T) {
 	if reason != "idle_timeout" {
 		t.Fatalf("stop reason: %s", reason)
 	}
-	service := transcriptretention.New(f.app.db, f.app.store, transcriptPolicy(), nil)
-	if err := service.Archive(t.Context(), transcriptScope(f.code), true); err != nil {
+	service := newTranscriptRetentionService(t, f.app, f.app.store, transcriptPolicy())
+	if err := service.Archive(t.Context(), transcriptScope(f.code), false); err != nil {
 		t.Fatal(err)
 	}
+
+	assertPayloadSQLCount(t, f.app, "select count(*) from transcript_archives where state='attached' and from_sequence_num=1 and to_sequence_num=1", 1)
+	assertPayloadSQLCount(t, f.app, "select count(*) from code_session_internal_events where deleted_at is not null and sequence_num=1", 1)
+	assertPayloadSQLCount(t, f.app, "select count(*) from code_session_internal_events where deleted_at is null", 2)
 	after := transcriptHTTPBytes(t, f.app, f.code.ExternalID, "internal-events")
 	if !bytes.Equal(before, after) {
 		t.Fatal("idle reclamation transcript changed")
@@ -79,7 +86,7 @@ func TestTranscriptArchiveConcurrentCompactionAndEpoch(t *testing.T) {
 		expected[1] = transcriptHTTPBytes(t, app, session.ExternalID, "internal-events?subagents=true")
 		return nil
 	}
-	service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 	if err := service.Archive(t.Context(), transcriptScope(session), false); err != nil {
 		t.Fatal(err)
 	}

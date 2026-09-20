@@ -10,11 +10,21 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func transcriptPolicy() transcriptretention.Policy {
 	return transcriptretention.Policy{Enabled: true, TerminalSweepEnabled: true, BoundarySweepEnabled: true, TerminalDwell: 24 * time.Hour, ArchiveMinAge: 7 * 24 * time.Hour, SoftDeleteWindow: 14 * 24 * time.Hour, TargetSegmentRawBytes: 8 * 1024 * 1024, DeleteBatchRows: 2, MaxRowsPerJob: 50000}
+}
+
+func newTranscriptRetentionService(t *testing.T, app *testApp, objects storage.ObjectStore, policy transcriptretention.Policy) *transcriptretention.Service {
+	t.Helper()
+	service, err := transcriptretention.New(app.db, objects, policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
 }
 
 func transcriptScope(session db.CodeSession) db.TranscriptScope {
@@ -56,21 +66,27 @@ func makeArchiveTerminal(t *testing.T, app *testApp, session db.CodeSession) {
 }
 
 func TestTranscriptArchiveTerminalSafety(t *testing.T) {
-	for _, scenario := range []struct{ name, sessionSQL, workerSQL string }{
-		{"terminated", "update sessions set status='terminated' where uuid=$1", ""},
-		{"terminated_to_running", "update sessions set status='running' where uuid=$1", ""},
-		{"live_lease", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()+interval '1 hour' where uuid=$1"},
-		{"running_worker", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='running',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
-		{"dwell", "update sessions set archived_at=now() where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
+	for _, scenario := range []struct{ name, setup, sessionSQL, workerSQL string }{
+		{"terminated", "", "update sessions set status='terminated' where uuid=$1", ""},
+		{"terminated_to_running", "update sessions set status='terminated',archived_at=now()-interval '2 days' where uuid=$1", "update sessions set status='running' where uuid=$1", "update code_sessions set worker_status='running',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
+		{"live_lease", "", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()+interval '1 hour' where uuid=$1"},
+		{"running_worker", "", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='running',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
+		{"dwell", "", "update sessions set archived_at=now() where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			objects := &payloadFaultStore{fakeStore: newFakeStore("archive-test")}
 			app := newPayloadIntegrationApp(t, objects)
 			session, _ := newPayloadIntegrationSession(t, app)
 			seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 3))
-			if scenario.name == "terminated_to_running" {
-				if _, err := app.pool.Exec(t.Context(), "update sessions set status='terminated' where uuid=$1", session.SessionUUID); err != nil {
+
+			if scenario.setup != "" {
+				makeArchiveTerminal(t, app, session)
+				if _, err := app.pool.Exec(t.Context(), scenario.setup, session.SessionUUID); err != nil {
 					t.Fatal(err)
+				}
+				rows, err := app.db.ListArchivableInternalEvents(t.Context(), db.TranscriptArchiveQuery{Scope: transcriptScope(session), Terminal: true, Cutoff: time.Now().Add(-transcriptPolicy().TerminalDwell), Limit: 10})
+				if err != nil || len(rows) != 3 {
+					t.Fatalf("fixture must be archivable before revival: %d rows, %v", len(rows), err)
 				}
 			}
 			if _, err := app.pool.Exec(t.Context(), scenario.sessionSQL, session.SessionUUID); err != nil {
@@ -81,7 +97,7 @@ func TestTranscriptArchiveTerminalSafety(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+			service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 			if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 				t.Fatal(err)
 			}
@@ -99,13 +115,13 @@ func TestTranscriptArchiveTerminalRetry(t *testing.T) {
 	makeArchiveTerminal(t, app, session)
 	policy := transcriptPolicy()
 	policy.DryRun = true
-	service := transcriptretention.New(app.db, objects, policy, nil)
+	service := newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 		t.Fatal(err)
 	}
 	assertPayloadSQLCount(t, app, "select count(*) from transcript_archives", 0)
 	policy.DryRun = false
-	service = transcriptretention.New(app.db, objects, policy, nil)
+	service = newTranscriptRetentionService(t, app, objects, policy)
 	objects.afterUpload = func(string) error { return errors.New("interrupted after upload") }
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err == nil {
 		t.Fatal("upload failure accepted")

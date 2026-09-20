@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 )
 
 func TestTranscriptArchiveConcurrentRetry(t *testing.T) {
@@ -25,7 +24,7 @@ func TestTranscriptArchiveConcurrentRetry(t *testing.T) {
 			return t.Context().Err()
 		}
 	}
-	service := transcriptretention.New(app.db, objects, transcriptPolicy(), nil)
+	service := newTranscriptRetentionService(t, app, objects, transcriptPolicy())
 	done := make(chan error, 1)
 	go func() { done <- service.Archive(t.Context(), transcriptScope(session), true) }()
 	select {
@@ -70,7 +69,7 @@ func TestTranscriptArchiveLargeBatchTransactions(t *testing.T) {
 	policy := transcriptPolicy()
 	policy.MaxRowsPerJob = 1500
 	policy.DeleteBatchRows = 500
-	service := transcriptretention.New(app.db, objects, policy, nil)
+	service := newTranscriptRetentionService(t, app, objects, policy)
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err == nil {
 		t.Fatal("third batch failure ignored")
 	}
@@ -81,6 +80,7 @@ func TestTranscriptArchiveLargeBatchTransactions(t *testing.T) {
 	if err := service.Archive(t.Context(), transcriptScope(session), true); err != nil {
 		t.Fatal(err)
 	}
-	assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events where deleted_at is not null", 1500)
+	// The retry finishes 500 existing rows and archives 1000 new rows within its 1500-row budget.
+	assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events where deleted_at is not null", 2500)
 	assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events", 500000)
 }

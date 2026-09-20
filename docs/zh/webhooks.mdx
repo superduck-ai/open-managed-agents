@@ -4,6 +4,8 @@ sidebarTitle: "订阅 Webhook"
 description: "无需轮询即可在重大事件发生时获得通知。"
 ---
 
+<Note>本指南描述对齐 Claude 的目标能力。OMA 当前完成的是既有事件白名单的订阅管理；下文 Agent、Deployment、Environment、Memory Store、预算等事件尚未全部开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
+
 会话是长时间运行的交互。虽然大多数实时交互通过 [SSE 事件流](/docs/zh/events-and-streaming)进行，但 Webhook 会在发生重大状态变化时通知您。
 
 Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收到 Webhook 事件时，需要通过 `GET` 调用直接获取该对象。这样可以避免在重试时传递过时数据，并使每次传递的数据量保持较小。
@@ -94,6 +96,10 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
 ## 注册端点
 
 访问 OMA 控制台中的 **Manage > Webhooks**。
+
+选择 workspace 后点击 **Add webhook endpoint**。名称和描述可留空；事件默认不选，至少选择一项。表单支持分组选择、全选、协议名复制和 URL 校验。详情支持编辑 URL/元数据/事件、启停、删除与重置密钥；关闭密钥弹窗前需要自行保存一次性密钥。
+
+未配置全局 endpoint/key、仅使用数据库订阅时，需要显式设置 `webhook.worker_enabled: true` 开启投递。
 
 Webhook 端点由以下部分组成：
 

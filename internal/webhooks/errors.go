@@ -1,6 +1,14 @@
 package webhooks
 
-import "github.com/superduck-ai/open-managed-agents/internal/apperr"
+import (
+	"errors"
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+)
+
+var (
+	errWebhookURLScheme   = errors.New("url must use http or https")
+	errWebhookURLFragment = errors.New("url must not include a fragment")
+)
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

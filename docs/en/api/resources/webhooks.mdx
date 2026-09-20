@@ -3,6 +3,8 @@ title: "Webhooks"
 description: "Register endpoints, select events, and rotate signing secrets."
 ---
 
+This page describes the current OMA contract. The [official Claude AWS IAM mapping](https://platform.claude.com/docs/en/api/claude-platform-on-aws-iam-actions) confirms these management routes, but does not define their full request/response schema. Field-level compatibility and the beta header below have not been independently confirmed against Claude.
+
 Every request requires `anthropic-beta: webhooks-2026-03-01`.
 
 | Method | Path | Purpose |
@@ -20,6 +22,12 @@ Every request requires `anthropic-beta: webhooks-2026-03-01`.
 }
 ```
 
-URLs pass SSRF and HTTPS validation unless the deployment explicitly enables insecure local targets. Events must be in the supported allowlist.
+`url` and a non-empty `enabled_events` array are required. `name` and `description` may be omitted or set to an empty string; `null` and other non-string values are rejected. The existing limits are 2048 bytes for URL/description and 255 bytes for name. POST updates accept `url`, `name`, `description`, `enabled_events`, and `status` (`enabled` or `disabled`); omitted fields are preserved.
 
-Create returns `signing_secret` once; rotation returns a replacement. List and retrieve never expose it. Consumers verify `X-Webhook-Signature` and handle duplicate delivery idempotently.
+URLs require HTTPS on port 443 without credentials or fragments. Private IP literals and localhost are rejected unless `webhook.allow_insecure` enables local HTTP targets. This is not complete DNS-based SSRF protection. Events must be in the server allowlist; the Console currently offers 17 types, including `session.updated` and `session.deleted`, and starts with none selected.
+
+Endpoints belong to the authenticated workspace. List returns `{ "data": [...], "next_page": null }`; Console ID search and sorting operate on this returned collection. The Console supports editing, enabling/disabling, deleting, and rotating secrets. Failed operations retain the form or confirmation and show the server error.
+
+Create returns `signing_secret` once; rotation returns a replacement. List, retrieve, and update never expose it. The Console keeps it only in the one-time dialog state. Consumers verify the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers with the official SDK and handle duplicate delivery idempotently.
+
+For deployments using database subscriptions without a configured global endpoint/key, explicitly set `webhook.worker_enabled: true` to run delivery jobs. Managing an endpoint alone does not enable the worker.

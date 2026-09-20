@@ -4,6 +4,8 @@ sidebarTitle: "Subscribe to webhooks"
 description: "Get notified when major events happen without polling."
 ---
 
+<Note>This guide describes the Claude-aligned target capability. OMA currently completes subscription management for the existing event allowlist; Agent, Deployment, Environment, Memory Store, and budget events below are not yet all available for subscription. See the [current Webhooks API contract](/docs/en/api/resources/webhooks) for implementation limits. Retry timing, automatic disabling, DNS checks, and transactional enqueueing still differ from the target behavior.</Note>
+
 Sessions are long-running interactions. While most real-time interactions happen through the [SSE event stream](/docs/en/events-and-streaming), webhooks notify you of major state changes.
 
 Webhook events return the event `type` and `id`, not the full object. When you receive a webhook event, you need to fetch the object directly with a `GET` call. This avoids delivering stale data on retries and keeps every delivery small.
@@ -94,6 +96,10 @@ Webhook events return the event `type` and `id`, not the full object. When you r
 ## Register an endpoint
 
 Visit **Manage > Webhooks** in the OMA Console.
+
+Choose a workspace and select **Add webhook endpoint**. Name and description are optional. Events start unselected; select at least one. The editor supports per-group selection, select all, protocol-name copy, and URL validation. Details support URL/metadata/event edits, enable/disable, deletion, and secret rotation. Save the one-time secret before closing its dialog.
+
+When using database subscriptions without a global endpoint/key, enable delivery explicitly with `webhook.worker_enabled: true`.
 
 A webhook endpoint consists of:
 

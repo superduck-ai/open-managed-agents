@@ -135,16 +135,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err := validateWebhookURL(endpointURL, h.cfg.AllowInsecure); err != nil {
 		return invalidRequest(err)
 	}
-	name, err := parseWebhookRequiredString(fields, "name")
+	name, err := parseWebhookOptionalString(fields, "name")
 	if err != nil {
 		return invalidRequest(err)
 	}
-	description := ""
-	if raw, ok := fields["description"]; ok {
-		description, err = parseWebhookRawString(raw, "description")
-		if err != nil {
-			return invalidRequest(err)
-		}
+	description, err := parseWebhookOptionalString(fields, "description")
+	if err != nil {
+		return invalidRequest(err)
 	}
 	enabledEvents, err := parseEnabledEvents(fields["enabled_events"])
 	if err != nil {
@@ -393,13 +390,20 @@ func parseWebhookRequiredString(fields map[string]json.RawMessage, name string) 
 	return parseWebhookRawString(raw, name)
 }
 
+func parseWebhookOptionalString(fields map[string]json.RawMessage, name string) (string, error) {
+	if raw, ok := fields[name]; ok {
+		return parseWebhookRawString(raw, name)
+	}
+	return "", nil
+}
+
 func parseWebhookRawString(raw json.RawMessage, name string) (string, error) {
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
+	var input *string
+	if err := json.Unmarshal(raw, &input); err != nil || input == nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	value = strings.TrimSpace(value)
-	if value == "" && name != "description" {
+	value := strings.TrimSpace(*input)
+	if value == "" && name != "description" && name != "name" {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	switch name {
@@ -457,8 +461,14 @@ func validateWebhookURL(rawURL string, allowInsecure bool) error {
 	if parsed.Scheme != "https" && !allowInsecure {
 		return errors.New("url must use https unless webhook.allow_insecure is true")
 	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return errWebhookURLScheme
+	}
 	if parsed.User != nil {
 		return errors.New("url must not include credentials")
+	}
+	if parsed.Fragment != "" {
+		return errWebhookURLFragment
 	}
 	if parsed.Port() != "" && parsed.Port() != "443" && !allowInsecure {
 		return errors.New("url must use port 443 unless webhook.allow_insecure is true")

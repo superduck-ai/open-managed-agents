@@ -85,6 +85,69 @@ func TestWebhooksAPI(t *testing.T) {
 		clearWebhookState(t, app)
 	})
 
+	t.Run("failure invalid optional fields", func(t *testing.T) {
+		for _, body := range []string{
+			`{"url":"https://webhook.example.com","name":null,"enabled_events":["session.updated"]}`,
+			`{"url":"https://webhook.example.com","description":null,"enabled_events":["session.updated"]}`,
+			`{"url":"https://webhook.example.com","name":123,"enabled_events":["session.updated"]}`,
+			`{"url":"https://webhook.example.com/path#fragment","enabled_events":["session.updated"]}`,
+		} {
+			resp := doWebhookRequest(t, app, http.MethodPost, "/v1/webhooks", strings.NewReader(body), defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		}
+	})
+
+	t.Run("failure cross workspace access", func(t *testing.T) {
+		const otherKey = "sk-ant-test-webhook-other"
+		seedWorkspaceKey(t, app.pool, "webhook_other_org", "webhook_other_workspace", "webhook_other_key", otherKey)
+		created := createWebhook(t, app, `{"url":"https://webhook.example.com","enabled_events":["session.updated"]}`)
+		for _, request := range []struct{ method, suffix, body string }{
+			{http.MethodGet, "", ""},
+			{http.MethodPost, "", `{"name":"other workspace"}`},
+			{http.MethodPost, "/regenerate_signing_secret", `{}`},
+			{http.MethodDelete, "", ""},
+		} {
+			resp := doWebhookRequest(t, app, request.method, "/v1/webhooks/"+created.ID+request.suffix, strings.NewReader(request.body), otherKey, true)
+			assertError(t, resp, http.StatusNotFound, "not_found_error")
+		}
+		resp := doWebhookRequest(t, app, http.MethodGet, "/v1/webhooks", nil, otherKey, true)
+		defer resp.Body.Close()
+		var page webhookPageAPIResponse
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("other workspace list status=%d", resp.StatusCode)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Data) != 0 {
+			t.Fatal("other workspace can list endpoint")
+		}
+		if retrieved := retrieveWebhook(t, app, created.ID); retrieved.Name != "" {
+			t.Fatal("cross workspace update changed endpoint")
+		}
+		clearWebhookState(t, app)
+	})
+
+	t.Run("success omitted and empty optional fields", func(t *testing.T) {
+		created := createWebhook(t, app, `{"url":"https://webhook.example.com","enabled_events":["session.updated","session.deleted"]}`)
+		if created.Name != "" || created.Description != "" {
+			t.Fatal("omitted optional fields must be empty")
+		}
+		updateWebhook(t, app, created.ID, `{"name":"temporary","description":"temporary"}`)
+		updated := updateWebhook(t, app, created.ID, `{"url":"https://webhook.example.com/new","name":"","description":""}`)
+		if updated.Name != "" || updated.Description != "" || updated.URL != "https://webhook.example.com/new" || updated.SigningSecret != nil {
+			t.Fatal("update did not clear optional fields, change URL, or hide secret")
+		}
+		for _, body := range []string{`{"name":null}`, `{"description":null}`, `{"url":""}`} {
+			resp := doWebhookRequest(t, app, http.MethodPost, "/v1/webhooks/"+created.ID, strings.NewReader(body), defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		}
+		if retrieved := retrieveWebhook(t, app, created.ID); retrieved.URL != updated.URL || retrieved.Name != "" || retrieved.SigningSecret != nil {
+			t.Fatal("updated endpoint not persisted")
+		}
+		clearWebhookState(t, app)
+	})
+
 	t.Run("success lifecycle", func(t *testing.T) {
 		created := createWebhook(t, app, `{"url":"https://webhook.example.com","name":"docs callback","description":"created from console","enabled_events":["session.status_idled"]}`)
 		if created.Type != "webhook" || created.ID == "" || !strings.HasPrefix(created.ID, "wh_") {

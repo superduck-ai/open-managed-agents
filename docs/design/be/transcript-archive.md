@@ -39,3 +39,18 @@
 缺失对象、存储权限/配置错误、归档完整性失败及未覆盖行不会被视为删除成功。删除 worker 使用 River 的 24 小时 snooze 保留任务，scheduled 状态参与 scope 去重，阻止 sweep 重复入队。使用 River 持久化的 snoozes 元数据仅在首次拒绝时记录结构化错误；后续每天重新验证，修复后自动继续。网络、读取中断和数据库临时错误仍交给 River 正常重试。codec 导出 ErrInvalidSegment、ErrIntegrity，供边界使用 errors.Is 分类，流读取错误保持原样。
 
 归档恢复先完整校验既有段，再仅对剩余预算允许的存活行软删除；预算耗尽正常结束。即使配置预算调小到低于已有段的行数，后续运行也能分批完成。此规则不放宽 attached 覆盖和逐批资格检查。
+
+## 导出与还原
+
+先在所有实例禁用归档/删除并等待运行中任务结束，再在受信环境运行以下命令。CLI 显式使用七天最小归档年龄的禁用策略并处理服务初始化错误；CLI 复用配置中的现有 bucket，不创建 bucket、不启动 HTTP 服务、不改 resume 路径。
+
+```sh
+CONFIG_FILE=/path/to/config.yaml go run ./cmd/transcript-archive -mode export \
+  -organization ORGANIZATION_UUID -workspace WORKSPACE_UUID -code-session CODE_SESSION_UUID > history.jsonl
+CONFIG_FILE=/path/to/config.yaml go run ./cmd/transcript-archive -mode restore \
+  -organization ORGANIZATION_UUID -workspace WORKSPACE_UUID -code-session CODE_SESSION_UUID
+```
+
+导出按序合并 attached 段和 PG 中尚未归档的历史。payload 原始 JSON 可以含格式换行，因此文件是按记录分隔的 JSON 文档流；应使用流式 JSON decoder，不能按物理换行 split。还原逐段校验对象，保留原始 UUID、external_id、sequence_num、payload_uuid、幂等键、worker payload_hash 和时间戳。大 payload 经现有 eventpayload 写入新 blob 后再原子关联；即使旧 blob 已被 GC 删除，也能恢复。已存在的活跃行不覆盖，冲突会返回错误；每批最多 500 条，不推进 append 序号水位。
+
+软删除观察期内且旧 blob 尚存时可用 deleted_at=NULL 取消软删除。旧 blob 已被 GC 回收后，必须使用还原工具重建引用，不能只清空 deleted_at。本测试覆盖段→物理删除→旧 blob GC→还原回 PG→ListPage 一致，以及还原幂等和跨 workspace 隔离。

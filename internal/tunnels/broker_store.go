@@ -18,10 +18,8 @@ const (
 	commandStreamName    = "OMA_TUNNEL_COMMANDS_V1"
 	commandSubjectPrefix = "oma.tunnel.command.v1."
 	requestBucketName    = "OMA_TUNNEL_REQUESTS_V1"
-	controlBucketName    = "OMA_TUNNEL_CONTROL_V1"
 	maxBrokerValueBytes  = 2 << 20
-	maxControlRecords    = 4096
-	maxControlValueBytes = 256 << 10
+	maxCommandConsumers  = 131072 // Existing global Stream consumer limit.
 	brokerCASAttempts    = 64
 )
 
@@ -143,10 +141,4 @@ func publishBrokerSignal(connection *nats.Conn, subject, key string) {
 	if err == nil {
 		_ = connection.Publish(subject, data)
 	}
-}
-
-// purgeControl removes the exact subject, including KV tombstones, to release
-// its MaxMsgs slot. Only permanently archived resources may be purged.
-func (b *Broker) purgeControl(ctx context.Context, tunnelUUID string) error {
-	return b.control.stream.Purge(ctx, jetstream.WithPurgeSubject("$KV."+b.control.name+"."+brokerKey(tunnelUUID)))
 }

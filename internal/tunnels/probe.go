@@ -217,14 +217,14 @@ func (s *Service) executeProbeCommand(
 	command := queuedCommand{
 		RequestID: requestID, CommandType: commandType, Channel: channel,
 		CreatedAt: time.Now().UTC(), Headers: headers, JSONRPC: body,
-		ExpiresAt: deadline, PayloadSize: int64(len(body)),
+		ExpiresAt: deadline,
 	}
 	waiter, err := s.broker.subscribeResponse(ctx, tunnel.UUID, requestID)
 	if err != nil {
 		return TunnelResponse{}, ingressQueueError(err)
 	}
 	defer waiter.Close()
-	if err := s.broker.Enqueue(ctx, tunnel.UUID, command); err != nil {
+	if err := s.broker.Enqueue(ctx, tunnel.UUID, tunnel.ExternalID, command); err != nil {
 		return TunnelResponse{}, ingressQueueError(err)
 	}
 	response, err := waiter.Wait(ctx, nil)

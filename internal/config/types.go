@@ -107,9 +107,7 @@ type TunnelConfig struct {
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
 	PresenceTTL         time.Duration `yaml:"presence_ttl"`
 	TombstoneTTL        time.Duration `yaml:"tombstone_ttl"`
-	MaxPendingRequests  int           `yaml:"max_pending_requests"`
 	MaxStoredRequests   int           `yaml:"max_stored_requests"`
-	MaxPendingBytes     int64         `yaml:"max_pending_bytes"`
 	MaxBodyBytes        int64         `yaml:"max_body_bytes"`
 	MaxHeaderBytes      int64         `yaml:"max_header_bytes"`
 	MaxHeaderValueBytes int64         `yaml:"max_header_value_bytes"`

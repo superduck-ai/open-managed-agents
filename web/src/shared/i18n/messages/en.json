@@ -1729,7 +1729,6 @@
   "mcpTunnels.detail.noChannelsDescription": "Start tunnel-client to publish its configured MCP channels.",
   "mcpTunnels.detail.overview": "Overview",
   "mcpTunnels.detail.overviewDescription": "Stable identifiers and the main MCP endpoint for this tunnel.",
-  "mcpTunnels.detail.processAffinity": "Process affinity",
   "mcpTunnels.detail.test": "Test",
   "mcpTunnels.empty.body": "Create a tunnel to connect a local MCP server to managed agent sessions.",
   "mcpTunnels.empty.filteredBody": "Try a different search or reset the filters.",

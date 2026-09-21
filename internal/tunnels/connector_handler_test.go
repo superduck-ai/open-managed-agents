@@ -42,45 +42,36 @@ func (d *changingConnectorDatabase) FindMCPTunnelTokenContext(ctx context.Contex
 	return credential, err
 }
 
-func TestConnectorPollRechecksArchiveBeforeWritingCommands(t *testing.T) {
+func TestConnectorPollAuthorizesOnlyOnce(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	credential := activeConnectorContext()
-	credential.Token.TunnelUUID = "tunnel"
-	registerTestConnector(t, b, "a", []ChannelDeclaration{{Name: "main"}})
-	command := testQueuedCommand("archive-race")
-	if err := b.Enqueue(t.Context(), "tunnel", command); err != nil {
+	credential.TunnelUUID = "tunnel"
+	command := testQueuedCommand("single-auth")
+	if err := b.Enqueue(t.Context(), "tunnel", credential.TunnelExternalID, command); err != nil {
 		t.Fatal(err)
 	}
-	// Model an archive committed while poll was waiting, with a delayed broker
-	// activation from a concurrent rotation. DB remains the credential authority.
-	h := &ConnectorHandler{cfg: b.cfg, broker: b, db: &changingConnectorDatabase{
-		connectorMetadataDatabase: connectorMetadataDatabase{context: credential},
-	}}
-	r := connectorMetadataRequest("valid-token")
-	r.Header.Set(connectorInstanceHeader, "a")
+	database := &changingConnectorDatabase{connectorMetadataDatabase: connectorMetadataDatabase{context: credential}}
+	h := &ConnectorHandler{cfg: b.cfg, broker: b, db: database}
 	w := httptest.NewRecorder()
-	err := h.poll(w, r)
-	var appErr *apperr.Error
-	if !errors.As(err, &appErr) || appErr.Kind != apperr.Unauthenticated || w.Body.Len() != 0 {
-		t.Fatalf("revoked poll exposed commands: error=%v body bytes=%d", err, w.Body.Len())
+	if err := h.poll(w, connectorMetadataRequest("valid-token")); err != nil {
+		t.Fatal(err)
 	}
-	_, state, err := b.GetResponse(t.Context(), "tunnel", command.RequestID)
-	if err != nil || state != "canceled" {
-		t.Fatalf("undelivered request left waiting: state=%s error=%v", state, err)
+	if database.lookups != 1 || w.Code != 200 || !strings.Contains(w.Body.String(), command.RequestID) {
+		t.Fatalf("poll lookups=%d status=%d", database.lookups, w.Code)
 	}
 }
 
 func TestConnectorResponseBodyLimitExcludesWireEnvelope(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	credential := activeConnectorContext()
-	credential.Token.TunnelUUID = "tunnel"
+	credential.TunnelUUID = "tunnel"
 	h := &ConnectorHandler{cfg: b.cfg, broker: b, db: connectorMetadataDatabase{context: credential}}
-	registerTestConnector(t, b, "a", []ChannelDeclaration{{Name: "main"}})
+
 	id := "req_0123456789abcdefghijklmn"
-	if err := b.Enqueue(t.Context(), "tunnel", testQueuedCommand(id)); err != nil {
+	if err := b.Enqueue(t.Context(), "tunnel", credential.TunnelExternalID, testQueuedCommand(id)); err != nil {
 		t.Fatal(err)
 	}
-	claim := pollTestCommands(t, b, "a", []ChannelDeclaration{{Name: "main"}}, 1)[0]
+	claim := pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1)[0]
 	for _, extra := range []int{1, 0} {
 		response := testTerminalResponse(id)
 		response.JSONResponse = json.RawMessage(`"` + strings.Repeat("x", int(b.cfg.MaxBodyBytes)-2+extra) + `"`)
@@ -92,7 +83,7 @@ func TestConnectorResponseBodyLimitExcludesWireEnvelope(t *testing.T) {
 		r := connectorMetadataRequest("valid-token")
 		r.Method = http.MethodPost
 		r.Body = io.NopCloser(bytes.NewReader(wire))
-		r.Header.Set(shardTokenHeader, claim.ShardToken)
+		r.Header.Set(shardTokenHeader, claim.RequestID)
 		r.Header.Set(connectorInstanceHeader, "a")
 		err = h.postResponse(httptest.NewRecorder(), r)
 		if extra > 0 && err == nil {
@@ -117,26 +108,23 @@ func TestConnectorPollOptionsCapsHugeTimeoutWithoutDurationOverflow(t *testing.T
 	}
 }
 
-func TestConnectorInstanceIDRequiresCanonicalHeaderForProcessAffinity(t *testing.T) {
+func TestConnectorInstanceIDValidatesDisplayIdentifier(t *testing.T) {
 	t.Parallel()
 
 	missing := httptest.NewRequest(http.MethodGet, "/poll", nil)
-	if _, err := connectorInstanceID(missing, true); err == nil {
-		t.Fatal("connectorInstanceID() accepted a missing process-affinity instance ID")
-	}
-	if got, err := connectorInstanceID(missing, false); err != nil || got != "legacy" {
+	if got, err := connectorInstanceID(missing); err != nil || got != "legacy" {
 		t.Fatalf("connectorInstanceID() stateless fallback = %q, %v, want legacy", got, err)
 	}
 
 	invalid := httptest.NewRequest(http.MethodGet, "/poll", nil)
 	invalid.Header.Set(connectorInstanceHeader, " instance-a ")
-	if _, err := connectorInstanceID(invalid, false); err == nil {
+	if _, err := connectorInstanceID(invalid); err == nil {
 		t.Fatal("connectorInstanceID() accepted surrounding whitespace")
 	}
 
 	valid := httptest.NewRequest(http.MethodGet, "/poll", nil)
 	valid.Header.Set(connectorInstanceHeader, "instance-a")
-	if got, err := connectorInstanceID(valid, true); err != nil || got != "instance-a" {
+	if got, err := connectorInstanceID(valid); err != nil || got != "instance-a" {
 		t.Fatalf("connectorInstanceID() = %q, %v, want instance-a", got, err)
 	}
 }
@@ -162,8 +150,8 @@ func TestConnectorMetadataDoesNotHideDatabaseFailuresAsBadCredentials(t *testing
 	}}
 	err := handler.metadata(httptest.NewRecorder(), connectorMetadataRequest("valid-token"))
 	appError, ok := err.(*apperr.Error)
-	if !ok || appError.Kind != apperr.Internal {
-		t.Fatalf("metadata error = %#v, want internal", err)
+	if !ok || appError.Kind != apperr.Unavailable {
+		t.Fatalf("metadata error = %#v, want unavailable", err)
 	}
 }
 
@@ -233,7 +221,7 @@ func TestConnectorMetadataRejectsRetiredAndArchivedCredentials(t *testing.T) {
 	}{
 		{name: "retired token", context: func() db.MCPTunnelTokenContext {
 			value := activeConnectorContext()
-			value.Token.RetiredAt = &now
+			value.RetiredAt = &now
 			return value
 		}()},
 		{name: "archived tunnel", context: func() db.MCPTunnelTokenContext {
@@ -255,11 +243,8 @@ func TestConnectorMetadataRejectsRetiredAndArchivedCredentials(t *testing.T) {
 }
 
 func activeConnectorContext() db.MCPTunnelTokenContext {
-	hash := sha256.Sum256([]byte("valid-token"))
 	return db.MCPTunnelTokenContext{
-		Token: db.MCPTunnelTokenVersion{
-			TunnelUUID: "11111111-1111-4111-8111-111111111111", Version: 1, TokenHash: hash[:],
-		},
+		TunnelUUID:       "11111111-1111-4111-8111-111111111111",
 		TunnelExternalID: "tunnel_0123456789abcdef0123456789abcdef",
 		OrganizationUUID: "22222222-2222-4222-8222-222222222222",
 		WorkspaceUUID:    "33333333-3333-4333-8333-333333333333",
@@ -276,14 +261,4 @@ func connectorMetadataRequest(token string) *http.Request {
 
 func stringPointer(value string) *string {
 	return &value
-}
-
-func (d connectorMetadataDatabase) WithMCPTunnelTokenTx(ctx context.Context, _, _, _ string, fn func(*db.MCPTunnelTokenTx) error) error {
-	if d.getError != nil {
-		return d.getError
-	}
-	if d.context.Token.RetiredAt != nil || d.context.TunnelArchivedAt != nil {
-		return db.ErrNotFound
-	}
-	return fn(&db.MCPTunnelTokenTx{Tunnel: d.tunnel, Token: d.context.Token})
 }

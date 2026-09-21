@@ -28,19 +28,19 @@ const (
 	defaultPollLimit        = 25
 	maxPollLimit            = 25
 	maxConnectorInstanceID  = 128
-	maxShardTokenBytes      = 256
 )
 
 type ConnectorHandler struct {
 	cfg          config.TunnelConfig
 	db           connectorDatabase
 	broker       *Broker
+	presence     *ConnectorPresence
+	logger       *slog.Logger
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
 }
 
 type connectorDatabase interface {
-	tunnelTokenDatabase
 	FindMCPTunnelTokenContext(context.Context, string, []byte) (db.MCPTunnelTokenContext, error)
 	GetMCPTunnel(context.Context, string, string, string) (db.MCPTunnel, error)
 }
@@ -50,7 +50,7 @@ type connectorAuthContext struct {
 	TunnelExternalID string
 	OrganizationUUID string
 	WorkspaceUUID    string
-	TokenVersion     int64
+	TokenHash        [sha256.Size]byte
 }
 
 type connectorTunnelMetadata struct {
@@ -63,13 +63,13 @@ type polledCommandEnvelope struct {
 	Commands []json.RawMessage `json:"commands"`
 }
 
-func NewConnectorHandler(cfg config.TunnelConfig, database *db.DB, broker *Broker, logger *slog.Logger) *ConnectorHandler {
+func NewConnectorHandler(cfg config.TunnelConfig, database *db.DB, broker *Broker, presence *ConnectorPresence, logger *slog.Logger) *ConnectorHandler {
 	if database == nil || broker == nil {
 		panic("tunnels: connector database and broker are required")
 	}
 	logger = logging.LoggerOrDefault(logger)
 	handler := &ConnectorHandler{
-		cfg: cfg, db: database, broker: broker,
+		cfg: cfg, db: database, broker: broker, presence: presence, logger: logger,
 		errorAdapter: httpapi.NewErrorAdapter(logger),
 	}
 	router := chi.NewRouter()
@@ -94,7 +94,7 @@ func (h *ConnectorHandler) connectorNotFound(http.ResponseWriter, *http.Request)
 }
 
 func (h *ConnectorHandler) metadata(w http.ResponseWriter, r *http.Request) error {
-	credential, err := h.authenticate(r, false)
+	credential, err := h.authenticate(r)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (h *ConnectorHandler) metadata(w http.ResponseWriter, r *http.Request) erro
 		if errors.Is(err, db.ErrNotFound) {
 			return invalidConnectorCredential()
 		}
-		return internalError("Could not load tunnel metadata", fmt.Errorf("load tunnel metadata: %w", err))
+		return unavailable("Could not load tunnel metadata", fmt.Errorf("load tunnel metadata: %w", err))
 	}
 	if tunnel.ArchivedAt != nil {
 		return invalidConnectorCredential()
@@ -121,7 +121,7 @@ func (h *ConnectorHandler) metadata(w http.ResponseWriter, r *http.Request) erro
 }
 
 func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
-	credential, err := h.authenticate(r, false)
+	credential, err := h.authenticate(r)
 	if err != nil {
 		return err
 	}
@@ -132,6 +132,7 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	declarations := channels
 	channels, err = filterPollChannels(channels, r.URL.Query()["channel"])
 	if err != nil {
 		return invalidRequest(err)
@@ -140,25 +141,18 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	instanceID, err := connectorInstanceID(r, channelsRequireProcessAffinity(channels))
+	instanceID, err := connectorInstanceID(r)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	commands, err := h.broker.Poll(r.Context(), credential.TunnelUUID, instanceID, credential.TokenVersion, channels, limit, timeout)
-	if errors.Is(err, ErrTokenRetired) || errors.Is(err, ErrControlNotFound) {
-		restoreCtx, cancel := context.WithTimeout(r.Context(), tokenVersionRestoreTimeout)
-		restoreErr := reconcileTunnelToken(restoreCtx, h.db, h.broker, tunnelScope{OrganizationUUID: credential.OrganizationUUID, WorkspaceUUID: credential.WorkspaceUUID}, credential.TunnelExternalID, credential.TokenVersion)
-		cancel()
-		if restoreErr != nil {
-			return connectorTokenRecoveryError(restoreErr)
+	if h.presence != nil {
+		if err := h.presence.Touch(r.Context(), credential.TunnelUUID, instanceID, declarations); err != nil {
+			h.logger.WarnContext(r.Context(), "update tunnel connector presence failed", "tunnel_id", credential.TunnelExternalID, "error", err)
 		}
-		commands, err = h.broker.Poll(r.Context(), credential.TunnelUUID, instanceID, credential.TokenVersion, channels, limit, timeout)
 	}
+	commands, err := h.broker.Poll(r.Context(), credential.TunnelUUID, credential.TokenHash, channels, limit, timeout)
 	if err != nil {
-		if errors.Is(err, ErrTokenRetired) {
-			return invalidConnectorCredential()
-		}
-		if errors.Is(err, ErrChannelMismatch) || errors.Is(err, ErrChannelLimit) || errors.Is(err, ErrChannelInvalid) {
+		if errors.Is(err, ErrChannelLimit) || errors.Is(err, ErrChannelInvalid) {
 			return invalidRequest(err)
 		}
 		return unavailable("Tunnel broker is unavailable", err)
@@ -166,17 +160,6 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 	if len(commands) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return nil
-	}
-	// Poll can outlive the credential lookup. A concurrent lifecycle operation
-	// may also leave a delayed broker activation; recheck the DB authority before
-	// any claimed command crosses the HTTP boundary.
-	if _, err := h.authenticate(r, false); err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
-		defer cancel()
-		for _, command := range commands {
-			_ = h.broker.Cancel(cleanupCtx, credential.TunnelUUID, command.RequestID)
-		}
-		return err
 	}
 	wireCommands := make([]json.RawMessage, 0, len(commands))
 	for _, command := range commands {
@@ -200,10 +183,11 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *ConnectorHandler) postResponse(w http.ResponseWriter, r *http.Request) error {
-	credential, err := h.authenticate(r, true)
-	if err != nil {
-		return err
+	token := auth.ExtractBearerToken(r)
+	if token == "" {
+		return invalidConnectorCredential()
 	}
+	tokenHash := sha256.Sum256([]byte(token))
 	response, err := httpapi.DecodeObjectBodyAs[TunnelResponse](w, r, maxBrokerValueBytes)
 	if err != nil {
 		return invalidRequest(err)
@@ -211,18 +195,10 @@ func (h *ConnectorHandler) postResponse(w http.ResponseWriter, r *http.Request) 
 	if err := validateTunnelResponse(response, h.cfg); err != nil {
 		return invalidRequest(err)
 	}
-	shardToken := r.Header.Get(shardTokenHeader)
-	if shardToken == "" {
-		return invalidRequest(errors.New("X-Tunnel-Shard-Token is required"))
+	if r.Header.Get(shardTokenHeader) != response.RequestID {
+		return connectorRequestNotFound()
 	}
-	if len(shardToken) > maxShardTokenBytes {
-		return invalidRequest(errors.New("X-Tunnel-Shard-Token exceeds the configured limit"))
-	}
-	instanceID, err := connectorInstanceID(r, false)
-	if err != nil {
-		return invalidRequest(err)
-	}
-	err = h.broker.SubmitResponse(r.Context(), credential.TunnelUUID, instanceID, credential.TokenVersion, shardToken, *response)
+	err = h.broker.SubmitResponse(r.Context(), chi.URLParam(r, "tunnel_id"), tokenHash, *response)
 	if err != nil {
 		return connectorResponseError(err)
 	}
@@ -230,7 +206,7 @@ func (h *ConnectorHandler) postResponse(w http.ResponseWriter, r *http.Request) 
 	return nil
 }
 
-func (h *ConnectorHandler) authenticate(r *http.Request, allowRetired bool) (connectorAuthContext, error) {
+func (h *ConnectorHandler) authenticate(r *http.Request) (connectorAuthContext, error) {
 	token := auth.ExtractBearerToken(r)
 	if token == "" {
 		return connectorAuthContext{}, invalidConnectorCredential()
@@ -241,15 +217,15 @@ func (h *ConnectorHandler) authenticate(r *http.Request, allowRetired bool) (con
 		if errors.Is(err, db.ErrNotFound) {
 			return connectorAuthContext{}, invalidConnectorCredential()
 		}
-		return connectorAuthContext{}, internalError("Could not authenticate tunnel connector", fmt.Errorf("lookup tunnel token: %w", err))
+		return connectorAuthContext{}, unavailable("Could not authenticate tunnel connector", fmt.Errorf("lookup tunnel token: %w", err))
 	}
-	if context.TunnelArchivedAt != nil || context.Token.ArchivedAt != nil || (!allowRetired && context.Token.RetiredAt != nil) {
+	if context.TunnelArchivedAt != nil || context.ArchivedAt != nil || context.RetiredAt != nil {
 		return connectorAuthContext{}, invalidConnectorCredential()
 	}
 	return connectorAuthContext{
-		TunnelUUID: context.Token.TunnelUUID, TunnelExternalID: context.TunnelExternalID,
+		TunnelUUID: context.TunnelUUID, TunnelExternalID: context.TunnelExternalID,
 		OrganizationUUID: context.OrganizationUUID, WorkspaceUUID: context.WorkspaceUUID,
-		TokenVersion: context.Token.Version,
+		TokenHash: hash,
 	}, nil
 }
 
@@ -337,12 +313,9 @@ func validateTunnelResponse(response *TunnelResponse, cfg config.TunnelConfig) e
 	return validateConnectorResponseHeaders(response.ResponseHeaders, response.ResponseType, cfg)
 }
 
-func connectorInstanceID(r *http.Request, required bool) (string, error) {
+func connectorInstanceID(r *http.Request) (string, error) {
 	instanceID := r.Header.Get(connectorInstanceHeader)
 	if instanceID == "" {
-		if required {
-			return "", errors.New("X-Tunnel-Client-Instance-Id is required for process-affine channels")
-		}
 		return "legacy", nil
 	}
 	if strings.TrimSpace(instanceID) != instanceID {
@@ -352,15 +325,6 @@ func connectorInstanceID(r *http.Request, required bool) (string, error) {
 		return "", errors.New("X-Tunnel-Client-Instance-Id exceeds the configured limit")
 	}
 	return instanceID, nil
-}
-
-func channelsRequireProcessAffinity(channels []ChannelDeclaration) bool {
-	for _, channel := range channels {
-		if channel.ProcessAffinity {
-			return true
-		}
-	}
-	return false
 }
 
 func validateConnectorResponseHeaders(headers http.Header, responseType ResponseType, cfg config.TunnelConfig) error {

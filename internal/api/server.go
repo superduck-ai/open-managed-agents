@@ -101,7 +101,7 @@ type ServerDeps struct {
 	SessionEventBus        sessionfanout.EventBus
 	WorkerEventBroker      workerevents.Broker
 	TunnelBroker           *tunnelsapi.Broker
-	TunnelCleanupJobs      *tunnelsapi.CleanupJobs
+	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
 }
 
@@ -170,7 +170,7 @@ func NewServer(deps ServerDeps) *Server {
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:         deps.TunnelBroker,
 	}
-	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelCleanupJobs)
+	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
 	router.Use(requestLoggingMiddleware(componentLogger("http")))

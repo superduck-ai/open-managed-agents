@@ -6,8 +6,9 @@
 preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一连接上的 JetStream。handler
 和业务 service 不建立独立连接池。
 
-MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue，控制与终态使用独立 KV，响应通知使用 Core NATS。
-Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain；Tunnel 不依赖 Redis。
+MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue，请求领取与终态保存在 Request KV，响应通知使用 Core NATS。
+Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain；Broker 不依赖 Redis；Connector/Console 的在线展示使用共享 Redis 8 客户端，故障不影响请求转发。
+Control KV、token 状态同步、亲和路由和专属 River 清理队列已移除；退役步骤见 [Tunnel 设计](mcp-tunnels.md#升级与旧资源退役)。
 
 ```mermaid
 flowchart LR

@@ -38,24 +38,24 @@ func TestNATSBrokerClusterRecoversCommittedTerminalAfterLeaderLoss(t *testing.T)
 		brokers[i] = broker
 	}
 	channels := []ChannelDeclaration{{Name: "main"}}
-	registerTestConnector(t, brokers[1], "a", channels)
+
 	command := testQueuedCommand("cluster-recovery")
 	waiter, err := brokers[0].subscribeResponse(t.Context(), "tunnel", command.RequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer waiter.Close()
-	if err := brokers[0].Enqueue(t.Context(), "tunnel", command); err != nil {
+	if err := brokers[0].Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
 		t.Fatal(err)
 	}
-	commands := pollTestCommands(t, brokers[1], "a", channels, 1)
+	commands := pollTestCommands(t, brokers[1], channels, 1)
 	if len(commands) != 1 {
 		t.Fatal("command was not dispatched")
 	}
 	if err := brokers[0].responseHub.subscription.Unsubscribe(); err != nil {
 		t.Fatal(err)
 	}
-	if err := brokers[1].SubmitResponse(t.Context(), "tunnel", "a", 1, commands[0].ShardToken, testTerminalResponse(command.RequestID)); err != nil {
+	if err := brokers[1].SubmitResponse(t.Context(), "tunnel", testTokenHash(), testTerminalResponse(command.RequestID)); err != nil {
 		t.Fatal(err)
 	}
 	info, err := brokers[1].requests.stream.Info(t.Context())
@@ -92,7 +92,7 @@ func TestNATSBrokerClusterRecoversCommittedTerminalAfterLeaderLoss(t *testing.T)
 	}
 	ctx, cancelWrite := context.WithTimeout(t.Context(), time.Second)
 	defer cancelWrite()
-	err = brokers[1].Enqueue(ctx, "tunnel", testQueuedCommand("without-quorum"))
+	err = brokers[1].Enqueue(ctx, "tunnel", "tunnel", testQueuedCommand("without-quorum"))
 	if err == nil || errors.Is(err, ErrRequestNotFound) {
 		t.Fatalf("quorum loss admission = %v", err)
 	}

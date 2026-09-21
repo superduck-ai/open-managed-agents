@@ -100,7 +100,7 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 		Config: cfg, DB: app.db, ObjectStore: app.store, Deployments: app.deployments,
 		Logger:                 logger,
 		CodeSessionCredentials: app.credentials, FilestoreCredentials: app.filestoreCredentials,
-		VaultSecrets: app.vaultSecrets, TunnelBroker: broker, TunnelCleanupJobs: tunnels.NewCleanupJobs(app.deploymentJobs),
+		VaultSecrets: app.vaultSecrets, TunnelBroker: broker,
 		WorkerEventBroker: workerBroker, SessionEventBus: eventBus,
 		SandboxTimeoutExtender: provider,
 	})
@@ -149,7 +149,7 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 	managedTunnelConnector(t, app.baseURL, tunnel.ID, token.TunnelToken, privateHTTP.URL, channel)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		result, _, probeErr := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker, tunnels.NewCleanupJobs(app.deploymentJobs)).ProbeTarget(ctx, tunnels.ConsoleScope{
+		result, _, probeErr := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker).ProbeTarget(ctx, tunnels.ConsoleScope{
 			OrganizationUUID: getDefaultDBIDs(t, app.pool).OrganizationUUID, WorkspaceUUID: getDefaultDBIDs(t, app.pool).WorkspaceUUID,
 		}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+tunnel.ID+"/"+channel)
 		if probeErr == nil && len(result.Tools) == 1 {

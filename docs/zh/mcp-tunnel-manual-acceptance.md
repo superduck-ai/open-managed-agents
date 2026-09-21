@@ -71,7 +71,7 @@ Private MCP 凭据写入 shell history、日志或文档。
 
 2. 把示例 ID 替换为 `OMA_TUNNEL_ID`，安全设置当前 active `OMA_TUNNEL_TOKEN` 后启动 client。
 3. 确认 client 能加载配置并完成 metadata；服务端 Connector presence 变为 connected。
-4. 观察 client 请求，确认 metadata、poll 和 response 路径都使用同一个 `tunnel_<32 位>` ID。声明 process-affinity channel 时还必须携带稳定、无首尾空白的 instance ID。
+4. 观察 client 请求，确认 metadata、poll 和 response 路径都使用同一个 `tunnel_<32 位>` ID。instance ID 只用于展示，提供时必须合法且无首尾空白；缺省为 legacy。
 
 ## 5. MCP 与 OAuth 数据面
 
@@ -100,16 +100,14 @@ Private MCP 凭据写入 shell history、日志或文档。
    全链路返回结果。
 5. Console probe、presence 或 `/readyz` 成功只能作为辅助证据，不能替代真实 Managed Agent 工具调用。
 
-## 7. 生命周期与常规收尾
+## 7. 轮换、归档与在线展示
 
-1. 再次 rotate token，确认旧 client 不能继续 metadata/poll；用新 token 重启 client 后恢复 connected（亲和 channel 的进程身份变更另见下文恢复限制）。不要把
-   已绑定请求的响应排空误判成旧 token 仍可领取新请求。
-2. archive 本次 Tunnel，确认 retrieve/list 的归档语义正确、Connector 不能继续 metadata/poll、MCP Ingress
-   和 Runtime Gateway 不再可调用，certificate 归档 SQL 不报错。
-3. 查询 PostgreSQL，确认 Tunnel、所有 token version 和归档时间一致。NATS 控制 KV 应显示 active version 已暂停、presence 清除；请求/终态在有界 TTL 内暂留，控制记录不自动过期。
-4. 等待 `request_timeout + tombstone_ttl` 后确认请求记录过期；停止验收期间启动的 Server、Web、Private MCP 和 tunnel-client，并清除 shell 敏感变量。
-
-亲和 channel 使用代理会话；重启原版 tunnel-client 后，旧会话应返回 404，新的 initialize 在同一 Tunnel 绑定新进程并恢复实际工具调用。v2 完全自包含的无 session 路径采用固定 channel owner；owner 永久退出后需重新配置 Tunnel。
+1. 发起长轮询并确认入口鉴权已通过，再 rotate 或 archive。该 Poll 在原期限内仍可领取，下一次旧 token Poll 返回 401。
+2. 保持一个已领取请求未完成，再轮换或归档；用领取时 token、匹配的 requestId/channel 和 `X-Tunnel-Shard-Token=requestId` 回传，应返回 200。用新 token 或错误 Tunnel/绑定回传应为 404。
+3. 检查 PostgreSQL 事务一致性；Response 不读取数据库，管理操作不读写 NATS/Redis。合法重复终态不覆盖结果。
+4. Redis 在线记录按实例独立过期，默认 60 秒；轮换不清空记录，归档在 Console 立即显示离线。Redis 暂不可用时显示 unknown，Poll/Response 仍正常。
+5. 停掉 Connector 后直接发起请求，再在 deadline 前启动，应领取成功；始终不启动则超时。不同亲和声明的 Connector 共享同一 channel，无 Session ID 映射或固定 owner。
+6. 等待请求记录过期；停止验收启动的 Server、Web、Private MCP 和 tunnel-client，清除 shell 敏感变量。使用无状态 MCP fixture；不要求依赖特定进程的旧会话继续工作。
 
 ## 8. 可选的破坏性重置
 
@@ -118,13 +116,13 @@ Private MCP 凭据写入 shell history、日志或文档。
 1. 停止 OMA Server 和所有 `tunnel-client`，防止清理期间继续创建或领取请求。
 2. 按本次 `OMA_TUNNEL_ID` 查询并再次确认唯一的 organization、workspace、Tunnel UUID、token version 和
    certificate 行；确认没有把其他环境或历史 Tunnel 纳入范围。
-3. 备份待删除行，按精确内部 Tunnel UUID 和 `brokerKey` 的摘要算法盘点控制 key、请求 key 和 consumer。命令 subject 只匹配该 Tunnel 的摘要。不要清空共享 NATS stream、KV bucket 或整个账号。
-4. 获得明确确认后，才按已盘点的范围清理测试资源。请求和命令优先等待 TTL；控制记录删除会丢失撤销屏障与亲和归属，必须确认所有关联 OMA/Connector 已停止。Certificate 是独立资源，另行确认是否需要删除。
+3. 备份待删除行，按精确内部 Tunnel UUID 和 `brokerKey` 的摘要算法盘点请求 key 和 consumer（新 key 仅由全局 requestId 生成摘要）。命令 subject 只匹配该 Tunnel 的摘要。不要清空共享 NATS stream、KV bucket 或整个账号。
+4. 获得明确确认后，才按已盘点的范围清理测试资源。请求和命令优先等待 TTL；旧版本遗留 Control KV 的退役应遵循[后端升级步骤](../design/be/mcp-tunnels.md#升级与旧资源退役)。Certificate 是独立资源，另行确认是否需要删除。
 5. 删除后复核目标 PostgreSQL 数据及精确 NATS 状态，确认其他 Tunnel、Agent、Environment 和 Session 仍然存在且可读。
 
 ## 9. 自动化验收
 
-Connector 验收依赖为 OpenAI `tunnel-client` 官方源码版本 `9f77746a5498289f04e1ae6d3e0c830f3871af52`。
+Connector 验收依赖为 OpenAI `tunnel-client` 未修改的官方发行版 `v0.0.14`，下载后核对发行版 SHA256SUMS。
 
 ```bash
 ./scripts/generate-go.sh
@@ -194,3 +192,25 @@ TEST_TUNNEL_CLIENT_BINARY=/absolute/path/to/tunnel-client \
 Managed runner 要求认证文件提供 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`。
 成功标准是 Sandbox 的最终回答包含私有工具随机标记、私有工具只执行一次，并确实经过 `/v2/ccr-sessions/.../mcp/...`。
 失败时只输出脱敏错误，不将初始化、presence、probe 或 Sandbox 创建成功算作工具调用通过。
+
+### Redis 8 与单次授权回归
+
+```bash
+# 指向独立、可短暂暂停的 Redis 8 测试实例；测试会使用 CLIENT PAUSE 验证 500ms 上限。
+TEST_TUNNEL_REDIS_ADDR=127.0.0.1:<test-port> go test ./internal/tunnels -run '^TestPresence' -count=1 -v
+go test ./internal/tunnels -run '^TestConnector' -count=1 -v
+```
+
+这些测试覆盖字段刷新/过期、多实例与多 channel 聚合、Redis 故障降级、单次 Poll 查询、轮换/归档后的在途响应。
+完整 Go 检查前先生成 Mapper；真实 PostgreSQL 配置用 `CONFIG_FILE` 指向隔离环境。不要在开发共享库上执行重置。
+
+### 2026-09-21 简化变更的本地验证记录
+
+- `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files` 通过。
+- `just test` 已执行；Tunnel package、真实 PostgreSQL Token Mapper、无 Broker 的管理事务回滚/轮换/归档测试通过。
+- Redis 8 隔离实例通过独立字段过期、刷新、完整 channel 声明、聚合与 `CLIENT PAUSE` 超时测试；故障时 Poll/Response 正常、Console 显示 unknown。
+- 校验官方发布的 SHA256SUMS 后，未修改的 tunnel-client v0.0.14 通过 HTTP JSON、HTTP SSE、stdio、HTTP v2 转发测试。HTTP fixture 使用无状态 MCP，DB 授权为 fixture；不将此结果等同于真实模型或 Sandbox 验收。
+- 带 `e2e` 标签的 Tunnel workspace 授权、Gateway 凭据和 NATS 分页探测测试通过。
+- 前端 Tunnel 功能 24 项、Agent 的 Tunnel 相关用例 6 项通过；命名、`just web-format-check` 与 `bun run build` 通过。
+- 全量 Go 测试未全绿：`TestCodeSessionAskUserQuestionUsesCustomToolResult` 缺少 `session.status_idle`，`TestTranscriptArchiveRestoreAfterBlobGC` 的清理计数为 3 而非 0；两项均在未修改的基线 `ada53ffb409af0a508b063a5f0c97efab5b5301a` 临时副本中复现，未扩大本次范围修改它们。
+- 整个大型 Agent 页面 Bun 套件曾因 Bun 1.3.14 segmentation fault 中止；改为独立运行上述 Tunnel 相关用例后通过，不将大型套件标记为通过。

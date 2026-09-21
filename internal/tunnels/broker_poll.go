@@ -2,6 +2,7 @@ package tunnels
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,17 +19,14 @@ type pollDelivery struct {
 	err     error
 }
 
-func (b *Broker) Poll(ctx context.Context, tunnelUUID, instanceID string, version int64, channels []ChannelDeclaration, limit int, timeout time.Duration) ([]ClaimedCommand, error) {
+func (b *Broker) Poll(ctx context.Context, tunnelUUID string, tokenHash [sha256.Size]byte, channels []ChannelDeclaration, limit int, timeout time.Duration) ([]ClaimedCommand, error) {
 	if err := validateBrokerChannels(channels); err != nil {
 		return nil, err
 	}
 	if limit < 1 || limit > maxPollLimit {
 		return nil, ErrQueueLimit
 	}
-	if err := b.RegisterConnector(ctx, tunnelUUID, instanceID, version, channels); err != nil {
-		return nil, err
-	}
-	consumers, err := b.pollConsumers(ctx, tunnelUUID, instanceID, channels)
+	consumers, err := b.pollConsumers(ctx, tunnelUUID, channels)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +36,7 @@ func (b *Broker) Poll(ctx context.Context, tunnelUUID, instanceID string, versio
 		pollCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	commands, err := b.pollCommands(pollCtx, consumers, tunnelUUID, instanceID, version, limit, timeout <= 0)
+	commands, err := b.pollCommands(pollCtx, consumers, tunnelUUID, tokenHash, limit, timeout <= 0)
 	if len(commands) > 0 {
 		return commands, nil
 	}
@@ -51,14 +49,10 @@ func (b *Broker) Poll(ctx context.Context, tunnelUUID, instanceID string, versio
 	return commands, err
 }
 
-func (b *Broker) pollConsumers(ctx context.Context, tunnelUUID, instanceID string, channels []ChannelDeclaration) ([]jetstream.Consumer, error) {
+func (b *Broker) pollConsumers(ctx context.Context, tunnelUUID string, channels []ChannelDeclaration) ([]jetstream.Consumer, error) {
 	consumers := make([]jetstream.Consumer, 0, len(channels))
 	for _, channel := range channels {
-		target := ""
-		if channel.ProcessAffinity {
-			target = instanceID
-		}
-		subject := commandSubject(tunnelUUID, channel.Name, target)
+		subject := commandSubject(tunnelUUID, channel.Name)
 		name := brokerKey(subject)
 		consumer, err := b.commands.Consumer(ctx, name)
 		if errors.Is(err, jetstream.ErrConsumerNotFound) {
@@ -78,7 +72,7 @@ func (b *Broker) pollConsumers(ctx context.Context, tunnelUUID, instanceID strin
 }
 
 // Each HTTP Poll owns its consumption; durable consumers are shared by route.
-func (b *Broker) pollCommands(ctx context.Context, consumers []jetstream.Consumer, tunnelUUID, instanceID string, version int64, limit int, noWait bool) ([]ClaimedCommand, error) {
+func (b *Broker) pollCommands(ctx context.Context, consumers []jetstream.Consumer, tunnelUUID string, tokenHash [sha256.Size]byte, limit int, noWait bool) ([]ClaimedCommand, error) {
 	pullCtx, cancel := context.WithCancel(ctx)
 	deliveries := make(chan pollDelivery)
 	var workers sync.WaitGroup
@@ -115,7 +109,7 @@ func (b *Broker) pollCommands(ctx context.Context, consumers []jetstream.Consume
 			_ = delivery.message.NakWithDelay(brokerRedeliveryDelay)
 			break
 		}
-		command, err := b.bindPollMessage(ctx, tunnelUUID, instanceID, version, delivery.message)
+		command, err := b.bindPollMessage(ctx, tunnelUUID, tokenHash, delivery.message)
 		if err != nil {
 			return commands, err
 		}
@@ -226,13 +220,13 @@ func releasePollBatch(batch jetstream.MessageBatch) {
 	}
 }
 
-func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID, instanceID string, version int64, message jetstream.Msg) (*ClaimedCommand, error) {
+func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID string, tokenHash [sha256.Size]byte, message jetstream.Msg) (*ClaimedCommand, error) {
 	var command queuedCommand
 	if err := json.Unmarshal(message.Data(), &command); err != nil {
 		_ = message.Term()
 		return nil, fmt.Errorf("decode tunnel command: %w", err)
 	}
-	if message.Subject() != commandSubject(tunnelUUID, command.Channel, command.TargetInstance) {
+	if message.Subject() != commandSubject(tunnelUUID, command.Channel) {
 		_ = message.Term()
 		return nil, ErrResponseMismatch
 	}
@@ -254,23 +248,13 @@ func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID, instanceID str
 		_ = message.Term()
 		return nil, ErrResponseMismatch
 	}
-	shard, err := randomOpaqueToken(24)
-	if err != nil {
-		_ = message.NakWithDelay(brokerRedeliveryDelay)
-		return nil, err
-	}
-	record.State, record.InstanceID, record.TokenVersion, record.ShardToken = "dispatched", instanceID, version, shard
-	err = b.requests.update(ctx, brokerKey(tunnelUUID, command.RequestID), record, revision, maxBrokerValueBytes)
+	record.State, record.TokenHash = "dispatched", tokenHash
+	err = b.requests.update(ctx, brokerKey(command.RequestID), record, revision, maxBrokerValueBytes)
 	if err != nil {
 		_ = message.NakWithDelay(brokerRedeliveryDelay)
 		if brokerCASConflict(err) {
 			return nil, nil
 		}
-		return nil, err
-	}
-	if err := b.confirmDelivery(ctx, tunnelUUID, instanceID, version, command); err != nil {
-		_ = b.Cancel(ctx, tunnelUUID, command.RequestID)
-		_ = message.Ack()
 		return nil, err
 	}
 	if err := message.DoubleAck(ctx); err != nil {
@@ -280,6 +264,6 @@ func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID, instanceID str
 	if remaining <= 0 {
 		return nil, nil
 	}
-	return &ClaimedCommand{RequestID: command.RequestID, ShardToken: shard, CommandType: command.CommandType, Channel: command.Channel,
+	return &ClaimedCommand{RequestID: command.RequestID, CommandType: command.CommandType, Channel: command.Channel,
 		CreatedAt: command.CreatedAt, Headers: command.Headers, JSONRPC: command.JSONRPC, ResponseTimeout: remaining, expiresAt: command.ExpiresAt}, nil
 }

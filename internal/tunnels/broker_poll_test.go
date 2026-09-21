@@ -29,12 +29,12 @@ func TestPollBatchDoesNotWaitForAnotherDelivery(t *testing.T) {
 func TestNATSBrokerCanceledPollReturnsUnboundMessages(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	channels := []ChannelDeclaration{{Name: "main"}}
-	registerTestConnector(t, b, "a", channels)
+
 	command := testQueuedCommand("unbound")
-	if err := b.Enqueue(t.Context(), "tunnel", command); err != nil {
+	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
 		t.Fatal(err)
 	}
-	consumers, err := b.pollConsumers(t.Context(), "tunnel", "a", channels)
+	consumers, err := b.pollConsumers(t.Context(), "tunnel", channels)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +87,13 @@ func TestNATSBrokerCanceledPollReturnsUnboundMessages(t *testing.T) {
 func TestNATSBrokerPollCancellationDoesNotWaitForNATSDrain(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	channels := []ChannelDeclaration{{Name: "main"}}
-	registerTestConnector(t, b, "a", channels)
+
 	pulls := observePollPulls(t, b)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := b.Poll(ctx, "tunnel", "a", 1, channels, 25, time.Minute)
+		_, err := b.Poll(ctx, "tunnel", testTokenHash(), channels, 25, time.Minute)
 		done <- err
 	}()
 	if _, err := pulls.NextMsg(time.Second); err != nil {
@@ -162,14 +162,14 @@ func TestNATSBrokerZeroTimeoutOnlyFetchesAvailableWork(t *testing.T) {
 		t.Run(fmt.Sprintf("queued_%v", queued), func(t *testing.T) {
 			b := testNATSBroker(t, brokerTestConfig())
 			channels := []ChannelDeclaration{{Name: "main"}}
-			registerTestConnector(t, b, "a", channels)
+
 			pulls := observePollPulls(t, b)
 			if queued {
-				if err := b.Enqueue(t.Context(), "tunnel", testQueuedCommand("available")); err != nil {
+				if err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand("available")); err != nil {
 					t.Fatal(err)
 				}
 			}
-			commands, err := b.Poll(t.Context(), "tunnel", "a", 1, channels, 25, 0)
+			commands, err := b.Poll(t.Context(), "tunnel", testTokenHash(), channels, 25, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,13 +196,13 @@ func TestNATSBrokerZeroTimeoutOnlyFetchesAvailableWork(t *testing.T) {
 func TestNATSBrokerPollKeepsPullAliveUntilDelivery(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	channels := []ChannelDeclaration{{Name: "main"}}
-	registerTestConnector(t, b, "a", channels)
+
 	pulls := observePollPulls(t, b)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	results := make(chan error, 1)
 	go func() {
-		commands, err := b.Poll(ctx, "tunnel", "a", 1, channels, 25, 2*time.Second)
+		commands, err := b.Poll(ctx, "tunnel", testTokenHash(), channels, 25, 2*time.Second)
 		if err == nil && (len(commands) != 1 || commands[0].RequestID != "late") {
 			err = fmt.Errorf("unexpected commands: %+v", commands)
 		}
@@ -215,7 +215,7 @@ func TestNATSBrokerPollKeepsPullAliveUntilDelivery(t *testing.T) {
 	if _, err := pulls.NextMsg(350 * time.Millisecond); !errors.Is(err, nats.ErrTimeout) {
 		t.Fatalf("idle pull was restarted: %v", err)
 	}
-	if err := b.Enqueue(t.Context(), "tunnel", testQueuedCommand("late")); err != nil {
+	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand("late")); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-results; err != nil {
@@ -239,11 +239,8 @@ func TestNATSBrokerPollSupportsMoreThan128WaitingTunnels(t *testing.T) {
 	results := make(chan pollResult, count)
 	for i := range count {
 		tunnel := fmt.Sprintf("tunnel-%d", i)
-		if err := b.ActivateTokenVersion(t.Context(), tunnel, 1); err != nil {
-			t.Fatal(err)
-		}
 		go func() {
-			commands, err := b.Poll(ctx, tunnel, "a", 1, channels, 1, 15*time.Second)
+			commands, err := b.Poll(ctx, tunnel, testTokenHash(), channels, 1, 15*time.Second)
 			results <- pollResult{i, commands, err}
 		}()
 	}
@@ -256,7 +253,7 @@ func TestNATSBrokerPollSupportsMoreThan128WaitingTunnels(t *testing.T) {
 		}
 		routes[request.Subject] = true
 	}
-	if err := b.Enqueue(t.Context(), "tunnel-139", testQueuedCommand("beyond-old-limit")); err != nil {
+	if err := b.Enqueue(t.Context(), "tunnel-139", "tunnel-139", testQueuedCommand("beyond-old-limit")); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -280,18 +277,18 @@ func TestNATSBrokerPollSupportsMoreThan128WaitingTunnels(t *testing.T) {
 func TestNATSBrokerPollBatchBytesReturnExcessWork(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	channels := []ChannelDeclaration{{Name: "main"}, {Name: "other"}}
-	registerTestConnector(t, b, "a", channels)
+
 	for _, channel := range channels {
 		command := testQueuedCommand(channel.Name)
 		command.Channel = channel.Name
 		command.JSONRPC = json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"text":"` + strings.Repeat("x", 1200*1024) + `"}}`)
-		if err := b.Enqueue(t.Context(), "tunnel", command); err != nil {
+		if err := b.Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
 			t.Fatal(err)
 		}
 	}
 	seen := make(map[string]bool)
 	for range 2 {
-		commands, err := b.Poll(t.Context(), "tunnel", "a", 1, channels, 25, time.Second)
+		commands, err := b.Poll(t.Context(), "tunnel", testTokenHash(), channels, 25, time.Second)
 		if err != nil || len(commands) != 1 {
 			t.Fatalf("oversize batch: count=%d err=%v", len(commands), err)
 		}

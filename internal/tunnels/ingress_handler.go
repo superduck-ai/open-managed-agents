@@ -152,13 +152,12 @@ func (h *IngressHandler) forwardTunnel(
 	if err != nil {
 		return err
 	}
-	headers, headerBytes, err := sanitizeIngressHeaders(r.Header, h.cfg)
+	headers, _, err := sanitizeIngressHeaders(r.Header, h.cfg)
 	if err != nil {
 		return invalidRequest(err)
 	}
 	if commandType == CommandTypeOAuthDiscovery {
 		headers = make(http.Header)
-		headerBytes = 0
 	}
 	requestID, err := ids.New("req_")
 	if err != nil {
@@ -172,7 +171,6 @@ func (h *IngressHandler) forwardTunnel(
 	command := queuedCommand{
 		RequestID: requestID, CommandType: commandType, Channel: channel,
 		CreatedAt: now, Headers: headers, ExpiresAt: deadline,
-		PayloadSize: int64(len(body)) + headerBytes,
 	}
 	if commandType == CommandTypeJSONRPC {
 		command.JSONRPC = body
@@ -182,7 +180,7 @@ func (h *IngressHandler) forwardTunnel(
 		return ingressQueueError(err)
 	}
 	defer waiter.Close()
-	if err := h.broker.Enqueue(r.Context(), tunnel.UUID, command); err != nil {
+	if err := h.broker.Enqueue(r.Context(), tunnel.UUID, tunnel.ExternalID, command); err != nil {
 		return ingressQueueError(err)
 	}
 	wroteStream := false

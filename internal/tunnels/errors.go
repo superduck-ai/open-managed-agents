@@ -10,22 +10,16 @@ import (
 )
 
 var (
-	ErrControlNotFound      = errors.New("tunnels: control state not found")
-	ErrCleanupUnavailable   = errors.New("tunnels: cleanup jobs are not configured")
-	ErrNoConnector          = errors.New("tunnels: no live connector")
-	ErrQueueLimit           = errors.New("tunnels: pending request limit exceeded")
+	ErrQueueLimit           = errors.New("tunnels: stored request limit exceeded")
 	ErrPayloadLimit         = errors.New("tunnels: payload limit exceeded")
 	ErrChannelLimit         = errors.New("tunnels: channel limit exceeded")
 	ErrChannelInvalid       = errors.New("tunnels: channel is invalid")
-	ErrChannelMismatch      = errors.New("tunnels: channel declaration mismatch")
 	ErrRequestNotFound      = errors.New("tunnels: request not found")
 	ErrResponseMismatch     = errors.New("tunnels: response binding mismatch")
 	ErrRequestExpired       = errors.New("tunnels: request expired")
 	ErrRequestCanceled      = errors.New("tunnels: request canceled")
-	ErrTokenRetired         = errors.New("tunnels: token version is no longer active")
 	ErrBrokerBusy           = errors.New("tunnels: broker is busy")
 	ErrResponseBackpressure = errors.New("tunnels: response buffer is full")
-	ErrSessionNotFound      = errors.New("tunnels: MCP session is no longer available; initialize a new session")
 )
 
 func connectorResponseError(err error) error {
@@ -69,12 +63,8 @@ func unavailable(message string, cause error) error {
 
 func ingressQueueError(err error) error {
 	switch {
-	case errors.Is(err, ErrSessionNotFound):
-		return apperr.New(apperr.NotFound, "MCP session is no longer available; initialize a new session", err)
-	case errors.Is(err, ErrNoConnector):
-		return unavailable("No tunnel connector is available", err)
 	case errors.Is(err, ErrQueueLimit), errors.Is(err, ErrPayloadLimit):
-		return apperr.New(apperr.RateLimited, "Tunnel pending request limit exceeded", err)
+		return apperr.New(apperr.RateLimited, "Tunnel request capacity exceeded", err)
 	default:
 		return unavailable("Tunnel broker is unavailable", err)
 	}
@@ -115,13 +105,6 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
-func tokenTransitionError(message string, err error) error {
-	if errors.Is(err, ErrTokenRetired) {
-		return apperr.New(apperr.Conflict, "Tunnel changed concurrently; reload and try again", err)
-	}
-	return internalError(message, err)
-}
-
 func mapTunnelLookupError(err error, tunnelID, operation string) error {
 	var appError *apperr.Error
 	if errors.As(err, &appError) {
@@ -148,13 +131,6 @@ func mapCertificateLookupError(err error, certificateID, operation string) error
 		"Could not "+operation+" tunnel certificate",
 		fmt.Errorf("%s tunnel certificate %q: %w", operation, certificateID, err),
 	)
-}
-
-func connectorTokenRecoveryError(err error) error {
-	if errors.Is(err, db.ErrNotFound) || errors.Is(err, db.ErrInvalidState) || errors.Is(err, ErrTokenRetired) {
-		return invalidConnectorCredential()
-	}
-	return unavailable("Could not restore tunnel token state", err)
 }
 
 func probePaginationError() error {

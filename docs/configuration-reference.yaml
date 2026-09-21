@@ -48,11 +48,9 @@ tunnel:
   request_timeout: 2m
   presence_ttl: 60s
   tombstone_ttl: 5m
-  max_pending_requests: 256
-  # Global slots include queued, executing, retained terminal and affinity session records.
+  # Global slots include queued, executing, retained terminal records.
   # Each slot reserves storage for a maximum-sized result; increase deliberately.
   max_stored_requests: 4096
-  max_pending_bytes: 33554432
   max_body_bytes: 1048576
   max_header_bytes: 32768
   max_header_value_bytes: 8192

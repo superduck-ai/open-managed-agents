@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -34,7 +33,9 @@ type MCPTunnelTokenVersion struct {
 }
 
 type MCPTunnelTokenContext struct {
-	Token            MCPTunnelTokenVersion
+	TunnelUUID       string
+	RetiredAt        *time.Time
+	ArchivedAt       *time.Time
 	TunnelExternalID string
 	OrganizationUUID string
 	WorkspaceUUID    string
@@ -135,17 +136,11 @@ func (d *DB) GetActiveMCPTunnelToken(ctx context.Context, organizationUUID, work
 }
 
 // MCPTunnelTokenTx is valid only inside WithMCPTunnelTokenTx's synchronous callback.
-// The resource row lock serializes token mutations with control-state recovery.
+// The resource row lock serializes token rotation and archive.
 type MCPTunnelTokenTx struct {
 	executor yourbatis.Executor
 	Tunnel   MCPTunnel
 	Token    MCPTunnelTokenVersion
-}
-
-// SQLTx shares this transaction with River job insertion. The caller must not
-// retain, commit, or roll back the transaction.
-func (tx *MCPTunnelTokenTx) SQLTx() *sql.Tx {
-	return tx.executor.(*yourbatis.Tx).SQLTx()
 }
 
 func (d *DB) WithMCPTunnelTokenTx(ctx context.Context, organizationUUID, workspaceUUID, externalID string, fn func(*MCPTunnelTokenTx) error) error {
@@ -223,19 +218,10 @@ func (d *DB) FindMCPTunnelTokenContext(ctx context.Context, tunnelExternalID str
 	if !found {
 		return MCPTunnelTokenContext{}, ErrNotFound
 	}
-	tokenRow := mcpTunnelTokenRow{
-		UUID: row.UUID, ExternalID: row.ExternalID, TunnelUUID: row.TunnelUUID,
-		Version: row.Version, TokenHash: row.TokenHash, Ciphertext: row.Ciphertext,
-		Nonce: row.Nonce, WrappedDEK: row.WrappedDEK, FormatVersion: row.FormatVersion,
-		KeyProvider: row.KeyProvider, KeyVersion: row.KeyVersion, CreatedAt: row.CreatedAt,
-		RetiredAt: row.RetiredAt, ArchivedAt: row.ArchivedAt,
-	}
 	return MCPTunnelTokenContext{
-		Token:            mcpTunnelTokenFromRow(tokenRow),
-		TunnelExternalID: row.TunnelExternalID,
-		OrganizationUUID: row.OrganizationUUID,
-		WorkspaceUUID:    row.WorkspaceUUID,
-		TunnelArchivedAt: row.TunnelArchivedAt,
+		TunnelUUID: row.TunnelUUID, TunnelExternalID: row.TunnelExternalID,
+		OrganizationUUID: row.OrganizationUUID, WorkspaceUUID: row.WorkspaceUUID,
+		RetiredAt: row.RetiredAt, ArchivedAt: row.ArchivedAt, TunnelArchivedAt: row.TunnelArchivedAt,
 	}, nil
 }
 

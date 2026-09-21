@@ -460,7 +460,7 @@ func (d *DB) CreateSessionResource(
 				return txErr
 			}
 		}
-		created, txErr = createSessionResource(ctx, executor, resource)
+		created, txErr = insertSessionResourceWithLockedSessionTx(ctx, executor, resource)
 		if txErr != nil {
 			return txErr
 		}

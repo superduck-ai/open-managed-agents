@@ -156,7 +156,7 @@ func TestAgentMapperStatements(t *testing.T) {
 			id:        "AgentMapper.ArchiveByExternalID",
 			kind:      yourbatis.StatementUpdate,
 			values:    []any{insertParams.WorkspaceUUID, insertParams.ExternalID},
-			fragments: []string{"UPDATE agents", "archived_at = COALESCE", "workspace_uuid = $1", "RETURNING"},
+			fragments: []string{"UPDATE agents", "archived_at = COALESCE", "workspace_uuid = $1", "external_id = $2", "archived_at IS NULL", "RETURNING"},
 		},
 		{
 			name:      "list page",

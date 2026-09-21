@@ -2,16 +2,13 @@ package tests
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-	"uuid"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
@@ -52,7 +49,7 @@ func TestWebhookMemoryDatabaseFailures(t *testing.T) {
 	app, _, _ := newEventSubscription(t, memoryWebhookEvents)
 	store := createWebhookMemoryStore(t, app, "memory fault")
 	before := retrieveMemoryStore(t, app, store.ID, defaultTestKey)
-	removeFailure := installMemoryWebhookFailure(t, app, "memory_stores", "INSERT OR UPDATE", "NEW.name = 'memory fault'")
+	removeFailure := installWebhookMutationFailure(t, app, "memory_stores", "INSERT OR UPDATE", "NEW.name = 'memory fault'")
 	for _, tc := range []struct{ path, body string }{
 		{"/v1/memory_stores", `{"name":"memory fault"}`},
 		{"/v1/memory_stores/" + store.ID + "/archive", `{}`},
@@ -82,7 +79,7 @@ func TestWebhookMemoryDeleteRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Versions are deleted before this AFTER DELETE trigger on memories rejects the transaction.
-	removeFailure := installMemoryWebhookFailure(t, app, "memories", "DELETE", "OLD.memory_store_uuid = '"+record.UUID+"'")
+	removeFailure := installWebhookMutationFailure(t, app, "memories", "DELETE", "OLD.memory_store_uuid = '"+record.UUID+"'")
 	response := doMemoryRequest(t, app, "DELETE", "/v1/memory_stores/"+store.ID+"?beta=true", nil, defaultTestKey, true)
 	assertError(t, response, 500, "api_error")
 	if after := memoryWebhookRowCounts(t, app, store.ID); after != before {
@@ -245,7 +242,7 @@ func TestWebhookMemoryCleanupFailureAndDelivery(t *testing.T) {
 	for _, event := range memoryWebhookEvents {
 		expected[event+"/"+store.ID] = 1
 	}
-	assertWebhookDeliveries(t, app, endpoint, received, expected, assertMemoryWebhookPayload)
+	assertWebhookDeliveries(t, app, endpoint, received, expected, assertResourceWebhookPayload)
 }
 
 func createWebhookMemoryStore(t *testing.T, app *testApp, name string) memoryStoreAPIResponse {
@@ -278,45 +275,4 @@ func memoryWebhookRowCounts(t *testing.T, app *testApp, id string) [3]int {
 		t.Fatal(err)
 	}
 	return counts
-}
-func installMemoryWebhookFailure(t *testing.T, app *testApp, table, operation, condition string) func() {
-	t.Helper()
-	identifier := pgx.Identifier{"test_memory_webhook_" + uuid.NewV4().String()}.Sanitize()
-	tableName := pgx.Identifier{table}.Sanitize()
-	_, err := app.pool.Exec(t.Context(), `CREATE FUNCTION `+identifier+`() RETURNS trigger LANGUAGE plpgsql AS $$
- BEGIN IF `+condition+` THEN RAISE EXCEPTION 'test mutation rejected'; END IF;
- IF TG_OP = 'DELETE' THEN RETURN OLD; END IF; RETURN NEW; END $$;
- CREATE TRIGGER `+identifier+` AFTER `+operation+` ON `+tableName+` FOR EACH ROW EXECUTE FUNCTION `+identifier+`() `)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var once sync.Once
-	remove := func() {
-		once.Do(func() {
-			if _, err := app.pool.Exec(context.Background(), `DROP TRIGGER `+identifier+` ON `+tableName+`; DROP FUNCTION `+identifier+`() `); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	t.Cleanup(remove)
-	return remove
-}
-
-// Keep payload validation at the wire boundary: only identifiers belong in resource events.
-func assertMemoryWebhookPayload(t *testing.T, body []byte) {
-	t.Helper()
-	var event struct {
-		Data map[string]json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(body, &event); err != nil {
-		t.Fatal(err)
-	}
-	if len(event.Data) != 4 {
-		t.Fatalf("unexpected resource payload fields: %v", event.Data)
-	}
-	for _, key := range []string{"type", "id", "organization_id", "workspace_id"} {
-		if _, ok := event.Data[key]; !ok {
-			t.Fatalf("missing payload field: %s", key)
-		}
-	}
 }

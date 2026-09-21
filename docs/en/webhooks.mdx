@@ -4,7 +4,7 @@ sidebarTitle: "Subscribe to webhooks"
 description: "Get notified when major events happen without polling."
 ---
 
-<Note>This guide describes the Claude-aligned target capability. OMA currently implements subscription management and delivery for 24 Session/Vault/Credential/Environment/Memory Store events; Agent, Deployment, and budget events below are not yet all available for subscription. See the [current Webhooks API contract](/docs/en/api/resources/webhooks) for implementation limits. Retry timing, automatic disabling, DNS checks, and transactional enqueueing still differ from the target behavior.</Note>
+<Note>This guide describes the Claude-aligned target capability. OMA currently implements subscription management and delivery for 27 Session/Vault/Credential/Environment/Memory Store/Agent events; Deployment and budget events below are not yet all available for subscription. See the [current Webhooks API contract](/docs/en/api/resources/webhooks) for implementation limits. Retry timing, automatic disabling, DNS checks, and transactional enqueueing still differ from the target behavior.</Note>
 
 Environment subscriptions support `environment.created`, `environment.updated`, `environment.archived`, and `environment.deleted`. Creation refers to the environment record, not sandbox readiness. Updates notify only when persisted attributes change; no-op updates and repeated archives preserve timestamps and emit nothing. Deletion notifies after the existing transaction succeeds, including deletion of an archived environment; active work still blocks deletion. Work/heartbeat/sandbox state changes and SDK fixture responses do not emit these resource events. Payloads contain identifiers only. The global compatibility defaults and retry policy are unchanged.
 
@@ -53,7 +53,7 @@ Webhook events return the event `type` and `id`, not the full object. When you r
     | `agent.created`  | Agent created.                                                                                                                                                                                  |
     | `agent.updated`  | A [new version of the agent](/docs/en/agent-setup#update-an-agent) was published. Updates that do not create a new version do not trigger this event. |
     | `agent.archived` | Agent archived.                                                                                                                                                                                 |
-    | `agent.deleted`  | Agent permanently deleted. There is no object left to fetch, so treat the event itself as final.                                                                                                |
+    | `agent.deleted`  | Agent permanently deleted. This event is defined by Claude, but no public Agent delete API is documented; OMA does not offer this subscription. There is no object left to fetch, so treat the event itself as final.                                                                                                |
   </Tab>
 
   <Tab title="Deployment events">

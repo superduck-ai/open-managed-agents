@@ -129,11 +129,12 @@ func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplySche
 }
 
 // ArchiveAgent commits the root agent, its deployments, and schedule deletions together.
-func (s *Store) ArchiveAgent(ctx context.Context, workspaceUUID, externalID string) (db.Agent, error) {
+func (s *Store) ArchiveAgent(ctx context.Context, workspaceUUID, externalID string) (db.Agent, bool, error) {
 	var archived db.Agent
+	var changed bool
 	err := s.transaction(ctx, func(tx *yourbatis.Tx) error {
 		var err error
-		archived, err = s.database.ArchiveAgentTx(ctx, tx, workspaceUUID, externalID)
+		archived, changed, err = s.database.ArchiveAgentTx(ctx, tx, workspaceUUID, externalID)
 		if err != nil {
 			return err
 		}
@@ -151,7 +152,7 @@ func (s *Store) ArchiveAgent(ctx context.Context, workspaceUUID, externalID stri
 		}
 		return nil
 	})
-	return archived, err
+	return archived, changed && err == nil, err
 }
 
 func (s *Store) WithEventPayloadStorage(objects storage.ObjectStore) *Store {

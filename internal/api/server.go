@@ -157,7 +157,7 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreCredentials: deps.FilestoreCredentials,
 		vaultSecrets:         deps.VaultSecrets,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
-		agents:               agents.NewHandler(deps.Config, deps.DB, deps.Deployments, componentLogger("agents")),
+		agents:               agents.NewHandler(deps.Config, deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer),
 		deployments:          deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, componentLogger("deployments")),

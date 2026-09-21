@@ -51,6 +51,12 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 公开合同没有说明的模糊行为保持不变，包括 `limit=0`、`schedule:null`、默认列表顺序，以及未记录的错误状态和幂等行为。
 
+## Agent 归档的 Webhook 边界
+
+`ArchiveAgentTx` 和 `Store.ArchiveAgent` 返回资源、changed 与 error。Agent 的条件归档只修改首次归档的记录，重复归档不刷新 Agent 时间戳；未命中时在同一 Yourbatis 事务内按 workspace 重读。无论 Agent 是否已归档，都继续保留既有 Deployment 级联及 River schedule 清理流程。任一后续步骤失败会整体回滚，Store 不返回有效 changed。
+
+Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `agent.archived`，不额外发送 updated，也不发送 Deployment 资源事件。通知入队在事务之外，失败只记录日志。`tests/agent_webhooks_test.go` 覆盖 Deployment 更新及 River schedule 删除故障回滚、并发归档、带计划/不带计划资源、实际通知及 SDK 验签。
+
 ## 创建 Session 的 Webhook 通知
 
 手动和定时运行都由 `Deployment Store` 在现有事务提交成功、实际创建 Session 后发送 `session.status_idled`。共享 Enqueuer 在 River worker 启动前完成注入，按 Session 的 workspace 选择订阅；HTTP Handler 不再自行发送创建通知。

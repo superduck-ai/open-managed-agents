@@ -4,7 +4,7 @@ sidebarTitle: "订阅 Webhook"
 description: "无需轮询即可在重大事件发生时获得通知。"
 ---
 
-<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 24 项 Session/Vault/Credential/Environment/Memory Store 事件的订阅管理与投递；下文 Agent、Deployment、预算等事件尚未全部开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
+<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 27 项 Session/Vault/Credential/Environment/Memory Store/Agent 事件的订阅管理与投递；下文 Deployment、预算等事件尚未全部开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
 
 Environment 支持 `environment.created`、`environment.updated`、`environment.archived`、`environment.deleted`。创建指环境记录创建，不等待 sandbox 就绪；只有实际持久化属性改变才发送 updated。无变化更新及重复归档保持时间戳，不新增通知。删除沿用现有事务和活跃 work 检查，成功删除已归档环境也通知，不额外补发 archived。work/心跳/sandbox 状态变化及 SDK fixture 模拟响应不产生这些资源事件。payload 仅包含标识；全局兼容默认配置及重试策略保持不变。
 
@@ -53,7 +53,7 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
     | `agent.created`  | 智能体已创建。                                                                                                           |
     | `agent.updated`  | [智能体的新版本](/docs/zh/agent-setup#update-an-agent)已发布。不创建新版本的更新不会触发此事件。 |
     | `agent.archived` | 智能体已归档。                                                                                                           |
-    | `agent.deleted`  | 智能体已被永久删除。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                               |
+    | `agent.deleted`  | 智能体已被永久删除。此事件已有官方定义，但公开删除 API 未确认，OMA 暂不开放该订阅。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                               |
   </Tab>
 
   <Tab title="部署事件">

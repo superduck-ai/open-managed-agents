@@ -11,15 +11,38 @@ export function isModelConfigurationUnavailable(error: unknown) {
 
 type RequestOptions = RequestInit & {
   csrfToken?: string;
+  context?: ConsoleRequestContext;
 };
 
-type ConsoleRequestContext = {
+export type ConsoleRequestContext = {
   organizationUuid?: string;
   workspaceId?: string;
   csrfToken?: string;
 };
 
 let consoleRequestContext: ConsoleRequestContext = {};
+let scopeController = new AbortController();
+const failureListeners = new Set<(status: number, context: ConsoleRequestContext) => void>();
+
+export function onApiAuthFailure(listener: (status: number, context: ConsoleRequestContext) => void) {
+  failureListeners.add(listener);
+  return () => {
+    failureListeners.delete(listener);
+  };
+}
+
+export function cancelScopeRequests() {
+  scopeController.abort();
+  scopeController = new AbortController();
+}
+
+export function getScopeSignal() {
+  return scopeController.signal;
+}
+
+export function reportApiAuthFailure(status: number, context: ConsoleRequestContext) {
+  if (status === 401 || status === 403) failureListeners.forEach((listener) => listener(status, context));
+}
 
 export function setConsoleRequestContext(context: ConsoleRequestContext) {
   consoleRequestContext = context;
@@ -42,9 +65,10 @@ export async function consoleApi<T>(path: string, options: RequestOptions = {}):
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  applyConsoleRequestContext(headers);
-  if (options.csrfToken) {
-    headers.set('X-CSRF-Token', options.csrfToken);
+  applyConsoleRequestContext(headers, options.context);
+  const csrfToken = options.csrfToken ?? consoleRequestContext.csrfToken;
+  if (csrfToken) {
+    headers.set('X-CSRF-Token', csrfToken);
   }
 
   return requestJson<T>(path, {
@@ -137,14 +161,34 @@ function applyConsoleRequestContext(headers: Headers, context: ConsoleRequestCon
 }
 
 async function requestJson<T>(path: string, options: RequestInit): Promise<T> {
-  const response = await fetch(path, options);
+  const headers = new Headers(options.headers);
+  const context = {
+    organizationUuid: headers.get('X-Organization-UUID') ?? undefined,
+    workspaceId: headers.get('X-Workspace-ID') ?? undefined,
+  };
+  const scoped = Boolean(context.organizationUuid || context.workspaceId);
+  const scopeSignal = scopeController.signal;
+  const readOnly = !options.method || ['GET', 'HEAD'].includes(options.method.toUpperCase());
+  // 写请求一旦发送就让服务端完成；只隔离返回值，不因切换取消或重发写操作。
+  const signal =
+    scoped && readOnly ? AbortSignal.any([scopeSignal, ...(options.signal ? [options.signal] : [])]) : options.signal;
+  const response = await fetch(path, { ...options, signal });
+  if (scoped) scopeSignal.throwIfAborted();
+  signal?.throwIfAborted();
   if (!response.ok) {
-    throw await toApiError(response);
+    const error = await toApiError(response);
+    signal?.throwIfAborted();
+    if (scoped) scopeSignal.throwIfAborted();
+    reportApiAuthFailure(response.status, context);
+    throw error;
   }
   if (response.status === 204) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  if (scoped) scopeSignal.throwIfAborted();
+  signal?.throwIfAborted();
+  return data;
 }
 
 async function toApiError(response: Response): Promise<ApiError> {

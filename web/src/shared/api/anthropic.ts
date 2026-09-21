@@ -1,5 +1,5 @@
 import Anthropic, { APIError, type Uploadable } from '@anthropic-ai/sdk';
-import { getConsoleRequestContext, type ApiError } from './client';
+import { getConsoleRequestContext, getScopeSignal, reportApiAuthFailure, type ApiError } from './client';
 
 type AnthropicHeaderValue = string | null;
 type AnthropicHeaders = Record<string, AnthropicHeaderValue>;
@@ -140,9 +140,15 @@ export function toPlainPage<T>(page: PageLike<T>): AnthropicPageResponse<T> {
 }
 
 async function sdkCall<T>(operation: () => Promise<T>): Promise<T> {
+  const signal = getScopeSignal();
+  const context = getConsoleRequestContext();
   try {
-    return await operation();
+    const result = await operation();
+    signal.throwIfAborted();
+    return result;
   } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof APIError) reportApiAuthFailure(error.status, context);
     throw normalizeSdkError(error);
   }
 }

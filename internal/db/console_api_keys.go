@@ -184,7 +184,7 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 		displayColor = "#9B87F5"
 	}
 	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
-	row, err := mapper.Upsert(ctx, upsertConsoleWorkspaceParams{
+	row, err := mapper.Insert(ctx, insertConsoleWorkspaceParams{
 		UUID:          uuid.NewV4().String(),
 		ExternalID:    externalID,
 		OrgUUID:       input.OrgUUID,
@@ -193,7 +193,7 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 		DataResidency: dataResidency,
 	})
 	if isUniqueViolation(err) {
-		return platform.ConsoleWorkspace{}, err
+		return platform.ConsoleWorkspace{}, ErrDuplicate
 	}
 	if err != nil {
 		return platform.ConsoleWorkspace{}, mapNoRows(err)
@@ -231,6 +231,7 @@ func (r consoleWorkspaceRow) workspace() (platform.ConsoleWorkspace, error) {
 		return platform.ConsoleWorkspace{}, err
 	}
 	return platform.ConsoleWorkspace{
+		IsDefault:             r.IsDefault,
 		UUID:                  r.UUID,
 		ExternalID:            r.ExternalID,
 		OrgUUID:               r.OrgUUID,

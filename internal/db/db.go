@@ -428,7 +428,6 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		organizationMapper := NewAdminOrganizationMapper(executor)
 		workspaceMapper := NewAdminWorkspaceMapper(executor)
 		userMapper := NewAdminUserMapper(executor)
-		memberMapper := NewAdminWorkspaceMemberMapper(executor)
 		apiKeyMapper := NewAdminAPIKeyMapper(executor)
 
 		if _, err := organizationMapper.LockSeed(ctx); err != nil {
@@ -444,16 +443,6 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		}
 		userUUID, err := userMapper.SeedDefault(ctx, "user_default", organizationUUID, "admin@example.local", "Local Admin")
 		if err != nil {
-			return err
-		}
-		if err := memberMapper.SeedDefault(ctx, seedAdminWorkspaceMemberParams{
-			ExternalID:          "wmem_default",
-			OrganizationUUID:    organizationUUID,
-			WorkspaceUUID:       workspaceUUID,
-			WorkspaceExternalID: "workspace_default",
-			UserUUID:            userUUID,
-			UserExternalID:      "user_default",
-		}); err != nil {
 			return err
 		}
 

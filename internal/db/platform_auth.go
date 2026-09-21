@@ -38,16 +38,6 @@ type PlatformAuthWorkspaceInput struct {
 
 type PlatformAuthWorkspaceRef struct{ UUID string }
 
-type PlatformAuthWorkspaceMemberInput struct {
-	ExternalID          string
-	OrganizationUUID    string
-	WorkspaceUUID       string
-	WorkspaceExternalID string
-	UserUUID            string
-	UserExternalID      string
-	WorkspaceRole       string
-}
-
 type PlatformAuthAPIKeyInput struct {
 	ExternalID        string
 	WorkspaceUUID     string
@@ -66,7 +56,6 @@ type PlatformAuthTxStore interface {
 	InsertOrganization(ctx context.Context, input PlatformAuthOrganizationInput) (PlatformAuthOrganizationRef, error)
 	InsertUser(ctx context.Context, input PlatformAuthUserInput) (PlatformAuthUserRef, error)
 	InsertWorkspace(ctx context.Context, input PlatformAuthWorkspaceInput) (PlatformAuthWorkspaceRef, error)
-	InsertWorkspaceMember(ctx context.Context, input PlatformAuthWorkspaceMemberInput) error
 	InsertAPIKey(ctx context.Context, input PlatformAuthAPIKeyInput) error
 }
 
@@ -124,23 +113,6 @@ func (tx PlatformAuthTx) InsertWorkspace(ctx context.Context, input PlatformAuth
 	mapper := NewPlatformAuthWorkspaceMapper(tx.executor)
 	uuid, err := mapper.Insert(ctx, platformAuthWorkspaceInsertParams(input))
 	return PlatformAuthWorkspaceRef{UUID: uuid}, err
-}
-
-func (tx PlatformAuthTx) InsertWorkspaceMember(ctx context.Context, input PlatformAuthWorkspaceMemberInput) error {
-	role := strings.TrimSpace(input.WorkspaceRole)
-	if role == "" {
-		role = "workspace_admin"
-	}
-	mapper := NewPlatformAuthWorkspaceMemberMapper(tx.executor)
-	return mapper.Insert(ctx, insertPlatformAuthWorkspaceMemberParams{
-		ExternalID:          input.ExternalID,
-		OrganizationUUID:    input.OrganizationUUID,
-		WorkspaceUUID:       input.WorkspaceUUID,
-		WorkspaceExternalID: input.WorkspaceExternalID,
-		UserUUID:            input.UserUUID,
-		UserExternalID:      input.UserExternalID,
-		WorkspaceRole:       role,
-	})
 }
 
 func (tx PlatformAuthTx) InsertAPIKey(ctx context.Context, input PlatformAuthAPIKeyInput) error {

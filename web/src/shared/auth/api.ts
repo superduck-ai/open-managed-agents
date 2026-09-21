@@ -1,6 +1,7 @@
 import { consoleApi } from '../api/client';
 
 export type AuthAccount = {
+  permissions?: string[];
   uuid: string;
   tagged_id?: string;
   email_address: string;

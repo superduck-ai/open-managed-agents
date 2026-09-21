@@ -41,6 +41,12 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 			}
 		}
 		response := buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r))
+		if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
+			response.CurrentUserAccess = buildCurrentUserAccess(principal.WorkspaceAccess)
+			if account != nil {
+				account.Permissions = principal.WorkspaceAccess.Permissions()
+			}
+		}
 		if account != nil {
 			if sessionKey := auth.ExtractPlatformSessionKey(r); sessionKey != "" {
 				response.CSRFToken = auth.PlatformCSRFToken(sessionKey)

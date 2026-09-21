@@ -1,6 +1,6 @@
 import { WorkspaceApiKeysContent } from '../settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksContent } from '../settings/WorkspaceWebhooksPage';
-import { OrganizationMembersPage } from '../settings/OrganizationMembersPage';
+import { WorkspaceMembersPage } from '../settings/WorkspaceMembersPage';
 import { BatchesPage } from './batches';
 import {
   ClaudeCodeSettingsPage,
@@ -55,7 +55,7 @@ export function DashboardPage({ section = 'dashboard' }: DashboardPageProps) {
     case 'limits':
       return <LimitsPage />;
     case 'members':
-      return <OrganizationMembersPage />;
+      return <WorkspaceMembersPage />;
     case 'service-accounts':
       return <ServiceAccountsPage />;
     case 'privacy-controls':

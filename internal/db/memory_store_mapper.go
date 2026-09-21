@@ -59,7 +59,6 @@ type listMemoryStoresParams struct {
 type MemoryStoreMapper interface {
 	Insert(ctx context.Context, params insertMemoryStoreParams) (memoryStoreRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (memoryStoreRow, error)
-	FindByOrganizationAndExternalID(ctx context.Context, organizationUUID, externalID string) (memoryStoreRow, error)
 	FindForUpdate(ctx context.Context, workspaceUUID, externalID string) (memoryStoreRow, error)
 	UpdateByExternalID(ctx context.Context, params updateMemoryStoreParams) (memoryStoreRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (memoryStoreRow, error)

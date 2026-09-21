@@ -66,18 +66,29 @@ func makeArchiveTerminal(t *testing.T, app *testApp, session db.CodeSession) {
 }
 
 func TestTranscriptArchiveTerminalSafety(t *testing.T) {
-	for _, scenario := range []struct{ name, sessionSQL, workerSQL string }{
-		{"terminated", "update sessions set status='terminated' where uuid=$1", ""},
-		{"terminated_to_running", "update sessions set status='running' where uuid=$1", ""},
-		{"live_lease", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()+interval '1 hour' where uuid=$1"},
-		{"running_worker", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='running',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
-		{"dwell", "update sessions set archived_at=now() where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
+	for _, scenario := range []struct{ name, setup, sessionSQL, workerSQL string }{
+		{"terminated", "", "update sessions set status='terminated' where uuid=$1", ""},
+		{"terminated_to_running", "update sessions set status='terminated',archived_at=now()-interval '2 days' where uuid=$1", "update sessions set status='running' where uuid=$1", "update code_sessions set worker_status='running',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
+		{"live_lease", "", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()+interval '1 hour' where uuid=$1"},
+		{"running_worker", "", "update sessions set archived_at=now()-interval '2 days' where uuid=$1", "update code_sessions set worker_status='running',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
+		{"dwell", "", "update sessions set archived_at=now() where uuid=$1", "update code_sessions set worker_status='idle',worker_lease_expires_at=now()-interval '1 hour' where uuid=$1"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			objects := &payloadFaultStore{fakeStore: newFakeStore("archive-test")}
 			app := newPayloadIntegrationApp(t, objects)
 			session, _ := newPayloadIntegrationSession(t, app)
 			seedArchiveEvents(t, app, session, make([]db.AppendCodeSessionInternalEventInput, 3))
+
+			if scenario.setup != "" {
+				makeArchiveTerminal(t, app, session)
+				if _, err := app.pool.Exec(t.Context(), scenario.setup, session.SessionUUID); err != nil {
+					t.Fatal(err)
+				}
+				rows, err := app.db.ListArchivableInternalEvents(t.Context(), db.TranscriptArchiveQuery{Scope: transcriptScope(session), Terminal: true, Cutoff: time.Now().Add(-transcriptPolicy().TerminalDwell), Limit: 10})
+				if err != nil || len(rows) != 3 {
+					t.Fatalf("fixture must be archivable before revival: %d rows, %v", len(rows), err)
+				}
+			}
 			if _, err := app.pool.Exec(t.Context(), scenario.sessionSQL, session.SessionUUID); err != nil {
 				t.Fatal(err)
 			}

@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -17,20 +18,7 @@ import (
 )
 
 // Policy is evaluated by workers at execution time, including already queued jobs.
-type Policy struct {
-	Enabled              bool `yaml:"enabled"`
-	DryRun               bool `yaml:"dry_run"`
-	TerminalSweepEnabled bool `yaml:"terminal_sweep_enabled"`
-	// Terminal, boundary, and hard-delete policies are independent.
-	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
-	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
-	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
-	ArchiveMinAge         time.Duration `yaml:"archive_min_age"`
-	SoftDeleteWindow      time.Duration `yaml:"soft_delete_window"`
-	TargetSegmentRawBytes int           `yaml:"target_segment_raw_bytes"`
-	DeleteBatchRows       int           `yaml:"delete_batch_rows"`
-	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
-}
+type Policy = config.TranscriptArchiveConfig
 
 type Service struct {
 	database *db.DB
@@ -42,8 +30,8 @@ type Service struct {
 
 // New rejects unsafe retention policies before any workers can be registered.
 func New(database *db.DB, objects storage.ObjectStore, policy Policy, logger *slog.Logger) (*Service, error) {
-	if policy.ArchiveMinAge < 7*24*time.Hour {
-		return nil, errArchiveMinAge
+	if err := config.ValidateTranscriptArchive(policy); err != nil {
+		return nil, err
 	}
 	return &Service{database: database, objects: objects, payloads: eventpayload.New(database, objects), policy: policy, logger: logging.LoggerOrDefault(logger)}, nil
 }

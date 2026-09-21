@@ -62,3 +62,5 @@ func (s *Service) enqueueDeletes(ctx context.Context, client *river.Client[*sql.
 		after = scopes[len(scopes)-1].CodeSessionUUID
 	}
 }
+
+func (*deleteWorker) Timeout(*river.Job[deleteArgs]) time.Duration { return archiveJobTimeout }

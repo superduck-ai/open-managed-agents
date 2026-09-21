@@ -3,14 +3,20 @@ package transcriptretention
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"time"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 )
 
 const Queue = "transcript_archive"
 const sweepID = "transcript_archive_sweep"
+
+// Allow multi-segment storage I/O without extending timeouts for unrelated queues.
+const archiveJobTimeout = 10 * time.Minute
 
 type sweepArgs struct{}
 
@@ -36,7 +42,14 @@ func (s *Service) Register(workers *river.Workers) {
 }
 
 func (s *Service) Configure(ctx context.Context, client *river.Client[*sql.Tx]) error {
-	_, err := client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{ID: sweepID, Kind: sweepID, Queue: Queue, Schedule: &river.DurablePeriodicJobSchedule{CronExpression: "*/5 * * * *", CronTimezone: "UTC"}})
+	existing, err := client.DurablePeriodicJobGet(ctx, sweepID)
+	if err != nil && !errors.Is(err, river.ErrNotFound) {
+		return err
+	}
+	if err == nil && riverjobs.MatchesActiveCron(existing, sweepID, Queue, "*/5 * * * *", "UTC") {
+		return nil
+	}
+	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{ID: sweepID, Kind: sweepID, Queue: Queue, Schedule: &river.DurablePeriodicJobSchedule{CronExpression: "*/5 * * * *", CronTimezone: "UTC"}})
 	return err
 }
 
@@ -92,3 +105,5 @@ func (w *archiveWorker) Work(ctx context.Context, job *river.Job[archiveArgs]) e
 	args := job.Args
 	return w.service.Archive(ctx, db.TranscriptScope{OrganizationUUID: args.OrganizationUUID, WorkspaceUUID: args.WorkspaceUUID, CodeSessionUUID: args.CodeSessionUUID, CodeSessionExternalID: args.CodeSessionExternalID}, args.Terminal)
 }
+
+func (*archiveWorker) Timeout(*river.Job[archiveArgs]) time.Duration { return archiveJobTimeout }

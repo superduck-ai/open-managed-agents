@@ -324,31 +324,31 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	return created, session, thread, events, err
 }
 
-func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, input ApplyScheduledOccurrenceInput) error {
+func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, input ApplyScheduledOccurrenceInput) (DeploymentRun, error) {
 	deploymentMapper := NewDeploymentMapper(tx)
 	row, err := deploymentMapper.LockByExternalID(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID)
 	if err != nil {
-		return mapNoRows(err)
+		return DeploymentRun{}, mapNoRows(err)
 	}
 	deployment := row.deployment()
 	if deployment.ArchivedAt != nil || deployment.Status != "active" ||
 		!sameJSON(deployment.Schedule, input.Deployment.Schedule) ||
 		!sameDeploymentExecution(deployment, input.Deployment) {
-		return ErrStaleSchedule
+		return DeploymentRun{}, ErrStaleSchedule
 	}
 	if input.ArchiveDeployment {
 		_, err := deploymentMapper.ArchiveByExternalID(ctx, deployment.WorkspaceUUID, deployment.ExternalID)
-		return err
+		return DeploymentRun{}, err
 	}
 	if input.Session != nil {
 		workspace, err := NewAdminWorkspaceMapper(tx).FindByIdentifier(
 			ctx, deployment.OrganizationUUID, "", deployment.WorkspaceUUID,
 		)
 		if err != nil {
-			return mapNoRows(err)
+			return DeploymentRun{}, mapNoRows(err)
 		}
 		if workspace.ArchivedAt != nil {
-			return ErrWorkspaceArchived
+			return DeploymentRun{}, ErrWorkspaceArchived
 		}
 	}
 
@@ -361,22 +361,22 @@ func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, i
 	if input.Session != nil {
 		session, _, _, _, err := insertSessionTx(ctx, tx, *input.Session)
 		if err != nil {
-			return err
+			return DeploymentRun{}, err
 		}
 		if _, err = insertSessionEventsTx(ctx, tx, session, input.Events, false); err != nil {
-			return err
+			return DeploymentRun{}, err
 		}
 		run.SessionExternalID = &session.ExternalID
 		run.Error = nil
 	} else {
 		run.SessionExternalID = nil
 	}
-	_, err = runMapper.Insert(ctx, deploymentRunWriteParamsFrom(run))
+	created, err := runMapper.Insert(ctx, deploymentRunWriteParamsFrom(run))
 	if err != nil {
 		if isUniqueViolationOnConstraint(err, "deployment_runs_schedule_occurrence_idx") {
-			return ErrStaleSchedule
+			return DeploymentRun{}, ErrStaleSchedule
 		}
-		return err
+		return DeploymentRun{}, err
 	}
 
 	if len(input.AutoPauseReason) > 0 {
@@ -389,7 +389,10 @@ func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, i
 			ctx, deployment.WorkspaceUUID, deployment.ExternalID, input.Now,
 		)
 	}
-	return err
+	if err != nil {
+		return DeploymentRun{}, err
+	}
+	return created.run(), nil
 }
 
 func sameDeploymentExecution(left Deployment, right Deployment) bool {

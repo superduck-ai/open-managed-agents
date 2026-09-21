@@ -42,3 +42,16 @@ func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID s
 		})
 	}
 }
+
+// Scheduled occurrences persist their Run and final Session-creation result in one
+// transaction. Publish both lifecycle signals after commit, with the same Run ID.
+func (s *Store) enqueueScheduledRun(ctx context.Context, run db.DeploymentRun) {
+	if run.TriggerType != "schedule" || run.ExternalID == "" {
+		return
+	}
+	outcome := "deployment_run.failed"
+	if run.SessionExternalID != nil {
+		outcome = "deployment_run.succeeded"
+	}
+	s.enqueueResource(ctx, run.WorkspaceUUID, run.ExternalID, "deployment_run.started", outcome)
+}

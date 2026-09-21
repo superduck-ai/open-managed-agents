@@ -24,13 +24,13 @@ description: "注册端点、选择事件并轮换签名密钥。"
 
 `url` 和非空 `enabled_events` 数组必填。`name`、`description` 可省略或传空字符串，不接受 `null` 或其他非字符串类型；既有长度上限为 URL/描述 2048 字节、名称 255 字节。POST 更新支持 `url`、`name`、`description`、`enabled_events`、`status`（`enabled` / `disabled`），省略的字段保持原值。
 
-URL 必须使用 HTTPS 和 443 端口，不能包含凭据或 fragment。私有 IP 字面值与 localhost 会被拒绝；部署级 `webhook.allow_insecure` 可允许本地 HTTP 地址。这不等于完整的 DNS 层 SSRF 防护。事件只接受后端白名单，控制台当前提供 32 项（包括 `session.updated`、`session.deleted`），创建时默认不选事件。
+URL 必须使用 HTTPS 和 443 端口，不能包含凭据或 fragment。私有 IP 字面值与 localhost 会被拒绝；部署级 `webhook.allow_insecure` 可允许本地 HTTP 地址。这不等于完整的 DNS 层 SSRF 防护。事件只接受后端白名单，控制台当前提供 35 项（包括 `session.updated`、`session.deleted`），创建时默认不选事件。
 
 端点属于鉴权确定的 workspace。列表返回 `{ "data": [...], "next_page": null }`，控制台的 ID 搜索与排序作用于该集合。详情支持编辑、启停、删除、重置密钥；失败时保留表单或确认框并展示服务端错误。
 
 创建响应包含一次性 `signing_secret`；轮换端点返回新的签名密钥。读取、列表和更新不返回密钥；控制台只在一次性弹窗状态中保留它。消费者使用官方 SDK 验证 Standard Webhooks 的 `webhook-id`、`webhook-timestamp`、`webhook-signature` 标头，并按重复投递场景设计幂等处理。
 
-投递 worker 默认随主服务启动，数据库订阅不需要配置全局 endpoint/key；可通过 `webhook.worker_enabled: false` 显式关闭当前实例的投递。API 白名单与控制台统一为 32 个规范事件，旧的 `session.error`、`session.thread_status_*` 等订阅名称不再接受。
+投递 worker 默认随主服务启动，数据库订阅不需要配置全局 endpoint/key；可通过 `webhook.worker_enabled: false` 显式关闭当前实例的投递。API 白名单与控制台统一为 35 个规范事件，旧的 `session.error`、`session.thread_status_*` 等订阅名称不再接受。
 
 Deployment 手动或定时运行创建 Session 后，在事务提交成功时产生 `session.status_idled`。创建主线程不会产生子线程事件，定义初始 outcome 不会产生 `session.outcome_evaluation_ended`，该通知由真实评估结束事件触发。失败运行和重复定时执行不新增通知，两次独立手动运行分别通知。
 
@@ -42,3 +42,6 @@ Agent 支持 `agent.created`、`agent.updated`、`agent.archived`。创建在 Ag
 
 
 Deployment 支持 `deployment.created`、`deployment.updated`、`deployment.paused`、`deployment.unpaused`、`deployment.archived`。通知由共享 Store 在资源与 River 计划事务整体提交后产生；updated 仅实际属性变更，暂停/恢复只在状态转换时通知，归档覆盖直接操作、Agent 级联及定时归档分支。重复操作及无变化更新不重复通知，普通运行的 last_run_at 变化不产生 updated。重复手动暂停可沿用原行为改变暂停原因，但不再次发 paused。data 只含类型、Deployment ID 与租户标识。公开 Deployment API 未提供删除入口，因此不开放 `deployment.deleted`，不新增删除 API；业务提交与通知入队仍非原子化。
+
+
+Deployment Run 支持 `deployment_run.started`、`deployment_run.succeeded`、`deployment_run.failed`，仅定时运行产生；手动运行不产生。现有一次事务保存 Run 与 Session 创建结果，提交后以同一 Run ID 连续入队 started 和结果事件，因此 started 不提供执行中实时进度。succeeded 只表示创建 Session 成功，failed 表示已落库的业务失败且没有 Session；数据库回滚、过期或重复任务不通知。data 仅含四个标识字段，后续执行应通过 Run 的 session_id 跟踪。

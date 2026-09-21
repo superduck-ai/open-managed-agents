@@ -69,6 +69,14 @@ export const webhookEventGroups: WebhookEventGroup[] = [
     ],
   },
   {
+    label: 'Deployment run',
+    events: [
+      { label: 'Started', type: 'deployment_run.started' },
+      { label: 'Succeeded', type: 'deployment_run.succeeded' },
+      { label: 'Failed', type: 'deployment_run.failed' },
+    ],
+  },
+  {
     label: 'Deployment',
     events: [
       { label: 'Created', type: 'deployment.created' },

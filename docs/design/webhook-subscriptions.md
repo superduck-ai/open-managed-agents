@@ -2,7 +2,7 @@
 
 ## 本次范围
 
-2026-09-21 分步实施：第一阶段订阅管理已提交为 `85ff33a`；第二阶段 17 项事件与 Deployment 创建 Session 通知已提交为 `18a7cef`；Environment 四项事件已提交为 `842a099`；Memory Store 三项事件已提交为 `0109df2`；Agent 三项事件已提交为 `63aa796`；当前基于该提交接入 Deployment 五项事件，共 32 项。其他资源事件和投递策略差异留待后续。旧占位 Webhook 数据没有上线，不增加兼容迁移或旧事件别名支持。
+2026-09-21 分步实施：第一阶段订阅管理已提交为 `85ff33a`；第二阶段 17 项事件与 Deployment 创建 Session 通知已提交为 `18a7cef`；Environment 四项事件已提交为 `842a099`；Memory Store 三项事件已提交为 `0109df2`；Agent 三项事件已提交为 `63aa796`；Deployment 五项事件已提交为 `2fb9a78`；当前增加 Deployment Run 三项，共 35 项。其他资源事件和投递策略差异留待后续。旧占位 Webhook 数据没有上线，不增加兼容迁移或旧事件别名支持。
 
 保留现有 `internal/webhooks` resource、Yourbatis Mapper、endpoint/job 表、Enqueuer、Worker 和鉴权路径。前端继续使用现有 Console 路由、TanStack Query、shadcn Dialog/Sheet；只拆出事件目录、反馈、复用的事件选择和表单模块，不引入新的事件总线、服务或数据库表。
 
@@ -27,8 +27,8 @@
 - URL 必填。前端即时校验 HTTPS URL，后端继续权威校验 HTTPS、443、凭据和私有 IP 字面值等规则；本地 `allow_insecure` 是部署级开关，不由普通前端放宽。
 - Name 和 Description 可省略或为空字符串，显式 `null` 和非字符串被拒绝；不再把空名称自动改为域名。沿用既有字节长度限制：名称 255，描述/URL 2048。
 - 创建时零事件选择；至少选择一项才可提交。创建与编辑共用事件目录、全局全选、分组半选/计数和事件协议名复制。
-- API 白名单和前端目录统一为 10 组 32 项规范事件。移除 `session.error`、`session.thread_status_*` 的对外订阅，以及前端未知事件和 `session.record_*` 兼容分支；内部会话流名称保持不变，在 Webhook 边界转换。
-- 本轮不把尚未接入的 Deployment Run、budget 等事件添加为可订阅选项。当前 32 项覆盖真实 API 或现有 worker 事件入口到本地接收器的验签测试，不代表真实模型已自动产生全部事件。
+- API 白名单和前端目录统一为 11 组 35 项规范事件。移除 `session.error`、`session.thread_status_*` 的对外订阅，以及前端未知事件和 `session.record_*` 兼容分支；内部会话流名称保持不变，在 Webhook 边界转换。
+- 本轮不把尚未接入的 budget 等事件添加为可订阅选项。当前 35 项覆盖真实 API 或现有 worker 事件入口到本地接收器的验签测试，不代表真实模型已自动产生全部事件。
 - 列表增加 ID 搜索、名称/状态/创建时间排序和空列表创建入口。搜索/排序作用于现有 API 返回集合，不增加未经官方确认的查询参数。
 - 编辑复用现有更新 API，增加 URL 输入，支持清空可选字段；详情显示描述和禁用原因。
 - 创建和重置后的 secret 仅放在一次性弹窗状态，不放入列表缓存或 mutation 返回数据。关闭/切换 workspace 后清除展示状态；复制失败时提示重试，不能显示虚假的复制成功。
@@ -99,7 +99,7 @@ flowchart LR
 手动验收顺序：进入 workspace 的 Webhooks → 创建（URL、可选名称、零选到至少一项事件）→ 保存一次性密钥并关闭 → 列表按 ID 搜索 → 详情编辑 URL/清空名称 → 禁用/启用 → 重置密钥 → 删除。无权限、非法 URL 或提交失败时，检查错误提示与输入保留。真实投递另用自己控制的接收器、确认 worker 未被显式关闭，并使用 SDK 验签；不要把订阅 CRUD 成功视为事件全集或投递策略兼容完成。
 
 
-## 当前 32 项事件验收矩阵
+## 当前 35 项事件验收矩阵
 
 ```mermaid
 sequenceDiagram
@@ -154,6 +154,10 @@ sequenceDiagram
 | `deployment.paused` | 手动或定时不可恢复错误使 active 变为 paused，计划删除提交成功 |
 | `deployment.unpaused` | paused 变为 active，计划恢复提交成功 |
 | `deployment.archived` | 直接归档、Agent 级联或定时归档分支首次实际归档成功 |
+| `deployment_run.started` | 定时 occurrence 的 Run 事务成功，表示该 Run 的开始 |
+| `deployment_run.succeeded` | 同一 Run 事务成功创建 Session，不等待 Session 执行完成 |
+| `deployment_run.failed` | 同一 Run 事务保存业务失败且没有创建 Session |
+
 
 
 Session 条件更新在 SQL 写入处比较属性，JSON 使用 JSONB 语义比较并保留服务器内部 metadata。重复归档通过写入条件只认领一次改变；DB API 返回是否改变。Vault 级联更新/删除在原有 Yourbatis 事务内通过 `RETURNING external_id` 获取受影响凭据，无单页 1,000 条截断，也不读取凭据密文。归档仅返回此次由 active 变为 archived 的凭据。
@@ -170,7 +174,7 @@ Delete 保留行锁、活跃 work 检查和原有 Yourbatis 事务；失败或�
 
 - `tests/environment_webhooks_test.go` 覆盖非法/重名/不存在/跨 workspace、数据库写入故障注入、活跃 work 阻止删除、空更新/JSON 键顺序/NULL/派生模板、并发更新归档、fixture/work/sandbox 边界、订阅过滤和四事件实际投递验签。
 - 与 `tests/webhook_events_test.go` 的 17 项矩阵共同覆盖上表前 21 项，Memory Store 三项由 `tests/memory_webhooks_test.go` 补齐；`tests/deployment_webhooks_test.go` 回归手动和实际 River worker 入口。不会将这类测试表述为所有事件都由真实模型自动产生。
-- `internal/webhooks/event_catalog_test.go` 比较后端白名单与前端事件目录，并校验 32 项；Mapper 测试检查 SQL、参数顺序与 sensitive 标记。
+- `internal/webhooks/event_catalog_test.go` 比较后端白名单与前端事件目录，并校验 35 项；Mapper 测试检查 SQL、参数顺序与 sensitive 标记。
 - 人工验收：创建订阅并只选择 Environment 四项 → 创建环境 → 修改属性 → 重复相同更新 → 归档及重复归档 → 删除 → 检查四类通知的数量、环境 ID、workspace 和 SDK 签名。首次操作正常通知，重复操作不新增；删除后可直接依事件确认结果，不依赖再次 GET。
 
 ### Environment 初次验证记录（2026-09-21，合并 upstream 前）
@@ -341,7 +345,7 @@ Store 仅在整体事务成功后返回有效 changed；归档未命中时使用
 
 人工 review 建议顺序：
 
-1. `internal/config/yaml_types.go`：默认启动与显式 false 的优先级；`internal/webhooks/handler.go`：32 项白名单。
+1. `internal/config/yaml_types.go`：默认启动与显式 false 的优先级；`internal/webhooks/handler.go`：35 项白名单。
 2. `internal/sessions/service.go` 和 `webhook_bridge.go`：真实变更后发出、主/子线程过滤、outcome 完成映射；再看 Session Mapper 的条件更新。
 3. `internal/db/vaults.go` 和两个 Vault Mapper：重复归档、并发写入与级联返回标识；`internal/vaults/handler.go` 仅在成功后通知。
 4. `internal/vaults/oauth_refresh.go`：永久错误分类和并发兜底顺序；从 API 组装追踪到 Injector，确认仍使用原有 Enqueuer。
@@ -385,3 +389,38 @@ flowchart LR
 - Bun 全量与单独的 `src/app/layout/ConsoleLayout.test.tsx`、`src/features/managed-agents/ManagedAgentsPage.test.tsx` 均 SIGTRAP（shell 退出码 133，Python subprocess 返回 -5）；定向测试通过不代表完整前端通过。本阶段没有改动这两个页面，也没有跳过其测试。
 - 仍有资源提交与入队的非原子窗口，以及目标重试/自动禁用/DNS 策略差异；不宣称投递策略完全对齐。
 - `just hooks-run` 全部通过；没有跳过 hook。隔离测试容器和网络已清理，compose ps --all 为空；本阶段未启动常驻开发服务。
+
+
+## Deployment Run 三项事件（2026-09-21）
+
+仅定时运行通知，手动成功/失败运行不发送 `deployment_run.*`。共享 Store 使用 `ApplyScheduledOccurrenceTx` 返回的真实持久化 Run，事务整体成功后发送 started 与 succeeded/failed；两个事件的 data.id 均为该 Run external ID，data 只包含 type、id、organization_id、workspace_id。
+
+现有模型用一个短事务同时保存 Run 与 Session 创建结果，没有独立的 running 行状态。因此 started 与最终结果在提交后连续入队，不能作为创建 Session 过程中的实时进度；不为通知拆分事务或增加 Run 状态/schema。started 表示成功落库的逻辑运行开始，succeeded 仅表示 Session 创建完成。接收端不能依赖到达顺序，也不能把 succeeded 当作 Session 中的模型任务完成。
+
+- 数据库故障/提交失败、Run 插入或计划删除回滚均不通知，也不把基础设施错误误发为 failed。仅已落库的业务失败 Run 发 failed；没有对应 Session。
+- occurrence 行锁、状态/快照校验和 `(deployment_uuid, scheduled_at)` 唯一索引继续防止并发或重放重复创建。重复任务不产生新的 Run 事件；归档、过期分支没有 Run，因此也没有 started。
+- 不可恢复业务失败继续自动暂停，产生独立 deployment.paused；可恢复失败不暂停。手动与定时成功创建 Session 的原有 session.status_idled 保持。
+- 订阅在发出时过滤；禁用/未订阅及其他 workspace 不接收，启用不补发。资源写入与通知入队的非原子窗口、重试和全局兼容配置保持原样。
+
+```mermaid
+flowchart LR
+    River[定时 occurrence] --> Tx[现有事务：校验 / Session / Run / 计划]
+    Tx -->|回滚或过期| No[不通知]
+    Tx -->|提交成功且有 Run| Started[deployment_run.started]
+    Started --> Result{Run 有 Session ID?}
+    Result -->|是| Success[deployment_run.succeeded]
+    Result -->|否| Failure[deployment_run.failed]
+    Success --> Follow[按 Run 的 session_id 跟踪 Session]
+```
+
+人工验收：订阅 Run 三项 → 设置定时 Deployment → 等待一次运行，核对 started/succeeded 的相同 Run ID 与 Session ID → 制造失效环境引用 → 下一次运行核对 started/failed 和自动暂停 → 重复投递同一 occurrence（不新增通知）→ 手动运行（不产生 Run 事件）。测试中的实际 River worker 执行与直接 occurrence 调用分别记录，不把直接入口测试称为 Cron 到点验收。
+
+### Deployment Run 阶段验证记录
+
+- 基于 `2fb9a78`，重建专用测试依赖后执行 `CONFIG_FILE=/tmp/oma-webhooks-test-config.yaml just test`：52 个有测试的 Go package 全部通过，覆盖已有 32 项与 Run 三项。本轮未出现调度超时。
+- Run 的 5 项定向测试通过：Run 插入/last_run_at/计划删除三处故障、回滚后换 Run ID 重试、手动成功/失败不通知、过期/归档无 Run、真实 River worker 成功/不可恢复失败、同一 occurrence 并发和重放、可恢复失败不暂停、禁用/未订阅/启用不补发。
+- 定时 worker 的成功与失败均经订阅 API、实际资源、jobs、Worker、本地接收器和官方 Go SDK Unwrap 验签；核对开始与结果事件 Run ID 一致、成功时 Session 可查询且尚处于 idle、失败时有错误且无 Session，以及四字段 payload。可恢复失败和故障重试使用直接 occurrence 入口；不将它们表述为完整 Cron 调度验收。
+- 前端新增 Run 分组后定向 22 项、240 个断言通过；格式、命名和构建通过。源码生成、lint、dead-code、duplicates、complexity、large-files 通过。
+- Bun 全量、ConsoleLayout 和 ManagedAgentsPage 单独运行均仍以 SIGTRAP（shell 133 / subprocess -5）退出。没有修改或跳过这些页面测试，前端完整套件仍未通过。
+- Review 发现两份公开 OpenAPI 遗留旧占位事件目录及 name 必填声明，已同步中英文 Webhook/Create/Update 三个 enum 为 35 项，并移除创建请求的 name 必填。新增跨端目录与 OpenAPI 合同测试，复跑 Run 与两份 schema 检查通过；未改变其他 OpenAPI 合同。
+- `just hooks-run` 全部通过，正常执行所有检查。已清理独立测试容器/网络，compose ps --all 为空；未启动常驻开发服务。

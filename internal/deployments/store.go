@@ -131,8 +131,11 @@ func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplySche
 		return err
 	}
 	input.Events = prepared
+	var run db.DeploymentRun
 	err = s.transaction(ctx, func(tx *yourbatis.Tx) error {
-		if err := s.database.ApplyScheduledOccurrenceTx(ctx, tx, input); err != nil {
+		var err error
+		run, err = s.database.ApplyScheduledOccurrenceTx(ctx, tx, input)
+		if err != nil {
 			return err
 		}
 		if input.ArchiveDeployment || len(input.AutoPauseReason) > 0 {
@@ -141,6 +144,7 @@ func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplySche
 		return nil
 	})
 	if err == nil {
+		s.enqueueScheduledRun(ctx, run)
 		switch {
 		case input.ArchiveDeployment:
 			s.enqueueResource(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID, "deployment.archived")

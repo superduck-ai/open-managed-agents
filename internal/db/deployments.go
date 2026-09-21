@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/samber/lo"
@@ -160,22 +162,27 @@ func (d *DB) GetDeployment(ctx context.Context, workspaceUUID string, externalID
 	return row.deployment(), nil
 }
 
-// UpdateDeploymentTx reports whether the schedule changed while holding the row lock.
-func (d *DB) UpdateDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, input UpdateDeploymentInput) (Deployment, bool, error) {
+// UpdateDeploymentTx reports property and schedule changes under the row lock.
+func (d *DB) UpdateDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, input UpdateDeploymentInput) (Deployment, bool, bool, error) {
 	mapper := NewDeploymentMapper(tx)
 	current, err := mapper.LockByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
-		return Deployment{}, false, mapNoRows(err)
+		return Deployment{}, false, false, mapNoRows(err)
 	}
 	if current.ArchivedAt != nil {
-		return Deployment{}, false, ErrInvalidState
+		return Deployment{}, false, false, ErrInvalidState
 	}
 	next := input.Deployment
 	scheduleChanged := input.ScheduleProvided && !sameJSON(current.Schedule, next.Schedule)
 	if scheduleChanged && len(current.Schedule) == 0 && len(next.Schedule) > 0 {
 		if err := checkScheduledDeploymentQuota(ctx, mapper, current.OrganizationUUID); err != nil {
-			return Deployment{}, false, err
+			return Deployment{}, false, false, err
 		}
+	}
+
+	if !scheduleChanged && current.Name == next.Name &&
+		sameOptionalString(current.Description, next.Description) && sameDeploymentExecution(current.deployment(), next) {
+		return current.deployment(), false, false, nil
 	}
 
 	params := deploymentWriteParamsFrom(next)
@@ -184,9 +191,9 @@ func (d *DB) UpdateDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspace
 	params.ScheduleChanged = scheduleChanged
 	row, err := mapper.UpdateByExternalID(ctx, params)
 	if err != nil {
-		return Deployment{}, false, mapNoRows(err)
+		return Deployment{}, false, false, mapNoRows(err)
 	}
-	return row.deployment(), scheduleChanged, nil
+	return row.deployment(), true, scheduleChanged, nil
 }
 
 func checkScheduledDeploymentQuota(ctx context.Context, mapper DeploymentMapper, organizationUUID string) error {
@@ -200,20 +207,38 @@ func checkScheduledDeploymentQuota(ctx context.Context, mapper DeploymentMapper,
 	return nil
 }
 
-func (d *DB) ArchiveDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx).ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Deployment{}, mapNoRows(err)
+// ArchiveDeploymentTx keeps repeated archives unchanged and re-reads within the transaction.
+func (d *DB) ArchiveDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string) (Deployment, bool, error) {
+	mapper := NewDeploymentMapper(tx)
+	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
+	if errors.Is(err, sql.ErrNoRows) {
+		row, err = mapper.FindByExternalID(ctx, workspaceUUID, externalID)
+		return row.deployment(), false, mapNoRows(err)
 	}
-	return row.deployment(), nil
+	if err != nil {
+		return Deployment{}, false, mapNoRows(err)
+	}
+	return row.deployment(), true, nil
 }
 
-func (d *DB) PauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, pausedReason json.RawMessage) (Deployment, error) {
-	row, err := NewDeploymentMapper(tx).PauseByExternalID(ctx, workspaceUUID, externalID, agentJSONArg(pausedReason))
+// PauseDeploymentTx reports a status transition, preserving existing paused-reason updates.
+func (d *DB) PauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, pausedReason json.RawMessage) (Deployment, bool, error) {
+	mapper := NewDeploymentMapper(tx)
+	current, err := mapper.LockByExternalID(ctx, workspaceUUID, externalID)
 	if err != nil {
-		return Deployment{}, mapNoRows(err)
+		return Deployment{}, false, mapNoRows(err)
 	}
-	return row.deployment(), nil
+	if current.ArchivedAt != nil {
+		return Deployment{}, false, ErrNotFound
+	}
+	if current.Status == "paused" && sameJSON(current.PausedReason, pausedReason) {
+		return current.deployment(), false, nil
+	}
+	row, err := mapper.PauseByExternalID(ctx, workspaceUUID, externalID, agentJSONArg(pausedReason))
+	if err != nil {
+		return Deployment{}, false, mapNoRows(err)
+	}
+	return row.deployment(), current.Status != "paused", nil
 }
 
 // UnpauseDeploymentTx reports whether a paused deployment resumed under the row lock.

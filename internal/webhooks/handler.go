@@ -31,6 +31,12 @@ const (
 )
 
 var supportedEndpointEventTypes = map[string]struct{}{
+	"deployment.created":  {},
+	"deployment.updated":  {},
+	"deployment.paused":   {},
+	"deployment.unpaused": {},
+	"deployment.archived": {},
+
 	"agent.created":                    {},
 	"agent.updated":                    {},
 	"agent.archived":                   {},

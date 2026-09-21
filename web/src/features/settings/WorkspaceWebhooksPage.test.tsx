@@ -92,13 +92,14 @@ describe('Workspace webhooks page', () => {
     await waitFor(() => expect(screen.queryByText('whsec_local_secret')).toBeNull());
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     expect((screen.getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe('');
-    expect(screen.getByText('0 of 27')).toBeTruthy();
+    expect(screen.getByText('0 of 32')).toBeTruthy();
   });
 
   test.each([
     ['Environment', 'environment', 'updated', 'Updated'],
     ['Memory Store', 'memory_store', 'archived', 'Archived'],
     ['Agent', 'agent', 'updated', 'Updated'],
+    ['Deployment', 'deployment', 'paused', 'Paused'],
   ])('edits %s events while allowing optional fields to be cleared', async (_group, prefix, change, label) => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
     const api = mockWebhooks([{ ...enabledWebhook, enabled_events: [`${prefix}.created`, `${prefix}.${change}`] }]);
@@ -228,7 +229,7 @@ describe('Workspace webhooks page', () => {
     expect(within(dialog).getAllByText('0 of 4').length).toBe(3);
     expect(within(dialog).getAllByText('0 of 3').length).toBe(4);
     expect(within(dialog).getByText('0 of 1')).toBeTruthy();
-    expect(within(dialog).getByText('0 of 27')).toBeTruthy();
+    expect(within(dialog).getByText('0 of 32')).toBeTruthy();
 
     // Layout regression for #122: the header/footer stay pinned while only the form
     // body scrolls, driven by grid rows instead of hardcoded pixel budgets.
@@ -256,7 +257,7 @@ describe('Workspace webhooks page', () => {
     );
     expect(createRequest?.body?.url).toBe('https://example.com/webhooks');
     expect(createRequest?.body?.name).toBe('');
-    expect((createRequest?.body?.enabled_events as string[]).length).toBe(27);
+    expect((createRequest?.body?.enabled_events as string[]).length).toBe(32);
     expect(createRequest?.headers.get('anthropic-beta')).toBe('webhooks-2026-03-01');
     expect(createRequest?.headers.get('X-CSRF-Token')).toBe('csrf_test');
     const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
@@ -300,6 +301,7 @@ describe('Workspace webhooks page', () => {
     { group: 'Environment', prefix: 'environment', change: 'updated', count: 4 },
     { group: 'Memory Store', prefix: 'memory_store', change: 'archived', count: 3 },
     { group: 'Agent', prefix: 'agent', change: 'updated', count: 3 },
+    { group: 'Deployment', prefix: 'deployment', change: 'paused', count: 5 },
   ])('updates group counts before create: %j', async ({ group, prefix, change, count }) => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
     const api = mockWebhooks([]);
@@ -322,14 +324,14 @@ describe('Workspace webhooks page', () => {
         .getByRole('checkbox', { name: `${group} events` })
         .getAttribute('aria-checked'),
     ).toBe('mixed');
-    expect(within(dialog).getByText(`${count - 1} of 27`)).toBeTruthy();
+    expect(within(dialog).getByText(`${count - 1} of 32`)).toBeTruthy();
     await toggleCheckbox(within(dialog).getByRole('checkbox', { name: `${prefix}.${change}` }));
     const selectAll = within(dialog).getByRole('checkbox', { name: 'Select all' });
     expect(selectAll.getAttribute('aria-checked')).toBe('mixed');
     await toggleCheckbox(selectAll);
-    expect(within(dialog).getByText('27 of 27')).toBeTruthy();
+    expect(within(dialog).getByText('32 of 32')).toBeTruthy();
     await toggleCheckbox(selectAll);
-    expect(within(dialog).getByText('0 of 27')).toBeTruthy();
+    expect(within(dialog).getByText('0 of 32')).toBeTruthy();
     await toggleCheckbox(within(dialog).getByRole('checkbox', { name: `${group} events` }));
 
     fireEvent.change(within(dialog).getByPlaceholderText('https://example.com/webhooks'), {

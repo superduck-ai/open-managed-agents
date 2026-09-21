@@ -18,22 +18,27 @@ func (s *Store) WithWebhooks(enqueuer webhookEnqueuer) *Store {
 }
 
 func (s *Store) enqueueSessionCreated(ctx context.Context, session db.Session) {
+	// The first two events remain available only through legacy global configuration.
+	s.enqueueResource(ctx, session.WorkspaceUUID, session.ExternalID,
+		"session.created", "session.pending", "session.status_idled")
+}
+
+func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID string, eventTypes ...string) {
 	if s.webhooks == nil {
 		return
 	}
-	scope, err := s.database.GetWorkspaceIdentifiers(ctx, session.WorkspaceUUID)
+	scope, err := s.database.GetWorkspaceIdentifiers(ctx, workspaceUUID)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "load workspace identifiers for deployment session webhook", "session_id", session.ExternalID, "error", err)
+		s.logger.ErrorContext(ctx, "load workspace identifiers for deployment webhook", "resource_id", resourceID, "error", err)
 		return
 	}
-	// The first two events remain available only through legacy global configuration.
-	for _, eventType := range []string{"session.created", "session.pending", "session.status_idled"} {
+	for _, eventType := range eventTypes {
 		s.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
-			WorkspaceUUID:       session.WorkspaceUUID,
+			WorkspaceUUID:       workspaceUUID,
 			OrganizationUUID:    scope.OrganizationUUID,
 			WorkspaceExternalID: scope.WorkspaceExternalID,
 			EventType:           eventType,
-			ResourceID:          session.ExternalID,
+			ResourceID:          resourceID,
 		})
 	}
 }

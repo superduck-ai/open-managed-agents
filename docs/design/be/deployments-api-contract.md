@@ -127,3 +127,12 @@ sequenceDiagram
 - <https://platform.claude.com/docs/en/api/beta/deployment_runs>
 - <https://platform.claude.com/docs/en/managed-agents/scheduled-deployments>
 - <https://riverqueue.com/docs/periodic-jobs>
+
+
+## Deployment Webhook 资源通知
+
+共享 Store 在 Deployment/River 计划整体事务成功后发送 created、updated、paused、unpaused、archived；具体触发条件与 32 项目录见 [Webhook 设计](../webhook-subscriptions.md)。Update 在既有行锁内比较实际配置，只在属性改变时写入；无变化更新不改 updated_at。直接 Archive 为条件写入并返回 changed，重复归档不改时间戳但不跳过原计划清理。Pause 在锁内识别 active → paused；重复同原因暂停不写入，修改已有暂停原因仍保留但不重复发 paused。Unpause 使用已有 resumed 标记。
+
+Agent 归档仍在同一事务处理 Agent、所有实际归档的 Deployment 及 River 计划，事务成功后分别通知；已归档 Agent 仍执行原有下游级联。定时归档和自动暂停沿用 occurrence 幂等检查，只有成功事务通知。无计划 Deployment 同样支持资源事件；Run 和 last_run_at 变化不产生 deployment.updated。没有公开 Deployment 删除入口，暂不暴露 deployment.deleted，不为 Webhook 新增路由或数据库列。
+
+租户标识来自资源的 workspace 查询，不依赖 HTTP 请求。日志不含资源配置、secret 或初始事件内容。资源事务与 Webhook 入队仍有非原子边界，入队失败不改变已提交操作的响应。

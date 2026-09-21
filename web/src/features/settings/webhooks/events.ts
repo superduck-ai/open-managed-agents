@@ -69,6 +69,16 @@ export const webhookEventGroups: WebhookEventGroup[] = [
     ],
   },
   {
+    label: 'Deployment',
+    events: [
+      { label: 'Created', type: 'deployment.created' },
+      { label: 'Updated', type: 'deployment.updated' },
+      { label: 'Paused', type: 'deployment.paused' },
+      { label: 'Unpaused', type: 'deployment.unpaused' },
+      { label: 'Archived', type: 'deployment.archived' },
+    ],
+  },
+  {
     label: 'Agent',
     events: [
       { label: 'Created', type: 'agent.created' },

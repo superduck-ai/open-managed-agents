@@ -92,12 +92,15 @@ describe('Workspace webhooks page', () => {
     await waitFor(() => expect(screen.queryByText('whsec_local_secret')).toBeNull());
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     expect((screen.getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe('');
-    expect(screen.getByText('0 of 21')).toBeTruthy();
+    expect(screen.getByText('0 of 24')).toBeTruthy();
   });
 
-  test('edits Environment events while allowing optional fields to be cleared', async () => {
+  test.each([
+    ['Environment', 'environment', 'updated', 'Updated'],
+    ['Memory Store', 'memory_store', 'archived', 'Archived'],
+  ])('edits %s events while allowing optional fields to be cleared', async (_group, prefix, change, label) => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
-    const api = mockWebhooks([{ ...enabledWebhook, enabled_events: ['environment.created', 'environment.updated'] }]);
+    const api = mockWebhooks([{ ...enabledWebhook, enabled_events: [`${prefix}.created`, `${prefix}.${change}`] }]);
     render(
       <WorkspaceWebhooksHarness>
         <WorkspaceWebhooksContent />
@@ -106,16 +109,16 @@ describe('Workspace webhooks page', () => {
     await screen.findByText('Prod events');
     fireEvent.click(screen.getByRole('button', { name: 'Prod events https://example.com/prod' }));
     fireEvent.click(screen.getByRole('button', { name: 'Edit webhook' }));
-    const extraEvent = screen.getByRole('checkbox', { name: 'environment.updated' });
+    const extraEvent = screen.getByRole('checkbox', { name: `${prefix}.${change}` });
     expect(extraEvent.getAttribute('aria-checked')).toBe('true');
     await toggleCheckbox(extraEvent);
-    expect(screen.getByRole('checkbox', { name: 'environment.updated' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: `${prefix}.${change}` })).toBeTruthy();
     await toggleCheckbox(extraEvent);
     fireEvent.change(screen.getByLabelText('Name (optional)'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.lastUpdateFor('wh_enabled')?.name).toBe(''));
-    expect(api.lastUpdateFor('wh_enabled')?.enabled_events).toEqual(['environment.created', 'environment.updated']);
-    expect(await screen.findByText('Created · Updated')).toBeTruthy();
+    expect(api.lastUpdateFor('wh_enabled')?.enabled_events).toEqual([`${prefix}.created`, `${prefix}.${change}`]);
+    expect(await screen.findByText(`Created · ${label}`)).toBeTruthy();
   });
 
   test('filters IDs and sorts the returned endpoint list', async () => {
@@ -222,9 +225,9 @@ describe('Workspace webhooks page', () => {
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
     expect(within(dialog).getByRole('button', { name: 'Create' }).hasAttribute('disabled')).toBe(true);
     expect(within(dialog).getAllByText('0 of 4').length).toBe(3);
-    expect(within(dialog).getAllByText('0 of 3').length).toBe(2);
+    expect(within(dialog).getAllByText('0 of 3').length).toBe(3);
     expect(within(dialog).getByText('0 of 1')).toBeTruthy();
-    expect(within(dialog).getByText('0 of 21')).toBeTruthy();
+    expect(within(dialog).getByText('0 of 24')).toBeTruthy();
 
     // Layout regression for #122: the header/footer stay pinned while only the form
     // body scrolls, driven by grid rows instead of hardcoded pixel budgets.
@@ -252,7 +255,7 @@ describe('Workspace webhooks page', () => {
     );
     expect(createRequest?.body?.url).toBe('https://example.com/webhooks');
     expect(createRequest?.body?.name).toBe('');
-    expect((createRequest?.body?.enabled_events as string[]).length).toBe(21);
+    expect((createRequest?.body?.enabled_events as string[]).length).toBe(24);
     expect(createRequest?.headers.get('anthropic-beta')).toBe('webhooks-2026-03-01');
     expect(createRequest?.headers.get('X-CSRF-Token')).toBe('csrf_test');
     const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
@@ -292,7 +295,10 @@ describe('Workspace webhooks page', () => {
     await waitFor(() => expect(screen.queryByText('whsec_local_secret')).toBeNull());
   });
 
-  test('updates event group counts as subscriptions are toggled before create', async () => {
+  test.each([
+    { group: 'Environment', prefix: 'environment', change: 'updated', count: 4 },
+    { group: 'Memory Store', prefix: 'memory_store', change: 'archived', count: 3 },
+  ])('updates group counts before create: %j', async ({ group, prefix, change, count }) => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
     const api = mockWebhooks([]);
 
@@ -306,21 +312,23 @@ describe('Workspace webhooks page', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
 
-    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: 'Environment events' }));
-    expect(within(dialog).getByText('4 of 4')).toBeTruthy();
-    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: 'environment.updated' }));
-    expect(within(dialog).getByRole('checkbox', { name: 'Environment events' }).getAttribute('aria-checked')).toBe(
-      'mixed',
-    );
-    expect(within(dialog).getByText('3 of 21')).toBeTruthy();
-    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: 'environment.updated' }));
+    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: `${group} events` }));
+    expect(within(dialog).getByText(`${count} of ${count}`)).toBeTruthy();
+    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: `${prefix}.${change}` }));
+    expect(
+      within(dialog)
+        .getByRole('checkbox', { name: `${group} events` })
+        .getAttribute('aria-checked'),
+    ).toBe('mixed');
+    expect(within(dialog).getByText(`${count - 1} of 24`)).toBeTruthy();
+    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: `${prefix}.${change}` }));
     const selectAll = within(dialog).getByRole('checkbox', { name: 'Select all' });
     expect(selectAll.getAttribute('aria-checked')).toBe('mixed');
     await toggleCheckbox(selectAll);
-    expect(within(dialog).getByText('21 of 21')).toBeTruthy();
+    expect(within(dialog).getByText('24 of 24')).toBeTruthy();
     await toggleCheckbox(selectAll);
-    expect(within(dialog).getByText('0 of 21')).toBeTruthy();
-    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: 'Environment events' }));
+    expect(within(dialog).getByText('0 of 24')).toBeTruthy();
+    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: `${group} events` }));
 
     fireEvent.change(within(dialog).getByPlaceholderText('https://example.com/webhooks'), {
       target: { value: 'https://example.com/hooks' },
@@ -335,8 +343,8 @@ describe('Workspace webhooks page', () => {
       (request) => request.method === 'POST' && request.url === '/v1/webhooks?beta=true',
     );
     expect(createRequest?.body?.name).toBe('Custom events');
-    expect(createRequest?.body?.enabled_events).toContain('environment.created');
-    expect((createRequest?.body?.enabled_events as string[]).length).toBe(4);
+    expect(createRequest?.body?.enabled_events).toContain(`${prefix}.created`);
+    expect((createRequest?.body?.enabled_events as string[]).length).toBe(count);
   });
 
   test('opens row actions and enables disabled endpoints', async () => {

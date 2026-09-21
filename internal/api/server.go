@@ -165,7 +165,7 @@ func NewServer(deps ServerDeps) *Server {
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
-		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")),
+		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
 		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, componentLogger("messages")),
 		models:               modelsapi.NewHandler(deps.DB),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),

@@ -218,7 +218,7 @@ func assertDeploymentWebhookTotal(t *testing.T, app *testApp, want int) {
 	}
 }
 
-func assertWebhookDeliveries(t *testing.T, app *testApp, endpoint webhookAPIResponse, received chan capturedWebhookRequest, expected map[string]int) {
+func assertWebhookDeliveries(t *testing.T, app *testApp, endpoint webhookAPIResponse, received chan capturedWebhookRequest, expected map[string]int, inspectors ...func(*testing.T, []byte)) {
 	t.Helper()
 	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(t.Context(), "deployment-events"); err != nil {
 		t.Fatal(err)
@@ -232,6 +232,9 @@ func assertWebhookDeliveries(t *testing.T, app *testApp, endpoint webhookAPIResp
 		delivery := <-received
 		if _, err := sdk.Beta.Webhooks.Unwrap(delivery.Body, delivery.Header); err != nil {
 			t.Fatal(err)
+		}
+		for _, inspect := range inspectors {
+			inspect(t, delivery.Body)
 		}
 		var event webhooks.Event
 		if err := json.Unmarshal(delivery.Body, &event); err != nil {

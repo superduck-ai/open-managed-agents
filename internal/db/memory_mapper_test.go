@@ -88,7 +88,7 @@ func TestMemoryStoreMapperBuilderContracts(t *testing.T) {
 			bound:     buildMemoryStoreMapperArchiveByExternalID(yourbatis.DialectPostgres, "workspace-uuid", "store-id"),
 			id:        "MemoryStoreMapper.ArchiveByExternalID", kind: yourbatis.StatementUpdate,
 			argumentNames: []string{"workspaceUUID", "externalID"},
-			fragments:     []string{"UPDATE memory_stores", "COALESCE(archived_at, NOW())", "workspace_uuid = $1", "RETURNING"},
+			fragments:     []string{"UPDATE memory_stores", "COALESCE(archived_at, NOW())", "workspace_uuid = $1", "external_id = $2", "archived_at IS NULL", "RETURNING"},
 		},
 		{
 			statement: memoryStoreMapperFindUUIDForUpdateStatement,

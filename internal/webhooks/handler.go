@@ -31,6 +31,9 @@ const (
 )
 
 var supportedEndpointEventTypes = map[string]struct{}{
+	"memory_store.created":             {},
+	"memory_store.archived":            {},
+	"memory_store.deleted":             {},
 	"environment.created":              {},
 	"environment.updated":              {},
 	"environment.archived":             {},

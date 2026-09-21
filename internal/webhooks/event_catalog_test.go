@@ -28,7 +28,7 @@ func TestConsoleEventCatalogMatchesSubscriptionAllowlist(t *testing.T) {
 			t.Errorf("API event missing from Console: %s", eventType)
 		}
 	}
-	if len(seen) != 21 {
-		t.Errorf("Console event count=%d, want 21", len(seen))
+	if len(seen) != 24 {
+		t.Errorf("Console event count=%d, want 24", len(seen))
 	}
 }

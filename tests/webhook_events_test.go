@@ -16,6 +16,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
@@ -157,6 +158,11 @@ func TestWebhookVaultDeleteIncludesAllArchivedCredentials(t *testing.T) {
 
 func newEventSubscription(t *testing.T, events []string) (*testApp, webhookAPIResponse, chan capturedWebhookRequest) {
 	t.Helper()
+	return newEventSubscriptionWithStore(t, events, newFakeStore("webhook-event-matrix"))
+}
+
+func newEventSubscriptionWithStore(t *testing.T, events []string, store storage.ObjectStore) (*testApp, webhookAPIResponse, chan capturedWebhookRequest) {
+	t.Helper()
 	received := make(chan capturedWebhookRequest, 128)
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -179,7 +185,7 @@ func newEventSubscription(t *testing.T, events []string) (*testApp, webhookAPIRe
 	cfg.Webhook.SigningKey = ""
 	cfg.Webhook.AllowInsecure = true
 	cfg.Webhook.Timeout = time.Second
-	app := newTestAppWithStore(t, &cfg, newFakeStore("webhook-event-matrix"))
+	app := newTestAppWithStore(t, &cfg, store)
 	t.Cleanup(app.close)
 	clearWebhookState(t, app)
 	t.Cleanup(func() { clearWebhookState(t, app) })

@@ -24,14 +24,16 @@ description: "注册端点、选择事件并轮换签名密钥。"
 
 `url` 和非空 `enabled_events` 数组必填。`name`、`description` 可省略或传空字符串，不接受 `null` 或其他非字符串类型；既有长度上限为 URL/描述 2048 字节、名称 255 字节。POST 更新支持 `url`、`name`、`description`、`enabled_events`、`status`（`enabled` / `disabled`），省略的字段保持原值。
 
-URL 必须使用 HTTPS 和 443 端口，不能包含凭据或 fragment。私有 IP 字面值与 localhost 会被拒绝；部署级 `webhook.allow_insecure` 可允许本地 HTTP 地址。这不等于完整的 DNS 层 SSRF 防护。事件只接受后端白名单，控制台当前提供 21 项（包括 `session.updated`、`session.deleted`），创建时默认不选事件。
+URL 必须使用 HTTPS 和 443 端口，不能包含凭据或 fragment。私有 IP 字面值与 localhost 会被拒绝；部署级 `webhook.allow_insecure` 可允许本地 HTTP 地址。这不等于完整的 DNS 层 SSRF 防护。事件只接受后端白名单，控制台当前提供 24 项（包括 `session.updated`、`session.deleted`），创建时默认不选事件。
 
 端点属于鉴权确定的 workspace。列表返回 `{ "data": [...], "next_page": null }`，控制台的 ID 搜索与排序作用于该集合。详情支持编辑、启停、删除、重置密钥；失败时保留表单或确认框并展示服务端错误。
 
 创建响应包含一次性 `signing_secret`；轮换端点返回新的签名密钥。读取、列表和更新不返回密钥；控制台只在一次性弹窗状态中保留它。消费者使用官方 SDK 验证 Standard Webhooks 的 `webhook-id`、`webhook-timestamp`、`webhook-signature` 标头，并按重复投递场景设计幂等处理。
 
-投递 worker 默认随主服务启动，数据库订阅不需要配置全局 endpoint/key；可通过 `webhook.worker_enabled: false` 显式关闭当前实例的投递。API 白名单与控制台统一为 21 个规范事件，旧的 `session.error`、`session.thread_status_*` 等订阅名称不再接受。
+投递 worker 默认随主服务启动，数据库订阅不需要配置全局 endpoint/key；可通过 `webhook.worker_enabled: false` 显式关闭当前实例的投递。API 白名单与控制台统一为 24 个规范事件，旧的 `session.error`、`session.thread_status_*` 等订阅名称不再接受。
 
 Deployment 手动或定时运行创建 Session 后，在事务提交成功时产生 `session.status_idled`。创建主线程不会产生子线程事件，定义初始 outcome 不会产生 `session.outcome_evaluation_ended`，该通知由真实评估结束事件触发。失败运行和重复定时执行不新增通知，两次独立手动运行分别通知；这不代表已开放 Deployment 资源事件订阅。
 
 Environment 支持 `environment.created`、`environment.updated`、`environment.archived`、`environment.deleted`。创建指环境记录创建，不等待 sandbox 就绪；只有实际持久化属性改变才发送 updated。无变化更新及重复归档保持时间戳，不新增通知。删除沿用现有事务和活跃 work 检查，成功删除已归档环境也通知，不额外补发 archived。work/心跳/sandbox 状态变化及 SDK fixture 模拟响应不产生这些资源事件。payload 仅包含标识；全局兼容默认配置及重试策略保持不变。 业务提交与通知入队仍是两个独立步骤，崩溃或入队失败可能丢失通知。
+
+Memory Store 支持 `memory_store.created`、`memory_store.archived`、`memory_store.deleted`。仅首次归档改变时间戳并通知。删除在 Store、Memory、Version 事务提交之后、对象清理之前发送一条 Store 事件；对象清理失败及重试不重复通知。Store 属性更新和单条 Memory/Version 操作不产生这些事件，删除 active Store 不补发 archived。data 仅含 `type`、Store external `id`、`organization_id`、`workspace_id`，不携带内容、metadata 或对象存储信息。不提供 `memory_store.updated` 或 Store 克隆 API；同样保留业务提交与通知入队的非原子边界。

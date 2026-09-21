@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
@@ -227,10 +229,15 @@ func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceUUID, externalID st
 	return updated, err
 }
 
-func (d *DB) ArchiveMemoryStore(ctx context.Context, workspaceUUID, externalID string) (MemoryStore, error) {
+func (d *DB) ArchiveMemoryStore(ctx context.Context, workspaceUUID, externalID string) (MemoryStore, bool, error) {
 	mapper := NewMemoryStoreMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	return memoryStoreFromMapperRow(row, err)
+	if errors.Is(err, sql.ErrNoRows) {
+		current, loadErr := d.GetMemoryStore(ctx, workspaceUUID, externalID)
+		return current, false, loadErr
+	}
+	archived, err := memoryStoreFromMapperRow(row, err)
+	return archived, err == nil, err
 }
 
 func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceUUID, externalID string) ([]ObjectRef, error) {

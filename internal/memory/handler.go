@@ -39,11 +39,12 @@ const (
 )
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	store  storage.ObjectStore
-	router chi.Router
+	webhooks webhookEnqueuer
+	cfg      config.Config
+	db       *db.DB
+	logger   *slog.Logger
+	store    storage.ObjectStore
+	router   chi.Router
 }
 
 type storePageResponse struct {
@@ -234,6 +235,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "Could not create memory store")
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "memory_store.created", created.ExternalID)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(created))
 }
 
@@ -393,10 +395,13 @@ func (h *Handler) archiveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) archiveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
+	record, changed, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
+	}
+	if changed {
+		h.enqueueWebhook(r.Context(), principal, "memory_store.archived", record.ExternalID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
 }
@@ -412,6 +417,7 @@ func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID st
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "memory_store.deleted", storeID)
 	for _, ref := range refs {
 		h.deleteObjectOrEnqueue(r.Context(), ref)
 	}

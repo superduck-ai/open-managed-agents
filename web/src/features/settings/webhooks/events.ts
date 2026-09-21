@@ -68,6 +68,14 @@ export const webhookEventGroups: WebhookEventGroup[] = [
       { label: 'Deleted', type: 'environment.deleted' },
     ],
   },
+  {
+    label: 'Memory Store',
+    events: [
+      { label: 'Created', type: 'memory_store.created' },
+      { label: 'Archived', type: 'memory_store.archived' },
+      { label: 'Deleted', type: 'memory_store.deleted' },
+    ],
+  },
 ];
 
 export const allWebhookEventTypes = webhookEventGroups.flatMap((group) => group.events.map((event) => event.type));

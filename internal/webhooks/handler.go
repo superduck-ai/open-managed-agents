@@ -31,6 +31,10 @@ const (
 )
 
 var supportedEndpointEventTypes = map[string]struct{}{
+	"environment.created":              {},
+	"environment.updated":              {},
+	"environment.archived":             {},
+	"environment.deleted":              {},
 	"session.status_run_started":       {},
 	"session.status_idled":             {},
 	"session.status_rescheduled":       {},

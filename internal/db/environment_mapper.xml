@@ -85,6 +85,12 @@
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
         AND deleted_at IS NULL
+        AND (name IS DISTINCT FROM #{params.Name}
+            OR description IS DISTINCT FROM #{params.Description}
+            OR config IS DISTINCT FROM CAST(#{params.Config,sensitive=true} AS jsonb)
+            OR metadata IS DISTINCT FROM CAST(#{params.Metadata,sensitive=true} AS jsonb)
+            OR scope IS DISTINCT FROM #{params.Scope}
+            OR resolved_template IS DISTINCT FROM #{params.ResolvedTemplate})
         RETURNING
         <include refid="columns"/>
     </update>
@@ -96,6 +102,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
         AND deleted_at IS NULL
+        AND archived_at IS NULL
         RETURNING
         <include refid="columns"/>
     </update>

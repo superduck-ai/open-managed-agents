@@ -146,7 +146,7 @@ func TestWebhookDeploymentManualAndScheduledDelivery(t *testing.T) {
 			postCodeSessionIngressEvents(t, app, codeID, `{"events":[{"type":"span.outcome_evaluation_end","uuid":"deployment-evaluation-ended","created_at":"2026-09-20T01:00:00Z"}]}`)
 			assertWebhookCount(t, app, "session.outcome_evaluation_ended", sessionID, 1)
 			expected["session.outcome_evaluation_ended/"+sessionID] = 1
-			assertDeploymentWebhookDeliveries(t, app, endpoint, received, expected)
+			assertWebhookDeliveries(t, app, endpoint, received, expected)
 		})
 	}
 }
@@ -218,7 +218,7 @@ func assertDeploymentWebhookTotal(t *testing.T, app *testApp, want int) {
 	}
 }
 
-func assertDeploymentWebhookDeliveries(t *testing.T, app *testApp, endpoint webhookAPIResponse, received chan capturedWebhookRequest, expected map[string]int) {
+func assertWebhookDeliveries(t *testing.T, app *testApp, endpoint webhookAPIResponse, received chan capturedWebhookRequest, expected map[string]int) {
 	t.Helper()
 	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(t.Context(), "deployment-events"); err != nil {
 		t.Fatal(err)

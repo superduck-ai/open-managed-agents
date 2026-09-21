@@ -59,6 +59,15 @@ export const webhookEventGroups: WebhookEventGroup[] = [
       { label: 'Refresh failed', type: 'vault_credential.refresh_failed' },
     ],
   },
+  {
+    label: 'Environment',
+    events: [
+      { label: 'Created', type: 'environment.created' },
+      { label: 'Updated', type: 'environment.updated' },
+      { label: 'Archived', type: 'environment.archived' },
+      { label: 'Deleted', type: 'environment.deleted' },
+    ],
+  },
 ];
 
 export const allWebhookEventTypes = webhookEventGroups.flatMap((group) => group.events.map((event) => event.type));

@@ -1205,7 +1205,7 @@ export function registerManagedAgentsAgentsTests() {
             display_name: 'Notion',
             icon_url: 'https://example.com/notion.png',
             tool_names: ['search', 'create_page'],
-            remote: { url: 'https://directory.example.com/notion' },
+            remote: { url: 'https://agent.example.com/notion' },
           },
         ],
       },
@@ -1214,7 +1214,7 @@ export function registerManagedAgentsAgentsTests() {
 
     expect(await screen.findByRole('heading', { name: 'Mixed tools agent', hidden: true })).toBeTruthy();
     const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
-    await waitFor(() => expect(within(section).getByRole('button', { name: /Tool permissions\s+2/ })).toBeTruthy());
+    await waitFor(() => expect(within(section).getByRole('button', { name: /Tool permissions\s+2\b/ })).toBeTruthy());
     const directoryStatus = within(section).getByRole('status');
     expect(directoryStatus.textContent).toBe('MCP tool metadata loaded.');
     expect(directoryStatus.parentElement?.getAttribute('aria-busy')).toBe('false');
@@ -1229,8 +1229,8 @@ export function registerManagedAgentsAgentsTests() {
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
     fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+22/ }));
-    expect(within(builtInCard).getByText('bash')).toBeTruthy();
-    expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
+    const bashRow = within(builtInCard).getByText('bash').parentElement as HTMLElement;
+    expect(within(bashRow).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
 
     const customCard = cards[1];

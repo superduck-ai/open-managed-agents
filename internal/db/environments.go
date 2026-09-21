@@ -144,28 +144,30 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 	return row.environment(), nil
 }
 
-func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, error) {
+func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, bool, error) {
 	params := environmentWriteParamsFrom(next)
 	params.WorkspaceUUID = workspaceUUID
 	params.ExternalID = externalID
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, params)
 	if isUniqueViolation(err) {
-		return Environment{}, ErrDuplicate
+		return Environment{}, false, ErrDuplicate
 	}
-	if err != nil {
-		return Environment{}, mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.environment(), err == nil, err
 	}
-	return row.environment(), nil
+	current, loadErr := d.GetEnvironment(ctx, workspaceUUID, externalID)
+	return current, false, loadErr
 }
 
-func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, error) {
+func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, bool, error) {
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Environment{}, mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.environment(), err == nil, err
 	}
-	return row.environment(), nil
+	current, loadErr := d.GetEnvironment(ctx, workspaceUUID, externalID)
+	return current, false, loadErr
 }
 
 func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, externalID string) error {

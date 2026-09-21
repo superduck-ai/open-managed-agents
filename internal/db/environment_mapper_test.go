@@ -54,15 +54,18 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.Name", "params.Description", "params.Config", "params.Metadata", "params.Scope",
 				"params.ResolvedTemplate", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
+				"params.Name", "params.Description", "params.Config", "params.Metadata", "params.Scope", "params.ResolvedTemplate",
 			},
-			wantSensitiveArgumentNames: []string{"params.Config", "params.Metadata"},
-			wantSQLFragments:           []string{"UPDATE environments", "workspace_uuid = $8", "RETURNING"},
+			wantSensitiveArgumentNames: []string{"params.Config", "params.Metadata", "params.Config", "params.Metadata"},
+			wantSQLFragments: []string{"UPDATE environments", "workspace_uuid = $8", "RETURNING",
+				"name IS DISTINCT FROM $10", "description IS DISTINCT FROM $11", "config IS DISTINCT FROM CAST($12 AS jsonb)",
+				"metadata IS DISTINCT FROM CAST($13 AS jsonb)", "scope IS DISTINCT FROM $14", "resolved_template IS DISTINCT FROM $15"},
 		}},
 		{"archive", mapperBuilderContract{
 			statement: environmentMapperArchiveByExternalIDStatement,
 			bound:     buildEnvironmentMapperArchiveByExternalID(yourbatis.DialectPostgres, params.WorkspaceUUID, params.ExternalID),
 			wantID:    "EnvironmentMapper.ArchiveByExternalID", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames: []string{"workspaceUUID", "externalID"}, wantSQLFragments: []string{"archived_at = COALESCE", "RETURNING"},
+			wantArgumentNames: []string{"workspaceUUID", "externalID"}, wantSQLFragments: []string{"archived_at = COALESCE", "archived_at IS NULL", "RETURNING"},
 		}},
 		{"lock UUID", mapperBuilderContract{
 			statement: environmentMapperLockUUIDByExternalIDStatement,

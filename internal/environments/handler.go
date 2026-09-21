@@ -31,6 +31,7 @@ const maxEnvironmentBodySize = 4 << 20
 type Handler struct {
 	cfg          config.Config
 	db           *db.DB
+	webhooks     webhookEnqueuer
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
 }
@@ -214,6 +215,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		}
 		return internalError("Could not create environment", fmt.Errorf("create environment %q: %w", envID, err))
 	}
+	h.enqueueWebhook(r.Context(), principal, "environment.created", created.ExternalID)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(created))
 	return nil
 }
@@ -346,7 +348,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 		next.ResolvedTemplate = h.resolvedTemplate(next.Config)
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, next)
+	updated, changed, err := h.db.UpdateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
 			return environmentNameConflict(err)
@@ -355,6 +357,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 			return environmentNotFound(environmentID, err)
 		}
 		return internalError("Could not update environment", fmt.Errorf("update environment %q: %w", environmentID, err))
+	}
+	if changed {
+		h.enqueueWebhook(r.Context(), principal, "environment.updated", updated.ExternalID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(updated))
 	return nil
@@ -373,12 +378,15 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, true))
 		return nil
 	}
-	record, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
+	record, changed, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return environmentNotFound(environmentID, err)
 		}
 		return internalError("Could not archive environment", fmt.Errorf("archive environment %q: %w", environmentID, err))
+	}
+	if changed {
+		h.enqueueWebhook(r.Context(), principal, "environment.archived", record.ExternalID)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(record))
 	return nil
@@ -403,6 +411,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		return internalError("Could not delete environment", fmt.Errorf("delete environment %q: %w", environmentID, err))
 	}
+	h.enqueueWebhook(r.Context(), principal, "environment.deleted", environmentID)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: environmentID, Type: "environment_deleted"})
 	return nil
 }

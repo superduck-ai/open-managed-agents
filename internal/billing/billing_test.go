@@ -15,12 +15,12 @@ func TestParseBudget(t *testing.T) {
 		{
 			name: "valid cents budget",
 			raw:  `{"type":"limit","max_list_cost":{"amount":"2500","currency":"USD"}}`,
-			want: Budget{MaxListCost: CostAmount{Amount: 2500, Currency: CurrencyUSD}},
+			want: Budget{Type: "limit", MaxListCost: CostAmount{Amount: 2500, Currency: CurrencyUSD}},
 		},
 		{
 			name: "currency defaults to USD",
 			raw:  `{"type":"limit","max_list_cost":{"amount":"1"}}`,
-			want: Budget{MaxListCost: CostAmount{Amount: 1, Currency: CurrencyUSD}},
+			want: Budget{Type: "limit", MaxListCost: CostAmount{Amount: 1, Currency: CurrencyUSD}},
 		},
 		{name: "missing type", raw: `{"max_list_cost":{"amount":"100"}}`, wantErr: true},
 		{name: "wrong type", raw: `{"type":"monthly","max_list_cost":{"amount":"100"}}`, wantErr: true},
@@ -63,6 +63,24 @@ func TestCostAmountMarshalJSON(t *testing.T) {
 	}
 	if round["amount"] != "53" || round["currency"] != "USD" {
 		t.Fatalf("wire = %v, want amount=53 currency=USD", round)
+	}
+}
+
+func TestBudgetMarshalKeepsTypeForStorage(t *testing.T) {
+	parsed, err := ParseBudget(json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"1000","currency":"USD"}}`))
+	if err != nil {
+		t.Fatalf("ParseBudget error = %v", err)
+	}
+	data, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatalf("marshal error = %v", err)
+	}
+	var round map[string]any
+	if err := json.Unmarshal(data, &round); err != nil {
+		t.Fatalf("unmarshal error = %v", err)
+	}
+	if round["type"] != "limit" {
+		t.Fatalf("marshaled budget = %v, want type=limit preserved for ParseBudget round-trip", round)
 	}
 }
 

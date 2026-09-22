@@ -31,6 +31,7 @@ const (
 // Budget is a parsed session/deployment budget:
 // {"type":"limit","max_list_cost":{"amount":"2500","currency":"USD"}}.
 type Budget struct {
+	Type        string     `json:"type"`
 	MaxListCost CostAmount `json:"max_list_cost"`
 }
 
@@ -79,7 +80,7 @@ func ParseBudget(raw json.RawMessage) (Budget, error) {
 	if currency != CurrencyUSD {
 		return Budget{}, fmt.Errorf("budget.max_list_cost.currency must be USD")
 	}
-	return Budget{MaxListCost: CostAmount{Amount: amount, Currency: CurrencyUSD}}, nil
+	return Budget{Type: "limit", MaxListCost: CostAmount{Amount: amount, Currency: CurrencyUSD}}, nil
 }
 
 // ParseCentsAmount parses an integer-cent string amount: no sign, no decimals,

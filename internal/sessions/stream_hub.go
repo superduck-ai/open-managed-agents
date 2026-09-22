@@ -42,10 +42,11 @@ func (sessionEventDelivery) implStreamDelivery() {}
 func (streamResetDelivery) implStreamDelivery()  {}
 
 type streamConnection struct {
-	threadID         string
-	primaryThread    bool
-	streamDeltaTypes map[string]struct{}
-	activePreviewIDs map[string]struct{}
+	threadID           string
+	primaryThread      bool
+	streamDeltaTypes   map[string]struct{}
+	activePreviewIDs   map[string]struct{}
+	finishedPreviewIDs map[string]struct{}
 }
 
 func newStreamHub() *streamHub {
@@ -115,10 +116,11 @@ func (h *streamHub) enqueue(id int64, sub *subscriber, delivery streamDelivery) 
 
 func newStreamConnection(threadID string, primaryThread bool, streamDeltaTypes map[string]struct{}) *streamConnection {
 	return &streamConnection{
-		threadID:         threadID,
-		primaryThread:    primaryThread,
-		streamDeltaTypes: streamDeltaTypes,
-		activePreviewIDs: make(map[string]struct{}),
+		threadID:           threadID,
+		primaryThread:      primaryThread,
+		streamDeltaTypes:   streamDeltaTypes,
+		activePreviewIDs:   make(map[string]struct{}),
+		finishedPreviewIDs: make(map[string]struct{}),
 	}
 }
 
@@ -138,6 +140,15 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	if maevents.IsPublicSessionHistoryEvent(event.EventType) {
+		if event.EventType == "span.model_request_end" {
+			for id := range c.activePreviewIDs {
+				c.finishedPreviewIDs[id] = struct{}{}
+			}
+			clear(c.activePreviewIDs)
+		}
+		if event.EventType == "agent.message" || event.EventType == "agent.thinking" {
+			c.finishedPreviewIDs[event.ExternalID] = struct{}{}
+		}
 		delete(c.activePreviewIDs, event.ExternalID)
 		return true
 	}
@@ -148,6 +159,9 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	previewType, previewID := streamPreviewTarget(event)
+	if _, finished := c.finishedPreviewIDs[previewID]; finished {
+		return false
+	}
 	if event.EventType == previewEventDelta && previewID == "" {
 		// Legacy event_delta payloads predate preview lifecycle IDs. They cannot
 		// be correlated with an event_start, so retain their previous opt-in
@@ -292,6 +306,10 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 
 func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
 	fmt.Fprintf(w, "event: %s\n", event.EventType)
+	if maevents.IsStreamDelta(event.EventType) {
+		fmt.Fprintf(w, "data: %s\n\n", event.Payload)
+		return
+	}
 	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID))
 }
 

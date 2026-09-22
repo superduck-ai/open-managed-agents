@@ -125,6 +125,9 @@ func (s *Store) skipPersistedLargeEvents(ctx context.Context, workspaceUUID, ses
 func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEvent {
 	payloads := make(map[string]json.RawMessage, len(originals))
 	for _, event := range originals {
+		if event.EncodeUsageSnapshot != nil {
+			continue
+		}
 		if _, exists := payloads[event.ExternalID]; !exists {
 			payloads[event.ExternalID] = event.Payload
 		}

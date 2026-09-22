@@ -667,6 +667,7 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 		{"payload":{"type":"system","uuid":"system-task-done","subtype":"task_notification","task_id":"taskzh123","tool_use_id":"tool_translate_zh","status":"completed","summary":"Translate to Chinese","usage":{"duration_ms":1234,"total_tokens":456},"created_at":"2026-06-16T01:00:03Z"}},
 		{"payload":{"type":"result","uuid":"result-task","stop_reason":"end_turn","created_at":"2026-06-16T01:00:04Z"}}
 	]}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 
@@ -708,10 +709,11 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 		}
 	}
 	if eventPageContains(events, `"type":"agent.tool_use"`) {
-		t.Fatalf("Claude Code assistant tool_use leaked instead of using can_use_tool as the canonical public event source: %+v", events.Data)
+		t.Fatal("automatic tool invocation is not mapped yet")
 	}
-	if eventPageContains(events, `"type":"system.message"`) {
-		t.Fatalf("Claude Code task lifecycle leaked raw system.message instead of canonical events: %+v", events.Data)
+	diagnostics := listSessionEvents(t, app, session.ID, "types[]=system.message", defaultTestKey)
+	if len(diagnostics.Data) != 0 {
+		t.Fatalf("internal diagnostics leaked publicly: %+v", diagnostics.Data)
 	}
 	if eventPageContains(events, "duplicate coordinator echo") {
 		t.Fatalf("Claude Code user transcript echo leaked into public session events: %+v", events.Data)
@@ -979,7 +981,6 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		`"type":"user.message"`,
 		"private child prompt only in child stream",
 		`"type":"agent.thinking"`,
-		"private child thinking only in child stream",
 		`"type":"agent.message"`,
 		"private child answer only in child stream",
 		`"session_thread_id":"` + child.ID + `"`,
@@ -987,6 +988,9 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		if !eventPageContains(childEvents, want) {
 			t.Fatalf("child transcript missing %q: %+v", want, childEvents.Data)
 		}
+	}
+	if eventPageContains(childEvents, "private child thinking only in child stream") {
+		t.Fatal("thinking content leaked through public progress event")
 	}
 	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`} {
 		if eventPageContains(childEvents, leaked) {
@@ -1005,7 +1009,7 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		}
 	}
 	if eventPageContains(primaryEvents, `"type":"agent.tool_use"`) {
-		t.Fatalf("subagent assistant tool_use leaked instead of using can_use_tool as the canonical public event source: %+v", primaryEvents.Data)
+		t.Fatal("automatic tool invocation is not mapped yet")
 	}
 	for _, blocked := range []string{"private child prompt only in child stream", "private child thinking only in child stream", "private child answer only in child stream"} {
 		if eventPageContains(primaryEvents, blocked) {

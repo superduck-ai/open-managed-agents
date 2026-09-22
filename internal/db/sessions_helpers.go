@@ -134,7 +134,7 @@ func insertSessionEventsTx(
 		if event.EventType == "session.status_running" && session.Status == "running" {
 			continue
 		}
-		if event.EventType == "session.status_idle" {
+		if event.EventType == "session.status_idle" || event.EventType == "session.usage" {
 			threads, err := threadMapper.List(ctx, session.WorkspaceUUID, session.ExternalID)
 			if err != nil {
 				return nil, err
@@ -168,6 +168,12 @@ func insertSessionEventsTx(
 			event.ThreadUUID = &thread.UUID
 		}
 
+		if event.EncodeUsageSnapshot != nil {
+			event.Payload, err = event.EncodeUsageSnapshot(session.Usage)
+			if err != nil {
+				return nil, err
+			}
+		}
 		params := sessionEventWriteParameters(event)
 		var row sessionEventRow
 		if ignoreExisting {
@@ -374,6 +380,13 @@ func lockSessionForEvents(ctx context.Context, mapper SessionMapper, workspaceUU
 // applySessionEventState runs only for newly inserted facts under the session lock.
 func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent) error {
 	mapper := NewSessionMapper(executor)
+	if event.UsageIncrement != nil {
+		row, err := mapper.AddUsage(ctx, session.WorkspaceUUID, session.UUID, *event.ThreadUUID, *event.UsageIncrement)
+		if err != nil {
+			return err
+		}
+		session.Usage = row.Usage
+	}
 	if status, ok := maevents.ThreadStatus(event.EventType); ok {
 		threadID := event.StatusThreadID
 		if threadID == "" {

@@ -270,7 +270,7 @@ func TestPreviewSessionEventDistinguishesPrimaryAndChildScopes(t *testing.T) {
 	}
 }
 
-func TestPreviewSSEIncludesTimesAndResolvedPrimaryThread(t *testing.T) {
+func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC)
 	processedAt := createdAt.Add(2 * time.Second)
 	event := previewSessionEvent(
@@ -294,14 +294,8 @@ func TestPreviewSSEIncludesTimesAndResolvedPrimaryThread(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		t.Fatalf("decode preview SSE data: %v", err)
 	}
-	if payload.CreatedAt != createdAt.Format(time.RFC3339Nano) {
-		t.Fatalf("created_at = %q, want %q", payload.CreatedAt, createdAt.Format(time.RFC3339Nano))
-	}
-	if payload.ProcessedAt != processedAt.Format(time.RFC3339Nano) {
-		t.Fatalf("processed_at = %q, want %q", payload.ProcessedAt, processedAt.Format(time.RFC3339Nano))
-	}
-	if payload.SessionThreadID != "primary-thread" {
-		t.Fatalf("session_thread_id = %q, want primary-thread", payload.SessionThreadID)
+	if payload.CreatedAt != "" || payload.ProcessedAt != "" || payload.SessionThreadID != "" {
+		t.Fatalf("preview gained persisted event fields: %+v", payload)
 	}
 }
 

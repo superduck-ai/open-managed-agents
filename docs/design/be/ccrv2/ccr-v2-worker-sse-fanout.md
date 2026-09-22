@@ -51,7 +51,7 @@ sequenceDiagram
 - `thinking_delta` 不产生 `event_delta`；`agent.thinking` 只有 `event_start` 预览。
 - 缺少 message start、block start 或消息总线重连后丢失上下文时，后续 delta 直接舍弃。
 - `parent_tool_use_id` 为空时归属主线程；非空时使用既有确定性 child thread ID。
-- Preview SSE 的 `created_at` 使用规范化 worker payload 的创建时间，缺失或无效时回退到接收时间；`processed_at` 使用接收实例的转换时间。接收实例使用 SSE 已解析出的实际订阅线程 ID 补充 `session_thread_id`，主线程 preview 不需要在生产端查询物理 thread ID。
+- Preview SSE 没有自己的 `id`、`created_at` 或 `processed_at`；关联 ID 只在 `event_start.event.id` / `event_delta.event_id` 中。内部接收时间只用于转换与清理，不进入公开 preview envelope。
 
 预览和最终事件共享确定性 ID：
 
@@ -111,15 +111,80 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 - Sessions 集成测试使用独立 NATS 连接模拟发布实例和两个 SSE 实例，覆盖同实例多连接、preview/final/terminal 的 SSE 编码以及 workspace/session 隔离。
 - `TEST_NATS_URL=nats://127.0.0.1:4222,nats://127.0.0.1:4223,nats://127.0.0.1:4224 go test ./internal/sessions -run TestNATSFanout -count=1 -v` 可复跑同一集成链路到本地 Compose 集群；测试使用唯一 session subject，不改数据库。
 
+## 每次模型请求的生命周期
 
-## 输入处理与状态事件顺序
+对于 code-session OAuth 发起的 `POST /v1/messages`，代理在调用上游前生成并持久化
+`span.model_request_start`，沿用上述 PG + NATS 投递路径。每次 HTTP 尝试（包括 Worker 重试）
+各自拥有一对 start/end；工具执行和整轮 `result` 不属于同一次模型请求。
+start 写入失败时不转发上游请求；生命周期事件的写入错误必须返回调用方，不能静默跳过。
+普通 `system`（init、hook 等）和成功 `result` 不生成公开消息；显式 `system.message` 仍保留。
+失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。
+内部 transcript 入口保持不变；不会把 stdout 诊断写入恢复用 transcript。未单独上报到内部入口的
+init/hook/result 不另行持久化。`result` 不驱动 Session 状态，也不使用 `duration_api_ms` 或汇总 usage 补造 span。
+接受主线程 `user.message` 时激活本轮，在同一事务内更新 Session/主线程为 running，并按
+`session.status_running → session.thread_status_running` 写入、广播，沿用 Qoder 的激活顺序。用户消息同时持久化为排队记录，Worker ACK 开始处理后再广播 `user.message`。
+这里 running 表示任务已激活，不表示模型 HTTP 请求已发出。事务在 Session 锁内判断当前状态，
+已处于 running 时不重复写入状态对；Worker 后续上报或并发输入也复用这个去重规则。
+发送接口仍只返回客户端提交的事件。idle 和无新消息的恢复执行继续由 Worker 状态上报驱动；
+工具审批仍使用带 `requires_action` 原因的 idle。
+Worker 初始化的 idle 不代表已接受任务执行完毕。内部字段 `worker_turn_started` 记录当前 Worker
+是否已显式上报 running：注册 Worker 或接受新一轮主线程消息时清零，显式 running 置为 true。
+普通 idle 只在该标记为 true 时同步公开状态；metadata-only 更新不改变标记。
+完成后保留标记，保证“Worker 状态已写入、公开事件写入失败”时重试 idle 仍能补齐结束事件。
+这避免启动时出现 `running → user.message → idle → running`；标记不进入公开 API。
+这样 result 与 Worker idle 的先后顺序不会产生两条结束事件，迟到 result 也不会结束新一轮。
+Session 与 thread 的 running/idle 事件分别表达整体任务状态和线程状态。公开事件桥接按
+`session.status_running → session.thread_status_running`、`session.thread_status_idle → session.usage → session.status_idle`
+生成主线程配套事件，两者共用时间戳，保留相同的 stop_reason（包括 requires_action.event_ids），
+配套 ID 由原状态事件 ID 派生，重复发布保持幂等。子线程仍由 task 事件驱动。
+本轮首次用户消息与前置 running 对共用接收时间；消息的 `processed_at` 在排队期间为 null，Worker processing/processed ACK 后设置，不伪造毫秒偏移。
+批次写入失败时状态转换和事件一起回滚；子线程输入不激活主线程。
 
-接受主线程 user.message 时，在同一事务内按 session.status_running → session.thread_status_running 激活任务；状态相同不重复写入。用户消息先持久化为 processed_at=null 的排队记录，Worker processing/processed ACK 后设置处理时间并广播。发送接口只返回提交的用户事件。
+关联使用现有标识，不增加请求注册表：
 
-Worker 注册和新一轮输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。result 不再驱动 idle，结束状态由 Worker 状态上报产生。旧 result 补造模型 span 的逻辑由后续模型生命周期 PR 替换。
+- 代理将 start ID 作为响应 `request-id`，Worker 的 `assistant.request_id` 原样带回，
+  映射为消息的 `model_request_start_id`。原上游 request ID 保留在 end 的
+  `upstream_request_id` 中，供诊断使用。只有 code-session 请求覆盖响应 request ID。
+- start/end 的 `request_id` 都是 start ID，end 另外通过 `model_request_start_id` 精确引用 start。
+- `message_start.message.id` 加内容块索引，继续生成 preview 和最终消息共用的公开 event ID。
+  end 的 `event_ids` 列出这些消息 ID；`tool_use_ids` 记录该请求产生的工具调用 ID。
+- 子请求的 `x-claude-code-agent-id` 对应 `task_started.task_id`，由已持久化的
+  `session.thread_created` 找到 thread。该注册表按页读取，不另设内存缓存。
+  CCR 投递晚于代理请求时，代理在转发前最多等待 10 秒；超时或取消返回错误，绝不退回主线程。
+  最终子消息继续通过 `parent_tool_use_id` 指向同一个确定性 thread ID。
 
-状态和公开事件同事务提交，重复事件不重新推动状态。主线程结束顺序为 thread idle → session idle；其他线程仍在运行时不结束 Session。待确认工具的 idle 保留 requires_action.event_ids。
+代理逐帧观察响应，不修改 SSE body。`message_start.usage` 与 `message_delta.usage` 按字段合并，
+其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 无内容的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
+非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。
+取消后的落库使用独立 5 秒 context；持久化失败记录 start ID 和错误，不记录原始响应。
+单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
+`observation_limit`（观测超过上限，不代表模型本身失败），保留已观察到的 usage。进程被强制杀死的恢复不由请求内 defer 保证。
 
-历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 00064–00067 保留既有编号，不改写已应用迁移。
+代理先发布最终消息再发布 end；Worker 后续 echo 使用相同消息 ID，由数据库幂等写入去重。
+end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。
+`event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。
+SSE 在最终消息或 end 后关闭相应线程的预览，忽略迟到的 start/delta；不要求错误路径一定有最终消息。
 
-验证：tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，以及 Worker ACK 后的 SSE/history 顺序。
+历史 Events API 按 `processed_at` 排序，同一时间保留数据库写入顺序；数据库 identity 只用于 SQL
+内部排序，不进入公开模型。事件游标包含 `processed_at` 与 `external_id`，查询在租户和 Session
+范围内解析该事件的排序位置。`created_at[...]` 按官方定义筛选 **processed_at**。未处理记录保持 null；升序历史将其放在已处理记录后，游标支持该状态。事件批次不按随机 ID 重排，
+也不再人为增加毫秒。实时缓存同时间戳保持服务端顺序，全量历史同步以分页返回顺序校正缓存。事件桥接和响应保留小数秒，代理时间截到 PostgreSQL
+可保存的微秒精度。不回填或重写旧 Session 的错误 span。
+
+验收覆盖 `tests/model_request_lifecycle_test.go`：发送前 start 持久化、并发主/子请求、晚到 task 映射、
+失败/取消、单次 usage、晚到 result 不产生额外 span，以及 同时间戳写入顺序、created_at 筛选和双向分页。
+Claude Code 2.1.251 和 2.1.278 的独立假网关验证确认了上述 header/task/message 关联；
+这不等同于 Linux sandbox 与真实模型供应商的完整 E2E。
+
+`tests/session_worker_status_test.go` 验证初始化/重复 idle、Worker 重注册、结束发布重试，以及正常、失败、乱序下的唯一 idle；同时覆盖真实 SSE 与历史的主线程状态顺序、公开诊断过滤和审批原因。
+
+## 累计用量与线程状态
+
+每个 `span.model_request_end` 仅在首次插入时累计 Session 与所属线程的实际计数。
+当前报告 input/output/cache-read，以及上游确实返回的 5 分钟 / 1 小时 cache-creation 分项；
+nil 保持缺失，显式 0 保留。没有来源的计费金额、active_seconds、server_tool_use 不填估计值。
+
+每次真正发布 Session idle，紧前发布 `session.usage`，`budget` 为 null。
+usage 的序列化由 sessions 资源层提供；DB 在 Session 行锁内用最新累计值生成并保存快照，
+避免同批 end/idle 或并发线程读到旧值。重复 end 不重复累计，重复事件 ID 不重新推动状态。
+线程状态和事件同一事务提交。仍有 running/rescheduling 线程时，仅发布线程 idle，不发布 Session usage/idle。

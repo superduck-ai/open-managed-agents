@@ -95,22 +95,34 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
-	StatusThreadID    string
-	PayloadBlobUUID   *string
-	ToolUseID         *string
-	UUID              string
-	ExternalID        string
-	OrganizationUUID  string
-	WorkspaceUUID     string
-	SessionUUID       string
-	SessionExternalID string
-	ThreadUUID        *string
-	ThreadExternalID  *string
-	EventType         string
-	Payload           json.RawMessage
-	ProcessedAt       time.Time
-	CreatedAt         time.Time
-	DeletedAt         *time.Time
+	// EncodeUsageSnapshot serializes the cumulative usage read under the session lock.
+	EncodeUsageSnapshot func(json.RawMessage) (json.RawMessage, error)
+	StatusThreadID      string
+	UsageIncrement      *SessionUsageIncrement
+	PayloadBlobUUID     *string
+	ToolUseID           *string
+	UUID                string
+	ExternalID          string
+	OrganizationUUID    string
+	WorkspaceUUID       string
+	SessionUUID         string
+	SessionExternalID   string
+	ThreadUUID          *string
+	ThreadExternalID    *string
+	EventType           string
+	Payload             json.RawMessage
+	ProcessedAt         time.Time
+	CreatedAt           time.Time
+	DeletedAt           *time.Time
+}
+
+// SessionUsageIncrement contains measured counters; nil means unavailable.
+type SessionUsageIncrement struct {
+	CacheCreation5mInputTokens *int64
+	CacheCreation1hInputTokens *int64
+	InputTokens                *int64
+	OutputTokens               *int64
+	CacheReadInputTokens       *int64
 }
 
 type SessionPageCursor struct {

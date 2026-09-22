@@ -22,6 +22,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只覆盖
 - 错误集中 `internal/sessions/errors.go`。
 - 资源顺序不影响落盘。
 - Deployment 创建/运行时按同一合同解析 memory store，并把快照写入即将创建的 Session。
+- 运行准备阶段收集并去重 memory store ID，按 workspace 使用一次 `IN` 查询加载；无 ID 时不查询。查询排除已删除记录但保留已归档记录，再按资源原顺序检查缺失和归档，以保持错误分类及优先顺序。
 
 ## 2. 响应快照
 
@@ -41,6 +42,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只覆盖
 2. 控制台能选 store、Access、Instructions；提交体不含 `mount_path` / `name` / `description`。
 3. `instructions` 501 个码点 → 400；500 个码点通过。
 4. 同一 Session 重复 `memory_store_id` 或第 9 个 store → 400；并发 `POST /resources` 不会写出重复或超限行。
+5. Deployment 批量加载保持缺失/归档错误的原资源顺序；`internal/deployments/memory_store_batch_test.go` 覆盖错误优先级，`internal/db/memory_store_batch_test.go` 覆盖 SQL 绑定及单次查询，`TestMemoryStoreBatchPostgres` 使用 `TEST_MIGRATION_DATABASE_URL` 在独立 schema 验证租户隔离、删除过滤及 JSON/nullable 扫描。
 
 测试先失败再成功。sessions / deployments / 控制台覆盖上表。
 

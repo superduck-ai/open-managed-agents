@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 	"uuid"
@@ -512,22 +513,37 @@ func loadDeploymentMemoryStores(
 	if err := json.Unmarshal(resources, &configs); err != nil {
 		return nil, errors.New("stored resources are invalid")
 	}
-	stores := make(map[string]db.MemoryStore)
+	var storeIDs []string
 	for _, config := range configs {
-		if config.Type != sessionresource.MemoryStoreType || config.MemoryStoreID == "" {
+		if config.Type != sessionresource.MemoryStoreType || config.MemoryStoreID == "" || slices.Contains(storeIDs, config.MemoryStoreID) {
 			continue
 		}
-		if _, exists := stores[config.MemoryStoreID]; exists {
-			continue
-		}
-		store, err := database.GetMemoryStore(ctx, workspaceUUID, config.MemoryStoreID)
-		if err != nil {
-			return nil, err
+		storeIDs = append(storeIDs, config.MemoryStoreID)
+	}
+	if len(storeIDs) == 0 {
+		return map[string]db.MemoryStore{}, nil
+	}
+	rows, err := database.GetMemoryStoresByExternalIDs(ctx, workspaceUUID, storeIDs)
+	if err != nil {
+		return nil, err
+	}
+	return deploymentMemoryStoresByID(storeIDs, rows)
+}
+
+func deploymentMemoryStoresByID(storeIDs []string, rows []db.MemoryStore) (map[string]db.MemoryStore, error) {
+	stores := make(map[string]db.MemoryStore, len(rows))
+	for _, store := range rows {
+		stores[store.ExternalID] = store
+	}
+	// Validate in resource order to preserve which reference error is reported first.
+	for _, storeID := range storeIDs {
+		store, exists := stores[storeID]
+		if !exists {
+			return nil, db.ErrNotFound
 		}
 		if store.ArchivedAt != nil {
 			return nil, db.ErrInvalidState
 		}
-		stores[config.MemoryStoreID] = store
 	}
 	return stores, nil
 }

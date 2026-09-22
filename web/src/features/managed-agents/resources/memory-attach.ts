@@ -3,8 +3,6 @@ import type { ManagedEntityApiResponse, MemoryAttachFormValue } from '../types';
 export const MAX_MEMORY_ATTACHES = 8;
 export const MAX_MEMORY_ATTACH_INSTRUCTIONS = 500;
 
-const FORBIDDEN_MEMORY_ATTACH_KEYS = ['mount_path', 'name', 'description'] as const;
-
 export function memoryInstructionsCodePointCount(value: string) {
   return Array.from(value).length;
 }
@@ -40,37 +38,15 @@ export function emptyMemoryAttach(): MemoryAttachFormValue {
   };
 }
 
-export function syncMemoryAttaches(current: MemoryAttachFormValue[], selectedIds: string[]): MemoryAttachFormValue[] {
-  const byId = new Map(current.map((attach) => [attach.memoryStoreId, attach]));
-  return selectedIds.map(
-    (memoryStoreId) =>
-      byId.get(memoryStoreId) ?? {
-        memoryStoreId,
-        access: 'read_write',
-        instructions: '',
-      },
-  );
-}
-
 export function memoryAttachResources(attaches: MemoryAttachFormValue[]) {
   return attaches
     .filter((attach) => attach.memoryStoreId)
-    .map((attach) => {
-      const resource: {
-        type: 'memory_store';
-        memory_store_id: string;
-        access: MemoryAttachFormValue['access'];
-        instructions?: string;
-      } = {
-        type: 'memory_store',
-        memory_store_id: attach.memoryStoreId,
-        access: attach.access,
-      };
-      if (attach.instructions) {
-        resource.instructions = attach.instructions;
-      }
-      return resource;
-    });
+    .map((attach) => ({
+      type: 'memory_store' as const,
+      memory_store_id: attach.memoryStoreId,
+      access: attach.access,
+      ...(attach.instructions ? { instructions: attach.instructions } : {}),
+    }));
 }
 
 export function entityMemoryAttaches(entity?: ManagedEntityApiResponse): MemoryAttachFormValue[] {
@@ -94,8 +70,4 @@ export function entityMemoryAttaches(entity?: ManagedEntityApiResponse): MemoryA
     });
   }
   return attaches;
-}
-
-export function memoryAttachHasForbiddenClientFields(resource: object) {
-  return FORBIDDEN_MEMORY_ATTACH_KEYS.some((key) => key in resource);
 }

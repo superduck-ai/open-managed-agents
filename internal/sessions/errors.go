@@ -65,9 +65,6 @@ func mapResourceBuildError(err error) error {
 	if mapped, ok := mapFileResourcePersistenceError(err); ok {
 		return mapped
 	}
-	if mapped, ok := mapMemoryAttachError(err); ok {
-		return mapped
-	}
 	var refErr resourceReferenceError
 	if !errors.As(err, &refErr) {
 		return invalidRequest(err)
@@ -82,19 +79,6 @@ func mapResourceBuildError(err error) error {
 		"Could not validate session resource",
 		fmt.Errorf("validate %s reference %q: %w", refErr.ResourceType, refErr.ResourceID, refErr.Err),
 	)
-}
-
-func mapMemoryAttachError(err error) (error, bool) {
-	switch {
-	case errors.Is(err, sessionresource.ErrMemoryStoreClientIdentity),
-		errors.Is(err, sessionresource.ErrMemoryStoreAccess),
-		errors.Is(err, sessionresource.ErrMemoryStoreInstructionsTooLong),
-		errors.Is(err, sessionresource.ErrMemoryStoreLimit),
-		errors.Is(err, sessionresource.ErrMemoryStoreDuplicate):
-		return invalidRequest(err), true
-	default:
-		return nil, false
-	}
 }
 
 func mapSessionLoadError(err error, sessionID string) error {

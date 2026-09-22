@@ -7,10 +7,8 @@ import {
   emptyMemoryAttach,
   entityMemoryAttaches,
   MAX_MEMORY_ATTACH_INSTRUCTIONS,
-  memoryAttachHasForbiddenClientFields,
   memoryAttachResources,
   memoryInstructionsCodePointCount,
-  syncMemoryAttaches,
 } from './memory-attach';
 
 function formValues(overrides: Partial<ManagedEntityFormValues> = {}): ManagedEntityFormValues {
@@ -74,7 +72,6 @@ describe('memory attach packing', () => {
         access: 'read_only',
       },
     ]);
-    expect(memoryAttachHasForbiddenClientFields(packed[0])).toBe(false);
     expect(JSON.stringify(packed)).not.toContain('mount_path');
     expect(JSON.stringify(packed)).not.toContain('/mnt/memory/secret');
   });
@@ -94,7 +91,6 @@ describe('memory attach packing', () => {
         instructions: '有新偏好就更新',
       },
     ]);
-    expect(memoryAttachHasForbiddenClientFields(sessionBody.resources[1] as object)).toBe(false);
 
     const deploymentBody = createManagedEntityBody('deployments', values);
     expect(deploymentBody.resources).toEqual([
@@ -159,13 +155,5 @@ describe('memory attach packing', () => {
   test('omits memory resources when no store is selected', () => {
     expect(createManagedEntityBody('deployments', formValues()).resources).toEqual([]);
     expect(createManagedEntityBody('sessions', formValues()).resources).toEqual([]);
-  });
-
-  test('preserves existing attaches when syncing selected store ids', () => {
-    const current = [attach({ access: 'read_only', instructions: 'keep' })];
-    expect(syncMemoryAttaches(current, ['memstore_one123456', 'memstore_two'])).toEqual([
-      current[0],
-      { memoryStoreId: 'memstore_two', access: 'read_write', instructions: '' },
-    ]);
   });
 });

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -391,7 +390,7 @@ func sessionResourcesFromDeployment(
 			return nil, markRunPreparationRetryable(err)
 		}
 
-		payload := maps.Clone(config)
+		payload := config
 		var fileMount *db.SessionFileMount
 		switch resourceType {
 		case sessionresource.FileType:

@@ -52,7 +52,6 @@ import {
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
-import { budgetValid } from './budget';
 import { BudgetField } from './budget-field';
 import { DeploymentFormFields } from './deployment-form-fields';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
@@ -825,7 +824,6 @@ function GenericManagedEntityDialog({
     editing: Boolean(entity),
     vaultAcknowledged,
   });
->>>>>>> origin/main
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

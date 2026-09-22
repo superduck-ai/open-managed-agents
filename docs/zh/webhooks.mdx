@@ -4,11 +4,11 @@ sidebarTitle: "订阅 Webhook"
 description: "无需轮询即可在重大事件发生时获得通知。"
 ---
 
-<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 35 项 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run 事件的订阅管理与投递；下文预算和两项删除事件尚未开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
+<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 35 项 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run 事件的订阅管理与投递；另接受两项删除事件作为预留订阅，共 37 个可选类型；预留事件当前不会产生通知。预算事件尚未开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
 
 Deployment Run 支持 `deployment_run.started`、`deployment_run.succeeded`、`deployment_run.failed`，仅定时运行产生；手动运行不产生。现有一次事务保存 Run 与 Session 创建结果，提交后以同一 Run ID 连续入队 started 和结果事件，因此 started 不提供执行中实时进度。succeeded 只表示创建 Session 成功，failed 表示已落库的业务失败且没有 Session；数据库回滚、过期或重复任务不通知。data 仅含四个标识字段，后续执行应通过 Run 的 session_id 跟踪。
 
-Deployment 支持 `deployment.created`、`deployment.updated`、`deployment.paused`、`deployment.unpaused`、`deployment.archived`。通知由共享 Store 在资源与 River 计划事务整体提交后产生；updated 仅实际属性变更，暂停/恢复只在状态转换时通知，归档覆盖直接操作、Agent 级联及定时归档分支。重复操作及无变化更新不重复通知，普通运行的 last_run_at 变化不产生 updated。重复手动暂停可沿用原行为改变暂停原因，但不再次发 paused。data 只含类型、Deployment ID 与租户标识。公开 Deployment API 未提供删除入口，因此不开放 `deployment.deleted`，不新增删除 API；业务提交与通知入队仍非原子化。
+Deployment 支持 `deployment.created`、`deployment.updated`、`deployment.paused`、`deployment.unpaused`、`deployment.archived`。通知由共享 Store 在资源与 River 计划事务整体提交后产生；updated 仅实际属性变更，暂停/恢复只在状态转换时通知，归档覆盖直接操作、Agent 级联及定时归档分支。重复操作及无变化更新不重复通知，普通运行的 last_run_at 变化不产生 updated。重复手动暂停可沿用原行为改变暂停原因，但不再次发 paused。data 只含类型、Deployment ID 与租户标识。`deployment.deleted` 作为预留订阅开放；当前没有删除 API 或产生入口，不发送通知，直接归档与级联归档均不发送 deleted；业务提交与通知入队仍非原子化。
 
 Environment 支持 `environment.created`、`environment.updated`、`environment.archived`、`environment.deleted`。创建指环境记录创建，不等待 sandbox 就绪；只有实际持久化属性改变才发送 updated。无变化更新及重复归档保持时间戳，不新增通知。删除沿用现有事务和活跃 work 检查，成功删除已归档环境也通知，不额外补发 archived。work/心跳/sandbox 状态变化及 SDK fixture 模拟响应不产生这些资源事件。payload 仅包含标识；全局兼容默认配置及重试策略保持不变。
 
@@ -57,7 +57,7 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
     | `agent.created`  | 智能体已创建。                                                                                                           |
     | `agent.updated`  | [智能体的新版本](/docs/zh/agent-setup#update-an-agent)已发布。不创建新版本的更新不会触发此事件。 |
     | `agent.archived` | 智能体已归档。                                                                                                           |
-    | `agent.deleted`  | 智能体已被永久删除。此事件已有官方定义，但公开删除 API 未确认，OMA 暂不开放该订阅。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                               |
+    | `agent.deleted`  | OMA 预留订阅：可选择并保存，但当前没有删除 API 或产生入口，不发送通知；归档也不发送该事件。 |
   </Tab>
 
   <Tab title="部署事件">
@@ -68,7 +68,7 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
     | `deployment.paused`   | 部署已暂停，可能是应请求暂停，也可能是在计划运行因不可恢复的错误（例如子智能体已归档或环境已归档）而失败时自动暂停。可恢复的失败（包括速率限制）不会暂停部署。请参阅[失败行为](/docs/zh/scheduled-deployments#failure-behavior)。 |
     | `deployment.unpaused` | 部署已取消暂停，恢复其计划。                                                                                                                                                                          |
     | `deployment.archived` | 部署已归档，可能是直接归档，也可能是因为其智能体已被归档。如果智能体被删除而非归档，则计划部署会在其下一次计划运行时被归档；没有计划的部署不会被自动归档。                                                                                                           |
-    | `deployment.deleted`  | 部署已被永久删除。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                                                                                                      |
+    | `deployment.deleted`  | OMA 预留订阅：可选择并保存，但当前没有删除 API 或产生入口，不发送通知；归档也不发送该事件。 |
   </Tab>
 
   <Tab title="部署运行事件">
@@ -113,7 +113,7 @@ Webhook 端点由以下部分组成：
 
 * **URL：** 必须是端口 443 上的 HTTPS，且主机名可公开解析。
 * **事件类型：** 此端点接收的 `data.type` 值列表。端点仅接收其已订阅的事件。
-* **签名密钥：** 创建时生成的 35 字节、以 `whsec_` 为前缀的密钥。该密钥仅显示一次，因此请安全存储以用于验证 Webhook 传递。
+* **签名密钥：** 创建时生成的 32 字节、以 `whsec_` 为前缀的密钥。该密钥仅显示一次，因此请安全存储以用于验证 Webhook 传递。
 
 ## 验证签名
 

@@ -30,6 +30,7 @@ const (
 	maxWebhookBodySize = 1 << 20
 )
 
+// Deleted Agent and Deployment types are reserved subscriptions without emitters.
 var supportedEndpointEventTypes = map[string]struct{}{
 	"deployment_run.started":   {},
 	"deployment_run.succeeded": {},
@@ -40,10 +41,12 @@ var supportedEndpointEventTypes = map[string]struct{}{
 	"deployment.paused":   {},
 	"deployment.unpaused": {},
 	"deployment.archived": {},
+	"deployment.deleted":  {},
 
 	"agent.created":                    {},
 	"agent.updated":                    {},
 	"agent.archived":                   {},
+	"agent.deleted":                    {},
 	"memory_store.created":             {},
 	"memory_store.archived":            {},
 	"memory_store.deleted":             {},

@@ -4,11 +4,11 @@ sidebarTitle: "Subscribe to webhooks"
 description: "Get notified when major events happen without polling."
 ---
 
-<Note>This guide describes the Claude-aligned target capability. OMA currently implements subscription management and delivery for 35 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run events; Budget and two deletion events below are not yet available for subscription. See the [current Webhooks API contract](/docs/en/api/resources/webhooks) for implementation limits. Retry timing, automatic disabling, DNS checks, and transactional enqueueing still differ from the target behavior.</Note>
+<Note>This guide describes the Claude-aligned target capability. OMA currently implements subscription management and delivery for 35 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run events. The catalog also accepts two reserved deletion types, for 37 selectable types in total; they currently produce no notifications. Budget events are not yet available for subscription. See the [current Webhooks API contract](/docs/en/api/resources/webhooks) for implementation limits. Retry timing, automatic disabling, DNS checks, and transactional enqueueing still differ from the target behavior.</Note>
 
 Deployment Run subscriptions support `deployment_run.started`, `deployment_run.succeeded`, and `deployment_run.failed` for scheduled runs only; manual runs emit none. The existing transaction persists the Run and Session-creation result together. After commit, started and the result are enqueued with the same Run ID, so started is not a live in-progress signal. Succeeded means a Session was created, not that its work finished. Failed means a business failure was persisted without a Session; database rollbacks, stale jobs, and duplicate occurrences do not notify. Data contains only the four identifier fields. Follow the Run's session_id for subsequent execution.
 
-Deployment subscriptions support `deployment.created`, `deployment.updated`, `deployment.paused`, `deployment.unpaused`, and `deployment.archived`. The shared Store notifies only after the resource and River schedule transaction commits. Updated requires an actual property change; pause/unpause require a status transition. Archive covers direct operations, Agent cascades, and the scheduled archive branch. No-op updates and repeated operations do not notify; last_run_at changes from ordinary runs do not emit updated. Repeating a manual pause may still change the pause reason as before, without another paused event. Data contains only event type, Deployment ID, and tenant identifiers. No public Deployment delete endpoint is documented, so OMA does not expose `deployment.deleted` or add a delete API. Resource commits and enqueueing remain non-atomic.
+Deployment subscriptions support `deployment.created`, `deployment.updated`, `deployment.paused`, `deployment.unpaused`, and `deployment.archived`. The shared Store notifies only after the resource and River schedule transaction commits. Updated requires an actual property change; pause/unpause require a status transition. Archive covers direct operations, Agent cascades, and the scheduled archive branch. No-op updates and repeated operations do not notify; last_run_at changes from ordinary runs do not emit updated. Repeating a manual pause may still change the pause reason as before, without another paused event. Data contains only event type, Deployment ID, and tenant identifiers. `deployment.deleted` is accepted as a reserved subscription. There is no Deployment delete API or producer, so it currently generates no notification; direct or cascading archival does not emit deleted. Resource commits and enqueueing remain non-atomic.
 
 Environment subscriptions support `environment.created`, `environment.updated`, `environment.archived`, and `environment.deleted`. Creation refers to the environment record, not sandbox readiness. Updates notify only when persisted attributes change; no-op updates and repeated archives preserve timestamps and emit nothing. Deletion notifies after the existing transaction succeeds, including deletion of an archived environment; active work still blocks deletion. Work/heartbeat/sandbox state changes and SDK fixture responses do not emit these resource events. Payloads contain identifiers only. The global compatibility defaults and retry policy are unchanged.
 
@@ -57,7 +57,7 @@ Webhook events return the event `type` and `id`, not the full object. When you r
     | `agent.created`  | Agent created.                                                                                                                                                                                  |
     | `agent.updated`  | A [new version of the agent](/docs/en/agent-setup#update-an-agent) was published. Updates that do not create a new version do not trigger this event. |
     | `agent.archived` | Agent archived.                                                                                                                                                                                 |
-    | `agent.deleted`  | Agent permanently deleted. This event is defined by Claude, but no public Agent delete API is documented; OMA does not offer this subscription. There is no object left to fetch, so treat the event itself as final.                                                                                                |
+    | `agent.deleted`  | Reserved subscription in OMA: selectable and persisted, but currently never emitted because there is no delete API or producer. Archiving does not emit this event. |
   </Tab>
 
   <Tab title="Deployment events">
@@ -68,7 +68,7 @@ Webhook events return the event `type` and `id`, not the full object. When you r
     | `deployment.paused`   | Deployment paused, either by request or automatically when a scheduled run fails with an unrecoverable error, such as an archived subagent or an archived environment. Recoverable failures, including rate limits, don't pause the deployment. See [Failure behavior](/docs/en/scheduled-deployments#failure-behavior). |
     | `deployment.unpaused` | Deployment unpaused, resuming its schedule.                                                                                                                                                                                                                                                                                                                        |
     | `deployment.archived` | Deployment archived, either directly or because its agent was archived. If the agent is deleted instead, a scheduled deployment is archived at its next scheduled run; a deployment without a schedule is not archived automatically.                                                                                                                              |
-    | `deployment.deleted`  | Deployment permanently deleted. There is no object left to fetch, so treat the event itself as final.                                                                                                                                                                                                                                                              |
+    | `deployment.deleted`  | Reserved subscription in OMA: selectable and persisted, but currently never emitted because there is no delete API or producer. Archiving does not emit this event. |
   </Tab>
 
   <Tab title="Deployment run events">
@@ -113,7 +113,7 @@ A webhook endpoint consists of:
 
 * **URL:** Must be HTTPS on port 443 with a publicly resolvable hostname.
 * **Event types:** The list of `data.type` values this endpoint receives. An endpoint only receives events it's subscribed to.
-* **Signing secret:** A 35-byte `whsec_`-prefixed secret generated at creation. It's shown only once, so store it securely to verify webhook deliveries.
+* **Signing secret:** A 32-byte `whsec_`-prefixed secret generated at creation. It's shown only once, so store it securely to verify webhook deliveries.
 
 ## Verify the signature
 

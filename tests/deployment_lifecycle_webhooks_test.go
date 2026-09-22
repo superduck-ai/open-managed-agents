@@ -42,8 +42,6 @@ func TestWebhookDeploymentLifecycleRejectedOperations(t *testing.T) {
 	response := doDeploymentRequest(t, app, "POST", "/v1/deployments/"+deployment.ID, strings.NewReader(`{"name":"archived"}`), defaultTestKey, true)
 	assertError(t, response, 400, "invalid_request_error")
 	assertDeploymentWebhookTotal(t, app, 3)
-	response = doWebhookRequest(t, app, "POST", "/v1/webhooks", strings.NewReader(`{"url":"https://example.com/hook","enabled_events":["deployment.deleted"]}`), defaultTestKey, true)
-	assertError(t, response, 400, "invalid_request_error")
 }
 
 func TestWebhookDeploymentLifecycleRollback(t *testing.T) {

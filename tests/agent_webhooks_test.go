@@ -51,8 +51,6 @@ func TestWebhookAgentRejectedOperations(t *testing.T) {
 	}
 	assertAgentWebhookCounts(t, app, agent.ID, 1, 0, 1)
 	assertAgentWebhookTotal(t, app, 2)
-	response := doWebhookRequest(t, app, "POST", "/v1/webhooks", strings.NewReader(`{"url":"https://example.com/hook","enabled_events":["agent.deleted"]}`), defaultTestKey, true)
-	assertError(t, response, 400, "invalid_request_error")
 }
 
 func TestWebhookAgentVersionRollback(t *testing.T) {

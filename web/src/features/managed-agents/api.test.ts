@@ -97,6 +97,14 @@ describe('managed agents API', () => {
       event: { id: 'sevt_final', type: 'agent.message' },
     });
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_model_end',
+      type: 'span.model_request_end',
+      model_request_start_id: 'sevt_model_start',
+      event_ids: ['sevt_final'],
+      created_at: idleAt,
+      processed_at: idleAt,
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       id: 'sevt_idle',
       type: 'session.status_idle',
       created_at: idleAt,
@@ -105,7 +113,7 @@ describe('managed agents API', () => {
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
       'sevt_model_start',
-      'sevt_final',
+      'sevt_model_end',
       'sevt_idle',
     ]);
 
@@ -118,7 +126,7 @@ describe('managed agents API', () => {
     });
 
     const events = sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']);
-    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_idle', 'sevt_final']);
+    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_model_end', 'sevt_idle', 'sevt_final']);
 
     const entries = buildSessionEventEntries(events, 'transcript', Date.parse(startAt), undefined, {
       platformTranscriptFiltering: true,
@@ -459,6 +467,8 @@ describe('managed agents API', () => {
           type: 'span.model_request_end',
           created_at: '2026-08-28T01:01:33Z',
           model_request_start_id: 'sevt_model_start',
+          event_ids: ['sevt_agent_between_tools'],
+          tool_use_ids: ['sevt_tool_first', 'sevt_tool_second'],
         },
       ],
       'transcript',

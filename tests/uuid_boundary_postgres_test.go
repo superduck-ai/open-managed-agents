@@ -736,8 +736,8 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		SessionExternalID: session.ExternalID,
 		Limit:             10,
 		Cursor: &db.SessionEventPageCursor{
-			CreatedAt: now.Add(-time.Second),
-			UUID:      uuid.NewV4().String(),
+			ProcessedAt: now.Add(-time.Second),
+			ExternalID:  eventExternalID,
 		},
 	})
 	if err != nil || len(listedEvents) != 1 || listedEvents[0].UUID != events[0].UUID {

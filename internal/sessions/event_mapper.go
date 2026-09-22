@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"strings"
 	"time"
@@ -40,18 +41,9 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 	if eventID == "" {
 		eventID = stableCodeSessionEventID(codeSessionID, raw)
 	}
-	payload["id"] = eventID
-	if sessionPayloadString(payload, "uuid") == "" {
-		payload["uuid"] = eventID
-	}
 	createdAt := now
-	if rawCreatedAt := firstSessionPayloadString(payload, "created_at", "timestamp"); rawCreatedAt != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, rawCreatedAt); err == nil {
-			createdAt = parsed.UTC()
-		}
-	}
-	if sessionPayloadString(payload, "created_at") == "" {
-		payload["created_at"] = httpapi.FormatTime(createdAt)
+	for _, field := range []string{"id", "uuid", "created_at", "processed_at", "timestamp"} {
+		delete(payload, field)
 	}
 	threadID := streamDeltaOwnerThreadID(payload)
 	delete(payload, "owner_session_thread_id")
@@ -119,20 +111,25 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 		eventID = stableCodeSessionEventID(codeSessionID, raw)
 		payload["id"] = eventID
 	}
+	if err := h.populateThreadStatus(ctx, session, codeSessionID, eventType, payload); err != nil {
+		return nil, err
+	}
 	processedAt := now
 	if rawProcessedAt, ok := payload["processed_at"].(string); ok && strings.TrimSpace(rawProcessedAt) != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(rawProcessedAt)); err == nil {
 			processedAt = parsed.UTC()
 		}
 	}
-	payload["processed_at"] = httpapi.FormatTime(processedAt)
+	processedAt = processedAt.Truncate(time.Microsecond)
+	payload["processed_at"] = processedAt.UTC().Format(time.RFC3339Nano)
 	createdAt := processedAt
 	if rawCreatedAt, ok := payload["created_at"].(string); ok && strings.TrimSpace(rawCreatedAt) != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(rawCreatedAt)); err == nil {
 			createdAt = parsed.UTC()
 		}
 	}
-	payload["created_at"] = httpapi.FormatTime(createdAt)
+	createdAt = createdAt.Truncate(time.Microsecond)
+	payload["created_at"] = createdAt.UTC().Format(time.RFC3339Nano)
 	if err := h.populateThreadCoordinationAgentNames(ctx, session, eventType, payload); err != nil {
 		return nil, err
 	}
@@ -147,6 +144,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			return nil, err
 		}
 		events = append(events, db.SessionEvent{
+			StatusThreadID:    sessionPayloadString(payload, "session_thread_id"),
 			UUID:              uuid.NewV4().String(),
 			ExternalID:        spec.EventID,
 			OrganizationUUID:  session.OrganizationUUID,
@@ -159,6 +157,71 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			ProcessedAt:       processedAt,
 			CreatedAt:         createdAt,
 		})
+
+	}
+	return h.expandSessionStatusEvents(ctx, session, codeSessionID, events, payload)
+}
+
+func (h *Handler) expandSessionStatusEvents(ctx context.Context, session db.Session, codeSessionID string, events []db.SessionEvent, payload map[string]any) ([]db.SessionEvent, error) {
+	eventType, eventID := events[0].EventType, events[0].ExternalID
+	var err error
+	if eventType == "session.status_running" || eventType == "session.status_idle" {
+		primary, err := h.ensurePrimarySessionThread(ctx, session)
+		if err != nil {
+			return nil, err
+		}
+		threadEvent := events[0]
+		threadEvent.UUID = uuid.NewV4().String()
+		threadEvent.EventType = strings.Replace(eventType, "session.status_", "session.thread_status_", 1)
+		threadEvent.StatusThreadID = primary.ExternalID
+		threadEvent.ExternalID = derivedSessionEventID(codeSessionID, eventID, threadEvent.EventType, "primary")
+		threadPayload := copySessionEventPayload(payload)
+		threadPayload["id"] = threadEvent.ExternalID
+		threadPayload["uuid"] = threadEvent.ExternalID
+		threadPayload["type"] = threadEvent.EventType
+		threadPayload["session_thread_id"] = primary.ExternalID
+		threadPayload["agent_name"], err = h.agentNameForSessionThread(ctx, session, primary.ExternalID)
+		if err != nil {
+			return nil, err
+		}
+		threadEvent.Payload, err = jsonv2.Marshal(threadPayload)
+		if err != nil {
+			return nil, err
+		}
+		// Both transitions share a timestamp; their batch order is significant.
+		if eventType == "session.status_idle" {
+			return append([]db.SessionEvent{threadEvent}, events...), nil
+		}
+		events = append(events, threadEvent)
+	}
+	if eventType == "session.thread_status_idle" || eventType == "session.thread_status_running" {
+		sessionEvent := events[0]
+		sessionEvent.UUID = uuid.NewV4().String()
+		sessionEvent.ExternalID += "_session"
+		sessionEvent.ThreadExternalID = nil
+		sessionEvent.StatusThreadID = ""
+		sessionEvent.EventType = strings.Replace(eventType, "session.thread_status_", "session.status_", 1)
+		sessionPayload := copySessionEventPayload(payload)
+		delete(sessionPayload, "session_thread_id")
+		delete(sessionPayload, "agent_name")
+		sessionPayload["id"], sessionPayload["type"] = sessionEvent.ExternalID, sessionEvent.EventType
+		if eventType == "session.thread_status_idle" && h.codeSessions != nil {
+			pending, err := h.codeSessions.PendingToolEventIDs(ctx, codeSessionID, "")
+			if err != nil {
+				return nil, err
+			}
+			if len(pending) > 0 {
+				sessionPayload["stop_reason"] = map[string]any{"type": "requires_action", "event_ids": pending}
+			}
+		}
+		sessionEvent.Payload, err = jsonv2.Marshal(sessionPayload)
+		if err != nil {
+			return nil, err
+		}
+		if eventType == "session.thread_status_idle" {
+			return append(events, sessionEvent), nil
+		}
+		return append([]db.SessionEvent{sessionEvent}, events...), nil
 	}
 	return events, nil
 }
@@ -499,4 +562,35 @@ func sessionPayloadString(payload map[string]any, name string) string {
 func stableCodeSessionEventID(codeSessionID string, raw json.RawMessage) string {
 	sum := sha256.Sum256([]byte(codeSessionID + "\x00" + strings.TrimSpace(string(raw))))
 	return "sevt_" + hex.EncodeToString(sum[:16])
+}
+
+func (h *Handler) populateThreadStatus(ctx context.Context, session db.Session, codeSessionID, eventType string, payload map[string]any) error {
+	if _, ok := maevents.ThreadStatus(eventType); ok {
+		threadID := sessionPayloadString(payload, "session_thread_id")
+		if threadID == "" {
+			primary, err := h.ensurePrimarySessionThread(ctx, session)
+			if err != nil {
+				return err
+			}
+			threadID = primary.ExternalID
+			payload["session_thread_id"] = threadID
+		}
+		if eventType == "session.thread_status_idle" && h.codeSessions != nil {
+			pending, err := h.codeSessions.PendingToolEventIDs(ctx, codeSessionID, threadID)
+			if err != nil {
+				return err
+			}
+			if len(pending) > 0 {
+				payload["stop_reason"] = map[string]any{"type": "requires_action", "event_ids": pending}
+			}
+		}
+		if sessionPayloadString(payload, "agent_name") == "" {
+			name, err := h.agentNameForSessionThread(ctx, session, threadID)
+			if err != nil {
+				return err
+			}
+			payload["agent_name"] = name
+		}
+	}
+	return nil
 }

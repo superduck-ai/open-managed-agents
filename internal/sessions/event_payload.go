@@ -246,7 +246,7 @@ func ensureSessionEventTimeField(payload map[string]any, field string, value tim
 			return false
 		}
 	}
-	payload[field] = httpapi.FormatTime(value)
+	payload[field] = value.UTC().Format(time.RFC3339Nano)
 	return true
 }
 
@@ -318,7 +318,11 @@ func encodeSessionCursor(session db.Session) string {
 }
 
 func encodeEventCursor(event db.SessionEvent) string {
-	return encodeCursor(event.CreatedAt, event.UUID)
+	data, _ := json.Marshal(struct {
+		ProcessedAt time.Time `json:"processed_at"`
+		ExternalID  string    `json:"external_id"`
+	}{event.ProcessedAt, event.ExternalID})
+	return base64.RawURLEncoding.EncodeToString(data)
 }
 
 func encodeThreadCursor(thread db.SessionThread) string {
@@ -339,11 +343,21 @@ func decodeSessionCursor(raw string) (*db.SessionPageCursor, error) {
 }
 
 func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
-	createdAt, resourceUUID, err := decodeCursor(raw)
-	if err != nil || createdAt == nil {
-		return nil, err
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
 	}
-	return &db.SessionEventPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, errors.New("page cursor is invalid")
+	}
+	var payload struct {
+		ProcessedAt time.Time `json:"processed_at"`
+		ExternalID  string    `json:"external_id"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil || payload.ExternalID == "" {
+		return nil, errors.New("page cursor is invalid")
+	}
+	return &db.SessionEventPageCursor{ProcessedAt: payload.ProcessedAt, ExternalID: payload.ExternalID}, nil
 }
 
 func decodeThreadCursor(raw string) (*db.SessionThreadPageCursor, error) {

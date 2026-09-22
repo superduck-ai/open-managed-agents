@@ -110,3 +110,16 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 - NATS bus 测试覆盖非法 subject/envelope、取消、关闭共享连接边界、畸形消息日志脱敏、真实 server 重启与自动恢复、引用计数订阅复用、跨实例广播、顺序和退订再订阅。
 - Sessions 集成测试使用独立 NATS 连接模拟发布实例和两个 SSE 实例，覆盖同实例多连接、preview/final/terminal 的 SSE 编码以及 workspace/session 隔离。
 - `TEST_NATS_URL=nats://127.0.0.1:4222,nats://127.0.0.1:4223,nats://127.0.0.1:4224 go test ./internal/sessions -run TestNATSFanout -count=1 -v` 可复跑同一集成链路到本地 Compose 集群；测试使用唯一 session subject，不改数据库。
+
+
+## 输入处理与状态事件顺序
+
+接受主线程 user.message 时，在同一事务内按 session.status_running → session.thread_status_running 激活任务；状态相同不重复写入。用户消息先持久化为 processed_at=null 的排队记录，Worker processing/processed ACK 后设置处理时间并广播。发送接口只返回提交的用户事件。
+
+Worker 注册和新一轮输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。result 不再驱动 idle，结束状态由 Worker 状态上报产生。旧 result 补造模型 span 的逻辑由后续模型生命周期 PR 替换。
+
+状态和公开事件同事务提交，重复事件不重新推动状态。主线程结束顺序为 thread idle → session idle；其他线程仍在运行时不结束 Session。待确认工具的 idle 保留 requires_action.event_ids。
+
+历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 00064–00067 保留既有编号，不改写已应用迁移。
+
+验证：tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，以及 Worker ACK 后的 SSE/history 顺序。

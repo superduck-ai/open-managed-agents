@@ -15,7 +15,7 @@
         thread_external_id,
         event_type,
         payload, payload_blob_uuid, tool_use_id,
-        processed_at,
+        COALESCE(processed_at, CAST('0001-01-01 00:00:00+00' AS timestamptz)) AS processed_at,
         created_at,
         deleted_at
     </sql>
@@ -30,7 +30,7 @@
         #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
         #{params.SessionUUID}, #{params.SessionExternalID}, #{params.ThreadUUID},
         #{params.ThreadExternalID}, #{params.EventType}, CAST(#{params.Payload,sensitive=true} AS jsonb), #{params.PayloadBlobUUID}, #{params.ToolUseID},
-        #{params.ProcessedAt}, #{params.CreatedAt}
+        NULLIF(#{params.ProcessedAt}, CAST('0001-01-01 00:00:00+00' AS timestamptz)), #{params.CreatedAt}
     </sql>
 
     <insert id="Insert" result="returning" resultType="sessionEventRow">
@@ -83,19 +83,33 @@
                 AND event_type IN
                 <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
             </if>
-            <if test="params.CreatedAtGT != nil">AND created_at &gt; #{params.CreatedAtGT}</if>
-            <if test="params.CreatedAtGTE != nil">AND created_at &gt;= #{params.CreatedAtGTE}</if>
-            <if test="params.CreatedAtLT != nil">AND created_at &lt; #{params.CreatedAtLT}</if>
-            <if test="params.CreatedAtLTE != nil">AND created_at &lt;= #{params.CreatedAtLTE}</if>
+            <if test="params.CreatedAtGT != nil">AND processed_at &gt; #{params.CreatedAtGT}</if>
+            <if test="params.CreatedAtGTE != nil">AND processed_at &gt;= #{params.CreatedAtGTE}</if>
+            <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
+            <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (created_at, uuid)
+                AND (COALESCE(processed_at, CAST('infinity' AS timestamptz)), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
-                (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+                (COALESCE(NULLIF(#{params.Cursor.ProcessedAt}, CAST('0001-01-01 00:00:00+00' AS timestamptz)), CAST('infinity' AS timestamptz)), (
+                    SELECT id FROM session_events
+                    WHERE workspace_uuid = #{params.WorkspaceUUID}
+                    AND session_external_id = #{params.SessionExternalID}
+                    AND external_id = #{params.Cursor.ExternalID}
+                ))
             </if>
         </where>
-        ORDER BY created_at
-        <choose><when test="params.Descending">DESC, uuid DESC</when><otherwise>ASC, uuid ASC</otherwise></choose>
+        ORDER BY COALESCE(processed_at, CAST('infinity' AS timestamptz))
+        <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="MarkProcessed" result="optional" resultType="sessionEventRow">
+        WITH changed AS (
+            UPDATE session_events SET processed_at = #{processedAt}
+            WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionID}
+            AND external_id = #{eventID} AND processed_at IS NULL AND deleted_at IS NULL
+            RETURNING <include refid="columns"/>
+        ) SELECT <include refid="columns"/> FROM changed
     </select>
 
     <select id="ChildSessionToolUseIDs" resultType="string">

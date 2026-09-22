@@ -454,6 +454,9 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
+	if r.URL.Query().Get("order") == "" {
+		order = "asc"
+	}
 	createdAtGT, err := httpapi.ParseOptionalTime(r, "created_at[gt]")
 	if err != nil {
 		return invalidRequest(err)
@@ -559,6 +562,10 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
+	events, err = h.prependInputRunningEvents(r.Context(), session, events)
+	if err != nil {
+		return mapSessionLoadError(err, sessionID)
+	}
 	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
@@ -567,6 +574,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		return mapSessionLoadError(err, sessionID)
 	}
 	h.publishSessionEvents(r.Context(), created)
+	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
@@ -584,7 +592,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	}
 	data := make([]json.RawMessage, 0, len(created))
 	for _, event := range created {
-		data = append(data, sessionEventPayload(event))
+		if allowedPublicEventType(event.EventType) {
+			data = append(data, sessionEventPayload(event))
+		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})
 	return nil

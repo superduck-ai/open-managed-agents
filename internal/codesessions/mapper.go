@@ -25,9 +25,12 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 		now = time.Now().UTC()
 	}
 	switch schema.Type {
+	case "user.interrupt":
+		return marshalRaw(map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, fallbackUUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}})
 	case "user.message":
 		eventUUID := firstNonEmpty(schema.UUID, schema.ID, fallbackUUID, uuid.NewV4().String())
 		payload := map[string]any{
+			"id":                 schema.ID,
 			"type":               "user",
 			"uuid":               eventUUID,
 			"session_id":         codeSessionID,
@@ -443,7 +446,6 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 			seedSuffix: "result:model_request_end",
 		})
 	}
-	candidates = append(candidates, publicPayloadCandidate{payload: publicPayloadWithType(object, "session.status_idle")})
 	return candidates
 }
 

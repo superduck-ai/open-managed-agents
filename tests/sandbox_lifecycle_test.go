@@ -40,7 +40,7 @@ func newSandboxLifecycleFixtureWithApp(t *testing.T, app *testApp) sandboxLifecy
 	env := createEnvironment(t, app, `{"name":"lifecycle-environment"}`)
 	t.Cleanup(func() { cleanupEnvironmentRows(t, app.pool, env.ID) })
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	t.Cleanup(func() { deleteSession(t, app, session.ID) })
+	t.Cleanup(func() { cleanupSession(t, app, session.ID) })
 	codeID := launchLocalCodeSession(t, app, session.ID)
 	epoch := registerCodeSessionWorker(t, app, codeID)
 	putCodeSessionWorkerState(t, app, codeID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)

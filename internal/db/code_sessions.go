@@ -38,6 +38,7 @@ type CodeSession struct {
 	WorkerTokenSessionID        *string
 	WorkerBinding               json.RawMessage
 	WorkerStatus                string
+	WorkerTurnStarted           bool
 	WorkerExternalMetadata      json.RawMessage
 	WorkerRequiresActionDetails json.RawMessage
 	CreatedAt                   time.Time
@@ -728,6 +729,7 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 		row, err := mapper.UpdateWorkerState(ctx, updateCodeSessionWorkerStateParams{
 			UUID:                  current.UUID,
 			WorkerStatus:          workerStatus,
+			TurnStarted:           input.WorkerStatus != nil && *input.WorkerStatus == "running",
 			RequiresActionDetails: requiresActionDetails,
 			ExternalMetadata:      externalMetadata,
 			Now:                   time.Now().UTC(),

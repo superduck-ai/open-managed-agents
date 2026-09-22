@@ -127,7 +127,7 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 				"params.WorkerBinding", "params.Now", "params.Now", "params.Now", "params.UUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.WorkerTokenSessionID", "params.WorkerBinding"},
-			wantSQLFragments:           []string{"UPDATE code_sessions", "CAST($5 AS jsonb)", "RETURNING current_worker_epoch"},
+			wantSQLFragments:           []string{"UPDATE code_sessions", "worker_turn_started = false", "CAST($5 AS jsonb)", "RETURNING current_worker_epoch"},
 		}},
 		{"resume worker lease for sandbox", mapperBuilderContract{
 			statement: codeSessionMapperResumeWorkerLeaseForSandboxStatement,
@@ -149,16 +149,16 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 		{"update worker state", mapperBuilderContract{
 			statement: codeSessionMapperUpdateWorkerStateStatement,
 			bound: buildCodeSessionMapperUpdateWorkerState(yourbatis.DialectPostgres, updateCodeSessionWorkerStateParams{
-				UUID: "code-session-uuid", WorkerStatus: "running", RequiresActionDetails: []byte("null"),
+				UUID: "code-session-uuid", WorkerStatus: "running", TurnStarted: true, RequiresActionDetails: []byte("null"),
 				ExternalMetadata: []byte(`{"worker":"test"}`), Now: now,
 			}),
 			wantID: "CodeSessionMapper.UpdateWorkerState", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.WorkerStatus", "params.Now", "params.WorkerStatus", "params.RequiresActionDetails", "params.ExternalMetadata",
+				"params.WorkerStatus", "params.Now", "params.WorkerStatus", "params.TurnStarted", "params.RequiresActionDetails", "params.ExternalMetadata",
 				"params.Now", "params.Now", "params.Now", "params.UUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.RequiresActionDetails", "params.ExternalMetadata"},
-			wantSQLFragments:           []string{"worker_requires_action_details = CAST($4 AS jsonb)", "RETURNING uuid"},
+			wantSQLFragments:           []string{"worker_turn_started = worker_turn_started OR $4", "worker_requires_action_details = CAST($5 AS jsonb)", "RETURNING uuid"},
 		}},
 	}
 	for _, test := range tests {

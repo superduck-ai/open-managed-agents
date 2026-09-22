@@ -1,6 +1,6 @@
 # 接口文档：`GET/PUT /v1/code/sessions/{session_id}/worker`
 
-本文记录当前后端实现中的 code-session worker state API。该接口用于持久化 worker 的轻量状态和 metadata patch，不负责 worker event 生成、delivery ACK、webhook job 或 session event 合成。
+本文记录当前后端实现中的 code-session worker state API。该接口用于持久化 worker 的轻量状态和 metadata patch，不接收 worker 输出事件或 delivery ACK。显式运行状态会驱动公开 Session/Thread 状态；公开事件及状态转换由事件写入事务统一提交。
 
 相关代码：
 
@@ -184,14 +184,19 @@ final worker_status != requires_action  => 一律保存为 null
 | `worker_status` | public `sessions.status` / primary thread status |
 |---|---|
 | `running` | `running` |
-| `idle` | `idle` |
+| `idle` | 仅当前 Worker 已显式上报 running 时同步为 `idle`；初始化 idle 不结束已接受的任务 |
 | `requires_action` | `idle` |
 
 同步发生在 worker state DB 更新提交之后。`running`、`idle` 和 `requires_action` 都通过同一条 public event 管道同步：先持久化 `session.status_running` 或 `session.status_idle`，再由 session event projection 更新 public session 与 primary thread，随后广播 SSE，并且只为首次创建的事件投递 webhook。同一 public 状态下重复上报不会生成重复事件；状态发生转换后再次上报会生成新的事件。
 
-`requires_action` 不是 public session status enum，因此 worker 状态只映射为不带 `stop_reason` 的普通 `session.status_idle`。工具阻塞语义仍由 worker state、metadata 以及工具权限路径产生的 `session.status_idle.stop_reason` 表达。
+`requires_action` 不是 public session status enum，映射为带 `requires_action` 原因的 `session.status_idle`。
 
-如果事件已经持久化但状态 projection 失败，PUT 返回 `500 api_error`。worker 使用相同状态重试时会命中同一个稳定事件 ID；服务端会重新执行已存在事件的 projection，但不会重复广播 SSE 或投递 webhook。Session 状态最后写入，作为 primary thread projection 已完成的标记，避免部分成功让后续重试被提前跳过。
+迁移 `00066` 添加内部 `worker_turn_started` 标记。注册 Worker 和接受新一轮主线程输入时清零，
+仅显式 running 上报置为 true；普通 idle 和 metadata-only 更新保留该标记。
+因此初始化 idle 不会生成公开结束事件，正常结束发布失败后的重复 idle 仍可重试。
+该标记不进入 Worker 或 Session API 响应。
+
+公开事件插入、primary thread 与 Session 状态更新在同一事务提交，失败时一起回滚，PUT 返回 `500 api_error`。Worker 使用相同状态重试时可补齐失败的事务；已存在的事件不会重新推动状态，也不会重复广播 SSE 或投递 webhook，避免迟到的旧事件覆盖新状态。
 
 如果请求没有显式 `worker_status`，不会触发 public session/thread 状态同步。details-only update 会保留当前 public status。
 
@@ -322,7 +327,7 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 - 当前 status 为 `running` 时，details-only PUT 不保存 details，且 public session/thread 保持 `running`。
 - `worker_status=running` 持久化一个 `session.status_running`，并通过该事件同步 public session/thread 为 `running`。
 - 同一 running 状态的重复 PUT 不重复生成事件；经过 idle 后的新一轮 running 会生成新事件。
-- `worker_status=idle` 或 `requires_action` 同步 public session/thread 为 `idle`。
+- 初始化和新一轮开始前的重复 `worker_status=idle` 不覆盖 public running；执行开始后的 idle 或 requires_action 同步 public session/thread 为 idle。
 - GET `/worker` 用最小 response 读回 PUT 后的 non-empty `external_metadata`。
 - GET `/worker` metadata 为空时返回 `{ "worker": {} }`，且不刷新 connected/activity。
 - 缺失或非法 `worker_epoch`、非法 `worker_status`、非 object metadata/details 返回 400。
@@ -333,3 +338,11 @@ GET 不返回 `ok`、`session_id`、`status`、`worker_epoch`、`worker_status`�
 go test ./tests -run TestCodeSessionWorker -count=1
 go test ./internal/codesessions ./internal/db -count=1
 ```
+
+## 公共输入处理 ACK
+
+Worker delivery 的 processing 对应用户命令 started，processed 对应 completed；控制响应在应用后上报 processed。
+公开输入的 ID 保留在投递 envelope 中，ACK 将排队事件的 processed_at 从 null 推进到处理时间，并只广播一次。
+写入时按 Session → Code Session 的顺序加锁并校验 epoch，避免旧 Worker 修改新 epoch 的输入状态。
+该步骤先于 broker ACK 行锁执行，防止与输入接受事务的锁顺序倒置。
+Worker 早到的 running 不覆盖仍待确认的主线程；工具确认 ACK 后清理待办的行为在后续工具 PR 中补齐。

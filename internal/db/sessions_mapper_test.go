@@ -188,12 +188,12 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 
 	eventBound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace-uuid", SessionExternalID: "ses_test", PrimaryOnly: true,
-		FetchLimit: 21, Cursor: &SessionEventPageCursor{CreatedAt: now, UUID: "event-uuid"},
+		FetchLimit: 21, Cursor: &SessionEventPageCursor{ProcessedAt: now, ExternalID: "event-id"},
 		Types: []string{"message", "result"},
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, "ORDER BY created_at ASC, uuid ASC")
+	assertMapperSQLContains(t, eventBound, `ORDER BY COALESCE(processed_at, CAST('infinity' AS timestamptz)) ASC, id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,

@@ -246,6 +246,7 @@ func normalizeInputEvent(
 	raw json.RawMessage,
 	now time.Time,
 ) (db.SessionEvent, json.RawMessage, bool, error) {
+	now = now.UTC().Truncate(time.Microsecond)
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return db.SessionEvent{}, nil, false, errors.New("event must be an object")
@@ -262,8 +263,13 @@ func normalizeInputEvent(
 		return db.SessionEvent{}, nil, false, err
 	}
 	payload["id"] = eventID
-	payload["processed_at"] = now.Format(time.RFC3339)
-	payload["created_at"] = httpapi.FormatTime(now)
+	payload["processed_at"] = now.Format(time.RFC3339Nano)
+	processedAt := now
+	if eventType == "user.message" || eventType == "user.interrupt" || eventType == "user.tool_confirmation" || eventType == "system.message" {
+		processedAt = time.Time{}
+		payload["processed_at"] = nil
+	}
+	payload["created_at"] = now.Format(time.RFC3339Nano)
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {
 		value = strings.TrimSpace(value)
@@ -308,7 +314,7 @@ func normalizeInputEvent(
 		ThreadExternalID:  threadExternalID,
 		EventType:         eventType,
 		Payload:           payloadRaw,
-		ProcessedAt:       now,
+		ProcessedAt:       processedAt,
 		CreatedAt:         now,
 	}, session.OutcomeEvaluations, outcomesChanged, nil
 }

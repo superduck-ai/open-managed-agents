@@ -59,6 +59,7 @@ type sessionEventPageMapperParams struct {
 
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
+	MarkProcessed(ctx context.Context, workspaceUUID, sessionID, eventID string, processedAt time.Time) (sessionEventRow, bool, error)
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)

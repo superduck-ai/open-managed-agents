@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -610,6 +611,9 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 	}
 	if eventType != "agent.custom_tool_use" {
 		toolPayload["evaluated_permission"] = string(permission)
+		if permission == resolvedToolPermissionAllow || permission == resolvedToolPermissionAsk {
+			toolPayload["evaluation"] = map[string]string{"type": "always_" + string(permission)}
+		}
 	}
 	if eventType == "agent.mcp_tool_use" {
 		toolPayload["mcp_server_name"] = identity.ServerName
@@ -625,15 +629,15 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 	if permission != resolvedToolPermissionAsk {
 		return request, payloads, nil
 	}
-	statusTime := now.Add(time.Millisecond)
 	statusRaw, err := marshalRaw(map[string]any{
-		"id":   stablePublicEventID(codeSessionID, request.RequestID+"\x00tool_permission_requires_action"),
-		"type": "session.status_idle",
+		"id":                stablePublicEventID(codeSessionID, request.RequestID+"\x00tool_permission_requires_action"),
+		"type":              "session.thread_status_idle",
+		"session_thread_id": request.SessionThreadID,
 		"stop_reason": map[string]any{
 			"event_ids": []string{request.PublicEventID},
 			"type":      "requires_action",
 		},
-		"processed_at": formatTime(statusTime),
+		"processed_at": formatTime(now),
 	})
 	if err != nil {
 		return toolPermissionRequest{}, nil, err
@@ -652,4 +656,40 @@ func toolPermissionPublicIdentity(toolName string, identity toolIdentity) (strin
 		return "agent.tool_use", identity.ToolName
 	}
 	return "agent.tool_use", toolName
+}
+
+func (s *Service) PendingToolEventIDs(ctx context.Context, codeSessionID, threadID string) ([]string, error) {
+	record, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, db.ErrNotFound
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(record.WorkerExternalMetadata, &metadata); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0)
+	primary, hasPrimary, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	for key, raw := range metadata {
+		if !strings.HasPrefix(key, legacyToolPermissionRequestMetadataKey+":") || string(raw) == "null" {
+			continue
+		}
+		var request toolPermissionRequest
+		if err := json.Unmarshal(raw, &request); err != nil {
+			return nil, err
+		}
+		if request.SessionThreadID == "" && hasPrimary {
+			request.SessionThreadID = primary.ExternalID
+		}
+		if request.PublicEventID != "" && (threadID == "" || request.SessionThreadID == threadID) {
+			ids = append(ids, request.PublicEventID)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
 }

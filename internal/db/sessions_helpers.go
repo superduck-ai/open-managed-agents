@@ -118,6 +118,34 @@ func insertSessionEventsTx(
 
 	created := make([]SessionEvent, 0, len(events))
 	for _, event := range events {
+		if event.EventType == "session.thread_status_running" {
+			threadID := event.StatusThreadID
+			if threadID == "" {
+				threadID = primary.ExternalID
+			}
+			thread, err := threadMapper.FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, threadID)
+			if err != nil {
+				return nil, err
+			}
+			if thread.Status == "running" {
+				continue
+			}
+		}
+		if event.EventType == "session.status_running" && session.Status == "running" {
+			continue
+		}
+		if event.EventType == "session.status_idle" {
+			threads, err := threadMapper.List(ctx, session.WorkspaceUUID, session.ExternalID)
+			if err != nil {
+				return nil, err
+			}
+			if slices.ContainsFunc(threads, func(thread sessionThreadRow) bool {
+				return thread.Status == "running" || thread.Status == "rescheduling"
+			}) {
+				continue
+			}
+		}
+
 		event.OrganizationUUID = session.OrganizationUUID
 		event.WorkspaceUUID = session.WorkspaceUUID
 		event.SessionUUID = session.UUID
@@ -141,32 +169,36 @@ func insertSessionEventsTx(
 		}
 
 		params := sessionEventWriteParameters(event)
+		var row sessionEventRow
 		if ignoreExisting {
-			row, found, insertErr := eventMapper.InsertIfAbsent(ctx, params)
-			if insertErr != nil {
-				return nil, insertErr
+			var found bool
+			row, found, err = eventMapper.InsertIfAbsent(ctx, params)
+			if err != nil {
+				return nil, err
 			}
-			if found {
-				if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
-					return nil, err
-				}
-				created = append(created, row.event())
+			if !found {
+				continue
 			}
-			continue
-		}
-		row, insertErr := eventMapper.Insert(ctx, params)
-		if insertErr != nil {
-			return nil, insertErr
+		} else {
+			row, err = eventMapper.Insert(ctx, params)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
 			return nil, err
 		}
 		created = append(created, row.event())
+		if err := applySessionEventState(ctx, executor, &session, primary.ExternalID, event); err != nil {
+			return nil, err
+		}
+
 	}
 	if slices.ContainsFunc(created, func(event SessionEvent) bool {
 		return maevents.IsPublicWorkerInputEvent(event.EventType)
 	}) {
-		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
+		newTurn := created[0].EventType == "session.status_running"
+		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, newTurn); err != nil {
 			return nil, err
 		}
 	}
@@ -325,7 +357,11 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 	workspaceUUID string,
 	sessionExternalID string,
 ) (Session, error) {
-	row, found, err := tx.sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+	return lockSessionForEvents(ctx, tx.sessionMapper, workspaceUUID, sessionExternalID)
+}
+
+func lockSessionForEvents(ctx context.Context, mapper SessionMapper, workspaceUUID, sessionID string) (Session, error) {
+	row, found, err := mapper.LockSessionForEvents(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		return Session{}, err
 	}
@@ -333,4 +369,24 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 		return Session{}, ErrNotFound
 	}
 	return row.session(), nil
+}
+
+// applySessionEventState runs only for newly inserted facts under the session lock.
+func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent) error {
+	mapper := NewSessionMapper(executor)
+	if status, ok := maevents.ThreadStatus(event.EventType); ok {
+		threadID := event.StatusThreadID
+		if threadID == "" {
+			threadID = primaryID
+		}
+		_, err := NewSessionThreadMapper(executor).SetStatus(ctx, session.WorkspaceUUID, session.ExternalID, threadID, status)
+		return err
+	}
+	if status, ok := maevents.SessionStatus(event.EventType); ok {
+		if _, err := mapper.SetStatus(ctx, session.WorkspaceUUID, session.ExternalID, status); err != nil {
+			return err
+		}
+		session.Status = status
+	}
+	return nil
 }

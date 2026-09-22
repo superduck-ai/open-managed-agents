@@ -325,6 +325,14 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
+	// An agent-only patch must not smuggle an unpriced model into a session
+	// that still carries a budget: unpriced requests accrue no cost, so the
+	// budget would silently never trigger.
+	if len(body.Agent) > 0 && len(next.Budget) > 0 {
+		if unpriced := h.codeSessions.Billing().UnpricedSnapshotModels(next.AgentSnapshot); len(unpriced) > 0 {
+			return invalidRequest(fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", ")))
+		}
+	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
 	if err != nil {

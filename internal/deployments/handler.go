@@ -1688,6 +1688,14 @@ func normalizeDeploymentBudget(raw json.RawMessage) (json.RawMessage, error) {
 // requests accrue no cost, so the budget could never trigger.
 func (h *Handler) deploymentBudgetPatch(current, raw, snapshot json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
+		// An agent-only patch must not smuggle an unpriced model into a
+		// deployment that still carries a budget: unpriced requests accrue no
+		// cost, so the budget would silently never trigger.
+		if len(current) > 0 {
+			if unpriced := h.billing.UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
+				return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
+			}
+		}
 		return current, nil
 	}
 	budget, err := normalizeDeploymentBudget(raw)

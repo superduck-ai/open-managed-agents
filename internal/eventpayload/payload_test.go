@@ -92,6 +92,13 @@ func TestOpaqueMetadataDoesNotRejectWorkerPayload(t *testing.T) {
 	}
 }
 
+func TestNonStringModelRequestStartIDDoesNotRejectPayload(t *testing.T) {
+	summary, _, err := Summarize([]byte(`{"type":"span.model_request_end","model_request_start_id":123}`), "span.model_request_end")
+	if err != nil || summary.ModelRequestStartID != "" {
+		t.Fatalf("non-string start id must degrade to empty, got %q %v", summary.ModelRequestStartID, err)
+	}
+}
+
 func TestSummaryCarriesBillingMetadata(t *testing.T) {
 	payload := []byte(`{"type":"span.model_request_end","model":"claude","billing":{"list_cost":"900","currency":"USD"},"usage":{"input_tokens":10},"model_request_start_id":"sevt_start"}`)
 	summary, _, err := Summarize(payload, "span.model_request_end")

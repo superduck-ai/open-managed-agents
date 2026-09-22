@@ -52,7 +52,7 @@ type payloadMetadata struct {
 	ID                  json.RawMessage `json:"id"`
 	Billing             json.RawMessage `json:"billing"`
 	Usage               json.RawMessage `json:"usage"`
-	ModelRequestStartID string          `json:"model_request_start_id"`
+	ModelRequestStartID json.RawMessage `json:"model_request_start_id"`
 }
 
 // Store holds stable database and object storage dependencies at the service boundary.
@@ -89,6 +89,10 @@ func Summarize(payload []byte, eventType string) (Summary, *string, error) {
 			break
 		}
 	}
+	modelRequestStartID := ""
+	if value := metadataString(metadata.ModelRequestStartID); value != nil {
+		modelRequestStartID = *value
+	}
 	return Summary{
 		Type:                eventType,
 		Name:                metadataString(metadata.Name),
@@ -96,7 +100,7 @@ func Summarize(payload []byte, eventType string) (Summary, *string, error) {
 		Preview:             Preview(payload),
 		Billing:             metadata.Billing,
 		Usage:               metadata.Usage,
-		ModelRequestStartID: metadata.ModelRequestStartID,
+		ModelRequestStartID: modelRequestStartID,
 	}, toolID, nil
 }
 

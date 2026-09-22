@@ -538,7 +538,6 @@ export type ModelBracketTargetEntry = DisplayEventEntry | ToolCallEntry;
 export type ModelRequestBracket = {
   startId: string;
   startMs: number;
-  softEndMs?: number;
   entries: ModelBracketTargetEntry[];
 };
 

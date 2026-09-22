@@ -31,7 +31,7 @@ describe('sessionTranscriptModel', () => {
     );
   });
 
-  test('keeps only the latest model request that has not ended or crossed a turn boundary', () => {
+  test('keeps the latest request open until its matching end arrives', () => {
     const open = { id: 'span-open', type: 'span.model_request_start' };
 
     expect(
@@ -41,7 +41,13 @@ describe('sessionTranscriptModel', () => {
         open,
       ]),
     ).toBe(open);
-    expect(latestOpenModelRequest([open, { id: 'idle', type: 'session.status_idle' }])).toBeNull();
+    expect(latestOpenModelRequest([open, { id: 'idle', type: 'session.status_idle' }])).toBe(open);
+    expect(
+      latestOpenModelRequest([
+        open,
+        { id: 'span-open-end', type: 'span.model_request_end', model_request_start_id: open.id },
+      ]),
+    ).toBeNull();
   });
 
   test('keeps agent entries without a reliable bracket as standalone blocks', () => {
@@ -143,7 +149,12 @@ describe('sessionTranscriptModel', () => {
           created_at: '2026-01-01T08:00:00.000Z',
           processed_at: '2026-01-01T08:00:01.000Z',
         },
-        { id: 'event-message', type: 'agent.message', processed_at: thinking.event.processed_at },
+        {
+          id: 'event-message',
+          type: 'agent.message',
+          model_request_start_id: 'model-start',
+          processed_at: thinking.event.processed_at,
+        },
         {
           id: 'model-end',
           type: 'span.model_request_end',
@@ -172,6 +183,7 @@ describe('sessionTranscriptModel', () => {
         {
           id: 'answer',
           type: 'agent.message',
+          model_request_start_id: 'model-start',
           processed_at: '2026-01-01T08:00:04.500Z',
           content: [{ type: 'text', text: 'Final answer' }],
         },

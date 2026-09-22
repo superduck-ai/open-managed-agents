@@ -11,6 +11,7 @@ import {
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
   sessionIncompleteStreamEventIds,
+  syncSessionEventHistory,
 } from './api';
 import { buildSessionEventEntries } from './sessions/sessionTraceModel';
 
@@ -22,7 +23,7 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
-  test('replaces an orphaned stream preview as soon as the final agent message arrives', () => {
+  test('replaces a preview with the same ID as soon as the final agent message arrives', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -32,11 +33,11 @@ describe('managed agents API', () => {
       type: 'event_start',
       created_at: createdAt,
       processed_at: createdAt,
-      event: { id: 'sevt_preview', type: 'agent.message' },
+      event: { id: 'sevt_final', type: 'agent.message' },
     });
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toMatchObject({
-      id: 'sevt_preview',
+      id: 'sevt_final',
       created_at: createdAt,
       processed_at: null,
       is_streaming: true,
@@ -76,7 +77,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('keeps a streaming message in its turn when idle arrives before the final event', () => {
+  test('places the final message in persisted arrival order when idle has the same timestamp', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -93,7 +94,15 @@ describe('managed agents API', () => {
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       type: 'event_start',
       created_at: messageAt,
-      event: { id: 'sevt_preview', type: 'agent.message' },
+      event: { id: 'sevt_final', type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_model_end',
+      type: 'span.model_request_end',
+      model_request_start_id: 'sevt_model_start',
+      event_ids: ['sevt_final'],
+      created_at: idleAt,
+      processed_at: idleAt,
     });
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       id: 'sevt_idle',
@@ -104,7 +113,7 @@ describe('managed agents API', () => {
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
       'sevt_model_start',
-      'sevt_preview',
+      'sevt_model_end',
       'sevt_idle',
     ]);
 
@@ -117,7 +126,7 @@ describe('managed agents API', () => {
     });
 
     const events = sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']);
-    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_final', 'sevt_idle']);
+    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_model_end', 'sevt_idle', 'sevt_final']);
 
     const entries = buildSessionEventEntries(events, 'transcript', Date.parse(startAt), undefined, {
       platformTranscriptFiltering: true,
@@ -277,7 +286,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('preserves backend event order when timestamps run backwards', () => {
+  test('sorts cached events by processed time even when delivery runs backwards', () => {
     const events = [
       {
         id: 'sevt_user_inserted_first',
@@ -294,8 +303,8 @@ describe('managed agents API', () => {
     ];
 
     expect(mergeSessionEventsById(events).map((event) => event.id)).toEqual([
-      'sevt_user_inserted_first',
       'sevt_agent_inserted_second',
+      'sevt_user_inserted_first',
     ]);
     expect(
       buildSessionEventEntries(events, 'transcript', Date.parse('2026-08-28T01:01:29Z'), undefined, {
@@ -343,7 +352,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('replaces cached events without moving them and appends new events in arrival order', () => {
+  test('sorts replacements and appended events by processed time', () => {
     const first = mergeSessionEventCache(undefined, [
       {
         id: 'sevt_first',
@@ -366,8 +375,8 @@ describe('managed agents API', () => {
       { id: 'sevt_third', type: 'session.status_idle', created_at: '2026-08-28T01:01:28Z' },
     ]);
 
-    expect(updated.events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_second', 'sevt_third']);
-    expect(updated.events[0]?.content).toBe('final');
+    expect(updated.events.map((event) => event.id)).toEqual(['sevt_third', 'sevt_second', 'sevt_first']);
+    expect(updated.events[2]?.content).toBe('final');
   });
 
   test('omits an idle result that duplicates an agent message with the same timestamp', () => {
@@ -458,6 +467,8 @@ describe('managed agents API', () => {
           type: 'span.model_request_end',
           created_at: '2026-08-28T01:01:33Z',
           model_request_start_id: 'sevt_model_start',
+          event_ids: ['sevt_agent_between_tools'],
+          tool_use_ids: ['sevt_tool_first', 'sevt_tool_second'],
         },
       ],
       'transcript',
@@ -649,3 +660,81 @@ function fileMetadata(index: number) {
     type: 'file' as const,
   };
 }
+
+describe('model request lifecycle', () => {
+  test('history establishes equal-timestamp order when live events overlap paginated loading', async () => {
+    const client = new QueryClient();
+    const events = ['z', 'b', 'a'].map((id) => ({ id, type: 'agent.message', processed_at: '2026-09-21T00:00:00Z' }));
+    mergeSessionStreamFrame(client, 'w', 's', '', events[2]);
+    let page = 0;
+    globalThis.fetch = (async () => {
+      page++;
+      return Response.json(
+        page === 1 ? { data: events.slice(0, 2), next_page: 'next' } : { data: events.slice(2), next_page: null },
+      );
+    }) as typeof fetch;
+    await syncSessionEventHistory({ queryClient: client, workspaceId: 'w', sessionId: 's', force: true });
+    expect(sessionDetailScopeEvents(client, 'w', 's', ['']).map((event) => event.id)).toEqual(['z', 'b', 'a']);
+  });
+
+  test('preserves server order for equal timestamps instead of sorting random IDs', () => {
+    const events = ['z', 'b', 'a'].map((id) => ({ id, type: 'agent.message', processed_at: '2026-09-21T00:00:00Z' }));
+    let cache: ReturnType<typeof mergeSessionEventCache> | undefined;
+    for (const event of events) cache = mergeSessionEventCache(cache, [event]);
+    expect(cache?.events).toEqual(events);
+    expect(mergeSessionEventCache(undefined, events).events).toEqual(events);
+  });
+
+  test('closes only the previews listed by an end and rejects their late deltas', () => {
+    const client = new QueryClient();
+    const send = (event: Parameters<typeof mergeSessionStreamFrame>[4]) =>
+      mergeSessionStreamFrame(client, 'w', 's', '', event);
+    for (const id of ['answer-a', 'answer-b']) send({ type: 'event_start', event: { id, type: 'agent.message' } });
+    send({ id: 'end-a', type: 'span.model_request_end', model_request_start_id: 'start-a', event_ids: ['answer-a'] });
+    send({ type: 'event_start', event: { id: 'answer-a', type: 'agent.message' } });
+    send({ type: 'event_delta', event_id: 'answer-a', delta: { content: { text: 'late' } } });
+    expect([...sessionIncompleteStreamEventIds(client, 'w', 's')]).toEqual(['answer-b']);
+    expect(Object.keys(sessionDetailDeltaFrames(client, 'w', 's', ['']))).toEqual(['answer-b']);
+  });
+
+  test('live arrival and history produce identical intervals for concurrent requests and late messages', () => {
+    const start = (id: string, thread: string, at: string) => ({
+      id,
+      request_id: id,
+      type: 'span.model_request_start',
+      session_thread_id: thread,
+      processed_at: at,
+    });
+    const a = start('a', 'main', '2026-09-21T00:00:01.000001Z');
+    const b = start('b', 'main', '2026-09-21T00:00:01.000002Z');
+    const child = start('c', 'child', '2026-09-21T00:00:01.000003Z');
+    const answer = {
+      id: 'answer',
+      type: 'agent.message',
+      session_thread_id: 'main',
+      model_request_start_id: 'a',
+      processed_at: '2026-09-21T00:00:05Z',
+      content: [{ type: 'text', text: 'Done' }],
+    };
+    const end = {
+      id: 'end-a',
+      type: 'span.model_request_end',
+      session_thread_id: 'main',
+      model_request_start_id: 'a',
+      processed_at: '2026-09-21T00:00:04.000001Z',
+      usage: { input_tokens: 12, output_tokens: 4 },
+    };
+    const arrival = [answer, child, b, end, a];
+    let cache: ReturnType<typeof mergeSessionEventCache> | undefined;
+    for (const event of arrival) cache = mergeSessionEventCache(cache, [event]);
+    const history = mergeSessionEventCache(undefined, [a, b, child, end, answer]);
+    expect(cache?.events).toEqual(history.events);
+    const entries = buildSessionEventEntries(cache!.events, 'transcript');
+    expect(entries.find((entry) => entry.kind === 'message')).toMatchObject({
+      bracketId: 'a',
+      inferenceMs: 3000,
+      bracketOpen: false,
+    });
+    expect(buildSessionEventEntries(history.events, 'transcript')).toEqual(entries);
+  });
+});

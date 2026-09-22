@@ -40,6 +40,7 @@ describe('session timeline event order', () => {
     const message = {
       id: 'agent-message',
       type: 'agent.message',
+      model_request_start_id: start.id,
       processed_at: '2026-08-29T01:00:01.000Z',
       content: [{ type: 'text', text: 'Streaming answer' }],
     };
@@ -54,12 +55,12 @@ describe('session timeline event order', () => {
     const earlyWidth = modelRequestTickWidth([start, message], Date.parse(startAt) + 2_000);
     const liveWidthAtEnd = modelRequestTickWidth([start, message], Date.parse(endAt));
     const completedWidth = modelRequestTickWidth([start, message, end], Date.parse(endAt) + 10_000);
-    const reconciledFromIdleWidth = modelRequestTickWidth([start, message, idle], Date.parse(endAt) + 10_000);
+    const widthAfterIdle = modelRequestTickWidth([start, message, end, idle], Date.parse(endAt) + 10_000);
 
     expect(earlyWidth).toBeGreaterThan(0.4);
     expect(liveWidthAtEnd).toBeGreaterThan(earlyWidth);
     expect(completedWidth).toBeCloseTo(liveWidthAtEnd, 6);
-    expect(reconciledFromIdleWidth).toBeCloseTo(liveWidthAtEnd, 6);
+    expect(widthAfterIdle).toBeCloseTo(liveWidthAtEnd, 6);
   });
 });
 
@@ -208,3 +209,24 @@ function modelRequestTickWidth(events: Array<Record<string, unknown>>, nowMs: nu
   const timeline = buildSessionTimeline([lane], new Map([[lane.id, entries]]));
   return buildTimelineTicks(timeline, nowMs)[0]?.widthPct ?? 0;
 }
+
+test('shows a request interval before any preview and closes it without a final message', () => {
+  const lane = { id: '', label: 'Main', isMain: true };
+  const start = {
+    id: 'request',
+    request_id: 'request',
+    type: 'span.model_request_start',
+    processed_at: '2026-09-21T00:00:00Z',
+  };
+  const live = buildSessionTimeline([lane], new Map(), new Map([['', [start]]]));
+  expect(live[0]?.items[0]).toMatchObject({ id: 'request', open: true, durationMs: 0 });
+  const end = {
+    id: 'end',
+    type: 'span.model_request_end',
+    model_request_start_id: 'request',
+    processed_at: '2026-09-21T00:00:03Z',
+    error: { type: 'cancelled' },
+  };
+  const closed = buildSessionTimeline([lane], new Map(), new Map([['', [start, end]]]));
+  expect(closed[0]?.items[0]).toMatchObject({ id: 'request', open: false, durationMs: 3000 });
+});

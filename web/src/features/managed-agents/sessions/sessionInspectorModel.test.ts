@@ -84,12 +84,12 @@ describe('session inspector event order', () => {
   test('groups filtered events by their original turns without merging across a hidden boundary', () => {
     const events: QuickstartSessionEvent[] = [
       modelStart('span_first'),
-      { id: 'evt_first', type: 'agent.message', content: 'First turn' },
+      { id: 'evt_first', type: 'agent.message', content: 'First turn', model_request_start_id: 'span_first' },
       { id: 'evt_idle', type: 'session.status_idle' },
       modelStart('span_second'),
-      { id: 'evt_second', type: 'agent.message', content: 'Second turn' },
+      { id: 'evt_second', type: 'agent.message', content: 'Second turn', model_request_start_id: 'span_second' },
       modelEnd('span_second_end', 'span_second'),
-    ];
+    ].map((event, index) => ({ ...event, processed_at: new Date(Date.UTC(2026, 8, 21) + index * 1000).toISOString() }));
     const rows = buildInspectorEventRows(events);
     const allItems = buildInspectorEventListItems(events, rows);
     const filteredItems = buildInspectorEventListItems(

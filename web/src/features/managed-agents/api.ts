@@ -1055,6 +1055,24 @@ export function sessionDetailDeltaFramesKey(workspaceId: string, sessionId: stri
   return ['managed-agents', 'session-detail-delta-frames', workspaceId, sessionId, threadId] as const;
 }
 
+// Keep server order for equal timestamps. Random event IDs carry no chronology.
+export function compareSessionEvents(a: QuickstartSessionEvent, b: QuickstartSessionEvent) {
+  return sessionEventOrderTime(a) - sessionEventOrderTime(b);
+}
+
+function sessionEventOrderTime(event: QuickstartSessionEvent) {
+  const value = typeof event.processed_at === 'string' ? event.processed_at : event.created_at;
+  if (typeof value !== 'string') return 0;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return 0;
+  const fraction = /\.(\d+)/.exec(value)?.[1] ?? '';
+  return milliseconds + Number(fraction.padEnd(6, '0').slice(3, 6)) / 1000;
+}
+
+export function modelRequestEventIds(event: QuickstartSessionEvent): string[] {
+  return Array.isArray(event.event_ids) ? event.event_ids.filter((id): id is string => typeof id === 'string') : [];
+}
+
 export function mergeSessionEventCache(
   cache: SessionDetailEventCache | undefined,
   incoming: QuickstartSessionEvent[],
@@ -1105,7 +1123,7 @@ export function mergeSessionEventCache(
     return current;
   }
   return {
-    events: nextEvents ?? current.events,
+    events: nextEvents?.sort(compareSessionEvents) ?? current.events,
     syncedThrough,
     historyComplete,
     sawTerminated,
@@ -1165,6 +1183,7 @@ export async function syncSessionEventHistory({
       queryClient.setQueryData(sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId), {});
     }
     let page = initialPage;
+    const historyEvents: QuickstartSessionEvent[] = [];
     let sawTerminated = false;
     do {
       if (signal?.aborted) {
@@ -1179,6 +1198,7 @@ export async function syncSessionEventHistory({
         page,
       });
       const nextPage = response.next_page ?? null;
+      historyEvents.push(...response.data);
       sawTerminated =
         sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
       const replacedPreviewIds: string[] = [];
@@ -1191,8 +1211,12 @@ export async function syncSessionEventHistory({
           mergedCache = sessionEventCacheReplacingId(mergedCache, previewId, event);
           return false;
         });
+        const orderedCache =
+          !initialPage && mergedCache
+            ? mergeSessionEventCache({ ...mergedCache, events: [...historyEvents] }, mergedCache.events)
+            : mergedCache;
         return mergeSessionEventCache(
-          mergedCache,
+          orderedCache,
           remainingEvents,
           nextPage
             ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
@@ -1231,6 +1255,15 @@ export function mergeSessionStreamFrame(
   if (replacedPreviewId) {
     removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, replacedPreviewId);
   }
+  if (eventType === 'span.model_request_end') {
+    cleanupIncompleteSessionStreamEvents(
+      queryClient,
+      workspaceId,
+      sessionId,
+      threadId,
+      new Set(modelRequestEventIds(event)),
+    );
+  }
   if (eventType.endsWith('status_terminated')) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
   }
@@ -1240,47 +1273,13 @@ function sessionStreamPreviewIdForFinalEvent(
   cache: SessionDetailEventCache | undefined,
   incoming: QuickstartSessionEvent,
 ) {
-  const incomingId = sessionStableEventId(incoming);
-  const incomingType = sessionEventType(incoming);
-  if (
-    !cache ||
-    !incomingId ||
-    (incomingType !== 'agent.message' && incomingType !== 'agent.thinking') ||
-    sessionNullableProcessedAt(incoming) === null
-  ) {
-    return null;
-  }
-
-  const candidates = cache.events.filter((event) => {
-    const id = sessionStableEventId(event);
-    return (
-      id !== null &&
-      id !== incomingId &&
-      sessionEventType(event) === incomingType &&
-      sessionNullableProcessedAt(event) === null &&
-      event.is_streaming === true
-    );
-  });
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  const incomingCreatedAt = sessionEventCreatedAtMs(incoming);
-  const timestampMatches =
-    incomingCreatedAt === null
-      ? []
-      : candidates.filter((candidate) => sessionEventCreatedAtMs(candidate) === incomingCreatedAt);
-  const matchedCandidate =
-    timestampMatches.length === 1 ? timestampMatches[0] : candidates.length === 1 ? candidates[0] : null;
-  return matchedCandidate ? sessionStableEventId(matchedCandidate) : null;
-}
-
-function sessionEventCreatedAtMs(event: QuickstartSessionEvent) {
-  if (typeof event.created_at !== 'string' || !event.created_at) {
-    return null;
-  }
-  const createdAtMs = Date.parse(event.created_at);
-  return Number.isFinite(createdAtMs) ? createdAtMs : null;
+  const id = sessionStableEventId(incoming);
+  if (!id || sessionNullableProcessedAt(incoming) === null) return null;
+  return cache?.events.some(
+    (event) => sessionStableEventId(event) === id && sessionEventIsIncompleteStreamPreview(event),
+  )
+    ? id
+    : null;
 }
 
 function sessionEventCacheReplacingId(
@@ -1292,19 +1291,11 @@ function sessionEventCacheReplacingId(
     return mergeSessionEventCache(cache, [finalEvent]);
   }
   const finalId = sessionStableEventId(finalEvent);
-  const events: QuickstartSessionEvent[] = [];
-  cache.events.forEach((event) => {
-    const eventId = sessionStableEventId(event);
-    if (eventId === previewId) {
-      events.push(finalEvent);
-      return;
-    }
-    if (finalId && eventId === finalId) {
-      return;
-    }
-    events.push(event);
+  const events = cache.events.filter((event) => {
+    const id = sessionStableEventId(event);
+    return id !== previewId && id !== finalId;
   });
-  return { ...cache, events };
+  return mergeSessionEventCache({ ...cache, events }, [finalEvent]);
 }
 
 function removeSessionDeltaFrame(
@@ -1368,6 +1359,20 @@ export function mergeSessionDeltaFrame(
   threadId: string,
   event: QuickstartSessionEvent,
 ) {
+  const cache = queryClient.getQueryData<SessionDetailEventCache>(
+    sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
+  );
+  const frameId =
+    sessionEventType(event) === 'event_start' ? sessionStableEventId(toRecord(event.event) ?? {}) : event.event_id;
+  if (
+    typeof frameId === 'string' &&
+    cache?.events.some(
+      (item) =>
+        (sessionEventType(item) === 'span.model_request_end' && modelRequestEventIds(item).includes(frameId)) ||
+        (sessionStableEventId(item) === frameId && sessionNullableProcessedAt(item) !== null),
+    )
+  )
+    return;
   const deltaKey = sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId);
   if (sessionEventType(event) === 'event_start') {
     const started = sessionStreamingMessageFromStart(event, threadId);

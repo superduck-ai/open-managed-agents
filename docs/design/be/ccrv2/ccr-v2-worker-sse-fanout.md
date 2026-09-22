@@ -188,3 +188,29 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 usage 的序列化由 sessions 资源层提供；DB 在 Session 行锁内用最新累计值生成并保存快照，
 避免同批 end/idle 或并发线程读到旧值。重复 end 不重复累计，重复事件 ID 不重新推动状态。
 线程状态和事件同一事务提交。仍有 running/rescheduling 线程时，仅发布线程 idle，不发布 Session usage/idle。
+
+## 工具、输入与资源事件
+
+- assistant 工具块和 can_use_tool 使用同一 public invocation ID，覆盖无需询问的自动放行调用。
+- built-in 使用 `agent.tool_use → agent.tool_result.tool_use_id`；MCP 使用
+  `agent.mcp_tool_use → agent.mcp_tool_result.mcp_tool_use_id`。
+- `user.tool_confirmation` 只能引用 ask 的 built-in/MCP 调用；拒绝非 ask、错误类别、重复回复和 allow 携带 deny_message。
+  子线程 owner/primary 两个投影归一到同一个待处理调用。
+- 确认通过 control_response 送给 Worker，携带公共输入 ID。处理 ACK 后清理该调用的等待记录；
+  还有其他调用未处理时重新发布 requires_action 的剩余集合，全部完成才恢复 running。
+- AskUserQuestion 是本地 custom adapter：`agent.custom_tool_use → user.custom_tool_result`。
+  不套用 permission policy；显式 disabled 仍禁用。成功结果必须是文本 JSON answers 对象，写入前验证。
+- `user.interrupt` 转成 SDK interrupt control_request；发送响应 processed_at 为 null，处理后才广播。
+- Worker compact_boundary 映射为 `agent.thread_context_compacted`；init/hook 继续留在内部诊断边界。
+
+### 当前能力边界
+
+CMA 与 Claude Code Worker 的能力并不等同。当前 Worker 没有动态 system-prompt 更新和通用 custom-tool-result 注入协议；
+`system.message` 输入、通用 custom result、self-hosted `user.tool_result` 明确返回 400，避免成功接收后无执行效果。
+服务端显式输出的 system.message 仍可发布。通用 custom 声明不会伪装成可执行的 AskUserQuestion。
+预算执行、initial_events 原子创建、outcome evaluator 生命周期不由这次事件适配实现；识别事件枚举不表示具备执行能力。
+当前 Worker 的 idle 上报不携带失败/预算原因，因此不能仅凭与它独立投递的 result 准确补出所有 retries_exhausted/budget_reached；普通 idle 仍使用 end_turn。
+要完整对齐这些 stop_reason，需要 Worker 在状态上报中提供同一轮的完成原因，不能通过延迟等待或倒推伪造。
+
+验收：`tests/session_event_contract_test.go` 覆盖同批 end/idle 快照、重复上报不计重、线程聚合、部分确认、重复确认和 MCP 配对；
+`tests/session_worker_status_test.go` 通过实际 Worker SSE + delivery ACK 比较实时与历史顺序。

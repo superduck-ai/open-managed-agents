@@ -100,6 +100,24 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 	}
 	eventType, _ := payload["type"].(string)
 	eventType = strings.TrimSpace(eventType)
+	if eventType == "agent.tool_result" {
+		toolID := sessionPayloadString(payload, "tool_use_id")
+		if toolID != "" {
+			tool, err := h.eventPayloads.GetSessionEvent(ctx, session.WorkspaceUUID, session.ExternalID, toolID)
+			if err != nil && !errors.Is(err, db.ErrNotFound) {
+				return nil, err
+			}
+			if tool.EventType == "agent.mcp_tool_use" {
+				eventType = "agent.mcp_tool_result"
+				payload["type"] = eventType
+				payload["mcp_tool_use_id"] = toolID
+				delete(payload, "tool_use_id")
+			}
+			if tool.ThreadExternalID != nil {
+				payload["_owner_session_thread_id"] = *tool.ThreadExternalID
+			}
+		}
+	}
 	if eventType == "" {
 		return nil, errors.New("code session event type is required")
 	}

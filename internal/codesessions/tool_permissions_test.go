@@ -88,19 +88,19 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 			want:     resolvedToolPermissionAsk,
 		},
 		{
-			name:     "ask user question without config defaults to deny",
+			name:     "ask user question without config waits for a result",
 			snapshot: `{"tools":[{"type":"agent_toolset_20260401"}]}`,
 			toolName: "AskUserQuestion",
-			want:     resolvedToolPermissionDeny,
+			want:     resolvedToolPermissionAsk,
 		},
 		{
-			name:     "ask user question without toolset defaults to deny",
+			name:     "ask user question without toolset waits for a result",
 			snapshot: `{"tools":[]}`,
 			toolName: "AskUserQuestion",
-			want:     resolvedToolPermissionDeny,
+			want:     resolvedToolPermissionAsk,
 		},
 		{
-			name: "ask user question explicit allow is preserved",
+			name: "ask user question explicit allow still waits for a result",
 			snapshot: `{
 				"tools":[{
 					"type":"agent_toolset_20260401",
@@ -109,7 +109,7 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 				}]
 			}`,
 			toolName: "AskUserQuestion",
-			want:     resolvedToolPermissionAllow,
+			want:     resolvedToolPermissionAsk,
 		},
 		{
 			name: "ask user question explicit ask is preserved",

@@ -381,7 +381,11 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 	case preparedControlAction:
 		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
 	case preparedPublicAction:
-		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
+		normalized, err := s.resolveAssistantToolPayloads(ctx, codeSessionID, prepared.payloads)
+		if err != nil {
+			return err
+		}
+		return s.publishWorkerPublicPayloads(ctx, codeSessionID, normalized)
 	default:
 		return fmt.Errorf("unsupported non-stream worker output event %T", workerOutputEvent)
 	}

@@ -194,6 +194,19 @@ func (d *DB) GetMemoryStore(ctx context.Context, workspaceUUID, externalID strin
 	return memoryStoreFromMapperRow(row, err)
 }
 
+// GetMemoryStoresByExternalIDs returns existing, non-deleted stores in the workspace.
+// Archived stores are included; missing IDs are omitted and result order is unspecified.
+func (d *DB) GetMemoryStoresByExternalIDs(ctx context.Context, workspaceUUID string, externalIDs []string) ([]MemoryStore, error) {
+	if len(externalIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := NewMemoryStoreMapper(d.mapperDB).FindByExternalIDs(ctx, workspaceUUID, externalIDs)
+	if err != nil {
+		return nil, err
+	}
+	return memoryStoresFromMapperRows(rows), nil
+}
+
 func (d *DB) GetMemoryStoreByExternalID(ctx context.Context, organizationUUID, externalID string) (MemoryStore, error) {
 	mapper := NewMemoryStoreMapper(d.mapperDB)
 	row, err := mapper.FindByOrganizationAndExternalID(ctx, organizationUUID, externalID)

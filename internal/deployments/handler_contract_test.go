@@ -3,6 +3,7 @@ package deployments
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,16 +14,139 @@ import (
 )
 
 func TestSessionResourcesFromDeploymentRejectsInvalidSecrets(t *testing.T) {
-	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{ResourceSecrets: json.RawMessage(`[]`)}, time.Time{}, nil)
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
 	}
 }
 
 func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
-	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
+	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{}, nil)
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
+	}
+}
+
+func TestSessionResourcesFromDeploymentSnapshotsMemoryStores(t *testing.T) {
+	resources, err := sessionResourcesFromDeployment("ses_test", db.Deployment{
+		OrganizationUUID: "org",
+		WorkspaceUUID:    "ws",
+		Resources: json.RawMessage(`[
+			{"type":"github_repository","url":"https://github.com/example/repo.git","mount_path":"/workspace/repo"},
+			{"type":"memory_store","memory_store_id":"memstore_one","access":"read_only","instructions":"keep notes"}
+		]`),
+	}, time.Time{}, map[string]db.MemoryStore{
+		"memstore_one": {
+			ExternalID:  "memstore_one",
+			Name:        "Product Docs-Draft!!",
+			Description: "personal taste",
+		},
+	})
+	if err != nil {
+		t.Fatalf("sessionResourcesFromDeployment() error = %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("resources = %d, want 2", len(resources))
+	}
+	var github map[string]any
+	if err := json.Unmarshal(resources[0].Resource.Payload, &github); err != nil {
+		t.Fatalf("decode github payload: %v", err)
+	}
+	if github["type"] != "github_repository" ||
+		github["url"] != "https://github.com/example/repo.git" ||
+		github["mount_path"] != "/workspace/repo" {
+		t.Fatalf("github payload = %#v", github)
+	}
+	if _, ok := github["id"].(string); !ok || github["id"] == "" {
+		t.Fatalf("github id = %#v", github["id"])
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resources[1].Resource.Payload, &payload); err != nil {
+		t.Fatalf("decode memory payload: %v", err)
+	}
+	if payload["type"] != "memory_store" ||
+		payload["memory_store_id"] != "memstore_one" ||
+		payload["access"] != "read_only" ||
+		payload["instructions"] != "keep notes" ||
+		payload["name"] != "Product Docs-Draft!!" ||
+		payload["description"] != "personal taste" ||
+		payload["mount_path"] != "/mnt/memory/product-docs-draft" {
+		t.Fatalf("memory payload = %#v", payload)
+	}
+}
+
+func TestSessionResourcesFromDeploymentRejectsMalformedMemoryFields(t *testing.T) {
+	stores := map[string]db.MemoryStore{
+		"memstore_one": {ExternalID: "memstore_one", Name: "notes"},
+	}
+	for _, test := range []struct {
+		name        string
+		resource    string
+		wantErr     error
+		wantMessage string
+	}{
+		{
+			name:     "access is not a string",
+			resource: `{"type":"memory_store","memory_store_id":"memstore_one","access":7}`,
+			wantErr:  sessionresource.ErrMemoryStoreAccess,
+		},
+		{
+			name:     "access is an unknown value",
+			resource: `{"type":"memory_store","memory_store_id":"memstore_one","access":"write"}`,
+			wantErr:  sessionresource.ErrMemoryStoreAccess,
+		},
+		{
+			name:        "memory_store_id is missing",
+			resource:    `{"type":"memory_store","access":"read_only"}`,
+			wantMessage: "memory_store_id",
+		},
+		{
+			name:        "instructions is not a string",
+			resource:    `{"type":"memory_store","memory_store_id":"memstore_one","instructions":7}`,
+			wantMessage: "instructions",
+		},
+		{
+			name:        "store was not loaded for snapshot",
+			resource:    `{"type":"memory_store","memory_store_id":"memstore_missing"}`,
+			wantMessage: "memory store not found",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{
+				OrganizationUUID: "org",
+				WorkspaceUUID:    "ws",
+				Resources:        json.RawMessage("[" + test.resource + "]"),
+			}, time.Time{}, stores)
+			if err == nil {
+				t.Fatal("sessionResourcesFromDeployment() error = nil, want rejection")
+			}
+			if test.wantErr != nil && !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want %v", err, test.wantErr)
+			}
+			if test.wantMessage != "" && !strings.Contains(err.Error(), test.wantMessage) {
+				t.Fatalf("error = %v, want it to mention %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestSessionResourcesFromDeploymentDefaultsAbsentMemoryAccess(t *testing.T) {
+	resources, err := sessionResourcesFromDeployment("ses_test", db.Deployment{
+		OrganizationUUID: "org",
+		WorkspaceUUID:    "ws",
+		Resources:        json.RawMessage(`[{"type":"memory_store","memory_store_id":"memstore_one"}]`),
+	}, time.Time{}, map[string]db.MemoryStore{
+		"memstore_one": {ExternalID: "memstore_one", Name: "notes"},
+	})
+	if err != nil {
+		t.Fatalf("sessionResourcesFromDeployment() error = %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resources[0].Resource.Payload, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["access"] != "read_write" {
+		t.Fatalf("access = %#v, want read_write", payload["access"])
 	}
 }
 
@@ -30,7 +154,7 @@ func TestSessionResourcesFromDeploymentRejectsPlaintextToken(t *testing.T) {
 	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{
 		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo","mount_path":"/workspace/repo"}]`),
 		ResourceSecrets: json.RawMessage(`{"0":{"authorization_token":"legacy"}}`),
-	}, time.Time{})
+	}, time.Time{}, nil)
 	if err == nil {
 		t.Fatal("plaintext token was copied into a session")
 	}
@@ -52,7 +176,7 @@ func TestSessionResourcesFromDeploymentCopiesEncryptedToken(t *testing.T) {
 		ResourceSecrets: append(append([]byte(`{"0":`), encrypted...), '}'),
 	}
 	for _, sessionID := range []string{"ses_one", "ses_two"} {
-		resources, err := sessionResourcesFromDeployment(sessionID, deployment, time.Time{})
+		resources, err := sessionResourcesFromDeployment(sessionID, deployment, time.Time{}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -35,24 +35,25 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
-	Env               string                  `yaml:"env"`
-	Server            ServerConfig            `yaml:"server"`
-	Database          yamlDatabaseConfig      `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	NATS              yamlNATSConfig          `yaml:"nats"`
-	Auth              AuthConfig              `yaml:"auth"`
-	Tunnel            TunnelConfig            `yaml:"tunnel"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Batch             BatchConfig             `yaml:"batch"`
-	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
-	E2B               E2BConfig               `yaml:"e2b"`
-	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
-	CodeSession       yamlCodeSessionConfig   `yaml:"code_session"`
-	Observability     ObservabilityConfig     `yaml:"observability"`
-	Webhook           yamlWebhookConfig       `yaml:"webhook"`
-	Vault             VaultConfig             `yaml:"vault"`
-	Bootstrap         yamlBootstrapConfig     `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	Env                  string                    `yaml:"env"`
+	Server               ServerConfig              `yaml:"server"`
+	Database             yamlDatabaseConfig        `yaml:"database"`
+	Redis                RedisConfig               `yaml:"redis"`
+	NATS                 yamlNATSConfig            `yaml:"nats"`
+	Auth                 AuthConfig                `yaml:"auth"`
+	Tunnel               TunnelConfig              `yaml:"tunnel"`
+	Storage              StorageConfig             `yaml:"storage"`
+	Batch                BatchConfig               `yaml:"batch"`
+	SandboxLifecycle     SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                  E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession          yamlCodeSessionConfig     `yaml:"code_session"`
+	Observability        ObservabilityConfig       `yaml:"observability"`
+	Webhook              yamlWebhookConfig         `yaml:"webhook"`
+	Vault                VaultConfig               `yaml:"vault"`
+	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
+	SDKFixtures          SDKFixtureConfig          `yaml:"sdk_fixtures"`
 }
 
 type yamlDatabaseConfig struct {
@@ -105,13 +106,14 @@ func newYAMLConfig() yamlConfig {
 			ConnectTimeout: defaults.NATS.ConnectTimeout,
 			DrainTimeout:   defaults.NATS.DrainTimeout,
 		},
-		Auth:              defaults.Auth,
-		Tunnel:            defaults.Tunnel,
-		Storage:           defaults.Storage,
-		Batch:             defaults.Batch,
-		E2B:               defaults.E2B,
-		SandboxLifecycle:  defaults.SandboxLifecycle,
-		EnvironmentRunner: defaults.EnvironmentRunner,
+		Auth:                 defaults.Auth,
+		Tunnel:               defaults.Tunnel,
+		Storage:              defaults.Storage,
+		Batch:                defaults.Batch,
+		E2B:                  defaults.E2B,
+		EnvironmentPrebuilds: defaults.EnvironmentPrebuilds,
+		SandboxLifecycle:     defaults.SandboxLifecycle,
+		EnvironmentRunner:    defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           defaults.CodeSession.JWTSigningPrivateKeyFile,
@@ -151,13 +153,14 @@ func (input yamlConfig) resolve() Config {
 			ConnectTimeout: input.NATS.ConnectTimeout,
 			DrainTimeout:   input.NATS.DrainTimeout,
 		},
-		Auth:              input.Auth,
-		Tunnel:            input.Tunnel,
-		Storage:           input.Storage,
-		Batch:             input.Batch,
-		E2B:               input.E2B,
-		SandboxLifecycle:  input.SandboxLifecycle,
-		EnvironmentRunner: input.EnvironmentRunner,
+		Auth:                 input.Auth,
+		Tunnel:               input.Tunnel,
+		Storage:              input.Storage,
+		Batch:                input.Batch,
+		E2B:                  input.E2B,
+		EnvironmentPrebuilds: input.EnvironmentPrebuilds,
+		SandboxLifecycle:     input.SandboxLifecycle,
+		EnvironmentRunner:    input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           input.CodeSession.JWTSigningPrivateKeyFile,

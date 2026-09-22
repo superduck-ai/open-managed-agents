@@ -85,6 +85,7 @@ type Server struct {
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
+	Prebuilds              *environments.Prebuilds
 	Config                 config.Config
 	DB                     *db.DB
 	Deployments            *deploymentsapi.Store
@@ -158,7 +159,7 @@ func NewServer(deps ServerDeps) *Server {
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease),
 		deployments:          deploymentsapi.NewHandler(deps.DB, deps.Deployments, webhookEnqueuer, deps.VaultSecrets, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
-		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
+		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithPrebuilds(deps.Prebuilds),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")),

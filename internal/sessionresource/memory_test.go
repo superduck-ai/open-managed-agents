@@ -1,0 +1,268 @@
+package sessionresource
+
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+func TestRejectClientMemoryIdentityFields(t *testing.T) {
+	t.Parallel()
+
+	if err := RejectClientMemoryIdentityFields(nil, nil, nil); err != nil {
+		t.Fatalf("omitted fields: %v", err)
+	}
+
+	for _, test := range []struct {
+		name        string
+		mountPath   json.RawMessage
+		storeName   json.RawMessage
+		description json.RawMessage
+	}{
+		{name: "mount_path", mountPath: json.RawMessage(`"/mnt/memory/custom"`)},
+		{name: "name", storeName: json.RawMessage(`"memory"`)},
+		{name: "description", description: json.RawMessage(`"copied"`)},
+		{name: "null name", storeName: json.RawMessage(`null`)},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := RejectClientMemoryIdentityFields(test.mountPath, test.storeName, test.description)
+			if !errors.Is(err, ErrMemoryStoreClientIdentity) {
+				t.Fatalf("error = %v, want ErrMemoryStoreClientIdentity", err)
+			}
+		})
+	}
+}
+
+func TestParseMemoryAccess(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		raw  json.RawMessage
+		want MemoryAccess
+	}{
+		{name: "omitted", want: MemoryAccessReadWrite},
+		{name: "null", raw: json.RawMessage(`null`), want: MemoryAccessReadWrite},
+		{name: "read_only", raw: json.RawMessage(`"read_only"`), want: MemoryAccessReadOnly},
+		{name: "read_write", raw: json.RawMessage(`"read_write"`), want: MemoryAccessReadWrite},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ParseMemoryAccess(test.raw)
+			if err != nil {
+				t.Fatalf("ParseMemoryAccess() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("ParseMemoryAccess() = %q, want %q", got, test.want)
+			}
+		})
+	}
+
+	t.Run("rejects rw", func(t *testing.T) {
+		t.Parallel()
+		_, err := ParseMemoryAccess(json.RawMessage(`"rw"`))
+		if !errors.Is(err, ErrMemoryStoreAccess) {
+			t.Fatalf("error = %v, want ErrMemoryStoreAccess", err)
+		}
+	})
+}
+
+func TestParseMemoryInstructions(t *testing.T) {
+	t.Parallel()
+
+	got, err := ParseMemoryInstructions(nil)
+	if err != nil || got != "" {
+		t.Fatalf("omitted = (%q, %v), want empty", got, err)
+	}
+
+	got, err = ParseMemoryInstructions(json.RawMessage(`""`))
+	if err != nil || got != "" {
+		t.Fatalf("empty = (%q, %v), want empty", got, err)
+	}
+
+	limit := strings.Repeat("i", MaxMemoryInstructionsRunes)
+	got, err = ParseMemoryInstructions(json.RawMessage(`"` + limit + `"`))
+	if err != nil || got != limit {
+		t.Fatalf("500 runes = (%d, %v)", utf8.RuneCountInString(got), err)
+	}
+
+	emoji := strings.Repeat("😀", MaxMemoryInstructionsRunes)
+	got, err = ParseMemoryInstructions(mustJSONString(t, emoji))
+	if err != nil || got != emoji {
+		t.Fatalf("500 emoji = (%d, %v)", utf8.RuneCountInString(got), err)
+	}
+
+	_, err = ParseMemoryInstructions(json.RawMessage(`"` + strings.Repeat("i", MaxMemoryInstructionsRunes+1) + `"`))
+	if !errors.Is(err, ErrMemoryStoreInstructionsTooLong) {
+		t.Fatalf("501 runes error = %v, want ErrMemoryStoreInstructionsTooLong", err)
+	}
+
+	_, err = ParseMemoryInstructions(mustJSONString(t, strings.Repeat("😀", MaxMemoryInstructionsRunes+1)))
+	if !errors.Is(err, ErrMemoryStoreInstructionsTooLong) {
+		t.Fatalf("501 emoji error = %v, want ErrMemoryStoreInstructionsTooLong", err)
+	}
+
+	_, err = ParseMemoryInstructions(json.RawMessage(`42`))
+	if err == nil {
+		t.Fatal("non-string instructions succeeded")
+	}
+}
+
+func TestSlugifyMemoryName(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		fallback string
+		want     string
+	}{
+		{name: "!!!", fallback: "???", want: "store"},
+		{name: "!!!", fallback: "memstore_abcXYZ", want: "memstore_abcxyz"},
+		{name: "", fallback: "memstore_fallback", want: "memstore_fallback"},
+		{name: "Product Docs-Draft!!", want: "product-docs-draft"},
+		{name: "项目规范", want: "xiang-mu-gui-fan"},
+		{name: "项目 API 规范", want: "xiang-mu-api-gui-fan"},
+		{name: "Hellö Wörld", want: "hello-world"},
+		{name: "hello_world", want: "hello_world"},
+		{name: "This & that", want: "this-and-that"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SlugifyMemoryName(test.name, test.fallback); got != test.want {
+				t.Fatalf("SlugifyMemoryName(%q, %q) = %q, want %q", test.name, test.fallback, got, test.want)
+			}
+		})
+	}
+}
+
+func TestMemoryAttachSetTransliteratedSlugCollision(t *testing.T) {
+	set := NewMemoryAttachSet()
+	set.Observe("memstore_existing", "xiang-mu-gui-fan")
+	slug, err := set.Add("memstore_new", "项目规范", "memstore_new")
+	if err != nil || slug != "xiang-mu-gui-fan-2" {
+		t.Fatalf("Add() = (%q, %v), want xiang-mu-gui-fan-2", slug, err)
+	}
+}
+
+func TestMemoryAttachSetAssignsUniqueSlugsAndRejectsDuplicates(t *testing.T) {
+	t.Parallel()
+
+	set := NewMemoryAttachSet()
+	first, err := set.Add("memstore_one", "Product Docs-Draft!!", "memstore_one")
+	if err != nil || first != "product-docs-draft" {
+		t.Fatalf("first slug = (%q, %v), want product-docs-draft", first, err)
+	}
+	second, err := set.Add("memstore_two", "Product Docs-Draft", "memstore_two")
+	if err != nil || second != "product-docs-draft-2" {
+		t.Fatalf("second slug = (%q, %v), want product-docs-draft-2", second, err)
+	}
+
+	if _, err := set.Add("memstore_one", "other", "memstore_one"); !errors.Is(err, ErrMemoryStoreDuplicate) {
+		t.Fatalf("duplicate id error = %v, want ErrMemoryStoreDuplicate", err)
+	}
+
+	limit := NewMemoryAttachSet()
+	for i := 0; i < MaxMemoryStores; i++ {
+		id := "memstore_" + strings.Repeat("a", i+1)
+		if _, err := limit.Add(id, id, id); err != nil {
+			t.Fatalf("store %d: %v", i, err)
+		}
+	}
+	if _, err := limit.Add("memstore_overflow", "overflow", "memstore_overflow"); !errors.Is(err, ErrMemoryStoreLimit) {
+		t.Fatalf("ninth store error = %v, want ErrMemoryStoreLimit", err)
+	}
+
+	claimed := NewMemoryAttachSet()
+	if err := claimed.Claim("memstore_one"); err != nil {
+		t.Fatalf("Claim() error = %v", err)
+	}
+	if err := claimed.Claim("memstore_one"); !errors.Is(err, ErrMemoryStoreDuplicate) {
+		t.Fatalf("Claim() duplicate error = %v, want ErrMemoryStoreDuplicate", err)
+	}
+}
+
+func TestObserveStoredMemoryResourceReservesSlug(t *testing.T) {
+	t.Parallel()
+
+	set := NewMemoryAttachSet()
+	ObserveStoredMemoryResource(set, FileType, json.RawMessage(`{"memory_store_id":"memstore_ignored"}`))
+	ObserveStoredMemoryResource(set, MemoryStoreType, json.RawMessage(
+		`{"memory_store_id":"memstore_one","mount_path":"/mnt/memory/product-docs-draft"}`,
+	))
+
+	slug, err := set.Add("memstore_two", "Product Docs-Draft!!", "memstore_two")
+	if err != nil || slug != "product-docs-draft-2" {
+		t.Fatalf("slug after observe = (%q, %v), want product-docs-draft-2", slug, err)
+	}
+	if _, err := set.Add("memstore_one", "other", "memstore_one"); !errors.Is(err, ErrMemoryStoreDuplicate) {
+		t.Fatalf("observed id error = %v, want ErrMemoryStoreDuplicate", err)
+	}
+}
+
+func TestMemorySnapshotPayloadFields(t *testing.T) {
+	t.Parallel()
+
+	snapshot := MemorySnapshot{
+		MemoryStoreID: "memstore_one",
+		Access:        MemoryAccessReadWrite,
+		Instructions:  "remember this",
+		Name:          "Product Docs-Draft!!",
+		Description:   "personal taste",
+		MountPath:     MemoryMountPath("product-docs-draft"),
+	}
+	fields := snapshot.PayloadFields("sesrsc_one")
+	if fields["type"] != MemoryStoreType ||
+		fields["memory_store_id"] != "memstore_one" ||
+		fields["access"] != "read_write" ||
+		fields["instructions"] != "remember this" ||
+		fields["name"] != "Product Docs-Draft!!" ||
+		fields["description"] != "personal taste" ||
+		fields["mount_path"] != "/mnt/memory/product-docs-draft" ||
+		fields["id"] != "sesrsc_one" {
+		t.Fatalf("payload fields = %#v", fields)
+	}
+}
+
+func mustJSONString(t *testing.T, value string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal string: %v", err)
+	}
+	return raw
+}
+
+func TestNormalizeMemoryAccess(t *testing.T) {
+	for _, value := range []string{"rw", "READ_ONLY", " read_only", "read_only "} {
+		t.Run("rejects "+value, func(t *testing.T) {
+			access, err := NormalizeMemoryAccess(value)
+			if access != "" || !errors.Is(err, ErrMemoryStoreAccess) {
+				t.Fatalf("NormalizeMemoryAccess(%q) = (%q, %v), want invalid access", value, access, err)
+			}
+		})
+	}
+	for _, test := range []struct {
+		input string
+		want  MemoryAccess
+		wire  string
+	}{
+		{input: "", want: MemoryAccessReadWrite, wire: `"read_write"`},
+		{input: "read_write", want: MemoryAccessReadWrite, wire: `"read_write"`},
+		{input: "read_only", want: MemoryAccessReadOnly, wire: `"read_only"`},
+	} {
+		t.Run("accepts "+test.input, func(t *testing.T) {
+			access, err := NormalizeMemoryAccess(test.input)
+			if err != nil || access != test.want {
+				t.Fatalf("NormalizeMemoryAccess(%q) = (%q, %v), want %q", test.input, access, err, test.want)
+			}
+			raw, err := json.Marshal(access)
+			if err != nil || string(raw) != test.wire {
+				t.Fatalf("JSON = %s, error = %v, want %s", raw, err, test.wire)
+			}
+		})
+	}
+}

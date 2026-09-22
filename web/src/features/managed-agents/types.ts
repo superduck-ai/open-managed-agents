@@ -302,6 +302,8 @@ export type EnvironmentWorkApiResponse = {
 };
 
 export type SessionResourceApiResponse = {
+  name?: string;
+  memory_store_id?: string;
   id?: string;
   created_at?: string;
   file_id?: string;
@@ -554,6 +556,15 @@ export type ModelRequestBracketMeta = {
 export type SessionEventListEntry =
   IdleGapEntry | QueuedBoundaryEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
 
+export type MemoryAttachAccess = 'read_write' | 'read_only';
+
+export type MemoryAttachFormValue = {
+  memoryStoreId: string;
+  access: MemoryAttachAccess;
+  instructions: string;
+  mountPath?: string;
+};
+
 export type ManagedEntityFormValues = {
   name: string;
   description: string;
@@ -564,7 +575,7 @@ export type ManagedEntityFormValues = {
   cronExpression: string;
   timezone: string;
   vaultIds: string[];
-  memoryStoreIds: string[];
+  memoryAttaches: MemoryAttachFormValue[];
   fileResources: SessionFileResourceFormValue[];
   gitResources: GitRepositoryResourceFormValue[];
   originalResources: SessionResourceApiResponse[];

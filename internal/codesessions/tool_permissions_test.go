@@ -87,6 +87,52 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 			toolName: "MysteryTool",
 			want:     resolvedToolPermissionAsk,
 		},
+		{
+			name:     "ask user question without config defaults to deny",
+			snapshot: `{"tools":[{"type":"agent_toolset_20260401"}]}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "ask user question without toolset defaults to deny",
+			snapshot: `{"tools":[]}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name: "ask user question explicit allow is preserved",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_allow"}}],
+					"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name: "ask user question explicit ask is preserved",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name: "ask user question enabled false denies",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":false,"permission_policy":{"type":"always_allow"}}]
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
 	}
 
 	for _, tt := range tests {
@@ -113,6 +159,27 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	identity = parseClaudeToolIdentity("MultiEdit")
 	if identity.Kind != "agent_toolset" || identity.ToolName != "edit" {
 		t.Fatalf("identity = %+v", identity)
+	}
+
+	identity = parseClaudeToolIdentity("WebFetch")
+	if identity.Kind != "agent_toolset" || identity.ToolName != "web_fetch" {
+		t.Fatalf("identity = %+v", identity)
+	}
+
+	identity = parseClaudeToolIdentity("WebSearch")
+	if identity.Kind != "unknown" || identity.ToolName != "WebSearch" {
+		t.Fatalf("identity = %+v, want unknown so retired WebSearch stays deny-safe", identity)
+	}
+
+	for claudeName, configName := range map[string]string{
+		"Task": "task", "Agent": "task", "AskUserQuestion": "ask_user_question", "CronCreate": "cron_create",
+		"EnterPlanMode": "enter_plan_mode", "NotebookEdit": "notebook_edit", "ScheduleWakeup": "schedule_wakeup",
+		"Skill": "skill", "TaskOutput": "task_output", "TaskStop": "task_stop", "TodoWrite": "todo_write",
+	} {
+		identity = parseClaudeToolIdentity(claudeName)
+		if identity.Kind != "agent_toolset" || identity.ToolName != configName {
+			t.Fatalf("identity for %s = %+v, want config name %s", claudeName, identity, configName)
+		}
 	}
 }
 

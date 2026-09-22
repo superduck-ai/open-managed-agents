@@ -18,7 +18,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, startMCPVaultAuth } from '../api';
+import { listAgents, listManagedEntities, listMemoryStoreOptions, startMCPVaultAuth } from '../api';
 import { LockedAgentReferenceField, ManagedSelectField, ManagedTextArea, ManagedTextField } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
@@ -33,13 +33,13 @@ import {
   type MemoryApiResponse,
   type MemoryFormValues,
   type MemoryStoreApiResponse,
-  type PageResponse,
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from '../types';
 import { errorMessage } from '../utils';
-import { ManagedResourceFields, managedResourceFieldsValid } from './ManagedResourceFields';
+import { ManagedResourceFields } from './ManagedResourceFields';
 import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
+import { managedEntityDialogCanSubmit } from './entity-dialog-ready';
 import {
   credentialAuthTypeLabel,
   credentialFormReady,
@@ -55,7 +55,6 @@ import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActi
 import { budgetValid } from './budget';
 import { BudgetField } from './budget-field';
 import { DeploymentFormFields } from './deployment-form-fields';
-import { previewSchedule } from './deployment-schedule';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
 import { ManagedVaultSelectField } from './vault-select-field';
@@ -762,9 +761,7 @@ function GenericManagedEntityDialog({
           lockedAgent ? Promise.resolve({ data: [], next_page: null } as AgentPageResponse) : listAgents(workspaceId),
           listManagedEntities('environments', workspaceId),
           listManagedEntities('credential-vaults', workspaceId),
-          section === 'deployments'
-            ? listManagedEntities('memory-stores', workspaceId)
-            : Promise.resolve({ data: [], next_page: null } as PageResponse<ManagedEntityApiResponse>),
+          listMemoryStoreOptions(workspaceId),
         ]);
         if (!active) {
           return;
@@ -821,29 +818,14 @@ function GenericManagedEntityDialog({
     };
   }, [lockedAgent, needsReferences, section, workspaceId]);
 
-  const canSubmit =
-    section === 'deployments'
-      ? values.name.trim().length > 0 &&
-        values.agentId.trim().length > 0 &&
-        values.environmentId.trim().length > 0 &&
-        values.initialMessage.trim().length > 0 &&
-        budgetValid(values) &&
-        managedResourceFieldsValid(values, Boolean(entity)) &&
-        (values.triggerType === 'manual' ||
-          (values.triggerType === 'schedule' && !previewSchedule(values.cronExpression, values.timezone).error)) &&
-        !submitting &&
-        !loadingOptions
-      : section === 'sessions'
-        ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
-          budgetValid(values) &&
-          managedResourceFieldsValid(values, false) &&
-          (!values.vaultIds.length || vaultAcknowledged) &&
-          !submitting &&
-          !loadingOptions
-        : values.name.trim().length > 0 &&
-          (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
-          !submitting &&
-          !loadingOptions;
+  const canSubmit = managedEntityDialogCanSubmit(section, values, {
+    submitting,
+    loadingOptions,
+    needsReferences,
+    editing: Boolean(entity),
+    vaultAcknowledged,
+  });
+>>>>>>> origin/main
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -977,7 +959,12 @@ function GenericManagedEntityDialog({
                 />
                 {section === 'sessions' ? (
                   <>
-                    <ManagedResourceFields values={values} onChange={setValues} workspaceId={workspaceId} />
+                    <ManagedResourceFields
+                      values={values}
+                      onChange={setValues}
+                      workspaceId={workspaceId}
+                      memoryStores={memoryStores}
+                    />
                     <BudgetField
                       values={values}
                       onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}

@@ -1,14 +1,14 @@
 package deployments
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
-	"unicode/utf8"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -42,20 +42,24 @@ type deploymentResourceRequest struct {
 	MemoryStoreID      json.RawMessage `json:"memory_store_id"`
 	Access             json.RawMessage `json:"access"`
 	Instructions       json.RawMessage `json:"instructions"`
+	Name               json.RawMessage `json:"name"`
+	Description        json.RawMessage `json:"description"`
 }
 
 type deploymentResourcePayload struct {
-	Type          string          `json:"type"`
-	FileID        string          `json:"file_id,omitempty"`
-	Source        string          `json:"source,omitempty"`
-	MountPath     string          `json:"mount_path,omitempty"`
-	URL           string          `json:"url,omitempty"`
-	Checkout      json.RawMessage `json:"checkout,omitempty"`
-	MemoryStoreID string          `json:"memory_store_id,omitempty"`
-	Access        string          `json:"access,omitempty"`
-	Instructions  *string         `json:"instructions,omitempty"`
+	Type          string                       `json:"type"`
+	FileID        string                       `json:"file_id,omitempty"`
+	Source        string                       `json:"source,omitempty"`
+	MountPath     string                       `json:"mount_path,omitempty"`
+	URL           string                       `json:"url,omitempty"`
+	Checkout      json.RawMessage              `json:"checkout,omitempty"`
+	MemoryStoreID string                       `json:"memory_store_id,omitempty"`
+	Access        sessionresource.MemoryAccess `json:"access,omitempty"`
+	Instructions  *string                      `json:"instructions,omitempty"`
 }
 
+// normalizeResources validates resource references and group limits, keeping Git tokens
+// encrypted and separate from the public configuration.
 func (h *Handler) normalizeResources(
 	r *http.Request,
 	principal auth.Principal,
@@ -76,6 +80,7 @@ func (h *Handler) normalizeResources(
 	resourceSecrets := map[string]json.RawMessage{}
 	gitSpecs := make([]sessionresource.GitRepositorySpec, 0, len(items))
 	fileMountPaths := make([]string, 0, len(items))
+	memoryStores := sessionresource.NewMemoryAttachSet()
 	for index, fields := range items {
 		resource, err := h.normalizeResource(r, principal, fields)
 		if err != nil {
@@ -84,6 +89,11 @@ func (h *Handler) normalizeResources(
 		resources = append(resources, resource.payload)
 		if resource.resourceType == sessionresource.FileType {
 			fileMountPaths = append(fileMountPaths, resource.mountPath)
+		}
+		if resource.resourceType == sessionresource.MemoryStoreType {
+			if err := memoryStores.Claim(resource.referenceID); err != nil {
+				return nil, nil, err
+			}
 		}
 		if resource.resourceType == sessionresource.GitRepositoryType {
 			gitSpecs = append(gitSpecs, sessionresource.GitRepositorySpec{URL: resource.payload.URL, MountPath: resource.mountPath})
@@ -184,55 +194,62 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-	case "memory_store":
-		memoryStoreID, err := parseRequiredRawString(fields.MemoryStoreID, "memory_store_id")
-		if err != nil {
-			return normalizedDeploymentResource{}, err
-		}
-		resource.payload.MemoryStoreID = memoryStoreID
-		resource.referenceID = memoryStoreID
-		access, err := optionalStringWithDefault(fields.Access, "read_write", "access")
-		if err != nil {
-			return normalizedDeploymentResource{}, err
-		}
-		if access != "read_write" && access != "read_only" {
-			return normalizedDeploymentResource{}, errors.New("access must be read_write or read_only")
-		}
-		resource.payload.Access = access
-		if len(fields.Instructions) > 0 {
-			if httpapi.IsJSONNull(fields.Instructions) {
-				return normalizedDeploymentResource{}, errors.New("instructions is required")
-			}
-			var instructions string
-			if err := json.Unmarshal(fields.Instructions, &instructions); err != nil {
-				return normalizedDeploymentResource{}, errors.New("instructions must be a string")
-			}
-			if utf8.RuneCountInString(instructions) > 4096 {
-				return normalizedDeploymentResource{}, errors.New("instructions must be at most 4096 characters")
-			}
-			resource.payload.Instructions = &instructions
-		}
+	case sessionresource.MemoryStoreType:
+		return h.normalizeMemoryStoreResource(r, principal, fields)
 	default:
 		return normalizedDeploymentResource{}, errors.New(
 			"resource type must be file, github_repository, or memory_store",
 		)
 	}
 
-	if resource.resourceType == "memory_store" {
-		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, resource.referenceID)
+	return resource, nil
+}
+
+func (h *Handler) normalizeMemoryStoreResource(
+	r *http.Request,
+	principal auth.Principal,
+	fields deploymentResourceRequest,
+) (normalizedDeploymentResource, error) {
+	if err := sessionresource.RejectClientMemoryIdentityFields(fields.MountPath, fields.Name, fields.Description); err != nil {
+		return normalizedDeploymentResource{}, err
+	}
+	memoryStoreID, err := parseRequiredRawString(fields.MemoryStoreID, "memory_store_id")
+	if err != nil {
+		return normalizedDeploymentResource{}, err
+	}
+	access, err := sessionresource.ParseMemoryAccess(fields.Access)
+	if err != nil {
+		return normalizedDeploymentResource{}, err
+	}
+	resource := normalizedDeploymentResource{
+		resourceType: sessionresource.MemoryStoreType,
+		payload: deploymentResourcePayload{
+			Type:          sessionresource.MemoryStoreType,
+			MemoryStoreID: memoryStoreID,
+			Access:        access,
+		},
+		referenceID: memoryStoreID,
+	}
+	if len(fields.Instructions) > 0 {
+		instructions, err := sessionresource.ParseMemoryInstructions(fields.Instructions)
 		if err != nil {
-			return normalizedDeploymentResource{}, resourceReferenceError{
-				ResourceType: "memory_store",
-				ResourceID:   resource.referenceID,
-				Err:          err,
-			}
+			return normalizedDeploymentResource{}, err
 		}
-		if store.ArchivedAt != nil {
-			return normalizedDeploymentResource{}, resourceReferenceError{
-				ResourceType: "memory_store",
-				ResourceID:   resource.referenceID,
-				Err:          db.ErrInvalidState,
-			}
+		resource.payload.Instructions = &instructions
+	}
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, memoryStoreID)
+	if err != nil {
+		return normalizedDeploymentResource{}, resourceReferenceError{
+			ResourceType: sessionresource.MemoryStoreType,
+			ResourceID:   memoryStoreID,
+			Err:          err,
+		}
+	}
+	if store.ArchivedAt != nil {
+		return normalizedDeploymentResource{}, resourceReferenceError{
+			ResourceType: sessionresource.MemoryStoreType,
+			ResourceID:   memoryStoreID,
+			Err:          db.ErrInvalidState,
 		}
 	}
 	return resource, nil
@@ -299,6 +316,7 @@ func sessionResourcesFromDeployment(
 	sessionID string,
 	deployment db.Deployment,
 	now time.Time,
+	memoryStores map[string]db.MemoryStore,
 ) ([]db.CreateSessionResourceInput, error) {
 	var configs []json.RawMessage
 	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
@@ -315,6 +333,7 @@ func sessionResourcesFromDeployment(
 
 	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
 	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
+	attachSet := sessionresource.NewMemoryAttachSet()
 	gitSpecs := make([]sessionresource.GitRepositorySpec, 0, len(configs))
 	for index, configRaw := range configs {
 		var config map[string]any
@@ -327,9 +346,10 @@ func sessionResourcesFromDeployment(
 			return nil, markRunPreparationRetryable(err)
 		}
 
-		payload := maps.Clone(config)
+		payload := config
 		var fileMount *db.SessionFileMount
-		if resourceType == sessionresource.FileType {
+		switch resourceType {
+		case sessionresource.FileType:
 			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
 			if err != nil {
 				return nil, err
@@ -345,7 +365,12 @@ func sessionResourcesFromDeployment(
 				FileExternalID:     binding.FileID,
 				Path:               binding.Path,
 			}
-		} else {
+		case sessionresource.MemoryStoreType:
+			payload, err = snapshotMemoryStorePayload(config, memoryStores, attachSet, resourceID)
+			if err != nil {
+				return nil, err
+			}
+		default:
 			payload["id"] = resourceID
 			payload["type"] = resourceType
 		}
@@ -389,4 +414,119 @@ func sessionResourcesFromDeployment(
 		return nil, err
 	}
 	return resources, nil
+}
+
+func snapshotMemoryStorePayload(
+	config map[string]any,
+	stores map[string]db.MemoryStore,
+	attachSet *sessionresource.MemoryAttachSet,
+	resourceID string,
+) (map[string]any, error) {
+	memoryStoreID, ok := config["memory_store_id"].(string)
+	if !ok || memoryStoreID == "" {
+		return nil, errors.New("stored memory_store resource is missing memory_store_id")
+	}
+	store, ok := stores[memoryStoreID]
+	if !ok {
+		return nil, fmt.Errorf("memory store not found: %s", memoryStoreID)
+	}
+	access, err := storedMemoryAccess(config["access"])
+	if err != nil {
+		return nil, err
+	}
+	instructions, ok := config["instructions"].(string)
+	if !ok && config["instructions"] != nil {
+		return nil, errors.New("stored memory_store instructions must be a string")
+	}
+	slug, err := attachSet.Add(memoryStoreID, store.Name, store.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := sessionresource.SnapshotMemoryStore(
+		memoryStoreID,
+		access,
+		instructions,
+		store.Name,
+		store.Description,
+		slug,
+	)
+	return snapshot.PayloadFields(resourceID), nil
+}
+
+// storedMemoryAccess reads the access field of a stored memory_store resource.
+// Validation itself lives in sessionresource.NormalizeMemoryAccess; this only
+// rejects a value that is present but not a JSON string.
+func storedMemoryAccess(raw any) (sessionresource.MemoryAccess, error) {
+	if raw == nil {
+		return sessionresource.MemoryAccessReadWrite, nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", sessionresource.ErrMemoryStoreAccess
+	}
+	return sessionresource.NormalizeMemoryAccess(value)
+}
+
+type deploymentResourceReader interface {
+	GetFile(context.Context, string, string) (db.FileRecord, error)
+	GetMemoryStoresByExternalIDs(context.Context, string, []string) ([]db.MemoryStore, error)
+}
+
+func validateDeploymentResources(ctx context.Context, database deploymentResourceReader, workspaceUUID string, resources []deploymentResourcePayload) (map[string]db.MemoryStore, *deploymentRunError, error) {
+	var memoryStores map[string]db.MemoryStore
+	for _, resource := range resources {
+		switch resource.Type {
+		case "file":
+			if _, err := database.GetFile(ctx, workspaceUUID, resource.FileID); err != nil {
+				failure, err := classifyReferenceFailure("file", err, false)
+				return nil, failure, err
+			}
+		case "memory_store":
+			// Load once, but check references in resource order so file and store
+			// failures keep their original precedence.
+			if memoryStores == nil {
+				var err error
+				memoryStores, err = loadDeploymentMemoryStores(ctx, database, workspaceUUID, resources)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			store, exists := memoryStores[resource.MemoryStoreID]
+			if !exists {
+				failure, err := classifyReferenceFailure("memory_store", db.ErrNotFound, false)
+				return nil, failure, err
+			}
+			if store.ArchivedAt != nil {
+				failure, err := classifyReferenceFailure("memory_store", nil, true)
+				return nil, failure, err
+			}
+		}
+	}
+	return memoryStores, nil, nil
+}
+
+func loadDeploymentMemoryStores(
+	ctx context.Context,
+	database deploymentResourceReader,
+	workspaceUUID string,
+	resources []deploymentResourcePayload,
+) (map[string]db.MemoryStore, error) {
+	var storeIDs []string
+	for _, resource := range resources {
+		if resource.Type == sessionresource.MemoryStoreType && !slices.Contains(storeIDs, resource.MemoryStoreID) {
+			storeIDs = append(storeIDs, resource.MemoryStoreID)
+		}
+	}
+	stores := make(map[string]db.MemoryStore)
+	if len(storeIDs) == 0 {
+		return stores, nil
+	}
+	rows, err := database.GetMemoryStoresByExternalIDs(ctx, workspaceUUID, storeIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, store := range rows {
+		stores[store.ExternalID] = store
+	}
+	return stores, nil
 }

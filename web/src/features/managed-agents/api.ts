@@ -5,7 +5,7 @@ import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { memoryAttachResources } from './resources/memory-attach';
-import { sessionFileAPIMountPath } from './sessions/file-resource-path';
+import { sessionFileResourcePayload } from './sessions/file-resource-form';
 import { sessionEventType } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
@@ -563,14 +563,9 @@ export function listSessionResources(sessionId: string, workspaceId: string) {
 }
 
 export function addSessionFileResource(sessionId: string, resource: SessionFileResourceFormValue, workspaceId: string) {
-  const mountPath = sessionFileAPIMountPath(resource.mountPath);
   return anthropicBetaApi.sessions.resources.add<SessionResourceApiResponse>(
     sessionId,
-    {
-      type: 'file',
-      file_id: resource.fileId.trim(),
-      ...(mountPath ? { mount_path: mountPath } : {}),
-    },
+    sessionFileResourcePayload(resource),
     workspaceId,
   );
 }
@@ -1935,14 +1930,7 @@ export function deploymentInitialEvents(initialMessage: string) {
 }
 
 export function packedSessionCreateResources(values: ManagedEntityFormValues) {
-  const files = values.fileResources.map((resource) => {
-    const mountPath = sessionFileAPIMountPath(resource.mountPath);
-    return {
-      type: 'file' as const,
-      file_id: resource.fileId.trim(),
-      ...(mountPath ? { mount_path: mountPath } : {}),
-    };
-  });
+  const files = values.fileResources.map(sessionFileResourcePayload);
   return [...files, ...memoryAttachResources(values.memoryAttaches)];
 }
 

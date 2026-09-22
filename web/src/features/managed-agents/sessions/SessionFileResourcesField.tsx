@@ -26,6 +26,8 @@ import type {
 import { formatBytes } from '../utils';
 import { hasSessionFileMountPath, isValidSessionFileMountPath, SESSION_FILE_UPLOADS_ROOT } from './file-resource-path';
 
+export { areSessionFileResourcesValid } from './file-resource-form';
+
 export function SessionFileResourcesField({
   resources,
   showAddButton = true,
@@ -45,7 +47,6 @@ export function SessionFileResourcesField({
 }) {
   const { msg } = useI18n();
   const includeFiles = Boolean(onChange);
-  const includeMemory = Boolean(onMemoryAttachesChange);
   const filesQuery = useQuery({
     queryKey: ['managed-agents', 'session-file-options', workspaceId],
     queryFn: () => listSessionFileOptions(workspaceId),
@@ -163,7 +164,7 @@ export function SessionFileResourcesField({
           })
         : null}
 
-      {includeMemory && onMemoryAttachesChange ? (
+      {onMemoryAttachesChange ? (
         <MemoryStoreResourceCards
           attaches={memoryAttaches}
           options={memoryStoreOptions}
@@ -190,10 +191,10 @@ export function SessionFileResourcesField({
                 {msg('managedAgents.sessions.resources.typeFile', 'File')}
               </DropdownMenuItem>
             ) : null}
-            {includeMemory ? (
+            {onMemoryAttachesChange ? (
               <DropdownMenuItem
                 disabled={memoryAttaches.length >= MAX_MEMORY_ATTACHES}
-                onClick={() => onMemoryAttachesChange?.([...memoryAttaches, emptyMemoryAttach()])}
+                onClick={() => onMemoryAttachesChange([...memoryAttaches, emptyMemoryAttach()])}
               >
                 <Database aria-hidden />
                 {msg('managedAgents.memoryStores.kindTitle', 'Memory store')}
@@ -271,12 +272,4 @@ function fileOptionLabel(file: FileMetadataApiResponse) {
 
 function fileSearchText(file: FileMetadataApiResponse) {
   return `${file.filename}\n${file.id}`.toLocaleLowerCase();
-}
-
-export function areSessionFileResourcesValid(resources: SessionFileResourceFormValue[]) {
-  return resources.every(
-    (resource) =>
-      resource.fileId.trim().length > 0 &&
-      (!hasSessionFileMountPath(resource.mountPath) || isValidSessionFileMountPath(resource.mountPath)),
-  );
 }

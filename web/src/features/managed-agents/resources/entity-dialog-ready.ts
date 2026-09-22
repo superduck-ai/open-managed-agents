@@ -1,4 +1,4 @@
-import { areSessionFileResourcesValid } from '../sessions/SessionFileResourcesField';
+import { areSessionFileResourcesValid } from '../sessions/file-resource-form';
 import type { ManagedEntityFormValues, ManagedEntitySection } from '../types';
 import { areMemoryAttachesValid } from './memory-attach';
 
@@ -26,13 +26,10 @@ export function managedEntityDialogCanSubmit(
       values.triggerType === 'schedule' && values.cronExpression.trim().length > 0 && values.timezone.trim().length > 0
     );
   }
-  if (section === 'sessions') {
-    const referencesReady =
-      !options.needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0);
-    return referencesReady && areSessionFileResourcesValid(values.fileResources);
-  }
+  const referencesReady =
+    !options.needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0);
   return (
-    values.name.trim().length > 0 &&
-    (!options.needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0))
+    referencesReady &&
+    (section === 'sessions' ? areSessionFileResourcesValid(values.fileResources) : values.name.trim().length > 0)
   );
 }

@@ -1,7 +1,6 @@
 package deployments
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -146,55 +145,6 @@ func TestSessionResourcesFromDeploymentDefaultsAbsentMemoryAccess(t *testing.T) 
 	}
 	if payload["access"] != "read_write" {
 		t.Fatalf("access = %#v, want read_write", payload["access"])
-	}
-}
-
-func TestLoadDeploymentMemoryStores(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("empty and null resources need no database", func(t *testing.T) {
-		for _, raw := range []json.RawMessage{nil, json.RawMessage(`null`)} {
-			stores, err := loadDeploymentMemoryStores(ctx, nil, "ws", raw)
-			if err != nil || stores != nil {
-				t.Fatalf("loadDeploymentMemoryStores(%s) = (%v, %v)", raw, stores, err)
-			}
-		}
-	})
-
-	t.Run("rejects invalid stored resources", func(t *testing.T) {
-		_, err := loadDeploymentMemoryStores(ctx, nil, "ws", json.RawMessage(`{"type":"memory_store"}`))
-		if err == nil || !strings.Contains(err.Error(), "stored resources are invalid") {
-			t.Fatalf("error = %v", err)
-		}
-	})
-
-	t.Run("skips non-memory resources without loading", func(t *testing.T) {
-		stores, err := loadDeploymentMemoryStores(
-			ctx,
-			nil,
-			"ws",
-			json.RawMessage(`[{"type":"file","file_id":"file_1"},{"type":"github_repository","url":"https://github.com/example/repo.git"}]`),
-		)
-		if err != nil {
-			t.Fatalf("loadDeploymentMemoryStores() error = %v", err)
-		}
-		if len(stores) != 0 {
-			t.Fatalf("stores = %#v, want empty", stores)
-		}
-	})
-}
-
-func TestMemoryStoreLoadFailure(t *testing.T) {
-	notFound := memoryStoreLoadFailure(db.ErrNotFound)
-	if notFound == nil || notFound.Type != "session_resource_not_found_error" {
-		t.Fatalf("not found = %+v", notFound)
-	}
-	archived := memoryStoreLoadFailure(db.ErrInvalidState)
-	if archived == nil || archived.Type != "memory_store_archived_error" {
-		t.Fatalf("archived = %+v", archived)
-	}
-	if failure := memoryStoreLoadFailure(errors.New("database unavailable")); failure != nil {
-		t.Fatalf("unexpected failure = %+v", failure)
 	}
 }
 

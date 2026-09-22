@@ -499,61 +499,66 @@ func storedMemoryAccess(raw any) (sessionresource.MemoryAccess, error) {
 	return sessionresource.NormalizeMemoryAccess(value)
 }
 
+type deploymentResourceReader interface {
+	GetFile(context.Context, string, string) (db.FileRecord, error)
+	GetMemoryStoresByExternalIDs(context.Context, string, []string) ([]db.MemoryStore, error)
+}
+
+func validateDeploymentResources(ctx context.Context, database deploymentResourceReader, workspaceUUID string, resources []deploymentResourcePayload) (map[string]db.MemoryStore, *deploymentRunError, error) {
+	var memoryStores map[string]db.MemoryStore
+	for _, resource := range resources {
+		switch resource.Type {
+		case "file":
+			if _, err := database.GetFile(ctx, workspaceUUID, resource.FileID); err != nil {
+				failure, err := classifyReferenceFailure("file", err, false)
+				return nil, failure, err
+			}
+		case "memory_store":
+			// Load once, but check references in resource order so file and store
+			// failures keep their original precedence.
+			if memoryStores == nil {
+				var err error
+				memoryStores, err = loadDeploymentMemoryStores(ctx, database, workspaceUUID, resources)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			store, exists := memoryStores[resource.MemoryStoreID]
+			if !exists {
+				failure, err := classifyReferenceFailure("memory_store", db.ErrNotFound, false)
+				return nil, failure, err
+			}
+			if store.ArchivedAt != nil {
+				failure, err := classifyReferenceFailure("memory_store", nil, true)
+				return nil, failure, err
+			}
+		}
+	}
+	return memoryStores, nil, nil
+}
+
 func loadDeploymentMemoryStores(
 	ctx context.Context,
-	database *db.DB,
+	database deploymentResourceReader,
 	workspaceUUID string,
-	resources json.RawMessage,
+	resources []deploymentResourcePayload,
 ) (map[string]db.MemoryStore, error) {
-	if len(resources) == 0 || httpapi.IsJSONNull(resources) {
-		return nil, nil
-	}
-	var configs []deploymentResourcePayload
-	if err := json.Unmarshal(resources, &configs); err != nil {
-		return nil, errors.New("stored resources are invalid")
-	}
 	var storeIDs []string
-	for _, config := range configs {
-		if config.Type != sessionresource.MemoryStoreType || config.MemoryStoreID == "" || slices.Contains(storeIDs, config.MemoryStoreID) {
-			continue
+	for _, resource := range resources {
+		if resource.Type == sessionresource.MemoryStoreType && !slices.Contains(storeIDs, resource.MemoryStoreID) {
+			storeIDs = append(storeIDs, resource.MemoryStoreID)
 		}
-		storeIDs = append(storeIDs, config.MemoryStoreID)
 	}
+	stores := make(map[string]db.MemoryStore)
 	if len(storeIDs) == 0 {
-		return map[string]db.MemoryStore{}, nil
+		return stores, nil
 	}
 	rows, err := database.GetMemoryStoresByExternalIDs(ctx, workspaceUUID, storeIDs)
 	if err != nil {
 		return nil, err
 	}
-	return deploymentMemoryStoresByID(storeIDs, rows)
-}
-
-func deploymentMemoryStoresByID(storeIDs []string, rows []db.MemoryStore) (map[string]db.MemoryStore, error) {
-	stores := make(map[string]db.MemoryStore, len(rows))
 	for _, store := range rows {
 		stores[store.ExternalID] = store
 	}
-	// Validate in resource order to preserve which reference error is reported first.
-	for _, storeID := range storeIDs {
-		store, exists := stores[storeID]
-		if !exists {
-			return nil, db.ErrNotFound
-		}
-		if store.ArchivedAt != nil {
-			return nil, db.ErrInvalidState
-		}
-	}
 	return stores, nil
-}
-
-func memoryStoreLoadFailure(err error) *deploymentRunError {
-	switch {
-	case errors.Is(err, db.ErrNotFound):
-		return runErrorForReference("memory_store", err, false)
-	case errors.Is(err, db.ErrInvalidState):
-		return runErrorForReference("memory_store", err, true)
-	default:
-		return nil
-	}
 }

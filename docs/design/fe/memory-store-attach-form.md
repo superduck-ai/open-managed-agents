@@ -33,6 +33,7 @@ Create Session 的 Resources 与官方控制台一致：`+ Resource` 菜单里�
 - `web/src/features/managed-agents/resources/memory-attach.ts`：组包、500 码点、禁字段剥离
 - `web/src/features/managed-agents/resources/MemoryStoresAttachField.tsx`：Memory store Resource 卡片
 - `web/src/features/managed-agents/sessions/SessionFileResourcesField.tsx`：`+ Resource` 菜单（File / Memory store）
+- `web/src/features/managed-agents/sessions/file-resource-form.ts`：纯表单校验与 File resource 序列化；创建 Session 和追加文件资源复用同一组包函数，提交就绪判断不依赖 UI 组件。
 - `web/src/features/managed-agents/api.ts`：Session 与 Deployment 创建、更新请求体；Store 选择器分页聚合
 
 测试覆盖 501 拦截、500 原样提交、`read_only`、Session / Deployment 提交体、编辑不回写禁字段、无 store 回归、选择器聚合超过一页的 store。

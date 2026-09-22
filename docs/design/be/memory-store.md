@@ -23,7 +23,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只覆盖
 - 错误集中 `internal/sessions/errors.go`。
 - 资源顺序不影响落盘。
 - Deployment 创建/运行时按同一合同解析 memory store，并把快照写入即将创建的 Session。
-- 运行准备阶段收集并去重 memory store ID，按 workspace 使用一次 `IN` 查询加载；无 ID 时不查询。查询排除已删除记录但保留已归档记录，再按资源原顺序检查缺失和归档，以保持错误分类及优先顺序。
+- 运行依赖校验首次遇到 Memory Store 时，收集并去重 memory store ID，按 workspace 使用一次 `IN` 查询加载；无 ID 时不查询。查询排除已删除记录但保留已归档记录，再按资源原顺序交错检查文件及 Memory Store 的缺失和归档，以保持错误分类及优先顺序。校验结果直接供 Session 快照构建复用，不再逐个查询或重复加载 Store。
 
 ## 2. 响应快照
 

@@ -29,11 +29,6 @@ type FileMapper interface {
 	RetireOwnedFilesInSubtree(ctx context.Context, params sessionResourceSubtreeParams) error
 	RetireSkillArchiveFiles(ctx context.Context, params sessionSkillArchiveRetireParams) error
 	InsertSkillArchiveFile(ctx context.Context, params sessionSkillArchiveInsertParams) error
-
-	EnqueueObjectCleanupJob(ctx context.Context, workspaceUUID string, payload []byte) error
-	LeaseObjectCleanupJobs(ctx context.Context, workerID string, limit int) ([]objectCleanupJobRow, error)
-	CompleteObjectCleanupJob(ctx context.Context, jobUUID string) error
-	FailObjectCleanupJob(ctx context.Context, params objectCleanupJobFailureParams) error
 }
 
 type fileMapperRecordParams struct {
@@ -66,14 +61,6 @@ type fileMapperListParams struct {
 	Before           bool
 }
 
-type objectCleanupJobFailureParams struct {
-	JobUUID  string
-	Status   string
-	RunAfter time.Time
-	Attempts int
-	Reason   string
-}
-
 type fileRecordRow struct {
 	UUID                string    `db:"uuid"`
 	ExternalID          string    `db:"external_id"`
@@ -94,16 +81,6 @@ type fileRecordRow struct {
 type filePageCursorRow struct {
 	UUID      string    `db:"uuid"`
 	CreatedAt time.Time `db:"created_at"`
-}
-
-type objectCleanupJobRow struct {
-	UUID           string `db:"uuid"`
-	ExternalID     string `db:"external_id"`
-	WorkspaceUUID  string `db:"workspace_uuid"`
-	Bucket         string `db:"bucket"`
-	Key            string `db:"object_key"`
-	FileExternalID string `db:"file_external_id"`
-	Attempts       int    `db:"attempts"`
 }
 
 func fileMapperRecordParameters(file FileRecord) fileMapperRecordParams {
@@ -174,17 +151,5 @@ func (r fileRecordRow) record() FileRecord {
 		ScopeID:             r.ScopeID,
 		CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		CreatedAt:           r.CreatedAt,
-	}
-}
-
-func (r objectCleanupJobRow) job() ObjectCleanupJob {
-	return ObjectCleanupJob{
-		UUID:           r.UUID,
-		ExternalID:     r.ExternalID,
-		WorkspaceUUID:  r.WorkspaceUUID,
-		Bucket:         r.Bucket,
-		Key:            r.Key,
-		FileExternalID: r.FileExternalID,
-		Attempts:       r.Attempts,
 	}
 }

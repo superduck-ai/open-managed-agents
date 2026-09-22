@@ -822,20 +822,6 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		credential.PublicSessionUUID != session.UUID || credential.AgentUUID != session.AgentUUID {
 		t.Fatalf("get Code Session credential typed UUID projection = (%+v, %v)", credential, err)
 	}
-	inbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSession.ExternalID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csein_typed_uuid_" + suffix,
-		EventType:      "control_request",
-		EventSubtype:   "typed_uuid",
-		Payload:        []byte(`{}`),
-		PayloadHash:    strings.Repeat("b", 64),
-		IdempotencyKey: "typed-uuid-" + suffix,
-		DeliveryStatus: "queued",
-		Source:         "integration",
-		CreatedAt:      now,
-	})
-	if err != nil || duplicate || inbound.CodeSessionUUID != codeSession.UUID {
-		t.Fatalf("append Code Session event through typed UUID transaction = (%+v, %v, %v)", inbound, duplicate, err)
-	}
 	internalEvents, err := app.db.AppendCodeSessionInternalEvents(ctx, codeSession.ExternalID, epoch, []db.AppendCodeSessionInternalEventInput{{
 		ExternalID:     "cseint_typed_uuid_" + suffix,
 		EventType:      "typed_uuid",

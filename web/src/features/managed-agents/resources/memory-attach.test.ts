@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { emptyGitResource } from './git-resource';
 import { createManagedEntityBody, updateManagedEntityBody } from '../api';
 import type { DeploymentApiResponse, ManagedEntityFormValues, MemoryAttachFormValue } from '../types';
 import {
@@ -24,6 +25,9 @@ function formValues(overrides: Partial<ManagedEntityFormValues> = {}): ManagedEn
     vaultIds: ['vlt_one123456'],
     memoryAttaches: [],
     fileResources: [],
+    gitResources: [],
+    originalResources: [],
+    resourcesChanged: false,
     ...overrides,
   };
 }
@@ -80,10 +84,12 @@ describe('memory attach packing', () => {
     const values = formValues({
       memoryAttaches: [attach()],
       fileResources: [{ fileId: 'file_input123456', mountPath: '' }],
+      gitResources: [{ ...emptyGitResource(), url: 'https://example.com/repo.git' }],
     });
     const sessionBody = createManagedEntityBody('sessions', values);
     expect(sessionBody.resources).toEqual([
       { type: 'file', file_id: 'file_input123456' },
+      { type: 'github_repository', url: 'https://example.com/repo.git' },
       {
         type: 'memory_store',
         memory_store_id: 'memstore_one123456',
@@ -94,6 +100,8 @@ describe('memory attach packing', () => {
 
     const deploymentBody = createManagedEntityBody('deployments', values);
     expect(deploymentBody.resources).toEqual([
+      { type: 'file', file_id: 'file_input123456' },
+      { type: 'github_repository', url: 'https://example.com/repo.git' },
       {
         type: 'memory_store',
         memory_store_id: 'memstore_one123456',
@@ -137,7 +145,7 @@ describe('memory attach packing', () => {
     ]);
     const body = updateManagedEntityBody(
       'deployments',
-      formValues({ memoryAttaches: attaches, name: 'Deployment one' }),
+      formValues({ memoryAttaches: attaches, name: 'Deployment one', resourcesChanged: true }),
     );
     expect(body.resources).toEqual([
       {

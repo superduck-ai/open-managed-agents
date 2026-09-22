@@ -40,8 +40,9 @@ type Policy struct {
 // MCPProxyPolicy 是 MCP HTTP proxy 的编译后授权策略，同时约束 Session
 // 配置的精确 URL 与 Environment 网络策略。
 type MCPProxyPolicy struct {
-	policy    Policy
-	mcpURLSet map[string]struct{}
+	policy        Policy
+	mcpURLSet     map[string]struct{}
+	mcpURLsByName map[string]string
 }
 
 // ParsePolicy 在策略加载边界解析数据库 JSON，并编译归一化的 host 索引。
@@ -82,9 +83,17 @@ func ParseMCPProxyPolicy(configRaw, agentSnapshotRaw []byte) (MCPProxyPolicy, er
 		mcpURLSet[rawURL] = struct{}{}
 	}
 	return MCPProxyPolicy{
-		policy:    compilePolicy(config, mcpHosts),
-		mcpURLSet: mcpURLSet,
+		policy:        compilePolicy(config, mcpHosts),
+		mcpURLSet:     mcpURLSet,
+		mcpURLsByName: targets.urlsByName,
 	}, nil
+}
+
+// MCPServerURL resolves a remote MCP target by the stable server name stored in
+// the Session Agent Snapshot. The runtime never supplies an arbitrary URL.
+func (p MCPProxyPolicy) MCPServerURL(name string) (string, bool) {
+	target, ok := p.mcpURLsByName[name]
+	return target, ok
 }
 
 func compilePolicy(config Config, mcpHosts []string) Policy {

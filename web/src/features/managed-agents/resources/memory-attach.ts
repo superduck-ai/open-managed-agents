@@ -1,4 +1,4 @@
-import type { ManagedEntityApiResponse, MemoryAttachFormValue } from '../types';
+import type { MemoryAttachFormValue } from '../types';
 
 export const MAX_MEMORY_ATTACHES = 8;
 export const MAX_MEMORY_ATTACH_INSTRUCTIONS = 500;
@@ -49,7 +49,7 @@ export function memoryAttachResources(attaches: MemoryAttachFormValue[]) {
     }));
 }
 
-export function entityMemoryAttaches(entity?: ManagedEntityApiResponse): MemoryAttachFormValue[] {
+export function entityMemoryAttaches(entity?: { resources?: unknown }): MemoryAttachFormValue[] {
   if (!entity || !('resources' in entity) || !Array.isArray(entity.resources)) {
     return [];
   }

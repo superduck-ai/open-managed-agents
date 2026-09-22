@@ -31,6 +31,7 @@ export { areSessionFileResourcesValid } from './file-resource-form';
 export function SessionFileResourcesField({
   resources,
   showAddButton = true,
+  showHeading = true,
   workspaceId,
   onChange,
   memoryAttaches = [],
@@ -39,6 +40,7 @@ export function SessionFileResourcesField({
 }: {
   resources: SessionFileResourceFormValue[];
   showAddButton?: boolean;
+  showHeading?: boolean;
   workspaceId: string;
   onChange?: (resources: SessionFileResourceFormValue[]) => void;
   memoryAttaches?: MemoryAttachFormValue[];
@@ -64,15 +66,20 @@ export function SessionFileResourcesField({
   };
 
   return (
-    <section className="space-y-3" aria-labelledby="session-resources-title">
-      <div>
-        <h3 id="session-resources-title" className="text-sm font-semibold text-foreground">
-          {msg('managedAgents.sessions.resources.title', 'Resources')}
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg('managedAgents.sessions.resources.description', 'Mount files or memory stores into the session.')}
-        </p>
-      </div>
+    <section className="space-y-3" aria-labelledby={showHeading ? 'session-resources-title' : undefined}>
+      {showHeading ? (
+        <div>
+          <h3 id="session-resources-title" className="text-sm font-semibold text-foreground">
+            {msg('managedAgents.sessions.resources.title', 'Resources')}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {msg(
+              'managedAgents.sessions.resources.description',
+              'Mount files, Git repositories, or memory stores into the session.',
+            )}
+          </p>
+        </div>
+      ) : null}
 
       {includeFiles
         ? resources.map((resource, index) => {

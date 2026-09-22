@@ -101,6 +101,8 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
+	PayloadBlobUUID   *string
+	ToolUseID         *string
 	UUID              string
 	ExternalID        string
 	OrganizationUUID  string

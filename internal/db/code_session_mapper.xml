@@ -19,7 +19,6 @@
         status,
         metadata,
         connection_status,
-        last_inbound_sequence_num,
         last_internal_sequence_num,
         last_worker_connected_at,
         last_worker_activity_at,
@@ -334,14 +333,6 @@
         WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID}
             AND session_uuid = #{sessionUUID} AND status = 'active' AND deleted_at IS NULL
     </update>
-    <update id="UpdateCodeSessionInboundSequence" result="rows">
-        UPDATE code_sessions
-        SET last_inbound_sequence_num = #{sequenceNum},
-            idle_since = NULL,
-            updated_at = #{now}
-        WHERE uuid = #{codeSessionUUID}
-    </update>
-
     <update id="UpdateCodeSessionInternalSequence">
         UPDATE code_sessions
         SET last_internal_sequence_num = #{sequenceNum},

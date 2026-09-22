@@ -26,6 +26,9 @@ export function useUnsavedChangesGuard({ dirty, interactionBlocked, onDiscard }:
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const bypassRef = useRef(false);
+  useEffect(() => {
+    if (!dirty) bypassRef.current = false;
+  }, [dirty]);
   const navigationBlocker = useBlocker({
     shouldBlockFn: () => dirty && !bypassRef.current,
     enableBeforeUnload: dirty,

@@ -6,6 +6,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 var (
@@ -96,4 +97,17 @@ func scheduledDeploymentLimitExceeded() error {
 		fmt.Sprintf("an organization may have at most %d scheduled deployments", db.MaxScheduledDeploymentsPerOrganization),
 		db.ErrLimitExceeded,
 	)
+}
+
+type resourceReferenceError = sessionresource.ReferenceError
+
+func memoryStoreLoadFailure(err error) *deploymentRunError {
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		return runErrorForReference("memory_store", err, false)
+	case errors.Is(err, db.ErrInvalidState):
+		return runErrorForReference("memory_store", err, true)
+	default:
+		return nil
+	}
 }

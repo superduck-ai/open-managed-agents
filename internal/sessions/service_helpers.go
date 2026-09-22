@@ -146,7 +146,7 @@ func (h *Handler) resourceFromRequest(
 	if err != nil {
 		return normalizedSessionResource{}, err
 	}
-	payload := map[string]any{"id": resourceID, "type": resourceType}
+	var payload any
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
 	switch resourceType {
@@ -186,11 +186,12 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		payload["url"] = url
-		payload["mount_path"] = mountPath
+		fields := map[string]any{"id": resourceID, "type": resourceType, "url": url}
+		fields["mount_path"] = mountPath
 		if len(body.Checkout) > 0 && !httpapi.IsJSONNull(body.Checkout) {
-			payload["checkout"] = agentsnapshot.RawJSONValue(body.Checkout, nil)
+			fields["checkout"] = agentsnapshot.RawJSONValue(body.Checkout, nil)
 		}
+		payload = fields
 	case sessionresource.MemoryStoreType:
 		fields, err := h.memoryStorePayload(r.Context(), session, body, attachSet, resourceID)
 		if err != nil {

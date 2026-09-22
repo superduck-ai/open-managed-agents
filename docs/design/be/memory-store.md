@@ -267,7 +267,9 @@ filestore 只 import `internal/db`。`sessions` / `environments` 不碰 memory �
 - 请求携带 `mount_path` / `name` / `description` → 400。
 - 不存在 → 404；已归档 → 400。
 - slug = name 小写，非字母数字折叠为 `-`，去首尾；空则回退 external id；同 Session 冲突追加 `-2`。
-- 错误集中 `internal/sessions/errors.go`。
+- Session 与 Deployment 保存 attach 时统一通过 `sessionresource.ResolveMemoryAttach` 解析并校验引用；持久化模板 `MemoryAttachSpec` 仅含 `memory_store_id`、`access`、`instructions`。Session 当场生成身份快照，Deployment 留到运行时生成；未填写 instructions 与显式清空在模板中保持区别。
+- 手动及定时运行均由 `loadDeploymentMemoryStores` 加载并检查归档状态，每个不同 store 只查询一次；依赖校验消费加载错误，快照复用加载结果。保存时校验不替代运行时校验，也不提供跨并发更新的事务快照保证。
+- 引用错误由 `sessionresource.ReferenceError` 携带，HTTP/运行错误分别集中映射于 `internal/sessions/errors.go` 和 `internal/deployments/errors.go`。
 - 资源顺序不影响落盘。
 
 ### 7.2 Filestore 写

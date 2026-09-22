@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
@@ -625,7 +626,8 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 	if deployment.ArchivedAt != nil {
 		return invalidRequest(errors.New("archived deployments cannot be run"))
 	}
-	referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
+	memoryStores, memoryErr := loadDeploymentMemoryStores(r.Context(), h.db, principal.WorkspaceUUID, deployment.Resources)
+	referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment, memoryErr)
 	if err != nil {
 		referenceFailure = runError("unknown_error", "Could not create session")
 	}
@@ -633,13 +635,6 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	memoryStores, err := loadDeploymentMemoryStores(r.Context(), h.db, principal.WorkspaceUUID, deployment.Resources)
-	if err != nil {
-		if failure := memoryStoreLoadFailure(err); failure != nil {
-			return h.writeRunReferenceFailure(w, r, principal, deployment, failure)
-		}
-		return deploymentLoadError(err, deploymentID)
-	}
 	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now, memoryStores)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
@@ -724,7 +719,7 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	return writeRunResponse(w, run)
 }
 
-func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment, memoryErr error) (*deploymentRunError, error) {
 	agent, err := database.GetAgent(ctx, workspaceUUID, deployment.AgentExternalID)
 	if err != nil {
 		return classifyReferenceFailure("agent", err, false)
@@ -732,10 +727,10 @@ func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID s
 	if agent.ArchivedAt != nil {
 		return classifyReferenceFailure("agent", nil, true)
 	}
-	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
+	return validateSessionDependencies(ctx, database, workspaceUUID, deployment, memoryErr)
 }
 
-func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment, memoryErr error) (*deploymentRunError, error) {
 	var snapshot deploymentAgentSnapshot
 	if err := json.Unmarshal(deployment.AgentSnapshot, &snapshot); err != nil {
 		return runError("unknown_error", "Stored agent snapshot is invalid"), nil
@@ -768,10 +763,10 @@ func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID
 			return classifyReferenceFailure("skill", err, false)
 		}
 	}
-	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
+	return validateSessionDependencies(ctx, database, workspaceUUID, deployment, memoryErr)
 }
 
-func validateSessionDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateSessionDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment, memoryErr error) (*deploymentRunError, error) {
 	env, err := database.GetEnvironment(ctx, workspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
 		return classifyReferenceFailure("environment", err, false)
@@ -801,20 +796,17 @@ func validateSessionDependencies(ctx context.Context, database *db.DB, workspace
 		}
 	}
 	for _, resource := range resources {
-		switch resource.Type {
-		case "file":
+		if resource.Type == sessionresource.FileType {
 			if _, err := database.GetFile(ctx, workspaceUUID, resource.FileID); err != nil {
 				return classifyReferenceFailure("file", err, false)
 			}
-		case "memory_store":
-			store, err := database.GetMemoryStore(ctx, workspaceUUID, resource.MemoryStoreID)
-			if err != nil {
-				return classifyReferenceFailure("memory_store", err, false)
-			}
-			if store.ArchivedAt != nil {
-				return classifyReferenceFailure("memory_store", nil, true)
-			}
 		}
+	}
+	if memoryErr != nil {
+		if failure := memoryStoreLoadFailure(memoryErr); failure != nil {
+			return failure, nil
+		}
+		return nil, memoryErr
 	}
 	return nil, nil
 }

@@ -111,17 +111,3 @@ type sessionResourceRequest struct {
 type sessionResourceUpdateRequest struct {
 	AuthorizationToken json.RawMessage `json:"authorization_token"`
 }
-
-type resourceReferenceError struct {
-	ResourceType string
-	ResourceID   string
-	Err          error
-}
-
-func (e resourceReferenceError) Error() string {
-	return e.ResourceType + " reference failed: " + e.ResourceID
-}
-
-func (e resourceReferenceError) Unwrap() error {
-	return e.Err
-}

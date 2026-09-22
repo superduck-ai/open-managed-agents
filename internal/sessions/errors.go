@@ -153,3 +153,5 @@ func mapResourceLoadError(err error, resourceID string) error {
 func streamingUnsupported() error {
 	return internalError("Streaming is not supported", errors.New("response writer does not implement http.Flusher"))
 }
+
+type resourceReferenceError = sessionresource.ReferenceError

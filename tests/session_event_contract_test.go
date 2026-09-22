@@ -1,11 +1,14 @@
 package tests
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
@@ -167,5 +170,69 @@ func TestSessionContractToolReplies(t *testing.T) {
 	}
 	if sessionEventStringField(t, mcpResults.Data[0], "mcp_tool_use_id") != sessionEventStringField(t, mcpCalls.Data[0], "id") {
 		t.Fatal("MCP result references the wrong invocation")
+	}
+}
+
+func TestSessionContractUpdatesArchiveAndDelete(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("contract-resource-events"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	path := "/v1/sessions/" + worker.SessionExternalID
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+path+"/events/stream?beta=true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("X-Api-Key", defaultTestKey)
+	request.Header.Set("Anthropic-Beta", "managed-agents-2026-04-01")
+	response, err := app.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("public stream: %d", response.StatusCode)
+	}
+	for range 2 {
+		result := doSessionRequest(t, app, http.MethodPost, path+"?beta=true", strings.NewReader(`{"title":"Updated"}`), defaultTestKey, true)
+		if result.StatusCode != http.StatusOK {
+			t.Fatalf("update failed: %d %s", result.StatusCode, readAll(t, result.Body))
+		}
+		result.Body.Close()
+	}
+	updates := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.updated", defaultTestKey)
+	if len(updates.Data) != 1 {
+		t.Fatalf("no-op update emitted event: %s", updates.Data)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(updates.Data[0], &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["agent"]; ok {
+		t.Fatal("update included unchanged agent")
+	}
+	if _, ok := fields["metadata"]; ok {
+		t.Fatal("update included unchanged metadata")
+	}
+	archiveSession(t, app, worker.SessionExternalID)
+	archiveSession(t, app, worker.SessionExternalID)
+	terminated := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.status_terminated&types[]=session.thread_status_terminated", defaultTestKey)
+	if len(terminated.Data) != 2 {
+		t.Fatalf("archive termination events: %s", terminated.Data)
+	}
+	result := doSessionRequest(t, app, http.MethodDelete, path+"?beta=true", nil, defaultTestKey, true)
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("delete failed: %d %s", result.StatusCode, readAll(t, result.Body))
+	}
+	result.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	var deleted bool
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), `"type":"session.deleted"`) {
+			deleted = true
+		}
+	}
+	if !deleted || scanner.Err() != nil {
+		t.Fatalf("delete did not notify and close SSE: deleted=%v err=%v", deleted, scanner.Err())
 	}
 }

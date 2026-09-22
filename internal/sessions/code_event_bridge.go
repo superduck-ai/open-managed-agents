@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -81,13 +80,4 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	h.publishSessionEvents(ctx, created)
 	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
 	return nil
-}
-
-func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {
-	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
-		return
-	}
-	h.publishSessionEvents(r.Context(), created)
 }

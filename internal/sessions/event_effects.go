@@ -3,12 +3,12 @@ package sessions
 import (
 	"context"
 	jsonv2 "encoding/json/v2"
+	"reflect"
 	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
@@ -44,23 +44,31 @@ func (h *Handler) prependInputRunningEvents(ctx context.Context, session db.Sess
 	return events, nil
 }
 
-func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, error) {
+func (h *Handler) sessionUpdatedEvent(previous, session db.Session) (db.SessionEvent, bool, error) {
 	eventID, err := ids.New("sevt_")
 	if err != nil {
-		return db.SessionEvent{}, err
+		return db.SessionEvent{}, false, err
 	}
-	now := time.Now().UTC()
-	payload, err := httpapi.MarshalRaw(map[string]any{
-		"id":           eventID,
-		"agent":        agentsnapshot.RawJSONValue(session.AgentSnapshot, nil),
-		"created_at":   httpapi.FormatTime(now),
-		"metadata":     agentsnapshot.RawJSONValue(session.Metadata, map[string]any{}),
-		"processed_at": now.Format(time.RFC3339),
-		"title":        session.Title,
-		"type":         "session.updated",
-	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	fields := make(map[string]any)
+	if !reflect.DeepEqual(previous.Title, session.Title) {
+		fields["title"] = session.Title
+	}
+	oldAgent, newAgent := agentsnapshot.RawJSONValue(previous.AgentSnapshot, nil), agentsnapshot.RawJSONValue(session.AgentSnapshot, nil)
+	if !reflect.DeepEqual(oldAgent, newAgent) {
+		fields["agent"] = newAgent
+	}
+	oldMetadata, newMetadata := agentsnapshot.RawJSONValue(previous.Metadata, nil), agentsnapshot.RawJSONValue(session.Metadata, nil)
+	if !reflect.DeepEqual(oldMetadata, newMetadata) {
+		fields["metadata"] = newMetadata
+	}
+	if len(fields) == 0 {
+		return db.SessionEvent{}, false, nil
+	}
+	fields["id"], fields["type"], fields["processed_at"], fields["created_at"] = eventID, "session.updated", now, now
+	payload, err := jsonv2.Marshal(fields)
 	if err != nil {
-		return db.SessionEvent{}, err
+		return db.SessionEvent{}, false, err
 	}
 	return db.SessionEvent{
 		UUID:              uuid.NewV4().String(),
@@ -73,7 +81,7 @@ func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, erro
 		Payload:           payload,
 		ProcessedAt:       now,
 		CreatedAt:         now,
-	}, nil
+	}, true, nil
 }
 
 func (h *Handler) simpleSessionEvent(eventType, sessionID string, threadID *string) (db.SessionEvent, error) {
@@ -104,4 +112,34 @@ func (h *Handler) simpleSessionEvent(eventType, sessionID string, threadID *stri
 		ProcessedAt:      now,
 		CreatedAt:        now,
 	}, nil
+}
+
+func (h *Handler) terminationEvents(ctx context.Context, session db.Session, threadID string) ([]db.SessionEvent, error) {
+	threads, err := h.db.ListSessionThreads(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	var events []db.SessionEvent
+	for _, thread := range threads {
+		if threadID != "" && thread.ExternalID != threadID {
+			continue
+		}
+		event, err := h.simpleSessionEvent("session.thread_status_terminated", session.ExternalID, new(thread.ExternalID))
+		if err != nil {
+			return nil, err
+		}
+		mapped, err := h.sessionEventsFromCodeSessionPayload(ctx, session, session.ExternalID, event.Payload, event.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, mapped...)
+	}
+	if threadID == "" {
+		event, err := h.simpleSessionEvent("session.status_terminated", session.ExternalID, nil)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, nil
 }

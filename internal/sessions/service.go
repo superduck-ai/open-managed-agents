@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -301,14 +302,23 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
-	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
+	event, changed, err := h.sessionUpdatedEvent(current, next)
 	if err != nil {
-		return mapSessionLoadError(err, sessionID)
+		return internalError("Could not encode session update", err)
 	}
-	event, err := h.sessionUpdatedEvent(updated)
-	if err == nil {
-		h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+	updated := current
+	if changed {
+		next.UpdatedAt = time.Now().UTC()
+		prepared, prepareErr := h.eventPayloads.PreparePublic(r.Context(), current.OrganizationUUID, current.WorkspaceUUID, []db.SessionEvent{event})
+		if prepareErr != nil {
+			return internalError("Could not prepare session update", prepareErr)
+		}
+		var created []db.SessionEvent
+		updated, created, err = h.db.UpdateSession(r.Context(), current, next, prepared[0])
+		if err != nil {
+			return mapSessionLoadError(err, sessionID)
+		}
+		h.publishSessionEvents(r.Context(), eventpayload.RestoreCreatedPublic(created, []db.SessionEvent{event}))
 	}
 	response, err := h.responseFromSession(r, updated)
 	if err != nil {
@@ -338,10 +348,15 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 	if current.Status == "running" || current.Status == "rescheduling" {
 		return invalidRequest(errors.New("running sessions cannot be archived"))
 	}
-	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	events, err := h.terminationEvents(r.Context(), current, "")
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
+	archived, created, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID, events)
+	if err != nil {
+		return mapSessionLoadError(err, sessionID)
+	}
+	h.publishSessionEvents(r.Context(), created)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
@@ -372,18 +387,24 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(errors.New("running sessions cannot be deleted"))
 	}
 	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, nil)
-	if err == nil {
-		if current.ArchivedAt == nil {
-			h.appendAndBroadcastInternal(r, sessionID, []db.SessionEvent{deletedEvent})
-		} else {
-			deletedEvent.SessionExternalID = sessionID
-			h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
-		}
+	if err != nil {
+		return internalError("Could not create session deletion event", err)
+	}
+	primary, found, err := h.db.GetPrimarySessionThread(r.Context(), current.WorkspaceUUID, sessionID)
+	if err != nil {
+		return mapSessionLoadError(err, sessionID)
+	}
+	deletedEvent.OrganizationUUID, deletedEvent.WorkspaceUUID = current.OrganizationUUID, current.WorkspaceUUID
+	deletedEvent.SessionUUID, deletedEvent.SessionExternalID = current.UUID, sessionID
+	if found {
+		deletedEvent.ThreadUUID, deletedEvent.ThreadExternalID = &primary.UUID, &primary.ExternalID
 	}
 	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
+	h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
+
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 	return nil
@@ -840,10 +861,15 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
+	events, err := h.terminationEvents(r.Context(), session, threadID)
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
+	thread, created, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID, events)
+	if err != nil {
+		return mapThreadLoadError(err, threadID)
+	}
+	h.publishSessionEvents(r.Context(), created)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
 	return nil

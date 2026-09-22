@@ -22,6 +22,8 @@ Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment
 
 Environment 的 `build_job_id` 直接引用 River 的 bigint 主键 `river_job.id`，不新增构建表。任务类型与队列均为 `environment_prebuild`。River args 保存 workspace、environment、服务商配置标识和 Dockerfile；output 保存远端任务引用及检查点。Dockerfile 在入队时固定基础镜像和软件包输入。
 
+APT 列表非空时，索引更新与软件包安装在同一条 `RUN` 中执行。启用镜像构建缓存后，输入不变时可复用该层，APT 包列表变化时同时重新更新索引和安装；列表为空时跳过 APT。包名通过独立的位置参数传给固定脚本，不拼接为 shell 代码。
+
 环境行锁协调修改、重试、取消及检查点，所有远端请求在事务之外执行。查询校验任务类型、workspace 和 environment；检查点及绑定 SQL 校验当前 job ID，防止旧任务覆盖新配置或已删除的环境。取消请求在检查点写入时合并，避免并发 worker 丢失取消意图。
 
 软件包更新或清空后，旧任务下次执行时取消；已提交的 Flow 构建会先请求远端取消，失败则保留构建引用并每 5 秒重试，接受取消后结束旧 River job。提交过程中发生更新也会先保存返回的构建引用，再执行取消。已经结束的构建不重复取消；当前 CubeSandbox 模板构建不支持取消，旧结果不会绑定到环境。

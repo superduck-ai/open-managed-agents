@@ -341,10 +341,8 @@ func packageDockerfile(base string, packages *environmentPackages) string {
 			run(append(prefix, specs...))
 		}
 	}
-	if len(packages.APT) > 0 {
-		run([]string{"apt-get", "update"})
-	}
-	batch([]string{"apt-get", "install", "-y", "--"}, packages.APT)
+	// Cache APT's index and installation together; pass specs as literal arguments.
+	batch([]string{"sh", "-c", `apt-get update && exec apt-get install -y -- "$@"`, "apt-get"}, packages.APT)
 	batch([]string{"cargo", "install"}, packages.Cargo)
 	batch([]string{"gem", "install"}, packages.Gem)
 	for _, spec := range packages.Go {

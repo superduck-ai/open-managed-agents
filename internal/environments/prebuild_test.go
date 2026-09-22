@@ -148,7 +148,7 @@ func TestPrebuildProviderConfiguration(t *testing.T) {
 }
 
 func TestPrebuildRecipePreservesLiteralSpecs(t *testing.T) {
-	p := &environmentPackages{APT: []string{"vim=1.2"}, Cargo: []string{"ripgrep"}, Gem: []string{"rake"}, Go: []string{"a@v1", "b@v2"}, NPM: []string{"$(touch /tmp/injected)\nCOPY secret /"}, PIP: []string{"demo >= 1"}}
+	p := &environmentPackages{APT: []string{"vim=1.2", "$(touch /tmp/injected)\nCOPY secret /"}, Cargo: []string{"ripgrep"}, Gem: []string{"rake"}, Go: []string{"a@v1", "b@v2"}, NPM: []string{"$(touch /tmp/injected)\nCOPY secret /"}, PIP: []string{"demo >= 1"}}
 	file := packageDockerfile("registry/base@sha256:pinned", p)
 	var actual [][]string
 	for _, line := range strings.Split(file, "\n") {
@@ -160,7 +160,7 @@ func TestPrebuildRecipePreservesLiteralSpecs(t *testing.T) {
 			actual = append(actual, argv)
 		}
 	}
-	expected := [][]string{{"apt-get", "update"}, {"apt-get", "install", "-y", "--", "vim=1.2"}, {"cargo", "install", "ripgrep"}, {"gem", "install", "rake"}, {"go", "install", "a@v1"}, {"go", "install", "b@v2"}, {"npm", "install", "--global", "--", p.NPM[0]}, {"pip", "install", "demo >= 1"}}
+	expected := [][]string{{"sh", "-c", `apt-get update && exec apt-get install -y -- "$@"`, "apt-get", p.APT[0], p.APT[1]}, {"cargo", "install", "ripgrep"}, {"gem", "install", "rake"}, {"go", "install", "a@v1"}, {"go", "install", "b@v2"}, {"npm", "install", "--global", "--", p.NPM[0]}, {"pip", "install", "demo >= 1"}}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("argv=%v", actual)
 	}

@@ -114,7 +114,15 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 
 ## 输入处理与状态事件顺序
 
-接受主线程 user.message 时，在同一事务内按 session.status_running → session.thread_status_running 激活任务；状态相同不重复写入。用户消息先持久化为 processed_at=null 的排队记录，Worker processing/processed ACK 后设置处理时间并广播。发送接口只返回提交的用户事件。
+接受主线程 user.message 时，在同一事务内按 session.status_running → session.thread_status_running 激活任务；状态相同不重复写入。发送接口只返回提交的用户事件。
+
+`processed_at` 表示消息被接纳为当前轮次输入的时间，不表示模型完成回复：
+
+- 主线程空闲、没有排队用户消息且不在等待工具确认：本批第一条主线程消息立即设置 `processed_at = created_at`，提交后广播。
+- 其余用户消息：保持 `processed_at=null`，Worker processing/processed ACK 后设置时间并广播。
+- 已有 `processed_at` 的消息：ACK 不修改时间、不重复广播。
+
+接纳判断与事件写入共用 Session 事务锁，并发发送只有一条能立即被接纳。
 
 Worker 注册和新一轮输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。result 不再驱动 idle，结束状态由 Worker 状态上报产生。旧 result 补造模型 span 的逻辑由后续模型生命周期 PR 替换。
 
@@ -122,4 +130,4 @@ Worker 注册和新一轮输入清除 worker_turn_started，显式 running 上�
 
 历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 `00064_session_input_state.sql` 一次创建最终排序索引、添加 `worker_turn_started` 并允许 `processed_at` 为 null；回滚前用 `created_at` 填充未处理记录的 `processed_at`。
 
-验证：tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，以及 Worker ACK 后的 SSE/history 顺序。
+验证：tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，空闲/排队输入时间、并发和批量接纳、对象存储 payload，以及 ACK 前后的 SSE/history 顺序。

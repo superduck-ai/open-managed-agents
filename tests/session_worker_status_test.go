@@ -83,8 +83,15 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"session.status_running","uuid":"late-worker-running","id":"sevt_late_worker_running"}`))
 	counts := make(map[string]int)
+	processed := 0
 	for _, raw := range listSessionEvents(t, app, codeSession.SessionExternalID, "", defaultTestKey).Data {
 		counts[sessionEventStringField(t, raw, "type")]++
+		if sessionEventStringField(t, raw, "type") == "user.message" && sessionInputProcessedAt(t, raw) != "" {
+			processed++
+		}
+	}
+	if processed != 1 {
+		t.Fatalf("expected exactly one immediately processed input, got %d", processed)
 	}
 	if counts["session.status_running"] != 1 || counts["session.thread_status_running"] != 1 || counts["user.message"] != 2 {
 		t.Fatalf("concurrent inputs duplicated running: %v", counts)
@@ -111,13 +118,55 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		t.Fatalf("stream: %d", resp.StatusCode)
 	}
 
-	for range 2 {
+	type publicEvent struct {
+		ID          string `json:"id"`
+		Type        string `json:"type"`
+		ThreadID    string `json:"session_thread_id"`
+		ProcessedAt string `json:"processed_at"`
+		StopReason  struct {
+			Type string `json:"type"`
+		} `json:"stop_reason"`
+	}
+	var live []publicEvent
+	scanner := bufio.NewScanner(resp.Body)
+	firstProcessedAt := ""
+	for i := range 2 {
 		sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Hello"}]}]}`, defaultTestKey)
 		if len(sent.Data) != 1 || sessionEventStringField(t, sent.Data[0], "type") != "user.message" {
 			t.Fatalf("send response must contain only submitted events: %s", sent.Data)
 		}
+		processedAt := sessionInputProcessedAt(t, sent.Data[0])
+		if i == 0 {
+			firstProcessedAt = processedAt
+			if processedAt == "" || processedAt != sessionEventStringField(t, sent.Data[0], "created_at") {
+				t.Fatalf("idle input must be processed on acceptance: %s", sent.Data)
+			}
+			// The running pair and first message must arrive before any worker ACK.
+			for scanner.Scan() {
+				data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+				if !ok {
+					continue
+				}
+				var event publicEvent
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
+					t.Fatal(err)
+				}
+				if event.ID != "" {
+					live = append(live, event)
+				}
+				if len(live) == 3 {
+					break
+				}
+			}
+			if len(live) != 3 || live[2].ProcessedAt != processedAt {
+				t.Fatalf("first input missing before ACK: %+v, scan: %v", live, scanner.Err())
+			}
+		} else if processedAt != "" {
+			t.Fatalf("busy input must remain queued: %s", sent.Data)
+		}
 		consumePublicInput(t, app, codeSession, epoch, sessionEventStringField(t, sent.Data[0], "id"))
 	}
+
 	// Worker initialization reports idle before consuming the accepted inputs.
 	for range 2 {
 		putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
@@ -133,16 +182,6 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	))
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
 	want := []string{"session.status_running", "session.thread_status_running", "user.message", "user.message", "agent.message", "system.message", "session.thread_status_idle", "session.status_idle"}
-	type publicEvent struct {
-		ID         string `json:"id"`
-		Type       string `json:"type"`
-		ThreadID   string `json:"session_thread_id"`
-		StopReason struct {
-			Type string `json:"type"`
-		} `json:"stop_reason"`
-	}
-	var live []publicEvent
-	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
 		if !ok {
@@ -172,7 +211,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if err := json.Unmarshal(raw, &event); err != nil {
 			t.Fatal(err)
 		}
-		if event.Type != want[i] || event.ID != live[i].ID || event.Type != live[i].Type || event.StopReason != live[i].StopReason {
+		if event.Type != want[i] || event.ID != live[i].ID || event.Type != live[i].Type || event.ProcessedAt != live[i].ProcessedAt || event.StopReason != live[i].StopReason {
 			t.Fatalf("event %d: history=%+v live=%+v want=%s", i, event, live[i], want[i])
 		}
 		if strings.HasPrefix(event.Type, "session.thread_status_") && (event.ThreadID == "" || event.ThreadID != live[i].ThreadID) {
@@ -186,7 +225,13 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		}
 	}
 
-	sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Next turn"}]}]}`, defaultTestKey)
+	if live[2].ProcessedAt != firstProcessedAt || live[3].ProcessedAt == "" {
+		t.Fatalf("ACK changed accepted time or left queued input unprocessed: %+v", live)
+	}
+	next := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Next turn"}]}]}`, defaultTestKey)
+	if sessionInputProcessedAt(t, next.Data[0]) != sessionEventStringField(t, next.Data[0], "created_at") {
+		t.Fatalf("next idle turn must be accepted immediately: %s", next.Data)
+	}
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
 	if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; status != "running" {
 		t.Fatalf("repeated idle ended newly accepted input: %s", status)
@@ -214,6 +259,39 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if !strings.Contains(string(raw), `"requires_action"`) || !strings.Contains(string(raw), tool.ID) {
 			t.Fatalf("lost approval reason: %s", raw)
 		}
+	}
+	waiting := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Wait for approval"}]}]}`, defaultTestKey)
+	if sessionInputProcessedAt(t, waiting.Data[0]) != "" {
+		t.Fatalf("approval wait must not be treated as an idle turn: %s", waiting.Data)
+	}
+}
+
+func TestSessionIdleInputBatch(t *testing.T) {
+	for _, size := range []int{10, 40000} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			app := newPayloadIntegrationApp(t, newFakeStore("idle-input-batch"))
+			codeSession, epoch := newPayloadIntegrationSession(t, app)
+			input := `{"type":"user.message","content":[{"type":"text","text":` + quoteJSON(strings.Repeat("x", size)) + `}]}`
+			sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[`+input+`,`+input+`]}`, defaultTestKey)
+			if len(sent.Data) != 2 {
+				t.Fatalf("expected two inputs, got %d", len(sent.Data))
+			}
+			first := sessionInputProcessedAt(t, sent.Data[0])
+			if first == "" || first != sessionEventStringField(t, sent.Data[0], "created_at") || sessionInputProcessedAt(t, sent.Data[1]) != "" {
+				t.Fatal("only the first batch input should be processed immediately")
+			}
+			history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message&order=asc", defaultTestKey)
+			if len(history.Data) != 2 || sessionInputProcessedAt(t, history.Data[0]) != first || sessionInputProcessedAt(t, history.Data[1]) != "" {
+				t.Fatal("history must preserve immediate and queued timestamps, including offloaded payloads")
+			}
+			// Idle can arrive while a later input is still queued. New input must not overtake it.
+			putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
+			putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+			later := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
+			if sessionInputProcessedAt(t, later.Data[0]) != "" {
+				t.Fatal("new input overtook a queued message")
+			}
+		})
 	}
 }
 
@@ -314,4 +392,15 @@ func TestSessionWorkerIdleHasSingleSource(t *testing.T) {
 			}
 		})
 	}
+}
+
+func sessionInputProcessedAt(t *testing.T, raw []byte) string {
+	t.Helper()
+	var event struct {
+		ProcessedAt string `json:"processed_at"`
+	}
+	if err := json.Unmarshal(raw, &event); err != nil {
+		t.Fatal(err)
+	}
+	return event.ProcessedAt
 }

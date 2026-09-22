@@ -3,6 +3,8 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"slices"
 
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -115,6 +117,10 @@ func insertSessionEventsTx(
 		return nil, mapNoRows(err)
 	}
 	primary := primaryRow.thread()
+	events, err = acceptIdlePrimaryInput(ctx, executor, session, primary, events)
+	if err != nil {
+		return nil, err
+	}
 
 	created := make([]SessionEvent, 0, len(events))
 	for _, event := range events {
@@ -203,6 +209,43 @@ func insertSessionEventsTx(
 		}
 	}
 	return created, nil
+}
+
+// The caller holds the session lock. Only the first input of an idle turn is
+// accepted immediately; queued inputs keep waiting for worker acknowledgement.
+func acceptIdlePrimaryInput(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, events []SessionEvent) ([]SessionEvent, error) {
+	if primary.Status != "idle" {
+		return events, nil
+	}
+	first := slices.IndexFunc(events, func(event SessionEvent) bool {
+		return event.EventType == "user.message" && event.ProcessedAt.IsZero() &&
+			(event.ThreadExternalID == nil || *event.ThreadExternalID == primary.ExternalID)
+	})
+	if first < 0 {
+		return events, nil
+	}
+	// Descending history puts unprocessed messages first, so one row suffices.
+	latest, err := NewSessionEventMapper(executor).ListPage(ctx, sessionEventPageMapperParams{
+		WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.ExternalID,
+		ThreadExternalID: primary.ExternalID, Types: []string{"user.message"},
+		Descending: true, FetchLimit: 1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(latest) > 0 && latest[0].ProcessedAt.IsZero() {
+		return events, nil
+	}
+	worker, err := NewCodeSessionMapper(executor).FindLatestBySessionExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if worker.WorkerStatus == "requires_action" {
+		return events, nil
+	}
+	events = slices.Clone(events)
+	events[first].ProcessedAt = events[first].CreatedAt
+	return events, nil
 }
 
 func sessionWriteParameters(session Session) sessionWriteParams {

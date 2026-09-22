@@ -46,12 +46,11 @@ type filestoreDatabase interface {
 // Service 编排 Filestore 的鉴权上下文、元数据事务与对象存储操作。
 // 数据库负责命名空间一致性，对象存储负责字节内容，两者通过持久化清理任务实现最终一致。
 type Service struct {
-	cfg    config.Config
-	db     filestoreDatabase
-	store  storage.ObjectStore
-	now    func() time.Time
-	paths  pathRouter
-	memory *memoryPathBackend
+	cfg   config.Config
+	db    filestoreDatabase
+	store storage.ObjectStore
+	now   func() time.Time
+	paths pathRouter
 }
 
 type readFileResult struct {
@@ -61,7 +60,7 @@ type readFileResult struct {
 }
 
 // NewService 创建 Filestore 业务服务。
-func NewService(cfg config.Config, database filestoreDatabase, store storage.ObjectStore) *Service {
+func NewService(cfg config.Config, database filestoreDatabase, memories memoryFilestoreStore, store storage.ObjectStore) *Service {
 	persistent := &persistentPathBackend{db: database, store: store}
 	skills := &skillArchivePathBackend{
 		db:    database,
@@ -75,13 +74,10 @@ func NewService(cfg config.Config, database filestoreDatabase, store storage.Obj
 		now:   time.Now,
 	}
 	memory := &memoryPathBackend{
-		store: store,
-		now:   func() time.Time { return service.now() },
+		memories: memories,
+		store:    store,
+		now:      func() time.Time { return service.now() },
 	}
-	if memories, ok := database.(memoryFilestoreStore); ok {
-		memory.memories = memories
-	}
-	service.memory = memory
 	service.paths = pathRouter{
 		persistent: persistent,
 		memory:     memory,
@@ -123,11 +119,12 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	if parsed, ok := parseMemoryFilestorePath(request.Path); ok {
-		return s.memory.makeDirectory(ctx, principal, filesystem, parsed, request.Path)
-	}
-	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, request.Path)
+	if apiErr != nil {
 		return directoryResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.makeDirectory(ctx, principal, filesystem, request)
 	}
 	entry, err := s.db.MakeFilestoreDirectory(ctx, db.MakeFilestoreDirectoryInput{
 		WorkspaceUUID:  principal.WorkspaceUUID,
@@ -151,11 +148,12 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 	if apiErr != nil {
 		return apiErr
 	}
-	if parsed, ok := parseMemoryFilestorePath(request.Path); ok {
-		return s.memory.removeDirectory(ctx, principal, filesystem, parsed)
-	}
-	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, request.Path)
+	if apiErr != nil {
 		return apiErr
+	}
+	if backend != nil {
+		return backend.removeDirectory(ctx, principal, filesystem, request)
 	}
 	_, err := s.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
 		WorkspaceUUID:  principal.WorkspaceUUID,
@@ -183,11 +181,12 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if parsed, ok := parseMemoryFilestorePath(params.Path); ok {
-		return s.memory.createFile(ctx, principal, filesystem, parsed, params, body)
-	}
-	if apiErr := s.paths.authorizeMutation(params.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, params.Path)
+	if apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.createFile(ctx, principal, filesystem, params, body)
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceUUID, filesystem.UUID, params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
@@ -272,15 +271,12 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	sourcePath, destPath, sameStore, claimed := classifyMemoryTransfer(request.Source, request.Destination)
-	if claimed && !sameStore {
-		return fileResponse{}, invalidArgument("cannot copy or move across the memory namespace boundary")
-	}
-	if sameStore {
-		return s.memory.copyFile(ctx, principal, filesystem, sourcePath, destPath)
-	}
-	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationFileTransfer, request.Source, request.Destination)
+	if apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.copyFile(ctx, principal, filesystem, request)
 	}
 	source, err := s.db.GetSessionResourceFile(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Source)
 	if err != nil {
@@ -352,15 +348,12 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	sourcePath, destPath, sameStore, claimed := classifyMemoryTransfer(request.Source, request.Destination)
-	if claimed && !sameStore {
-		return fileResponse{}, invalidArgument("cannot copy or move across the memory namespace boundary")
-	}
-	if sameStore {
-		return s.memory.moveFile(ctx, principal, filesystem, sourcePath, destPath)
-	}
-	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationFileTransfer, request.Source, request.Destination)
+	if apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.moveFile(ctx, principal, filesystem, request)
 	}
 	result, err := s.db.MoveFilestoreFile(ctx, db.MoveFilestoreFileInput{
 		WorkspaceUUID:     principal.WorkspaceUUID,
@@ -395,10 +388,7 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	if _, _, _, claimed := classifyMemoryTransfer(request.Source, request.Destination); claimed {
-		return directoryResponse{}, failedPrecondition("memory namespace directories are virtual")
-	}
-	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
+	if _, apiErr := s.paths.mutationBackendFor(mutationDirectoryTransfer, request.Source, request.Destination); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
@@ -436,11 +426,12 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 	if apiErr != nil {
 		return apiErr
 	}
-	if parsed, ok := parseMemoryFilestorePath(request.Path); ok {
-		return s.memory.removeFile(ctx, principal, filesystem, parsed)
-	}
-	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, request.Path)
+	if apiErr != nil {
 		return apiErr
+	}
+	if backend != nil {
+		return backend.removeFile(ctx, principal, filesystem, request)
 	}
 	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveSessionResourceFileInput{
 		WorkspaceUUID:  principal.WorkspaceUUID,

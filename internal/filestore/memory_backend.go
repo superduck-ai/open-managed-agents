@@ -43,10 +43,10 @@ func (b *memoryPathBackend) createFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
 	params createFileParams,
 	body io.Reader,
 ) (fileResponse, *apiError) {
+	parsed, _ := parseMemoryFilestorePath(params.Path)
 	if apiErr := requireMemoryDocumentPath(parsed); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -72,8 +72,10 @@ func (b *memoryPathBackend) copyFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	source, dest memoryFilestorePath,
+	request copyMoveFileRequest,
 ) (fileResponse, *apiError) {
+	source, _ := parseMemoryFilestorePath(request.Source)
+	dest, _ := parseMemoryFilestorePath(request.Destination)
 	if apiErr := requireMemoryDocumentPath(source); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -103,8 +105,10 @@ func (b *memoryPathBackend) moveFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	source, dest memoryFilestorePath,
+	request copyMoveFileRequest,
 ) (fileResponse, *apiError) {
+	source, _ := parseMemoryFilestorePath(request.Source)
+	dest, _ := parseMemoryFilestorePath(request.Destination)
 	if apiErr := requireMemoryDocumentPath(source); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -157,21 +161,22 @@ func (b *memoryPathBackend) makeDirectory(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
-	requestPath string,
+	request makeDirectoryRequest,
 ) (directoryResponse, *apiError) {
+	parsed, _ := parseMemoryFilestorePath(request.Path)
 	if _, apiErr := b.resolveMount(ctx, principal, filesystem, parsed, true); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	return directoryResponse{Directory: virtualMemoryDirectory(filesystem.ExternalID, requestPath, b.now().UTC())}, nil
+	return directoryResponse{Directory: virtualMemoryDirectory(filesystem.ExternalID, request.Path, b.now().UTC())}, nil
 }
 
 func (b *memoryPathBackend) removeDirectory(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
+	request removeDirectoryRequest,
 ) *apiError {
+	parsed, _ := parseMemoryFilestorePath(request.Path)
 	mount, apiErr := b.resolveMount(ctx, principal, filesystem, parsed, true)
 	if apiErr != nil {
 		return apiErr
@@ -197,8 +202,9 @@ func (b *memoryPathBackend) removeFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
+	request pathRequest,
 ) *apiError {
+	parsed, _ := parseMemoryFilestorePath(request.Path)
 	if apiErr := requireMemoryDocumentPath(parsed); apiErr != nil {
 		return apiErr
 	}
@@ -477,9 +483,6 @@ func (b *memoryPathBackend) resolveMount(
 	parsed memoryFilestorePath,
 	mutate bool,
 ) (resolvedMemoryMount, *apiError) {
-	if b.memories == nil {
-		return resolvedMemoryMount{}, notFound("resource does not exist")
-	}
 	mounts, err := b.memories.ListSessionMemoryMounts(ctx, principal.WorkspaceUUID, filesystem.UUID)
 	if err != nil {
 		return resolvedMemoryMount{}, internalError("list memory mounts", err)

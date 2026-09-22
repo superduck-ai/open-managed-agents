@@ -44,6 +44,14 @@ func permissionDenied(message string) *apiError {
 	return &apiError{Status: http.StatusForbidden, Code: "permission_denied", Message: message}
 }
 
+func memoryTransferBoundaryError() *apiError {
+	return invalidArgument("cannot copy or move across the memory namespace boundary")
+}
+
+func memoryDirectoryMoveError() *apiError {
+	return failedPrecondition("memory namespace directories are virtual")
+}
+
 func writeFilestoreError(w http.ResponseWriter, err *apiError) {
 	if err == nil {
 		err = &apiError{Status: http.StatusInternalServerError, Code: "internal", Message: "Internal server error"}

@@ -115,7 +115,7 @@ func NewServer(deps ServerDeps) *Server {
 	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
 	filestoreService := deps.FilestoreService
 	if filestoreService == nil {
-		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
+		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
 	}
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease

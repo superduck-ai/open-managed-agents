@@ -24,7 +24,11 @@
 
 Filestore 是现有单体中的独立资源切片。handler 负责 wire contract 和流式 HTTP，service 负责校验及业务编排，`internal/db` 负责事务和租户范围内的持久化。对象读写、错误分类和版本清理统一交给绑定单个 bucket 的 `internal/storage.ObjectStore`；生产环境由共享 `storage.Client` 复用 AWS SDK 连接，再按名称派生轻量对象存储。
 
-Service 在完成请求校验和 filesystem 租户鉴权后，通过 `pathRouter` 把 list、file read 和 metadata read 分发给持久化 backend、只读虚拟 backend 或可写 Memory backend。普通 namespace 的读取由持久化 backend 访问数据库和对象存储，`/skills` 的 archive 索引、缓存与成员读取由独立 skill backend 处理，`/memory/{slug}` 由 Memory backend 映射到当前 Session 已挂载 store 的三表头与 S3 正文。虚拟只读 backend 自己声明读取匹配范围，router 则统一拒绝对其整棵 namespace 的 mutation；`/memory/{slug}` 的写入走 Memory backend，写入 Memory 三表而不是 filesystem 固定根。覆盖式 `moveFile` 在同一事务中软删目标并改源 path；相同正文的 `createFile` 不新建 version，并丢弃刚上传、未被引用的 object；非 0 `ttlSeconds` 拒绝，因为 Memory 没有 Filestore 过期。普通写入仍由 Service 编排既有数据库事务和对象存储操作。JWT 仍然只绑定 filesystem，不含 slug；slug 是否已挂载由 Session 快照在请求时解析。
+Service 在完成请求校验和 filesystem 租户鉴权后，通过 `pathRouter` 统一决定读写路径的归属。list、file read 和 metadata read 分发给持久化 backend、只读虚拟 backend 或可写 Memory backend；mutation 先调用 `mutationBackendFor`，拒绝只读命名空间后，再选择可写 backend 或返回普通持久化路径。普通 namespace 的读取由持久化 backend 访问数据库和对象存储，`/skills` 的 archive 索引、缓存与成员读取由独立 skill backend 处理，`/memory/{slug}` 由 Memory backend 映射到当前 Session 已挂载 store 的三表头与 S3 正文。虚拟只读 backend 自己声明读取匹配范围，router 则统一拒绝对其整棵 namespace 的 mutation；`/memory/{slug}` 的写入走 Memory backend，写入 Memory 三表而不是 filesystem 固定根。覆盖式 `moveFile` 在同一事务中软删目标并改源 path；相同正文的 `createFile` 不新建 version，并丢弃刚上传、未被引用的 object；非 0 `ttlSeconds` 拒绝，因为 Memory 没有 Filestore 过期。普通写入仍由 Service 编排既有数据库事务和对象存储操作。JWT 仍然只绑定 filesystem，不含 slug；slug 是否已挂载由 Session 快照在请求时解析。
+
+`Service` 不解析 Memory slug，也不保存独立的 Memory backend 引用。`pathRouter` 持有 Memory backend，统一判断单路径归属、文件复制/移动的同 store 约束和虚拟目录移动限制；命中可写 backend 后，Service 传递原始请求，由 backend 解析领域路径并检查挂载权限。任一端属于 `/skills` 时，优先返回只读拒绝（`403 permission_denied`），包括它与 Memory 之间的传输。普通写入仍在 Service 内执行，不新增对象存储包装层。
+
+`NewService` 显式要求 `memoryFilestoreStore` 参数，生产组装将同一个 DB 分别作为 Filestore 与 Memory 持久化依赖传入；不使用可选类型断言，也不将缺少依赖伪装成资源不存在。构造调用方必须提供有效依赖。单测使用独立 Memory fake 验证六个可写操作确实进入 Memory 挂载授权，目录移动由 router 拒绝；router 测试覆盖只读优先级、跨 store/namespace 拒绝、同 store 分流和普通路径回落。
 
 Filestore 还拥有独立的 `filestore.Principal`。API 中间件完成专用 JWT 验证与数据库回查后，只把资源所需的租户、account、filesystem 和策略范围映射到该类型，并通过 Filestore 私有的 context key 交给 handler。全局 `auth.Principal` 不保存 `filesystem_id`、`readonly`、`org_taints` 或 CMEK 等 Filestore 专属状态；Filestore handler/service 也不依赖全局 Principal。
 
@@ -34,7 +38,7 @@ flowchart LR
     AUTH["API auth boundary"] --> P["filestore.Principal"]
     P --> H
     H --> S["Filestore service"]
-    S --> PR["pathRouter"]
+    S --> PR["pathRouter：读写归属 / 只读保护"]
     PR --> PB["persistent read backend"]
     PR --> SB["skill read backend"]
     PR --> MB["memory path backend"]

@@ -97,6 +97,9 @@ func validate(cfg Config) error {
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
 	}
+	if err := ValidateTranscriptArchive(cfg.TranscriptArchive); err != nil {
+		return err
+	}
 	if err := validateTunnelDomainSuffix(cfg.Tunnel.DomainSuffix); err != nil {
 		return err
 	}

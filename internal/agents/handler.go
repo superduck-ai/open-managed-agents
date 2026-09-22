@@ -918,13 +918,18 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 		return nil, err
 	}
 	referencedMCPServers := map[string]struct{}{}
-	seenMCPToolsets := map[string]struct{}{}
+	seenToolsets := map[string]struct{}{}
+	seenCustomTools := map[string]struct{}{}
 	normalized := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		total++
 		toolType, _ := tool["type"].(string)
 		switch toolType {
 		case "agent_toolset_20260401":
+			if _, exists := seenToolsets[toolType]; exists {
+				return nil, errors.New("agent toolset must be unique")
+			}
+			seenToolsets[toolType] = struct{}{}
 			defaultConfig, err := normalizeDefaultConfig(tool["default_config"], "always_allow")
 			if err != nil {
 				return nil, err
@@ -946,10 +951,11 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if _, ok := serverNames[name]; !ok {
 				return nil, errors.New("mcp_toolset.mcp_server_name must reference an MCP server")
 			}
-			if _, exists := seenMCPToolsets[name]; exists {
+			toolsetKey := toolType + ":" + name
+			if _, exists := seenToolsets[toolsetKey]; exists {
 				return nil, errors.New("mcp toolset server names must be unique")
 			}
-			seenMCPToolsets[name] = struct{}{}
+			seenToolsets[toolsetKey] = struct{}{}
 			referencedMCPServers[name] = struct{}{}
 			defaultConfig, err := normalizeDefaultConfig(tool["default_config"], "always_ask")
 			if err != nil {
@@ -966,6 +972,11 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if err != nil {
 				return nil, err
 			}
+			customName := custom["name"].(string)
+			if _, exists := seenCustomTools[customName]; exists {
+				return nil, errors.New("custom tool names must be unique")
+			}
+			seenCustomTools[customName] = struct{}{}
 			normalized = append(normalized, custom)
 		default:
 			return nil, errors.New("tools.type must be agent_toolset_20260401, mcp_toolset, or custom")
@@ -986,26 +997,33 @@ func validateMCPToolReferences(tools json.RawMessage, mcpServers json.RawMessage
 }
 
 func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]any, error) {
-	if value == nil {
-		return []map[string]any{}, nil
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil, errors.New("tools.configs must be an array")
-	}
 	var configs []map[string]any
-	if err := json.Unmarshal(raw, &configs); err != nil {
-		return nil, errors.New("tools.configs must be an array")
+	if value != nil {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, errors.New("tools.configs must be an array")
+		}
+		if err := json.Unmarshal(raw, &configs); err != nil {
+			return nil, errors.New("tools.configs must be an array")
+		}
 	}
 	allowed := map[string]struct{}{
-		"bash": {}, "edit": {}, "read": {}, "write": {}, "glob": {}, "grep": {}, "web_fetch": {}, "web_search": {},
+		"task": {}, "ask_user_question": {}, "bash": {}, "cron_create": {}, "cron_delete": {}, "cron_list": {},
+		"edit": {}, "enter_plan_mode": {}, "enter_worktree": {}, "exit_plan_mode": {}, "exit_worktree": {},
+		"glob": {}, "grep": {}, "notebook_edit": {}, "read": {}, "schedule_wakeup": {}, "skill": {},
+		"task_output": {}, "task_stop": {}, "todo_write": {}, "web_fetch": {}, "write": {},
 	}
 	normalized := make([]map[string]any, 0, len(configs))
+	seen := map[string]struct{}{}
 	for _, config := range configs {
 		name, _ := config["name"].(string)
 		if _, ok := allowed[name]; !ok {
 			return nil, errors.New("agent tool config name is invalid")
 		}
+		if _, exists := seen[name]; exists {
+			return nil, errors.New("agent tool config names must be unique")
+		}
+		seen[name] = struct{}{}
 		enabled, err := boolWithDefault(config["enabled"], true, "tools.configs.enabled")
 		if err != nil {
 			return nil, err
@@ -1015,6 +1033,13 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 			return nil, err
 		}
 		normalized = append(normalized, map[string]any{"enabled": enabled, "name": name, "permission_policy": policy})
+	}
+	if _, configured := seen["ask_user_question"]; !configured {
+		normalized = append(normalized, map[string]any{
+			"enabled":           false,
+			"name":              "ask_user_question",
+			"permission_policy": map[string]string{"type": "always_allow"},
+		})
 	}
 	return normalized, nil
 }
@@ -1032,11 +1057,16 @@ func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any,
 		return nil, errors.New("tools.configs must be an array")
 	}
 	normalized := make([]map[string]any, 0, len(configs))
+	seen := map[string]struct{}{}
 	for _, config := range configs {
 		name, _ := config["name"].(string)
-		if name == "" || len(name) > 128 {
-			return nil, errors.New("mcp tool config name must be between 1 and 128 characters")
+		if !mcpNamePattern.MatchString(name) || len(name) > 128 {
+			return nil, errors.New("mcp tool config name must match ^[A-Za-z0-9_.-]{1,128}$")
 		}
+		if _, exists := seen[name]; exists {
+			return nil, errors.New("mcp tool config names must be unique")
+		}
+		seen[name] = struct{}{}
 		enabled, err := boolWithDefault(config["enabled"], true, "tools.configs.enabled")
 		if err != nil {
 			return nil, err

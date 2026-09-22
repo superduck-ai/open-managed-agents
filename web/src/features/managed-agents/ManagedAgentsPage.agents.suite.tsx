@@ -253,7 +253,13 @@ export function registerManagedAgentsAgentsTests() {
     expect((createRequest?.body?.metadata as Record<string, string>).template).toBe('deep-research');
     const createdToolset = (createRequest?.body?.tools as Array<Record<string, unknown>>)[0];
     expect(createdToolset.type).toBe('agent_toolset_20260401');
-    expect(createdToolset.configs).toBeUndefined();
+    expect(createdToolset.configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: false,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
     expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();
@@ -1111,12 +1117,13 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
     expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
     expect(screen.queryByText('No skills configured.')).toBeNull();
-    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+6/ });
+    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+22/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
     expect(screen.getByText('bash')).toBeTruthy();
-    expect(screen.queryByText('web_fetch')).toBeNull();
+    expect(screen.getByText('web_fetch')).toBeTruthy();
+    expect(screen.getByText('Fetch URL content')).toBeTruthy();
     expect(screen.queryByText('web_search')).toBeNull();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     const versionButton = screen.getByRole('button', { name: 'Version: v2' });
@@ -1221,7 +1228,7 @@ export function registerManagedAgentsAgentsTests() {
 
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
-    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+6/ }));
+    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+22/ }));
     expect(within(builtInCard).getByText('bash')).toBeTruthy();
     expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
@@ -1691,8 +1698,8 @@ export function registerManagedAgentsAgentsTests() {
       ),
     );
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
-    await selectManagedComboboxOption(dialog, 'Trigger', 'Manual');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(within(dialog).getByRole('tab', { name: 'Manual' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
 
     await waitFor(() =>
       expect(

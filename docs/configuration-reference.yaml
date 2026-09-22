@@ -246,3 +246,17 @@ environment_prebuilds:
     registry_auth:
       username: ""
       password: ""
+
+# Private transcript archives reuse storage.s3.bucket. No fixed object TTL on this prefix.
+transcript_archive:
+  enabled: false
+  dry_run: true
+  terminal_sweep_enabled: true
+  boundary_sweep_enabled: false
+  hard_delete_enabled: false
+  terminal_dwell: 24h
+  archive_min_age: 168h
+  soft_delete_window: 336h
+  target_segment_raw_bytes: 8388608
+  delete_batch_rows: 500
+  max_rows_per_job: 50000

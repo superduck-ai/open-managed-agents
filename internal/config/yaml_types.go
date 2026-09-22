@@ -36,6 +36,7 @@ func (o optional[T]) valueOr(fallback T) T {
 
 type yamlConfig struct {
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
 	Env                  string                    `yaml:"env"`
 	Server               ServerConfig              `yaml:"server"`
 	Database             yamlDatabaseConfig        `yaml:"database"`
@@ -112,6 +113,7 @@ func newYAMLConfig() yamlConfig {
 		Batch:                defaults.Batch,
 		E2B:                  defaults.E2B,
 		EnvironmentPrebuilds: defaults.EnvironmentPrebuilds,
+		TranscriptArchive:    defaults.TranscriptArchive,
 		SandboxLifecycle:     defaults.SandboxLifecycle,
 		EnvironmentRunner:    defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
@@ -159,6 +161,7 @@ func (input yamlConfig) resolve() Config {
 		Batch:                input.Batch,
 		E2B:                  input.E2B,
 		EnvironmentPrebuilds: input.EnvironmentPrebuilds,
+		TranscriptArchive:    input.TranscriptArchive,
 		SandboxLifecycle:     input.SandboxLifecycle,
 		EnvironmentRunner:    input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{

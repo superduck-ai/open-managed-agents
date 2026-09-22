@@ -152,6 +152,28 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 			},
 		},
 		{
+			name: "count session memory stores by store id",
+			contract: mapperBuilderContract{
+				statement: sessionResourceMapperCountSessionMemoryStoresByStoreIDStatement,
+				bound: buildSessionResourceMapperCountSessionMemoryStoresByStoreID(
+					yourbatis.DialectPostgres,
+					"workspace-uuid",
+					"session-external-id",
+					"memstore_test",
+				),
+				wantID:            "SessionResourceMapper.CountSessionMemoryStoresByStoreID",
+				wantKind:          yourbatis.StatementSelect,
+				wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "memoryStoreID"},
+				wantSQLFragments: []string{
+					"SELECT count(*) AS resource_count",
+					"resource_type = 'memory_store'",
+					"payload->>'memory_store_id' = $3",
+					"payload IS NOT NULL",
+					"deleted_at IS NULL",
+				},
+			},
+		},
+		{
 			name: "find mount conflict",
 			contract: mapperBuilderContract{
 				statement:         sessionResourceMapperFindMountConflictStatement,
@@ -382,6 +404,10 @@ func TestSessionResourceMapperPropagatesExecutionErrors(t *testing.T) {
 	}{
 		{name: "count resources", contract: mapperExecutionErrorContract{statementID: "SessionResourceMapper.CountSessionFileResources", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			_, err := NewSessionResourceMapper(executor).CountSessionFileResources(ctx, "", "", "")
+			return err
+		}}},
+		{name: "count memory stores by store id", contract: mapperExecutionErrorContract{statementID: "SessionResourceMapper.CountSessionMemoryStoresByStoreID", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			_, err := NewSessionResourceMapper(executor).CountSessionMemoryStoresByStoreID(ctx, "", "", "")
 			return err
 		}}},
 		{name: "find mount conflict", contract: mapperExecutionErrorContract{statementID: "SessionResourceMapper.FindMountConflict", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {

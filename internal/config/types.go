@@ -11,6 +11,7 @@ const (
 
 type Config struct {
 	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
 	Env                  string                    `yaml:"env"`
 	Server               ServerConfig              `yaml:"server"`
 	Database             DatabaseConfig            `yaml:"database"`
@@ -266,4 +267,18 @@ type SandboxLifecycleConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	DryRun      bool          `yaml:"dry_run"`
 	IdleTimeout time.Duration `yaml:"idle_timeout"`
+}
+
+type TranscriptArchiveConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	DryRun                bool          `yaml:"dry_run"`
+	TerminalSweepEnabled  bool          `yaml:"terminal_sweep_enabled"`
+	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
+	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
+	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
+	ArchiveMinAge         time.Duration `yaml:"archive_min_age"`
+	SoftDeleteWindow      time.Duration `yaml:"soft_delete_window"`
+	TargetSegmentRawBytes int           `yaml:"target_segment_raw_bytes"`
+	DeleteBatchRows       int           `yaml:"delete_batch_rows"`
+	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
 }

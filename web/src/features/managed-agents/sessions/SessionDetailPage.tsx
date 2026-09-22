@@ -130,14 +130,22 @@ interface BudgetChangeDeps {
   toastFor: (cents: number | null) => string;
 }
 
-async function applyBudgetChange(session: SessionApiResponse, usd: string | null, deps: BudgetChangeDeps): Promise<void> {
+async function applyBudgetChange(
+  session: SessionApiResponse,
+  usd: string | null,
+  deps: BudgetChangeDeps,
+): Promise<void> {
   const parsed = usd === null ? { ok: true as const, cents: null } : parseBudgetUsdInput(usd);
   if (!parsed.ok) return;
   deps.onBusyChange(true);
   deps.onError(null);
   try {
     deps.onUpdated(
-      await updateSessionBudget(session.id, parsed.cents === null ? null : budgetWireBody(parsed.cents), deps.workspaceId),
+      await updateSessionBudget(
+        session.id,
+        parsed.cents === null ? null : budgetWireBody(parsed.cents),
+        deps.workspaceId,
+      ),
     );
     toast.success(deps.toastFor(parsed.cents));
   } catch (error) {
@@ -168,7 +176,8 @@ function SessionBudgetBannerSection({
   return <SessionBudgetBanner state={budget} busy={busy} onChangeBudget={onChangeBudget} />;
 }
 
-export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {  const { activeWorkspaceId } = useWorkspace();
+export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
+  const { activeWorkspaceId } = useWorkspace();
   const { msg } = useI18n();
   const formatters = useFormatters();
   const listHref = managedEntityListHref(activeWorkspaceId, 'sessions');

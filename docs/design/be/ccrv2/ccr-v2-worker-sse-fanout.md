@@ -120,6 +120,6 @@ Worker 注册和新一轮输入清除 worker_turn_started，显式 running 上�
 
 状态和公开事件同事务提交，重复事件不重新推动状态。主线程结束顺序为 thread idle → session idle；其他线程仍在运行时不结束 Session。待确认工具的 idle 保留 requires_action.event_ids。
 
-历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 00064–00067 保留既有编号，不改写已应用迁移。
+历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 `00064_session_input_state.sql` 一次创建最终排序索引、添加 `worker_turn_started` 并允许 `processed_at` 为 null；回滚前用 `created_at` 填充未处理记录的 `processed_at`。
 
 验证：tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，以及 Worker ACK 后的 SSE/history 顺序。

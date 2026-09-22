@@ -191,7 +191,7 @@ final worker_status != requires_action  => 一律保存为 null
 
 `requires_action` 不是 public session status enum，映射为带 `requires_action` 原因的 `session.status_idle`。
 
-迁移 `00066` 添加内部 `worker_turn_started` 标记。注册 Worker 和接受新一轮主线程输入时清零，
+迁移 `00064_session_input_state.sql` 添加内部 `worker_turn_started` 标记。注册 Worker 和接受新一轮主线程输入时清零，
 仅显式 running 上报置为 true；普通 idle 和 metadata-only 更新保留该标记。
 因此初始化 idle 不会生成公开结束事件，正常结束发布失败后的重复 idle 仍可重试。
 该标记不进入 Worker 或 Session API 响应。

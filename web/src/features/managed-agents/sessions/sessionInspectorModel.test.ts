@@ -89,7 +89,7 @@ describe('session inspector event order', () => {
       modelStart('span_second'),
       { id: 'evt_second', type: 'agent.message', content: 'Second turn' },
       modelEnd('span_second_end', 'span_second'),
-    ];
+    ].map((event, index) => ({ ...event, processed_at: new Date(Date.UTC(2026, 8, 21) + index * 1000).toISOString() }));
     const rows = buildInspectorEventRows(events);
     const allItems = buildInspectorEventListItems(events, rows);
     const filteredItems = buildInspectorEventListItems(

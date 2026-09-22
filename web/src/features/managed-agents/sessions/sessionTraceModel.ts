@@ -1,4 +1,4 @@
-import { sessionNullableProcessedAt } from '../api';
+import { compareSessionEvents, modelRequestEventIds, sessionNullableProcessedAt } from '../api';
 import {
   type BaseSessionEventEntry,
   type DisplayEvent,
@@ -391,130 +391,92 @@ function sessionTraceEntrySourceKey(entry: SessionTraceEntry, rawEventKeys: Set<
   return parentEventId && rawEventKeys.has(parentEventId) ? parentEventId : eventKey;
 }
 
+type RequestBracket = ModelRequestBracket & {
+  start: QuickstartSessionEvent;
+  end?: QuickstartSessionEvent;
+  turnId: string;
+};
+
 export function applyModelRequestBrackets(
   entries: SessionEventListEntry[],
   rawEvents: QuickstartSessionEvent[],
 ): SessionEventListEntry[] {
-  const modelEvents = rawEvents.filter(sessionIsModelEvent);
-  if (!modelEvents.length) {
-    return entries;
-  }
-
-  const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
-  const bracketsByStartId = new Map<string, ModelRequestBracket>();
-  const entriesByRawEventId = new Map<string, SessionEventListEntry[]>();
-  entries.forEach((entry) => {
-    if (!('event' in entry)) {
-      return;
-    }
-    const eventId = sessionTraceEntrySourceKey(entry.traceEntry, rawEventKeys);
-    const matchingEntries = entriesByRawEventId.get(eventId) ?? [];
-    matchingEntries.push(entry);
-    entriesByRawEventId.set(eventId, matchingEntries);
-  });
-  let activeBracket: ModelRequestBracket | null = null;
-  let activeTurnId: string | null = null;
-  let pendingBracketMeta: ModelRequestBracketMeta | null = null;
-
-  rawEvents.forEach((event) => {
-    if (sessionEventType(event) === 'span.model_request_start') {
-      const startId = sessionEventKey(event);
-      const startMs = sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event);
-      if (activeBracket) {
-        closeModelRequestBracket(activeBracket, startMs);
-      }
-      activeBracket = {
-        startId,
-        startMs,
-        entries: [],
-      };
-      bracketsByStartId.set(startId, activeBracket);
-      activeTurnId ??= startId;
-      return;
-    }
-
-    const matchingEntries = entriesByRawEventId.get(sessionEventKey(event)) ?? [];
-    matchingEntries.forEach((entry) => {
-      const targetEntry = sessionModelBracketTargetEntry(entry);
-      if (activeBracket && targetEntry) {
-        if (targetEntry.kind === 'message') {
-          activeBracket.entries.forEach((candidate) => {
-            if (candidate.bracketOpen) {
-              candidate.bracketOpen = false;
-              candidate.bracketEndMs ??= targetEntry.processedAtMs;
-            }
-          });
-          targetEntry.bracketOpen = true;
-        }
-        if (!targetEntry.bracketId) {
-          targetEntry.bracketId = activeBracket.startId;
-        }
-        targetEntry.bracketStartMs ??= activeBracket.startMs;
-        targetEntry.turnId ??= activeTurnId ?? activeBracket.startId;
-        if (activeBracket.softEndMs !== undefined) {
-          targetEntry.bracketEndMs ??= Math.max(activeBracket.startMs, activeBracket.softEndMs);
-          targetEntry.bracketOpen = false;
-        }
-        activeBracket.entries.push(targetEntry);
-        return;
-      }
-      if (pendingBracketMeta && sessionIsSubagentSentDisplayEntry(entry)) {
-        applyModelBracketMetaToDisplayEntry(entry, pendingBracketMeta);
-        pendingBracketMeta = null;
-      }
+  const events = [...rawEvents].sort(compareSessionEvents);
+  const requests = new Map<string, RequestBracket>();
+  const requestByEvent = new Map<string, string>();
+  const requestByTool = new Map<string, string>();
+  let turnId = '';
+  for (const event of events) {
+    if (sessionEventEndsTranscriptTurn(event)) turnId = '';
+    if (sessionEventType(event) !== 'span.model_request_start') continue;
+    const startId = sessionEventKey(event);
+    turnId ||= startId;
+    requests.set(startId, {
+      startId,
+      start: event,
+      startMs: modelEventTime(event),
+      entries: [],
+      turnId,
     });
-
-    if (sessionStatusFromEventType(sessionEventType(event)) === 'idle' && activeBracket) {
-      const endMs = sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event) || activeBracket.startMs;
-      activeBracket.softEndMs = endMs;
-      closeModelRequestBracket(activeBracket, endMs);
-      activeTurnId = null;
-    }
-
-    if (sessionEventEndsModelBracket(event)) {
-      if (activeBracket) {
-        closeModelRequestBracket(
-          activeBracket,
-          sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event) || activeBracket.startMs,
-        );
-      }
-      activeTurnId = null;
-      activeBracket = null;
-    }
-
-    if (sessionEventType(event) !== 'span.model_request_end') {
-      return;
-    }
-
+  }
+  for (const event of events) {
+    if (sessionEventType(event) !== 'span.model_request_end') continue;
     const startId = sessionModelRequestStartRef(event);
-    const bracket = (startId ? bracketsByStartId.get(startId) : null) ?? activeBracket;
-    if (!bracket) {
-      return;
-    }
-    const meta = modelRequestBracketMeta(bracket, event);
-    closeModelRequestBracket(bracket, meta.startMs + meta.inferenceMs);
-    const agentMessage = bracket.entries.find(sessionIsAgentMessageDisplayEntry);
-    const firstTool = bracket.entries.find((entry): entry is ToolCallEntry => entry.kind === 'tool_call');
-    if (agentMessage) {
-      applyModelBracketMetaToDisplayEntry(agentMessage, meta);
-      bracket.entries.forEach((entry) => {
-        if (entry.kind === 'tool_call') {
-          entry.usage = emptySessionEventUsage();
-          entry.inferenceMs = 0;
-        }
+    const request = requests.get(startId);
+    if (!request || !sameModelRequestThread(request.start, event)) continue;
+    request.end = event;
+    modelRequestEventIds(event).forEach((id) => requestByEvent.set(id, startId));
+    if (Array.isArray(event.tool_use_ids))
+      event.tool_use_ids.forEach((id) => {
+        if (typeof id === 'string') requestByTool.set(id, startId);
       });
-    } else if (firstTool) {
-      applyModelBracketMetaToToolEntry(firstTool, meta);
-    } else {
-      pendingBracketMeta = meta;
-    }
-    bracketsByStartId.delete(bracket.startId);
-    if (activeBracket?.startId === bracket.startId) {
-      activeBracket = null;
-    }
-  });
-
+  }
+  const byId = new Map(events.map((event) => [sessionEventKey(event), event]));
+  const rawKeys = new Set(byId.keys());
+  for (const entry of entries) {
+    if (!('event' in entry)) continue;
+    const target = sessionModelBracketTargetEntry(entry);
+    if (!target) continue;
+    const sourceId = sessionTraceEntrySourceKey(entry.traceEntry, rawKeys);
+    const source = byId.get(sourceId) ?? entry.event;
+    const explicitId =
+      stringValueFromKeys(source, ['model_request_start_id']) ||
+      requestByEvent.get(sourceId) ||
+      (sessionIsToolUseEvent(source) ? requestByTool.get(sessionToolUseId(source)) : undefined);
+    const request = explicitId ? requests.get(explicitId) : undefined;
+    if (!request || !sameModelRequestThread(request.start, source)) continue;
+    target.bracketId = request.startId;
+    target.bracketStartMs = request.startMs;
+    target.turnId = request.turnId;
+    target.bracketOpen = !request.end;
+    request.entries.push(target);
+  }
+  for (const request of requests.values()) {
+    if (!request.end) continue;
+    const meta = modelRequestBracketMeta(request, request.end);
+    closeModelRequestBracket(request, meta.startMs + meta.inferenceMs);
+    const recipient =
+      request.entries.find(sessionIsAgentMessageDisplayEntry) ??
+      request.entries.find((entry) => entry.kind === 'tool_call');
+    request.entries.forEach((entry) => {
+      entry.usage = emptySessionEventUsage();
+      entry.inferenceMs = 0;
+    });
+    if (recipient?.kind === 'tool_call') applyModelBracketMetaToToolEntry(recipient, meta);
+    else if (recipient) applyModelBracketMetaToDisplayEntry(recipient, meta);
+  }
   return entries;
+}
+
+function sameModelRequestThread(a: QuickstartSessionEvent, b: QuickstartSessionEvent) {
+  return (
+    stringValueFromKeys(a, ['session_thread_id', 'thread_id']) ===
+    stringValueFromKeys(b, ['session_thread_id', 'thread_id'])
+  );
+}
+
+function modelEventTime(event: QuickstartSessionEvent) {
+  return sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event);
 }
 
 function closeModelRequestBracket(bracket: ModelRequestBracket, endMs: number) {
@@ -535,25 +497,18 @@ function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
   );
 }
 
-function sessionEventEndsModelBracket(event: QuickstartSessionEvent) {
-  const status = sessionStatusFromEventType(sessionEventType(event));
-  return sessionEventEndsTranscriptTurn(event) && status !== 'idle';
-}
-
 export function latestOpenModelRequest(events: QuickstartSessionEvent[]) {
+  const ended = new Map(
+    events
+      .filter((event) => sessionEventType(event) === 'span.model_request_end')
+      .map((event) => [sessionModelRequestStartRef(event), event]),
+  );
   let open: QuickstartSessionEvent | null = null;
-  events.forEach((event) => {
-    const type = sessionEventType(event);
-    if (type === 'span.model_request_start') {
-      open = event;
-      return;
+  [...events].sort(compareSessionEvents).forEach((event) => {
+    if (sessionEventType(event) === 'span.model_request_start') {
+      const end = ended.get(sessionEventKey(event));
+      if (!end || !sameModelRequestThread(event, end)) open = event;
     }
-    if (type === 'span.model_request_end') {
-      const startId = sessionModelRequestStartRef(event);
-      if (open && (!startId || startId === sessionEventKey(open))) open = null;
-      return;
-    }
-    if (open && sessionEventEndsTranscriptTurn(event)) open = null;
   });
   return open;
 }
@@ -570,10 +525,6 @@ export function sessionModelBracketTargetEntry(entry: SessionEventListEntry): Mo
 
 export function sessionIsAgentMessageDisplayEntry(entry: ModelBracketTargetEntry): entry is DisplayEventEntry {
   return entry.kind === 'message' && entry.displayEvent.type === 'agent';
-}
-
-export function sessionIsSubagentSentDisplayEntry(entry: SessionEventListEntry): entry is DisplayEventEntry {
-  return entry.kind === 'passthrough' && sessionEventType(entry.event) === 'agent.thread_message_sent';
 }
 
 export function modelRequestBracketMeta(

@@ -29,6 +29,8 @@ import { Bot, Clock3, Cloud, LockKeyhole, ReceiptText, Timer } from 'lucide-reac
 import { SESSION_ARCHIVED_LANES_STORAGE_KEY, SESSION_MAIN_LANE_ID } from './sessionTimeline';
 import {
   sessionEventSummary,
+  sessionEventProcessedTimestamp,
+  sessionModelRequestStartRef,
   sessionEventTimestamp,
   sessionEventType,
   sessionSubagentThreadId,
@@ -175,13 +177,50 @@ export function uniqueSessionThreadLabels(threads: SessionThreadApiResponse[], m
 export function buildSessionTimeline(
   lanes: SessionDetailLane[],
   entriesByLaneId: Map<string, SessionEventListEntry[]>,
+  eventsByLaneId: Map<string, QuickstartSessionEvent[]> = new Map(),
 ): SessionTimelineLane[] {
   return lanes.map((lane) => ({
     ...lane,
-    items: (entriesByLaneId.get(lane.id) ?? [])
-      .map(sessionTimelineItemFromEntry)
-      .filter((item): item is SessionTimelineItem => Boolean(item)),
+    items: [
+      ...(entriesByLaneId.get(lane.id) ?? [])
+        .map(sessionTimelineItemFromEntry)
+        .filter((item): item is SessionTimelineItem => Boolean(item)),
+      ...unrepresentedModelRequests(eventsByLaneId.get(lane.id) ?? [], entriesByLaneId.get(lane.id) ?? []),
+    ].sort((a, b) => a.processedAtMs - b.processedAtMs),
   }));
+}
+
+function unrepresentedModelRequests(
+  events: QuickstartSessionEvent[],
+  entries: SessionEventListEntry[],
+): SessionTimelineItem[] {
+  const represented = new Set(entries.map((entry) => ('bracketId' in entry ? entry.bracketId : undefined)));
+  const ends = new Map(
+    events
+      .filter((event) => sessionEventType(event) === 'span.model_request_end')
+      .map((event) => [sessionModelRequestStartRef(event), event]),
+  );
+  return events
+    .filter(
+      (event) =>
+        sessionEventType(event) === 'span.model_request_start' && !represented.has(sessionStableEventId(event) ?? ''),
+    )
+    .map((event) => {
+      const id = sessionStableEventId(event) ?? '';
+      const startMs = sessionEventProcessedTimestamp(event) || sessionEventTimestamp(event);
+      const end = ends.get(id);
+      return {
+        id,
+        rowId: id,
+        type: 'thinking',
+        label: typeof event.model === 'string' ? event.model : '',
+        preview: '',
+        relativeTime: '',
+        processedAtMs: startMs,
+        durationMs: end ? Math.max(0, sessionEventProcessedTimestamp(end) - startMs) : 0,
+        open: !end,
+      };
+    });
 }
 
 export function sessionTimelineItemFromEntry(entry: SessionEventListEntry): SessionTimelineItem | null {

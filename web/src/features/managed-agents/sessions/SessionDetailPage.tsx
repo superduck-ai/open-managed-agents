@@ -407,7 +407,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     ? sessionEventEntrySelectionId(hoveredInspectorEntry)
     : hoveredEventId;
   const hasFilter = query.trim().length > 0 || activeLane !== SESSION_MAIN_LANE_ID;
-  const timeline = useMemo(() => buildSessionTimeline(lanes, entriesByLaneId), [entriesByLaneId, lanes]);
+  const timeline = useMemo(
+    () => buildSessionTimeline(lanes, entriesByLaneId, eventsByLaneId),
+    [entriesByLaneId, eventsByLaneId, lanes],
+  );
   const timelineVisibleIds = useMemo(
     () => buildSessionTimelineVisibleIds(filteredEntries, timeline, activeLane, query),
     [activeLane, filteredEntries, query, timeline],

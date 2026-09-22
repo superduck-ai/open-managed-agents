@@ -144,7 +144,7 @@ func TestSessionResourcesFromDeploymentDefaultsAbsentMemoryAccess(t *testing.T) 
 	if err := json.Unmarshal(resources[0].Resource.Payload, &payload); err != nil {
 		t.Fatalf("decode payload: %v", err)
 	}
-	if payload["access"] != sessionresource.MemoryAccessReadWrite {
+	if payload["access"] != "read_write" {
 		t.Fatalf("access = %#v, want read_write", payload["access"])
 	}
 }

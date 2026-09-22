@@ -43,7 +43,7 @@ func TestParseMemoryAccess(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		raw  json.RawMessage
-		want string
+		want MemoryAccess
 	}{
 		{name: "omitted", want: MemoryAccessReadWrite},
 		{name: "null", raw: json.RawMessage(`null`), want: MemoryAccessReadWrite},
@@ -196,7 +196,7 @@ func TestMemorySnapshotPayloadFields(t *testing.T) {
 	fields := snapshot.PayloadFields("sesrsc_one")
 	if fields["type"] != MemoryStoreType ||
 		fields["memory_store_id"] != "memstore_one" ||
-		fields["access"] != MemoryAccessReadWrite ||
+		fields["access"] != "read_write" ||
 		fields["instructions"] != "remember this" ||
 		fields["name"] != "Product Docs-Draft!!" ||
 		fields["description"] != "personal taste" ||
@@ -213,4 +213,35 @@ func mustJSONString(t *testing.T, value string) json.RawMessage {
 		t.Fatalf("marshal string: %v", err)
 	}
 	return raw
+}
+
+func TestNormalizeMemoryAccess(t *testing.T) {
+	for _, value := range []string{"rw", "READ_ONLY", " read_only", "read_only "} {
+		t.Run("rejects "+value, func(t *testing.T) {
+			access, err := NormalizeMemoryAccess(value)
+			if access != "" || !errors.Is(err, ErrMemoryStoreAccess) {
+				t.Fatalf("NormalizeMemoryAccess(%q) = (%q, %v), want invalid access", value, access, err)
+			}
+		})
+	}
+	for _, test := range []struct {
+		input string
+		want  MemoryAccess
+		wire  string
+	}{
+		{input: "", want: MemoryAccessReadWrite, wire: `"read_write"`},
+		{input: "read_write", want: MemoryAccessReadWrite, wire: `"read_write"`},
+		{input: "read_only", want: MemoryAccessReadOnly, wire: `"read_only"`},
+	} {
+		t.Run("accepts "+test.input, func(t *testing.T) {
+			access, err := NormalizeMemoryAccess(test.input)
+			if err != nil || access != test.want {
+				t.Fatalf("NormalizeMemoryAccess(%q) = (%q, %v), want %q", test.input, access, err, test.want)
+			}
+			raw, err := json.Marshal(access)
+			if err != nil || string(raw) != test.wire {
+				t.Fatalf("JSON = %s, error = %v, want %s", raw, err, test.wire)
+			}
+		})
+	}
 }

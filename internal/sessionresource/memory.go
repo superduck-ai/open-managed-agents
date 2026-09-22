@@ -14,9 +14,16 @@ const (
 	MemoryStoreType            = sessioncontract.MemoryStoreResourceType
 	MaxMemoryStores            = sessioncontract.MaxMemoryStores
 	MaxMemoryInstructionsRunes = sessioncontract.MaxMemoryInstructionsRunes
-	MemoryAccessReadWrite      = "read_write"
-	MemoryAccessReadOnly       = "read_only"
 	MemoryMountRoot            = "/mnt/memory"
+)
+
+// MemoryAccess describes the access granted by a memory store attachment.
+// External values must be validated by ParseMemoryAccess or NormalizeMemoryAccess.
+type MemoryAccess string
+
+const (
+	MemoryAccessReadWrite MemoryAccess = "read_write"
+	MemoryAccessReadOnly  MemoryAccess = "read_only"
 )
 
 var (
@@ -30,7 +37,7 @@ var (
 // MemorySnapshot is the server-authored attach record stored on session_resources.
 type MemorySnapshot struct {
 	MemoryStoreID string
-	Access        string
+	Access        MemoryAccess
 	Instructions  string
 	Name          string
 	Description   string
@@ -60,17 +67,18 @@ func RejectClientMemoryIdentityFields(mountPath, name, description json.RawMessa
 // NormalizeMemoryAccess is the single authority on attach access values. An
 // empty value means the documented default; anything else must name one of the
 // two known modes, because a malformed value must never widen the mount.
-func NormalizeMemoryAccess(value string) (string, error) {
+func NormalizeMemoryAccess(value string) (MemoryAccess, error) {
 	if value == "" {
 		return MemoryAccessReadWrite, nil
 	}
-	if value != MemoryAccessReadWrite && value != MemoryAccessReadOnly {
+	access := MemoryAccess(value)
+	if access != MemoryAccessReadWrite && access != MemoryAccessReadOnly {
 		return "", ErrMemoryStoreAccess
 	}
-	return value, nil
+	return access, nil
 }
 
-func ParseMemoryAccess(raw json.RawMessage) (string, error) {
+func ParseMemoryAccess(raw json.RawMessage) (MemoryAccess, error) {
 	if len(raw) == 0 || isJSONNull(raw) {
 		return MemoryAccessReadWrite, nil
 	}
@@ -175,7 +183,7 @@ func (s MemorySnapshot) PayloadFields(resourceID string) map[string]any {
 	fields := map[string]any{
 		"type":            MemoryStoreType,
 		"memory_store_id": s.MemoryStoreID,
-		"access":          s.Access,
+		"access":          string(s.Access),
 		"instructions":    s.Instructions,
 		"name":            s.Name,
 		"description":     s.Description,
@@ -187,7 +195,7 @@ func (s MemorySnapshot) PayloadFields(resourceID string) map[string]any {
 	return fields
 }
 
-func SnapshotMemoryStore(storeID, access, instructions, name, description, slug string) MemorySnapshot {
+func SnapshotMemoryStore(storeID string, access MemoryAccess, instructions, name, description, slug string) MemorySnapshot {
 	return MemorySnapshot{
 		MemoryStoreID: storeID,
 		Access:        access,

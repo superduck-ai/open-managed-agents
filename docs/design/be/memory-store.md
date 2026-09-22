@@ -14,7 +14,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只覆盖
 ## 1. Attach 合同
 
 - 最多 8 个 store，不得重复。Create Session 请求体与 `POST /resources` 都强制这两条；`CreateSessionResource` 在锁定 Session 行后的同一事务里再次检查，并发附加不会写出重复 `memory_store_id` 或第 9 个 store。冲突返回 `invalid_request_error`。
-- `access` 缺省 `read_write`；仅 `read_write` / `read_only`。这是本次挂载权限，不是 store 属性。
+- `access` 缺省 `read_write`；仅 `read_write` / `read_only`。这是本次挂载权限，不是 store 属性。外部值在解析边界校验后以 `sessionresource.MemoryAccess` 命名字符串类型传入内部快照和函数；JSON 仍使用原字符串值。命名类型不替代取值校验。
 - `instructions` ≤ 500 个 Unicode 码点，允许空。Session 与 Deployment 共用该上限。超限返回 `400`，不截断。
 - 请求携带 `mount_path` / `name` / `description` → 400。
 - 不存在 → 404；已归档 → 400。

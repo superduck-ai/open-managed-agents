@@ -47,15 +47,15 @@ type deploymentResourceRequest struct {
 }
 
 type deploymentResourcePayload struct {
-	Type          string          `json:"type"`
-	FileID        string          `json:"file_id,omitempty"`
-	Source        string          `json:"source,omitempty"`
-	MountPath     string          `json:"mount_path,omitempty"`
-	URL           string          `json:"url,omitempty"`
-	Checkout      json.RawMessage `json:"checkout,omitempty"`
-	MemoryStoreID string          `json:"memory_store_id,omitempty"`
-	Access        string          `json:"access,omitempty"`
-	Instructions  *string         `json:"instructions,omitempty"`
+	Type          string                       `json:"type"`
+	FileID        string                       `json:"file_id,omitempty"`
+	Source        string                       `json:"source,omitempty"`
+	MountPath     string                       `json:"mount_path,omitempty"`
+	URL           string                       `json:"url,omitempty"`
+	Checkout      json.RawMessage              `json:"checkout,omitempty"`
+	MemoryStoreID string                       `json:"memory_store_id,omitempty"`
+	Access        sessionresource.MemoryAccess `json:"access,omitempty"`
+	Instructions  *string                      `json:"instructions,omitempty"`
 }
 
 type deploymentResourceSecret struct {
@@ -489,7 +489,7 @@ func snapshotMemoryStorePayload(
 // storedMemoryAccess reads the access field of a stored memory_store resource.
 // Validation itself lives in sessionresource.NormalizeMemoryAccess; this only
 // rejects a value that is present but not a JSON string.
-func storedMemoryAccess(raw any) (string, error) {
+func storedMemoryAccess(raw any) (sessionresource.MemoryAccess, error) {
 	if raw == nil {
 		return sessionresource.MemoryAccessReadWrite, nil
 	}

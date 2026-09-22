@@ -18,7 +18,8 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只覆盖
 - `instructions` ≤ 500 个 Unicode 码点，允许空。Session 与 Deployment 共用该上限。超限返回 `400`，不截断。
 - 请求携带 `mount_path` / `name` / `description` → 400。
 - 不存在 → 404；已归档 → 400。
-- slug = name 小写，非字母数字折叠为 `-`，去首尾；空则回退 external id；同 Session 冲突追加 `-2`。
+- slug 使用 `github.com/gosimple/slug` v1.15.0 的默认 `slug.Make` 规则：Unicode 转 ASCII、小写、保留下划线，部分符号按英文语义替换（如 `&` → `and`）。例如 `项目规范` → `xiang-mu-gui-fan`、`Hellö Wörld` → `hello-world`。不修改库的包级配置。
+- name 转换为空时，对 external id 使用相同规则；仍为空则回退 `store`。同 Session 冲突追加 `-2`、`-3` 等。新挂载采用新规则，既有资源的 `mount_path` 快照不迁移，仍用于冲突检测；Deployment 后续运行新建 Session 时使用新规则生成挂载快照。
 - 错误集中 `internal/sessions/errors.go`。
 - 资源顺序不影响落盘。
 - Deployment 创建/运行时按同一合同解析 memory store，并把快照写入即将创建的 Session。
@@ -41,6 +42,7 @@ CRUD、三张表、S3 正文、控制台列表/详情已落地。本文只覆盖
 1. 响应含服务端 `mount_path`；请求携带 `mount_path` / `name` / `description` → 400。
 2. 控制台能选 store、Access、Instructions；提交体不含 `mount_path` / `name` / `description`。
 3. `instructions` 501 个码点 → 400；500 个码点通过。
+   `TestSlugifyMemoryName` 覆盖中文、混合文字、重音字符、下划线、符号和空值回退；`TestMemoryAttachSetTransliteratedSlugCollision` 验证转写后与已有路径冲突时追加后缀。
 4. 同一 Session 重复 `memory_store_id` 或第 9 个 store → 400；并发 `POST /resources` 不会写出重复或超限行。
 5. Deployment 批量加载保持缺失/归档错误的原资源顺序；`internal/deployments/memory_store_batch_test.go` 覆盖错误优先级，`internal/db/memory_store_batch_test.go` 覆盖 SQL 绑定及单次查询，`TestMemoryStoreBatchPostgres` 使用 `TEST_MIGRATION_DATABASE_URL` 在独立 schema 验证租户隔离、删除过滤及 JSON/nullable 扫描。
 

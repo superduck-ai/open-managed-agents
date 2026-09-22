@@ -115,15 +115,36 @@ func TestParseMemoryInstructions(t *testing.T) {
 
 func TestSlugifyMemoryName(t *testing.T) {
 	t.Parallel()
-
-	if got := SlugifyMemoryName("Product Docs-Draft!!", "memstore_fallback"); got != "product-docs-draft" {
-		t.Fatalf("display name slug = %q, want product-docs-draft", got)
+	for _, test := range []struct {
+		name     string
+		fallback string
+		want     string
+	}{
+		{name: "!!!", fallback: "???", want: "store"},
+		{name: "!!!", fallback: "memstore_abcXYZ", want: "memstore_abcxyz"},
+		{name: "", fallback: "memstore_fallback", want: "memstore_fallback"},
+		{name: "Product Docs-Draft!!", want: "product-docs-draft"},
+		{name: "项目规范", want: "xiang-mu-gui-fan"},
+		{name: "项目 API 规范", want: "xiang-mu-api-gui-fan"},
+		{name: "Hellö Wörld", want: "hello-world"},
+		{name: "hello_world", want: "hello_world"},
+		{name: "This & that", want: "this-and-that"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SlugifyMemoryName(test.name, test.fallback); got != test.want {
+				t.Fatalf("SlugifyMemoryName(%q, %q) = %q, want %q", test.name, test.fallback, got, test.want)
+			}
+		})
 	}
+}
 
-	fallback := "memstore_abcXYZ"
-	got := SlugifyMemoryName("!!!", fallback)
-	if got != "memstore-abcxyz" {
-		t.Fatalf("all-symbol name slug = %q, want memstore-abcxyz", got)
+func TestMemoryAttachSetTransliteratedSlugCollision(t *testing.T) {
+	set := NewMemoryAttachSet()
+	set.Observe("memstore_existing", "xiang-mu-gui-fan")
+	slug, err := set.Add("memstore_new", "项目规范", "memstore_new")
+	if err != nil || slug != "xiang-mu-gui-fan-2" {
+		t.Fatalf("Add() = (%q, %v), want xiang-mu-gui-fan-2", slug, err)
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/gosimple/slug"
+
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
@@ -104,11 +106,11 @@ func ParseMemoryInstructions(raw json.RawMessage) (string, error) {
 }
 
 func SlugifyMemoryName(name, fallbackExternalID string) string {
-	if slug := slugifyMemoryToken(name); slug != "" {
-		return slug
+	if token := slug.Make(name); token != "" {
+		return token
 	}
-	if slug := slugifyMemoryToken(fallbackExternalID); slug != "" {
-		return slug
+	if token := slug.Make(fallbackExternalID); token != "" {
+		return token
 	}
 	return "store"
 }
@@ -171,12 +173,21 @@ func (s *MemoryAttachSet) Add(storeID, name, fallbackExternalID string) (string,
 	if err := s.Claim(storeID); err != nil {
 		return "", err
 	}
+	return s.claimSlug(SlugifyMemoryName(name, fallbackExternalID)), nil
+}
+
+func (s *MemoryAttachSet) claimSlug(base string) string {
 	if s.slugs == nil {
 		s.slugs = make(map[string]struct{})
 	}
-	slug := uniqueMemorySlug(SlugifyMemoryName(name, fallbackExternalID), s.slugs)
-	s.slugs[slug] = struct{}{}
-	return slug, nil
+	candidate := base
+	for suffix := 2; ; suffix++ {
+		if _, exists := s.slugs[candidate]; !exists {
+			s.slugs[candidate] = struct{}{}
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%d", base, suffix)
+	}
 }
 
 func (s MemorySnapshot) PayloadFields(resourceID string) map[string]any {
@@ -203,35 +214,5 @@ func SnapshotMemoryStore(storeID string, access MemoryAccess, instructions, name
 		Name:          name,
 		Description:   description,
 		MountPath:     MemoryMountPath(slug),
-	}
-}
-
-func slugifyMemoryToken(value string) string {
-	var builder strings.Builder
-	lastHyphen := false
-	for _, r := range strings.ToLower(value) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			builder.WriteRune(r)
-			lastHyphen = false
-			continue
-		}
-		if builder.Len() == 0 || lastHyphen {
-			continue
-		}
-		builder.WriteByte('-')
-		lastHyphen = true
-	}
-	return strings.TrimSuffix(builder.String(), "-")
-}
-
-func uniqueMemorySlug(base string, used map[string]struct{}) string {
-	if _, exists := used[base]; !exists {
-		return base
-	}
-	for n := 2; ; n++ {
-		candidate := fmt.Sprintf("%s-%d", base, n)
-		if _, exists := used[candidate]; !exists {
-			return candidate
-		}
 	}
 }

@@ -1,5 +1,29 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <mapper namespace="SessionMapper">
+    <sql id="usageIncrement">
+        usage || jsonb_strip_nulls(jsonb_build_object(
+            'input_tokens', COALESCE(CAST(usage-&gt;&gt;'input_tokens' AS bigint), 0) + #{usage.InputTokens},
+            'output_tokens', COALESCE(CAST(usage-&gt;&gt;'output_tokens' AS bigint), 0) + #{usage.OutputTokens},
+            'cache_read_input_tokens', COALESCE(CAST(usage-&gt;&gt;'cache_read_input_tokens' AS bigint), 0) + #{usage.CacheReadInputTokens}
+        ))
+        <if test="usage.CacheCreation5mInputTokens != nil || usage.CacheCreation1hInputTokens != nil">
+        || jsonb_build_object('cache_creation', COALESCE(usage-&gt;'cache_creation', CAST('{}' AS jsonb)) || jsonb_strip_nulls(jsonb_build_object(
+          'ephemeral_5m_input_tokens', COALESCE(CAST(usage-&gt;'cache_creation'-&gt;&gt;'ephemeral_5m_input_tokens' AS bigint), 0) + #{usage.CacheCreation5mInputTokens},
+          'ephemeral_1h_input_tokens', COALESCE(CAST(usage-&gt;'cache_creation'-&gt;&gt;'ephemeral_1h_input_tokens' AS bigint), 0) + #{usage.CacheCreation1hInputTokens}
+        )))
+        </if>
+    </sql>
+    <update id="AddUsage" result="returning" resultType="sessionRow">
+        WITH thread_usage AS (
+            UPDATE session_threads
+            SET usage = <include refid="usageIncrement"/>
+            WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{threadUUID}
+            AND session_uuid = #{sessionUUID}
+        )
+        UPDATE sessions SET usage = <include refid="usageIncrement"/>
+        WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{sessionUUID}
+RETURNING <include refid="columns"/>
+    </update>
     <sql id="columns">
         uuid,
         external_id,

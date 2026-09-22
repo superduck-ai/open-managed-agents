@@ -121,6 +121,11 @@ func insertSessionEventTx(ctx context.Context, executor yourbatis.Executor, sess
 		return SessionEvent{}, false, mapNoRows(err)
 	}
 	event.ThreadUUID = &thread.UUID
+	if event.EventType == "session.usage" {
+		if event.Payload, err = sessionUsagePayload(event, session.Usage); err != nil {
+			return SessionEvent{}, false, err
+		}
+	}
 	mapper := NewSessionEventMapper(executor)
 	var row sessionEventRow
 	if ignoreExisting {

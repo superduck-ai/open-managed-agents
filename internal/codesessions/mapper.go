@@ -3,10 +3,12 @@ package codesessions
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
@@ -93,15 +95,15 @@ func normalizeWorkerOutboundPayload(codeSessionID string, raw json.RawMessage, f
 }
 
 func publicPayloadFromWorkerEvent(codeSessionID string, event db.CodeSessionEvent, raw json.RawMessage) (json.RawMessage, bool, error) {
-	payloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, event, raw)
+	payloads, ok, err := publicPayloadsFromWorkerEvent(nil, codeSessionID, event, raw)
 	if err != nil || !ok || len(payloads) == 0 {
 		return nil, ok, err
 	}
 	return payloads[0], true, nil
 }
 
-func publicPayloadsFromWorkerEvent(codeSessionID string, event db.CodeSessionEvent, raw json.RawMessage) ([]json.RawMessage, bool, error) {
-	candidates, ok, err := publicPayloadCandidatesFromWorkerEvent(codeSessionID, event, raw)
+func publicPayloadsFromWorkerEvent(calculator *billing.Calculator, codeSessionID string, event db.CodeSessionEvent, raw json.RawMessage) ([]json.RawMessage, bool, error) {
+	candidates, ok, err := publicPayloadCandidatesFromWorkerEvent(calculator, codeSessionID, event, raw)
 	if err != nil {
 		return nil, false, err
 	}
@@ -125,7 +127,7 @@ type publicPayloadCandidate struct {
 	timeOffset time.Duration
 }
 
-func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeSessionEvent, raw json.RawMessage) ([]publicPayloadCandidate, bool, error) {
+func publicPayloadCandidatesFromWorkerEvent(calculator *billing.Calculator, codeSessionID string, event db.CodeSessionEvent, raw json.RawMessage) ([]publicPayloadCandidate, bool, error) {
 	fields, err := decodeRawJSONObject(raw)
 	if err != nil {
 		return nil, false, err
@@ -155,7 +157,7 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, false, fmt.Errorf("%w: invalid result payload: %w", ErrProtocol, err)
 		}
-		return resultPublicPayloadCandidates(codeSessionID, event, object, payload), true, nil
+		return resultPublicPayloadCandidates(calculator, codeSessionID, event, object, payload), true, nil
 	default:
 		if !maevents.IsWorkerOutputEvent(event.EventType) && !maevents.IsStreamDelta(event.EventType) {
 			return nil, false, nil
@@ -383,7 +385,7 @@ func publicPayloadWithType(object map[string]any, eventType string) map[string]a
 	return payload
 }
 
-func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEvent, object map[string]any, schema workerResultOutputPayload) []publicPayloadCandidate {
+func resultPublicPayloadCandidates(calculator *billing.Calculator, codeSessionID string, event db.CodeSessionEvent, object map[string]any, schema workerResultOutputPayload) []publicPayloadCandidate {
 	candidates := make([]publicPayloadCandidate, 0, 3)
 	modelUsage := firstNonNil(decodeWorkerOutputValue(schema.ModelUsageAlt), decodeWorkerOutputValue(schema.ModelUsage))
 	usage := decodeWorkerOutputValue(schema.Usage)
@@ -437,6 +439,14 @@ func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEve
 		}
 		if usage != nil {
 			end["usage"] = usage
+		}
+		if model != "" {
+			if requestCents, priced := calculator.ModelRequestCents(model, modelUsage); priced {
+				end["billing"] = map[string]string{
+					"list_cost": strconv.FormatInt(requestCents, 10),
+					"currency":  billing.CurrencyUSD,
+				}
+			}
 		}
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    end,

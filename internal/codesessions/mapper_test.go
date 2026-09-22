@@ -11,7 +11,7 @@ import (
 )
 
 func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testing.T) {
-	_, _, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	_, _, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		EventType: "result",
 	}, json.RawMessage(`{"type":"result","uuid":"result-uuid","duration_ms":"invalid"}`))
 	if !errors.Is(err, ErrProtocol) {
@@ -137,7 +137,7 @@ func TestPublicPayloadFromWorkerEventPassesThroughStreamPreview(t *testing.T) {
 }
 
 func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
-	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	payloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_assistant_blocks",
 		EventType:      "assistant",
 		IdempotencyKey: "assistant_blocks",
@@ -188,7 +188,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 }
 
 func TestPublicPayloadsFromWorkerEventMapsScalarAssistantBlockToPreviewID(t *testing.T) {
-	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	payloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_scalar_assistant_block",
 		EventType:      "assistant",
 		IdempotencyKey: "scalar_assistant_block",
@@ -256,7 +256,7 @@ func TestPublicPayloadsFromInternalSubagentEventMarksOwnerThread(t *testing.T) {
 }
 
 func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
-	plainPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	plainPayloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_user_echo",
 		EventType:      "user",
 		IdempotencyKey: "user_echo",
@@ -273,7 +273,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 		t.Fatalf("plain Claude user echo should not publish public events: ok=%v payloads=%#v", ok, plainPayloads)
 	}
 
-	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	payloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_user_tool_result",
 		EventType:      "user",
 		IdempotencyKey: "user_tool_result",
@@ -318,7 +318,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 		t.Fatalf("tool_result visible content = %#v", content)
 	}
 
-	toolPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	toolPayloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_user_plain_tool_result",
 		EventType:      "user",
 		IdempotencyKey: "user_plain_tool_result",
@@ -363,7 +363,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 
 func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *testing.T) {
 	createdAt := time.Date(2026, 6, 16, 1, 11, 0, 0, time.UTC)
-	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	payloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_result",
 		EventType:      "result",
 		IdempotencyKey: "result_event",
@@ -526,7 +526,7 @@ func TestPublicPayloadFromWorkerEventNormalizesIdleStopReasonVariants(t *testing
 }
 
 func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
-	startPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	startPayloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_task_started",
 		EventType:      "system",
 		IdempotencyKey: "task_started",
@@ -564,7 +564,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		t.Fatalf("thread_message_sent payload = %#v", startObjects[2])
 	}
 
-	donePayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+	donePayloads, ok, err := publicPayloadsFromWorkerEvent(nil, "csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_task_done",
 		EventType:      "system",
 		IdempotencyKey: "task_done",

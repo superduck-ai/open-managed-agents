@@ -9,6 +9,7 @@ import {
   LockedAgentReferenceField,
 } from '../components/common';
 import { type AgentApiResponse, type EntityOption, type ManagedEntityFormValues } from '../types';
+import { BudgetField } from './budget-field';
 import { DeploymentScheduleFields } from './deployment-schedule-fields';
 import { ManagedResourceFields } from './ManagedResourceFields';
 
@@ -102,6 +103,7 @@ export function DeploymentFormFields({
           manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
           onChange={(environmentId) => onChange({ environmentId })}
         />
+        <BudgetField values={values} onChange={onChange} />
         <DeploymentTextArea
           label={msg('managedAgents.deployments.initialMessage', 'Initial message')}
           value={values.initialMessage}

@@ -59,6 +59,7 @@ func prepareDeploymentExecution(
 				AgentVersion: deployment.AgentVersion, AgentSnapshot: deployment.AgentSnapshot,
 				DeploymentUUID: &deployment.UUID, DeploymentID: &deploymentID,
 				Metadata: jsonx.Default(deployment.Metadata, `{}`), VaultIDs: vaultIDs,
+				Budget: deployment.Budget,
 				Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`),
 				OutcomeEvaluations: outcomes, CreatedAt: now, UpdatedAt: now,
 			},

@@ -52,6 +52,8 @@ import {
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
+import { budgetValid } from './budget';
+import { BudgetField } from './budget-field';
 import { DeploymentFormFields } from './deployment-form-fields';
 import { previewSchedule } from './deployment-schedule';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
@@ -825,6 +827,7 @@ function GenericManagedEntityDialog({
         values.agentId.trim().length > 0 &&
         values.environmentId.trim().length > 0 &&
         values.initialMessage.trim().length > 0 &&
+        budgetValid(values) &&
         managedResourceFieldsValid(values, Boolean(entity)) &&
         (values.triggerType === 'manual' ||
           (values.triggerType === 'schedule' && !previewSchedule(values.cronExpression, values.timezone).error)) &&
@@ -832,6 +835,7 @@ function GenericManagedEntityDialog({
         !loadingOptions
       : section === 'sessions'
         ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
+          budgetValid(values) &&
           managedResourceFieldsValid(values, false) &&
           (!values.vaultIds.length || vaultAcknowledged) &&
           !submitting &&
@@ -972,7 +976,13 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <ManagedResourceFields values={values} onChange={setValues} workspaceId={workspaceId} />
+                  <>
+                    <ManagedResourceFields values={values} onChange={setValues} workspaceId={workspaceId} />
+                    <BudgetField
+                      values={values}
+                      onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
+                    />
+                  </>
                 ) : null}
               </>
             ) : null}

@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -123,9 +124,11 @@ func NewServer(deps ServerDeps) *Server {
 	if workerEventAcks == nil {
 		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
 	}
+	billingCalculator := billing.NewCalculator(deps.Config.Billing.ModelPrices)
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
 		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
+		WithBilling(billingCalculator).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)

@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
@@ -56,6 +58,7 @@ type deploymentResponse struct {
 	ID            string                      `json:"id"`
 	Agent         deploymentAgentReference    `json:"agent"`
 	ArchivedAt    *string                     `json:"archived_at"`
+	Budget        json.RawMessage             `json:"budget"`
 	CreatedAt     string                      `json:"created_at"`
 	Description   string                      `json:"description"`
 	EnvironmentID string                      `json:"environment_id"`
@@ -85,6 +88,7 @@ type deploymentScheduleResponse struct {
 
 type deploymentMutationRequest struct {
 	Agent         json.RawMessage `json:"agent"`
+	Budget        json.RawMessage `json:"budget"`
 	Description   json.RawMessage `json:"description"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
 	InitialEvents json.RawMessage `json:"initial_events"`
@@ -352,6 +356,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	budget, err := normalizeDeploymentBudget(body.Budget)
+	if err != nil {
+		return invalidRequest(err)
+	}
 	deploymentID, err := ids.New("depl_")
 	if err != nil {
 		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
@@ -377,6 +385,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		Resources:             resources,
 		ResourceSecrets:       resourceSecrets,
 		VaultIDs:              vaultIDs,
+		Budget:                budget,
 		Schedule:              schedule,
 		Status:                "active",
 		CreatedAt:             now,
@@ -548,6 +557,13 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return invalidRequest(err)
 		}
+	}
+	if len(body.Budget) > 0 {
+		budget, err := normalizeDeploymentBudget(body.Budget)
+		if err != nil {
+			return invalidRequest(err)
+		}
+		next.Budget = budget
 	}
 	scheduleProvided := body.Schedule != nil
 	if scheduleProvided {
@@ -1179,6 +1195,7 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 		ID:            deployment.ExternalID,
 		Agent:         agentReference(deployment.AgentExternalID, deployment.AgentVersion),
 		ArchivedAt:    httpapi.OptionalTime(deployment.ArchivedAt),
+		Budget:        deploymentBudgetResponse(deployment.Budget),
 		CreatedAt:     httpapi.FormatTime(deployment.CreatedAt),
 		Description:   description,
 		EnvironmentID: deployment.EnvironmentExternalID,
@@ -1650,4 +1667,32 @@ func decodeCursor(raw string) (*time.Time, string, error) {
 	}
 	createdAt = createdAt.UTC()
 	return &createdAt, parsedUUID.String(), nil
+}
+
+// normalizeDeploymentBudget validates a deployment budget input. JSON null
+// clears the budget; an absent field is an empty raw value.
+func normalizeDeploymentBudget(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if string(trimmed) == "null" {
+		return nil, nil
+	}
+	budget, err := billing.ParseBudget(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := jsonx.Encode(budget)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func deploymentBudgetResponse(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage("null")
+	}
+	return raw
 }

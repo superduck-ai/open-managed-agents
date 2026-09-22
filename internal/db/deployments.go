@@ -35,6 +35,7 @@ type Deployment struct {
 	Resources             json.RawMessage
 	ResourceSecrets       json.RawMessage
 	VaultIDs              json.RawMessage
+	Budget                json.RawMessage
 	Schedule              json.RawMessage
 	LastRunAt             *time.Time
 	Status                string
@@ -461,7 +462,7 @@ func deploymentWriteParamsFrom(deployment Deployment) deploymentWriteParams {
 		AgentSnapshot: agentJSONArg(deployment.AgentSnapshot), Name: deployment.Name, Description: deployment.Description,
 		Metadata: agentJSONArg(deployment.Metadata), InitialEvents: agentJSONArg(deployment.InitialEvents),
 		Resources: agentJSONArg(deployment.Resources), ResourceSecrets: agentJSONArg(deployment.ResourceSecrets),
-		VaultIDs: agentJSONArg(deployment.VaultIDs), Schedule: agentJSONArg(deployment.Schedule),
+		VaultIDs: agentJSONArg(deployment.VaultIDs), Budget: agentJSONArg(deployment.Budget), Schedule: agentJSONArg(deployment.Schedule),
 		LastRunAt: deployment.LastRunAt, Status: deployment.Status, PausedReason: agentJSONArg(deployment.PausedReason),
 		CreatedAt: deployment.CreatedAt, UpdatedAt: deployment.UpdatedAt,
 	}
@@ -517,7 +518,7 @@ func (r deploymentMapperRow) deployment() Deployment {
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Name: r.Name, Description: r.Description,
 		Metadata: bytes.Clone(r.Metadata), InitialEvents: bytes.Clone(r.InitialEvents), Resources: bytes.Clone(r.Resources),
-		ResourceSecrets: bytes.Clone(r.ResourceSecrets), VaultIDs: bytes.Clone(r.VaultIDs), Schedule: bytes.Clone(r.Schedule),
+		ResourceSecrets: bytes.Clone(r.ResourceSecrets), VaultIDs: bytes.Clone(r.VaultIDs), Budget: bytes.Clone(r.Budget), Schedule: bytes.Clone(r.Schedule),
 		LastRunAt: r.LastRunAt, Status: r.Status, PausedReason: bytes.Clone(r.PausedReason), CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}

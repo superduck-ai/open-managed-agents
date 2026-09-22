@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -33,6 +34,7 @@ type Service struct {
 	workerEvents           workerevents.Broker
 	workerEventAcks        workerevents.AckStore
 	workerEventObjects     storage.ObjectStore
+	billing                *billing.Calculator
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
@@ -78,6 +80,24 @@ func (s *Service) WithSandboxTimeoutExtender(extender SandboxTimeoutExtender, ti
 	s.sandboxTimeoutExtender = extender
 	s.sandboxTimeout = timeout
 	return s
+}
+
+// WithBilling wires the model list-price calculator used to write the
+// billing payload on synthesized span.model_request_end events.
+func (s *Service) WithBilling(calculator *billing.Calculator) *Service {
+	if s == nil {
+		return s
+	}
+	s.billing = calculator
+	return s
+}
+
+// Billing exposes the model list-price calculator for budget validation.
+func (s *Service) Billing() *billing.Calculator {
+	if s == nil {
+		return nil
+	}
+	return s.billing
 }
 
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
@@ -208,7 +228,7 @@ func (s *Service) AppendWorkerEvent(ctx context.Context, route CodeSessionStream
 		return nil
 	}
 	codeSessionID := route.CodeSessionID
-	prepared, err := prepareWorkerOutputEvent(codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
+	prepared, err := prepareWorkerOutputEvent(s.billing, codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -223,7 +243,7 @@ func (s *Service) AppendWorkerEventForEpoch(ctx context.Context, route CodeSessi
 		return nil
 	}
 	codeSessionID := route.CodeSessionID
-	prepared, err := prepareWorkerOutputEvent(codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
+	prepared, err := prepareWorkerOutputEvent(s.billing, codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -245,7 +265,7 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, route Co
 		return db.ErrWorkerEpochMismatch
 	}
 	now := time.Now().UTC()
-	prepared, err := prepareWorkerOutputEvents(codeSessionID, events, now)
+	prepared, err := prepareWorkerOutputEvents(s.billing, codeSessionID, events, now)
 	if err != nil {
 		return err
 	}
@@ -286,10 +306,10 @@ func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
 func (preparedControlAction) implPreparedWorkerOutputEvent()   {}
 func (preparedPublicAction) implPreparedWorkerOutputEvent()    {}
 
-func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, error) {
+func prepareWorkerOutputEvents(calculator *billing.Calculator, codeSessionID string, events []workerOutputEvent, now time.Time) ([]preparedWorkerOutputEvent, error) {
 	prepared := make([]preparedWorkerOutputEvent, 0, len(events))
 	for i, event := range events {
-		output, err := prepareWorkerOutputEvent(codeSessionID, event, now)
+		output, err := prepareWorkerOutputEvent(calculator, codeSessionID, event, now)
 		if err != nil {
 			return nil, fmt.Errorf("%w: events[%d]: %v", ErrProtocol, i, err)
 		}
@@ -298,7 +318,7 @@ func prepareWorkerOutputEvents(codeSessionID string, events []workerOutputEvent,
 	return prepared, nil
 }
 
-func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
+func prepareWorkerOutputEvent(calculator *billing.Calculator, codeSessionID string, input workerOutputEvent, now time.Time) (preparedWorkerOutputEvent, error) {
 	if codeSessionID == "" {
 		return nil, ErrProtocol
 	}
@@ -333,7 +353,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !isPublicWorkerOutputEvent(meta.EventType) {
 		return preparedNoopAction{}, nil
 	}
-	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, transientWorkerEvent(meta, now), payload)
+	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(calculator, codeSessionID, transientWorkerEvent(meta, now), payload)
 	if err != nil {
 		return nil, err
 	}

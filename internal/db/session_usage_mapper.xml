@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="SessionUsageMapper">
+    <select id="SumUsageTotals" result="optional" resultType="sessionUsageTotalsRow">
+        SELECT
+            COALESCE(SUM(CASE WHEN e.payload->'billing'->>'list_cost' ~ '^[0-9]+$'
+                THEN CAST(e.payload->'billing'->>'list_cost' AS bigint) END), 0) AS list_cost_cents,
+            COALESCE(SUM(CASE WHEN e.payload->'usage'->>'input_tokens' ~ '^[0-9]+$'
+                THEN CAST(e.payload->'usage'->>'input_tokens' AS bigint) END), 0) AS input_tokens,
+            COALESCE(SUM(CASE WHEN e.payload->'usage'->>'output_tokens' ~ '^[0-9]+$'
+                THEN CAST(e.payload->'usage'->>'output_tokens' AS bigint) END), 0) AS output_tokens,
+            COALESCE(SUM(CASE WHEN e.payload->'usage'->>'cache_read_input_tokens' ~ '^[0-9]+$'
+                THEN CAST(e.payload->'usage'->>'cache_read_input_tokens' AS bigint) END), 0) AS cache_read_input_tokens,
+            COALESCE(SUM(CASE WHEN e.payload->'usage'->>'cache_creation_input_tokens' ~ '^[0-9]+$'
+                THEN CAST(e.payload->'usage'->>'cache_creation_input_tokens' AS bigint) END), 0) AS cache_creation_input_tokens,
+            COALESCE(SUM(CASE WHEN e.payload->'usage'->'server_tool_use'->>'web_search_requests' ~ '^[0-9]+$'
+                THEN CAST(e.payload->'usage'->'server_tool_use'->>'web_search_requests' AS bigint) END), 0) AS web_search_requests
+        FROM session_events e
+        WHERE e.workspace_uuid = #{params.WorkspaceUUID}
+        AND e.session_external_id = #{params.SessionExternalID}
+        AND e.event_type = 'span.model_request_end'
+        AND e.deleted_at IS NULL
+        <if test="params.ThreadExternalID != ''">
+            AND e.thread_external_id = #{params.ThreadExternalID}
+        </if>
+    </select>
+
+    <select id="SumActiveSeconds" result="scalar">
+        SELECT COALESCE(SUM(GREATEST(EXTRACT(EPOCH FROM (e.created_at - s.created_at)), 0)), 0)
+        FROM session_events e
+        JOIN session_events s
+            ON s.workspace_uuid = e.workspace_uuid
+            AND s.session_external_id = e.session_external_id
+            AND s.external_id = e.payload->>'model_request_start_id'
+            AND s.deleted_at IS NULL
+        WHERE e.workspace_uuid = #{params.WorkspaceUUID}
+        AND e.session_external_id = #{params.SessionExternalID}
+        AND e.event_type = 'span.model_request_end'
+        AND e.deleted_at IS NULL
+        <if test="params.ThreadExternalID != ''">
+            AND e.thread_external_id = #{params.ThreadExternalID}
+        </if>
+    </select>
+</mapper>

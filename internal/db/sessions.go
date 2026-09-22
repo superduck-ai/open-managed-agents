@@ -33,6 +33,9 @@ type Session struct {
 	Metadata              json.RawMessage
 	VaultIDs              []string
 	Status                string
+	Budget                json.RawMessage
+	BudgetReachedAt       *time.Time
+	BudgetRemovedAt       *time.Time
 	Usage                 json.RawMessage
 	Stats                 json.RawMessage
 	OutcomeEvaluations    json.RawMessage
@@ -254,9 +257,22 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID
 		AgentSnapshot: agentJSONArg(next.AgentSnapshot),
 		Title:         next.Title,
 		Metadata:      agentJSONArg(next.Metadata),
+		Budget:        agentJSONArg(next.Budget),
+		BudgetReachedAt: next.BudgetReachedAt,
+		BudgetRemovedAt: next.BudgetRemovedAt,
 		UpdatedAt:     next.UpdatedAt,
 	})
 	return row.session(), mapNoRows(err)
+}
+
+func (d *DB) SetSessionUsage(ctx context.Context, workspaceUUID, externalID string, usage json.RawMessage) error {
+	_, err := NewSessionMapper(d.mapperDB).SetUsage(ctx, workspaceUUID, externalID, agentJSONArg(usage))
+	return err
+}
+
+func (d *DB) MarkSessionBudgetReached(ctx context.Context, workspaceUUID, externalID string, reachedAt time.Time) (bool, error) {
+	updated, err := NewSessionMapper(d.mapperDB).SetBudgetReached(ctx, workspaceUUID, externalID, reachedAt)
+	return updated > 0, err
 }
 
 func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, externalID string, patch json.RawMessage) (Session, error) {

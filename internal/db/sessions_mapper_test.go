@@ -65,11 +65,11 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.CreatedByAPIKeyUUID", "params.EnvironmentUUID", "params.EnvironmentExternalID",
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
 				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata", "params.RuntimeUserUUID",
-				"params.VaultIDs", "params.Status", "params.Usage", "params.Stats",
+				"params.VaultIDs", "params.Status", "params.Budget", "params.Usage", "params.Stats",
 				"params.OutcomeEvaluations", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{
-				"params.AgentSnapshot", "params.Metadata", "params.VaultIDs", "params.Usage",
+				"params.AgentSnapshot", "params.Metadata", "params.VaultIDs", "params.Budget", "params.Usage",
 				"params.Stats", "params.OutcomeEvaluations",
 			},
 			wantSQLFragments: []string{"INSERT INTO sessions", "CAST($11 AS jsonb)", "RETURNING", "uuid, external_id"},

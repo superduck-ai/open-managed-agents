@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -458,10 +459,15 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 	if err != nil {
 		return sessionResponse{}, err
 	}
+	usage := httpapi.RawOr(session.Usage, `{}`)
+	if totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID); err == nil {
+		usage = sessionUsageJSON(totals, session.Budget)
+	}
 	return sessionResponse{
 		ID:                 session.ExternalID,
 		Agent:              httpapi.RawOr(session.AgentSnapshot, `{}`),
 		ArchivedAt:         httpapi.OptionalTime(session.ArchivedAt),
+		Budget:             budgetJSONOrNull(session.Budget),
 		CreatedAt:          httpapi.FormatTime(session.CreatedAt),
 		DeploymentID:       session.DeploymentID,
 		EnvironmentID:      session.EnvironmentExternalID,
@@ -473,7 +479,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		Title:              session.Title,
 		Type:               "session",
 		UpdatedAt:          httpapi.FormatTime(session.UpdatedAt),
-		Usage:              httpapi.RawOr(session.Usage, `{}`),
+		Usage:              usage,
 		VaultIDs:           append([]string{}, session.VaultIDs...),
 	}, nil
 }
@@ -492,6 +498,14 @@ func responseFromThread(thread db.SessionThread) threadResponse {
 		UpdatedAt:      httpapi.FormatTime(thread.UpdatedAt),
 		Usage:          httpapi.RawOr(thread.Usage, `{}`),
 	}
+}
+
+func (h *Handler) responseFromThreadWithUsage(ctx context.Context, workspaceUUID, sessionExternalID string, thread db.SessionThread) threadResponse {
+	response := responseFromThread(thread)
+	if totals, err := h.db.SumSessionThreadUsageTotals(ctx, workspaceUUID, sessionExternalID, thread.ExternalID); err == nil {
+		response.Usage = sessionUsageJSON(totals, nil)
+	}
+	return response
 }
 
 func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {

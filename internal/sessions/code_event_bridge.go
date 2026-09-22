@@ -90,6 +90,12 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		projectionErr = errors.Join(projectionErr, eventErr)
 	}
+	// Budget enforcement runs after the batch is durable: it refreshes the
+	// usage projection and emits the budget_reached sequence when the cap is
+	// first crossed.
+	if projectionErr == nil {
+		h.enforceBudgetAfterEvents(ctx, session, created)
+	}
 	h.publishSessionEvents(ctx, created)
 	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
 	return projectionErr

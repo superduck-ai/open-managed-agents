@@ -202,6 +202,8 @@ usage 的序列化由 sessions 资源层提供；DB 在 Session 行锁内用最�
   不套用 permission policy；显式 disabled 仍禁用。成功结果必须是文本 JSON answers 对象，写入前验证。
 - `user.interrupt` 转成 SDK interrupt control_request；发送响应 processed_at 为 null，处理后才广播。
 - Worker compact_boundary 映射为 `agent.thread_context_compacted`；init/hook 继续留在内部诊断边界。
+- session.updated 只含实际改变字段；no-op 不写事件。更新与事件写入同一事务，并检查并发版本。
+- archive 在同一事务写 thread/session terminated；delete 成功提交后通知活动 SSE 并关闭连接。
 
 ### 当前能力边界
 

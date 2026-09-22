@@ -282,6 +282,9 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			if accepted {
 				writeSSE(w, event, subscribeThreadID)
 				flusher.Flush()
+				if event.EventType == "session.deleted" {
+					return
+				}
 			}
 		}
 	}

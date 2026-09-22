@@ -107,10 +107,10 @@ func ParseCentsAmount(value string) (int64, error) {
 
 // ModelPrice holds USD list prices per million tokens for one model.
 type ModelPrice struct {
-	InputPerMTok         float64 `json:"input"`
-	OutputPerMTok        float64 `json:"output"`
-	CacheReadPerMTok     float64 `json:"cache_read"`
-	CacheWritePerMTok    float64 `json:"cache_write"`
+	InputPerMTok      float64 `json:"input" yaml:"input"`
+	OutputPerMTok     float64 `json:"output" yaml:"output"`
+	CacheReadPerMTok  float64 `json:"cache_read" yaml:"cache_read"`
+	CacheWritePerMTok float64 `json:"cache_write" yaml:"cache_write"`
 }
 
 // Calculator prices model requests from configured list prices.

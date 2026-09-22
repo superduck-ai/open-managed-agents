@@ -274,7 +274,7 @@ filestore 只 import `internal/db`。`sessions` / `environments` 不碰 memory �
 
 ### 7.2 Filestore 写
 
-每请求实时回查：未挂载 → not found；`read_only` 写 → 403；归档 → 拒 mutation；>100KB 拒写；第 2001 条拒新建。
+每请求实时回查：未挂载 → not found；仅明确的 `access=read_write` 允许写，其他值（包括 `read_only`、空值及未知值）写 → 403；归档 → 拒 mutation；>100KB 拒写；第 2001 条拒新建。正常 attach 在输入边界将缺省 access 规范化为 `read_write`；Filestore 不为数据库快照中的缺失或异常 access 提供可写兼容，读取行为不变。
 
 | 操作 | 语义 |
 | --- | --- |
@@ -320,7 +320,7 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 
 1. Agent 读到 seed；写入可写挂载后 API 立刻查到同一 path，`created_by.type=session_actor` 带 session_id。无透传、无启动物化拷贝。
 2. 响应含服务端 `mount_path`；请求携带 `mount_path` / `name` / `description` → 400。
-3. `read_only` 写失败且无 version；`read_write` 写有 version。
+3. `read_only`、异常 access（如 `readonly` / `unknown`）及空值写失败且无 version；仅 `read_write` 写有 version。`internal/filestore/memory_backend_access_test.go` 覆盖写权限白名单及读取行为。
 4. 双 Session 同 path：后写为头；后启动的 B 读到 A 已提交的写。
 5. 运行中改 store 名：已启动 Session 的 `mount_path` 与启动时写入的 `MEMORY.md` store 目录段不变（Agent 运行时改动除外）。
 6. 任一 memory mount 失败或 `MEMORY.md` 未写好 → 启动失败并清理 sandbox。

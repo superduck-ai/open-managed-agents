@@ -13,6 +13,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -497,7 +498,7 @@ func (b *memoryPathBackend) resolveMount(
 		if mutate && mount.Archived {
 			return resolvedMemoryMount{}, permissionDenied("memory store is archived")
 		}
-		if mutate && mount.Access == "read_only" {
+		if mutate && mount.Access != sessionresource.MemoryAccessReadWrite {
 			return resolvedMemoryMount{}, permissionDenied("the memory mount is read-only")
 		}
 		return resolvedMemoryMount{SessionMemoryMount: mount}, nil

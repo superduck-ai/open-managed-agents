@@ -27,9 +27,9 @@ type SessionUsageTotals struct {
 }
 
 type sessionUsageTotalsParams struct {
-	WorkspaceUUID    string
+	WorkspaceUUID     string
 	SessionExternalID string
-	ThreadExternalID string
+	ThreadExternalID  string
 }
 
 // SessionUsageMapper aggregates billing and token usage from persisted
@@ -41,16 +41,11 @@ type SessionUsageMapper interface {
 	SumActiveSeconds(ctx context.Context, params sessionUsageTotalsParams) (float64, error)
 }
 
-type sessionUsageScope struct {
-	workspaceUUID     string
-	sessionExternalID string
-}
-
 func usageTotalsParams(workspaceUUID, sessionExternalID, threadExternalID string) sessionUsageTotalsParams {
 	return sessionUsageTotalsParams{
-		WorkspaceUUID:    workspaceUUID,
+		WorkspaceUUID:     workspaceUUID,
 		SessionExternalID: sessionExternalID,
-		ThreadExternalID: threadExternalID,
+		ThreadExternalID:  threadExternalID,
 	}
 }
 

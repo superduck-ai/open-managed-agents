@@ -20,8 +20,8 @@ const (
 	CurrencyUSD = "USD"
 
 	// CMA list prices for server tools and runtime, expressed in cents.
-	WebSearchCentsPerRequest = 1  // $10 per 1,000 searches
-	ActiveTimeCentsPerHour   = 8  // $0.08 per hour
+	WebSearchCentsPerRequest = 1 // $10 per 1,000 searches
+	ActiveTimeCentsPerHour   = 8 // $0.08 per hour
 
 	// TokensPerMillion is the price unit basis: model prices are quoted in
 	// USD per million tokens.
@@ -166,14 +166,13 @@ func (c *Calculator) ModelRequestCents(model string, usage any) (cents int64, ok
 		return 0, false
 	}
 	counters := usageCounters(usage)
+	// Anthropic usage reports non-cache input separately: input_tokens excludes
+	// cache_read_input_tokens and cache_creation_input_tokens, so all three are
+	// billed at their own rates without subtraction.
 	input := counters["inputTokens"] + counters["input_tokens"]
 	output := counters["outputTokens"] + counters["output_tokens"]
 	cacheRead := counters["cacheReadInputTokens"] + counters["cache_read_input_tokens"]
 	cacheWrite := counters["cacheCreationInputTokens"] + counters["cache_creation_input_tokens"]
-	input -= cacheRead + cacheWrite
-	if input < 0 {
-		input = 0
-	}
 	dollars := (input*price.InputPerMTok +
 		output*price.OutputPerMTok +
 		cacheRead*price.CacheReadPerMTok +
@@ -224,13 +223,56 @@ func firstObjectEntry(object map[string]any) (map[string]any, bool) {
 // cents at the fixed CMA list prices.
 func MeteringCents(webSearchRequests int64, activeSeconds float64) int64 {
 	activeCents := int64(math.Round(activeSeconds / 3600 * ActiveTimeCentsPerHour))
-	return webSearchRequests * WebSearchCentsPerRequest + activeCents
+	return webSearchRequests*WebSearchCentsPerRequest + activeCents
 }
 
 // TotalListCostCents is the authoritative list cost the budget is enforced
 // against: model request costs stored on events plus runtime metering.
 func TotalListCostCents(modelCents, webSearchRequests int64, activeSeconds float64) int64 {
 	return modelCents + MeteringCents(webSearchRequests, activeSeconds)
+}
+
+// UnpricedSnapshotModels walks an agent snapshot and returns the sorted subset
+// of model names referenced by "model" fields that have no list price. Used
+// for create/update-time checks so a budget cannot be attached to workloads
+// that would silently accrue no cost.
+func (c *Calculator) UnpricedSnapshotModels(snapshot json.RawMessage) []string {
+	if len(snapshot) == 0 || c == nil {
+		return nil
+	}
+	var tree any
+	if err := json.Unmarshal(snapshot, &tree); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	collectSnapshotModels(tree, seen)
+	if len(seen) == 0 {
+		return nil
+	}
+	models := make([]string, 0, len(seen))
+	for model := range seen {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return c.UnpricedModels(models)
+}
+
+func collectSnapshotModels(node any, seen map[string]bool) {
+	switch typed := node.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			if key == "model" {
+				if text, ok := value.(string); ok && text != "" {
+					seen[text] = true
+				}
+			}
+			collectSnapshotModels(value, seen)
+		}
+	case []any:
+		for _, item := range typed {
+			collectSnapshotModels(item, seen)
+		}
+	}
 }
 
 func normalizeModelName(model string) string {

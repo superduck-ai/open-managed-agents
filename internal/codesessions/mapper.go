@@ -441,7 +441,8 @@ func resultPublicPayloadCandidates(calculator *billing.Calculator, codeSessionID
 			end["usage"] = usage
 		}
 		if model != "" {
-			if requestCents, priced := calculator.ModelRequestCents(model, modelUsage); priced {
+			usageForBilling := firstNonNil(modelUsage, usage)
+			if requestCents, priced := calculator.ModelRequestCents(model, usageForBilling); priced {
 				end["billing"] = map[string]string{
 					"list_cost": strconv.FormatInt(requestCents, 10),
 					"currency":  billing.CurrencyUSD,

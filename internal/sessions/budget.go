@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"time"
 	"uuid"
 
@@ -166,8 +165,12 @@ func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Sessi
 	if !reached {
 		return
 	}
-	usageEvent := h.sessionUsageEvent(session, usage, now)
-	idleEvent := h.budgetReachedIdleEvent(session, now)
+	// Distinct timestamps guarantee usage sorts strictly before the idle event;
+	// same-timestamp ordering is not guaranteed (uuid tie-break).
+	usageAt := now
+	idleAt := now.Add(time.Microsecond)
+	usageEvent := h.sessionUsageEvent(session, usage, usageAt)
+	idleEvent := h.budgetReachedIdleEvent(session, idleAt)
 	created, err := h.eventPayloads.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{usageEvent, idleEvent}, nil)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "append budget reached events", "session_id", session.ExternalID, "error", err)
@@ -237,45 +240,4 @@ func budgetJSONOrNull(budget json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return budget
-}
-
-// unpricedAgentModels walks an agent snapshot and returns the sorted set of
-// model names referenced by "model" fields, for create-time pricing checks.
-func unpricedAgentModels(snapshot json.RawMessage, calculator *billing.Calculator) []string {
-	if len(snapshot) == 0 || calculator == nil {
-		return nil
-	}
-	var tree any
-	if err := json.Unmarshal(snapshot, &tree); err != nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	collectModels(tree, seen)
-	if len(seen) == 0 {
-		return nil
-	}
-	models := make([]string, 0, len(seen))
-	for model := range seen {
-		models = append(models, model)
-	}
-	sort.Strings(models)
-	return calculator.UnpricedModels(models)
-}
-
-func collectModels(node any, seen map[string]bool) {
-	switch typed := node.(type) {
-	case map[string]any:
-		for key, value := range typed {
-			if key == "model" {
-				if text, ok := value.(string); ok && text != "" {
-					seen[text] = true
-				}
-			}
-			collectModels(value, seen)
-		}
-	case []any:
-		for _, item := range typed {
-			collectModels(item, seen)
-		}
-	}
 }

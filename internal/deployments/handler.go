@@ -40,6 +40,7 @@ type Handler struct {
 	db            *db.DB
 	deployments   *Store
 	webhooks      webhookEnqueuer
+	billing       *billing.Calculator
 	errorAdapter  *httpapi.ErrorAdapter
 	router        chi.Router
 }
@@ -234,9 +235,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, secretService *secrets.Service, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, secretService *secrets.Service, billingCalculator *billing.Calculator, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, secretService: secretService, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, secretService: secretService, billing: billingCalculator, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -356,7 +357,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	budget, err := normalizeDeploymentBudget(body.Budget)
+	budget, err := h.deploymentBudgetPatch(nil, body.Budget, agent.snapshot)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -558,13 +559,11 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
-	if len(body.Budget) > 0 {
-		budget, err := normalizeDeploymentBudget(body.Budget)
-		if err != nil {
-			return invalidRequest(err)
-		}
-		next.Budget = budget
+	budget, err := h.deploymentBudgetPatch(next.Budget, body.Budget, next.AgentSnapshot)
+	if err != nil {
+		return invalidRequest(err)
 	}
+	next.Budget = budget
 	scheduleProvided := body.Schedule != nil
 	if scheduleProvided {
 		next.Schedule, err = normalizeOptionalSchedule(body.Schedule)
@@ -1688,6 +1687,24 @@ func normalizeDeploymentBudget(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	return encoded, nil
+}
+
+// deploymentBudgetPatch applies an optional budget field to the current value:
+// an absent field keeps current, a null or object replaces it. When a budget
+// is set, the agent snapshot must not reference unpriced models: unpriced
+// requests accrue no cost, so the budget could never trigger.
+func (h *Handler) deploymentBudgetPatch(current, raw, snapshot json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return current, nil
+	}
+	budget, err := normalizeDeploymentBudget(raw)
+	if err != nil || budget == nil {
+		return budget, err
+	}
+	if unpriced := h.billing.UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
+		return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
+	}
+	return budget, nil
 }
 
 func deploymentBudgetResponse(raw json.RawMessage) json.RawMessage {

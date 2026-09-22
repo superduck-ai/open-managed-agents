@@ -10,7 +10,7 @@ import (
 
 func TestPrepareWorkerOutputEventRejectsInvalidControlRequest(t *testing.T) {
 	prepared, err := prepareWorkerOutputEvent(
-	nil,
+		nil,
 		"cse_test",
 		workerOutputEvent{Payload: json.RawMessage(`{"type":"control_request","uuid":"control-uuid","request_id":"request-id","request":42}`)},
 		time.Unix(1, 0).UTC(),
@@ -25,7 +25,7 @@ func TestPrepareWorkerOutputEventRejectsInvalidControlRequest(t *testing.T) {
 
 func TestPrepareWorkerOutputEventBuildsKeepAliveAction(t *testing.T) {
 	prepared, err := prepareWorkerOutputEvent(
-	nil,
+		nil,
 		"cse_test",
 		workerOutputEvent{Payload: json.RawMessage(`{"type":"keep_alive"}`)},
 		time.Unix(1, 0).UTC(),
@@ -40,7 +40,7 @@ func TestPrepareWorkerOutputEventBuildsKeepAliveAction(t *testing.T) {
 
 func TestPrepareWorkerOutputEventIgnoresNonEphemeralStream(t *testing.T) {
 	prepared, err := prepareWorkerOutputEvent(
-	nil,
+		nil,
 		"cse_test",
 		workerOutputEvent{Payload: json.RawMessage(`{
 			"type":"stream_event",

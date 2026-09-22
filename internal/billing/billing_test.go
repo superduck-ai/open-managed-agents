@@ -121,18 +121,18 @@ func TestCalculatorModelRequestCents(t *testing.T) {
 		t.Fatalf("ModelRequestCents(snake) = (%d, %v), want (1800, true)", cents, ok)
 	}
 
-	// Cache tokens are excluded from the full input rate: input tokens already
-	// include cache reads/writes in Claude usage payloads.
+	// Anthropic usage reports non-cache input separately: input_tokens excludes
+	// cache reads/writes, so each counter is billed at its own rate.
 	withCache := map[string]any{
-		"input_tokens":               1_000_000.0,
-		"output_tokens":              1_000_000.0,
-		"cache_read_input_tokens":    500_000.0,
+		"input_tokens":                1_000_000.0,
+		"output_tokens":               1_000_000.0,
+		"cache_read_input_tokens":     500_000.0,
 		"cache_creation_input_tokens": 500_000.0,
 	}
-	// plain input = 0 after excluding cache; output 15.00 + cache read 0.15 +
-	// cache write 1.875 = 17.025 USD → 1702 cents (float rounding).
-	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", withCache); !ok || cents != 1702 {
-		t.Fatalf("ModelRequestCents(cache) = (%d, %v), want (203, true)", cents, ok)
+	// input 3.00 + output 15.00 + cache read 0.15 + cache write 1.875 = 20.025
+	// USD → 2002 cents after float64 rounding.
+	if cents, ok := calculator.ModelRequestCents("claude-sonnet-4-5-20250929", withCache); !ok || cents != 2002 {
+		t.Fatalf("ModelRequestCents(cache) = (%d, %v), want (2002, true)", cents, ok)
 	}
 
 	// camelCase keys from Claude Code modelUsage payloads.

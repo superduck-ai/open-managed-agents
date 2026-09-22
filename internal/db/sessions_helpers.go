@@ -186,7 +186,7 @@ func sessionWriteParameters(session Session) sessionWriteParams {
 		VaultIDs: append(sessionVaultIDs{}, session.VaultIDs...), Status: session.Status,
 		Budget: agentJSONArg(session.Budget),
 		Usage:  agentJSONArg(session.Usage),
-		Stats: agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
+		Stats:  agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
 		CreatedAt: session.CreatedAt,
 	}
 }

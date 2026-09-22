@@ -31,7 +31,7 @@ import {
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
-import { budgetWireBody, parseBudgetUsdInput, sessionBudgetState } from '../resources/budget';
+import { budgetWireBody, parseBudgetUsdInput, sessionBudgetState, type SessionBudgetState } from '../resources/budget';
 import { SessionBudgetBanner } from './SessionBudgetBanner';
 import {
   type EventsTabProps,
@@ -122,8 +122,53 @@ function sessionPendingAction(
   return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
 }
 
-export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
-  const { activeWorkspaceId } = useWorkspace();
+interface BudgetChangeDeps {
+  workspaceId: string;
+  onUpdated: (next: SessionApiResponse) => void;
+  onError: (message: string | null) => void;
+  onBusyChange: (busy: boolean) => void;
+  toastFor: (cents: number | null) => string;
+}
+
+async function applyBudgetChange(session: SessionApiResponse, usd: string | null, deps: BudgetChangeDeps): Promise<void> {
+  const parsed = usd === null ? { ok: true as const, cents: null } : parseBudgetUsdInput(usd);
+  if (!parsed.ok) return;
+  deps.onBusyChange(true);
+  deps.onError(null);
+  try {
+    deps.onUpdated(
+      await updateSessionBudget(session.id, parsed.cents === null ? null : budgetWireBody(parsed.cents), deps.workspaceId),
+    );
+    toast.success(deps.toastFor(parsed.cents));
+  } catch (error) {
+    deps.onError(errorMessage(error));
+  } finally {
+    deps.onBusyChange(false);
+  }
+}
+
+function budgetToastMessage(cents: number | null, msg: (key: string, fallback: string) => string): string {
+  return cents === null
+    ? msg('managedAgents.budget.removedToast', 'Budget removed — session resumed')
+    : msg('managedAgents.budget.updatedToast', 'Budget updated — session resumed');
+}
+
+function SessionBudgetBannerSection({
+  budget,
+  archived,
+  busy,
+  onChangeBudget,
+}: {
+  budget: SessionBudgetState | null;
+  archived: boolean;
+  busy: boolean;
+  onChangeBudget: (usd: string | null) => Promise<void>;
+}) {
+  if (!budget || archived) return null;
+  return <SessionBudgetBanner state={budget} busy={busy} onChangeBudget={onChangeBudget} />;
+}
+
+export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {  const { activeWorkspaceId } = useWorkspace();
   const { msg } = useI18n();
   const formatters = useFormatters();
   const listHref = managedEntityListHref(activeWorkspaceId, 'sessions');
@@ -579,28 +624,13 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   };
   const handleBudgetChange = async (usd: string | null) => {
     if (!session) return;
-    const parsed = usd === null ? { ok: true, cents: null } : parseBudgetUsdInput(usd);
-    if (!parsed.ok) return;
-    setBusyAction('budget');
-    setMutationError(null);
-    try {
-      setSession(
-        await updateSessionBudget(
-          session.id,
-          parsed.cents === null ? null : budgetWireBody(parsed.cents),
-          activeWorkspaceId,
-        ),
-      );
-      toast.success(
-        parsed.cents === null
-          ? msg('managedAgents.budget.removedToast', 'Budget removed — session resumed')
-          : msg('managedAgents.budget.updatedToast', 'Budget updated — session resumed'),
-      );
-    } catch (error) {
-      setMutationError(errorMessage(error));
-    } finally {
-      setBusyAction(null);
-    }
+    await applyBudgetChange(session, usd, {
+      workspaceId: activeWorkspaceId,
+      onUpdated: setSession,
+      onError: setMutationError,
+      onBusyChange: (busy) => setBusyAction(busy ? 'budget' : null),
+      toastFor: (cents) => budgetToastMessage(cents, msg),
+    });
   };
   if (loading) {
     return (
@@ -755,9 +785,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         </header>
 
         <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />
-        {budget && !archived ? (
-          <SessionBudgetBanner state={budget} busy={busyAction === 'budget'} onChangeBudget={handleBudgetChange} />
-        ) : null}
+        <SessionBudgetBannerSection
+          budget={budget}
+          archived={archived}
+          busy={busyAction === 'budget'}
+          onChangeBudget={handleBudgetChange}
+        />
 
         <div className="min-h-0 flex-1 overflow-hidden pt-1" data-testid="session-viewer">
           <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>

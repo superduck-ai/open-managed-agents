@@ -454,14 +454,21 @@ func appendOutcomeEvaluation(raw json.RawMessage, outcomeID string, maxIteration
 	return httpapi.MarshalRaw(outcomes)
 }
 
-func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sessionResponse, error) {
+// responseFromSession renders a session API response. refreshUsage controls
+// whether the live usage aggregate is recomputed: single-session reads pass
+// true for freshness, list routes pass false to avoid a per-row aggregation
+// over session_events (the stored usage projection is kept fresh by budget
+// enforcement after every persisted batch).
+func (h *Handler) responseFromSession(r *http.Request, session db.Session, refreshUsage bool) (sessionResponse, error) {
 	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return sessionResponse{}, err
 	}
 	usage := httpapi.RawOr(session.Usage, `{}`)
-	if totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID); err == nil {
-		usage = sessionUsageJSON(totals, session.Budget)
+	if refreshUsage {
+		if totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID); err == nil {
+			usage = sessionUsageJSON(totals, session.Budget)
+		}
 	}
 	return sessionResponse{
 		ID:                 session.ExternalID,

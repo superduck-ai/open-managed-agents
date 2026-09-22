@@ -122,10 +122,12 @@ code_session:
 
 billing:
   # USD list prices per million tokens used for session budget enforcement,
-  # keyed by model name. Models without an entry are unpriced; pricing an
-  # event for an unpriced model fails the session with a 400. Web search
-  # ($10 per 1k requests) and active time ($0.08/h) are platform constants
-  # and are not configured here.
+  # keyed by model name. Models without an entry are unpriced: budgeted
+  # sessions are rejected at create/update time when their agent snapshot
+  # references unpriced models, and requests on unpriced models are not
+  # billed (no billing entry is written). Web search ($10 per 1k requests)
+  # and active time ($0.08/h) are platform constants and are not configured
+  # here.
   model_prices: {}
 
 observability:

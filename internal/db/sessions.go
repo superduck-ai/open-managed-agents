@@ -252,15 +252,15 @@ func (d *DB) GetSessionByUUID(ctx context.Context, workspaceUUID string, session
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
 	mapper := NewSessionMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, sessionUpdateParams{
-		WorkspaceUUID: workspaceUUID,
-		ExternalID:    externalID,
-		AgentSnapshot: agentJSONArg(next.AgentSnapshot),
-		Title:         next.Title,
-		Metadata:      agentJSONArg(next.Metadata),
-		Budget:        agentJSONArg(next.Budget),
+		WorkspaceUUID:   workspaceUUID,
+		ExternalID:      externalID,
+		AgentSnapshot:   agentJSONArg(next.AgentSnapshot),
+		Title:           next.Title,
+		Metadata:        agentJSONArg(next.Metadata),
+		Budget:          agentJSONArg(next.Budget),
 		BudgetReachedAt: next.BudgetReachedAt,
 		BudgetRemovedAt: next.BudgetRemovedAt,
-		UpdatedAt:     next.UpdatedAt,
+		UpdatedAt:       next.UpdatedAt,
 	})
 	return row.session(), mapNoRows(err)
 }

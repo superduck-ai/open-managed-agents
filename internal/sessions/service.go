@@ -71,7 +71,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 	if budget != nil {
-		if unpriced := unpricedAgentModels(snapshot, h.codeSessions.Billing()); len(unpriced) > 0 {
+		if unpriced := h.codeSessions.Billing().UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
 			return invalidRequest(fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", ")))
 		}
 	}
@@ -167,7 +167,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_created", created.ExternalID, &thread.ExternalID)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_idled", created.ExternalID, &thread.ExternalID)
-	response, err := h.responseFromSession(r, created)
+	response, err := h.responseFromSession(r, created, true)
 	if err != nil {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
@@ -241,7 +241,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	}
 	data := make([]sessionResponse, 0, len(records))
 	for _, record := range records {
-		response, err := h.responseFromSession(r, record)
+		response, err := h.responseFromSession(r, record, false)
 		if err != nil {
 			return internalError("Could not list sessions", fmt.Errorf("load session %q response: %w", record.ExternalID, err))
 		}
@@ -266,7 +266,7 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	response, err := h.responseFromSession(r, session)
+	response, err := h.responseFromSession(r, session, true)
 	if err != nil {
 		return internalError("Could not retrieve session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
@@ -334,7 +334,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 	if err == nil {
 		h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
 	}
-	response, err := h.responseFromSession(r, updated)
+	response, err := h.responseFromSession(r, updated, true)
 	if err != nil {
 		return internalError("Could not update session", fmt.Errorf("load updated session %q response: %w", sessionID, err))
 	}
@@ -370,6 +370,11 @@ func (h *Handler) applyBudgetUpdate(r *http.Request, next *db.Session, raw json.
 	if next.BudgetRemovedAt != nil {
 		return invalidRequest(errors.New("a removed budget cannot be added again"))
 	}
+	// Validate the final agent snapshot: a same-request agent patch could
+	// otherwise introduce an unpriced model that silently accrues no cost.
+	if unpriced := h.codeSessions.Billing().UnpricedSnapshotModels(next.AgentSnapshot); len(unpriced) > 0 {
+		return invalidRequest(fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", ")))
+	}
 	totals, err := h.db.SumSessionUsageTotals(r.Context(), next.WorkspaceUUID, next.ExternalID)
 	if err != nil {
 		return internalError("Could not update session", fmt.Errorf("sum session usage: %w", err))
@@ -388,7 +393,8 @@ func (h *Handler) applyBudgetUpdate(r *http.Request, next *db.Session, raw json.
 	return nil
 }
 
-func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {	principal, err := requireSessionManager(r)
+func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireSessionManager(r)
 	if err != nil {
 		return err
 	}
@@ -412,7 +418,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {	p
 		return mapSessionLoadError(err, sessionID)
 	}
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
-	response, err := h.responseFromSession(r, archived)
+	response, err := h.responseFromSession(r, archived, true)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
 	}
@@ -855,7 +861,8 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) error
 	}
 	data := make([]threadResponse, 0, len(records))
 	for _, thread := range records {
-		data = append(data, h.responseFromThreadWithUsage(r.Context(), session.WorkspaceUUID, session.ExternalID, thread))
+		// Stored usage projection, no per-row aggregation on the list path.
+		data = append(data, responseFromThread(thread))
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {

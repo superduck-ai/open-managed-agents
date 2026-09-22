@@ -36,14 +36,23 @@ type Summary struct {
 	BlobRef *Reference `json:"blob_ref"`
 	Size    int64      `json:"size"`
 	Preview string     `json:"preview"`
+	// Billing / usage counters and the model_request_start_id link are carried
+	// through so budget aggregation over span.model_request_end events keeps
+	// working when the full payload is externalized past the inline threshold.
+	Billing             json.RawMessage `json:"billing,omitempty"`
+	Usage               json.RawMessage `json:"usage,omitempty"`
+	ModelRequestStartID string          `json:"model_request_start_id,omitempty"`
 }
 
 type payloadMetadata struct {
-	Name            json.RawMessage `json:"name"`
-	ToolUseID       json.RawMessage `json:"tool_use_id"`
-	MCPToolUseID    json.RawMessage `json:"mcp_tool_use_id"`
-	CustomToolUseID json.RawMessage `json:"custom_tool_use_id"`
-	ID              json.RawMessage `json:"id"`
+	Name                json.RawMessage `json:"name"`
+	ToolUseID           json.RawMessage `json:"tool_use_id"`
+	MCPToolUseID        json.RawMessage `json:"mcp_tool_use_id"`
+	CustomToolUseID     json.RawMessage `json:"custom_tool_use_id"`
+	ID                  json.RawMessage `json:"id"`
+	Billing             json.RawMessage `json:"billing"`
+	Usage               json.RawMessage `json:"usage"`
+	ModelRequestStartID string          `json:"model_request_start_id"`
 }
 
 // Store holds stable database and object storage dependencies at the service boundary.
@@ -80,7 +89,15 @@ func Summarize(payload []byte, eventType string) (Summary, *string, error) {
 			break
 		}
 	}
-	return Summary{Type: eventType, Name: metadataString(metadata.Name), Size: int64(len(payload)), Preview: Preview(payload)}, toolID, nil
+	return Summary{
+		Type:                eventType,
+		Name:                metadataString(metadata.Name),
+		Size:                int64(len(payload)),
+		Preview:             Preview(payload),
+		Billing:             metadata.Billing,
+		Usage:               metadata.Usage,
+		ModelRequestStartID: metadata.ModelRequestStartID,
+	}, toolID, nil
 }
 
 // Metadata is optional; opaque worker JSON may use these names for non-string values.

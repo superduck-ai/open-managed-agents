@@ -169,7 +169,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
-		Billing:          input.Billing,
+		Billing:       input.Billing,
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
 			EndpointURL:   input.Webhook.EndpointURL,

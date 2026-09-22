@@ -422,6 +422,14 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 		}
 		blockType := stringField(block, "type")
 		if blockType == "tool_use" {
+			toolID := stringField(block, "id")
+			if toolID != "" {
+				payload := publicPayloadWithType(object, "agent.tool_use")
+				delete(payload, "message")
+				payload["id"] = toolUsePublicEventID(codeSessionID, toolID)
+				payload["name"], payload["input"] = block["name"], block["input"]
+				candidates = append(candidates, publicPayloadCandidate{payload: payload})
+			}
 			continue
 		}
 		eventType := "agent.message"

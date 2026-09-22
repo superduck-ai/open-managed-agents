@@ -4,6 +4,12 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="SessionEventMapper">
+    <select id="HasToolReply" result="scalar">
+        SELECT EXISTS(SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionID}
+            AND tool_use_id = #{toolID} AND deleted_at IS NULL
+            AND event_type IN ('user.tool_confirmation', 'user.custom_tool_result', 'user.tool_result'))
+    </select>
     <sql id="columns">
         uuid,
         external_id,

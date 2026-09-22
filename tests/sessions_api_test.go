@@ -308,7 +308,7 @@ func TestSessionsEnvironmentKeyAccess(t *testing.T) {
 	if got.ID != session.ID {
 		t.Fatalf("env key retrieve session id = %s, want %s", got.ID, session.ID)
 	}
-	events := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"worker note"}]}]}`, envKey)
+	events := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, envKey)
 	if len(events.Data) != 1 {
 		t.Fatalf("env key send events = %+v", events)
 	}
@@ -669,8 +669,6 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	]}`)
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 
-	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
-
 	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
 	var child *sessionThreadAPIResponse
 	for i := range threads.Data {
@@ -708,8 +706,8 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 			t.Fatalf("Claude Code task mapped events missing %q: %+v", want, events.Data)
 		}
 	}
-	if eventPageContains(events, `"type":"agent.tool_use"`) {
-		t.Fatal("automatic tool invocation is not mapped yet")
+	if !eventPageContains(events, `"type":"agent.tool_use"`) {
+		t.Fatal("automatically allowed task invocation was omitted")
 	}
 	diagnostics := listSessionEvents(t, app, session.ID, "types[]=system.message", defaultTestKey)
 	if len(diagnostics.Data) != 0 {
@@ -1008,8 +1006,8 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 			t.Fatalf("primary coordination missing %q: %+v", want, primaryEvents.Data)
 		}
 	}
-	if eventPageContains(primaryEvents, `"type":"agent.tool_use"`) {
-		t.Fatal("automatic tool invocation is not mapped yet")
+	if !eventPageContains(primaryEvents, `"type":"agent.tool_use"`) {
+		t.Fatal("automatic subagent invocation missing")
 	}
 	for _, blocked := range []string{"private child prompt only in child stream", "private child thinking only in child stream", "private child answer only in child stream"} {
 		if eventPageContains(primaryEvents, blocked) {
@@ -2007,9 +2005,9 @@ func TestCodeSessionMCPDefaultAllowAutoApprovesWorkerPermissionRequest(t *testin
 				`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":`+quoteJSON(toolUseID)+`,"content":[{"type":"text","text":"Sunny"}]}]}`+
 				`}}]}`)
 			allPublicEvents = listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
-			resultEvent := sessionEventObjectByType(t, allPublicEvents, "agent.tool_result")
-			if resultEvent["tool_use_id"] != toolEventID {
-				t.Fatalf("tool result tool_use_id = %#v, want public event id %s: %#v", resultEvent["tool_use_id"], toolEventID, resultEvent)
+			resultEvent := sessionEventObjectByType(t, allPublicEvents, "agent.mcp_tool_result")
+			if resultEvent["mcp_tool_use_id"] != toolEventID {
+				t.Fatalf("tool result tool_use_id = %#v, want public event id %s: %#v", resultEvent["mcp_tool_use_id"], toolEventID, resultEvent)
 			}
 			if eventPageContains(allPublicEvents, toolUseID) {
 				t.Fatalf("provider tool id leaked into public events: %+v", allPublicEvents.Data)
@@ -3449,8 +3447,10 @@ func TestSessionEventInputValidation(t *testing.T) {
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"done"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
-	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
-	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.custom_tool_result"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
+	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"}]}`), defaultTestKey, true)
+	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
+	if len(valid.Data) != 1 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.define_outcome"`)) {
 		t.Fatalf("unexpected valid events response: %+v", valid)
 	}
 	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)

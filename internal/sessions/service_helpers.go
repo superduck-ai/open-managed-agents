@@ -356,8 +356,14 @@ func validateToolConfirmationPayload(payload map[string]any) error {
 		return errors.New("result must be allow or deny")
 	}
 	if _, ok := payload["deny_message"]; ok {
+		if payload["deny_message"] != nil && result != "deny" {
+			return errors.New("deny_message is only allowed with deny")
+		}
 		if _, ok := payload["deny_message"].(string); !ok && payload["deny_message"] != nil {
 			return errors.New("deny_message must be a string")
+		}
+		if message, ok := payload["deny_message"].(string); ok && len([]rune(message)) > 10000 {
+			return errors.New("deny_message must be at most 10000 characters")
 		}
 	}
 	if _, ok := payload["updated_input"]; ok {
@@ -431,6 +437,9 @@ func validateContentBlocks(payload map[string]any, field string, required bool) 
 		}
 		if requiredStringValue(block, "type") == "" {
 			return fmt.Errorf("%s item type is required", field)
+		}
+		if block["type"] == "redacted" {
+			return errors.New("redacted blocks cannot be submitted")
 		}
 	}
 	return nil

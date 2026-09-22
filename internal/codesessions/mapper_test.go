@@ -167,10 +167,10 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 		t.Fatal("publicPayloadsFromWorkerEvent ok = false, want true")
 	}
 	objects := decodePublicPayloads(t, payloads)
-	if got, want := len(objects), 2; got != want {
+	if got, want := len(objects), 3; got != want {
 		t.Fatalf("payload count = %d, want %d: %#v", got, want, objects)
 	}
-	wantTypes := []string{"agent.thinking", "agent.message"}
+	wantTypes := []string{"agent.thinking", "agent.message", "agent.tool_use"}
 	for index, wantType := range wantTypes {
 		if objects[index]["type"] != wantType {
 			t.Fatalf("payload[%d] type = %q, want %q; payload=%#v", index, objects[index]["type"], wantType, objects[index])

@@ -118,6 +118,15 @@ func insertSessionEventsTx(
 
 	created := make([]SessionEvent, 0, len(events))
 	for _, event := range events {
+		if event.ToolUseID != nil && slices.Contains([]string{"user.tool_confirmation", "user.custom_tool_result", "user.tool_result"}, event.EventType) {
+			exists, err := eventMapper.HasToolReply(ctx, session.WorkspaceUUID, session.ExternalID, *event.ToolUseID)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
+				return nil, ErrInvalidState
+			}
+		}
 		if event.EventType == "session.thread_status_running" {
 			threadID := event.StatusThreadID
 			if threadID == "" {

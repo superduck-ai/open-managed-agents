@@ -552,6 +552,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		if err != nil {
 			return invalidRequest(err)
 		}
+		if err := h.validateToolReply(r.Context(), session, &event); err != nil {
+			return err
+		}
 		if changed {
 			normalizedSession.OutcomeEvaluations = outcomes
 			outcomesChanged = true
@@ -559,6 +562,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		events = append(events, event)
 	}
 	var outcomeEvaluations json.RawMessage
+	if err := validateInputBatch(events); err != nil {
+		return invalidRequest(err)
+	}
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
@@ -569,7 +575,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
-			return invalidRequest(errors.New("archived sessions do not accept new events"))
+			return invalidRequest(errors.New("session state does not allow these events or the tool invocation is already resolved"))
 		}
 		return mapSessionLoadError(err, sessionID)
 	}

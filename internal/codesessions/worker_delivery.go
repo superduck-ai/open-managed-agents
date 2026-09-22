@@ -77,6 +77,9 @@ func (s *Service) publishProcessedInputs(ctx context.Context, codeSessionID stri
 			if err := s.sink.PublishProcessedInput(ctx, codeSession, ref.PublicEventID); err != nil {
 				return err
 			}
+			if err := s.finishProcessedToolReply(ctx, codeSession, ref.PublicEventID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

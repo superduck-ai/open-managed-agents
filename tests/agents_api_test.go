@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
-
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -439,22 +437,30 @@ func TestAgentsSchemaHasNoForeignKeys(t *testing.T) {
 	}
 }
 
-func TestAgentsOfficialSDKFixture(t *testing.T) {
+func TestAgentsPersistUpdateAndArchive(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("agents-fixture-bucket"))
 	defer app.close()
 
-	updateResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+app.cfg.SDKFixtures.AgentID+"?beta=true", strings.NewReader(`{"version":1,"name":"fixture"}`), config.OfficialSDKResourceAPIKey, true)
+	created := createAgent(t, app, `{"name":"persisted-agent","model":"claude-opus-4-6"}`)
+	defer cleanupAgentRows(t, app.pool, created.ID)
+
+	updateResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+created.ID+"?beta=true", strings.NewReader(`{"version":1,"name":"fixture"}`), defaultTestKey, true)
 	defer updateResp.Body.Close()
 	if updateResp.StatusCode != http.StatusOK {
 		t.Fatalf("fixture update status = %d, want 200: %s", updateResp.StatusCode, readAll(t, updateResp.Body))
 	}
 	var updated agentAPIResponse
 	decodeJSON(t, updateResp.Body, &updated)
-	if updated.ID != app.cfg.SDKFixtures.AgentID || updated.Version != 2 {
+	if updated.ID != created.ID || updated.Version != 2 {
 		t.Fatalf("unexpected fixture update response: %+v", updated)
 	}
 
-	archiveResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+app.cfg.SDKFixtures.AgentID+"/archive?beta=true", nil, config.OfficialSDKResourceAPIKey, true)
+	persisted := retrieveAgent(t, app, created.ID, "")
+	if persisted.Name != "fixture" || persisted.Version != 2 {
+		t.Fatalf("update was not persisted: %+v", persisted)
+	}
+
+	archiveResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+created.ID+"/archive?beta=true", nil, defaultTestKey, true)
 	defer archiveResp.Body.Close()
 	if archiveResp.StatusCode != http.StatusOK {
 		t.Fatalf("fixture archive status = %d, want 200: %s", archiveResp.StatusCode, readAll(t, archiveResp.Body))

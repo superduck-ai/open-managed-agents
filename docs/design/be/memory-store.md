@@ -53,6 +53,8 @@ Session 默认没有跨会话记忆。需要：
 
 父目录 `/mnt/memory` **不是** Filestore 上的 store。启动时在沙箱本地创建该目录、写入 `MEMORY.md`，再把各 store 挂成子目录。父目录和 `MEMORY.md` **保持可写**。根上新建文件成功，但不进任何 store；沙箱销毁后随本地盘一起丢掉。未挂载的子路径同样不是持久记忆。
 
+运行时资源解析遇到无效 memory 快照时立即返回错误并终止启动，不返回部分解析结果；错误日志保留对应 session resource ID。
+
 ready = 五个固定 mount + 全部 memory store mount + `MEMORY.md` 已就位。任一失败则启动失败并清理 sandbox。删除 memory payload 对 environment-manager 的透传。
 
 ### 2.2 持久化

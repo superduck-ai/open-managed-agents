@@ -32,7 +32,6 @@ var (
 	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
 	errMemoryRootCreate        = errors.New("local memory mount root create failed")
 	errMemoryMarkdownWrite     = errors.New("memory markdown write failed")
-	errMemorySnapshotInvalid   = errors.New("memory mount snapshot is invalid")
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
 )
 
@@ -556,18 +555,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 	}
 	runtimeResources, err := resolveManagedAgentRuntimeResources(resources)
 	if err != nil {
+		if errors.Is(err, errMemorySnapshotInvalid) {
+			return nil, r.logManagedAgentRuntimeStageFailure(ctx, "memory_mount_resolve", errMemorySnapshotInvalid, err)
+		}
 		return nil, fmt.Errorf("resolve managed agent resources: %w", err)
-	}
-	if len(runtimeResources.invalidMemoryResources) > 0 {
-		return nil, r.logManagedAgentRuntimeStageFailure(
-			ctx,
-			"memory_mount_resolve",
-			errMemorySnapshotInvalid,
-			fmt.Errorf(
-				"unparseable memory snapshots on session resources %s",
-				strings.Join(runtimeResources.invalidMemoryResources, ", "),
-			),
-		)
 	}
 	if !r.cfg.CodeSession.UpstreamProxyMITMEnabled {
 		for _, resource := range resources {

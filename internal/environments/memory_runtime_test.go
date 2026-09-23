@@ -2,6 +2,7 @@ package environments
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -74,7 +75,7 @@ func TestManagedAgentRuntimeResourcesReportUnparseableMemorySnapshots(t *testing
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			resolved := mustResolveRuntimeResources(t, []db.SessionResource{{
+			resolved, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{
 				ResourceType: sessionresource.MemoryStoreType,
 				ExternalID:   "sesrsc_broken",
 				Payload:      json.RawMessage(testCase.payload),
@@ -82,9 +83,11 @@ func TestManagedAgentRuntimeResourcesReportUnparseableMemorySnapshots(t *testing
 			if len(resolved.memoryMounts) != 0 {
 				t.Fatalf("memory mounts = %#v, want none", resolved.memoryMounts)
 			}
-			want := []string{"sesrsc_broken"}
-			if !reflect.DeepEqual(resolved.invalidMemoryResources, want) {
-				t.Fatalf("invalid memory resources = %#v, want %#v", resolved.invalidMemoryResources, want)
+			if !errors.Is(err, errMemorySnapshotInvalid) {
+				t.Fatalf("resolve memory resource error = %v, want invalid snapshot", err)
+			}
+			if !strings.Contains(err.Error(), "sesrsc_broken") {
+				t.Fatalf("resolve memory resource error missing resource ID: %v", err)
 			}
 		})
 	}

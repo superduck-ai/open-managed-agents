@@ -14,10 +14,6 @@ type managedAgentRuntimeResources struct {
 	sources      []json.RawMessage
 	workDir      string
 	memoryMounts []memoryRuntimeMount
-	// invalidMemoryResources holds the session_resource IDs whose memory
-	// snapshot could not be parsed. Launch is fail-closed on these: a store the
-	// caller attached must never be silently left unmounted.
-	invalidMemoryResources []string
 }
 
 type gitRepositoryRuntimeSource struct {
@@ -82,8 +78,7 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (manage
 		case sessionresource.MemoryStoreType:
 			mount, ok := parseMemoryRuntimeMount(resource.Payload)
 			if !ok {
-				resolved.invalidMemoryResources = append(resolved.invalidMemoryResources, resource.ExternalID)
-				continue
+				return managedAgentRuntimeResources{}, fmt.Errorf("memory resource %s: %w", resource.ExternalID, errMemorySnapshotInvalid)
 			}
 			resolved.memoryMounts = append(resolved.memoryMounts, mount)
 		}

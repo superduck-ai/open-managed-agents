@@ -2180,6 +2180,9 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("send AskUserQuestion custom result status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
+	var submitted sessionEventPageAPIResponse
+	decodeJSON(t, resp.Body, &submitted)
+
 	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
 	if eventType != "control_response" {
 		t.Fatalf("confirmation event_type = %q, want control_response payload=%s", eventType, payload)
@@ -2204,6 +2207,16 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	if !ok || answers["Color"] != "Blue" {
 		t.Fatalf("confirmation updatedInput.answers = %#v, want Color=Blue; payload=%s", updatedInput["answers"], payload)
 	}
+	inputID := sessionEventStringField(t, submitted.Data[0], "id")
+	if object["id"] != inputID {
+		t.Fatalf("control response lost input ID: %v", object["id"])
+	}
+	codeSession, found, err := app.db.GetCodeSession(t.Context(), codeSessionID)
+	if err != nil || !found {
+		t.Fatalf("code session: %v", err)
+	}
+	consumePublicInput(t, app, codeSession, workerEpoch, inputID)
+
 }
 
 func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testing.T) {

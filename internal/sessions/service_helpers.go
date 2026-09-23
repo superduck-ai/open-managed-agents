@@ -265,7 +265,7 @@ func normalizeInputEvent(
 	payload["id"] = eventID
 	payload["processed_at"] = now.Format(time.RFC3339Nano)
 	processedAt := now
-	if eventType == "user.message" || eventType == "user.interrupt" || eventType == "user.tool_confirmation" || eventType == "system.message" {
+	if eventType == "user.message" || eventType == "user.interrupt" || eventType == "user.tool_confirmation" {
 		processedAt = time.Time{}
 		payload["processed_at"] = nil
 	}

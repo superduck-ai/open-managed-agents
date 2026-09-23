@@ -3,8 +3,6 @@ package db
 import (
 	"bytes"
 	"context"
-	"database/sql"
-	"errors"
 	"slices"
 
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -117,7 +115,7 @@ func insertSessionEventsTx(
 		return nil, mapNoRows(err)
 	}
 	primary := primaryRow.thread()
-	events, err = acceptIdlePrimaryInput(ctx, executor, session, primary, events)
+	events, acceptedInputID, err := prepareSessionInputEvents(ctx, executor, session, primary, events)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +201,9 @@ func insertSessionEventsTx(
 	if slices.ContainsFunc(created, func(event SessionEvent) bool {
 		return maevents.IsPublicWorkerInputEvent(event.EventType)
 	}) {
-		newTurn := created[0].EventType == "session.status_running"
+		newTurn := slices.ContainsFunc(created, func(event SessionEvent) bool {
+			return event.ExternalID == acceptedInputID
+		})
 		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, newTurn); err != nil {
 			return nil, err
 		}
@@ -211,18 +211,34 @@ func insertSessionEventsTx(
 	return created, nil
 }
 
-// The caller holds the session lock. Only the first input of an idle turn is
-// accepted immediately; queued inputs keep waiting for worker acknowledgement.
-func acceptIdlePrimaryInput(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, events []SessionEvent) ([]SessionEvent, error) {
+// Candidate running transitions are persisted only with their accepted input.
+func prepareSessionInputEvents(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, events []SessionEvent) ([]SessionEvent, string, error) {
+	inputID, err := idlePrimaryInputID(ctx, executor, session, primary, events)
+	if err != nil {
+		return nil, "", err
+	}
+	events = slices.DeleteFunc(slices.Clone(events), func(event SessionEvent) bool {
+		return event.InputEventID != "" && event.InputEventID != inputID
+	})
+	for i := range events {
+		if events[i].ExternalID == inputID {
+			events[i].ProcessedAt = events[i].CreatedAt
+		}
+	}
+	return events, inputID, nil
+}
+
+// The caller holds the session lock; worker state is locked second, as in ACK processing.
+func idlePrimaryInputID(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, events []SessionEvent) (string, error) {
 	if primary.Status != "idle" {
-		return events, nil
+		return "", nil
 	}
 	first := slices.IndexFunc(events, func(event SessionEvent) bool {
 		return event.EventType == "user.message" && event.ProcessedAt.IsZero() &&
 			(event.ThreadExternalID == nil || *event.ThreadExternalID == primary.ExternalID)
 	})
 	if first < 0 {
-		return events, nil
+		return "", nil
 	}
 	// Descending history puts unprocessed messages first, so one row suffices.
 	latest, err := NewSessionEventMapper(executor).ListPage(ctx, sessionEventPageMapperParams{
@@ -231,21 +247,19 @@ func acceptIdlePrimaryInput(ctx context.Context, executor yourbatis.Executor, se
 		Descending: true, FetchLimit: 1,
 	})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if len(latest) > 0 && latest[0].ProcessedAt.IsZero() {
-		return events, nil
+		return "", nil
 	}
-	worker, err := NewCodeSessionMapper(executor).FindLatestBySessionExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
+	worker, _, err := NewCodeSessionMapper(executor).LockLatestInputState(ctx, session.WorkspaceUUID, session.UUID, primary.ExternalID)
+	if err != nil {
+		return "", err
 	}
-	if worker.WorkerStatus == "requires_action" {
-		return events, nil
+	if worker.WorkerStatus == "requires_action" || worker.HasPendingToolRequest {
+		return "", nil
 	}
-	events = slices.Clone(events)
-	events[first].ProcessedAt = events[first].CreatedAt
-	return events, nil
+	return events[first].ExternalID, nil
 }
 
 func sessionWriteParameters(session Session) sessionWriteParams {

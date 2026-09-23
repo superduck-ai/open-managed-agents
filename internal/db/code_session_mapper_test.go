@@ -60,6 +60,13 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 		name     string
 		contract mapperBuilderContract
 	}{
+		{"lock latest input state", mapperBuilderContract{
+			statement: codeSessionMapperLockLatestInputStateStatement,
+			bound:     buildCodeSessionMapperLockLatestInputState(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid", "sthr_primary"),
+			wantID:    "CodeSessionMapper.LockLatestInputState", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"primaryThreadID", "primaryThreadID", "workspaceUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"jsonb_each(worker_external_metadata)", "workspace_uuid = $3", "session_uuid = $4", "ORDER BY created_at DESC, uuid DESC", "LIMIT 1 FOR UPDATE"},
+		}},
 		{"insert", mapperBuilderContract{
 			statement: codeSessionMapperInsertStatement,
 			bound:     buildCodeSessionMapperInsert(yourbatis.DialectPostgres, createParams),

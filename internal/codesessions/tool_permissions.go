@@ -66,9 +66,9 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	}
 	switch permission {
 	case resolvedToolPermissionAllow:
-		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-approve", "", "")
+		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-approve", "", "", "")
 	case resolvedToolPermissionDeny:
-		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-deny", "", "")
+		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-deny", "", "", "")
 	case resolvedToolPermissionAsk:
 		return nil
 	default:
@@ -363,7 +363,7 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	}
 	denyMessage := stringField(payload, "deny_message")
 	sessionThreadID := firstNonEmpty(toolPermissionSessionThreadID(payload), request.SessionThreadID)
-	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, request, behavior, "tool-confirmation", denyMessage, sessionThreadID); err != nil {
+	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, request, behavior, "tool-confirmation", denyMessage, sessionThreadID, event.ExternalID); err != nil {
 		return false, err
 	}
 	if err := s.clearToolPermissionRequest(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request.PublicEventID); err != nil {
@@ -478,7 +478,7 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 		request.Input["answers"] = answers
 	}
 	sessionThreadID := firstNonEmpty(payload.SessionThreadID, request.SessionThreadID)
-	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, request, behavior, "custom-tool-result", denyMessage, sessionThreadID); err != nil {
+	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, request, behavior, "custom-tool-result", denyMessage, sessionThreadID, event.ExternalID); err != nil {
 		return false, err
 	}
 	if err := s.clearToolPermissionRequest(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request.PublicEventID); err != nil {
@@ -517,7 +517,7 @@ func cloneStringAnyMap(value map[string]any) map[string]any {
 	return cloned
 }
 
-func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessionID string, request toolPermissionRequest, behavior resolvedToolPermission, source string, denyMessage string, sessionThreadID string) error {
+func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessionID string, request toolPermissionRequest, behavior resolvedToolPermission, source string, denyMessage string, sessionThreadID string, inputEventID string) error {
 	if request.RequestID == "" {
 		return nil
 	}
@@ -555,6 +555,9 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 			"request_id": request.RequestID,
 			"response":   response,
 		},
+	}
+	if inputEventID != "" {
+		payloadObject["id"] = inputEventID
 	}
 	if sessionThreadID != "" {
 		payloadObject["session_thread_id"] = sessionThreadID

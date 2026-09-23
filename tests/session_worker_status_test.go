@@ -250,7 +250,16 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	if err := json.Unmarshal(toolEvents.Data[0], &tool); err != nil {
 		t.Fatal(err)
 	}
-	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"requires_action"}`, epoch))
+	for _, reportRequiresAction := range []bool{false, true} {
+		if reportRequiresAction {
+			putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"requires_action"}`, epoch))
+		}
+		waiting := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Wait for approval"}]}]}`, defaultTestKey)
+		if sessionInputProcessedAt(t, waiting.Data[0]) != "" {
+			t.Fatal("pending tool request must block acceptance before and after requires_action")
+		}
+		assertQueuedInputPreservesIdle(t, app, codeSession)
+	}
 	pauses := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=session.status_idle&types[]=session.thread_status_idle&order=desc&limit=2", defaultTestKey)
 	if len(pauses.Data) != 2 {
 		t.Fatalf("pause events: %s", pauses.Data)
@@ -259,10 +268,6 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if !strings.Contains(string(raw), `"requires_action"`) || !strings.Contains(string(raw), tool.ID) {
 			t.Fatalf("lost approval reason: %s", raw)
 		}
-	}
-	waiting := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Wait for approval"}]}]}`, defaultTestKey)
-	if sessionInputProcessedAt(t, waiting.Data[0]) != "" {
-		t.Fatalf("approval wait must not be treated as an idle turn: %s", waiting.Data)
 	}
 }
 
@@ -291,11 +296,12 @@ func TestSessionIdleInputBatch(t *testing.T) {
 			if sessionInputProcessedAt(t, later.Data[0]) != "" {
 				t.Fatal("new input overtook a queued message")
 			}
+			assertQueuedInputPreservesIdle(t, app, codeSession)
 		})
 	}
 }
 
-func consumePublicInput(t *testing.T, app *testApp, session db.CodeSession, epoch, publicID string) {
+func consumePublicInput(t *testing.T, app *testApp, session db.CodeSession, epoch, publicID string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -335,10 +341,11 @@ func consumePublicInput(t *testing.T, app *testApp, session db.CodeSession, epoc
 			t.Fatalf("input was not processed: %+v", ack)
 		}
 		if frame.Payload.ID == publicID {
-			return
+			return frame.EventID
 		}
 	}
 	t.Fatalf("input was not delivered: %v", scanner.Err())
+	return ""
 }
 
 func TestSessionWorkerIdleHasSingleSource(t *testing.T) {
@@ -403,4 +410,99 @@ func sessionInputProcessedAt(t *testing.T, raw []byte) string {
 		t.Fatal(err)
 	}
 	return event.ProcessedAt
+}
+
+func assertQueuedInputPreservesIdle(t *testing.T, app *testApp, session db.CodeSession) {
+	t.Helper()
+	if status := retrieveSession(t, app, session.SessionExternalID, defaultTestKey).Status; status != "idle" {
+		t.Fatalf("queued input changed session status to %s", status)
+	}
+	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), session.WorkspaceUUID, session.SessionExternalID)
+	if err != nil || !found || primary.Status != "idle" {
+		t.Fatalf("queued input changed primary status: %+v, %v", primary, err)
+	}
+	worker, found, err := app.db.GetCodeSession(t.Context(), session.ExternalID)
+	if err != nil || !found || !worker.WorkerTurnStarted {
+		t.Fatalf("queued input cleared the existing turn marker: %+v, %v", worker.WorkerTurnStarted, err)
+	}
+}
+
+func TestSessionToolConfirmationACKPublishesOriginalInput(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("confirmation-ack"))
+	codeSession, epoch := newPayloadIntegrationSession(t, app)
+	// The large request also exercises offloaded control responses.
+	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch,
+		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{"text":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
+	toolEvents := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
+	if len(toolEvents.Data) != 1 {
+		t.Fatalf("expected a pending tool request, got %d", len(toolEvents.Data))
+	}
+	toolID := sessionEventStringField(t, toolEvents.Data[0], "id")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+codeSession.SessionExternalID+"/events/stream?beta=true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Api-Key", defaultTestKey)
+	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+	resp, err := app.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream: %d", resp.StatusCode)
+	}
+
+	sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(toolID)+`,"result":"allow"}]}`, defaultTestKey)
+	inputID := sessionEventStringField(t, sent.Data[0], "id")
+	if sessionInputProcessedAt(t, sent.Data[0]) != "" {
+		t.Fatal("confirmation must wait for the worker ACK")
+	}
+	deliveryID := consumePublicInput(t, app, codeSession, epoch, inputID)
+	history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.tool_confirmation", defaultTestKey)
+	if len(history.Data) != 1 || sessionEventStringField(t, history.Data[0], "id") != inputID || sessionInputProcessedAt(t, history.Data[0]) == "" {
+		t.Fatal("ACK did not process the original confirmation")
+	}
+	processedAt := sessionInputProcessedAt(t, history.Data[0])
+	retry := postCodeSessionWorkerDelivery(t, app, codeSession.ExternalID, `{"worker_epoch":`+quoteJSON(epoch)+`,"updates":[{"event_id":`+quoteJSON(deliveryID)+`,"status":"processed"}]}`)
+	if retry.Applied != 0 || retry.Ignored != 1 {
+		t.Fatalf("repeated ACK: %+v", retry)
+	}
+	// A later system message marks the end of the live events we need to inspect.
+	system := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"Context"}]}]}`, defaultTestKey)
+	systemID := sessionEventStringField(t, system.Data[0], "id")
+	if sessionInputProcessedAt(t, system.Data[0]) != sessionEventStringField(t, system.Data[0], "created_at") {
+		t.Fatal("system message must be processed on receipt")
+	}
+	confirmationCount, sawSystem := 0, false
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var event struct {
+			ID          string `json:"id"`
+			ProcessedAt string `json:"processed_at"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.ID == inputID {
+			confirmationCount++
+			if event.ProcessedAt != processedAt {
+				t.Fatal("live confirmation time differs from history")
+			}
+		}
+		if event.ID == systemID {
+			sawSystem = true
+			break
+		}
+	}
+	if confirmationCount != 1 || !sawSystem {
+		t.Fatalf("confirmation count=%d system=%t scan=%v", confirmationCount, sawSystem, scanner.Err())
+	}
 }

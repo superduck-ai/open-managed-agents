@@ -39,6 +39,9 @@ func (h *Handler) prependInputRunningEvents(ctx context.Context, session db.Sess
 		if err != nil {
 			return nil, err
 		}
+		for i := range running {
+			running[i].InputEventID = event.ExternalID
+		}
 		return append(running, events...), nil
 	}
 	return events, nil

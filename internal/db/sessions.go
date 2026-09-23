@@ -95,6 +95,8 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
+	// InputEventID links a candidate running transition to its input; it is not persisted.
+	InputEventID      string
 	StatusThreadID    string
 	PayloadBlobUUID   *string
 	ToolUseID         *string

@@ -342,7 +342,8 @@ go test ./internal/codesessions ./internal/db -count=1
 ## 公共输入处理 ACK
 
 Worker delivery 的 processing 对应用户命令 started，processed 对应 completed；控制响应在应用后上报 processed。
-空闲主线程接纳的第一条 `user.message` 在发送事务中就设置 `processed_at = created_at` 并广播；已有排队消息或等待工具确认时仍排队。公开输入的 ID 保留在投递 envelope 中，ACK 只将排队事件的 processed_at 从 null 推进到处理时间，并只广播一次。已接纳消息的 ACK 不修改时间，也不重复广播。
+空闲主线程接纳的第一条 `user.message` 在发送事务中就设置 `processed_at = created_at` 并广播；已有排队消息或等待工具确认时仍排队，Session/Thread 状态和 `worker_turn_started` 不变。工具等待同时检查已持久化的主线程待确认 metadata，接纳事务按 Session → Code Session 加锁读取。公开输入的 ID 保留在投递 envelope 中，ACK 只将排队事件的 processed_at 从 null 推进到处理时间，并只广播一次。已接纳消息的 ACK 不修改时间，也不重复广播。
 写入时按 Session → Code Session 的顺序加锁并校验 epoch，避免旧 Worker 修改新 epoch 的输入状态。
 该步骤先于 broker ACK 行锁执行，防止与输入接受事务的锁顺序倒置。
-Worker 早到的 running 不覆盖仍待确认的主线程；工具确认 ACK 后清理待办的行为在后续工具 PR 中补齐。
+控制响应的顶层 `id` 保留原始公开输入 ID，ACK 因此能更新对应工具确认；控制响应自己的 `uuid` 保持不变。`system.message` 不投递给 Worker，接收时直接处理。
+Worker 早到的 running 不覆盖仍待确认的主线程；待确认 metadata 仍沿用控制响应入队成功后清理的现有路径。

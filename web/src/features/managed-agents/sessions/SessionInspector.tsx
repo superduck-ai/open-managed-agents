@@ -1515,8 +1515,11 @@ function InspectorResourcesPanel({
         <TableBody>
           {resources.map((resource, index) => {
             if (resource.type === 'memory_store') {
-              const name = resource.name || '—';
-              const storeId = resource.memory_store_id || '—';
+              const name = typeof resource.name === 'string' && resource.name ? resource.name : '—';
+              const storeId =
+                typeof resource.memory_store_id === 'string' && resource.memory_store_id
+                  ? resource.memory_store_id
+                  : '—';
               const mountPath = resource.mount_path || '—';
               const title = `${name} ${storeId} ${mountPath}`;
               return (

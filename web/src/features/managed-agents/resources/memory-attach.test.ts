@@ -10,7 +10,6 @@ import {
   memoryAttachHasForbiddenClientFields,
   memoryAttachResources,
   memoryInstructionsCodePointCount,
-  syncMemoryAttaches,
 } from './memory-attach';
 
 function formValues(overrides: Partial<ManagedEntityFormValues> = {}): ManagedEntityFormValues {
@@ -159,13 +158,5 @@ describe('memory attach packing', () => {
   test('omits memory resources when no store is selected', () => {
     expect(createManagedEntityBody('deployments', formValues()).resources).toEqual([]);
     expect(createManagedEntityBody('sessions', formValues()).resources).toEqual([]);
-  });
-
-  test('preserves existing attaches when syncing selected store ids', () => {
-    const current = [attach({ access: 'read_only', instructions: 'keep' })];
-    expect(syncMemoryAttaches(current, ['memstore_one123456', 'memstore_two'])).toEqual([
-      current[0],
-      { memoryStoreId: 'memstore_two', access: 'read_write', instructions: '' },
-    ]);
   });
 });

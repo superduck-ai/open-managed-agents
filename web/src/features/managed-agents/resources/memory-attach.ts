@@ -40,18 +40,6 @@ export function emptyMemoryAttach(): MemoryAttachFormValue {
   };
 }
 
-export function syncMemoryAttaches(current: MemoryAttachFormValue[], selectedIds: string[]): MemoryAttachFormValue[] {
-  const byId = new Map(current.map((attach) => [attach.memoryStoreId, attach]));
-  return selectedIds.map(
-    (memoryStoreId) =>
-      byId.get(memoryStoreId) ?? {
-        memoryStoreId,
-        access: 'read_write',
-        instructions: '',
-      },
-  );
-}
-
 export function memoryAttachResources(attaches: MemoryAttachFormValue[]) {
   return attaches
     .filter((attach) => attach.memoryStoreId)

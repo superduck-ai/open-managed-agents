@@ -412,7 +412,9 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 
 ## 验收
 
-自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期，以及 `tests/environments_memory_sandbox_e2e_test.go` 的跨 Session memory 寿命。
+自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。Memory Filestore API 合同由 `tests/filestore_memory_namespace_test.go` 覆盖；真实 Sandbox 跨 Session 的 Memory 持久化验收仍待补充，当前分支不宣称已有该 E2E 覆盖。
+
+Memory 文档路径由 `internal/memorypath` 与 REST API 共享校验：只接受 NFC 规范形式，拒绝控制字符及 Unicode 格式字符，不自动归一化。M2-05 分别验证普通 `/memory` 父目录缺失时写入返回 409，以及目录存在时普通 Filestore 写入成功；两者均不得写入 Memory 三表。
 
 ## 长期 idle 回收的文件边界
 

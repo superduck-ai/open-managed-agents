@@ -245,8 +245,8 @@ func TestMemoryMapperBuilderContracts(t *testing.T) {
 			statement: memoryMapperFindPathConflictStatement,
 			bound:     buildMemoryMapperFindPathConflict(yourbatis.DialectPostgres, "workspace-uuid", "store-uuid", "/test", "memory-uuid"),
 			id:        "MemoryMapper.FindPathConflict", kind: yourbatis.StatementSelect,
-			argumentNames: []string{"workspaceUUID", "storeUUID", "path", "excludeMemoryUUID"},
-			fragments:     []string{"workspace_uuid = $1", "memory_store_uuid = $2", "path = $3", "uuid <> $4", "LIMIT 1"},
+			argumentNames: []string{"workspaceUUID", "storeUUID", "path", "excludeMemoryUUID", "path", "path"},
+			fragments:     []string{"workspace_uuid = $1", "memory_store_uuid = $2", "path = $3", "uuid <> $4", "starts_with(path, $5 || '/')", "starts_with($6, path || '/')", "LIMIT 1"},
 		},
 		{
 			statement: memoryMapperFindByPathStatement,
@@ -329,7 +329,7 @@ func TestMemoryMapperListPageBranches(t *testing.T) {
 
 	t.Run("path conflict without exclusion", func(t *testing.T) {
 		bound := buildMemoryMapperFindPathConflict(yourbatis.DialectPostgres, "workspace", "store", "/test", "")
-		if strings.Contains(bound.SQL, "uuid <>") || len(bound.Args) != 3 {
+		if strings.Contains(bound.SQL, "uuid <>") || len(bound.Args) != 5 {
 			t.Fatalf("FindPathConflict() SQL = %q args = %#v", bound.SQL, bound.Args)
 		}
 	})

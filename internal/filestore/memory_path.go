@@ -5,10 +5,7 @@ import (
 	"strings"
 )
 
-const (
-	memoryNamespaceRoot    = "/memory"
-	memorySandboxMountRoot = "/mnt/memory"
-)
+const memoryNamespaceRoot = "/memory"
 
 var memorySlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
@@ -39,16 +36,6 @@ func classifyMemoryTransfer(source, dest string) (memoryFilestorePath, memoryFil
 	return src, dst, srcOK && dstOK && src.Slug == dst.Slug, srcOK || dstOK
 }
 
-func memorySlugFromMountPath(mountPath string) string {
-	if !strings.HasPrefix(mountPath, memorySandboxMountRoot+"/") {
-		return ""
-	}
-	return strings.TrimPrefix(mountPath, memorySandboxMountRoot+"/")
-}
-
 func (p memoryFilestorePath) filestorePath() string {
-	if p.Rel == "" {
-		return memoryNamespaceRoot + "/" + p.Slug
-	}
 	return memoryNamespaceRoot + "/" + p.Slug + p.Rel
 }

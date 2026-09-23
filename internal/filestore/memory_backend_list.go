@@ -25,12 +25,12 @@ func memoryListPrefix(dirRel string) string {
 func collectMemoryDirectoryEntries(parsed memoryFilestorePath, recursive bool, records []db.Memory) []memoryDirectoryEntry {
 	seenDirs := make(map[string]struct{})
 	entries := make([]memoryDirectoryEntry, 0)
+	filestoreBase := parsed.filestorePath()
 	for _, record := range records {
 		relative, ok := memoryPathRelativeToDir(parsed.Rel, record.Path)
 		if !ok {
 			continue
 		}
-		filestoreBase := parsed.filestorePath()
 		if recursive {
 			entries = append(entries, memoryDirectoryEntry{
 				path:   filestoreBase + relative,
@@ -90,9 +90,6 @@ func paginateMemoryDirectory(
 			}
 			start = index + 1
 		}
-	}
-	if start > len(entries) {
-		start = len(entries)
 	}
 	end := start + limit
 	hasMore := end < len(entries)

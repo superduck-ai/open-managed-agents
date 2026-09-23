@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -59,18 +60,39 @@ func TestFilestoreMemoryNamespaceContract(t *testing.T) {
 	t.Run("M2-05 parent directory is not a memory namespace", func(t *testing.T) {
 		fx := newMemoryFilestoreFixture(t, app, agent.ID, env.ID, "parent-store", "")
 		defer fx.cleanup()
-
-		for _, path := range []string{"/memory/MEMORY.md", "/memory/foo.md"} {
-			resp := fx.createFile(t, path, []byte("local only"))
-			defer resp.Body.Close()
-			if _, found := findMemoryByPath(t, app, fx.store.ID, "/MEMORY.md"); found {
-				t.Fatalf("%s created a memory at /MEMORY.md", path)
+		for _, parentExists := range []bool{false, true} {
+			if parentExists {
+				resp := fx.json(t, "makeDirectory", map[string]any{"filesystemId": fx.filesystem.ExternalID, "path": "/memory", "makeParents": true})
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("make parent: %d %s", resp.StatusCode, readAll(t, resp.Body))
+				}
+				resp.Body.Close()
 			}
-			if _, found := findMemoryByPath(t, app, fx.store.ID, "/foo.md"); found {
-				t.Fatalf("%s created a memory at /foo.md", path)
-			}
-			if versionsHaveSessionActor(t, app, fx.store.ID, fx.session.ID) {
-				t.Fatalf("%s produced a session_actor version", path)
+			for _, path := range []string{"/memory/MEMORY.md", "/memory/foo.md"} {
+				resp := fx.createFile(t, path, []byte("ordinary filestore"))
+				if !parentExists {
+					assertFilestoreError(t, resp, http.StatusConflict, "failed_precondition")
+				} else {
+					if resp.StatusCode != http.StatusOK {
+						t.Fatalf("ordinary write: %d %s", resp.StatusCode, readAll(t, resp.Body))
+					}
+					resp.Body.Close()
+				}
+				_, err := app.db.GetSessionResourceFile(context.Background(), fx.workspaceUUID, fx.filesystem.UUID, path)
+				if parentExists && err != nil {
+					t.Fatalf("ordinary file missing: %v", err)
+				}
+				if !parentExists && !errors.Is(err, db.ErrNotFound) {
+					t.Fatalf("rejected write persisted file: %v", err)
+				}
+				for _, memoryPath := range []string{"/MEMORY.md", "/foo.md"} {
+					if _, found := findMemoryByPath(t, app, fx.store.ID, memoryPath); found {
+						t.Fatalf("%s created memory %s", path, memoryPath)
+					}
+				}
+				if versionsHaveSessionActor(t, app, fx.store.ID, fx.session.ID) {
+					t.Fatalf("%s produced a session_actor version", path)
+				}
 			}
 		}
 	})

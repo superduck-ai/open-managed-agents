@@ -6,7 +6,6 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -49,9 +48,15 @@ type ModelRequestResult struct {
 // ModelRequestMessage is a completed public message observed at the proxy.
 // Publishing it with the end avoids depending on the worker's later echo.
 type ModelRequestMessage struct {
-	ID      string            `json:"id"`
-	Type    string            `json:"type"`
-	Content []json.RawMessage `json:"content,omitempty"`
+	ID      string                `json:"id"`
+	Type    string                `json:"type"`
+	Content []ModelRequestContent `json:"content,omitempty"`
+}
+
+// ModelRequestContent is a public agent.message content block; Text is absent for redacted blocks.
+type ModelRequestContent struct {
+	Type string  `json:"type"`
+	Text *string `json:"text,omitempty"`
 }
 
 type modelRequestEvent struct {
@@ -102,7 +107,7 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
 	event := modelRequestEvent{ID: request.StartID + "_end", Type: "span.model_request_end", StartID: request.StartID,
-		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != ""), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
+		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
 	if result.ErrorType != "" {
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
@@ -193,7 +198,7 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 				continue
 			}
 			for _, id := range []string{task.TaskID, task.AgentID, task.AgentIDAlt} {
-				if id = strings.TrimSpace(id); id != "" {
+				if id != "" {
 					mappings[id] = task.ThreadID
 				}
 			}

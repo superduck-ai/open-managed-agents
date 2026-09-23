@@ -140,16 +140,14 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	if maevents.IsPublicSessionHistoryEvent(event.EventType) {
-		if event.EventType == "span.model_request_end" {
-			for id := range c.activePreviewIDs {
-				c.finishedPreviewIDs[id] = struct{}{}
-			}
-			clear(c.activePreviewIDs)
-		}
-		if event.EventType == "agent.message" || event.EventType == "agent.thinking" {
-			c.finishedPreviewIDs[event.ExternalID] = struct{}{}
-		}
 		delete(c.activePreviewIDs, event.ExternalID)
+		// Only preview subscribers can receive late deltas, so only they remember finished previews.
+		if len(c.streamDeltaTypes) > 0 {
+			for _, id := range previewsFinishedBy(event) {
+				c.finishedPreviewIDs[id] = struct{}{}
+				delete(c.activePreviewIDs, id)
+			}
+		}
 		return true
 	}
 	if !maevents.IsStreamDelta(event.EventType) {
@@ -180,6 +178,24 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 	}
 	_, active := c.activePreviewIDs[previewID]
 	return active
+}
+
+// A request end retires only its own previews, including ones whose start arrives after the end.
+func previewsFinishedBy(event sessionStreamEvent) []string {
+	switch event.EventType {
+	case "agent.message", "agent.thinking":
+		return []string{event.ExternalID}
+	case "span.model_request_end":
+		var end struct {
+			EventIDs []string `json:"event_ids"`
+		}
+		if json.Unmarshal(event.Payload, &end) != nil {
+			return nil
+		}
+		return end.EventIDs
+	default:
+		return nil
+	}
 }
 
 func (c *streamConnection) matches(event sessionStreamEvent) bool {

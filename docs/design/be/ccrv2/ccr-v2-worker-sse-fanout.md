@@ -118,6 +118,7 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 各自拥有一对 start/end；工具执行和整轮 `result` 不属于同一次模型请求。
 start 写入失败时不转发上游请求；生命周期事件的写入错误必须返回调用方，不能静默跳过。
 普通 `system`（init、hook 等）和成功 `result` 不生成公开消息；显式 `system.message` 仍保留。
+`system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败或终止时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
 失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。
 内部 transcript 入口保持不变；不会把 stdout 诊断写入恢复用 transcript。未单独上报到内部入口的
 init/hook/result 不另行持久化。`result` 不驱动 Session 状态，也不使用 `duration_api_ms` 或汇总 usage 补造 span。
@@ -191,17 +192,17 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
   CCR 投递晚于代理请求时，代理在转发前最多等待 10 秒；超时或取消返回错误，绝不退回主线程。
   最终子消息继续通过 `parent_tool_use_id` 指向同一个确定性 thread ID。
 
-代理逐帧观察响应，不修改 SSE body。`message_start.usage` 与 `message_delta.usage` 按字段合并，
+代理逐帧观察响应，不修改 SSE body。code-session 上游请求不转发客户端的 `Accept-Encoding`，由 Go Transport 协商并透明解压，观测器因此读到明文帧，客户端收到的是解压后的响应。`message_start.usage` 与 `message_delta.usage` 按字段合并，
 其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 无内容的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
 非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。
 取消后的落库使用独立 5 秒 context；持久化失败记录 start ID 和错误，不记录原始响应。
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
-`observation_limit`（观测超过上限，不代表模型本身失败），保留已观察到的 usage。进程被强制杀死的恢复不由请求内 defer 保证。
+`observation_limit`（观测超过上限，不代表模型本身失败，`is_error=false`），保留已观察到的 usage。非流式响应已完整观测后客户端才断开，不标记为 `cancelled`。进程被强制杀死的恢复不由请求内 defer 保证。
 
 代理先发布最终消息再发布 end；Worker 后续 echo 使用相同消息 ID，由数据库幂等写入去重。
 end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。
-`event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。
-SSE 在最终消息或 end 后关闭相应线程的预览，忽略迟到的 start/delta；不要求错误路径一定有最终消息。
+`event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。`tool_use_ids` 是 provider 原始工具调用 ID（如 `toolu_...`），不是公开事件 ID，客户端不能用它直接关联 `agent.tool_use` 等公开事件。
+SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。
 
 历史排序、游标与 `created_at[...]` 筛选规则见上文；代理事件沿用同一写入入口。事件批次不按随机 ID 重排，
 也不再人为增加毫秒。实时缓存同时间戳保持服务端顺序，全量历史同步以分页返回顺序校正缓存。事件桥接和响应保留小数秒，代理时间截到 PostgreSQL

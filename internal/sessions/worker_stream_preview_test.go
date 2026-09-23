@@ -368,6 +368,32 @@ func TestStreamConnectionResetDropsOrphanDelta(t *testing.T) {
 	}
 }
 
+func TestStreamConnectionRequestEndRetiresOnlyItsPreviews(t *testing.T) {
+	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
+	preview := func(eventType, id string) bool {
+		block := previewBlock{eventID: id, eventType: "agent.message"}
+		payload := eventStartPayload(block)
+		if eventType == previewEventDelta {
+			payload = eventDeltaPayload(id, "text")
+		}
+		_, accepted := connection.event(sessionEventDelivery{event: sessionStreamEvent{ExternalID: id, PrimaryThread: true, EventType: eventType, Payload: payload}})
+		return accepted
+	}
+	if !preview(previewEventStart, "running") {
+		t.Fatal("overlapping preview start was not accepted")
+	}
+	end := sessionStreamEvent{ExternalID: "end", PrimaryThread: true, EventType: "span.model_request_end", Payload: json.RawMessage(`{"event_ids":["late"]}`)}
+	if _, accepted := connection.event(sessionEventDelivery{event: end}); !accepted {
+		t.Fatal("request end was not accepted")
+	}
+	if !preview(previewEventDelta, "running") {
+		t.Fatal("end retired another request's preview")
+	}
+	if preview(previewEventStart, "late") || preview(previewEventDelta, "late") {
+		t.Fatal("preview reopened after its request ended")
+	}
+}
+
 func TestStreamConnectionAcceptsLegacyDeltaWithoutPreviewID(t *testing.T) {
 	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
 	event := sessionStreamEvent{

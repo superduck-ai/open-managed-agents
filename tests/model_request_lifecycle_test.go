@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,9 +38,20 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Request-Id", "provider-request")
-		_, _ = io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"usage\":{\"input_tokens\":9,\"output_tokens\":0}}}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n")
+		var out io.Writer = w
+		messageID := "msg_test"
+		if mode == "gzip" {
+			messageID = "msg_gzip"
+			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				w.Header().Set("Content-Encoding", "gzip")
+				compressed := gzip.NewWriter(w)
+				defer compressed.Close()
+				out = compressed
+			}
+		}
+		_, _ = io.WriteString(out, "data: {\"type\":\"message_start\",\"message\":{\"id\":\""+messageID+"\",\"usage\":{\"input_tokens\":9,\"output_tokens\":0}}}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n")
 		if mode != "incomplete_response" {
-			_, _ = io.WriteString(w, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":4}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
+			_, _ = io.WriteString(out, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":4}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
 		}
 	}))
 	defer upstream.Close()
@@ -57,7 +69,7 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 		t.Fatalf("code session: %v", err)
 	}
 	var completed int
-	for _, mode := range []string{"http_error", "incomplete_response", "cancelled", "success"} {
+	for _, mode := range []string{"http_error", "incomplete_response", "cancelled", "success", "gzip"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -67,6 +79,9 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 			}
 			request.Header.Set("X-Api-Key", credential.Token)
 			request.Header.Set("X-Lifecycle-Test", mode)
+			if mode == "gzip" {
+				request.Header.Set("Accept-Encoding", "gzip")
+			}
 			finished := make(chan string, 1)
 			go func() {
 				response, err := app.client.Do(request)
@@ -120,13 +135,14 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 			if mode != "cancelled" && responseID != start.ExternalID {
 				t.Fatalf("response ID=%q start=%q", responseID, start.ExternalID)
 			}
-			if mode != "success" && (payload.Error == nil || payload.Error.Type != mode) {
+			ok := mode == "success" || mode == "gzip"
+			if !ok && (payload.Error == nil || payload.Error.Type != mode) {
 				t.Fatalf("error=%+v, want %s", payload.Error, mode)
 			}
+			if ok && (payload.Error != nil || payload.Usage.Input != 9 || payload.Usage.Output != 4) {
+				t.Fatalf("%s usage/error=%+v", mode, payload)
+			}
 			if mode == "success" {
-				if payload.Error != nil || payload.Usage.Input != 9 || payload.Usage.Output != 4 {
-					t.Fatalf("usage/error=%+v", payload)
-				}
 				postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"assistant","uuid":"late-answer","request_id":%q,"message":{"id":"msg_test","content":[{"type":"text","text":"done"}]} }},{"payload":{"type":"result","uuid":"turn-result","duration_api_ms":900000,"usage":{"output_tokens":9999}}}]}`, epoch, start.ExternalID))
 				history := listSessionEvents(t, app, codeSession.SessionExternalID, "order=asc&limit=100", defaultTestKey)
 				finals := 0

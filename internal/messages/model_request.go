@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"io"
 	"maps"
@@ -72,6 +71,8 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 	if request != nil {
 		// Claude Code copies this header to assistant.request_id, including HTTP errors.
 		w.Header().Set("Request-Id", request.StartID)
+		// A forwarded Accept-Encoding disables Transport decompression and hides the frames from the observer.
+		upstream.Header.Del("Accept-Encoding")
 		observation.onComplete = sync.OnceFunc(func() { h.finishModelRequest(r.Context(), observation) })
 		defer observation.onComplete()
 	}
@@ -108,7 +109,7 @@ type observedResponseBody struct {
 
 func (h *Handler) finishModelRequest(ctx context.Context, observation *responseObservation) {
 	observation.finish()
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && !observation.complete {
 		observation.result.ErrorType = "cancelled"
 	}
 	// End must survive client cancellation, but cannot hold a handler indefinitely.
@@ -285,17 +286,9 @@ func (o *responseObservation) addMessage(index int, block responseContentBlock) 
 	case "thinking", "redacted_thinking":
 		message.Type = "agent.thinking"
 	case "text":
-		raw, err := json.Marshal(struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}{Type: "text", Text: block.Text})
-		if err != nil {
-			o.malformed = true
-			return
-		}
-		message.Content = []jsonv1.RawMessage{raw}
+		message.Content = []codesessions.ModelRequestContent{{Type: "text", Text: &block.Text}}
 	case "redacted":
-		message.Content = []jsonv1.RawMessage{jsonv1.RawMessage(`{"type":"redacted"}`)}
+		message.Content = []codesessions.ModelRequestContent{{Type: "redacted"}}
 	default:
 		return
 	}

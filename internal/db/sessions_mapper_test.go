@@ -113,7 +113,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.SessionUUID", "params.SessionExternalID", "params.ThreadUUID",
-				"params.ThreadExternalID", "params.EventType", "params.Payload",
+				"params.ThreadExternalID", "params.EventType", "params.Payload", "params.PayloadBlobUUID", "params.ToolUseID",
 				"params.ProcessedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Payload"},

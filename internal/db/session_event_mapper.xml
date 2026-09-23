@@ -14,7 +14,7 @@
         thread_uuid,
         thread_external_id,
         event_type,
-        payload,
+        payload, payload_blob_uuid, tool_use_id,
         processed_at,
         created_at,
         deleted_at
@@ -23,13 +23,13 @@
     <sql id="insertColumns">
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, thread_uuid, thread_external_id, event_type,
-        payload, processed_at, created_at
+        payload, payload_blob_uuid, tool_use_id, processed_at, created_at
     </sql>
 
     <sql id="insertValues">
         #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
         #{params.SessionUUID}, #{params.SessionExternalID}, #{params.ThreadUUID},
-        #{params.ThreadExternalID}, #{params.EventType}, CAST(#{params.Payload,sensitive=true} AS jsonb),
+        #{params.ThreadExternalID}, #{params.EventType}, CAST(#{params.Payload,sensitive=true} AS jsonb), #{params.PayloadBlobUUID}, #{params.ToolUseID},
         #{params.ProcessedAt}, #{params.CreatedAt}
     </sql>
 
@@ -99,10 +99,7 @@
     </select>
 
     <select id="ChildSessionToolUseIDs" resultType="string">
-        SELECT DISTINCT COALESCE(
-            e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id',
-            e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id'
-        ) AS tool_use_id
+        SELECT DISTINCT COALESCE(e.tool_use_id, CASE WHEN e.payload_blob_uuid IS NULL THEN COALESCE(e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id', e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id') END) AS tool_use_id
         FROM session_events e
         JOIN session_threads t
         ON t.workspace_uuid = e.workspace_uuid
@@ -115,10 +112,7 @@
         AND t.parent_thread_uuid IS NOT NULL
         AND e.event_type IN
         <foreach collection="eventTypes" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
-        AND COALESCE(
-            e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id',
-            e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id'
-        ) IN
+        AND COALESCE(e.tool_use_id, CASE WHEN e.payload_blob_uuid IS NULL THEN COALESCE(e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id', e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id') END) IN
         <foreach collection="toolUseIDs" item="toolUseID" open="(" separator="," close=")">#{toolUseID}</foreach>
     </select>
 

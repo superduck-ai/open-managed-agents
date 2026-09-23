@@ -43,7 +43,7 @@ func TestParseMemoryAccess(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		raw  json.RawMessage
-		want string
+		want MemoryAccess
 	}{
 		{name: "omitted", want: MemoryAccessReadWrite},
 		{name: "null", raw: json.RawMessage(`null`), want: MemoryAccessReadWrite},
@@ -115,15 +115,36 @@ func TestParseMemoryInstructions(t *testing.T) {
 
 func TestSlugifyMemoryName(t *testing.T) {
 	t.Parallel()
-
-	if got := SlugifyMemoryName("Product Docs-Draft!!", "memstore_fallback"); got != "product-docs-draft" {
-		t.Fatalf("display name slug = %q, want product-docs-draft", got)
+	for _, test := range []struct {
+		name     string
+		fallback string
+		want     string
+	}{
+		{name: "!!!", fallback: "???", want: "store"},
+		{name: "!!!", fallback: "memstore_abcXYZ", want: "memstore_abcxyz"},
+		{name: "", fallback: "memstore_fallback", want: "memstore_fallback"},
+		{name: "Product Docs-Draft!!", want: "product-docs-draft"},
+		{name: "项目规范", want: "xiang-mu-gui-fan"},
+		{name: "项目 API 规范", want: "xiang-mu-api-gui-fan"},
+		{name: "Hellö Wörld", want: "hello-world"},
+		{name: "hello_world", want: "hello_world"},
+		{name: "This & that", want: "this-and-that"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SlugifyMemoryName(test.name, test.fallback); got != test.want {
+				t.Fatalf("SlugifyMemoryName(%q, %q) = %q, want %q", test.name, test.fallback, got, test.want)
+			}
+		})
 	}
+}
 
-	fallback := "memstore_abcXYZ"
-	got := SlugifyMemoryName("!!!", fallback)
-	if got != "memstore-abcxyz" {
-		t.Fatalf("all-symbol name slug = %q, want memstore-abcxyz", got)
+func TestMemoryAttachSetTransliteratedSlugCollision(t *testing.T) {
+	set := NewMemoryAttachSet()
+	set.Observe("memstore_existing", "xiang-mu-gui-fan")
+	slug, err := set.Add("memstore_new", "项目规范", "memstore_new")
+	if err != nil || slug != "xiang-mu-gui-fan-2" {
+		t.Fatalf("Add() = (%q, %v), want xiang-mu-gui-fan-2", slug, err)
 	}
 }
 
@@ -203,7 +224,7 @@ func TestMemorySnapshotPayloadFields(t *testing.T) {
 	}
 	if fields["type"] != MemoryStoreType ||
 		fields["memory_store_id"] != "memstore_one" ||
-		fields["access"] != MemoryAccessReadWrite ||
+		fields["access"] != "read_write" ||
 		fields["instructions"] != "remember this" ||
 		fields["name"] != "Product Docs-Draft!!" ||
 		fields["description"] != "personal taste" ||
@@ -220,4 +241,35 @@ func mustJSONString(t *testing.T, value string) json.RawMessage {
 		t.Fatalf("marshal string: %v", err)
 	}
 	return raw
+}
+
+func TestNormalizeMemoryAccess(t *testing.T) {
+	for _, value := range []string{"rw", "READ_ONLY", " read_only", "read_only "} {
+		t.Run("rejects "+value, func(t *testing.T) {
+			access, err := NormalizeMemoryAccess(value)
+			if access != "" || !errors.Is(err, ErrMemoryStoreAccess) {
+				t.Fatalf("NormalizeMemoryAccess(%q) = (%q, %v), want invalid access", value, access, err)
+			}
+		})
+	}
+	for _, test := range []struct {
+		input string
+		want  MemoryAccess
+		wire  string
+	}{
+		{input: "", want: MemoryAccessReadWrite, wire: `"read_write"`},
+		{input: "read_write", want: MemoryAccessReadWrite, wire: `"read_write"`},
+		{input: "read_only", want: MemoryAccessReadOnly, wire: `"read_only"`},
+	} {
+		t.Run("accepts "+test.input, func(t *testing.T) {
+			access, err := NormalizeMemoryAccess(test.input)
+			if err != nil || access != test.want {
+				t.Fatalf("NormalizeMemoryAccess(%q) = (%q, %v), want %q", test.input, access, err, test.want)
+			}
+			raw, err := json.Marshal(access)
+			if err != nil || string(raw) != test.wire {
+				t.Fatalf("JSON = %s, error = %v, want %s", raw, err, test.wire)
+			}
+		})
+	}
 }

@@ -30,6 +30,19 @@ export type AgentSkillOption = {
   source: 'anthropic' | 'custom';
 };
 
+export type McpServerInput = {
+  name: string;
+  url: string;
+};
+
+export type McpServerInputErrors = {
+  name?: 'required' | 'too_long' | 'invalid' | 'ambiguous' | 'duplicate';
+  url?: 'required' | 'too_long' | 'invalid';
+  form?: 'limit';
+};
+
+export type AddMcpServerResult = { ok: true; draft: CreateAgentInput } | { ok: false; errors: McpServerInputErrors };
+
 const modelSchema = z.union([
   z.string().trim().min(1, 'Model is required.'),
   z
@@ -77,9 +90,15 @@ const skillSchema = z
 
 const mcpServerSchema = z
   .object({
-    name: z.string().trim().min(1).max(255),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(255)
+      .regex(/^[A-Za-z0-9_.-]+$/)
+      .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
     type: z.literal('url'),
-    url: z.url().max(2048),
+    url: z.string().trim().max(2048).refine(isHTTPURL, 'MCP server URL must be a safe HTTP/HTTPS URL.'),
   })
   .strict();
 
@@ -92,11 +111,41 @@ const permissionConfigSchema = z
   })
   .strict();
 
-const builtInToolNameSchema = z.enum(['bash', 'edit', 'read', 'write', 'glob', 'grep', 'web_fetch', 'web_search']);
+const builtInToolNameSchema = z.enum([
+  'task',
+  'ask_user_question',
+  'bash',
+  'cron_create',
+  'cron_delete',
+  'cron_list',
+  'edit',
+  'enter_plan_mode',
+  'enter_worktree',
+  'exit_plan_mode',
+  'exit_worktree',
+  'glob',
+  'grep',
+  'notebook_edit',
+  'read',
+  'schedule_wakeup',
+  'skill',
+  'task_output',
+  'task_stop',
+  'todo_write',
+  'web_fetch',
+  'write',
+]);
 
 const builtInToolConfigSchema = permissionConfigSchema.extend({ name: builtInToolNameSchema }).strict();
 
-const mcpToolConfigSchema = permissionConfigSchema.extend({ name: z.string().trim().min(1).max(128) }).strict();
+const mcpToolConfigSchema = permissionConfigSchema
+  .extend({
+    name: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_.-]{1,128}$/),
+  })
+  .strict();
 
 const builtInToolsetSchema = z
   .object({
@@ -109,7 +158,13 @@ const builtInToolsetSchema = z
 const mcpToolsetSchema = z
   .object({
     type: z.literal('mcp_toolset'),
-    mcp_server_name: z.string().trim().min(1).max(255),
+    mcp_server_name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(255)
+      .regex(/^[A-Za-z0-9_.-]+$/)
+      .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
     default_config: permissionConfigSchema.optional(),
     configs: z.array(mcpToolConfigSchema).optional(),
   })
@@ -147,7 +202,25 @@ export const createAgentDraftSchema = z
     if (new Set(serverNames).size !== serverNames.length) {
       context.addIssue({ code: 'custom', message: 'MCP server names must be unique.', path: ['mcp_servers'] });
     }
+    const toolsetKeys = draft.tools.flatMap((tool) => {
+      if (tool.type === 'agent_toolset_20260401') {
+        return [tool.type];
+      }
+      return tool.type === 'mcp_toolset' ? [`${tool.type}:${tool.mcp_server_name}`] : [];
+    });
+    if (new Set(toolsetKeys).size !== toolsetKeys.length) {
+      context.addIssue({ code: 'custom', message: 'Toolsets must be unique.', path: ['tools'] });
+    }
     const toolsets = draft.tools.filter((tool) => tool.type === 'mcp_toolset');
+    for (const tool of draft.tools) {
+      if (!('configs' in tool) || !Array.isArray(tool.configs)) {
+        continue;
+      }
+      const configNames = tool.configs.map((config) => config.name);
+      if (new Set(configNames).size !== configNames.length) {
+        context.addIssue({ code: 'custom', message: 'Tool config names must be unique.', path: ['tools'] });
+      }
+    }
     for (const toolset of toolsets) {
       if (!serverNames.includes(String(toolset.mcp_server_name))) {
         context.addIssue({
@@ -186,7 +259,7 @@ export function normalizeCreateAgentDraft(input: CreateAgentInput): CreateAgentI
     model: normalizeDraftModel(parsed.model),
     system: nullableString(parsed.system),
     mcp_servers: cloneJsonValue(parsed.mcp_servers),
-    tools: cloneJsonValue(parsed.tools),
+    tools: parsed.tools.map(withAskUserQuestionDisabledByDefault),
     skills: cloneJsonValue(parsed.skills),
     ...(parsed.metadata ? { metadata: { ...parsed.metadata } } : {}),
     ...(parsed.multiagent === undefined ? {} : { multiagent: cloneJsonValue(parsed.multiagent) }),
@@ -230,27 +303,66 @@ export function toggleSkill(draft: CreateAgentInput, skill: AgentSkillOption): C
   const current = selectedSkillReferences(draft);
   const exists = current.some((reference) => reference.skill_id === skill.id);
   const skills = exists
-    ? current.filter((reference) => reference.skill_id !== skill.id)
-    : [...current, { type: skill.source, skill_id: skill.id, version: 'latest' }];
+    ? draft.skills.filter((reference) => toRecord(reference)?.skill_id !== skill.id)
+    : [...draft.skills, { type: skill.source, skill_id: skill.id, version: 'latest' }];
   return { ...draft, skills };
 }
 
-export function addMcpServer(draft: CreateAgentInput, server: McpDirectoryServer): CreateAgentInput {
-  if (!server.url || draft.mcp_servers.some((value) => toRecord(value)?.name === server.slug)) {
-    return draft;
+export function addMcpServer(draft: CreateAgentInput, input: McpServerInput): AddMcpServerResult {
+  const name = input.name.trim();
+  const url = input.url.trim();
+  const errors = validateMcpServerInput(draft, name, url);
+  if (Object.keys(errors).length) {
+    return { ok: false, errors };
   }
-  return {
+  const nextDraft = {
     ...draft,
-    mcp_servers: [...draft.mcp_servers, { name: server.slug, type: 'url', url: server.url }],
+    mcp_servers: [...draft.mcp_servers, { name, type: 'url', url }],
     tools: [
       ...draft.tools,
       {
         type: 'mcp_toolset',
-        mcp_server_name: server.slug,
+        mcp_server_name: name,
         default_config: permissionConfig('always_ask'),
         configs: [],
       },
     ],
+  };
+  return { ok: true, draft: nextDraft };
+}
+
+export function updateMcpServer(
+  draft: CreateAgentInput,
+  currentName: string,
+  server: McpDirectoryServer,
+): CreateAgentInput {
+  if (
+    !server.url ||
+    currentName === server.slug ||
+    draft.mcp_servers.some((value) => {
+      const name = toRecord(value)?.name;
+      return name !== currentName && name === server.slug;
+    })
+  ) {
+    return draft;
+  }
+  const serverIndex = draft.mcp_servers.findIndex((value) => toRecord(value)?.name === currentName);
+  const hasMatchingToolset = draft.tools.some(
+    (tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === currentName,
+  );
+  if (serverIndex < 0 || !hasMatchingToolset) {
+    return draft;
+  }
+  return {
+    ...draft,
+    mcp_servers: draft.mcp_servers.map((value, index) =>
+      index === serverIndex ? { name: server.slug, type: 'url', url: server.url } : value,
+    ),
+    tools: draft.tools.map((tool) =>
+      tool.type === 'mcp_toolset' && tool.mcp_server_name === currentName
+        ? { ...tool, mcp_server_name: server.slug }
+        : tool,
+    ),
   };
 }
 
@@ -258,7 +370,10 @@ export function addBuiltInToolset(draft: CreateAgentInput): CreateAgentInput {
   if (draft.tools.some((tool) => tool.type === 'agent_toolset_20260401')) {
     return draft;
   }
-  return { ...draft, tools: [{ type: 'agent_toolset_20260401' }, ...draft.tools] };
+  return {
+    ...draft,
+    tools: [withAskUserQuestionDisabledByDefault({ type: 'agent_toolset_20260401' }), ...draft.tools],
+  };
 }
 
 export function removeToolset(draft: CreateAgentInput, key: string): CreateAgentInput {
@@ -269,26 +384,6 @@ export function removeToolset(draft: CreateAgentInput, key: string): CreateAgent
     ...draft,
     mcp_servers: draft.mcp_servers.filter((server) => toRecord(server)?.name !== key),
     tools: draft.tools.filter((tool) => !(tool.type === 'mcp_toolset' && tool.mcp_server_name === key)),
-  };
-}
-
-export function addCustomTool(draft: CreateAgentInput): CreateAgentInput {
-  const used = new Set(draft.tools.filter((tool) => tool.type === 'custom').map((tool) => String(tool.name)));
-  let name = 'new_tool';
-  for (let suffix = 2; used.has(name); suffix += 1) {
-    name = `new_tool_${suffix}`;
-  }
-  return {
-    ...draft,
-    tools: [
-      ...draft.tools,
-      {
-        type: 'custom',
-        name,
-        description: 'Describe what this tool does.',
-        input_schema: { type: 'object', properties: {} },
-      },
-    ],
   };
 }
 
@@ -328,9 +423,14 @@ export function setToolsetPermission(
 ): CreateAgentInput {
   return {
     ...draft,
-    tools: draft.tools.map((tool) =>
-      predicate(tool) ? { ...tool, default_config: permissionConfig(permission), configs: [] } : tool,
-    ),
+    tools: draft.tools.map((tool) => {
+      if (!predicate(tool)) {
+        return tool;
+      }
+      const configs =
+        tool.type === 'agent_toolset_20260401' ? [{ name: 'ask_user_question', ...permissionConfig(permission) }] : [];
+      return { ...tool, default_config: permissionConfig(permission), configs };
+    }),
   };
 }
 
@@ -352,10 +452,14 @@ export function setToolPermission(
         ? tool.configs.map(toRecord).filter((config): config is Record<string, unknown> => Boolean(config))
         : [];
       const others = existing.filter((config) => config.name !== name);
+      const requiresExplicitPermission = tool.type === 'agent_toolset_20260401' && name === 'ask_user_question';
       return {
         ...tool,
         default_config: toRecord(tool.default_config) ?? permissionConfig(defaultPermission),
-        configs: permission === defaultPermission ? others : [...others, { name, ...permissionConfig(permission) }],
+        configs:
+          permission === defaultPermission && !requiresExplicitPermission
+            ? others
+            : [...others, { name, ...permissionConfig(permission) }],
       };
     }),
   };
@@ -369,6 +473,71 @@ export function permissionConfig(permission: EditablePermission) {
   return permission === 'always_deny'
     ? { enabled: false, permission_policy: { type: 'always_allow' } }
     : { enabled: true, permission_policy: { type: permission } };
+}
+
+function withAskUserQuestionDisabledByDefault<T extends Record<string, unknown>>(tool: T): T {
+  const cloned = cloneJsonValue(tool);
+  if (cloned.type !== 'agent_toolset_20260401') {
+    return cloned;
+  }
+  const configs = Array.isArray(cloned.configs) ? cloned.configs : [];
+  if (configs.some((config) => toRecord(config)?.name === 'ask_user_question')) {
+    return cloned;
+  }
+  return {
+    ...cloned,
+    configs: [...configs, { name: 'ask_user_question', ...permissionConfig('always_deny') }],
+  };
+}
+
+function validateMcpServerInput(draft: CreateAgentInput, name: string, url: string): McpServerInputErrors {
+  const errors: McpServerInputErrors = {};
+  if (!name) {
+    errors.name = 'required';
+  } else if (name.length > 255) {
+    errors.name = 'too_long';
+  } else if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+    errors.name = 'invalid';
+  } else if (!isUnambiguousMcpServerName(name)) {
+    errors.name = 'ambiguous';
+  } else if (
+    draft.mcp_servers.some((server) => toRecord(server)?.name === name) ||
+    draft.tools.some((tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === name)
+  ) {
+    errors.name = 'duplicate';
+  }
+
+  if (!url) {
+    errors.url = 'required';
+  } else if (url.length > 2048) {
+    errors.url = 'too_long';
+  } else if (!isHTTPURL(url)) {
+    errors.url = 'invalid';
+  }
+
+  if (draft.mcp_servers.length >= 20) {
+    errors.form = 'limit';
+  }
+  return errors;
+}
+
+function isUnambiguousMcpServerName(value: string) {
+  return !value.includes('__');
+}
+
+function isHTTPURL(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      Boolean(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
 }
 
 function normalizeDraftModel(model: AgentModelInput): AgentModelInput {

@@ -78,6 +78,10 @@ export function DataTableCell({ edge, className, ...props }: DataTableCellProps)
   );
 }
 
+export function DataTableResourceLink({ className, ...props }: ComponentProps<'a'>) {
+  return <a className={cn('underline-offset-4 hover:underline focus-visible:underline', className)} {...props} />;
+}
+
 export function CopyIdCell({
   value,
   displayValue,

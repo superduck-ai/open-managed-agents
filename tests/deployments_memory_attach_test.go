@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func TestDeploymentsMemoryAttachContract(t *testing.T) {
@@ -59,7 +57,7 @@ func TestDeploymentsMemoryAttachContract(t *testing.T) {
 			t.Fatalf("run session resources = %d, want 1", len(session.Resources))
 		}
 		got := decodeMemoryResource(t, session.Resources[0])
-		if got.Access != sessionresource.MemoryAccessReadOnly ||
+		if got.Access != "read_only" ||
 			got.MountPath != "/mnt/memory/user-preferences" ||
 			got.Name != store.Name ||
 			got.Description != store.Description ||
@@ -69,7 +67,7 @@ func TestDeploymentsMemoryAttachContract(t *testing.T) {
 		}
 
 		stored := persistedMemoryPayload(t, app, session.ID)
-		if stored["mount_path"] != "/mnt/memory/user-preferences" || stored["access"] != sessionresource.MemoryAccessReadOnly {
+		if stored["mount_path"] != "/mnt/memory/user-preferences" || stored["access"] != "read_only" {
 			t.Fatalf("stored run payload = %#v", stored)
 		}
 	})

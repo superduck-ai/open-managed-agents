@@ -21,8 +21,8 @@ Create Session 与 Create Deployment 可以选 Memory Store、Access 和 Instruc
 
 - `access` 为 `read_write` 或 `read_only`。UI 选了 store 就显式发送，默认 `read_write`。
 - `instructions` 按 Unicode 码点计数，上限 500；空字符串时省略该字段。
-- 不发送 `mount_path`、`name`、`description`。编辑已有 Deployment 时，即使 GET 响应带有这些字段，POST 也只回写上面四个允许字段。
-- Session 的 `resources` 为文件资源后接 memory 资源。未选 store 时不出现 memory 项。
+- 不发送 `mount_path`、`name`、`description`。编辑已有 Deployment 时，即使 GET 响应带有这些字段，仅修改其他配置时 POST 省略 `resources`；选择 Replace resources 后，Memory Store 项也只回写上面四个允许字段。
+- Session 的 `resources` 为文件资源、Git 仓库资源后接 memory 资源。未选 store 时不出现 memory 项。
 
 ## 表单
 
@@ -32,7 +32,9 @@ Create Session 的 Resources 与官方控制台一致：`+ Resource` 菜单里�
 
 - `web/src/features/managed-agents/resources/memory-attach.ts`：组包、500 码点、禁字段剥离
 - `web/src/features/managed-agents/resources/MemoryStoresAttachField.tsx`：Memory store Resource 卡片
-- `web/src/features/managed-agents/sessions/SessionFileResourcesField.tsx`：`+ Resource` 菜单（File / Memory store）
+- `web/src/features/managed-agents/resources/ManagedResourceFields.tsx`：统一资源菜单（File / Git repository / Memory store）及 Deployment 整组替换流程
+- `web/src/features/managed-agents/sessions/SessionFileResourcesField.tsx`：文件资源卡片
+- `web/src/features/managed-agents/sessions/file-resource-form.ts`：纯表单校验与 File resource 序列化；创建 Session 和追加文件资源复用同一组包函数，提交就绪判断不依赖 UI 组件。
 - `web/src/features/managed-agents/api.ts`：Session 与 Deployment 创建、更新请求体；Store 选择器分页聚合
 
-测试覆盖 501 拦截、500 原样提交、`read_only`、Session / Deployment 提交体、编辑不回写禁字段、无 store 回归、选择器聚合超过一页的 store。
+测试覆盖 File / Git / Memory 组合提交、Deployment 未修改资源时省略字段、501 拦截、500 原样提交、`read_only`、Session / Deployment 提交体、编辑不回写禁字段、无 store 回归、选择器聚合超过一页的 store。

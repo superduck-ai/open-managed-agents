@@ -25,7 +25,9 @@ func TestGoSDKFilesE2E(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("failure missing file id", func(t *testing.T) {
-		_, err := client.Beta.Files.GetMetadata(ctx, "file_missing_go_sdk", anthropic.BetaFileGetMetadataParams{})
+		_, err := client.Beta.Files.GetMetadata(ctx, "file_missing_go_sdk", anthropic.BetaFileGetMetadataParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+		})
 		if err == nil {
 			t.Fatal("expected missing file metadata request to fail")
 		}
@@ -33,14 +35,19 @@ func TestGoSDKFilesE2E(t *testing.T) {
 
 	t.Run("failure uploaded file is not downloadable", func(t *testing.T) {
 		uploaded, err := client.Beta.Files.Upload(ctx, anthropic.BetaFileUploadParams{
-			File: anthropic.File(bytes.NewReader([]byte("go sdk no download")), "go-sdk-no-download.txt", "text/plain"),
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+			File:  anthropic.File(bytes.NewReader([]byte("go sdk no download")), "go-sdk-no-download.txt", "text/plain"),
 		})
 		if err != nil {
 			t.Fatalf("upload: %v", err)
 		}
-		defer client.Beta.Files.Delete(ctx, uploaded.ID, anthropic.BetaFileDeleteParams{})
+		defer client.Beta.Files.Delete(ctx, uploaded.ID, anthropic.BetaFileDeleteParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+		})
 
-		resp, err := client.Beta.Files.Download(ctx, uploaded.ID, anthropic.BetaFileDownloadParams{})
+		resp, err := client.Beta.Files.Download(ctx, uploaded.ID, anthropic.BetaFileDownloadParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+		})
 		if err == nil {
 			resp.Body.Close()
 			t.Fatal("expected uploaded file download to fail")
@@ -49,7 +56,8 @@ func TestGoSDKFilesE2E(t *testing.T) {
 
 	t.Run("success upload list retrieve delete", func(t *testing.T) {
 		uploaded, err := client.Beta.Files.Upload(ctx, anthropic.BetaFileUploadParams{
-			File: anthropic.File(bytes.NewReader([]byte("hello from go sdk")), "go-sdk.txt", "text/plain"),
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+			File:  anthropic.File(bytes.NewReader([]byte("hello from go sdk")), "go-sdk.txt", "text/plain"),
 		})
 		if err != nil {
 			t.Fatalf("upload: %v", err)
@@ -58,7 +66,10 @@ func TestGoSDKFilesE2E(t *testing.T) {
 			t.Fatalf("unexpected upload response: %+v", uploaded)
 		}
 
-		page, err := client.Beta.Files.List(ctx, anthropic.BetaFileListParams{Limit: anthropic.Int(20)})
+		page, err := client.Beta.Files.List(ctx, anthropic.BetaFileListParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+			Limit: anthropic.Int(20),
+		})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -73,7 +84,9 @@ func TestGoSDKFilesE2E(t *testing.T) {
 			t.Fatalf("uploaded file %s not found in list", uploaded.ID)
 		}
 
-		retrieved, err := client.Beta.Files.GetMetadata(ctx, uploaded.ID, anthropic.BetaFileGetMetadataParams{})
+		retrieved, err := client.Beta.Files.GetMetadata(ctx, uploaded.ID, anthropic.BetaFileGetMetadataParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+		})
 		if err != nil {
 			t.Fatalf("retrieve metadata: %v", err)
 		}
@@ -81,7 +94,9 @@ func TestGoSDKFilesE2E(t *testing.T) {
 			t.Fatalf("retrieved id = %s, want %s", retrieved.ID, uploaded.ID)
 		}
 
-		deleted, err := client.Beta.Files.Delete(ctx, uploaded.ID, anthropic.BetaFileDeleteParams{})
+		deleted, err := client.Beta.Files.Delete(ctx, uploaded.ID, anthropic.BetaFileDeleteParams{
+			Betas: []anthropic.AnthropicBeta{anthropic.AnthropicBetaFilesAPI2025_04_14},
+		})
 		if err != nil {
 			t.Fatalf("delete: %v", err)
 		}

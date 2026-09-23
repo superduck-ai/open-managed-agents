@@ -73,14 +73,14 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 		created := createSession(t, app, sessionBodyWithMemoryResource(agent.ID, env.ID, store.ID, ""))
 		defer deleteSession(t, app, created.ID)
 		got := decodeMemoryResource(t, created.Resources[0])
-		if got.Access != sessionresource.MemoryAccessReadWrite {
+		if got.Access != "read_write" {
 			t.Fatalf("default access = %q, want read_write", got.Access)
 		}
 
 		readonly := createSession(t, app, sessionBodyWithMemoryResource(agent.ID, env.ID, store.ID, `"access":"read_only"`))
 		defer deleteSession(t, app, readonly.ID)
 		got = decodeMemoryResource(t, readonly.Resources[0])
-		if got.Access != sessionresource.MemoryAccessReadOnly {
+		if got.Access != "read_only" {
 			t.Fatalf("read_only access = %q", got.Access)
 		}
 	})
@@ -244,7 +244,7 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 			t.Fatalf("created session = %+v", created)
 		}
 		got := decodeMemoryResource(t, created.Resources[0])
-		if got.Access != sessionresource.MemoryAccessReadWrite ||
+		if got.Access != "read_write" ||
 			got.MountPath != "/mnt/memory/user-preferences" ||
 			got.Name != store.Name ||
 			got.Description != store.Description ||
@@ -254,7 +254,7 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 		}
 
 		stored := persistedMemoryPayload(t, app, created.ID)
-		if stored["access"] != sessionresource.MemoryAccessReadWrite ||
+		if stored["access"] != "read_write" ||
 			stored["mount_path"] != "/mnt/memory/user-preferences" ||
 			stored["name"] != store.Name ||
 			stored["description"] != store.Description ||

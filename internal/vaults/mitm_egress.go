@@ -12,24 +12,19 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-// EgressSession identifies the Code Session tenant for MITM outbound rewriting.
 type EgressSession struct {
 	CodeSessionExternalID string
 	OrganizationUUID      string
 	WorkspaceUUID         string
 }
 
-// MITMEgress is the deep module for Managed Agent CONNECT MITM outbound
-// rewriting. Callers only use Prepare: env placeholder substitution, Git Smart
-// HTTP Authorization, then MCP Authorization inject.
 type MITMEgress struct {
-	env *EgressSubstitutor
-	inj *Injector
+	env      *EgressSubstitutor
+	inj      *Injector
+	gitStore gitResourceStore
 }
 
-// NewMITMEgress wires MITM outbound rewriting. database/secretSvc drive env +
-// Git stages; inj may be shared with Session MCP HTTP proxy. Nil inj skips MCP.
-// Returns nil when neither env/Git nor MCP can run.
+// NewMITMEgress returns nil when neither Git/environment nor MCP credentials are available.
 func NewMITMEgress(
 	database *db.DB,
 	secretSvc *secrets.Service,
@@ -47,10 +42,13 @@ func NewMITMEgress(
 	if env == nil && inj == nil {
 		return nil
 	}
-	return &MITMEgress{env: env, inj: inj}
+	egress := &MITMEgress{env: env, inj: inj}
+	if env != nil {
+		egress.gitStore = database
+	}
+	return egress
 }
 
-// newMITMEgressForTest builds MITMEgress from package-local doubles.
 func newMITMEgressForTest(env *EgressSubstitutor, inj *Injector) *MITMEgress {
 	if env == nil && inj == nil {
 		return nil
@@ -58,12 +56,7 @@ func newMITMEgressForTest(env *EgressSubstitutor, inj *Injector) *MITMEgress {
 	return &MITMEgress{env: env, inj: inj}
 }
 
-// Prepare mutates req for env substitution and Git Smart HTTP Authorization,
-// then returns a RoundTripper that performs MCP Authorization inject on base.
-//
-// Ordering is fixed: env substitute → Git Basic → MCP inject wrap.
-// Credentials are loaded once for env and Git. Absolute URL for MCP credential
-// match is built from CONNECT authority + origin-form path/query.
+// Prepare applies repository credentials first, then Vault environment, Git Basic, and MCP injection.
 func (e *MITMEgress) Prepare(
 	ctx context.Context,
 	session EgressSession,
@@ -75,6 +68,13 @@ func (e *MITMEgress) Prepare(
 		return base, nil
 	}
 	host, port := splitConnectAuthority(connectAuthority)
+	matched, err := e.authorizeGitResource(ctx, session, host, port, req)
+	if err != nil {
+		return nil, err
+	}
+	if matched {
+		return base, nil
+	}
 	if err := e.rewriteOutbound(ctx, session, host, port, req); err != nil {
 		return nil, err
 	}

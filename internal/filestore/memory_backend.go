@@ -491,7 +491,7 @@ func (b *memoryPathBackend) resolveMount(
 	if mutate && mount.Archived {
 		return db.SessionMemoryMount{}, permissionDenied("memory store is archived")
 	}
-	if mutate && mount.Access != sessionresource.MemoryAccessReadWrite {
+	if mutate && mount.Access != string(sessionresource.MemoryAccessReadWrite) {
 		return db.SessionMemoryMount{}, permissionDenied("the memory mount is read-only")
 	}
 	return mount, nil

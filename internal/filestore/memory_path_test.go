@@ -45,3 +45,13 @@ func TestParseMemoryFilestorePath(t *testing.T) {
 		}
 	})
 }
+
+func TestMemoryFilestoreRecognizesGeneratedSlugs(t *testing.T) {
+	for _, name := range []string{"项目规范", "Hellö Wörld", "hello_world", "!!!"} {
+		slug := sessionresource.SlugifyMemoryName(name, "memstore_fallback")
+		parsed, claimed := parseMemoryFilestorePath("/memory/" + slug + "/note.md")
+		if !claimed || parsed.Slug != slug || parsed.Rel != "/note.md" {
+			t.Fatalf("generated slug %q not routed to memory: %+v claimed=%t", slug, parsed, claimed)
+		}
+	}
+}

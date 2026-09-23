@@ -63,8 +63,7 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[dep
 		return agentErr
 	}
 
-	memoryStores, memoryErr := loadDeploymentMemoryStores(ctx, w.store.database, deployment.WorkspaceUUID, deployment.Resources)
-	referenceFailure, err := validateRunDependencies(ctx, w.store.database, deployment.WorkspaceUUID, deployment, memoryErr)
+	memoryStores, referenceFailure, err := validateRunDependencies(ctx, w.store.database, deployment.WorkspaceUUID, deployment)
 	if err != nil {
 		return err
 	}

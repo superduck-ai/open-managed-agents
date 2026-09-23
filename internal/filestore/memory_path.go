@@ -7,7 +7,7 @@ import (
 
 const memoryNamespaceRoot = "/memory"
 
-var memorySlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+var memorySlugPattern = regexp.MustCompile(`^[a-z0-9_]+(?:-[a-z0-9_]+)*$`)
 
 type memoryFilestorePath struct {
 	Slug string

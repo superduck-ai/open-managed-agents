@@ -101,6 +101,8 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
+	PayloadBlobUUID   *string
+	ToolUseID         *string
 	UUID              string
 	ExternalID        string
 	OrganizationUUID  string
@@ -460,7 +462,7 @@ func (d *DB) CreateSessionResource(
 				return txErr
 			}
 		}
-		created, txErr = createSessionResource(ctx, executor, resource)
+		created, txErr = insertSessionResourceWithLockedSessionTx(ctx, executor, resource)
 		if txErr != nil {
 			return txErr
 		}

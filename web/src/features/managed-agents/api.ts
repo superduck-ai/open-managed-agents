@@ -3,9 +3,9 @@ import { consoleApi } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
-import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
-import { memoryAttachResources } from './resources/memory-attach';
-import { sessionFileAPIMountPath } from './sessions/file-resource-path';
+import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
+import { sessionFileResourcePayload } from './sessions/file-resource-form';
+import { managedResourcesBody } from './resources/git-resource';
 import { sessionEventType } from './sessions/sessionTraceModel';
 import {
   type AgentApiResponse,
@@ -260,7 +260,7 @@ export function createAgentDetailSession(
       agent: { type: 'agent', id: agent.id },
       environment_id: values.environmentId,
       vault_ids: values.vaultIds.length ? values.vaultIds : undefined,
-      resources: packedSessionCreateResources(values),
+      resources: managedResourcesBody(values, true),
     },
     workspaceId,
   );
@@ -279,7 +279,7 @@ export function createAgentDetailDeployment(
       environment_id: values.environmentId,
       vault_ids: values.vaultIds,
       metadata: {},
-      resources: memoryAttachResources(values.memoryAttaches),
+      resources: managedResourcesBody(values, true),
       initial_events: deploymentInitialEvents(values.initialMessage),
       schedule: deploymentSchedule(values),
     },
@@ -563,14 +563,23 @@ export function listSessionResources(sessionId: string, workspaceId: string) {
 }
 
 export function addSessionFileResource(sessionId: string, resource: SessionFileResourceFormValue, workspaceId: string) {
-  const mountPath = sessionFileAPIMountPath(resource.mountPath);
   return anthropicBetaApi.sessions.resources.add<SessionResourceApiResponse>(
     sessionId,
-    {
-      type: 'file',
-      file_id: resource.fileId.trim(),
-      ...(mountPath ? { mount_path: mountPath } : {}),
-    },
+    sessionFileResourcePayload(resource),
+    workspaceId,
+  );
+}
+
+export function updateSessionGitResourceToken(
+  sessionId: string,
+  resourceId: string,
+  token: string,
+  workspaceId: string,
+) {
+  return anthropicBetaApi.sessions.resources.update<SessionResourceApiResponse>(
+    sessionId,
+    resourceId,
+    token.trim(),
     workspaceId,
   );
 }
@@ -1746,7 +1755,11 @@ export function listVaultCredentials(vaultId: string, workspaceId: string) {
 export function createVaultCredential(vaultId: string, values: CredentialFormValues, workspaceId: string) {
   return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
     vaultId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'create'), metadata: {} },
+    {
+      display_name: credentialDisplayName(values),
+      auth: credentialAuthBody(values, 'create'),
+      metadata: {},
+    },
     workspaceId,
   );
 }
@@ -1778,7 +1791,7 @@ export function updateVaultCredential(
   return anthropicBetaApi.vaults.credentials.update<VaultCredentialApiResponse>(
     vaultId,
     credentialId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'update'), metadata: {} },
+    { display_name: credentialDisplayName(values), auth: credentialAuthBody(values, 'update'), metadata: {} },
     workspaceId,
   );
 }
@@ -1854,7 +1867,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: packedSessionCreateResources(values),
+        resources: managedResourcesBody(values, true),
       };
     case 'deployments':
       return {
@@ -1864,7 +1877,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: memoryAttachResources(values.memoryAttaches),
+        resources: managedResourcesBody(values, true),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
       };
@@ -1912,7 +1925,7 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
         vault_ids: values.vaultIds,
-        resources: memoryAttachResources(values.memoryAttaches),
+        ...(values.resourcesChanged ? { resources: managedResourcesBody(values, true) } : {}),
         initial_events: deploymentInitialEvents(values.initialMessage),
         schedule: deploymentSchedule(values),
       };
@@ -1932,18 +1945,6 @@ export function deploymentInitialEvents(initialMessage: string) {
       content: [{ type: 'text', text: initialMessage.trim() }],
     },
   ];
-}
-
-export function packedSessionCreateResources(values: ManagedEntityFormValues) {
-  const files = values.fileResources.map((resource) => {
-    const mountPath = sessionFileAPIMountPath(resource.mountPath);
-    return {
-      type: 'file' as const,
-      file_id: resource.fileId.trim(),
-      ...(mountPath ? { mount_path: mountPath } : {}),
-    };
-  });
-  return [...files, ...memoryAttachResources(values.memoryAttaches)];
 }
 
 export function deploymentSchedule(values: ManagedEntityFormValues) {

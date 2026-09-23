@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
@@ -15,6 +16,15 @@ func invalidRequest(err error) error {
 
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
+}
+
+func queueCodeSessionEventsError(cause error) error {
+	// code session service 已将传输失败包装为 Unavailable 应用错误，直接透传
+	// 保持 503 语义，不再二次解释 sentinel。
+	if errors.Is(cause, codesessions.ErrWorkerEventUnavailable) {
+		return cause
+	}
+	return internalError("Could not queue events for the code session worker", cause)
 }
 
 func sessionsBetaRequired() error {
@@ -62,10 +72,10 @@ func resourceNotFound(resourceID string, cause error) error {
 }
 
 func mapResourceBuildError(err error) error {
-	if mapped, ok := mapFileResourcePersistenceError(err); ok {
-		return mapped
+	if errors.Is(err, sessionresource.ErrGitTokenCrypto) {
+		return internalError("Could not secure Git resource token", err)
 	}
-	if mapped, ok := mapMemoryAttachError(err); ok {
+	if mapped, ok := mapFileResourcePersistenceError(err); ok {
 		return mapped
 	}
 	var refErr resourceReferenceError
@@ -82,19 +92,6 @@ func mapResourceBuildError(err error) error {
 		"Could not validate session resource",
 		fmt.Errorf("validate %s reference %q: %w", refErr.ResourceType, refErr.ResourceID, refErr.Err),
 	)
-}
-
-func mapMemoryAttachError(err error) (error, bool) {
-	switch {
-	case errors.Is(err, sessionresource.ErrMemoryStoreClientIdentity),
-		errors.Is(err, sessionresource.ErrMemoryStoreAccess),
-		errors.Is(err, sessionresource.ErrMemoryStoreInstructionsTooLong),
-		errors.Is(err, sessionresource.ErrMemoryStoreLimit),
-		errors.Is(err, sessionresource.ErrMemoryStoreDuplicate):
-		return invalidRequest(err), true
-	default:
-		return nil, false
-	}
 }
 
 func mapSessionLoadError(err error, sessionID string) error {
@@ -152,6 +149,10 @@ func mapResourceLoadError(err error, resourceID string) error {
 
 func streamingUnsupported() error {
 	return internalError("Streaming is not supported", errors.New("response writer does not implement http.Flusher"))
+}
+
+func gitTokenUpdateRequiredError() error {
+	return invalidRequest(errors.New("authorization_token must be provided when updating a Git resource"))
 }
 
 type resourceReferenceError = sessionresource.ReferenceError

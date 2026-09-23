@@ -9,9 +9,9 @@ import (
 
 // MemoryAttachSpec is the persisted template, without server-authored identity.
 type MemoryAttachSpec struct {
-	MemoryStoreID string  `json:"memory_store_id,omitempty"`
-	Access        string  `json:"access,omitempty"`
-	Instructions  *string `json:"instructions,omitempty"`
+	MemoryStoreID string       `json:"memory_store_id,omitempty"`
+	Access        MemoryAccess `json:"access,omitempty"`
+	Instructions  *string      `json:"instructions,omitempty"`
 }
 
 // MemoryAttachRequest retains field presence at the API boundary.

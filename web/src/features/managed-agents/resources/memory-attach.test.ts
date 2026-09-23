@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { emptyGitResource } from './git-resource';
 import { createManagedEntityBody, updateManagedEntityBody } from '../api';
 import type { DeploymentApiResponse, ManagedEntityFormValues, MemoryAttachFormValue } from '../types';
 import {
@@ -7,7 +8,6 @@ import {
   emptyMemoryAttach,
   entityMemoryAttaches,
   MAX_MEMORY_ATTACH_INSTRUCTIONS,
-  memoryAttachHasForbiddenClientFields,
   memoryAttachResources,
   memoryInstructionsCodePointCount,
 } from './memory-attach';
@@ -25,6 +25,9 @@ function formValues(overrides: Partial<ManagedEntityFormValues> = {}): ManagedEn
     vaultIds: ['vlt_one123456'],
     memoryAttaches: [],
     fileResources: [],
+    gitResources: [],
+    originalResources: [],
+    resourcesChanged: false,
     ...overrides,
   };
 }
@@ -73,7 +76,6 @@ describe('memory attach packing', () => {
         access: 'read_only',
       },
     ]);
-    expect(memoryAttachHasForbiddenClientFields(packed[0])).toBe(false);
     expect(JSON.stringify(packed)).not.toContain('mount_path');
     expect(JSON.stringify(packed)).not.toContain('/mnt/memory/secret');
   });
@@ -82,10 +84,12 @@ describe('memory attach packing', () => {
     const values = formValues({
       memoryAttaches: [attach()],
       fileResources: [{ fileId: 'file_input123456', mountPath: '' }],
+      gitResources: [{ ...emptyGitResource(), url: 'https://example.com/repo.git' }],
     });
     const sessionBody = createManagedEntityBody('sessions', values);
     expect(sessionBody.resources).toEqual([
       { type: 'file', file_id: 'file_input123456' },
+      { type: 'github_repository', url: 'https://example.com/repo.git' },
       {
         type: 'memory_store',
         memory_store_id: 'memstore_one123456',
@@ -93,10 +97,11 @@ describe('memory attach packing', () => {
         instructions: '有新偏好就更新',
       },
     ]);
-    expect(memoryAttachHasForbiddenClientFields(sessionBody.resources[1] as object)).toBe(false);
 
     const deploymentBody = createManagedEntityBody('deployments', values);
     expect(deploymentBody.resources).toEqual([
+      { type: 'file', file_id: 'file_input123456' },
+      { type: 'github_repository', url: 'https://example.com/repo.git' },
       {
         type: 'memory_store',
         memory_store_id: 'memstore_one123456',
@@ -140,7 +145,7 @@ describe('memory attach packing', () => {
     ]);
     const body = updateManagedEntityBody(
       'deployments',
-      formValues({ memoryAttaches: attaches, name: 'Deployment one' }),
+      formValues({ memoryAttaches: attaches, name: 'Deployment one', resourcesChanged: true }),
     );
     expect(body.resources).toEqual([
       {

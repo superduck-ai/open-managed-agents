@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/gosimple/slug"
+
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
@@ -14,9 +16,16 @@ const (
 	MemoryStoreType            = sessioncontract.MemoryStoreResourceType
 	MaxMemoryStores            = sessioncontract.MaxMemoryStores
 	MaxMemoryInstructionsRunes = sessioncontract.MaxMemoryInstructionsRunes
-	MemoryAccessReadWrite      = "read_write"
-	MemoryAccessReadOnly       = "read_only"
 	MemoryMountRoot            = "/mnt/memory"
+)
+
+// MemoryAccess describes the access granted by a memory store attachment.
+// External values must be validated by ParseMemoryAccess or NormalizeMemoryAccess.
+type MemoryAccess string
+
+const (
+	MemoryAccessReadWrite MemoryAccess = "read_write"
+	MemoryAccessReadOnly  MemoryAccess = "read_only"
 )
 
 var (
@@ -29,12 +38,12 @@ var (
 
 // MemorySnapshot is the server-authored attach record stored on session_resources.
 type MemorySnapshot struct {
-	MemoryStoreID string `json:"memory_store_id"`
-	Access        string `json:"access"`
-	Instructions  string `json:"instructions"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	MountPath     string `json:"mount_path"`
+	MemoryStoreID string       `json:"memory_store_id"`
+	Access        MemoryAccess `json:"access"`
+	Instructions  string       `json:"instructions"`
+	Name          string       `json:"name"`
+	Description   string       `json:"description"`
+	MountPath     string       `json:"mount_path"`
 }
 
 // MemoryAttachSet tracks store IDs and slugs already claimed in one Session.
@@ -60,17 +69,18 @@ func RejectClientMemoryIdentityFields(mountPath, name, description json.RawMessa
 // NormalizeMemoryAccess is the single authority on attach access values. An
 // empty value means the documented default; anything else must name one of the
 // two known modes, because a malformed value must never widen the mount.
-func NormalizeMemoryAccess(value string) (string, error) {
+func NormalizeMemoryAccess(value string) (MemoryAccess, error) {
 	if value == "" {
 		return MemoryAccessReadWrite, nil
 	}
-	if value != MemoryAccessReadWrite && value != MemoryAccessReadOnly {
+	access := MemoryAccess(value)
+	if access != MemoryAccessReadWrite && access != MemoryAccessReadOnly {
 		return "", ErrMemoryStoreAccess
 	}
-	return value, nil
+	return access, nil
 }
 
-func ParseMemoryAccess(raw json.RawMessage) (string, error) {
+func ParseMemoryAccess(raw json.RawMessage) (MemoryAccess, error) {
 	if len(raw) == 0 || isJSONNull(raw) {
 		return MemoryAccessReadWrite, nil
 	}
@@ -96,11 +106,11 @@ func ParseMemoryInstructions(raw json.RawMessage) (string, error) {
 }
 
 func SlugifyMemoryName(name, fallbackExternalID string) string {
-	if slug := slugifyMemoryToken(name); slug != "" {
-		return slug
+	if token := slug.Make(name); token != "" {
+		return token
 	}
-	if slug := slugifyMemoryToken(fallbackExternalID); slug != "" {
-		return slug
+	if token := slug.Make(fallbackExternalID); token != "" {
+		return token
 	}
 	return "store"
 }
@@ -163,12 +173,21 @@ func (s *MemoryAttachSet) Add(storeID, name, fallbackExternalID string) (string,
 	if err := s.Claim(storeID); err != nil {
 		return "", err
 	}
+	return s.claimSlug(SlugifyMemoryName(name, fallbackExternalID)), nil
+}
+
+func (s *MemoryAttachSet) claimSlug(base string) string {
 	if s.slugs == nil {
 		s.slugs = make(map[string]struct{})
 	}
-	slug := uniqueMemorySlug(SlugifyMemoryName(name, fallbackExternalID), s.slugs)
-	s.slugs[slug] = struct{}{}
-	return slug, nil
+	candidate := base
+	for suffix := 2; ; suffix++ {
+		if _, exists := s.slugs[candidate]; !exists {
+			s.slugs[candidate] = struct{}{}
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%d", base, suffix)
+	}
 }
 
 // MemorySnapshotPayload is the Session resource serialization boundary.
@@ -182,7 +201,7 @@ func (s MemorySnapshot) Payload(resourceID string) MemorySnapshotPayload {
 	return MemorySnapshotPayload{ID: resourceID, Type: MemoryStoreType, MemorySnapshot: s}
 }
 
-func SnapshotMemoryStore(storeID, access, instructions, name, description, slug string) MemorySnapshot {
+func SnapshotMemoryStore(storeID string, access MemoryAccess, instructions, name, description, slug string) MemorySnapshot {
 	return MemorySnapshot{
 		MemoryStoreID: storeID,
 		Access:        access,
@@ -190,35 +209,5 @@ func SnapshotMemoryStore(storeID, access, instructions, name, description, slug 
 		Name:          name,
 		Description:   description,
 		MountPath:     MemoryMountPath(slug),
-	}
-}
-
-func slugifyMemoryToken(value string) string {
-	var builder strings.Builder
-	lastHyphen := false
-	for _, r := range strings.ToLower(value) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			builder.WriteRune(r)
-			lastHyphen = false
-			continue
-		}
-		if builder.Len() == 0 || lastHyphen {
-			continue
-		}
-		builder.WriteByte('-')
-		lastHyphen = true
-	}
-	return strings.TrimSuffix(builder.String(), "-")
-}
-
-func uniqueMemorySlug(base string, used map[string]struct{}) string {
-	if _, exists := used[base]; !exists {
-		return base
-	}
-	for n := 2; ; n++ {
-		candidate := fmt.Sprintf("%s-%d", base, n)
-		if _, exists := used[candidate]; !exists {
-			return candidate
-		}
 	}
 }

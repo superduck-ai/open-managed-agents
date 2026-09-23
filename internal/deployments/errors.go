@@ -54,6 +54,9 @@ func environmentLoadError(err error, environmentID string) error {
 }
 
 func resourceBuildError(err error) error {
+	if errors.Is(err, sessionresource.ErrGitTokenCrypto) {
+		return internalError("Could not secure Git resource token", err)
+	}
 	var refErr resourceReferenceError
 	if !errors.As(err, &refErr) {
 		return invalidRequest(err)
@@ -100,14 +103,3 @@ func scheduledDeploymentLimitExceeded() error {
 }
 
 type resourceReferenceError = sessionresource.ReferenceError
-
-func memoryStoreLoadFailure(err error) *deploymentRunError {
-	switch {
-	case errors.Is(err, db.ErrNotFound):
-		return runErrorForReference("memory_store", err, false)
-	case errors.Is(err, db.ErrInvalidState):
-		return runErrorForReference("memory_store", err, true)
-	default:
-		return nil
-	}
-}

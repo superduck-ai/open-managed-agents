@@ -266,9 +266,9 @@ filestore 通过 `internal/db` 访问记忆数据，并复用 `internal/sessionr
 - `instructions` ≤ 500 字，允许空。Session 与 Deployment 共用该上限。
 - 请求携带 `mount_path` / `name` / `description` → 400。
 - 不存在 → 404；已归档 → 400。
-- slug = name 小写，非字母数字折叠为 `-`，去首尾；空则回退 external id；同 Session 冲突追加 `-2`。
+- slug 使用 `gosimple/slug` 转写名称，支持中文及重音字符，保留下划线；空则回退 external id；同 Session 冲突追加 `-2`。Filestore 接受同一 slug 字符集合。
 - Session 与 Deployment 保存 attach 时统一通过 `sessionresource.ResolveMemoryAttach` 解析并校验引用；持久化模板 `MemoryAttachSpec` 仅含 `memory_store_id`、`access`、`instructions`。Session 当场生成身份快照，Deployment 留到运行时生成；未填写 instructions 与显式清空在模板中保持区别。
-- 手动及定时运行均由 `loadDeploymentMemoryStores` 加载并检查归档状态，每个不同 store 只查询一次；依赖校验消费加载错误，快照复用加载结果。保存时校验不替代运行时校验，也不提供跨并发更新的事务快照保证。
+- 手动及定时运行均由 `loadDeploymentMemoryStores` 一次批量加载去重后的 store；依赖校验按资源顺序检查加载结果是否缺失或归档，快照复用加载结果。保存时校验不替代运行时校验，也不提供跨并发更新的事务快照保证。
 - 引用错误由 `sessionresource.ReferenceError` 携带，HTTP/运行错误分别集中映射于 `internal/sessions/errors.go` 和 `internal/deployments/errors.go`。
 - 资源顺序不影响落盘。
 
@@ -341,3 +341,5 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 合入时已同步：[e2b-sandbox-image-contract.md](./e2b-sandbox-image-contract.md)、[filestore.md](./filestore.md)、[messages-proxy.md](./messages-proxy.md)、[deployments-api-contract.md](./deployments-api-contract.md)（instructions 4096→500）。
 
 文件树约束回归：`tests/memory_path_tree_test.go` 使用真实 PostgreSQL 覆盖两个入口的父子冲突、失败不改版本、目录仍可列举、路径段边界、已删除路径复用及并发创建父子路径时仅一个请求成功。
+
+合并 attach 合同后，`internal/deployments/memory_store_batch_test.go` 继续验证批量加载一次及按资源顺序返回错误；slug 转写测试覆盖中文、重音字符及下划线。

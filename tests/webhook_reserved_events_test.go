@@ -31,3 +31,25 @@ func TestWebhookReservedDeletionsDoNotEmit(t *testing.T) {
 	assertAgentWebhookTotal(t, app, 0)
 	assertWebhookDeliveries(t, app, endpoint, received, map[string]int{})
 }
+
+func TestWebhookReservedBudgetDoesNotEmit(t *testing.T) {
+	events := []string{"session.budget_reached"}
+	app, endpoint, received := newEventSubscription(t, events)
+	if got := retrieveWebhook(t, app, endpoint.ID); !reflect.DeepEqual(got.EnabledEvents, events) {
+		t.Fatalf("reserved budget subscription not preserved: %v", got.EnabledEvents)
+	}
+	updateWebhook(t, app, endpoint.ID, `{"enabled_events":["agent.deleted"]}`)
+	updated := updateWebhook(t, app, endpoint.ID, `{"enabled_events":["session.budget_reached"]}`)
+	if got := retrieveWebhook(t, app, endpoint.ID); !reflect.DeepEqual(got.EnabledEvents, events) || !reflect.DeepEqual(updated.EnabledEvents, events) {
+		t.Fatal("reserved budget subscription edit not persisted")
+	}
+	agent := newWebhookAgent(t, app)
+	environment := createEnvironment(t, app, `{"name":"reserved budget"}`)
+	t.Cleanup(func() { cleanupEnvironmentRows(t, app.pool, environment.ID) })
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
+	updateSession(t, app, session.ID, `{"title":"reserved budget"}`)
+	codeID := launchLocalCodeSession(t, app, session.ID)
+	postCodeSessionIngressEvents(t, app, codeID, `{"events":[{"type":"session.status_idle","uuid":"reserved-budget-idle","stop_reason":"budget_reached","created_at":"2026-09-23T01:00:00Z"}]}`)
+	assertAgentWebhookTotal(t, app, 0)
+	assertWebhookDeliveries(t, app, endpoint, received, map[string]int{})
+}

@@ -4,7 +4,7 @@ sidebarTitle: "订阅 Webhook"
 description: "无需轮询即可在重大事件发生时获得通知。"
 ---
 
-<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 35 项 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run 事件的订阅管理与投递；另接受两项删除事件作为预留订阅，共 37 个可选类型；预留事件当前不会产生通知。预算事件尚未开放订阅。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
+<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 35 项 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run 事件的订阅管理与投递；另接受 `session.budget_reached`、`agent.deleted`、`deployment.deleted` 三项预留订阅，共 38 个可选类型；预留事件当前不会产生通知。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
 
 Deployment Run 支持 `deployment_run.started`、`deployment_run.succeeded`、`deployment_run.failed`，仅定时运行产生；手动运行不产生。现有一次事务保存 Run 与 Session 创建结果，提交后以同一 Run ID 连续入队 started 和结果事件，因此 started 不提供执行中实时进度。succeeded 只表示创建 Session 成功，failed 表示已落库的业务失败且没有 Session；数据库回滚、过期或重复任务不通知。data 仅含四个标识字段，后续执行应通过 Run 的 session_id 跟踪。
 
@@ -26,7 +26,7 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
     | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
     | `session.status_run_started`       | 智能体开始执行。每次会话状态转换为 `running` 时都会触发此事件。                                                                                                                                                                                                               |
     | `session.status_idled`             | 智能体正在等待输入，例如工具权限审批或新的用户消息。                                                                                                                                                                                                                          |
-    | `session.budget_reached`           | 会话达到其[预算](/docs/zh/budgets)并暂停。对于您设置的每个预算值，此事件最多触发一次；更改预算会重新激活该触发条件。                                                                                                                                   |
+    | `session.budget_reached`           | OMA 预留订阅：可选择并保存，当前不发送通知；尚未实现预算控制。 |
     | `session.status_rescheduled`       | 发生了暂时性错误，会话正在自动重试。                                                                                                                                                                                                                                  |
     | `session.status_terminated`        | 会话已终止，原因可能是发生了不可恢复的错误，或会话已被归档。                                                                                                                                                                                                                      |
     | `session.thread_created`           | 新的[多智能体线程](/docs/zh/multiagent-orchestration)已开启：协调器调用的另一个智能体正在开始工作，或正在咨询会话的[顾问](/docs/zh/multiagent-orchestration#give-the-session-an-advisor)。          |

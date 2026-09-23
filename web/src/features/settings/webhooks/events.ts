@@ -36,6 +36,10 @@ export const webhookEventGroups: WebhookEventGroup[] = [
     events: [{ label: 'Evaluation ended', type: 'session.outcome_evaluation_ended' }],
   },
   {
+    label: 'Budget',
+    events: [{ label: 'Budget reached', type: 'session.budget_reached' }],
+  },
+  {
     label: 'Session record',
     events: [
       { label: 'Updated', type: 'session.updated' },

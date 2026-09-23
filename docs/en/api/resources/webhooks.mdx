@@ -24,13 +24,13 @@ Every request requires `anthropic-beta: webhooks-2026-03-01`.
 
 `url` and a non-empty `enabled_events` array are required. `name` and `description` may be omitted or set to an empty string; `null` and other non-string values are rejected. The existing limits are 2048 bytes for URL/description and 255 bytes for name. POST updates accept `url`, `name`, `description`, `enabled_events`, and `status` (`enabled` or `disabled`); omitted fields are preserved.
 
-URLs require HTTPS on port 443 without credentials or fragments. Private IP literals and localhost are rejected unless `webhook.allow_insecure` enables local HTTP targets. This is not complete DNS-based SSRF protection. Events must be in the server allowlist; the Console currently offers 37 types (including two reserved deletion types), including `session.updated` and `session.deleted`, and starts with none selected.
+URLs require HTTPS on port 443 without credentials or fragments. Private IP literals and localhost are rejected unless `webhook.allow_insecure` enables local HTTP targets. This is not complete DNS-based SSRF protection. Events must be in the server allowlist; the Console currently offers 38 types (including three reserved types), including `session.updated` and `session.deleted`, and starts with none selected.
 
 Endpoints belong to the authenticated workspace. List returns `{ "data": [...], "next_page": null }`; Console ID search and sorting operate on this returned collection. The Console supports editing, enabling/disabling, deleting, and rotating secrets. Failed operations retain the form or confirmation and show the server error.
 
 Create returns `signing_secret` once; rotation returns a replacement. List, retrieve, and update never expose it. The Console keeps it only in the one-time dialog state. Consumers verify the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers with the official SDK and handle duplicate delivery idempotently.
 
-The delivery worker starts by default, including for database subscriptions without a global endpoint/key. Set `webhook.worker_enabled: false` to disable delivery on this instance. The API allowlist and Console both use the same 37 event types (35 active types and two reserved deletion types); legacy `session.error` and `session.thread_status_*` subscriptions are rejected.
+The delivery worker starts by default, including for database subscriptions without a global endpoint/key. Set `webhook.worker_enabled: false` to disable delivery on this instance. The API allowlist and Console both use the same 38 event types (35 active types and three reserved types); legacy `session.error` and `session.thread_status_*` subscriptions are rejected.
 
 Sessions created by manual or scheduled Deployment runs emit `session.status_idled` after the transaction commits. Creating the primary thread does not emit child-thread events, and defining an initial outcome does not emit `session.outcome_evaluation_ended`; that event follows an actual evaluation-end event. Failed runs and duplicate scheduled occurrences do not create new notifications. Two independent manual runs notify separately.
 
@@ -45,3 +45,5 @@ Deployment subscriptions support `deployment.created`, `deployment.updated`, `de
 
 
 Deployment Run subscriptions support `deployment_run.started`, `deployment_run.succeeded`, and `deployment_run.failed` for scheduled runs only; manual runs emit none. The existing transaction persists the Run and Session-creation result together. After commit, started and the result are enqueued with the same Run ID, so started is not a live in-progress signal. Succeeded means a Session was created, not that its work finished. Failed means a business failure was persisted without a Session; database rollbacks, stale jobs, and duplicate occurrences do not notify. Data contains only the four identifier fields. Follow the Run's session_id for subsequent execution.
+
+`session.budget_reached` is a reserved subscription: it can be selected, saved, retrieved, and edited, but currently generates no notifications. OMA has not implemented budget configuration, spend accounting, or budget-driven pause/resume. Ordinary idle events, including worker-reported budget stop reasons, do not trigger it. Subscribing does not enable budget enforcement.

@@ -53,7 +53,6 @@ type yamlConfig struct {
 	Webhook           yamlWebhookConfig       `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         yamlBootstrapConfig     `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
 }
 
 type yamlDatabaseConfig struct {
@@ -138,7 +137,6 @@ func newYAMLConfig() yamlConfig {
 			UserExternalID:      defaults.Bootstrap.UserExternalID,
 			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: defaults.SDKFixtures,
 	}
 }
 
@@ -185,7 +183,6 @@ func (input yamlConfig) resolve() Config {
 			UserExternalID:      input.Bootstrap.UserExternalID,
 			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")

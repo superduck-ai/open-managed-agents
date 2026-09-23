@@ -327,7 +327,9 @@ func consumePublicInput(t *testing.T, app *testApp, session db.CodeSession, epoc
 		var frame struct {
 			EventID string `json:"event_id"`
 			Payload struct {
-				ID string `json:"id"`
+				ID   string `json:"id"`
+				UUID string `json:"uuid"`
+				Type string `json:"type"`
 			} `json:"payload"`
 		}
 		if err := json.Unmarshal([]byte(data), &frame); err != nil {
@@ -335,6 +337,11 @@ func consumePublicInput(t *testing.T, app *testApp, session db.CodeSession, epoc
 		}
 		if frame.EventID == "" {
 			continue
+		}
+		if frame.Payload.Type == "control_response" {
+			if frame.Payload.ID != publicID || frame.Payload.UUID == "" || frame.EventID != frame.Payload.UUID || frame.EventID == publicID {
+				t.Fatalf("control response must preserve its UUID for ACK and the source input ID: %+v", frame)
+			}
 		}
 		ack := postCodeSessionWorkerDelivery(t, app, session.ExternalID, `{"worker_epoch":`+quoteJSON(epoch)+`,"updates":[{"event_id":`+quoteJSON(frame.EventID)+`,"status":"processed"}]}`)
 		if ack.Applied != 1 {

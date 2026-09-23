@@ -124,7 +124,7 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 
 接纳判断与事件写入共用 Session 事务锁，再锁定对应的 Code Session 行，读取 Worker 状态和主线程待确认请求。待确认 metadata 已写入而 Worker 尚未上报 `requires_action` 时也必须排队；并发发送只有一条能立即被接纳。
 
-`system.message` 不需要 Worker ACK，在接收时设置处理时间并广播。工具确认生成的 `control_response` 使用顶层 `id` 携带原始公开输入 ID，`uuid` 仍标识控制响应；Worker ACK 更新并广播原始工具确认。自动工具响应没有公开输入 ID，不触发公开输入更新。
+`system.message` 不需要 Worker ACK，在接收时设置处理时间并广播。工具确认和 `AskUserQuestion` 回答（`user.custom_tool_result`）生成的 `control_response` 使用顶层 `id` 携带原始公开输入 ID，`uuid` 仍标识控制响应。Worker 继续用外层 `event_id`（控制响应的 `uuid`）回 ACK，服务端通过 `id` 关联原始输入；尚未处理的输入更新处理时间并广播，已有处理时间的输入不重复广播。自动工具响应没有公开输入 ID，不触发公开输入更新。
 
 Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。result 不再驱动 idle，结束状态由 Worker 状态上报产生。旧 result 补造模型 span 的逻辑由后续模型生命周期 PR 替换。
 

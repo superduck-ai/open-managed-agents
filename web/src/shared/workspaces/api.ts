@@ -6,19 +6,11 @@ export type Workspace = {
   name: string;
   display_color?: string;
   color?: string;
-  data_residency?: {
-    workspace_geo?: string;
-    allowed_inference_geos?: string;
-    default_inference_geo?: string;
-  } | null;
 };
 
 export type CreateWorkspaceInput = {
   name: string;
   display_color: string;
-  data_residency: {
-    workspace_geo: 'us';
-  };
 };
 
 export type WorkspaceApiKey = {
@@ -54,11 +46,6 @@ export const defaultWorkspace: Workspace = {
   name: 'Default',
   display_color: '#9B87F5',
   color: '#9B87F5',
-  data_residency: {
-    workspace_geo: 'us',
-    allowed_inference_geos: 'unrestricted',
-    default_inference_geo: 'global',
-  },
 };
 
 export function listConsoleWorkspaces(orgUuid: string) {

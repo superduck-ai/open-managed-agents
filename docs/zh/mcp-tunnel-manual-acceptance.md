@@ -104,10 +104,21 @@ Private MCP 凭据写入 shell history、日志或文档。
 
 1. 发起长轮询并确认入口鉴权已通过，再 rotate 或 archive。该 Poll 在原期限内仍可领取，下一次旧 token Poll 返回 401。
 2. 保持一个已领取请求未完成，再轮换或归档；用领取时 token、匹配的 requestId/channel 和 `X-Tunnel-Shard-Token=requestId` 回传，应返回 200。用新 token 或错误 Tunnel/绑定回传应为 404。
-3. 检查 PostgreSQL 事务一致性；Response 不读取数据库，管理操作不读写 NATS/Redis。合法重复终态不覆盖结果。
+3. 检查 PostgreSQL 事务一致性；Response 不读取数据库，管理操作不读写 NATS/Redis。合法重复终态不覆盖结果；仅原 OMA 的本地完成标记有效期间返回 200，重启后不恢复。
 4. Redis 在线记录按实例独立过期，默认 60 秒；轮换不清空记录，归档在 Console 立即显示离线。Redis 暂不可用时显示 unknown，Poll/Response 仍正常。
 5. 停掉 Connector 后直接发起请求，再在 deadline 前启动，应领取成功；始终不启动则超时。不同亲和声明的 Connector 共享同一 channel，无 Session ID 映射或固定 owner。
 6. 等待请求记录过期；停止验收启动的 Server、Web、Private MCP 和 tunnel-client，清除 shell 敏感变量。使用无状态 MCP fixture；不要求依赖特定进程的旧会话继续工作。
+
+
+### 单次投递与本地完成确认
+
+- 多个 OMA 和 connector 同时工作：请求只领取一次；检查 consumer 的 MaxDeliver=1。模拟 ACK 丢失后不再次交付。
+- 使用两个 channel 并传 limit=1，确认每次返回不超过一条，剩余命令仍能由下次 Poll 领取；传 limit=30 可返回超过旧服务端上限的命令。
+- Poll 已发出的有限拉取必须收束，不能因另一路先返回而丢弃已取命令；正常返回后没有持续预取。
+- MCP HTTP 调用方断开后，已入队命令仍可在 deadline 前被领取；响应因无人等待返回 404。队列过期命令不能执行。
+- 原请求在 OMA A、Poll 在 B、Response 在 C：通知和最终结果回到 A，Request KV 仅有绑定，结果交付不改变 KV revision。
+- 并发重复最终响应不覆盖或重复交付，A 本地标记到期后返回 404；A 退出后旧 Origin 不可达返回 503，不从 KV 恢复结果。
+- 本次不验收新的大响应方案；只验证已取消 Poll 累计大小截断，其他既有单消息和 Response 阈值留待下一轮。
 
 ## 8. 可选的破坏性重置
 
@@ -117,7 +128,7 @@ Private MCP 凭据写入 shell history、日志或文档。
 2. 按本次 `OMA_TUNNEL_ID` 查询并再次确认唯一的 organization、workspace、Tunnel UUID、token version 和
    certificate 行；确认没有把其他环境或历史 Tunnel 纳入范围。
 3. 备份待删除行，按精确内部 Tunnel UUID 和 `brokerKey` 的摘要算法盘点请求 key 和 consumer（新 key 仅由全局 requestId 生成摘要）。命令 subject 只匹配该 Tunnel 的摘要。不要清空共享 NATS stream、KV bucket 或整个账号。
-4. 获得明确确认后，才按已盘点的范围清理测试资源。请求和命令优先等待 TTL；旧版本遗留 Control KV 的退役应遵循[后端升级步骤](../design/be/mcp-tunnels.md#升级与旧资源退役)。Certificate 是独立资源，另行确认是否需要删除。
+4. 获得明确确认后，才按已盘点的范围清理测试资源。请求和命令优先等待 TTL。Certificate 是独立资源，另行确认是否需要删除。
 5. 删除后复核目标 PostgreSQL 数据及精确 NATS 状态，确认其他 Tunnel、Agent、Environment 和 Session 仍然存在且可读。
 
 ## 9. 自动化验收
@@ -214,3 +225,41 @@ go test ./internal/tunnels -run '^TestConnector' -count=1 -v
 - 前端 Tunnel 功能 24 项、Agent 的 Tunnel 相关用例 6 项通过；命名、`just web-format-check` 与 `bun run build` 通过。
 - 全量 Go 测试未全绿：`TestCodeSessionAskUserQuestionUsesCustomToolResult` 缺少 `session.status_idle`，`TestTranscriptArchiveRestoreAfterBlobGC` 的清理计数为 3 而非 0；两项均在未修改的基线 `ada53ffb409af0a508b063a5f0c97efab5b5301a` 临时副本中复现，未扩大本次范围修改它们。
 - 整个大型 Agent 页面 Bun 套件曾因 Bun 1.3.14 segmentation fault 中止；改为独立运行上述 Tunnel 相关用例后通过，不将大型套件标记为通过。
+
+### 2026-09-22 Request KV 简化的本地验证记录
+
+- Tunnel package 全部普通测试以及 `go test -race ./internal/tunnels -count=1` 通过。覆盖不可覆盖绑定、ACK 失败和丢失后不重投、跨 OMA 响应、本地取消、重复响应、Origin 丢失、通知背压、客户端 limit、有限拉取收尾和交付前过期。
+- 未修改的 tunnel-client v0.0.14 通过 HTTP JSON、HTTP SSE、stdio、HTTP v2 转发；独立 Redis 8 通过 presence 回归。上述用例也随竞态测试运行；本轮未执行真实模型和 Managed Agent Sandbox 验收。
+- `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files` 与 `git diff --check` 通过。本轮没有前端、Mapper 或 PostgreSQL schema 变更。
+- 最终 `just test` 使用独立 PostgreSQL 17 的全新测试库运行，所有 `internal/` package 通过，但 `tests` package 有两项失败，不能标记全量测试通过：
+  - `TestCodeSessionAskUserQuestionUsesCustomToolResult` 缺少 `session.status_idle`。在未修改的基线 `ca41d7afd7f627059866e6b2f360386f7a84115b` 临时源码副本中，单项和完整 `tests` package 均复现。
+  - `TestSandboxLifecycleDurableScheduleDispatchesReclaim` 等待 15 秒未收到回收事件。本轮全量运行失败，但修改前后单项运行均通过，基线完整 `tests` package 也通过该项；原因尚未确认，不将单项通过等同于全量通过，也不据此宣称已排除回归。
+- 基线完整 `tests` package 另出现 `TestTranscriptArchiveRestoreAfterBlobGC` 清理计数失败；最终变更代码的全新库运行通过该项。保留测试隔离与时序问题的排查范围，不修改无关模块。
+- 已复核投递、鉴权绑定、期限、重复响应与缓冲释放边界；Response 大小方案仍留待下一项讨论。本轮不提交、推送或部署。MCP Tunnel 尚未正式上线，直接调整实现并沿用原有 NATS 资源名称，无旧资源迁移或退役要求。
+
+## 超过 NATS 上限的正文验收
+
+默认配置：`tunnel.max_stored_requests=256`、`tunnel.max_body_bytes=16777216`。每节点 Tunnel 存储预算 515 MiB，三副本约 1.51 GiB；Worker Stream 的预算不变。不要为通过验收提高 NATS `max_payload` 或存储容量。
+
+1. 先测失败：16 MiB+1 正文、对象不存在、长度/摘要不符、对象上传/读取失败、清理任务登记失败；错误沿用当前合同，不重投。错误 Response 绑定不能上传对象。
+2. 检查编码后完整 NATS 消息（包含命令去重 header）在上限前、恰好达到上限和超过上限的行为。前两者不访问存储，后者只发布引用，接收方恢复完整正文。
+3. 两个 OMA 实例分别领取和接收 Response；验证 16 MiB 正文完整性、小/大 SSE 通知交错顺序与最终结果，以及合法重复响应不再次交付。
+4. 在独立 PostgreSQL、版本化 S3 bucket 和官方 tunnel-client v0.0.14 下运行：
+
+```sh
+TEST_TUNNEL_PAYLOAD_DATABASE_URL=postgresql://postgres:payload-test@127.0.0.1:55439/tunnel_payload \
+TEST_TUNNEL_PAYLOAD_S3_ENDPOINT=http://127.0.0.1:59009 \
+TEST_TUNNEL_CLIENT_BINARY=/absolute/path/to/tunnel-client \
+go test ./internal/tunnels -run 'TestTunnelPayloadRealStorageAndClient|TestOfficialTunnelClientIntegration' -count=1 -v
+```
+
+此专用测试要求 S3 测试凭据 `payload-test` / `payload-test-secret`，使用独立 `tunnel-payload-test` bucket。不要指向业务环境。它验证 3 MiB 请求、响应及 SSE 通知，沿用测试凭据查询 fixture；清理登记使用真实 PostgreSQL，测试会验证清理不会提前执行，再主动提前测试任务并检查所有对象版本消失。生产清理仍按原 deadline 加 5 分钟调度。
+
+`TestTunnelReducedStorageBudget` 使用每节点 600 MiB 的独立三副本 JetStream 验证新 Tunnel 预算可初始化、旧预算被拒绝。它仅验证 Tunnel，不代表完整应用可在 600 MiB 下运行。测试和验收结束后停止自行启动的 PostgreSQL、S3、Redis 与 connector 进程。
+
+### 2026-09-23 大报文实现验证记录
+
+- 真实 PostgreSQL、版本化 S3 与未修改的 tunnel-client v0.0.14：3 MiB 请求、JSON 响应、SSE 通知/最终响应通过；对象清理未提前执行，提前测试任务后所有版本和删除标记均消失。既有 HTTP JSON、HTTP SSE、stdio、server-info v2 客户端回归通过。
+- Tunnel/config 定向测试与 Tunnel race 检查通过，覆盖 16 MiB 正文、NATS 完整消息边界、跨实例、读取失败、过期重复响应、三节点每节点 600 MiB 的预算准入。
+- `just test` 的全部 internal 包通过；`tests` 仅 `TestCodeSessionAskUserQuestionUsesCustomToolResult` 因缺少 `session.status_idle` 失败。在 `ca41d7a` 基线源码和独立数据库中重新复现相同失败，未修改该功能。
+- `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files` 通过。此次未执行真实 Claude/Managed Agent Sandbox 验收。

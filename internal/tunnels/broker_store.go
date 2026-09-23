@@ -10,29 +10,23 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
 const (
-	commandStreamName    = "OMA_TUNNEL_COMMANDS_V1"
-	commandSubjectPrefix = "oma.tunnel.command.v1."
-	requestBucketName    = "OMA_TUNNEL_REQUESTS_V1"
-	maxBrokerValueBytes  = 2 << 20
-	maxCommandConsumers  = 131072 // Existing global Stream consumer limit.
-	brokerCASAttempts    = 64
+	commandStreamName      = "OMA_TUNNEL_COMMANDS_V1"
+	commandSubjectPrefix   = "oma.tunnel.command.v1."
+	requestBucketName      = "OMA_TUNNEL_REQUESTS_V1"
+	maxBrokerValueBytes    = 2 << 20
+	maxCommandConsumers    = 131072 // Existing global Stream consumer limit.
+	maxRequestBindingBytes = 4096
 )
 
-// brokerStore uses normal stream GET requests, which are served by the stream
-// leader. Missing is still not sufficient evidence to discard a live command.
+// brokerStore reads immutable bindings from the stream leader.
 type brokerStore struct {
 	bucket jetstream.KeyValue
 	name   string
 	stream jetstream.Stream
-}
-
-type storedBrokerValue struct {
-	revision uint64
 }
 
 func openBrokerStore(ctx context.Context, js jetstream.JetStream, name string, maxRecords int64, maxValueBytes int32, ttl time.Duration, replicas int) (*brokerStore, error) {
@@ -42,8 +36,8 @@ func openBrokerStore(ctx context.Context, js jetstream.JetStream, name string, m
 		MaxAge: ttl, MaxMsgSize: maxValueBytes, MaxMsgs: maxRecords,
 		MaxMsgsPerSubject: 1, Discard: jetstream.DiscardNew,
 		AllowRollup: true, DenyDelete: true, AllowDirect: false,
-		// Include storage/header overhead and room for replacing a full record.
-		MaxBytes: 2 * (maxRecords + 1) * (int64(maxValueBytes) + 4096),
+		// Include binding and stream header overhead.
+		MaxBytes: maxRecords * (int64(maxValueBytes) + 4096),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open tunnel KV %s: %w", name, err)
@@ -55,21 +49,21 @@ func openBrokerStore(ctx context.Context, js jetstream.JetStream, name string, m
 	return &brokerStore{bucket: kv, name: name, stream: stream}, nil
 }
 
-func (s *brokerStore) read(ctx context.Context, key string, target any) (storedBrokerValue, error) {
+func (s *brokerStore) read(ctx context.Context, key string, target any) error {
 	msg, err := s.stream.GetLastMsgForSubject(ctx, "$KV."+s.name+"."+key)
 	if errors.Is(err, jetstream.ErrMsgNotFound) {
-		return storedBrokerValue{}, ErrRequestNotFound
+		return ErrRequestNotFound
 	}
 	if err != nil {
-		return storedBrokerValue{}, err
+		return err
 	}
 	if msg.Header.Get("KV-Operation") != "" {
-		return storedBrokerValue{}, ErrRequestNotFound
+		return ErrRequestNotFound
 	}
 	if err := json.Unmarshal(msg.Data, target); err != nil {
-		return storedBrokerValue{}, fmt.Errorf("decode tunnel KV: %w", err)
+		return fmt.Errorf("decode tunnel KV: %w", err)
 	}
-	return storedBrokerValue{revision: msg.Sequence}, nil
+	return nil
 }
 
 func encodeTunnelJSON(value any, limit int) ([]byte, error) {
@@ -79,7 +73,7 @@ func encodeTunnelJSON(value any, limit int) ([]byte, error) {
 	if err := encoder.Encode(value); err != nil {
 		return nil, err
 	}
-	if buffer.Len() > limit {
+	if limit > 0 && buffer.Len() > limit {
 		return nil, ErrPayloadLimit
 	}
 	return buffer.Bytes(), nil
@@ -92,21 +86,6 @@ func brokerKey(parts ...string) string {
 		_, _ = hash.Write([]byte(part))
 	}
 	return hex.EncodeToString(hash.Sum(nil))
-}
-
-func brokerCASConflict(err error) bool {
-	return errors.Is(err, jetstream.ErrKeyExists)
-}
-
-func brokerPause(ctx context.Context, attempt int) error {
-	timer := time.NewTimer(time.Duration(1+attempt%8) * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func brokerCapacityError(err error) error {
@@ -124,21 +103,4 @@ func (s *brokerStore) create(ctx context.Context, key string, value any, limit i
 	}
 	_, err = s.bucket.Create(ctx, key, data)
 	return brokerCapacityError(err)
-}
-
-func (s *brokerStore) update(ctx context.Context, key string, value any, revision uint64, limit int) error {
-	data, err := encodeTunnelJSON(value, limit)
-	if err != nil {
-		return err
-	}
-	_, err = s.bucket.Update(ctx, key, data, revision)
-	return err
-}
-
-func publishBrokerSignal(connection *nats.Conn, subject, key string) {
-	// The durable record is authoritative; this signal only accelerates reads.
-	data, err := json.Marshal(responseEnvelope{Key: key})
-	if err == nil {
-		_ = connection.Publish(subject, data)
-	}
 }

@@ -35,7 +35,7 @@ func runClaudeTransportCase(t *testing.T, transport string) {
 	for _, server := range servers {
 		urls = append(urls, server.ClientURL())
 	}
-	broker, err := NewBroker(t.Context(), connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig())
+	broker, err := NewBroker(t.Context(), connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

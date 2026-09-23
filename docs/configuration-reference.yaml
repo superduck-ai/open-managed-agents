@@ -47,11 +47,15 @@ tunnel:
   poll_timeout: 30s
   request_timeout: 2m
   presence_ttl: 60s
+  # Local completion receipts expire at the request deadline plus this TTL.
+  # Immutable bindings live for request_timeout + tombstone_ttl after creation.
   tombstone_ttl: 5m
-  # Global slots include queued, executing, retained terminal records.
-  # Each slot reserves storage for a maximum-sized result; increase deliberately.
-  max_stored_requests: 4096
-  max_body_bytes: 1048576
+  # Separate global message limits for the command queue and response bindings.
+  # Bindings are immutable (up to 4 KiB); response bodies are not stored in KV.
+  # Default Tunnel budget: 513 MiB commands + 2 MiB bindings per node (R3).
+  max_stored_requests: 256
+  # Only NATS envelopes exceeding 2 MiB offload their bodies; no 32 KiB threshold.
+  max_body_bytes: 16777216
   max_header_bytes: 32768
   max_header_value_bytes: 8192
 

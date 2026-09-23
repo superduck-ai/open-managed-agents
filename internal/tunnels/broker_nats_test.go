@@ -1,12 +1,9 @@
 package tunnels
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,192 +15,12 @@ import (
 )
 
 func TestNATSBrokerRejectsMissingJetStreamAndSmallPayload(t *testing.T) {
-	if _, err := NewBroker(t.Context(), nil, brokerTestConfig()); err == nil {
+	if _, err := NewBroker(t.Context(), nil, brokerTestConfig(), nil); err == nil {
 		t.Fatal("accepted nil connection")
 	}
 	srv := startTunnelNATS(t, server.Options{MaxPayload: 1 << 20})
 	if _, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1); err == nil {
 		t.Fatal("accepted insufficient max_payload")
-	}
-}
-
-func TestNATSBrokerCapacityReservesLargestTerminal(t *testing.T) {
-	cfg := brokerTestConfig()
-	cfg.MaxStoredRequests = 2
-	b := testNATSBroker(t, cfg)
-
-	for _, id := range []string{"first", "second"} {
-		if err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand(id)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand("overflow")); !errors.Is(err, ErrQueueLimit) {
-		t.Fatalf("capacity error = %v", err)
-	}
-	commands := pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 2)
-	if len(commands) == 1 {
-		commands = append(commands, pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1)...)
-	}
-	if len(commands) != 2 {
-		t.Fatalf("got %d commands", len(commands))
-	}
-	prefix, suffix := `{"jsonrpc":"2.0","id":1,"result":{"text":"`, `"}}`
-	large := json.RawMessage(prefix + strings.Repeat("x", int(cfg.MaxBodyBytes)-len(prefix)-len(suffix)) + suffix)
-	for _, command := range commands {
-		response := testTerminalResponse(command.RequestID)
-		response.JSONResponse = large
-		if err := b.SubmitResponse(t.Context(), "tunnel", testTokenHash(), response); err != nil {
-			t.Fatalf("accepted request lost terminal capacity: %v", err)
-		}
-	}
-}
-
-func TestNATSBrokerRejectsWrongBindingsAndCanceledResults(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-	channels := []ChannelDeclaration{{Name: "main"}}
-
-	command := testQueuedCommand("binding")
-	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
-		t.Fatal(err)
-	}
-	pollTestCommands(t, b, channels, 1)
-	for _, binding := range []struct {
-		tunnel  string
-		hash    [32]byte
-		channel string
-	}{
-		{"other", testTokenHash(), "main"}, {"tunnel", [32]byte{1}, "main"}, {"tunnel", testTokenHash(), "other"},
-	} {
-		response := testTerminalResponse(command.RequestID)
-		response.Channel = binding.channel
-		if err := b.SubmitResponse(t.Context(), binding.tunnel, binding.hash, response); !errors.Is(err, ErrResponseMismatch) {
-			t.Fatalf("wrong binding accepted: %v", err)
-		}
-	}
-	if err := b.Cancel(t.Context(), "tunnel", command.RequestID); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.SubmitResponse(t.Context(), "tunnel", testTokenHash(), testTerminalResponse(command.RequestID)); !errors.Is(err, ErrRequestCanceled) {
-		t.Fatalf("canceled result accepted: %v", err)
-	}
-}
-
-func TestNATSBrokerCanceledQueueIsNeverDispatched(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-	channels := []ChannelDeclaration{{Name: "main"}}
-
-	command := testQueuedCommand("canceled")
-	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Cancel(t.Context(), "tunnel", command.RequestID); err != nil {
-		t.Fatal(err)
-	}
-	if commands := pollTestCommands(t, b, channels, 1); len(commands) != 0 {
-		t.Fatal("canceled request dispatched")
-	}
-}
-
-func TestNATSBrokerPollSurfacesDeletedConsumer(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-	channels := []ChannelDeclaration{{Name: "main"}}
-	consumers, err := b.pollConsumers(t.Context(), "tunnel", channels)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.commands.DeleteConsumer(t.Context(), consumers[0].CachedInfo().Name); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	if _, err := b.pollCommands(ctx, consumers, "tunnel", testTokenHash(), 1, false); err == nil || errors.Is(err, context.DeadlineExceeded) {
-		t.Fatal("consumer failure reported as an empty poll")
-	}
-}
-
-func TestNATSBrokerRedeliveryNeverDispatchesBoundCommand(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-
-	command := testQueuedCommand("bound")
-	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
-		t.Fatal(err)
-	}
-	record, revision, err := b.readRequest(t.Context(), "tunnel", command.RequestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	record.State, record.TokenHash = "dispatched", testTokenHash()
-	if err := b.requests.update(t.Context(), brokerKey(command.RequestID), record, revision, maxBrokerValueBytes); err != nil {
-		t.Fatal(err)
-	}
-	commands := pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1)
-	if len(commands) != 0 {
-		t.Fatal("bound request was dispatched again")
-	}
-}
-
-func TestNATSBrokerMissingRecordDoesNotDiscardLiveCommand(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-	channels := []ChannelDeclaration{{Name: "main"}}
-
-	command := testQueuedCommand("temporarily-missing")
-	data, err := encodeTunnelJSON(command, maxBrokerValueBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.js.Publish(t.Context(), commandSubject("tunnel", "main"), data); err != nil {
-		t.Fatal(err)
-	}
-	if commands := pollTestCommands(t, b, channels, 1); len(commands) != 0 {
-		t.Fatal("missing request dispatched")
-	}
-	info, err := b.commands.Info(t.Context())
-	if err != nil || info.State.Msgs != 1 {
-		t.Fatalf("live command discarded: %#v, %v", info, err)
-	}
-	record := requestRecord{TunnelUUID: "tunnel", RequestID: command.RequestID, Channel: "main", CommandType: CommandTypeJSONRPC, ExpiresAt: command.ExpiresAt, State: "queued", Origin: b.responseHub.subject}
-	if err := b.requests.create(t.Context(), brokerKey(command.RequestID), record, maxBrokerValueBytes); err != nil {
-		t.Fatal(err)
-	}
-	if commands := pollTestCommands(t, b, channels, 1); len(commands) != 1 {
-		t.Fatalf("restored request not delivered: %d", len(commands))
-	}
-}
-
-func TestNATSBrokerTerminalRecoveryAndOldTokenResponse(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-	channels := []ChannelDeclaration{{Name: "main"}}
-
-	command := testQueuedCommand("terminal")
-	waiter, err := b.subscribeResponse(t.Context(), "tunnel", command.RequestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer waiter.Close()
-	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", command); err != nil {
-		t.Fatal(err)
-	}
-	commands := pollTestCommands(t, b, channels, 1)
-	if len(commands) != 1 {
-		t.Fatalf("commands = %d", len(commands))
-	}
-	if err := b.responseHub.subscription.Unsubscribe(); err != nil {
-		t.Fatal(err)
-	}
-	response := testTerminalResponse(command.RequestID)
-	for range 2 {
-		if err := b.SubmitResponse(t.Context(), "tunnel", testTokenHash(), response); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := b.Cancel(t.Context(), "tunnel", command.RequestID); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	got, err := waiter.Wait(ctx, nil)
-	if err != nil || string(got.JSONResponse) != string(response.JSONResponse) {
-		t.Fatalf("durable recovery = %+v, %v", got, err)
 	}
 }
 

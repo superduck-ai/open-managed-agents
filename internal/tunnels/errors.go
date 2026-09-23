@@ -10,21 +10,24 @@ import (
 )
 
 var (
-	ErrQueueLimit           = errors.New("tunnels: stored request limit exceeded")
-	ErrPayloadLimit         = errors.New("tunnels: payload limit exceeded")
-	ErrChannelLimit         = errors.New("tunnels: channel limit exceeded")
-	ErrChannelInvalid       = errors.New("tunnels: channel is invalid")
-	ErrRequestNotFound      = errors.New("tunnels: request not found")
-	ErrResponseMismatch     = errors.New("tunnels: response binding mismatch")
-	ErrRequestExpired       = errors.New("tunnels: request expired")
-	ErrRequestCanceled      = errors.New("tunnels: request canceled")
-	ErrBrokerBusy           = errors.New("tunnels: broker is busy")
-	ErrResponseBackpressure = errors.New("tunnels: response buffer is full")
+	errPayloadStorageUnavailable = errors.New("tunnels: payload storage unavailable")
+	errPayloadReferenceInvalid   = errors.New("tunnels: invalid payload reference")
+	errPayloadSizeMismatch       = errors.New("tunnels: payload size mismatch")
+	errPayloadDigestMismatch     = errors.New("tunnels: payload digest mismatch")
+	ErrQueueLimit                = errors.New("tunnels: stored request limit exceeded")
+	ErrPayloadLimit              = errors.New("tunnels: payload limit exceeded")
+	ErrChannelLimit              = errors.New("tunnels: channel limit exceeded")
+	ErrChannelInvalid            = errors.New("tunnels: channel is invalid")
+	ErrRequestNotFound           = errors.New("tunnels: request not found")
+	ErrResponseMismatch          = errors.New("tunnels: response binding mismatch")
+	ErrRequestExpired            = errors.New("tunnels: request expired")
+	ErrResponseGone              = errors.New("tunnels: response waiter unavailable")
+	ErrResponseBackpressure      = errors.New("tunnels: response buffer is full")
 )
 
 func connectorResponseError(err error) error {
 	switch {
-	case errors.Is(err, ErrRequestNotFound), errors.Is(err, ErrResponseMismatch), errors.Is(err, ErrRequestExpired), errors.Is(err, ErrRequestCanceled):
+	case errors.Is(err, ErrRequestNotFound), errors.Is(err, ErrResponseMismatch), errors.Is(err, ErrRequestExpired), errors.Is(err, ErrResponseGone):
 		return connectorRequestNotFound()
 	case errors.Is(err, ErrResponseBackpressure):
 		return apperr.New(apperr.RateLimited, "Tunnel response buffer is full", err)
@@ -74,7 +77,7 @@ func ingressResponseError(err error) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, ErrRequestExpired):
 		return apperr.New(apperr.Timeout, "Tunnel request timed out", err)
-	case errors.Is(err, context.Canceled), errors.Is(err, ErrRequestCanceled):
+	case errors.Is(err, context.Canceled), errors.Is(err, ErrResponseGone):
 		return apperr.New(apperr.Unavailable, "Tunnel request was canceled", err)
 	default:
 		return unavailable("Tunnel broker is unavailable", err)

@@ -25,7 +25,7 @@ func TestTunnelProbePaginationThroughNATS(t *testing.T) {
 	cfg.Tunnel.PublicBaseURL = "https://oma.example"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("tunnel-probe-pages"))
 	t.Cleanup(app.close)
-	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel)
+	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

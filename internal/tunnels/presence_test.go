@@ -32,6 +32,8 @@ func TestPresenceFailureOnlyAffectsDisplay(t *testing.T) {
 	credential := activeConnectorContext()
 	credential.TunnelUUID = "tunnel"
 	id := "req_0123456789abcdefghijklmn"
+	waiter := testResponseWaiter(t, b, testQueuedCommand(id))
+	defer waiter.Close()
 	if err := b.Enqueue(t.Context(), "tunnel", credential.TunnelExternalID, testQueuedCommand(id)); err != nil {
 		t.Fatal(err)
 	}

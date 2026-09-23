@@ -15,12 +15,12 @@ import (
 
 func TestNATSBrokerRejectsInsufficientReplicas(t *testing.T) {
 	srv := startTunnelNATS(t, server.Options{})
-	if _, err := NewBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig()); err == nil {
+	if _, err := NewBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), nil); err == nil {
 		t.Fatal("production broker accepted one node")
 	}
 }
 
-func TestNATSBrokerClusterRecoversCommittedTerminalAfterLeaderLoss(t *testing.T) {
+func TestNATSBrokerClusterKeepsAcceptedResponseAfterLeaderLoss(t *testing.T) {
 	servers := startTunnelNATSCluster(t)
 	urls := make([]string, 0, len(servers))
 	for _, srv := range servers {
@@ -29,7 +29,7 @@ func TestNATSBrokerClusterRecoversCommittedTerminalAfterLeaderLoss(t *testing.T)
 	brokers := make([]*Broker, 2)
 	for i := range brokers {
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		broker, err := NewBroker(ctx, connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig())
+		broker, err := NewBroker(ctx, connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig(), nil)
 		cancel()
 		if err != nil {
 			t.Fatal(err)
@@ -40,7 +40,7 @@ func TestNATSBrokerClusterRecoversCommittedTerminalAfterLeaderLoss(t *testing.T)
 	channels := []ChannelDeclaration{{Name: "main"}}
 
 	command := testQueuedCommand("cluster-recovery")
-	waiter, err := brokers[0].subscribeResponse(t.Context(), "tunnel", command.RequestID)
+	waiter, err := brokers[0].subscribeResponse(t.Context(), command.RequestID, command.ExpiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +51,6 @@ func TestNATSBrokerClusterRecoversCommittedTerminalAfterLeaderLoss(t *testing.T)
 	commands := pollTestCommands(t, brokers[1], channels, 1)
 	if len(commands) != 1 {
 		t.Fatal("command was not dispatched")
-	}
-	if err := brokers[0].responseHub.subscription.Unsubscribe(); err != nil {
-		t.Fatal(err)
 	}
 	if err := brokers[1].SubmitResponse(t.Context(), "tunnel", testTokenHash(), testTerminalResponse(command.RequestID)); err != nil {
 		t.Fatal(err)
@@ -100,6 +97,11 @@ func TestNATSBrokerClusterRecoversCommittedTerminalAfterLeaderLoss(t *testing.T)
 
 func startTunnelNATSCluster(t *testing.T) []*server.Server {
 	t.Helper()
+	return startTunnelNATSClusterWithStorage(t, 0)
+}
+
+func startTunnelNATSClusterWithStorage(t *testing.T, maxStore int64) []*server.Server {
+	t.Helper()
 	ports := make([]int, 3)
 	for i := range ports {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -124,7 +126,7 @@ func startTunnelNATSCluster(t *testing.T) []*server.Server {
 			}
 			routes = append(routes, route)
 		}
-		servers = append(servers, startTunnelNATS(t, server.Options{ServerName: "tunnel-test-" + strconv.Itoa(i),
+		servers = append(servers, startTunnelNATS(t, server.Options{JetStreamMaxStore: maxStore, ServerName: "tunnel-test-" + strconv.Itoa(i),
 			Cluster: server.ClusterOpts{Name: "tunnel-test", Host: "127.0.0.1", Port: ports[i]}, Routes: routes}))
 	}
 	deadline := time.Now().Add(10 * time.Second)

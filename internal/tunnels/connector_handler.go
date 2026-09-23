@@ -26,7 +26,6 @@ const (
 	serverInfoHeader        = "X-Tunnel-MCP-Server-Info"
 	shardTokenHeader        = "X-Tunnel-Shard-Token"
 	defaultPollLimit        = 25
-	maxPollLimit            = 25
 	maxConnectorInstanceID  = 128
 )
 
@@ -165,6 +164,9 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 	for _, command := range commands {
 		if !command.expiresAt.IsZero() {
 			command.ResponseTimeout = time.Until(command.expiresAt)
+			if command.ResponseTimeout <= 0 {
+				continue
+			}
 		}
 		wire, err := command.MarshalWireJSON()
 		if err != nil {
@@ -172,7 +174,11 @@ func (h *ConnectorHandler) poll(w http.ResponseWriter, r *http.Request) error {
 		}
 		wireCommands = append(wireCommands, wire)
 	}
-	data, err := encodeTunnelJSON(polledCommandEnvelope{Commands: wireCommands}, maxBrokerValueBytes+4096)
+	if len(wireCommands) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	data, err := encodeTunnelJSON(polledCommandEnvelope{Commands: wireCommands}, 0)
 	if err != nil {
 		return internalError("Could not encode tunnel commands", err)
 	}
@@ -188,7 +194,7 @@ func (h *ConnectorHandler) postResponse(w http.ResponseWriter, r *http.Request) 
 		return invalidConnectorCredential()
 	}
 	tokenHash := sha256.Sum256([]byte(token))
-	response, err := httpapi.DecodeObjectBodyAs[TunnelResponse](w, r, maxBrokerValueBytes)
+	response, err := httpapi.DecodeObjectBodyAs[TunnelResponse](w, r, h.cfg.MaxBodyBytes+6*h.cfg.MaxHeaderBytes+16384)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -233,8 +239,8 @@ func (h *ConnectorHandler) pollOptions(r *http.Request) (int, time.Duration, err
 	limit := defaultPollLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > maxPollLimit {
-			return 0, 0, errors.New("limit must be between 1 and 25")
+		if err != nil || parsed < 1 {
+			return 0, 0, errors.New("limit must be a positive integer")
 		}
 		limit = parsed
 	}

@@ -45,13 +45,17 @@ type channelDeclarationInput struct {
 }
 
 type queuedCommand struct {
-	RequestID   string          `json:"request_id"`
-	CommandType CommandType     `json:"command_type"`
-	Channel     string          `json:"channel"`
-	CreatedAt   time.Time       `json:"created_at"`
-	Headers     http.Header     `json:"headers"`
-	JSONRPC     json.RawMessage `json:"jsonrpc,omitempty"`
-	ExpiresAt   time.Time       `json:"expires_at"`
+	Scope       payloadScope      `json:"scope"`
+	PayloadRef  *payloadReference `json:"payload_ref,omitempty"`
+	TunnelID    string            `json:"tunnel_id"`
+	Origin      string            `json:"origin"`
+	RequestID   string            `json:"request_id"`
+	CommandType CommandType       `json:"command_type"`
+	Channel     string            `json:"channel"`
+	CreatedAt   time.Time         `json:"created_at"`
+	Headers     http.Header       `json:"headers"`
+	JSONRPC     json.RawMessage   `json:"jsonrpc,omitempty"`
+	ExpiresAt   time.Time         `json:"expires_at"`
 }
 
 type ClaimedCommand struct {
@@ -141,7 +145,7 @@ func (command ClaimedCommand) MarshalWireJSON() (json.RawMessage, error) {
 		CreatedAt: command.CreatedAt, Headers: command.Headers,
 		ResponseTimeout: &timeout, JSONRPC: command.JSONRPC,
 	}
-	data, err := encodeTunnelJSON(value, maxBrokerValueBytes)
+	data, err := encodeTunnelJSON(value, 0)
 	if err != nil {
 		return nil, fmt.Errorf("encode polled tunnel command: %w", err)
 	}

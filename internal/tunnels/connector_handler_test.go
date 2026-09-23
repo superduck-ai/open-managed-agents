@@ -68,6 +68,8 @@ func TestConnectorResponseBodyLimitExcludesWireEnvelope(t *testing.T) {
 	h := &ConnectorHandler{cfg: b.cfg, broker: b, db: connectorMetadataDatabase{context: credential}}
 
 	id := "req_0123456789abcdefghijklmn"
+	waiter := testResponseWaiter(t, b, testQueuedCommand(id))
+	defer waiter.Close()
 	if err := b.Enqueue(t.Context(), "tunnel", credential.TunnelExternalID, testQueuedCommand(id)); err != nil {
 		t.Fatal(err)
 	}
@@ -261,4 +263,74 @@ func connectorMetadataRequest(token string) *http.Request {
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func TestConnectorPollReturnsWholeEnvelopeWithoutBatchByteLimit(t *testing.T) {
+	cfg := brokerTestConfig()
+	cfg.MaxBodyBytes = 16 << 20
+	b := testNATSBroker(t, cfg)
+	credential := activeConnectorContext()
+	credential.TunnelUUID = "tunnel"
+	for _, id := range []string{"large-a", "large-b"} {
+		command := testQueuedCommand(id)
+		command.JSONRPC = json.RawMessage(`{"text":"` + strings.Repeat("<x>", 400*1024) + `"}`)
+		if err := b.Enqueue(t.Context(), "tunnel", credential.TunnelExternalID, command); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &ConnectorHandler{cfg: b.cfg, broker: b, db: connectorMetadataDatabase{context: credential}}
+	w := httptest.NewRecorder()
+	if err := h.poll(w, connectorMetadataRequest("valid-token")); err != nil {
+		t.Fatal(err)
+	}
+	var envelope polledCommandEnvelope
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || len(envelope.Commands) != 2 || w.Body.Len() <= maxBrokerValueBytes {
+		t.Fatalf("status=%d commands=%d bytes=%d", w.Code, len(envelope.Commands), w.Body.Len())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte(`\u003c`)) {
+		t.Fatal("batch encoding unnecessarily inflated the body")
+	}
+}
+
+func TestConnectorPollDoesNotReturnCommandsExpiredDuringRound(t *testing.T) {
+	b := testNATSBroker(t, brokerTestConfig())
+	credential := activeConnectorContext()
+	credential.TunnelUUID = "tunnel"
+	h := &ConnectorHandler{cfg: b.cfg, broker: b, db: connectorMetadataDatabase{context: credential}}
+	request := connectorMetadataRequest("valid-token")
+	request.Header.Set(serverInfoHeader, `{"version":1,"channels":[{"name":"main"},{"name":"idle"}]}`)
+	pulls := observePollPulls(t, b)
+	response := httptest.NewRecorder()
+	done := make(chan error, 1)
+	go func() { done <- h.poll(response, request) }()
+	// Wait for both bounded long pulls, after the initial nonblocking scan.
+	for seen := 0; seen < 2; {
+		msg, err := pulls.NextMsg(time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var options struct {
+			NoWait bool `json:"no_wait"`
+		}
+		if err := json.Unmarshal(msg.Data, &options); err != nil {
+			t.Fatal(err)
+		}
+		if !options.NoWait {
+			seen++
+		}
+	}
+	command := testQueuedCommand("expires-before-http")
+	command.ExpiresAt = time.Now().Add(30 * time.Millisecond)
+	if err := b.Enqueue(t.Context(), "tunnel", credential.TunnelExternalID, command); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("expired command delivered: status=%d", response.Code)
+	}
 }

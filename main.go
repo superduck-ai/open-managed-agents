@@ -104,11 +104,6 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open worker event broker: %w", err)
 	}
 	logger.Info("nats messaging ready", "jetstream", true)
-	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel)
-	if err != nil {
-		return fmt.Errorf("open tunnel broker: %w", err)
-	}
-	defer tunnelBroker.Close()
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
@@ -121,6 +116,12 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
+	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore))
+	if err != nil {
+		return fmt.Errorf("open tunnel broker: %w", err)
+	}
+	defer tunnelBroker.Close()
+
 	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
 	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)

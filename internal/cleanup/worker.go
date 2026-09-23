@@ -85,7 +85,7 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 			continue
 		}
 
-		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{AllVersions: job.ResourceType == "event_payload" || job.ResourceType == "transcript_archive"}); err != nil {
+		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{AllVersions: job.ResourceType == "event_payload" || job.ResourceType == "transcript_archive" || job.ResourceType == "tunnel_payload"}); err != nil {
 			delay := retryDelay(job.Attempts + 1)
 			if markErr := w.database.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s retry: %w", job.ExternalID, markErr))

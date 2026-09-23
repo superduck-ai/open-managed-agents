@@ -84,6 +84,8 @@ func TestConnectorAuthorizedLongPollSurvivesRevocation(t *testing.T) {
 			<-database.entered
 			database.revoked.Store(true)
 			command := testQueuedCommand("req_0123456789abcdefghijklmn")
+			waiter := testResponseWaiter(t, b, command)
+			defer waiter.Close()
 			if err := b.Enqueue(t.Context(), "tunnel", credential.TunnelExternalID, command); err != nil {
 				t.Fatal(err)
 			}
@@ -113,7 +115,10 @@ func TestConnectorResponseUsesOnlyRequestBinding(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	tunnelID := activeConnectorContext().TunnelExternalID
 	id := "req_0123456789abcdefghijklmn"
-	if err := b.Enqueue(t.Context(), "tunnel", tunnelID, testQueuedCommand(id)); err != nil {
+	command := testQueuedCommand(id)
+	waiter := testResponseWaiter(t, b, command)
+	defer waiter.Close()
+	if err := b.Enqueue(t.Context(), "tunnel", tunnelID, command); err != nil {
 		t.Fatal(err)
 	}
 	h := &ConnectorHandler{cfg: b.cfg, broker: b} // A DB lookup would panic.
@@ -142,8 +147,8 @@ func TestConnectorResponseUsesOnlyRequestBinding(t *testing.T) {
 		}
 		response.JSONResponse = json.RawMessage(`{"result":"must not overwrite"}`)
 	}
-	record, _, err := b.readRequest(t.Context(), "tunnel", id)
-	if err != nil || bytes.Equal(record.Response.JSONResponse, response.JSONResponse) {
+	result, err := waiter.Wait(t.Context(), nil)
+	if err != nil || bytes.Equal(result.JSONResponse, response.JSONResponse) {
 		t.Fatalf("duplicate replaced terminal result: %v", err)
 	}
 }
@@ -195,21 +200,21 @@ func TestConnectorDeclarationsShareConsumer(t *testing.T) {
 	}
 }
 
-func TestConnectorRejectsCanceledAndExpiredResponses(t *testing.T) {
+func TestConnectorRejectsGoneAndExpiredResponses(t *testing.T) {
 	for _, canceled := range []bool{true, false} {
-		t.Run(map[bool]string{true: "canceled", false: "expired"}[canceled], func(t *testing.T) {
+		t.Run(map[bool]string{true: "gone", false: "expired"}[canceled], func(t *testing.T) {
 			b := testNATSBroker(t, brokerTestConfig())
 			id := "req_0123456789abcdefghijklmn"
 			tunnelID := activeConnectorContext().TunnelExternalID
 			command := testQueuedCommand(id)
+			waiter := testResponseWaiter(t, b, command)
+			defer waiter.Close()
 			if err := b.Enqueue(t.Context(), "tunnel", tunnelID, command); err != nil {
 				t.Fatal(err)
 			}
 			pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1)
 			if canceled {
-				if err := b.Cancel(t.Context(), "tunnel", id); err != nil {
-					t.Fatal(err)
-				}
+				waiter.Close()
 			} else {
 				b.now = func() time.Time { return command.ExpiresAt.Add(time.Second) }
 			}
@@ -230,5 +235,33 @@ func TestIngressWithoutConnectorWaitsUntilDeadline(t *testing.T) {
 	assertTunnelErrorKind(t, err, apperr.Timeout)
 	if time.Since(started) < cfg.RequestTimeout {
 		t.Fatal("offline request failed before its deadline")
+	}
+}
+
+func TestIngressDisconnectOnlyClosesLocalWaiter(t *testing.T) {
+	b := testNATSBroker(t, brokerTestConfig())
+	h := &IngressHandler{cfg: b.cfg, broker: b}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)).WithContext(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- h.forwardTunnel(httptest.NewRecorder(), r, db.MCPTunnel{UUID: "tunnel", ExternalID: "tunnel"}, "main", CommandTypeJSONRPC)
+	}()
+	waitPollCondition(t, func() bool { info, err := b.commands.Info(t.Context()); return err == nil && info.State.Msgs == 1 })
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("disconnect did not end waiting")
+	}
+	info, err := b.requests.stream.Info(t.Context())
+	if err != nil || info.State.Msgs != 0 {
+		t.Fatalf("disconnect wrote a request state: %+v %v", info, err)
+	}
+	commands := pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1)
+	if len(commands) != 1 {
+		t.Fatal("disconnected caller's queued command was canceled")
+	}
+	if err := b.SubmitResponse(t.Context(), "tunnel", testTokenHash(), testTerminalResponse(commands[0].RequestID)); !errors.Is(err, ErrResponseGone) {
+		t.Fatalf("late response = %v", err)
 	}
 }

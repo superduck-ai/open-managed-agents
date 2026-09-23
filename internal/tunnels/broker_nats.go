@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -25,10 +25,16 @@ type Broker struct {
 	cfg         config.TunnelConfig
 	now         func() time.Time
 	responseHub *responseHub
+	payloads    *PayloadStore
+	pollCursor  atomic.Uint64
 }
 
-func NewBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig) (*Broker, error) {
-	return newBroker(ctx, connection, cfg, 3)
+func NewBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, payloads *PayloadStore) (*Broker, error) {
+	b, err := newBroker(ctx, connection, cfg, 3)
+	if err == nil {
+		b.payloads = payloads
+	}
+	return b, err
 }
 
 func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, replicas int) (*Broker, error) {
@@ -41,10 +47,9 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 	if cfg.MaxStoredRequests <= 0 || cfg.RequestTimeout <= 0 || cfg.TombstoneTTL <= 0 {
 		return nil, fmt.Errorf("invalid tunnel broker capacity or retention")
 	}
-	// Raw JSON stays unescaped; header strings can expand sixfold in JSON.
-	// Reserve metadata and transport headers before admitting any execution.
-	if cfg.MaxBodyBytes > maxBrokerValueBytes-16384 || cfg.MaxHeaderBytes > (maxBrokerValueBytes-16384-cfg.MaxBodyBytes)/6 {
-		return nil, fmt.Errorf("tunnel body and header limits exceed the 2 MiB broker envelope budget")
+	// Body limits are independent of NATS: oversized bodies use object references.
+	if cfg.MaxBodyBytes <= 0 || cfg.MaxHeaderBytes <= 0 || cfg.MaxHeaderBytes > (maxBrokerValueBytes-16384)/6 {
+		return nil, fmt.Errorf("invalid tunnel body or header limits")
 	}
 	js, err := jetstream.New(connection)
 	if err != nil {
@@ -53,7 +58,7 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 	commands, err := js.CreateStream(ctx, jetstream.StreamConfig{
 		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
 		Storage: jetstream.FileStorage, Replicas: replicas, Retention: jetstream.WorkQueuePolicy,
-		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout,
+		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: int64(cfg.MaxStoredRequests),
 		MaxBytes:   int64(cfg.MaxStoredRequests) * (maxBrokerValueBytes + 4096),
 		MaxMsgSize: maxBrokerValueBytes, MaxConsumers: maxCommandConsumers,
 		Duplicates: cfg.RequestTimeout,
@@ -61,7 +66,7 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 	if err != nil {
 		return nil, fmt.Errorf("open tunnel command stream: %w", err)
 	}
-	requests, err := openBrokerStore(ctx, js, requestBucketName, int64(cfg.MaxStoredRequests), maxBrokerValueBytes, brokerRequestRetention(cfg.RequestTimeout, cfg.TombstoneTTL), replicas)
+	requests, err := openBrokerStore(ctx, js, requestBucketName, int64(cfg.MaxStoredRequests), maxRequestBindingBytes, brokerRequestRetention(cfg.RequestTimeout, cfg.TombstoneTTL), replicas)
 	if err != nil {
 		return nil, err
 	}
@@ -85,17 +90,16 @@ func (b *Broker) Ping(ctx context.Context) error {
 	return err
 }
 
+// requestRecord is an immutable response binding, created only before delivery.
+// No execution state or response body is persisted.
 type requestRecord struct {
+	Scope       payloadScope      `json:"scope"`
 	TunnelID    string            `json:"tunnel_id"`
 	TokenHash   [sha256.Size]byte `json:"token_hash"`
-	TunnelUUID  string            `json:"tunnel_uuid"`
-	RequestID   string            `json:"request_id"`
 	Channel     string            `json:"channel"`
 	CommandType CommandType       `json:"command_type"`
 	ExpiresAt   time.Time         `json:"expires_at"`
-	State       string            `json:"state"`
 	Origin      string            `json:"origin"`
-	Response    *TunnelResponse   `json:"response,omitempty"`
 }
 
 func (b *Broker) Enqueue(ctx context.Context, tunnelUUID, tunnelID string, command queuedCommand) error {
@@ -108,132 +112,44 @@ func (b *Broker) Enqueue(ctx context.Context, tunnelUUID, tunnelID string, comma
 	if !b.now().Before(command.ExpiresAt) || command.ExpiresAt.After(b.now().Add(b.cfg.RequestTimeout)) {
 		return ErrRequestExpired
 	}
-	state := requestRecord{TunnelUUID: tunnelUUID, TunnelID: tunnelID, RequestID: command.RequestID, Channel: command.Channel,
-		CommandType: command.CommandType, ExpiresAt: command.ExpiresAt, State: "queued", Origin: b.responseHub.subject}
-	key := brokerKey(command.RequestID)
-	if err := b.requests.create(ctx, key, state, maxBrokerValueBytes); err != nil {
-		// An uncertain create leaves at most an orphan; no command was published.
+	command.TunnelID, command.Origin = tunnelID, b.responseHub.subject
+	data, err := b.encodeCommand(ctx, command)
+	if err != nil {
 		return err
 	}
-	data, err := encodeTunnelJSON(command, maxBrokerValueBytes)
-	if err == nil {
-		_, err = b.js.Publish(ctx, commandSubject(tunnelUUID, command.Channel), data, jetstream.WithMsgID(key))
-	}
-	if err != nil {
-		// Cancellation races dispatch by revision; never overwrite completion.
-		_ = b.Cancel(ctx, tunnelUUID, command.RequestID)
-		return brokerCapacityError(err)
-	}
-	return nil
+	_, err = b.js.PublishMsg(ctx, &nats.Msg{Subject: commandSubject(tunnelUUID, command.Channel), Header: commandHeaders(command.RequestID), Data: data})
+	return brokerCapacityError(err)
 }
 
 func commandSubject(tunnelUUID, channel string) string {
 	return commandSubjectPrefix + brokerKey(tunnelUUID) + "." + channel + ".shared"
 }
 
-func (b *Broker) readRequestByID(ctx context.Context, requestID string) (requestRecord, uint64, error) {
+func (b *Broker) readRequestByID(ctx context.Context, requestID string) (requestRecord, error) {
 	var record requestRecord
-	stored, err := b.requests.read(ctx, brokerKey(requestID), &record)
-	if err != nil {
-		return record, 0, err
-	}
-	if record.RequestID != requestID {
-		return record, 0, ErrResponseMismatch
-	}
-	return record, stored.revision, nil
-}
-
-func (b *Broker) readRequest(ctx context.Context, tunnelUUID, requestID string) (requestRecord, uint64, error) {
-	record, revision, err := b.readRequestByID(ctx, requestID)
-	if err != nil {
-		return record, 0, err
-	}
-	if record.TunnelUUID != tunnelUUID {
-		return record, 0, ErrResponseMismatch
-	}
-	return record, revision, nil
-}
-
-func (b *Broker) GetResponse(ctx context.Context, tunnelUUID, requestID string) (*TunnelResponse, string, error) {
-	record, _, err := b.readRequest(ctx, tunnelUUID, requestID)
-	if err != nil {
-		return nil, "", err
-	}
-	if record.State == "completed" {
-		return record.Response, record.State, nil
-	}
-	if !b.now().Before(record.ExpiresAt) {
-		return nil, "expired", nil
-	}
-	return nil, record.State, nil
-}
-
-func (b *Broker) Cancel(ctx context.Context, tunnelUUID, requestID string) error {
-	for attempt := range brokerCASAttempts {
-		record, revision, err := b.readRequest(ctx, tunnelUUID, requestID)
-		if err != nil {
-			return err
-		}
-		if record.State == "completed" || record.State == "canceled" {
-			return nil
-		}
-		record.State = "canceled"
-		err = b.requests.update(ctx, brokerKey(requestID), record, revision, maxBrokerValueBytes)
-		if brokerCASConflict(err) {
-			if err := brokerPause(ctx, attempt); err != nil {
-				return err
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		publishBrokerSignal(b.connection, record.Origin, brokerKey(record.TunnelUUID, record.RequestID))
-		return nil
-	}
-	return ErrBrokerBusy
+	err := b.requests.read(ctx, brokerKey(requestID), &record)
+	return record, err
 }
 
 func (b *Broker) SubmitResponse(ctx context.Context, tunnelID string, tokenHash [sha256.Size]byte, response TunnelResponse) error {
-	for attempt := range brokerCASAttempts {
-		record, revision, err := b.readRequestByID(ctx, response.RequestID)
-		if err != nil {
-			return err
-		}
-		if err := validateResponseBinding(record, tunnelID, tokenHash, response); err != nil {
-			return err
-		}
-		if record.State == "completed" {
-			return nil
-		}
-		if record.State == "canceled" {
-			return ErrRequestCanceled
-		}
-		if !b.now().Before(record.ExpiresAt) {
-			return ErrRequestExpired
-		}
-		if !response.terminal() {
-			return b.responseHub.forward(ctx, record.Origin, record.TunnelUUID, response)
-		}
-		record.State, record.Response = "completed", &response
-		err = b.requests.update(ctx, brokerKey(response.RequestID), record, revision, maxBrokerValueBytes)
-		if brokerCASConflict(err) {
-			if err := brokerPause(ctx, attempt); err != nil {
-				return err
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		publishBrokerSignal(b.connection, record.Origin, brokerKey(record.TunnelUUID, record.RequestID))
-		return nil
+	record, err := b.readRequestByID(ctx, response.RequestID)
+	if err != nil {
+		return err
 	}
-	return ErrBrokerBusy
+	if err := validateResponseBinding(record, tunnelID, tokenHash, response); err != nil {
+		return err
+	}
+	// The origin alone knows whether an expired request already completed. It
+	// checks its receipt before the deadline, allowing only completed duplicates.
+	envelope, err := b.encodeResponse(ctx, record, response)
+	if err != nil {
+		return err
+	}
+	return b.responseHub.forwardData(ctx, record.Origin, envelope)
 }
 
 func validateResponseBinding(record requestRecord, tunnelID string, tokenHash [sha256.Size]byte, response TunnelResponse) error {
-	if record.TunnelID != tunnelID || subtle.ConstantTimeCompare(record.TokenHash[:], tokenHash[:]) != 1 || record.Channel != response.Channel || record.State == "queued" {
+	if record.TunnelID != tunnelID || subtle.ConstantTimeCompare(record.TokenHash[:], tokenHash[:]) != 1 || record.Channel != response.Channel {
 		return ErrResponseMismatch
 	}
 	valid := false
@@ -259,14 +175,6 @@ func randomOpaqueToken(size int) (string, error) {
 	token := base64.RawURLEncoding.EncodeToString(value)
 	clear(value)
 	return token, nil
-}
-
-func brokerWaitableError(err error) bool {
-	var apiError *jetstream.APIError
-	if errors.As(err, &apiError) && apiError.Code == 503 {
-		return true
-	}
-	return errors.Is(err, ErrRequestNotFound) || errors.Is(err, nats.ErrTimeout) || errors.Is(err, nats.ErrDisconnected) || errors.Is(err, nats.ErrReconnectBufExceeded) || errors.Is(err, nats.ErrNoResponders) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func validateBrokerChannels(channels []ChannelDeclaration) error {

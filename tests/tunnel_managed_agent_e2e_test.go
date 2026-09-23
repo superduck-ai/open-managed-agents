@@ -75,7 +75,7 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 	clearTestLLMProviders(t, app)
 	seedTestLLMProvider(t, app, "Isolated Claude tunnel acceptance", managedTunnelModelProxy(t), os.Getenv("ANTHROPIC_AUTH_TOKEN"), os.Getenv("TEST_CLAUDE_MODEL"))
 	connection := managedTunnelNATS(t)
-	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel)
+	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

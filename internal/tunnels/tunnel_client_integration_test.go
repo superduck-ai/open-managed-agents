@@ -94,7 +94,7 @@ func tunnelHTTPFixture(t *testing.T, b *Broker) (string, string, string) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	credential := activeConnectorContext()
 	credential.TunnelUUID = "tunnel"
-	tunnel := db.MCPTunnel{UUID: "tunnel", ExternalID: credential.TunnelExternalID}
+	tunnel := db.MCPTunnel{UUID: "tunnel", ExternalID: credential.TunnelExternalID, OrganizationUUID: payloadTestScope.OrganizationUUID, WorkspaceUUID: payloadTestScope.WorkspaceUUID}
 	connector := NewConnectorHandler(b.cfg, &db.DB{}, b, nil, logger)
 	connector.db = connectorMetadataDatabase{context: credential, tunnel: tunnel, expectedToken: "valid-token"}
 	ingress := NewIngressHandler(b.cfg, &db.DB{}, b, logger)

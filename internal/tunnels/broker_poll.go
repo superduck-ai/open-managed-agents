@@ -6,30 +6,33 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-const brokerRedeliveryDelay = 100 * time.Millisecond
+const pollRoundWait = 100 * time.Millisecond
 
-type pollDelivery struct {
-	message jetstream.Msg
-	err     error
+type pollResult struct {
+	commands []ClaimedCommand
+	err      error
 }
 
 func (b *Broker) Poll(ctx context.Context, tunnelUUID string, tokenHash [sha256.Size]byte, channels []ChannelDeclaration, limit int, timeout time.Duration) ([]ClaimedCommand, error) {
 	if err := validateBrokerChannels(channels); err != nil {
 		return nil, err
 	}
-	if limit < 1 || limit > maxPollLimit {
+	if limit < 1 {
 		return nil, ErrQueueLimit
 	}
 	consumers, err := b.pollConsumers(ctx, tunnelUUID, channels)
 	if err != nil {
 		return nil, err
 	}
+	// Rotate the first route without retaining per-Tunnel scheduling state.
+	start := int((b.pollCursor.Add(1) - 1) % uint64(len(consumers)))
+	consumers = append(consumers[start:], consumers[:start]...)
 	pollCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -37,14 +40,14 @@ func (b *Broker) Poll(ctx context.Context, tunnelUUID string, tokenHash [sha256.
 		defer cancel()
 	}
 	commands, err := b.pollCommands(pollCtx, consumers, tunnelUUID, tokenHash, limit, timeout <= 0)
-	if len(commands) > 0 {
-		return commands, nil
-	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	if len(commands) > 0 {
+		return commands, nil
+	}
 	if errors.Is(err, context.DeadlineExceeded) && pollCtx.Err() != nil {
-		return []ClaimedCommand{}, nil
+		return nil, nil
 	}
 	return commands, err
 }
@@ -58,9 +61,8 @@ func (b *Broker) pollConsumers(ctx context.Context, tunnelUUID string, channels 
 		if errors.Is(err, jetstream.ErrConsumerNotFound) {
 			consumer, err = b.commands.CreateConsumer(ctx, jetstream.ConsumerConfig{
 				Durable: name, FilterSubject: subject, AckPolicy: jetstream.AckExplicitPolicy,
-				AckWait: 5 * time.Second, MaxAckPending: 32, MaxWaiting: 128,
-				InactiveThreshold: b.cfg.RequestTimeout + time.Minute,
-				MaxRequestBatch:   1, MaxRequestExpires: time.Second,
+				MaxDeliver: 1, AckWait: 5 * time.Second, MaxAckPending: 32, MaxWaiting: 128,
+				InactiveThreshold: b.cfg.RequestTimeout + time.Minute, MaxRequestExpires: time.Second,
 			})
 		}
 		if err != nil {
@@ -71,153 +73,104 @@ func (b *Broker) pollConsumers(ctx context.Context, tunnelUUID string, channels 
 	return consumers, nil
 }
 
-// Each HTTP Poll owns its consumption; durable consumers are shared by route.
 func (b *Broker) pollCommands(ctx context.Context, consumers []jetstream.Consumer, tunnelUUID string, tokenHash [sha256.Size]byte, limit int, noWait bool) ([]ClaimedCommand, error) {
-	pullCtx, cancel := context.WithCancel(ctx)
-	deliveries := make(chan pollDelivery)
-	var workers sync.WaitGroup
+	commands := make([]ClaimedCommand, 0, min(limit, len(consumers)))
+	var firstErr error
 	for _, consumer := range consumers {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			if noWait {
-				fetchAvailablePollMessages(pullCtx, consumer, deliveries)
-			} else {
-				consumePollChannel(pullCtx, consumer, deliveries)
-			}
-		}()
-	}
-	finished := make(chan struct{})
-	// SDK error callbacks may finish after their subscription closes. Keep the
-	// delivery channel open so late callbacks can observe cancellation safely.
-	go func() { workers.Wait(); close(finished) }()
-	// Workers drain after cancellation. Do not delay the HTTP response while
-	// NATS flushes an unsubscribe, especially during a network interruption.
-	defer cancel()
-	commands := make([]ClaimedCommand, 0, limit)
-	batchBytes := 0
-	for len(commands) < limit {
-		delivery, open := nextPollDelivery(ctx, deliveries, finished, len(commands) == 0)
-		if !open {
+		if ctx.Err() != nil {
 			return commands, ctx.Err()
 		}
-		if delivery.err != nil {
-			return commands, delivery.err
-		}
-		messageBytes := len(delivery.message.Data())
-		if len(commands) > 0 && batchBytes+messageBytes > maxBrokerValueBytes {
-			_ = delivery.message.NakWithDelay(brokerRedeliveryDelay)
+		if len(commands) == limit {
 			break
 		}
-		command, err := b.bindPollMessage(ctx, tunnelUUID, tokenHash, delivery.message)
+		// The SDK preallocates proportional to batch size. The stream cannot hold
+		// more than MaxStoredRequests; never allocate an arbitrary client limit.
+		batch, err := consumer.FetchNoWait(min(limit-len(commands), b.cfg.MaxStoredRequests))
+		if err == nil {
+			result := b.collectPollBatch(ctx, tunnelUUID, tokenHash, batch)
+			commands = append(commands, result.commands...)
+			err = result.err
+		}
 		if err != nil {
-			return commands, err
+			firstErr = err
+		}
+	}
+	if len(commands) > 0 || firstErr != nil || noWait {
+		return commands, firstErr
+	}
+	for start := 0; ctx.Err() == nil; {
+		count := min(limit, len(consumers))
+		result := b.pollRound(ctx, consumers, start, count, tunnelUUID, tokenHash)
+		if len(result.commands) > 0 || result.err != nil {
+			return result.commands, result.err
+		}
+		start = (start + count) % len(consumers)
+	}
+	return nil, ctx.Err()
+}
+
+// A finite round reserves one slot per pull before requesting any messages.
+// All pulls settle before returning: no ready delivery is abandoned for a
+// different channel's first result, and no worker starts another pull.
+func (b *Broker) pollRound(ctx context.Context, consumers []jetstream.Consumer, start, count int, tunnelUUID string, tokenHash [sha256.Size]byte) pollResult {
+	wait := pollRoundWait
+	if deadline, ok := ctx.Deadline(); ok {
+		wait = min(wait, time.Until(deadline))
+	}
+	if wait <= 0 {
+		return pollResult{err: context.DeadlineExceeded}
+	}
+	results := make(chan pollResult, count)
+	for i := range count {
+		consumer := consumers[(start+i)%len(consumers)]
+		go func() {
+			batch, err := consumer.Fetch(1, jetstream.FetchMaxWait(wait))
+			if err != nil {
+				results <- pollResult{err: err}
+				return
+			}
+			results <- b.collectPollBatch(ctx, tunnelUUID, tokenHash, batch)
+		}()
+	}
+	var result pollResult
+	for range count {
+		next := <-results
+		result.commands = append(result.commands, next.commands...)
+		if next.err != nil {
+			result.err = next.err
+		}
+	}
+	return result
+}
+
+// Drain the finite SDK batch even on HTTP cancellation, terminating late
+// deliveries instead of leaving a background prefetcher or requesting redelivery.
+func (b *Broker) collectPollBatch(ctx context.Context, tunnelUUID string, tokenHash [sha256.Size]byte, batch jetstream.MessageBatch) pollResult {
+	var result pollResult
+	for message := range batch.Messages() {
+		if err := ctx.Err(); err != nil {
+			_ = message.Term()
+			result.err = err
+			continue
+		}
+		command, err := b.bindPollMessage(ctx, tunnelUUID, tokenHash, message)
+		if err != nil {
+			result.err = err
 		}
 		if command != nil {
-			commands = append(commands, *command)
-			batchBytes += messageBytes
+			result.commands = append(result.commands, *command)
 		}
 	}
-	return commands, nil
-}
-
-func nextPollDelivery(ctx context.Context, deliveries <-chan pollDelivery, finished <-chan struct{}, wait bool) (pollDelivery, bool) {
-	if !wait {
-		// A batch only includes deliveries already ready; never wait to fill it.
-		select {
-		case delivery, open := <-deliveries:
-			return delivery, open
-		default:
-			return pollDelivery{}, false
-		}
+	if err := batch.Error(); err != nil {
+		result.err = err
 	}
-	select {
-	case delivery, open := <-deliveries:
-		return delivery, open
-	case <-ctx.Done():
-		return pollDelivery{}, false
-	case <-finished:
-		return pollDelivery{}, false
+	if ctx.Err() != nil {
+		result.err = ctx.Err()
 	}
-}
-
-func sendPollDelivery(ctx context.Context, deliveries chan<- pollDelivery, delivery pollDelivery) bool {
-	select {
-	case deliveries <- delivery:
-		return true
-	case <-ctx.Done():
-		if delivery.message != nil {
-			_ = delivery.message.NakWithDelay(brokerRedeliveryDelay)
-		}
-		return false
+	if !b.connection.IsConnected() && result.err == nil {
+		result.err = nats.ErrDisconnected
 	}
-}
-
-func consumePollChannel(ctx context.Context, consumer jetstream.Consumer, deliveries chan<- pollDelivery) {
-	// Match the durable consumer's single-message pull and one-second expiry.
-	// The callback hands off its message before the SDK requests another one.
-	consumption, err := consumer.Consume(func(message jetstream.Msg) {
-		sendPollDelivery(ctx, deliveries, pollDelivery{message: message})
-	}, jetstream.PullMaxMessages(1), jetstream.PullExpiry(time.Second),
-		jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
-			sendPollDelivery(ctx, deliveries, pollDelivery{err: err})
-		}))
-	if err != nil {
-		sendPollDelivery(ctx, deliveries, pollDelivery{err: err})
-		return
-	}
-	closed := consumption.Closed()
-	select {
-	case <-ctx.Done():
-		// Drain lets callbacks return any buffered, unbound work via NAK.
-		consumption.Drain()
-		<-closed
-	case <-closed:
-		// A connection can close before the SDK's error callback runs. An
-		// unexpectedly closed consumer must not become an empty successful Poll.
-		sendPollDelivery(ctx, deliveries, pollDelivery{err: jetstream.ErrMsgIteratorClosed})
-	}
-}
-
-func fetchAvailablePollMessages(ctx context.Context, consumer jetstream.Consumer, deliveries chan<- pollDelivery) {
-	for ctx.Err() == nil {
-		message, err := fetchAvailablePollMessage(ctx, consumer)
-		if errors.Is(err, jetstream.ErrNoMessages) {
-			return
-		}
-		if !sendPollDelivery(ctx, deliveries, pollDelivery{message: message, err: err}) || err != nil {
-			return
-		}
-	}
-}
-
-func fetchAvailablePollMessage(ctx context.Context, consumer jetstream.Consumer) (jetstream.Msg, error) {
-	// FetchNoWait asks only for available work; it never waits for a new command.
-	batch, err := consumer.FetchNoWait(1)
-	if err != nil {
-		return nil, err
-	}
-	select {
-	case message, open := <-batch.Messages():
-		if open {
-			return message, nil
-		}
-		if err := batch.Error(); err != nil {
-			return nil, err
-		}
-		return nil, jetstream.ErrNoMessages
-	case <-ctx.Done():
-		// FetchNoWait has no context option. Its SDK timeout bounds this cleanup;
-		// a canceled HTTP request does not have to wait for the network round trip.
-		go releasePollBatch(batch)
-		return nil, ctx.Err()
-	}
-}
-
-func releasePollBatch(batch jetstream.MessageBatch) {
-	for message := range batch.Messages() {
-		_ = message.NakWithDelay(brokerRedeliveryDelay)
-	}
+	return result
 }
 
 func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID string, tokenHash [sha256.Size]byte, message jetstream.Msg) (*ClaimedCommand, error) {
@@ -226,40 +179,32 @@ func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID string, tokenHa
 		_ = message.Term()
 		return nil, fmt.Errorf("decode tunnel command: %w", err)
 	}
-	if message.Subject() != commandSubject(tunnelUUID, command.Channel) {
+	if message.Subject() != commandSubject(tunnelUUID, command.Channel) || command.Origin == "" || command.TunnelID == "" {
 		_ = message.Term()
 		return nil, ErrResponseMismatch
 	}
 	if !b.now().Before(command.ExpiresAt) {
-		return nil, message.DoubleAck(ctx)
+		return nil, message.Term()
 	}
-	record, revision, err := b.readRequest(ctx, tunnelUUID, command.RequestID)
-	if err != nil {
-		_ = message.NakWithDelay(brokerRedeliveryDelay)
-		if errors.Is(err, ErrRequestNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	if record.State != "queued" {
-		return nil, message.DoubleAck(ctx)
-	}
-	if record.Channel != command.Channel || record.CommandType != command.CommandType || !record.ExpiresAt.Equal(command.ExpiresAt) {
+	record := requestRecord{Scope: command.Scope, TunnelID: command.TunnelID, TokenHash: tokenHash, Channel: command.Channel,
+		CommandType: command.CommandType, ExpiresAt: command.ExpiresAt, Origin: command.Origin}
+	if err := b.requests.create(ctx, brokerKey(command.RequestID), record, maxRequestBindingBytes); err != nil {
 		_ = message.Term()
-		return nil, ErrResponseMismatch
-	}
-	record.State, record.TokenHash = "dispatched", tokenHash
-	err = b.requests.update(ctx, brokerKey(command.RequestID), record, revision, maxBrokerValueBytes)
-	if err != nil {
-		_ = message.NakWithDelay(brokerRedeliveryDelay)
-		if brokerCASConflict(err) {
+		if errors.Is(err, jetstream.ErrKeyExists) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	if err := message.DoubleAck(ctx); err != nil {
+	if err := message.Ack(); err != nil {
 		return nil, err
 	}
+	restoreCtx, cancel := context.WithDeadline(ctx, command.ExpiresAt)
+	defer cancel()
+	body, err := b.payloads.restore(restoreCtx, command.Scope, command.RequestID, command.JSONRPC, command.PayloadRef, b.cfg.MaxBodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	command.JSONRPC = body
 	remaining := command.ExpiresAt.Sub(b.now())
 	if remaining <= 0 {
 		return nil, nil

@@ -13,7 +13,7 @@ func TestNATSResponseBackpressureKeepsAcceptedNotifications(t *testing.T) {
 	channels := []ChannelDeclaration{{Name: "main"}}
 
 	command := testQueuedCommand("notifications")
-	waiter, err := b.subscribeResponse(t.Context(), "tunnel", command.RequestID)
+	waiter, err := b.subscribeResponse(t.Context(), command.RequestID, command.ExpiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +46,8 @@ func TestNATSResponseBackpressureKeepsAcceptedNotifications(t *testing.T) {
 	if seen != responseSubscriptionBuffer {
 		t.Fatalf("preserved %d accepted notifications", seen)
 	}
-	if status := b.responseHub.accept(responseEnvelope{Key: waiter.key, Response: &notification}, 100); status != "gone" {
-		t.Fatalf("notification accepted after terminal: %s", status)
+	if status := b.responseHub.accept(responseEnvelope{Key: waiter.key, Response: &notification}, 100); status != "accepted" {
+		t.Fatalf("completed duplicate was not acknowledged: %s", status)
 	}
 	if b.responseHub.bufferedBytes != 0 {
 		t.Fatalf("buffer leaked %d bytes", b.responseHub.bufferedBytes)
@@ -56,7 +56,7 @@ func TestNATSResponseBackpressureKeepsAcceptedNotifications(t *testing.T) {
 
 func TestNATSResponseSlowWriterStillConsumesGlobalBudget(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
-	waiter, err := b.subscribeResponse(t.Context(), "tunnel", "slow")
+	waiter, err := b.subscribeResponse(t.Context(), "slow", time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,10 @@ func TestNATSResponseSlowWriterStillConsumesGlobalBudget(t *testing.T) {
 		t.Fatal(status)
 	}
 	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	go func() { waiter.drain(false, func(TunnelResponse) { close(started); <-release }); close(finished) }()
+	go func() {
+		_ = waiter.drain(t.Context(), func(TunnelResponse) { close(started); <-release })
+		close(finished)
+	}()
 	<-started
 	b.responseHub.mu.Lock()
 	retained := b.responseHub.bufferedBytes

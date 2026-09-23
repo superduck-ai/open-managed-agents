@@ -161,7 +161,7 @@ func TestSessionsAPI(t *testing.T) {
 		if _, err := app.pool.Exec(context.Background(), `update session_events set payload = payload - 'created_at' where external_id = $1`, sentEventID); err != nil {
 			t.Fatalf("remove stored event created_at: %v", err)
 		}
-		events := listSessionEvents(t, app, created.ID, "", defaultTestKey)
+		events := listSessionEvents(t, app, created.ID, "types[]=user.message", defaultTestKey)
 		if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(`"id":"sevt_`)) {
 			t.Fatalf("unexpected listed events: %+v", events)
 		}
@@ -169,8 +169,16 @@ func TestSessionsAPI(t *testing.T) {
 			t.Fatalf("listed event created_at = %q, want %q", listedCreatedAt, sentCreatedAt)
 		}
 		threadEvents := listThreadEvents(t, app, created.ID, thread.ID, defaultTestKey)
-		if len(threadEvents.Data) != 1 {
+		if len(threadEvents.Data) != 3 {
 			t.Fatalf("unexpected thread events: %+v", threadEvents)
+		}
+		// Complete the accepted turn before testing idle-only resource mutations.
+		storedSession := mustSessionRecord(t, app, created.ID)
+		if err := app.db.SetSessionStatus(t.Context(), storedSession.WorkspaceUUID, created.ID, "idle"); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.db.SetSessionThreadStatus(t.Context(), storedSession.WorkspaceUUID, created.ID, thread.ID, "idle"); err != nil {
+			t.Fatal(err)
 		}
 
 		updated := updateSession(t, app, created.ID, `{"title":"updated","metadata":{"case":"","priority":"high"},"agent":{"tools":[],"mcp_servers":[]}}`)
@@ -425,7 +433,14 @@ func TestPlatformWebSessionStream(t *testing.T) {
 		close(lineCh)
 	}()
 
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"hello from web-api stream"}]}]}`, defaultTestKey)
+	workerID := launchLocalCodeSession(t, app, session.ID)
+	epoch := registerCodeSessionWorker(t, app, workerID)
+	worker, err := getCodeSession(app, t.Context(), workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"hello from web-api stream"}]}]}`, defaultTestKey)
+	consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, sent.Data[0], "id"))
 
 	deadline := time.After(5 * time.Second)
 	for {
@@ -481,12 +496,15 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	clearWebhookState(t, app)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionIngressEvents(t, app, codeSessionID, `{"events":[
 		{"type":"assistant","uuid":"assistant-`+eventSuffix+`","message":{"role":"assistant","content":"hello from worker"},"created_at":"2026-06-16T01:00:01Z"},
 		{"type":"result","uuid":"result-`+eventSuffix+`","stop_reason":{"type":"end_turn"},"created_at":"2026-06-16T01:00:02Z"}
 	]}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 
 	events := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
@@ -639,6 +657,7 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
 		{"payload":{"type":"user","uuid":"user-task-echo","message":{"role":"user","content":"duplicate coordinator echo"},"created_at":"2026-06-16T00:59:59Z"}},
@@ -648,6 +667,8 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 		{"payload":{"type":"system","uuid":"system-task-done","subtype":"task_notification","task_id":"taskzh123","tool_use_id":"tool_translate_zh","status":"completed","summary":"Translate to Chinese","usage":{"duration_ms":1234,"total_tokens":456},"created_at":"2026-06-16T01:00:03Z"}},
 		{"payload":{"type":"result","uuid":"result-task","stop_reason":"end_turn","created_at":"2026-06-16T01:00:04Z"}}
 	]}`)
+
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 
 	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
 	var child *sessionThreadAPIResponse
@@ -710,7 +731,7 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	env := createEnvironment(t, app, `{"name":"sessions-managed-agent-activation-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
+	defer cleanupSession(t, app, session.ID)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 
 	if _, err := app.pool.Exec(ctx, `
@@ -844,7 +865,7 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	env := createEnvironment(t, app, `{"name":"sessions-history-activation-rollback-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, sessionResponse.ID)
+	defer cleanupSession(t, app, sessionResponse.ID)
 	codeSessionID := launchLocalCodeSession(t, app, sessionResponse.ID)
 
 	if _, err := app.pool.Exec(ctx, `
@@ -1371,17 +1392,18 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
 		t.Fatalf("retry existing running event projection: %v", err)
 	}
-	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
-		t.Fatalf("public session status after projection retry = %q, want running", got)
+	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "idle" {
+		t.Fatalf("public session status after projection retry = %q, want idle", got)
 	}
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
-	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
-		t.Fatalf("primary thread status after projection retry = %+v, want running", threads.Data)
+	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
+		t.Fatalf("primary thread status after projection retry = %+v, want idle", threads.Data)
 	}
 	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
 	if len(runningEvents.Data) != 1 {
 		t.Fatalf("projection retry produced %d running events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
 	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 	runningDetailsOnlyState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"requires_action_details":{"tool_name":"Bash"}}`)
 	if runningDetailsOnlyState.Worker.WorkerStatus != "running" || !rawMessageIsJSONNull(runningDetailsOnlyState.Worker.RequiresActionDetails) {
 		t.Fatalf("running details-only worker state = %+v, details=%s; want running with cleared details", runningDetailsOnlyState.Worker, runningDetailsOnlyState.Worker.RequiresActionDetails)
@@ -1479,8 +1501,8 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
 	}
 	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
-	if _, ok := idleEvent["stop_reason"]; ok {
-		t.Fatalf("worker session.status_idle unexpectedly contains stop_reason: %#v", idleEvent)
+	if reason, ok := idleEvent["stop_reason"].(map[string]any); !ok || reason["type"] != "end_turn" {
+		t.Fatalf("worker session.status_idle missing end_turn reason: %#v", idleEvent)
 	}
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 	duplicateIdleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
@@ -1547,8 +1569,8 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
-	if len(runningEvents.Data) != 2 {
-		t.Fatalf("second idle-to-running transition produced %d events, want 2: %+v", len(runningEvents.Data), runningEvents.Data)
+	if len(runningEvents.Data) != 3 {
+		t.Fatalf("initial, explicit restart, and final running transitions = %d, want 3", len(runningEvents.Data))
 	}
 }
 
@@ -2109,7 +2131,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
 	defer app.close()
 
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent"}`)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]}]}`)
 	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"sessions-worker-ask-user-question-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
@@ -2158,6 +2180,13 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("send AskUserQuestion custom result status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
+	var submitted sessionEventPageAPIResponse
+	decodeJSON(t, resp.Body, &submitted)
+
+	if sessionInputProcessedAt(t, submitted.Data[0]) != "" {
+		t.Fatal("custom tool result must wait for ACK")
+	}
+
 	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
 	if eventType != "control_response" {
 		t.Fatalf("confirmation event_type = %q, want control_response payload=%s", eventType, payload)
@@ -2182,6 +2211,20 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	if !ok || answers["Color"] != "Blue" {
 		t.Fatalf("confirmation updatedInput.answers = %#v, want Color=Blue; payload=%s", updatedInput["answers"], payload)
 	}
+	inputID := sessionEventStringField(t, submitted.Data[0], "id")
+	if object["id"] != inputID {
+		t.Fatalf("control response lost input ID: %v", object["id"])
+	}
+	codeSession, found, err := app.db.GetCodeSession(t.Context(), codeSessionID)
+	if err != nil || !found {
+		t.Fatalf("code session: %v", err)
+	}
+	consumePublicInput(t, app, codeSession, workerEpoch, inputID)
+	history := listSessionEvents(t, app, session.ID, "types[]=user.custom_tool_result", defaultTestKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
+		t.Fatal("ACK did not process custom tool result")
+	}
+
 }
 
 func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testing.T) {
@@ -3717,6 +3760,16 @@ func archiveSession(t *testing.T, app *testApp, sessionID string) sessionAPIResp
 	var session sessionAPIResponse
 	decodeJSON(t, resp.Body, &session)
 	return session
+}
+
+func cleanupSession(t *testing.T, app *testApp, sessionID string) {
+	t.Helper()
+	// Tests that leave accepted work queued must end it before deleting it.
+	session := mustSessionRecord(t, app, sessionID)
+	if err := app.db.SetSessionStatus(context.Background(), session.WorkspaceUUID, sessionID, "terminated"); err != nil {
+		t.Fatal(err)
+	}
+	deleteSession(t, app, sessionID)
 }
 
 func deleteSession(t *testing.T, app *testApp, sessionID string) {

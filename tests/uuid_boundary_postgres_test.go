@@ -735,12 +735,9 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		WorkspaceUUID:     ids.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		Limit:             10,
-		Cursor: &db.SessionEventPageCursor{
-			CreatedAt: now.Add(-time.Second),
-			UUID:      uuid.NewV4().String(),
-		},
+		Cursor:            &db.SessionEventPageCursor{ExternalID: eventExternalID},
 	})
-	if err != nil || len(listedEvents) != 1 || listedEvents[0].UUID != events[0].UUID {
+	if err != nil || len(listedEvents) != 0 {
 		t.Fatalf("list Session events with typed UUID cursor = (%+v, %v)", listedEvents, err)
 	}
 

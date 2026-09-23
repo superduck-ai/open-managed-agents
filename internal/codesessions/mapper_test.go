@@ -394,7 +394,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *tes
 		t.Fatal("result mapping ok = false, want true")
 	}
 	objects := decodePublicPayloads(t, payloads)
-	wantTypes := []string{"span.model_request_start", "span.model_request_end", "session.status_idle"}
+	wantTypes := []string{"span.model_request_start", "span.model_request_end"}
 	if len(objects) != len(wantTypes) {
 		t.Fatalf("result payload count = %d, want %d: %#v", len(objects), len(wantTypes), objects)
 	}
@@ -423,13 +423,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *tes
 	if objects[1]["model_request_start_id"] != objects[0]["id"] {
 		t.Fatalf("model_request_end model_request_start_id = %#v, want start id %#v", objects[1]["model_request_start_id"], objects[0]["id"])
 	}
-	if objects[2]["result"] != "Done." {
-		t.Fatalf("status idle should preserve result payload: %#v", objects[2])
-	}
-	stopReason, ok := objects[2]["stop_reason"].(map[string]any)
-	if !ok || stopReason["type"] != "end_turn" {
-		t.Fatalf("status idle stop_reason = %#v, want {type:end_turn}", objects[2]["stop_reason"])
-	}
+
 }
 
 func TestPublicPayloadFromWorkerEventNormalizesIdleStopReasonVariants(t *testing.T) {

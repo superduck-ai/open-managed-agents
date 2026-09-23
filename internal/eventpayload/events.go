@@ -6,12 +6,23 @@ import (
 	"errors"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func (s *Store) PreparePublic(ctx context.Context, organizationUUID, workspaceUUID string, events []db.SessionEvent) ([]db.SessionEvent, error) {
 	prepared := append([]db.SessionEvent(nil), events...)
 	for i := range prepared {
 		event := &prepared[i]
+		// Status facts are normalized and compared inside the DB transaction.
+		// Keep their stop reasons inline instead of replacing them with a blob summary.
+		_, sessionStatus := maevents.SessionStatus(event.EventType)
+		_, threadStatus := maevents.ThreadStatus(event.EventType)
+		if threadStatus || (sessionStatus && event.EventType != "session.deleted") {
+			if len(event.Payload) > MaxBytes {
+				return nil, errPayloadTooLarge
+			}
+			continue
+		}
 		summary, toolID, err := Summarize(event.Payload, event.EventType)
 		if err != nil {
 			return nil, err
@@ -130,7 +141,7 @@ func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEven
 		}
 	}
 	for i := range created {
-		if payload, ok := payloads[created[i].ExternalID]; ok {
+		if payload, ok := payloads[created[i].ExternalID]; ok && created[i].PayloadBlobUUID != nil {
 			created[i].Payload = payload
 		}
 	}

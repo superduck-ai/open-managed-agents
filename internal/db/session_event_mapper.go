@@ -20,7 +20,7 @@ type sessionEventRow struct {
 	Payload           []byte     `db:"payload"`
 	PayloadBlobUUID   *string    `db:"payload_blob_uuid"`
 	ToolUseID         *string    `db:"tool_use_id"`
-	ProcessedAt       time.Time  `db:"processed_at"`
+	ProcessedAt       *time.Time `db:"processed_at"`
 	CreatedAt         time.Time  `db:"created_at"`
 	DeletedAt         *time.Time `db:"deleted_at"`
 }
@@ -38,7 +38,7 @@ type sessionEventWriteParams struct {
 	Payload           []byte
 	PayloadBlobUUID   *string
 	ToolUseID         *string
-	ProcessedAt       time.Time
+	ProcessedAt       *time.Time
 	CreatedAt         time.Time
 }
 
@@ -59,6 +59,9 @@ type sessionEventPageMapperParams struct {
 
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
+	CursorExists(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (bool, error)
+	FindLatestStatus(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
+	MarkProcessed(ctx context.Context, workspaceUUID, sessionID, eventID string, processedAt time.Time) (sessionEventRow, bool, error)
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)

@@ -120,6 +120,16 @@ code_session:
   # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.
   upstream_proxy_disable_ssrf_protection: false
 
+billing:
+  # USD list prices per million tokens used for session budget enforcement,
+  # keyed by model name. Models without an entry are unpriced: budgeted
+  # sessions are rejected at create/update time when their agent snapshot
+  # references unpriced models, and requests on unpriced models are not
+  # billed (no billing entry is written). Web search ($10 per 1k requests)
+  # and active time ($0.08/h) are platform constants and are not configured
+  # here.
+  model_prices: {}
+
 observability:
   enabled: false
   # Content capture sends prompt originals, model output, and tool input/output

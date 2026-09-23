@@ -25,11 +25,14 @@ import {
   postSessionToolConfirmation,
   retrieveSessionDetailSession,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
+  updateSessionBudget,
   sessionThreadListSignature,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
+import { budgetWireBody, parseBudgetUsdInput, sessionBudgetState, type SessionBudgetState } from '../resources/budget';
+import { SessionBudgetBanner } from './SessionBudgetBanner';
 import {
   type EventsTabProps,
   type QuickstartSessionEvent,
@@ -117,6 +120,60 @@ function sessionPendingAction(
 ) {
   if (!toolCall) return undefined;
   return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+}
+
+interface BudgetChangeDeps {
+  workspaceId: string;
+  onUpdated: (next: SessionApiResponse) => void;
+  onError: (message: string | null) => void;
+  onBusyChange: (busy: boolean) => void;
+  toastFor: (cents: number | null) => string;
+}
+
+async function applyBudgetChange(
+  session: SessionApiResponse,
+  usd: string | null,
+  deps: BudgetChangeDeps,
+): Promise<void> {
+  const parsed = usd === null ? { ok: true as const, cents: null } : parseBudgetUsdInput(usd);
+  if (!parsed.ok) return;
+  deps.onBusyChange(true);
+  deps.onError(null);
+  try {
+    deps.onUpdated(
+      await updateSessionBudget(
+        session.id,
+        parsed.cents === null ? null : budgetWireBody(parsed.cents),
+        deps.workspaceId,
+      ),
+    );
+    toast.success(deps.toastFor(parsed.cents));
+  } catch (error) {
+    deps.onError(errorMessage(error));
+  } finally {
+    deps.onBusyChange(false);
+  }
+}
+
+function budgetToastMessage(cents: number | null, msg: (key: string, fallback: string) => string): string {
+  return cents === null
+    ? msg('managedAgents.budget.removedToast', 'Budget removed — session resumed')
+    : msg('managedAgents.budget.updatedToast', 'Budget updated — session resumed');
+}
+
+function SessionBudgetBannerSection({
+  budget,
+  archived,
+  busy,
+  onChangeBudget,
+}: {
+  budget: SessionBudgetState | null;
+  archived: boolean;
+  busy: boolean;
+  onChangeBudget: (usd: string | null) => Promise<void>;
+}) {
+  if (!budget || archived) return null;
+  return <SessionBudgetBanner state={budget} busy={busy} onChangeBudget={onChangeBudget} />;
 }
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
@@ -297,6 +354,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     return () => window.clearInterval(interval);
   }, [session?.archived_at, session?.id, session?.status]);
 
+  const budget = useMemo(() => (session ? sessionBudgetState(session) : null), [session]);
   const laneState = useMemo(
     () => buildSessionDetailLaneState(threads, msg, showArchivedLanes),
     [msg, showArchivedLanes, threads],
@@ -573,6 +631,16 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       setBusyAction(null);
     }
   };
+  const handleBudgetChange = async (usd: string | null) => {
+    if (!session) return;
+    await applyBudgetChange(session, usd, {
+      workspaceId: activeWorkspaceId,
+      onUpdated: setSession,
+      onError: setMutationError,
+      onBusyChange: (busy) => setBusyAction(busy ? 'budget' : null),
+      toastFor: (cents) => budgetToastMessage(cents, msg),
+    });
+  };
   if (loading) {
     return (
       <section className="@container min-h-[calc(100vh-48px)] text-foreground">
@@ -726,6 +794,12 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         </header>
 
         <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />
+        <SessionBudgetBannerSection
+          budget={budget}
+          archived={archived}
+          busy={busyAction === 'budget'}
+          onChangeBudget={handleBudgetChange}
+        />
 
         <div className="min-h-0 flex-1 overflow-hidden pt-1" data-testid="session-viewer">
           <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>

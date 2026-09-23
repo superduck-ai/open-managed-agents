@@ -52,6 +52,7 @@ import {
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
+import { BudgetField } from './budget-field';
 import { DeploymentFormFields } from './deployment-form-fields';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
@@ -955,12 +956,18 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <ManagedResourceFields
-                    values={values}
-                    onChange={setValues}
-                    workspaceId={workspaceId}
-                    memoryStores={memoryStores}
-                  />
+                  <>
+                    <ManagedResourceFields
+                      values={values}
+                      onChange={setValues}
+                      workspaceId={workspaceId}
+                      memoryStores={memoryStores}
+                    />
+                    <BudgetField
+                      values={values}
+                      onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
+                    />
+                  </>
                 ) : null}
               </>
             ) : null}

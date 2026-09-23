@@ -1,3 +1,4 @@
+import { budgetValid } from './budget';
 import { managedResourceFieldsValid } from './git-resource';
 import { previewSchedule } from './deployment-schedule';
 import type { ManagedEntityFormValues, ManagedEntitySection } from '../types';
@@ -22,7 +23,8 @@ export function managedEntityDialogCanSubmit(
       !values.agentId.trim() ||
       !values.environmentId.trim() ||
       !values.initialMessage.trim() ||
-      !managedResourceFieldsValid(values, Boolean(options.editing))
+      !managedResourceFieldsValid(values, Boolean(options.editing)) ||
+      !budgetValid(values)
     ) {
       return false;
     }
@@ -36,7 +38,9 @@ export function managedEntityDialogCanSubmit(
   return (
     referencesReady &&
     (section === 'sessions'
-      ? managedResourceFieldsValid(values, false) && (!values.vaultIds.length || options.vaultAcknowledged === true)
+      ? managedResourceFieldsValid(values, false) &&
+        budgetValid(values) &&
+        (!values.vaultIds.length || options.vaultAcknowledged === true)
       : values.name.trim().length > 0)
   );
 }

@@ -10,6 +10,7 @@ import (
 
 func TestPrepareWorkerOutputEventRejectsInvalidControlRequest(t *testing.T) {
 	prepared, err := prepareWorkerOutputEvent(
+		nil,
 		"cse_test",
 		workerOutputEvent{Payload: json.RawMessage(`{"type":"control_request","uuid":"control-uuid","request_id":"request-id","request":42}`)},
 		time.Unix(1, 0).UTC(),
@@ -24,6 +25,7 @@ func TestPrepareWorkerOutputEventRejectsInvalidControlRequest(t *testing.T) {
 
 func TestPrepareWorkerOutputEventBuildsKeepAliveAction(t *testing.T) {
 	prepared, err := prepareWorkerOutputEvent(
+		nil,
 		"cse_test",
 		workerOutputEvent{Payload: json.RawMessage(`{"type":"keep_alive"}`)},
 		time.Unix(1, 0).UTC(),
@@ -38,6 +40,7 @@ func TestPrepareWorkerOutputEventBuildsKeepAliveAction(t *testing.T) {
 
 func TestPrepareWorkerOutputEventIgnoresNonEphemeralStream(t *testing.T) {
 	prepared, err := prepareWorkerOutputEvent(
+		nil,
 		"cse_test",
 		workerOutputEvent{Payload: json.RawMessage(`{
 			"type":"stream_event",
@@ -68,7 +71,7 @@ func TestPrepareWorkerOutputEventsRejectsBatchBeforeApply(t *testing.T) {
 		}`)},
 	}
 
-	prepared, err := prepareWorkerOutputEvents("cse_test", events, time.Unix(1, 0).UTC())
+	prepared, err := prepareWorkerOutputEvents(nil, "cse_test", events, time.Unix(1, 0).UTC())
 	if !errors.Is(err, ErrProtocol) {
 		t.Fatalf("prepareWorkerOutputEvents() error = %v, want ErrProtocol", err)
 	}
@@ -101,7 +104,7 @@ func TestPrepareWorkerOutputEventsBuildsActions(t *testing.T) {
 		}`)},
 	}
 
-	prepared, err := prepareWorkerOutputEvents("cse_test", events, time.Unix(1, 0).UTC())
+	prepared, err := prepareWorkerOutputEvents(nil, "cse_test", events, time.Unix(1, 0).UTC())
 	if err != nil {
 		t.Fatalf("prepareWorkerOutputEvents() error = %v", err)
 	}

@@ -49,6 +49,7 @@ type yamlConfig struct {
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       yamlCodeSessionConfig   `yaml:"code_session"`
+	Billing           BillingConfig           `yaml:"billing"`
 	Observability     ObservabilityConfig     `yaml:"observability"`
 	Webhook           yamlWebhookConfig       `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
@@ -168,6 +169,7 @@ func (input yamlConfig) resolve() Config {
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
 		},
+		Billing:       input.Billing,
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
 			EndpointURL:   input.Webhook.EndpointURL,

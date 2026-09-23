@@ -72,6 +72,9 @@ type sessionRow struct {
 	RuntimeUserUUID       *string         `db:"runtime_user_uuid"`
 	VaultIDs              sessionVaultIDs `db:"vault_ids"`
 	Status                string          `db:"status"`
+	Budget                []byte          `db:"budget"`
+	BudgetReachedAt       *time.Time      `db:"budget_reached_at"`
+	BudgetRemovedAt       *time.Time      `db:"budget_removed_at"`
 	Usage                 []byte          `db:"usage"`
 	Stats                 []byte          `db:"stats"`
 	OutcomeEvaluations    []byte          `db:"outcome_evaluations"`
@@ -100,6 +103,7 @@ type sessionWriteParams struct {
 	Metadata              []byte
 	VaultIDs              sessionVaultIDs
 	Status                string
+	Budget                []byte
 	Usage                 []byte
 	Stats                 []byte
 	OutcomeEvaluations    []byte
@@ -107,12 +111,15 @@ type sessionWriteParams struct {
 }
 
 type sessionUpdateParams struct {
-	WorkspaceUUID string
-	ExternalID    string
-	AgentSnapshot []byte
-	Title         *string
-	Metadata      []byte
-	UpdatedAt     time.Time
+	WorkspaceUUID   string
+	ExternalID      string
+	AgentSnapshot   []byte
+	Title           *string
+	Metadata        []byte
+	Budget          []byte
+	BudgetReachedAt *time.Time
+	BudgetRemovedAt *time.Time
+	UpdatedAt       time.Time
 }
 
 type sessionPageMapperParams struct {
@@ -140,6 +147,8 @@ type SessionMapper interface {
 	UpdateByExternalID(ctx context.Context, params sessionUpdateParams) (sessionRow, error)
 	PatchMetadata(ctx context.Context, workspaceUUID, sessionExternalID string, metadataPatch []byte) (sessionRow, error)
 	SetOutcomeEvaluations(ctx context.Context, workspaceUUID, sessionExternalID string, evaluations []byte) (sessionRow, error)
+	SetUsage(ctx context.Context, workspaceUUID, sessionExternalID string, usage []byte) (int64, error)
+	SetBudgetReached(ctx context.Context, workspaceUUID, sessionExternalID string, reachedAt time.Time) (int64, error)
 	SetStatus(ctx context.Context, workspaceUUID, sessionExternalID, status string) (int64, error)
 	Archive(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	SoftDelete(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)

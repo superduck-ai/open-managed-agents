@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -88,5 +89,41 @@ func TestOpaqueMetadataDoesNotRejectWorkerPayload(t *testing.T) {
 	summary, _, err := Summarize([]byte(`{"type":"custom","name":{"nested":"value"},"id":123}`), "custom")
 	if err != nil || summary.Name != nil {
 		t.Fatalf("opaque metadata rejected: %+v %v", summary, err)
+	}
+}
+
+func TestNonStringModelRequestStartIDDoesNotRejectPayload(t *testing.T) {
+	summary, _, err := Summarize([]byte(`{"type":"span.model_request_end","model_request_start_id":123}`), "span.model_request_end")
+	if err != nil || summary.ModelRequestStartID != "" {
+		t.Fatalf("non-string start id must degrade to empty, got %q %v", summary.ModelRequestStartID, err)
+	}
+}
+
+func TestSummaryCarriesBillingMetadata(t *testing.T) {
+	payload := []byte(`{"type":"span.model_request_end","model":"claude","billing":{"list_cost":"900","currency":"USD"},"usage":{"input_tokens":10},"model_request_start_id":"sevt_start"}`)
+	summary, _, err := Summarize(payload, "span.model_request_end")
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if string(summary.Billing) != `{"list_cost":"900","currency":"USD"}` {
+		t.Fatalf("billing not carried: %s", summary.Billing)
+	}
+	if string(summary.Usage) != `{"input_tokens":10}` || summary.ModelRequestStartID != "sevt_start" {
+		t.Fatalf("usage/start link not carried: %s %q", summary.Usage, summary.ModelRequestStartID)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(encoded, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	billing, ok := back["billing"].(map[string]any)
+	if !ok || billing["list_cost"] != "900" {
+		t.Fatalf("summary json missing billing: %s", encoded)
+	}
+	if _, has := back["usage"]; !has {
+		t.Fatalf("summary json missing usage: %s", encoded)
 	}
 }

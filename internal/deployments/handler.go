@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
@@ -38,6 +40,7 @@ type Handler struct {
 	db            *db.DB
 	deployments   *Store
 	webhooks      webhookEnqueuer
+	billing       *billing.Calculator
 	errorAdapter  *httpapi.ErrorAdapter
 	router        chi.Router
 }
@@ -56,6 +59,7 @@ type deploymentResponse struct {
 	ID            string                      `json:"id"`
 	Agent         deploymentAgentReference    `json:"agent"`
 	ArchivedAt    *string                     `json:"archived_at"`
+	Budget        json.RawMessage             `json:"budget"`
 	CreatedAt     string                      `json:"created_at"`
 	Description   string                      `json:"description"`
 	EnvironmentID string                      `json:"environment_id"`
@@ -85,6 +89,7 @@ type deploymentScheduleResponse struct {
 
 type deploymentMutationRequest struct {
 	Agent         json.RawMessage `json:"agent"`
+	Budget        json.RawMessage `json:"budget"`
 	Description   json.RawMessage `json:"description"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
 	InitialEvents json.RawMessage `json:"initial_events"`
@@ -230,9 +235,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, secretService *secrets.Service, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *Store, webhookEvents webhookEnqueuer, secretService *secrets.Service, billingCalculator *billing.Calculator, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, secretService: secretService, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, webhooks: webhookEvents, secretService: secretService, billing: billingCalculator, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -352,6 +357,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	budget, err := h.deploymentBudgetPatch(nil, body.Budget, agent.snapshot)
+	if err != nil {
+		return invalidRequest(err)
+	}
 	deploymentID, err := ids.New("depl_")
 	if err != nil {
 		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
@@ -377,6 +386,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		Resources:             resources,
 		ResourceSecrets:       resourceSecrets,
 		VaultIDs:              vaultIDs,
+		Budget:                budget,
 		Schedule:              schedule,
 		Status:                "active",
 		CreatedAt:             now,
@@ -549,6 +559,11 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
+	budget, err := h.deploymentBudgetPatch(next.Budget, body.Budget, next.AgentSnapshot)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	next.Budget = budget
 	scheduleProvided := body.Schedule != nil
 	if scheduleProvided {
 		next.Schedule, err = normalizeOptionalSchedule(body.Schedule)
@@ -1172,6 +1187,7 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 		ID:            deployment.ExternalID,
 		Agent:         agentReference(deployment.AgentExternalID, deployment.AgentVersion),
 		ArchivedAt:    httpapi.OptionalTime(deployment.ArchivedAt),
+		Budget:        deploymentBudgetResponse(deployment.Budget),
 		CreatedAt:     httpapi.FormatTime(deployment.CreatedAt),
 		Description:   description,
 		EnvironmentID: deployment.EnvironmentExternalID,
@@ -1643,4 +1659,58 @@ func decodeCursor(raw string) (*time.Time, string, error) {
 	}
 	createdAt = createdAt.UTC()
 	return &createdAt, parsedUUID.String(), nil
+}
+
+// normalizeDeploymentBudget validates a deployment budget input. JSON null
+// clears the budget; an absent field is an empty raw value.
+func normalizeDeploymentBudget(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if string(trimmed) == "null" {
+		return nil, nil
+	}
+	budget, err := billing.ParseBudget(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := jsonx.Encode(budget)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+// deploymentBudgetPatch applies an optional budget field to the current value:
+// an absent field keeps current, a null or object replaces it. When a budget
+// is set, the agent snapshot must not reference unpriced models: unpriced
+// requests accrue no cost, so the budget could never trigger.
+func (h *Handler) deploymentBudgetPatch(current, raw, snapshot json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		// An agent-only patch must not smuggle an unpriced model into a
+		// deployment that still carries a budget: unpriced requests accrue no
+		// cost, so the budget would silently never trigger.
+		if len(current) > 0 {
+			if unpriced := h.billing.UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
+				return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
+			}
+		}
+		return current, nil
+	}
+	budget, err := normalizeDeploymentBudget(raw)
+	if err != nil || budget == nil {
+		return budget, err
+	}
+	if unpriced := h.billing.UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
+		return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
+	}
+	return budget, nil
+}
+
+func deploymentBudgetResponse(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage("null")
+	}
+	return raw
 }

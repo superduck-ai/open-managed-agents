@@ -24,6 +24,7 @@ import {
 } from '../types';
 import { formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
 import { resourceFormValues } from './git-resource';
+import { entityBudgetDisplay, entityBudgetUsdInput } from './budget';
 
 export { sectionPathSegment };
 
@@ -331,6 +332,8 @@ export function initialFormValues(
     cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1-5',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
+    budgetUsd: entityBudgetUsdInput(entity),
+    budgetChanged: false,
     ...resourceFormValues(entity && 'resources' in entity ? entity.resources : []),
   };
 }
@@ -513,6 +516,10 @@ export function detailRowsForEntity(
           label: label('managedAgents.deployments.kindTitle', 'Deployment'),
           value: (entity as SessionApiResponse).deployment_id || '—',
         },
+        {
+          label: label('managedAgents.budget.title', 'Budget'),
+          value: entityBudgetDisplay(entity as SessionApiResponse),
+        },
       ];
     case 'deployments':
       return [
@@ -527,6 +534,10 @@ export function detailRowsForEntity(
           value: msg
             ? localizedDeploymentTrigger(entity as DeploymentApiResponse, msg)
             : deploymentTrigger(entity as DeploymentApiResponse),
+        },
+        {
+          label: label('managedAgents.budget.title', 'Budget'),
+          value: entityBudgetDisplay(entity as DeploymentApiResponse),
         },
       ];
     case 'environments':

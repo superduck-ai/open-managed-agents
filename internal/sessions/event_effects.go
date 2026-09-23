@@ -1,7 +1,6 @@
 package sessions
 
 import (
-	"context"
 	jsonv2 "encoding/json/v2"
 	"time"
 	"uuid"
@@ -11,41 +10,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
-
-// Input acceptance activates the turn before its user messages are published.
-// The append transaction decides whether these status transitions are needed.
-func (h *Handler) prependInputRunningEvents(ctx context.Context, session db.Session, events []db.SessionEvent) ([]db.SessionEvent, error) {
-	for _, event := range events {
-		if event.EventType != "user.message" {
-			continue
-		}
-		primary, err := h.ensurePrimarySessionThread(ctx, session)
-		if err != nil {
-			return nil, err
-		}
-		if event.ThreadExternalID != nil && *event.ThreadExternalID != primary.ExternalID {
-			continue
-		}
-		payload, err := jsonv2.Marshal(struct {
-			ID          string    `json:"id"`
-			Type        string    `json:"type"`
-			CreatedAt   time.Time `json:"created_at"`
-			ProcessedAt time.Time `json:"processed_at"`
-		}{event.ExternalID + "_running", "session.status_running", event.CreatedAt, event.CreatedAt})
-		if err != nil {
-			return nil, err
-		}
-		running, err := h.sessionEventsFromCodeSessionPayload(ctx, session, session.ExternalID, payload, event.CreatedAt)
-		if err != nil {
-			return nil, err
-		}
-		for i := range running {
-			running[i].InputEventID = event.ExternalID
-		}
-		return append(running, events...), nil
-	}
-	return events, nil
-}
 
 func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, error) {
 	eventID, err := ids.New("sevt_")

@@ -90,3 +90,17 @@ func TestOpaqueMetadataDoesNotRejectWorkerPayload(t *testing.T) {
 		t.Fatalf("opaque metadata rejected: %+v %v", summary, err)
 	}
 }
+
+func TestPreparePublicKeepsStatusReasonInline(t *testing.T) {
+	payload := []byte(`{"type":"session.status_idle","stop_reason":{"type":"error","detail":"` + strings.Repeat("x", Threshold) + `"}}`)
+	store := New(nil, nil)
+	for _, kind := range []string{"session.status_idle", "session.thread_status_idle"} {
+		events, err := store.PreparePublic(t.Context(), "org", "workspace", []db.SessionEvent{{EventType: kind, Payload: payload}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if events[0].PayloadBlobUUID != nil || !bytes.Equal(events[0].Payload, payload) {
+			t.Fatal("status reason must remain readable by the transaction without object storage")
+		}
+	}
+}

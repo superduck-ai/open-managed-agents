@@ -454,9 +454,6 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if r.URL.Query().Get("order") == "" {
-		order = "asc"
-	}
 	createdAtGT, err := httpapi.ParseOptionalTime(r, "created_at[gt]")
 	if err != nil {
 		return invalidRequest(err)
@@ -561,10 +558,6 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	var outcomeEvaluations json.RawMessage
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
-	}
-	events, err = h.prependInputRunningEvents(r.Context(), session, events)
-	if err != nil {
-		return mapSessionLoadError(err, sessionID)
 	}
 	created, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {

@@ -58,6 +58,23 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="FindLatestStatus" result="optional" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+          AND deleted_at IS NULL
+        <choose>
+            <when test="threadID != ''">
+                AND event_type IN ('session.thread_status_running', 'session.thread_status_idle', 'session.thread_status_rescheduled', 'session.thread_status_terminated')
+                AND payload-&gt;&gt;'session_thread_id' = #{threadID}
+            </when>
+            <otherwise>
+                AND event_type IN ('session.status_running', 'session.status_idle', 'session.status_rescheduled', 'session.status_terminated')
+            </otherwise>
+        </choose>
+        ORDER BY id DESC LIMIT 1
+    </select>
+
     <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
@@ -83,10 +100,10 @@
                 AND event_type IN
                 <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
             </if>
-            <if test="params.CreatedAtGT != nil">AND processed_at &gt; #{params.CreatedAtGT}</if>
-            <if test="params.CreatedAtGTE != nil">AND processed_at &gt;= #{params.CreatedAtGTE}</if>
-            <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
-            <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
+            <if test="params.CreatedAtGT != nil">AND created_at &gt; #{params.CreatedAtGT}</if>
+            <if test="params.CreatedAtGTE != nil">AND created_at &gt;= #{params.CreatedAtGTE}</if>
+            <if test="params.CreatedAtLT != nil">AND created_at &lt; #{params.CreatedAtLT}</if>
+            <if test="params.CreatedAtLTE != nil">AND created_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
                 AND (COALESCE(processed_at, CAST('infinity' AS timestamptz)), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>

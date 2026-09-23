@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"slices"
 	"strings"
 	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 type resolvedToolPermission string
@@ -372,7 +372,7 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	return true, nil
 }
 
-const legacyToolPermissionRequestMetadataKey = "managed_agent_tool_permission_request"
+const legacyToolPermissionRequestMetadataKey = maevents.ToolPermissionRequestMetadataKey
 
 func toolPermissionRequestMetadataKey(publicEventID string) string {
 	return legacyToolPermissionRequestMetadataKey + ":" + publicEventID
@@ -614,9 +614,6 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 	}
 	if eventType != "agent.custom_tool_use" {
 		toolPayload["evaluated_permission"] = string(permission)
-		if permission == resolvedToolPermissionAllow || permission == resolvedToolPermissionAsk {
-			toolPayload["evaluation"] = map[string]string{"type": "always_" + string(permission)}
-		}
 	}
 	if eventType == "agent.mcp_tool_use" {
 		toolPayload["mcp_server_name"] = identity.ServerName
@@ -659,40 +656,4 @@ func toolPermissionPublicIdentity(toolName string, identity toolIdentity) (strin
 		return "agent.tool_use", identity.ToolName
 	}
 	return "agent.tool_use", toolName
-}
-
-func (s *Service) PendingToolEventIDs(ctx context.Context, codeSessionID, threadID string) ([]string, error) {
-	record, found, err := s.db.GetCodeSession(ctx, codeSessionID)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, db.ErrNotFound
-	}
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(record.WorkerExternalMetadata, &metadata); err != nil {
-		return nil, err
-	}
-	ids := make([]string, 0)
-	primary, hasPrimary, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
-	if err != nil {
-		return nil, err
-	}
-	for key, raw := range metadata {
-		if !strings.HasPrefix(key, legacyToolPermissionRequestMetadataKey+":") || string(raw) == "null" {
-			continue
-		}
-		var request toolPermissionRequest
-		if err := json.Unmarshal(raw, &request); err != nil {
-			return nil, err
-		}
-		if request.SessionThreadID == "" && hasPrimary {
-			request.SessionThreadID = primary.ExternalID
-		}
-		if request.PublicEventID != "" && (threadID == "" || request.SessionThreadID == threadID) {
-			ids = append(ids, request.PublicEventID)
-		}
-	}
-	slices.Sort(ids)
-	return ids, nil
 }

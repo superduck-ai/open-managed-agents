@@ -44,8 +44,8 @@ type codeSessionRow struct {
 }
 
 type codeSessionInputStateRow struct {
-	WorkerStatus          string `db:"worker_status"`
-	HasPendingToolRequest bool   `db:"has_pending_tool_request"`
+	WorkerStatus           string `db:"worker_status"`
+	WorkerExternalMetadata []byte `db:"worker_external_metadata"`
 }
 
 type createCodeSessionParams struct {
@@ -155,7 +155,7 @@ type resumeCodeSessionWorkerLeaseParams struct {
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
-	LockLatestInputState(ctx context.Context, workspaceUUID, sessionUUID, primaryThreadID string) (codeSessionInputStateRow, bool, error)
+	LockLatestInputState(ctx context.Context, workspaceUUID, sessionUUID string) (codeSessionInputStateRow, bool, error)
 	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string, newTurn bool) error
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
 	FindCredentialByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (codeSessionCredentialContextRow, error)

@@ -207,14 +207,7 @@
     </select>
 
     <select id="LockLatestInputState" result="optional" resultType="codeSessionInputStateRow">
-        SELECT worker_status,
-            EXISTS (
-                SELECT 1 FROM jsonb_each(worker_external_metadata) AS request
-                WHERE (request.key = 'managed_agent_tool_permission_request'
-                    OR starts_with(request.key, 'managed_agent_tool_permission_request:'))
-                  AND request.value != CAST('null' AS jsonb)
-                  AND COALESCE(NULLIF(request.value-&gt;&gt;'session_thread_id', ''), #{primaryThreadID}) = #{primaryThreadID}
-            ) AS has_pending_tool_request
+        SELECT worker_status, worker_external_metadata
         FROM code_sessions
         WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
           AND deleted_at IS NULL

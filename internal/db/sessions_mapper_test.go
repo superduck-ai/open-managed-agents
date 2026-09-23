@@ -207,6 +207,39 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 
 }
 
+func TestSessionEventMapperLatestStatus(t *testing.T) {
+	for _, threadID := range []string{"sthr_primary", ""} {
+		bound := buildSessionEventMapperFindLatestStatus(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", threadID)
+		names := []string{"workspaceUUID", "sessionExternalID"}
+		fragments := []string{"workspace_uuid = $1", "session_external_id = $2", "deleted_at IS NULL", "ORDER BY id DESC LIMIT 1"}
+		if threadID != "" {
+			names = append(names, "threadID")
+			fragments = append(fragments, "payload->>'session_thread_id' = $3", "'session.thread_status_idle'")
+		} else {
+			fragments = append(fragments, "'session.status_idle'")
+		}
+		assertMapperBuilderContract(t, mapperBuilderContract{
+			statement: sessionEventMapperFindLatestStatusStatement, bound: bound,
+			wantID: "SessionEventMapper.FindLatestStatus", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: names, wantSQLFragments: fragments,
+		})
+	}
+}
+
+func TestSessionEventMapperFiltersCreationTime(t *testing.T) {
+	now := time.Now().UTC()
+	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
+		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 20,
+		CreatedAtGT: &now, CreatedAtGTE: &now, CreatedAtLT: &now, CreatedAtLTE: &now,
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperListPageStatement, bound: bound,
+		wantID: "SessionEventMapper.ListPage", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionExternalID", "params.CreatedAtGT", "params.CreatedAtGTE", "params.CreatedAtLT", "params.CreatedAtLTE", "params.FetchLimit"},
+		wantSQLFragments:  []string{"created_at > $3", "created_at >= $4", "created_at < $5", "created_at <= $6"},
+	})
+}
+
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 	ctx := context.Background()
 	tests := []mapperExecutionErrorContract{

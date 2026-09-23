@@ -3,9 +3,11 @@ package db
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -25,23 +27,24 @@ func TestCodeSessionInputStatePostgres(t *testing.T) {
 	const workspace = "52000000-0000-0000-0000-000000000001"
 	const session = "52000000-0000-0000-0000-000000000002"
 	mapper := NewCodeSessionMapper(yourbatis.NewDB(database, yourbatis.DialectPostgres))
-	if _, found, err := mapper.LockLatestInputState(ctx, workspace, session, "sthr_primary"); err != nil || found {
+	if _, found, err := mapper.LockLatestInputState(ctx, workspace, session); err != nil || found {
 		t.Fatalf("missing worker: found=%t err=%v", found, err)
 	}
 	if _, err := database.ExecContext(ctx, `INSERT INTO code_sessions(workspace_uuid,session_uuid,worker_status,worker_external_metadata) VALUES ($1,$2,'running','{}')`, workspace, session); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := mapper.LockLatestInputState(ctx, session, session, "sthr_primary"); err != nil || found {
+	if _, found, err := mapper.LockLatestInputState(ctx, session, session); err != nil || found {
 		t.Fatalf("foreign workspace: found=%t err=%v", found, err)
 	}
 	for _, tc := range []struct {
 		name, metadata string
 		pending        bool
 	}{
-		{"primary request", `{"managed_agent_tool_permission_request:tool":{"session_thread_id":"sthr_primary"}}`, true},
-		{"implicit primary", `{"managed_agent_tool_permission_request:tool":{}}`, true},
-		{"legacy primary", `{"managed_agent_tool_permission_request":{}}`, true},
-		{"child request", `{"managed_agent_tool_permission_request:tool":{"session_thread_id":"sthr_child"}}`, false},
+		{"primary request", `{"managed_agent_tool_permission_request:tool":{"public_event_id":"tool","request_id":"request","provider_tool_use_id":"provider","session_thread_id":"sthr_primary"}}`, true},
+		{"implicit primary", `{"managed_agent_tool_permission_request:tool":{"public_event_id":"tool","request_id":"request","provider_tool_use_id":"provider"}}`, true},
+		{"legacy primary", `{"managed_agent_tool_permission_request":{"public_event_id":"tool","request_id":"request","provider_tool_use_id":"provider"}}`, true},
+		{"child request", `{"managed_agent_tool_permission_request:tool":{"public_event_id":"tool","request_id":"request","provider_tool_use_id":"provider","session_thread_id":"sthr_child"}}`, false},
+		{"legacy overridden by persisted null", `{"managed_agent_tool_permission_request":{"public_event_id":"tool","request_id":"request","provider_tool_use_id":"provider"},"managed_agent_tool_permission_request:tool":null}`, false},
 		{"cleared request", `{"managed_agent_tool_permission_request:tool":null}`, false},
 		{"unrelated metadata", `{"task_summary":"busy"}`, false},
 	} {
@@ -49,8 +52,12 @@ func TestCodeSessionInputStatePostgres(t *testing.T) {
 			if _, err := database.ExecContext(ctx, `UPDATE code_sessions SET worker_external_metadata=$1::jsonb`, tc.metadata); err != nil {
 				t.Fatal(err)
 			}
-			state, found, err := mapper.LockLatestInputState(ctx, workspace, session, "sthr_primary")
-			if err != nil || !found || state.WorkerStatus != "running" || state.HasPendingToolRequest != tc.pending {
+			state, found, err := mapper.LockLatestInputState(ctx, workspace, session)
+			pending, pendingErr := maevents.PendingToolEventIDs(state.WorkerExternalMetadata, "sthr_primary", "sthr_primary")
+			if pendingErr != nil {
+				t.Fatal(pendingErr)
+			}
+			if err != nil || !found || state.WorkerStatus != "running" || (len(pending) > 0) != tc.pending {
 				t.Fatalf("input state=%+v found=%t err=%v", state, found, err)
 			}
 		})
@@ -60,19 +67,19 @@ func TestCodeSessionInputStatePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE code_sessions SET worker_status='requires_action',worker_external_metadata='{"managed_agent_tool_permission_request:tool":{}}'`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE code_sessions SET worker_status='requires_action',worker_external_metadata='{"managed_agent_tool_permission_request:tool":{"public_event_id":"tool","request_id":"request","provider_tool_use_id":"provider"}}'`); err != nil {
 		t.Fatal(err)
 	}
 	blocked, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
-	if _, _, err := mapper.LockLatestInputState(blocked, workspace, session, "sthr_primary"); err == nil || blocked.Err() == nil {
+	if _, _, err := mapper.LockLatestInputState(blocked, workspace, session); err == nil || blocked.Err() == nil {
 		t.Fatalf("input acceptance did not wait for worker update: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	state, found, err := mapper.LockLatestInputState(ctx, workspace, session, "sthr_primary")
-	if err != nil || !found || state.WorkerStatus != "requires_action" || !state.HasPendingToolRequest {
+	state, found, err := mapper.LockLatestInputState(ctx, workspace, session)
+	if err != nil || !found || state.WorkerStatus != "requires_action" || !strings.Contains(string(state.WorkerExternalMetadata), "managed_agent_tool_permission_request:tool") {
 		t.Fatalf("committed input state=%+v found=%t err=%v", state, found, err)
 	}
 }

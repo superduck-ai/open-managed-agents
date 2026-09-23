@@ -114,7 +114,17 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 
 ## 输入处理与状态事件顺序
 
-主线程 user.message 被立即接纳时，在同一事务内按 session.status_running → session.thread_status_running 激活任务；候选状态事件与输入 ID 关联，只有对应输入被接纳才写入。排队消息不改变 Session/Thread 状态，不清除 `worker_turn_started`。发送接口只返回提交的用户事件。
+`internal/db/session_events.go` 的 `insertSessionEventsTx` 是统一写入入口：先锁 Session，再锁 Code Session，判断本批第一条主线程 user.message 能否接纳。接纳后才生成 session.status_running → session.thread_status_running，并设置输入的 `processed_at = created_at`；三者按此顺序写入。排队消息不改变 Session/Thread 状态，不清除 `worker_turn_started`。发送接口只返回提交的用户事件。
+
+```mermaid
+flowchart TD
+    A[锁定 Session → Code Session] --> B{空闲主线程且无排队或待确认?}
+    B -->|是| C[processed_at = created_at]
+    C --> D[写 Session running → Thread running → 输入]
+    B -->|否| E[只写 processed_at=null 的输入]
+    D --> F[提交后广播已处理事件]
+    E --> F
+```
 
 `processed_at` 表示消息被接纳为当前轮次输入的时间，不表示模型完成回复：
 
@@ -128,8 +138,10 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 
 Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。result 不再驱动 idle，结束状态由 Worker 状态上报产生。旧 result 补造模型 span 的逻辑由后续模型生命周期 PR 替换。
 
-状态和公开事件同事务提交，重复事件不重新推动状态。主线程结束顺序为 thread idle → session idle；其他线程仍在运行时不结束 Session。待确认工具的 idle 保留 requires_action.event_ids。
+状态动作由同一事务生成公开事件、确定顺序、去重和更新 Session/Thread。主线程结束顺序为 thread idle → session idle；其他线程仍在运行或 rescheduling 时不结束 Session。线程状态汇总按 running、rescheduling、idle、terminated 的优先级决定 Session 状态。idle 去重同时比较 stop_reason 的 type、detail 和去重排序后的 event_ids；待确认集合变化仍写入新状态事件。状态 payload 保持内联，供事务比较原因；普通大事件仍走对象存储。
 
-历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 `00064_session_input_state.sql` 在事务内添加和回填 `worker_turn_started`，并允许 `processed_at` 为 null；回滚前用 `created_at` 填充未处理记录的 `processed_at`。独立迁移 `00065_session_input_index.sql` 使用 `NO TRANSACTION` 和 `CREATE INDEX CONCURRENTLY` 创建索引，避免索引构建期间阻塞事件写入；列变更仍需获取表锁。索引迁移先并发删除同名索引，兼容已运行旧版 00064 的环境及中断构建留下的无效索引，再重新创建；其 Down 仅并发删除索引。
+待确认工具统一调用 `managedagentsevents.PendingToolEventIDs`：SQL 只锁定并读取 metadata，不再单独实现 JSON 判断。接受旧的精确键或 `managed_agent_tool_permission_request:<public_event_id>`；请求必须具有 public_event_id、request_id、provider_tool_use_id，带后缀的键必须匹配 ID。同一 ID 的新键优先于旧键，null/空请求无效，缺省、空或 null 的 session_thread_id 都归主线程。公开 Session 等待列表包含全部线程，Thread 列表和接纳判断只看对应线程。Worker payload 中过期的 requires_action.event_ids 不覆盖已清理的 metadata。metadata 更新请求中的 null 仍表示删除该键。
 
-验证：tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，空闲/排队输入时间、并发和批量接纳、对象存储 payload，以及 ACK 前后的 SSE/history 顺序。
+历史按 processed_at 排序，同时间保留数据库写入顺序；默认 desc，未处理记录在 desc 最前、asc 最后。`created_at[gt|gte|lt|lte]` 只筛选创建时间，包含符合范围的排队输入。cursor 是不透明的处理时间和事件 ID 标记，旧版本创建时间 cursor 需要重新开始分页；ACK 会改变排序位置，跨页不保证快照一致，客户端以 SSE 更新并重新拉取历史。迁移 `00064_session_input_state.sql` 在事务内添加和回填 `worker_turn_started`，并允许 `processed_at` 为 null；回滚前用 `created_at` 填充未处理记录的 `processed_at`。独立迁移 `00065_session_input_index.sql` 使用 `NO TRANSACTION` 和 `CREATE INDEX CONCURRENTLY` 创建索引，避免索引构建期间阻塞事件写入；列变更仍需获取表锁。索引迁移先并发删除同名索引，兼容已运行旧版 00064 的环境及中断构建留下的无效索引，再重新创建；其 Down 仅并发删除索引。
+
+验证：`tests/session_input_state_test.go` 覆盖接纳和公开等待列表的一致性、等待原因变化去重、多线程状态和时间筛选；`internal/db/code_session_input_state_postgres_test.go` 覆盖实际 JSONB 读取及并发锁。tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，空闲/排队输入时间、并发和批量接纳、对象存储 payload，以及 ACK 前后的 SSE/history 顺序。

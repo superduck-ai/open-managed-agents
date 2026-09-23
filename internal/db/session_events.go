@@ -100,7 +100,7 @@ func idlePrimaryInputID(ctx context.Context, executor yourbatis.Executor, sessio
 	if err != nil {
 		return "", err
 	}
-	if len(latest) > 0 && latest[0].ProcessedAt.IsZero() {
+	if len(latest) > 0 && latest[0].ProcessedAt == nil {
 		return "", nil
 	}
 	return events[first].ExternalID, nil

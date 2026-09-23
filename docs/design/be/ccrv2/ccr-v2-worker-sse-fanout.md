@@ -130,6 +130,6 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 
 状态和公开事件同事务提交，重复事件不重新推动状态。主线程结束顺序为 thread idle → session idle；其他线程仍在运行时不结束 Session。待确认工具的 idle 保留 requires_action.event_ids。
 
-历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 `00064_session_input_state.sql` 一次创建最终排序索引、添加 `worker_turn_started` 并允许 `processed_at` 为 null；回滚前用 `created_at` 填充未处理记录的 `processed_at`。
+历史按 processed_at 升序读取，同时间保留数据库写入顺序，未处理记录排在最后；created_at[...] 筛选 processed_at。迁移 `00064_session_input_state.sql` 在事务内添加和回填 `worker_turn_started`，并允许 `processed_at` 为 null；回滚前用 `created_at` 填充未处理记录的 `processed_at`。独立迁移 `00065_session_input_index.sql` 使用 `NO TRANSACTION` 和 `CREATE INDEX CONCURRENTLY` 创建索引，避免索引构建期间阻塞事件写入；列变更仍需获取表锁。索引迁移先并发删除同名索引，兼容已运行旧版 00064 的环境及中断构建留下的无效索引，再重新创建；其 Down 仅并发删除索引。
 
 验证：tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，空闲/排队输入时间、并发和批量接纳、对象存储 payload，以及 ACK 前后的 SSE/history 顺序。

@@ -240,3 +240,11 @@ func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 		t.Run(test.statementID, func(t *testing.T) { assertMapperExecutionError(t, test) })
 	}
 }
+
+func TestSessionMapperSetStatusRestrictsPredecessors(t *testing.T) {
+	// 回归守卫：SetStatus 只允许从活跃状态（idle/running/rescheduling）转换，
+	// terminated 是终态不可回退。
+	bound := buildSessionMapperSetStatus(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", "running")
+	assertMapperSQLContains(t, bound, "status IN ('idle', 'running', 'rescheduling')")
+	assertMapperSQLContains(t, bound, "OR status = $4")
+}

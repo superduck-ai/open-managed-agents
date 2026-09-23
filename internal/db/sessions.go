@@ -302,7 +302,14 @@ func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externa
 		return err
 	}
 	if rowsAffected == 0 {
-		return ErrNotFound
+		current, found, err := d.GetSession(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrNotFound
+		}
+		return newInvalidStateTransition(current.Status, status)
 	}
 	return nil
 }

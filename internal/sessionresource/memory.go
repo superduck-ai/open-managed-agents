@@ -38,12 +38,12 @@ var (
 
 // MemorySnapshot is the server-authored attach record stored on session_resources.
 type MemorySnapshot struct {
-	MemoryStoreID string
-	Access        MemoryAccess
-	Instructions  string
-	Name          string
-	Description   string
-	MountPath     string
+	MemoryStoreID string       `json:"memory_store_id"`
+	Access        MemoryAccess `json:"access"`
+	Instructions  string       `json:"instructions"`
+	Name          string       `json:"name"`
+	Description   string       `json:"description"`
+	MountPath     string       `json:"mount_path"`
 }
 
 // MemoryAttachSet tracks store IDs and slugs already claimed in one Session.
@@ -190,20 +190,15 @@ func (s *MemoryAttachSet) claimSlug(base string) string {
 	}
 }
 
-func (s MemorySnapshot) PayloadFields(resourceID string) map[string]any {
-	fields := map[string]any{
-		"type":            MemoryStoreType,
-		"memory_store_id": s.MemoryStoreID,
-		"access":          string(s.Access),
-		"instructions":    s.Instructions,
-		"name":            s.Name,
-		"description":     s.Description,
-		"mount_path":      s.MountPath,
-	}
-	if resourceID != "" {
-		fields["id"] = resourceID
-	}
-	return fields
+// MemorySnapshotPayload is the Session resource serialization boundary.
+type MemorySnapshotPayload struct {
+	ID   string `json:"id,omitempty"`
+	Type string `json:"type"`
+	MemorySnapshot
+}
+
+func (s MemorySnapshot) Payload(resourceID string) MemorySnapshotPayload {
+	return MemorySnapshotPayload{ID: resourceID, Type: MemoryStoreType, MemorySnapshot: s}
 }
 
 func SnapshotMemoryStore(storeID string, access MemoryAccess, instructions, name, description, slug string) MemorySnapshot {

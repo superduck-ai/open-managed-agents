@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 type deploymentResourceReaderStub struct {
@@ -33,7 +34,7 @@ func (s *deploymentResourceReaderStub) GetMemoryStoresByExternalIDs(_ context.Co
 func TestValidateDeploymentResources(t *testing.T) {
 	now := time.Now().UTC()
 	memory := func(id string) deploymentResourcePayload {
-		return deploymentResourcePayload{Type: "memory_store", MemoryStoreID: id}
+		return deploymentResourcePayload{Type: "memory_store", MemoryAttachSpec: sessionresource.MemoryAttachSpec{MemoryStoreID: id}}
 	}
 	file := deploymentResourcePayload{Type: "file", FileID: "file_1"}
 	active := db.MemoryStore{ExternalID: "active", Name: "snapshot name"}

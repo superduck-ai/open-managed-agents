@@ -2183,6 +2183,10 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	var submitted sessionEventPageAPIResponse
 	decodeJSON(t, resp.Body, &submitted)
 
+	if sessionInputProcessedAt(t, submitted.Data[0]) != "" {
+		t.Fatal("custom tool result must wait for ACK")
+	}
+
 	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
 	if eventType != "control_response" {
 		t.Fatalf("confirmation event_type = %q, want control_response payload=%s", eventType, payload)
@@ -2216,6 +2220,10 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("code session: %v", err)
 	}
 	consumePublicInput(t, app, codeSession, workerEpoch, inputID)
+	history := listSessionEvents(t, app, session.ID, "types[]=user.custom_tool_result", defaultTestKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
+		t.Fatal("ACK did not process custom tool result")
+	}
 
 }
 

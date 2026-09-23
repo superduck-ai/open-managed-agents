@@ -67,3 +67,37 @@ func TestSessionInputIndexMigration(t *testing.T) {
 		t.Fatalf("upgrade with the earlier PR index: %v", err)
 	}
 }
+
+func TestSessionInputMigrationRefusesLossyRollback(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 64); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO session_events(external_id,organization_uuid,workspace_uuid,session_uuid,session_external_id,event_type,payload,processed_at)
+      VALUES ('sevt_queued',gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),'session_test','user.message','{}',NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Down(ctx); err == nil {
+		t.Fatal("rollback silently processed queued input")
+	}
+	var queued bool
+	if err := database.QueryRowContext(ctx, `SELECT processed_at IS NULL FROM session_events WHERE external_id='sevt_queued'`).Scan(&queued); err != nil || !queued {
+		t.Fatalf("queued input lost: queued=%t err=%v", queued, err)
+	}
+	assertMigrationColumnExists(t, ctx, database, "code_sessions", "worker_turn_started", true)
+	// After normal processing drains the queue, rollback and re-up are safe.
+	if _, err := database.ExecContext(ctx, `UPDATE session_events SET processed_at=now()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertMigrationColumnNullable(t, ctx, database, "session_events", "processed_at", "NO")
+	if _, err := provider.UpTo(ctx, 64); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -328,16 +328,6 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), true))
 		return nil
 	}
-	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
-	if err != nil {
-		return mapSessionLoadError(err, sessionID)
-	}
-	if !found {
-		return mapSessionLoadError(db.ErrNotFound, sessionID)
-	}
-	if current.Status == "running" || current.Status == "rescheduling" {
-		return invalidRequest(errors.New("running sessions cannot be archived"))
-	}
 	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
@@ -361,28 +351,22 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 		return nil
 	}
-	current, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	primary, found, err := h.db.GetPrimarySessionThread(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	if current.Status == "running" || current.Status == "rescheduling" {
-		return invalidRequest(errors.New("running sessions cannot be deleted"))
-	}
-	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, nil)
-	if err == nil {
-		if current.ArchivedAt == nil {
-			h.appendAndBroadcastInternal(r, sessionID, []db.SessionEvent{deletedEvent})
-		} else {
-			deletedEvent.SessionExternalID = sessionID
-			h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
-		}
-	}
 	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
+	}
+	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, &primary.ExternalID)
+	if err == nil {
+		deletedEvent.WorkspaceUUID = deleted.WorkspaceUUID
+		deletedEvent.SessionExternalID = sessionID
+		h.publishSessionEvents(r.Context(), []db.SessionEvent{deletedEvent})
 	}
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
@@ -484,6 +468,9 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		CreatedAtLT:       createdAtLT,
 		CreatedAtLTE:      createdAtLTE,
 	})
+	if errors.Is(err, db.ErrInvalidCursor) {
+		return invalidRequest(err)
+	}
 	if err != nil {
 		return internalError("Could not list events", fmt.Errorf("list session %q events: %w", sessionID, err))
 	}

@@ -81,15 +81,21 @@ func idlePrimaryInputID(ctx context.Context, executor yourbatis.Executor, sessio
 	if first < 0 {
 		return "", nil
 	}
+	if slices.ContainsFunc(events[:first], func(event SessionEvent) bool {
+		return maevents.IsPublicWorkerInputEvent(event.EventType) && event.ProcessedAt.IsZero() &&
+			(event.ThreadExternalID == nil || *event.ThreadExternalID == primary.ExternalID)
+	}) {
+		return "", nil
+	}
 	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, primary.ExternalID)
 	if err != nil || len(pending) > 0 {
 		return "", err
 	}
-	// Descending history puts queued messages first, so one row suffices.
+	// Descending history puts every unacknowledged worker input first.
 	latest, err := NewSessionEventMapper(executor).ListPage(ctx, sessionEventPageMapperParams{
 		WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.ExternalID,
-		ThreadExternalID: primary.ExternalID, Types: []string{"user.message"},
-		Descending: true, FetchLimit: 1,
+		ThreadExternalID: primary.ExternalID,
+		Descending:       true, FetchLimit: 1,
 	})
 	if err != nil {
 		return "", err

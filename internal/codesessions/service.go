@@ -198,7 +198,7 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 		}
 		batch.events = append(batch.events, prepared)
 	}
-	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, func(db.CodeSession) error {
+	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", func(db.CodeSession) error {
 		return batch.publish(ctx)
 	})
 }

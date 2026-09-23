@@ -58,6 +58,14 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="CursorExists" result="scalar" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+              AND external_id = #{eventExternalID}
+        )
+    </select>
+
     <select id="FindLatestStatus" result="optional" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
@@ -115,8 +123,8 @@
                 ))
             </if>
         </where>
-        ORDER BY COALESCE(processed_at, CAST('infinity' AS timestamptz))
-        <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
+        ORDER BY session_events.processed_at
+        <choose><when test="params.Descending">DESC NULLS FIRST, id DESC</when><otherwise>ASC NULLS LAST, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>
 

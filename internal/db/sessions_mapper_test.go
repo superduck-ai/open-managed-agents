@@ -193,7 +193,7 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, `ORDER BY COALESCE(processed_at, CAST('infinity' AS timestamptz)) ASC, id ASC`)
+	assertMapperSQLContains(t, eventBound, `ORDER BY session_events.processed_at ASC NULLS LAST, id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -272,4 +272,14 @@ func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.statementID, func(t *testing.T) { assertMapperExecutionError(t, test) })
 	}
+}
+
+func TestSessionEventCursorExistsMapper(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperCursorExistsStatement,
+		bound:     buildSessionEventMapperCursorExists(yourbatis.DialectPostgres, "workspace", "session", "event"),
+		wantID:    "SessionEventMapper.CursorExists", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "eventExternalID"},
+		wantSQLFragments:  []string{"SELECT EXISTS", "workspace_uuid = $1", "session_external_id = $2", "external_id = $3"},
+	})
 }

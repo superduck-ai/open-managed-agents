@@ -697,6 +697,10 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 		if !found {
 			return ErrNotFound
 		}
+		if current.Status != "active" {
+			return ErrInvalidState
+		}
+
 		if input.WorkerEpoch != current.CurrentWorkerEpoch {
 			return ErrWorkerEpochMismatch
 		}

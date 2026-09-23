@@ -20,6 +20,7 @@ func TestCodeSessionInputStatePostgres(t *testing.T) {
 	// Only the columns queried here are needed for this isolated locking fixture.
 	if _, err := database.ExecContext(ctx, `CREATE TABLE code_sessions (
  uuid uuid DEFAULT gen_random_uuid(), workspace_uuid uuid, session_uuid uuid,
+ external_id text DEFAULT 'code_session', status text DEFAULT 'active', worker_turn_started boolean DEFAULT false,
  worker_status text, worker_external_metadata jsonb, created_at timestamptz DEFAULT now(), deleted_at timestamptz
  )`); err != nil {
 		t.Fatal(err)

@@ -333,14 +333,24 @@ func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThre
 }
 
 func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
-	mapper := NewSessionMapper(d.mapperDB)
-	row, err := mapper.Archive(ctx, workspaceUUID, externalID)
-	return row.session(), mapNoRows(err)
+	var archived Session
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		if err := prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+			return err
+		}
+		row, err := NewSessionMapper(executor).Archive(ctx, workspaceUUID, externalID)
+		archived = row.session()
+		return mapNoRows(err)
+	})
+	return archived, err
 }
 
 func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
 	var session Session
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		if err := prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+			return err
+		}
 		sessionMapper := NewSessionMapper(executor)
 		threadMapper := NewSessionThreadMapper(executor)
 		resourceMapper := NewSessionResourceMapper(executor)
@@ -609,6 +619,15 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 		params.Limit = 20
 	}
 	mapper := NewSessionEventMapper(d.mapperDB)
+	if params.Cursor != nil {
+		exists, err := mapper.CursorExists(ctx, params.WorkspaceUUID, params.SessionExternalID, params.Cursor.ExternalID)
+		if err != nil {
+			return nil, false, err
+		}
+		if !exists {
+			return nil, false, ErrInvalidCursor
+		}
+	}
 	rows, err := mapper.ListPage(ctx, sessionEventPageParameters(params))
 	if err != nil {
 		return nil, false, err

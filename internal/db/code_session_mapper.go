@@ -44,6 +44,9 @@ type codeSessionRow struct {
 }
 
 type codeSessionInputStateRow struct {
+	ExternalID             string `db:"external_id"`
+	Status                 string `db:"status"`
+	WorkerTurnStarted      bool   `db:"worker_turn_started"`
 	WorkerStatus           string `db:"worker_status"`
 	WorkerExternalMetadata []byte `db:"worker_external_metadata"`
 }
@@ -155,6 +158,7 @@ type resumeCodeSessionWorkerLeaseParams struct {
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
+	ClearToolPermissionRequest(ctx context.Context, workspaceUUID, codeSessionExternalID, publicEventID string) error
 	LockLatestInputState(ctx context.Context, workspaceUUID, sessionUUID string) (codeSessionInputStateRow, bool, error)
 	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string, newTurn bool) error
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)

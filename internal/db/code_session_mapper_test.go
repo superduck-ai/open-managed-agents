@@ -254,3 +254,13 @@ func TestInternalEventIdempotencyLookupBindings(t *testing.T) {
 		wantSQLFragments:  []string{"workspace_uuid = $1", "idempotency_key = $2", "idempotency_key <> ''", "deleted_at IS NULL"},
 	})
 }
+
+func TestClearToolPermissionRequestMapper(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionMapperClearToolPermissionRequestStatement,
+		bound:     buildCodeSessionMapperClearToolPermissionRequest(yourbatis.DialectPostgres, "workspace", "worker", "tool"),
+		wantID:    "CodeSessionMapper.ClearToolPermissionRequest", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames: []string{"publicEventID", "publicEventID", "workspaceUUID", "codeSessionExternalID"},
+		wantSQLFragments:  []string{"- ('managed_agent_tool_permission_request:' || $2)", "->>'public_event_id' = $1", "workspace_uuid = $3", "external_id = $4"},
+	})
+}

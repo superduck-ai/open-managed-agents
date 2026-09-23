@@ -4,6 +4,7 @@ import (
 	"context"
 	jsonv2 "encoding/json/v2"
 	"slices"
+	"strings"
 	"time"
 	"uuid"
 
@@ -65,17 +66,15 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		return nil, err
 	}
 	if status == "idle" && payload.StopReason != nil && payload.StopReason.Type == "requires_action" &&
+		(len(payload.StopReason.EventIDs) > 0 || worker.WorkerStatus != "requires_action") &&
 		(len(allPending) == 0 || (isThread && len(pending) == 0)) {
 		return nil, nil
 	}
-	suffix := status
-	if suffix == "rescheduling" {
-		suffix = "rescheduled"
-	}
-	threadEvent, err := newSessionStatusEvent(source, "session.thread_status_"+suffix, thread, statusStopReason(status, payload.StopReason, pending))
+	threadEvent, err := newSessionStatusEvent(source, "session.thread_status_"+status, thread, statusStopReason(status, payload.StopReason, pending))
 	if err != nil {
 		return nil, err
 	}
+	threadEvent.ThreadExternalID = source.ThreadExternalID
 	sessionStatus := status
 	if isThread {
 		threads, err := NewSessionThreadMapper(executor).List(ctx, session.WorkspaceUUID, session.ExternalID)
@@ -84,11 +83,7 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 		sessionStatus = sessionStatusAfterThread(threads, thread.ExternalID, status)
 	}
-	sessionSuffix := sessionStatus
-	if sessionSuffix == "rescheduling" {
-		sessionSuffix = "rescheduled"
-	}
-	sessionType := "session.status_" + sessionSuffix
+	sessionType := "session.status_" + sessionStatus
 	if !isThread {
 		sessionType = source.EventType
 	}
@@ -130,6 +125,7 @@ func statusStopReason(status string, reason *sessionStopReason, pending []string
 }
 
 func newSessionStatusEvent(source SessionEvent, eventType string, thread SessionThread, reason *sessionStopReason) (SessionEvent, error) {
+	eventType = strings.Replace(eventType, "_rescheduling", "_rescheduled", 1)
 	eventID := source.ExternalID
 	if eventType != source.EventType {
 		eventID += "_" + eventType

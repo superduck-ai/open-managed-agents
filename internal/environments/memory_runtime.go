@@ -20,7 +20,7 @@ type memoryRuntimeMount struct {
 	Name         string
 	Description  string
 	Instructions string
-	Access       string
+	Access       sessionresource.MemoryAccess
 	MountPath    string
 	Slug         string
 }
@@ -113,7 +113,7 @@ func escapeMemoryMarkdownLinkText(value string) string {
 	return value
 }
 
-func memoryMarkdownAccess(access string) string {
+func memoryMarkdownAccess(access sessionresource.MemoryAccess) string {
 	if access == sessionresource.MemoryAccessReadOnly {
 		return "ro"
 	}

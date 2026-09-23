@@ -85,7 +85,7 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 	}
 	var sawReadWrite, sawReadOnly bool
 	for _, resource := range resources {
-		readonly := resource.Access == sessionresource.MemoryAccessReadOnly
+		readonly := resource.Access == string(sessionresource.MemoryAccessReadOnly)
 		assertMemoryRcloneMount(t, app, rcloneConfig.Mounts, resource, readonly)
 		if readonly {
 			sawReadOnly = true
@@ -114,7 +114,7 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 	}
 	for _, resource := range resources {
 		access := "rw"
-		if resource.Access == sessionresource.MemoryAccessReadOnly {
+		if resource.Access == string(sessionresource.MemoryAccessReadOnly) {
 			access = "ro"
 		}
 		line := "- [" + resource.Name + "](" + resource.MountPath + ") " + access + " — " + resource.Description + "。" + resource.Instructions
@@ -146,7 +146,7 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load code session: %v", err)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil || len(queued) == 0 {
 		t.Fatalf("queued inbound events = %#v err=%v", queued, err)
 	}

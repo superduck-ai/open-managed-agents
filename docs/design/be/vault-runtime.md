@@ -11,7 +11,7 @@
 
 ## 背景
 
-Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Managed Agent 保留 Agent Snapshot 原始 MCP URL，经 `HTTPS_PROXY` CONNECT；当 `upstream_proxy_mitm_enabled` 开启时，OMA 在 MITM 解密后的 HTTP 边界注入凭证。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）按 #235 作为显式兼容入口保留，Runner 不再自动改写 `mcp_config` 到该接口。
+Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Managed Agent 的普通 MCP 保留 Agent Snapshot 原始 URL，经 `HTTPS_PROXY` CONNECT；当 `upstream_proxy_mitm_enabled` 开启时，OMA 在 MITM 解密后的 HTTP 边界注入凭证。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）按 #235 作为显式兼容入口保留，Runner 不把普通 MCP 自动改写到该接口；只有 canonical Tunnel 条目会投影到独立的 named Runtime Gateway。
 
 ## 威胁模型（加密管到哪）
 
@@ -160,14 +160,14 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 目标：Sandbox 连需认证的 MCP 时，由 OMA 在 MITM 解密后的出站 HTTP 上注入凭证；沙箱只持有原始 MCP URL，看不到 token。
 
-注入点：CONNECT MITM（`serveUpstreamProxyMITMHTTP` → `vaults.MITMEgress.Prepare`）为 Managed Agent 主路径。先环境变量占位符替换，再按 CONNECT authority + origin-form path 拼绝对 URL，经 `Injector.WrapTransport` 做 Credential URL match 与 Bearer 注入。显式调用方可继续走 Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`），共用同一 `Injector`；Runner 不恢复改写 `mcp_config`。
+注入点：CONNECT MITM（`serveUpstreamProxyMITMHTTP` → `vaults.MITMEgress.Prepare`）为普通 Managed Agent MCP 主路径。先环境变量占位符替换，再按 CONNECT authority + origin-form path 拼绝对 URL，经 `Injector.WrapTransport` 做 Credential URL match 与 Bearer 注入。显式调用方可继续走 Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`），共用同一 `Injector`；Runner 不改写普通 MCP，canonical Tunnel 则使用独立 named Runtime Gateway。
 
 ### 运行时注入决策（grilling 已确认）
 
 | 项 | 决定 |
 |---|---|
 | 凭证类型 | **static_bearer** + **mcp_oauth**（MITM MCP 注入）；**environment_variable**（Opaque Placeholder + Egress Secret Substitution） |
-| 注入落点 | Managed Agent：CONNECT MITM（`MITMEgress` → `Injector` + `EgressSubstitutor`）。显式：Session MCP HTTP proxy（`WithVaultSecrets` → `wrapMCPVaultTransport` → 同一 `Injector`）。Runner **不**自动改写 `mcp_config`。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan。`WithPlatformOAuthClients` 接入 `vault.platform_oauth_clients`。Env：Session 挂载时经 `startup_context.environment_variables` 灌入 Opaque Placeholder |
+| 注入落点 | Managed Agent 普通 MCP：CONNECT MITM（`MITMEgress` → `Injector` + `EgressSubstitutor`）。显式：Session MCP HTTP proxy（`WithVaultSecrets` → `wrapMCPVaultTransport` → 同一 `Injector`）。Runner **不**自动改写普通 MCP；Tunnel-only named Gateway 不经过 Vault transport。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan。`WithPlatformOAuthClients` 接入 `vault.platform_oauth_clients`。Env：Session 挂载时经 `startup_context.environment_variables` 灌入 Opaque Placeholder |
 | MITM 硬门闩 | Session 挂载时若有活跃 `environment_variable` 且 `upstream_proxy_mitm_enabled=false` → 失败。`static_bearer` / `mcp_oauth` **不**挡启动：MITM 关时 Session 仍可起来，MCP 注入只走显式 `/mcp`；Managed Agent 自动注入仍需 MITM |
 | Credential `networking` | MCP 注入仍不按 credential networking 门控。`environment_variable` **要求**显式 `networking`；limited 的 `allowed_hosts` 复用 Environment host 语义，仅约束是否可替换，不授予可达性 |
 | host 未覆盖 | MCP：passthrough。Env：未覆盖 host / 关闭的 Injection Location → 占位符原文透传 |

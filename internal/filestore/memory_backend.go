@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -14,10 +13,10 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/memorypath"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
-
-const maxMemoryPathBytes = 1024
 
 type memoryFilestoreStore interface {
 	ListSessionMemoryMounts(ctx context.Context, workspaceUUID, filesystemUUID string) ([]db.SessionMemoryMount, error)
@@ -36,18 +35,14 @@ type memoryPathBackend struct {
 	now      func() time.Time
 }
 
-type resolvedMemoryMount struct {
-	db.SessionMemoryMount
-}
-
 func (b *memoryPathBackend) createFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
 	params createFileParams,
 	body io.Reader,
 ) (fileResponse, *apiError) {
+	parsed, _ := parseMemoryFilestorePath(params.Path)
 	if apiErr := requireMemoryDocumentPath(parsed); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -73,8 +68,10 @@ func (b *memoryPathBackend) copyFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	source, dest memoryFilestorePath,
+	request copyMoveFileRequest,
 ) (fileResponse, *apiError) {
+	source, _ := parseMemoryFilestorePath(request.Source)
+	dest, _ := parseMemoryFilestorePath(request.Destination)
 	if apiErr := requireMemoryDocumentPath(source); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -104,8 +101,10 @@ func (b *memoryPathBackend) moveFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	source, dest memoryFilestorePath,
+	request copyMoveFileRequest,
 ) (fileResponse, *apiError) {
+	source, _ := parseMemoryFilestorePath(request.Source)
+	dest, _ := parseMemoryFilestorePath(request.Destination)
 	if apiErr := requireMemoryDocumentPath(source); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
@@ -158,21 +157,22 @@ func (b *memoryPathBackend) makeDirectory(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
-	requestPath string,
+	request makeDirectoryRequest,
 ) (directoryResponse, *apiError) {
+	parsed, _ := parseMemoryFilestorePath(request.Path)
 	if _, apiErr := b.resolveMount(ctx, principal, filesystem, parsed, true); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	return directoryResponse{Directory: virtualMemoryDirectory(filesystem.ExternalID, requestPath, b.now().UTC())}, nil
+	return directoryResponse{Directory: virtualMemoryDirectory(filesystem.ExternalID, request.Path, b.now().UTC())}, nil
 }
 
 func (b *memoryPathBackend) removeDirectory(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
+	request removeDirectoryRequest,
 ) *apiError {
+	parsed, _ := parseMemoryFilestorePath(request.Path)
 	mount, apiErr := b.resolveMount(ctx, principal, filesystem, parsed, true)
 	if apiErr != nil {
 		return apiErr
@@ -198,8 +198,9 @@ func (b *memoryPathBackend) removeFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
-	parsed memoryFilestorePath,
+	request pathRequest,
 ) *apiError {
+	parsed, _ := parseMemoryFilestorePath(request.Path)
 	if apiErr := requireMemoryDocumentPath(parsed); apiErr != nil {
 		return apiErr
 	}
@@ -305,7 +306,7 @@ func (b *memoryPathBackend) readMetadata(
 func (b *memoryPathBackend) upsertMemoryContent(
 	ctx context.Context,
 	principal Principal,
-	mount resolvedMemoryMount,
+	mount db.SessionMemoryMount,
 	documentPath string,
 	content []byte,
 ) (db.Memory, *apiError) {
@@ -397,7 +398,7 @@ func (b *memoryPathBackend) upsertMemoryContent(
 	return record, nil
 }
 
-func (b *memoryPathBackend) deleteMemoryRecord(ctx context.Context, workspaceUUID string, mount resolvedMemoryMount, current db.Memory) *apiError {
+func (b *memoryPathBackend) deleteMemoryRecord(ctx context.Context, workspaceUUID string, mount db.SessionMemoryMount, current db.Memory) *apiError {
 	versionID, err := ids.New("memver_")
 	if err != nil {
 		return internalError("allocate memory version id", err)
@@ -431,7 +432,7 @@ func (b *memoryPathBackend) loadMountedMemoryFile(
 	return b.loadMemoryFile(ctx, principal.WorkspaceUUID, mount, parsed.Rel)
 }
 
-func (b *memoryPathBackend) loadMemoryFile(ctx context.Context, workspaceUUID string, mount resolvedMemoryMount, documentPath string) (db.Memory, *apiError) {
+func (b *memoryPathBackend) loadMemoryFile(ctx context.Context, workspaceUUID string, mount db.SessionMemoryMount, documentPath string) (db.Memory, *apiError) {
 	current, found, err := b.memories.GetMemoryByPath(ctx, workspaceUUID, mount.MemoryStoreExternalID, documentPath)
 	if err != nil {
 		return db.Memory{}, mapMemoryMutationError("read memory", err)
@@ -448,28 +449,15 @@ func (b *memoryPathBackend) readMemoryObject(ctx context.Context, current db.Mem
 		return nil, mapBlobstoreError("read memory", err)
 	}
 	defer object.Body.Close()
-	content, apiErr := readMemoryUpload(object.Body)
-	if apiErr != nil {
-		return nil, apiErr
-	}
-	return content, nil
+	return readMemoryUpload(object.Body)
 }
 
 func (b *memoryPathBackend) memoryDirectoryHasChildren(ctx context.Context, workspaceUUID, storeID, dirRel string) (bool, error) {
-	prefix := memoryListPrefix(dirRel)
-	if prefix == "" {
-		records, _, err := b.memories.ListMemoriesPage(ctx, db.ListMemoriesPageParams{
-			WorkspaceUUID:         workspaceUUID,
-			MemoryStoreExternalID: storeID,
-			Limit:                 1,
-		})
-		return len(records) > 0, err
-	}
 	records, _, err := b.memories.ListMemoriesPage(ctx, db.ListMemoriesPageParams{
 		WorkspaceUUID:         workspaceUUID,
 		MemoryStoreExternalID: storeID,
 		Limit:                 1,
-		PathPrefix:            prefix,
+		PathPrefix:            memoryListPrefix(dirRel),
 	})
 	return len(records) > 0, err
 }
@@ -480,30 +468,37 @@ func (b *memoryPathBackend) resolveMount(
 	filesystem db.FilestoreFilesystem,
 	parsed memoryFilestorePath,
 	mutate bool,
-) (resolvedMemoryMount, *apiError) {
-	if b.memories == nil {
-		return resolvedMemoryMount{}, notFound("resource does not exist")
+) (db.SessionMemoryMount, *apiError) {
+	if parsed.Rel != "" {
+		if err := memorypath.Validate(parsed.Rel); err != nil {
+			return db.SessionMemoryMount{}, invalidArgument(err.Error())
+		}
 	}
 	mounts, err := b.memories.ListSessionMemoryMounts(ctx, principal.WorkspaceUUID, filesystem.UUID)
 	if err != nil {
-		return resolvedMemoryMount{}, internalError("list memory mounts", err)
+		return db.SessionMemoryMount{}, internalError("list memory mounts", err)
 	}
-	for _, mount := range mounts {
-		if memorySlugFromMountPath(mount.MountPath) != parsed.Slug {
+	var mount db.SessionMemoryMount
+	found := false
+	for _, candidate := range mounts {
+		if sessionresource.MemorySlugFromMountPath(candidate.MountPath) != parsed.Slug {
 			continue
 		}
-		if mount.StoreMissing || mount.MemoryStoreUUID == "" {
-			return resolvedMemoryMount{}, notFound("resource does not exist")
+		if found {
+			return db.SessionMemoryMount{}, duplicateMemoryMountError()
 		}
-		if mutate && mount.Archived {
-			return resolvedMemoryMount{}, permissionDenied("memory store is archived")
-		}
-		if mutate && mount.Access == "read_only" {
-			return resolvedMemoryMount{}, permissionDenied("the memory mount is read-only")
-		}
-		return resolvedMemoryMount{SessionMemoryMount: mount}, nil
+		mount, found = candidate, true
 	}
-	return resolvedMemoryMount{}, notFound("resource does not exist")
+	if !found || mount.StoreMissing || mount.MemoryStoreUUID == "" {
+		return db.SessionMemoryMount{}, notFound("resource does not exist")
+	}
+	if mutate && mount.Archived {
+		return db.SessionMemoryMount{}, permissionDenied("memory store is archived")
+	}
+	if mutate && mount.Access != string(sessionresource.MemoryAccessReadWrite) {
+		return db.SessionMemoryMount{}, permissionDenied("the memory mount is read-only")
+	}
+	return mount, nil
 }
 
 func (b *memoryPathBackend) discardMemoryObject(ctx context.Context, key string) {
@@ -516,8 +511,8 @@ func requireMemoryDocumentPath(parsed memoryFilestorePath) *apiError {
 	if parsed.Rel == "" {
 		return invalidArgument("path is a directory")
 	}
-	if len(parsed.Rel) > maxMemoryPathBytes {
-		return invalidArgument("path is too long")
+	if err := memorypath.Validate(parsed.Rel); err != nil {
+		return invalidArgument(err.Error())
 	}
 	return nil
 }
@@ -538,17 +533,6 @@ func readMemoryUpload(body io.Reader) ([]byte, *apiError) {
 
 func sessionMemoryActor(sessionExternalID string) db.MemoryActor {
 	return db.MemoryActor{Type: db.MemoryActorTypeSession, SessionID: sessionExternalID}
-}
-
-func mapMemoryMutationError(operation string, err error) *apiError {
-	switch {
-	case errors.Is(err, db.ErrInvalidState):
-		return permissionDenied("memory store is archived")
-	case errors.Is(err, db.ErrLimitExceeded):
-		return &apiError{Status: http.StatusForbidden, Code: "resource_exhausted", Message: "Memory store item limit exceeded"}
-	default:
-		return mapDatabaseError(operation, err)
-	}
 }
 
 func sha256HexBytes(content []byte) string {

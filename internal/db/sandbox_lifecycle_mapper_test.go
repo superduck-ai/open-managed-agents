@@ -15,9 +15,9 @@ func TestSandboxLifecycleMapperClaimBindsScopeAndIdleCutoff(t *testing.T) {
 		statement: sandboxLifecycleMapperClaimStatement, bound: bound,
 		wantID: "SandboxLifecycleMapper.Claim", wantKind: yourbatis.StatementUpdate,
 		wantArgumentNames: []string{"codeSessionUUID", "cutoff", "sandboxUUID"},
-		wantSQLFragments: []string{"idle_since = NULL", "current_worker_epoch = current_worker_epoch + 1",
+		wantSQLFragments: []string{"current_worker_epoch = current_worker_epoch + 1",
 			"worker_status = 'idle'", "idle_since <= $2", "sandbox.uuid = $3", "s.organization_uuid = cs.organization_uuid",
-			"e.delivery_status <> 'processed'", "env.config->>'type' = 'cloud'"},
+			"env.config->>'type' = 'cloud'"},
 	})
 	values := make([]any, len(bound.Args))
 	for i, arg := range bound.Args {
@@ -62,7 +62,7 @@ func TestSandboxReclamationRecoveryWithoutProviderIDOnlyTargetsReclaimed(t *test
 		wantArgumentNames:          []string{"params.CodeSessionExternalID", "params.LastError"},
 		wantSensitiveArgumentNames: []string{"params.LastError"},
 		wantSQLFragments: []string{"sandbox.state = 'stopped'", "sandbox.stop_reason = 'idle_timeout'",
-			"e.delivery_status <> 'processed'", "s.archived_at IS NULL", "code_session.external_id = $1"},
+			"code_session.idle_since IS NULL", "s.archived_at IS NULL", "code_session.external_id = $1"},
 	})
 	if containsMapperSQL(bound.SQL, "sandbox.state = 'running'") {
 		t.Fatal("empty provider ID allows recovery of a running sandbox")

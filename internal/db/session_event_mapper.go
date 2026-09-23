@@ -18,6 +18,8 @@ type sessionEventRow struct {
 	ThreadExternalID  *string    `db:"thread_external_id"`
 	EventType         string     `db:"event_type"`
 	Payload           []byte     `db:"payload"`
+	PayloadBlobUUID   *string    `db:"payload_blob_uuid"`
+	ToolUseID         *string    `db:"tool_use_id"`
 	ProcessedAt       time.Time  `db:"processed_at"`
 	CreatedAt         time.Time  `db:"created_at"`
 	DeletedAt         *time.Time `db:"deleted_at"`
@@ -34,6 +36,8 @@ type sessionEventWriteParams struct {
 	ThreadExternalID  *string
 	EventType         string
 	Payload           []byte
+	PayloadBlobUUID   *string
+	ToolUseID         *string
 	ProcessedAt       time.Time
 	CreatedAt         time.Time
 }

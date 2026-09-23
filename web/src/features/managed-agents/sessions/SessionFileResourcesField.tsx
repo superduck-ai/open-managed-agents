@@ -26,9 +26,12 @@ import type {
 import { formatBytes } from '../utils';
 import { hasSessionFileMountPath, isValidSessionFileMountPath, SESSION_FILE_UPLOADS_ROOT } from './file-resource-path';
 
+export { areSessionFileResourcesValid } from './file-resource-form';
+
 export function SessionFileResourcesField({
   resources,
   showAddButton = true,
+  showHeading = true,
   workspaceId,
   onChange,
   memoryAttaches = [],
@@ -37,6 +40,7 @@ export function SessionFileResourcesField({
 }: {
   resources: SessionFileResourceFormValue[];
   showAddButton?: boolean;
+  showHeading?: boolean;
   workspaceId: string;
   onChange?: (resources: SessionFileResourceFormValue[]) => void;
   memoryAttaches?: MemoryAttachFormValue[];
@@ -45,7 +49,6 @@ export function SessionFileResourcesField({
 }) {
   const { msg } = useI18n();
   const includeFiles = Boolean(onChange);
-  const includeMemory = Boolean(onMemoryAttachesChange);
   const filesQuery = useQuery({
     queryKey: ['managed-agents', 'session-file-options', workspaceId],
     queryFn: () => listSessionFileOptions(workspaceId),
@@ -63,15 +66,20 @@ export function SessionFileResourcesField({
   };
 
   return (
-    <section className="space-y-3" aria-labelledby="session-resources-title">
-      <div>
-        <h3 id="session-resources-title" className="text-sm font-semibold text-foreground">
-          {msg('managedAgents.sessions.resources.title', 'Resources')}
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg('managedAgents.sessions.resources.description', 'Mount files or memory stores into the session.')}
-        </p>
-      </div>
+    <section className="space-y-3" aria-labelledby={showHeading ? 'session-resources-title' : undefined}>
+      {showHeading ? (
+        <div>
+          <h3 id="session-resources-title" className="text-sm font-semibold text-foreground">
+            {msg('managedAgents.sessions.resources.title', 'Resources')}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {msg(
+              'managedAgents.sessions.resources.description',
+              'Mount files, Git repositories, or memory stores into the session.',
+            )}
+          </p>
+        </div>
+      ) : null}
 
       {includeFiles
         ? resources.map((resource, index) => {
@@ -163,7 +171,7 @@ export function SessionFileResourcesField({
           })
         : null}
 
-      {includeMemory && onMemoryAttachesChange ? (
+      {onMemoryAttachesChange ? (
         <MemoryStoreResourceCards
           attaches={memoryAttaches}
           options={memoryStoreOptions}
@@ -190,10 +198,10 @@ export function SessionFileResourcesField({
                 {msg('managedAgents.sessions.resources.typeFile', 'File')}
               </DropdownMenuItem>
             ) : null}
-            {includeMemory ? (
+            {onMemoryAttachesChange ? (
               <DropdownMenuItem
                 disabled={memoryAttaches.length >= MAX_MEMORY_ATTACHES}
-                onClick={() => onMemoryAttachesChange?.([...memoryAttaches, emptyMemoryAttach()])}
+                onClick={() => onMemoryAttachesChange([...memoryAttaches, emptyMemoryAttach()])}
               >
                 <Database aria-hidden />
                 {msg('managedAgents.memoryStores.kindTitle', 'Memory store')}
@@ -271,12 +279,4 @@ function fileOptionLabel(file: FileMetadataApiResponse) {
 
 function fileSearchText(file: FileMetadataApiResponse) {
   return `${file.filename}\n${file.id}`.toLocaleLowerCase();
-}
-
-export function areSessionFileResourcesValid(resources: SessionFileResourceFormValue[]) {
-  return resources.every(
-    (resource) =>
-      resource.fileId.trim().length > 0 &&
-      (!hasSessionFileMountPath(resource.mountPath) || isValidSessionFileMountPath(resource.mountPath)),
-  );
 }

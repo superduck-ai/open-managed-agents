@@ -96,3 +96,12 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 8. 有 memory store 时 ready 后存在 `/mnt/memory/MEMORY.md`；无 store 时不创建 `/mnt/memory`。Memory mount 或 `MEMORY.md` 写入失败与固定盘失败一样 fail-closed。跨 Session 寿命见 `tests/environments_memory_sandbox_e2e_test.go`。
 
 Token 当前固定一小时有效且不刷新；长生命周期 Sandbox 的续签不属于此镜像合同。
+
+
+## Git 资源准备
+
+Environment Manager 复用既有 sources 编排，在启动 Claude 前准备 Git 工作树。OMA 下发 `git_info.ref` 和 `mount_path`，默认分支省略 ref，指定分支使用 `refs/heads/<name>`，提交仅接受完整的 40 或 64 位十六进制 SHA；Git 凭据由已有 OMA 代理注入，不进入启动参数。
+
+Git 准备失败沿用既有初始化失败流程，不下发继续启动开关，不改写 Claude settings 或注入资源告警 hook。源码变更需构建匹配的 Manager artifact 才会进入新 Sandbox；本轮未更新运行镜像。
+
+Memory 沙箱 E2E 在 Environment Manager 启动前从 Worker 事件队列记录初始化提示词；Worker 确认后的消息不再依赖旧的数据库 inbound-event 查询。

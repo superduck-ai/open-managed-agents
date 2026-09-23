@@ -110,7 +110,7 @@ func TestMemorySandboxCrossSessionLifetime(t *testing.T) {
 		if !strings.Contains(markdown, " rw ") || !strings.Contains(markdown, " ro ") {
 			t.Fatalf("MEMORY.md missing access markers:\n%s", markdown)
 		}
-		prompt := initializeAppendSystemPrompt(t, app, sessionA.session.ID)
+		prompt := sessionA.appendSystemPrompt
 		if prompt == "" {
 			t.Fatal("initialize appendSystemPrompt is empty")
 		}
@@ -306,7 +306,7 @@ printf 'no-memory-root\n'
 		if !strings.Contains(stdout, "no-memory-root") {
 			t.Fatalf("session C probe stdout=%s stderr=%s", stdout, stderr)
 		}
-		prompt := initializeAppendSystemPrompt(t, app, sessionC.session.ID)
+		prompt := sessionC.appendSystemPrompt
 		if strings.Contains(prompt, sessionresource.MemoryMountRoot) {
 			t.Fatalf("session C appendSystemPrompt leaked memory root: %q", prompt)
 		}
@@ -314,11 +314,12 @@ printf 'no-memory-root\n'
 }
 
 type memorySandboxSession struct {
-	session   sessionAPIResponse
-	workID    string
-	sandbox   *e2b.Sandbox
-	resources []memoryResourceAPIResponse
-	stopped   bool
+	appendSystemPrompt string
+	session            sessionAPIResponse
+	workID             string
+	sandbox            *e2b.Sandbox
+	resources          []memoryResourceAPIResponse
+	stopped            bool
 }
 
 func startMemorySandboxSession(
@@ -336,7 +337,13 @@ func startMemorySandboxSession(
 		workID:    quickstartFindSessionEnvironmentWorkID(t, app, environmentID, session.ID),
 	}
 
-	runner := newManagedAgentRunner(t, app, e2bruntime.NewProvider(cfg.E2B), cfg)
+	provider := &memorySandboxPromptCaptureProvider{
+		Provider: e2bruntime.NewProvider(cfg.E2B),
+		beforeManagerStart: func() {
+			live.appendSystemPrompt = initializeAppendSystemPrompt(t, app, session.ID)
+		},
+	}
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "memory-sandbox-e2e")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)
@@ -401,10 +408,10 @@ func sessionMemoryResources(t *testing.T, session sessionAPIResponse) []memoryRe
 	return out
 }
 
-func memoryResourceByAccess(t *testing.T, resources []memoryResourceAPIResponse, access string) memoryResourceAPIResponse {
+func memoryResourceByAccess(t *testing.T, resources []memoryResourceAPIResponse, access sessionresource.MemoryAccess) memoryResourceAPIResponse {
 	t.Helper()
 	for _, resource := range resources {
-		if resource.Access == access {
+		if resource.Access == string(access) {
 			return resource
 		}
 	}
@@ -482,7 +489,7 @@ func initializeAppendSystemPrompt(t *testing.T, app *testApp, sessionID string) 
 	if err != nil {
 		t.Fatalf("load code session for %s: %v", sessionID, err)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
 	}
@@ -491,8 +498,8 @@ func initializeAppendSystemPrompt(t *testing.T, app *testApp, sessionID string) 
 			return prompt
 		}
 	}
-	_, _, payload := latestCodeSessionInboundEventForSource(t, app, codeSession.ExternalID, "internal")
-	return appendSystemPromptFromPayload(payload)
+	t.Fatal("initialize event is missing before worker startup")
+	return ""
 }
 
 func appendSystemPromptFromPayload(payload json.RawMessage) string {
@@ -505,4 +512,17 @@ func appendSystemPromptFromPayload(payload json.RawMessage) string {
 		return ""
 	}
 	return envelope.Request.AppendSystemPrompt
+}
+
+// Capture the initialization event before the worker acknowledges and removes it.
+type memorySandboxPromptCaptureProvider struct {
+	e2bruntime.Provider
+	beforeManagerStart func()
+}
+
+func (p *memorySandboxPromptCaptureProvider) StartBackgroundCommand(ctx context.Context, sandboxID, command string, stdin []byte) error {
+	if strings.Contains(command, " task-run") {
+		p.beforeManagerStart()
+	}
+	return p.Provider.StartBackgroundCommand(ctx, sandboxID, command, stdin)
 }

@@ -37,6 +37,26 @@ auth:
     # so there is no separate email-login secret to configure.
     password: replace-me
 
+tunnel:
+  # Stable externally reachable OMA origin used in canonical MCP URLs and to
+  # recognize Tunnel targets inside the Managed Agent Runtime Gateway.
+  public_base_url: ""
+  # Claude-compatible hostname metadata. The reserved default is intentionally
+  # non-resolving; configure a real suffix only with matching wildcard DNS/TLS.
+  domain_suffix: tunnel.invalid
+  poll_timeout: 30s
+  request_timeout: 2m
+  presence_ttl: 60s
+  tombstone_ttl: 5m
+  max_pending_requests: 256
+  # Global slots include queued, executing, retained terminal and affinity session records.
+  # Each slot reserves storage for a maximum-sized result; increase deliberately.
+  max_stored_requests: 4096
+  max_pending_bytes: 33554432
+  max_body_bytes: 1048576
+  max_header_bytes: 32768
+  max_header_value_bytes: 8192
+
 storage:
   type: s3
   s3:
@@ -77,7 +97,7 @@ environment_runner:
   concurrency: 2
   package_provision_timeout: 2m
   manager_path: /usr/local/bin/environment-manager
-  claude_agent_version: 2.1.120
+  claude_agent_version: 2.1.251
   claude_path: /opt/claude-code/bin/claude
   # Extra hosts rewritten from SSH remotes to HTTPS (in addition to built-in github.com).
   # Bare DNS hostnames only (labels [a-z0-9-], no leading/trailing hyphen); each adds git@host: and ssh://git@host/ → https://host/.
@@ -199,3 +219,17 @@ sandbox_lifecycle:
   enabled: true
   dry_run: true
   idle_timeout: 24h
+
+# Private transcript archives reuse storage.s3.bucket. No fixed object TTL on this prefix.
+transcript_archive:
+  enabled: false
+  dry_run: true
+  terminal_sweep_enabled: true
+  boundary_sweep_enabled: false
+  hard_delete_enabled: false
+  terminal_dwell: 24h
+  archive_min_age: 168h
+  soft_delete_window: 336h
+  target_segment_raw_bytes: 8388608
+  delete_batch_rows: 500
+  max_rows_per_job: 50000

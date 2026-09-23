@@ -211,10 +211,15 @@
         FROM memories
         WHERE workspace_uuid = #{workspaceUUID}
         AND memory_store_uuid = #{storeUUID}
-        AND path = #{path}
-        <if test="excludeMemoryUUID != ''">
-            AND uuid &lt;&gt; #{excludeMemoryUUID}
-        </if>
+        AND (
+            (path = #{path}
+            <if test="excludeMemoryUUID != ''">
+                AND uuid &lt;&gt; #{excludeMemoryUUID}
+            </if>
+            )
+            OR starts_with(path, #{path} || '/')
+            OR starts_with(#{path}, path || '/')
+        )
         AND deleted_at IS NULL
         LIMIT 1
     </select>

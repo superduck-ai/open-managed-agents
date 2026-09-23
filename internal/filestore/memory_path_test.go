@@ -2,6 +2,8 @@ package filestore
 
 import (
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func TestParseMemoryFilestorePath(t *testing.T) {
@@ -35,11 +37,21 @@ func TestParseMemoryFilestorePath(t *testing.T) {
 	})
 
 	t.Run("slug is taken from the sandbox mount_path snapshot", func(t *testing.T) {
-		if got := memorySlugFromMountPath("/mnt/memory/product-docs-draft"); got != "product-docs-draft" {
+		if got := sessionresource.MemorySlugFromMountPath("/mnt/memory/product-docs-draft"); got != "product-docs-draft" {
 			t.Fatalf("slug = %q", got)
 		}
-		if got := memorySlugFromMountPath("/memory/test"); got != "" {
+		if got := sessionresource.MemorySlugFromMountPath("/memory/test"); got != "" {
 			t.Fatalf("filestore path is not a sandbox mount: %q", got)
 		}
 	})
+}
+
+func TestMemoryFilestoreRecognizesGeneratedSlugs(t *testing.T) {
+	for _, name := range []string{"项目规范", "Hellö Wörld", "hello_world", "!!!"} {
+		slug := sessionresource.SlugifyMemoryName(name, "memstore_fallback")
+		parsed, claimed := parseMemoryFilestorePath("/memory/" + slug + "/note.md")
+		if !claimed || parsed.Slug != slug || parsed.Rel != "/note.md" {
+			t.Fatalf("generated slug %q not routed to memory: %+v claimed=%t", slug, parsed, claimed)
+		}
+	}
 }

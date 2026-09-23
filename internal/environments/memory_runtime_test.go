@@ -35,12 +35,12 @@ func TestManagedAgentRuntimeResourcesCollectMemoryMountsWithoutSources(t *testin
 		),
 	}
 
-	resolved := resolveManagedAgentRuntimeResources(resources)
+	resolved := mustResolveRuntimeResources(t, resources)
 	sources := managedAgentRuntimeSourceValues(t, resolved.sources)
 	wantSources := []any{
 		map[string]any{
 			"type":       "git_repository",
-			"url":        "https://github.com/acme/widgets",
+			"git_info":   map[string]any{"type": "git", "repo": "acme/widgets", "url": "https://github.com/acme/widgets"},
 			"mount_path": "/workspace/widgets",
 		},
 	}
@@ -74,7 +74,7 @@ func TestManagedAgentRuntimeResourcesReportUnparseableMemorySnapshots(t *testing
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			resolved := resolveManagedAgentRuntimeResources([]db.SessionResource{{
+			resolved := mustResolveRuntimeResources(t, []db.SessionResource{{
 				ResourceType: sessionresource.MemoryStoreType,
 				ExternalID:   "sesrsc_broken",
 				Payload:      json.RawMessage(testCase.payload),
@@ -287,11 +287,14 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"},"system":"You are a concise coding assistant."}`),
 	}
-	withoutStores := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	withoutStores, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertSessionConfigPromptExcludesMemory(t, withoutStores, "")
 	assertSessionConfigMemoryEnv(t, withoutStores, false)
 
-	withStores := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources([]db.SessionResource{
+	withStores, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, []db.SessionResource{
 		memoryStoreSessionResource(
 			"user-preferences",
 			"user-preferences",
@@ -300,6 +303,9 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 			"问饮食或语言先读此目录",
 		),
 	}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertSessionConfigPromptExcludesMemory(t, withStores, "user-preferences")
 	assertSessionConfigMemoryEnv(t, withStores, true)
 
@@ -332,7 +338,7 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 	}
 }
 
-func memoryStoreSessionResource(name, slug, access, description, instructions string) db.SessionResource {
+func memoryStoreSessionResource(name, slug string, access sessionresource.MemoryAccess, description, instructions string) db.SessionResource {
 	payload, err := json.Marshal(map[string]any{
 		"type":            sessionresource.MemoryStoreType,
 		"memory_store_id": "mem_" + slug,

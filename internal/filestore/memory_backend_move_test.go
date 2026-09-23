@@ -35,8 +35,7 @@ func TestMoveFileLeavesDestinationWhenRenameFails(t *testing.T) {
 		context.Background(),
 		Principal{WorkspaceUUID: "ws"},
 		db.FilestoreFilesystem{UUID: "fs-uuid", ExternalID: "fse_1"},
-		memoryFilestorePath{Slug: "slug", Rel: "/notes/a.txt"},
-		memoryFilestorePath{Slug: "slug", Rel: "/notes/b.txt"},
+		copyMoveFileRequest{Source: "/memory/slug/notes/a.txt", Destination: "/memory/slug/notes/b.txt"},
 	)
 	if apiErr == nil {
 		t.Fatal("want rename failure")

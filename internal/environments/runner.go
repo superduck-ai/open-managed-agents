@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
@@ -553,7 +554,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if err := r.replaceRuntimeSkillArchives(ctx, session, runtimeSkills); err != nil {
 		return nil, err
 	}
-	runtimeResources := resolveManagedAgentRuntimeResources(resources)
+	runtimeResources, err := resolveManagedAgentRuntimeResources(resources)
+	if err != nil {
+		return nil, fmt.Errorf("resolve managed agent resources: %w", err)
+	}
 	if len(runtimeResources.invalidMemoryResources) > 0 {
 		return nil, r.logManagedAgentRuntimeStageFailure(
 			ctx,
@@ -565,7 +569,17 @@ func (r *Runner) prepareManagedAgentLaunch(
 			),
 		)
 	}
-	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
+	if !r.cfg.CodeSession.UpstreamProxyMITMEnabled {
+		for _, resource := range resources {
+			if resource.ResourceType == sessionresource.GitRepositoryType {
+				return nil, errGitResourcesRequireMITM
+			}
+		}
+	}
+	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources)
+	if err != nil {
+		return nil, err
+	}
 	envPlaceholders, err := r.prepareEnvCredentialPlaceholders(ctx, session)
 	if err != nil {
 		return nil, err
@@ -637,16 +651,25 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
 	}
-	payload, err := buildEnvironmentManagerV0Payload(
+	runtimeSessionConfig, err := buildManagedAgentRuntimeMCPConfig(
+		preparation.SessionConfig,
 		local.CodeSessionID,
 		local.SessionIngressToken,
-		local.OAuthAccessToken,
-		local.WorkerEpoch,
-		preparation.WorkDir,
-		preparation.SessionConfig,
 		r.cfg,
-		preparation.EnvPlaceholders,
 	)
+	var payload []byte
+	if err == nil {
+		payload, err = buildEnvironmentManagerV0Payload(
+			local.CodeSessionID,
+			local.SessionIngressToken,
+			local.OAuthAccessToken,
+			local.WorkerEpoch,
+			preparation.WorkDir,
+			runtimeSessionConfig,
+			r.cfg,
+			preparation.EnvPlaceholders,
+		)
+	}
 	if err != nil {
 		if preparation.RecoveryCodeSessionID == "" {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

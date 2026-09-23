@@ -253,7 +253,7 @@ flowchart TB
 | `internal/db` | filesystem UUID → 本 Session 的 slug / store / access / 归档。不缓存、不进 JWT |
 | 控制台 | Create session / deployment：选 store、Access、Instructions（500 字）。列表/详情/Add memory 已有 |
 
-filestore 只 import `internal/db`。`sessions` / `environments` 不碰 memory 三表。
+filestore 通过 `internal/db` 访问记忆数据，并复用 `internal/sessionresource` 的挂载路径解析；不依赖 `internal/memory` handler。`sessions` / `environments` 不碰 memory 三表。
 
 ---
 
@@ -266,13 +266,19 @@ filestore 只 import `internal/db`。`sessions` / `environments` 不碰 memory �
 - `instructions` ≤ 500 字，允许空。Session 与 Deployment 共用该上限。
 - 请求携带 `mount_path` / `name` / `description` → 400。
 - 不存在 → 404；已归档 → 400。
-- slug = name 小写，非字母数字折叠为 `-`，去首尾；空则回退 external id；同 Session 冲突追加 `-2`。
-- 错误集中 `internal/sessions/errors.go`。
+- slug 使用 `gosimple/slug` 转写名称，支持中文及重音字符，保留下划线；空则回退 external id；同 Session 冲突追加 `-2`。Filestore 接受同一 slug 字符集合。
+- Session 与 Deployment 保存 attach 时统一通过 `sessionresource.ResolveMemoryAttach` 解析并校验引用；持久化模板 `MemoryAttachSpec` 仅含 `memory_store_id`、`access`、`instructions`。Session 当场生成身份快照，Deployment 留到运行时生成；未填写 instructions 与显式清空在模板中保持区别。
+- 手动及定时运行均由 `loadDeploymentMemoryStores` 一次批量加载去重后的 store；依赖校验按资源顺序检查加载结果是否缺失或归档，快照复用加载结果。保存时校验不替代运行时校验，也不提供跨并发更新的事务快照保证。
+- 引用错误由 `sessionresource.ReferenceError` 携带，HTTP/运行错误分别集中映射于 `internal/sessions/errors.go` 和 `internal/deployments/errors.go`。
 - 资源顺序不影响落盘。
 
 ### 7.2 Filestore 写
 
-每请求实时回查：未挂载 → not found；`read_only` 写 → 403；归档 → 拒 mutation；>100KB 拒写；第 2001 条拒新建。
+Memory REST 与 Filestore 共用 `internal/memorypath` 校验文档路径：UTF-8、1024 字节上限、NFC、无控制/格式字符及合法路径段。非 NFC 输入直接拒绝，不自动改写路径。
+
+同一 store 的活动 Memory 路径必须构成合法文件树：文件不能与其他文件的祖先或后代路径重叠。REST create / 改路径及 Filestore create / copy / move 在持有 store 行锁的同一事务内检查精确路径、祖先和后代冲突；冲突返回 409，失败不新增版本或改变源文件。路径比较按 `/` 分段，`%`、`_` 作为普通字符，已软删除的记录不占用路径。合法的同 store 文件移动和目标文件覆盖继续支持；本次不自动修复既有冲突数据。
+
+每请求实时回查：未挂载 → not found；请求的 slug 匹配多条挂载 → 409 `failed_precondition`，读写均拒绝，不按返回顺序选择 store，且先于 store 状态和 access 检查；仅明确的 `access=read_write` 允许写，其他值（包括 `read_only`、空值及未知值）写 → 403；归档 → 拒 mutation；>100KB 拒写；第 2001 条拒新建。正常 attach 在输入边界将缺省 access 规范化为 `read_write`；Filestore 不为数据库快照中的缺失或异常 access 提供可写兼容，读取行为不变。
 
 | 操作 | 语义 |
 | --- | --- |
@@ -319,7 +325,7 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 
 1. Agent 读到 seed；写入可写挂载后 API 立刻查到同一 path，`created_by.type=session_actor` 带 session_id。无透传、无启动物化拷贝。
 2. 响应含服务端 `mount_path`；请求携带 `mount_path` / `name` / `description` → 400。
-3. `read_only` 写失败且无 version；`read_write` 写有 version。
+3. `read_only`、异常 access（如 `readonly` / `unknown`）及空值写失败且无 version；仅 `read_write` 写有 version。`internal/filestore/memory_backend_access_test.go` 覆盖写权限白名单及读取行为，并验证重复 slug 在不同记录顺序、权限和 store 状态下均拒绝读写。此检查不阻止重复挂载写入数据库。
 4. 双 Session 同 path：后写为头；后启动的 B 读到 A 已提交的写。
 5. 运行中改 store 名：已启动 Session 的 `mount_path` 与启动时写入的 `MEMORY.md` store 目录段不变（Agent 运行时改动除外）。
 6. 任一 memory mount 失败或 `MEMORY.md` 未写好 → 启动失败并清理 sandbox。
@@ -334,3 +340,7 @@ Agent 可以改运行中的 `MEMORY.md`。下一 Session 按快照重建，不�
 测试先失败再成功。sessions / filestore（真 PostgreSQL）/ runner / 控制台 / E2E（A 写指定 store → B 读；A 写根 → B 看不到；`ro` store 写失败）各盖上表。
 
 合入时已同步：[e2b-sandbox-image-contract.md](./e2b-sandbox-image-contract.md)、[filestore.md](./filestore.md)、[messages-proxy.md](./messages-proxy.md)、[deployments-api-contract.md](./deployments-api-contract.md)（instructions 4096→500）。
+
+文件树约束回归：`tests/memory_path_tree_test.go` 使用真实 PostgreSQL 覆盖两个入口的父子冲突、失败不改版本、目录仍可列举、路径段边界、已删除路径复用及并发创建父子路径时仅一个请求成功。
+
+合并 attach 合同后，`internal/deployments/memory_store_batch_test.go` 继续验证批量加载一次及按资源顺序返回错误；slug 转写测试覆盖中文、重音字符及下划线。

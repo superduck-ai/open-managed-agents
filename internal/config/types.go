@@ -10,12 +10,14 @@ const (
 )
 
 type Config struct {
+	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
 	Env               string                  `yaml:"env"`
 	Server            ServerConfig            `yaml:"server"`
 	Database          DatabaseConfig          `yaml:"database"`
 	Redis             RedisConfig             `yaml:"redis"`
 	NATS              NATSConfig              `yaml:"nats"`
 	Auth              AuthConfig              `yaml:"auth"`
+	Tunnel            TunnelConfig            `yaml:"tunnel"`
 	Storage           StorageConfig           `yaml:"storage"`
 	Batch             BatchConfig             `yaml:"batch"`
 	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
@@ -96,6 +98,21 @@ type EmailSMTPConfig struct {
 	Addr     string `yaml:"addr"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+type TunnelConfig struct {
+	PublicBaseURL       string        `yaml:"public_base_url"`
+	DomainSuffix        string        `yaml:"domain_suffix"`
+	PollTimeout         time.Duration `yaml:"poll_timeout"`
+	RequestTimeout      time.Duration `yaml:"request_timeout"`
+	PresenceTTL         time.Duration `yaml:"presence_ttl"`
+	TombstoneTTL        time.Duration `yaml:"tombstone_ttl"`
+	MaxPendingRequests  int           `yaml:"max_pending_requests"`
+	MaxStoredRequests   int           `yaml:"max_stored_requests"`
+	MaxPendingBytes     int64         `yaml:"max_pending_bytes"`
+	MaxBodyBytes        int64         `yaml:"max_body_bytes"`
+	MaxHeaderBytes      int64         `yaml:"max_header_bytes"`
+	MaxHeaderValueBytes int64         `yaml:"max_header_value_bytes"`
 }
 
 type StorageConfig struct {
@@ -249,4 +266,18 @@ type SandboxLifecycleConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	DryRun      bool          `yaml:"dry_run"`
 	IdleTimeout time.Duration `yaml:"idle_timeout"`
+}
+
+type TranscriptArchiveConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	DryRun                bool          `yaml:"dry_run"`
+	TerminalSweepEnabled  bool          `yaml:"terminal_sweep_enabled"`
+	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
+	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
+	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
+	ArchiveMinAge         time.Duration `yaml:"archive_min_age"`
+	SoftDeleteWindow      time.Duration `yaml:"soft_delete_window"`
+	TargetSegmentRawBytes int           `yaml:"target_segment_raw_bytes"`
+	DeleteBatchRows       int           `yaml:"delete_batch_rows"`
+	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
 }

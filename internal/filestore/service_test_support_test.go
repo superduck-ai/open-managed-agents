@@ -19,7 +19,7 @@ import (
 )
 
 func newServiceUnderTest(cfg config.Config, database filestoreDatabase, store storage.ObjectStore) *Service {
-	service := NewService(cfg, database, store)
+	service := NewService(cfg, database, &recordingMemoryStore{}, store)
 	service.now = func() time.Time { return serviceTestNow }
 	return service
 }

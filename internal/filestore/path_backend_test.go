@@ -31,8 +31,10 @@ func TestPathRouterSelectsReadBackend(t *testing.T) {
 
 	persistent := &persistentPathBackend{}
 	skills := &skillArchivePathBackend{}
+	memory := &memoryPathBackend{}
 	router := pathRouter{
 		persistent: persistent,
+		memory:     memory,
 		readOnly:   []readOnlyPathBackend{skills},
 	}
 	tests := []struct {
@@ -81,6 +83,24 @@ func TestPathRouterSelectsReadBackend(t *testing.T) {
 			name:      "ordinary path",
 			operation: readOperationMetadata,
 			path:      "/outputs/report.txt",
+			want:      persistent,
+		},
+		{
+			name:      "memory slug file",
+			operation: readOperationFile,
+			path:      "/memory/test/notes/a.txt",
+			want:      memory,
+		},
+		{
+			name:      "memory slug root list",
+			operation: readOperationListDirectory,
+			path:      "/memory/test",
+			want:      memory,
+		},
+		{
+			name:      "memory parent file stays persistent",
+			operation: readOperationFile,
+			path:      "/memory/foo.md",
 			want:      persistent,
 		},
 		{

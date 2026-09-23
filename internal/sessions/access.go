@@ -21,9 +21,7 @@ func (h *Handler) authorizeSession(r *http.Request, sessionID string, access ses
 	if !ok {
 		return db.Session{}, sessionAuthenticationRequired()
 	}
-	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
-		return h.fixtureDBSession(principal), nil
-	}
+
 	session, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return db.Session{}, mapSessionLoadError(err, sessionID)

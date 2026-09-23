@@ -490,6 +490,7 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 	}{
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
+		{name: "removed SDK fixture configuration", overrides: "sdk_fixtures:\n  api_key: leftover\n", wantField: "sdk_fixtures"},
 		{name: "removed NATS enable flag", overrides: "nats:\n  enabled: false\n", wantField: "enabled"},
 		{name: "optional list item field", overrides: "bootstrap:\n  seed_api_keys:\n    - external_idd: typo\n      key: secret\n", wantField: "external_idd"},
 		// D7 迁移后废弃的平铺凭据键不得被静默接受。
@@ -604,8 +605,11 @@ func TestLoadYAMLSeedAPIKeyPresence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
-		if len(cfg.Bootstrap.SeedAPIKeys) != 2 {
-			t.Fatalf("Bootstrap.SeedAPIKeys = %#v, want two derived defaults", cfg.Bootstrap.SeedAPIKeys)
+		if len(cfg.Bootstrap.SeedAPIKeys) != 1 {
+			t.Fatalf("Bootstrap.SeedAPIKeys = %#v, want only the normal bootstrap key", cfg.Bootstrap.SeedAPIKeys)
+		}
+		if cfg.Bootstrap.SeedAPIKeys[0] != (SeedAPIKey{ExternalID: cfg.Bootstrap.APIKeyExternalID, Key: DefaultAPIKey}) {
+			t.Fatalf("unexpected default seed key: %#v", cfg.Bootstrap.SeedAPIKeys)
 		}
 	})
 

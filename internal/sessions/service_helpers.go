@@ -151,7 +151,7 @@ func (h *Handler) resourceFromRequest(
 	if err != nil {
 		return normalizedSessionResource{}, err
 	}
-	payload := map[string]any{"id": resourceID, "type": resourceType}
+	var payload any
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
 	var gitSpec *sessionresource.GitRepositorySpec
@@ -194,11 +194,12 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		payload["url"] = spec.URL
-		payload["mount_path"] = spec.MountPath
+		fields := map[string]any{"id": resourceID, "type": resourceType, "url": spec.URL}
+		fields["mount_path"] = spec.MountPath
 		if spec.Checkout != nil {
-			payload["checkout"] = spec.Checkout
+			fields["checkout"] = spec.Checkout
 		}
+		payload = fields
 		gitSpec = &spec
 	case sessionresource.MemoryStoreType:
 		fields, err := h.memoryStorePayload(r.Context(), session, body, attachSet, resourceID)

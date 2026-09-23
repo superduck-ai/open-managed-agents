@@ -154,3 +154,5 @@ func streamingUnsupported() error {
 func gitTokenUpdateRequiredError() error {
 	return invalidRequest(errors.New("authorization_token must be provided when updating a Git resource"))
 }
+
+type resourceReferenceError = sessionresource.ReferenceError

@@ -250,7 +250,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
     const dialog = screen.getByRole('dialog', { name: 'Create environment' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Pending create' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create environment' }));
 
     expect((within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(dialog).getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);

@@ -755,7 +755,6 @@ export type ResourceConfig = {
   columns: string[];
   emptyTitle: string;
   emptyBody?: string;
-  emptyAction?: string;
   emptyIcon: IconComponent;
   rows?: Array<Record<string, ReactNode>>;
 };

@@ -1,6 +1,6 @@
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, MoreVertical, Plus, Send, Trash2 } from 'lucide-react';
+import { AlertCircle, MoreVertical, Plus, Send, Trash2, Users } from 'lucide-react';
 import { useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   AlertDialog,
@@ -15,8 +15,10 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
-import { Card, CardContent, CardHeader } from '../../shared/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { useI18n } from '../../shared/i18n';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,6 +63,7 @@ const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => 
 }));
 
 export function OrganizationMembersPage() {
+  const { msg } = useI18n();
   const { account, csrfToken } = useAuth();
   const { orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
@@ -251,46 +254,43 @@ export function OrganizationMembersPage() {
 
   if (!activeOrgUuid) {
     return (
-      <section className="mx-auto w-full max-w-[1180px]">
-        <Card>
-          <CardHeader>
-            <h1 className="text-xl font-semibold tracking-normal text-foreground">Members</h1>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">No organization is available for this session.</p>
-          </CardContent>
-        </Card>
+      <section>
+        <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
+        <p className="text-[15px] leading-5 text-muted-foreground">No organization is available for this session.</p>
       </section>
     );
   }
 
   return (
-    <section className="mx-auto w-full max-w-[1180px]" data-testid="organization-members-page">
-      <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
-        <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
-          <span>Members</span>
+    <section data-testid="organization-members-page">
+      <ResourcePageHeader
+        contentGap="content"
+        title={msg('members.title', 'Members')}
+        titleAdornment={
           <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
             {titleCount}
           </Badge>
-        </h1>
-        {canManage ? (
-          <Button
-            size="lg"
-            onClick={() => {
-              setInviteActionError(null);
-              setInviteOpen(true);
-            }}
-          >
-            <Plus className="size-4" aria-hidden />
-            Invite
-          </Button>
-        ) : null}
-      </div>
+        }
+        actions={
+          canManage ? (
+            <Button
+              size="lg"
+              onClick={() => {
+                setInviteActionError(null);
+                setInviteOpen(true);
+              }}
+            >
+              <Plus className="size-4" aria-hidden />
+              {msg('members.invite', 'Invite')}
+            </Button>
+          ) : null
+        }
+      />
 
       {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
-      <div className="overflow-hidden border-y border-border">
+      <div className="overflow-x-auto">
         <Table className="table-fixed text-left" aria-label="Members">
           <TableHeader className="text-muted-foreground">
             {table.getHeaderGroups().map((headerGroup) => (
@@ -321,13 +321,6 @@ export function OrganizationMembersPage() {
                 </TableCell>
               </TableRow>
             ) : null}
-            {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  No members found.
-                </TableCell>
-              </TableRow>
-            ) : null}
             {!isInitialLoading && !hasTableError
               ? table.getRowModel().rows.map((row) => (
                   <TableRow key={row.id} className="border-border last:border-b-0">
@@ -342,6 +335,14 @@ export function OrganizationMembersPage() {
           </TableBody>
         </Table>
       </div>
+
+      {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
+        <ResourceListState
+          icon={Users}
+          title={msg('members.emptyTitle', 'No members yet')}
+          body={msg('members.emptyBody', 'Invite people to join this organization.')}
+        />
+      ) : null}
 
       <InviteMembersDialog
         open={inviteOpen}
@@ -387,6 +388,7 @@ function InviteMembersDialog({
   onOpenChange: (open: boolean) => void;
   onInvited: (createdInvites: OrganizationInvite[]) => void;
 }) {
+  const { msg } = useI18n();
   const [emailsValue, setEmailsValue] = useState('');
   const [role, setRole] = useState<PlatformRole>('user');
   const [submitValidationError, setSubmitValidationError] = useState<InviteValidationError | null>(null);
@@ -447,7 +449,9 @@ function InviteMembersDialog({
         initialFocus={textareaRef}
       >
         <DialogHeader>
-          <DialogTitle>Invite members</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            {msg('members.invite', 'Invite')}
+          </DialogTitle>
         </DialogHeader>
         <form className="space-y-5" onSubmit={handleSubmit}>
           <div>
@@ -491,11 +495,19 @@ function InviteMembersDialog({
           {submitValidationError ? <InviteValidationNotice error={submitValidationError} /> : null}
           {inviteMutation.isError ? <InlineNotice>{errorMessage(inviteMutation.error)}</InlineNotice> : null}
 
-          <div className="flex justify-end">
-            <Button type="submit" size="lg" disabled={!canSubmit}>
-              {inviteMutation.isPending ? 'Inviting...' : 'Invite'}
+          <DialogFooter className="sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => closeDialog(false)}
+              disabled={inviteMutation.isPending}
+            >
+              {msg('common.cancel', 'Cancel')}
             </Button>
-          </div>
+            <Button type="submit" size="lg" disabled={!canSubmit}>
+              {inviteMutation.isPending ? 'Inviting...' : msg('members.invite', 'Invite')}
+            </Button>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

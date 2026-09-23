@@ -19,6 +19,7 @@ import {
 import { toast } from '../../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, ChevronLeft, ChevronRight, Copy, Pencil, Play, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -752,57 +753,21 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   };
 
   return (
-    <section
-      className={cn(
-        'relative min-h-[calc(100vh-48px)] text-foreground',
-        (config.section === 'sessions' || config.section === 'deployments') && 'mx-auto w-full max-w-[1600px]',
-      )}
-    >
-      <header
-        className={cn(
-          'flex items-start justify-between',
-          config.section === 'sessions' ? 'mb-2 gap-4' : 'mb-5 gap-6',
-          config.section === 'deployments' && 'flex-wrap',
-        )}
-      >
-        <div>
-          <h1
-            className={cn(
-              'text-foreground',
-              config.section === 'sessions'
-                ? 'text-[22px] leading-7 font-medium'
-                : 'text-[28px] leading-tight font-semibold',
-            )}
-          >
-            {title}
-          </h1>
-          <p
-            className={cn(
-              'mt-2 max-w-[760px] leading-5 text-muted-foreground',
-              config.section === 'sessions' ? 'text-sm' : 'text-[15px]',
-            )}
-          >
-            {description}
-          </p>
-        </div>
-        {createLabel ? (
-          <Button
-            type="button"
-            className={cn('shrink-0', config.section === 'sessions' ? 'h-8 px-3' : 'h-9')}
-            onClick={() => setDialogState({ mode: 'create' })}
-          >
-            <Plus className="size-4" aria-hidden />
-            {createLabel}
-          </Button>
-        ) : null}
-      </header>
+    <section className="relative min-h-[calc(100vh-48px)] text-foreground">
+      <ResourcePageHeader
+        title={title}
+        description={description}
+        actions={
+          createLabel ? (
+            <Button type="button" size="lg" onClick={() => setDialogState({ mode: 'create' })}>
+              <Plus className="size-4" aria-hidden />
+              {createLabel}
+            </Button>
+          ) : null
+        }
+      />
 
-      <div
-        className={cn(
-          'flex flex-wrap items-center gap-2',
-          config.section === 'sessions' ? 'mb-2' : config.section === 'deployments' ? 'mb-3' : 'mb-7',
-        )}
-      >
+      <div className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
           id={`${config.section}-search`}
           value={search}
@@ -816,7 +781,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       {loadError ? <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert> : null}
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
-      <div className={config.section === 'deployments' ? 'overflow-hidden rounded-lg border border-border' : undefined}>
+      <div>
         <Table
           className={cn(
             dataTableClassName,
@@ -891,7 +856,6 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           config.section === 'deployments' ? (
             <DeploymentEmptyState
               filtered={Boolean(search || deploymentAgentFilter || deploymentStatusFilter !== 'all')}
-              onCreate={() => setDialogState({ mode: 'create' })}
             />
           ) : (
             <EmptyState config={config} />

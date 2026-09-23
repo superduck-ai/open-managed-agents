@@ -47,14 +47,14 @@ describe('Organization members settings', () => {
         .some((button) => button.getAttribute('aria-label') === 'Default'),
     ).toBe(true);
     expect(screen.getByText('Organization settings')).toBeTruthy();
-    expect(await screen.findByRole('heading', { name: 'Members 3' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Invite' })).toBeTruthy();
 
     const table = screen.getByRole('table', { name: 'Members' });
     expect(within(table).getByRole('columnheader', { name: 'Name' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'Email' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: 'Role' })).toBeTruthy();
-    expect(within(table).getByText('Current User')).toBeTruthy();
+    expect(await within(table).findByText('Current User')).toBeTruthy();
     expect(within(table).getByText('test@example.com')).toBeTruthy();
     expect(within(table).getByText('Pending')).toBeTruthy();
     expect(within(table).getByText('pending@example.com')).toBeTruthy();
@@ -80,7 +80,7 @@ describe('Organization members settings', () => {
     expect(within(alert).getByText('Try again.')).toBeTruthy();
     fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
 
-    expect(await screen.findByRole('heading', { name: 'Members 3' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy();
     expect(screen.getByText('pending@example.com')).toBeTruthy();
     await waitFor(() => expect(api.memberListRequests).toBe(2));
     await waitFor(() => expect(api.inviteListRequests).toBe(2));
@@ -96,7 +96,7 @@ describe('Organization members settings', () => {
       </OrganizationMembersHarness>,
     );
 
-    expect(await screen.findByRole('heading', { name: 'Members 3' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy();
     expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.querySelector('.text-emerald-600')).toBeNull();
   });

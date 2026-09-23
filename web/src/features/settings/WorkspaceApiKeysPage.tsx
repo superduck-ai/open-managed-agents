@@ -20,6 +20,9 @@ import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Card, CardContent } from '../../shared/ui/card';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -156,6 +159,7 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
   const keys = useMemo(() => (keysQuery.data ?? []).filter((apiKey) => !isArchivedKey(apiKey)), [keysQuery.data]);
   const identity = displayIdentity(account);
   const errorMessage = readableError(keysQuery.error);
+  const workspaceName = localizedWorkspaceName(workspace.name, msg);
 
   const handleCreateKey = async (name: string) => {
     await createMutation.mutateAsync(name);
@@ -173,100 +177,99 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
   return (
     <TooltipProvider>
       <section className="w-full max-w-none" data-testid="workspace-api-keys-page">
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-                {msg('apiKeys.title', 'API keys')}
-              </h1>
-              <Badge
-                variant="secondary"
-                className="h-6 min-w-6 rounded-md px-2 text-muted-foreground"
-                aria-label={msg('apiKeys.countAria', '{count, plural, one {# API key} other {# API keys}}', {
-                  count: keys.length,
-                })}
-              >
-                {keys.length}
-              </Badge>
-            </div>
-            <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-              {msg(
-                'apiKeys.description',
-                'API keys are owned by workspaces and remain active even after the creator is removed',
+        <ResourcePageHeader
+          contentGap="content"
+          title={msg('apiKeys.title', 'API keys')}
+          description={msg(
+            'apiKeys.description',
+            'API keys are owned by workspaces and remain active even after the creator is removed',
+          )}
+          titleAdornment={
+            <Badge
+              variant="secondary"
+              className="h-6 min-w-6 rounded-md px-2 text-muted-foreground"
+              aria-label={msg('apiKeys.countAria', '{count, plural, one {# API key} other {# API keys}}', {
+                count: keys.length,
+              })}
+            >
+              {keys.length}
+            </Badge>
+          }
+          actions={
+            <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {msg('apiKeys.create', 'Create API key')}
+            </Button>
+          }
+        />
+
+        <div className="overflow-x-auto">
+          <Table className="min-w-[920px] table-fixed text-left">
+            <colgroup>
+              <col className="w-[30%]" />
+              <col className="w-[22%]" />
+              <col className="w-[14%]" />
+              <col className="w-[14%]" />
+              <col className="w-[10%]" />
+              <col className="w-[72px]" />
+            </colgroup>
+            <TableHeader className="text-[13px] text-muted-foreground">
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.key', 'Key')}</TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  {msg('apiKeys.createdBy', 'Created by')}
+                </TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  {msg('apiKeys.createdAt', 'Created at')}
+                </TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  {msg('apiKeys.lastUsedAt', 'Last used at')}
+                </TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    {msg('analytics.cost.title', 'Cost')}
+                    <InfoTooltip
+                      label={msg('apiKeys.costTooltip', 'API key cost attribution appears after usage is recorded.')}
+                    />
+                  </span>
+                </TableHead>
+                <TableHead className="px-3 py-3 text-right text-muted-foreground">
+                  {msg('common.actions', 'Actions')}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {keysQuery.isLoading ? (
+                <ApiKeysState
+                  text={msg('apiKeys.loading', 'Loading {workspaceName} API keys...', {
+                    workspaceName,
+                  })}
+                />
+              ) : errorMessage ? (
+                <ApiKeysState tone="error" text={errorMessage} />
+              ) : (
+                keys.map((apiKey) => (
+                  <ApiKeyRow
+                    key={apiKey.id}
+                    apiKey={apiKey}
+                    identity={identity}
+                    onAction={(action) => setPendingAction({ action, apiKey })}
+                  />
+                ))
               )}
-            </p>
-          </div>
-          <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {msg('apiKeys.create', 'Create key')}
-          </Button>
+            </TableBody>
+          </Table>
         </div>
 
-        <Card className="overflow-hidden py-0">
-          <CardContent className="p-0">
-            <Table className="min-w-[920px] table-fixed text-left">
-              <colgroup>
-                <col className="w-[30%]" />
-                <col className="w-[22%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
-                <col className="w-[10%]" />
-                <col className="w-[72px]" />
-              </colgroup>
-              <TableHeader className="text-[13px] text-muted-foreground">
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.key', 'Key')}</TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    {msg('apiKeys.createdBy', 'Created by')}
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    {msg('apiKeys.createdAt', 'Created at')}
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    {msg('apiKeys.lastUsedAt', 'Last used at')}
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    <span className="inline-flex items-center gap-1">
-                      {msg('analytics.cost.title', 'Cost')}
-                      <InfoTooltip
-                        label={msg('apiKeys.costTooltip', 'API key cost attribution appears after usage is recorded.')}
-                      />
-                    </span>
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-right text-muted-foreground">
-                    {msg('common.actions', 'Actions')}
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {keysQuery.isLoading ? (
-                  <ApiKeysState
-                    text={msg('apiKeys.loading', 'Loading {workspaceName} API keys...', {
-                      workspaceName: workspace.name,
-                    })}
-                  />
-                ) : errorMessage ? (
-                  <ApiKeysState tone="error" text={errorMessage} />
-                ) : keys.length > 0 ? (
-                  keys.map((apiKey) => (
-                    <ApiKeyRow
-                      key={apiKey.id}
-                      apiKey={apiKey}
-                      identity={identity}
-                      onAction={(action) => setPendingAction({ action, apiKey })}
-                    />
-                  ))
-                ) : (
-                  <ApiKeysState
-                    text={msg('apiKeys.empty', 'No API keys have been created for {workspaceName}.', {
-                      workspaceName: workspace.name,
-                    })}
-                  />
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        {!keysQuery.isLoading && !errorMessage && keys.length === 0 ? (
+          <ResourceListState
+            icon={KeyRound}
+            title={msg('apiKeys.emptyTitle', 'No API keys yet')}
+            body={msg('apiKeys.empty', 'Create an API key in the {workspaceName} workspace to see it here.', {
+              workspaceName,
+            })}
+          />
+        ) : null}
 
         {createOpen ? (
           <CreateApiKeyModal
@@ -406,7 +409,9 @@ function CreateApiKeyModal({
     >
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>{msg('apiKeys.createTitle', 'Create API key')}</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            {msg('apiKeys.createTitle', 'Create API key')}
+          </DialogTitle>
         </DialogHeader>
 
         <form className="space-y-5" onSubmit={handleSubmit}>
@@ -423,7 +428,7 @@ function CreateApiKeyModal({
                 style={{ color: workspace.display_color || workspace.color }}
                 aria-hidden
               />
-              <span className="truncate">{workspace.name}</span>
+              <span className="truncate">{localizedWorkspaceName(workspace.name, msg)}</span>
             </FieldDescription>
           </Field>
 
@@ -440,9 +445,12 @@ function CreateApiKeyModal({
           </Field>
 
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+              {msg('common.cancel', 'Cancel')}
+            </Button>
             <Button type="submit" disabled={!canSubmit} className="min-w-[52px]">
               {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              {msg('apiKeys.add', 'Add')}
+              {msg('apiKeys.create', 'Create API key')}
             </Button>
           </DialogFooter>
         </form>

@@ -8,7 +8,9 @@ import { PrivacyControlsPage } from '../dashboard/privacy-controls';
 import { useAuth } from '../../shared/auth/context';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Button } from '../../shared/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../shared/ui/card';
+import { Card, CardContent } from '../../shared/ui/card';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { useI18n } from '../../shared/i18n';
 import { Field, FieldLabel } from '../../shared/ui/field';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
@@ -124,6 +126,7 @@ export function OrganizationSettingsPage({ section = 'organization' }: { section
 }
 
 export function OrganizationSettingsContent() {
+  const { msg } = useI18n();
   const { account, csrfToken, refresh } = useAuth();
   const { orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
@@ -259,17 +262,13 @@ export function OrganizationSettingsContent() {
     }
   };
 
+  const organizationTitle = msg('nav.organization', 'Organization');
+
   if (!activeOrgUuid) {
     return (
-      <section className="mx-auto w-full max-w-[1100px]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Organization</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">No organization is available for this session.</p>
-          </CardContent>
-        </Card>
+      <section>
+        <ResourcePageHeader contentGap="content" title={organizationTitle} />
+        <p className="text-[15px] leading-5 text-muted-foreground">No organization is available for this session.</p>
       </section>
     );
   }
@@ -278,153 +277,153 @@ export function OrganizationSettingsContent() {
     (organizationQuery.isLoading || profileQuery.isLoading) && (!organizationQuery.data || !profileQuery.data);
 
   return (
-    <section className="mx-auto w-full max-w-[1100px] space-y-4" data-testid="organization-settings-page">
-      <Card>
-        <CardHeader>
-          <h1 className="text-xl font-semibold tracking-normal text-foreground">Organization</h1>
-        </CardHeader>
-        <CardContent className="space-y-7">
-          {isInitialLoading ? (
-            <div className="space-y-4" aria-label="Loading organization settings">
-              <Skeleton className="h-10 w-[428px] max-w-full" />
-              <Skeleton className="h-10 w-[428px] max-w-full" />
-              <Skeleton className="h-10 w-[720px] max-w-full" />
-            </div>
-          ) : (
-            <>
-              <Field className="max-w-[428px] gap-2">
-                <FieldLabel htmlFor="organization-name">Organization name</FieldLabel>
-                <TextInput
-                  id="organization-name"
-                  value={form.name}
-                  onChange={(name) => setForm((current) => ({ ...current, name }))}
-                />
-              </Field>
-
-              <div className="space-y-6">
-                <div className="text-sm font-medium text-foreground">Primary business address</div>
-                <div className="grid gap-3 lg:grid-cols-[208px_208px]">
+    <section data-testid="organization-settings-page">
+      <ResourcePageHeader contentGap="content" title={organizationTitle} />
+      <div className="space-y-4">
+        <Card>
+          <CardContent className="space-y-7">
+            {isInitialLoading ? (
+              <div className="space-y-4" aria-label="Loading organization settings">
+                <Skeleton className="h-10 w-[428px] max-w-full" />
+                <Skeleton className="h-10 w-[428px] max-w-full" />
+                <Skeleton className="h-10 w-[720px] max-w-full" />
+              </div>
+            ) : (
+              <>
+                <Field className="max-w-[428px] gap-2">
+                  <FieldLabel htmlFor="organization-name">Organization name</FieldLabel>
                   <TextInput
-                    aria-label="Primary business address line 1"
-                    placeholder="Line 1"
-                    value={form.line1}
-                    onChange={(line1) => setForm((current) => ({ ...current, line1 }))}
+                    id="organization-name"
+                    value={form.name}
+                    onChange={(name) => setForm((current) => ({ ...current, name }))}
                   />
-                  <TextInput
-                    aria-label="Primary business address line 2"
-                    placeholder="Line 2"
-                    value={form.line2}
-                    onChange={(line2) => setForm((current) => ({ ...current, line2 }))}
-                  />
-                </div>
+                </Field>
 
-                <div className="grid gap-3 lg:grid-cols-[208px_208px_minmax(180px,1fr)_96px]">
-                  <div>
-                    <Label id="country-label" className="mb-2">
-                      Country
-                    </Label>
-                    <CountryCombobox
-                      value={form.country}
-                      onChange={(country) => setForm((current) => ({ ...current, country }))}
+                <div className="space-y-6">
+                  <div className="text-sm font-medium text-foreground">Primary business address</div>
+                  <div className="grid gap-3 lg:grid-cols-[208px_208px]">
+                    <TextInput
+                      aria-label="Primary business address line 1"
+                      placeholder="Line 1"
+                      value={form.line1}
+                      onChange={(line1) => setForm((current) => ({ ...current, line1 }))}
+                    />
+                    <TextInput
+                      aria-label="Primary business address line 2"
+                      placeholder="Line 2"
+                      value={form.line2}
+                      onChange={(line2) => setForm((current) => ({ ...current, line2 }))}
                     />
                   </div>
-                  <TextField
-                    id="state"
-                    label="State or province"
-                    value={form.state}
-                    onChange={(state) => setForm((current) => ({ ...current, state }))}
-                  />
-                  <TextField
-                    id="city"
-                    label="City"
-                    value={form.city}
-                    onChange={(city) => setForm((current) => ({ ...current, city }))}
-                  />
-                  <TextField
-                    id="postal-code"
-                    label="Postal code"
-                    value={form.postalCode}
-                    onChange={(postalCode) => setForm((current) => ({ ...current, postalCode }))}
-                  />
-                </div>
 
-                {!addressValid ? (
-                  <Alert variant="destructive">
-                    <AlertDescription>
-                      Enter line 1, country, state, city, and postal code, or leave the address blank.
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>Organization ID: {organizationId}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label="Copy Organization ID"
-                  onClick={copyOrganizationId}
-                >
-                  <Copy className="size-3.5" aria-hidden />
-                </Button>
-                {copied ? <span className="text-primary">Copied</span> : null}
-              </div>
-
-              {isDirty ? (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button type="button" size="lg" disabled={!canSave} onClick={handleSave}>
-                      <Save className="size-4" aria-hidden />
-                      {isSaving ? 'Saving' : 'Save changes'}
-                    </Button>
-                    <Button type="button" variant="outline" size="lg" onClick={handleCancel}>
-                      <X className="size-4" aria-hidden />
-                      Cancel
-                    </Button>
+                  <div className="grid gap-3 lg:grid-cols-[208px_208px_minmax(180px,1fr)_96px]">
+                    <div>
+                      <Label id="country-label" className="mb-2">
+                        Country
+                      </Label>
+                      <CountryCombobox
+                        value={form.country}
+                        onChange={(country) => setForm((current) => ({ ...current, country }))}
+                      />
+                    </div>
+                    <TextField
+                      id="state"
+                      label="State or province"
+                      value={form.state}
+                      onChange={(state) => setForm((current) => ({ ...current, state }))}
+                    />
+                    <TextField
+                      id="city"
+                      label="City"
+                      value={form.city}
+                      onChange={(city) => setForm((current) => ({ ...current, city }))}
+                    />
+                    <TextField
+                      id="postal-code"
+                      label="Postal code"
+                      value={form.postalCode}
+                      onChange={(postalCode) => setForm((current) => ({ ...current, postalCode }))}
+                    />
                   </div>
-                  {formError ? (
+
+                  {!addressValid ? (
                     <Alert variant="destructive">
-                      <AlertDescription>{formError}</AlertDescription>
+                      <AlertDescription>
+                        Enter line 1, country, state, city, and postal code, or leave the address blank.
+                      </AlertDescription>
                     </Alert>
                   ) : null}
                 </div>
-              ) : formError ? (
-                <Alert variant="destructive">
-                  <AlertDescription>{formError}</AlertDescription>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>Organization ID: {organizationId}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Copy Organization ID"
+                    onClick={copyOrganizationId}
+                  >
+                    <Copy className="size-3.5" aria-hidden />
+                  </Button>
+                  {copied ? <span className="text-primary">Copied</span> : null}
+                </div>
+
+                {isDirty ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button type="button" size="lg" disabled={!canSave} onClick={handleSave}>
+                        <Save className="size-4" aria-hidden />
+                        {isSaving ? 'Saving' : 'Save changes'}
+                      </Button>
+                      <Button type="button" variant="outline" size="lg" onClick={handleCancel}>
+                        <X className="size-4" aria-hidden />
+                        Cancel
+                      </Button>
+                    </div>
+                    {formError ? (
+                      <Alert variant="destructive">
+                        <AlertDescription>{formError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </div>
+                ) : formError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{formError}</AlertDescription>
+                  </Alert>
+                ) : null}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="flex items-start justify-between gap-8">
+            <div className="max-w-[760px]">
+              <h2 className="text-xl font-semibold tracking-normal text-foreground">
+                Allow creating new API keys in default workspace
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Allow users to create new API keys in the default workspace. Disabling this setting does not affect
+                existing API keys or disable Workbench usage.
+              </p>
+              {switchError ? (
+                <Alert variant="destructive" className="mt-3">
+                  <AlertDescription>{switchError}</AlertDescription>
                 </Alert>
               ) : null}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="flex items-start justify-between gap-8">
-          <div className="max-w-[760px]">
-            <h2 className="text-xl font-semibold tracking-normal text-foreground">
-              Allow creating new API keys in default workspace
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Allow users to create new API keys in the default workspace. Disabling this setting does not affect
-              existing API keys or disable Workbench usage.
-            </p>
-            {switchError ? (
-              <Alert variant="destructive" className="mt-3">
-                <AlertDescription>{switchError}</AlertDescription>
-              </Alert>
-            ) : null}
-          </div>
-          <Switch
-            checked={allowApiKeys}
-            aria-label="Allow creating new API keys in default workspace"
-            className="mt-1"
-            disabled={updateOrganizationMutation.isPending}
-            onCheckedChange={() => void handleApiKeysToggle()}
-          />
-        </CardContent>
-      </Card>
+            </div>
+            <Switch
+              checked={allowApiKeys}
+              aria-label="Allow creating new API keys in default workspace"
+              className="mt-1"
+              disabled={updateOrganizationMutation.isPending}
+              onCheckedChange={() => void handleApiKeysToggle()}
+            />
+          </CardContent>
+        </Card>
+      </div>
     </section>
   );
 }

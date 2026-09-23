@@ -43,7 +43,7 @@ describe('Workspace webhooks page', () => {
         .some((button) => button.getAttribute('aria-label') === 'Default'),
     ).toBe(true);
     expect(screen.getByRole('heading', { name: 'Webhooks' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add webhook endpoint' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create webhook endpoint' })).toBeTruthy();
     expect(
       screen.getByText('Webhook endpoints receive event notifications when things happen in your workspace.'),
     ).toBeTruthy();
@@ -74,14 +74,14 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('No webhook endpoints have been created for Default.');
-    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create webhook endpoint' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
     fireEvent.change(within(dialog).getByPlaceholderText('https://example.com/webhooks'), {
       target: { value: 'https://example.com/webhooks' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create webhook endpoint' }));
 
     const alert = await within(dialog).findByRole('alert');
     expect(alert.textContent).toContain('Webhook rejected');
@@ -98,11 +98,11 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('No webhook endpoints have been created for Default.');
-    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create webhook endpoint' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
-    expect(within(dialog).getByRole('button', { name: 'Create' }).hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).getByRole('button', { name: 'Create webhook endpoint' }).hasAttribute('disabled')).toBe(true);
     expect(within(dialog).getAllByText('4 of 4').length).toBe(2);
     expect(within(dialog).getAllByText('3 of 3').length).toBe(2);
     expect(within(dialog).getByText('1 of 1')).toBeTruthy();
@@ -118,7 +118,7 @@ describe('Workspace webhooks page', () => {
     fireEvent.change(within(dialog).getByPlaceholderText('https://example.com/webhooks'), {
       target: { value: 'https://example.com/webhooks' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create webhook endpoint' }));
 
     const createdDialog = await screen.findByRole('dialog', { name: 'Webhook endpoint created' });
     expect(screen.getByText('whsec_local_secret')).toBeTruthy();
@@ -146,8 +146,8 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('No webhook endpoints have been created for Default.');
-    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
+    fireEvent.click(screen.getByRole('button', { name: 'Create webhook endpoint' }));
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
 
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Session lifecycle events' }));
@@ -159,7 +159,7 @@ describe('Workspace webhooks page', () => {
     fireEvent.change(within(dialog).getByPlaceholderText('My webhook endpoint'), {
       target: { value: 'Custom events' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create webhook endpoint' }));
 
     await screen.findByRole('dialog', { name: 'Webhook endpoint created' });
     const createRequest = api.requests.find(

@@ -1078,9 +1078,12 @@ export function registerManagedAgentsResourceTests() {
     mockManagedResourceApi();
     renderManagedAgentsPage('sessions');
 
-    const missingAlert = await screen.findByRole('alert');
-    expect(missingAlert.dataset.slot).toBe('alert');
-    expect(missingAlert.textContent).toContain('not found');
+    expect(await screen.findByRole('heading', { name: 'Session not found' })).toBeTruthy();
+    expect(screen.getByText(/Session sesn_missing123456 was not found/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to sessions' }).getAttribute('href')).toBe(
+      '/workspaces/default/sessions',
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');

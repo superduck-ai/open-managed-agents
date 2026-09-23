@@ -46,6 +46,9 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Badge } from '../../shared/ui/badge';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { Card, CardContent } from '../../shared/ui/card';
 import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
@@ -178,6 +181,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
     () => resolveWorkspace(routeWorkspaceId, workspaces, activeWorkspace),
     [activeWorkspace, routeWorkspaceId, workspaces],
   );
+  const workspaceName = localizedWorkspaceName(workspace.name, msg);
   const queryKey = useMemo(
     () => ['console', 'workspace-webhooks', orgUuid, workspace.id] as const,
     [orgUuid, workspace.id],
@@ -301,25 +305,22 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
   return (
     <section className="w-full max-w-none" data-testid="workspace-webhooks-page">
       <div className="min-w-0" data-testid="workspace-webhooks-list">
-        <div className="mb-7 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-              {msg('webhooks.title', 'Webhooks')}
-            </h1>
-            <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-              {msg(
-                'webhooks.description',
-                'Webhook endpoints receive event notifications when things happen in your workspace.',
-              )}
-            </p>
-          </div>
-          <Button type="button" size="lg" className="shrink-0" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {msg('webhooks.addEndpoint', 'Add webhook endpoint')}
-          </Button>
-        </div>
+        <ResourcePageHeader
+          contentGap="content"
+          title={msg('webhooks.title', 'Webhooks')}
+          description={msg(
+            'webhooks.description',
+            'Webhook endpoints receive event notifications when things happen in your workspace.',
+          )}
+          actions={
+            <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {msg('webhooks.createTitle', 'Create webhook endpoint')}
+            </Button>
+          }
+        />
 
-        <div className="border-t border-border">
+        <div className="overflow-x-auto">
           <Table className="min-w-[880px] table-fixed text-left">
             <colgroup>
               <col className="w-[18%]" />
@@ -348,7 +349,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
                 <WebhooksState text={msg('webhooks.loading', 'Loading webhooks...')} />
               ) : errorMessage ? (
                 <WebhooksState tone="error" text={errorMessage} />
-              ) : webhooks.length > 0 ? (
+              ) : (
                 webhooks.map((webhook) => (
                   <WebhookRow
                     key={webhook.id}
@@ -358,16 +359,22 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
                     onAction={(action) => setPendingAction({ action, webhook })}
                   />
                 ))
-              ) : (
-                <WebhooksState
-                  text={msg('webhooks.empty', 'No webhook endpoints have been created for {workspaceName}.', {
-                    workspaceName: workspace.name,
-                  })}
-                />
               )}
             </TableBody>
           </Table>
         </div>
+
+        {!webhooksQuery.isLoading && !errorMessage && webhooks.length === 0 ? (
+          <ResourceListState
+            icon={Webhook}
+            title={msg('webhooks.emptyTitle', 'No webhook endpoints yet')}
+            body={msg(
+              'webhooks.empty',
+              'Create a webhook endpoint for the {workspaceName} workspace to receive event notifications.',
+              { workspaceName },
+            )}
+          />
+        ) : null}
       </div>
 
       {selectedWebhook ? (
@@ -1007,7 +1014,9 @@ function CreateWebhookDialog({
         initialFocus={urlRef}
       >
         <DialogHeader className="px-4 py-4">
-          <DialogTitle>{msg('webhooks.createTitle', 'Create webhook endpoint')}</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            {msg('webhooks.createTitle', 'Create webhook endpoint')}
+          </DialogTitle>
         </DialogHeader>
         <form className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]" onSubmit={handleSubmit}>
           <div className="subtle-scrollbar-auto min-h-0 space-y-4 overflow-y-auto pl-4 pr-2 py-4">
@@ -1090,9 +1099,12 @@ function CreateWebhookDialog({
           <div className="px-4">
             {error ? <InlineError>{error}</InlineError> : null}
             <DialogFooter className="py-4">
+              <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
               <Button type="submit" disabled={!canSubmit} size="lg" className="min-w-[82px]">
                 {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                {msg('common.create', 'Create')}
+                {msg('webhooks.createTitle', 'Create webhook endpoint')}
               </Button>
             </DialogFooter>
           </div>

@@ -122,6 +122,16 @@
         AND payload IS NOT NULL
         AND deleted_at IS NULL
     </select>
+    <select id="CountSessionMemoryStoresByStoreID" result="scalar">
+        SELECT count(*) AS resource_count
+        FROM session_resources
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND resource_type = 'memory_store'
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+        AND payload->>'memory_store_id' = #{memoryStoreID}
+    </select>
 
     <select id="FindMountConflict" result="optional" resultType="string">
         SELECT resource.path
@@ -385,4 +395,30 @@
         AND session.workspace_uuid = #{params.WorkspaceUUID}
         AND session.deleted_at IS NULL
     </insert>
+
+    <select id="ListMemoryMountsByFilesystem" resultType="sessionMemoryMountRow">
+        SELECT
+            session.external_id AS session_external_id,
+            COALESCE(resource.payload->>'memory_store_id', '') AS memory_store_external_id,
+            COALESCE(resource.payload->>'access', '') AS access,
+            COALESCE(resource.payload->>'mount_path', '') AS mount_path,
+            store.uuid AS memory_store_uuid,
+            store.archived_at,
+            store.deleted_at
+        FROM filestore_filesystems filesystem
+        JOIN sessions session
+            ON session.uuid = filesystem.session_uuid
+            AND session.workspace_uuid = filesystem.workspace_uuid
+        JOIN session_resources resource
+            ON resource.session_uuid = session.uuid
+            AND resource.workspace_uuid = filesystem.workspace_uuid
+            AND resource.deleted_at IS NULL
+            AND resource.resource_type = 'memory_store'
+        LEFT JOIN memory_stores store
+            ON store.external_id = resource.payload->>'memory_store_id'
+            AND store.workspace_uuid = filesystem.workspace_uuid
+        WHERE filesystem.workspace_uuid = #{workspaceUUID}
+        AND filesystem.uuid = #{filesystemUUID}
+        AND filesystem.deleted_at IS NULL
+    </select>
 </mapper>

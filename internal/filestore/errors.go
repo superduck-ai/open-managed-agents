@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 var (
@@ -44,6 +46,18 @@ func permissionDenied(message string) *apiError {
 	return &apiError{Status: http.StatusForbidden, Code: "permission_denied", Message: message}
 }
 
+func memoryTransferBoundaryError() *apiError {
+	return invalidArgument("cannot copy or move across the memory namespace boundary")
+}
+
+func memoryDirectoryMoveError() *apiError {
+	return failedPrecondition("memory namespace directories are virtual")
+}
+
+func duplicateMemoryMountError() *apiError {
+	return failedPrecondition("multiple memory mounts match the requested slug")
+}
+
 func writeFilestoreError(w http.ResponseWriter, err *apiError) {
 	if err == nil {
 		err = &apiError{Status: http.StatusInternalServerError, Code: "internal", Message: "Internal server error"}
@@ -61,4 +75,19 @@ func WriteProtocolError(w http.ResponseWriter, status int, code, message string)
 		"code":    code,
 		"message": message,
 	})
+}
+
+func mapMemoryMutationError(operation string, err error) *apiError {
+	var conflict *db.MemoryPathConflictError
+	if errors.As(err, &conflict) {
+		return &apiError{Status: http.StatusConflict, Code: "already_exists", Message: "memory path conflicts with an existing file or directory", Cause: err}
+	}
+	switch {
+	case errors.Is(err, db.ErrInvalidState):
+		return permissionDenied("memory store is archived")
+	case errors.Is(err, db.ErrLimitExceeded):
+		return &apiError{Status: http.StatusForbidden, Code: "resource_exhausted", Message: "Memory store item limit exceeded"}
+	default:
+		return mapDatabaseError(operation, err)
+	}
 }

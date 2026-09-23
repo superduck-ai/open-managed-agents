@@ -604,7 +604,8 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 	}
 	createdAt := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
 	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres, yourbatis.WithDatabaseID("postgres"))
-	created, err := createSessionResource(ctx, mapperDB, SessionResource{
+	databaseAPI := &DB{mapperDB: mapperDB}
+	created, err := databaseAPI.CreateSessionResource(ctx, CreateSessionResourceInput{Resource: SessionResource{
 		UUID:              "50000000-0000-0000-0000-000000000099",
 		ExternalID:        "sesrsc_runtime_after_uuid_migration",
 		OrganizationUUID:  organizationUUID,
@@ -613,7 +614,7 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 		ResourceType:      "github_repository",
 		Payload:           json.RawMessage(`{"repository":"example/repository"}`),
 		CreatedAt:         createdAt,
-	})
+	}})
 	if err != nil {
 		t.Fatalf("create Session Resource after UUID migration: %v", err)
 	}

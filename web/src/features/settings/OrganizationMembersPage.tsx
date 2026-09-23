@@ -743,8 +743,9 @@ function memberAccessDescription(
   workspaceName: string,
   msg: ReturnType<typeof useI18n>['msg'],
 ) {
+  const organizationName = organization?.name || localizedWorkspaceName(workspaceName, msg);
   return msg('members.description', 'People who can access the {organizationName} organization.', {
-    organizationName: localizedWorkspaceName(organization?.name || workspaceName, msg),
+    organizationName,
   });
 }
 

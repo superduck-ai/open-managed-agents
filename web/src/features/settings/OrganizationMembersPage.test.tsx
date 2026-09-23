@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
+import { I18nProvider } from '../../shared/i18n';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
@@ -101,6 +102,36 @@ describe('Organization members settings', () => {
     expect(container.querySelector('.text-emerald-600')).toBeNull();
   });
 
+  test('keeps an organization named Default as the stored name', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+
+    render(
+      <I18nProvider initialLocale="zh-CN">
+        <OrganizationMembersHarness organizationName="Default">
+          <OrganizationMembersPage />
+        </OrganizationMembersHarness>
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByText('可以访问Default组织的人员。')).toBeTruthy();
+  });
+
+  test('localizes the seeded workspace name when the organization name is missing', async () => {
+    resetTestDom('https://oma.duck.ai/settings/members');
+    mockMembersApi();
+
+    render(
+      <I18nProvider initialLocale="zh-CN">
+        <OrganizationMembersHarness organizationName="">
+          <OrganizationMembersPage />
+        </OrganizationMembersHarness>
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByText('可以访问默认组织的人员。')).toBeTruthy();
+  });
+
   test('renders the no-organization empty state without legacy surface-card chrome', () => {
     resetTestDom('https://oma.duck.ai/settings/members');
 
@@ -147,7 +178,13 @@ describe('Organization members settings', () => {
   });
 });
 
-function OrganizationMembersHarness({ children }: { children: ReactNode }) {
+function OrganizationMembersHarness({
+  children,
+  organizationName = 'default',
+}: {
+  children: ReactNode;
+  organizationName?: string;
+}) {
   const queryClient = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }), []);
   const authValue = useMemo<AuthContextValue>(
     () => ({
@@ -155,14 +192,14 @@ function OrganizationMembersHarness({ children }: { children: ReactNode }) {
         uuid: 'acct_test',
         email_address: 'test@example.com',
         display_name: 'test',
-        memberships: [{ organization: { uuid: 'org_test', name: 'default' }, role: 'admin' }],
+        memberships: [{ organization: { uuid: 'org_test', name: organizationName }, role: 'admin' }],
       },
       status: 'authenticated',
       csrfToken: 'csrf_test',
       refresh: async () => ({ account: { uuid: 'acct_test', email_address: 'test@example.com' } }),
       logout: async () => undefined,
     }),
-    [],
+    [organizationName],
   );
   const workspaceValue = useMemo<WorkspaceContextValue>(
     () => ({

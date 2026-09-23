@@ -16,7 +16,12 @@ export function ResourcePageHeader({
   contentGap?: 'filters' | 'content';
 }) {
   return (
-    <header className={cn('flex items-start justify-between gap-6', contentGap === 'content' ? 'mb-7' : 'mb-5')}>
+    <header
+      className={cn(
+        'flex flex-col items-start gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6',
+        contentGap === 'content' ? 'mb-7' : 'mb-5',
+      )}
+    >
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>

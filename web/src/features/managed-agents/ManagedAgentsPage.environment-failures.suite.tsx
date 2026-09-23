@@ -309,7 +309,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     fireEvent.click(screen.getByRole('button', { name: '创建环境' }));
     const dialog = screen.getByRole('dialog', { name: '创建环境' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '失败环境' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建环境' }));
     expect(await within(dialog).findByText('无法创建环境。')).toBeTruthy();
   });
 

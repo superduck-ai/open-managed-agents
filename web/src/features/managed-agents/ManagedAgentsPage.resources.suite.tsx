@@ -3318,7 +3318,7 @@ export function registerManagedAgentsResourceTests() {
     const discardDialog = await screen.findByRole('alertdialog', { name: '放弃未保存的更改？' });
     fireEvent.click(within(discardDialog).getByRole('button', { name: '继续编辑' }));
 
-    const form = within(dialog).getByRole('button', { name: '创建' }).closest('form') as HTMLFormElement;
+    const form = within(dialog).getByRole('button', { name: '创建环境' }).closest('form') as HTMLFormElement;
     fireEvent.submit(form);
     fireEvent.submit(form);
     await waitFor(() =>

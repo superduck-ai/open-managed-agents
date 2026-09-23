@@ -19,6 +19,7 @@ import {
   waitFor,
   within,
 } from './ManagedAgentsPage.test-utils';
+import { managedEntityListLimit } from './api';
 import { objectRecord } from './utils';
 
 function requestUrl(input: RequestInfo | URL) {
@@ -27,6 +28,20 @@ function requestUrl(input: RequestInfo | URL) {
 
 function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
   return init?.method ?? (input instanceof Request ? input.method : 'GET');
+}
+
+function appendRowPastPage<T>(rows: T[], create: (index: number, hidden: boolean) => T) {
+  const hiddenIndex = managedEntityListLimit - rows.length;
+  for (let index = 0; index <= hiddenIndex; index += 1) {
+    rows.push(create(index, index === hiddenIndex));
+  }
+}
+
+async function confirmFirstRowAction(menuName: string, confirmName: string) {
+  fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
+  fireEvent.click(screen.getByRole('menuitem', { name: menuName }));
+  const dialog = await screen.findByRole('alertdialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: confirmName }));
 }
 
 export function registerManagedAgentsResourceTests() {
@@ -2740,7 +2755,8 @@ export function registerManagedAgentsResourceTests() {
     expect(
       api.requests.some(
         (request) =>
-          request.url === '/v1/deployments?beta=true&limit=5&include_archived=true' && request.method === 'GET',
+          request.url === `/v1/deployments?beta=true&limit=${managedEntityListLimit}&include_archived=true` &&
+          request.method === 'GET',
       ),
     ).toBe(true);
 
@@ -2984,6 +3000,102 @@ export function registerManagedAgentsResourceTests() {
       ).toBe(true),
     );
     await waitFor(() => expect(screen.queryByText('Memory one')).toBeNull());
+  });
+
+  test('shows the next session after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_extra_${index}`,
+      title: hidden ? 'Session overflow' : `Session extra ${index}`,
+      status: 'idle',
+    }));
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(screen.queryByText('Session overflow')).toBeNull();
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session overflow')).toBeTruthy();
+    expect(screen.queryByText('Session one')).toBeNull();
+  });
+
+  test('shows the next deployment after archiving one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.deployments, (index, hidden) => ({
+      ...api.resources.deployments[0],
+      id: `dep_extra_${index}`,
+      name: hidden ? 'Deployment overflow' : `Deployment extra ${index}`,
+      status: 'active',
+    }));
+    render(<ManagedAgentsPage section="deployments" />);
+
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    expect(screen.queryByText('Deployment overflow')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Active' }));
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    expect(screen.queryByText('Deployment overflow')).toBeNull();
+    await confirmFirstRowAction('Archive deployment', 'Archive');
+
+    expect(await screen.findByText('Deployment overflow')).toBeTruthy();
+    expect(screen.queryByText('Deployment one')).toBeNull();
+  });
+
+  test('shows the next environment after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.environments, (index, hidden) => ({
+      ...api.resources.environments[0],
+      id: `env_extra_${index}`,
+      name: hidden ? 'Environment overflow' : `Environment extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="environments" />);
+
+    expect(await screen.findByText('Environment one')).toBeTruthy();
+    expect(screen.queryByText('Environment overflow')).toBeNull();
+    await confirmFirstRowAction('Delete environment', 'Delete');
+
+    expect(await screen.findByText('Environment overflow')).toBeTruthy();
+    expect(screen.queryByText('Environment one')).toBeNull();
+  });
+
+  test('shows the next vault after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.vaults, (index, hidden) => ({
+      ...api.resources.vaults[0],
+      id: `vlt_extra_${index}`,
+      display_name: hidden ? 'Vault overflow' : `Vault extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="credential-vaults" />);
+
+    expect(await screen.findByText('Vault one')).toBeTruthy();
+    expect(screen.queryByText('Vault overflow')).toBeNull();
+    await confirmFirstRowAction('Delete vault', 'Delete');
+
+    expect(await screen.findByText('Vault overflow')).toBeTruthy();
+    expect(screen.queryByText('Vault one')).toBeNull();
+  });
+
+  test('shows the next memory store after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/memory-stores');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.memoryStores, (index, hidden) => ({
+      ...api.resources.memoryStores[0],
+      id: `memstore_extra_${index}`,
+      name: hidden ? 'Memory overflow' : `Memory extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="memory-stores" />);
+
+    expect(await screen.findByText('Memory one')).toBeTruthy();
+    expect(screen.queryByText('Memory overflow')).toBeNull();
+    await confirmFirstRowAction('Delete memory store', 'Delete');
+
+    expect(await screen.findByText('Memory overflow')).toBeTruthy();
+    expect(screen.queryByText('Memory one')).toBeNull();
   });
 
   test('uses the shared delete confirmation dialog on environment detail pages', async () => {

@@ -62,6 +62,8 @@ export const defaultAgentFilters: AgentListFilters = { created: 'all', status: '
 
 export const agentsListLimit = 20;
 
+export const managedEntityListLimit = 20;
+
 export const agentSearchLimit = 100;
 
 export const agentSearchMaxPages = 3;
@@ -294,7 +296,7 @@ export function listManagedEntities(
   filters?: ManagedEntityListFilters,
 ) {
   const params: Record<string, unknown> = {
-    limit: 5,
+    limit: managedEntityListLimit,
     include_archived: filters?.includeArchived ?? false,
   };
   if (page) {

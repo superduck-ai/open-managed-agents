@@ -492,7 +492,23 @@ export function AgentsResourcePage({
     setArchivingIds((current) => new Set([...current, ...ids]));
     try {
       await Promise.all(ids.map((id) => archiveAgent(id, workspaceId)));
-      removeArchivedAgents(ids);
+      if (agentLoadMode === 'list' && statusFilter !== 'all') {
+        const page = await listAgents(workspaceId, agentPageCursor, agentListFilters);
+        setRemoteAgentsState({
+          workspaceId,
+          requestKey: agentRequestKey,
+          mode: 'list',
+          data: page.data ?? [],
+          truncated: false,
+        });
+        setAgentPageState((current) =>
+          current.workspaceId === workspaceId && current.requestKey === agentRequestKey
+            ? { ...current, nextPage: page.next_page ?? null }
+            : current,
+        );
+      } else {
+        removeArchivedAgents(ids);
+      }
     } catch (error) {
       setArchiveError(errorMessage(error));
     } finally {

@@ -108,6 +108,38 @@ function currentManagedEntityPageState(
   return { cursor: null, history: [], nextPage: null };
 }
 
+function withEntityPageResult(
+  current: ManagedEntityPageState,
+  workspaceId: string,
+  section: ManagedEntitySection,
+  pageCursor: PageCursor,
+  nextPage: PageCursor,
+): ManagedEntityPageState {
+  const sameScope = current.workspaceId === workspaceId && current.section === section;
+  return {
+    workspaceId,
+    section,
+    cursor: pageCursor,
+    history: sameScope ? current.history : [],
+    nextPage,
+  };
+}
+
+function entityMutationDropsListRow(
+  action: 'archive' | 'delete',
+  section: ManagedEntitySection,
+  filters: ManagedEntityListFilters | undefined,
+  deploymentStatus: DeploymentStatusFilter,
+) {
+  if (action === 'delete') {
+    return true;
+  }
+  if (section === 'deployments') {
+    return deploymentStatus !== 'all';
+  }
+  return filters?.includeArchived !== true;
+}
+
 function managedFilterValueLabel(
   options: ReadonlyArray<{ value: string; label: string }>,
   value: string,
@@ -377,28 +409,18 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         const page = await listManagedEntities(config.section, activeWorkspaceId, pageCursor, managedEntityListFilters);
         if (active) {
           setEntities(page.data ?? []);
-          setEntityPageState((current) => ({
-            workspaceId: activeWorkspaceId,
-            section: config.section,
-            cursor: pageCursor,
-            history:
-              current.workspaceId === activeWorkspaceId && current.section === config.section ? current.history : [],
-            nextPage: page.next_page ?? null,
-          }));
+          setEntityPageState((current) =>
+            withEntityPageResult(current, activeWorkspaceId, config.section, pageCursor, page.next_page ?? null),
+          );
           setLoading(false);
         }
       } catch (error) {
         if (active) {
           setEntities([]);
           setLoadError(managedEntityErrorMessage(config.section, error, 'list', msg));
-          setEntityPageState((current) => ({
-            workspaceId: activeWorkspaceId,
-            section: config.section,
-            cursor: pageCursor,
-            history:
-              current.workspaceId === activeWorkspaceId && current.section === config.section ? current.history : [],
-            nextPage: null,
-          }));
+          setEntityPageState((current) =>
+            withEntityPageResult(current, activeWorkspaceId, config.section, pageCursor, null),
+          );
           setLoading(false);
         }
       }
@@ -707,7 +729,18 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       } else {
         await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
       }
-      if (action === 'archive' && config.section === 'deployments') {
+      if (entityMutationDropsListRow(action, config.section, managedEntityListFilters, deploymentStatusFilter)) {
+        const page = await listManagedEntities(
+          config.section,
+          activeWorkspaceId,
+          entityPageCursor,
+          managedEntityListFilters,
+        );
+        setEntities(page.data ?? []);
+        setEntityPageState((current) =>
+          withEntityPageResult(current, activeWorkspaceId, config.section, entityPageCursor, page.next_page ?? null),
+        );
+      } else if (action === 'archive' && config.section === 'deployments') {
         const archivedAt = new Date().toISOString();
         setEntities((current) =>
           current.map((item) =>

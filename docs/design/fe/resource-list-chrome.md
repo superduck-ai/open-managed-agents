@@ -1,6 +1,6 @@
 # 资源列表页头、空态与未找到
 
-Environments、Vaults、Memory、Deployments、Sessions、Agents、Skills、Files、Members、Organization、API keys 和 Webhooks 使用同一套列表外观。行为、路由和接口不变。
+Environments、Vaults、Memory、Deployments、Sessions、Agents、Skills、Files、Members、Organization、API keys 和 Webhooks 使用同一套列表外观。页头、空态和未找到只对齐外观，不改这些控件的路由和接口。列表分页见下文。
 
 ## 页头与表格
 
@@ -13,6 +13,10 @@ Environments、Vaults、Memory、Deployments、Sessions、Agents、Skills、File
 - 空列表是居中图标、标题和一句话。这句话的动词与页头主按钮相同，空态不再放第二个按钮。
 - 创建弹窗标题 `22px` / `font-semibold`。取消在左，提交在右，提交文案与页头主按钮相同。
 - API key 页头、弹窗标题和提交都是 “Create API key” / “创建 API 密钥”。Webhook 三处都是 “Create webhook endpoint” / “创建 Webhook 端点”。邀请三处都是 “Invite” / “邀请”。
+
+## 列表分页与删除补位
+
+Sessions、Deployments、Environments、Vaults 和 Memory 共用 `listManagedEntities`，每页 20 条，与 Agents、Files 相同。接口用 `page` / `next_page` 游标翻页；省略 `limit` 时服务端默认也是 20，上限 1000。删除成功后，以及归档会让该行离开当前查询时，用同一游标重新请求当前页，把下一行补进空位。Agents 的默认 Active 列表在归档后同样重取当前页。Skills 删除后本来就会让当前页查询失效并重取。Files 列表没有删除。
 
 ## 未找到与工作区名称
 

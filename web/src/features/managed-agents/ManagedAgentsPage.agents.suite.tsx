@@ -23,6 +23,7 @@ import {
   workspaceContextValue,
 } from './ManagedAgentsPage.test-utils';
 import type { AuthContextValue } from '../../shared/auth/context';
+import { agentsListLimit } from './api';
 
 export function registerManagedAgentsAgentsTests() {
   test('guides agent creation to LLM configuration when no provider exists', async () => {
@@ -2660,6 +2661,27 @@ export function registerManagedAgentsAgentsTests() {
       ),
     );
     await waitFor(() => expect(screen.queryByText('Menu agent')).toBeNull());
+  });
+
+  test('shows the next agent after archiving one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const agents = Array.from({ length: agentsListLimit + 1 }, (_, index) => ({
+      id: `agent_page_${index}`,
+      name: index === agentsListLimit ? 'Overflow agent' : `Agent ${index}`,
+    }));
+    mockAgentsApi(agents);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByText('Agent 0')).toBeTruthy();
+    expect(screen.queryByText('Overflow agent')).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive agent' }));
+    fireEvent.click(
+      within(screen.getByRole('alertdialog', { name: 'Archive agent' })).getByRole('button', { name: 'Archive' }),
+    );
+
+    expect(await screen.findByText('Overflow agent')).toBeTruthy();
+    expect(screen.queryByText('Agent 0')).toBeNull();
   });
 
   test('shows a shared alert when archiving an agent fails', async () => {

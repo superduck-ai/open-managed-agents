@@ -4,7 +4,6 @@ set -euo pipefail
 ANT_BIN="${ANT_BIN:-/Users/arthur/GolandProjects/anthropic-sdk-all/anthropic-cli/ant}"
 ANT_BASE_URL="${ANT_BASE_URL:-http://127.0.0.1:38080}"
 ANT_API_KEY="${ANT_API_KEY:-sk-ant-api03-XuCxmIM_sikQZNITUgn96BcR301063m581U9yzlTzB0}"
-ANT_FIXTURE_API_KEY="${ANT_FIXTURE_API_KEY:-sk-ant-api03-cuAqUqFbiNXtNkjtrPC0UYLItBAejN44tGBoBt4l-mE}"
 ANT_BATCH_VARIANT="${ANT_BATCH_VARIANT:-stable}"
 ANT_BATCH_BETA="${ANT_BATCH_BETA:-message-batches-2024-09-24}"
 ANT_BATCH_MODEL="${ANT_BATCH_MODEL:-claude-3-5-haiku-latest}"
@@ -20,7 +19,6 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/ant-batches run [--stable|--beta]
-  scripts/ant-batches fixture [--stable|--beta]
   scripts/ant-batches create [--stable|--beta] [body.yaml]
   scripts/ant-batches create-id [--stable|--beta] [body.yaml]
   scripts/ant-batches poll [--stable|--beta] <message_batch_id>
@@ -35,7 +33,6 @@ Defaults:
   ANT_BIN=/Users/arthur/GolandProjects/anthropic-sdk-all/anthropic-cli/ant
   ANT_BASE_URL=http://127.0.0.1:38080
   ANT_API_KEY=sk-ant-local-default
-  ANT_FIXTURE_API_KEY=my-anthropic-api-key
   ANT_BATCH_VARIANT=stable
   ANT_BATCH_MODEL=claude-3-5-haiku-latest
   ANT_BATCH_MAX_TOKENS=32
@@ -44,7 +41,6 @@ Defaults:
 
 Examples:
   scripts/ant-batches run
-  scripts/ant-batches fixture
   scripts/ant-batches run --beta
   BATCH_ID=$(scripts/ant-batches create-id)
   scripts/ant-batches poll "$BATCH_ID"
@@ -213,11 +209,6 @@ run_batch_test() {
   results_batch "$batch_id"
 }
 
-run_fixture_test() {
-  ANT_API_KEY="$ANT_FIXTURE_API_KEY"
-  run_batch_test
-}
-
 batch_command() {
   local command="${1:-}"
   [[ -n "$command" ]] || die "missing command"
@@ -239,10 +230,6 @@ batch_command() {
     run)
       [[ $# -eq 0 ]] || die "run does not accept positional arguments"
       run_batch_test
-      ;;
-    fixture)
-      [[ $# -eq 0 ]] || die "fixture does not accept positional arguments"
-      run_fixture_test
       ;;
     create)
       create_batch "$@"
@@ -296,7 +283,7 @@ main() {
       [[ $# -ge 1 ]] || die "raw requires <ant args...>"
       run_ant "$@"
       ;;
-    run | fixture | create | create-id | poll | get | retrieve | results | list | cancel | delete | rm)
+    run | create | create-id | poll | get | retrieve | results | list | cancel | delete | rm)
       batch_command "$@"
       ;;
     *)

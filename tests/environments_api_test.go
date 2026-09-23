@@ -12,7 +12,6 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
@@ -313,18 +312,21 @@ func TestEnvironmentsSchemaHasNoForeignKeys(t *testing.T) {
 	}
 }
 
-func TestEnvironmentsOfficialSDKFixture(t *testing.T) {
+func TestEnvironmentsRetrievePersistedResource(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("environments-fixture-bucket"))
 	defer app.close()
 
-	resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments/"+app.cfg.SDKFixtures.EnvironmentID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true)
+	created := createEnvironment(t, app, `{"name":"persisted-environment","config":{"init_script":"","environment":{}},"scope":"organization"}`)
+	defer cleanupEnvironmentRows(t, app.pool, created.ID)
+
+	resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments/"+created.ID+"?beta=true", nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("fixture environment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 	var env environmentAPIResponse
 	decodeJSON(t, resp.Body, &env)
-	if env.ID != app.cfg.SDKFixtures.EnvironmentID {
+	if env.ID != created.ID {
 		t.Fatalf("unexpected fixture environment: %+v", env)
 	}
 	if env.State != "active" {

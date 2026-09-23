@@ -169,13 +169,13 @@ Session 条件更新在 SQL 写入处比较属性，JSON 使用 JSONB 语义比�
 
 ## Environment 事件实现与验收
 
-Environment Handler 通过 `WithWebhooks` 复用组装层共享 Enqueuer，只在真实资源写入成功后通知。事件仅携带类型、环境 external ID 与租户标识，不携带环境配置。work 元数据/心跳、sandbox 状态和 SDK fixture 模拟响应不产生资源事件；GET/list 也不通知。
+Environment Handler 通过 `WithWebhooks` 复用组装层共享 Enqueuer，只在真实资源写入成功后通知。事件仅携带类型、环境 external ID 与租户标识，不携带环境配置。work 元数据/心跳、sandbox 状态不产生资源事件；GET/list 也不通知。生产 SDK fixture 绕过已随 upstream 同步移除，所有身份都遵循普通持久化与通知规则。
 
 `UpdateEnvironment`、`ArchiveEnvironment` 返回资源、`changed` 和 error。Update Mapper 对 name、description、config、metadata、nullable scope 和 resolved_template 使用 `IS DISTINCT FROM`，JSONB 按语义比较，排除 updated_at；未发生变化时保持时间戳。Archive 只更新 `archived_at IS NULL` 的记录；未命中时重新读取同 workspace 的资源，区分重复操作和 not found。保留 scope 的 NULL 存储/响应默认值、配置派生和已归档环境的既有更新行为。
 
 Delete 保留行锁、活跃 work 检查和原有 Yourbatis 事务；失败或回滚不通知。入队失败不回滚已提交业务。全局兼容配置的默认事件目录与回退规则不变，新事件主要通过数据库订阅验收；本轮没有新表、migration 或投递策略变化。
 
-- `tests/environment_webhooks_test.go` 覆盖非法/重名/不存在/跨 workspace、数据库写入故障注入、活跃 work 阻止删除、空更新/JSON 键顺序/NULL/派生模板、并发更新归档、fixture/work/sandbox 边界、订阅过滤和四事件实际投递验签。
+- `tests/environment_webhooks_test.go` 覆盖非法/重名/不存在/跨 workspace、数据库写入故障注入、活跃 work 阻止删除、空更新/JSON 键顺序/NULL/派生模板、并发更新归档、原 SDK 身份的不存在资源/work/sandbox 边界、订阅过滤和四事件实际投递验签。
 - 与 `tests/webhook_events_test.go` 的 17 项矩阵共同覆盖上表前 21 项，Memory Store 三项由 `tests/memory_webhooks_test.go` 补齐；`tests/deployment_webhooks_test.go` 回归手动和实际 River worker 入口。不会将这类测试表述为所有事件都由真实模型自动产生。
 - `internal/webhooks/event_catalog_test.go` 比较后端白名单与前端事件目录，并校验 38 项；Mapper 测试检查 SQL、参数顺序与 sensitive 标记。
 - 人工验收：创建订阅并只选择 Environment 四项 → 创建环境 → 修改属性 → 重复相同更新 → 归档及重复归档 → 删除 → 检查四类通知的数量、环境 ID、workspace 和 SDK 签名。首次操作正常通知，重复操作不新增；删除后可直接依事件确认结果，不依赖再次 GET。
@@ -274,7 +274,7 @@ flowchart TD
 - Create 与 Update 的 DB 签名和事务保持不变。Update 复用现有 `sameAgentConfig`、行锁与 `expectedVersion` 检查；只有成功返回的 CurrentVersion 大于本次 expectedVersion 才通知。不得以 Handler 写前读取的版本判断，也不重写字段比较、JSON 语义或版本增长规则。
 - `ArchiveAgentTx` 和 `Deployment Store.ArchiveAgent` 增加 changed 返回值。Archive Mapper 增加 `archived_at IS NULL`，未命中时在同一 Yourbatis transaction executor 中按 workspace 重读，区分已归档与不存在；无变化不刷新 Agent 时间戳。
 - 保留整个 Agent / Deployment / River schedule 原子归档边界和既有级联行为，不因 Agent 已归档就擅自跳过下游处理。Handler 仅在 Store 返回整体成功且 Agent changed 时通知；任何后续步骤失败回滚都不通知。本阶段不增加 deployment.archived。
-- SDK fixture 的更新/归档模拟响应、GET/list/version 查询不通知；版本冲突、更新已归档 Agent、非法工具/模型配置、数据库故障不通知。保持 upstream 的 Agent 校验和现有错误、路由、响应不变。
+- GET/list/version 查询不通知；原 SDK 测试身份不再有模拟成功响应，遵循普通鉴权、资源查询和持久化规则；版本冲突、更新已归档 Agent、非法工具/模型配置、数据库故障不通知。保持 upstream 的 Agent 校验和现有错误、路由、响应不变。
 - 前后端新增 Agent 分组（3 项），目录一致性测试改为 27。同步中英文说明、设计和验收矩阵。保留全局兼容配置、现有重试，以及业务提交与通知入队的非原子边界，不增加表或 migration。
 
 ```mermaid
@@ -295,9 +295,9 @@ Store 仅在整体事务成功后返回有效 changed；归档未命中时使用
 
 ### 验证与交付
 
-1. 先覆盖非法输入、不存在、跨 workspace、版本冲突、已归档更新、SDK fixture；均无新增通知。Create/Update 在版本插入处注入失败，断言 Agent 和版本整体回滚；Archive 在 Deployment 级联或 River schedule 删除处注入失败，断言 Agent、Deployment 和计划均保持。
+1. 先覆盖非法输入、不存在、跨 workspace、版本冲突、已归档更新、原 SDK 身份访问不存在资源；均无新增通知。Create/Update 在版本插入处注入失败，断言 Agent 和版本整体回滚；Archive 在 Deployment 级联或 River schedule 删除处注入失败，断言 Agent、Deployment 和计划均保持。
 2. 覆盖空更新、相同值、JSON 键顺序、现有可更新字段的真实变化；同一版本的两个并发有效更新仅一个成功发布并通知，失败请求不得重试为额外事件。重复/并发归档仅首次通知，并保留时间戳与级联合同。
-3. 覆盖无 Deployment、有计划及无计划 Deployment 的归档；禁用、未订阅、其他 workspace 过滤及启用不补发。无效事务和 fixture 路径不仅检查响应，还检查版本数、jobs 数与资源状态。
+3. 覆盖无 Deployment、有计划及无计划 Deployment 的归档；禁用、未订阅、其他 workspace 过滤及启用不补发。无效事务和原 SDK 身份路径不仅检查响应，还检查版本数、jobs 数与资源状态。
 4. 使用独立 PostgreSQL 与本地接收器，经 API 创建订阅 → Agent 创建/发布版本/归档 → jobs → Worker → 官方 Go SDK 验签；核对三种类型、资源/租户标识与四字段 payload。补 Mapper SQL/参数绑定测试及前端 27 项全选、半选、保存和编辑回显测试。
 5. 回归原 24 项事件、Deployment 两入口、OAuth、级联、worker 开关；执行源码生成、just test / lint / dead-code / duplicates / complexity / large-files / hooks-run、前端格式/命名/定向测试/构建。单独报告前端全量与大型页面的 Bun 133，记录调度测试在干净数据库与复用数据库上的差异，不降门禁。
 6. Review 版本发布、归档事务与并发、租户范围及查询成本；修复后复跑受影响检查，清理测试依赖。本阶段实现后保留待审核，不自动提交或推送。
@@ -449,3 +449,21 @@ API 白名单、Console 和两份 OpenAPI 同步增加 `agent.deleted`、`deploy
 验收：创建仅订阅 budget_reached 的 endpoint → 查询并编辑回该类型 → 创建/修改 Session，接收带 budget_reached stop reason 的 idle → jobs 为零，Worker 无投递。前端覆盖 Budget 单项组的选中/取消、38 项全选创建保存和编辑回显。完整预算能力留待独立阶段，不属于本次范围。
 
 验证记录：显式使用 `/tmp/oma-webhooks-test-config.yaml`，预留事件与目录定向测试通过，`just test` 的 52 个有测试 Go package 通过；前端 Webhooks 25 项、265 次断言通过。格式、命名、构建及 lint、dead-code、duplicates、complexity、large-files、hooks-run 全部通过。前端全量和两项大型页面仍分别 SIGTRAP（shell 133 / subprocess -5），不作为全量通过。独立测试容器及网络已清理。Review 复核 38 项集合与 2026-09-18 保存的 Console 调研目录一致，且两份 OpenAPI 的其他合同未变。
+
+
+## 2026-09-23 同步 upstream/main
+
+本次合并 `e7845c7`，保留 upstream 的 Memory 挂载/文件写回及生产 SDK fixture 绕过移除；不新增 Webhook 类型或产生入口。Agent 构造函数采用上游新签名并继续注入共享 Enqueuer，Agent/Environment 归档继续使用实际变更标记。共享 Enqueuer 仍在 River 启动前注入 Deployment Store，HTTP 与定时运行共用通知路径。
+
+原先依赖 SDK 模拟成功响应的两处 Webhook 测试改为显式注册原测试身份，再验证不存在资源返回 404 且不产生 jobs。上文各阶段的 fixture 测试记录属于当时基线，不代表当前仍保留生产模拟接口。Memory 挂载与单条 Memory 写回不产生 Store 生命周期事件；38 项目录（35 项已接入、3 项预留）和业务提交后独立入队的边界保持不变。
+
+
+合并适配还包括上游新增 Memory 批量读取测试的三返回值归档调用。完整测试暴露既有 transcript 恢复测试对零保留窗口的时钟依赖：数据库设置软删除时间，服务用宿主机时间判断到期，独立容器存在几十毫秒偏差时会保留全部记录。仅在该测试自己的 schema 中将已软删除记录设为明确过期；不改生产归档/清理策略。该失败场景修正前重复失败，修正后连续五次通过。
+
+
+本次同步的验证记录（合并后代码）：
+
+- 显式使用独立配置 `/tmp/oma-webhooks-test-config.yaml`。复用测试库时 `TestSandboxLifecycleDurableScheduleDispatchesReclaim` 出现一次 15 秒超时；重建专用测试容器和临时数据库后，`just test` 的 53 个有测试 Go package 全部通过，包括 Webhook 投递/验签、上游 Memory 挂载与写回、SDK 绕过移除、Deployment 和 sandbox 调度回归。未修改调度超时或生产策略。
+- Webhook 页面、受影响 Agent API 与 Memory attach 纯逻辑测试合计 50 项、327 次断言通过；前端格式、命名、构建通过。完整前端套件及独立 ConsoleLayout、ManagedAgentsPage 仍分别 SIGTRAP（subprocess -5 / shell 133），不能记为全量通过。
+- lint、dead-code 修复新增测试的归档签名后复跑通过；duplicates、complexity、large-files 和全量 hooks-run 通过。最终合并提交继续运行正常 pre-commit。
+- Review 复核冲突处归档变更标记、上游 Memory 事务/挂载合同、共享 Enqueuer 启动顺序与租户标识；未引入新产生入口或恢复 SDK 绕过。验证日志保存在 `/tmp/oma-upstream-sync-*.log`。

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
@@ -30,6 +31,10 @@ func TestTranscriptArchiveRestoreAfterBlobGC(t *testing.T) {
 	}
 	makeArchiveTerminal(t, app, session)
 	if err := service.Archive(t.Context(), scope, true); err != nil {
+		t.Fatal(err)
+	}
+	// PostgreSQL may run on a different clock; make expiry explicit before GC.
+	if _, err := app.pool.Exec(t.Context(), "update code_session_internal_events set deleted_at=$1 where deleted_at is not null", time.Now().UTC().Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.HardDelete(t.Context(), scope); err != nil {

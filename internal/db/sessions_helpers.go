@@ -63,7 +63,7 @@ func insertSessionTx(
 	for _, resourceInput := range input.Resources {
 		resource := resourceInput.Resource
 		resource.SessionExternalID = session.ExternalID
-		created, createErr := createSessionResource(ctx, executor, resource)
+		created, createErr := insertSessionResourceWithLockedSessionTx(ctx, executor, resource)
 		if createErr != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, createErr
 		}
@@ -88,11 +88,17 @@ func insertSessionTx(
 	return session, thread, resources, workRow.work(), nil
 }
 
-func createSessionResource(
+// insertSessionResourceWithLockedSessionTx checks invariants and inserts a resource.
+// The executor must belong to the transaction that either holds the owning
+// Session row lock or has just inserted that Session.
+func insertSessionResourceWithLockedSessionTx(
 	ctx context.Context,
 	executor yourbatis.Executor,
 	resource SessionResource,
 ) (SessionResource, error) {
+	if err := enforceSessionMemoryResourceInvariantsTx(ctx, executor, resource); err != nil {
+		return SessionResource{}, err
+	}
 	mapper := NewSessionResourceMapper(executor)
 	row, err := mapper.Insert(ctx, sessionResourceWriteParameters(resource))
 	if err != nil {

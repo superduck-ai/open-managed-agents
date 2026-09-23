@@ -10,7 +10,7 @@ Deployment Run 支持 `deployment_run.started`、`deployment_run.succeeded`、`d
 
 Deployment 支持 `deployment.created`、`deployment.updated`、`deployment.paused`、`deployment.unpaused`、`deployment.archived`。通知由共享 Store 在资源与 River 计划事务整体提交后产生；updated 仅实际属性变更，暂停/恢复只在状态转换时通知，归档覆盖直接操作、Agent 级联及定时归档分支。重复操作及无变化更新不重复通知，普通运行的 last_run_at 变化不产生 updated。重复手动暂停可沿用原行为改变暂停原因，但不再次发 paused。data 只含类型、Deployment ID 与租户标识。`deployment.deleted` 作为预留订阅开放；当前没有删除 API 或产生入口，不发送通知，直接归档与级联归档均不发送 deleted；业务提交与通知入队仍非原子化。
 
-Environment 支持 `environment.created`、`environment.updated`、`environment.archived`、`environment.deleted`。创建指环境记录创建，不等待 sandbox 就绪；只有实际持久化属性改变才发送 updated。无变化更新及重复归档保持时间戳，不新增通知。删除沿用现有事务和活跃 work 检查，成功删除已归档环境也通知，不额外补发 archived。work/心跳/sandbox 状态变化及 SDK fixture 模拟响应不产生这些资源事件。payload 仅包含标识；全局兼容默认配置及重试策略保持不变。
+Environment 支持 `environment.created`、`environment.updated`、`environment.archived`、`environment.deleted`。创建指环境记录创建，不等待 sandbox 就绪；只有实际持久化属性改变才发送 updated。无变化更新及重复归档保持时间戳，不新增通知。删除沿用现有事务和活跃 work 检查，成功删除已归档环境也通知，不额外补发 archived。work/心跳/sandbox 状态变化不产生这些资源事件。生产 SDK fixture 绕过已移除，所有身份遵循相同的持久化与通知规则。payload 仅包含标识；全局兼容默认配置及重试策略保持不变。
 
 Deployment 手动或定时运行创建 Session 后，在事务提交成功时产生 `session.status_idled`。创建主线程不会产生子线程事件，定义初始 outcome 不会产生 `session.outcome_evaluation_ended`，该通知由真实评估结束事件触发。失败运行和重复定时执行不新增通知，两次独立手动运行分别通知。
 

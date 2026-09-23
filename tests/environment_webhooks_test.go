@@ -192,26 +192,20 @@ func TestWebhookEnvironmentWorkAndSandboxDoNotNotify(t *testing.T) {
 	assertEnvironmentWebhookCounts(t, app, environment.ID, 1, 0, 0, 1)
 }
 
-func TestWebhookEnvironmentFixtureDoesNotNotify(t *testing.T) {
-	app, endpoint, _ := newEventSubscription(t, environmentWebhookEvents)
-	raw, _ := json.Marshal(environmentWebhookEvents)
-	// Subscribe in the fixture principal's workspace too, so the assertion cannot pass merely through workspace filtering.
-	response := doWebhookRequest(t, app, "POST", "/v1/webhooks", strings.NewReader(`{"url":`+quoteJSON(endpoint.URL)+`,"enabled_events":`+string(raw)+`}`), config.OfficialSDKResourceAPIKey, true)
-	if response.StatusCode != 200 {
-		t.Fatalf("fixture subscription failed: %s", readAll(t, response.Body))
+func TestWebhookFormerSDKEnvironmentMissingOperationsDoNotNotify(t *testing.T) {
+	app, _, _ := newEventSubscription(t, environmentWebhookEvents)
+	if err := app.db.Seed(t.Context(), []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}); err != nil {
+		t.Fatal(err)
 	}
-	response.Body.Close()
-	base := "/v1/environments/" + app.cfg.SDKFixtures.EnvironmentID
-	for _, tc := range []struct{ method, path string }{{"POST", "/v1/environments"}, {"POST", base}, {"POST", base + "/archive"}, {"DELETE", base}} {
-		response := doEnvironmentRequest(t, app, tc.method, tc.path+"?beta=true", strings.NewReader(`{}`), config.OfficialSDKResourceAPIKey, true)
-		if response.StatusCode != 200 {
-			t.Fatalf("fixture operation failed: %s", readAll(t, response.Body))
-		}
-		response.Body.Close()
+	// The former SDK identity now follows ordinary resource lookup and notification rules.
+	const base = "/v1/environments/env_011CZkZ9X2dpNyB7HsEFoRfW"
+	for _, tc := range []struct{ method, path string }{{"POST", base}, {"POST", base + "/archive"}, {"DELETE", base}} {
+		response := doEnvironmentRequest(t, app, tc.method, tc.path+"?beta=true", strings.NewReader(`{}`), formerSDKKey, true)
+		assertError(t, response, 404, "not_found_error")
 	}
 	var count int
 	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery'`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("fixture jobs=%d: %v", count, err)
+		t.Fatalf("missing resource jobs=%d: %v", count, err)
 	}
 }
 

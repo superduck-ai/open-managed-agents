@@ -102,6 +102,8 @@ type MemoryMapper interface {
 	ListPage(ctx context.Context, params listMemoriesParams) ([]memoryRow, error)
 	ListForDepth(ctx context.Context, params listMemoriesForDepthParams) ([]memoryRow, error)
 	FindPathConflict(ctx context.Context, workspaceUUID, storeUUID, path, excludeMemoryUUID string) (string, bool, error)
+	FindByPath(ctx context.Context, workspaceUUID, memoryStoreExternalID, path string) (memoryRow, bool, error)
 	CountActiveHead(ctx context.Context, workspaceUUID, memoryStoreExternalID, versionUUID string) (int, error)
+	CountActiveByStore(ctx context.Context, workspaceUUID, memoryStoreExternalID string) (int, error)
 	DeleteByStoreUUID(ctx context.Context, workspaceUUID, storeUUID string) error
 }

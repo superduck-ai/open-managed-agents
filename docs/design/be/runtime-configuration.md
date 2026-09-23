@@ -14,7 +14,7 @@ flowchart LR
     resolved --> infrastructure["Database / Redis / NATS / Object Storage"]
     resolved --> workers["Batch / EnvironmentRunner / Webhook"]
     resolved --> runtime["E2B / CodeSession"]
-    resolved --> compatibility["Bootstrap / SDKFixtures"]
+    resolved --> compatibility["Bootstrap"]
 ```
 
 加载优先级固定为：
@@ -87,7 +87,6 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `WEBHOOK_ENDPOINT_URL` / `ANTHROPIC_WEBHOOK_SIGNING_KEY`            | `webhook.endpoint_url` / `webhook.signing_key`                             | signing key 字段不再使用 Anthropic 环境变量名                                     |
 | `WEBHOOK_EVENT_TYPES`                                               | `webhook.event_types`                                                      | 旧 CSV 改为 YAML 字符串列表                                                       |
 | 其他 `WEBHOOK_*`                                                    | `webhook.*`                                                                | 后缀转为小写 snake case                                                           |
-| `OFFICIAL_SDK_FIXTURE_*`                                            | `sdk_fixtures.*`                                                           | 只在兼容测试需要覆盖稳定 fixture 时迁移                                           |
 
 `POSTGRES_ADMIN_URL`、`PUBLIC_BASE_URL` 和 `CODE_SESSION_API_BASE_URL` 没有 YAML 对应字段。数据库和角色应在部署前准备好；首次启动回退只使用 `database.url` 派生的 maintenance 连接。客户端响应 URL 根据请求地址及受信任反向代理设置的 `X-Forwarded-*` header 构造；sandbox 回调则显式使用 `code_session.sandbox_api_base_url`。
 
@@ -102,7 +101,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 ## 示例与完整参考
 
-`config/config.example.yaml` 只包含正常本地开发最常修改的连接、监听和凭证字段，并且可以直接复制为 `config/config.yaml`。其中 `tunnel.public_base_url` 显式对齐默认的本地监听 origin，使 Console 生成的 canonical Tunnel URL 也能被 Managed Agent Runtime Gateway 精确识别；修改 `server.addr` 或本地访问入口时应同步调整。具有稳定代码默认值的 Batch、Webhook、Environment Runner、Bootstrap、SDK fixture、容量限制和高级 Code Session 开关不进入最小示例，避免把“支持配置”误解为“启动必须配置”。
+`config/config.example.yaml` 只包含正常本地开发最常修改的连接、监听和凭证字段，并且可以直接复制为 `config/config.yaml`。其中 `tunnel.public_base_url` 显式对齐默认的本地监听 origin，使 Console 生成的 canonical Tunnel URL 也能被 Managed Agent Runtime Gateway 精确识别；修改 `server.addr` 或本地访问入口时应同步调整。具有稳定代码默认值的 Batch、Webhook、Environment Runner、Bootstrap、容量限制和高级 Code Session 开关不进入最小示例，避免把“支持配置”误解为“启动必须配置”。
 
 `docs/configuration-reference.yaml` 是独立的完整字段参考，列出 `Config` 接受的全部 YAML 字段及安全示例值；它用于查找按需覆盖项，不建议整份复制为部署配置。配置合同测试承担两个方向的防漂移：最小示例必须能经过严格解码和完整校验，且只能包含约定的常用字段；完整参考的字段路径必须与 Go `Config` 的 `yaml` 标签精确一致。
 
@@ -125,7 +124,9 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 - `database.auto_migrate`：`env` 为 `prod` 时默认关闭，`dev` 时默认开启。
 - `webhook.worker_enabled`：同时配置 endpoint 和 signing key 时默认开启。
-- `bootstrap.seed_api_keys`：未配置时根据 Bootstrap 和 SDK fixture 的 ID/key 生成默认 seed keys；显式空列表表示不 seed API key。
+- `bootstrap.seed_api_keys`：未配置时根据 Bootstrap ID 和默认开发 Key 生成一个默认 seed key；显式空列表表示不 seed API key。
+
+SDK 测试不再有生产配置或专用默认身份。旧配置与测试的迁移方式见 [SDK 契约测试与真实资源生命周期](sdk-contract-testing.md)。
 
 `code_session.sandbox_api_base_url` 不从 `server.addr` 或其他字段推导。空值会保持为空；需要 sandbox 回调 code-session ingress 或 OTLP endpoint 时，部署配置必须显式提供 sandbox 可访问的地址。非空值必须是绝对 HTTP(S) URL；生产环境必须使用 HTTPS。Docker Compose 使用 `env: dev`，因此可显式使用 `http://host.docker.internal:38080`。
 
@@ -149,25 +150,24 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 
 ## 领域配置
 
-| 配置类型 | YAML 节点 | 职责 |
-| --- | --- | --- |
-| `Config.Env` | `env` | 运行模式，只接受 `dev` 或 `prod` |
-| `ServerConfig` | `server` | HTTP 监听地址 |
-| `DatabaseConfig` | `database` | PostgreSQL 运行连接和自动迁移开关 |
-| `RedisConfig` | `redis` | 平台会话 Redis 连接 |
-| `NATSConfig` | `nats` | 必需的 NATS JetStream 连接和生命周期超时 |
-| `TunnelConfig` | `tunnel` | Tunnel public origin、hostname alias、Broker TTL、队列与 payload 上限 |
-| `StorageConfig` | `storage` | 对象存储类型选择和文件容量限制 |
-| `S3Config` | `storage.s3` | S3 兼容对象存储连接、bucket 和寻址方式 |
-| `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |
-| `SandboxLifecycleConfig` | `sandbox_lifecycle` | 长期 idle 回收开关、dry-run 与超时，见 [沙箱生命周期](sandbox-lifecycle.md) |
-| `E2BConfig` | `e2b` | E2B provider 连接、模板和超时 |
-| `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令 |
-| `CodeSessionConfig` | `code_session` | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置 |
-| `ObservabilityConfig` | `observability` | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
-| `WebhookConfig` | `webhook` | Webhook endpoint、签名、事件和投递 worker 策略 |
-| `BootstrapConfig` | `bootstrap` | 本地默认身份和需要 seed 的 API keys |
-| `SDKFixtureConfig` | `sdk_fixtures` | 官方 SDK 兼容测试使用的稳定 fixture 标识 |
+| 配置类型                  | YAML 节点            | 职责                                                                                     |
+| ------------------------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| `Config.Env`              | `env`                | 运行模式，只接受 `dev` 或 `prod`                                                         |
+| `ServerConfig`            | `server`             | HTTP 监听地址                                                                            |
+| `DatabaseConfig`          | `database`           | PostgreSQL 运行连接和自动迁移开关                                                        |
+| `RedisConfig`             | `redis`              | 平台会话 Redis 连接                                                                      |
+| `NATSConfig`              | `nats`               | 必需的 NATS JetStream 连接和生命周期超时                                                 |
+| `TunnelConfig`            | `tunnel`             | Tunnel public origin、hostname alias、Broker TTL、队列与 payload 上限                    |
+| `StorageConfig`           | `storage`            | 对象存储类型选择和文件容量限制                                                           |
+| `S3Config`                | `storage.s3`         | S3 兼容对象存储连接、bucket 和寻址方式                                                   |
+| `BatchConfig`             | `batch`              | Message Batch 限制、worker、lease 和清理策略                                             |
+| `SandboxLifecycleConfig`  | `sandbox_lifecycle`  | 长期 idle 回收开关、dry-run 与超时，见 [沙箱生命周期](sandbox-lifecycle.md)              |
+| `E2BConfig`               | `e2b`                | E2B provider 连接、模板和超时                                                            |
+| `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令                                                |
+| `CodeSessionConfig`       | `code_session`       | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置                           |
+| `ObservabilityConfig`     | `observability`      | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
+| `WebhookConfig`           | `webhook`            | Webhook endpoint、签名、事件和投递 worker 策略                                           |
+| `BootstrapConfig`         | `bootstrap`          | 本地默认身份和需要 seed 的 API keys                                                      |
 
 ### S3 兼容对象存储
 
@@ -193,7 +193,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 - Provider API Key 只以数据库密文存在，Webhook signing key 等进程秘密只存在于服务端配置边界；二者都不得进入 sandbox payload 或日志。
 - JWT 和 CCR MITM 私钥继续通过只读文件路径配置；路径校验仍在相应的 code-session 启动边界执行。
 - `config/config.yaml`、`config/secrets/` 和 `deploy/docker-compose/oma-server.local.yaml` 中的真实秘密已加入 `.gitignore`；仓库提交的 `config/config.example.yaml`、`deploy/docker-compose/oma-server.yaml` 和 `docs/configuration-reference.yaml` 只使用无真实凭证的示例值。
-- `BootstrapConfig` 与 `SDKFixtureConfig` 只承载本地初始化和兼容测试数据，不能演变为租户级业务配置。
+- `BootstrapConfig` 只承载本地初始化数据，不能演变为租户级业务配置。
 
 ## 验收
 

@@ -137,7 +137,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load vault secrets service: %w", err)
 	}
-	filestoreService := filestore.NewService(cfg, database, objectStore)
+	filestoreService := filestore.NewService(cfg, database, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)

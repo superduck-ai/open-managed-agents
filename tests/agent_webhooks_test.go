@@ -216,7 +216,7 @@ func TestWebhookAgentRepeatedArchiveKeepsCascade(t *testing.T) {
 	assertAgentWebhookTotal(t, app, 2)
 }
 
-func TestWebhookAgentFilteringAndFixtures(t *testing.T) {
+func TestWebhookAgentFilteringAndFormerSDKIdentity(t *testing.T) {
 	app, endpoint, _ := newEventSubscription(t, []string{"agent.archived"})
 	agent := newWebhookAgent(t, app)
 	updateAgent(t, app, agent.ID, `{"version":1,"description":"not subscribed"}`, 200)
@@ -239,14 +239,19 @@ func TestWebhookAgentFilteringAndFixtures(t *testing.T) {
 	for _, tc := range []struct{ id, path, body, key string }{
 		{other.ID, "", `{"version":1,"name":"changed"}`, otherKey},
 		{other.ID, "/archive", `{}`, otherKey},
-		{app.cfg.SDKFixtures.AgentID, "", `{"version":1,"name":"fixture"}`, config.OfficialSDKResourceAPIKey},
-		{app.cfg.SDKFixtures.AgentID, "/archive", `{}`, config.OfficialSDKResourceAPIKey},
 	} {
 		response = doAgentRequest(t, app, "POST", "/v1/agents/"+tc.id+tc.path+"?beta=true", strings.NewReader(tc.body), tc.key, true)
 		if response.StatusCode != 200 {
 			t.Errorf("operation status=%d", response.StatusCode)
 		}
 		response.Body.Close()
+	}
+	if err := app.db.Seed(t.Context(), []config.SeedAPIKey{{ExternalID: "api_key_official_sdk_resource_tests", Key: formerSDKKey}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"", "/archive"} {
+		response = doAgentRequest(t, app, "POST", "/v1/agents/agent_011CZkYpogX7uDKUyvBTophP"+path+"?beta=true", strings.NewReader(`{"version":1}`), formerSDKKey, true)
+		assertError(t, response, 404, "not_found_error")
 	}
 	assertAgentWebhookTotal(t, app, 0)
 }

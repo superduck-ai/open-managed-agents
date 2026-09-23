@@ -122,8 +122,9 @@ func (h *Handler) resourcesFromCreate(
 		OrganizationUUID: principal.OrganizationUUID,
 		WorkspaceUUID:    principal.WorkspaceUUID,
 	}
+	attachSet := sessionresource.NewMemoryAttachSet()
 	for i := range items {
-		resource, err := h.resourceFromRequest(r, session, &items[i], now)
+		resource, err := h.resourceFromRequest(r, session, &items[i], now, attachSet)
 		if err != nil {
 			return nil, err
 		}
@@ -140,6 +141,7 @@ func (h *Handler) resourceFromRequest(
 	session db.Session,
 	body *sessionResourceRequest,
 	now time.Time,
+	attachSet *sessionresource.MemoryAttachSet,
 ) (normalizedSessionResource, error) {
 	resourceType, err := parseRequiredRawString(body.Type, "type")
 	if err != nil {
@@ -149,7 +151,7 @@ func (h *Handler) resourceFromRequest(
 	if err != nil {
 		return normalizedSessionResource{}, err
 	}
-	payload := map[string]any{"id": resourceID, "type": resourceType}
+	var payload any
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
 	var gitSpec *sessionresource.GitRepositorySpec
@@ -192,30 +194,19 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		payload["url"] = spec.URL
-		payload["mount_path"] = spec.MountPath
+		fields := map[string]any{"id": resourceID, "type": resourceType, "url": spec.URL}
+		fields["mount_path"] = spec.MountPath
 		if spec.Checkout != nil {
-			payload["checkout"] = spec.Checkout
+			fields["checkout"] = spec.Checkout
 		}
+		payload = fields
 		gitSpec = &spec
-	case "memory_store":
-		memoryStoreID, err := parseRequiredRawString(body.MemoryStoreID, "memory_store_id")
+	case sessionresource.MemoryStoreType:
+		fields, err := h.memoryStorePayload(r.Context(), session, body, attachSet, resourceID)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		store, err := h.db.GetMemoryStore(r.Context(), session.WorkspaceUUID, memoryStoreID)
-		if err != nil {
-			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
-		}
-		if store.ArchivedAt != nil {
-			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
-		}
-		payload["memory_store_id"] = memoryStoreID
-		copyOptionalPayloadString(payload, body.Access, "access")
-		copyOptionalPayloadString(payload, body.Description, "description")
-		copyOptionalPayloadString(payload, body.Instructions, "instructions")
-		copyOptionalPayloadString(payload, body.MountPath, "mount_path")
-		copyOptionalPayloadString(payload, body.Name, "name")
+		payload = fields
 	default:
 		return normalizedSessionResource{}, errors.New("resource type must be file, github_repository, or memory_store")
 	}

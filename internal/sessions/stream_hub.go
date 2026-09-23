@@ -191,10 +191,7 @@ func (h *Handler) StreamEvents(w http.ResponseWriter, r *http.Request, sessionID
 func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
-	if h.isFixtureThread(r, sessionID, threadID) {
-		h.streamEvents(w, r, sessionID, threadID, false)
-		return
-	}
+
 	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
 		h.errorAdapter.Write(w, r, err)
 		return

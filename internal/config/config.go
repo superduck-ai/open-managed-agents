@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	DefaultAPIKey             = "sk-ant-local-default"
-	OfficialSDKResourceAPIKey = "my-anthropic-api-key"
-	MaxTunnelPendingRequests  = 512
+	DefaultAPIKey            = "sk-ant-local-default"
+	MaxTunnelPendingRequests = 512
 )
 
 func Load() (Config, error) {

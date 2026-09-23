@@ -82,7 +82,7 @@ import {
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
 import { useI18n, useLocale } from '../../shared/i18n';
-import { accountRoleLabel } from '../../shared/permissions/roles';
+import { accountRoleLabel, membershipRoleForOrganization } from '../../shared/permissions/roles';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { consoleNavigation, settingsNavigation, type NavLinkItem } from './navigation';
 
@@ -700,7 +700,7 @@ export function AccountMenu({
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const identity = getIdentity(account);
-  const { activeWorkspace } = useWorkspace();
+  const { activeWorkspace, orgUuid } = useWorkspace();
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 
@@ -751,7 +751,7 @@ export function AccountMenu({
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="block truncate text-xs text-sidebar-foreground/70">
                     {msg('account.subtitle', '{role} · {workspaceName}', {
-                      role: accountRoleLabel(account?.memberships?.[0]?.role, msg),
+                      role: accountRoleLabel(membershipRoleForOrganization(account?.memberships, orgUuid), msg),
                       workspaceName: localizedWorkspaceName(activeWorkspace.name, msg),
                     })}
                   </span>

@@ -86,7 +86,19 @@ export function accountRoleLabel(role: string | undefined, msg: Translate) {
 }
 
 function isPlatformRole(role: string): role is PlatformRole {
-  return role in roleCopy;
+  return Object.hasOwn(roleCopy, role);
+}
+
+export function membershipRoleForOrganization(
+  memberships: readonly { role?: string; organization?: { uuid?: string } }[] | undefined,
+  organizationUuid: string | undefined,
+) {
+  const matchedOrganizationUuid =
+    organizationUuid ?? memberships?.find((membership) => membership.organization?.uuid)?.organization?.uuid;
+  if (!matchedOrganizationUuid) {
+    return undefined;
+  }
+  return memberships?.find((membership) => membership.organization?.uuid === matchedOrganizationUuid)?.role;
 }
 
 function titleizeRole(role: string) {

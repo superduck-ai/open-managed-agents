@@ -136,9 +136,7 @@ function EnvironmentDetail({
               </span>
               <EnvironmentScope scope={entity.scope} />
               <div className="ml-auto">
-                {!entity.archived_at && entity.state !== 'archived' ? (
-                  <EnvironmentActions entity={entity} onAction={onAction} />
-                ) : null}
+                <EnvironmentActions entity={entity} onAction={onAction} />
               </div>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">

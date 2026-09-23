@@ -242,6 +242,9 @@ func (svc *Prebuilds) saveCheckpoint(ctx context.Context, task *prebuildTask) er
 		return nil
 	})
 	if err != nil {
+		if time.Since(task.job.CreatedAt) > svc.cfg.Timeout {
+			return fmt.Errorf("save prebuild checkpoint: %w", err)
+		}
 		return river.JobSnooze(prebuildPollInterval)
 	}
 	if superseded {

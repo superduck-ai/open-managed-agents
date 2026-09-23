@@ -146,6 +146,9 @@ func (svc *Prebuilds) cancelSuperseded(ctx context.Context, task prebuildTask) e
 		status, err := svc.readStatus(ctx, &task)
 		if err != nil || (status.State != "succeeded" && status.State != "failed" && status.State != "cancelled") {
 			if err := svc.cancelRemote(ctx, task); err != nil {
+				if time.Since(task.job.CreatedAt) > svc.cfg.Timeout {
+					return river.JobCancel(errors.Join(errPrebuildSuperseded, err))
+				}
 				return river.JobSnooze(prebuildPollInterval)
 			}
 		}

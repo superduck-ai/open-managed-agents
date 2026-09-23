@@ -135,10 +135,8 @@ func TestEnvironmentRunnerMountsMemoryStoresAndWritesMarkdown(t *testing.T) {
 		t.Fatalf("memory stores leaked into sources: %#v", startup["sources"])
 	}
 	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" ||
-		startupEnv["CLAUDE_CODE_REMOTE_MEMORY_DIR"] != sessionresource.MemoryMountRoot ||
-		startupEnv["CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"] != sessionresource.MemoryMountRoot {
-		t.Fatalf("startup memory env = %#v", startupEnv)
+	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" {
+		t.Fatalf("startup env = %#v", startupEnv)
 	}
 
 	ids := getDefaultDBIDs(t, app.pool)

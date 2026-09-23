@@ -109,15 +109,13 @@ Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。模型会加载该文
 | 一次性任务、能从代码推出的事实 | 引导仍建议不要记进 store；记到根上也不跨会话 |
 | 写 `ro` store | 文件系统拒绝 |
 
-### 2.5 运行时配置（有 store 时）
+### 2.5 运行时配置
 
 ```text
 CLAUDE_CODE_REMOTE=true
-CLAUDE_CODE_REMOTE_MEMORY_DIR=/mnt/memory
-CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/mnt/memory
 ```
 
-后两个无 store 则不设。写允许覆盖 `/mnt/memory/` 及其下路径；各 `read_only` store 仍靠挂载只读位拒绝写入。沙箱关闭会跳过 `MEMORY.md` 加载的实验开关（`tengu_moth_copse`）。
+写允许覆盖 `/mnt/memory/` 及其下路径；各 `read_only` store 仍靠挂载只读位拒绝写入。沙箱关闭会跳过 `MEMORY.md` 加载的实验开关（`tengu_moth_copse`）。
 
 ### 2.6 一次请求里有什么
 

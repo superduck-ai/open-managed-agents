@@ -282,7 +282,7 @@ func TestRenderMemoryMarkdownEscapesLinkLabel(t *testing.T) {
 	}
 }
 
-func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
+func TestManagedAgentSessionConfigMemoryPrompt(t *testing.T) {
 	t.Parallel()
 	session := db.Session{
 		AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"},"system":"You are a concise coding assistant."}`),
@@ -292,7 +292,6 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSessionConfigPromptExcludesMemory(t, withoutStores, "")
-	assertSessionConfigMemoryEnv(t, withoutStores, false)
 
 	withStores, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, []db.SessionResource{
 		memoryStoreSessionResource(
@@ -307,7 +306,6 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSessionConfigPromptExcludesMemory(t, withStores, "user-preferences")
-	assertSessionConfigMemoryEnv(t, withStores, true)
 
 	payload, err := buildEnvironmentManagerV0Payload(
 		"cse_test",
@@ -328,10 +326,8 @@ func TestManagedAgentSessionConfigMemoryEnvironmentAndPrompt(t *testing.T) {
 	}
 	startup := body["startup_context"].(map[string]any)
 	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" ||
-		startupEnv["CLAUDE_CODE_REMOTE_MEMORY_DIR"] != sessionresource.MemoryMountRoot ||
-		startupEnv["CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"] != sessionresource.MemoryMountRoot {
-		t.Fatalf("startup memory env = %#v", startupEnv)
+	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" {
+		t.Fatalf("startup env = %#v", startupEnv)
 	}
 	if sources, ok := startup["sources"].([]any); !ok || len(sources) != 0 {
 		t.Fatalf("sources = %#v, want empty", startup["sources"])
@@ -371,26 +367,5 @@ func assertSessionConfigPromptExcludesMemory(t *testing.T, raw json.RawMessage, 
 		strings.Contains(prompt, "MEMORY.md") ||
 		(storeName != "" && strings.Contains(prompt, storeName)) {
 		t.Fatalf("append_system_prompt leaked memory policy: %q", prompt)
-	}
-}
-
-func assertSessionConfigMemoryEnv(t *testing.T, raw json.RawMessage, wantPresent bool) {
-	t.Helper()
-	var body map[string]any
-	if err := json.Unmarshal(raw, &body); err != nil {
-		t.Fatalf("decode session config: %v", err)
-	}
-	env, _ := body["environment_variables"].(map[string]any)
-	_, hasDir := env["CLAUDE_CODE_REMOTE_MEMORY_DIR"]
-	_, hasOverride := env["CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"]
-	if wantPresent {
-		if env["CLAUDE_CODE_REMOTE_MEMORY_DIR"] != sessionresource.MemoryMountRoot ||
-			env["CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"] != sessionresource.MemoryMountRoot {
-			t.Fatalf("memory env = %#v", env)
-		}
-		return
-	}
-	if hasDir || hasOverride {
-		t.Fatalf("memory env present without stores: %#v", env)
 	}
 }

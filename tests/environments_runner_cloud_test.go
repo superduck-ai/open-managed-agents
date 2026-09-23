@@ -274,12 +274,6 @@ These rules describe the current sandbox environment and do not replace your ass
 	if _, ok := startupEnvironment["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
 		t.Fatalf("startup environment masks WebSocket auth FD: %#v", startupEnvironment)
 	}
-	if _, ok := startupEnvironment["CLAUDE_CODE_REMOTE_MEMORY_DIR"]; ok {
-		t.Fatalf("memory dir env must be absent without stores: %#v", startupEnvironment)
-	}
-	if _, ok := startupEnvironment["CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"]; ok {
-		t.Fatalf("cowork memory path env must be absent without stores: %#v", startupEnvironment)
-	}
 	if _, ok := payload["environment"].(map[string]any)["environment"]; ok {
 		t.Fatalf("environment-manager payload should not contain Claude credential environment variables: %#v", payload["environment"])
 	}

@@ -9,11 +9,9 @@ import (
 )
 
 const (
-	memoryMarkdownSandboxPath         = sessionresource.MemoryMountRoot + "/MEMORY.md"
-	claudeCodeRemoteMemoryDirEnv      = "CLAUDE_CODE_REMOTE_MEMORY_DIR"
-	claudeCoworkMemoryPathOverrideEnv = "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE"
-	memoryFilestoreNamespace          = "/memory"
-	memoryRcloneCacheSeconds          = 1
+	memoryMarkdownSandboxPath = sessionresource.MemoryMountRoot + "/MEMORY.md"
+	memoryFilestoreNamespace  = "/memory"
+	memoryRcloneCacheSeconds  = 1
 )
 
 type memoryRuntimeMount struct {
@@ -126,14 +124,4 @@ func memoryRootMkdirCommand() string {
 
 func memoryFilestoreSource(slug string) string {
 	return memoryFilestoreNamespace + "/" + slug
-}
-
-func memorySessionEnvironment(mounts []memoryRuntimeMount) map[string]string {
-	if len(mounts) == 0 {
-		return nil
-	}
-	return map[string]string{
-		claudeCodeRemoteMemoryDirEnv:      sessionresource.MemoryMountRoot,
-		claudeCoworkMemoryPathOverrideEnv: sessionresource.MemoryMountRoot,
-	}
 }

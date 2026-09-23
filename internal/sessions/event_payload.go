@@ -236,9 +236,14 @@ func ensureSessionEventTimeField(payload map[string]any, field string, value tim
 			return false
 		}
 	}
-	payload[field] = value.UTC().Format(time.RFC3339Nano)
+	payload[field] = formatEventTime(value)
 	return true
 }
+
+// Event times keep PostgreSQL's microsecond precision so live payloads match history.
+func eventTime(t time.Time) time.Time { return t.UTC().Truncate(time.Microsecond) }
+
+func formatEventTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 func parseOrder(r *http.Request) (string, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("order"))
@@ -307,11 +312,13 @@ func encodeSessionCursor(session db.Session) string {
 	return encodeCursor(session.CreatedAt, session.UUID)
 }
 
+// The server resolves the event's processing position from its ID.
+type eventCursor struct {
+	ExternalID string `json:"external_id"`
+}
+
 func encodeEventCursor(event db.SessionEvent) string {
-	data, _ := json.Marshal(struct {
-		ProcessedAt time.Time `json:"processed_at"`
-		ExternalID  string    `json:"external_id"`
-	}{event.ProcessedAt, event.ExternalID})
+	data, _ := json.Marshal(eventCursor{event.ExternalID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -340,14 +347,11 @@ func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
 	if err != nil {
 		return nil, errors.New("page cursor is invalid")
 	}
-	var payload struct {
-		ProcessedAt time.Time `json:"processed_at"`
-		ExternalID  string    `json:"external_id"`
-	}
+	var payload eventCursor
 	if err := json.Unmarshal(data, &payload); err != nil || payload.ExternalID == "" {
 		return nil, errors.New("page cursor is invalid")
 	}
-	return &db.SessionEventPageCursor{ProcessedAt: payload.ProcessedAt, ExternalID: payload.ExternalID}, nil
+	return &db.SessionEventPageCursor{ExternalID: payload.ExternalID}, nil
 }
 
 func decodeThreadCursor(raw string) (*db.SessionThreadPageCursor, error) {

@@ -40,8 +40,8 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		if event.ExternalID == acceptedID {
 			event.ProcessedAt = event.CreatedAt
 			running := event
-			running.ExternalID += "_running"
 			running.EventType = "session.status_running"
+			running.ExternalID = derivedStatusEventID(event.ExternalID, running.EventType)
 			running.Payload = nil
 			batch, err = sessionStatusEventsTx(ctx, executor, session, primary, worker, running)
 			batch = append(batch, event)

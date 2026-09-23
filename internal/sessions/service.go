@@ -314,10 +314,12 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
-	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	removal, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
+	h.finishSessionRemoval(r.Context(), removal)
+	archived := removal.Session
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
@@ -340,10 +342,12 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	removal, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
+	h.finishSessionRemoval(r.Context(), removal)
+	deleted := removal.Session
 	deletedEvent, err := h.simpleSessionEvent("session.deleted", sessionID, &primary.ExternalID)
 	if err == nil {
 		deletedEvent.WorkspaceUUID = deleted.WorkspaceUUID
@@ -353,6 +357,16 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 	return nil
+}
+
+func (h *Handler) finishSessionRemoval(ctx context.Context, removal db.SessionRemoval) {
+	if removal.TerminatedCodeSession != "" && h.codeSessions != nil {
+		if err := h.codeSessions.TerminateManagedAgentCodeSession(ctx, removal.Session, removal.TerminatedCodeSession); err != nil {
+			h.logger.ErrorContext(ctx, "purge removed session worker events", "session_id", removal.Session.ExternalID, "code_session_id", removal.TerminatedCodeSession, "error", err)
+		}
+	}
+	h.publishSessionEvents(ctx, removal.StatusEvents)
+	h.enqueueWebhooksForSessionEvents(ctx, removal.Session.WorkspaceUUID, removal.Session.ExternalID, removal.StatusEvents)
 }
 
 func (h *Handler) listEventsRoute(w http.ResponseWriter, r *http.Request) error {

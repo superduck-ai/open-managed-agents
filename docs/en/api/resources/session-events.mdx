@@ -16,7 +16,7 @@ History supports `limit`, `page`, `order`, `types`/`types[]`, and `created_at[gt
 
 History is ordered by `processed_at`, with database insertion order breaking ties. The default is `order=desc`; explicitly request `order=asc` for chronological history. Queued inputs have `processed_at=null` and appear last in ascending order or first in descending order.
 
-`page` is an opaque server-issued cursor; pass it back unchanged. The current format uses processing time and the public event ID. Older cursors using creation time and an internal UUID are incompatible: discard them and restart from the first page after upgrading. Pagination is not a snapshot: Worker ACKs move queued inputs into the processed timeline, so concurrent pagination can repeat or omit events. Deduplicate by event ID, use SSE for live delivery, and reload history when a complete view is needed.
+`page` is an opaque server-issued cursor; pass it back unchanged. The current format carries only the public event ID; the server resolves its position. Older cursors using creation time and an internal UUID are incompatible: discard them and restart from the first page after upgrading. Pagination is not a snapshot: Worker ACKs move queued inputs into the processed timeline, so concurrent pagination can repeat or omit events. Deduplicate by event ID, use SSE for live delivery, and reload history when a complete view is needed.
 
 ```json
 {

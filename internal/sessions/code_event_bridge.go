@@ -12,20 +12,21 @@ import (
 )
 
 func (h *Handler) PublishProcessedInput(ctx context.Context, codeSession db.CodeSession, eventID string) error {
+	// Worker payload IDs are not always public inputs; only stored inputs are acknowledged.
 	original, err := h.eventPayloads.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, eventID)
+	if errors.Is(err, db.ErrNotFound) || (err == nil && !original.ProcessedAt.IsZero()) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if !original.ProcessedAt.IsZero() {
-		return nil
-	}
-	event, changed, err := h.db.MarkSessionEventProcessed(ctx, codeSession, eventID, time.Now().UTC().Truncate(time.Microsecond))
+	processed, changed, err := h.db.MarkSessionEventProcessed(ctx, codeSession, eventID, eventTime(time.Now()))
 	if err != nil || !changed {
 		return err
 	}
-	event.Payload = original.Payload
-	event.Payload = sessionEventPayload(event)
-	h.publishSessionEvents(ctx, []db.SessionEvent{event})
+	original.ProcessedAt = processed.ProcessedAt
+	original.Payload = sessionEventPayload(original)
+	h.publishSessionEvents(ctx, []db.SessionEvent{original})
 	return nil
 }
 

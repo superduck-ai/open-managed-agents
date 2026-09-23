@@ -157,8 +157,14 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 						t.Fatalf("worker not revoked: status=%s err=%v", worker.Status, err)
 					}
 				}
-				if operation == "archive" && retrieveSession(t, app, session.ID, defaultTestKey).Status != "terminated" {
-					t.Fatal("archived unstarted turn still running")
+				if operation == "archive" {
+					if retrieveSession(t, app, session.ID, defaultTestKey).Status != "terminated" {
+						t.Fatal("archived unstarted turn still running")
+					}
+					terminated := listSessionEvents(t, app, session.ID, "types[]=session.status_terminated&types[]=session.thread_status_terminated", defaultTestKey)
+					if len(terminated.Data) != 2 {
+						t.Fatalf("archived unstarted turn status history = %s", terminated.Data)
+					}
 				}
 			})
 		}
@@ -187,7 +193,7 @@ func TestSessionHistoryCursorBoundaries(t *testing.T) {
 			if !more {
 				break
 			}
-			cursor = &db.SessionEventPageCursor{ProcessedAt: events[0].ProcessedAt, ExternalID: events[0].ExternalID}
+			cursor = &db.SessionEventPageCursor{ExternalID: events[0].ExternalID}
 		}
 		if len(ids) != 5 {
 			t.Fatalf("%s lost rows: %v", order, ids)

@@ -149,7 +149,7 @@ func sessionEventWriteParameters(event SessionEvent) sessionEventWriteParams {
 		SessionExternalID: event.SessionExternalID, ThreadUUID: event.ThreadUUID,
 		ThreadExternalID: event.ThreadExternalID, EventType: event.EventType,
 		PayloadBlobUUID: event.PayloadBlobUUID, ToolUseID: event.ToolUseID,
-		Payload: agentJSONArg(event.Payload), ProcessedAt: event.ProcessedAt, CreatedAt: event.CreatedAt,
+		Payload: agentJSONArg(event.Payload), ProcessedAt: nullableTime(event.ProcessedAt), CreatedAt: event.CreatedAt,
 	}
 }
 
@@ -248,7 +248,7 @@ func (r sessionEventRow) event() SessionEvent {
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
 		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
-		Payload: bytes.Clone(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		Payload: bytes.Clone(r.Payload), ProcessedAt: timeFromNullable(r.ProcessedAt), CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }
 

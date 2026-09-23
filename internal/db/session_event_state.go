@@ -2,9 +2,10 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	jsonv2 "encoding/json/v2"
 	"slices"
-	"strings"
 	"time"
 	"uuid"
 
@@ -65,12 +66,10 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return nil, err
 	}
-	if status == "idle" && payload.StopReason != nil && payload.StopReason.Type == "requires_action" &&
-		(len(payload.StopReason.EventIDs) > 0 || worker.WorkerStatus != "requires_action") &&
-		(len(allPending) == 0 || (isThread && len(pending) == 0)) {
+	if status == "idle" && unbackedRequiresAction(payload.StopReason, worker.WorkerStatus, isThread, pending, allPending) {
 		return nil, nil
 	}
-	threadEvent, err := newSessionStatusEvent(source, "session.thread_status_"+status, thread, statusStopReason(status, payload.StopReason, pending))
+	threadEvent, err := newSessionStatusEvent(source, "session.thread_status_"+statusEventSuffix(status), thread, statusStopReason(status, payload.StopReason, pending))
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +82,7 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 		sessionStatus = sessionStatusAfterThread(threads, thread.ExternalID, status)
 	}
-	sessionType := "session.status_" + sessionStatus
+	sessionType := "session.status_" + statusEventSuffix(sessionStatus)
 	if !isThread {
 		sessionType = source.EventType
 	}
@@ -111,6 +110,32 @@ func sessionStatusAfterThread(threads []sessionThreadRow, threadID, status strin
 	return "terminated"
 }
 
+// A requires_action idle is dropped when no pending tool request backs it.
+func unbackedRequiresAction(reason *sessionStopReason, workerStatus string, isThread bool, threadPending, allPending []string) bool {
+	if reason == nil || reason.Type != "requires_action" {
+		return false
+	}
+	// Without event IDs, the worker's own requires_action state is the backing request.
+	if len(reason.EventIDs) == 0 && workerStatus == "requires_action" {
+		return false
+	}
+	return len(allPending) == 0 || (isThread && len(threadPending) == 0)
+}
+
+// Public status event names use the past participle only for rescheduling.
+func statusEventSuffix(status string) string {
+	if status == "rescheduling" {
+		return "rescheduled"
+	}
+	return status
+}
+
+// Derived status events need deterministic IDs so retried reports stay idempotent.
+func derivedStatusEventID(sourceID, eventType string) string {
+	sum := sha256.Sum256([]byte(sourceID + "\x00" + eventType))
+	return "sevt_" + hex.EncodeToString(sum[:16])
+}
+
 func statusStopReason(status string, reason *sessionStopReason, pending []string) *sessionStopReason {
 	if status != "idle" {
 		return nil
@@ -125,10 +150,9 @@ func statusStopReason(status string, reason *sessionStopReason, pending []string
 }
 
 func newSessionStatusEvent(source SessionEvent, eventType string, thread SessionThread, reason *sessionStopReason) (SessionEvent, error) {
-	eventType = strings.Replace(eventType, "_rescheduling", "_rescheduled", 1)
 	eventID := source.ExternalID
 	if eventType != source.EventType {
-		eventID += "_" + eventType
+		eventID = derivedStatusEventID(source.ExternalID, eventType)
 	}
 	type statusAgent struct {
 		Name        string `json:"name"`

@@ -15,7 +15,7 @@
         thread_external_id,
         event_type,
         payload, payload_blob_uuid, tool_use_id,
-        COALESCE(processed_at, CAST('0001-01-01 00:00:00+00' AS timestamptz)) AS processed_at,
+        processed_at,
         created_at,
         deleted_at
     </sql>
@@ -30,7 +30,7 @@
         #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
         #{params.SessionUUID}, #{params.SessionExternalID}, #{params.ThreadUUID},
         #{params.ThreadExternalID}, #{params.EventType}, CAST(#{params.Payload,sensitive=true} AS jsonb), #{params.PayloadBlobUUID}, #{params.ToolUseID},
-        NULLIF(#{params.ProcessedAt}, CAST('0001-01-01 00:00:00+00' AS timestamptz)), #{params.CreatedAt}
+        #{params.ProcessedAt}, #{params.CreatedAt}
     </sql>
 
     <insert id="Insert" result="returning" resultType="sessionEventRow">
@@ -115,12 +115,12 @@
             <if test="params.Cursor != nil">
                 AND (COALESCE(processed_at, CAST('infinity' AS timestamptz)), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
-                (COALESCE(NULLIF(#{params.Cursor.ProcessedAt}, CAST('0001-01-01 00:00:00+00' AS timestamptz)), CAST('infinity' AS timestamptz)), (
-                    SELECT id FROM session_events
+                (
+                    SELECT COALESCE(processed_at, CAST('infinity' AS timestamptz)), id FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}
-                ))
+                )
             </if>
         </where>
         ORDER BY session_events.processed_at

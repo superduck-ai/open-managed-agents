@@ -48,11 +48,11 @@ func (h *Handler) simpleSessionEvent(eventType, sessionID string, threadID *stri
 	if err != nil {
 		return db.SessionEvent{}, err
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	now := eventTime(time.Now())
 	payload := map[string]any{
 		"id":           eventID,
-		"created_at":   now.Format(time.RFC3339Nano),
-		"processed_at": now.Format(time.RFC3339Nano),
+		"created_at":   formatEventTime(now),
+		"processed_at": formatEventTime(now),
 		"type":         eventType,
 	}
 	if threadID != nil {

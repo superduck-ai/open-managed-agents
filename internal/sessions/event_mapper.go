@@ -119,16 +119,16 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			processedAt = parsed.UTC()
 		}
 	}
-	processedAt = processedAt.Truncate(time.Microsecond)
-	payload["processed_at"] = processedAt.UTC().Format(time.RFC3339Nano)
+	processedAt = eventTime(processedAt)
+	payload["processed_at"] = formatEventTime(processedAt)
 	createdAt := processedAt
 	if rawCreatedAt, ok := payload["created_at"].(string); ok && strings.TrimSpace(rawCreatedAt) != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(rawCreatedAt)); err == nil {
 			createdAt = parsed.UTC()
 		}
 	}
-	createdAt = createdAt.Truncate(time.Microsecond)
-	payload["created_at"] = createdAt.UTC().Format(time.RFC3339Nano)
+	createdAt = eventTime(createdAt)
+	payload["created_at"] = formatEventTime(createdAt)
 	if err := h.populateThreadCoordinationAgentNames(ctx, session, eventType, payload); err != nil {
 		return nil, err
 	}
@@ -156,7 +156,6 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			ProcessedAt:       processedAt,
 			CreatedAt:         createdAt,
 		})
-
 	}
 	return events, nil
 }

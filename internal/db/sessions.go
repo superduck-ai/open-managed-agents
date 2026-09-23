@@ -125,8 +125,7 @@ type SessionPageCursor struct {
 }
 
 type SessionEventPageCursor struct {
-	ProcessedAt time.Time
-	ExternalID  string
+	ExternalID string
 }
 
 type SessionThreadPageCursor struct {
@@ -332,23 +331,25 @@ func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThre
 	return d.GetSessionThread(ctx, thread.WorkspaceUUID, thread.SessionExternalID, thread.ExternalID)
 }
 
-func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
-	var archived Session
+func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (SessionRemoval, error) {
+	var removal SessionRemoval
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		if err := prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+		var err error
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
 			return err
 		}
 		row, err := NewSessionMapper(executor).Archive(ctx, workspaceUUID, externalID)
-		archived = row.session()
+		removal.Session = row.session()
 		return mapNoRows(err)
 	})
-	return archived, err
+	return removal, err
 }
 
-func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
-	var session Session
+func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (SessionRemoval, error) {
+	var removal SessionRemoval
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		if err := prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+		var err error
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
 			return err
 		}
 		sessionMapper := NewSessionMapper(executor)
@@ -361,7 +362,8 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if txErr != nil {
 			return mapNoRows(txErr)
 		}
-		session = row.session()
+		session := row.session()
+		removal.Session = session
 		if txErr = retireSessionFilesystemTx(ctx, executor, session); txErr != nil {
 			return txErr
 		}
@@ -377,7 +379,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
 		return txErr
 	})
-	return session, err
+	return removal, err
 }
 
 func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams) ([]Session, bool, error) {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
 func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
@@ -21,9 +22,14 @@ func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.Cod
 	if !ok {
 		return nil
 	}
+	// Each report is a new fact; the session event transaction drops unchanged status.
+	eventID, err := ids.New("sevt_")
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	payload := map[string]any{
-		"id":   stablePublicEventID(record.ExternalID, "worker_status_"+workerStatus+"\x00"+now.Format(time.RFC3339Nano)),
+		"id":   eventID,
 		"type": eventType, "created_at": formatTime(now), "processed_at": formatTime(now),
 	}
 	if workerStatus == "requires_action" {

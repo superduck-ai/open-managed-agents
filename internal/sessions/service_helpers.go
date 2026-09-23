@@ -237,7 +237,7 @@ func normalizeInputEvent(
 	raw json.RawMessage,
 	now time.Time,
 ) (db.SessionEvent, json.RawMessage, bool, error) {
-	now = now.UTC().Truncate(time.Microsecond)
+	now = eventTime(now)
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return db.SessionEvent{}, nil, false, errors.New("event must be an object")
@@ -254,13 +254,13 @@ func normalizeInputEvent(
 		return db.SessionEvent{}, nil, false, err
 	}
 	payload["id"] = eventID
-	payload["processed_at"] = now.Format(time.RFC3339Nano)
+	payload["processed_at"] = formatEventTime(now)
 	processedAt := now
 	if maevents.IsPublicWorkerInputEvent(eventType) {
 		processedAt = time.Time{}
 		payload["processed_at"] = nil
 	}
-	payload["created_at"] = now.Format(time.RFC3339Nano)
+	payload["created_at"] = formatEventTime(now)
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {
 		value = strings.TrimSpace(value)

@@ -13,7 +13,7 @@ import (
 func TestGoSDKFilesE2E(t *testing.T) {
 	baseURL := os.Getenv("TEST_API_BASE_URL")
 	if baseURL == "" {
-		app := newTestApp(t, nil)
+		app := newTestAppWithStore(t, nil, newFakeStore("go-sdk-files"))
 		defer app.close()
 		baseURL = app.baseURL
 	}

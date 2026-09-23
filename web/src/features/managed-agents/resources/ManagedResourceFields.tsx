@@ -1,19 +1,12 @@
-import { ChevronDown, FileText, GitBranch, Plus } from 'lucide-react';
+import { ChevronDown, Database, FileText, GitBranch, Plus } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu';
-import { DeploymentAddSelectField } from '../components/common';
 import type { EntityOption, ManagedEntityFormValues } from '../types';
-import { SessionFileResourcesField, areSessionFileResourcesValid } from '../sessions/SessionFileResourcesField';
+import { SessionFileResourcesField } from '../sessions/SessionFileResourcesField';
+import { emptyMemoryAttach, MAX_MEMORY_ATTACHES } from './memory-attach';
 import { GitRepositoryFields } from './GitRepositoryFields';
-import { emptyGitResource, gitResourceValid, resourceFormValues } from './git-resource';
-
-export function managedResourceFieldsValid(values: ManagedEntityFormValues, editing: boolean) {
-  return (
-    (editing && !values.resourcesChanged) ||
-    (areSessionFileResourcesValid(values.fileResources) && values.gitResources.every(gitResourceValid))
-  );
-}
+import { emptyGitResource, resourceFormValues } from './git-resource';
 
 export function ManagedResourceFields({
   values,
@@ -38,7 +31,10 @@ export function ManagedResourceFields({
         <div>
           <h3 className="text-sm font-semibold">{msg('managedAgents.sessions.resources.title', 'Resources')}</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            {msg('managedAgents.git.resourcesHelp', 'Mount files and Git repositories into the session.')}
+            {msg(
+              'managedAgents.git.resourcesHelp',
+              'Mount files, Git repositories, or memory stores into the session.',
+            )}
           </p>
         </div>
       )}
@@ -77,9 +73,12 @@ export function ManagedResourceFields({
               </Button>
             </div>
           ) : null}
-          {values.fileResources.length ? (
+          {values.fileResources.length || values.memoryAttaches.length ? (
             <SessionFileResourcesField
               resources={values.fileResources}
+              memoryAttaches={values.memoryAttaches}
+              memoryStoreOptions={memoryStores}
+              onMemoryAttachesChange={(memoryAttaches) => patch({ memoryAttaches })}
               showAddButton={false}
               showHeading={false}
               workspaceId={workspaceId}
@@ -118,20 +117,17 @@ export function ManagedResourceFields({
                 <FileText aria-hidden />
                 {msg('managedAgents.sessions.resources.typeFile', 'File')}
               </DropdownMenuItem>
+              {memoryStores ? (
+                <DropdownMenuItem
+                  disabled={values.memoryAttaches.length >= MAX_MEMORY_ATTACHES}
+                  onClick={() => patch({ memoryAttaches: [...values.memoryAttaches, emptyMemoryAttach()] })}
+                >
+                  <Database aria-hidden />
+                  {msg('managedAgents.memoryStores.kindTitle', 'Memory store')}
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
-          {memoryStores ? (
-            <DeploymentAddSelectField
-              label={msg('managedAgents.memoryStores.title', 'Memory stores')}
-              optional
-              valueLabel={msg('managedAgents.memoryStores.kind', 'memory store')}
-              selectedIds={values.memoryStoreIds}
-              options={memoryStores}
-              manageHref={`/workspaces/${workspaceId}/memory-stores`}
-              manageLabel={msg('managedAgents.memoryStores.manage', 'Manage memory stores')}
-              onChange={(memoryStoreIds) => patch({ memoryStoreIds })}
-            />
-          ) : null}
         </>
       )}
     </section>

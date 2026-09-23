@@ -63,14 +63,14 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[dep
 		return agentErr
 	}
 
-	referenceFailure, err := validateRunDependencies(ctx, w.store.database, deployment.WorkspaceUUID, deployment)
+	memoryStores, referenceFailure, err := validateRunDependencies(ctx, w.store.database, deployment.WorkspaceUUID, deployment)
 	if err != nil {
 		return err
 	}
 	if referenceFailure != nil {
 		return w.recordFailure(ctx, deployment, referenceFailure, scheduledAt, now)
 	}
-	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, deployment.RuntimeUserUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, deployment.RuntimeUserUUID, now, memoryStores)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err

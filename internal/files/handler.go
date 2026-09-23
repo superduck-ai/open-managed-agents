@@ -226,10 +226,6 @@ func (h *Handler) retrieveMetadata(w http.ResponseWriter, r *http.Request, fileI
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixture(principal, fileID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.officialSDKFixtureMetadata())
-			return
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
@@ -245,10 +241,6 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixture(principal, fileID) {
-			httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": fileID, "type": "file_deleted"})
-			return
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
@@ -422,23 +414,6 @@ func metadataFromRecord(record db.FileRecord) fileMetadata {
 		CreatedAt:    record.CreatedAt.UTC().Format(time.RFC3339),
 		Downloadable: record.Downloadable,
 		Scope:        scope,
-	}
-}
-
-func (h *Handler) isOfficialSDKFixture(principal auth.Principal, fileID string) bool {
-	return fileID == h.cfg.SDKFixtures.FileID && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
-}
-
-func (h *Handler) officialSDKFixtureMetadata() fileMetadata {
-	return fileMetadata{
-		ID:           h.cfg.SDKFixtures.FileID,
-		Type:         "file",
-		Filename:     "README.md",
-		MimeType:     "text/markdown",
-		SizeBytes:    12,
-		CreatedAt:    time.Unix(0, 0).UTC().Format(time.RFC3339),
-		Downloadable: false,
-		Scope:        nil,
 	}
 }
 

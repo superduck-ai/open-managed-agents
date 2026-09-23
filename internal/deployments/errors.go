@@ -101,3 +101,5 @@ func scheduledDeploymentLimitExceeded() error {
 		db.ErrLimitExceeded,
 	)
 }
+
+type resourceReferenceError = sessionresource.ReferenceError

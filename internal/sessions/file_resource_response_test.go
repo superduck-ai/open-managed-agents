@@ -25,8 +25,8 @@ func TestResponseFromResourceHandlesNullPayload(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("解析响应：%v", err)
 	}
-	assertFixtureResourceString(t, out, "id", "sesrsc_null_1")
-	assertFixtureResourceString(t, out, "type", "memory_store")
+	assertResourceString(t, out, "id", "sesrsc_null_1")
+	assertResourceString(t, out, "type", "memory_store")
 }
 
 func TestResponseFromResourceBackfillsOutputFileID(t *testing.T) {
@@ -47,10 +47,18 @@ func TestResponseFromResourceBackfillsOutputFileID(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("解析响应：%v", err)
 	}
-	assertFixtureResourceString(t, out, "id", "sesrsc_output_1")
-	assertFixtureResourceString(t, out, "type", "file")
-	assertFixtureResourceString(t, out, "file_id", "file_owned_1")
-	assertFixtureResourceString(t, out, "mount_path", "/outputs/report.pdf")
+	assertResourceString(t, out, "id", "sesrsc_output_1")
+	assertResourceString(t, out, "type", "file")
+	assertResourceString(t, out, "file_id", "file_owned_1")
+	assertResourceString(t, out, "mount_path", "/outputs/report.pdf")
+	if _, exists := out["source"]; exists {
+		t.Fatalf("file resource leaked source: %s", raw)
+	}
+	for _, field := range []string{"created_at", "updated_at"} {
+		if _, exists := out[field]; !exists {
+			t.Fatalf("file resource missing %s: %s", field, raw)
+		}
+	}
 }
 
 func TestResponseFromResourceKeepsInputResourcePayload(t *testing.T) {
@@ -75,8 +83,8 @@ func TestResponseFromResourceKeepsInputResourcePayload(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("解析响应：%v", err)
 	}
-	assertFixtureResourceString(t, out, "file_id", "file_uploaded_1")
-	assertFixtureResourceString(t, out, "mount_path", "/uploads/data.csv")
+	assertResourceString(t, out, "file_id", "file_uploaded_1")
+	assertResourceString(t, out, "mount_path", "/uploads/data.csv")
 	if _, exists := out["source"]; exists {
 		t.Fatalf("Input Resource 泄漏内部 source 字段：%s", raw)
 	}
@@ -101,9 +109,20 @@ func TestResponseFromResourceLeavesNonFileResourcesUntouched(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("解析响应：%v", err)
 	}
-	assertFixtureResourceString(t, out, "id", "sesrsc_dir_1")
-	assertFixtureResourceString(t, out, "type", "directory")
+	assertResourceString(t, out, "id", "sesrsc_dir_1")
+	assertResourceString(t, out, "type", "directory")
 	if _, exists := out["file_id"]; exists {
 		t.Fatalf("directory 资源不应有 file_id：%s", raw)
+	}
+}
+
+func assertResourceString(t *testing.T, resource map[string]json.RawMessage, field, expected string) {
+	t.Helper()
+	var actual string
+	if err := json.Unmarshal(resource[field], &actual); err != nil {
+		t.Fatalf("解析 fixture File Resource 的 %s 字段：%v", field, err)
+	}
+	if actual != expected {
+		t.Fatalf("fixture File Resource 的 %s = %q，期望 %q", field, actual, expected)
 	}
 }

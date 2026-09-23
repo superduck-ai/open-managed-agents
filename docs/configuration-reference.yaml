@@ -194,24 +194,6 @@ bootstrap:
   user_external_id: user_default
   api_key_external_id: api_key_default
 
-sdk_fixtures:
-  file_id: file_id
-  batch_id: message_batch_id
-  agent_id: agent_011CZkYpogX7uDKUyvBTophP
-  reference_agent_id: agent_011CZkYqphY8vELVzwCUpqiQ
-  environment_id: env_011CZkZ9X2dpNyB7HsEFoRfW
-  work_id: work_id
-  session_id: sesn_011CZkZAtmR3yMPDzynEDxu7
-  session_resource_id: sesrsc_011CZkZBJq5dWxk9fVLNcPht
-  session_thread_id: sthr_011CZkZVWa6oIjw0rgXZpnBt
-  session_event_id: sevt_011CZkZbF9oBV2h6c7qWZfnE
-  skill_id: skill_id
-  skill_version: version
-  deployment_id: deployment_id
-  deployment_run_id: deployment_run_id
-  api_key: my-anthropic-api-key
-  api_key_external_id: api_key_official_sdk_resource_tests
-
 # Long-idle managed sandbox reclamation. Disable dry_run to delete sandbox local state.
 sandbox_lifecycle:
   enabled: true

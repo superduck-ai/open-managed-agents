@@ -17,7 +17,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -38,7 +37,6 @@ var (
 )
 
 type Handler struct {
-	cfg          config.Config
 	db           *db.DB
 	deployments  *deployments.Store
 	errorAdapter *httpapi.ErrorAdapter
@@ -106,9 +104,9 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, deploymentStore *deployments.Store, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *deployments.Store, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, deployments: deploymentStore, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -287,10 +285,6 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 		record, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, agentID, version)
 	}
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureID(principal, agentID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, false))
-			return nil
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			return agentNotFound(agentID, err)
 		}
@@ -306,10 +300,6 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if h.isOfficialSDKFixtureID(principal, agentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 2, false))
-		return nil
-	}
 
 	body, err := httpapi.DecodeObjectBodyAs[agentMutationRequest](w, r, maxAgentBodySize)
 	if err != nil {
@@ -371,10 +361,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if h.isOfficialSDKFixtureID(principal, agentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
-		return nil
-	}
+
 	record, err := h.deployments.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -392,10 +379,7 @@ func (h *Handler) versionsRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if h.isOfficialSDKFixtureID(principal, agentID) {
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: []agentResponse{h.fixtureAgent(agentID, 1, false)}})
-		return nil
-	}
+
 	limit, err := httpapi.ParseLimit(r, 100)
 	if err != nil {
 		return invalidRequest(err)
@@ -640,18 +624,12 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 	}
 	if version > 0 {
 		if _, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version); err != nil {
-			if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureReference(principal, id) {
-				return agentReference{ID: id, Type: "agent", Version: version}, false, nil
-			}
 			return agentReference{}, false, errors.New("multiagent referenced agent version not found")
 		}
 		return agentReference{ID: id, Type: "agent", Version: version}, false, nil
 	}
 	record, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, id)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureReference(principal, id) {
-			return agentReference{ID: id, Type: "agent", Version: 1}, false, nil
-		}
 		return agentReference{}, false, errors.New("multiagent referenced agent not found")
 	}
 	if record.ArchivedAt != nil {
@@ -1289,41 +1267,5 @@ func responseFromAgent(agent db.Agent) agentResponse {
 		Type:        "agent",
 		UpdatedAt:   httpapi.FormatTime(agent.UpdatedAt),
 		Version:     agent.CurrentVersion,
-	}
-}
-
-func (h *Handler) isOfficialSDKFixtureID(principal auth.Principal, agentID string) bool {
-	return principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID && agentID == h.cfg.SDKFixtures.AgentID
-}
-
-func (h *Handler) isOfficialSDKFixtureReference(principal auth.Principal, agentID string) bool {
-	return principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID &&
-		(agentID == h.cfg.SDKFixtures.AgentID || agentID == h.cfg.SDKFixtures.ReferenceAgentID)
-}
-
-func (h *Handler) fixtureAgent(agentID string, version int, archived bool) agentResponse {
-	now := time.Unix(0, 0).UTC()
-	var archivedAt *string
-	if archived {
-		archivedAt = httpapi.OptionalTime(&now)
-	}
-	description := "A general-purpose starter agent."
-	system := "You are a general-purpose agent that can research, write code, run commands, and use connected tools to complete the user's task end to end."
-	return agentResponse{
-		ID:          agentID,
-		ArchivedAt:  archivedAt,
-		CreatedAt:   httpapi.FormatTime(now),
-		Description: &description,
-		MCPServers:  json.RawMessage(`[{"name":"example-mcp","type":"url","url":"https://example-server.modelcontextprotocol.io/sse"}]`),
-		Metadata:    json.RawMessage(`{"foo":"bar"}`),
-		Model:       json.RawMessage(`{}`),
-		Multiagent:  json.RawMessage(fmt.Sprintf(`{"agents":[{"id":%q,"type":"agent","version":1}],"type":"coordinator"}`, h.cfg.SDKFixtures.ReferenceAgentID)),
-		Name:        "My First Agent",
-		Skills:      json.RawMessage(`[{"skill_id":"xlsx","type":"anthropic","version":"1"}]`),
-		System:      &system,
-		Tools:       json.RawMessage(`[{"configs":[{"enabled":true,"name":"bash","permission_policy":{"type":"always_allow"}}],"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},"type":"agent_toolset_20260401"}]`),
-		Type:        "agent",
-		UpdatedAt:   httpapi.FormatTime(now),
-		Version:     version,
 	}
 }

@@ -12,10 +12,7 @@ import (
 	"time"
 )
 
-const (
-	DefaultAPIKey             = "sk-ant-local-default"
-	OfficialSDKResourceAPIKey = "my-anthropic-api-key"
-)
+const DefaultAPIKey = "sk-ant-local-default"
 
 func Load() (Config, error) {
 	configPath, found, err := findConfigFile()

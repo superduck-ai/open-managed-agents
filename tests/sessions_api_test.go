@@ -112,7 +112,7 @@ func TestSessionsAPI(t *testing.T) {
 			"metadata":{"case":"1234"},
 			"resources":[
 				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/session-resource.txt"},
-				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`,"name":"memory"}
+				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`}
 			]
 		}`)
 		if created.Type != "session" || created.Status != "idle" || created.EnvironmentID != env.ID {
@@ -3173,6 +3173,10 @@ func TestCodeSessionWorkerDeliveryControlsJetStreamAcknowledgement(t *testing.T)
 	}
 	if countQueuedCodeSessionInboundEvents(app, codeSessionID, "user", payloadUUID) != 0 {
 		t.Fatal("processed ACK did not remove the JetStream message")
+	}
+	deliveryResp = postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processed"}]}`)
+	if !deliveryResp.OK || deliveryResp.Applied != 0 || deliveryResp.Ignored != 1 {
+		t.Fatalf("duplicate processed ACK = %+v, want ignored", deliveryResp)
 	}
 }
 

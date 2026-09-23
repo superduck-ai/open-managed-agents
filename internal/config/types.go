@@ -28,7 +28,6 @@ type Config struct {
 	Webhook           WebhookConfig           `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and
@@ -233,25 +232,6 @@ type BootstrapConfig struct {
 	WorkspaceExternalID string       `yaml:"workspace_external_id"`
 	UserExternalID      string       `yaml:"user_external_id"`
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
-}
-
-type SDKFixtureConfig struct {
-	FileID            string `yaml:"file_id"`
-	BatchID           string `yaml:"batch_id"`
-	AgentID           string `yaml:"agent_id"`
-	ReferenceAgentID  string `yaml:"reference_agent_id"`
-	EnvironmentID     string `yaml:"environment_id"`
-	WorkID            string `yaml:"work_id"`
-	SessionID         string `yaml:"session_id"`
-	SessionResourceID string `yaml:"session_resource_id"`
-	SessionThreadID   string `yaml:"session_thread_id"`
-	SessionEventID    string `yaml:"session_event_id"`
-	SkillID           string `yaml:"skill_id"`
-	SkillVersion      string `yaml:"skill_version"`
-	DeploymentID      string `yaml:"deployment_id"`
-	DeploymentRunID   string `yaml:"deployment_run_id"`
-	APIKey            string `yaml:"api_key"`
-	APIKeyExternalID  string `yaml:"api_key_external_id"`
 }
 
 type SeedAPIKey struct {

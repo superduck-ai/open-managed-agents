@@ -28,6 +28,7 @@ import {
   sessionThreadListSignature,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
+import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
 import {
@@ -117,6 +118,27 @@ function sessionPendingAction(
 ) {
   if (!toolCall) return undefined;
   return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
+}
+
+function SessionNotFound({
+  sessionId,
+  listHref,
+  loadError,
+}: {
+  sessionId: string;
+  listHref: string;
+  loadError: string | null;
+}) {
+  const { msg } = useI18n();
+  const copy = useResourceMissingCopy(loadError, 'session', sessionId);
+  return (
+    <ResourceNotFound
+      title={copy.title}
+      sentence={copy.sentence}
+      backHref={listHref}
+      backLabel={msg('managedAgents.sessions.detail.backToList', 'Back to sessions')}
+    />
+  );
 }
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
@@ -587,16 +609,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   if (!session || loadError || !summary) {
-    return (
-      <section className="@container min-h-[calc(100vh-48px)] text-foreground">
-        <div className={SESSION_CHROME_GUTTER_CLASS_NAME}>
-          <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
-          <ManagedErrorAlert className="mt-6 max-w-xl">
-            {loadError || msg('managedAgents.sessions.detail.notFound', 'Session not found')}
-          </ManagedErrorAlert>
-        </div>
-      </section>
-    );
+    return <SessionNotFound sessionId={sessionId} listHref={listHref} loadError={loadError} />;
   }
 
   const archived = Boolean(session.archived_at);

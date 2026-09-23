@@ -871,7 +871,12 @@ function GenericManagedEntityDialog({
 
             {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-            <DeploymentDialogActions editing={Boolean(entity)} submitting={submitting} canSubmit={canSubmit} />
+            <DeploymentDialogActions
+              editing={Boolean(entity)}
+              submitting={submitting}
+              canSubmit={canSubmit}
+              onCancel={onClose}
+            />
           </form>
         </DialogContent>
       </Dialog>
@@ -969,7 +974,7 @@ function GenericManagedEntityDialog({
               <p className="text-sm leading-5 text-muted-foreground">
                 {msg(
                   'managedAgents.credentialVaults.createHint',
-                  'Continue after creating the vault to add credentials for tools and MCP servers.',
+                  'After you create the vault, add credentials for tools and MCP servers.',
                 )}
               </p>
             ) : null}

@@ -484,6 +484,30 @@ describe('ConsoleShell', () => {
     expect(screen.getByText('Admin · foo')).toBeTruthy();
   });
 
+  test('shows the role for the active organization instead of the first membership', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/dashboard"
+        account={{
+          uuid: 'acct_test',
+          email_address: 'test@example.com',
+          display_name: 'test',
+          memberships: [
+            { role: 'user', organization: { uuid: 'org_other' } },
+            { role: 'developer', organization: { uuid: 'org_test' } },
+          ],
+        }}
+        onLogout={() => undefined}
+      >
+        <div>Dashboard content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.getByText('Developer · Default')).toBeTruthy();
+  });
+
   test('uses client navigation when selecting a workspace on managed routes', async () => {
     resetTestDom('https://oma.duck.ai/agents');
     const navigate = mock(async () => undefined);

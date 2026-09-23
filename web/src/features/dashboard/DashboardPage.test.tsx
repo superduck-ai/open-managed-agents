@@ -104,7 +104,7 @@ describe('Dashboard i18n', () => {
 
     expect(await screen.findByRole('heading', { name: '文件' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '文件列表' })).toBeTruthy();
-    expect(await screen.findByText('Default 工作区还没有上传文件。')).toBeTruthy();
+    expect(await screen.findByText('向默认工作区上传文件后，文件会显示在这里。')).toBeTruthy();
     expect(screen.getByRole('button', { name: '上一页' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '下一页' })).toBeTruthy();
 
@@ -125,7 +125,7 @@ describe('Dashboard i18n', () => {
     expect(await screen.findByRole('heading', { name: '技能' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '创建技能' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '技能列表' })).toBeTruthy();
-    expect(await screen.findByText('Default 工作区还没有创建技能。')).toBeTruthy();
+    expect(await screen.findByText('在默认工作区创建技能后，即可在多个智能体中复用。')).toBeTruthy();
 
     skills.unmount();
     resetTestDom('https://oma.duck.ai/workspaces/default/batches');
@@ -233,9 +233,10 @@ describe('Dashboard i18n', () => {
       }),
     );
 
-    expect(await screen.findByRole('heading', { name: 'Members 2' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Invite' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Invite' })).toBeNull();
+    expect(await screen.findByText('pending@example.com')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
     expect(screen.getByText('pending@example.com')).toBeTruthy();
     expect(screen.getByText('admin@example.local')).toBeTruthy();
@@ -254,8 +255,10 @@ describe('Dashboard i18n', () => {
     renderDashboardPage(<DashboardPage section="webhooks" />);
 
     expect(await screen.findByRole('heading', { name: 'Webhooks' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add webhook endpoint' })).toBeTruthy();
-    expect(await screen.findByText('No webhook endpoints have been created for Default.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create webhook endpoint' })).toBeTruthy();
+    expect(
+      await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.'),
+    ).toBeTruthy();
     expect(
       screen.queryByText('Create an endpoint to receive event notifications from Open Managed Agents.'),
     ).toBeNull();
@@ -464,7 +467,7 @@ describe('Files page', () => {
 
     renderFilesPage();
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
     const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
     fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
 
@@ -513,7 +516,7 @@ describe('Files page', () => {
 
     renderFilesPage();
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
     const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
     fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
 
@@ -798,7 +801,7 @@ describe('Files page', () => {
 
     renderFilesPage();
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
     expect(screen.queryByText('import anthropic')).toBeNull();
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement).disabled).toBe(true);
@@ -816,15 +819,15 @@ describe('Files page', () => {
     renderFilesPage();
 
     // `asdf` is not a known workspace, so the name falls back to the route id.
-    expect(await screen.findByText('No files have been uploaded to the asdf workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the asdf workspace to see them here.')).toBeTruthy();
 
     // Navigating to the default workspace must update the name even though the
     // active workspace context is unchanged — this is the regression for the
     // useLocation-driven scope.
     window.history.pushState(null, '', 'https://oma.duck.ai/workspaces/default/files');
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
-    expect(screen.queryByText('No files have been uploaded to the asdf workspace.')).toBeNull();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
+    expect(screen.queryByText('Upload files to the asdf workspace to see them here.')).toBeNull();
   });
 
   test('renders the standardized files error row and retries successfully', async () => {
@@ -1155,7 +1158,7 @@ describe('Skills page', () => {
 
     fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }));
 
     await waitFor(() =>
       expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(
@@ -1219,7 +1222,7 @@ describe('Skills page', () => {
     fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
     expect(screen.queryByText(/already exists/)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }));
 
     await waitFor(() =>
       expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(
@@ -1262,7 +1265,9 @@ describe('Skills page', () => {
     fireEvent.change(input, { target: { files: [file] } });
 
     expect(await screen.findByText('Skill package files cannot be empty.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(false);
   });
 
@@ -1309,7 +1314,7 @@ describe('Skills page', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
     fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Update' }));
 
     await waitFor(() =>
       expect(

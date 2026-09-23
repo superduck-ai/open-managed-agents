@@ -1078,9 +1078,12 @@ export function registerManagedAgentsResourceTests() {
     mockManagedResourceApi();
     renderManagedAgentsPage('sessions');
 
-    const missingAlert = await screen.findByRole('alert');
-    expect(missingAlert.dataset.slot).toBe('alert');
-    expect(missingAlert.textContent).toContain('not found');
+    expect(await screen.findByRole('heading', { name: 'Session not found' })).toBeTruthy();
+    expect(screen.getByText(/Session sesn_missing123456 was not found/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to sessions' }).getAttribute('href')).toBe(
+      '/workspaces/default/sessions',
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
@@ -3315,7 +3318,7 @@ export function registerManagedAgentsResourceTests() {
     const discardDialog = await screen.findByRole('alertdialog', { name: '放弃未保存的更改？' });
     fireEvent.click(within(discardDialog).getByRole('button', { name: '继续编辑' }));
 
-    const form = within(dialog).getByRole('button', { name: '创建' }).closest('form') as HTMLFormElement;
+    const form = within(dialog).getByRole('button', { name: '创建环境' }).closest('form') as HTMLFormElement;
     fireEvent.submit(form);
     fireEvent.submit(form);
     await waitFor(() =>

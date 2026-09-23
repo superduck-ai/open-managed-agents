@@ -1786,15 +1786,12 @@ export function registerManagedAgentsAgentsTests() {
     mockAgentsApi([]);
     render(<ManagedAgentsPage section="agents" />);
 
-    const missingAgentBreadcrumb = await screen.findByRole('navigation', { name: 'Breadcrumb' });
-    expect(missingAgentBreadcrumb.dataset.slot).toBe('breadcrumb');
-    expect(within(missingAgentBreadcrumb).getByRole('link', { name: 'Agents' }).getAttribute('href')).toBe(
+    expect(await screen.findByRole('heading', { name: 'Agent not found' })).toBeTruthy();
+    expect(screen.getByText(/Agent agent_missing123456 was not found/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to agents' }).getAttribute('href')).toBe(
       '/workspaces/default/agents',
     );
-    expect(missingAgentBreadcrumb.querySelector('[data-slot="breadcrumb-page"]')?.textContent).toBe('Error');
-    const missingAgentAlert = await screen.findByRole('alert');
-    expect(missingAgentAlert.dataset.slot).toBe('alert');
-    expect(missingAgentAlert.textContent).toContain('not found');
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_detail123456?version_id=99');
@@ -2525,7 +2522,7 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Get started with agents' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
     expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull();

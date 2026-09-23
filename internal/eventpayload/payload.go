@@ -92,7 +92,7 @@ func metadataString(raw json.RawMessage) *string {
 	return value
 }
 
-func (s *Store) prepare(ctx context.Context, organizationUUID, workspaceUUID string, payload []byte, summary Summary) ([]byte, *string, error) {
+func (s *Store) prepare(ctx context.Context, organizationUUID, workspaceUUID, identity string, payload []byte, summary Summary) ([]byte, *string, error) {
 	if !ExceedsThreshold(len(payload)) {
 		return payload, nil, nil
 	}
@@ -101,6 +101,13 @@ func (s *Store) prepare(ctx context.Context, organizationUUID, workspaceUUID str
 	}
 	if s.objects == nil {
 		return nil, nil, errStorageUnavailable
+	}
+	if preparation, ok := ctx.Value(preparationContextKey{}).(*transactionPreparation); ok {
+		key := preparedPayloadKey{workspaceUUID: workspaceUUID, identity: identity, eventType: summary.Type, digest: sha256.Sum256(payload)}
+		if prepared, found := preparation.payloads[key]; found {
+			return prepared.payload, prepared.blobUUID, nil
+		}
+		return nil, nil, &preparationRequired{store: s, organizationUUID: organizationUUID, workspaceUUID: workspaceUUID, identity: identity, payload: payload, summary: summary}
 	}
 	blobUUID := uuid.NewV4().String()
 	digest := sha256.Sum256(payload)
@@ -135,6 +142,23 @@ func (s *Store) restore(ctx context.Context, workspaceUUID string, payload []byt
 		return nil, errStorageUnavailable
 	}
 	blob, err := s.database.GetEventPayloadBlob(ctx, workspaceUUID, *blobUUID)
+	if err != nil {
+		return nil, err
+	}
+	if blob.Bucket != s.objects.Name() {
+		return nil, errStorageUnavailable
+	}
+	return readBlob(ctx, s.objects, blob)
+}
+
+func (s *Store) restoreTx(ctx context.Context, tx db.ManagedAgentEventTx, workspaceUUID string, payload []byte, blobUUID *string) ([]byte, error) {
+	if blobUUID == nil {
+		return payload, nil
+	}
+	if s.objects == nil {
+		return nil, errStorageUnavailable
+	}
+	blob, err := tx.GetEventPayloadBlob(ctx, workspaceUUID, *blobUUID)
 	if err != nil {
 		return nil, err
 	}

@@ -74,11 +74,11 @@ func TestInlineReferenceIsNotTrusted(t *testing.T) {
 	if err != nil || !bytes.Equal(got, payload) {
 		t.Fatalf("inline payload changed: %s %v", got, err)
 	}
-	_, _, err = store.prepare(context.Background(), "org", "workspace", bytes.Repeat([]byte("x"), Threshold+1), Summary{})
+	_, _, err = store.prepare(context.Background(), "org", "workspace", "event", bytes.Repeat([]byte("x"), Threshold+1), Summary{})
 	if !errors.Is(err, errStorageUnavailable) {
 		t.Fatalf("missing store: %v", err)
 	}
-	got, ref, err := store.prepare(context.Background(), "org", "workspace", bytes.Repeat([]byte("x"), Threshold), Summary{})
+	got, ref, err := store.prepare(context.Background(), "org", "workspace", "event", bytes.Repeat([]byte("x"), Threshold), Summary{})
 	if err != nil || ref != nil || len(got) != Threshold {
 		t.Fatalf("threshold must stay inline: %v", err)
 	}

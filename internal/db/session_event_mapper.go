@@ -25,6 +25,10 @@ type sessionEventRow struct {
 	DeletedAt         *time.Time `db:"deleted_at"`
 }
 
+type sessionEventRetryRow struct {
+	Matches bool `db:"matches"`
+}
+
 type sessionEventWriteParams struct {
 	UUID              string
 	ExternalID        string
@@ -47,6 +51,7 @@ type sessionEventPageMapperParams struct {
 	SessionExternalID string
 	ThreadExternalID  string
 	PrimaryOnly       bool
+	IncludeDeleted    bool
 	FetchLimit        int
 	Cursor            *SessionEventPageCursor
 	Descending        bool
@@ -59,8 +64,9 @@ type sessionEventPageMapperParams struct {
 
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
+	PayloadsMatch(ctx context.Context, stored, incoming []byte, ignoredFields []string) (bool, error)
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)
-	InsertIfAbsent(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, bool, error)
+	MatchRetry(ctx context.Context, params sessionEventWriteParams, ignoredPayloadFields []string) (sessionEventRetryRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)
 	ListPage(ctx context.Context, params sessionEventPageMapperParams) ([]sessionEventRow, error)
 	ChildSessionToolUseIDs(ctx context.Context, workspaceUUID, sessionExternalID string, eventTypes, toolUseIDs []string) ([]string, error)

@@ -134,6 +134,8 @@ type sessionPageMapperParams struct {
 
 // SessionMapper contains queries whose primary table is sessions.
 type SessionMapper interface {
+	EventWatermark(ctx context.Context, workspaceUUID, sessionExternalID string) (time.Time, error)
+	AdvanceEventClock(ctx context.Context, workspaceUUID, sessionExternalID string) (time.Time, error)
 	Insert(ctx context.Context, params sessionWriteParams) (sessionRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, bool, error)
 	FindByUUID(ctx context.Context, workspaceUUID, sessionUUID string) (sessionRow, bool, error)

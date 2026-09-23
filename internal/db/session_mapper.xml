@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <mapper namespace="SessionMapper">
+    <select id="EventWatermark" result="scalar">
+        SELECT last_event_at FROM sessions
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{sessionExternalID}
+    </select>
+
+    <select id="AdvanceEventClock" result="scalar">
+        WITH advanced AS (
+            UPDATE sessions
+            SET last_event_at = GREATEST(clock_timestamp(), last_event_at + INTERVAL '1 microsecond')
+            WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{sessionExternalID}
+            RETURNING last_event_at
+        ) SELECT last_event_at FROM advanced
+    </select>
     <sql id="columns">
         uuid,
         external_id,

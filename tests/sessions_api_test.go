@@ -484,6 +484,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionIngressEvents(t, app, codeSessionID, `{"events":[
+		{"type":"session.thread_status_running","uuid":"running-`+eventSuffix+`"},
 		{"type":"assistant","uuid":"assistant-`+eventSuffix+`","message":{"role":"assistant","content":"hello from worker"},"created_at":"2026-06-16T01:00:01Z"},
 		{"type":"result","uuid":"result-`+eventSuffix+`","stop_reason":{"type":"end_turn"},"created_at":"2026-06-16T01:00:02Z"}
 	]}`)
@@ -941,6 +942,18 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 	`, session.ID, child.ID); err != nil {
 		t.Fatalf("delete child session events before backfill: %v", err)
 	}
+	beforeRead := mustSessionRecord(t, app, session.ID)
+	watermark, err := app.db.SessionEventWatermark(t.Context(), beforeRead.WorkspaceUUID, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page := listThreadEvents(t, app, session.ID, child.ID, defaultTestKey); len(page.Data) != 0 {
+		t.Fatalf("history GET materialized missing child events: %+v", page.Data)
+	}
+	afterRead, err := app.db.SessionEventWatermark(t.Context(), beforeRead.WorkspaceUUID, session.ID)
+	if err != nil || !afterRead.Equal(watermark) {
+		t.Fatalf("history GET advanced processing clock: %v, %v", afterRead, err)
+	}
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 	sessionRecord := mustSessionRecord(t, app, session.ID)
 	storedChildEvents, _, err := app.db.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{
@@ -958,7 +971,6 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		`"type":"user.message"`,
 		"private child prompt only in child stream",
 		`"type":"agent.thinking"`,
-		"private child thinking only in child stream",
 		`"type":"agent.message"`,
 		"private child answer only in child stream",
 		`"session_thread_id":"` + child.ID + `"`,
@@ -967,7 +979,7 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 			t.Fatalf("child transcript missing %q: %+v", want, childEvents.Data)
 		}
 	}
-	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`} {
+	for _, leaked := range []string{`"agentId":"agent-a"`, `"_owner_session_thread_id"`, `"type":"session.thread_status_running"`, "private child thinking only in child stream"} {
 		if eventPageContains(childEvents, leaked) {
 			t.Fatalf("child transcript leaked internal field %q: %+v", leaked, childEvents.Data)
 		}
@@ -1099,7 +1111,9 @@ func TestSessionEventStreamForwardsWorkerStreamDeltasWithoutHistory(t *testing.T
 
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
-		{"payload":{"type":"event_delta","uuid":"stream-delta-sse-`+suffix+`","delta":{"text":"stream preview over sse"},"created_at":"2026-06-16T01:10:03Z"}}
+		{"payload":{"type":"event_delta","uuid":"stream-orphan-sse-`+suffix+`","delta":{"text":"unidentified orphan"}}},
+		{"payload":{"type":"event_start","uuid":"stream-start-sse-`+suffix+`","event":{"id":"preview-`+suffix+`","type":"agent.message"}}},
+		{"payload":{"type":"event_delta","uuid":"stream-delta-sse-`+suffix+`","event_id":"preview-`+suffix+`","delta":{"type":"content_delta","index":0,"content":{"type":"text","text":"stream preview over sse"}},"created_at":"2026-06-16T01:10:03Z"}}
 	]}`)
 
 	deadline := time.After(5 * time.Second)
@@ -1108,6 +1122,9 @@ func TestSessionEventStreamForwardsWorkerStreamDeltasWithoutHistory(t *testing.T
 		case line, ok := <-lineCh:
 			if !ok {
 				t.Fatal("event stream closed before stream delta arrived")
+			}
+			if strings.Contains(line, "unidentified orphan") {
+				t.Fatal("unidentified preview delta was forwarded")
 			}
 			if strings.HasPrefix(line, "data: ") && strings.Contains(line, "stream preview over sse") {
 				if !strings.Contains(line, `"type":"event_delta"`) {
@@ -1360,15 +1377,15 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("load code session for projection retry: %v", err)
 	}
 	sessionRecord := mustSessionRecord(t, app, session.ID)
-	if err := app.db.SetSessionThreadStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, threads.Data[0].ID, "idle"); err != nil {
-		t.Fatalf("make primary thread projection stale: %v", err)
-	}
-	if err := app.db.SetSessionStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, "idle"); err != nil {
-		t.Fatalf("make session projection stale: %v", err)
-	}
 	retryService := newCodeSessionService(app, nil, nil)
-	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, app.vaultSecrets, nil)
-	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
+	sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, app.vaultSecrets, nil)
+	// A worker retries its stored projection. History responses additionally
+	// supplement the route's thread field and are not the original worker payload.
+	storedRunning, err := app.db.GetSessionEvent(t.Context(), sessionRecord.WorkspaceUUID, session.ID, runningEvent["id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := retryService.CommitWorkerSessionEvents(t.Context(), codeSession.ExternalID, codeSession.CurrentWorkerEpoch, []json.RawMessage{storedRunning.Payload}, nil); err != nil {
 		t.Fatalf("retry existing running event projection: %v", err)
 	}
 	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
@@ -1479,8 +1496,8 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
 	}
 	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
-	if _, ok := idleEvent["stop_reason"]; ok {
-		t.Fatalf("worker session.status_idle unexpectedly contains stop_reason: %#v", idleEvent)
+	if reason, ok := idleEvent["stop_reason"].(map[string]any); !ok || reason["type"] != "end_turn" || len(reason) != 1 {
+		t.Fatalf("worker session.status_idle requires an end_turn stop_reason: %#v", idleEvent)
 	}
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 	duplicateIdleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
@@ -1631,8 +1648,11 @@ func TestCodeSessionWorkerInternalEventsPersistForResume(t *testing.T) {
 		{"payload":{"type":"assistant","uuid":"agent-a-after","message":{"role":"assistant","content":"after agent a"}},"agent_id":"agent-a"},
 		{"payload":{"type":"attachment","uuid":"agent-b-only","agentId":"agent-b","attachment":{"type":"skill_listing","content":"only agent b"}}}
 	]}`)
-	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
+	assertError(t, doCodeSessionWorkerRequest(t, app, codeSessionID, "internal-events", `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
 		{"payload":{"type":"assistant","uuid":"fg-after","message":{"role":"assistant","content":"duplicate retry"}}}
+	]}`), http.StatusConflict, "conflict_error")
+	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
+		{"payload":{"type":"assistant","uuid":"fg-after","message":{"role":"assistant","content":"after foreground"}},"event_metadata":{"source":"resume-log","batch":1}}
 	]}`)
 
 	afterPublicEvents := countSessionEvents(t, app, session.ID)
@@ -2109,7 +2129,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
 	defer app.close()
 
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent"}`)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]}]}`)
 	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"sessions-worker-ask-user-question-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)

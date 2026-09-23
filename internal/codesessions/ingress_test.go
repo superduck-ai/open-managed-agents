@@ -206,3 +206,24 @@ func TestDecodeWorkerPayloadHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerErrorDistinguishesArchivedSessionFromDatabaseInvariant(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"database invariant", db.ErrInvalidState, http.StatusInternalServerError},
+		{"archived session", errSessionRejectsWorkerEvents, http.StatusConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/", nil)
+			handler.writeWorkerEpochDBError(response, request, "cse_test", test.err, "Could not save worker events")
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d", response.Code, test.status)
+			}
+		})
+	}
+}

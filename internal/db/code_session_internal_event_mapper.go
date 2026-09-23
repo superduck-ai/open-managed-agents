@@ -65,6 +65,7 @@ type transcriptScopeRow struct {
 }
 
 type CodeSessionInternalEventMapper interface {
+	FindByIdempotencyKey(ctx context.Context, workspaceUUID, idempotencyKey string) (codeSessionInternalEventRow, bool, error)
 	RestoreArchived(ctx context.Context, event CodeSessionInternalEvent) (int64, error)
 	ListDeletionCandidates(ctx context.Context, afterUUID string, cutoff time.Time, limit int) ([]transcriptScopeRow, error)
 	HasUnprotectedDeleted(ctx context.Context, scope TranscriptScope, cutoff time.Time) (bool, error)
@@ -75,7 +76,9 @@ type CodeSessionInternalEventMapper interface {
 	HardDeleteArchived(ctx context.Context, batch TranscriptDeleteBatch) (int64, error)
 	ExistsByIdempotencyKey(ctx context.Context, workspaceUUID, idempotencyKey string) (bool, error)
 	Insert(ctx context.Context, params codeSessionInternalEventInsertParams) (codeSessionInternalEventRow, error)
+	MatchesRetry(ctx context.Context, params codeSessionInternalEventInsertParams) (bool, error)
 	ListPage(ctx context.Context, params listCodeSessionInternalEventsParams) ([]codeSessionInternalEventRow, error)
+	ListForPublicEvents(ctx context.Context, workspaceUUID, codeSessionExternalID string, afterSequence int64, limit int) ([]codeSessionInternalEventRow, error)
 }
 
 func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {

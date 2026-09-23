@@ -135,8 +135,13 @@ type workerControlRequestPayload struct {
 
 func decodeWorkerControlRequestPayload(raw json.RawMessage) (workerControlRequestPayload, error) {
 	var payload workerControlRequestPayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
 		return workerControlRequestPayload{}, err
+	}
+	if !json.Valid(raw) {
+		return workerControlRequestPayload{}, ErrProtocol
 	}
 	return payload, nil
 }
@@ -178,4 +183,11 @@ type workerPermissionUpdate struct {
 type workerPermissionRule struct {
 	ToolName    string `json:"toolName"`
 	RuleContent string `json:"ruleContent,omitempty"`
+}
+
+type workerThreadCreatedPayload struct {
+	SessionThreadID string `json:"session_thread_id"`
+	TaskID          string `json:"task_id"`
+	AgentID         string `json:"agent_id"`
+	LegacyAgentID   string `json:"agentId"`
 }

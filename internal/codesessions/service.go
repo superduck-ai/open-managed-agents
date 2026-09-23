@@ -203,56 +203,49 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 	})
 }
 
-func (s *Service) AppendWorkerEvent(ctx context.Context, route CodeSessionStreamRoute, raw json.RawMessage) error {
-	if s == nil {
-		return nil
+// AppendWorkerEvents is the legacy raw-payload entry point. Zero epoch retains
+// legacy authentication; persistent writes still fence the captured worker epoch.
+func (s *Service) AppendWorkerEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payloads []json.RawMessage) error {
+	events := make([]workerOutputEvent, len(payloads))
+	for i, payload := range payloads {
+		events[i] = workerOutputEvent{Payload: payload}
 	}
-	codeSessionID := route.CodeSessionID
-	prepared, err := prepareWorkerOutputEvent(codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if _, keepAlive := prepared.(preparedKeepAliveAction); keepAlive {
-		return s.db.TouchCodeSessionWorkerActivity(ctx, codeSessionID)
-	}
-	return s.applyWorkerOutputEvents(ctx, route, 0, []preparedWorkerOutputEvent{prepared})
-}
-
-func (s *Service) AppendWorkerEventForEpoch(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, raw json.RawMessage) error {
-	if s == nil {
-		return nil
-	}
-	codeSessionID := route.CodeSessionID
-	prepared, err := prepareWorkerOutputEvent(codeSessionID, workerOutputEvent{Payload: raw}, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, workerEpoch); err != nil {
-		return err
-	}
-	return s.applyWorkerOutputEvents(ctx, route, workerEpoch, []preparedWorkerOutputEvent{prepared})
+	return s.appendWorkerOutputEvents(ctx, route, workerEpoch, events)
 }
 
 func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, events []workerOutputEvent) error {
-	if s == nil || len(events) == 0 {
-		return nil
-	}
-	codeSessionID := route.CodeSessionID
-	if codeSessionID == "" {
-		return ErrProtocol
-	}
 	if workerEpoch <= 0 {
 		return db.ErrWorkerEpochMismatch
 	}
-	now := time.Now().UTC()
-	prepared, err := prepareWorkerOutputEvents(codeSessionID, events, now)
+	return s.appendWorkerOutputEvents(ctx, route, workerEpoch, events)
+}
+
+func (s *Service) appendWorkerOutputEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, events []workerOutputEvent) error {
+	if s == nil || len(events) == 0 {
+		return nil
+	}
+	if route.CodeSessionID == "" {
+		return ErrProtocol
+	}
+	prepared, err := prepareWorkerOutputEvents(route.CodeSessionID, events, time.Now().UTC())
 	if err != nil {
 		return err
 	}
-	// This conditional update is the batch linearization point. It serializes
-	// against worker registration and rejects a worker that has lost its epoch.
-	if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, codeSessionID, workerEpoch); err != nil {
-		return err
+	// Activity is transport telemetry, independent of the public batch. Reject
+	// stale epochs before previews; durable writes recheck under the worker lock.
+	if workerEpoch > 0 {
+		if err := s.db.TouchCodeSessionWorkerActivityForEpoch(ctx, route.CodeSessionID, workerEpoch); err != nil {
+			return err
+		}
+	} else {
+		for _, output := range prepared {
+			if _, keepAlive := output.(preparedKeepAliveAction); keepAlive {
+				if err := s.db.TouchCodeSessionWorkerActivity(ctx, route.CodeSessionID); err != nil {
+					return err
+				}
+				break
+			}
+		}
 	}
 	return s.applyWorkerOutputEvents(ctx, route, workerEpoch, prepared)
 }
@@ -357,34 +350,29 @@ func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (pr
 	}, nil
 }
 
-func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, workerOutputEvents []preparedWorkerOutputEvent) error {
-	for _, workerOutputEvent := range workerOutputEvents {
-		if stream, ok := workerOutputEvent.(preparedStreamAction); ok {
-			// Publish previews independently so an ingress batch cannot become one
-			// oversized broker message or cause unrelated previews to fail together.
-			s.publishWorkerStreamPayload(ctx, route, workerEpoch, stream.payload)
-			continue
+func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, outputs []preparedWorkerOutputEvent) error {
+	var durable []preparedWorkerOutputEvent
+	var previews []json.RawMessage
+	for _, output := range outputs {
+		switch prepared := output.(type) {
+		case preparedNoopAction, preparedKeepAliveAction:
+		case preparedStreamAction:
+			previews = append(previews, prepared.payload)
+		case preparedPublicAction, preparedControlAction:
+			durable = append(durable, output)
+		default:
+			return fmt.Errorf("unsupported worker output event %T", output)
 		}
-		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerEpoch, workerOutputEvent); err != nil {
+	}
+	if len(durable) > 0 {
+		if err := s.commitWorkerSessionEvents(ctx, route.CodeSessionID, workerEpoch, durable, nil); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerEpoch int64, workerOutputEvent preparedWorkerOutputEvent) error {
-	switch prepared := workerOutputEvent.(type) {
-	case preparedNoopAction:
-		return nil
-	case preparedKeepAliveAction:
-		return nil
-	case preparedControlAction:
-		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
-	case preparedPublicAction:
-		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
-	default:
-		return fmt.Errorf("unsupported non-stream worker output event %T", workerOutputEvent)
+	for _, preview := range previews {
+		s.publishWorkerStreamPayload(ctx, route, workerEpoch, preview)
 	}
+	return nil
 }
 
 func (s *Service) publishWorkerStreamPayload(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payload json.RawMessage) {
@@ -452,17 +440,15 @@ func (s *Service) publishPreparedInboundEvent(ctx context.Context, prepared prep
 	return nil
 }
 
-func (s *Service) publishWorkerPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
-	if err := s.publishPublicPayloads(ctx, codeSessionID, payloads); err != nil {
-		return err
-	}
-	s.reconcileSubagentEvents(ctx, codeSessionID)
-	return nil
+// CommitWorkerSessionEvents commits raw transcript and its public projection
+// together. Delayed thread mappings replay stored transcript in the same transaction.
+func (s *Service) CommitWorkerSessionEvents(ctx context.Context, codeSessionID string, workerEpoch int64, payloads []json.RawMessage, internalInputs []db.AppendCodeSessionInternalEventInput) error {
+	return s.commitWorkerSessionEvents(ctx, codeSessionID, workerEpoch, []preparedWorkerOutputEvent{preparedPublicAction{payloads: payloads}}, internalInputs)
 }
 
-func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
-	if len(payloads) == 0 {
-		return nil
+func (s *Service) commitWorkerSessionEvents(ctx context.Context, codeSessionID string, workerEpoch int64, outputs []preparedWorkerOutputEvent, internalInputs []db.AppendCodeSessionInternalEventInput) error {
+	if s.sink == nil {
+		return ErrPublicEventSinkUnavailable
 	}
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
@@ -471,101 +457,146 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	if !found {
 		return db.ErrNotFound
 	}
-	if s.sink == nil {
-		return nil
+	// Legacy server-side callers have no credential epoch. Modern worker
+	// requests retain their original epoch through the persistence boundary.
+	if workerEpoch == 0 {
+		workerEpoch = codeSession.CurrentWorkerEpoch
 	}
-	return s.sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
-}
-
-func (s *Service) reconcileSubagentEvents(ctx context.Context, codeSessionID string) {
-	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
-	if err == nil && found {
-		err = s.publishSubagentInternalEvents(ctx, codeSession)
-	}
-	if err != nil {
-		s.logger.ErrorContext(ctx, "publish subagent internal events", "code_session_id", codeSessionID, "error", err)
-	}
-}
-
-func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
-	threadByAgent, err := s.subagentThreadMappings(ctx, codeSession)
-	if err != nil || len(threadByAgent) == 0 {
-		return err
-	}
-	payloads := make([]json.RawMessage, 0, 32)
-	afterSequence := int64(0)
-	for {
-		events, hasMore, err := s.eventPayloads.ListCodeSessionInternalEventsPage(ctx, db.ListCodeSessionInternalEventsPageParams{
-			WorkspaceUUID:         codeSession.WorkspaceUUID,
-			CodeSessionExternalID: codeSession.ExternalID,
-			Subagents:             true,
-			AfterSequence:         afterSequence,
-			Limit:                 internalEventsPageSize,
-		})
+	var created []db.SessionEvent
+	var repliesToSend []toolPermissionReply
+	err = s.eventPayloads.WithEventTx(ctx, func(ctx context.Context, tx db.ManagedAgentEventTx) error {
+		created = nil
+		repliesToSend = nil
+		session, err := tx.LockSessionForEvents(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 		if err != nil {
 			return err
 		}
+		if session.ArchivedAt != nil {
+			return errSessionRejectsWorkerEvents
+		}
+		worker, err := tx.LockPublicEventWorker(ctx, session, db.SessionEventWorker{CodeSessionUUID: codeSession.UUID, Epoch: workerEpoch})
+		if err != nil {
+			return err
+		}
+		if _, err := s.eventPayloads.AppendInternalTx(ctx, tx, worker, internalInputs); err != nil {
+			return err
+		}
+		for _, output := range outputs {
+			var public []db.SessionEvent
+			var replies []toolPermissionReply
+			switch prepared := output.(type) {
+			case preparedPublicAction:
+				public, err = s.sink.AppendCodeSessionEvents(ctx, tx, session, codeSessionID, prepared.payloads)
+			case preparedControlAction:
+				public, replies, err = s.appendToolPermissionRequest(ctx, tx, session, worker, prepared)
+			default:
+				return fmt.Errorf("unsupported persistent worker output %T", output)
+			}
+			if err != nil {
+				return err
+			}
+			created = append(created, public...)
+			repliesToSend = append(repliesToSend, replies...)
+			// Materialize after each output, preserving the same order whether
+			// the worker sends one batch or several individual requests.
+			subagentPayloads, err := s.subagentPublicPayloads(ctx, tx, worker)
+			if err != nil {
+				return err
+			}
+			materialized, err := s.sink.AppendCodeSessionEvents(ctx, tx, session, codeSessionID, subagentPayloads)
+			if err != nil {
+				return err
+			}
+			created = append(created, materialized...)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.sink.NotifyCodeSessionEvents(ctx, created)
+	for _, reply := range repliesToSend {
+		if err := s.respondToToolPermissionRequest(ctx, codeSessionID, reply.request, reply.permission, reply.source, "", ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (s *Service) subagentPublicPayloads(ctx context.Context, tx db.ManagedAgentEventTx, codeSession db.CodeSession) ([]json.RawMessage, error) {
+	threadByAgent, err := s.subagentThreadMappings(ctx, tx, codeSession)
+	if err != nil || len(threadByAgent) == 0 {
+		return nil, err
+	}
+	payloads := make([]json.RawMessage, 0, 32)
+	afterSequence := int64(0)
+	// ponytail: replay the existing transcript under the Session lock; add a
+	// durable materialization cursor only if large histories make this costly.
+	for {
+		events, err := tx.ListCodeSessionInternalEventsForPublic(ctx, codeSession, afterSequence, internalEventsPageSize)
+		if err != nil {
+			return nil, err
+		}
 		for _, event := range events {
+			event, err = s.eventPayloads.RestoreInternalTx(ctx, tx, event)
+			if err != nil {
+				return nil, err
+			}
 			if event.AgentID == nil {
 				continue
 			}
-			threadID := threadByAgent[strings.TrimSpace(*event.AgentID)]
+			threadID := threadByAgent[*event.AgentID]
 			if threadID == "" {
 				continue
 			}
 			eventPayloads, err := publicPayloadsFromInternalSubagentEvent(codeSession.ExternalID, event, threadID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			payloads = append(payloads, eventPayloads...)
 		}
-		if len(events) > 0 {
-			afterSequence = events[len(events)-1].SequenceNum
+		if len(events) < internalEventsPageSize {
+			return payloads, nil
 		}
-		if !hasMore {
-			break
-		}
+		afterSequence = events[len(events)-1].SequenceNum
 	}
-	if len(payloads) == 0 {
-		return nil
-	}
-	return s.publishPublicPayloads(ctx, codeSession.ExternalID, payloads)
 }
 
-func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
-	if s == nil {
-		return nil
-	}
-	return s.publishSubagentInternalEvents(ctx, codeSession)
-}
-
-func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
-	events, _, err := s.eventPayloads.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceUUID:     codeSession.WorkspaceUUID,
-		SessionExternalID: codeSession.SessionExternalID,
-		PrimaryOnly:       true,
-		Limit:             500,
-		Order:             "asc",
-		Types:             []string{"session.thread_created"},
-	})
-	if err != nil {
-		return nil, err
+func (s *Service) subagentThreadMappings(ctx context.Context, tx db.ManagedAgentEventTx, codeSession db.CodeSession) (map[string]string, error) {
+	query := db.ListSessionEventsPageParams{
+		WorkspaceUUID: codeSession.WorkspaceUUID, SessionExternalID: codeSession.SessionExternalID,
+		PrimaryOnly: true, Limit: internalEventsPageSize, Order: "asc", Types: []string{"session.thread_created"},
 	}
 	threadByAgent := make(map[string]string)
-	for _, event := range events {
-		object := rawObject(event.Payload)
-		threadID := strings.TrimSpace(stringField(object, "session_thread_id"))
-		if threadID == "" {
-			continue
+	for {
+		events, more, err := tx.ListSessionEventsPage(ctx, query)
+		if err != nil {
+			return nil, err
 		}
-		for _, key := range []string{"task_id", "agent_id", "agentId"} {
-			agentID := strings.TrimSpace(stringField(object, key))
-			if agentID != "" {
-				threadByAgent[agentID] = threadID
+		for _, event := range events {
+			event, err = s.eventPayloads.RestorePublicTx(ctx, tx, event)
+			if err != nil {
+				return nil, err
+			}
+			var object workerThreadCreatedPayload
+			if err := json.Unmarshal(event.Payload, &object); err != nil {
+				return nil, fmt.Errorf("decode stored thread mapping: %w", err)
+			}
+			if object.SessionThreadID == "" {
+				continue
+			}
+			for _, agentID := range []string{object.TaskID, object.AgentID, object.LegacyAgentID} {
+				if agentID != "" {
+					threadByAgent[agentID] = object.SessionThreadID
+				}
 			}
 		}
+		if !more {
+			return threadByAgent, nil
+		}
+		last := events[len(events)-1]
+		query.Cursor = &db.SessionEventPageCursor{ProcessedAt: last.ProcessedAt, ExternalID: last.ExternalID}
 	}
-	return threadByAgent, nil
 }
 
 func isPublicWorkerOutputEvent(eventType string) bool {

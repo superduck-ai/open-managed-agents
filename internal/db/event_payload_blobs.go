@@ -27,6 +27,12 @@ func (d *DB) GetEventPayloadBlob(ctx context.Context, workspaceUUID, blobUUID st
 	return EventPayloadBlob(row), mapNoRows(err)
 }
 
+// GetEventPayloadBlob observes attachments made by the current event transaction.
+func (tx ManagedAgentEventTx) GetEventPayloadBlob(ctx context.Context, workspaceUUID, blobUUID string) (EventPayloadBlob, error) {
+	row, err := NewEventPayloadBlobMapper(tx.executor).Find(ctx, workspaceUUID, blobUUID)
+	return EventPayloadBlob(row), mapNoRows(err)
+}
+
 func attachEventPayloadBlob(ctx context.Context, executor yourbatis.Executor, workspaceUUID string, blobUUID *string) error {
 	if blobUUID == nil {
 		return nil

@@ -35,7 +35,7 @@ func (s *Service) ActivateManagedAgentCodeSession(ctx context.Context, codeSessi
 	}
 }
 
-func loadActivationSnapshot(ctx context.Context, tx db.ManagedAgentActivationTx, codeSession db.CodeSession) (activationSnapshot, error) {
+func loadActivationSnapshot(ctx context.Context, tx db.ManagedAgentEventTx, codeSession db.CodeSession) (activationSnapshot, error) {
 	session, err := tx.LockSessionForEvents(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {
 		return activationSnapshot{}, err
@@ -50,7 +50,7 @@ func loadActivationSnapshot(ctx context.Context, tx db.ManagedAgentActivationTx,
 
 func (s *Service) activateSnapshot(ctx context.Context, codeSession db.CodeSession) error {
 	var snapshot activationSnapshot
-	err := s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
+	err := s.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
 		var err error
 		snapshot, err = loadActivationSnapshot(ctx, tx, codeSession)
 		return err
@@ -63,7 +63,7 @@ func (s *Service) activateSnapshot(ctx context.Context, codeSession db.CodeSessi
 	if err := s.prepareActivation(ctx, snapshot, batch); err != nil {
 		return err
 	}
-	return s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
+	return s.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
 		current, err := loadActivationSnapshot(ctx, tx, codeSession)
 		if err != nil {
 			return err

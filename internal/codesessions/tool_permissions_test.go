@@ -3,6 +3,7 @@ package codesessions
 import (
 	"encoding/json"
 	"testing"
+	"time"
 	"uuid"
 )
 
@@ -305,6 +306,7 @@ func TestToolPermissionPublicPayloadsUseCanonicalPublicID(t *testing.T) {
 		EventMetadata{RequestID: &requestID},
 		parseClaudeToolIdentity(payload.Request.ToolName),
 		resolvedToolPermissionAsk,
+		time.Now().UTC(),
 	)
 	if err != nil {
 		t.Fatalf("build public payloads: %v", err)

@@ -11,6 +11,6 @@ func (s *Store) PrepareInternalRestore(ctx context.Context, event db.CodeSession
 	if err != nil {
 		return db.CodeSessionInternalEvent{}, err
 	}
-	event.Payload, event.PayloadBlobUUID, err = s.prepare(ctx, event.OrganizationUUID, event.WorkspaceUUID, event.Payload, summary)
+	event.Payload, event.PayloadBlobUUID, err = s.prepare(ctx, event.OrganizationUUID, event.WorkspaceUUID, "internal/"+event.IdempotencyKey, event.Payload, summary)
 	return event, err
 }

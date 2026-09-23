@@ -11,6 +11,7 @@ import (
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
 var (
+	errSessionRejectsWorkerEvents     = errors.New("session no longer accepts worker events")
 	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
 	ErrMCPGatewayMissing              = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
 	ErrMCPRuntimeIdentityMissing      = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")
@@ -88,3 +89,21 @@ type workerPayloadError struct {
 func (e *workerPayloadError) Error() string { return e.message }
 
 func (e *workerPayloadError) Unwrap() error { return e.cause }
+
+func sessionEventConflict(cause error) error {
+	return apperr.New(apperr.Conflict, "Session event ID conflicts with previously accepted content", cause)
+}
+
+func internalEventConflict(cause error) error {
+	return apperr.New(apperr.Conflict, "Internal event identity conflicts with previously accepted content", cause)
+}
+
+func workerEventProtocolError(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "Invalid worker event payload", cause)
+}
+
+func publicSessionRejectsWorkerEvents(cause error) error {
+	return apperr.New(apperr.Conflict, "Session no longer accepts worker events", cause)
+}
+
+var ErrPublicEventSinkUnavailable = errors.New("public session event sink is unavailable")

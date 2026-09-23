@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -110,7 +111,7 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 		t.Fatalf("pagination: %d %t %v", len(pageEvents), more, err)
 	}
 	last := pageEvents[len(pageEvents)-1]
-	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}, Cursor: &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}})
+	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}, Cursor: &db.SessionEventPageCursor{ProcessedAt: last.ProcessedAt, ExternalID: last.ExternalID}})
 	if err != nil || len(next) != 3 || more {
 		t.Fatalf("next page: %d %t %v", len(next), more, err)
 	}
@@ -129,11 +130,11 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 		}
 		assertRawJSONEqual(t, event.Payload, sizedPublicPayload(size))
 	}
-	// A retry with the same public ID must neither replace history nor upload its new body.
+	// Conflicting content must not replace history or upload a new body.
 	originalID := "ev_ascii-32769"
 	before := len(objects.objects)
 	retried, err := store.AppendSessionEventsIfAbsent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, []db.SessionEvent{publicPayloadEvent(originalID, sizedPublicPayload(40000))})
-	if err != nil || len(retried) != 0 || len(objects.objects) != before {
+	if !errors.Is(err, db.ErrSessionEventConflict) || len(retried) != 0 || len(objects.objects) != before {
 		t.Fatalf("public replay: %d %v", len(retried), err)
 	}
 	persisted, err := store.GetSessionEvent(context.Background(), session.WorkspaceUUID, session.SessionExternalID, originalID)

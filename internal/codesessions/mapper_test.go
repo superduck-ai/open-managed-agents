@@ -394,7 +394,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *tes
 		t.Fatal("result mapping ok = false, want true")
 	}
 	objects := decodePublicPayloads(t, payloads)
-	wantTypes := []string{"span.model_request_start", "span.model_request_end", "session.status_idle"}
+	wantTypes := []string{"span.model_request_start", "span.model_request_end", "session.thread_status_idle"}
 	if len(objects) != len(wantTypes) {
 		t.Fatalf("result payload count = %d, want %d: %#v", len(objects), len(wantTypes), objects)
 	}

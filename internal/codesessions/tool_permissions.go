@@ -1,16 +1,19 @@
 package codesessions
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 )
 
 type resolvedToolPermission string
@@ -37,42 +40,44 @@ type toolPermissionRequest struct {
 	Input           map[string]any `json:"input"`
 }
 
-func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID string, workerEpoch int64, payload *workerControlRequestPayload, meta EventMetadata) error {
-	if s == nil {
-		return nil
+type toolPermissionReply struct {
+	request    toolPermissionRequest
+	permission resolvedToolPermission
+	source     string
+}
+
+func (s *Service) appendToolPermissionRequest(ctx context.Context, tx db.ManagedAgentEventTx, session db.Session, worker db.CodeSession, prepared preparedControlAction) ([]db.SessionEvent, []toolPermissionReply, error) {
+	toolName := firstNonEmpty(prepared.request.Request.ToolName, prepared.request.ToolName)
+	permission, identity := resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, toolName)
+	request, payloads, err := toolPermissionPublicPayloads(worker.ExternalID, &prepared.request, prepared.metadata, identity, permission, eventpayload.EventTime(ctx))
+	if err != nil || len(payloads) == 0 {
+		return nil, nil, err
 	}
-	toolName := firstNonEmpty(payload.Request.ToolName, payload.ToolName)
-	permission, identity, err := s.resolveToolPermission(ctx, codeSessionID, toolName)
+	created, err := s.sink.AppendCodeSessionEvents(ctx, tx, session, worker.ExternalID, payloads)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "resolve tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "error", err)
-		return nil
-	}
-	s.logger.InfoContext(ctx, "resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
-	request, payloads, err := toolPermissionPublicPayloads(codeSessionID, payload, meta, identity, permission)
-	if err != nil {
-		return err
-	}
-	if len(payloads) == 0 {
-		return nil
+		return nil, nil, err
 	}
 	if permission == resolvedToolPermissionAsk {
-		if err := s.persistToolPermissionRequest(ctx, codeSessionID, workerEpoch, request); err != nil {
-			return err
+		newRequest := slices.ContainsFunc(created, func(event db.SessionEvent) bool { return event.ExternalID == request.PublicEventID })
+		if !newRequest {
+			// A confirmed request has already had its metadata removed. Replaying
+			// its public events must not resurrect it or move the Session to idle.
+			if len(created) > 0 {
+				return nil, nil, db.ErrSessionEventConflict
+			}
+			return nil, nil, nil
 		}
+		metadata, err := marshalRaw(map[string]toolPermissionRequest{toolPermissionRequestMetadataKey(request.PublicEventID): request})
+		if err != nil {
+			return nil, nil, err
+		}
+		return created, nil, tx.MergeWorkerMetadata(ctx, worker, metadata)
 	}
-	if err := s.publishWorkerPublicPayloads(ctx, codeSessionID, payloads); err != nil {
-		return err
+	source := "auto-approve"
+	if permission == resolvedToolPermissionDeny {
+		source = "auto-deny"
 	}
-	switch permission {
-	case resolvedToolPermissionAllow:
-		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-approve", "", "")
-	case resolvedToolPermissionDeny:
-		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-deny", "", "")
-	case resolvedToolPermissionAsk:
-		return nil
-	default:
-		return nil
-	}
+	return created, []toolPermissionReply{{request: request, permission: permission, source: source}}, nil
 }
 
 func toolPermissionRequestFromWorkerEvent(payload *workerControlRequestPayload, meta EventMetadata) toolPermissionRequest {
@@ -83,25 +88,6 @@ func toolPermissionRequestFromWorkerEvent(payload *workerControlRequestPayload, 
 		SessionThreadID: workerOutputSessionThreadID(payload),
 		Input:           payload.Request.Input,
 	}
-}
-
-func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID string, claudeToolName string) (resolvedToolPermission, toolIdentity, error) {
-	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
-	if err != nil {
-		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
-	}
-	if !found {
-		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
-	}
-	session, found, err := s.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
-	if err != nil {
-		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
-	}
-	if !found {
-		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), db.ErrNotFound
-	}
-	permission, identity := resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, claudeToolName)
-	return permission, identity, nil
 }
 
 type toolPermissionToolset struct {
@@ -377,27 +363,33 @@ func toolPermissionRequestMetadataKey(publicEventID string) string {
 	return legacyToolPermissionRequestMetadataKey + ":" + publicEventID
 }
 
-func (s *Service) persistToolPermissionRequest(ctx context.Context, codeSessionID string, workerEpoch int64, request toolPermissionRequest) error {
-	if workerEpoch <= 0 {
-		codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return db.ErrNotFound
-		}
-		workerEpoch = codeSession.CurrentWorkerEpoch
+// PendingToolActionEventIDs reads the same pending requests that confirmations
+// consume. Unrelated worker metadata is not part of the public waiting state.
+func PendingToolActionEventIDs(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
-	metadata, err := marshalRaw(map[string]any{toolPermissionRequestMetadataKey(request.PublicEventID): request})
-	if err != nil {
-		return err
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil, err
 	}
-	_, err = s.db.UpdateCodeSessionWorkerState(ctx, codeSessionID, db.UpdateCodeSessionWorkerStateInput{
-		WorkerEpoch:         workerEpoch,
-		ExternalMetadataSet: true,
-		ExternalMetadata:    metadata,
-	})
-	return err
+	var ids []string
+	for key, value := range metadata {
+		if key != legacyToolPermissionRequestMetadataKey && !strings.HasPrefix(key, legacyToolPermissionRequestMetadataKey+":") {
+			continue
+		}
+		var request toolPermissionRequest
+		decoder := json.NewDecoder(bytes.NewReader(value))
+		decoder.UseNumber()
+		if err := decoder.Decode(&request); err != nil {
+			return nil, err
+		}
+		if request.PublicEventID != "" && request.RequestID != "" && request.ToolUseID != "" {
+			ids = append(ids, request.PublicEventID)
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids), nil
 }
 
 func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string) (toolPermissionRequest, error) {
@@ -416,7 +408,9 @@ func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string
 	if len(requestRaw) == 0 {
 		return toolPermissionRequest{}, db.ErrNotFound
 	}
-	if err := json.Unmarshal(requestRaw, &request); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(requestRaw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&request); err != nil {
 		return toolPermissionRequest{}, err
 	}
 	if request.PublicEventID != publicEventID || request.RequestID == "" || request.ToolUseID == "" {
@@ -425,17 +419,41 @@ func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string
 	return request, nil
 }
 
+type legacyToolPermissionMetadata struct {
+	Request struct {
+		PublicEventID string `json:"public_event_id"`
+	} `json:"managed_agent_tool_permission_request"`
+}
+
 func (s *Service) clearToolPermissionRequest(ctx context.Context, codeSessionID string, workerEpoch int64, publicEventID string) error {
-	metadata, err := marshalRaw(map[string]any{toolPermissionRequestMetadataKey(publicEventID): nil})
+	worker, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.UpdateCodeSessionWorkerState(ctx, codeSessionID, db.UpdateCodeSessionWorkerStateInput{
-		WorkerEpoch:         workerEpoch,
-		ExternalMetadataSet: true,
-		ExternalMetadata:    metadata,
+	if !found {
+		return db.ErrNotFound
+	}
+	return s.db.WithManagedAgentEventTx(ctx, func(tx db.ManagedAgentEventTx) error {
+		session, err := tx.LockSessionForEvents(ctx, worker.WorkspaceUUID, worker.SessionExternalID)
+		if err != nil {
+			return err
+		}
+		locked, err := tx.LockPublicEventWorker(ctx, session, db.SessionEventWorker{CodeSessionUUID: worker.UUID, Epoch: workerEpoch})
+		if err != nil {
+			return err
+		}
+		var metadata legacyToolPermissionMetadata
+		if len(locked.WorkerExternalMetadata) > 0 {
+			if err := json.Unmarshal(locked.WorkerExternalMetadata, &metadata); err != nil {
+				return err
+			}
+		}
+		keys := []string{toolPermissionRequestMetadataKey(publicEventID)}
+		if metadata.Request.PublicEventID == publicEventID {
+			keys = append(keys, legacyToolPermissionRequestMetadataKey)
+		}
+		return tx.ClearWorkerMetadata(ctx, locked, keys)
 	})
-	return err
 }
 
 type userCustomToolResultPayload struct {
@@ -492,7 +510,9 @@ func customToolResultAnswers(payload userCustomToolResultPayload) (map[string]an
 		return map[string]any{}, nil
 	}
 	var answers map[string]any
-	if err := json.Unmarshal([]byte(text), &answers); err != nil || answers == nil {
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
+	if err := decoder.Decode(&answers); err != nil || answers == nil || !json.Valid([]byte(text)) {
 		return nil, ErrProtocol
 	}
 	return answers, nil
@@ -588,7 +608,7 @@ func toolUsePublicEventID(codeSessionID string, toolUseID string) string {
 	return stablePublicEventID(codeSessionID, "tool_use\x00"+toolUseID)
 }
 
-func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRequestPayload, meta EventMetadata, identity toolIdentity, permission resolvedToolPermission) (toolPermissionRequest, []json.RawMessage, error) {
+func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRequestPayload, meta EventMetadata, identity toolIdentity, permission resolvedToolPermission, now time.Time) (toolPermissionRequest, []json.RawMessage, error) {
 	request := toolPermissionRequestFromWorkerEvent(payload, meta)
 	if request.ToolName == "" || request.ToolUseID == "" || request.RequestID == "" {
 		return request, nil, nil
@@ -600,7 +620,6 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 	if request.SessionThreadID != "" {
 		request.PublicEventID = derivedPrimarySessionEventID(codeSessionID, toolEventID, eventType)
 	}
-	now := time.Now().UTC()
 	toolPayload := map[string]any{
 		"id":           toolEventID,
 		"type":         eventType,
@@ -627,8 +646,9 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 	}
 	statusTime := now.Add(time.Millisecond)
 	statusRaw, err := marshalRaw(map[string]any{
-		"id":   stablePublicEventID(codeSessionID, request.RequestID+"\x00tool_permission_requires_action"),
-		"type": "session.status_idle",
+		"id":                stablePublicEventID(codeSessionID, request.RequestID+"\x00tool_permission_thread_requires_action"),
+		"type":              "session.thread_status_idle",
+		"session_thread_id": request.SessionThreadID,
 		"stop_reason": map[string]any{
 			"event_ids": []string{request.PublicEventID},
 			"type":      "requires_action",

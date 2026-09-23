@@ -43,12 +43,6 @@ import {
 import { OrganizationMembersPage } from './OrganizationMembersPage';
 import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
 
-const countryOptions = [
-  { value: 'US', label: 'United States' },
-  { value: 'CA', label: 'Canada' },
-  { value: 'GB', label: 'United Kingdom' },
-];
-
 type FormState = {
   name: string;
   line1: string;
@@ -268,7 +262,9 @@ export function OrganizationSettingsContent() {
     return (
       <section>
         <ResourcePageHeader contentGap="content" title={organizationTitle} />
-        <p className="text-[15px] leading-5 text-muted-foreground">No organization is available for this session.</p>
+        <p className="text-[15px] leading-5 text-muted-foreground">
+          {msg('settings.organization.unavailable', 'No organization is available for this session.')}
+        </p>
       </section>
     );
   }
@@ -283,7 +279,10 @@ export function OrganizationSettingsContent() {
         <Card>
           <CardContent className="space-y-7">
             {isInitialLoading ? (
-              <div className="space-y-4" aria-label="Loading organization settings">
+              <div
+                className="space-y-4"
+                aria-label={msg('settings.organization.loading', 'Loading organization settings')}
+              >
                 <Skeleton className="h-10 w-[428px] max-w-full" />
                 <Skeleton className="h-10 w-[428px] max-w-full" />
                 <Skeleton className="h-10 w-[720px] max-w-full" />
@@ -291,7 +290,9 @@ export function OrganizationSettingsContent() {
             ) : (
               <>
                 <Field className="max-w-[428px] gap-2">
-                  <FieldLabel htmlFor="organization-name">Organization name</FieldLabel>
+                  <FieldLabel htmlFor="organization-name">
+                    {msg('settings.organization.name', 'Organization name')}
+                  </FieldLabel>
                   <TextInput
                     id="organization-name"
                     value={form.name}
@@ -300,17 +301,19 @@ export function OrganizationSettingsContent() {
                 </Field>
 
                 <div className="space-y-6">
-                  <div className="text-sm font-medium text-foreground">Primary business address</div>
+                  <div className="text-sm font-medium text-foreground">
+                    {msg('settings.organization.addressTitle', 'Primary business address')}
+                  </div>
                   <div className="grid gap-3 lg:grid-cols-[208px_208px]">
                     <TextInput
-                      aria-label="Primary business address line 1"
-                      placeholder="Line 1"
+                      aria-label={msg('settings.organization.line1', 'Primary business address line 1')}
+                      placeholder={msg('settings.organization.line1Placeholder', 'Line 1')}
                       value={form.line1}
                       onChange={(line1) => setForm((current) => ({ ...current, line1 }))}
                     />
                     <TextInput
-                      aria-label="Primary business address line 2"
-                      placeholder="Line 2"
+                      aria-label={msg('settings.organization.line2', 'Primary business address line 2')}
+                      placeholder={msg('settings.organization.line2Placeholder', 'Line 2')}
                       value={form.line2}
                       onChange={(line2) => setForm((current) => ({ ...current, line2 }))}
                     />
@@ -319,7 +322,7 @@ export function OrganizationSettingsContent() {
                   <div className="grid gap-3 lg:grid-cols-[208px_208px_minmax(180px,1fr)_96px]">
                     <div>
                       <Label id="country-label" className="mb-2">
-                        Country
+                        {msg('settings.organization.country', 'Country')}
                       </Label>
                       <CountryCombobox
                         value={form.country}
@@ -328,19 +331,19 @@ export function OrganizationSettingsContent() {
                     </div>
                     <TextField
                       id="state"
-                      label="State or province"
+                      label={msg('settings.organization.state', 'State or province')}
                       value={form.state}
                       onChange={(state) => setForm((current) => ({ ...current, state }))}
                     />
                     <TextField
                       id="city"
-                      label="City"
+                      label={msg('settings.organization.city', 'City')}
                       value={form.city}
                       onChange={(city) => setForm((current) => ({ ...current, city }))}
                     />
                     <TextField
                       id="postal-code"
-                      label="Postal code"
+                      label={msg('settings.organization.postalCode', 'Postal code')}
                       value={form.postalCode}
                       onChange={(postalCode) => setForm((current) => ({ ...current, postalCode }))}
                     />
@@ -349,25 +352,28 @@ export function OrganizationSettingsContent() {
                   {!addressValid ? (
                     <Alert variant="destructive">
                       <AlertDescription>
-                        Enter line 1, country, state, city, and postal code, or leave the address blank.
+                        {msg(
+                          'settings.organization.addressInvalid',
+                          'Enter line 1, country, state, city, and postal code, or leave the address blank.',
+                        )}
                       </AlertDescription>
                     </Alert>
                   ) : null}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span>Organization ID: {organizationId}</span>
+                  <span>{msg('settings.organization.id', 'Organization ID: {id}', { id: organizationId })}</span>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-xs"
                     className="text-muted-foreground hover:text-foreground"
-                    aria-label="Copy Organization ID"
+                    aria-label={msg('settings.organization.copyId', 'Copy Organization ID')}
                     onClick={copyOrganizationId}
                   >
                     <Copy className="size-3.5" aria-hidden />
                   </Button>
-                  {copied ? <span className="text-primary">Copied</span> : null}
+                  {copied ? <span className="text-primary">{msg('common.copied', 'Copied')}</span> : null}
                 </div>
 
                 {isDirty ? (
@@ -375,11 +381,13 @@ export function OrganizationSettingsContent() {
                     <div className="flex flex-wrap items-center gap-3">
                       <Button type="button" size="lg" disabled={!canSave} onClick={handleSave}>
                         <Save className="size-4" aria-hidden />
-                        {isSaving ? 'Saving' : 'Save changes'}
+                        {isSaving
+                          ? msg('settings.organization.saving', 'Saving')
+                          : msg('common.saveChanges', 'Save changes')}
                       </Button>
                       <Button type="button" variant="outline" size="lg" onClick={handleCancel}>
                         <X className="size-4" aria-hidden />
-                        Cancel
+                        {msg('common.cancel', 'Cancel')}
                       </Button>
                     </div>
                     {formError ? (
@@ -402,11 +410,13 @@ export function OrganizationSettingsContent() {
           <CardContent className="flex items-start justify-between gap-8">
             <div className="max-w-[760px]">
               <h2 className="text-xl font-semibold tracking-normal text-foreground">
-                Allow creating new API keys in default workspace
+                {msg('settings.organization.allowApiKeys', 'Allow creating new API keys in default workspace')}
               </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Allow users to create new API keys in the default workspace. Disabling this setting does not affect
-                existing API keys or disable Workbench usage.
+                {msg(
+                  'settings.organization.allowApiKeysDescription',
+                  'Allow users to create new API keys in the default workspace. Disabling this setting does not affect existing API keys or disable Workbench usage.',
+                )}
               </p>
               {switchError ? (
                 <Alert variant="destructive" className="mt-3">
@@ -416,7 +426,7 @@ export function OrganizationSettingsContent() {
             </div>
             <Switch
               checked={allowApiKeys}
-              aria-label="Allow creating new API keys in default workspace"
+              aria-label={msg('settings.organization.allowApiKeys', 'Allow creating new API keys in default workspace')}
               className="mt-1"
               disabled={updateOrganizationMutation.isPending}
               onCheckedChange={() => void handleApiKeysToggle()}
@@ -459,6 +469,12 @@ function TextInput({
 }
 
 function CountryCombobox({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { msg } = useI18n();
+  const countryOptions = [
+    { value: 'US', label: msg('settings.organization.country.us', 'United States') },
+    { value: 'CA', label: msg('settings.organization.country.ca', 'Canada') },
+    { value: 'GB', label: msg('settings.organization.country.gb', 'United Kingdom') },
+  ];
   return (
     <Select<string>
       value={value || null}
@@ -469,8 +485,8 @@ function CountryCombobox({ value, onChange }: { value: string; onChange: (value:
         }
       }}
     >
-      <SelectTrigger aria-label="Country" className="h-10 w-full px-4">
-        <SelectValue placeholder="Select" />
+      <SelectTrigger aria-label={msg('settings.organization.country', 'Country')} className="h-10 w-full px-4">
+        <SelectValue placeholder={msg('settings.organization.select', 'Select')} />
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} className="min-w-[208px]">
         {countryOptions.map((option) => (

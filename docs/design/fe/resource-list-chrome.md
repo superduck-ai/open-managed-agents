@@ -18,3 +18,4 @@ Environments、Vaults、Memory、Deployments、Sessions、Agents、Skills、File
 
 - Agent 和 Session 不存在时使用同一块：标题、一句包含资源 ID 的说明、返回列表的链接。文案跟随当前语言。版本不存在和操作失败仍使用 alert。
 - 这些页面上的工作区显示名如果正好是 `Default`，中文界面显示“默认”。批处理空态不在本次范围内。
+- 成员说明、表头、角色，组织设置字段和 API 密钥开关，侧边栏工作区显示名与账号角色，以及 Skills、Webhooks 里走文案表的句子，都跟随当前语言。组织 ID 和工作区 ID 保持原值。中文描述里不保留英文词 Default。

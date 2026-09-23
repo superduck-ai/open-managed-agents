@@ -82,6 +82,8 @@ import {
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
 import { useI18n, useLocale } from '../../shared/i18n';
+import { accountRoleLabel } from '../../shared/permissions/roles';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { consoleNavigation, settingsNavigation, type NavLinkItem } from './navigation';
 
 type ConsoleShellProps = {
@@ -502,7 +504,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                   interactiveMotionClass,
                   collapsed ? 'justify-center' : 'justify-start',
                 )}
-                aria-label={activeWorkspace.name}
+                aria-label={localizedWorkspaceName(activeWorkspace.name, msg)}
               />
             }
           >
@@ -512,7 +514,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
             {collapsed ? null : (
               <>
                 <span className="grid min-w-0 flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">{activeWorkspace.name}</span>
+                  <span className="truncate font-semibold">{localizedWorkspaceName(activeWorkspace.name, msg)}</span>
                   <span className="truncate text-xs text-sidebar-foreground/70">
                     {msg('settings.workspaces.workspace', 'Workspace')}
                   </span>
@@ -542,7 +544,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background text-muted-foreground">
                       <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
                     </span>
-                    <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                    <span className="min-w-0 flex-1 truncate">{localizedWorkspaceName(workspace.name, msg)}</span>
                     <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                 ))}
@@ -748,7 +750,10 @@ export function AccountMenu({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="block truncate text-xs text-sidebar-foreground/70">
-                    {msg('account.subtitle', 'Admin · {workspaceName}', { workspaceName: activeWorkspace.name })}
+                    {msg('account.subtitle', '{role} · {workspaceName}', {
+                      role: accountRoleLabel(account?.memberships?.[0]?.role, msg),
+                      workspaceName: localizedWorkspaceName(activeWorkspace.name, msg),
+                    })}
                   </span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
@@ -774,7 +779,9 @@ export function AccountMenu({
               >
                 <Building2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{activeWorkspace.name}</span>
+                  <span className="block truncate font-medium">
+                    {localizedWorkspaceName(activeWorkspace.name, msg)}
+                  </span>
                   <span className="block text-xs text-muted-foreground">{msg('account.apiPlan', 'API plan')}</span>
                 </span>
               </DropdownMenuRadioItem>

@@ -1,1 +1,1 @@
-export const consoleResourceListLimit = 10;
+export const consoleResourceListLimit = 15;

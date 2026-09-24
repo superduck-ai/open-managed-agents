@@ -2349,23 +2349,23 @@ export function registerManagedAgentsAgentsTests() {
     await waitFor(() => expect(selectedWorkspaceIds).toContain('wrkspc_foo'));
   });
 
-  test('paginates agents ten rows at a time with the backend page cursor', async () => {
+  test('paginates agents one shared page at a time with the backend page cursor', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi(
       Array.from({ length: agentsListLimit + 1 }, (_, index) => ({
         id: `agent_page${String(index + 1).padStart(2, '0')}123456`,
-        name: index === 0 ? 'First agent' : index === agentsListLimit ? 'Eleventh agent' : `Agent ${index + 1}`,
+        name: index === 0 ? 'First agent' : index === agentsListLimit ? 'Next page agent' : `Agent ${index + 1}`,
       })),
     );
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('First agent')).toBeTruthy();
-    expect(screen.queryByText('Eleventh agent')).toBeNull();
+    expect(screen.queryByText('Next page agent')).toBeNull();
     expect(screen.getByText('1 / 2')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText('Eleventh agent')).toBeTruthy();
+    expect(await screen.findByText('Next page agent')).toBeTruthy();
     expect(screen.queryByText('First agent')).toBeNull();
     expect(screen.getByText('2 / 2')).toBeTruthy();
     expect(api.requests.some((request) => request.method === 'GET' && request.url.includes('page=next_cursor'))).toBe(

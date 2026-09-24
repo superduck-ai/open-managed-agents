@@ -174,7 +174,7 @@ func NormalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if err != nil {
 				return nil, err
 			}
-			configs, err := normalizeAgentToolConfigs(tool["configs"], permissionPolicyType(defaultConfig, "always_allow"))
+			configs, err := normalizeAgentToolConfigs(tool["configs"], permissionPolicyType(defaultConfig, "always_allow"), configEnabled(defaultConfig))
 			if err != nil {
 				return nil, err
 			}
@@ -232,7 +232,7 @@ func validMCPServerURL(value string) bool {
 		parsed.IsAbs() && parsed.Hostname() != "" && parsed.User == nil && parsed.Fragment == ""
 }
 
-func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]any, error) {
+func normalizeAgentToolConfigs(value any, defaultPolicy string, defaultEnabled bool) ([]map[string]any, error) {
 	if value == nil {
 		return []map[string]any{}, nil
 	}
@@ -253,7 +253,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		if _, ok := allowed[name]; !ok {
 			return nil, errors.New("agent tool config name is invalid")
 		}
-		enabled, err := boolWithDefault(config["enabled"], true, "tools.configs.enabled")
+		enabled, err := boolWithDefault(config["enabled"], defaultEnabled, "tools.configs.enabled")
 		if err != nil {
 			return nil, err
 		}
@@ -264,6 +264,11 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		normalized = append(normalized, map[string]any{"enabled": enabled, "name": name, "permission_policy": policy})
 	}
 	return normalized, nil
+}
+
+func configEnabled(defaultConfig map[string]any) bool {
+	enabled, ok := defaultConfig["enabled"].(bool)
+	return !ok || enabled
 }
 
 func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any, error) {

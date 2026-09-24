@@ -9,7 +9,7 @@ A Session actually runs with this agent configuration. Identity still names the 
 _Avoid_: Agent snapshot as a picture of the Agent resource; thread agent as the session's source of truth
 
 **Override**:
-A create-time replacement of selected Session Agent fields. Omitted fields inherit from the referenced Agent version; null or empty clears; a value replaces the field in full. Validation applies only to changed fields and the couplings those changes create.
+A create-time replacement of selected Session Agent fields. Omitted fields inherit from the referenced Agent version. null or empty clears system, tools, MCP servers, and skills; model cannot be cleared. A value replaces the field in full. Validation applies only to changed fields and the couplings those changes create.
 _Avoid_: merge; patch of the Agent resource
 
 **Session Thread**:

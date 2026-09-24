@@ -44,13 +44,16 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 		return db.Agent{}, nil, errors.New("agent must not be archived")
 	}
 	if ref.WithOverrides {
-		modelIDs, listErr := llmproviders.ListModelIDs(r.Context(), h.db, principal.OrganizationUUID, principal.WorkspaceUUID)
-		if listErr != nil {
-			return db.Agent{}, nil, workspaceModelConfigError(listErr)
+		var modelIDs []string
+		if ref.Overrides.ReplacesModel() {
+			modelIDs, err = llmproviders.ListModelIDs(r.Context(), h.db, principal.OrganizationUUID, principal.WorkspaceUUID)
+			if err != nil {
+				return db.Agent{}, nil, workspaceModelConfigError(err)
+			}
 		}
-		cfg, applyErr := agentconfig.Apply(agentconfig.FromAgent(agent), ref.Overrides, modelIDs)
-		if applyErr != nil {
-			return db.Agent{}, nil, applyErr
+		cfg, err := agentconfig.Apply(agentconfig.FromAgent(agent), ref.Overrides, modelIDs)
+		if err != nil {
+			return db.Agent{}, nil, err
 		}
 		agent = agentconfig.WriteAgent(agent, cfg)
 	}
@@ -466,10 +469,14 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 	}, nil
 }
 
-func responseFromThread(thread db.SessionThread) threadResponse {
+func responseFromThread(thread db.SessionThread, sessionAgent json.RawMessage) threadResponse {
+	agent := thread.AgentSnapshot
+	if thread.ParentThreadExternalID == nil || strings.TrimSpace(*thread.ParentThreadExternalID) == "" {
+		agent = sessionAgent
+	}
 	return threadResponse{
 		ID:             thread.ExternalID,
-		Agent:          httpapi.RawOr(thread.AgentSnapshot, `{}`),
+		Agent:          httpapi.RawOr(agent, `{}`),
 		ArchivedAt:     httpapi.OptionalTime(thread.ArchivedAt),
 		CreatedAt:      httpapi.FormatTime(thread.CreatedAt),
 		ParentThreadID: thread.ParentThreadExternalID,

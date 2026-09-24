@@ -308,6 +308,9 @@ These rules describe the current sandbox environment and do not replace your ass
 	if err := json.Unmarshal(provider.writes[0].data, &rcloneConfig); err != nil {
 		t.Fatalf("decode rclone config: %v", err)
 	}
+	if len(rcloneConfig.Mounts) != 5 {
+		t.Fatalf("rclone mounts = %d, want 5 without memory stores", len(rcloneConfig.Mounts))
+	}
 	for _, mount := range rcloneConfig.Mounts {
 		if mount.AuthToken == "" || strings.Contains(provider.rcloneLaunches[0].command, mount.AuthToken) {
 			t.Fatal("rclone token is empty or leaked into command text")
@@ -315,6 +318,9 @@ These rules describe the current sandbox environment and do not replace your ass
 		claims, verifyErr := app.filestoreCredentials.Verify(mount.AuthToken)
 		if verifyErr != nil {
 			t.Fatalf("verify rclone token for %s: %v", mount.Source, verifyErr)
+		}
+		if mount.Source == "/memory" || mount.Destination == "/mnt/memory" {
+			t.Fatalf("parent /mnt/memory must not be a filestore mount: %#v", mount)
 		}
 		if mount.Source == "/outputs" {
 			if mount.Readonly || claims.Readonly != nil {
@@ -368,7 +374,7 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	env := createEnvironment(t, app, `{"name":"runner-startup-message-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
+	defer cleanupSession(t, app, session.ID)
 
 	const prompt = "startup-window message must reach inbound"
 	ids := getDefaultDBIDs(t, app.pool)
@@ -1375,8 +1381,15 @@ func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID, path s
 		path:      path,
 		data:      append([]byte(nil), data...),
 	})
-	p.operations = append(p.operations, "rclone-config-write")
-	if p.failOperation == "rclone-config-write" {
+	operation := "write:" + path
+	switch path {
+	case "/tmp/rclone-mount-config.json":
+		operation = "rclone-config-write"
+	case "/mnt/memory/MEMORY.md":
+		operation = "memory-markdown-write"
+	}
+	p.operations = append(p.operations, operation)
+	if p.failOperation == operation {
 		return p.runCommandFailure
 	}
 	return nil
@@ -1410,6 +1423,8 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 	switch {
 	case request.Command == "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin":
 		operation = "command:provision"
+	case strings.HasPrefix(request.Command, "mkdir -p ") && strings.Contains(request.Command, "/mnt/memory"):
+		operation = "memory-root-mkdir"
 	case strings.HasPrefix(request.Command, "chmod 0600 "):
 		operation = "rclone-config-chmod"
 	case strings.HasPrefix(request.Command, "rm -f ") && strings.Contains(request.Command, "rclone-mount-config.json"):

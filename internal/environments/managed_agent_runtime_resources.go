@@ -11,8 +11,9 @@ import (
 )
 
 type managedAgentRuntimeResources struct {
-	sources []json.RawMessage
-	workDir string
+	sources      []json.RawMessage
+	workDir      string
+	memoryMounts []memoryRuntimeMount
 }
 
 type gitRepositoryRuntimeSource struct {
@@ -74,24 +75,18 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (manage
 				return managedAgentRuntimeResources{}, err
 			}
 			resolved.sources = append(resolved.sources, source)
-		case "memory_store":
-			if source, ok := opaqueRuntimeSourceJSON(resource.Payload); ok {
-				resolved.sources = append(resolved.sources, source)
+		case sessionresource.MemoryStoreType:
+			mount, ok := parseMemoryRuntimeMount(resource.Payload)
+			if !ok {
+				return managedAgentRuntimeResources{}, fmt.Errorf("memory resource %s: %w", resource.ExternalID, errMemorySnapshotInvalid)
 			}
+			resolved.memoryMounts = append(resolved.memoryMounts, mount)
 		}
 	}
 	if err := sessionresource.ValidateGitRepositoryConflicts(gitSpecs); err != nil {
 		return managedAgentRuntimeResources{}, err
 	}
 	return resolved, nil
-}
-
-func opaqueRuntimeSourceJSON(raw json.RawMessage) (json.RawMessage, bool) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
-		return nil, false
-	}
-	return append(json.RawMessage(nil), raw...), true
 }
 
 func repositoryAttachedBefore(candidate, current db.SessionResource) bool {

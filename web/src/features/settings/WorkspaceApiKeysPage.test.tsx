@@ -9,7 +9,7 @@ import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/works
 import { WorkspaceApiKeysContent } from './WorkspaceApiKeysPage';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor } = testingLibrary;
+const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(globalThis.navigator, 'clipboard');
@@ -45,7 +45,7 @@ describe('Workspace API keys page', () => {
         .some((button) => button.getAttribute('aria-label') === 'Default'),
     ).toBe(true);
     expect(screen.getByRole('heading', { name: 'API keys' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Create key' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create API key' })).toBeTruthy();
     expect(screen.getByText(/API keys are owned by workspaces/i)).toBeTruthy();
     expect(screen.getByText('Created by')).toBeTruthy();
     expect(screen.getByText('Created at')).toBeTruthy();
@@ -70,15 +70,17 @@ describe('Workspace API keys page', () => {
     );
 
     await screen.findByText('foo');
-    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API key' }));
 
-    expect(screen.getByRole('dialog', { name: 'Create API key' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add' }).hasAttribute('disabled')).toBe(true);
+    const dialog = screen.getByRole('dialog', { name: 'Create API key' });
+    expect(within(dialog).getByRole('button', { name: 'Create API key' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByText('Workspace')).toBeTruthy();
     expect(screen.getByText('Default')).toBeTruthy();
 
     fireEvent.change(screen.getByPlaceholderText('my-secret-key'), { target: { value: 'local-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Create API key' })).getByRole('button', { name: 'Create API key' }),
+    );
 
     const createdDialog = await screen.findByRole('dialog', { name: 'API key created' });
     expect(screen.getByText('sk-ant-api03-localraw')).toBeTruthy();
@@ -110,9 +112,11 @@ describe('Workspace API keys page', () => {
     );
 
     await screen.findByText('foo');
-    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API key' }));
     fireEvent.change(screen.getByPlaceholderText('my-secret-key'), { target: { value: 'local-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Create API key' })).getByRole('button', { name: 'Create API key' }),
+    );
 
     await screen.findByRole('dialog', { name: 'API key created' });
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
@@ -140,9 +144,11 @@ describe('Workspace API keys page', () => {
     );
 
     await screen.findByText('foo');
-    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API key' }));
     fireEvent.change(screen.getByPlaceholderText('my-secret-key'), { target: { value: 'local-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Create API key' })).getByRole('button', { name: 'Create API key' }),
+    );
 
     await screen.findByRole('dialog', { name: 'API key created' });
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));

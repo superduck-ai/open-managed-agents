@@ -28,8 +28,11 @@ import {
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
+import { ResourceListState } from '@/shared/ui/resource-list-state';
+import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { useI18n } from '../../shared/i18n';
-import { CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
+import { CursorPagination, TableErrorRow, TableLoadingRow } from './frame';
 import {
   createSkillPackage,
   deleteSkill,
@@ -83,7 +86,8 @@ type SkillFileSystemEntry = {
 export function SkillsPage({ initialCreateOpen = false, initialSkillId }: SkillsPageProps = {}) {
   const { msg } = useI18n();
   const queryClient = useQueryClient();
-  const { workspaceId, workspaceName } = useDashboardWorkspaceScope();
+  const { workspaceId, workspaceName: workspaceNameToken } = useDashboardWorkspaceScope();
+  const workspaceName = localizedWorkspaceName(workspaceNameToken, msg);
   const [selectedSkillId, setSelectedSkillId] = useSkillSearchParam(initialSkillId);
   const [createOpen, setCreateOpen] = useState(initialCreateOpen);
   const [updateSkillTarget, setUpdateSkillTarget] = useState<ConsoleSkill | null>(null);
@@ -187,27 +191,21 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
   };
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{msg('skills.title', 'Skills')}</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
-            {msg(
-              'skills.description',
-              'Skills are repeatable and customizable instructions that Claude API can follow.',
-              {
-                workspaceName,
-              },
-            )}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button type="button" onClick={() => setCreateOpen(true)}>
+    <section>
+      <ResourcePageHeader
+        contentGap="content"
+        title={msg('skills.title', 'Skills')}
+        description={msg(
+          'skills.description',
+          'Skills are repeatable and customizable instructions that Open Managed Agents can follow.',
+        )}
+        actions={
+          <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" aria-hidden />
             {msg('skills.create', 'Create skill')}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       <SkillsTable
         skills={skills}
@@ -368,11 +366,7 @@ function SkillsTable({
               retryLabel={msg('common.retry', 'Retry')}
               onRetry={onRetry}
             />
-          ) : skills.length === 0 ? (
-            <TableEmptyRow colSpan={6}>
-              {msg('skills.empty', 'No skills have been created in the {workspaceName} workspace.', { workspaceName })}
-            </TableEmptyRow>
-          ) : (
+          ) : skills.length === 0 ? null : (
             skills.map((skill) => (
               <DataTableRow
                 key={skill.id}
@@ -410,6 +404,15 @@ function SkillsTable({
           )}
         </TableBody>
       </Table>
+      {!isLoading && !error && skills.length === 0 ? (
+        <ResourceListState
+          icon={FileArchive}
+          title={msg('skills.emptyTitle', 'No skills yet')}
+          body={msg('skills.empty', 'Create a skill in the {workspaceName} workspace to reuse it across agents.', {
+            workspaceName,
+          })}
+        />
+      ) : null}
       {isFetching && !isLoading ? <span className="sr-only">{msg('common.updating', 'Updating...')}</span> : null}
     </section>
   );
@@ -729,7 +732,7 @@ function SkillUploadDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]" showCloseButton>
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">{title}</DialogTitle>
           {mode === 'update' ? (
             <DialogDescription>
               {msg(
@@ -863,23 +866,30 @@ function SkillUploadDialog({
           </Alert>
         ) : null}
 
-        <DialogFooter className="items-start sm:items-center sm:justify-between">
-          <p className="max-w-[260px] text-xs leading-5 text-muted-foreground">
-            {msg('skills.upload.limit', 'Total file size limit: 8MB.')}{' '}
-            <a href="https://docs.anthropic.com/" className="underline underline-offset-4">
-              {msg('skills.upload.fileFormat', 'File format')}
-            </a>
-            {' · '}
-            <a href="https://docs.anthropic.com/" className="underline underline-offset-4">
-              {msg('skills.upload.example', 'download an example.')}
-            </a>
-          </p>
+        <p className="text-xs leading-5 text-muted-foreground">
+          {msg('skills.upload.limit', 'Total file size limit: 8MB.')}{' '}
+          <a href="https://docs.anthropic.com/" className="underline underline-offset-4">
+            {msg('skills.upload.fileFormat', 'File format')}
+          </a>
+          {' · '}
+          <a href="https://docs.anthropic.com/" className="underline underline-offset-4">
+            {msg('skills.upload.example', 'download an example.')}
+          </a>
+        </p>
+        <DialogFooter className="sm:justify-end">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            {msg('common.cancel', 'Cancel')}
+          </Button>
           <Button
             type="button"
             disabled={!selection || Boolean(error) || isSubmitting}
             onClick={() => void handleSubmit()}
           >
-            {isSubmitting ? msg('skills.upload.uploading', 'Uploading...') : msg('common.continue', 'Continue')}
+            {isSubmitting
+              ? msg('skills.upload.uploading', 'Uploading...')
+              : mode === 'create'
+                ? msg('skills.create', 'Create skill')
+                : msg('skills.update.action', 'Update')}
           </Button>
         </DialogFooter>
       </DialogContent>

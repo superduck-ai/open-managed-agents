@@ -13,7 +13,11 @@ description: "发送输入事件，分页读取历史，并订阅会话或线程
 | `GET` | `/v1/sessions/{id}/threads/{thread_id}/events` | 线程历史 |
 | `GET` | `/v1/sessions/{id}/threads/{thread_id}/stream` | 线程 SSE |
 
-列表支持 `limit`、`page`、`order`、`types`/`types[]` 和创建时间范围。`event_start` 与 `event_delta` 只出现在实时流，不进入列表历史。
+列表支持 `limit`、`page`、`order`、`types`/`types[]` 和 `created_at[gt|gte|lt|lte]`。时间筛选始终比较创建时间，也可以匹配尚未处理的输入。`event_start` 与 `event_delta` 只出现在实时流，不进入列表历史。
+
+历史按 `processed_at` 排序，同一处理时间按数据库写入顺序排列；默认 `order=desc`，需要从早到晚读取时显式传 `order=asc`。未处理输入的 `processed_at=null`，升序时位于最后，降序时位于最前。
+
+`page` 是服务端返回的不透明游标，客户端应原样传回，不自行构造。当前版本只携带公开事件 ID，由服务端解析其排序位置；旧版使用创建时间和内部 UUID 的游标不兼容，升级后需清除旧 `page`，重新读取首页。分页不是快照：Worker ACK 会使排队输入移到已处理位置，翻页期间可能出现重复或遗漏。客户端应按事件 ID 去重，并通过 SSE 接收实时事件；需要完整历史时重新读取。
 
 ```json
 {

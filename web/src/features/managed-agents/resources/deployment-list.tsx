@@ -1,7 +1,6 @@
-import { CalendarDays, Hand, Plus, Search } from 'lucide-react';
+import { CalendarDays, Hand, Search } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
-import { Button } from '../../../shared/ui/button';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
+import { ResourceListState } from '../../../shared/ui/resource-list-state';
 import { type DeploymentApiResponse } from '../types';
 import { objectRecord } from '../utils';
 import { cronToSchedule } from './deployment-schedule';
@@ -45,31 +44,24 @@ export function DeploymentTriggerCell({ deployment }: { deployment: DeploymentAp
   );
 }
 
-export function DeploymentEmptyState({ filtered, onCreate }: { filtered: boolean; onCreate: () => void }) {
+export function DeploymentEmptyState({ filtered }: { filtered: boolean }) {
   const { msg } = useI18n();
   return (
-    <Empty className="min-h-72 rounded-none py-12">
-      <EmptyHeader>
-        <EmptyMedia variant="icon" className="size-10">
-          {filtered ? <Search /> : <CalendarDays />}
-        </EmptyMedia>
-        <EmptyTitle>
-          {filtered
-            ? msg('managedAgents.deployments.noMatches', 'No matching deployments')
-            : msg('managedAgents.deployments.emptyTitle', 'No deployments yet')}
-        </EmptyTitle>
-        <EmptyDescription>
-          {filtered
-            ? msg('managedAgents.deployments.noMatchesHelp', 'Try another name or adjust your filters.')
-            : msg('managedAgents.deployments.emptyBody', 'Deployments will appear after an agent is deployed.')}
-        </EmptyDescription>
-      </EmptyHeader>
-      {!filtered && (
-        <Button variant="outline" onClick={onCreate}>
-          <Plus aria-hidden />
-          {msg('managedAgents.deployments.createLabel', 'Create deployment')}
-        </Button>
-      )}
-    </Empty>
+    <ResourceListState
+      icon={filtered ? Search : CalendarDays}
+      title={
+        filtered
+          ? msg('managedAgents.deployments.noMatches', 'No matching deployments')
+          : msg('managedAgents.deployments.emptyTitle', 'No deployments yet')
+      }
+      body={
+        filtered
+          ? msg('managedAgents.deployments.noMatchesHelp', 'Try another name or adjust your filters.')
+          : msg(
+              'managedAgents.deployments.emptyBody',
+              'Create a deployment to bind an agent to credentials, an environment, and a schedule.',
+            )
+      }
+    />
   );
 }

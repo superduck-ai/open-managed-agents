@@ -58,6 +58,7 @@ import {
   type AgentSkillApiResponse,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
+import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { CopyButton } from '../components/CodeBlocks';
 import { ConfirmAgentsArchiveDialog, StatusPill } from '../components/common';
 import { managedColumnLabel } from '../labels';
@@ -268,18 +269,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
   }
 
   if (!agent || loadError) {
-    return (
-      <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb
-          listHref={listHref}
-          listLabel={msg('managedAgents.agents.title', 'Agents')}
-          currentLabel={msg('common.error', 'Error')}
-        />
-        <AgentDetailErrorAlert className="mt-6 max-w-xl">
-          {loadError || `Agent not found: ${agentId}`}
-        </AgentDetailErrorAlert>
-      </section>
-    );
+    return <AgentNotFound agentId={agentId} listHref={listHref} loadError={loadError} />;
   }
 
   return (
@@ -1496,6 +1486,27 @@ export function AgentDeploymentDetailPanel({
       {runError ? <AgentDetailErrorAlert className="mb-4 max-w-xl">{runError}</AgentDetailErrorAlert> : null}
       <DeploymentRunsPanel deployment={deployment} workspaceId={workspaceId} refreshKey={refreshKey} />
     </div>
+  );
+}
+
+function AgentNotFound({
+  agentId,
+  listHref,
+  loadError,
+}: {
+  agentId: string;
+  listHref: string;
+  loadError: string | null;
+}) {
+  const { msg } = useI18n();
+  const copy = useResourceMissingCopy(loadError, 'agent', agentId);
+  return (
+    <ResourceNotFound
+      title={copy.title}
+      sentence={copy.sentence}
+      backHref={listHref}
+      backLabel={msg('managedAgents.agents.backToList', 'Back to agents')}
+    />
   );
 }
 

@@ -20,6 +20,7 @@ import {
 } from '../../../shared/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -49,7 +50,6 @@ import {
   managedColumnLabel,
   resourceCreateLabel,
   resourceDescription,
-  resourceEmptyAction,
   resourceSearchPlaceholder,
   resourceTitle,
   statusFilterLabel,
@@ -549,18 +549,18 @@ export function AgentsResourcePage({
 
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5 flex items-start justify-between gap-6">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
-          <p className="mt-2 text-[15px] leading-5 text-muted-foreground">{description}</p>
-        </div>
-        {createLabel ? (
-          <Button type="button" className="h-9 shrink-0" onClick={() => setDialogOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {createLabel}
-          </Button>
-        ) : null}
-      </header>
+      <ResourcePageHeader
+        title={title}
+        description={description}
+        actions={
+          createLabel ? (
+            <Button type="button" size="lg" onClick={() => setDialogOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {createLabel}
+            </Button>
+          ) : null
+        }
+      />
 
       <div className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
@@ -743,10 +743,6 @@ export function AgentsResourcePage({
               <AgentsEmptyState
                 trueEmpty={!hasActiveAgentFilters}
                 truncated={searchResultsTruncated}
-                trueEmptyActionLabel={
-                  resourceEmptyAction(config, msg) ?? msg('managedAgents.agents.emptyAction', 'Get started with agents')
-                }
-                onCreate={() => setDialogOpen(true)}
                 onReset={resetAgentFilters}
               />
             )

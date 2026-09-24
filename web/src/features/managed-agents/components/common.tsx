@@ -32,7 +32,7 @@ import clsx from 'clsx';
 import { AlertCircle, Archive, ArrowUpRight, Bot, Plus, Search, Trash2, TriangleAlert, X } from 'lucide-react';
 import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
-import { entityKindLabel, resourceEmptyAction, resourceEmptyBody, resourceEmptyTitle } from '../labels';
+import { entityKindLabel, resourceEmptyBody, resourceEmptyTitle } from '../labels';
 import { entityDisplayName } from '../resources/ManagedResources';
 import {
   type AgentApiResponse,
@@ -832,17 +832,14 @@ export function AgentsListState({
 export function AgentsEmptyState({
   trueEmpty,
   truncated,
-  trueEmptyActionLabel,
-  onCreate,
   onReset,
 }: {
   trueEmpty: boolean;
   truncated?: boolean;
-  trueEmptyActionLabel: string;
-  onCreate: () => void;
   onReset: () => void;
 }) {
   const { msg } = useI18n();
+  const filtered = !trueEmpty;
   return (
     <AgentsListState
       icon={trueEmpty ? Bot : Search}
@@ -861,37 +858,20 @@ export function AgentsEmptyState({
             ? msg('managedAgents.agents.emptyBody', 'Create an agent to start building managed workflows.')
             : msg('managedAgents.agents.noFilteredResultsBody', 'Try a different search or reset the filters.')
       }
-      actionLabel={
-        truncated
-          ? undefined
-          : trueEmpty
-            ? trueEmptyActionLabel
-            : msg('managedAgents.filters.resetFilters', 'Reset filters')
-      }
-      onAction={truncated ? undefined : trueEmpty ? onCreate : onReset}
+      actionLabel={filtered && !truncated ? msg('managedAgents.filters.resetFilters', 'Reset filters') : undefined}
+      onAction={filtered && !truncated ? onReset : undefined}
     />
   );
 }
 
 export function EmptyState({ config }: { config: ResourceConfig }) {
   const { msg } = useI18n();
-  const Icon = config.emptyIcon;
-  const title = resourceEmptyTitle(config, msg);
-  const body = resourceEmptyBody(config, msg);
-  const action = resourceEmptyAction(config, msg);
   return (
-    <div className="grid min-h-[320px] place-items-center text-center">
-      <div>
-        <Icon className="mx-auto mb-4 size-14 stroke-[1.2] text-foreground" aria-hidden />
-        <div className="text-sm font-medium text-foreground">{title}</div>
-        {body ? <p className="mt-3 text-sm text-muted-foreground">{body}</p> : null}
-        {action ? (
-          <Button type="button" variant="outline" className="mt-4">
-            {action}
-          </Button>
-        ) : null}
-      </div>
-    </div>
+    <ResourceListState
+      icon={config.emptyIcon}
+      title={resourceEmptyTitle(config, msg)}
+      body={resourceEmptyBody(config, msg) ?? ''}
+    />
   );
 }
 

@@ -91,7 +91,7 @@ export const consoleNavigation: NavItem[] = [
       { href: '/agents', label: 'Agents', labelId: 'nav.agents' },
       { href: '/sessions', label: 'Sessions', labelId: 'nav.sessions' },
       { href: '/observability', label: 'Observability', labelId: 'nav.observability' },
-      { href: '/deployments', label: 'Deployments', labelId: 'nav.deployments', badge: 'New', badgeId: 'nav.new' },
+      { href: '/deployments', label: 'Deployments', labelId: 'nav.deployments' },
       { href: '/environments', label: 'Environments', labelId: 'nav.environments' },
       { href: '/credential-vaults', label: 'Credential vaults', labelId: 'nav.credentialVaults' },
       { href: '/memory-stores', label: 'Memory stores', labelId: 'nav.memoryStores' },

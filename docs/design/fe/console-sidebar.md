@@ -27,3 +27,5 @@ flowchart TD
 - 整个 Claude Code 分组（`/claude-code/usage`、`/claude-code/settings`）
 
 展开 `Build` 后仍显示 Files 和 Skills，不显示 Workbench 和 Batches。Claude Code 分组标题也不出现。产品文案表中的对应词条保持不变。
+
+`Managed Agents` 里的 Deployments 不再显示 `New` 标记。仪表盘模型卡仍使用同一文案键。

@@ -70,6 +70,7 @@ describe('ConsoleShell', () => {
       'https://oma.mintlifysite.com/',
     );
     expect(screen.getByText('Deployments')).toBeTruthy();
+    expect(screen.queryByText('New')).toBeNull();
     expect(screen.getByRole('link', { name: 'Quickstart' }).getAttribute('href')).toBe(
       '/workspaces/default/agent-quickstart',
     );

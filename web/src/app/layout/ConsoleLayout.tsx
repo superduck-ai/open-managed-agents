@@ -24,6 +24,7 @@ import {
   useCallback,
   useEffect,
   forwardRef,
+  useRef,
   useState,
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -228,9 +229,8 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
   const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
   const { setOpen, state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    'Managed Agents': true,
-  });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => initialSidebarGroupExpansion(currentPath));
+  const expandedForPath = useRef(currentPath);
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
   const navigationSource = visibleConsoleNavigation();
   const navigationItems = canManageLLMProviders(account, orgUuid)
@@ -245,6 +245,18 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       selectWorkspace(routeWorkspaceId);
     }
   }, [activeWorkspaceId, routeWorkspaceId, selectWorkspace, workspaces]);
+
+  useEffect(() => {
+    if (expandedForPath.current === currentPath) {
+      return;
+    }
+    expandedForPath.current = currentPath;
+    const labels = activeSidebarGroupLabels(currentPath);
+    if (labels.length === 0) {
+      return;
+    }
+    setExpanded((current) => openSidebarGroups(current, labels));
+  }, [currentPath]);
 
   return (
     <AppSidebar
@@ -870,6 +882,36 @@ const workspaceBuildPathByHref: Record<string, string> = {
   '/skills': 'skills',
   '/batches': 'batches',
 };
+
+function activeSidebarGroupLabels(currentPath: string) {
+  return visibleConsoleNavigation().flatMap((item) => {
+    if (item.type !== 'group' || !item.children.some((child) => isActivePath(currentPath, child.href))) {
+      return [];
+    }
+    return [item.label];
+  });
+}
+
+function initialSidebarGroupExpansion(currentPath: string) {
+  const expanded: Record<string, boolean> = { 'Managed Agents': true };
+  for (const label of activeSidebarGroupLabels(currentPath)) {
+    expanded[label] = true;
+  }
+  return expanded;
+}
+
+function openSidebarGroups(current: Record<string, boolean>, labels: string[]) {
+  let changed = false;
+  const next = { ...current };
+  for (const label of labels) {
+    if (next[label]) {
+      continue;
+    }
+    next[label] = true;
+    changed = true;
+  }
+  return changed ? next : current;
+}
 
 function navigationHref(href: string, workspaceId: string) {
   if (href === '/api-keys') {

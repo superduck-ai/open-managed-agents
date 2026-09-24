@@ -111,6 +111,69 @@ describe('ConsoleShell', () => {
     expect(screen.queryByRole('button', { name: 'Feedback' })).toBeNull();
   });
 
+  test('does not expand Build for a sidebar-hidden workbench route', () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workbench" account={testAccount()} onLogout={() => undefined}>
+        <div>Workbench content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+  });
+
+  test('expands the sidebar group that contains the current route', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workspaces/default/files" account={testAccount()} onLogout={() => undefined}>
+        <div>Files content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Analytics' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+  });
+
+  test('expands a collapsed group after navigation enters its route', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+
+    function FilesRouteHarness() {
+      const [currentPath, setCurrentPath] = useState('/dashboard');
+      return (
+        <>
+          <button type="button" onClick={() => setCurrentPath('/workspaces/default/files')}>
+            Open files
+          </button>
+          <ConsoleShell currentPath={currentPath} account={testAccount()} onLogout={() => undefined}>
+            <div>Route content</div>
+          </ConsoleShell>
+        </>
+      );
+    }
+
+    renderWithWorkspaces(<FilesRouteHarness />);
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open files' }));
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Files' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
+  });
+
   test('hides LLM model configuration from non-administrators', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(

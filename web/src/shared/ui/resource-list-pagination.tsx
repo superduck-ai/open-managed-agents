@@ -20,6 +20,9 @@ export function resourceListPageCount(totalCount: number | null | undefined, pag
   return Math.ceil(count / pageSize);
 }
 
+const pagerButtonClassName =
+  'border-foreground/30 bg-background text-foreground shadow-none hover:bg-muted disabled:border-foreground/30 disabled:bg-background disabled:text-muted-foreground disabled:opacity-100';
+
 export function ResourceListPagination({
   currentPage,
   totalPages,
@@ -50,19 +53,21 @@ export function ResourceListPagination({
         type="button"
         variant="outline"
         size="icon-lg"
+        className={pagerButtonClassName}
         aria-label={msg('pagination.previousPage', 'Previous page')}
         disabled={!canPrevious}
         onClick={onPrevious}
       >
         <ChevronLeft className="size-4" aria-hidden />
       </Button>
-      <span className="min-w-16 text-center text-sm tabular-nums text-foreground" aria-label={statusLabel}>
+      <span className="min-w-16 text-center text-sm font-medium tabular-nums text-foreground" aria-label={statusLabel}>
         {statusText}
       </span>
       <Button
         type="button"
         variant="outline"
         size="icon-lg"
+        className={pagerButtonClassName}
         aria-label={msg('pagination.nextPage', 'Next page')}
         disabled={!canNext}
         onClick={onNext}

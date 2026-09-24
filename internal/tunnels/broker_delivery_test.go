@@ -57,27 +57,6 @@ func TestNATSBrokerMissingAndWrongResponseBindings(t *testing.T) {
 	}
 }
 
-func TestNATSBrokerBindingCapacityFailureDoesNotRedeliver(t *testing.T) {
-	cfg := brokerTestConfig()
-	cfg.MaxStoredRequests = 1
-	b := testNATSBroker(t, cfg)
-	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand("first")); err != nil {
-		t.Fatal(err)
-	}
-	pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1)
-	waitPollCondition(t, func() bool { info, err := b.commands.Info(t.Context()); return err == nil && info.State.Msgs == 0 })
-	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand("second")); err != nil {
-		t.Fatal(err)
-	}
-	commands, err := b.Poll(t.Context(), "tunnel", testTokenHash(), []ChannelDeclaration{{Name: "main"}}, 1, 0)
-	if !errors.Is(err, ErrQueueLimit) || len(commands) != 0 {
-		t.Fatalf("binding capacity: %v, %v", commands, err)
-	}
-	if commands := pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1); len(commands) != 0 {
-		t.Fatal("failed binding was redelivered")
-	}
-}
-
 func TestNATSBrokerNoACKNeverRedelivers(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	channels := []ChannelDeclaration{{Name: "main"}}
@@ -183,7 +162,7 @@ func TestNATSBrokerCrossInstanceResponsesUseImmutableBinding(t *testing.T) {
 	a := testNATSBroker(t, brokerTestConfig())
 	peers := make([]*Broker, 2)
 	for i := range peers {
-		peer, err := newBroker(t.Context(), connectTunnelNATS(t, a.connection.ConnectedUrl()), brokerTestConfig(), 1)
+		peer, err := newBroker(t.Context(), connectTunnelNATS(t, a.connection.ConnectedUrl()), brokerTestConfig(), 1, a.requests)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,7 +175,7 @@ func TestNATSBrokerCrossInstanceResponsesUseImmutableBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	pollTestCommands(t, peers[0], []ChannelDeclaration{{Name: "main"}}, 1)
-	before, err := a.requests.stream.Info(t.Context())
+	before, err := a.readRequestByID(t.Context(), command.RequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,12 +198,12 @@ func TestNATSBrokerCrossInstanceResponsesUseImmutableBinding(t *testing.T) {
 	if err := peers[0].SubmitResponse(t.Context(), "tunnel", testTokenHash(), testTerminalResponse(command.RequestID)); err != nil {
 		t.Fatalf("duplicate after HTTP completion: %v", err)
 	}
-	after, err := a.requests.stream.Info(t.Context())
+	after, err := a.readRequestByID(t.Context(), command.RequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.State.LastSeq != after.State.LastSeq {
-		t.Fatal("response mutated binding KV")
+	if before != after {
+		t.Fatal("response mutated binding")
 	}
 	a.responseHub.mu.Lock()
 	receipts, bytes := len(a.responseHub.receipts), a.responseHub.bufferedBytes

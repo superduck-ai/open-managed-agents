@@ -23,7 +23,6 @@ func defaultConfig() Config {
 			RequestTimeout:      2 * time.Minute,
 			PresenceTTL:         60 * time.Second,
 			TombstoneTTL:        5 * time.Minute,
-			MaxStoredRequests:   256,
 			MaxBodyBytes:        16 * 1024 * 1024,
 			MaxHeaderBytes:      32 * 1024,
 			MaxHeaderValueBytes: 8 * 1024,

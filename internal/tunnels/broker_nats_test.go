@@ -15,20 +15,21 @@ import (
 )
 
 func TestNATSBrokerRejectsMissingJetStreamAndSmallPayload(t *testing.T) {
-	if _, err := NewBroker(t.Context(), nil, brokerTestConfig(), nil); err == nil {
+	if _, err := NewBroker(t.Context(), nil, brokerTestConfig(), nil, testRequestBindings(t)); err == nil {
 		t.Fatal("accepted nil connection")
 	}
 	srv := startTunnelNATS(t, server.Options{MaxPayload: 1 << 20})
-	if _, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1); err == nil {
+	if _, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1, testRequestBindings(t)); err == nil {
 		t.Fatal("accepted insufficient max_payload")
 	}
 }
 
 func TestNATSBrokerConcurrentConnectionsDispatchOnlyOnce(t *testing.T) {
 	srv := startTunnelNATS(t, server.Options{})
+	bindings := testRequestBindings(t)
 	brokers := make([]*Broker, 2)
 	for i := range brokers {
-		broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1)
+		broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), 1, bindings)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,13 +62,13 @@ func TestNATSBrokerConcurrentConnectionsDispatchOnlyOnce(t *testing.T) {
 
 func brokerTestConfig() config.TunnelConfig {
 	return config.TunnelConfig{RequestTimeout: time.Minute, PollTimeout: time.Second, PresenceTTL: time.Minute, TombstoneTTL: time.Minute,
-		MaxStoredRequests: 64, MaxBodyBytes: 1 << 20, MaxHeaderBytes: 32 << 10, MaxHeaderValueBytes: 8 << 10}
+		MaxBodyBytes: 1 << 20, MaxHeaderBytes: 32 << 10, MaxHeaderValueBytes: 8 << 10}
 }
 
 func testNATSBroker(t *testing.T, cfg config.TunnelConfig) *Broker {
 	t.Helper()
 	srv := startTunnelNATS(t, server.Options{})
-	broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), cfg, 1)
+	broker, err := newBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), cfg, 1, testRequestBindingsWithTTL(t, brokerRequestRetention(cfg.RequestTimeout, cfg.TombstoneTTL)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,13 +121,13 @@ func testTerminalResponse(requestID string) TunnelResponse {
 	return TunnelResponse{RequestID: requestID, Channel: "main", ResponseType: ResponseTypeJSONRPC, ResponseCode: 200, JSONResponse: json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`)}
 }
 
-func TestNATSBrokerRequestStreamHasAdmissionLimit(t *testing.T) {
+func TestNATSBrokerCommandsHaveOnlyStorageBudget(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
-	info, err := b.requests.stream.Info(t.Context())
+	info, err := b.commands.Info(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Config.MaxMsgs != 64 || info.Config.MaxMsgsPerSubject != 1 || info.Config.Discard != jetstream.DiscardNew || info.Config.AllowDirect {
+	if info.Config.MaxMsgs != -1 || info.Config.MaxBytes != commandStorageBytes || info.Config.Discard != jetstream.DiscardNew {
 		t.Fatalf("request stream = %+v", info.Config)
 	}
 }

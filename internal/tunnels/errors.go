@@ -14,7 +14,9 @@ var (
 	errPayloadReferenceInvalid   = errors.New("tunnels: invalid payload reference")
 	errPayloadSizeMismatch       = errors.New("tunnels: payload size mismatch")
 	errPayloadDigestMismatch     = errors.New("tunnels: payload digest mismatch")
-	ErrQueueLimit                = errors.New("tunnels: stored request limit exceeded")
+	errCommandStorageFull        = errors.New("tunnels: command storage is full")
+	errRequestBindingExists      = errors.New("tunnels: request binding already exists")
+	errPollLimitInvalid          = errors.New("tunnels: poll limit must be positive")
 	ErrPayloadLimit              = errors.New("tunnels: payload limit exceeded")
 	ErrChannelLimit              = errors.New("tunnels: channel limit exceeded")
 	ErrChannelInvalid            = errors.New("tunnels: channel is invalid")
@@ -66,7 +68,7 @@ func unavailable(message string, cause error) error {
 
 func ingressQueueError(err error) error {
 	switch {
-	case errors.Is(err, ErrQueueLimit), errors.Is(err, ErrPayloadLimit):
+	case errors.Is(err, errCommandStorageFull), errors.Is(err, ErrPayloadLimit):
 		return apperr.New(apperr.RateLimited, "Tunnel request capacity exceeded", err)
 	default:
 		return unavailable("Tunnel broker is unavailable", err)

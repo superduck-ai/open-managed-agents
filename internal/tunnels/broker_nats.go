@@ -21,7 +21,7 @@ type Broker struct {
 	connection  *nats.Conn
 	js          jetstream.JetStream
 	commands    jetstream.Stream
-	requests    *brokerStore
+	requests    *RequestBindings
 	cfg         config.TunnelConfig
 	now         func() time.Time
 	responseHub *responseHub
@@ -29,22 +29,22 @@ type Broker struct {
 	pollCursor  atomic.Uint64
 }
 
-func NewBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, payloads *PayloadStore) (*Broker, error) {
-	b, err := newBroker(ctx, connection, cfg, 3)
+func NewBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, payloads *PayloadStore, requests *RequestBindings) (*Broker, error) {
+	b, err := newBroker(ctx, connection, cfg, 3, requests)
 	if err == nil {
 		b.payloads = payloads
 	}
 	return b, err
 }
 
-func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, replicas int) (*Broker, error) {
+func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConfig, replicas int, requests *RequestBindings) (*Broker, error) {
 	if connection == nil || !connection.IsConnected() {
 		return nil, nats.ErrDisconnected
 	}
 	if connection.MaxPayload() < maxBrokerValueBytes {
 		return nil, fmt.Errorf("tunnel NATS max_payload must be at least %d bytes", maxBrokerValueBytes)
 	}
-	if cfg.MaxStoredRequests <= 0 || cfg.RequestTimeout <= 0 || cfg.TombstoneTTL <= 0 {
+	if requests == nil || requests.client == nil || requests.ttl <= 0 || cfg.RequestTimeout <= 0 || cfg.TombstoneTTL <= 0 {
 		return nil, fmt.Errorf("invalid tunnel broker capacity or retention")
 	}
 	// Body limits are independent of NATS: oversized bodies use object references.
@@ -58,19 +58,15 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 	commands, err := js.CreateStream(ctx, jetstream.StreamConfig{
 		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
 		Storage: jetstream.FileStorage, Replicas: replicas, Retention: jetstream.WorkQueuePolicy,
-		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: int64(cfg.MaxStoredRequests),
-		MaxBytes:   int64(cfg.MaxStoredRequests) * (maxBrokerValueBytes + 4096),
+		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: -1,
+		MaxBytes:   commandStorageBytes,
 		MaxMsgSize: maxBrokerValueBytes, MaxConsumers: maxCommandConsumers,
 		Duplicates: cfg.RequestTimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open tunnel command stream: %w", err)
 	}
-	requests, err := openBrokerStore(ctx, js, requestBucketName, int64(cfg.MaxStoredRequests), maxRequestBindingBytes, brokerRequestRetention(cfg.RequestTimeout, cfg.TombstoneTTL), replicas)
-	if err != nil {
-		return nil, err
-	}
-	hub, err := newResponseHub(ctx, connection, cfg.MaxStoredRequests)
+	hub, err := newResponseHub(ctx, connection)
 	if err != nil {
 		return nil, err
 	}
@@ -86,9 +82,11 @@ func (b *Broker) Ping(ctx context.Context) error {
 	if _, err := b.commands.Info(ctx); err != nil {
 		return err
 	}
-	_, err := b.requests.stream.Info(ctx)
-	return err
+	return nil
 }
+
+// PingRedis checks the independent request binding dependency.
+func (b *Broker) PingRedis(ctx context.Context) error { return b.requests.ping(ctx) }
 
 // requestRecord is an immutable response binding, created only before delivery.
 // No execution state or response body is persisted.
@@ -126,9 +124,7 @@ func commandSubject(tunnelUUID, channel string) string {
 }
 
 func (b *Broker) readRequestByID(ctx context.Context, requestID string) (requestRecord, error) {
-	var record requestRecord
-	err := b.requests.read(ctx, brokerKey(requestID), &record)
-	return record, err
+	return b.requests.read(ctx, brokerKey(requestID))
 }
 
 func (b *Broker) SubmitResponse(ctx context.Context, tunnelID string, tokenHash [sha256.Size]byte, response TunnelResponse) error {

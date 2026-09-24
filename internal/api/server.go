@@ -196,7 +196,7 @@ func NewServer(deps ServerDeps) *Server {
 func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	checks := map[string]string{"database": "ok", "tunnel_nats": "ok"}
+	checks := map[string]string{"database": "ok", "tunnel_nats": "ok", "tunnel_redis": "ok"}
 	ready := true
 	if s.db == nil || s.db.SQLDB().PingContext(ctx) != nil {
 		checks["database"] = "unavailable"
@@ -204,6 +204,10 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.tunnelBroker == nil || s.tunnelBroker.Ping(ctx) != nil {
 		checks["tunnel_nats"] = "unavailable"
+		ready = false
+	}
+	if s.tunnelBroker == nil || s.tunnelBroker.PingRedis(ctx) != nil {
+		checks["tunnel_redis"] = "unavailable"
 		ready = false
 	}
 	status := http.StatusOK

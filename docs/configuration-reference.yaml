@@ -50,10 +50,9 @@ tunnel:
   # Local completion receipts expire at the request deadline plus this TTL.
   # Immutable bindings live for request_timeout + tombstone_ttl after creation.
   tombstone_ttl: 5m
-  # Separate global message limits for the command queue and response bindings.
-  # Bindings are immutable (up to 4 KiB); response bodies are not stored in KV.
-  # Default Tunnel budget: 513 MiB commands + 2 MiB bindings per node (R3).
-  max_stored_requests: 256
+  # Commands: no message-count limit; fixed 513 MiB per NATS node (R3).
+  # Immutable bindings use Redis SET NX PX, up to 4 KiB per record.
+  # Bindings and local waiters have no request-count admission limit.
   # Only NATS envelopes exceeding 2 MiB offload their bodies; no 32 KiB threshold.
   max_body_bytes: 16777216
   max_header_bytes: 32768

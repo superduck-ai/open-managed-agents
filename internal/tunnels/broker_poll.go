@@ -12,7 +12,10 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-const pollRoundWait = 100 * time.Millisecond
+const (
+	pollRoundWait      = 100 * time.Millisecond
+	pollFetchBatchSize = 256
+)
 
 type pollResult struct {
 	commands []ClaimedCommand
@@ -24,7 +27,7 @@ func (b *Broker) Poll(ctx context.Context, tunnelUUID string, tokenHash [sha256.
 		return nil, err
 	}
 	if limit < 1 {
-		return nil, ErrQueueLimit
+		return nil, errPollLimitInvalid
 	}
 	consumers, err := b.pollConsumers(ctx, tunnelUUID, channels)
 	if err != nil {
@@ -83,9 +86,9 @@ func (b *Broker) pollCommands(ctx context.Context, consumers []jetstream.Consume
 		if len(commands) == limit {
 			break
 		}
-		// The SDK preallocates proportional to batch size. The stream cannot hold
-		// more than MaxStoredRequests; never allocate an arbitrary client limit.
-		batch, err := consumer.FetchNoWait(min(limit-len(commands), b.cfg.MaxStoredRequests))
+		// Bound SDK preallocation for a single fetch, independently of queue size
+		// and the number of in-flight requests.
+		batch, err := consumer.FetchNoWait(min(limit-len(commands), pollFetchBatchSize))
 		if err == nil {
 			result := b.collectPollBatch(ctx, tunnelUUID, tokenHash, batch)
 			commands = append(commands, result.commands...)
@@ -188,9 +191,9 @@ func (b *Broker) bindPollMessage(ctx context.Context, tunnelUUID string, tokenHa
 	}
 	record := requestRecord{Scope: command.Scope, TunnelID: command.TunnelID, TokenHash: tokenHash, Channel: command.Channel,
 		CommandType: command.CommandType, ExpiresAt: command.ExpiresAt, Origin: command.Origin}
-	if err := b.requests.create(ctx, brokerKey(command.RequestID), record, maxRequestBindingBytes); err != nil {
+	if err := b.requests.create(ctx, brokerKey(command.RequestID), record); err != nil {
 		_ = message.Term()
-		if errors.Is(err, jetstream.ErrKeyExists) {
+		if errors.Is(err, errRequestBindingExists) {
 			return nil, nil
 		}
 		return nil, err

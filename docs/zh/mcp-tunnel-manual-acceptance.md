@@ -116,7 +116,7 @@ Private MCP 凭据写入 shell history、日志或文档。
 - 使用两个 channel 并传 limit=1，确认每次返回不超过一条，剩余命令仍能由下次 Poll 领取；传 limit=30 可返回超过旧服务端上限的命令。
 - Poll 已发出的有限拉取必须收束，不能因另一路先返回而丢弃已取命令；正常返回后没有持续预取。
 - MCP HTTP 调用方断开后，已入队命令仍可在 deadline 前被领取；响应因无人等待返回 404。队列过期命令不能执行。
-- 原请求在 OMA A、Poll 在 B、Response 在 C：通知和最终结果回到 A，Request KV 仅有绑定，结果交付不改变 KV revision。
+- 原请求在 OMA A、Poll 在 B、Response 在 C：通知和最终结果回到 A，Redis 仅保存不可变领取绑定，结果交付不修改记录、不续期。
 - 并发重复最终响应不覆盖或重复交付，A 本地标记到期后返回 404；A 退出后旧 Origin 不可达返回 503，不从 KV 恢复结果。
 - 本次不验收新的大响应方案；只验证已取消 Poll 累计大小截断，其他既有单消息和 Response 阈值留待下一轮。
 
@@ -239,7 +239,7 @@ go test ./internal/tunnels -run '^TestConnector' -count=1 -v
 
 ## 超过 NATS 上限的正文验收
 
-默认配置：`tunnel.max_stored_requests=256`、`tunnel.max_body_bytes=16777216`。每节点 Tunnel 存储预算 515 MiB，三副本约 1.51 GiB；Worker Stream 的预算不变。不要为通过验收提高 NATS `max_payload` 或存储容量。
+默认配置：`tunnel.max_body_bytes=16777216`，已删除 `max_stored_requests`。每节点 Tunnel Commands 存储预算固定 513 MiB，三副本约 1.50 GiB；Worker Stream 的预算不变。不要为通过验收提高 NATS `max_payload` 或存储容量。
 
 1. 先测失败：16 MiB+1 正文、对象不存在、长度/摘要不符、对象上传/读取失败、清理任务登记失败；错误沿用当前合同，不重投。错误 Response 绑定不能上传对象。
 2. 检查编码后完整 NATS 消息（包含命令去重 header）在上限前、恰好达到上限和超过上限的行为。前两者不访问存储，后者只发布引用，接收方恢复完整正文。
@@ -263,3 +263,20 @@ go test ./internal/tunnels -run 'TestTunnelPayloadRealStorageAndClient|TestOffic
 - Tunnel/config 定向测试与 Tunnel race 检查通过，覆盖 16 MiB 正文、NATS 完整消息边界、跨实例、读取失败、过期重复响应、三节点每节点 600 MiB 的预算准入。
 - `just test` 的全部 internal 包通过；`tests` 仅 `TestCodeSessionAskUserQuestionUsesCustomToolResult` 因缺少 `session.status_idle` 失败。在 `ca41d7a` 基线源码和独立数据库中重新复现相同失败，未修改该功能。
 - `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files` 通过。此次未执行真实 Claude/Managed Agent Sandbox 验收。
+
+### Redis 领取绑定与无请求数量准入验收
+
+1. 使用专用 Redis 8 运行 `TestRequestBindingsRedis8`；通过 `TEST_TUNNEL_REDIS_ADDR` 指定可短暂停顿的验收实例，不能使用共享开发 Redis。验证并发 NX、独立 TTL、读取不续期及暂停时失败。
+2. 验证不存在旧 Request KV，Commands 为 R3、MaxMsgs=-1、MaxBytes=537919488；超过 256 个排队命令、绑定和等待者仍可处理。
+3. 绑定缺失/过期为 404；Redis 故障为 503。领取写入失败不交付，不后台重投。已有成功领取的旧 token 在轮换后仍可完成响应。
+4. 设置真实存储与官方 client 验收所需环境变量，同时指定上述 Redis 地址；运行 `TestTunnelPayloadRealStorageAndClient` 与 `TestOfficialTunnelClientIntegration`，验证跨实例回传、普通正文、超 2 MiB 正文及 SSE 顺序。
+5. Redis 丢失绑定导致在途请求失败是已接受的行为；绑定读取不查询 PostgreSQL 当前凭据、不回退 NATS KV。检查 readiness 分别显示 tunnel_nats/tunnel_redis。
+6. 本次不迁移或自动删除旧资源；验收结束停止本次启动的 Redis、PostgreSQL、S3 和 connector，不停止已有开发服务。
+
+### 2026-09-24 Redis 领取绑定本地验证记录
+
+- 专用 Redis 8 验证 NX 并发唯一创建、TTL 不续期、独立过期、暂停超时，以及三个独立 Broker/Redis 客户端的领取与响应回传，均通过。
+- 未修改的 tunnel-client v0.0.14 完成 HTTP JSON、HTTP SSE、stdio、server-info v2 验收；真实 PostgreSQL、版本化 S3 与 Redis 8 完成 3 MiB 请求、响应和 SSE 通知，以及临时对象清理验收。Token 查询仍使用该集成测试原有 fixture，此结果不等同于真实 Managed Agent/Sandbox 验收。
+- Tunnel 包全量测试和定向并发 race 检查通过；300 个排队命令、绑定和等待者无数量准入，固定字节预算及无 Request KV 检查通过。
+- 全仓库 just test 的其他包通过，tests 包仍有 TestCodeSessionAskUserQuestionUsesCustomToolResult 缺少 session.status_idle 的失败；变更前验收日志也有同样失败，本次没有修改该逻辑。
+- lint、dead-code、duplicates、complexity、large-files 均通过；E2E build tag 编译通过。

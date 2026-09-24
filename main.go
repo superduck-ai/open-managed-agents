@@ -116,7 +116,7 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
-	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore))
+	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
 		return fmt.Errorf("open tunnel broker: %w", err)
 	}

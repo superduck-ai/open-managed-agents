@@ -253,9 +253,9 @@ func TestIngressDisconnectOnlyClosesLocalWaiter(t *testing.T) {
 	if err := <-done; err == nil {
 		t.Fatal("disconnect did not end waiting")
 	}
-	info, err := b.requests.stream.Info(t.Context())
-	if err != nil || info.State.Msgs != 0 {
-		t.Fatalf("disconnect wrote a request state: %+v %v", info, err)
+	count, err := b.requests.client.DBSize(t.Context()).Result()
+	if err != nil || count != 0 {
+		t.Fatalf("disconnect wrote a request state: %d %v", count, err)
 	}
 	commands := pollTestCommands(t, b, []ChannelDeclaration{{Name: "main"}}, 1)
 	if len(commands) != 1 {

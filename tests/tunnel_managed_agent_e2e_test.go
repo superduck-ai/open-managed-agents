@@ -34,6 +34,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
@@ -75,7 +76,12 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 	clearTestLLMProviders(t, app)
 	seedTestLLMProvider(t, app, "Isolated Claude tunnel acceptance", managedTunnelModelProxy(t), os.Getenv("ANTHROPIC_AUTH_TOKEN"), os.Getenv("TEST_CLAUDE_MODEL"))
 	connection := managedTunnelNATS(t)
-	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel, nil)
+	bindingRedis, err := redisclient.Open(t.Context(), cfg.Redis.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bindingRedis.Close() })
+	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
 		t.Fatal(err)
 	}

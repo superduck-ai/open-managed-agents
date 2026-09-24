@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -199,7 +200,7 @@ func TestTunnelPayloadCrossInstanceAndDuplicate(t *testing.T) {
 	cfg := brokerTestConfig()
 	cfg.MaxBodyBytes = 16 << 20
 	origin := testNATSBroker(t, cfg)
-	peer, err := newBroker(t.Context(), connectTunnelNATS(t, origin.connection.ConnectedUrl()), cfg, 1)
+	peer, err := newBroker(t.Context(), connectTunnelNATS(t, origin.connection.ConnectedUrl()), cfg, 1, origin.requests)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,9 +283,8 @@ func TestTunnelPayloadFailureIsNotRedelivered(t *testing.T) {
 func TestTunnelReducedStorageBudget(t *testing.T) {
 	servers := startTunnelNATSClusterWithStorage(t, 600<<20)
 	cfg := brokerTestConfig()
-	cfg.MaxStoredRequests = 256
 	cfg.MaxBodyBytes = 16 << 20
-	b, err := NewBroker(t.Context(), connectTunnelNATS(t, servers[0].ClientURL()), cfg, nil)
+	b, err := NewBroker(t.Context(), connectTunnelNATS(t, servers[0].ClientURL()), cfg, nil, testRequestBindings(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,15 +293,11 @@ func TestTunnelReducedStorageBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bindings, err := b.requests.stream.Info(t.Context())
-	if err != nil {
-		t.Fatal(err)
+	if commands.Config.MaxBytes != commandStorageBytes || commands.Config.MaxMsgSize != maxBrokerValueBytes || commands.Config.MaxMsgs != -1 || commands.Config.Replicas != 3 {
+		t.Fatal("command storage contract changed")
 	}
-	if commands.Config.MaxBytes != 513<<20 || bindings.Config.MaxBytes != 2<<20 || commands.Config.MaxMsgSize != maxBrokerValueBytes {
-		t.Fatal("storage budget changed")
-	}
-	if commands.Config.MaxMsgs != 256 || bindings.Config.MaxMsgs != 256 || commands.Config.Replicas != 3 || bindings.Config.Replicas != 3 {
-		t.Fatal("record limits changed")
+	if _, err := b.js.Stream(t.Context(), "KV_OMA_TUNNEL_REQUESTS_V1"); !errors.Is(err, jetstream.ErrStreamNotFound) {
+		t.Fatalf("unexpected request KV: %v", err)
 	}
 	// Demonstrate this server rejects the previous budget while accepting the new one.
 	old := commands.Config

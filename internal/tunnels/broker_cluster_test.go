@@ -15,7 +15,7 @@ import (
 
 func TestNATSBrokerRejectsInsufficientReplicas(t *testing.T) {
 	srv := startTunnelNATS(t, server.Options{})
-	if _, err := NewBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), nil); err == nil {
+	if _, err := NewBroker(t.Context(), connectTunnelNATS(t, srv.ClientURL()), brokerTestConfig(), nil, testRequestBindings(t)); err == nil {
 		t.Fatal("production broker accepted one node")
 	}
 }
@@ -26,10 +26,11 @@ func TestNATSBrokerClusterKeepsAcceptedResponseAfterLeaderLoss(t *testing.T) {
 	for _, srv := range servers {
 		urls = append(urls, srv.ClientURL())
 	}
+	bindings := testRequestBindings(t)
 	brokers := make([]*Broker, 2)
 	for i := range brokers {
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		broker, err := NewBroker(ctx, connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig(), nil)
+		broker, err := NewBroker(ctx, connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig(), nil, bindings)
 		cancel()
 		if err != nil {
 			t.Fatal(err)
@@ -55,7 +56,7 @@ func TestNATSBrokerClusterKeepsAcceptedResponseAfterLeaderLoss(t *testing.T) {
 	if err := brokers[1].SubmitResponse(t.Context(), "tunnel", testTokenHash(), testTerminalResponse(command.RequestID)); err != nil {
 		t.Fatal(err)
 	}
-	info, err := brokers[1].requests.stream.Info(t.Context())
+	info, err := brokers[1].commands.Info(t.Context())
 	if err != nil || info.Cluster == nil {
 		t.Fatalf("cluster info = %#v %v", info, err)
 	}
@@ -72,7 +73,7 @@ func TestNATSBrokerClusterKeepsAcceptedResponseAfterLeaderLoss(t *testing.T) {
 		}
 	}
 	if stopped == nil {
-		t.Fatal("request stream leader not found")
+		t.Fatal("command stream leader not found")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()

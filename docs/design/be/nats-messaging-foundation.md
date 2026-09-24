@@ -6,7 +6,7 @@
 preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一连接上的 JetStream。handler
 和业务 service 不建立独立连接池。
 
-MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue（共享 consumer，MaxDeliver=1），Request KV 只保存交付前创建的不可覆盖响应绑定。
+MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue（共享 consumer，MaxDeliver=1），不可覆盖响应绑定改由 Redis String key 保存，NATS 不再创建 Request KV。
 通知和最终响应正文均通过 Core NATS request-reply 直接交付原 OMA；不保存终态、不定时恢复，完成标记仅在原实例内存中保留。
 Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain；Broker 不依赖 Redis；Connector/Console 的在线展示使用共享 Redis 8 客户端，故障不影响请求转发。
 Control KV、token 状态同步、亲和路由和专属 River 清理队列已移除。
@@ -104,10 +104,10 @@ just generate
 go test ./internal/workerevents -count=1
 ```
 
-MCP Tunnel 的 stream/KV、2 MiB 节点 payload 要求、容量和故障合同详见 [MCP Tunnels](mcp-tunnels.md)。
+MCP Tunnel 的 Commands Stream、Redis 绑定、2 MiB 节点 payload 要求、容量和故障合同详见 [MCP Tunnels](mcp-tunnels.md)。
 
 ### Tunnel 超限正文与默认预算
 
 Tunnel 完整 NATS 消息（命令包含去重 header）超过 2 MiB 时才将正文暂存对象存储，队列/响应通道传引用；未超限保持内联。接收 OMA 恢复并校验完整正文，客户端协议不变。对象清理复用 PostgreSQL 任务，原 deadline 后 5 分钟开始删除所有版本。此阈值与 Worker 事件 32 KiB 外置阈值无关。
 
-Tunnel 默认 `max_stored_requests=256`：每节点 Commands 513 MiB、Request KV 2 MiB，R3 合计约 1.51 GiB。默认正文上限 16 MiB 不进入这两个存储预算公式。Worker Stream 仍为 10 GiB、R3，不调整 NATS 集群容量。显式配置优先，降低 Tunnel 默认预算不保证任意小磁盘都能运行完整应用。
+Tunnel 不设置请求数量准入，Commands 的 MaxMsgs=-1，固定每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB。删除 max_stored_requests，不新增容量配置；Redis 绑定不占 NATS 存储预算。默认正文上限 16 MiB 不改变命令预算。Worker Stream 仍为 10 GiB、R3，不调整 NATS 集群容量，也不保证任意小磁盘都能运行完整应用。

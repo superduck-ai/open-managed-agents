@@ -38,6 +38,7 @@ func runOfficialTunnelClientCase(t *testing.T, binary, transport string) {
 	t.Helper()
 	marker := fmt.Sprintf("tunnel-proof-%d", time.Now().UnixNano())
 	b := testNATSBroker(t, brokerTestConfig())
+	useRealIntegrationBindings(t, b)
 	if transport == "stdio" {
 		b.cfg.PresenceTTL = time.Second
 	}

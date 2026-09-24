@@ -129,6 +129,7 @@ func runLargeOfficialClient(t *testing.T, binary string, store *PayloadStore, st
 	cfg.MaxBodyBytes = 16 << 20
 	cfg.RequestTimeout = time.Minute
 	b := testNATSBroker(t, cfg)
+	useRealIntegrationBindings(t, b)
 	b.payloads = store
 	endpoint, controlURL, tunnelID := tunnelHTTPFixture(t, b)
 	text := strings.Repeat("x", 3<<20)

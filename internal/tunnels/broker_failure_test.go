@@ -166,7 +166,7 @@ func TestLocalCompletionReceiptExpiresAndDoesNotSurviveRestart(t *testing.T) {
 			waiter.Close()
 			if restart {
 				b.Close()
-				fresh, err := newBroker(t.Context(), b.connection, cfg, 1)
+				fresh, err := newBroker(t.Context(), b.connection, cfg, 1, b.requests)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -185,26 +185,5 @@ func TestLocalCompletionReceiptExpiresAndDoesNotSurviveRestart(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestResponseWaitNeverPollsRequestKV(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
-	waiter := testResponseWaiter(t, b, testQueuedCommand("no-kv-polling"))
-	reads, err := b.connection.SubscribeSync("$JS.API.STREAM.MSG.GET.KV_" + requestBucketName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reads.Unsubscribe()
-	if err := b.connection.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
-	defer cancel()
-	if _, err := waiter.Wait(ctx, nil); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatal(err)
-	}
-	if _, err := reads.NextMsg(20 * time.Millisecond); !errors.Is(err, nats.ErrTimeout) {
-		t.Fatalf("waiter queried request KV: %v", err)
 	}
 }

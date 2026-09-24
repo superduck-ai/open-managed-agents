@@ -42,7 +42,6 @@ type responseHub struct {
 	mu            sync.Mutex
 	waiters       map[string]*responseWaiter
 	receipts      map[string]responseReceipt
-	maxWaiters    int
 	bufferedBytes int
 	closed        bool
 }
@@ -60,7 +59,7 @@ type responseWaiter struct {
 	bytes         int
 }
 
-func newResponseHub(ctx context.Context, connection *nats.Conn, maxWaiters int) (*responseHub, error) {
+func newResponseHub(ctx context.Context, connection *nats.Conn) (*responseHub, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	id, err := randomOpaqueToken(24)
@@ -68,7 +67,7 @@ func newResponseHub(ctx context.Context, connection *nats.Conn, maxWaiters int) 
 		return nil, err
 	}
 	h := &responseHub{connection: connection, subject: "oma.tunnel.response.v1." + brokerKey(id),
-		waiters: make(map[string]*responseWaiter), receipts: make(map[string]responseReceipt), maxWaiters: maxWaiters}
+		waiters: make(map[string]*responseWaiter), receipts: make(map[string]responseReceipt)}
 	h.subscription, err = connection.Subscribe(h.subject, h.receive)
 	if err != nil {
 		return nil, err
@@ -173,9 +172,6 @@ func (b *Broker) subscribeResponse(ctx context.Context, requestID string, deadli
 		return nil, nats.ErrConnectionClosed
 	}
 	key := brokerKey(requestID)
-	if len(h.waiters) >= h.maxWaiters {
-		return nil, ErrQueueLimit
-	}
 	if h.waiters[key] != nil {
 		return nil, ErrResponseMismatch
 	}

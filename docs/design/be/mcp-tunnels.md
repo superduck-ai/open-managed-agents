@@ -191,7 +191,7 @@ display name、全局唯一 domain 和 active/archive 时间。external ID 在�
 - ciphertext、nonce、wrapped DEK 和 key metadata 复用 `internal/secrets` envelope encryption；
 - 每个 Tunnel 只能有一个未 retired、未 archived 的 active token；
 - token 轮换时立即清除旧版本的 envelope 字段，只保留 hash、version 与状态作为凭据历史；
-- retired token 不能发起新 Poll，但可凭 Request KV 中领取时绑定的 token 哈希完成在途请求。
+- retired token 不能发起新 Poll，但可凭 Redis 中领取时绑定的 token 哈希完成在途请求。
 
 `mcp_tunnel_certificates` 作为独立管理资源保存 `tcrt_<32 位小写十六进制>`、organization UUID、
 Tunnel UUID/展示 ID、原始 CA PEM、DER SHA-256 fingerprint、X.509 到期时间与 create/archive 时间。
@@ -209,7 +209,7 @@ sequenceDiagram
     participant A as 原 OMA
     participant Q as Commands
     participant B as Poll OMA
-    participant K as Request KV
+    participant K as Redis 领取绑定
     participant C as Response OMA
     A->>A: 注册本地等待者
     A->>Q: 命令入队，包含 Origin
@@ -232,9 +232,9 @@ Connector 在 deadline 前上线即可领取，始终无人领取则超时。调
 `MaxDeliver=1`；未 ACK、断连或 NAK 都不会使该 consumer 再次投递。consumer 无活动超过 request timeout 加一分钟才回收，
 避免在命令仍有效时自动重建而重新读取。运维不得在有在途命令时删除重建 consumer。
 
-入队时不创建 KV。领取后在 `OMA_TUNNEL_REQUESTS_V1` 中按 requestId 摘要一次性创建不可覆盖的绑定，
+入队时不访问 Redis。领取后在 Redis `oma:tunnel:request:v1:<requestId 摘要>` String key 中使用 `SET NX PX` 一次性创建不可覆盖的绑定，
 字段为对外 Tunnel ID、领取 token SHA-256、channel、命令类型、deadline、Origin 和正文清理所需的组织/workspace UUID。每条绑定最多 4 KiB；
-不保存重复 requestId、Tunnel UUID、明文 token、执行状态或响应正文。读取走 stream leader。
+不保存重复 requestId、Tunnel UUID、明文 token、执行状态或响应正文。每次 Response 使用 GET 读取；不查询 PostgreSQL 当前凭据。
 一次性创建是防止覆盖凭据的原子写入，不存在读取 revision、状态转换或冲突重试。
 绑定失败、结果不确定或 ACK 本地发送失败时不交付该命令；其他已成功绑定的命令仍可返回。
 普通 ACK 后才写 Poll HTTP，不等待 ACK 回执；ACK 只用于队列清理，不表示 connector 收到或工具执行成功。
@@ -245,7 +245,7 @@ Response 不查询 PostgreSQL 凭据；大正文暂存会写入现有对象清�
 原等待实例通过 deadline 拒绝新结果；缺少绑定表示未领取或记录已过期。
 
 通知和最终响应正文都通过 `oma.tunnel.response.v1.<进程随机摘要>` 定向 request-reply 发送到原 OMA。
-原 OMA 接纳后才确认；不再保存终态、发送空唤醒信号或定时查询 KV。Origin 不可达或回执超时返回 503，不后台重试。
+原 OMA 接纳后才确认；不再保存终态、发送空唤醒信号或定时查询 Redis。Origin 不可达或回执超时返回 503，不后台重试。
 每请求保留 16 条、2 MiB 的通知缓冲，全实例 64 MiB；慢 HTTP 写入仍占预算。
 最终响应使用独立本地槽位，不被通知条数阻塞，但计入全局字节预算。满载在接受前返回 429。
 最终响应前排空已接受通知，同一个请求仅接受一个最终响应。
@@ -255,11 +255,16 @@ Response 不查询 PostgreSQL 凭据；大正文暂存会写入现有对象清�
 deadline 后仅允许确认已有完成标记。等待者与标记均不存在返回 404；旧 Origin 因重启不可达返回 503。
 缺少 Bearer 为 401，格式错误为 400，绑定不符/未领取/过期未完成为 404，基础设施故障为 503。
 
-全局 `max_stored_requests` 默认 256，范围 `1..65536`；Commands 和 Request KV 各自以 MaxMsgs 限制存储条数，
-不再用同一个请求状态计数排队、执行和终态。命令保留原有全局字节预算；绑定按 4 KiB 加存储开销预留。
-绑定创建后保留 `request_timeout + tombstone_ttl`，读取和重复响应不续期，完成标记不会比绑定活得更久。
-默认命令预算为 `256 × (2 MiB + 4 KiB) = 513 MiB`，绑定预算为 `256 × (4 KiB + 4 KiB) = 2 MiB`；每节点合计 515 MiB，R3 合计约 1.51 GiB。预算不随 MCP 正文上限扩大。既有 Worker Stream 的 10 GiB 预算不变。
-所有 OMA 实例必须使用一致配置。
+Commands Stream 显式设置 `MaxMsgs=-1`，Redis 绑定和本地等待者也没有请求数量准入，不引入替代计数器或额度释放补偿。
+命令总字节预算固定为每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB；不再通过请求数推导，不新增容量配置。
+预算不随 MCP 正文上限扩大。既有 Worker Stream 的 10 GiB 预算不变。请求超时、ACK 和本地等待者关闭负责释放资源；TTL 不能限制突发流量的峰值内存。
+绑定创建后保留 `request_timeout + tombstone_ttl`（默认 7 分钟），读取、重复创建和重复响应均不续期，完成或取消也不主动删除。
+所有 OMA 实例必须使用一致的 Redis 和配置。Redis 数据丢失会使部分在途请求失败，不新增恢复、补投或 NATS KV 回退。
+绑定存储复用应用 Redis 客户端，与在线展示组件分开；每次操作最长 2 秒且受调用方 context 约束，不增加应用层重试。
+缺少 key 返回 404；连接、超时和解码故障返回 503。写入失败或结果不确定不交付该命令，其他成功绑定的命令仍可返回。
+在线展示写失败仍可忽略，领取绑定失败不可忽略。readiness 分别报告 `tunnel_nats` 和 `tunnel_redis`。
+部署应避免提前淘汰有效绑定，建议使用 `noeviction`；本次不自动修改共享 Redis 的配置、持久化或高可用拓扑。
+Redis 默认异步复制意味着故障切换可能丢失已确认绑定，不能等同于之前的 JetStream R3 存储保障。
 
 ### 超过 NATS 消息上限的正文
 
@@ -308,7 +313,7 @@ sequenceDiagram
     participant C as Connector
     participant H as Connector Handler
     participant DB as PostgreSQL
-    participant N as NATS Request KV
+    participant N as Redis 领取绑定
     C->>H: Poll + 旧 token
     H->>DB: 查询一次活动凭据
     DB-->>H: 身份与状态
@@ -325,7 +330,7 @@ sequenceDiagram
     H-->>C: 401
 ```
 
-MCP Tunnel 尚未正式上线，本次直接调整实现，沿用现有 NATS 资源名称，不涉及 PostgreSQL schema 变更。
+MCP Tunnel 尚未正式上线，本次直接调整实现，保留 Commands Stream 名称，停止创建 Request KV，不涉及 PostgreSQL schema 变更。
 
 ## 实时连接快照
 
@@ -398,7 +403,7 @@ Ingress 超限 body/header 返回 413，Connector response 格式或内容限制
 
 创建、轮换、归档和成功 probe 事件复用 `slog`、HTTP request ID 和现有 access log，记录 organization、workspace、
 Tunnel 与 actor 的安全标识。rotate 的 `reason` 不持久化也不记录。`/readyz` 同时检查 PostgreSQL 与
-Tunnel 的 NATS/JetStream stream（`tunnel_nats`）；`/healthz` 仅表示进程存活。Tunnel 结构化日志用于运维追踪。
+Tunnel 的 NATS/JetStream stream（`tunnel_nats`）及领取绑定 Redis（`tunnel_redis`）；`/healthz` 仅表示进程存活。Tunnel 结构化日志用于运维追踪。
 
 ## Console MCP 探测
 
@@ -423,7 +428,7 @@ Managed Agent Session 验证 sandbox → Runtime Gateway → TunnelInvoker → B
 | 范围           | 覆盖与边界                                                                                                                                                                     |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Broker 与通知  | 单次投递、不可覆盖绑定、客户端 limit、多 channel 有限拉取、本地取消、重复响应和通知背压                                                                                   |
-| 三副本故障     | 独立 Broker 连接验证绑定三副本、原实例已接收结果不依赖 KV 恢复、失去 quorum 后拒绝入队                                                                                        |
+| 三副本故障     | 独立 Broker 连接验证 Commands 三副本、原实例已接收结果不依赖存储恢复、失去 quorum 后拒绝入队                                                                                        |
 | 原版 Connector | `TestOfficialTunnelClientIntegration` 使用 DB 鉴权 fixture 和 Go MCP SDK，执行 HTTP JSON、HTTP SSE、stdio 工具调用，以及 v2 声明兼容；HTTP fixture 为无状态 MCP                    |
 | Claude 客户端  | `TestClaudeClientsTunnelIntegration` 分别运行 TypeScript/Python Claude Agent SDK 和 Claude Code CLI，每个客户端覆盖 HTTP JSON、HTTP SSE、stdio，以私有工具随机标记校验真实执行 |
 | Managed Agent  | `TestManagedAgentNATSTunnelE2E` 使用真实 DB、E2B Sandbox、Runtime Gateway、三副本 NATS 和原版 Connector，验证 `sse` Channel 的 HTTP 连接；文件对象存储为内存 fixture           |

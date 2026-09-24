@@ -10,6 +10,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"net/http"
 	"testing"
@@ -25,7 +26,12 @@ func TestTunnelProbePaginationThroughNATS(t *testing.T) {
 	cfg.Tunnel.PublicBaseURL = "https://oma.example"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("tunnel-probe-pages"))
 	t.Cleanup(app.close)
-	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel, nil)
+	bindingRedis, err := redisclient.Open(t.Context(), cfg.Redis.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bindingRedis.Close() })
+	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
 		t.Fatal(err)
 	}

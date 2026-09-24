@@ -90,6 +90,21 @@ func TestApplyRejectsInvalidOverrides(t *testing.T) {
 			wantError: "skills require the read tool",
 		},
 		{
+			name:      "replace tools without read",
+			overrides: Overrides{Tools: json.RawMessage(`[{"type":"mcp_toolset","mcp_server_name":"linear"}]`), MCPServers: json.RawMessage(`[{"name":"linear","type":"url","url":"https://mcp.linear.app/mcp"}]`)},
+			wantError: "skills require the read tool",
+		},
+		{
+			name:      "disable read with skills",
+			overrides: Overrides{Tools: json.RawMessage(`[{"type":"agent_toolset_20260401","configs":[{"name":"read","enabled":false}]}]`)},
+			wantError: "skills require the read tool",
+		},
+		{
+			name:      "default config disables read with skills",
+			overrides: Overrides{Tools: json.RawMessage(`[{"type":"agent_toolset_20260401","default_config":{"enabled":false}}]`)},
+			wantError: "skills require the read tool",
+		},
+		{
 			name:      "clear mcp servers while toolset remains",
 			overrides: Overrides{MCPServers: json.RawMessage(`[]`), Tools: json.RawMessage(`[{"type":"mcp_toolset","mcp_server_name":"linear"}]`)},
 			wantError: "mcp_toolset.mcp_server_name must reference an MCP server",
@@ -104,6 +119,69 @@ func TestApplyRejectsInvalidOverrides(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOverridesReplacesModel(t *testing.T) {
+	testCases := []struct {
+		name      string
+		overrides Overrides
+		want      bool
+	}{
+		{name: "omit", overrides: Overrides{System: json.RawMessage(`null`)}},
+		{name: "null", overrides: Overrides{Model: json.RawMessage(`null`)}},
+		{name: "replace", overrides: Overrides{Model: json.RawMessage(`{"id":"claude-sonnet-4-6"}`)}, want: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := testCase.overrides.ReplacesModel(); got != testCase.want {
+				t.Fatalf("ReplacesModel() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestApplyDoesNotRevalidateUntouchedSkillsAndTools(t *testing.T) {
+	system := "you are a researcher"
+	base := configWithSkillsOnly()
+	base.System = &system
+
+	got, err := Apply(base, Overrides{System: json.RawMessage(`null`)}, []string{"unrelated-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.System != nil {
+		t.Fatalf("system = %v, want nil", got.System)
+	}
+	if string(got.Model) != string(base.Model) {
+		t.Fatalf("model changed: %s", got.Model)
+	}
+	if string(got.Tools) != `[]` || string(got.Skills) != string(base.Skills) {
+		t.Fatalf("tools/skills changed: tools=%s skills=%s", got.Tools, got.Skills)
+	}
+}
+
+func TestApplyAllowsReadFromDefaultToolsetConfig(t *testing.T) {
+	base := configWithSkillsOnly()
+
+	t.Run("default toolset enables read", func(t *testing.T) {
+		got, err := Apply(base, Overrides{Tools: json.RawMessage(`[{"type":"agent_toolset_20260401"}]`)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(got.Tools), `"type":"agent_toolset_20260401"`) {
+			t.Fatalf("tools = %s", got.Tools)
+		}
+	})
+
+	t.Run("explicit read overrides disabled default", func(t *testing.T) {
+		got, err := Apply(base, Overrides{Tools: json.RawMessage(`[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read","enabled":true}]}]`)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(got.Tools), `"name":"read"`) {
+			t.Fatalf("tools = %s", got.Tools)
+		}
+	})
 }
 
 func TestApplyReplacesFieldsWithoutMerging(t *testing.T) {
@@ -140,9 +218,28 @@ func TestApplyReplacesFieldsWithoutMerging(t *testing.T) {
 
 func TestPatchSessionSnapshotRejectsFrozenFields(t *testing.T) {
 	snapshot := json.RawMessage(`{"id":"agent_1","type":"agent","version":1,"model":{"id":"claude-opus-4-6","speed":"standard"},"system":"hi","tools":[],"mcp_servers":[],"skills":[]}`)
-	_, err := PatchSessionSnapshot(snapshot, json.RawMessage(`{"model":{"id":"claude-sonnet-4-6"}}`))
-	if err == nil || !strings.Contains(err.Error(), "session agent updates may only replace tools and mcp_servers") {
-		t.Fatalf("PatchSessionSnapshot() error = %v", err)
+	testCases := []struct {
+		name string
+		raw  string
+	}{
+		{name: "type", raw: `{"type":"agent"}`},
+		{name: "id", raw: `{"id":"agent_2"}`},
+		{name: "version", raw: `{"version":2}`},
+		{name: "model", raw: `{"model":{"id":"claude-sonnet-4-6"}}`},
+		{name: "system", raw: `{"system":null}`},
+		{name: "skills", raw: `{"skills":[]}`},
+		{name: "name", raw: `{"name":"other"}`},
+		{name: "description", raw: `{"description":"other"}`},
+		{name: "metadata", raw: `{"metadata":{}}`},
+		{name: "multiagent", raw: `{"multiagent":null}`},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := PatchSessionSnapshot(snapshot, json.RawMessage(testCase.raw))
+			if err == nil || !strings.Contains(err.Error(), "session agent updates may only replace tools and mcp_servers") {
+				t.Fatalf("PatchSessionSnapshot() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -162,6 +259,28 @@ func TestPatchSessionSnapshotReplacesTools(t *testing.T) {
 	tools, _ := object["tools"].([]any)
 	if len(tools) != 0 {
 		t.Fatalf("tools = %#v", object["tools"])
+	}
+}
+
+func TestPatchSessionSnapshotRejectsToolsWithoutReadWhenSkillsRemain(t *testing.T) {
+	snapshot := json.RawMessage(`{"id":"agent_1","type":"agent","version":1,"model":{"id":"claude-opus-4-6","speed":"standard"},"system":null,"tools":[{"type":"agent_toolset_20260401"}],"mcp_servers":[],"skills":[{"type":"anthropic","skill_id":"xlsx","version":"latest"}]}`)
+	_, err := PatchSessionSnapshot(snapshot, json.RawMessage(`{"tools":[]}`))
+	if err == nil || !strings.Contains(err.Error(), "skills require the read tool") {
+		t.Fatalf("PatchSessionSnapshot() error = %v", err)
+	}
+}
+
+func TestPatchSessionSnapshotAllowsMCPServersWithoutRecheckingRead(t *testing.T) {
+	snapshot := json.RawMessage(`{"id":"agent_1","type":"agent","version":1,"model":{"id":"claude-opus-4-6","speed":"standard"},"system":null,"tools":[],"mcp_servers":[],"skills":[{"type":"anthropic","skill_id":"xlsx","version":"latest"}]}`)
+	got, err := PatchSessionSnapshot(snapshot, json.RawMessage(`{"mcp_servers":[{"name":"github","type":"url","url":"https://mcp.github.example/mcp"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"name":"github"`) {
+		t.Fatalf("snapshot = %s", got)
+	}
+	if !strings.Contains(string(got), `"skill_id":"xlsx"`) {
+		t.Fatalf("skills dropped: %s", got)
 	}
 }
 
@@ -192,5 +311,14 @@ func TestWriteAgentKeepsIdentity(t *testing.T) {
 	}
 	if string(got.Model) != string(cleared.Model) {
 		t.Fatalf("model = %s", got.Model)
+	}
+}
+
+func configWithSkillsOnly() Config {
+	return Config{
+		Model:      json.RawMessage(`{"id":"claude-opus-4-6","speed":"fast"}`),
+		Tools:      json.RawMessage(`[]`),
+		MCPServers: json.RawMessage(`[]`),
+		Skills:     json.RawMessage(`[{"type":"anthropic","skill_id":"xlsx","version":"latest"}]`),
 	}
 }

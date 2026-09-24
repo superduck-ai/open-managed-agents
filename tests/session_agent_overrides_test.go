@@ -69,11 +69,39 @@ func TestSessionAgentWithOverrides(t *testing.T) {
 		}`, "skills require the read tool")
 	})
 
+	t.Run("failure disable read while skills remain", func(t *testing.T) {
+		assertSessionCreateError(t, app, `{
+			"agent":{"type":"agent_with_overrides","id":`+quoteJSON(agent.ID)+`,"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"read","enabled":false}]}]},
+			"environment_id":`+quoteJSON(env.ID)+`
+		}`, "skills require the read tool")
+	})
+
+	t.Run("failure replace tools without read while skills remain", func(t *testing.T) {
+		assertSessionCreateError(t, app, `{
+			"agent":{"type":"agent_with_overrides","id":`+quoteJSON(agent.ID)+`,"tools":[{"type":"mcp_toolset","mcp_server_name":"linear"}]},
+			"environment_id":`+quoteJSON(env.ID)+`
+		}`, "skills require the read tool")
+	})
+
 	t.Run("failure clear mcp servers while toolset remains", func(t *testing.T) {
 		assertSessionCreateError(t, app, `{
 			"agent":{"type":"agent_with_overrides","id":`+quoteJSON(agent.ID)+`,"mcp_servers":[]},
 			"environment_id":`+quoteJSON(env.ID)+`
 		}`, "mcp_toolset.mcp_server_name must reference an MCP server")
+	})
+
+	t.Run("success clear system without rechecking inherited skills", func(t *testing.T) {
+		bare := createSkillsOnlyAgent(t, app, "session-overrides-skills-without-tools")
+		created := createSession(t, app, `{
+			"agent":{"type":"agent_with_overrides","id":`+quoteJSON(bare.ID)+`,"system":null},
+			"environment_id":`+quoteJSON(env.ID)+`
+		}`)
+		defer deleteSession(t, app, created.ID)
+		assertRawContains(t, created.Agent, `"skill_id":"xlsx"`)
+		snapshot := sessionAgentObject(t, created.Agent)
+		if snapshot["system"] != nil {
+			t.Fatalf("system = %#v, want nil", snapshot["system"])
+		}
 	})
 
 	t.Run("success replace model and clear system on pinned version", func(t *testing.T) {
@@ -122,6 +150,19 @@ func TestSessionAgentWithOverrides(t *testing.T) {
 		if retrieved.System == nil || *retrieved.System != "you are version two" {
 			t.Fatalf("agent system = %v", retrieved.System)
 		}
+
+		pinned := retrieveAgent(t, app, agent.ID, "version=1")
+		if pinned.Version != 1 {
+			t.Fatalf("pinned version = %d, want 1", pinned.Version)
+		}
+		assertRawContains(t, pinned.Model, `"id":"claude-opus-4-6"`)
+		assertRawContains(t, pinned.Model, `"speed":"fast"`)
+		if pinned.System == nil || *pinned.System != "you are a researcher" {
+			t.Fatalf("pinned system = %v", pinned.System)
+		}
+		assertRawContains(t, pinned.Skills, `"skill_id":"xlsx"`)
+		assertRawContains(t, pinned.Tools, `"name":"read"`)
+		assertRawContains(t, pinned.MCPServers, `"name":"linear"`)
 	})
 
 	t.Run("success idle update replaces tools and mcp servers", func(t *testing.T) {
@@ -139,6 +180,9 @@ func TestSessionAgentWithOverrides(t *testing.T) {
 		assertSessionUpdateError(t, app, created.ID, `{
 			"agent":{"mcp_servers":[],"tools":[{"type":"mcp_toolset","mcp_server_name":"linear"}]}
 		}`, "mcp_toolset.mcp_server_name must reference an MCP server")
+		assertSessionUpdateError(t, app, created.ID, `{
+			"agent":{"tools":[{"type":"mcp_toolset","mcp_server_name":"linear"}]}
+		}`, "skills require the read tool")
 
 		updatedSession := updateSession(t, app, created.ID, `{
 			"agent":{
@@ -153,6 +197,28 @@ func TestSessionAgentWithOverrides(t *testing.T) {
 		assertRawContains(t, updatedSession.Agent, `"id":"claude-opus-4-6"`)
 		assertRawContains(t, updatedSession.Agent, `"you are version two"`)
 		assertRawNotContains(t, updatedSession.Agent, `"mcp_server_name":"linear"`)
+
+		threads := listSessionThreads(t, app, created.ID, defaultTestKey)
+		if len(threads.Data) != 1 || threads.Data[0].ParentThreadID != nil {
+			t.Fatalf("primary thread = %+v", threads.Data)
+		}
+		assertRawContains(t, threads.Data[0].Agent, `"mcp_server_name":"github"`)
+		assertRawNotContains(t, threads.Data[0].Agent, `"mcp_server_name":"linear"`)
+	})
+
+	t.Run("success idle update mcp servers without rechecking inherited tools", func(t *testing.T) {
+		bare := createSkillsOnlyAgent(t, app, "session-overrides-idle-mcp-only")
+		created := createSession(t, app, `{
+			"agent":{"type":"agent","id":`+quoteJSON(bare.ID)+`},
+			"environment_id":`+quoteJSON(env.ID)+`
+		}`)
+		defer deleteSession(t, app, created.ID)
+
+		updatedSession := updateSession(t, app, created.ID, `{
+			"agent":{"mcp_servers":[{"name":"github","type":"url","url":"https://mcp.github.example/mcp"}]}
+		}`)
+		assertRawContains(t, updatedSession.Agent, `"name":"github"`)
+		assertRawContains(t, updatedSession.Agent, `"skill_id":"xlsx"`)
 	})
 }
 
@@ -189,4 +255,15 @@ func sessionAgentObject(t *testing.T, raw json.RawMessage) map[string]any {
 	var object map[string]any
 	decodeRawJSON(t, raw, &object)
 	return object
+}
+
+func createSkillsOnlyAgent(t *testing.T, app *testApp, name string) agentAPIResponse {
+	t.Helper()
+	agent := createAgent(t, app, `{
+		"model":"claude-opus-4-6",
+		"name":`+quoteJSON(name)+`,
+		"skills":[{"type":"anthropic","skill_id":"xlsx","version":"latest"}]
+	}`)
+	t.Cleanup(func() { cleanupAgentRows(t, app.pool, agent.ID) })
+	return agent
 }

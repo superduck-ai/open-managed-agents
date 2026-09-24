@@ -13,7 +13,7 @@ OMA 的实现边界。
 - 单次 Session 可以覆盖 Agent 的 `model`、`system`、`tools`、`mcp_servers`、`skills`，
   而不创建新的 Agent 版本。
 - 覆盖是整字段替换，不是 merge。省略继承，`null` / `[]` 清空，有值则整份替换。
-- `model` 不可清空。`skills` 非空时不能清空 `tools`。覆盖 `mcp_servers` 后，有效
+- `model` 不可清空。改了 `tools` 或 `skills` 且有效 `skills` 非空时，必须有 enabled 的 `read`。覆盖 `mcp_servers` 后，有效
   `tools` 里的 `mcp_toolset` 必须仍能引用服务器。
 - 覆盖只影响当前 Session。Agent 资源本身不变。响应里的 `agent.id` / `agent.version`
   仍指向被覆盖的那一版 Agent。
@@ -49,8 +49,13 @@ Agent 与 Session 共用 `internal/agentconfig`：
 - `NormalizeModel` / `NormalizeMCPServers` / `NormalizeSkills` / `NormalizeTools`
   继续承担 Agents 创建与更新的同一套字段校验。
 - `ParseSessionAgent` 解析 Session 的三元 union，并拒绝在 `type: "agent"` 上夹带覆盖字段。
-- `Apply` 按三态规则把覆盖应用到一份 Config。
+- `Apply` 按三态规则把覆盖应用到一份 Config。只校验被改过的字段，以及这些改动引发的耦合：
+  - 改了 `mcp_servers` 时，有效 `tools` 里的 `mcp_toolset` 必须仍能引用服务器。
+  - 改了 `tools` 或 `skills`，且有效 `skills` 非空时，按 CMA 要求必须有 enabled 的 `read`：存在 `agent_toolset_20260401`，未写 `read` 配置则跟随 `default_config.enabled`（默认 true）；显式 `read.enabled: false` 或把 default 关掉且未打开 `read` 则拒绝。
+- 没改 `model` 时不拉工作区模型目录，也不因模型目录不可用而失败。
 - `PatchSessionSnapshot` 只接受 `tools` / `mcp_servers`，再走同一套 `Apply`。
+
+未改的 `tools`/`skills` 不重新拒绝 Agent 创建时就已经合法的组合（例如 skills 非空且 tools 为空）。
 
 Session 覆盖 `model` 时会核对当前 workspace 已配置的模型 ID。未传 `speed` 时默认
 `standard`，对应 CMA 文档中 “model override 不继承 effort、回落到模型默认” 的语义。
@@ -72,11 +77,11 @@ OMA 没有 `effort` 或 `inference_geo` 字段。
 - 在 `type: "agent"` 上携带 `model` / `system` / `tools` / `mcp_servers` / `skills`
   返回 400。
 - Deployment `resolveAgent` 继续要求 `type: "agent"`，拒绝 `agent_with_overrides`。
-- Idle 更新仍只改 Session snapshot；这与现有 `UpdateSession` 路径一致。
+- Idle 更新仍只写 `sessions.agent_snapshot`。Primary Thread 的 `agent` 在列出和读取时返回这份 Session Agent；子线程继续读自己的 `agent_snapshot`。
 
 ## 测试计划
 
-- `internal/agentconfig`：union 解析失败/成功、Apply 拒绝非法覆盖、整字段替换、
-  idle patch 拒绝冻结字段、WriteAgent 保留身份。
+- `internal/agentconfig`：union 解析失败/成功、Apply 拒绝非法覆盖、未改字段不重验 inherited 组合与模型目录、read 按 CMA 默认开启语义、整字段替换、
+  idle patch 拒绝身份字段与 model/system/skills、idle 只改 mcp_servers 时不重验 read、WriteAgent 保留身份。
 - `tests/session_agent_overrides_test.go`：创建失败场景先于成功场景；成功路径验证
-  snapshot 写入、thread 同步、Agent 资源未被修改；idle 更新只允许 tools/mcp_servers。
+  snapshot 写入、thread 在创建时拷贝同一份、被覆盖的那一版 Agent 未被修改；idle 更新只允许 tools/mcp_servers，且 Primary Thread 的读取结果跟着 Session Agent 走。

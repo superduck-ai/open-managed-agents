@@ -36,7 +36,10 @@ func (d *DB) UpdateEnvironmentTx(ctx context.Context, tx *yourbatis.Tx, env Envi
 // Provider requests run outside this transaction.
 func (d *DB) LockEnvironmentByUUIDTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, environmentUUID string) (Environment, error) {
 	row, err := NewEnvironmentMapper(tx).LockByUUID(ctx, workspaceUUID, environmentUUID)
-	return row.environment(), mapNoRows(err)
+	if err != nil {
+		return Environment{}, mapNoRows(err)
+	}
+	return row.environment(), nil
 }
 
 func (d *DB) ResolveEnvironmentPrebuildTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, environmentUUID string, jobID int64, template string) error {

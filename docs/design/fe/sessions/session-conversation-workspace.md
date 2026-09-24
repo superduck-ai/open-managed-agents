@@ -6,6 +6,8 @@ Session 详情页同时承担继续对话和检查运行上下文两个职责。
 
 本页面不再使用旧版 `Events / Resources / Agent / Environment / Credentials` 页面级页签。主界面固定由左侧会话转录和右侧 Session Inspector 组成，用户无需离开对话即可查看上下文。
 
+Sessions 列表点击「创建会话」并提交成功后，直接进入刚创建的 Session 详情。地址与点击该行名称相同：`/workspaces/{workspaceId}/sessions/{sessionId}`。创建失败时留在列表和对话框里显示错误；编辑已有 Session 仍停在列表。这次只改变创建成功后的导航，不改变列表分页或侧边栏折叠。
+
 ## 页面结构
 
 宽屏标题区将名称、状态、Agent、Environment、Vault、耗时、费用和更新时间放在同一摘要行；除状态外，摘要使用点分隔的轻量文本元信息，不使用连续描边 Badge。操作菜单位于右侧。较窄宽度按下述降级规则换成标题行与元信息行。摘要下方依次是转录搜索、线程时间轴和 Viewer；主栏固定展示转录，不提供事件类型筛选或 Debug 视图切换。

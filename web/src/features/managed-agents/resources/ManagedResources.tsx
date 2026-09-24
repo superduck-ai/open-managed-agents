@@ -1,6 +1,6 @@
 import { useI18n } from '../../../shared/i18n';
 import { Bot, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { AgentDetailPage, AgentsResourcePage } from '../agents/AgentsResourcePage';
 import { CompactChip, StatusPill } from '../components/common';
 import { SessionDetailPage } from '../sessions/SessionDetailPage';
@@ -165,6 +165,19 @@ export const resourceConfigs: Record<
   },
 };
 
+function useWindowPathname(enabled: boolean) {
+  const [pathname, setPathname] = useState(currentPathname);
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const syncPathname = () => setPathname(currentPathname());
+    window.addEventListener('popstate', syncPathname);
+    return () => window.removeEventListener('popstate', syncPathname);
+  }, [enabled]);
+  return pathname;
+}
+
 export function ManagedResourcePage({
   config,
   routeWorkspaceId,
@@ -172,9 +185,11 @@ export function ManagedResourcePage({
   config: ResourceConfig;
   routeWorkspaceId?: string;
 }) {
+  const trackedPathname = useWindowPathname(config.section === 'sessions');
+  const pathname = config.section === 'sessions' ? trackedPathname : currentPathname();
   if (config.section !== 'agents') {
     const entityConfig = config as ResourceConfig & { section: ManagedEntitySection };
-    const detailId = managedEntityIdFromPath(entityConfig.section);
+    const detailId = managedEntityIdFromPath(entityConfig.section, pathname);
     if (detailId) {
       if (entityConfig.section === 'sessions') {
         return <SessionDetailPage config={entityConfig} sessionId={detailId} />;
@@ -184,7 +199,7 @@ export function ManagedResourcePage({
     return <ManagedEntitiesPage config={entityConfig} />;
   }
 
-  const agentId = managedAgentIdFromPath(currentPathname());
+  const agentId = managedAgentIdFromPath(pathname);
   if (agentId) {
     return <AgentDetailPage agentId={agentId} routeWorkspaceId={routeWorkspaceId} />;
   }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"slices"
 	"time"
@@ -93,7 +94,24 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if sessionStatus == "running" || sessionStatus == "rescheduling" {
 		return []SessionEvent{sessionEvent, threadEvent}, nil
 	}
+	if sessionStatus == "idle" {
+		usage := SessionEvent{
+			UUID: uuid.NewV4().String(), ExternalID: derivedStatusEventID(source.ExternalID, "session.usage"),
+			EventType: "session.usage", CreatedAt: source.CreatedAt, ProcessedAt: source.ProcessedAt,
+		}
+		return []SessionEvent{threadEvent, usage, sessionEvent}, nil
+	}
 	return []SessionEvent{threadEvent, sessionEvent}, nil
+}
+
+// The usage snapshot is cumulative, so it is rendered from the usage read under the Session lock.
+func sessionUsagePayload(event SessionEvent, usage json.RawMessage) (json.RawMessage, error) {
+	if len(usage) == 0 {
+		usage = json.RawMessage(`{}`)
+	}
+	return jsonv2.Marshal(map[string]any{
+		"id": event.ExternalID, "type": event.EventType, "processed_at": event.ProcessedAt, "usage": usage, "budget": nil,
+	})
 }
 
 func sessionStatusAfterThread(threads []sessionThreadRow, threadID, status string) string {
@@ -185,6 +203,17 @@ func shouldWriteSessionStatus(ctx context.Context, executor yourbatis.Executor, 
 	if event.EventType == "session.deleted" {
 		return true, nil
 	}
+	if event.EventType == "session.usage" {
+		// Usage closes a turn: skip repeated idle reports and idles while another thread still runs.
+		if session.Status == "idle" {
+			return false, nil
+		}
+		threads, err := NewSessionThreadMapper(executor).List(ctx, session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return false, err
+		}
+		return !slices.ContainsFunc(threads, func(t sessionThreadRow) bool { return t.Status == "running" || t.Status == "rescheduling" }), nil
+	}
 	status, isThread := maevents.ThreadStatus(event.EventType)
 	current, threadID := session.Status, ""
 	if isThread {
@@ -247,6 +276,13 @@ func shouldWriteSessionStatus(ctx context.Context, executor yourbatis.Executor, 
 // applySessionEventState runs only for newly inserted facts under the session lock.
 func applySessionEventState(ctx context.Context, executor yourbatis.Executor, session *Session, primaryID string, event SessionEvent) error {
 	mapper := NewSessionMapper(executor)
+	if event.UsageIncrement != nil {
+		row, err := mapper.AddUsage(ctx, session.WorkspaceUUID, session.UUID, *event.ThreadUUID, *event.UsageIncrement)
+		if err != nil {
+			return err
+		}
+		session.Usage = row.Usage
+	}
 	if status, ok := maevents.ThreadStatus(event.EventType); ok {
 		threadID := event.StatusThreadID
 		if threadID == "" {

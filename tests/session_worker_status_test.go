@@ -176,12 +176,14 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	}
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch,
+		`{"type":"system","uuid":"init","subtype":"init","apiKeySource":"private"}`,
+		`{"type":"system","uuid":"hook","subtype":"hook_response","stdout":"private"}`,
 		`{"type":"assistant","uuid":"answer","message":{"content":"Hello"}}`,
 		`{"type":"result","uuid":"result","is_error":false,"result":"private"}`,
 		`{"type":"system.message","uuid":"context","content":[{"type":"text","text":"Public context"}]}`,
 	))
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
-	want := []string{"session.status_running", "session.thread_status_running", "user.message", "user.message", "agent.message", "system.message", "session.thread_status_idle", "session.status_idle"}
+	want := []string{"session.status_running", "session.thread_status_running", "user.message", "user.message", "agent.message", "system.message", "session.thread_status_idle", "session.usage", "session.status_idle"}
 	for scanner.Scan() {
 		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
 		if !ok {
@@ -404,6 +406,22 @@ func TestSessionWorkerIdleHasSingleSource(t *testing.T) {
 			if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; status != "idle" {
 				t.Fatalf("worker idle projected status=%s", status)
 			}
+			if order == "worker without result" {
+				return
+			}
+			diagnostics := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=system.message", defaultTestKey)
+			if len(diagnostics.Data) != 0 {
+				t.Fatal("result leaked as system.message")
+			}
+			failures := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=session.error", defaultTestKey)
+			wantFailures := 0
+			if order == "failed result" {
+				wantFailures = 1
+			}
+			if len(failures.Data) != wantFailures {
+				t.Fatalf("error events=%d want %d", len(failures.Data), wantFailures)
+			}
+
 		})
 	}
 }

@@ -113,7 +113,7 @@ func publicPayloadsFromWorkerEvent(codeSessionID string, event db.CodeSessionEve
 	}
 	payloads := make([]json.RawMessage, 0, len(candidates))
 	for _, candidate := range candidates {
-		payload, err := normalizePublicWorkerPayload(codeSessionID, event, candidate.payload, candidate.seedSuffix, candidate.timeOffset)
+		payload, err := normalizePublicWorkerPayload(codeSessionID, event, candidate.payload, candidate.seedSuffix)
 		if err != nil {
 			return nil, false, err
 		}
@@ -125,7 +125,6 @@ func publicPayloadsFromWorkerEvent(codeSessionID string, event db.CodeSessionEve
 type publicPayloadCandidate struct {
 	payload    map[string]any
 	seedSuffix string
-	timeOffset time.Duration
 }
 
 func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeSessionEvent, raw json.RawMessage) ([]publicPayloadCandidate, bool, error) {
@@ -158,7 +157,18 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, false, fmt.Errorf("%w: invalid result payload: %w", ErrProtocol, err)
 		}
-		return resultPublicPayloadCandidates(codeSessionID, event, object, payload), true, nil
+		// Results summarize a turn, not a model request or a state transition.
+		if !payload.IsError {
+			return nil, false, nil
+		}
+		return []publicPayloadCandidate{{payload: map[string]any{
+			"type": "session.error",
+			"error": map[string]any{
+				"type":         "unknown_error",
+				"message":      workerResultErrorMessage(payload.Subtype),
+				"retry_status": map[string]any{"type": "exhausted"},
+			},
+		}}}, true, nil
 	default:
 		if !maevents.IsWorkerOutputEvent(event.EventType) && !maevents.IsStreamDelta(event.EventType) {
 			return nil, false, nil
@@ -194,7 +204,7 @@ func publicPayloadsFromInternalSubagentEvent(codeSessionID string, event db.Code
 	}
 	payloads := make([]json.RawMessage, 0, len(candidates))
 	for _, candidate := range candidates {
-		payload, err := normalizePublicInternalSubagentPayload(codeSessionID, event, threadID, candidate.payload, candidate.seedSuffix, candidate.timeOffset)
+		payload, err := normalizePublicInternalSubagentPayload(codeSessionID, event, threadID, candidate.payload, candidate.seedSuffix)
 		if err != nil {
 			return nil, err
 		}
@@ -217,14 +227,12 @@ func publicPayloadCandidatesFromInternalSubagentEvent(codeSessionID string, raw 
 			return nil, fmt.Errorf("%w: invalid user payload: %w", ErrProtocol, err)
 		}
 		return internalSubagentUserPayloadCandidates(object, payload), nil
-	case "system":
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}, nil
 	default:
 		return nil, nil
 	}
 }
 
-func normalizePublicInternalSubagentPayload(codeSessionID string, event db.CodeSessionInternalEvent, threadID string, payload map[string]any, seedSuffix string, timeOffset time.Duration) (json.RawMessage, error) {
+func normalizePublicInternalSubagentPayload(codeSessionID string, event db.CodeSessionInternalEvent, threadID string, payload map[string]any, seedSuffix string) (json.RawMessage, error) {
 	if payload == nil {
 		payload = map[string]any{}
 	}
@@ -256,12 +264,9 @@ func normalizePublicInternalSubagentPayload(codeSessionID string, event db.CodeS
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	createdAt = createdAt.Add(timeOffset)
 	processedAt := timeFromString(stringField(payload, "processed_at"))
 	if processedAt.IsZero() {
 		processedAt = createdAt
-	} else {
-		processedAt = processedAt.Add(timeOffset)
 	}
 	payload["created_at"] = formatTime(createdAt)
 	payload["processed_at"] = formatTime(processedAt)
@@ -276,7 +281,7 @@ func normalizePublicInternalSubagentPayload(codeSessionID string, event db.CodeS
 	return marshalRaw(payload)
 }
 
-func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEvent, payload map[string]any, seedSuffix string, timeOffset time.Duration) (json.RawMessage, error) {
+func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEvent, payload map[string]any, seedSuffix string) (json.RawMessage, error) {
 	if payload == nil {
 		payload = map[string]any{}
 	}
@@ -297,12 +302,9 @@ func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEven
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	createdAt = createdAt.Add(timeOffset)
 	processedAt := timeFromString(stringField(payload, "processed_at"))
 	if processedAt.IsZero() {
 		processedAt = createdAt
-	} else {
-		processedAt = processedAt.Add(timeOffset)
 	}
 	payload["created_at"] = formatTime(createdAt)
 	payload["processed_at"] = formatTime(processedAt)
@@ -386,71 +388,14 @@ func publicPayloadWithType(object map[string]any, eventType string) map[string]a
 	return payload
 }
 
-func resultPublicPayloadCandidates(codeSessionID string, event db.CodeSessionEvent, object map[string]any, schema workerResultOutputPayload) []publicPayloadCandidate {
-	candidates := make([]publicPayloadCandidate, 0, 3)
-	modelUsage := firstNonNil(decodeWorkerOutputValue(schema.ModelUsageAlt), decodeWorkerOutputValue(schema.ModelUsage))
-	usage := decodeWorkerOutputValue(schema.Usage)
-	durationMs := schema.DurationAPIMs
-	if durationMs <= 0 {
-		durationMs = schema.DurationMs
-	}
-	duration := time.Duration(durationMs * float64(time.Millisecond))
-	if modelUsage != nil || usage != nil || duration > 0 {
-		seed := firstNonEmpty(event.IdempotencyKey, event.PayloadHash, event.ExternalID)
-		startID := ""
-		if seed != "" {
-			startID = stablePublicEventID(codeSessionID, seed+"\x00result:model_request_start")
-		}
-		model := firstNonEmpty(schema.Model, firstModelName(modelUsage))
-		start := publicPayloadWithType(object, "span.model_request_start")
-		delete(start, "result")
-		delete(start, "usage")
-		delete(start, "modelUsage")
-		delete(start, "model_usage")
-		if startID != "" {
-			start["id"] = startID
-		}
-		if model != "" {
-			start["model"] = model
-		}
-		startOffset := -duration
-		if startOffset == 0 {
-			startOffset = -time.Millisecond
-		}
-		candidates = append(candidates, publicPayloadCandidate{
-			payload:    start,
-			seedSuffix: "result:model_request_start",
-			timeOffset: startOffset,
-		})
-
-		end := publicPayloadWithType(object, "span.model_request_end")
-		delete(end, "result")
-		delete(end, "modelUsage")
-		if seed != "" {
-			end["id"] = stablePublicEventID(codeSessionID, seed+"\x00result:model_request_end")
-		}
-		if startID != "" && stringField(end, "model_request_start_id") == "" {
-			end["model_request_start_id"] = startID
-		}
-		if model != "" {
-			end["model"] = model
-		}
-		if modelUsage != nil {
-			end["model_usage"] = modelUsage
-		}
-		if usage != nil {
-			end["usage"] = usage
-		}
-		candidates = append(candidates, publicPayloadCandidate{
-			payload:    end,
-			seedSuffix: "result:model_request_end",
-		})
-	}
-	return candidates
-}
-
 func assistantPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
 	delete(object, "content_block_index")
+	if schema.ParentToolUseID != "" {
+		object["_owner_session_thread_id"] = maevents.ClaudeTaskThreadID(codeSessionID, schema.ParentToolUseID)
+	}
+	if strings.HasPrefix(schema.RequestID, "sevt_") {
+		object["model_request_start_id"] = schema.RequestID
+	}
 	content := publicContentBlocks(workerOutputContent(schema.Content, schema.Message.Content))
 	blocks, ok := content.([]any)
 	if !ok || len(blocks) == 0 {
@@ -472,7 +417,6 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 			candidates = append(candidates, publicPayloadCandidate{
 				payload:    payload,
 				seedSuffix: fmt.Sprintf("content:%d", index),
-				timeOffset: time.Duration(index) * time.Millisecond,
 			})
 			continue
 		}
@@ -482,17 +426,20 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 		}
 		eventType := "agent.message"
 		switch blockType {
-		case "thinking":
+		case "thinking", "redacted_thinking":
 			eventType = "agent.thinking"
 		}
 		payload := publicPayloadWithSingleContentBlock(object, eventType, block)
+		if eventType == "agent.thinking" {
+			delete(payload, "content")
+			delete(payload, "message")
+		}
 		if schema.Message.ID != "" && (eventType == "agent.message" || eventType == "agent.thinking") {
 			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
 		}
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    payload,
 			seedSuffix: fmt.Sprintf("content:%d:%s:%s", index, blockType, stringField(block, "id")),
-			timeOffset: time.Duration(index) * time.Millisecond,
 		})
 	}
 	return candidates
@@ -550,7 +497,6 @@ func userPublicPayloadCandidates(codeSessionID string, object map[string]any, sc
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    payload,
 			seedSuffix: fmt.Sprintf("user_tool_result:%d:%s", index, providerToolUseID),
-			timeOffset: time.Duration(index) * time.Millisecond,
 		})
 	}
 	return candidates
@@ -570,10 +516,16 @@ func internalSubagentUserPayloadCandidates(object map[string]any, schema workerU
 
 func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerSystemOutputPayload) []publicPayloadCandidate {
 	switch schema.Subtype {
+	case "compact_boundary":
+		payload := map[string]any{"type": "agent.thread_context_compacted"}
+		if parentID := stringField(object, "parent_tool_use_id"); parentID != "" {
+			payload["_owner_session_thread_id"] = maevents.ClaudeTaskThreadID(codeSessionID, parentID)
+		}
+		return []publicPayloadCandidate{{payload: payload}}
 	case "task_started":
 		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
 		if threadID == "" {
-			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
+			return nil
 		}
 		agentName := firstNonEmpty(schema.Description, schema.TaskType, "subagent")
 		content := claudeTaskContentFromFields(schema.Prompt, schema.Summary)
@@ -597,13 +549,13 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 		}
 		return []publicPayloadCandidate{
 			{payload: created, seedSuffix: "task_started:thread_created:" + threadID},
-			{payload: running, seedSuffix: "task_started:thread_running:" + threadID, timeOffset: time.Millisecond},
-			{payload: sent, seedSuffix: "task_started:message_sent:" + threadID, timeOffset: 2 * time.Millisecond},
+			{payload: running, seedSuffix: "task_started:thread_running:" + threadID},
+			{payload: sent, seedSuffix: "task_started:message_sent:" + threadID},
 		}
 	case "task_notification":
 		threadID := claudeTaskThreadIDFromFields(codeSessionID, schema.ToolUseID, schema.TaskID)
 		if threadID == "" {
-			return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
+			return nil
 		}
 		statusEventType := "session.thread_status_idle"
 		if status := strings.ToLower(schema.Status); status == "failed" || status == "error" || status == "terminated" {
@@ -613,13 +565,13 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 		status["session_thread_id"] = threadID
 		status["task_id"] = schema.TaskID
 		status["tool_use_id"] = schema.ToolUseID
-		status["stop_reason"] = map[string]any{
-			"type":   firstNonEmpty(schema.Status, "completed"),
-			"detail": schema.Summary,
+		status["stop_reason"] = map[string]any{"type": "end_turn"}
+		if statusEventType == "session.thread_status_terminated" {
+			delete(status, "stop_reason")
 		}
 		return []publicPayloadCandidate{{payload: status, seedSuffix: "task_notification:thread_status:" + threadID}}
 	default:
-		return []publicPayloadCandidate{{payload: publicPayloadWithType(object, "system.message")}}
+		return nil
 	}
 }
 
@@ -788,31 +740,6 @@ func publicContentBlocks(value any) any {
 	default:
 		return value
 	}
-}
-
-func firstNonNil(values ...any) any {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-	return nil
-}
-
-func firstModelName(value any) string {
-	usage, ok := value.(map[string]any)
-	if !ok {
-		return ""
-	}
-	if model := stringField(usage, "model"); model != "" {
-		return model
-	}
-	for key := range usage {
-		if strings.TrimSpace(key) != "" {
-			return strings.TrimSpace(key)
-		}
-	}
-	return ""
 }
 
 func cloneMap(input map[string]any) map[string]any {

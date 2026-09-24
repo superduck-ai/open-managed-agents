@@ -43,9 +43,12 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	}
 	var streamEvents []db.SessionEvent
 	var events []db.SessionEvent
+	var hasModelRequest bool
 	now := time.Now().UTC()
 	for _, raw := range payloads {
 		eventType := rawSessionEventType(raw)
+		isModelRequest := eventType == "span.model_request_start" || eventType == "span.model_request_end"
+		hasModelRequest = hasModelRequest || isModelRequest
 		if maevents.IsStreamDelta(eventType) {
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
 			if err != nil {
@@ -71,7 +74,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	}
 	created, err := h.eventPayloads.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events)
 	if err != nil {
-		if errors.Is(err, db.ErrInvalidState) {
+		if errors.Is(err, db.ErrInvalidState) && !hasModelRequest {
 			return nil
 		}
 		return err

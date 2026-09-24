@@ -53,7 +53,7 @@ type environmentPageMapperParams struct {
 }
 
 type EnvironmentMapper interface {
-	LockByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (environmentMapperRow, error)
+	LockByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (environmentMapperRow, bool, error)
 	ResolvePrebuild(ctx context.Context, workspaceUUID, environmentUUID string, jobID int64, template string) (int64, error)
 	Insert(ctx context.Context, params environmentWriteParams) (environmentMapperRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (environmentMapperRow, error)

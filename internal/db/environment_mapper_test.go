@@ -561,3 +561,31 @@ func TestEnvironmentPrebuildMapperContracts(t *testing.T) {
 		t.Run(contract.wantID, func(t *testing.T) { assertMapperBuilderContract(t, contract) })
 	}
 }
+
+func TestEnvironmentPrebuildLockOptionalResult(t *testing.T) {
+	ctx := context.Background()
+	t.Run("missing environment", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: environmentMapperTestColumns()})
+		_, found, err := NewEnvironmentMapper(executor).LockByUUID(ctx, "workspace", "missing")
+		if err != nil || found {
+			t.Fatalf("LockByUUID() = (found=%t, err=%v), want (false, nil)", found, err)
+		}
+	})
+	t.Run("query error", func(t *testing.T) {
+		queryErr := errors.New("query failed")
+		executor := newMapperTestExecutor(t, mapperTestResponse{queryErr: queryErr})
+		_, found, err := NewEnvironmentMapper(executor).LockByUUID(ctx, "workspace", "environment")
+		if found || !errors.Is(err, queryErr) {
+			t.Fatalf("LockByUUID() = (found=%t, err=%v), want query error", found, err)
+		}
+	})
+	t.Run("existing environment", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{
+			columns: environmentMapperTestColumns(), rows: [][]driver.Value{environmentMapperTestRow()},
+		})
+		row, found, err := NewEnvironmentMapper(executor).LockByUUID(ctx, "workspace", "environment")
+		if err != nil || !found || row.UUID != "00000000-0000-4000-8000-000000000001" {
+			t.Fatalf("LockByUUID() = (%+v, %t, %v), want environment row", row, found, err)
+		}
+	})
+}

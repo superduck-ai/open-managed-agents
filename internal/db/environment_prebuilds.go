@@ -34,12 +34,15 @@ func (d *DB) UpdateEnvironmentTx(ctx context.Context, tx *yourbatis.Tx, env Envi
 
 // Lock the owning environment before updating its build or the River checkpoint.
 // Provider requests run outside this transaction.
-func (d *DB) LockEnvironmentByUUIDTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, environmentUUID string) (Environment, error) {
-	row, err := NewEnvironmentMapper(tx).LockByUUID(ctx, workspaceUUID, environmentUUID)
+func (d *DB) LockEnvironmentByUUIDTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, environmentUUID string) (Environment, bool, error) {
+	row, found, err := NewEnvironmentMapper(tx).LockByUUID(ctx, workspaceUUID, environmentUUID)
 	if err != nil {
-		return Environment{}, mapNoRows(err)
+		return Environment{}, false, err
 	}
-	return row.environment(), nil
+	if !found {
+		return Environment{}, false, nil
+	}
+	return row.environment(), true, nil
 }
 
 func (d *DB) ResolveEnvironmentPrebuildTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, environmentUUID string, jobID int64, template string) error {

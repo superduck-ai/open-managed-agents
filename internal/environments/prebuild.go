@@ -214,11 +214,11 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 func (svc *Prebuilds) saveCheckpoint(ctx context.Context, task *prebuildTask) error {
 	superseded := false
 	err := svc.db.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
-		env, err := svc.db.LockEnvironmentByUUIDTx(ctx, tx, task.job.Args.WorkspaceUUID, task.job.Args.EnvironmentUUID)
-		if err != nil && !errors.Is(err, db.ErrNotFound) {
+		env, found, err := svc.db.LockEnvironmentByUUIDTx(ctx, tx, task.job.Args.WorkspaceUUID, task.job.Args.EnvironmentUUID)
+		if err != nil {
 			return err
 		}
-		superseded = errors.Is(err, db.ErrNotFound) || env.BuildJobID == nil || *env.BuildJobID != task.job.ID
+		superseded = !found || env.BuildJobID == nil || *env.BuildJobID != task.job.ID
 		row, err := svc.client.JobGetTx(ctx, tx.SQLTx(), task.job.ID)
 		if err != nil {
 			return err
@@ -307,9 +307,12 @@ func (svc *Prebuilds) withLockedEnvironment(ctx context.Context, env db.Environm
 		return errPrebuildUnavailable
 	}
 	return svc.db.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
-		current, err := svc.db.LockEnvironmentByUUIDTx(ctx, tx, env.WorkspaceUUID, env.UUID)
+		current, found, err := svc.db.LockEnvironmentByUUIDTx(ctx, tx, env.WorkspaceUUID, env.UUID)
 		if err != nil {
 			return err
+		}
+		if !found {
+			return db.ErrNotFound
 		}
 		if current.ArchivedAt != nil {
 			return errPrebuildConflict

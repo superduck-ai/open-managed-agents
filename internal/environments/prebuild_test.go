@@ -220,6 +220,38 @@ func TestPrebuildTemplateBinding(t *testing.T) {
 	}
 }
 
+func TestPrebuildReconcileUnchangedPackagesKeepsCorrectTemplate(t *testing.T) {
+	jobID := int64(42)
+	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base-b"}}}
+	service := &Prebuilds{}
+	provider := e2bruntime.NewProvider(config.E2BConfig{Template: "base-b"})
+	for _, tc := range []struct {
+		name           string
+		config         string
+		jobID          *int64
+		storedTemplate string
+		wantTemplate   string
+	}{
+		{"environment without prebuild refreshes base", `{"type":"cloud"}`, nil, "base-a", "base-b"},
+		{"completed prebuild keeps its template", `{"type":"cloud","packages":{"pip":["requests"]}}`, &jobID, "built-template", "built-template"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := db.Environment{Config: json.RawMessage(tc.config), BuildJobID: tc.jobID, ResolvedTemplate: tc.storedTemplate}
+			next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{Config: json.RawMessage(`{"type":"cloud"}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := service.reconcilePrebuild(context.Background(), nil, &current, &next); err != nil {
+				t.Fatal(err)
+			}
+			resolution, err := provider.Resolve(next, nil)
+			if err != nil || resolution.Template != tc.wantTemplate || next.BuildJobID != tc.jobID {
+				t.Fatalf("reconciled environment = (%q, %v), resolve = (%q, %v); want template %q and original job", next.ResolvedTemplate, next.BuildJobID, resolution.Template, err, tc.wantTemplate)
+			}
+		})
+	}
+}
+
 func TestPrebuildFailedResponse(t *testing.T) {
 	jobID := int64(42)
 	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}, providerKey: "provider", images: &aliyunFlowImageBuilder{}, templates: &cubeSandboxTemplateBuilder{}}

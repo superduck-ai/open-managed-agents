@@ -198,7 +198,9 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 		}
 		if samePackages(previous, packages) {
 			next.BuildJobID = current.BuildJobID
-			next.ResolvedTemplate = current.ResolvedTemplate
+			if current.BuildJobID != nil {
+				next.ResolvedTemplate = current.ResolvedTemplate
+			}
 			return nil
 		}
 	}

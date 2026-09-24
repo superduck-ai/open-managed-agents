@@ -2297,7 +2297,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === '/v1/agents?beta=true&limit=20&include_archived=false' &&
+            request.url === `/v1/agents?beta=true&limit=${agentsListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'default',
         ),
       ).toBe(true),
@@ -2314,7 +2314,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === '/v1/agents?beta=true&limit=20&include_archived=false' &&
+            request.url === `/v1/agents?beta=true&limit=${agentsListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'wrkspc_foo',
         ),
       ).toBe(true),
@@ -2341,7 +2341,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === '/v1/agents?beta=true&limit=20&include_archived=false' &&
+            request.url === `/v1/agents?beta=true&limit=${agentsListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'wrkspc_foo',
         ),
       ).toBe(true),
@@ -2349,22 +2349,22 @@ export function registerManagedAgentsAgentsTests() {
     await waitFor(() => expect(selectedWorkspaceIds).toContain('wrkspc_foo'));
   });
 
-  test('paginates agents twenty rows at a time with the backend page cursor', async () => {
+  test('paginates agents ten rows at a time with the backend page cursor', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi(
-      Array.from({ length: 21 }, (_, index) => ({
+      Array.from({ length: agentsListLimit + 1 }, (_, index) => ({
         id: `agent_page${String(index + 1).padStart(2, '0')}123456`,
-        name: index === 0 ? 'First agent' : index === 20 ? 'Twenty first agent' : `Agent ${index + 1}`,
+        name: index === 0 ? 'First agent' : index === agentsListLimit ? 'Eleventh agent' : `Agent ${index + 1}`,
       })),
     );
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('First agent')).toBeTruthy();
-    expect(screen.queryByText('Twenty first agent')).toBeNull();
+    expect(screen.queryByText('Eleventh agent')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText('Twenty first agent')).toBeTruthy();
+    expect(await screen.findByText('Eleventh agent')).toBeTruthy();
     expect(screen.queryByText('First agent')).toBeNull();
     expect(api.requests.some((request) => request.method === 'GET' && request.url.includes('page=next_cursor'))).toBe(
       true,
@@ -2482,12 +2482,12 @@ export function registerManagedAgentsAgentsTests() {
     expect(truncatedAlert.textContent).toContain(
       "Couldn't search every agent. Narrow the search or paste an exact ID.",
     );
-    expect(screen.getByText('Aggregate agent 20')).toBeTruthy();
-    expect(screen.queryByText('Aggregate agent 21')).toBeNull();
+    expect(screen.getByText(`Aggregate agent ${agentsListLimit}`)).toBeTruthy();
+    expect(screen.queryByText(`Aggregate agent ${agentsListLimit + 1}`)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText('Aggregate agent 21')).toBeTruthy();
+    expect(await screen.findByText(`Aggregate agent ${agentsListLimit + 1}`)).toBeTruthy();
     expect(screen.queryByText('Aggregate agent 1')).toBeNull();
     expect(api.requests.filter((request) => request.url === '/v1/agents:search?beta=true').length).toBe(3);
   });

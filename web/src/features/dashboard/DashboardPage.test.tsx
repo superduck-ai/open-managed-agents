@@ -14,6 +14,7 @@ import { setConsoleRequestContext } from '../../shared/api/client';
 import { Toaster } from '../../shared/ui/sonner';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
+import { consoleResourceListLimit } from '../../shared/console-list';
 import { resetTestDom } from '../../test/setup';
 import { BatchesPage, DashboardPage, FilesPage, SkillDetailPage, SkillsPage } from './DashboardPage';
 
@@ -630,7 +631,10 @@ describe('Files page', () => {
     expect(screen.queryByText('second-page.txt')).toBeNull();
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
     expect(
-      requests.filter((request) => request.method === 'GET' && request.url === '/v1/files?beta=true&limit=20').length,
+      requests.filter(
+        (request) =>
+          request.method === 'GET' && request.url === `/v1/files?beta=true&limit=${consoleResourceListLimit}`,
+      ).length,
     ).toBeGreaterThanOrEqual(2);
   });
 
@@ -674,7 +678,7 @@ describe('Files page', () => {
 
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('file_abc123456789'));
     expect((screen.getByRole('button', { name: 'Download report.json' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(requests[0]?.url).toBe('/v1/files?beta=true&limit=20');
+    expect(requests[0]?.url).toBe(`/v1/files?beta=true&limit=${consoleResourceListLimit}`);
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('files-api-2025-04-14');
     expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
   });
@@ -784,9 +788,11 @@ describe('Files page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     expect(await screen.findByText('second.md')).toBeTruthy();
-    expect(requests.some((request) => request.url === '/v1/files?beta=true&limit=20&after_id=file_page_one')).toBe(
-      true,
-    );
+    expect(
+      requests.some(
+        (request) => request.url === `/v1/files?beta=true&limit=${consoleResourceListLimit}&after_id=file_page_one`,
+      ),
+    ).toBe(true);
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -914,7 +920,7 @@ describe('Skills page', () => {
           next_page: null,
         };
       }
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -958,7 +964,7 @@ describe('Skills page', () => {
     expect(screen.getByText('Jul 8, 2026')).toBeTruthy();
     expect(screen.getByText('Feb 3, 2026')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Actions' })).toHaveLength(1);
-    expect(requests[0]?.url).toBe('/v1/skills?beta=true&limit=100');
+    expect(requests[0]?.url).toBe(`/v1/skills?beta=true&limit=${consoleResourceListLimit}`);
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('skills-2025-10-02');
     expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
 
@@ -1064,7 +1070,11 @@ describe('Skills page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     expect(await screen.findByText('product-self-knowledge')).toBeTruthy();
-    expect(requests.some((request) => request.url === '/v1/skills?beta=true&limit=100&page=cursor_two')).toBe(true);
+    expect(
+      requests.some(
+        (request) => request.url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}&page=cursor_two`,
+      ),
+    ).toBe(true);
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
@@ -1105,7 +1115,7 @@ describe('Skills page', () => {
   test('creates a skill from a single archive upload', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return { data: [], has_more: false, next_page: null };
       }
       if (url === '/v1/skills?beta=true') {
@@ -1177,7 +1187,7 @@ describe('Skills page', () => {
   test('surfaces duplicate create errors without posting a new version', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1246,7 +1256,7 @@ describe('Skills page', () => {
   test('blocks empty skill archive uploads before posting', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [],
           has_more: false,
@@ -1274,7 +1284,7 @@ describe('Skills page', () => {
   test('updates a custom skill from the action menu', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1330,7 +1340,7 @@ describe('Skills page', () => {
   test('deletes a custom skill atomically from the skill endpoint', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1375,7 +1385,7 @@ describe('Skill detail page', () => {
   test('renders the selected skill in the query-param drawer', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1453,7 +1463,7 @@ describe('Skill detail page', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
     let attempt = 0;
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1536,7 +1546,7 @@ describe('Batches page', () => {
       results_url: 'https://oma.duck.ai/v1/messages/batches/msgbatch_detail/results',
     });
     const requests = mockMessageBatchesApi((url) => {
-      if (url === '/v1/messages/batches?beta=true&limit=20') {
+      if (url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [batch],
           has_more: false,
@@ -1589,7 +1599,7 @@ describe('Batches page', () => {
       results_url: 'https://oma.duck.ai/v1/messages/batches/msgbatch_done/results',
     });
     const requests = mockMessageBatchesApi((url) => {
-      if (url === '/v1/messages/batches?beta=true&limit=20') {
+      if (url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [endedBatch],
           has_more: false,
@@ -1625,7 +1635,7 @@ describe('Batches page', () => {
     const detailCopyButton = within(detailPanel).getByRole('button', { name: 'Copy msgbatch_done' });
     expect((detailCopyButton as HTMLElement).style.opacity).toBe('1');
     expect(screen.queryByText('Copy the template below to set up your first batch:')).toBeNull();
-    expect(requests[0]?.url).toBe('/v1/messages/batches?beta=true&limit=20');
+    expect(requests[0]?.url).toBe(`/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`);
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('message-batches-2024-09-24');
     expect(requests[0]?.headers.get('anthropic-version')).toBe('2023-06-01');
     expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
@@ -1705,7 +1715,10 @@ describe('Batches page', () => {
 
     expect(await screen.findByRole('button', { name: 'msgbatch_page_two' })).toBeTruthy();
     expect(
-      requests.some((request) => request.url === '/v1/messages/batches?beta=true&limit=20&after_id=msgbatch_page_one'),
+      requests.some(
+        (request) =>
+          request.url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}&after_id=msgbatch_page_one`,
+      ),
     ).toBe(true);
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1715,7 +1728,7 @@ describe('Batches page', () => {
     const inProgressBatch = makeBatch({ id: 'msgbatch_progress', processing_status: 'in_progress' });
     const endedBatch = makeBatch({ id: 'msgbatch_done', processing_status: 'ended' });
     const requests = mockMessageBatchesApi((url, method) => {
-      if (url === '/v1/messages/batches?beta=true&limit=20') {
+      if (url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [inProgressBatch, endedBatch],
           has_more: false,

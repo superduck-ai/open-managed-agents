@@ -1,6 +1,7 @@
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { consoleApi } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
+import { consoleResourceListLimit } from '../../shared/console-list';
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
@@ -60,9 +61,9 @@ export function sdkBody(value: object): Record<string, unknown> {
 
 export const defaultAgentFilters: AgentListFilters = { created: 'all', status: 'active' };
 
-export const agentsListLimit = 20;
+export const agentsListLimit = consoleResourceListLimit;
 
-export const managedEntityListLimit = 20;
+export const managedEntityListLimit = consoleResourceListLimit;
 
 export const agentSearchLimit = 100;
 

@@ -16,7 +16,7 @@ Environments、Vaults、Memory、Deployments、Sessions、Agents、Skills、File
 
 ## 列表分页与删除补位
 
-Sessions、Deployments、Environments、Vaults 和 Memory 共用 `listManagedEntities`，每页 20 条，与 Agents、Files 相同。接口用 `page` / `next_page` 游标翻页；省略 `limit` 时服务端默认也是 20，上限 1000。删除成功后，以及归档会让该行离开当前查询时，用同一游标重新请求当前页，把下一行补进空位。Agents 的默认 Active 列表在归档后同样重取当前页。Skills 删除后本来就会让当前页查询失效并重取。Files 列表没有删除。
+控制台资源列表共用 `consoleResourceListLimit`，每页 10 条：Sessions、Agents、Deployments、Environments、Vaults、Memory、Files、Skills 和 Batches。Sessions、Deployments、Environments、Vaults 和 Memory 经 `listManagedEntities` 带上这个 `limit`；Agents、Files、Skills 和 Batches 使用同一个常量。接口用 `page` / `next_page` 游标翻页，Files 和 Batches 用 `after_id` / `before_id`。省略 `limit` 时服务端默认仍是 20，上限 1000。删除成功后，以及归档会让该行离开当前查询时，用同一游标重新请求当前页，把下一行补进空位。Agents 的默认 Active 列表在归档后同样重取当前页。Skills 删除后会让当前页查询失效并重取。Files 和 Batches 列表没有删除。
 
 ## 未找到与工作区名称
 

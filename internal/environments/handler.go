@@ -14,6 +14,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -29,6 +30,7 @@ import (
 const maxEnvironmentBodySize = 4 << 20
 
 type Handler struct {
+	prebuilds    *Prebuilds
 	cfg          config.Config
 	db           *db.DB
 	errorAdapter *httpapi.ErrorAdapter
@@ -128,6 +130,10 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 	router.Post("/", wrap(h.create))
 	router.Get("/", wrap(h.list))
 	router.Get("/{environment_id}", wrap(h.retrieveRoute))
+	router.Get("/{environment_id}/prebuild", wrap(h.getPrebuild))
+	router.Get("/{environment_id}/prebuild/logs", wrap(h.getPrebuildLogs))
+	router.Post("/{environment_id}/prebuild", wrap(h.startPrebuild))
+	router.Post("/{environment_id}/prebuild/cancel", wrap(h.cancelPrebuild))
 	router.Post("/{environment_id}", wrap(h.updateRoute))
 	router.Post("/{environment_id}/archive", wrap(h.archiveRoute))
 	router.Delete("/{environment_id}", wrap(h.deleteRoute))
@@ -190,7 +196,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not generate environment ID", fmt.Errorf("generate environment ID: %w", err))
 	}
 	now := time.Now().UTC()
-	created, err := h.db.CreateEnvironment(r.Context(), db.Environment{
+	created, err := h.createEnvironment(r.Context(), db.Environment{
 		UUID:                uuid.NewV4().String(),
 		ExternalID:          envID,
 		OrganizationUUID:    principal.OrganizationUUID,
@@ -284,53 +290,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 	if authErr != nil {
 		return authErr
 	}
-
-	current, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return environmentNotFound(environmentID, err)
-		}
-		return internalError("Could not update environment", fmt.Errorf("retrieve environment %q for update: %w", environmentID, err))
-	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	next := current
-	if len(body.Name) > 0 {
-		next.Name, err = parseRequiredRawString(body.Name, "name")
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Description) > 0 {
-		next.Description, err = descriptionFromRaw(body.Description)
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Metadata) > 0 {
-		next.Metadata, err = patchMetadata(next.Metadata, body.Metadata)
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Scope) > 0 {
-		next.Scope, err = parseScope(body.Scope)
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Config) > 0 {
-		next.Config, err = normalizeConfigForUpdate(current.Config, body.Config)
-		if err != nil {
-			return invalidRequest(err)
-		}
-		next.ResolvedTemplate = h.resolvedTemplate(next.Config)
-	}
-	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, next)
+	updated, err := h.updateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, *body)
 	if err != nil {
+		var appError *apperr.Error
+		if errors.As(err, &appError) {
+			return err
+		}
 		if errors.Is(err, db.ErrDuplicate) {
 			return environmentNameConflict(err)
 		}

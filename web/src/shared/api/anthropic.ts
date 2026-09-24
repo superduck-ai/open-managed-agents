@@ -416,6 +416,48 @@ export const anthropicBetaApi = {
         getAnthropicClient().beta.environments.delete(environmentId, {}, requestOptions(workspaceId)),
       ) as Promise<T>;
     },
+    prebuild: {
+      retrieve<T>(environmentId: string, workspaceId: string, signal?: AbortSignal) {
+        return sdkCall(() =>
+          getAnthropicClient().get<T>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true },
+            signal,
+          }),
+        );
+      },
+      start(environmentId: string, workspaceId: string) {
+        return sdkCall(() =>
+          getAnthropicClient().post<void>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true },
+          }),
+        );
+      },
+      cancel(environmentId: string, workspaceId: string, body: { job_id: string }) {
+        return sdkCall(() =>
+          getAnthropicClient().post<void>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild/cancel`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true },
+            body,
+          }),
+        );
+      },
+      logs<T>(
+        environmentId: string,
+        workspaceId: string,
+        params: { stage: string; job_id: string; cursor: string },
+        signal?: AbortSignal,
+      ) {
+        return sdkCall(() =>
+          getAnthropicClient().get<T>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild/logs`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true, ...params },
+            signal,
+          }),
+        );
+      },
+    },
     work: {
       list<T>(environmentId: string, params: Record<string, unknown>, workspaceId?: string) {
         return sdkPage<T>(() =>

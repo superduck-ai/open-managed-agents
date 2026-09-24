@@ -199,6 +199,7 @@ export type DeploymentApiResponse = {
 };
 
 export type EnvironmentApiResponse = {
+  metadata?: Record<string, string>;
   id: string;
   archived_at: string | null;
   config: unknown;

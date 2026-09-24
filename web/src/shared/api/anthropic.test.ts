@@ -13,6 +13,37 @@ afterEach(() => {
 });
 
 describe('anthropicBetaApi', () => {
+  test('uses prebuild routes while preserving workspace scope and string job IDs', async () => {
+    const requests: { url: URL; init: RequestInit | undefined }[] = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: new URL(String(input), 'https://oma.duck.ai'), init });
+      return init?.method === 'POST' ? new Response(null, { status: 202 }) : Response.json({ build: null });
+    }) as typeof fetch;
+    setConsoleRequestContext({ organizationUuid: 'org_test', csrfToken: 'csrf' });
+    const api = anthropicBetaApi.environments.prebuild;
+    const jobId = '9007199254740993';
+    expect(await api.retrieve('env/test', 'workspace_prebuild')).toEqual({ build: null });
+    await api.start('env/test', 'workspace_prebuild');
+    await api.cancel('env/test', 'workspace_prebuild', { job_id: jobId });
+    await api.logs('env/test', 'workspace_prebuild', { stage: 'image', job_id: jobId, cursor: 'tail' });
+
+    expect(requests.map(({ url }) => url.pathname)).toEqual([
+      '/v1/environments/env%2Ftest/prebuild',
+      '/v1/environments/env%2Ftest/prebuild',
+      '/v1/environments/env%2Ftest/prebuild/cancel',
+      '/v1/environments/env%2Ftest/prebuild/logs',
+    ]);
+    for (const { url, init } of requests) {
+      expect(url.searchParams.get('beta')).toBe('true');
+      expect(new Headers(init?.headers).get('x-workspace-id')).toBe('workspace_prebuild');
+      expect(new Headers(init?.headers).get('x-organization-uuid')).toBe('org_test');
+      if (init?.method === 'POST') expect(new Headers(init.headers).get('x-csrf-token')).toBe('csrf');
+    }
+    expect(JSON.parse(String(requests[2].init?.body))).toEqual({ job_id: jobId });
+    expect(requests[3].url.searchParams.get('job_id')).toBe(jobId);
+    expect(requests[3].url.searchParams.get('cursor')).toBe('tail');
+  });
+
   test('lists models through the v1 SDK boundary with the requested workspace', async () => {
     let capturedInput: RequestInfo | URL = '';
     let capturedInit: RequestInit | undefined;

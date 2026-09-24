@@ -1,0 +1,116 @@
+/* Match the console's subtle-scrollbar treatment on the page scroll owner. */
+html:has([data-environment-page]) {
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 36%, transparent) transparent;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+[data-slot='sidebar-inset']:has([data-environment-page]),
+.environment-preview,
+.environment-package-picker,
+.environment-prebuild-panel {
+  --background: #fcfcfb;
+  --foreground: #0b0b0b;
+  --muted: #f0f0ee;
+  --secondary: #fcfcfb;
+  --border: rgb(11 11 11 / 10%);
+  --input: rgb(11 11 11 / 12%);
+  --ring: #557ab7;
+  --muted-foreground: #6b6b66;
+  background-color: var(--background);
+}
+.dark [data-slot='sidebar-inset']:has([data-environment-page]),
+.dark .environment-preview,
+.dark .environment-package-picker,
+.dark .environment-prebuild-panel {
+  --background: #20201e;
+  --foreground: #eeeeec;
+  --muted: #2b2b29;
+  --secondary: #20201e;
+  --border: rgb(255 255 255 / 12%);
+  --input: rgb(255 255 255 / 18%);
+  --muted-foreground: #aaa9a2;
+}
+.environment-preview[data-slot='sheet-content'] {
+  background: transparent;
+}
+.environment-page [data-slot='button'],
+.environment-preview [data-slot='button'],
+.environment-prebuild-panel [data-slot='button'] {
+  font-weight: 400;
+  transition-property: color, background-color, border-color, opacity, scale;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.environment-page [data-slot='table-head'] {
+  font-size: 13px;
+}
+
+.environment-page [data-slot='field-label'] {
+  font-weight: 400;
+}
+.environment-page,
+.environment-preview,
+.environment-package-picker,
+.environment-prebuild-panel {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.environment-page [data-slot='field-label'] {
+  line-height: 1.5;
+}
+.environment-page [data-slot='input'],
+.environment-page [data-slot='textarea'] {
+  background-color: var(--background);
+  padding-inline: 12px;
+  line-height: 1.5;
+  transition-property: border-color, box-shadow;
+  transition-duration: 150ms;
+}
+.environment-page [data-slot='input'] {
+  height: 36px;
+}
+.environment-page [data-slot='textarea'] {
+  padding-block: 10px;
+}
+.environment-page [data-slot='input']:focus-visible,
+.environment-page [data-slot='textarea']:focus-visible {
+  --tw-ring-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+.environment-page [data-slot='input'][aria-invalid='true'],
+.environment-page [data-slot='textarea'][aria-invalid='true'] {
+  --tw-ring-shadow: 0 0 0 2px color-mix(in srgb, var(--destructive) 20%, transparent);
+}
+.environment-page [data-slot='button'] .lucide,
+.environment-preview [data-slot='button'] .lucide,
+.environment-package-picker .lucide,
+.environment-prebuild-panel .lucide {
+  stroke-width: 1.5px;
+}
+.environment-page [data-slot='button']:active:not(:disabled),
+.environment-preview [data-slot='button']:active:not(:disabled),
+.environment-prebuild-panel [data-slot='button']:active:not(:disabled) {
+  scale: 0.96;
+}
+@media (prefers-reduced-motion: reduce) {
+  .environment-page *,
+  .environment-preview *,
+  .environment-package-picker *,
+  .environment-prebuild-panel * {
+    transition: none;
+    animation: none;
+    scale: none;
+  }
+}
+
+.environment-page textarea.font-mono,
+.environment-package-picker input {
+  font-family: var(--font-mono);
+}
+
+.environment-page .font-mono,
+.environment-preview .font-mono,
+.environment-package-picker input,
+.environment-prebuild-panel .font-mono {
+  font-variant-ligatures: none;
+}

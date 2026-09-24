@@ -13,6 +13,7 @@
         scope,
         provider,
         resolved_template,
+        build_job_id,
         created_at,
         updated_at,
         archived_at,
@@ -33,6 +34,7 @@
             scope,
             provider,
             resolved_template,
+            build_job_id,
             created_at,
             updated_at
         ) VALUES (
@@ -48,6 +50,7 @@
             #{params.Scope},
             #{params.Provider},
             #{params.ResolvedTemplate},
+            #{params.BuildJobID},
             #{params.CreatedAt},
             #{params.CreatedAt}
         )
@@ -81,6 +84,7 @@
             metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
             scope = #{params.Scope},
             resolved_template = #{params.ResolvedTemplate},
+            build_job_id = #{params.BuildJobID},
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
@@ -135,4 +139,16 @@
         ORDER BY created_at DESC, uuid DESC
         LIMIT #{params.FetchLimit}
     </select>
+    <select id="LockByUUID" resultType="environmentMapperRow">
+        SELECT <include refid="columns"/>
+        FROM environments
+        WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{environmentUUID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+    <update id="ResolvePrebuild" result="rows">
+        UPDATE environments SET resolved_template = #{template}, updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{environmentUUID}
+        AND build_job_id = #{jobID} AND deleted_at IS NULL
+    </update>
 </mapper>

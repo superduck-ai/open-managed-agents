@@ -218,6 +218,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		r.failWorkBeforeSandbox(ctx, *work)
 		return true, err
 	}
+	preinstalled := hasPrebuiltTemplate(env)
 	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
 		r.failWorkBeforeSandbox(ctx, *work)
@@ -290,7 +291,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
-	if provision {
+	if provision && !preinstalled {
 		proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
 		if err != nil {
 			return true, err

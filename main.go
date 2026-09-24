@@ -171,6 +171,8 @@ func run(logger *slog.Logger) error {
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
+	prebuilds := environments.NewPrebuilds(database, cfg)
+	prebuilds.Register(workers)
 	tunnels.RegisterCleanupWorker(workers, database, tunnelBroker, logger.With("component", "tunnel_cleanup"))
 	deploymentStore := deployments.NewStore(database).WithEventPayloadStorage(objectStore)
 	deployments.RegisterWorkers(workers, deploymentStore)
@@ -183,7 +185,13 @@ func run(logger *slog.Logger) error {
 	}
 	transcripts.Register(workers)
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
-		map[string]river.QueueConfig{tunnels.CleanupQueue: {MaxWorkers: 2}, deploymentjobs.Queue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}, transcriptretention.Queue: {MaxWorkers: 2}})
+		map[string]river.QueueConfig{
+			environments.PrebuildQueue:         {MaxWorkers: 4},
+			tunnels.CleanupQueue:               {MaxWorkers: 2},
+			deploymentjobs.Queue:               {MaxWorkers: 10},
+			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
+			transcriptretention.Queue:          {MaxWorkers: 2},
+		})
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
@@ -194,6 +202,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("configure transcript archive: %w", err)
 	}
 	deploymentStore.Configure(jobClient)
+	prebuilds.Configure(jobClient)
 	if err := jobClient.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
 	}
@@ -208,6 +217,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			Prebuilds:              prebuilds,
 			Config:                 cfg,
 			DB:                     database,
 			Deployments:            deploymentStore,

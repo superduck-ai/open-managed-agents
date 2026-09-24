@@ -20,6 +20,7 @@ type environmentMapperRow struct {
 	Scope               *string    `db:"scope"`
 	Provider            string     `db:"provider"`
 	ResolvedTemplate    string     `db:"resolved_template"`
+	BuildJobID          *int64     `db:"build_job_id"`
 	CreatedAt           time.Time  `db:"created_at"`
 	UpdatedAt           time.Time  `db:"updated_at"`
 	ArchivedAt          *time.Time `db:"archived_at"`
@@ -39,6 +40,7 @@ type environmentWriteParams struct {
 	Scope               *string
 	Provider            string
 	ResolvedTemplate    string
+	BuildJobID          *int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }
@@ -51,6 +53,8 @@ type environmentPageMapperParams struct {
 }
 
 type EnvironmentMapper interface {
+	LockByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (environmentMapperRow, error)
+	ResolvePrebuild(ctx context.Context, workspaceUUID, environmentUUID string, jobID int64, template string) (int64, error)
 	Insert(ctx context.Context, params environmentWriteParams) (environmentMapperRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (environmentMapperRow, error)
 	FindByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (environmentMapperRow, error)

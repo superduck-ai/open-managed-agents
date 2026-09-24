@@ -70,6 +70,7 @@ func TestWebhookResourceEventDelivery(t *testing.T) {
  ]}`
 	postCodeSessionIngressEvents(t, app, codeID, ingress)
 	postCodeSessionIngressEvents(t, app, codeID, ingress)
+	assertPayloadSQLCount(t, app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND payload->'event'->'data'->>'id'=$1 AND payload->'event'->'data'->>'type'='session.status_run_started' AND payload->'event'->>'created_at'='2026-09-20T01:00:00Z'`, 1, session.ID)
 	assertWebhookCount(t, app, "session.status_run_started", session.ID, 1)
 	assertWebhookCount(t, app, "session.thread_created", session.ID, 1)
 	assertWebhookCount(t, app, "session.thread_idled", session.ID, 1)

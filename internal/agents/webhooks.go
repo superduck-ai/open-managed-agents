@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -17,11 +18,12 @@ func (h *Handler) WithWebhooks(enqueuer webhookEnqueuer) *Handler {
 	return h
 }
 
-func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, eventType, agentID string) {
+func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, eventType, agentID string, occurredAt time.Time) {
 	if h.webhooks == nil {
 		return
 	}
 	h.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
+		OccurredAt:          occurredAt,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceExternalID: principal.WorkspaceExternalID,

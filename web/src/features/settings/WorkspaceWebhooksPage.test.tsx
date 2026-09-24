@@ -484,6 +484,8 @@ describe('Workspace webhooks page', () => {
       'vault.deleted',
     ]);
     expect(api.lastUpdateFor('wh_enabled')?.status).toBeUndefined();
+    expect(api.lastUpdateFor('wh_enabled')).not.toHaveProperty('consecutive_failures');
+    expect(api.lastUpdateFor('wh_enabled')).not.toHaveProperty('disabled_reason');
 
     const updatedInspector = await screen.findByRole('dialog', { name: 'Prod deliveries' });
     expect(within(updatedInspector).getByText('Vault lifecycle')).toBeTruthy();

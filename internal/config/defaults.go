@@ -74,10 +74,11 @@ func defaultConfig() Config {
 			},
 		},
 		Webhook: WebhookConfig{
-			WorkerEnabled: true,
-			EventTypes:    defaultWebhookEventTypes(),
-			Timeout:       10 * time.Second,
-			MaxAttempts:   10,
+			WorkerEnabled:       true,
+			EventTypes:          defaultWebhookEventTypes(),
+			Timeout:             10 * time.Second,
+			MaxAttempts:         3,
+			FailureDisableAfter: 24 * time.Hour,
 		},
 		Bootstrap: BootstrapConfig{
 			WorkspaceName:       "default",

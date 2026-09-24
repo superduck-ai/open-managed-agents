@@ -233,7 +233,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "Could not create memory store")
 		return
 	}
-	h.enqueueWebhook(r.Context(), principal, "memory_store.created", created.ExternalID)
+	h.enqueueWebhook(r.Context(), principal, "memory_store.created", created.ExternalID, created.CreatedAt)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(created))
 }
 
@@ -399,7 +399,7 @@ func (h *Handler) archiveStore(w http.ResponseWriter, r *http.Request, storeID s
 		return
 	}
 	if changed {
-		h.enqueueWebhook(r.Context(), principal, "memory_store.archived", record.ExternalID)
+		h.enqueueWebhook(r.Context(), principal, "memory_store.archived", record.ExternalID, *record.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
 }
@@ -415,7 +415,7 @@ func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID st
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
-	h.enqueueWebhook(r.Context(), principal, "memory_store.deleted", storeID)
+	h.enqueueWebhook(r.Context(), principal, "memory_store.deleted", storeID, time.Now().UTC())
 	for _, ref := range refs {
 		h.deleteObjectOrEnqueue(r.Context(), ref)
 	}

@@ -40,6 +40,7 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 			}
 			seen[key] = struct{}{}
 			h.enqueueWebhook(ctx, webhooks.EnqueueInput{
+				OccurredAt:          event.CreatedAt,
 				WorkspaceUUID:       workspaceUUID,
 				OrganizationUUID:    workspaceIDs.OrganizationUUID,
 				WorkspaceExternalID: workspaceIDs.WorkspaceExternalID,
@@ -57,8 +58,9 @@ func (h *Handler) enqueueWebhook(ctx context.Context, input webhooks.EnqueueInpu
 	}
 }
 
-func (h *Handler) enqueuePrincipalWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
+func (h *Handler) enqueuePrincipalWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string, occurredAt time.Time) {
 	h.enqueueWebhook(ctx, webhooks.EnqueueInput{
+		OccurredAt:          occurredAt,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceExternalID: principal.WorkspaceExternalID,

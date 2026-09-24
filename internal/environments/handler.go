@@ -212,7 +212,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		}
 		return internalError("Could not create environment", fmt.Errorf("create environment %q: %w", envID, err))
 	}
-	h.enqueueWebhook(r.Context(), principal, "environment.created", created.ExternalID)
+	h.enqueueWebhook(r.Context(), principal, "environment.created", created.ExternalID, created.CreatedAt)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(created))
 	return nil
 }
@@ -342,7 +342,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 		return internalError("Could not update environment", fmt.Errorf("update environment %q: %w", environmentID, err))
 	}
 	if changed {
-		h.enqueueWebhook(r.Context(), principal, "environment.updated", updated.ExternalID)
+		h.enqueueWebhook(r.Context(), principal, "environment.updated", updated.ExternalID, updated.UpdatedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(updated))
 	return nil
@@ -365,7 +365,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 		return internalError("Could not archive environment", fmt.Errorf("archive environment %q: %w", environmentID, err))
 	}
 	if changed {
-		h.enqueueWebhook(r.Context(), principal, "environment.archived", record.ExternalID)
+		h.enqueueWebhook(r.Context(), principal, "environment.archived", record.ExternalID, *record.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(record))
 	return nil
@@ -387,7 +387,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		return internalError("Could not delete environment", fmt.Errorf("delete environment %q: %w", environmentID, err))
 	}
-	h.enqueueWebhook(r.Context(), principal, "environment.deleted", environmentID)
+	h.enqueueWebhook(r.Context(), principal, "environment.deleted", environmentID, time.Now().UTC())
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: environmentID, Type: "environment_deleted"})
 	return nil
 }

@@ -4,7 +4,7 @@ sidebarTitle: "订阅 Webhook"
 description: "无需轮询即可在重大事件发生时获得通知。"
 ---
 
-<Note>本指南描述对齐 Claude 的目标能力。OMA 当前实现 35 项 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run 事件的订阅管理与投递；另接受 `session.budget_reached`、`agent.deleted`、`deployment.deleted` 三项预留订阅，共 38 个可选类型；预留事件当前不会产生通知。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。重试节奏、自动禁用、DNS 校验和事务入队仍与目标行为存在差异。</Note>
+<Note>本指南描述 OMA 当前 Webhook 能力及与 Claude 的差异。OMA 当前实现 35 项 Session/Vault/Credential/Environment/Memory Store/Agent/Deployment/Deployment Run 事件的订阅管理与投递；另接受 `session.budget_reached`、`agent.deleted`、`deployment.deleted` 三项预留订阅，共 38 个可选类型；预留事件当前不会产生通知。实现边界以[当前 Webhooks API 合同](/docs/zh/api/resources/webhooks)为准。自动禁用和事务入队仍与目标行为存在差异；显式配置的尝试次数也可能不同。</Note>
 
 Deployment Run 支持 `deployment_run.started`、`deployment_run.succeeded`、`deployment_run.failed`，仅定时运行产生；手动运行不产生。现有一次事务保存 Run 与 Session 创建结果，提交后以同一 Run ID 连续入队 started 和结果事件，因此 started 不提供执行中实时进度。succeeded 只表示创建 Session 成功，failed 表示已落库的业务失败且没有 Session；数据库回滚、过期或重复任务不通知。data 仅含四个标识字段，后续执行应通过 Run 的 session_id 跟踪。
 
@@ -108,6 +108,13 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
 选择 workspace 后点击 **Add webhook endpoint**。名称和描述可留空；事件默认不选，至少选择一项。表单支持分组选择、全选、协议名复制和 URL 校验。详情支持编辑 URL/元数据/事件、启停、删除与重置密钥；关闭密钥弹窗前需要自行保存一次性密钥。
 
 投递 worker 默认随主服务启动，仅使用数据库订阅时也无需配置全局 endpoint/key。通过 `webhook.worker_enabled: false` 可以关闭当前实例的投递。
+
+OMA 当前每个 worker 实例每批最多并发投递 10 条，等待整批结束后再轮询。多个实例的并发上限相互独立，不保证送达顺序。已指定数据库订阅的待投递任务，在订阅被删除、禁用或无法在所属 workspace 找到时直接跳过，不会改投全局配置地址。订阅配置在领取时读取，之后的变更无法撤回已开始的请求。
+
+每次领取使用新的标记；仅当前且未到期的领取可以在同一事务中提交任务结果与订阅失败统计。HTTP 超时 T 默认 10 秒，整批期限 T+15 秒，租约 max(60 秒, T+30 秒)。取消或结果写回失败后，未完成任务通过租约过期恢复；HTTP 仍可能重复投递，需按事件 ID 去重。业务写入与通知入队仍为两次独立提交。
+
+升级到此 worker 版本前应先停止所有旧版 webhook worker；混跑不能保证完整的领取保护，启动新版前需应用新增失败窗口字段的迁移，已有任务 payload 不变。当前默认共尝试 3 次，采用 5–120 秒范围内的随机指数退避。普通失败按持续失败时间禁用，默认 24 小时；重定向及地址拒绝立即禁用并终止当前任务。下文传递行为以 OMA 当前实现为准，尚未对齐 Claude 的部分单独列出。
+
 
 Webhook 端点由以下部分组成：
 
@@ -435,14 +442,24 @@ Webhook 端点由以下部分组成：
 
 * **不保证顺序。** 事件不会按其发生的顺序传递：即使结果先产生，`session.status_idled` 也可能在 `session.outcome_evaluation_ended` 之前到达；同一资源的 `.deleted` 事件也可能在 `.archived` 事件之前到达。请根据您获取的资源来驱动状态，而不是根据事件到达的顺序。
 
-* **重试：** 对于每个端点和事件，OMA 最多进行三次传递尝试（触发自动禁用的响应永远不会被重试，详见本节后文），重试之间采用带抖动的指数退避，间隔在 5 到 120 秒之间。每次尝试传递的 `event.id` 都相同。最后一次尝试失败后，该事件会被丢弃：它不会排队等待后续传递，也没有任何信号表明它已丢失。Webhook 不是持久化日志，因此如果您需要观察每一次状态转换，请通过 API 列出或获取资源来进行核对。
+* **重试：** OMA 默认共尝试 3 次，包含首次发送，可通过 `webhook.max_attempts` 配置。第 n 次已记录失败后的上界为 `min(120秒, 5秒 × 2ⁿ)`，从 `[5秒, 上界)` 均匀随机取值；默认两次重试分别等待 5–10 秒和 5–20 秒。这是 OMA 选择的随机算法，不代表 Claude 未公开的具体实现。`run_after` 只表示再次具备领取资格的时间，实际发送还可能受轮询、批次耗时和积压影响。投递 goroutine 不通过 sleep 等待重试。
+
+* **任务终态与升级：** 次数耗尽及永久拒绝使当前任务进入 `failed`，重新启用订阅不会恢复该任务。其他排队任务保持领取时检查目标的规则。历史 payload、事件时间、次数和预约时间不批量重写；历史任务下次领取时若已达到当前有效上限，直接终止，不发送、不增加计数、不替换原失败原因。未耗尽的旧任务在下次失败后采用新退避。数据库订阅与全局任务共用此策略，显式次数配置继续生效。HTTP 成功而结果写回失败仍可能导致超过已记录上限的重复发送。
 
 * **时间戳：** `webhook-timestamp` 标头在对传递尝试进行签名时打上时间戳，并在每次重试时重新生成，因此重试不会被 SDK 的新鲜度检查拒绝。它是传递尝试的时钟，而非事件的时钟：请使用事件负载中的 `created_at` 来获取事件发生的时间。
 
-* **自动禁用：** 在以下三种情况下，端点会被自动设置为 `disabled`，并附带机器可读的 `disabled_reason`：
+* **自动禁用：** `3xx` 响应立即禁用订阅，原因为 `auto-disabled: endpoint URL returned a redirect (3xx)`，不跟随重定向。DNS 结果中没有允许访问的公网地址时立即禁用，原因为 `auto-disabled: endpoint URL resolved to an invalid address`。普通失败首次记录时建立窗口；后续失败写回时，如果距起点已达到 `webhook.failure_disable_after` 且中间没有成功，禁用原因固定为 `auto-disabled after sustained delivery failures`。此正时长默认 `24h`，是 OMA 的选择，不是 Claude 公布的阈值。成功投递清空窗口和计数；触发禁用的当前任务直接终止，不再预约重试。并发结果按数据库事务实际执行顺序更新统计。临时 DNS 查询和连接故障仍使用普通重试。
 
-  * 端点返回 `3xx` 响应。永远不会跟随重定向；这会在第一次尝试时立即禁用端点，原因为 `auto-disabled: endpoint URL returned a redirect (3xx)`。如果您的端点已迁移，请在 OMA 控制台 中更新 URL 并重新启用该端点。
-  * 当 OMA 连接时，端点的 URL 解析为非公共 IP 地址。这会立即禁用端点，原因为 `auto-disabled: endpoint URL resolved to an invalid address`。
-  * 向该端点的传递持续失败了一段时间，原因为 `auto-disabled after sustained delivery failures`。触发条件是端点连续失败的时长，而非传递次数。单个 `2xx` 响应即可重置该时间窗口，因此单个不稳定的事件不会导致端点被禁用。
+* **失败窗口持久化：** 首次有效失败按数据库时钟记录，多个 Worker 共用。仅在新的失败结果写回时检查，不增加定时扫描或主动探测；长时间空闲后，成功清空窗口，失败才判断是否禁用。历史启用订阅从升级后首次失败开始，不推算旧时间；已禁用订阅保持原状态。修改阈值后在下次失败时生效。全局配置任务没有订阅窗口。换密钥、普通编辑和手动禁用不重置窗口；迟到成功不能重新启用已禁用订阅。已经发出的请求可能在禁用后结束，结果按数据库接受顺序处理。升级时先停止旧 Worker，应用迁移后再启动新版，避免计数策略与时间策略混跑。
 
-  这三种情况都是可逆的：解决问题后，在 OMA 控制台 中重新启用端点即可。端点被禁用期间发出的事件不会被重放。
+* **连接策略：** Webhook 使用专用直连 Transport，不继承 `HTTP_PROXY`、`HTTPS_PROXY`。默认 URL 必须为 HTTPS、443。每次新连接解析域名，过滤非公网地址，直接连接已验证的数字 IP，同时保留原 Host 和 TLS 证书校验。混合 DNS 结果仅使用公网候选。`allow_insecure` 允许本地 HTTP、私网地址和其他端口用于测试，但不会开启环境代理或重定向。依赖代理出网的部署应在升级前确认可以直连。
+
+* **订阅编辑：** 未提供的字段保持不变。编辑 URL、名称、描述或事件不会覆盖 Worker 的计数或恢复自动禁用状态。显式启用清空禁用原因和失败计数；显式禁用保留已有原因，没有原因时标记为 `manual`。
+
+* **事件时间：** 已持久化 Session 事件保留原始时间；资源变更使用返回记录的创建、更新或归档时间。删除和仅返回标识的级联操作在事务成功返回时采集时间，OAuth 刷新失败在最终确定失败时采集。这些补充时间表示应用观察到结果的时间，不是精确数据库提交时刻。定时 Run 的 started 使用 Run 创建时间，结果事件使用事务成功返回时间。时间统一以 UTC RFC3339 输出并保留已有小数秒精度，不重写已入队 payload。
+
+解决问题后可重新启用订阅，禁用期间发生的事件不回填。业务提交与通知入队仍是独立操作，Webhook 不能作为完整持久变更日志。
+
+### 尚未对齐 Claude 的部分
+
+默认次数和重试范围已遵循 Claude 公开说明，但官方没有公布具体随机算法。显式配置其他尝试次数属于 OMA 扩展。Claude 按持续失败时间禁用且未公布阈值；OMA 默认采用可配置的 24 小时阈值，使用官方说明中的持续失败禁用原因。业务写入与入队尚未原子化，HTTP 成功后结果写回失败仍可能导致重复投递。参见 [Claude 官方说明](https://platform.claude.com/docs/en/managed-agents/webhooks)。

@@ -14,6 +14,7 @@
         status,
         disabled_reason,
         consecutive_failures,
+        failure_started_at,
         created_at,
         updated_at,
         deleted_at
@@ -77,14 +78,19 @@
 
     <update id="UpdateByExternalID" result="returning" resultType="webhookEndpointRow">
         UPDATE webhook_endpoints
-        SET url = #{params.URL,sensitive=true},
-            name = #{params.Name},
-            description = #{params.Description},
-            enabled_events = CAST(#{params.EnabledEvents} AS jsonb),
-            status = #{params.Status},
-            disabled_reason = #{params.DisabledReason,sensitive=true},
-            consecutive_failures = #{params.ConsecutiveFailures},
+        <set>
+            <if test="params.URL != nil">url = #{params.URL,sensitive=true},</if>
+            <if test="params.Name != nil">name = #{params.Name},</if>
+            <if test="params.Description != nil">description = #{params.Description},</if>
+            <if test="params.EnabledEvents != nil">enabled_events = CAST(#{params.EnabledEvents} AS jsonb),</if>
+            <if test="params.Status != nil">
+                status = #{params.Status},
+                disabled_reason = CASE WHEN #{params.Status} = 'enabled' THEN NULL ELSE COALESCE(disabled_reason, 'manual') END,
+                failure_started_at = CASE WHEN #{params.Status} = 'enabled' THEN NULL ELSE failure_started_at END,
+                consecutive_failures = CASE WHEN #{params.Status} = 'enabled' THEN 0 ELSE consecutive_failures END,
+            </if>
             updated_at = #{params.UpdatedAt}
+        </set>
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
         AND deleted_at IS NULL
@@ -133,27 +139,46 @@
     <update id="RecordDeliverySuccess" result="exec">
         UPDATE webhook_endpoints
         SET consecutive_failures = 0,
+            failure_started_at = NULL,
             disabled_reason = NULL,
             updated_at = NOW()
         WHERE uuid = #{endpointUUID}
+        AND workspace_uuid = #{workspaceUUID}
         AND deleted_at IS NULL
         AND status = 'enabled'
     </update>
 
-    <update id="RecordDeliveryFailure" result="exec">
-        UPDATE webhook_endpoints
+    <update id="RecordDeliveryFailure" result="returning" resultType="webhookEndpointFailureRow">
+        WITH locked_endpoint AS MATERIALIZED (
+            SELECT uuid, failure_started_at
+            FROM webhook_endpoints
+            WHERE uuid = #{params.EndpointUUID}
+            AND workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            AND status = 'enabled'
+            FOR UPDATE
+        ), failure_state AS MATERIALIZED (
+            SELECT uuid,
+                COALESCE(failure_started_at, clock_timestamp()) AS started_at,
+                (#{params.ImmediateDisable} OR (
+                    failure_started_at IS NOT NULL
+                    AND clock_timestamp() &gt;= failure_started_at + #{params.DisableAfterMicroseconds} * INTERVAL '1 microsecond'
+                )) AS disable
+            FROM locked_endpoint
+        )
+        UPDATE webhook_endpoints e
         SET consecutive_failures = consecutive_failures + 1,
-            status = CASE
-                WHEN consecutive_failures + 1 &gt;= #{params.DisableAfter} THEN 'disabled'
-                ELSE status
-            END,
+            failure_started_at = f.started_at,
+            status = CASE WHEN f.disable THEN 'disabled' ELSE e.status END,
             disabled_reason = CASE
-                WHEN consecutive_failures + 1 &gt;= #{params.DisableAfter} THEN #{params.Reason,sensitive=true}
-                ELSE disabled_reason
+                WHEN #{params.ImmediateDisable} THEN #{params.Reason,sensitive=true}
+                WHEN f.disable THEN 'auto-disabled after sustained delivery failures'
+                ELSE e.disabled_reason
             END,
-            updated_at = NOW()
-        WHERE uuid = #{params.EndpointUUID}
-        AND deleted_at IS NULL
-        AND status = 'enabled'
+            updated_at = clock_timestamp()
+        FROM failure_state f
+        WHERE e.uuid = f.uuid
+        AND e.workspace_uuid = #{params.WorkspaceUUID}
+        RETURNING e.status = 'disabled' AS disabled
     </update>
 </mapper>

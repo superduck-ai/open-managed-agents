@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -36,6 +37,7 @@ func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	enqueuer := newEnqueuer(failingEnqueueStore{}, config.WebhookConfig{}, logger)
 
 	enqueuer.Enqueue(context.Background(), EnqueueInput{
+		OccurredAt:          time.Now().UTC(),
 		WorkspaceUUID:       "00000000-0000-0000-0000-000000000042",
 		OrganizationUUID:    "11111111-1111-4111-8111-111111111111",
 		WorkspaceExternalID: "wrk_test",
@@ -55,5 +57,57 @@ func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	}
 	if got := record["workspace_uuid"]; got != "00000000-0000-0000-0000-000000000042" {
 		t.Fatalf("workspace_uuid = %v, want UUID", got)
+	}
+}
+
+type capturingEnqueueStore struct {
+	failingEnqueueStore
+	payloads []json.RawMessage
+}
+
+func (s *capturingEnqueueStore) HasWebhookEndpoints(context.Context, string) (bool, error) {
+	return true, nil
+}
+func (s *capturingEnqueueStore) ListActiveWebhookEndpointsForEvent(context.Context, string, string) ([]db.WebhookEndpoint, error) {
+	return []db.WebhookEndpoint{{UUID: "one"}, {UUID: "two"}}, nil
+}
+func (s *capturingEnqueueStore) EnqueueWebhookDeliveryJobForEndpoint(_ context.Context, _, _ string, event json.RawMessage, _ string) error {
+	s.payloads = append(s.payloads, append(json.RawMessage(nil), event...))
+	return nil
+}
+
+func TestEnqueuerOccurrenceTime(t *testing.T) {
+	store := &capturingEnqueueStore{}
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	enqueuer := newEnqueuer(store, config.WebhookConfig{}, logger)
+	input := EnqueueInput{EventType: "agent.created", ResourceID: "agent_test"}
+	enqueuer.Enqueue(t.Context(), input)
+	if len(store.payloads) != 0 {
+		t.Fatal("zero time created jobs")
+	}
+	var record struct {
+		Level      string `json:"level"`
+		Message    string `json:"msg"`
+		EventType  string `json:"event_type"`
+		ResourceID string `json:"resource_id"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Level != "ERROR" || record.Message != "webhook occurrence time missing" || record.EventType != input.EventType || record.ResourceID != input.ResourceID {
+		t.Fatalf("log = %+v", record)
+	}
+	input.OccurredAt = time.Date(2020, 1, 2, 3, 4, 5, 123456789, time.FixedZone("source", 8*3600))
+	enqueuer.Enqueue(t.Context(), input)
+	if len(store.payloads) != 2 || !bytes.Equal(store.payloads[0], store.payloads[1]) {
+		t.Fatal("fanout changed payload")
+	}
+	var event Event
+	if err := json.Unmarshal(store.payloads[0], &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.CreatedAt != "2020-01-01T19:04:05.123456789Z" || event.ID == "" {
+		t.Fatalf("event = %+v", event)
 	}
 }

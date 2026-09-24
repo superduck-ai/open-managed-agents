@@ -12,6 +12,7 @@ type webhookDeliveryJobRow struct {
 	UUID                      string         `db:"uuid"`
 	ExternalID                string         `db:"external_id"`
 	WorkspaceUUID             string         `db:"workspace_uuid"`
+	ClaimToken                string         `db:"locked_by"`
 	EventType                 string         `db:"event_type"`
 	Event                     []byte         `db:"event"`
 	Attempts                  int            `db:"attempts"`
@@ -23,16 +24,24 @@ type webhookDeliveryJobRow struct {
 }
 
 type failWebhookDeliveryJobParams struct {
-	JobUUID  string
-	Status   string
-	RunAfter time.Time
-	Attempts int
-	Reason   string
+	JobUUID       string
+	WorkspaceUUID string
+	ClaimToken    string
+	Status        string
+	RunAfter      time.Time
+	Attempts      int
+	Reason        string
+}
+
+type webhookDeliveryClaimRow struct {
+	UUID string `db:"uuid"`
 }
 
 type WebhookDeliveryJobMapper interface {
+	LockClaim(ctx context.Context, jobUUID, workspaceUUID, claimToken string) (webhookDeliveryClaimRow, bool, error)
 	Insert(ctx context.Context, workspaceUUID string, payload []byte) error
-	Lease(ctx context.Context, workerID string, limit int, leaseMicroseconds int64) ([]webhookDeliveryJobRow, error)
-	Complete(ctx context.Context, jobUUID string) error
-	Fail(ctx context.Context, params failWebhookDeliveryJobParams) error
+	Lease(ctx context.Context, claimToken string, limit int, leaseMicroseconds int64) ([]webhookDeliveryJobRow, error)
+	Complete(ctx context.Context, jobUUID, workspaceUUID, claimToken string) (int64, error)
+	Exhaust(ctx context.Context, jobUUID, workspaceUUID, claimToken string) (int64, error)
+	Fail(ctx context.Context, params failWebhookDeliveryJobParams) (int64, error)
 }

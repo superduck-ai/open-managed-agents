@@ -138,9 +138,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		}
 		return internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.created", created.ExternalID, nil)
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.pending", created.ExternalID, nil)
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.created", created.ExternalID, nil, created.CreatedAt)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.pending", created.ExternalID, nil, created.CreatedAt)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
 	response, err := h.responseFromSession(r, created)
 	if err != nil {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
@@ -298,7 +298,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
 	}
 	if changed {
-		h.enqueuePrincipalWebhook(r.Context(), principal, "session.updated", updated.ExternalID, nil)
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.updated", updated.ExternalID, nil, updated.UpdatedAt)
 	}
 	response, err := h.responseFromSession(r, updated)
 	if err != nil {
@@ -330,7 +330,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return mapSessionLoadError(err, sessionID)
 	}
 	if changed {
-		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil)
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
 	}
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
@@ -370,7 +370,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil, time.Now().UTC())
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 	return nil
 }
@@ -771,7 +771,7 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 		return mapThreadLoadError(err, threadID)
 	}
 	if changed && thread.ParentThreadUUID != nil {
-		h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
+		h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID, *thread.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
 	return nil

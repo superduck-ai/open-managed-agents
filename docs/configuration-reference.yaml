@@ -152,7 +152,12 @@ webhook:
   # Database subscriptions work without a global endpoint/key. Set false to pause this instance.
   worker_enabled: true
   timeout: 10s
-  max_attempts: 10
+  # Includes the first attempt; explicit positive values override this default.
+  max_attempts: 3
+  # Positive duration; checked on failures, reset by a successful delivery or explicit enable.
+  failure_disable_after: 24h
+  # Webhooks connect directly; HTTP_PROXY/HTTPS_PROXY are not used.
+  # Verify direct egress before upgrading a proxy-dependent deployment.
   allow_insecure: false
 
 vault:

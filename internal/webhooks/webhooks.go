@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -25,7 +27,6 @@ const (
 	defaultWorkerInterval = 5 * time.Second
 	defaultLeaseDuration  = time.Minute
 	defaultBatchSize      = 10
-	autoDisableFailures   = 20
 )
 
 type EventData struct {
@@ -104,51 +105,68 @@ func (w *Worker) Start(ctx context.Context) {
 
 // RunOnce leases and processes one batch of webhook delivery jobs.
 func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
-	jobs, err := w.database.LeaseWebhookDeliveryJobs(ctx, workerID, defaultBatchSize, defaultLeaseDuration)
+	timeout := webhookTimeout(w.cfg)
+	ctx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
+	defer cancel()
+	lease := max(defaultLeaseDuration, timeout+30*time.Second)
+	jobs, err := w.database.LeaseWebhookDeliveryJobs(ctx, workerID, defaultBatchSize, lease)
 	if err != nil {
 		return err
 	}
-	var errs []error
+	transport := newDeliveryTransport(ctx, w.cfg.AllowInsecure, timeout)
+	defer transport.CloseIdleConnections()
 	client := &http.Client{
-		Timeout: webhookTimeout(w.cfg),
+		Transport: transport,
+		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	for _, job := range jobs {
-		target, skip, err := targetForJob(w.cfg, job)
-		if skip {
-			if err := w.database.CompleteWebhookDeliveryJob(ctx, job.UUID); err != nil {
-				errs = append(errs, fmt.Errorf("complete skipped webhook job %s: %w", job.ExternalID, err))
-			}
-			continue
+	errs := make([]error, len(jobs))
+	var pending sync.WaitGroup
+	for i, job := range jobs {
+		pending.Go(func() {
+			errs[i] = w.processJob(ctx, client, job)
+		})
+	}
+	pending.Wait()
+	return errors.Join(errs...)
+}
+
+func (w *Worker) processJob(ctx context.Context, client *http.Client, job db.WebhookDeliveryJob) error {
+	target, skip, deliveryErr := targetForJob(w.cfg, job)
+	var applied bool
+	var err error
+	switch {
+	case skip:
+		applied, err = w.database.CompleteWebhookDeliveryJob(ctx, job, false)
+	case job.Attempts >= webhookMaxAttempts(w.cfg):
+		applied, err = w.database.ExhaustWebhookDeliveryJob(ctx, job)
+	default:
+		if deliveryErr == nil {
+			deliveryErr = deliver(ctx, client, target, job.Event)
 		}
-		if err != nil {
-			delay := retryDelay(job.Attempts + 1)
-			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.UUID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
-				errs = append(errs, fmt.Errorf("mark invalid webhook job %s retry: %w", job.ExternalID, markErr))
+		if deliveryErr == nil {
+			applied, err = w.database.CompleteWebhookDeliveryJob(ctx, job, true)
+		} else {
+			result := db.WebhookDeliveryFailure{Reason: deliveryErr.Error(), MaxAttempts: webhookMaxAttempts(w.cfg), DisableAfter: webhookFailureDisableAfter(w.cfg)}
+			var failure deliveryFailure
+			if errors.As(deliveryErr, &failure) && failure.immediateDisable {
+				result.Terminal = true
 			}
-			w.recordEndpointFailure(ctx, job, err)
-			continue
-		}
-		if err := deliver(ctx, client, target, job.Event); err != nil {
-			delay := retryDelay(job.Attempts + 1)
-			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.UUID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
-				errs = append(errs, fmt.Errorf("mark webhook job %s retry: %w", job.ExternalID, markErr))
+			if !result.Terminal && job.Attempts+1 < result.MaxAttempts {
+				result.RetryDelay = retryDelay(job.Attempts+1, rand.Int64N)
 			}
-			w.recordEndpointFailure(ctx, job, err)
-			continue
-		}
-		if err := w.database.CompleteWebhookDeliveryJob(ctx, job.UUID); err != nil {
-			errs = append(errs, fmt.Errorf("complete webhook job %s: %w", job.ExternalID, err))
-		}
-		if job.WebhookEndpointUUID != nil {
-			if err := w.database.RecordWebhookEndpointDeliverySuccess(ctx, *job.WebhookEndpointUUID); err != nil {
-				errs = append(errs, fmt.Errorf("record webhook endpoint %s success: %w", job.WebhookEndpointExternalID, err))
-			}
+			applied, err = w.database.FailWebhookDeliveryJob(ctx, job, result)
 		}
 	}
-	return errors.Join(errs...)
+	if err != nil {
+		return fmt.Errorf("record webhook job %s result: %w", job.ExternalID, err)
+	}
+	if !applied {
+		w.logger.DebugContext(ctx, "webhook claim no longer current", "job_id", job.ExternalID)
+	}
+	return nil
 }
 
 func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (deliveryTarget, bool, error) {
@@ -172,20 +190,6 @@ func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (delivery
 		AllowInsecure: cfg.AllowInsecure,
 	}
 	return target, false, validateDeliveryTarget(target, "webhook.endpoint_url")
-}
-
-func (w *Worker) recordEndpointFailure(ctx context.Context, job db.WebhookDeliveryJob, err error) {
-	if job.WebhookEndpointUUID == nil {
-		return
-	}
-	disableAfter := autoDisableFailures
-	var failure deliveryFailure
-	if errors.As(err, &failure) && failure.immediateDisable {
-		disableAfter = 1
-	}
-	if recordErr := w.database.RecordWebhookEndpointDeliveryFailure(ctx, *job.WebhookEndpointUUID, err.Error(), disableAfter); recordErr != nil {
-		w.logger.ErrorContext(ctx, "record webhook endpoint failure", "endpoint_id", job.WebhookEndpointExternalID, "error", recordErr)
-	}
 }
 
 func deliver(ctx context.Context, client *http.Client, target deliveryTarget, payload []byte) error {
@@ -222,13 +226,17 @@ func deliver(ctx context.Context, client *http.Client, target deliveryTarget, pa
 	req.Header.Set("X-Webhook-Signature", signature)
 	resp, err := client.Do(req)
 	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return fmt.Errorf("post webhook: %w", err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			return deliveryFailure{reason: fmt.Sprintf("webhook status %d", resp.StatusCode), immediateDisable: true}
+			return deliveryFailure{reason: redirectReason, immediateDisable: true}
 		}
 		return fmt.Errorf("webhook status %d", resp.StatusCode)
 	}
@@ -246,18 +254,11 @@ func validateDeliveryTarget(target deliveryTarget, name string) error {
 	if target.SigningKey == "" {
 		return errors.New("webhook signing key is empty")
 	}
-	parsed, err := url.Parse(target.URL)
-	if err != nil {
-		return fmt.Errorf("parse %s: %w", name, err)
-	}
-	if parsed.Scheme != "https" && !target.AllowInsecure {
-		return fmt.Errorf("%s must be https unless webhook.allow_insecure is true", name)
-	}
-	if parsed.Host == "" {
-		return fmt.Errorf("%s must include a host", name)
-	}
-	if isPrivateWebhookHost(parsed.Hostname()) && !target.AllowInsecure {
-		return deliveryFailure{reason: fmt.Sprintf("%s host must be publicly routable unless webhook.allow_insecure is true", name), immediateDisable: true}
+	if err := validateWebhookURL(target.URL, target.AllowInsecure); err != nil {
+		if errors.Is(err, errWebhookURLPrivate) {
+			return deliveryFailure{reason: invalidAddressReason, immediateDisable: true}
+		}
+		return deliveryFailure{reason: err.Error(), immediateDisable: true}
 	}
 	return nil
 }
@@ -274,14 +275,11 @@ func subscribed(cfg config.WebhookConfig, eventType string) bool {
 	return false
 }
 
-func retryDelay(attempts int) time.Duration {
-	if attempts < 1 {
-		attempts = 1
-	}
-	if attempts > 6 {
-		attempts = 6
-	}
-	return time.Duration(attempts*attempts) * time.Minute
+// retryDelay randomizes the next eligibility time; the worker never sleeps here.
+func retryDelay(attempts int, randomN func(int64) int64) time.Duration {
+	attempts = min(max(attempts, 1), 5)
+	upper := min(120*time.Second, 5*time.Second<<attempts)
+	return 5*time.Second + time.Duration(randomN(int64(upper-5*time.Second)))
 }
 
 func webhookTimeout(cfg config.WebhookConfig) time.Duration {
@@ -293,7 +291,14 @@ func webhookTimeout(cfg config.WebhookConfig) time.Duration {
 
 func webhookMaxAttempts(cfg config.WebhookConfig) int {
 	if cfg.MaxAttempts <= 0 {
-		return 10
+		return 3
 	}
 	return cfg.MaxAttempts
+}
+
+func webhookFailureDisableAfter(cfg config.WebhookConfig) time.Duration {
+	if cfg.FailureDisableAfter <= 0 {
+		return 24 * time.Hour
+	}
+	return cfg.FailureDisableAfter
 }

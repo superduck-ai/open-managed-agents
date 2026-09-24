@@ -15,6 +15,7 @@ import (
 // EnqueueInput contains event-specific values while Enqueuer owns the stable
 // database, configuration, and logger dependencies.
 type EnqueueInput struct {
+	OccurredAt          time.Time
 	WorkspaceUUID       string
 	OrganizationUUID    string
 	WorkspaceExternalID string
@@ -55,6 +56,10 @@ func (e *Enqueuer) Enqueue(ctx context.Context, input EnqueueInput) {
 	if e == nil || e.store == nil {
 		return
 	}
+	if input.OccurredAt.IsZero() {
+		e.logger.ErrorContext(ctx, "webhook occurrence time missing", "event_type", input.EventType, "resource_id", input.ResourceID)
+		return
+	}
 	eventID, err := ids.New("wevt_")
 	if err != nil {
 		e.logger.ErrorContext(ctx, "webhook event id", "error", err)
@@ -62,7 +67,7 @@ func (e *Enqueuer) Enqueue(ctx context.Context, input EnqueueInput) {
 	}
 	event := Event{
 		ID:        eventID,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		CreatedAt: input.OccurredAt.UTC().Format(time.RFC3339Nano),
 		Data: EventData{
 			ID:              input.ResourceID,
 			OrganizationID:  input.OrganizationUUID,

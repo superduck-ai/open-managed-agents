@@ -3,14 +3,20 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
+	"uuid"
+
+	"github.com/superduck-ai/yourbatis"
 )
 
 type WebhookDeliveryJob struct {
 	UUID                      string
 	ExternalID                string
 	WorkspaceUUID             string
+	ClaimToken                string
 	EventType                 string
 	Event                     json.RawMessage
 	Attempts                  int
@@ -61,7 +67,7 @@ func (d *DB) LeaseWebhookDeliveryJobs(ctx context.Context, workerID string, limi
 		leaseDuration = time.Minute
 	}
 	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	rows, err := mapper.Lease(ctx, workerID, limit, leaseDuration.Microseconds())
+	rows, err := mapper.Lease(ctx, workerID+":"+uuid.NewV4().String(), limit, leaseDuration.Microseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -73,26 +79,105 @@ func (d *DB) LeaseWebhookDeliveryJobs(ctx context.Context, workerID string, limi
 	return jobs, nil
 }
 
-func (d *DB) CompleteWebhookDeliveryJob(ctx context.Context, jobUUID string) error {
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	return mapper.Complete(ctx, jobUUID)
+// CompleteWebhookDeliveryJob marks a current claim complete. Skips do not count as deliveries.
+func (d *DB) CompleteWebhookDeliveryJob(ctx context.Context, job WebhookDeliveryJob, delivered bool) (bool, error) {
+	return d.finishWebhookDeliveryJob(ctx, job, func(mapper WebhookDeliveryJobMapper) (int64, error) {
+		return mapper.Complete(ctx, job.UUID, job.WorkspaceUUID, job.ClaimToken)
+	}, func(mapper WebhookEndpointMapper) error {
+		if !delivered {
+			return nil
+		}
+		return mapper.RecordDeliverySuccess(ctx, *job.WebhookEndpointUUID, job.WorkspaceUUID)
+	})
 }
 
-func (d *DB) FailWebhookDeliveryJob(ctx context.Context, jobUUID string, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {
-	nextAttempts := attempts + 1
-	status := "retry"
-	if nextAttempts >= maxAttempts {
-		status = "failed"
+// WebhookDeliveryFailure separates terminal rejections from retryable failures.
+type WebhookDeliveryFailure struct {
+	Reason       string
+	RetryDelay   time.Duration
+	MaxAttempts  int
+	DisableAfter time.Duration
+	Terminal     bool
+}
+
+var errWebhookClaimExpired = errors.New("webhook claim expired during result transaction")
+
+func (d *DB) FailWebhookDeliveryJob(ctx context.Context, job WebhookDeliveryJob, failure WebhookDeliveryFailure) (bool, error) {
+	if failure.DisableAfter <= 0 {
+		failure.DisableAfter = 24 * time.Hour
 	}
-	runAfter := time.Now().UTC().Add(retryDelay)
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	return mapper.Fail(ctx, failWebhookDeliveryJobParams{
-		JobUUID:  jobUUID,
-		Status:   status,
-		RunAfter: runAfter,
-		Attempts: nextAttempts,
-		Reason:   reason,
+	var applied bool
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewWebhookDeliveryJobMapper(executor)
+		_, found, err := mapper.LockClaim(ctx, job.UUID, job.WorkspaceUUID, job.ClaimToken)
+		if err != nil || !found {
+			return err
+		}
+		disabled, err := recordWebhookFailure(ctx, executor, job, failure)
+		if err != nil {
+			return err
+		}
+		status := "retry"
+		if failure.Terminal || disabled || job.Attempts+1 >= failure.MaxAttempts {
+			status = "failed"
+		}
+		rows, err := mapper.Fail(ctx, failWebhookDeliveryJobParams{
+			JobUUID: job.UUID, WorkspaceUUID: job.WorkspaceUUID, ClaimToken: job.ClaimToken,
+			Status: status, RunAfter: time.Now().UTC().Add(failure.RetryDelay), Attempts: job.Attempts + 1, Reason: failure.Reason,
+		})
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return errWebhookClaimExpired
+		}
+		applied = true
+		return nil
 	})
+	if errors.Is(err, errWebhookClaimExpired) {
+		return false, nil
+	}
+	return applied && err == nil, err
+}
+
+func recordWebhookFailure(ctx context.Context, executor yourbatis.Executor, job WebhookDeliveryJob, failure WebhookDeliveryFailure) (bool, error) {
+	if job.WebhookEndpointUUID == nil {
+		return false, nil
+	}
+	row, err := NewWebhookEndpointMapper(executor).RecordDeliveryFailure(ctx, recordWebhookEndpointFailureParams{
+		EndpointUUID: *job.WebhookEndpointUUID, WorkspaceUUID: job.WorkspaceUUID,
+		DisableAfterMicroseconds: failure.DisableAfter.Microseconds(), ImmediateDisable: failure.Terminal,
+		Reason: truncateWebhookFailureReason(failure.Reason),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return row.Disabled, err
+}
+
+// ExhaustWebhookDeliveryJob stops an already exhausted claim without a new
+// delivery attempt, preserving its payload, counters and scheduled time.
+func (d *DB) ExhaustWebhookDeliveryJob(ctx context.Context, job WebhookDeliveryJob) (bool, error) {
+	return d.finishWebhookDeliveryJob(ctx, job, func(mapper WebhookDeliveryJobMapper) (int64, error) {
+		return mapper.Exhaust(ctx, job.UUID, job.WorkspaceUUID, job.ClaimToken)
+	}, nil)
+}
+
+// The job row lock fences both the result and endpoint statistics until commit.
+func (d *DB) finishWebhookDeliveryJob(ctx context.Context, job WebhookDeliveryJob, update func(WebhookDeliveryJobMapper) (int64, error), record func(WebhookEndpointMapper) error) (bool, error) {
+	var applied bool
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		rows, err := update(NewWebhookDeliveryJobMapper(executor))
+		if err != nil || rows == 0 {
+			return err
+		}
+		applied = true
+		if job.WebhookEndpointUUID != nil && record != nil {
+			return record(NewWebhookEndpointMapper(executor))
+		}
+		return nil
+	})
+	return applied && err == nil, err
 }
 
 func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
@@ -100,6 +185,7 @@ func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
 		UUID:                      r.UUID,
 		ExternalID:                r.ExternalID,
 		WorkspaceUUID:             r.WorkspaceUUID,
+		ClaimToken:                r.ClaimToken,
 		EventType:                 r.EventType,
 		Event:                     bytes.Clone(r.Event),
 		Attempts:                  r.Attempts,

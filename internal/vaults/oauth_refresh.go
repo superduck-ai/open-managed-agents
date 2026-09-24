@@ -329,6 +329,7 @@ func resolveExpiresAtAfterRefresh(now time.Time, previous *string, expiresIn OAu
 }
 
 func (i *Injector) enqueueRefreshFailure(ctx context.Context, credential db.VaultCredential) {
+	occurredAt := time.Now().UTC()
 	if i.webhooks == nil {
 		return
 	}
@@ -338,6 +339,7 @@ func (i *Injector) enqueueRefreshFailure(ctx context.Context, credential db.Vaul
 		return
 	}
 	i.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
+		OccurredAt:          occurredAt,
 		WorkspaceUUID:       credential.WorkspaceUUID,
 		OrganizationUUID:    scope.OrganizationUUID,
 		WorkspaceExternalID: scope.WorkspaceExternalID,

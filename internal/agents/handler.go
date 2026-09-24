@@ -178,7 +178,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError("Could not create agent", fmt.Errorf("create agent %q: %w", agentID, err))
 	}
-	h.enqueueWebhook(r.Context(), principal, "agent.created", created.ExternalID)
+	h.enqueueWebhook(r.Context(), principal, "agent.created", created.ExternalID, created.CreatedAt)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(created))
 	return nil
 }
@@ -354,7 +354,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		return internalError("Could not update agent", fmt.Errorf("update agent %q: %w", agentID, err))
 	}
 	if updated.CurrentVersion > expectedVersion {
-		h.enqueueWebhook(r.Context(), principal, "agent.updated", updated.ExternalID)
+		h.enqueueWebhook(r.Context(), principal, "agent.updated", updated.ExternalID, updated.UpdatedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
 	return nil
@@ -374,7 +374,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		return internalError("Could not archive agent", fmt.Errorf("archive agent %q: %w", agentID, err))
 	}
 	if changed {
-		h.enqueueWebhook(r.Context(), principal, "agent.archived", record.ExternalID)
+		h.enqueueWebhook(r.Context(), principal, "agent.archived", record.ExternalID, *record.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(record))
 	return nil

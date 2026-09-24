@@ -24,6 +24,7 @@ type WebhookEndpoint struct {
 	SigningSecret       string
 	Status              string
 	DisabledReason      *string
+	FailureStartedAt    *time.Time
 	ConsecutiveFailures int
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -88,23 +89,30 @@ func (d *DB) GetWebhookEndpoint(ctx context.Context, workspaceUUID string, exter
 	return row.endpoint()
 }
 
-func (d *DB) UpdateWebhookEndpoint(ctx context.Context, workspaceUUID string, externalID string, next WebhookEndpoint) (WebhookEndpoint, error) {
-	events, err := json.Marshal(next.EnabledEvents)
-	if err != nil {
-		return WebhookEndpoint{}, err
+// WebhookEndpointUpdate changes only explicitly provided subscription fields.
+type WebhookEndpointUpdate struct {
+	URL           *string
+	Name          *string
+	Description   *string
+	EnabledEvents []string
+	Status        *string
+	UpdatedAt     time.Time
+}
+
+func (d *DB) UpdateWebhookEndpoint(ctx context.Context, workspaceUUID string, externalID string, next WebhookEndpointUpdate) (WebhookEndpoint, error) {
+	var events []byte
+	if next.EnabledEvents != nil {
+		var err error
+		events, err = json.Marshal(next.EnabledEvents)
+		if err != nil {
+			return WebhookEndpoint{}, err
+		}
 	}
 	mapper := NewWebhookEndpointMapper(d.mapperDB)
 	row, err := mapper.UpdateByExternalID(ctx, updateWebhookEndpointParams{
-		WorkspaceUUID:       workspaceUUID,
-		ExternalID:          externalID,
-		URL:                 next.URL,
-		Name:                next.Name,
-		Description:         next.Description,
-		EnabledEvents:       events,
-		Status:              next.Status,
-		DisabledReason:      next.DisabledReason,
-		ConsecutiveFailures: next.ConsecutiveFailures,
-		UpdatedAt:           next.UpdatedAt,
+		WorkspaceUUID: workspaceUUID, ExternalID: externalID,
+		URL: next.URL, Name: next.Name, Description: next.Description,
+		EnabledEvents: events, Status: next.Status, UpdatedAt: next.UpdatedAt,
 	})
 	if err != nil {
 		return WebhookEndpoint{}, mapNoRows(err)
@@ -155,23 +163,6 @@ func (d *DB) ListActiveWebhookEndpointsForEvent(ctx context.Context, workspaceUU
 	return webhookEndpoints(rows)
 }
 
-func (d *DB) RecordWebhookEndpointDeliverySuccess(ctx context.Context, endpointUUID string) error {
-	mapper := NewWebhookEndpointMapper(d.mapperDB)
-	return mapper.RecordDeliverySuccess(ctx, endpointUUID)
-}
-
-func (d *DB) RecordWebhookEndpointDeliveryFailure(ctx context.Context, endpointUUID string, reason string, disableAfter int) error {
-	if disableAfter <= 0 {
-		disableAfter = 20
-	}
-	mapper := NewWebhookEndpointMapper(d.mapperDB)
-	return mapper.RecordDeliveryFailure(ctx, recordWebhookEndpointFailureParams{
-		EndpointUUID: endpointUUID,
-		DisableAfter: disableAfter,
-		Reason:       truncateWebhookFailureReason(reason),
-	})
-}
-
 func webhookEndpoints(rows []webhookEndpointRow) ([]WebhookEndpoint, error) {
 	endpoints := make([]WebhookEndpoint, 0, len(rows))
 	for _, row := range rows {
@@ -204,6 +195,7 @@ func (r webhookEndpointRow) endpoint() (WebhookEndpoint, error) {
 		SigningSecret:       r.SigningSecret,
 		Status:              r.Status,
 		ConsecutiveFailures: r.ConsecutiveFailures,
+		FailureStartedAt:    r.FailureStartedAt,
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
 		DeletedAt:           r.DeletedAt,

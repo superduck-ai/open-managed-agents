@@ -219,7 +219,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError("Could not create vault", fmt.Errorf("create vault: %w", err))
 	}
-	h.enqueueWebhook(r, principal, "vault.created", created.ExternalID, nil)
+	h.enqueueWebhook(r, principal, "vault.created", created.ExternalID, nil, created.CreatedAt)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromVault(created))
 	return nil
 }
@@ -334,11 +334,12 @@ func (h *Handler) archiveVaultRoute(w http.ResponseWriter, r *http.Request) erro
 		}
 		return internalError("Could not archive vault", fmt.Errorf("archive vault %q: %w", vaultID, err))
 	}
+	occurredAt := time.Now().UTC()
 	if result.Changed {
-		h.enqueueWebhook(r, principal, "vault.archived", result.Vault.ExternalID, nil)
+		h.enqueueWebhook(r, principal, "vault.archived", result.Vault.ExternalID, nil, *result.Vault.ArchivedAt)
 	}
 	for _, credentialID := range result.CredentialIDs {
-		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", credentialID, webhooks.EventOptions{VaultID: &result.Vault.ExternalID})
+		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", credentialID, webhooks.EventOptions{VaultID: &result.Vault.ExternalID}, occurredAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromVault(result.Vault))
 	return nil
@@ -357,10 +358,11 @@ func (h *Handler) deleteVaultRoute(w http.ResponseWriter, r *http.Request) error
 		}
 		return internalError("Could not delete vault", fmt.Errorf("delete vault %q: %w", vaultID, err))
 	}
-	h.enqueueWebhook(r, principal, "vault.deleted", vaultID, nil)
+	occurredAt := time.Now().UTC()
+	h.enqueueWebhook(r, principal, "vault.deleted", vaultID, nil, occurredAt)
 	for _, credentialID := range credentialIDs {
 		parentVaultID := vaultID
-		h.enqueueWebhookWithOptions(r, principal, "vault_credential.deleted", credentialID, webhooks.EventOptions{VaultID: &parentVaultID})
+		h.enqueueWebhookWithOptions(r, principal, "vault_credential.deleted", credentialID, webhooks.EventOptions{VaultID: &parentVaultID}, occurredAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: vaultID, Type: "vault_deleted"})
 	return nil
@@ -431,7 +433,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		return mapCreateCredentialError(err, vaultID)
 	}
 	parentVaultID := created.VaultExternalID
-	h.enqueueWebhookWithOptions(r, principal, "vault_credential.created", created.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
+	h.enqueueWebhookWithOptions(r, principal, "vault_credential.created", created.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID}, created.CreatedAt)
 	return h.writeCredentialResponse(w, created)
 }
 
@@ -571,7 +573,7 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 	}
 	parentVaultID := record.VaultExternalID
 	if changed {
-		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", record.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
+		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", record.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID}, *record.ArchivedAt)
 	}
 	return h.writeCredentialResponse(w, record)
 }
@@ -590,20 +592,21 @@ func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		return internalError("Could not delete credential", fmt.Errorf("delete credential %q: %w", credentialID, err))
 	}
 	parentVaultID := vaultID
-	h.enqueueWebhookWithOptions(r, principal, "vault_credential.deleted", credentialID, webhooks.EventOptions{VaultID: &parentVaultID})
+	h.enqueueWebhookWithOptions(r, principal, "vault_credential.deleted", credentialID, webhooks.EventOptions{VaultID: &parentVaultID}, time.Now().UTC())
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: credentialID, Type: "vault_credential_deleted"})
 	return nil
 }
 
-func (h *Handler) enqueueWebhook(r *http.Request, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
-	h.enqueueWebhookWithOptions(r, principal, eventType, resourceID, webhooks.EventOptions{SessionThreadID: sessionThreadID})
+func (h *Handler) enqueueWebhook(r *http.Request, principal auth.Principal, eventType, resourceID string, sessionThreadID *string, occurredAt time.Time) {
+	h.enqueueWebhookWithOptions(r, principal, eventType, resourceID, webhooks.EventOptions{SessionThreadID: sessionThreadID}, occurredAt)
 }
 
-func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Principal, eventType, resourceID string, options webhooks.EventOptions) {
+func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Principal, eventType, resourceID string, options webhooks.EventOptions, occurredAt time.Time) {
 	if h.webhooks == nil {
 		return
 	}
 	h.webhooks.Enqueue(r.Context(), webhooks.EnqueueInput{
+		OccurredAt:          occurredAt,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceExternalID: principal.WorkspaceExternalID,

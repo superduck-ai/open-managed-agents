@@ -2,6 +2,7 @@ package deployments
 
 import (
 	"context"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -19,11 +20,11 @@ func (s *Store) WithWebhooks(enqueuer webhookEnqueuer) *Store {
 
 func (s *Store) enqueueSessionCreated(ctx context.Context, session db.Session) {
 	// The first two events remain available only through legacy global configuration.
-	s.enqueueResource(ctx, session.WorkspaceUUID, session.ExternalID,
+	s.enqueueResource(ctx, session.WorkspaceUUID, session.ExternalID, session.CreatedAt,
 		"session.created", "session.pending", "session.status_idled")
 }
 
-func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID string, eventTypes ...string) {
+func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID string, occurredAt time.Time, eventTypes ...string) {
 	if s.webhooks == nil {
 		return
 	}
@@ -34,6 +35,7 @@ func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID s
 	}
 	for _, eventType := range eventTypes {
 		s.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
+			OccurredAt:          occurredAt,
 			WorkspaceUUID:       workspaceUUID,
 			OrganizationUUID:    scope.OrganizationUUID,
 			WorkspaceExternalID: scope.WorkspaceExternalID,
@@ -45,7 +47,7 @@ func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID s
 
 // Scheduled occurrences persist their Run and final Session-creation result in one
 // transaction. Publish both lifecycle signals after commit, with the same Run ID.
-func (s *Store) enqueueScheduledRun(ctx context.Context, run db.DeploymentRun) {
+func (s *Store) enqueueScheduledRun(ctx context.Context, run db.DeploymentRun, completedAt time.Time) {
 	if run.TriggerType != "schedule" || run.ExternalID == "" {
 		return
 	}
@@ -53,5 +55,6 @@ func (s *Store) enqueueScheduledRun(ctx context.Context, run db.DeploymentRun) {
 	if run.SessionExternalID != nil {
 		outcome = "deployment_run.succeeded"
 	}
-	s.enqueueResource(ctx, run.WorkspaceUUID, run.ExternalID, "deployment_run.started", outcome)
+	s.enqueueResource(ctx, run.WorkspaceUUID, run.ExternalID, run.CreatedAt, "deployment_run.started")
+	s.enqueueResource(ctx, run.WorkspaceUUID, run.ExternalID, completedAt, outcome)
 }

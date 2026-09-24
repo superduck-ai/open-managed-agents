@@ -72,11 +72,164 @@ flowchart LR
 
 ## 保留的投递边界
 
-沿用现有按事件发生时的 workspace 订阅选择、持久化 delivery jobs 和 Standard Webhooks 签名。此轮不改投递重试和自动禁用阈值，不引入事务 outbox，不增加测试通知、投递日志 UI、手动/批量重放或多密钥宽限期。
+沿用现有按事件发生时的 workspace 订阅选择、持久化 delivery jobs 和 Standard Webhooks 签名。投递策略由下述各阶段逐步对齐，不引入事务 outbox，不增加测试通知、投递日志 UI、手动/批量重放或多密钥宽限期。
 
 `webhook.worker_enabled` 默认 `true`，显式 `false` 仍关闭当前实例 worker；数据库订阅无需全局 endpoint/key。复用主进程中的后台协程和 PostgreSQL jobs，不按订阅数动态启动进程。没有匹配的启用订阅时不创建 endpoint 投递任务。既有全局配置投递路径保留，只有 workspace 没有订阅记录时才可能使用。
 
-尚待后续解决的投递差异包括 DNS 解析后的公网地址约束、Claude 的重试节奏与基于时间的持续失败禁用，以及资源写入和 webhook 入队的事务可靠性；当前 URL 的字面值检查不能表述为完整 SSRF 防护。
+### 批次并发、目标隔离与领取保护
+
+2026-09-24 投递改进继续使用现有 jobs 表和 Yourbatis，不增加 schema 或更换队列。全局配置任务指 payload 没有 `webhook_endpoint_uuid` 的任务，不能根据关联查询是否命中来推断。
+
+- 领取查询从任务 payload 保留原始订阅 UUID，并按订阅 UUID 与任务 workspace 关联有效订阅。指定订阅的任务遇到删除、不存在、禁用或 workspace 不匹配时跳过发送并完成任务，不修改订阅成功/失败统计，绝不回退全局 URL/密钥。真正的全局任务和新事件入队时的原有回退规则不变。
+- 每次领取最多 10 条，使用共享 HTTP Client 并发执行目标检查、HTTP 投递和结果写回；整批结束后才进入下一次轮询。保留 5 秒 ticker，一条投递失败不取消其他任务。并发上限按 Worker 实例计算，多实例叠加；没有每订阅串行、全局限流或顺序保证。
+- 每次领取生成新随机标记（worker 名称加随机 UUID），写入已有 `locked_by` 并随任务返回。完成、失败和跳过都要求同 workspace、同领取标记、仍为 running 且 `locked_until > clock_timestamp()`；未命中返回 `applied=false`，属于失去执行权，不更新统计。
+- 任务结果与订阅统计使用同一个 Yourbatis 事务；任务行锁保护结果和统计直到提交。事务中任意一步或提交失败，返回 `applied=false` 与错误，任务结果不应被视为已保存。跳过任务不算投递成功。
+- HTTP 超时为 T（默认 10 秒），整批期限为 T+15 秒，从领取前计时；租约为 max(60 秒, T+30 秒)。默认批次 25 秒、租约 60 秒。取消/超时使写回无法完成时，任务由租约过期恢复；不增加续租或超时配置。
+- 重试默认共 3 次，按下述第二阶段策略使用 5–120 秒随机指数退避；普通失败按第三阶段的持续时间窗口禁用，3xx 和地址校验的永久拒绝可立即禁用。并发任务的成功/失败统计按结果事务实际获得订阅行锁的顺序更新。
+- URL、密钥与状态在领取时读取；之后修改/禁用/删除订阅不能撤回已经开始的请求。旧执行者写回被拒绝也不能撤回已发出的 HTTP 请求；网络结果不确定或写回失败仍可能重投，接收方必须按 event.id 去重。业务提交与通知入队仍未原子化。
+
+```mermaid
+flowchart TD
+    Claim[领取最多 10 条：写入随机领取标记与租约] --> Parallel[并发处理每条任务]
+    Parallel --> Target{原始任务指定订阅?}
+    Target -->|是| Endpoint{同 workspace 的订阅有效且启用?}
+    Target -->|否| Global{全局配置规则允许投递?}
+    Endpoint -->|否| Skip[跳过发送]
+    Endpoint -->|是| HTTP[签名并投递]
+    Global -->|是| HTTP
+    Global -->|否| Skip
+    HTTP --> Result[事务：校验当前领取并写任务结果]
+    Skip --> Result
+    Result -->|生效且实际投递| Stats[同事务更新订阅统计]
+    Result -->|领取失效| Ignore[不写回、不更新统计]
+    Stats --> Wait[等待整批结束]
+    Ignore --> Wait
+    Result -->|跳过生效| Wait
+    Wait --> Poll[下一次轮询]
+```
+
+升级时先停止所有旧版 Webhook Worker，再启动新版；旧版缺少领取标记校验，不能在新旧混跑期间承诺写回保护。现存任务使用原表格式继续领取，运行中的遗留任务到期后恢复，不需要迁移。
+
+`tests/webhook_worker_test.go` 使用独立 PostgreSQL、本地可控接收器和官方 Go SDK，覆盖目标丢失但全局配置有效、跨 workspace、禁用、全局任务、10 路并发与第 11 条留待下一批、失败隔离、重试验签和稳定事件 ID、过期/重复/错误领取标记、统计写入回滚、取消恢复及多实例互斥领取。Mapper 单测检查 SQL、参数、影响行数和错误传播；另执行定向 race 检查。
+
+人工验收：创建两个独立接收器（订阅与全局）→ 暂停 worker → 创建订阅并产生待投递事件 → 删除订阅 → 启动新版 worker，确认两处均未收到旧任务 → 新建订阅并产生 11 条事件 → 阻塞接收器前 10 条响应，确认 10 路并发且第 11 条尚未投递 → 释放响应并核对后续批次、签名及事件 ID。租约过期/故障注入仅在独立测试库执行。
+
+本次验证（2026-09-24，基于 `064c3d7` 的未提交变更）：
+
+- 显式使用 `/tmp/oma-webhooks-test-config.yaml` 和 `oma-webhooks-test` 独立依赖；源码生成、`just test` 通过，53 个有测试的 Go package。现有事件生产、SDK 验签和 worker 开关随全量测试回归，本轮没有调度超时。
+- 新增 9 组投递测试；首轮全量包含前 7 组，review 后增加提交阶段失败回滚、并发 20 次失败自动禁用两组，以及 Mapper 影响行数测试。最终 `go test -race ./internal/db ./internal/webhooks ./tests -run 'TestWebhook|TestConsoleEventCatalog|TestOpenAPIEventCatalog' -count=1` 全部通过，覆盖上述补充测试；不是全仓库 race 检查。
+- `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files`、`just hooks-run` 全部通过。对未跟踪的新测试文件和 review 后的 Mapper 测试额外执行 `pre-commit run --files` 通过，不依赖暂存来纳入检查，也没有跳过失败项。前端未改，本轮未重跑前端测试/构建。
+- 独立接收器由测试关闭；`oma-webhooks-test` 的 6 个容器及网络已清理。代码保持未暂存、未提交、未推送。
+- Review 检查原始目标保留、租户条件、领取标记/到期校验、结果与统计的事务、并发错误收集及连接占用；没有更改原有重试规则、全局配置回退条件或业务写入与入队边界。人工操作验收未执行，上述接收器、签名和并发证明来自自动化测试。
+
+基于时间的持续失败禁用由第三阶段补齐；资源写入和 webhook 入队的事务可靠性仍待后续处理；具体随机算法未公开，OMA 明确记录自己的实现选择。实际连接地址约束见下节。
+
+## 重试节奏与永久失败终止（第二阶段，2026-09-24）
+
+配置与 Worker 默认总尝试次数改为 3（包含首次发送），显式正数 max_attempts 继续生效，数据库订阅与全局路径共用规则。第 n 次失败的上界为 min(120秒, 5秒 × 2ⁿ)，从 [5秒, 上界) 均匀随机采样，默认两次重试为 5–10、5–20 秒。指数提前封顶避免溢出，使用 math/rand/v2 的并发安全随机源。随机值写入 jobs.run_after，不在 goroutine 内等待；轮询、整批耗时和积压可能延后真正发送。
+
+内部 WebhookDeliveryFailure 显式区分终止与可重试结果。3xx、DNS/私网地址及已有永久 URL 校验拒绝立即将当前任务写成 failed，不再修改 run_after，并在同一 Yourbatis 事务禁用订阅。重定向原因统一为 `auto-disabled: endpoint URL returned a redirect (3xx)`，DNS/私网原因为 `auto-disabled: endpoint URL resolved to an invalid address`；管理 API 保留原校验文案，Worker 通过错误类别识别，不匹配文本。全局任务同样终止但不写订阅统计。
+
+历史任务保留原 payload、事件 ID、时间、次数和 run_after。下一次领取后，失效订阅仍按原规则跳过完成；有效目标已达到当前次数上限时，Exhaust 只将任务转为 failed 并释放领取，不修改 attempts、last_error、run_after 或订阅统计。未耗尽任务再次失败后使用新退避，failed 不自动复活。所有结果继续按 workspace、running、领取标记及未过期租约保护；订阅统计失败会回滚整个结果事务。
+
+```mermaid
+flowchart TD
+    Claim[领取任务并检查目标] --> Skip{目标失效或禁用?}
+    Skip -->|是| Complete[跳过完成：不改统计]
+    Skip -->|否| Limit{已达到当前次数上限?}
+    Limit -->|是| Exhaust[失败终止：保留次数和原错误]
+    Limit -->|否| Send[执行投递]
+    Send --> Success[2xx：完成并清零计数]
+    Send --> Permanent[永久拒绝：失败终止并禁用]
+    Send --> Retry[普通失败：未耗尽则预约重试，否则失败终止]
+```
+
+第二阶段当时保留的普通连续失败 20 次禁用，现已由第三阶段的持续失败窗口替代；其他待处理任务依旧在领取时检查订阅状态。已终止任务不会随重新启用而恢复。第二阶段未增加 schema 或配置；第三阶段增加失败窗口字段和时长配置。公开 API、签名、事件目录、10 条批次并发、租约与业务提交/入队非原子边界不变。升级须先停旧 Worker 再启动新版；显式配置 10 次的部署不会自动变成 3 次。
+
+这不是严格的物理 HTTP 次数限制：请求已发送而写回失败时仍可能重复投递，接收方按事件 ID 去重。默认次数和退避范围对齐公开合同，随机公式是 OMA 的明确选择，持续失败时长见第三阶段。
+
+验收包含永久拒绝后重新启用不复活、默认/显式次数、历史任务不改预约及计数、终态写回回滚和失效领取。大多数用例直接 RunOnce 并在独立测试库推进预约时间；TestWebhookRetryRealWorkerPolling 使用真实 Worker.Start 轮询经历一次普通失败、自然退避、再次投递成功，不将前者称为真实调度验收。
+
+第二阶段验证记录：使用 `/tmp/oma-webhooks-test-config.yaml` 与 `oma-webhooks-test` 独立依赖，`just test` 的 53 个 Go package 通过。Review 后补充 Exhaust 的 0/1 影响行数测试和重新启用后新事件正常投递测试，最终 `go test -race ./internal/config ./internal/db ./internal/webhooks ./tests -run 'TestWebhook|TestDeliver|TestEnqueuer|TestConsoleEventCatalog|TestOpenAPIEventCatalog' -count=1` 四个测试包通过，包含既有事件矩阵、官方 SDK 验签与并发 Worker 回归；这是定向 race。
+
+源码生成、lint、dead-code、duplicates、complexity、large-files、hooks-run 通过；全部未跟踪 Go 新文件另行执行相同 hooks 通过。本阶段没有前端行为修改，没有额外运行前端全量测试。Review 检查终态不可复活、次数边界、历史任务保留、事务回滚、租户条件和随机并发安全，未发现需要扩大本阶段范围的逻辑问题。独立测试服务在验收后清理，代码保留未暂存、未提交、未推送。
+
+人工验收顺序：创建订阅 → 普通失败到默认次数耗尽 → 新事件收到 3xx 后立即终止并禁用 → 重新启用，确认旧任务不恢复且新事件正常投递 → 验签并核对稳定事件时间。浏览器人工操作与生产出口验收未执行；以上投递与轮询证据均来自独立测试环境。
+
+
+## 订阅部分更新、连接地址与事件时间（2026-09-24）
+
+订阅编辑通过 `WebhookEndpointUpdate` 表示字段是否提供，Yourbatis 只写明确提供的字段。未传 status 时不写状态、禁用原因或计数，避免旧快照覆盖 Worker 结果。显式 enabled 在 SQL 内清空原因和计数；disabled 保留当前原因或填入 manual。更新保持 workspace 和未删除条件；同一字段以执行顺序为准，不引入新版本协议。
+
+Webhook 每批使用独立 Transport，Proxy=nil，忽略环境 HTTP 代理。HTTPS/443 为默认要求。新连接解析一次 DNS，复用 networkpolicy.PublicAddress 过滤，按剩余期限尝试公网 IP；实际拨号只接收数字地址，原 URL 保留 Host、TLS SNI 和证书校验。DNS 临时失败走普通重试；无可用公网地址产生可识别的永久失败，在既有结果/统计事务内立即禁用订阅，原因是 `auto-disabled: endpoint URL resolved to an invalid address`。全局任务执行相同检查但没有订阅状态可更新。allow_insecure 保留本地测试例外，仍直连且不跟随重定向。批次结束关闭空闲连接，拨号受批次取消和 HTTP 超时限制。代理依赖部署需先确认直连出口。
+
+```mermaid
+flowchart LR
+    Task[任务目标] --> URL[URL 校验]
+    URL --> DNS[解析 DNS 并过滤公网候选]
+    DNS --> Dial[连接已验证 IP]
+    Dial --> TLS[原域名 TLS 校验与 HTTP 发送]
+    TLS --> Result[既有领取保护与结果事务]
+```
+
+EnqueueInput.OccurredAt 必填，零值记录结构化错误并停止该次入队，不回滚已完成业务操作。已持久化 Session 事件取 CreatedAt；资源取成功返回记录的 CreatedAt/UpdatedAt/ArchivedAt。删除、仅返回标识的级联在事务成功返回时采集一次，早于租户查询和对象清理；OAuth 取最终失败判断时间。定时 Run started 取 Run.CreatedAt，结果取事务成功返回时间。无持久化时间时采用应用观察时间，不伪称精确提交时间，也不增加子资源查询或表字段。
+
+payload.created_at 使用 UTC RFC3339Nano；扇出和重试保留同一事件 ID、时间与 payload，签名头按每次尝试重新生成；不改写历史任务。事件目录、预留事件、全局订阅回退和业务提交/入队非原子边界保持不变。
+
+验收覆盖部分更新与 Worker 并发、显式启用/禁用、JSON 空数组绑定、跨 workspace，DNS 私网/混合结果/临时故障/IP 固定、TLS Host 与证书验证，以及历史事件时间和重试 payload 一致。测试使用独立 PostgreSQL、可控解析/拨号替身与本地接收器；公网真实出口和人工 Console 操作需另行验收。
+
+本阶段验证：显式使用 `/tmp/oma-webhooks-test-config.yaml`，`just test` 的 53 个 Go package 通过；review 补充连接取消、URL query 脱敏和 Mapper 分支绑定断言后，`go test -race ./internal/db ./internal/webhooks ./tests -run 'TestWebhook|TestDeliver|TestEnqueuer|TestConsoleEventCatalog|TestOpenAPIEventCatalog' -count=1` 通过。这是定向 race，不是全仓库 race。首次将 test 与 lint 并发运行导致生成文件被另一命令清理而编译失败，改为串行后全量通过；新增日志测试缺少 JSON 标签的 lint 问题已修正。
+
+lint、dead-code、duplicates、complexity、large-files、web-format-check、hooks-run 通过，未跟踪的新文件也显式执行相同 hooks。前端 Webhook 页面 25 项测试、267 次断言，以及命名、格式和构建通过；本阶段没有重新运行完整前端套件，不将历史 Bun 133 问题表述为已修复。Review 核对部分更新、租户条件、统计事务、所有生产入口时间来源与连接生命周期；没有新增 migration、事件类型或投递策略。
+
+人工顺序：在测试订阅上制造失败并编辑元数据，确认自动禁用/计数保持 → 显式启用确认清零 → 验证被拒绝地址与临时 DNS 失败分类 → 正常接收并使用官方 SDK 验签 → 暂停投递后恢复，核对原始事件时间、重试 payload 和新签名时间。生产直连出口与浏览器人工流程未在本阶段执行。
+
+
+## 持续失败时间窗口（第三阶段，2026-09-24）
+
+普通失败禁用不再使用 20 次阈值。新增 `webhook.failure_disable_after`，默认 `24h`，必须为正时长；配置加载和 Worker 的未配置回退一致。Claude 未公开持续失败阈值，这一默认值和可配置能力属于 OMA 的选择。
+
+migration 00064 为 webhook_endpoints 增加 nullable `failure_started_at timestamptz`。失败次数保留用于内部统计，不再决定禁用。旧启用记录从升级后首次失败开始计时，不用 updated_at 或历史任务推算；原禁用状态与原因不变。公开 API、前端及事件目录不增加字段。
+
+```mermaid
+flowchart TD
+    A[投递结果] --> B{成功或失败}
+    B -->|2xx| C[启用订阅清空失败窗口和计数]
+    B -->|失败| D[同一事务锁定有效任务领取]
+    D --> E[按数据库时钟更新订阅窗口]
+    E --> F{永久失败或持续失败达到阈值}
+    F -->|是| G[禁用订阅并终止当前任务]
+    F -->|否| H[按现有次数限制重试或终止]
+    G --> I[复核领取条件并提交]
+    H --> I
+    I -->|租约失效或写入失败| J[整体回滚窗口、计数和任务结果]
+```
+
+失败路径始终先锁 jobs，再锁同 workspace 的启用订阅，避免反向锁序。订阅 SQL 在取得行锁后以 clock_timestamp 初始化或比较起点，达到时长使用 `>=`；一次计算同时决定状态和原因。持续失败禁用原因固定为 `auto-disabled after sustained delivery failures`；永久拒绝保留已有原因。当前任务只在最终领取检查通过后记录结果，触发禁用时直接 failed，不改变 run_after，也不覆盖实际 last_error。缺失或已禁用订阅不写统计，其他任务仍沿用已有目标检查。
+
+显式启用清空窗口、原因及次数；普通编辑、换密钥、手动禁用不清空窗口。成功只有在订阅仍启用时才重置；迟到成功不能自动恢复订阅。并发结果按数据库接受顺序，不按 HTTP 开始顺序推进。HTTP 期间不持有数据库事务；已经发出的请求不会因禁用追溯取消。
+
+只在新的失败写回时检查时长，不新增扫描、定时禁用或主动探测。空闲超过阈值不会自行禁用；下一次成功清空窗口，下一次失败才触发判断。阈值变更在下次失败生效。全局配置任务无订阅窗口，仍沿用次数和永久失败策略；显式重新启用不复活 failed 任务。
+
+部署先停止旧 Worker，执行新增字段迁移，再启动新版；禁止混用旧计数策略。业务提交与通知入队仍非原子，HTTP 成功但写回失败仍可能重复投递，接收方按事件 ID 去重。
+
+验收覆盖：迁移保留历史状态、配置校验、短时超过 20 次不禁用、窗口阈值、成功/启用重置、普通编辑不覆盖、并发首次失败、锁等待期间租约失效整体回滚、任务或统计写入失败、提交失败、重新启用不复活。独立测试库通过调整起点验证长时间边界，真实 Worker 轮询与直接 RunOnce 分别记录。
+
+### 第三阶段验证记录
+
+本轮基于 `064c3d7` 及当前累计未提交变更，显式使用独立 `/tmp/oma-webhooks-test-config.yaml`，不连接开发数据库。
+
+- `just test`：53 个有测试的 Go package 通过，集成测试包约 98 秒。
+- 迁移测试显式设置独立 `TEST_MIGRATION_DATABASE_URL`，验证从 63 升级到 64、历史启用/禁用状态和次数保持、窗口为 NULL，以及 Down/Up 可执行；全新测试库也应用了本次迁移。
+- `go test -race ./internal/config ./internal/db ./internal/webhooks ./tests -run 'TestWebhook|TestDeliver|TestEnqueuer|TestConsoleEventCatalog|TestOpenAPIEventCatalog' -count=1`：四个 package 通过。这是定向 race，不是全仓库 race。
+- `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files`、`just hooks-run` 全部通过；新增文件另显式执行 hooks。
+- 重点通过：21 次短时并发失败不禁用且起点不漂移；24 小时边界；自定义阈值；成功和重新启用重置；元数据/密钥编辑与手动禁用保留；成功与失败并发；订阅锁等待期间租约过期整体回滚；任务写入失败及提交失败；终态重新启用不复活。
+- 回归现有事件入口、签名、永久拒绝、重试、目标隔离和领取保护。`TestWebhookRetryRealWorkerPolling` 使用真实 Worker.Start 轮询并检查最终窗口清空；其余大多数投递用例直接 RunOnce，长窗口通过测试库调整起点，不声称已等待 24 小时。
+- 首次普通沙箱检查无法监听本地接收器/连接测试依赖，另发现新增配置缺少参考文档字段；已补齐并在允许访问独立测试服务的环境重新通过上述检查。本阶段无前端行为变更，未扩展前端测试范围。
+
+Review 已复核锁序、租户范围、窗口原子更新、领取失效回滚、任务终态和连接占用，并修正设计文档中的旧待办描述。人工浏览器操作和生产公网出口未验收；代码保留待审核，不自动暂存、提交或推送。
+
+人工顺序：失败建立窗口 → 普通编辑确认保留 → 成功清空 → 再次失败并达到测试阈值 → 订阅禁用且当前任务 failed → 显式启用 → 旧任务不恢复、新事件正常签名投递。
 
 ## 验证
 

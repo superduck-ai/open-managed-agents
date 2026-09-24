@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -51,7 +52,7 @@ func (s *Store) Create(ctx context.Context, deployment db.Deployment) (db.Deploy
 		return s.writeDeploymentScheduleTx(ctx, tx, created)
 	})
 	if err == nil {
-		s.enqueueResource(ctx, created.WorkspaceUUID, created.ExternalID, "deployment.created")
+		s.enqueueResource(ctx, created.WorkspaceUUID, created.ExternalID, created.CreatedAt, "deployment.created")
 	}
 	return created, err
 }
@@ -69,7 +70,7 @@ func (s *Store) Update(ctx context.Context, workspaceUUID, externalID string, in
 		return s.writeDeploymentScheduleTx(ctx, tx, updated)
 	})
 	if err == nil && changed {
-		s.enqueueResource(ctx, updated.WorkspaceUUID, updated.ExternalID, "deployment.updated")
+		s.enqueueResource(ctx, updated.WorkspaceUUID, updated.ExternalID, updated.UpdatedAt, "deployment.updated")
 	}
 	return updated, err
 }
@@ -86,7 +87,7 @@ func (s *Store) Pause(ctx context.Context, workspaceUUID, externalID string, pau
 		return s.deleteDeploymentScheduleTx(ctx, tx, paused.ExternalID)
 	})
 	if err == nil && changed {
-		s.enqueueResource(ctx, paused.WorkspaceUUID, paused.ExternalID, "deployment.paused")
+		s.enqueueResource(ctx, paused.WorkspaceUUID, paused.ExternalID, paused.UpdatedAt, "deployment.paused")
 	}
 	return paused, err
 }
@@ -103,7 +104,7 @@ func (s *Store) Unpause(ctx context.Context, workspaceUUID, externalID string) (
 		return s.writeDeploymentScheduleTx(ctx, tx, unpaused)
 	})
 	if err == nil && changed {
-		s.enqueueResource(ctx, unpaused.WorkspaceUUID, unpaused.ExternalID, "deployment.unpaused")
+		s.enqueueResource(ctx, unpaused.WorkspaceUUID, unpaused.ExternalID, unpaused.UpdatedAt, "deployment.unpaused")
 	}
 	return unpaused, err
 }
@@ -120,7 +121,7 @@ func (s *Store) Archive(ctx context.Context, workspaceUUID, externalID string) (
 		return s.deleteDeploymentScheduleTx(ctx, tx, archived.ExternalID)
 	})
 	if err == nil && changed {
-		s.enqueueResource(ctx, archived.WorkspaceUUID, archived.ExternalID, "deployment.archived")
+		s.enqueueResource(ctx, archived.WorkspaceUUID, archived.ExternalID, *archived.ArchivedAt, "deployment.archived")
 	}
 	return archived, err
 }
@@ -144,12 +145,13 @@ func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplySche
 		return nil
 	})
 	if err == nil {
-		s.enqueueScheduledRun(ctx, run)
+		occurredAt := time.Now().UTC()
+		s.enqueueScheduledRun(ctx, run, occurredAt)
 		switch {
 		case input.ArchiveDeployment:
-			s.enqueueResource(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID, "deployment.archived")
+			s.enqueueResource(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID, occurredAt, "deployment.archived")
 		case len(input.AutoPauseReason) > 0:
-			s.enqueueResource(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID, "deployment.paused")
+			s.enqueueResource(ctx, input.Deployment.WorkspaceUUID, input.Deployment.ExternalID, occurredAt, "deployment.paused")
 		}
 		if !input.ArchiveDeployment && input.Session != nil {
 			s.enqueueSessionCreated(ctx, input.Session.Session)
@@ -184,8 +186,9 @@ func (s *Store) ArchiveAgent(ctx context.Context, workspaceUUID, externalID stri
 		return nil
 	})
 	if err == nil {
+		occurredAt := time.Now().UTC()
 		for _, deployment := range archivedDeployments {
-			s.enqueueResource(ctx, deployment.WorkspaceUUID, deployment.ExternalID, "deployment.archived")
+			s.enqueueResource(ctx, deployment.WorkspaceUUID, deployment.ExternalID, occurredAt, "deployment.archived")
 		}
 	}
 	return archived, changed && err == nil, err

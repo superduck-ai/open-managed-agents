@@ -242,8 +242,10 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 		t.Fatalf("load api key: %v", err)
 	}
 	enqueuer := webhooks.NewEnqueuer(app.db, app.cfg.Webhook, nil)
+	occurredAt := time.Date(2020, 1, 2, 3, 4, 5, 123456789, time.UTC)
 	enqueue := func(eventType, resourceID string) {
 		enqueuer.Enqueue(ctx, webhooks.EnqueueInput{
+			OccurredAt:          occurredAt,
 			WorkspaceUUID:       apiKey.WorkspaceUUID.String(),
 			OrganizationUUID:    apiKey.OrganizationUUID.String(),
 			WorkspaceExternalID: apiKey.WorkspaceExternalID,
@@ -275,8 +277,9 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 		t.Fatalf("SDK failed to unwrap webhook: %v", err)
 	}
 	var payload struct {
-		Type string `json:"type"`
-		Data struct {
+		CreatedAt string `json:"created_at"`
+		Type      string `json:"type"`
+		Data      struct {
 			ID             string `json:"id"`
 			OrganizationID string `json:"organization_id"`
 			Type           string `json:"type"`
@@ -285,7 +288,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	if err := json.Unmarshal(delivered.Body, &payload); err != nil {
 		t.Fatalf("unmarshal delivered webhook: %v", err)
 	}
-	if event.Type != "event" ||
+	if payload.CreatedAt != occurredAt.Format(time.RFC3339Nano) || event.Type != "event" ||
 		payload.Type != "event" ||
 		payload.Data.Type != "session.status_idled" ||
 		payload.Data.ID != sessionID ||
@@ -310,7 +313,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 		t.Fatalf("run redirect webhook delivery: %v", err)
 	}
 	disabled := retrieveWebhook(t, app, redirectEndpoint.ID)
-	if disabled.Status != "disabled" || disabled.DisabledReason == nil || !strings.Contains(*disabled.DisabledReason, "webhook status 302") {
+	if disabled.Status != "disabled" || disabled.DisabledReason == nil || *disabled.DisabledReason != "auto-disabled: endpoint URL returned a redirect (3xx)" {
 		t.Fatalf("redirect endpoint = %+v, want disabled with status reason", disabled)
 	}
 }

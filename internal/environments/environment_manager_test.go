@@ -198,6 +198,19 @@ func mustResolveRuntimeResources(t *testing.T, resources []db.SessionResource) m
 	return resolved
 }
 
+func mustManagedAgentSessionConfig(t *testing.T, session db.Session) map[string]any {
+	t.Helper()
+	raw, err := managedAgentSessionConfig(session, mustResolveRuntimeResources(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode session config: %v", err)
+	}
+	return body
+}
+
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	cfg := config.Config{
 		CodeSession: config.CodeSessionConfig{
@@ -616,5 +629,37 @@ func TestManagedAgentRuntimeGitRef(t *testing.T) {
 				t.Fatalf("unexpected runtime source: %s", sources[0])
 			}
 		})
+	}
+}
+
+func TestManagedAgentSessionConfigCarriesOutcomeEvaluations(t *testing.T) {
+	// Bug 1 回归守卫：session 启动配置必须携带真实 OutcomeEvaluations（此前硬编码空数组）
+	session := db.Session{
+		AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"}}`),
+		OutcomeEvaluations: json.RawMessage(`[{"id":"outc_1","status":"pending","max_iterations":3,` +
+			`"description":"ship the feature","rubric":{"type":"text","content":"# Rubric"}}]`),
+	}
+	body := mustManagedAgentSessionConfig(t, session)
+	outcomes, ok := body["outcomes"].([]any)
+	if !ok || len(outcomes) != 1 {
+		t.Fatalf("outcomes = %v, want 1 个 evaluation", body["outcomes"])
+	}
+	first := outcomes[0].(map[string]any)
+	if first["id"] != "outc_1" || first["status"] != "pending" {
+		t.Fatalf("outcomes[0] = %v, want outc_1/pending", first)
+	}
+	if first["description"] != "ship the feature" {
+		t.Fatalf("outcomes[0].description = %v, want 完整透传目标定义", first["description"])
+	}
+	rubric := first["rubric"].(map[string]any)
+	if rubric["type"] != "text" || rubric["content"] != "# Rubric" {
+		t.Fatalf("outcomes[0].rubric = %v, want 完整透传评分标准", first["rubric"])
+	}
+
+	// 无 outcomes 时保持空数组（不回归为 nil）
+	emptySession := db.Session{AgentSnapshot: json.RawMessage(`{"model":{"id":"claude-opus-4-8"}}`)}
+	body = mustManagedAgentSessionConfig(t, emptySession)
+	if outcomes, ok := body["outcomes"].([]any); !ok || len(outcomes) != 0 {
+		t.Fatalf("无 outcomes 应为空数组, got %v", body["outcomes"])
 	}
 }

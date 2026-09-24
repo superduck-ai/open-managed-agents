@@ -51,7 +51,7 @@ Agent 与 Session 共用 `internal/agentconfig`：
 - `ParseSessionAgent` 解析 Session 的三元 union，并拒绝在 `type: "agent"` 上夹带覆盖字段。
 - `Apply` 按三态规则把覆盖应用到一份 Config。只校验被改过的字段，以及这些改动引发的耦合：
   - 改了 `mcp_servers` 时，有效 `tools` 里的 `mcp_toolset` 必须仍能引用服务器。
-  - 改了 `tools` 或 `skills`，且有效 `skills` 非空时，按 CMA 要求必须有 enabled 的 `read`：存在 `agent_toolset_20260401`，未写 `read` 配置则跟随 `default_config.enabled`（默认 true）；显式 `read.enabled: false` 或把 default 关掉且未打开 `read` 则拒绝。
+  - 改了 `tools` 或 `skills`，且有效 `skills` 非空时，按 CMA 要求必须有 enabled 的 `read`：存在 `agent_toolset_20260401`。没写 `read`，或写了 `read` 但省略 `enabled`，都跟随 `default_config.enabled`（默认 true）。显式 `read.enabled: false`，或把 default 关掉又没把 `read` 打开，则拒绝。
 - 没改 `model` 时不拉工作区模型目录，也不因模型目录不可用而失败。
 - `PatchSessionSnapshot` 只接受 `tools` / `mcp_servers`，再走同一套 `Apply`。
 

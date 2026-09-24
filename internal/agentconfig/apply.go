@@ -360,9 +360,13 @@ func toolsetReadEnabled(tool readProbeTool) bool {
 		enabled = enabledOrDefault(tool.DefaultConfig.Enabled)
 	}
 	for _, config := range tool.Configs {
-		if config.Name == "read" {
-			return enabledOrDefault(config.Enabled)
+		if config.Name != "read" {
+			continue
 		}
+		if config.Enabled == nil {
+			return enabled
+		}
+		return *config.Enabled
 	}
 	return enabled
 }

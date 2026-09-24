@@ -105,6 +105,11 @@ func TestApplyRejectsInvalidOverrides(t *testing.T) {
 			wantError: "skills require the read tool",
 		},
 		{
+			name:      "omitted read enabled inherits disabled default",
+			overrides: Overrides{Tools: json.RawMessage(`[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"read"}]}]`)},
+			wantError: "skills require the read tool",
+		},
+		{
 			name:      "clear mcp servers while toolset remains",
 			overrides: Overrides{MCPServers: json.RawMessage(`[]`), Tools: json.RawMessage(`[{"type":"mcp_toolset","mcp_server_name":"linear"}]`)},
 			wantError: "mcp_toolset.mcp_server_name must reference an MCP server",
@@ -179,6 +184,16 @@ func TestApplyAllowsReadFromDefaultToolsetConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !strings.Contains(string(got.Tools), `"name":"read"`) {
+			t.Fatalf("tools = %s", got.Tools)
+		}
+	})
+
+	t.Run("omitted read enabled follows enabled default", func(t *testing.T) {
+		got, err := Apply(base, Overrides{Tools: json.RawMessage(`[{"type":"agent_toolset_20260401","configs":[{"name":"read"}]}]`)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(got.Tools), `"enabled":true`) || !strings.Contains(string(got.Tools), `"name":"read"`) {
 			t.Fatalf("tools = %s", got.Tools)
 		}
 	})

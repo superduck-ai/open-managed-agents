@@ -79,9 +79,8 @@ type vaultResponse struct {
 }
 
 type vaultPageResponse struct {
-	Data       []vaultResponse `json:"data"`
-	NextPage   *string         `json:"next_page"`
-	TotalCount *int64          `json:"total_count,omitempty"`
+	Data     []vaultResponse `json:"data"`
+	NextPage *string         `json:"next_page"`
 }
 
 type credentialResponse struct {
@@ -242,17 +241,12 @@ func (h *Handler) listVaults(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	listParams := db.ListVaultsPageParams{
+	records, hasMore, err := h.db.ListVaultsPage(r.Context(), db.ListVaultsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
-	}
-	totalCount, err := h.db.CountVaults(r.Context(), listParams)
-	if err != nil {
-		return internalError("Could not list vaults", fmt.Errorf("count vaults: %w", err))
-	}
-	records, hasMore, err := h.db.ListVaultsPage(r.Context(), listParams)
+	})
 	if err != nil {
 		return internalError("Could not list vaults", fmt.Errorf("list vaults: %w", err))
 	}
@@ -265,7 +259,7 @@ func (h *Handler) listVaults(w http.ResponseWriter, r *http.Request) error {
 		value := encodeVaultCursor(records[len(records)-1])
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, vaultPageResponse{Data: data, NextPage: nextPage, TotalCount: &totalCount})
+	httpapi.WriteJSON(w, http.StatusOK, vaultPageResponse{Data: data, NextPage: nextPage})
 	return nil
 }
 

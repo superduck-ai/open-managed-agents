@@ -132,13 +132,6 @@
         AND deleted_at IS NULL
     </select>
 
-    <select id="CountByWorkspace" result="scalar">
-        SELECT COUNT(*)
-        FROM message_batches
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND deleted_at IS NULL
-    </select>
-
     <select id="ListPage" resultType="messageBatchRow">
         SELECT
         <include refid="messageBatchColumns"/>

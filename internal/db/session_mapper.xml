@@ -129,38 +129,6 @@
         RETURNING <include refid="columns"/>
     </update>
 
-    <select id="CountList" result="scalar">
-        SELECT COUNT(*)
-        FROM sessions s
-        <where>
-            s.workspace_uuid = #{params.WorkspaceUUID}
-            AND s.deleted_at IS NULL
-            <if test="!params.IncludeArchived">AND s.archived_at IS NULL</if>
-            <if test="params.AgentExternalID != ''">AND s.agent_external_id = #{params.AgentExternalID}</if>
-            <if test="params.AgentVersion != nil">AND s.agent_version = #{params.AgentVersion}</if>
-            <if test="params.DeploymentID != ''">AND s.deployment_external_id = #{params.DeploymentID}</if>
-            <if test="params.MemoryStoreID != ''">
-                AND EXISTS (
-                    SELECT 1 FROM session_resources sr
-                    WHERE sr.workspace_uuid = s.workspace_uuid
-                    AND sr.session_external_id = s.external_id
-                    AND sr.deleted_at IS NULL
-                    AND sr.resource_type = 'memory_store'
-                    AND (sr.payload-&gt;&gt;'memory_store_id' = #{params.MemoryStoreID}
-                        OR sr.payload-&gt;&gt;'id' = #{params.MemoryStoreID})
-                )
-            </if>
-            <if test="len(params.Statuses) &gt; 0">
-                AND s.status IN
-                <foreach collection="params.Statuses" item="status" open="(" separator="," close=")">#{status}</foreach>
-            </if>
-            <if test="params.CreatedAtGT != nil">AND s.created_at &gt; #{params.CreatedAtGT}</if>
-            <if test="params.CreatedAtGTE != nil">AND s.created_at &gt;= #{params.CreatedAtGTE}</if>
-            <if test="params.CreatedAtLT != nil">AND s.created_at &lt; #{params.CreatedAtLT}</if>
-            <if test="params.CreatedAtLTE != nil">AND s.created_at &lt;= #{params.CreatedAtLTE}</if>
-        </where>
-    </select>
-
     <select id="ListPage" resultType="sessionRow">
         SELECT <include refid="columns"/>
         FROM sessions s

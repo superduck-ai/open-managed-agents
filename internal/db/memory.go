@@ -312,22 +312,6 @@ func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceUUID, externalID st
 	return refs, err
 }
 
-func (d *DB) CountMemoryStores(ctx context.Context, params ListMemoryStoresPageParams) (int64, error) {
-	filter := listMemoryStoresParams{
-		WorkspaceUUID:   params.WorkspaceUUID,
-		IncludeArchived: params.IncludeArchived,
-	}
-	if params.CreatedAtGTE != nil {
-		filter.HasCreatedAtGTE = true
-		filter.CreatedAtGTE = *params.CreatedAtGTE
-	}
-	if params.CreatedAtLTE != nil {
-		filter.HasCreatedAtLTE = true
-		filter.CreatedAtLTE = *params.CreatedAtLTE
-	}
-	return NewMemoryStoreMapper(d.mapperDB).CountList(ctx, filter)
-}
-
 func (d *DB) ListMemoryStoresPage(ctx context.Context, params ListMemoryStoresPageParams) ([]MemoryStore, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

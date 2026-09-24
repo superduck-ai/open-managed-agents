@@ -67,13 +67,6 @@
         FOR UPDATE
     </select>
 
-    <select id="CountByWorkspace" result="scalar">
-        SELECT COUNT(*)
-        FROM skills
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND deleted_at IS NULL
-    </select>
-
     <select id="ListPage" resultType="skillRow">
         SELECT
         <include refid="columns"/>

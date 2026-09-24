@@ -83,15 +83,6 @@ func (d *DB) ListFiles(ctx context.Context, workspaceUUID string, scopeID string
 	return fileRecordsFromMapperRows(rows, err)
 }
 
-func (d *DB) CountFiles(ctx context.Context, workspaceUUID, scopeID string) (int64, error) {
-	mapper := NewFileMapper(d.mapperDB)
-	params := newFileMapperListParams(workspaceUUID, scopeID)
-	if params.SessionScope {
-		return mapper.CountSessionFiles(ctx, params)
-	}
-	return mapper.CountFiles(ctx, params)
-}
-
 func (d *DB) ListFilesPage(ctx context.Context, params ListFilesPageParams) ([]FileRecord, bool, error) {
 	return listFilesPage(ctx, d.mapperDB, params)
 }

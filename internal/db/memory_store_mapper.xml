@@ -119,24 +119,6 @@
         AND uuid = #{storeUUID}
     </delete>
 
-    <select id="CountList" result="scalar">
-        SELECT COUNT(*)
-        FROM memory_stores
-        <where>
-            workspace_uuid = #{params.WorkspaceUUID}
-            AND deleted_at IS NULL
-            <if test="!params.IncludeArchived">
-                AND archived_at IS NULL
-            </if>
-            <if test="params.HasCreatedAtGTE">
-                AND created_at &gt;= #{params.CreatedAtGTE}
-            </if>
-            <if test="params.HasCreatedAtLTE">
-                AND created_at &lt;= #{params.CreatedAtLTE}
-            </if>
-        </where>
-    </select>
-
     <select id="ListPage" resultType="memoryStoreRow">
         SELECT
         <include refid="columns"/>

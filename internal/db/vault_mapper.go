@@ -62,6 +62,5 @@ type VaultMapper interface {
 	FindUUIDForUpdate(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	FindActiveUUIDForUpdate(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	DeleteByUUID(ctx context.Context, workspaceUUID, vaultUUID string) error
-	CountList(ctx context.Context, params listVaultsMapperParams) (int64, error)
 	ListPage(ctx context.Context, params listVaultsMapperParams) ([]vaultRow, error)
 }

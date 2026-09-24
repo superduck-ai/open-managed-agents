@@ -194,10 +194,6 @@ func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, extern
 	})
 }
 
-func (d *DB) CountEnvironments(ctx context.Context, params ListEnvironmentsPageParams) (int64, error) {
-	return NewEnvironmentMapper(d.mapperDB).CountList(ctx, environmentPageParams(params))
-}
-
 func (d *DB) ListEnvironmentsPage(ctx context.Context, params ListEnvironmentsPageParams) ([]Environment, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

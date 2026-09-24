@@ -181,27 +181,6 @@
         <include refid="agentColumns"/>
     </update>
 
-    <select id="CountList" result="scalar">
-        SELECT COUNT(*)
-        FROM agents
-        <where>
-            workspace_uuid = #{filter.WorkspaceUUID}
-            AND deleted_at IS NULL
-            <if test="!filter.IncludeArchived">
-                AND archived_at IS NULL
-            </if>
-            <if test="filter.CreatedAtGTE != nil">
-                AND created_at &gt;= #{filter.CreatedAtGTE}
-            </if>
-            <if test="filter.CreatedAtLTE != nil">
-                AND created_at &lt;= #{filter.CreatedAtLTE}
-            </if>
-            <if test="filter.Name != ''">
-                AND POSITION(LOWER(#{filter.Name}) IN LOWER(name)) &gt; 0
-            </if>
-        </where>
-    </select>
-
     <select id="ListPage" resultType="agentRow">
         SELECT
         <include refid="agentColumns"/>

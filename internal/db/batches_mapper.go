@@ -144,7 +144,6 @@ type MessageBatchMapper interface {
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (messageBatchRow, error)
 	FindByUUID(ctx context.Context, batchUUID string) (messageBatchRow, error)
 	FindPageAnchorByExternalID(ctx context.Context, workspaceUUID, externalID string) (messageBatchPageAnchor, bool, error)
-	CountByWorkspace(ctx context.Context, workspaceUUID string) (int64, error)
 	ListPage(ctx context.Context, workspaceUUID string, anchor *messageBatchPageAnchor, before bool, limit int) ([]messageBatchRow, error)
 	MarkCancelingByExternalID(ctx context.Context, workspaceUUID, externalID string) (int64, error)
 	ExistsByExternalID(ctx context.Context, workspaceUUID, externalID string) (bool, error)

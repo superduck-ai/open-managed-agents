@@ -154,13 +154,6 @@ func (d *DB) DeleteVault(ctx context.Context, workspaceUUID, externalID string) 
 	})
 }
 
-func (d *DB) CountVaults(ctx context.Context, params ListVaultsPageParams) (int64, error) {
-	return NewVaultMapper(d.mapperDB).CountList(ctx, listVaultsMapperParams{
-		WorkspaceUUID:   params.WorkspaceUUID,
-		IncludeArchived: params.IncludeArchived,
-	})
-}
-
 func (d *DB) ListVaultsPage(ctx context.Context, params ListVaultsPageParams) ([]Vault, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

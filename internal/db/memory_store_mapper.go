@@ -66,7 +66,6 @@ type MemoryStoreMapper interface {
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (memoryStoreRow, error)
 	FindUUIDForUpdate(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	DeleteByUUID(ctx context.Context, workspaceUUID, storeUUID string) error
-	CountList(ctx context.Context, params listMemoryStoresParams) (int64, error)
 	ListPage(ctx context.Context, params listMemoryStoresParams) ([]memoryStoreRow, error)
 	Exists(ctx context.Context, workspaceUUID, externalID string) (bool, error)
 }

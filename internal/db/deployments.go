@@ -240,10 +240,6 @@ func (d *DB) ArchiveDeploymentsByRootAgentTx(ctx context.Context, tx *yourbatis.
 	return NewDeploymentMapper(tx).ArchiveByRootAgent(ctx, workspaceUUID, agentExternalID)
 }
 
-func (d *DB) CountDeployments(ctx context.Context, params ListDeploymentsPageParams) (int64, error) {
-	return NewDeploymentMapper(d.mapperDB).CountList(ctx, deploymentPageParams(params))
-}
-
 func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPageParams) ([]Deployment, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

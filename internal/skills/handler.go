@@ -65,10 +65,9 @@ type skillVersionResponse struct {
 }
 
 type pageResponse[T any] struct {
-	Data       []T     `json:"data"`
-	HasMore    bool    `json:"has_more"`
-	NextPage   *string `json:"next_page"`
-	TotalCount *int64  `json:"total_count,omitempty"`
+	Data     []T     `json:"data"`
+	HasMore  bool    `json:"has_more"`
+	NextPage *string `json:"next_page"`
 }
 
 type pageCursor struct {
@@ -184,8 +183,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	source := strings.TrimSpace(r.URL.Query().Get("source"))
 	if source != "" && source != "custom" && source != "anthropic" {
-		emptyCount := int64(0)
-		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: []skillResponse{}, HasMore: false, NextPage: nil, TotalCount: &emptyCount})
+		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: []skillResponse{}, HasMore: false, NextPage: nil})
 		return nil
 	}
 	limit, err := parseLimitParam(r, defaultSkillsLimit, maxSkillsLimit)
@@ -195,11 +193,6 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	offset, err := decodePageOffset(r.URL.Query().Get("page"))
 	if err != nil {
 		return invalidRequest(err)
-	}
-
-	totalCount, err := h.countListedSkills(r.Context(), principal.WorkspaceUUID, source)
-	if err != nil {
-		return internalError("Could not list skills", fmt.Errorf("count skills: %w", err))
 	}
 
 	var data []skillResponse
@@ -238,28 +231,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		value := encodePageOffset(offset + len(data))
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: data, HasMore: hasMore, NextPage: nextPage, TotalCount: &totalCount})
+	httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: data, HasMore: hasMore, NextPage: nextPage})
 	return nil
-}
-
-func (h *Handler) countListedSkills(ctx context.Context, workspaceUUID, source string) (int64, error) {
-	switch source {
-	case "anthropic":
-		count, err := h.db.CountBuiltinSkills(ctx)
-		return int64(count), err
-	case "custom":
-		return h.db.CountSkills(ctx, workspaceUUID)
-	default:
-		builtinCount, err := h.db.CountBuiltinSkills(ctx)
-		if err != nil {
-			return 0, err
-		}
-		customCount, err := h.db.CountSkills(ctx, workspaceUUID)
-		if err != nil {
-			return 0, err
-		}
-		return int64(builtinCount) + customCount, nil
-	}
 }
 
 func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offset, limit int) ([]skillResponse, bool, error) {

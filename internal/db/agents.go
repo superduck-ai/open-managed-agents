@@ -191,23 +191,6 @@ func (d *DB) ArchiveAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID
 	return row.agent(), nil
 }
 
-func (d *DB) CountAgents(ctx context.Context, params ListAgentsPageParams) (int64, error) {
-	return NewAgentMapper(d.mapperDB).CountList(ctx, agentPageFilter{
-		WorkspaceUUID:   params.WorkspaceUUID,
-		IncludeArchived: params.IncludeArchived,
-		CreatedAtGTE:    params.CreatedAtGTE,
-		CreatedAtLTE:    params.CreatedAtLTE,
-	})
-}
-
-func (d *DB) CountAgentsByName(ctx context.Context, params SearchAgentsPageParams) (int64, error) {
-	return NewAgentMapper(d.mapperDB).CountList(ctx, agentPageFilter{
-		WorkspaceUUID:   params.WorkspaceUUID,
-		Name:            strings.TrimSpace(params.Name),
-		IncludeArchived: params.IncludeArchived,
-	})
-}
-
 func (d *DB) ListAgentsPage(ctx context.Context, params ListAgentsPageParams) ([]Agent, bool, error) {
 	limit := agentPageLimit(params.Limit)
 	mapper := NewAgentMapper(d.mapperDB)

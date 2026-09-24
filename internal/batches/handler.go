@@ -77,11 +77,10 @@ type requestCounts struct {
 }
 
 type listResponse struct {
-	Data       []messageBatchResponse `json:"data"`
-	HasMore    bool                   `json:"has_more"`
-	FirstID    *string                `json:"first_id"`
-	LastID     *string                `json:"last_id"`
-	TotalCount *int64                 `json:"total_count,omitempty"`
+	Data    []messageBatchResponse `json:"data"`
+	HasMore bool                   `json:"has_more"`
+	FirstID *string                `json:"first_id"`
+	LastID  *string                `json:"last_id"`
 }
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
@@ -307,10 +306,6 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	totalCount, err := h.db.CountMessageBatches(r.Context(), principal.WorkspaceUUID)
-	if err != nil {
-		return internalError("Could not list message batches", fmt.Errorf("count message batches: %w", err))
-	}
 	records, hasMore, err := h.db.ListMessageBatchesPage(r.Context(), db.ListMessageBatchesPageParams{
 		WorkspaceUUID: principal.WorkspaceUUID,
 		AfterID:       r.URL.Query().Get("after_id"),
@@ -329,7 +324,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		firstID = &data[0].ID
 		lastID = &data[len(data)-1].ID
 	}
-	httpapi.WriteJSON(w, http.StatusOK, listResponse{Data: data, HasMore: hasMore, FirstID: firstID, LastID: lastID, TotalCount: &totalCount})
+	httpapi.WriteJSON(w, http.StatusOK, listResponse{Data: data, HasMore: hasMore, FirstID: firstID, LastID: lastID})
 	return nil
 }
 

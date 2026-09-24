@@ -143,7 +143,6 @@ type SessionMapper interface {
 	SetStatus(ctx context.Context, workspaceUUID, sessionExternalID, status string) (int64, error)
 	Archive(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	SoftDelete(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
-	CountList(ctx context.Context, params sessionPageMapperParams) (int64, error)
 	ListPage(ctx context.Context, params sessionPageMapperParams) ([]sessionRow, error)
 	LockForResourceMutation(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	LockSessionForEvents(

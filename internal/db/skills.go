@@ -143,10 +143,6 @@ func (d *DB) GetSkill(ctx context.Context, workspaceUUID string, externalID stri
 	return skillFromMapperRow(row, err)
 }
 
-func (d *DB) CountSkills(ctx context.Context, workspaceUUID string) (int64, error) {
-	return NewSkillMapper(d.mapperDB).CountByWorkspace(ctx, workspaceUUID)
-}
-
 func (d *DB) ListSkillsPage(ctx context.Context, params ListSkillsPageParams) ([]Skill, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

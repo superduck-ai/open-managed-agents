@@ -18,8 +18,6 @@ type FileMapper interface {
 	ListSessionFiles(ctx context.Context, params fileMapperListParams) ([]fileRecordRow, error)
 	FindPageCursor(ctx context.Context, params fileMapperListParams) (filePageCursorRow, bool, error)
 	FindSessionPageCursor(ctx context.Context, params fileMapperListParams) (filePageCursorRow, bool, error)
-	CountFiles(ctx context.Context, params fileMapperListParams) (int64, error)
-	CountSessionFiles(ctx context.Context, params fileMapperListParams) (int64, error)
 	ListFilesPage(ctx context.Context, params fileMapperListParams) ([]fileRecordRow, error)
 	ListSessionFilesPage(ctx context.Context, params fileMapperListParams) ([]fileRecordRow, error)
 	GetFileForDelete(ctx context.Context, workspaceUUID, fileUUID string) (fileRecordRow, error)

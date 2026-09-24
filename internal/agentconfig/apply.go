@@ -39,7 +39,7 @@ type SessionAgent struct {
 }
 
 func ParseSessionAgent(raw json.RawMessage) (SessionAgent, error) {
-	if len(raw) == 0 || jsonx.IsNull(raw) {
+	if rawMissing(raw) {
 		return SessionAgent{}, errors.New("agent is required")
 	}
 	var agentID string
@@ -126,7 +126,7 @@ func Apply(base Config, overrides Overrides, allowedModelIDs []string) (Config, 
 }
 
 func PatchSessionSnapshot(snapshot json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 || jsonx.IsNull(raw) {
+	if rawMissing(raw) {
 		return snapshot, nil
 	}
 	var patch struct {
@@ -236,7 +236,7 @@ func applyLists(next *Config, overrides Overrides) error {
 		}
 		tools = normalized
 	}
-	if listHasEntries(skills) && !listHasEntries(tools) {
+	if overrides.replacesToolsOrSkills() && listHasEntries(skills) && !readToolEnabled(tools) {
 		return errors.New("skills require the read tool")
 	}
 	next.MCPServers = mcpServers
@@ -278,12 +278,24 @@ func derefVersion(version *int) int {
 	return *version
 }
 
+func (o Overrides) ReplacesModel() bool {
+	return !rawMissing(o.Model)
+}
+
 func (o Overrides) empty() bool {
 	return !hasRaw(o.Model) && !hasRaw(o.System) && !hasRaw(o.Tools) && !hasRaw(o.MCPServers) && !hasRaw(o.Skills)
 }
 
+func (o Overrides) replacesToolsOrSkills() bool {
+	return hasRaw(o.Tools) || hasRaw(o.Skills)
+}
+
 func hasRaw(raw json.RawMessage) bool {
 	return len(raw) > 0
+}
+
+func rawMissing(raw json.RawMessage) bool {
+	return len(raw) == 0 || jsonx.IsNull(raw)
 }
 
 func cloneRaw(raw json.RawMessage) json.RawMessage {
@@ -302,7 +314,7 @@ func cloneString(value *string) *string {
 }
 
 func listHasEntries(raw json.RawMessage) bool {
-	if len(raw) == 0 || jsonx.IsNull(raw) {
+	if rawMissing(raw) {
 		return false
 	}
 	var items []json.RawMessage
@@ -312,8 +324,55 @@ func listHasEntries(raw json.RawMessage) bool {
 	return len(items) > 0
 }
 
+type readProbeTool struct {
+	Type          string            `json:"type"`
+	DefaultConfig *readProbeConfig  `json:"default_config"`
+	Configs       []readProbeConfig `json:"configs"`
+}
+
+type readProbeConfig struct {
+	Name    string `json:"name"`
+	Enabled *bool  `json:"enabled"`
+}
+
+func readToolEnabled(raw json.RawMessage) bool {
+	if rawMissing(raw) {
+		return false
+	}
+	var tools []readProbeTool
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		return false
+	}
+	for _, tool := range tools {
+		if tool.Type != "agent_toolset_20260401" {
+			continue
+		}
+		if toolsetReadEnabled(tool) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolsetReadEnabled(tool readProbeTool) bool {
+	enabled := true
+	if tool.DefaultConfig != nil {
+		enabled = enabledOrDefault(tool.DefaultConfig.Enabled)
+	}
+	for _, config := range tool.Configs {
+		if config.Name == "read" {
+			return enabledOrDefault(config.Enabled)
+		}
+	}
+	return enabled
+}
+
+func enabledOrDefault(value *bool) bool {
+	return value == nil || *value
+}
+
 func configFromSnapshot(snapshot json.RawMessage) (Config, error) {
-	if len(snapshot) == 0 || jsonx.IsNull(snapshot) {
+	if rawMissing(snapshot) {
 		return Config{}, errors.New("stored session agent is invalid")
 	}
 	var object struct {
@@ -340,7 +399,7 @@ func configFromSnapshot(snapshot json.RawMessage) (Config, error) {
 }
 
 func systemFromRaw(raw json.RawMessage) (*string, error) {
-	if len(raw) == 0 || jsonx.IsNull(raw) {
+	if rawMissing(raw) {
 		return nil, nil
 	}
 	var value string
@@ -368,7 +427,7 @@ func writeConfigToSnapshot(snapshot json.RawMessage, cfg Config) (json.RawMessag
 }
 
 func jsonValue(raw json.RawMessage, fallback any) any {
-	if len(raw) == 0 || jsonx.IsNull(raw) {
+	if rawMissing(raw) {
 		return fallback
 	}
 	var value any

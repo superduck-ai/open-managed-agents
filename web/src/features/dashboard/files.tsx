@@ -16,7 +16,9 @@ import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/
 import { toast } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
 import { ResourceListState } from '@/shared/ui/resource-list-state';
+import { consoleResourceListLimit } from '@/shared/console-list';
 import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
+import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { CursorPagination, TableErrorRow, TableLoadingRow } from './frame';
 import {
@@ -168,6 +170,8 @@ export function FilesPage() {
           error={filesQuery.error}
           canPrevious={pageIndex > 0 && !filesQuery.isFetching}
           canNext={Boolean(response?.has_more && lastId) && !filesQuery.isFetching}
+          currentPage={pageIndex + 1}
+          totalPages={resourceListPageCount(response?.total_count, consoleResourceListLimit)}
           downloadingFileId={downloadingFileId}
           onRetry={() => void filesQuery.refetch()}
           onPrevious={goPrevious}
@@ -187,6 +191,8 @@ function FilesTable({
   error,
   canPrevious,
   canNext,
+  currentPage,
+  totalPages,
   downloadingFileId,
   onRetry,
   onPrevious,
@@ -200,6 +206,8 @@ function FilesTable({
   error: unknown;
   canPrevious: boolean;
   canNext: boolean;
+  currentPage: number;
+  totalPages: number | null;
   downloadingFileId: string | null;
   onRetry: () => void;
   onPrevious: () => void;
@@ -276,11 +284,11 @@ function FilesTable({
       ) : null}
 
       <CursorPagination
-        previousLabel={msg('pagination.previousPage', 'Previous page')}
-        nextLabel={msg('pagination.nextPage', 'Next page')}
         updatingLabel={msg('common.updating', 'Updating...')}
         canPrevious={canPrevious}
         canNext={canNext}
+        currentPage={currentPage}
+        totalPages={totalPages}
         isUpdating={isFetching && !isLoading}
         onPrevious={onPrevious}
         onNext={onNext}

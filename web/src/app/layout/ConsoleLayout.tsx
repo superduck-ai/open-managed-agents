@@ -84,7 +84,7 @@ import {
 import { useI18n, useLocale } from '../../shared/i18n';
 import { accountRoleLabel, membershipRoleForOrganization } from '../../shared/permissions/roles';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
-import { consoleNavigation, settingsNavigation, type NavLinkItem } from './navigation';
+import { settingsNavigation, visibleConsoleNavigation, type NavLinkItem } from './navigation';
 
 type ConsoleShellProps = {
   account?: AuthAccount | null;
@@ -229,16 +229,13 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
   const { setOpen, state } = useSidebar();
   const collapsed = state === 'collapsed';
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    Build: true,
     'Managed Agents': true,
-    Analytics: true,
-    'Claude Code': true,
-    Manage: true,
   });
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
+  const navigationSource = visibleConsoleNavigation();
   const navigationItems = canManageLLMProviders(account, orgUuid)
-    ? consoleNavigation
-    : consoleNavigation.filter((item) => item.type !== 'link' || item.href !== '/llm-models');
+    ? navigationSource
+    : navigationSource.filter((item) => item.type !== 'link' || item.href !== '/llm-models');
 
   useEffect(() => {
     if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) {
@@ -275,7 +272,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                   }
 
                   const Icon = item.icon;
-                  const isOpen = expanded[item.label] ?? true;
+                  const isOpen = expanded[item.label] ?? false;
                   const groupActive = item.children.some((child) => isActivePath(currentPath, child.href));
 
                   return (

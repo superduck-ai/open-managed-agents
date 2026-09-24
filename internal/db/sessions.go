@@ -102,6 +102,7 @@ type SessionResource struct {
 
 type SessionEvent struct {
 	StatusThreadID    string
+	UsageIncrement    *SessionUsageIncrement
 	PayloadBlobUUID   *string
 	ToolUseID         *string
 	UUID              string
@@ -117,6 +118,15 @@ type SessionEvent struct {
 	ProcessedAt       time.Time
 	CreatedAt         time.Time
 	DeletedAt         *time.Time
+}
+
+// SessionUsageIncrement contains measured counters; nil means unavailable.
+type SessionUsageIncrement struct {
+	CacheCreation5mInputTokens *int64
+	CacheCreation1hInputTokens *int64
+	InputTokens                *int64
+	OutputTokens               *int64
+	CacheReadInputTokens       *int64
 }
 
 type SessionPageCursor struct {

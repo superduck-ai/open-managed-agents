@@ -1,4 +1,4 @@
-import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { AlertCircle, ChevronLeft, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '@/shared/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
@@ -7,7 +7,7 @@ import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/shared/ui/empty';
 import { Field, FieldLabel } from '@/shared/ui/field';
-import { Pagination, PaginationContent, PaginationItem } from '@/shared/ui/pagination';
+import { ResourceListPagination } from '@/shared/ui/resource-list-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import type { IconComponent } from './model';
@@ -126,58 +126,34 @@ export function EmptyState({
 }
 
 export function CursorPagination({
-  previousLabel,
-  nextLabel,
   updatingLabel,
   canPrevious,
   canNext,
   isUpdating,
+  currentPage,
+  totalPages,
   onPrevious,
   onNext,
 }: {
-  previousLabel: string;
-  nextLabel: string;
   updatingLabel: string;
   canPrevious: boolean;
   canNext: boolean;
   isUpdating: boolean;
+  currentPage: number;
+  totalPages: number | null;
   onPrevious: () => void;
   onNext: () => void;
 }) {
   return (
-    <div className="mt-5 flex items-center gap-2">
-      <Pagination className="mx-0 w-auto justify-start">
-        <PaginationContent>
-          <PaginationItem>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={previousLabel}
-              className="text-muted-foreground"
-              disabled={!canPrevious}
-              onClick={onPrevious}
-            >
-              <ChevronLeft className="size-4" aria-hidden />
-            </Button>
-          </PaginationItem>
-          <PaginationItem>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={nextLabel}
-              className="text-muted-foreground"
-              disabled={!canNext}
-              onClick={onNext}
-            >
-              <ChevronRight className="size-4" aria-hidden />
-            </Button>
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
-      {isUpdating ? <span className="ml-2 text-xs text-muted-foreground/70">{updatingLabel}</span> : null}
-    </div>
+    <ResourceListPagination
+      currentPage={currentPage}
+      totalPages={totalPages}
+      canPrevious={canPrevious}
+      canNext={canNext}
+      onPrevious={onPrevious}
+      onNext={onNext}
+      updatingLabel={isUpdating ? updatingLabel : undefined}
+    />
   );
 }
 

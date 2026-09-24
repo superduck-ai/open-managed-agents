@@ -17,7 +17,7 @@ type proxyErrorReader struct {
 
 func TestHandlerUsesInjectedLogger(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(nil, nil, logger)
+	handler := NewHandler(nil, nil, nil, logger)
 	if handler.logger != logger {
 		t.Fatal("NewHandler did not keep the injected logger")
 	}

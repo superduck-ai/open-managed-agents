@@ -29,7 +29,9 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { ResourceListState } from '@/shared/ui/resource-list-state';
+import { consoleResourceListLimit } from '@/shared/console-list';
 import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
+import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
 import { useI18n } from '../../shared/i18n';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { CursorPagination, TableErrorRow, TableLoadingRow } from './frame';
@@ -224,11 +226,11 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
       />
 
       <CursorPagination
-        previousLabel={msg('pagination.previousPage', 'Previous page')}
-        nextLabel={msg('pagination.nextPage', 'Next page')}
         updatingLabel={msg('common.updating', 'Updating...')}
         canPrevious={pageIndex > 0 && !skillsQuery.isFetching}
         canNext={Boolean(skillsQuery.data?.has_more && nextPage) && !skillsQuery.isFetching}
+        currentPage={pageIndex + 1}
+        totalPages={resourceListPageCount(skillsQuery.data?.total_count, consoleResourceListLimit)}
         isUpdating={skillsQuery.isFetching && !skillsQuery.isLoading}
         onPrevious={goPrevious}
         onNext={goNext}

@@ -55,6 +55,8 @@ type workerOutputCommonPayload struct {
 }
 
 type workerAssistantOutputPayload struct {
+	ParentToolUseID   string              `json:"parent_tool_use_id"`
+	RequestID         string              `json:"request_id"`
 	Type              string              `json:"type"`
 	Content           json.RawMessage     `json:"content"`
 	ContentBlockIndex *int                `json:"content_block_index"`
@@ -67,6 +69,8 @@ func decodeWorkerAssistantOutputPayload(raw json.RawMessage) (workerAssistantOut
 		return workerAssistantOutputPayload{}, err
 	}
 	payload.Message.ID = strings.TrimSpace(payload.Message.ID)
+	payload.RequestID = strings.TrimSpace(payload.RequestID)
+	payload.ParentToolUseID = strings.TrimSpace(payload.ParentToolUseID)
 	return payload, nil
 }
 
@@ -89,13 +93,25 @@ type workerSystemOutputPayload struct {
 }
 
 type workerResultOutputPayload struct {
-	Type          string          `json:"type"`
-	Model         string          `json:"model"`
-	DurationAPIMs float64         `json:"duration_api_ms"`
-	DurationMs    float64         `json:"duration_ms"`
-	Usage         json.RawMessage `json:"usage"`
-	ModelUsage    json.RawMessage `json:"modelUsage"`
-	ModelUsageAlt json.RawMessage `json:"model_usage"`
+	IsError       bool    `json:"is_error"`
+	Subtype       string  `json:"subtype"`
+	DurationMs    float64 `json:"duration_ms"`
+	DurationAPIMs float64 `json:"duration_api_ms"`
+}
+
+// Raw result text can contain provider details or credentials. Publish only
+// known failure categories; the worker transcript remains a separate channel.
+func workerResultErrorMessage(subtype string) string {
+	switch subtype {
+	case "error_max_turns":
+		return "Agent reached the maximum number of turns."
+	case "error_max_budget_usd":
+		return "Agent reached its spending limit."
+	case "error_max_structured_output_retries":
+		return "Agent could not produce the requested structured output."
+	default:
+		return "Agent execution failed."
+	}
 }
 
 type workerOpaqueOutputPayload struct {

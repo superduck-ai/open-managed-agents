@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -156,6 +157,19 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			ProcessedAt:       processedAt,
 			CreatedAt:         createdAt,
 		})
+		if eventType == "span.model_request_end" {
+			var usage struct {
+				ModelUsage codesessions.ModelRequestUsage `json:"model_usage"`
+			}
+			if err := json.Unmarshal(payloadRaw, &usage); err != nil {
+				return nil, err
+			}
+			increment := &db.SessionUsageIncrement{InputTokens: usage.ModelUsage.InputTokens, OutputTokens: usage.ModelUsage.OutputTokens, CacheReadInputTokens: usage.ModelUsage.CacheReadInputTokens}
+			if cache := usage.ModelUsage.CacheCreation; cache != nil {
+				increment.CacheCreation5mInputTokens, increment.CacheCreation1hInputTokens = cache.Ephemeral5mInputTokens, cache.Ephemeral1hInputTokens
+			}
+			events[len(events)-1].UsageIncrement = increment
+		}
 	}
 	return events, nil
 }

@@ -1,6 +1,7 @@
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { consoleApi } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
+import { consoleResourceListLimit } from '../../shared/console-list';
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
@@ -62,6 +63,8 @@ export const defaultAgentFilters: AgentListFilters = { created: 'all', status: '
 
 export const agentsListLimit = 20;
 
+export const managedEntityListLimit = consoleResourceListLimit;
+
 export const agentSearchLimit = 100;
 
 export const agentSearchMaxPages = 3;
@@ -79,9 +82,14 @@ export function createdFilterStartISOString(filter: AgentCreatedFilter) {
   return null;
 }
 
-export function listAgents(workspaceId: string, page?: PageCursor, filters: AgentListFilters = defaultAgentFilters) {
+export function listAgents(
+  workspaceId: string,
+  page?: PageCursor,
+  filters: AgentListFilters = defaultAgentFilters,
+  limit = agentsListLimit,
+) {
   const params: Record<string, string | number | boolean> = {
-    limit: agentsListLimit,
+    limit,
     include_archived: filters.status === 'all',
   };
   const createdAtGTE = createdFilterStartISOString(filters.created);
@@ -294,7 +302,7 @@ export function listManagedEntities(
   filters?: ManagedEntityListFilters,
 ) {
   const params: Record<string, unknown> = {
-    limit: 5,
+    limit: managedEntityListLimit,
     include_archived: filters?.includeArchived ?? false,
   };
   if (page) {

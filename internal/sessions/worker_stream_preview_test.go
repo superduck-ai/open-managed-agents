@@ -270,7 +270,7 @@ func TestPreviewSessionEventDistinguishesPrimaryAndChildScopes(t *testing.T) {
 	}
 }
 
-func TestPreviewSSEIncludesTimesAndResolvedPrimaryThread(t *testing.T) {
+func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC)
 	processedAt := createdAt.Add(2 * time.Second)
 	event := previewSessionEvent(
@@ -294,14 +294,8 @@ func TestPreviewSSEIncludesTimesAndResolvedPrimaryThread(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		t.Fatalf("decode preview SSE data: %v", err)
 	}
-	if payload.CreatedAt != createdAt.Format(time.RFC3339Nano) {
-		t.Fatalf("created_at = %q, want %q", payload.CreatedAt, createdAt.Format(time.RFC3339Nano))
-	}
-	if payload.ProcessedAt != processedAt.Format(time.RFC3339Nano) {
-		t.Fatalf("processed_at = %q, want %q", payload.ProcessedAt, processedAt.Format(time.RFC3339Nano))
-	}
-	if payload.SessionThreadID != "primary-thread" {
-		t.Fatalf("session_thread_id = %q, want primary-thread", payload.SessionThreadID)
+	if payload.CreatedAt != "" || payload.ProcessedAt != "" || payload.SessionThreadID != "" {
+		t.Fatalf("preview gained persisted event fields: %+v", payload)
 	}
 }
 
@@ -371,6 +365,32 @@ func TestStreamConnectionResetDropsOrphanDelta(t *testing.T) {
 	}
 	if _, accepted := connection.event(sessionEventDelivery{event: delta}); accepted {
 		t.Fatal("orphan delta was accepted after reset")
+	}
+}
+
+func TestStreamConnectionRequestEndRetiresOnlyItsPreviews(t *testing.T) {
+	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
+	preview := func(eventType, id string) bool {
+		block := previewBlock{eventID: id, eventType: "agent.message"}
+		payload := eventStartPayload(block)
+		if eventType == previewEventDelta {
+			payload = eventDeltaPayload(id, "text")
+		}
+		_, accepted := connection.event(sessionEventDelivery{event: sessionStreamEvent{ExternalID: id, PrimaryThread: true, EventType: eventType, Payload: payload}})
+		return accepted
+	}
+	if !preview(previewEventStart, "running") {
+		t.Fatal("overlapping preview start was not accepted")
+	}
+	end := sessionStreamEvent{ExternalID: "end", PrimaryThread: true, EventType: "span.model_request_end", Payload: json.RawMessage(`{"event_ids":["late"]}`)}
+	if _, accepted := connection.event(sessionEventDelivery{event: end}); !accepted {
+		t.Fatal("request end was not accepted")
+	}
+	if !preview(previewEventDelta, "running") {
+		t.Fatal("end retired another request's preview")
+	}
+	if preview(previewEventStart, "late") || preview(previewEventDelta, "late") {
+		t.Fatal("preview reopened after its request ended")
 	}
 }
 

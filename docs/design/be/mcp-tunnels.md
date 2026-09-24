@@ -53,13 +53,17 @@ flowchart LR
     ConsoleAPI --> DB
     ConsoleAPI --> Presence[Redis 在线展示]
     ConnectorAPI --> Presence
-    ConnectorAPI --> DB
+    ConnectorAPI -->|Poll 和 metadata 鉴权| DB
     Management --> Secrets[Envelope encryption]
     Ingress --> Broker[NATS Broker]
     Connector[tunnel-client] -->|Bearer tunnel token| ConnectorAPI[Connector API]
     ConnectorAPI --> Broker
-    Broker --> JetStream[(JetStream Commands + KV)]
-    Broker --> Core[Core NATS response notifications]
+    Broker --> JetStream[(JetStream Commands)]
+    Broker --> Bindings[(Redis 领取绑定)]
+    Broker --> Core[Core NATS 响应直送原 OMA]
+    Broker -->|超限正文| PayloadStore[临时正文组件]
+    PayloadStore --> Objects[(对象存储)]
+    PayloadStore -->|登记清理任务| DB
     Connector --> PrivateMCP[Private MCP Server]
 ```
 

@@ -8,7 +8,8 @@ preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一�
 
 MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue（共享 consumer，MaxDeliver=1），不可覆盖响应绑定改由 Redis String key 保存，NATS 不再创建 Request KV。
 通知和最终响应正文均通过 Core NATS request-reply 直接交付原 OMA；不保存终态、不定时恢复，完成标记仅在原实例内存中保留。
-Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain；Broker 不依赖 Redis；Connector/Console 的在线展示使用共享 Redis 8 客户端，故障不影响请求转发。
+Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain。Broker 依赖 Redis 保存和读取领取绑定；绑定写入失败不交付命令，读取失败拒绝响应，不回退到 NATS KV 或 PostgreSQL。
+Connector/Console 的在线展示使用独立组件，复用同一 Redis 8 客户端。在线记录写入失败不阻止 Poll，读取失败显示“状态未知”；此降级策略不适用于领取绑定。
 Control KV、token 状态同步、亲和路由和专属 River 清理队列已移除。
 
 ```mermaid
@@ -78,9 +79,9 @@ envelope 会告警，但不阻塞其他 Session 的扫描。同通道后续消�
 
 ## 数据安全与大消息
 
-JetStream envelope 可能包含用户内容，不得写入运行日志。原始字节数超过 32 KiB 的 payload 存入对象
+JetStream envelope 可能包含用户内容，不得写入运行日志。Worker 入站事件的原始字节数超过 32 KiB 时，payload 存入对象
 存储，envelope 只携带租户作用域 key、字节数、SHA-256 和 cleanup job ID；引用 envelope 仍不得
-超过 1 MiB。Redis 只保存短期 ACK subject，不保存 payload，也不是消息事实源。
+超过 1 MiB。Worker 入站链路中的 Redis 只保存短期 ACK subject，不保存 payload，也不是消息事实源。
 
 ## 其他消息能力的接入约束
 

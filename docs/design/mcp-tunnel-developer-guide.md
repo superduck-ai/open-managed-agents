@@ -42,8 +42,12 @@ flowchart LR
         ConnectorAPI[Connector API]
         Broker[NATS Broker]
         TunnelDB[(PostgreSQL)]
-        NATS[(JetStream / Core NATS)]
+        Commands[(JetStream Commands)]
+        Core[Core NATS 响应直送原 OMA]
+        Bindings[(Redis 领取绑定)]
         Presence[(Redis 在线记录)]
+        PayloadStore[临时正文组件]
+        Objects[(对象存储)]
     end
 
     subgraph PrivateNetwork[企业私网]
@@ -65,7 +69,12 @@ flowchart LR
     ConnectorAPI -->|Poll 和 metadata 鉴权| TunnelDB
     ConnectorAPI -->|有效 Poll 更新| Presence
     ConnectorAPI --> Broker
-    Broker --> NATS
+    Broker --> Commands
+    Broker --> Core
+    Broker --> Bindings
+    Broker -->|超限正文| PayloadStore
+    PayloadStore --> Objects
+    PayloadStore -->|登记清理任务| TunnelDB
     Client -->|Bearer tunnel token; outbound poll/response| ConnectorAPI
     Client --> PrivateMCP
 ```
@@ -80,9 +89,11 @@ flowchart LR
 | Connector API      | 校验 Tunnel token，处理 metadata、poll 和 response wire                             |
 | Runtime Gateway    | 只允许 Sandbox 访问当前 Code Session Snapshot 中按名称配置的 MCP Server             |
 | TunnelInvoker      | 识别 canonical Tunnel URL，在 OMA 进程内直接进入 Broker，避免 HTTP 回环             |
-| NATS Broker        | 排队、原子 claim、响应状态、通知、超时和全局存储预算                    |
+| NATS Broker        | 命令排队、创建领取绑定、ACK、响应直送与本地等待；维护 deadline 和响应背压 |
+| Redis 领取绑定 | 保存不可变的领取 token 哈希、请求归属与回传路由，TTL 到期删除；不保存执行状态或结果 |
+| 临时正文组件 | 超过 NATS 消息上限时暂存正文、恢复并校验对象，登记到期清理任务 |
 | Redis 在线记录 | 仅保存近期 Poll 的实例/channel 声明，字段 TTL 独立过期 |
-| PostgreSQL         | 保存 Tunnel、租户归属、归档状态和加密的 token version                               |
+| PostgreSQL         | 保存 Tunnel、租户归属、归档状态、加密的 token version 和临时对象清理任务 |
 | `tunnel-client`    | 出站长轮询、并发与背压、本地 MCP 转发、通知与终态响应回传                           |
 | Private MCP Server | 真正执行 `initialize`、`tools/list`、`tools/call` 等 MCP 请求                       |
 
@@ -627,7 +638,11 @@ OMA 主要代码：
 | `internal/tunnels/certificate_service.go`                                                      | X.509 校验、fingerprint 和独立持久化编排                |
 | `internal/tunnels/connector_handler.go`                                                        | Tunnel token、metadata、poll、response                  |
 | `internal/tunnels/ingress_handler.go`                                                          | direct ingress、TunnelInvoker、SSE 和 OAuth rewrite     |
-| `internal/tunnels/broker_nats.go`、`broker_poll.go` | NATS 单次投递与响应绑定；`presence.go` 独立实现 Redis 在线记录            |
+| `internal/tunnels/broker_nats.go`、`broker_poll.go` | NATS 命令排队、单次投递与响应绑定校验 |
+| `internal/tunnels/request_bindings.go` | Redis 不可变领取绑定 |
+| `internal/tunnels/response_hub_nats.go` | Core NATS 响应直送、本地等待与完成标记 |
+| `internal/tunnels/presence.go` | Redis 在线展示记录 |
+| `internal/tunnels/payload.go`、`payload_transport.go` | 超限正文暂存、引用传输与恢复校验 |
 | `internal/tunnels/protocol.go`                                                                 | command、response 和 channel wire 类型                  |
 | `internal/tunnels/probe.go`                                                                    | Console/catalog initialize/tools/list Broker 探测       |
 | `internal/mcpcatalogs/handler.go`                                                              | Agent 工具 catalog、Tunnel scope 校验与 last-good 保存  |

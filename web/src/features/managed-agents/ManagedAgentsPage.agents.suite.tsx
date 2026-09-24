@@ -23,6 +23,7 @@ import {
   workspaceContextValue,
 } from './ManagedAgentsPage.test-utils';
 import type { AuthContextValue } from '../../shared/auth/context';
+import { consoleResourceListLimit } from '../../shared/console-list';
 
 export function registerManagedAgentsAgentsTests() {
   test('guides agent creation to LLM configuration when no provider exists', async () => {
@@ -253,7 +254,13 @@ export function registerManagedAgentsAgentsTests() {
     expect((createRequest?.body?.metadata as Record<string, string>).template).toBe('deep-research');
     const createdToolset = (createRequest?.body?.tools as Array<Record<string, unknown>>)[0];
     expect(createdToolset.type).toBe('agent_toolset_20260401');
-    expect(createdToolset.configs).toBeUndefined();
+    expect(createdToolset.configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: false,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
     expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();
@@ -1111,12 +1118,13 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
     expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
     expect(screen.queryByText('No skills configured.')).toBeNull();
-    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+6/ });
+    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+22/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
     expect(screen.getByText('bash')).toBeTruthy();
-    expect(screen.queryByText('web_fetch')).toBeNull();
+    expect(screen.getByText('web_fetch')).toBeTruthy();
+    expect(screen.getByText('Fetch URL content')).toBeTruthy();
     expect(screen.queryByText('web_search')).toBeNull();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     const versionButton = screen.getByRole('button', { name: 'Version: v2' });
@@ -1221,7 +1229,7 @@ export function registerManagedAgentsAgentsTests() {
 
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
-    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+6/ }));
+    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+22/ }));
     expect(within(builtInCard).getByText('bash')).toBeTruthy();
     expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
@@ -1691,8 +1699,8 @@ export function registerManagedAgentsAgentsTests() {
       ),
     );
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
-    await selectManagedComboboxOption(dialog, 'Trigger', 'Manual');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(within(dialog).getByRole('tab', { name: 'Manual' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
 
     await waitFor(() =>
       expect(
@@ -1779,15 +1787,12 @@ export function registerManagedAgentsAgentsTests() {
     mockAgentsApi([]);
     render(<ManagedAgentsPage section="agents" />);
 
-    const missingAgentBreadcrumb = await screen.findByRole('navigation', { name: 'Breadcrumb' });
-    expect(missingAgentBreadcrumb.dataset.slot).toBe('breadcrumb');
-    expect(within(missingAgentBreadcrumb).getByRole('link', { name: 'Agents' }).getAttribute('href')).toBe(
+    expect(await screen.findByRole('heading', { name: 'Agent not found' })).toBeTruthy();
+    expect(screen.getByText(/Agent agent_missing123456 was not found/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to agents' }).getAttribute('href')).toBe(
       '/workspaces/default/agents',
     );
-    expect(missingAgentBreadcrumb.querySelector('[data-slot="breadcrumb-page"]')?.textContent).toBe('Error');
-    const missingAgentAlert = await screen.findByRole('alert');
-    expect(missingAgentAlert.dataset.slot).toBe('alert');
-    expect(missingAgentAlert.textContent).toContain('not found');
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_detail123456?version_id=99');
@@ -2292,7 +2297,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === '/v1/agents?beta=true&limit=20&include_archived=false' &&
+            request.url === `/v1/agents?beta=true&limit=${consoleResourceListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'default',
         ),
       ).toBe(true),
@@ -2309,7 +2314,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === '/v1/agents?beta=true&limit=20&include_archived=false' &&
+            request.url === `/v1/agents?beta=true&limit=${consoleResourceListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'wrkspc_foo',
         ),
       ).toBe(true),
@@ -2336,7 +2341,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === '/v1/agents?beta=true&limit=20&include_archived=false' &&
+            request.url === `/v1/agents?beta=true&limit=${consoleResourceListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'wrkspc_foo',
         ),
       ).toBe(true),
@@ -2344,23 +2349,26 @@ export function registerManagedAgentsAgentsTests() {
     await waitFor(() => expect(selectedWorkspaceIds).toContain('wrkspc_foo'));
   });
 
-  test('paginates agents twenty rows at a time with the backend page cursor', async () => {
+  test('paginates agents one shared page at a time with the backend page cursor', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi(
-      Array.from({ length: 21 }, (_, index) => ({
+      Array.from({ length: consoleResourceListLimit + 1 }, (_, index) => ({
         id: `agent_page${String(index + 1).padStart(2, '0')}123456`,
-        name: index === 0 ? 'First agent' : index === 20 ? 'Twenty first agent' : `Agent ${index + 1}`,
+        name:
+          index === 0 ? 'First agent' : index === consoleResourceListLimit ? 'Next page agent' : `Agent ${index + 1}`,
       })),
     );
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('First agent')).toBeTruthy();
-    expect(screen.queryByText('Twenty first agent')).toBeNull();
+    expect(screen.queryByText('Next page agent')).toBeNull();
+    expect(screen.getByLabelText('Page 1')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText('Twenty first agent')).toBeTruthy();
+    expect(await screen.findByText('Next page agent')).toBeTruthy();
     expect(screen.queryByText('First agent')).toBeNull();
+    expect(screen.getByLabelText('Page 2')).toBeTruthy();
     expect(api.requests.some((request) => request.method === 'GET' && request.url.includes('page=next_cursor'))).toBe(
       true,
     );
@@ -2477,12 +2485,12 @@ export function registerManagedAgentsAgentsTests() {
     expect(truncatedAlert.textContent).toContain(
       "Couldn't search every agent. Narrow the search or paste an exact ID.",
     );
-    expect(screen.getByText('Aggregate agent 20')).toBeTruthy();
-    expect(screen.queryByText('Aggregate agent 21')).toBeNull();
+    expect(screen.getByText(`Aggregate agent ${consoleResourceListLimit}`)).toBeTruthy();
+    expect(screen.queryByText(`Aggregate agent ${consoleResourceListLimit + 1}`)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText('Aggregate agent 21')).toBeTruthy();
+    expect(await screen.findByText(`Aggregate agent ${consoleResourceListLimit + 1}`)).toBeTruthy();
     expect(screen.queryByText('Aggregate agent 1')).toBeNull();
     expect(api.requests.filter((request) => request.url === '/v1/agents:search?beta=true').length).toBe(3);
   });
@@ -2518,7 +2526,7 @@ export function registerManagedAgentsAgentsTests() {
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByText('No agents yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Get started with agents' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
     expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull();
@@ -2656,6 +2664,27 @@ export function registerManagedAgentsAgentsTests() {
       ),
     );
     await waitFor(() => expect(screen.queryByText('Menu agent')).toBeNull());
+  });
+
+  test('shows the next agent after archiving one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const agents = Array.from({ length: consoleResourceListLimit + 1 }, (_, index) => ({
+      id: `agent_page_${index}`,
+      name: index === consoleResourceListLimit ? 'Overflow agent' : `Agent ${index}`,
+    }));
+    mockAgentsApi(agents);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByText('Agent 0')).toBeTruthy();
+    expect(screen.queryByText('Overflow agent')).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive agent' }));
+    fireEvent.click(
+      within(screen.getByRole('alertdialog', { name: 'Archive agent' })).getByRole('button', { name: 'Archive' }),
+    );
+
+    expect(await screen.findByText('Overflow agent')).toBeTruthy();
+    expect(screen.queryByText('Agent 0')).toBeNull();
   });
 
   test('shows a shared alert when archiving an agent fails', async () => {

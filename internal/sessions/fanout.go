@@ -42,6 +42,9 @@ func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionE
 	payloads := make(map[string]*sessionEventsFanout)
 	sessionIDs := make([]string, 0, 1)
 	for _, event := range events {
+		if event.ProcessedAt.IsZero() && maevents.IsClientInput(event.EventType) {
+			continue
+		}
 		payload, exists := payloads[event.SessionExternalID]
 		if !exists {
 			payload = &sessionEventsFanout{}

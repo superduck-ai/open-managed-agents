@@ -59,7 +59,8 @@ export function memoryBranchFromPage(page: PageResponse<MemoryApiResponse>): Mem
 export function memoryRowsFromPage(page: PageResponse<MemoryApiResponse>) {
   const rows = (page.data ?? [])
     .map(normalizeMemoryRow)
-    .filter((memory): memory is MemoryApiResponse => Boolean(memory));
+    .filter((memory): memory is MemoryApiResponse => Boolean(memory))
+    .filter((memory) => memory.type !== 'memory' || !isPlatformMemoryMarkdownPath(memory.path));
   const existingPaths = new Set(
     rows.map((memory) => (memory.type === 'memory_prefix' ? normalizeMemoryFolderPath(memory.path) : memory.path)),
   );
@@ -179,6 +180,9 @@ export function buildMemoryTreeNodes(
   const appendRows = (rows: MemoryApiResponse[], depth: number) => {
     const seenFolders = new Set<string>();
     for (const row of sortMemoryRows(rows)) {
+      if (row.type === 'memory' && isPlatformMemoryMarkdownPath(row.path)) {
+        continue;
+      }
       if (row.type === 'memory_prefix') {
         const path = normalizeMemoryFolderPath(row.path);
         if (seenFolders.has(path)) {
@@ -327,8 +331,8 @@ export function initialFormValues(
     agentId: entity ? entityAgentId(entity) : '',
     environmentId: entity && 'environment_id' in entity ? entity.environment_id : '',
     initialMessage: entity ? entityInitialMessage(entity) : '',
-    triggerType: entity ? entityTriggerType(entity) : '',
-    cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1',
+    triggerType: entity ? entityTriggerType(entity) : section === 'deployments' ? 'manual' : '',
+    cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1-5',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
     ...resourceFormValues(entity && 'resources' in entity ? entity.resources : []),
@@ -465,6 +469,11 @@ export function entityInitialMessage(entity: ManagedEntityApiResponse) {
     }
   }
   return '';
+}
+
+export function isPlatformMemoryMarkdownPath(path: string) {
+  const trimmed = path.trim();
+  return trimmed === '/MEMORY.md' || trimmed === 'MEMORY.md';
 }
 
 export function entityTriggerType(entity: ManagedEntityApiResponse): ManagedEntityFormValues['triggerType'] {

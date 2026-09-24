@@ -5,14 +5,14 @@
 控制台补齐 Session 输入文件的最短操作路径：
 
 1. 在当前 Workspace 的 Files 页面上传文件；
-2. 在 Create Session 对话框添加 File Resource，并从当前 Workspace 的文件列表中查询选择；
-3. 提交现有 `POST /v1/sessions` 的 `resources` 字段。
+2. 在 Create Session 对话框的 Resources 里用 `+ Resource` 添加 File、Git repository 或 Memory store，并从当前 Workspace 的列表中选择；
+3. 提交现有 `POST /v1/sessions` 的 `resources` 字段。Memory Store 的 Access / Instructions 见 [Memory Store Attach 表单](memory-store-attach-form.md)，走同一套 Resource 卡片，不走独立多选。
 
 后端的 filesystem、输入引用、只读挂载和 Files API 投影统一由 [Filestore 设计](../be/filestore.md)定义，本文只描述前端接口。
 
 ## Git Repository 资源
 
-Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File 或 Git repository；Deployment 保留 Memory Store 选择器。Git 资源支持 GitHub 及自托管 HTTPS Git 仓库。
+Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File、Git repository 或 Memory store；Session 和 Deployment 共用 Memory Store 的 Access / Instructions 卡片。Git 资源支持 GitHub 及自托管 HTTPS Git 仓库。
 
 Git repository 的公开请求字段如下；API 类型沿用 `github_repository`，不限制仓库托管平台：
 

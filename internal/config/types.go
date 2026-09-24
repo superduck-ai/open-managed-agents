@@ -10,6 +10,7 @@ const (
 )
 
 type Config struct {
+	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
 	Env               string                  `yaml:"env"`
 	Server            ServerConfig            `yaml:"server"`
 	Database          DatabaseConfig          `yaml:"database"`
@@ -27,7 +28,6 @@ type Config struct {
 	Webhook           WebhookConfig           `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and
@@ -236,25 +236,6 @@ type BootstrapConfig struct {
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
 }
 
-type SDKFixtureConfig struct {
-	FileID            string `yaml:"file_id"`
-	BatchID           string `yaml:"batch_id"`
-	AgentID           string `yaml:"agent_id"`
-	ReferenceAgentID  string `yaml:"reference_agent_id"`
-	EnvironmentID     string `yaml:"environment_id"`
-	WorkID            string `yaml:"work_id"`
-	SessionID         string `yaml:"session_id"`
-	SessionResourceID string `yaml:"session_resource_id"`
-	SessionThreadID   string `yaml:"session_thread_id"`
-	SessionEventID    string `yaml:"session_event_id"`
-	SkillID           string `yaml:"skill_id"`
-	SkillVersion      string `yaml:"skill_version"`
-	DeploymentID      string `yaml:"deployment_id"`
-	DeploymentRunID   string `yaml:"deployment_run_id"`
-	APIKey            string `yaml:"api_key"`
-	APIKeyExternalID  string `yaml:"api_key_external_id"`
-}
-
 type SeedAPIKey struct {
 	ExternalID string `yaml:"external_id"`
 	Key        string `yaml:"key"`
@@ -265,4 +246,18 @@ type SandboxLifecycleConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	DryRun      bool          `yaml:"dry_run"`
 	IdleTimeout time.Duration `yaml:"idle_timeout"`
+}
+
+type TranscriptArchiveConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	DryRun                bool          `yaml:"dry_run"`
+	TerminalSweepEnabled  bool          `yaml:"terminal_sweep_enabled"`
+	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
+	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
+	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
+	ArchiveMinAge         time.Duration `yaml:"archive_min_age"`
+	SoftDeleteWindow      time.Duration `yaml:"soft_delete_window"`
+	TargetSegmentRawBytes int           `yaml:"target_segment_raw_bytes"`
+	DeleteBatchRows       int           `yaml:"delete_batch_rows"`
+	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
 }

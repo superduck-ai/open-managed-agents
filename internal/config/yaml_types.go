@@ -35,6 +35,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
 	Env               string                  `yaml:"env"`
 	Server            ServerConfig            `yaml:"server"`
 	Database          yamlDatabaseConfig      `yaml:"database"`
@@ -52,7 +53,6 @@ type yamlConfig struct {
 	Webhook           yamlWebhookConfig       `yaml:"webhook"`
 	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         yamlBootstrapConfig     `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
 }
 
 type yamlDatabaseConfig struct {
@@ -111,6 +111,7 @@ func newYAMLConfig() yamlConfig {
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
 		SandboxLifecycle:  defaults.SandboxLifecycle,
+		TranscriptArchive: defaults.TranscriptArchive,
 		EnvironmentRunner: defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
@@ -136,7 +137,6 @@ func newYAMLConfig() yamlConfig {
 			UserExternalID:      defaults.Bootstrap.UserExternalID,
 			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: defaults.SDKFixtures,
 	}
 }
 
@@ -157,6 +157,7 @@ func (input yamlConfig) resolve() Config {
 		Batch:             input.Batch,
 		E2B:               input.E2B,
 		SandboxLifecycle:  input.SandboxLifecycle,
+		TranscriptArchive: input.TranscriptArchive,
 		EnvironmentRunner: input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,
@@ -182,7 +183,6 @@ func (input yamlConfig) resolve() Config {
 			UserExternalID:      input.Bootstrap.UserExternalID,
 			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")

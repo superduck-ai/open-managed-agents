@@ -312,7 +312,14 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 			if envelope.PayloadRef != nil {
 				cleanupJobID = envelope.PayloadRef.CleanupJobID
 			}
-			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID}); err != nil {
+			var publicEvent struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(envelope.Payload, &publicEvent); err != nil {
+				h.logger.ErrorContext(ctx, "decode code session worker event ID", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
+				return
+			}
+			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID}); err != nil {
 				h.logger.WarnContext(ctx, "store code session worker event ACK", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}

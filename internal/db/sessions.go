@@ -66,9 +66,15 @@ const (
 	// Session. It is distinct from FilestoreEntryKindFile, which classifies
 	// filesystem nodes.
 	SessionResourceTypeFile = sessioncontract.FileResourceType
+	// SessionResourceTypeMemoryStore identifies a Memory Store attached to a
+	// Session. Snapshot fields live in payload, not Filestore path columns.
+	SessionResourceTypeMemoryStore = sessioncontract.MemoryStoreResourceType
 	// MaxSessionFileResources is the write-time limit for active File resources
 	// attached to one Session.
 	MaxSessionFileResources = sessioncontract.MaxFileResources
+	// MaxSessionMemoryStores is the write-time limit for active Memory Store
+	// resources attached to one Session.
+	MaxSessionMemoryStores = sessioncontract.MaxMemoryStores
 	// MaxSessionOutputFileResources caps the output files ListSessionResources
 	// returns. Output files bypass the write-time limit, so without this cap the
 	// resources array would grow unbounded. files.list(scope_id) stays complete.
@@ -95,6 +101,8 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
+	StatusThreadID    string
+	UsageIncrement    *SessionUsageIncrement
 	PayloadBlobUUID   *string
 	ToolUseID         *string
 	UUID              string
@@ -112,14 +120,22 @@ type SessionEvent struct {
 	DeletedAt         *time.Time
 }
 
+// SessionUsageIncrement contains measured counters; nil means unavailable.
+type SessionUsageIncrement struct {
+	CacheCreation5mInputTokens *int64
+	CacheCreation1hInputTokens *int64
+	InputTokens                *int64
+	OutputTokens               *int64
+	CacheReadInputTokens       *int64
+}
+
 type SessionPageCursor struct {
 	CreatedAt time.Time
 	UUID      string
 }
 
 type SessionEventPageCursor struct {
-	CreatedAt time.Time
-	UUID      string
+	ExternalID string
 }
 
 type SessionThreadPageCursor struct {
@@ -197,6 +213,24 @@ type SessionFileResourceLimitError struct {
 
 func (e *SessionFileResourceLimitError) Error() string {
 	return fmt.Sprintf("at most %d managed-agent file resources are allowed", e.Limit)
+}
+
+// SessionMemoryStoreLimitError reports that an atomic resource mutation would
+// exceed the maximum number of active Memory Store resources for one Session.
+type SessionMemoryStoreLimitError struct {
+	Limit int
+}
+
+func (e *SessionMemoryStoreLimitError) Error() string {
+	return fmt.Sprintf("at most %d memory stores are allowed", e.Limit)
+}
+
+// SessionMemoryStoreDuplicateError reports that a Session already has an
+// active resource for the same memory_store_id.
+type SessionMemoryStoreDuplicateError struct{}
+
+func (e *SessionMemoryStoreDuplicateError) Error() string {
+	return "memory_store_id must be unique"
 }
 
 // SessionFileMountConflictError reports a conflict between two active
@@ -307,15 +341,27 @@ func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThre
 	return d.GetSessionThread(ctx, thread.WorkspaceUUID, thread.SessionExternalID, thread.ExternalID)
 }
 
-func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
-	mapper := NewSessionMapper(d.mapperDB)
-	row, err := mapper.Archive(ctx, workspaceUUID, externalID)
-	return row.session(), mapNoRows(err)
+func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (SessionRemoval, error) {
+	var removal SessionRemoval
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var err error
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+			return err
+		}
+		row, err := NewSessionMapper(executor).Archive(ctx, workspaceUUID, externalID)
+		removal.Session = row.session()
+		return mapNoRows(err)
+	})
+	return removal, err
 }
 
-func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
-	var session Session
+func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (SessionRemoval, error) {
+	var removal SessionRemoval
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var err error
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+			return err
+		}
 		sessionMapper := NewSessionMapper(executor)
 		threadMapper := NewSessionThreadMapper(executor)
 		resourceMapper := NewSessionResourceMapper(executor)
@@ -326,7 +372,8 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if txErr != nil {
 			return mapNoRows(txErr)
 		}
-		session = row.session()
+		session := row.session()
+		removal.Session = session
 		if txErr = retireSessionFilesystemTx(ctx, executor, session); txErr != nil {
 			return txErr
 		}
@@ -342,7 +389,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
 		return txErr
 	})
-	return session, err
+	return removal, err
 }
 
 func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams) ([]Session, bool, error) {
@@ -438,7 +485,7 @@ func (d *DB) CreateSessionResource(
 				return txErr
 			}
 		}
-		created, txErr = createSessionResource(ctx, executor, resource)
+		created, txErr = insertSessionResourceWithLockedSessionTx(ctx, executor, resource)
 		if txErr != nil {
 			return txErr
 		}
@@ -514,14 +561,10 @@ func (d *DB) AppendSessionEvents(
 	var created []SessionEvent
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
 		if txErr != nil {
 			return txErr
 		}
-		if !found {
-			return ErrNotFound
-		}
-		session := row.session()
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
@@ -539,14 +582,10 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 	var created []SessionEvent
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
 		if txErr != nil {
 			return txErr
 		}
-		if !found {
-			return ErrNotFound
-		}
-		session := row.session()
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
@@ -566,11 +605,41 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionE
 	return row.event(), mapNoRows(err)
 }
 
+func (d *DB) MarkSessionEventProcessed(ctx context.Context, worker CodeSession, eventID string, at time.Time) (SessionEvent, bool, error) {
+	var row sessionEventRow
+	var changed bool
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		_, err := lockSessionForEvents(ctx, NewSessionMapper(executor), worker.WorkspaceUUID, worker.SessionExternalID)
+		if err != nil {
+			return err
+		}
+		current, err := NewCodeSessionMapper(executor).LockWorkerLeaseByExternalID(ctx, worker.ExternalID)
+		if err != nil {
+			return err
+		}
+		if current.CurrentWorkerEpoch != worker.CurrentWorkerEpoch {
+			return ErrWorkerEpochMismatch
+		}
+		row, changed, err = NewSessionEventMapper(executor).MarkProcessed(ctx, worker.WorkspaceUUID, worker.SessionExternalID, eventID, at)
+		return err
+	})
+	return row.event(), changed, err
+}
+
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
 	mapper := NewSessionEventMapper(d.mapperDB)
+	if params.Cursor != nil {
+		exists, err := mapper.CursorExists(ctx, params.WorkspaceUUID, params.SessionExternalID, params.Cursor.ExternalID)
+		if err != nil {
+			return nil, false, err
+		}
+		if !exists {
+			return nil, false, ErrInvalidCursor
+		}
+	}
 	rows, err := mapper.ListPage(ctx, sessionEventPageParameters(params))
 	if err != nil {
 		return nil, false, err

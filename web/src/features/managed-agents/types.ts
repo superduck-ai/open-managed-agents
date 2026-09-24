@@ -61,6 +61,7 @@ export type AgentApiResponse = {
 export type AgentPageResponse = {
   data: AgentApiResponse[];
   next_page: string | null;
+  total_count?: number;
 };
 
 export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
@@ -133,6 +134,7 @@ export type PageResponse<T> = {
   data: T[];
   next_page: string | null;
   prefixes?: unknown[];
+  total_count?: number;
 };
 
 export type PageCursor = string | null;
@@ -300,6 +302,8 @@ export type EnvironmentWorkApiResponse = {
 };
 
 export type SessionResourceApiResponse = {
+  name?: string;
+  memory_store_id?: string;
   id?: string;
   created_at?: string;
   file_id?: string;
@@ -552,6 +556,15 @@ export type ModelRequestBracketMeta = {
 export type SessionEventListEntry =
   IdleGapEntry | QueuedBoundaryEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
 
+export type MemoryAttachAccess = 'read_write' | 'read_only';
+
+export type MemoryAttachFormValue = {
+  memoryStoreId: string;
+  access: MemoryAttachAccess;
+  instructions: string;
+  mountPath?: string;
+};
+
 export type ManagedEntityFormValues = {
   name: string;
   description: string;
@@ -562,7 +575,7 @@ export type ManagedEntityFormValues = {
   cronExpression: string;
   timezone: string;
   vaultIds: string[];
-  memoryStoreIds: string[];
+  memoryAttaches: MemoryAttachFormValue[];
   fileResources: SessionFileResourceFormValue[];
   gitResources: GitRepositoryResourceFormValue[];
   originalResources: SessionResourceApiResponse[];
@@ -744,7 +757,6 @@ export type ResourceConfig = {
   columns: string[];
   emptyTitle: string;
   emptyBody?: string;
-  emptyAction?: string;
   emptyIcon: IconComponent;
   rows?: Array<Record<string, ReactNode>>;
 };

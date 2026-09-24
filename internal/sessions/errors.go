@@ -106,10 +106,10 @@ func mapResourceBuildError(err error) error {
 	if !errors.As(err, &refErr) {
 		return invalidRequest(err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrNotFound) {
 		return memoryStoreNotFound(refErr.ResourceID, err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrInvalidState) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "memory store must not be archived", err)
 	}
 	return internalError(
@@ -146,6 +146,14 @@ func mapFileResourcePersistenceError(err error) (error, bool) {
 	if errors.Is(err, db.ErrFilestorePathExists) {
 		return apperr.New(apperr.Conflict, "File resource mount_path conflicts with the session filesystem", err), true
 	}
+	var memoryLimitErr *db.SessionMemoryStoreLimitError
+	if errors.As(err, &memoryLimitErr) {
+		return invalidRequest(memoryLimitErr), true
+	}
+	var memoryDuplicateErr *db.SessionMemoryStoreDuplicateError
+	if errors.As(err, &memoryDuplicateErr) {
+		return invalidRequest(memoryDuplicateErr), true
+	}
 	return nil, false
 }
 
@@ -170,3 +178,5 @@ func streamingUnsupported() error {
 func gitTokenUpdateRequiredError() error {
 	return invalidRequest(errors.New("authorization_token must be provided when updating a Git resource"))
 }
+
+type resourceReferenceError = sessionresource.ReferenceError

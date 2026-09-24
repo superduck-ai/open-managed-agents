@@ -15,7 +15,12 @@ import {
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { toast } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
-import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
+import { ResourceListState } from '@/shared/ui/resource-list-state';
+import { consoleResourceListLimit } from '@/shared/console-list';
+import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
+import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
+import { CursorPagination, TableErrorRow, TableLoadingRow } from './frame';
 import {
   downloadFile,
   errorMessage,
@@ -32,7 +37,8 @@ import {
 export function FilesPage() {
   const { msg } = useI18n();
   const queryClient = useQueryClient();
-  const { workspaceId, workspaceName } = useDashboardWorkspaceScope();
+  const { workspaceId, workspaceName: workspaceNameToken } = useDashboardWorkspaceScope();
+  const workspaceName = localizedWorkspaceName(workspaceNameToken, msg);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<FilesPageCursor[]>([{}]);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
@@ -130,31 +136,32 @@ export function FilesPage() {
 
   return (
     <>
-      <ConsolePageFrame
-        title={msg('files.title', 'Files')}
-        icon={FileText}
-        description={msg(
-          'files.description',
-          "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
-          { workspaceName },
-        )}
-        actions={
-          <>
-            <input
-              ref={uploadInputRef}
-              className="sr-only"
-              type="file"
-              multiple
-              aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
-              onChange={(event) => void handleUpload(event)}
-            />
-            <Button type="button" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
-              <Upload aria-hidden />
-              {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
-            </Button>
-          </>
-        }
-      >
+      <section>
+        <ResourcePageHeader
+          contentGap="content"
+          title={msg('files.title', 'Files')}
+          description={msg(
+            'files.description',
+            "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
+            { workspaceName },
+          )}
+          actions={
+            <>
+              <input
+                ref={uploadInputRef}
+                className="sr-only"
+                type="file"
+                multiple
+                aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
+                onChange={(event) => void handleUpload(event)}
+              />
+              <Button type="button" size="lg" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+                <Upload aria-hidden />
+                {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
+              </Button>
+            </>
+          }
+        />
         <FilesTable
           files={files}
           workspaceName={workspaceName}
@@ -163,13 +170,15 @@ export function FilesPage() {
           error={filesQuery.error}
           canPrevious={pageIndex > 0 && !filesQuery.isFetching}
           canNext={Boolean(response?.has_more && lastId) && !filesQuery.isFetching}
+          currentPage={pageIndex + 1}
+          totalPages={resourceListPageCount(response?.total_count, consoleResourceListLimit)}
           downloadingFileId={downloadingFileId}
           onRetry={() => void filesQuery.refetch()}
           onPrevious={goPrevious}
           onNext={goNext}
           onDownload={(file) => void handleDownload(file)}
         />
-      </ConsolePageFrame>
+      </section>
     </>
   );
 }
@@ -182,6 +191,8 @@ function FilesTable({
   error,
   canPrevious,
   canNext,
+  currentPage,
+  totalPages,
   downloadingFileId,
   onRetry,
   onPrevious,
@@ -195,6 +206,8 @@ function FilesTable({
   error: unknown;
   canPrevious: boolean;
   canNext: boolean;
+  currentPage: number;
+  totalPages: number | null;
   downloadingFileId: string | null;
   onRetry: () => void;
   onPrevious: () => void;
@@ -233,13 +246,7 @@ function FilesTable({
               retryLabel={msg('common.retry', 'Retry')}
               onRetry={onRetry}
             />
-          ) : files.length === 0 ? (
-            <TableEmptyRow colSpan={5}>
-              {msg('files.empty', 'No files have been uploaded to the {workspaceName} workspace.', {
-                workspaceName,
-              })}
-            </TableEmptyRow>
-          ) : (
+          ) : files.length === 0 ? null : (
             files.map((file) => (
               <DataTableRow key={file.id}>
                 <DataTableCell edge="start">
@@ -266,12 +273,22 @@ function FilesTable({
         </TableBody>
       </Table>
 
+      {!isLoading && !error && files.length === 0 ? (
+        <ResourceListState
+          icon={FileText}
+          title={msg('files.emptyTitle', 'No files yet')}
+          body={msg('files.empty', 'Upload files to the {workspaceName} workspace to see them here.', {
+            workspaceName,
+          })}
+        />
+      ) : null}
+
       <CursorPagination
-        previousLabel={msg('pagination.previousPage', 'Previous page')}
-        nextLabel={msg('pagination.nextPage', 'Next page')}
         updatingLabel={msg('common.updating', 'Updating...')}
         canPrevious={canPrevious}
         canNext={canNext}
+        currentPage={currentPage}
+        totalPages={totalPages}
         isUpdating={isFetching && !isLoading}
         onPrevious={onPrevious}
         onNext={onNext}

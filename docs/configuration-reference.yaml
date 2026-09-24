@@ -196,26 +196,22 @@ bootstrap:
   user_external_id: user_default
   api_key_external_id: api_key_default
 
-sdk_fixtures:
-  file_id: file_id
-  batch_id: message_batch_id
-  agent_id: agent_011CZkYpogX7uDKUyvBTophP
-  reference_agent_id: agent_011CZkYqphY8vELVzwCUpqiQ
-  environment_id: env_011CZkZ9X2dpNyB7HsEFoRfW
-  work_id: work_id
-  session_id: sesn_011CZkZAtmR3yMPDzynEDxu7
-  session_resource_id: sesrsc_011CZkZBJq5dWxk9fVLNcPht
-  session_thread_id: sthr_011CZkZVWa6oIjw0rgXZpnBt
-  session_event_id: sevt_011CZkZbF9oBV2h6c7qWZfnE
-  skill_id: skill_id
-  skill_version: version
-  deployment_id: deployment_id
-  deployment_run_id: deployment_run_id
-  api_key: my-anthropic-api-key
-  api_key_external_id: api_key_official_sdk_resource_tests
-
 # Long-idle managed sandbox reclamation. Disable dry_run to delete sandbox local state.
 sandbox_lifecycle:
   enabled: true
   dry_run: true
   idle_timeout: 24h
+
+# Private transcript archives reuse storage.s3.bucket. No fixed object TTL on this prefix.
+transcript_archive:
+  enabled: false
+  dry_run: true
+  terminal_sweep_enabled: true
+  boundary_sweep_enabled: false
+  hard_delete_enabled: false
+  terminal_dwell: 24h
+  archive_min_age: 168h
+  soft_delete_window: 336h
+  target_segment_raw_bytes: 8388608
+  delete_batch_rows: 500
+  max_rows_per_job: 50000

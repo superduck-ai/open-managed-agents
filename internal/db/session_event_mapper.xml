@@ -58,6 +58,31 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="CursorExists" result="scalar" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+              AND external_id = #{eventExternalID}
+        )
+    </select>
+
+    <select id="FindLatestStatus" result="optional" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+          AND deleted_at IS NULL
+        <choose>
+            <when test="threadID != ''">
+                AND event_type IN ('session.thread_status_running', 'session.thread_status_idle', 'session.thread_status_rescheduled', 'session.thread_status_terminated')
+                AND payload-&gt;&gt;'session_thread_id' = #{threadID}
+            </when>
+            <otherwise>
+                AND event_type IN ('session.status_running', 'session.status_idle', 'session.status_rescheduled', 'session.status_terminated')
+            </otherwise>
+        </choose>
+        ORDER BY id DESC LIMIT 1
+    </select>
+
     <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
@@ -88,14 +113,28 @@
             <if test="params.CreatedAtLT != nil">AND created_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND created_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (created_at, uuid)
+                AND (COALESCE(processed_at, CAST('infinity' AS timestamptz)), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
-                (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+                (
+                    SELECT COALESCE(processed_at, CAST('infinity' AS timestamptz)), id FROM session_events
+                    WHERE workspace_uuid = #{params.WorkspaceUUID}
+                    AND session_external_id = #{params.SessionExternalID}
+                    AND external_id = #{params.Cursor.ExternalID}
+                )
             </if>
         </where>
-        ORDER BY created_at
-        <choose><when test="params.Descending">DESC, uuid DESC</when><otherwise>ASC, uuid ASC</otherwise></choose>
+        ORDER BY session_events.processed_at
+        <choose><when test="params.Descending">DESC NULLS FIRST, id DESC</when><otherwise>ASC NULLS LAST, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="MarkProcessed" result="optional" resultType="sessionEventRow">
+        WITH changed AS (
+            UPDATE session_events SET processed_at = #{processedAt}
+            WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionID}
+            AND external_id = #{eventID} AND processed_at IS NULL AND deleted_at IS NULL
+            RETURNING <include refid="columns"/>
+        ) SELECT <include refid="columns"/> FROM changed
     </select>
 
     <select id="ChildSessionToolUseIDs" resultType="string">

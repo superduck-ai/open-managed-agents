@@ -52,7 +52,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	eventParams := sessionEventWriteParams{
 		UUID: "event-uuid", ExternalID: "event_test", OrganizationUUID: "organization-uuid",
 		WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid", SessionExternalID: "ses_test",
-		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: now, CreatedAt: now,
+		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: &now, CreatedAt: now,
 	}
 
 	tests := []mapperBuilderContract{
@@ -188,12 +188,12 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 
 	eventBound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace-uuid", SessionExternalID: "ses_test", PrimaryOnly: true,
-		FetchLimit: 21, Cursor: &SessionEventPageCursor{CreatedAt: now, UUID: "event-uuid"},
+		FetchLimit: 21, Cursor: &SessionEventPageCursor{ExternalID: "event-id"},
 		Types: []string{"message", "result"},
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, "ORDER BY created_at ASC, uuid ASC")
+	assertMapperSQLContains(t, eventBound, `ORDER BY session_events.processed_at ASC NULLS LAST, id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -205,6 +205,39 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	assertMapperSQLContains(t, toolUseBound, "e.event_type IN ( $3 , $4 )")
 	assertMapperSQLContains(t, toolUseBound, ") IN ( $5 , $6 )")
 
+}
+
+func TestSessionEventMapperLatestStatus(t *testing.T) {
+	for _, threadID := range []string{"sthr_primary", ""} {
+		bound := buildSessionEventMapperFindLatestStatus(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", threadID)
+		names := []string{"workspaceUUID", "sessionExternalID"}
+		fragments := []string{"workspace_uuid = $1", "session_external_id = $2", "deleted_at IS NULL", "ORDER BY id DESC LIMIT 1"}
+		if threadID != "" {
+			names = append(names, "threadID")
+			fragments = append(fragments, "payload->>'session_thread_id' = $3", "'session.thread_status_idle'")
+		} else {
+			fragments = append(fragments, "'session.status_idle'")
+		}
+		assertMapperBuilderContract(t, mapperBuilderContract{
+			statement: sessionEventMapperFindLatestStatusStatement, bound: bound,
+			wantID: "SessionEventMapper.FindLatestStatus", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: names, wantSQLFragments: fragments,
+		})
+	}
+}
+
+func TestSessionEventMapperFiltersCreationTime(t *testing.T) {
+	now := time.Now().UTC()
+	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
+		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 20,
+		CreatedAtGT: &now, CreatedAtGTE: &now, CreatedAtLT: &now, CreatedAtLTE: &now,
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperListPageStatement, bound: bound,
+		wantID: "SessionEventMapper.ListPage", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionExternalID", "params.CreatedAtGT", "params.CreatedAtGTE", "params.CreatedAtLT", "params.CreatedAtLTE", "params.FetchLimit"},
+		wantSQLFragments:  []string{"created_at > $3", "created_at >= $4", "created_at < $5", "created_at <= $6"},
+	})
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
@@ -239,4 +272,14 @@ func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.statementID, func(t *testing.T) { assertMapperExecutionError(t, test) })
 	}
+}
+
+func TestSessionEventCursorExistsMapper(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperCursorExistsStatement,
+		bound:     buildSessionEventMapperCursorExists(yourbatis.DialectPostgres, "workspace", "session", "event"),
+		wantID:    "SessionEventMapper.CursorExists", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "eventExternalID"},
+		wantSQLFragments:  []string{"SELECT EXISTS", "workspace_uuid = $1", "session_external_id = $2", "external_id = $3"},
+	})
 }

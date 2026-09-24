@@ -33,7 +33,7 @@ func (b *inboundPublicationBatch) cleanupUnpublished(ctx context.Context) {
 	}
 }
 
-func (s *Service) publishControlResponse(ctx context.Context, codeSessionID string, payload []byte, source, seed string) error {
+func (s *Service) publishControlResponse(ctx context.Context, codeSessionID string, workerEpoch int64, payload []byte, source, seed, completedToolID string) error {
 	ctx, cancel := context.WithTimeout(ctx, workerPublicationTimeout)
 	defer cancel()
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
@@ -52,7 +52,10 @@ func (s *Service) publishControlResponse(ctx context.Context, codeSessionID stri
 	}
 	batch := &inboundPublicationBatch{service: s, events: []preparedInboundEvent{prepared}}
 	defer batch.cleanupUnpublished(ctx)
-	return s.db.WithLockedActiveCodeSession(ctx, codeSessionID, func(db.CodeSession) error {
+	return s.db.WithLockedActiveCodeSession(ctx, codeSessionID, completedToolID, func(locked db.CodeSession) error {
+		if workerEpoch > 0 && locked.CurrentWorkerEpoch != workerEpoch {
+			return db.ErrWorkerEpochMismatch
+		}
 		return batch.publish(ctx)
 	})
 }

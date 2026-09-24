@@ -41,7 +41,8 @@ func defaultConfig() Config {
 			JobLeaseHeartbeatInterval: 30 * time.Second,
 			ExpirySweepInterval:       5 * time.Minute,
 		},
-		SandboxLifecycle: SandboxLifecycleConfig{Enabled: true, DryRun: true, IdleTimeout: 24 * time.Hour},
+		TranscriptArchive: TranscriptArchiveConfig{DryRun: true, TerminalSweepEnabled: true, TerminalDwell: 24 * time.Hour, ArchiveMinAge: 168 * time.Hour, SoftDeleteWindow: 336 * time.Hour, TargetSegmentRawBytes: 8388608, DeleteBatchRows: 500, MaxRowsPerJob: 50000},
+		SandboxLifecycle:  SandboxLifecycleConfig{Enabled: true, DryRun: true, IdleTimeout: 24 * time.Hour},
 		E2B: E2BConfig{
 			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,
@@ -84,24 +85,6 @@ func defaultConfig() Config {
 			UserExternalID:      "user_default",
 			APIKeyExternalID:    "api_key_default",
 		},
-		SDKFixtures: SDKFixtureConfig{
-			FileID:            "file_id",
-			BatchID:           "message_batch_id",
-			AgentID:           "agent_011CZkYpogX7uDKUyvBTophP",
-			ReferenceAgentID:  "agent_011CZkYqphY8vELVzwCUpqiQ",
-			EnvironmentID:     "env_011CZkZ9X2dpNyB7HsEFoRfW",
-			WorkID:            "work_id",
-			SessionID:         "sesn_011CZkZAtmR3yMPDzynEDxu7",
-			SessionResourceID: "sesrsc_011CZkZBJq5dWxk9fVLNcPht",
-			SessionThreadID:   "sthr_011CZkZVWa6oIjw0rgXZpnBt",
-			SessionEventID:    "sevt_011CZkZbF9oBV2h6c7qWZfnE",
-			SkillID:           "skill_id",
-			SkillVersion:      "version",
-			DeploymentID:      "deployment_id",
-			DeploymentRunID:   "deployment_run_id",
-			APIKey:            OfficialSDKResourceAPIKey,
-			APIKeyExternalID:  "api_key_official_sdk_resource_tests",
-		},
 	}
 	setDefaultSeedAPIKeys(&cfg)
 	return cfg
@@ -114,7 +97,6 @@ func defaultDatabaseAutoMigrate(appEnv string) bool {
 func setDefaultSeedAPIKeys(cfg *Config) {
 	cfg.Bootstrap.SeedAPIKeys = []SeedAPIKey{
 		{ExternalID: cfg.Bootstrap.APIKeyExternalID, Key: DefaultAPIKey},
-		{ExternalID: cfg.SDKFixtures.APIKeyExternalID, Key: cfg.SDKFixtures.APIKey},
 	}
 }
 

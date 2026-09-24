@@ -47,7 +47,7 @@ func TestEventPayloadBlobsPostgres(t *testing.T) {
 		if err := attachEventPayloadBlob(ctx, tx, blob.WorkspaceUUID, &blob.UUID); err != nil {
 			return err
 		}
-		_, err := NewSessionEventMapper(tx).Insert(ctx, sessionEventWriteParams{UUID: "52000000-0000-0000-0000-000000000091", ExternalID: "event_test", OrganizationUUID: blob.OrganizationUUID, WorkspaceUUID: blob.WorkspaceUUID, SessionUUID: "52000000-0000-0000-0000-000000000010", SessionExternalID: "session_test", EventType: "user.message", Payload: []byte(`{"type":"user.message","preview":"hello"}`), PayloadBlobUUID: &blob.UUID, ToolUseID: &blob.ExternalID, CreatedAt: now, ProcessedAt: now})
+		_, err := NewSessionEventMapper(tx).Insert(ctx, sessionEventWriteParams{UUID: "52000000-0000-0000-0000-000000000091", ExternalID: "event_test", OrganizationUUID: blob.OrganizationUUID, WorkspaceUUID: blob.WorkspaceUUID, SessionUUID: "52000000-0000-0000-0000-000000000010", SessionExternalID: "session_test", EventType: "user.message", Payload: []byte(`{"type":"user.message","preview":"hello"}`), PayloadBlobUUID: &blob.UUID, ToolUseID: &blob.ExternalID, CreatedAt: now, ProcessedAt: &now})
 		return err
 	})
 	if err != nil {

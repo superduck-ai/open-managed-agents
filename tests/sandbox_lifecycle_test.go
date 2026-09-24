@@ -30,12 +30,17 @@ func newSandboxLifecycleFixture(t *testing.T) sandboxLifecycleFixture {
 	t.Helper()
 	app := newTestAppWithStore(t, nil, newFakeStore("sandbox-lifecycle"))
 	t.Cleanup(app.close)
+	return newSandboxLifecycleFixtureWithApp(t, app)
+}
+
+func newSandboxLifecycleFixtureWithApp(t *testing.T, app *testApp) sandboxLifecycleFixture {
+	t.Helper()
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"lifecycle-agent"}`)
 	t.Cleanup(func() { cleanupAgentRows(t, app.pool, agent.ID) })
 	env := createEnvironment(t, app, `{"name":"lifecycle-environment"}`)
 	t.Cleanup(func() { cleanupEnvironmentRows(t, app.pool, env.ID) })
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	t.Cleanup(func() { deleteSession(t, app, session.ID) })
+	t.Cleanup(func() { cleanupSession(t, app, session.ID) })
 	codeID := launchLocalCodeSession(t, app, session.ID)
 	epoch := registerCodeSessionWorker(t, app, codeID)
 	putCodeSessionWorkerState(t, app, codeID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)

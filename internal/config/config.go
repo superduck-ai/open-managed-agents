@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	DefaultAPIKey             = "sk-ant-local-default"
-	OfficialSDKResourceAPIKey = "my-anthropic-api-key"
-	MaxTunnelPendingRequests  = 512
+	DefaultAPIKey            = "sk-ant-local-default"
+	MaxTunnelPendingRequests = 512
 )
 
 func Load() (Config, error) {
@@ -90,6 +89,9 @@ func validate(cfg Config) error {
 		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
 	}
 	if err := validatePositiveValues(cfg); err != nil {
+		return err
+	}
+	if err := ValidateTranscriptArchive(cfg.TranscriptArchive); err != nil {
 		return err
 	}
 	if err := validateTunnelDomainSuffix(cfg.Tunnel.DomainSuffix); err != nil {

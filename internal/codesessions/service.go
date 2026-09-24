@@ -198,7 +198,7 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 		}
 		batch.events = append(batch.events, prepared)
 	}
-	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, func(db.CodeSession) error {
+	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", func(db.CodeSession) error {
 		return batch.publish(ctx)
 	})
 }
@@ -537,35 +537,6 @@ func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession
 		return nil
 	}
 	return s.publishSubagentInternalEvents(ctx, codeSession)
-}
-
-func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
-	events, _, err := s.eventPayloads.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceUUID:     codeSession.WorkspaceUUID,
-		SessionExternalID: codeSession.SessionExternalID,
-		PrimaryOnly:       true,
-		Limit:             500,
-		Order:             "asc",
-		Types:             []string{"session.thread_created"},
-	})
-	if err != nil {
-		return nil, err
-	}
-	threadByAgent := make(map[string]string)
-	for _, event := range events {
-		object := rawObject(event.Payload)
-		threadID := strings.TrimSpace(stringField(object, "session_thread_id"))
-		if threadID == "" {
-			continue
-		}
-		for _, key := range []string{"task_id", "agent_id", "agentId"} {
-			agentID := strings.TrimSpace(stringField(object, key))
-			if agentID != "" {
-				threadByAgent[agentID] = threadID
-			}
-		}
-	}
-	return threadByAgent, nil
 }
 
 func isPublicWorkerOutputEvent(eventType string) bool {

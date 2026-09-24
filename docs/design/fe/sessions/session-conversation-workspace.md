@@ -57,7 +57,7 @@ Inspector header 与 tab 控件共用 `32px` 总高度。外壳始终使用 pane
 1. **Session**：ID、状态、创建/更新时间、Agent、Environment、Vault、Deployment 和 Cost。关联实体名称可导航到 OMA 对应详情页；metadata 请求失败时继续用原始 ID 提供同一链接，不能降级成不可点击文本或数量。
 2. **Events**：按后端返回顺序排列原始事件，直接使用 `Event / Preview / Time` 粘性表头、`192px` 事件列和 `24px` 紧凑行。FilterCombobox 的 `Transcript events` 与 wire type 使用交集语义；筛选只隐藏行，不重新排序，也不清除仍存在但暂时不可见的已选 detail。Time 列只展示时间，不影响顺序；`processed_at` 为空时显示 queued，不回退到 `created_at`。选择事件后使用 Claude 的纵向 list/detail split：列表至少保留 `120px`，详情默认 `360px` 并可拖动；为满足 OMA 已确认的交互要求，详情在首次出现或切换事件时播放 `180ms ease-out` 的 `translateY(8px) + opacity` 上浮动画，并以顶部 hairline 和轻量向上阴影表达层级；它仍是 Inspector 内的普通分栏，不改成 drawer 或脱离滚动模型的 overlay。`prefers-reduced-motion` 下禁用动画。Agent message/thinking 详情默认展示 Raw JSON；当前浏览器标签页实时捕获到增量帧时可切换 Deltas 紧凑表格，历史事件不伪造增量，也不维护字符缺失/重复比对算法。详情由唯一的 viewport 统一滚动。
 3. **Tools**：展示 Name、Permission、Calls、Failed、p50，并提供工具搜索和 `All threads / Current agent / Current thread` Scope；`Current agent` 只按 Lane 的既有 `group` 归属筛选，不按名称猜测。配置工具按 Built-in、Custom 和 MCP Server 分组，未出现在当前 Agent 配置中的实际调用单列为 `Called, not configured`；只有主 Agent 配置可用时才展示其 `Configured on`。默认 detail 是带 `64×64` CSS conic-gradient 结果环的 Overview；Failed 非零时同时展示失败率，Failed/Denied 为零时使用国际化 `none`，Completed 始终保留数字。选择工具后展示调用表，调用行与转录的选择和悬浮状态联动，清除选择后回到 Overview。调用表仅在存在审批时展示 Waited，仅在当前 Scope 跨多个线程时展示 Thread。Time in tools、Executing 和 Waiting 对同一线程内重叠的调用区间做并集合并，不重复累计同一 Tool Batch 中的并行墙钟时间；不同线程分别累计。
-4. **Resources**：提供常驻资源筛选，按 Path/Size 展示 Session 挂载资源，并通过 `+ Resource → File` 挂载已有文件；当前产品不展示 GitHub Repository 或 Memory Store 入口。
+4. **Resources**：提供常驻资源筛选，按 Path/Size 展示 Session 挂载资源（File 用挂载路径与文件元数据；Memory Store 用快照 `name`/`memory_store_id`，Size 为 `—`）。可通过 `+ Resource → File` 挂载已有文件；Memory Store 在创建 Session/Deployment 表单中挂载，Inspector 只读展示。当前产品不展示 GitHub Repository 入口。
 5. **Threads**：展示有真实数据来源的 Thread、Status、Context；在后端提供线程级费用前不展示 Cost 占位列。detail 始终绑定 active thread，不提供本地关闭态。detail 显示 Agent、Model、Effort 和 `140px`、step-after area 的 Context usage 图；图上 model-request point hover 与 Transcript/Events 使用同一个 event ID 联动。单时间点只显示一个 X 轴标签，短会话显示秒，避免重复时间标签叠加。
 6. **Traces**：仅在 `observability.enabled=true` 时查询当前 Session 的 OpenObserve traces。选中 trace 后使用 `trace_id` 查询参数保存详情状态；返回列表或切换到其他 Inspector 页签时删除该参数。observability 路由返回 404 时展示 “Observability is not enabled”，不使用通用加载错误。
 
@@ -71,10 +71,10 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 | 转录与 Events | Session/Thread events + SSE                         | 保留现有缓存、补帧、lane 和实时状态机             |
 | Session       | Session retrieve + Agent/Environment/Vault retrieve | 只读取关联实体名称和固定版本信息                  |
 | Tools         | 原始事件 + Agent retrieve                           | 聚合配置工具、权限、调用、失败和耗时              |
-| Resources     | Session retrieve + File metadata                    | 挂载关系来自 Session；名称和大小按 `file_id` 获取 |
+| Resources     | Session retrieve + File metadata                    | 挂载关系来自 Session；File 名称/大小按 `file_id` 获取；Memory Store 用快照 `name`/`memory_store_id` |
 | Threads       | Session threads + thread events + Agent retrieve    | 聚合线程状态、模型用量和 context 阶梯点           |
 
-进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。
+进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。Memory Store 资源直接使用 Session 快照里的 `name` 和 `memory_store_id`，不额外请求 Memory Store retrieve。
 
 ## 对话与审批行为
 

@@ -198,7 +198,7 @@ MCP 工具集默认为 `always_ask`。这可确保添加到 MCP 服务器的新�
 
 `mcp_server_name` 必须与 `mcp_servers` 数组中某个服务器的 `name` 相匹配。
 
-自定义 MCP Server 名称仅允许字母、数字、下划线、连字符和点，且不能包含 `__`，以避免与 Claude Code 的 MCP 工具命名规则产生歧义。URL 必须是无用户凭据、无 fragment 的绝对 HTTP(S) 地址；同一个 Agent 不能重复配置相同的 MCP 工具集。
+自定义 MCP Server 名称仅允许字母、数字、下划线、连字符和点，且不能包含 `__`，以避免与 Claude Code 的 MCP 工具命名规则产生歧义。URL 必须是无用户凭据、无 fragment 的绝对 HTTP(S) 地址；同一个 Agent 不能重复配置相同的工具集、自定义工具或逐工具权限。MCP 逐工具配置名称最长 128 个字符，并使用与 Server 名称相同的字符集。
 
 以下示例连接了一个 GitHub MCP 服务器，并允许其工具在无需确认的情况下运行：
 

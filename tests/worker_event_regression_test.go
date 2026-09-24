@@ -172,6 +172,9 @@ func TestActivationRechecksHistoryAfterOffloadWithOneConnection(t *testing.T) {
 	if store.uploads != 3 {
 		t.Fatalf("uploads = %d, want history archive plus snapshot preparation and re-preparation", store.uploads)
 	}
+	if err := app.db.SetSessionStatus(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, "idle"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type historyDuringUploadStore struct {

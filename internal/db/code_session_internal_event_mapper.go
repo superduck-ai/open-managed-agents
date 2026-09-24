@@ -65,6 +65,9 @@ type transcriptScopeRow struct {
 }
 
 type CodeSessionInternalEventMapper interface {
+	RestoreArchived(ctx context.Context, event CodeSessionInternalEvent) (int64, error)
+	ListDeletionCandidates(ctx context.Context, afterUUID string, cutoff time.Time, limit int) ([]transcriptScopeRow, error)
+	HasUnprotectedDeleted(ctx context.Context, scope TranscriptScope, cutoff time.Time) (bool, error)
 	ListArchiveCandidates(ctx context.Context, query TranscriptArchiveQuery) ([]transcriptScopeRow, error)
 	ListArchivable(ctx context.Context, query TranscriptArchiveQuery) ([]codeSessionInternalEventRow, error)
 	ReadArchiveRange(ctx context.Context, query TranscriptArchiveQuery) ([]codeSessionInternalEventRow, error)

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { anthropicApi, anthropicBaseURL, anthropicBetaApi, setAnthropicClientForTest } from './anthropic';
+import { anthropicApi, anthropicBaseURL, anthropicBetaApi, setAnthropicClientForTest, toPlainPage } from './anthropic';
 import { setConsoleRequestContext } from './client';
 import { resetTestDom } from '../../test/setup';
 
@@ -182,5 +182,17 @@ describe('anthropicBetaApi', () => {
       code: 'api_error',
       message: 'This workspace has no LLM provider configured',
     });
+  });
+
+  test('copies total_count from the raw page body', () => {
+    expect(
+      toPlainPage({
+        data: [{ id: 'agent_1' }],
+        next_page: 'cursor',
+        body: { total_count: 24 },
+      }).total_count,
+    ).toBe(24);
+    expect(toPlainPage({ data: [], total_count: 0 }).total_count).toBe(0);
+    expect(toPlainPage({ data: [], body: { total_count: -1 } }).total_count).toBeUndefined();
   });
 });

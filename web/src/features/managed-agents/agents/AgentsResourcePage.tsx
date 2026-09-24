@@ -20,11 +20,17 @@ import {
 } from '../../../shared/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
-import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  agentsListLimit,
+  ResourceListPagination,
+  resourceListPageCount,
+  resourceListTotalCount,
+} from '../../../shared/ui/resource-list-pagination';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import { useWorkspace } from '../../../shared/workspaces/context';
+import { Archive, Plus, Search, TriangleAlert } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { consoleResourceListLimit } from '../../../shared/console-list';
+import {
   archiveAgent,
   createAgent,
   defaultAgentFilters,
@@ -49,7 +55,6 @@ import {
   managedColumnLabel,
   resourceCreateLabel,
   resourceDescription,
-  resourceEmptyAction,
   resourceSearchPlaceholder,
   resourceTitle,
   statusFilterLabel,
@@ -85,6 +90,30 @@ export {
   relativeTime,
 } from './model';
 export { BUILT_IN_AGENT_TOOLSETS } from './tools/model';
+
+function scopedAgentTotalCount(
+  state: { workspaceId: string; requestKey: string; totalCount: number | null },
+  workspaceId: string,
+  requestKey: string,
+) {
+  if (state.workspaceId !== workspaceId || state.requestKey !== requestKey) {
+    return null;
+  }
+  return state.totalCount;
+}
+
+function agentListPager(
+  mode: AgentLoadMode,
+  historyLength: number,
+  localPage: number,
+  listTotalCount: number | null,
+  loadedCount: number,
+) {
+  return {
+    currentPage: mode === 'search' ? localPage + 1 : historyLength + 1,
+    totalPages: resourceListPageCount(mode === 'list' ? listTotalCount : loadedCount, consoleResourceListLimit),
+  };
+}
 
 export function AgentsResourcePage({
   config,
@@ -134,6 +163,7 @@ export function AgentsResourcePage({
     history: PageCursor[];
     nextPage: PageCursor;
     localPage: number;
+    totalCount: number | null;
   }>({
     workspaceId: '',
     requestKey: '',
@@ -141,6 +171,7 @@ export function AgentsResourcePage({
     history: [],
     nextPage: null,
     localPage: 0,
+    totalCount: null,
   });
   const isAgentsPage = config.section === 'agents';
   const normalizedSearch = debouncedSearch.trim();
@@ -178,6 +209,7 @@ export function AgentsResourcePage({
     agentPageState.workspaceId === workspaceId && agentPageState.requestKey === agentRequestKey
       ? agentPageState.localPage
       : 0;
+  const agentListTotalCount = scopedAgentTotalCount(agentPageState, workspaceId, agentRequestKey);
   const agentsFromApi = remoteAgents ?? emptyAgents;
   const agentRowsFromApi = useMemo(() => agentsFromApi.map(rowFromAgent), [agentsFromApi]);
   const rows = isAgentsPage ? agentRowsFromApi : (config.rows ?? []);
@@ -195,7 +227,7 @@ export function AgentsResourcePage({
   );
   const displayedAgents =
     agentLoadMode === 'search'
-      ? visibleAgents.slice(agentLocalPage * agentsListLimit, (agentLocalPage + 1) * agentsListLimit)
+      ? visibleAgents.slice(agentLocalPage * consoleResourceListLimit, (agentLocalPage + 1) * consoleResourceListLimit)
       : visibleAgents;
   const title = resourceTitle(config, msg);
   const description = resourceDescription(config, msg);
@@ -207,7 +239,9 @@ export function AgentsResourcePage({
   const searchResultsTruncated = agentLoadMode === 'search' && remoteAgentsTruncated;
   const hasPreviousAgentsPage = agentLoadMode === 'search' ? agentLocalPage > 0 : Boolean(agentPageHistory.length);
   const hasNextAgentsPage =
-    agentLoadMode === 'search' ? (agentLocalPage + 1) * agentsListLimit < visibleAgents.length : Boolean(agentNextPage);
+    agentLoadMode === 'search'
+      ? (agentLocalPage + 1) * consoleResourceListLimit < visibleAgents.length
+      : Boolean(agentNextPage);
 
   useEffect(() => {
     if (previousWorkspaceIdRef.current === workspaceId) {
@@ -267,7 +301,7 @@ export function AgentsResourcePage({
             })
         : agentLoadMode === 'search'
           ? searchAgentsByName(requestWorkspaceId, normalizedSearch, agentListFilters)
-          : listAgents(requestWorkspaceId, pageCursor, agentListFilters).then((page) => ({
+          : listAgents(requestWorkspaceId, pageCursor, agentListFilters, consoleResourceListLimit).then((page) => ({
               ...page,
               truncated: false,
             }));
@@ -293,6 +327,7 @@ export function AgentsResourcePage({
             nextPage: page.next_page ?? null,
             localPage:
               current.workspaceId === requestWorkspaceId && current.requestKey === requestKey ? current.localPage : 0,
+            totalCount: resourceListTotalCount(page.total_count),
           }));
         }
       })
@@ -314,6 +349,7 @@ export function AgentsResourcePage({
               current.workspaceId === requestWorkspaceId && current.requestKey === requestKey ? current.history : [],
             nextPage: null,
             localPage: 0,
+            totalCount: null,
           }));
         }
       });
@@ -340,6 +376,7 @@ export function AgentsResourcePage({
       history: [],
       nextPage: null,
       localPage: 0,
+      totalCount: null,
     });
     setArchiveError(null);
   };
@@ -370,6 +407,7 @@ export function AgentsResourcePage({
       history: [],
       nextPage: null,
       localPage: 0,
+      totalCount: null,
     });
   };
 
@@ -383,6 +421,7 @@ export function AgentsResourcePage({
       history: [],
       nextPage: null,
       localPage: 0,
+      totalCount: null,
     });
   };
 
@@ -414,6 +453,7 @@ export function AgentsResourcePage({
         history: [],
         nextPage: agentNextPage,
         localPage: agentLocalPage + 1,
+        totalCount: agentListTotalCount,
       });
       setArchiveError(null);
       return;
@@ -428,6 +468,7 @@ export function AgentsResourcePage({
       history: [...agentPageHistory, agentPageCursor],
       nextPage: null,
       localPage: 0,
+      totalCount: agentListTotalCount,
     });
     setArchiveError(null);
   };
@@ -444,6 +485,7 @@ export function AgentsResourcePage({
         history: [],
         nextPage: agentNextPage,
         localPage: agentLocalPage - 1,
+        totalCount: agentListTotalCount,
       });
       setArchiveError(null);
       return;
@@ -458,6 +500,7 @@ export function AgentsResourcePage({
       history: agentPageHistory.slice(0, -1),
       nextPage: null,
       localPage: 0,
+      totalCount: agentListTotalCount,
     });
     setArchiveError(null);
   };
@@ -491,10 +534,47 @@ export function AgentsResourcePage({
     setArchiveError(null);
     setArchivingIds((current) => new Set([...current, ...ids]));
     try {
-      await Promise.all(ids.map((id) => archiveAgent(id, workspaceId)));
-      removeArchivedAgents(ids);
-    } catch (error) {
-      setArchiveError(errorMessage(error));
+      try {
+        await Promise.all(ids.map((id) => archiveAgent(id, workspaceId)));
+      } catch (error) {
+        setArchiveError(errorMessage(error));
+        return;
+      }
+      if (agentLoadMode === 'list' && statusFilter !== 'all') {
+        try {
+          let cursor = agentPageCursor;
+          let history = agentPageHistory;
+          let page = await listAgents(workspaceId, cursor, agentListFilters, consoleResourceListLimit);
+          if ((page.data ?? []).length === 0 && history.length > 0) {
+            cursor = history[history.length - 1];
+            history = history.slice(0, -1);
+            page = await listAgents(workspaceId, cursor, agentListFilters, consoleResourceListLimit);
+          }
+          setRemoteAgentsState({
+            workspaceId,
+            requestKey: agentRequestKey,
+            mode: 'list',
+            data: page.data ?? [],
+            truncated: false,
+          });
+          setAgentPageState((current) =>
+            current.workspaceId === workspaceId && current.requestKey === agentRequestKey
+              ? {
+                  ...current,
+                  cursor,
+                  history,
+                  nextPage: page.next_page ?? null,
+                  totalCount: resourceListTotalCount(page.total_count),
+                }
+              : current,
+          );
+        } catch (error) {
+          removeArchivedAgents(ids);
+          setArchiveError(errorMessage(error));
+        }
+      } else {
+        removeArchivedAgents(ids);
+      }
     } finally {
       setArchivingIds((current) => {
         const next = new Set(current);
@@ -549,18 +629,18 @@ export function AgentsResourcePage({
 
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5 flex items-start justify-between gap-6">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
-          <p className="mt-2 text-[15px] leading-5 text-muted-foreground">{description}</p>
-        </div>
-        {createLabel ? (
-          <Button type="button" className="h-9 shrink-0" onClick={() => setDialogOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {createLabel}
-          </Button>
-        ) : null}
-      </header>
+      <ResourcePageHeader
+        title={title}
+        description={description}
+        actions={
+          createLabel ? (
+            <Button type="button" size="lg" onClick={() => setDialogOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {createLabel}
+            </Button>
+          ) : null
+        }
+      />
 
       <div className="mb-7 flex flex-wrap items-center gap-2">
         <ResourceSearchField
@@ -743,38 +823,25 @@ export function AgentsResourcePage({
               <AgentsEmptyState
                 trueEmpty={!hasActiveAgentFilters}
                 truncated={searchResultsTruncated}
-                trueEmptyActionLabel={
-                  resourceEmptyAction(config, msg) ?? msg('managedAgents.agents.emptyAction', 'Get started with agents')
-                }
-                onCreate={() => setDialogOpen(true)}
                 onReset={resetAgentFilters}
               />
             )
           : !visibleRows.length && <EmptyState config={config} />}
       </div>
 
-      <div className="mt-9 flex items-center gap-2">
-        <Button
-          type="button"
-          disabled={!hasPreviousAgentsPage}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.previousPage', 'Previous page')}
-          onClick={goToPreviousAgentsPage}
-        >
-          <ChevronLeft className="size-4" aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          disabled={!hasNextAgentsPage}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.nextPage', 'Next page')}
-          onClick={goToNextAgentsPage}
-        >
-          <ChevronRight className="size-4" aria-hidden />
-        </Button>
-      </div>
+      <ResourceListPagination
+        {...agentListPager(
+          agentLoadMode,
+          agentPageHistory.length,
+          agentLocalPage,
+          agentListTotalCount,
+          visibleAgents.length,
+        )}
+        canPrevious={hasPreviousAgentsPage}
+        canNext={hasNextAgentsPage}
+        onPrevious={goToPreviousAgentsPage}
+        onNext={goToNextAgentsPage}
+      />
 
       {dialogOpen && createLabel ? (
         config.section === 'agents' ? (

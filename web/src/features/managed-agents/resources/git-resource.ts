@@ -1,5 +1,6 @@
 import type { GitRepositoryResourceFormValue, ManagedEntityFormValues, SessionResourceApiResponse } from '../types';
-import { sessionFileAPIMountPath } from '../sessions/file-resource-path';
+import { sessionFileResourcePayload, areSessionFileResourcesValid } from '../sessions/file-resource-form';
+import { areMemoryAttachesValid, entityMemoryAttaches, memoryAttachResources } from './memory-attach';
 import { objectRecord } from '../utils';
 
 export function emptyGitResource(): GitRepositoryResourceFormValue {
@@ -69,10 +70,7 @@ export function resourceFormValues(raw: unknown) {
   return {
     originalResources: resources,
     resourcesChanged: false,
-    memoryStoreIds: resources
-      .filter((resource) => resource.type === 'memory_store')
-      .map((resource) => resource.memory_store_id)
-      .filter((id): id is string => typeof id === 'string' && Boolean(id)),
+    memoryAttaches: entityMemoryAttaches({ resources }),
     fileResources: resources
       .filter((resource) => resource.type === 'file' && resource.file_id)
       .map((resource) => ({
@@ -95,23 +93,19 @@ export function resourceFormValues(raw: unknown) {
   };
 }
 
+export function managedResourceFieldsValid(values: ManagedEntityFormValues, editing: boolean) {
+  return (
+    (editing && !values.resourcesChanged) ||
+    (areSessionFileResourcesValid(values.fileResources) &&
+      values.gitResources.every(gitResourceValid) &&
+      areMemoryAttachesValid(values.memoryAttaches))
+  );
+}
+
 export function managedResourcesBody(values: ManagedEntityFormValues, includeMemory: boolean) {
-  const files = values.fileResources.map((resource) => {
-    const mountPath = sessionFileAPIMountPath(resource.mountPath);
-    return { type: 'file', file_id: resource.fileId.trim(), ...(mountPath ? { mount_path: mountPath } : {}) };
-  });
-  const memory = includeMemory
-    ? values.memoryStoreIds.map((id) => {
-        const existing = values.originalResources.find(
-          (resource) => resource.type === 'memory_store' && resource.memory_store_id === id,
-        );
-        return {
-          type: 'memory_store',
-          memory_store_id: id,
-          ...(existing?.access ? { access: existing.access } : {}),
-          ...(typeof existing?.instructions === 'string' ? { instructions: existing.instructions } : {}),
-        };
-      })
-    : [];
-  return [...files, ...values.gitResources.map(gitResourceBody), ...memory];
+  return [
+    ...values.fileResources.map(sessionFileResourcePayload),
+    ...values.gitResources.map(gitResourceBody),
+    ...(includeMemory ? memoryAttachResources(values.memoryAttaches) : []),
+  ];
 }

@@ -39,7 +39,7 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory"}`),
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write"}`),
 		},
 		{
 			ResourceType: "future_resource",
@@ -65,7 +65,7 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 	memoryStore := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000003",
 		ResourceType: "memory_store",
-		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/workspace/memory"}`),
+		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/mnt/memory/test","access":"read_write"}`),
 	}
 	for name, resources := range map[string][]db.SessionResource{
 		"repository first": {repository, file, memoryStore},
@@ -124,7 +124,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory","runtime_extension":{"enabled":true}}`),
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write","runtime_extension":{"enabled":true}}`),
 		},
 	}
 
@@ -133,14 +133,6 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 			"type":       "git_repository",
 			"git_info":   map[string]any{"type": "git", "repo": "group/subgroup/widgets.git", "url": "https://git.internal:443/group/subgroup/widgets.git", "ref": "refs/heads/main"},
 			"mount_path": "/workspace/widgets",
-		},
-		map[string]any{
-			"type":            "memory_store",
-			"memory_store_id": "mem_test",
-			"mount_path":      "/workspace/memory",
-			"runtime_extension": map[string]any{
-				"enabled": true,
-			},
 		},
 	}
 	sources := managedAgentRuntimeSourceValues(

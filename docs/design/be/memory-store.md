@@ -1,6 +1,6 @@
 # Memory Store 运行时
 
-- 状态：Attach 合同与 Filestore `/memory/{slug}` 写回已实现；Sandbox 挂载与 `MEMORY.md` 见后续 PR
+- 状态：已实现（Attach 合同、Filestore `/memory/{slug}` 写回、Sandbox 挂载与 `MEMORY.md`）
 - 日期：2026-08-27
 - 官方 HTTP 合同：[Using agent memory](https://platform.claude.com/docs/en/managed-agents/memory)
 
@@ -52,6 +52,8 @@ Session 默认没有跨会话记忆。需要：
 | `read_only` | `/memory/{slug}` | `/mnt/memory/{slug}` | 只读 | 是 |
 
 父目录 `/mnt/memory` **不是** Filestore 上的 store。启动时在沙箱本地创建该目录、写入 `MEMORY.md`，再把各 store 挂成子目录。父目录和 `MEMORY.md` **保持可写**。根上新建文件成功，但不进任何 store；沙箱销毁后随本地盘一起丢掉。未挂载的子路径同样不是持久记忆。
+
+运行时资源解析遇到无效 memory 快照时立即返回错误并终止启动，不返回部分解析结果；错误日志保留对应 session resource ID。
 
 ready = 五个固定 mount + 全部 memory store mount + `MEMORY.md` 已就位。任一失败则启动失败并清理 sandbox。删除 memory payload 对 environment-manager 的透传。
 
@@ -109,15 +111,13 @@ Claude 启动前，runner 写入 `/mnt/memory/MEMORY.md`。模型会加载该文
 | 一次性任务、能从代码推出的事实 | 引导仍建议不要记进 store；记到根上也不跨会话 |
 | 写 `ro` store | 文件系统拒绝 |
 
-### 2.5 运行时配置（有 store 时）
+### 2.5 运行时配置
 
 ```text
 CLAUDE_CODE_REMOTE=true
-CLAUDE_CODE_REMOTE_MEMORY_DIR=/mnt/memory
-CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=/mnt/memory
 ```
 
-后两个无 store 则不设。写允许覆盖 `/mnt/memory/` 及其下路径；各 `read_only` store 仍靠挂载只读位拒绝写入。沙箱关闭会跳过 `MEMORY.md` 加载的实验开关（`tengu_moth_copse`）。
+写允许覆盖 `/mnt/memory/` 及其下路径；各 `read_only` store 仍靠挂载只读位拒绝写入。沙箱关闭会跳过 `MEMORY.md` 加载的实验开关（`tengu_moth_copse`）。
 
 ### 2.6 一次请求里有什么
 
@@ -288,6 +288,7 @@ Memory REST 与 Filestore 共用 `internal/memorypath` 校验文档路径：UTF-
 | mkdir / rmdir | 不持久化 / 空 no-op、非空拒绝 |
 | 跨 namespace copy/move | 拒绝 |
 | `ttlSeconds` | 非 0 拒绝。Memory 没有 Filestore 过期；成功写入是跨 Session 永久记忆 |
+| 非 UTF-8 正文 | 上传对象存储前拒绝。REST `content` 是 JSON string，本身已是 UTF-8；Filestore/FUSE 写回是唯一能注入非法字节的入口 |
 | 相同正文 flush | 不新建 version，丢弃刚上传、未被引用的 object |
 
 S3 key：

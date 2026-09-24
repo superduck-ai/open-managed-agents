@@ -55,22 +55,39 @@ describe('ConsoleShell', () => {
     expect(screen.getByText('Build')).toBeTruthy();
     expect(screen.getByText('Managed Agents')).toBeTruthy();
     expect(screen.getByText('Analytics')).toBeTruthy();
-    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.queryByText('Claude Code')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
     expect(screen.getByText('Manage')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Managed Agents' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Analytics' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Manage' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Caching' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /MCP tunnels/i })).toBeNull();
     expect(screen.getByRole('link', { name: 'Documentation' }).getAttribute('href')).toBe(
       'https://oma.mintlifysite.com/',
     );
     expect(screen.getByText('Deployments')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
-    expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/workspaces/default/skills');
-    expect(screen.getByRole('link', { name: 'Batches' }).getAttribute('href')).toBe('/workspaces/default/batches');
-    expect(screen.getByRole('link', { name: 'Caching' }).getAttribute('href')).toBe('/usage/cache');
-    expect(screen.getByRole('link', { name: 'Rate limits' }).getAttribute('href')).toBe('/usage/limits');
+    expect(screen.queryByText('New')).toBeNull();
     expect(screen.getByRole('link', { name: 'Quickstart' }).getAttribute('href')).toBe(
       '/workspaces/default/agent-quickstart',
     );
     expect(screen.queryByRole('link', { name: /Playground/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Dreams/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+    expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
+    expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/workspaces/default/skills');
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analytics' }));
+    expect(screen.getByRole('link', { name: 'Caching' }).getAttribute('href')).toBe('/usage/cache');
+    expect(screen.getByRole('link', { name: 'Rate limits' }).getAttribute('href')).toBe('/usage/limits');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
     expect(screen.getByRole('link', { name: /MCP tunnels/i }).getAttribute('href')).toBe(
       '/settings/workspaces/default/mcp-tunnels',
     );
@@ -81,8 +98,80 @@ describe('ConsoleShell', () => {
       false,
     );
     expect(manage?.type === 'group' && manage.children.some((item) => item.href === '/mcp-tunnels')).toBe(true);
+    const build = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Build');
+    const claudeCode = consoleNavigation.find((item) => item.type === 'group' && item.label === 'Claude Code');
+    expect(build?.type === 'group' && build.children.some((item) => item.href === '/workbench' && item.hidden)).toBe(
+      true,
+    );
+    expect(build?.type === 'group' && build.children.some((item) => item.href === '/batches' && item.hidden)).toBe(
+      true,
+    );
+    expect(claudeCode?.type === 'group' && claudeCode.hidden).toBe(true);
     expect(screen.queryByRole('link', { name: 'Tags' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Feedback' })).toBeNull();
+  });
+
+  test('does not expand Build for a sidebar-hidden workbench route', () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workbench" account={testAccount()} onLogout={() => undefined}>
+        <div>Workbench content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+  });
+
+  test('expands the sidebar group that contains the current route', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workspaces/default/files" account={testAccount()} onLogout={() => undefined}>
+        <div>Files content</div>
+      </ConsoleShell>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Analytics' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+  });
+
+  test('expands a collapsed group after navigation enters its route', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+
+    function FilesRouteHarness() {
+      const [currentPath, setCurrentPath] = useState('/dashboard');
+      return (
+        <>
+          <button type="button" onClick={() => setCurrentPath('/workspaces/default/files')}>
+            Open files
+          </button>
+          <ConsoleShell currentPath={currentPath} account={testAccount()} onLogout={() => undefined}>
+            <div>Route content</div>
+          </ConsoleShell>
+        </>
+      );
+    }
+
+    renderWithWorkspaces(<FilesRouteHarness />);
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open files' }));
+
+    expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Files' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
   });
 
   test('hides LLM model configuration from non-administrators', () => {
@@ -142,13 +231,14 @@ describe('ConsoleShell', () => {
     expect(sidebar?.getAttribute('data-state')).toBe('collapsed');
     expect(sidebar?.getAttribute('data-collapsible')).toBe('icon');
     expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Agents' })).toBeNull();
 
     fireEvent.click(sidebarRail);
 
     expect(sidebar?.getAttribute('data-state')).toBe('expanded');
     expect(sidebar?.getAttribute('data-collapsible')).toBe('');
-    expect(screen.getByRole('link', { name: 'Files' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Agents' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Files' })).toBeNull();
   });
 
   test('preserves the desktop sidebar state when entering a session detail route', () => {
@@ -280,9 +370,9 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    fireEvent.click(screen.getByRole('link', { name: 'Workbench' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
 
-    expect(navigate).toHaveBeenCalledWith('/workbench');
+    expect(navigate).toHaveBeenCalledWith('/dashboard');
   });
 
   test('uses workspace scoped client navigation for build links', () => {
@@ -300,6 +390,7 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Build' }));
     fireEvent.click(screen.getByRole('link', { name: 'Files' }));
 
     expect(navigate).toHaveBeenCalledWith('/workspaces/default/files');

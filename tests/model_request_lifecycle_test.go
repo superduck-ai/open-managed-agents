@@ -40,7 +40,9 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 		w.Header().Set("Request-Id", "provider-request")
 		var out io.Writer = w
 		messageID := "msg_test"
-		if mode == "gzip" {
+		if mode == "persist_retry" {
+			messageID = "msg_retry"
+		} else if mode == "gzip" {
 			messageID = "msg_gzip"
 			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				w.Header().Set("Content-Encoding", "gzip")
@@ -49,14 +51,25 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 				out = compressed
 			}
 		}
-		_, _ = io.WriteString(out, "data: {\"type\":\"message_start\",\"message\":{\"id\":\""+messageID+"\",\"usage\":{\"input_tokens\":9,\"output_tokens\":0}}}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n")
+		_, _ = io.WriteString(out, "data: {\"type\":\"message_start\",\"message\":{\"id\":\""+messageID+"\",\"usage\":{\"input_tokens\":9,\"output_tokens\":0}}}\n\n")
+		blockIndex := 0
+		if mode == "success" {
+			_, _ = io.WriteString(out, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+			blockIndex = 1
+		}
+		_, _ = fmt.Fprintf(out, "data: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\"}}\n\n", blockIndex)
 		if mode != "incomplete_response" {
-			_, _ = io.WriteString(out, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":4}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
+			answer := "done"
+			if mode == "persist_retry" {
+				answer = strings.Repeat("x", 40_000) + answer
+			}
+			_, _ = fmt.Fprintf(out, "data: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":4}}\n\ndata: {\"type\":\"message_stop\"}\n\n", blockIndex, answer)
 		}
 	}))
 	defer upstream.Close()
 	defer close(release)
-	app := newPayloadIntegrationApp(t, newFakeStore("request-lifecycle"))
+	objects := &payloadFaultStore{fakeStore: newFakeStore("request-lifecycle")}
+	app := newPayloadIntegrationApp(t, objects)
 	clearTestLLMProviders(t, app)
 	seedTestLLMProvider(t, app, "Lifecycle", upstream.URL, "provider-key", messagesTestModel)
 	agent := createAgent(t, app, `{"model":"`+messagesTestModel+`","name":"request-lifecycle"}`)
@@ -69,8 +82,19 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 		t.Fatalf("code session: %v", err)
 	}
 	var completed int
-	for _, mode := range []string{"http_error", "incomplete_response", "cancelled", "success", "gzip"} {
+	for _, mode := range []string{"persist_retry", "http_error", "incomplete_response", "cancelled", "success", "gzip"} {
 		t.Run(mode, func(t *testing.T) {
+			var uploadAttempts int
+			if mode == "persist_retry" {
+				objects.afterUpload = func(string) error {
+					uploadAttempts++
+					if uploadAttempts == 1 {
+						return errors.New("injected temporary upload failure")
+					}
+					return nil
+				}
+				defer func() { objects.afterUpload = nil }()
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			request, err := http.NewRequestWithContext(ctx, http.MethodPost, app.baseURL+"/v1/messages", strings.NewReader(`{"model":"`+messagesTestModel+`","stream":true,"messages":[]}`))
@@ -83,13 +107,19 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 				request.Header.Set("Accept-Encoding", "gzip")
 			}
 			finished := make(chan string, 1)
+			var receivedComplete bool
 			go func() {
 				response, err := app.client.Do(request)
 				if err != nil {
 					finished <- ""
 					return
 				}
-				_, _ = io.Copy(io.Discard, response.Body)
+				if mode == "persist_retry" {
+					body, readErr := io.ReadAll(response.Body)
+					receivedComplete = readErr == nil && response.StatusCode == http.StatusOK && strings.Contains(string(body), `"type":"message_stop"`)
+				} else {
+					_, _ = io.Copy(io.Discard, response.Body)
+				}
 				_ = response.Body.Close()
 				finished <- response.Header.Get("Request-Id")
 			}()
@@ -135,12 +165,41 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 			if mode != "cancelled" && responseID != start.ExternalID {
 				t.Fatalf("response ID=%q start=%q", responseID, start.ExternalID)
 			}
-			ok := mode == "success" || mode == "gzip"
+			ok := mode == "success" || mode == "gzip" || mode == "persist_retry"
 			if !ok && (payload.Error == nil || payload.Error.Type != mode) {
 				t.Fatalf("error=%+v, want %s", payload.Error, mode)
 			}
 			if ok && (payload.Error != nil || payload.Usage.Input != 9 || payload.Usage.Output != 4) {
 				t.Fatalf("%s usage/error=%+v", mode, payload)
+			}
+			if mode == "persist_retry" {
+				if !receivedComplete || uploadAttempts != 2 || len(events) != (completed+1)*2 {
+					t.Fatalf("complete=%v end retry attempts=%d lifecycle events=%d", receivedComplete, uploadAttempts, len(events))
+				}
+				current, found, err := app.db.GetSession(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID)
+				if err != nil || !found {
+					t.Fatalf("session after retry: found=%v err=%v", found, err)
+				}
+				var usage struct {
+					Input  int `json:"input_tokens"`
+					Output int `json:"output_tokens"`
+				}
+				if err := json.Unmarshal(current.Usage, &usage); err != nil || usage.Input != 9 || usage.Output != 4 {
+					t.Fatalf("retry usage=%s err=%v", current.Usage, err)
+				}
+			}
+			if mode == "incomplete_response" {
+				postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"assistant","uuid":"fallback-answer","request_id":%q,"message":{"id":"msg_test","content":[{"type":"text","text":"worker fallback"}]}}}]}`, epoch, start.ExternalID))
+				history := listSessionEvents(t, app, codeSession.SessionExternalID, "order=asc&limit=100", defaultTestKey)
+				var fallbackCount int
+				for _, raw := range history.Data {
+					if sessionEventStringField(t, raw, "type") == "agent.message" && sessionEventStringField(t, raw, "model_request_start_id") == start.ExternalID {
+						fallbackCount++
+					}
+				}
+				if fallbackCount != 1 {
+					t.Fatalf("worker fallback messages = %d, want 1", fallbackCount)
+				}
 			}
 			if mode == "success" {
 				postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"assistant","uuid":"late-answer","request_id":%q,"message":{"id":"msg_test","content":[{"type":"text","text":"done"}]} }},{"payload":{"type":"result","uuid":"turn-result","duration_api_ms":900000,"usage":{"output_tokens":9999}}}]}`, epoch, start.ExternalID))
@@ -152,8 +211,11 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 							t.Fatal("final message must precede its request end")
 						}
 					}
-					if sessionEventStringField(t, raw, "type") == "agent.message" {
+					if sessionEventStringField(t, raw, "type") == "agent.message" && sessionEventStringField(t, raw, "model_request_start_id") == start.ExternalID {
 						finals++
+						if id := sessionEventStringField(t, raw, "id"); id != maevents.StableAssistantEventID(codeSession.ExternalID, "msg_test", 1, "agent.message") {
+							t.Fatalf("final message id = %s, want original text block index 1", id)
+						}
 						if !strings.Contains(string(raw), "done") {
 							t.Fatalf("proxy lost final text: %s", raw)
 						}

@@ -558,7 +558,7 @@ func systemPublicPayloadCandidates(codeSessionID string, object map[string]any, 
 			return nil
 		}
 		statusEventType := "session.thread_status_idle"
-		if status := strings.ToLower(schema.Status); status == "failed" || status == "error" || status == "terminated" {
+		if status := strings.ToLower(schema.Status); status == "failed" || status == "error" || status == "terminated" || status == "stopped" {
 			statusEventType = "session.thread_status_terminated"
 		}
 		status := publicPayloadWithType(object, statusEventType)

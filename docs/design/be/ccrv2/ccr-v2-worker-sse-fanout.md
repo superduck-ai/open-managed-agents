@@ -25,15 +25,19 @@ sequenceDiagram
     B->>R: SUB oma.s.session_id + PING
     R-->>B: PONG confirms SUB processed
     B-->>C: SSE connected
+    W->>A: POST /v1/messages
+    A->>DB: span.model_request_start
     W->>A: POST worker events
     A->>R: PUB oma.s.session_id one raw stream_event
     R-->>B: session fanout
     B-->>C: event_start / event_delta
-    W->>A: final assistant event
-    A->>DB: append session_events
+    A->>DB: append final agent.message + span.model_request_end
     A->>R: PUB oma.s.session_id persisted event
     R-->>B: session fanout
     B-->>C: agent.message / agent.thinking
+    A-->>W: completed model response
+    W->>A: final assistant echo
+    A->>DB: read completed request; skip echo
     A->>R: PUBLISH session.status_terminated
     R-->>B: terminal session fanout
     B-->>C: session.status_terminated
@@ -118,7 +122,7 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 各自拥有一对 start/end；工具执行和整轮 `result` 不属于同一次模型请求。
 start 写入失败时不转发上游请求；生命周期事件的写入错误必须返回调用方，不能静默跳过。
 普通 `system`（init、hook 等）和成功 `result` 不生成公开消息；显式 `system.message` 仍保留。
-`system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败或终止时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
+`system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败、终止或用户停止（`stopped`）时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
 失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。
 内部 transcript 入口保持不变；不会把 stdout 诊断写入恢复用 transcript。未单独上报到内部入口的
 init/hook/result 不另行持久化。`result` 不驱动 Session 状态，也不使用 `duration_api_ms` 或汇总 usage 补造 span。
@@ -194,13 +198,13 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 
 代理逐帧观察响应，不修改 SSE body。code-session 上游请求不转发客户端的 `Accept-Encoding`，由 Go Transport 协商并透明解压，观测器因此读到明文帧，客户端收到的是解压后的响应。`message_start.usage` 与 `message_delta.usage` 按字段合并，
 其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 无内容的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
-非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。
-取消后的落库使用独立 5 秒 context；持久化失败记录 start ID 和错误，不记录原始响应。
+非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。非流式响应已完整读取但向客户端写入失败时，end 保留已知用量并标记 `stream_error`。
+取消后的落库使用独立 5 秒 context；end 持久化失败在该期限内每 250 毫秒重试，成功即停止，期限耗尽时记录 start ID 和错误，不记录原始响应。
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
 `observation_limit`（观测超过上限，不代表模型本身失败，`is_error=false`），保留已观察到的 usage。非流式响应已完整观测后客户端才断开，不标记为 `cancelled`。进程被强制杀死的恢复不由请求内 defer 保证。
 
-代理先发布最终消息再发布 end；Worker 后续 echo 使用相同消息 ID，由数据库幂等写入去重。
-end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。
+代理先发布最终消息再发布 end；二者与预览使用原始 content block index 生成的事件 ID。Worker 后续上报的 assistant 如果关联到已经成功持久化、且包含输出事件 ID 的 model request end，属于同一次响应的 echo，不再二次发布。这样即使 Worker 的最终 content 省略了前面的 thinking block、缺少原始 block index，也不会生成另一条消息。若代理未完成观测或未成功持久化 end，仍使用 Worker 的 assistant 输出作为兜底。
+end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。`model_usage` 中未知的 token 字段保持缺失；中英文 OpenAPI 均将这些字段列为可选，避免把未知用量误报为零。
 `event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。`tool_use_ids` 是 provider 原始工具调用 ID（如 `toolu_...`），不是公开事件 ID，客户端不能用它直接关联 `agent.tool_use` 等公开事件。
 SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。
 
@@ -209,7 +213,8 @@ SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_
 可保存的微秒精度。不回填或重写旧 Session 的错误 span。
 
 验收覆盖 `tests/model_request_lifecycle_test.go`：发送前 start 持久化、并发主/子请求、晚到 task 映射、
-失败/取消、单次 usage、晚到 result 不产生额外 span，以及 同时间戳写入顺序、created_at 筛选和双向分页。
+失败/取消、一次瞬时 end 持久化失败后的重试与单次 usage、晚到 result 不产生额外 span，以及 同时间戳写入顺序、created_at 筛选和双向分页。
+`tests/sessions_api_test.go` 验证 `stopped` 子任务的公开终止事件和持久化线程状态。
 Claude Code 2.1.251 和 2.1.278 的独立假网关验证确认了上述 header/task/message 关联；
 这不等同于 Linux sandbox 与真实模型供应商的完整 E2E。
 

@@ -646,6 +646,37 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 	}
 }
 
+func TestSessionClaudeCodeStoppedTaskTerminatesThread(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-stopped-task-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-stopped-task-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-stopped-task-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
+		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
+		{"payload":{"type":"system","uuid":"stopped-task-end","subtype":"task_notification","task_id":"stopped-task","tool_use_id":"stopped-tool","status":"stopped"}}
+	]}`)
+	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
+	for _, thread := range threads.Data {
+		if thread.ParentThreadID != nil {
+			if thread.Status != "terminated" {
+				t.Fatalf("stopped child status = %q, want terminated", thread.Status)
+			}
+			events := listSessionEvents(t, app, session.ID, "types[]=session.thread_status_terminated", defaultTestKey)
+			if !eventPageContains(events, quoteJSON(thread.ID)) {
+				t.Fatalf("stopped child has no terminated event: %+v", events.Data)
+			}
+			return
+		}
+	}
+	t.Fatal("stopped child thread was not created")
+}
+
 func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-claude-code-task-bucket"))
 	defer app.close()

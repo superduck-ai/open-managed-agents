@@ -23,7 +23,7 @@ import {
   workspaceContextValue,
 } from './ManagedAgentsPage.test-utils';
 import type { AuthContextValue } from '../../shared/auth/context';
-import { agentsListLimit } from './api';
+import { consoleResourceListLimit } from '../../shared/console-list';
 
 export function registerManagedAgentsAgentsTests() {
   test('guides agent creation to LLM configuration when no provider exists', async () => {
@@ -2297,7 +2297,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === `/v1/agents?beta=true&limit=${agentsListLimit}&include_archived=false` &&
+            request.url === `/v1/agents?beta=true&limit=${consoleResourceListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'default',
         ),
       ).toBe(true),
@@ -2314,7 +2314,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === `/v1/agents?beta=true&limit=${agentsListLimit}&include_archived=false` &&
+            request.url === `/v1/agents?beta=true&limit=${consoleResourceListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'wrkspc_foo',
         ),
       ).toBe(true),
@@ -2341,7 +2341,7 @@ export function registerManagedAgentsAgentsTests() {
         api.requests.some(
           (request) =>
             request.method === 'GET' &&
-            request.url === `/v1/agents?beta=true&limit=${agentsListLimit}&include_archived=false` &&
+            request.url === `/v1/agents?beta=true&limit=${consoleResourceListLimit}&include_archived=false` &&
             request.headers['x-workspace-id'] === 'wrkspc_foo',
         ),
       ).toBe(true),
@@ -2352,9 +2352,10 @@ export function registerManagedAgentsAgentsTests() {
   test('paginates agents one shared page at a time with the backend page cursor', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi(
-      Array.from({ length: agentsListLimit + 1 }, (_, index) => ({
+      Array.from({ length: consoleResourceListLimit + 1 }, (_, index) => ({
         id: `agent_page${String(index + 1).padStart(2, '0')}123456`,
-        name: index === 0 ? 'First agent' : index === agentsListLimit ? 'Next page agent' : `Agent ${index + 1}`,
+        name:
+          index === 0 ? 'First agent' : index === consoleResourceListLimit ? 'Next page agent' : `Agent ${index + 1}`,
       })),
     );
     render(<ManagedAgentsPage section="agents" />);
@@ -2484,12 +2485,12 @@ export function registerManagedAgentsAgentsTests() {
     expect(truncatedAlert.textContent).toContain(
       "Couldn't search every agent. Narrow the search or paste an exact ID.",
     );
-    expect(screen.getByText(`Aggregate agent ${agentsListLimit}`)).toBeTruthy();
-    expect(screen.queryByText(`Aggregate agent ${agentsListLimit + 1}`)).toBeNull();
+    expect(screen.getByText(`Aggregate agent ${consoleResourceListLimit}`)).toBeTruthy();
+    expect(screen.queryByText(`Aggregate agent ${consoleResourceListLimit + 1}`)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText(`Aggregate agent ${agentsListLimit + 1}`)).toBeTruthy();
+    expect(await screen.findByText(`Aggregate agent ${consoleResourceListLimit + 1}`)).toBeTruthy();
     expect(screen.queryByText('Aggregate agent 1')).toBeNull();
     expect(api.requests.filter((request) => request.url === '/v1/agents:search?beta=true').length).toBe(3);
   });
@@ -2667,9 +2668,9 @@ export function registerManagedAgentsAgentsTests() {
 
   test('shows the next agent after archiving one when more than a page exists', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
-    const agents = Array.from({ length: agentsListLimit + 1 }, (_, index) => ({
+    const agents = Array.from({ length: consoleResourceListLimit + 1 }, (_, index) => ({
       id: `agent_page_${index}`,
-      name: index === agentsListLimit ? 'Overflow agent' : `Agent ${index}`,
+      name: index === consoleResourceListLimit ? 'Overflow agent' : `Agent ${index}`,
     }));
     mockAgentsApi(agents);
     render(<ManagedAgentsPage section="agents" />);

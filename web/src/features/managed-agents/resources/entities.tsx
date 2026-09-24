@@ -744,29 +744,41 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setBusyAction(`${action}:${entity.id}`);
     setMutationError(null);
     try {
-      if (action === 'archive') {
-        await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
-      } else {
-        await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
+      try {
+        if (action === 'archive') {
+          await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
+        } else {
+          await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
+        }
+      } catch (error) {
+        setMutationError(managedEntityErrorMessage(config.section, error, action, msg));
+        return;
       }
+      toast.success(managedToastMessage(config.section, action === 'archive' ? 'archived' : 'deleted', msg));
+      setConfirmState(null);
       if (entityMutationDropsListRow(action, config.section, managedEntityListFilters, deploymentStatusFilter)) {
-        const page = await listManagedEntities(
-          config.section,
-          activeWorkspaceId,
-          entityPageCursor,
-          managedEntityListFilters,
-        );
-        setEntities(page.data ?? []);
-        setEntityPageState((current) =>
-          withEntityPageResult(
-            current,
-            activeWorkspaceId,
-            config.section,
-            entityPageCursor,
-            page.next_page ?? null,
-            resourceListTotalCount(page.total_count),
-          ),
-        );
+        try {
+          let cursor = entityPageCursor;
+          let history = entityPageHistory;
+          let page = await listManagedEntities(config.section, activeWorkspaceId, cursor, managedEntityListFilters);
+          if ((page.data ?? []).length === 0 && history.length > 0) {
+            cursor = history[history.length - 1];
+            history = history.slice(0, -1);
+            page = await listManagedEntities(config.section, activeWorkspaceId, cursor, managedEntityListFilters);
+          }
+          setEntities(page.data ?? []);
+          setEntityPageState({
+            workspaceId: activeWorkspaceId,
+            section: config.section,
+            cursor,
+            history,
+            nextPage: page.next_page ?? null,
+            totalCount: resourceListTotalCount(page.total_count),
+          });
+        } catch (error) {
+          setEntities((current) => current.filter((item) => item.id !== entity.id));
+          setLoadError(errorMessage(error));
+        }
       } else if (action === 'archive' && config.section === 'deployments') {
         const archivedAt = new Date().toISOString();
         setEntities((current) =>
@@ -777,10 +789,6 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       } else {
         setEntities((current) => current.filter((item) => item.id !== entity.id));
       }
-      toast.success(managedToastMessage(config.section, action === 'archive' ? 'archived' : 'deleted', msg));
-      setConfirmState(null);
-    } catch (error) {
-      setMutationError(managedEntityErrorMessage(config.section, error, action, msg));
     } finally {
       setBusyAction(null);
     }

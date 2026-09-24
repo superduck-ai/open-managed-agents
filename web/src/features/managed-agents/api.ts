@@ -61,7 +61,7 @@ export function sdkBody(value: object): Record<string, unknown> {
 
 export const defaultAgentFilters: AgentListFilters = { created: 'all', status: 'active' };
 
-export const agentsListLimit = consoleResourceListLimit;
+export const agentsListLimit = 20;
 
 export const managedEntityListLimit = consoleResourceListLimit;
 
@@ -82,9 +82,14 @@ export function createdFilterStartISOString(filter: AgentCreatedFilter) {
   return null;
 }
 
-export function listAgents(workspaceId: string, page?: PageCursor, filters: AgentListFilters = defaultAgentFilters) {
+export function listAgents(
+  workspaceId: string,
+  page?: PageCursor,
+  filters: AgentListFilters = defaultAgentFilters,
+  limit = agentsListLimit,
+) {
   const params: Record<string, string | number | boolean> = {
-    limit: agentsListLimit,
+    limit,
     include_archived: filters.status === 'all',
   };
   const createdAtGTE = createdFilterStartISOString(filters.created);

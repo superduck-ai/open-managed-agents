@@ -983,6 +983,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     },
   ];
   const resources = {
+    failSessionList: false,
     files: [
       {
         id: 'file_input123456',
@@ -1556,6 +1557,10 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       });
     }
     if (url.startsWith('/v1/sessions?') && method === 'GET') {
+      if (resources.failSessionList) {
+        resources.failSessionList = false;
+        return jsonResponse({ error: { message: 'list failed' } }, 500);
+      }
       const params = new URL(url, 'https://oma.duck.ai').searchParams;
       const agentId = params.get('agent_id');
       const deploymentId = params.get('deployment_id');

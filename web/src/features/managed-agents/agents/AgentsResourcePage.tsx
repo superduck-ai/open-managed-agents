@@ -29,8 +29,8 @@ import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Archive, Plus, Search, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { consoleResourceListLimit } from '../../../shared/console-list';
 import {
-  agentsListLimit,
   archiveAgent,
   createAgent,
   defaultAgentFilters,
@@ -111,7 +111,7 @@ function agentListPager(
 ) {
   return {
     currentPage: mode === 'search' ? localPage + 1 : historyLength + 1,
-    totalPages: resourceListPageCount(mode === 'list' ? listTotalCount : loadedCount, agentsListLimit),
+    totalPages: resourceListPageCount(mode === 'list' ? listTotalCount : loadedCount, consoleResourceListLimit),
   };
 }
 
@@ -227,7 +227,7 @@ export function AgentsResourcePage({
   );
   const displayedAgents =
     agentLoadMode === 'search'
-      ? visibleAgents.slice(agentLocalPage * agentsListLimit, (agentLocalPage + 1) * agentsListLimit)
+      ? visibleAgents.slice(agentLocalPage * consoleResourceListLimit, (agentLocalPage + 1) * consoleResourceListLimit)
       : visibleAgents;
   const title = resourceTitle(config, msg);
   const description = resourceDescription(config, msg);
@@ -239,7 +239,9 @@ export function AgentsResourcePage({
   const searchResultsTruncated = agentLoadMode === 'search' && remoteAgentsTruncated;
   const hasPreviousAgentsPage = agentLoadMode === 'search' ? agentLocalPage > 0 : Boolean(agentPageHistory.length);
   const hasNextAgentsPage =
-    agentLoadMode === 'search' ? (agentLocalPage + 1) * agentsListLimit < visibleAgents.length : Boolean(agentNextPage);
+    agentLoadMode === 'search'
+      ? (agentLocalPage + 1) * consoleResourceListLimit < visibleAgents.length
+      : Boolean(agentNextPage);
 
   useEffect(() => {
     if (previousWorkspaceIdRef.current === workspaceId) {
@@ -299,7 +301,7 @@ export function AgentsResourcePage({
             })
         : agentLoadMode === 'search'
           ? searchAgentsByName(requestWorkspaceId, normalizedSearch, agentListFilters)
-          : listAgents(requestWorkspaceId, pageCursor, agentListFilters).then((page) => ({
+          : listAgents(requestWorkspaceId, pageCursor, agentListFilters, consoleResourceListLimit).then((page) => ({
               ...page,
               truncated: false,
             }));
@@ -532,30 +534,47 @@ export function AgentsResourcePage({
     setArchiveError(null);
     setArchivingIds((current) => new Set([...current, ...ids]));
     try {
-      await Promise.all(ids.map((id) => archiveAgent(id, workspaceId)));
+      try {
+        await Promise.all(ids.map((id) => archiveAgent(id, workspaceId)));
+      } catch (error) {
+        setArchiveError(errorMessage(error));
+        return;
+      }
       if (agentLoadMode === 'list' && statusFilter !== 'all') {
-        const page = await listAgents(workspaceId, agentPageCursor, agentListFilters);
-        setRemoteAgentsState({
-          workspaceId,
-          requestKey: agentRequestKey,
-          mode: 'list',
-          data: page.data ?? [],
-          truncated: false,
-        });
-        setAgentPageState((current) =>
-          current.workspaceId === workspaceId && current.requestKey === agentRequestKey
-            ? {
-                ...current,
-                nextPage: page.next_page ?? null,
-                totalCount: resourceListTotalCount(page.total_count),
-              }
-            : current,
-        );
+        try {
+          let cursor = agentPageCursor;
+          let history = agentPageHistory;
+          let page = await listAgents(workspaceId, cursor, agentListFilters, consoleResourceListLimit);
+          if ((page.data ?? []).length === 0 && history.length > 0) {
+            cursor = history[history.length - 1];
+            history = history.slice(0, -1);
+            page = await listAgents(workspaceId, cursor, agentListFilters, consoleResourceListLimit);
+          }
+          setRemoteAgentsState({
+            workspaceId,
+            requestKey: agentRequestKey,
+            mode: 'list',
+            data: page.data ?? [],
+            truncated: false,
+          });
+          setAgentPageState((current) =>
+            current.workspaceId === workspaceId && current.requestKey === agentRequestKey
+              ? {
+                  ...current,
+                  cursor,
+                  history,
+                  nextPage: page.next_page ?? null,
+                  totalCount: resourceListTotalCount(page.total_count),
+                }
+              : current,
+          );
+        } catch (error) {
+          removeArchivedAgents(ids);
+          setArchiveError(errorMessage(error));
+        }
       } else {
         removeArchivedAgents(ids);
       }
-    } catch (error) {
-      setArchiveError(errorMessage(error));
     } finally {
       setArchivingIds((current) => {
         const next = new Set(current);

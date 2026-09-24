@@ -16,7 +16,7 @@ Environments、Vaults、Memory、Deployments、Sessions、Agents、Skills、File
 
 ## 列表分页与删除补位
 
-控制台资源列表共用 `consoleResourceListLimit`，每页 15 条：Sessions、Agents、Deployments、Environments、Vaults、Memory、Files、Skills 和 Batches。Sessions、Deployments、Environments、Vaults 和 Memory 经 `listManagedEntities` 带上这个 `limit`；Agents、Files、Skills 和 Batches 使用同一个常量。接口用 `page` / `next_page` 游标翻页，Files 和 Batches 用 `after_id` / `before_id`。翻页条统一为同一套带边框的 `outline` / `icon-lg` 按钮，边框用 `border-foreground/30`。上一页或下一页禁用时，边框粗细和颜色保持不变，只把箭头改成浅色。按钮中间显示当前页，页码来自客户端游标历史或 `pageIndex`。列表响应没有总行数，所以不显示总页数。Agents 搜索把已加载结果按同样的页大小在本地切片，这一段可以按已加载条数显示总页数。省略 `limit` 时服务端默认仍是 20，上限 1000。删除成功后，以及归档会让该行离开当前查询时，用同一游标重新请求当前页，把下一行补进空位。Agents 的默认 Active 列表在归档后同样重取当前页。Skills 删除后会让当前页查询失效并重取。Files 和 Batches 列表没有删除。
+控制台资源列表共用 `consoleResourceListLimit`，每页 15 条：Sessions、Agents、Deployments、Environments、Vaults、Memory、Files、Skills 和 Batches。Sessions、Deployments、Environments、Vaults 和 Memory 经 `listManagedEntities` 带上这个 `limit`；Files、Skills 和 Batches 使用同一个常量。Agents 列表页也用它；只读第一页的 Agent 选择器仍请求 20 条。接口用 `page` / `next_page` 游标翻页，Files 和 Batches 用 `after_id` / `before_id`。翻页条统一为同一套带边框的 `outline` / `icon-lg` 按钮，边框用 `border-foreground/30`。上一页或下一页禁用时，边框粗细和颜色保持不变，只把箭头改成浅色。按钮中间显示当前页，页码来自客户端游标历史或 `pageIndex`。列表响应没有总行数，所以不显示总页数。Agents 搜索把已加载结果按同样的页大小在本地切片，这一段可以按已加载条数显示总页数。省略 `limit` 时服务端默认仍是 20，上限 1000。删除成功后，以及归档会让该行离开当前查询时，用同一游标重新请求当前页，把下一行补进空位。重取失败不撤销已经成功的删除或归档，本地去掉该行并另报列表错误。重取结果为空且还有上一页时，退回上一页，避免停在空白页。Agents 的默认 Active 列表在归档后同样重取当前页。Skills 删除后会让当前页查询失效并重取。Files 和 Batches 列表没有删除。
 
 ## 未找到与工作区名称
 

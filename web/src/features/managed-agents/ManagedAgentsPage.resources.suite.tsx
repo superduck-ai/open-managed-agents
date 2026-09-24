@@ -3021,6 +3021,40 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.queryByText('Session one')).toBeNull();
   });
 
+  test('returns to the previous session page after deleting the last row on the last page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_extra_${index}`,
+      title: hidden ? 'Session overflow' : `Session extra ${index}`,
+      status: 'idle',
+    }));
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Session overflow')).toBeTruthy();
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(screen.queryByText('Session overflow')).toBeNull();
+  });
+
+  test('keeps a successful session delete when the refill request fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    api.resources.failSessionList = true;
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session deleted')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Session one')).toBeNull());
+    expect(screen.getByRole('alert').textContent).toContain('list failed');
+  });
+
   test('shows the next deployment after archiving one when more than a page exists', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
     const api = mockManagedResourceApi();

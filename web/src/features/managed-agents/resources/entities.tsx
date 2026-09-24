@@ -724,7 +724,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       const updated = await updateManagedEntity(config.section, entity.id, values, activeWorkspaceId);
       setEntities((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       toast.success(managedToastMessage(config.section, 'updated', msg));
-      return;
+      return false;
     }
     const created = await createManagedEntity(config.section, values, activeWorkspaceId);
     setEntities((current) => [created, ...current.filter((item) => item.id !== created.id)]);
@@ -733,7 +733,13 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       navigateToInternalHref(
         `${managedEntityDetailHref(activeWorkspaceId, config.section, created.id)}?addCredential=1`,
       );
+      return false;
     }
+    if (config.section === 'sessions') {
+      navigateToInternalHref(managedEntityDetailHref(activeWorkspaceId, config.section, created.id));
+      return true;
+    }
+    return false;
   };
 
   const handleConfirm = async () => {
@@ -956,9 +962,11 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           onClose={() => setDialogState(null)}
           onSubmit={async (values) => {
             const resetPage = dialogState.mode === 'create';
-            await handleSubmitEntity(values, dialogState.entity);
+            const openedCreatedSession = await handleSubmitEntity(values, dialogState.entity);
             setDialogState(null);
-            reload(resetPage);
+            if (!openedCreatedSession) {
+              reload(resetPage);
+            }
           }}
         />
       ) : null}

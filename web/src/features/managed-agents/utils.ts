@@ -89,11 +89,11 @@ export function formatKilobytes(bytes: number) {
   return `${(Math.ceil(bytes / 100) / 10).toFixed(1)}kB`;
 }
 
-export function managedEntityIdFromPath(section: ManagedEntitySection) {
-  if (typeof window === 'undefined') {
+export function managedEntityIdFromPath(section: ManagedEntitySection, pathname = currentPathname()) {
+  if (!pathname) {
     return null;
   }
-  const parts = window.location.pathname.split('/').filter(Boolean);
+  const parts = pathname.split('/').filter(Boolean);
   const segment = sectionPathSegment(section);
   const index = parts.lastIndexOf(segment);
   if (index === -1) {

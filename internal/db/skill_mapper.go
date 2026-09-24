@@ -42,6 +42,7 @@ type SkillMapper interface {
 	Insert(ctx context.Context, params insertSkillParams) (skillRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
 	FindForUpdateByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
+	CountByWorkspace(ctx context.Context, workspaceUUID string) (int64, error)
 	ListPage(ctx context.Context, workspaceUUID string, limit, offset int) ([]skillRow, error)
 	FindUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	UpdateLatestVersionByExternalID(ctx context.Context, params updateSkillLatestVersionParams) (skillRow, error)

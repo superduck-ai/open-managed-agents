@@ -50,8 +50,9 @@ type environmentResponse struct {
 }
 
 type environmentPageResponse struct {
-	Data     []environmentResponse `json:"data"`
-	NextPage *string               `json:"next_page"`
+	Data       []environmentResponse `json:"data"`
+	NextPage   *string               `json:"next_page"`
+	TotalCount *int64                `json:"total_count,omitempty"`
 }
 
 type environmentMutationRequest struct {
@@ -232,12 +233,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	records, hasMore, err := h.db.ListEnvironmentsPage(r.Context(), db.ListEnvironmentsPageParams{
+	listParams := db.ListEnvironmentsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
-	})
+	}
+	totalCount, err := h.db.CountEnvironments(r.Context(), listParams)
+	if err != nil {
+		return internalError("Could not list environments", fmt.Errorf("count environments: %w", err))
+	}
+	records, hasMore, err := h.db.ListEnvironmentsPage(r.Context(), listParams)
 	if err != nil {
 		return internalError("Could not list environments", fmt.Errorf("list environments: %w", err))
 	}
@@ -251,7 +257,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		value := encodeEnvironmentCursor(records[len(records)-1])
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: data, NextPage: nextPage})
+	httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: data, NextPage: nextPage, TotalCount: &totalCount})
 	return nil
 }
 

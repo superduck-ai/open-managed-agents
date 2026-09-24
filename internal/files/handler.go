@@ -51,10 +51,11 @@ type fileMetadata struct {
 }
 
 type pageResponse struct {
-	Data    []fileMetadata `json:"data"`
-	HasMore bool           `json:"has_more"`
-	FirstID *string        `json:"first_id"`
-	LastID  *string        `json:"last_id"`
+	Data       []fileMetadata `json:"data"`
+	HasMore    bool           `json:"has_more"`
+	FirstID    *string        `json:"first_id"`
+	LastID     *string        `json:"last_id"`
+	TotalCount *int64         `json:"total_count,omitempty"`
 }
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
@@ -185,6 +186,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	beforeID := r.URL.Query().Get("before_id")
 	scopeID := r.URL.Query().Get("scope_id")
 
+	totalCount, err := h.db.CountFiles(r.Context(), principal.WorkspaceUUID, scopeID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "count files", "error", err)
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list files"))
+		return
+	}
 	records, hasMore, err := h.db.ListFilesPage(r.Context(), db.ListFilesPageParams{
 		WorkspaceUUID: principal.WorkspaceUUID,
 		ScopeID:       scopeID,
@@ -207,7 +214,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		firstID = &data[0].ID
 		lastID = &data[len(data)-1].ID
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, HasMore: hasMore, FirstID: firstID, LastID: lastID})
+	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, HasMore: hasMore, FirstID: firstID, LastID: lastID, TotalCount: &totalCount})
 }
 
 func (h *Handler) retrieveMetadataRoute(w http.ResponseWriter, r *http.Request) {

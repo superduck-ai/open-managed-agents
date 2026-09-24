@@ -39,8 +39,9 @@ type webhookEnqueuer interface {
 }
 
 type pageResponse[T any] struct {
-	Data     []T     `json:"data"`
-	NextPage *string `json:"next_page"`
+	Data       []T     `json:"data"`
+	NextPage   *string `json:"next_page"`
+	TotalCount *int64  `json:"total_count,omitempty"`
 }
 
 type sessionResponse struct {

@@ -19,9 +19,14 @@ import {
 import { toast } from '../../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import {
+  ResourceListPagination,
+  resourceListPageCount,
+  resourceListTotalCount,
+} from '../../../shared/ui/resource-list-pagination';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, ChevronLeft, ChevronRight, Copy, Pencil, Play, Plus, X } from 'lucide-react';
+import { Archive, Copy, Pencil, Play, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import {
@@ -30,6 +35,7 @@ import {
   deleteManagedEntity,
   listAgents,
   listManagedEntities,
+  managedEntityListLimit,
   pauseDeployment,
   runDeployment,
   unpauseDeployment,
@@ -83,6 +89,7 @@ type ManagedEntityPageState = {
   cursor: PageCursor;
   history: PageCursor[];
   nextPage: PageCursor;
+  totalCount: number | null;
 };
 
 function defaultGenericStatusFilter(section: ManagedEntitySection): AgentStatusFilter {
@@ -105,7 +112,7 @@ function currentManagedEntityPageState(
   if (state.workspaceId === workspaceId && state.section === section) {
     return state;
   }
-  return { cursor: null, history: [], nextPage: null };
+  return { cursor: null, history: [], nextPage: null, totalCount: null };
 }
 
 function withEntityPageResult(
@@ -114,6 +121,7 @@ function withEntityPageResult(
   section: ManagedEntitySection,
   pageCursor: PageCursor,
   nextPage: PageCursor,
+  totalCount: number | null,
 ): ManagedEntityPageState {
   const sameScope = current.workspaceId === workspaceId && current.section === section;
   return {
@@ -122,6 +130,7 @@ function withEntityPageResult(
     cursor: pageCursor,
     history: sameScope ? current.history : [],
     nextPage,
+    totalCount,
   };
 }
 
@@ -183,6 +192,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     cursor: null,
     history: [],
     nextPage: null,
+    totalCount: null,
   });
   const currentPage = currentManagedEntityPageState(entityPageState, activeWorkspaceId, config.section);
   const entityPageCursor = currentPage.cursor;
@@ -410,7 +420,14 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         if (active) {
           setEntities(page.data ?? []);
           setEntityPageState((current) =>
-            withEntityPageResult(current, activeWorkspaceId, config.section, pageCursor, page.next_page ?? null),
+            withEntityPageResult(
+              current,
+              activeWorkspaceId,
+              config.section,
+              pageCursor,
+              page.next_page ?? null,
+              resourceListTotalCount(page.total_count),
+            ),
           );
           setLoading(false);
         }
@@ -419,7 +436,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           setEntities([]);
           setLoadError(managedEntityErrorMessage(config.section, error, 'list', msg));
           setEntityPageState((current) =>
-            withEntityPageResult(current, activeWorkspaceId, config.section, pageCursor, null),
+            withEntityPageResult(current, activeWorkspaceId, config.section, pageCursor, null, null),
           );
           setLoading(false);
         }
@@ -504,6 +521,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       cursor: null,
       history: [],
       nextPage: null,
+      totalCount: null,
     });
   };
 
@@ -682,6 +700,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       cursor: entityNextPage,
       history: [...entityPageHistory, entityPageCursor],
       nextPage: null,
+      totalCount: currentPage.totalCount,
     });
   };
 
@@ -695,6 +714,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       cursor: entityPageHistory[entityPageHistory.length - 1],
       history: entityPageHistory.slice(0, -1),
       nextPage: null,
+      totalCount: currentPage.totalCount,
     });
   };
 
@@ -738,7 +758,14 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         );
         setEntities(page.data ?? []);
         setEntityPageState((current) =>
-          withEntityPageResult(current, activeWorkspaceId, config.section, entityPageCursor, page.next_page ?? null),
+          withEntityPageResult(
+            current,
+            activeWorkspaceId,
+            config.section,
+            entityPageCursor,
+            page.next_page ?? null,
+            resourceListTotalCount(page.total_count),
+          ),
         );
       } else if (action === 'archive' && config.section === 'deployments') {
         const archivedAt = new Date().toISOString();
@@ -896,28 +923,14 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         ) : null}
       </div>
 
-      <div className="mt-9 flex items-center gap-2">
-        <Button
-          type="button"
-          disabled={!entityPageHistory.length || loading}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.previousPage', 'Previous page')}
-          onClick={goToPreviousEntityPage}
-        >
-          <ChevronLeft className="size-4" aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          disabled={!entityNextPage || loading}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.nextPage', 'Next page')}
-          onClick={goToNextEntityPage}
-        >
-          <ChevronRight className="size-4" aria-hidden />
-        </Button>
-      </div>
+      <ResourceListPagination
+        currentPage={entityPageHistory.length + 1}
+        totalPages={resourceListPageCount(currentPage.totalCount, managedEntityListLimit)}
+        canPrevious={entityPageHistory.length > 0 && !loading}
+        canNext={Boolean(entityNextPage) && !loading}
+        onPrevious={goToPreviousEntityPage}
+        onNext={goToNextEntityPage}
+      />
 
       {dialogState ? (
         <ManagedEntityDialog

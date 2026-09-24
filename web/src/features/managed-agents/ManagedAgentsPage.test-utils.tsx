@@ -536,7 +536,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       const offset = page === 'next_cursor' ? limit : 0;
       const data = filteredAgents.slice(offset, offset + limit);
       const nextPage = offset + limit < filteredAgents.length ? 'next_cursor' : null;
-      return jsonResponse({ data, next_page: nextPage });
+      return jsonResponse({ data, next_page: nextPage, total_count: filteredAgents.length });
     }
 
     if (url.startsWith('/v1/agents:search?') && method === 'POST') {
@@ -967,6 +967,7 @@ export function pageResourceRows<T>(rows: T[], limit: number, page: string | nul
   return {
     data,
     next_page: nextOffset < rows.length ? `offset_${nextOffset}` : null,
+    total_count: rows.length,
   };
 }
 
@@ -1840,7 +1841,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const data = filteredMemoryStores.slice(offset, offset + limit);
       const nextOffset = offset + data.length;
       const nextPage = nextOffset < filteredMemoryStores.length ? `memory_${nextOffset}` : null;
-      return jsonResponse({ data, next_page: nextPage });
+      return jsonResponse({ data, next_page: nextPage, total_count: filteredMemoryStores.length });
     }
     if (url === '/v1/memory_stores/memstore_one123456?beta=true' && method === 'GET') {
       return jsonResponse(resources.memoryStores[0]);

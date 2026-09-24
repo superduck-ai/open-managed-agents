@@ -58,5 +58,6 @@ type EnvironmentMapper interface {
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (environmentMapperRow, error)
 	LockUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	SoftDeleteByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (int64, error)
+	CountList(ctx context.Context, params environmentPageMapperParams) (int64, error)
 	ListPage(ctx context.Context, params environmentPageMapperParams) ([]environmentMapperRow, error)
 }

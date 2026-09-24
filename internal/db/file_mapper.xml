@@ -152,6 +152,27 @@
         WHERE file.external_id = #{params.CursorExternalID}
     </select>
 
+    <select id="CountFiles" result="scalar">
+        SELECT COUNT(*)
+        FROM files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <include refid="visibleFilePredicate"/>
+            <if test="params.HasScope">
+                AND scope_id = #{params.ScopeID}
+            </if>
+    </select>
+
+    <select id="CountSessionFiles" result="scalar">
+        WITH <include refid="catalogResourceCTE"/>
+        SELECT COUNT(*)
+        FROM catalog_resource resource
+        JOIN files file
+            ON file.uuid = resource.file_uuid
+            AND file.workspace_uuid = resource.workspace_uuid
+            AND file.deleted_at IS NULL
+    </select>
+
     <select id="ListFilesPage" resultType="fileRecordRow">
         SELECT <include refid="fileColumns"/>
         FROM files

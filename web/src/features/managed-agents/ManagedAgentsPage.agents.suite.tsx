@@ -2361,11 +2361,13 @@ export function registerManagedAgentsAgentsTests() {
 
     expect(await screen.findByText('First agent')).toBeTruthy();
     expect(screen.queryByText('Eleventh agent')).toBeNull();
+    expect(screen.getByText('1 / 2')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     expect(await screen.findByText('Eleventh agent')).toBeTruthy();
     expect(screen.queryByText('First agent')).toBeNull();
+    expect(screen.getByText('2 / 2')).toBeTruthy();
     expect(api.requests.some((request) => request.method === 'GET' && request.url.includes('page=next_cursor'))).toBe(
       true,
     );

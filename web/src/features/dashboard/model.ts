@@ -25,6 +25,7 @@ export type FilesListResponse = {
   has_more: boolean;
   first_id?: string | null;
   last_id?: string | null;
+  total_count?: number;
 };
 
 export type FilesPageCursor = {
@@ -58,6 +59,7 @@ export type MessageBatchesListResponse = {
   has_more: boolean;
   first_id?: string | null;
   last_id?: string | null;
+  total_count?: number;
 };
 
 export type MessageBatchesPageCursor = {
@@ -90,6 +92,7 @@ export type SkillsListResponse = {
   data: ConsoleSkill[];
   has_more: boolean;
   next_page?: string | null;
+  total_count?: number;
 };
 
 export type SkillVersionsListResponse = {

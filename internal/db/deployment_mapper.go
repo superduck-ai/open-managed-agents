@@ -95,6 +95,7 @@ type DeploymentMapper interface {
 	PauseByExternalID(ctx context.Context, workspaceUUID, externalID string, pausedReason []byte) (deploymentMapperRow, error)
 	UnpauseByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	PauseAfterScheduledRun(ctx context.Context, params pauseScheduledDeploymentParams) (int64, error)
+	CountList(ctx context.Context, params deploymentPageMapperParams) (int64, error)
 	ListPage(ctx context.Context, params deploymentPageMapperParams) ([]deploymentMapperRow, error)
 	UpdateLastRun(ctx context.Context, workspaceUUID, externalID string, lastRunAt time.Time) (int64, error)
 }

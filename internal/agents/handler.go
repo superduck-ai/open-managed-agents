@@ -62,8 +62,9 @@ type agentResponse struct {
 }
 
 type pageResponse struct {
-	Data     []agentResponse `json:"data"`
-	NextPage *string         `json:"next_page"`
+	Data       []agentResponse `json:"data"`
+	NextPage   *string         `json:"next_page"`
+	TotalCount *int64          `json:"total_count,omitempty"`
 }
 
 type searchRequest struct {
@@ -204,14 +205,19 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 
-	records, hasMore, err := h.db.ListAgentsPage(r.Context(), db.ListAgentsPageParams{
+	listParams := db.ListAgentsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
 		CreatedAtGTE:    createdAtGTE,
 		CreatedAtLTE:    createdAtLTE,
-	})
+	}
+	totalCount, err := h.db.CountAgents(r.Context(), listParams)
+	if err != nil {
+		return internalError("Could not list agents", fmt.Errorf("count agents: %w", err))
+	}
+	records, hasMore, err := h.db.ListAgentsPage(r.Context(), listParams)
 	if err != nil {
 		return internalError("Could not list agents", fmt.Errorf("list agents: %w", err))
 	}
@@ -221,7 +227,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		value := encodeAgentCursor(records[len(records)-1])
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage})
+	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage, TotalCount: &totalCount})
 	return nil
 }
 
@@ -246,13 +252,18 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 
-	records, hasMore, err := h.db.SearchAgentsPage(r.Context(), db.SearchAgentsPageParams{
+	searchParams := db.SearchAgentsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Name:            strings.TrimSpace(body.Name),
 		Limit:           searchLimit(body.Limit),
 		Cursor:          cursor,
 		IncludeArchived: derefBool(body.IncludeArchived),
-	})
+	}
+	totalCount, err := h.db.CountAgentsByName(r.Context(), searchParams)
+	if err != nil {
+		return internalError("Could not search agents", fmt.Errorf("count agents: %w", err))
+	}
+	records, hasMore, err := h.db.SearchAgentsPage(r.Context(), searchParams)
 	if err != nil {
 		return internalError("Could not search agents", fmt.Errorf("search agents: %w", err))
 	}
@@ -262,7 +273,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) error {
 		value := encodeAgentCursor(records[len(records)-1])
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage})
+	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage, TotalCount: &totalCount})
 	return nil
 }
 

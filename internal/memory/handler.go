@@ -45,8 +45,9 @@ type Handler struct {
 }
 
 type storePageResponse struct {
-	Data     []storeResponse `json:"data"`
-	NextPage *string         `json:"next_page"`
+	Data       []storeResponse `json:"data"`
+	NextPage   *string         `json:"next_page"`
+	TotalCount *int64          `json:"total_count,omitempty"`
 }
 
 type memoryPageResponse struct {
@@ -262,14 +263,21 @@ func (h *Handler) listStores(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	records, hasMore, err := h.db.ListMemoryStoresPage(r.Context(), db.ListMemoryStoresPageParams{
+	listParams := db.ListMemoryStoresPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
 		CreatedAtGTE:    createdAtGTE,
 		CreatedAtLTE:    createdAtLTE,
-	})
+	}
+	totalCount, err := h.db.CountMemoryStores(r.Context(), listParams)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "count memory stores", "error", err)
+		writeAPIError(w, r, "Could not list memory stores")
+		return
+	}
+	records, hasMore, err := h.db.ListMemoryStoresPage(r.Context(), listParams)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list memory stores", "error", err)
 		writeAPIError(w, r, "Could not list memory stores")
@@ -284,7 +292,7 @@ func (h *Handler) listStores(w http.ResponseWriter, r *http.Request) {
 		value := encodeStoreCursor(records[len(records)-1])
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, storePageResponse{Data: data, NextPage: nextPage})
+	httpapi.WriteJSON(w, http.StatusOK, storePageResponse{Data: data, NextPage: nextPage, TotalCount: &totalCount})
 }
 
 func (h *Handler) retrieveStoreRoute(w http.ResponseWriter, r *http.Request) {

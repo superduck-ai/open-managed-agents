@@ -382,6 +382,10 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 	return removal, err
 }
 
+func (d *DB) CountSessions(ctx context.Context, params ListSessionsPageParams) (int64, error) {
+	return NewSessionMapper(d.mapperDB).CountList(ctx, sessionPageParameters(params))
+}
+
 func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams) ([]Session, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

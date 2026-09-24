@@ -122,8 +122,9 @@ type deploymentRunTriggerContext struct {
 }
 
 type pageResponse[T any] struct {
-	Data     []T     `json:"data"`
-	NextPage *string `json:"next_page"`
+	Data       []T     `json:"data"`
+	NextPage   *string `json:"next_page"`
+	TotalCount *int64  `json:"total_count,omitempty"`
 }
 
 type deploymentCursorPayload struct {
@@ -423,7 +424,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	records, hasMore, err := h.db.ListDeploymentsPage(r.Context(), db.ListDeploymentsPageParams{
+	listParams := db.ListDeploymentsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
@@ -432,7 +433,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		Status:          status,
 		CreatedAtGTE:    createdAtGTE,
 		CreatedAtLTE:    createdAtLTE,
-	})
+	}
+	totalCount, err := h.db.CountDeployments(r.Context(), listParams)
+	if err != nil {
+		return internalError("Could not list deployments", fmt.Errorf("count deployments: %w", err))
+	}
+	records, hasMore, err := h.db.ListDeploymentsPage(r.Context(), listParams)
 	if err != nil {
 		return internalError("Could not list deployments", fmt.Errorf("list deployments: %w", err))
 	}
@@ -450,7 +456,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		value := encodeDeploymentCursor(records[len(records)-1])
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse[deploymentResponse]{Data: data, NextPage: nextPage})
+	httpapi.WriteJSON(w, http.StatusOK, pageResponse[deploymentResponse]{Data: data, NextPage: nextPage, TotalCount: &totalCount})
 	return nil
 }
 

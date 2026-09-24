@@ -153,6 +153,10 @@ func (d *DB) GetMessageBatchByUUID(ctx context.Context, batchUUID string) (Messa
 	return messageBatchFromRow(row, err)
 }
 
+func (d *DB) CountMessageBatches(ctx context.Context, workspaceUUID string) (int64, error) {
+	return NewMessageBatchMapper(d.mapperDB).CountByWorkspace(ctx, workspaceUUID)
+}
+
 func (d *DB) ListMessageBatchesPage(ctx context.Context, params ListMessageBatchesPageParams) ([]MessageBatch, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

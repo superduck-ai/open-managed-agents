@@ -61,6 +61,7 @@ export type AgentApiResponse = {
 export type AgentPageResponse = {
   data: AgentApiResponse[];
   next_page: string | null;
+  total_count?: number;
 };
 
 export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
@@ -133,6 +134,7 @@ export type PageResponse<T> = {
   data: T[];
   next_page: string | null;
   prefixes?: unknown[];
+  total_count?: number;
 };
 
 export type PageCursor = string | null;

@@ -200,6 +200,30 @@
 		AND external_id = #{params.ExternalID}
 	</update>
 
+    <select id="CountList" result="scalar">
+        SELECT COUNT(*)
+        FROM deployments
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <if test="!params.IncludeArchived">
+                AND archived_at IS NULL
+            </if>
+            <if test="params.AgentExternalID != ''">
+                AND agent_external_id = #{params.AgentExternalID}
+            </if>
+            <if test="params.Status != ''">
+                AND status = #{params.Status}
+            </if>
+            <if test="params.CreatedAtGTE != nil">
+                AND created_at &gt;= #{params.CreatedAtGTE}
+            </if>
+            <if test="params.CreatedAtLTE != nil">
+                AND created_at &lt;= #{params.CreatedAtLTE}
+            </if>
+        </where>
+    </select>
+
     <select id="ListPage" resultType="deploymentMapperRow">
         SELECT
         <include refid="columns"/>

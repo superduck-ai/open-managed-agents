@@ -197,7 +197,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	records, hasMore, err := h.db.ListSessionsPage(r.Context(), db.ListSessionsPageParams{
+	listParams := db.ListSessionsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
@@ -212,7 +212,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		CreatedAtGTE:    createdAtGTE,
 		CreatedAtLT:     createdAtLT,
 		CreatedAtLTE:    createdAtLTE,
-	})
+	}
+	totalCount, err := h.db.CountSessions(r.Context(), listParams)
+	if err != nil {
+		return internalError("Could not list sessions", fmt.Errorf("count sessions: %w", err))
+	}
+	records, hasMore, err := h.db.ListSessionsPage(r.Context(), listParams)
 	if err != nil {
 		return internalError("Could not list sessions", fmt.Errorf("list sessions: %w", err))
 	}
@@ -229,7 +234,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		value := encodeSessionCursor(records[len(records)-1])
 		nextPage = &value
 	}
-	httpapi.WriteJSON(w, http.StatusOK, pageResponse[sessionResponse]{Data: data, NextPage: nextPage})
+	httpapi.WriteJSON(w, http.StatusOK, pageResponse[sessionResponse]{Data: data, NextPage: nextPage, TotalCount: &totalCount})
 	return nil
 }
 

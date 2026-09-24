@@ -1045,6 +1045,7 @@ describe('Skills page', () => {
           ],
           has_more: false,
           next_page: null,
+          total_count: 20,
         };
       }
       return {
@@ -1061,15 +1062,18 @@ describe('Skills page', () => {
         ],
         has_more: true,
         next_page: 'cursor_two',
+        total_count: 20,
       };
     });
 
     renderSkillsPage();
 
     expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('1 / 2')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     expect(await screen.findByText('product-self-knowledge')).toBeTruthy();
+    expect(screen.getByText('2 / 2')).toBeTruthy();
     expect(
       requests.some(
         (request) => request.url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}&page=cursor_two`,

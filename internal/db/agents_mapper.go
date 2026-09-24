@@ -87,6 +87,7 @@ type AgentMapper interface {
 	LockByExternalID(ctx context.Context, workspaceUUID, externalID string) (agentRow, error)
 	UpdateByExternalID(ctx context.Context, params updateAgentParams) (agentRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (agentRow, error)
+	CountList(ctx context.Context, filter agentPageFilter) (int64, error)
 	ListPage(ctx context.Context, filter agentPageFilter) ([]agentRow, error)
 	FindUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	ListVersionsPage(ctx context.Context, agentUUID string, cursor *AgentVersionPageCursor, limit int) ([]agentRow, error)

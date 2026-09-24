@@ -101,6 +101,14 @@
         AND uuid = #{vaultUUID}
     </delete>
 
+    <select id="CountList" result="scalar">
+        SELECT COUNT(*)
+        FROM vaults
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND deleted_at IS NULL
+        <if test="!params.IncludeArchived">AND archived_at IS NULL</if>
+    </select>
+
     <select id="ListPage" resultType="vaultRow">
         SELECT <include refid="columns"/>
         FROM vaults

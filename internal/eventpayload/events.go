@@ -83,12 +83,9 @@ func assistantEchoKey(raw json.RawMessage, eventType string) (requestID, source,
 		return "", "", "", nil
 	}
 	var payload struct {
-		RequestID string `json:"model_request_start_id"`
-		UUID      string `json:"uuid"`
-		Content   []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+		RequestID string          `json:"model_request_start_id"`
+		UUID      string          `json:"uuid"`
+		Content   json.RawMessage `json:"content"`
 	}
 	if err := jsonv2.Unmarshal(raw, &payload); err != nil {
 		return "", "", "", err
@@ -102,12 +99,24 @@ func assistantEchoKey(raw json.RawMessage, eventType string) (requestID, source,
 	}
 	content := eventType
 	if eventType == "agent.message" {
-		if len(payload.Content) != 1 {
+		var blocks []json.RawMessage
+		if jsonv2.Unmarshal(payload.Content, &blocks) != nil || len(blocks) != 1 {
 			return "", "", "", nil
 		}
-		switch payload.Content[0].Type {
+		var block struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if jsonv2.Unmarshal(blocks[0], &block) != nil {
+			// Worker assistant content may contain a scalar string text block.
+			if jsonv2.Unmarshal(blocks[0], &block.Text) != nil {
+				return "", "", "", nil
+			}
+			block.Type = "text"
+		}
+		switch block.Type {
 		case "text":
-			content = "text\x00" + payload.Content[0].Text
+			content = "text\x00" + block.Text
 		case "redacted":
 			content = "redacted"
 		default:

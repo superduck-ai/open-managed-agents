@@ -104,3 +104,32 @@ func TestPreparePublicKeepsStatusReasonInline(t *testing.T) {
 		}
 	}
 }
+
+func TestPreparePublicAcceptsScalarAssistantContent(t *testing.T) {
+	store := New(nil, nil)
+	scalar := []byte(`{"type":"agent.message","uuid":"worker-1","model_request_start_id":"sevt_request","content":["hello"]}`)
+	text := []byte(`{"type":"agent.message","uuid":"worker-2","model_request_start_id":"sevt_request","content":[{"type":"text","text":"hello"}]}`)
+	prepared, err := store.PreparePublic(t.Context(), "org", "workspace", []db.SessionEvent{
+		{EventType: "agent.message", Payload: scalar},
+		{EventType: "agent.message", Payload: text},
+	})
+	if err != nil {
+		t.Fatalf("prepare assistant events: %v", err)
+	}
+	if len(prepared) != 2 {
+		t.Fatalf("assistant events dropped: %+v", prepared)
+	}
+	for _, event := range prepared {
+		if !bytes.Contains(event.Payload, []byte(`"_echo_key"`)) {
+			t.Fatalf("text event lost echo metadata: %s", event.Payload)
+		}
+	}
+	_, _, scalarKey, err := assistantEchoKey(scalar, "agent.message")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, textKey, err := assistantEchoKey(text, "agent.message")
+	if err != nil || scalarKey == "" || scalarKey != textKey {
+		t.Fatalf("scalar echo key = %q, text echo key = %q, error = %v", scalarKey, textKey, err)
+	}
+}

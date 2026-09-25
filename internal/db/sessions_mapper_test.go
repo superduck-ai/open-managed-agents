@@ -27,6 +27,36 @@ func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
 	)
 }
 
+func TestSessionEventStreamMapperScopes(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		params sessionEventStreamMapperParams
+		filter string
+	}{
+		{"primary", sessionEventStreamMapperParams{WorkspaceUUID: "workspace", SessionExternalID: "session", PrimaryOnly: true, EventExternalID: "event", AfterSeq: 7, FetchLimit: 20}, "parent_thread_uuid IS NULL"},
+		{"thread", sessionEventStreamMapperParams{WorkspaceUUID: "workspace", SessionExternalID: "session", ThreadExternalID: "thread", EventExternalID: "event", AfterSeq: 7, FetchLimit: 20}, "thread_external_id = $3"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, bound := range []yourbatis.BoundSQL{
+				buildSessionEventMapperFindStreamPosition(yourbatis.DialectPostgres, test.params),
+				buildSessionEventMapperLatestStreamPosition(yourbatis.DialectPostgres, test.params),
+				buildSessionEventMapperListStreamPage(yourbatis.DialectPostgres, test.params),
+			} {
+				if !containsMapperSQL(bound.SQL, test.filter) || !containsMapperSQL(bound.SQL, "delivery_seq IS NOT NULL") {
+					t.Fatalf("stream scope missing from SQL: %s", bound.SQL)
+				}
+				if len(bound.Args) < 2 || bound.Args[0].Value != "workspace" || bound.Args[1].Value != "session" {
+					t.Fatalf("stream query scope args = %+v", bound.Args)
+				}
+			}
+			page := buildSessionEventMapperListStreamPage(yourbatis.DialectPostgres, test.params)
+			if !containsMapperSQL(page.SQL, "ORDER BY delivery_seq ASC") || !containsMapperSQL(page.SQL, "delivery_seq >") {
+				t.Fatalf("stream page order/cursor missing: %s", page.SQL)
+			}
+		})
+	}
+}
+
 func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	sessionParams := sessionWriteParams{

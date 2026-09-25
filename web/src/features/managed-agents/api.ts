@@ -625,8 +625,6 @@ export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;
 
 export const SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS = 90_000;
 
-export const SESSION_DETAIL_STREAM_FALLBACK_LIMIT = 20;
-
 export const SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS = 5000;
 
 export const sessionDetailRequestInFlight = new Map<string, Promise<unknown>>();
@@ -981,7 +979,7 @@ export async function streamSessionEvents({
   threadId?: string;
   workspaceId: string;
   signal: AbortSignal;
-  onOpen?: () => void;
+  onOpen?: () => Promise<boolean> | boolean;
   onEvent: (event: QuickstartSessionEvent) => void;
 }) {
   const headers = new Headers({ Accept: 'text/event-stream' });
@@ -1004,11 +1002,13 @@ export async function streamSessionEvents({
     streamSignal.dispose();
     throw new SessionStreamError(response.status);
   }
-  onOpen?.();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   try {
+    if ((await onOpen?.()) === false) {
+      return;
+    }
     streamSignal.touch();
     for (;;) {
       const { value, done } = await reader.read();
@@ -1026,6 +1026,7 @@ export async function streamSessionEvents({
       onEvent(sessionEventWithResponseThread(event.data, threadId)),
     );
   } finally {
+    await reader.cancel().catch(() => undefined);
     streamSignal.dispose();
   }
 }
@@ -1041,17 +1042,17 @@ export class SessionStreamError extends Error {
 
 export function sessionLinkedAbortSignal(parent: AbortSignal, idleTimeoutMs: number) {
   const controller = new AbortController();
-  let timeout: number | null = null;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
   const abort = () => controller.abort(parent.reason);
   const clear = () => {
     if (timeout !== null) {
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
       timeout = null;
     }
   };
   const touch = () => {
     clear();
-    timeout = window.setTimeout(() => controller.abort(new Error('Session event stream timed out')), idleTimeoutMs);
+    timeout = globalThis.setTimeout(() => controller.abort(new Error('Session event stream timed out')), idleTimeoutMs);
   };
   if (parent.aborted) {
     abort();
@@ -1207,6 +1208,7 @@ export async function syncSessionEventHistory({
         order: 'asc',
         limit: SESSION_DETAIL_EVENT_PAGE_LIMIT,
         page,
+        signal,
       });
       const nextPage = response.next_page ?? null;
       sawTerminated =
@@ -1683,12 +1685,12 @@ export function sleepWithAbort(ms: number, signal: AbortSignal) {
       reject(signal.reason);
       return;
     }
-    let timer: number;
+    let timer: ReturnType<typeof setTimeout>;
     const abort = () => {
-      window.clearTimeout(timer);
+      globalThis.clearTimeout(timer);
       reject(signal.reason);
     };
-    timer = window.setTimeout(() => {
+    timer = globalThis.setTimeout(() => {
       signal.removeEventListener('abort', abort);
       resolve();
     }, ms);

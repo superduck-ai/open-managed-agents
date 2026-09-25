@@ -1159,13 +1159,22 @@ func TestSessionEventStreamForwardsWorkerStreamDeltasWithoutHistory(t *testing.T
 	]}`)
 
 	deadline := time.After(5 * time.Second)
+	currentFrameID := ""
 	for {
 		select {
 		case line, ok := <-lineCh:
 			if !ok {
 				t.Fatal("event stream closed before stream delta arrived")
 			}
+			if line == "" {
+				currentFrameID = ""
+			} else if strings.HasPrefix(line, "id: ") {
+				currentFrameID = strings.TrimPrefix(line, "id: ")
+			}
 			if strings.HasPrefix(line, "data: ") && strings.Contains(line, "stream preview over sse") {
+				if currentFrameID != "" {
+					t.Fatalf("preview advanced SSE cursor: %q", currentFrameID)
+				}
 				if !strings.Contains(line, `"type":"event_delta"`) {
 					t.Fatalf("stream delta data missing event_delta type: %s", line)
 				}

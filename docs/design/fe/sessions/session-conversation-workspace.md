@@ -26,6 +26,7 @@ Viewer 包含两个区域：
 ## 转录与对齐
 
 - 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。
+- 实时主线程页面每次先建立 SSE，再分页同步完整历史，最后消费连接中已缓冲的实时帧；历史与实时帧按 JSON `id` 合并。正常 EOF、网络错误或 90 秒无数据均重连并重新补历史；断线时清理未完成预览，最终事件以持久化内容为准。页面继续用带 `X-Workspace-ID` 的 `fetch` 和现有 Cookie 鉴权；原生 `EventSource` 无法发送此自定义头，服务端提供的 `id:`/`Last-Event-ID` 供具备适当鉴权方式的其他客户端续传。
 - Transcript 内容列、待处理 Action Card 和消息输入框共享最大 `720px` 的居中内容轨道。
 - 三者在窄容器中使用相同的 `16px` 水平留白；滚动条采用覆盖式自动隐藏样式，不允许通过 Composer 或 Action Card 的伪滚动容器预留 gutter。左右边界必须逐像素一致。
 - 转录先按未过滤的事件流建立 speaker turn，再按 model request bracket 建立 iteration，最后应用搜索；搜索不得把原本由 User、idle、queued、outcome、status 或 speaker 变化分开的 turn 重新合并。

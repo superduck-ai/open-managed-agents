@@ -13,8 +13,10 @@ import {
   sessionDetailScopeEvents,
   sessionIncompleteStreamEventIds,
   syncSessionEventHistory,
+  streamSessionEvents,
 } from './api';
 import { buildSessionEventEntries } from './sessions/sessionTraceModel';
+import { runSessionEventStreamLoop } from './sessions/sessionDetailData';
 
 const originalFetch = globalThis.fetch;
 
@@ -24,6 +26,86 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('buffers stream frames until the history sync finishes', async () => {
+    let signalOpen: () => void = () => undefined;
+    let finishHistory: () => void = () => undefined;
+    const opened = new Promise<void>((resolve) => {
+      signalOpen = resolve;
+    });
+    const history = new Promise<void>((resolve) => {
+      finishHistory = resolve;
+    });
+    const seen: string[] = [];
+    globalThis.fetch = async () =>
+      new Response('event: agent.message\ndata: {"id":"sevt_live","type":"agent.message"}\n\n');
+
+    const stream = streamSessionEvents({
+      sessionId: 'sesn_test',
+      workspaceId: 'default',
+      signal: new AbortController().signal,
+      onOpen: async () => {
+        signalOpen();
+        await history;
+      },
+      onEvent: (event) => seen.push(String(event.id)),
+    });
+    await opened;
+    expect(seen).toEqual([]);
+    finishHistory();
+    await stream;
+    expect(seen).toEqual(['sevt_live']);
+  });
+
+  test('opens each stream before paginating history and resyncs after EOF', async () => {
+    const queryClient = new QueryClient();
+    const controller = new AbortController();
+    const requests: string[] = [];
+    let connections = 0;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes('/stream?')) {
+        connections += 1;
+        requests.push(`stream-${connections}`);
+        return new Response(': connected\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      const page = new URL(url, 'http://localhost').searchParams.get('page');
+      requests.push(`history-${connections}-${page ?? 'first'}`);
+      if (connections === 1 && !page) {
+        return Response.json({
+          data: [{ id: 'sevt_one', type: 'agent.message', processed_at: '2026-09-25T00:00:00Z' }],
+          next_page: 'page-two',
+        });
+      }
+      if (connections === 1) {
+        return Response.json({
+          data: [{ id: 'sevt_two', type: 'agent.message', processed_at: '2026-09-25T00:00:01Z' }],
+          next_page: null,
+        });
+      }
+      return Response.json({
+        data: [{ id: 'sevt_three', type: 'agent.message', processed_at: '2026-09-25T00:00:02Z' }],
+        next_page: null,
+      });
+    };
+
+    await runSessionEventStreamLoop({
+      queryClient,
+      sessionId: 'sesn_test',
+      workspaceId: 'default',
+      threadId: '',
+      signal: controller.signal,
+      onCacheChange: () => {
+        if (connections === 2) controller.abort();
+      },
+    });
+    expect(requests).toEqual(['stream-1', 'history-1-first', 'history-1-page-two', 'stream-2', 'history-2-page-two']);
+    expect(sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['']).map((event) => event.id)).toEqual([
+      'sevt_one',
+      'sevt_two',
+      'sevt_three',
+    ]);
+  });
+
   test('replaces a same-ID streaming preview with the complete final message', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';

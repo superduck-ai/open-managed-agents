@@ -433,6 +433,33 @@ func TestEnvironmentWorkSessionUUIDMigration(t *testing.T) {
 	}
 }
 
+func TestSessionInputProcessedAtMigrationRepairsAppliedSchema(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 65); err != nil {
+		t.Fatalf("migrate fixture database to 65: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `ALTER TABLE session_events ALTER COLUMN processed_at SET NOT NULL`); err != nil {
+		t.Fatalf("recreate applied-schema drift: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (66, true)`); err != nil {
+		t.Fatalf("recreate migration history: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("migrate drifted database: %v", err)
+	}
+	var nullable bool
+	if err := database.QueryRowContext(ctx, `SELECT NOT attnotnull FROM pg_attribute WHERE attrelid = 'session_events'::regclass AND attname = 'processed_at'`).Scan(&nullable); err != nil {
+		t.Fatalf("inspect processed_at: %v", err)
+	}
+	if !nullable {
+		t.Fatal("session_events.processed_at still rejects pending inputs")
+	}
+}
+
 func newIsolatedMigrationTestDatabase(
 	t *testing.T,
 	databaseURL string,

@@ -22,6 +22,7 @@ import (
 func TestMessagesProxyRequestLifecycle(t *testing.T) {
 	entered := make(chan string, 8)
 	release := make(chan struct{}, 8)
+	finishNonstream := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		mode := r.Header.Get("X-Lifecycle-Test")
@@ -34,6 +35,16 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 		if mode == "http_error" {
 			w.WriteHeader(400)
 			_, _ = io.WriteString(w, `{"type":"error"}`)
+			return
+		}
+		if mode == "nonstream_race" {
+			w.Header().Set("Request-Id", "provider-request")
+			_, _ = io.WriteString(w, `{"id":"msg_race","type":"message","usage":{"input_tokens":2,"output_tokens":3},"content":[{"type":"thinking","thinking":"work"},{"type":"text","text":"answer"}]}`)
+			w.(http.Flusher).Flush()
+			select {
+			case <-finishNonstream:
+			case <-r.Context().Done():
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -202,9 +213,10 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 				}
 			}
 			if mode == "success" {
-				postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"assistant","uuid":"late-answer","request_id":%q,"message":{"id":"msg_test","content":[{"type":"text","text":"done"}]} }},{"payload":{"type":"result","uuid":"turn-result","duration_api_ms":900000,"usage":{"output_tokens":9999}}}]}`, epoch, start.ExternalID))
+				postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"assistant","uuid":"late-answer","request_id":%q,"message":{"id":"msg_test","content":[{"type":"text","text":"done"},{"type":"server_tool_use","id":"srv_1","name":"web_search"},{"type":"web_search_tool_result","content":[{"type":"web_search_result","title":"found"}]}]} }},{"payload":{"type":"result","uuid":"turn-result","duration_api_ms":900000,"usage":{"output_tokens":9999}}}]}`, epoch, start.ExternalID))
 				history := listSessionEvents(t, app, codeSession.SessionExternalID, "order=asc&limit=100", defaultTestKey)
 				finals := 0
+				workerOnly := 0
 				for i, raw := range history.Data {
 					if sessionEventStringField(t, raw, "id") == end.ExternalID {
 						if i == 0 || sessionEventStringField(t, history.Data[i-1], "type") != "agent.message" || sessionEventStringField(t, history.Data[i-1], "model_request_start_id") != start.ExternalID {
@@ -213,6 +225,10 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 					}
 					if sessionEventStringField(t, raw, "type") == "agent.message" && sessionEventStringField(t, raw, "model_request_start_id") == start.ExternalID {
 						finals++
+						if strings.Contains(string(raw), "server_tool_use") || strings.Contains(string(raw), "web_search_tool_result") {
+							workerOnly++
+							continue
+						}
 						if id := sessionEventStringField(t, raw, "id"); id != maevents.StableAssistantEventID(codeSession.ExternalID, "msg_test", 1, "agent.message") {
 							t.Fatalf("final message id = %s, want original text block index 1", id)
 						}
@@ -221,8 +237,8 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 						}
 					}
 				}
-				if finals != 1 {
-					t.Fatalf("worker echo duplicated final message: %d", finals)
+				if finals != 3 || workerOnly != 2 {
+					t.Fatalf("worker echo messages = %d, unique worker blocks = %d; want 3 and 2: %s", finals, workerOnly, history.Data)
 				}
 				// The worker's late result must not fabricate another request.
 				events = requestLifecycleEvents(t, app, codeSession, (completed+1)*2)
@@ -233,6 +249,72 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 			completed++
 		})
 	}
+	t.Run("nonstream worker echo wins before proxy end", func(t *testing.T) {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, app.baseURL+"/v1/messages", strings.NewReader(`{"model":"`+messagesTestModel+`","messages":[]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("X-Api-Key", credential.Token)
+		request.Header.Set("X-Lifecycle-Test", "nonstream_race")
+		finished := make(chan string, 1)
+		go func() {
+			response, err := app.client.Do(request)
+			if err != nil {
+				finished <- ""
+				return
+			}
+			defer response.Body.Close()
+			var message json.RawMessage
+			if json.NewDecoder(response.Body).Decode(&message) != nil {
+				finished <- ""
+				return
+			}
+			finished <- response.Header.Get("Request-Id")
+		}()
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("request did not reach provider")
+		}
+		_ = requestLifecycleEvents(t, app, codeSession, completed*2+1)
+		release <- struct{}{}
+		var responseID string
+		select {
+		case responseID = <-finished:
+		case <-time.After(5 * time.Second):
+			t.Fatal("client did not receive non-streaming response")
+		}
+		start, err := app.db.GetSessionEvent(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, responseID)
+		if err != nil || start.EventType != "span.model_request_start" {
+			t.Fatalf("response ID = %q, start = %+v, error = %v", responseID, start, err)
+		}
+		postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%q,"events":[{"payload":{"type":"assistant","uuid":"race-answer","request_id":%q,"message":{"id":"msg_race","content":[{"type":"text","text":"answer"}]}}}]}`, epoch, start.ExternalID))
+		close(finishNonstream)
+		_ = requestLifecycleEvents(t, app, codeSession, completed*2+2)
+		history := listSessionEvents(t, app, codeSession.SessionExternalID, "order=asc&limit=100", defaultTestKey)
+		var textCount, thinkingCount int
+		for _, raw := range history.Data {
+			var event struct {
+				StartID string `json:"model_request_start_id"`
+			}
+			if err := json.Unmarshal(raw, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.StartID != start.ExternalID {
+				continue
+			}
+			switch sessionEventStringField(t, raw, "type") {
+			case "agent.message":
+				textCount++
+			case "agent.thinking":
+				thinkingCount++
+			}
+		}
+		if textCount != 1 || thinkingCount != 1 {
+			t.Fatalf("text=%d thinking=%d; want one of each", textCount, thinkingCount)
+		}
+	})
+	completed++
 	t.Run("concurrent child waits for its task mapping", func(t *testing.T) {
 		send := func(agentID, mode string) <-chan string {
 			done := make(chan string, 1)

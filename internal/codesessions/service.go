@@ -277,8 +277,7 @@ type preparedControlAction struct {
 }
 
 type preparedPublicAction struct {
-	payloads       []json.RawMessage
-	proxyRequestID string
+	payloads []json.RawMessage
 }
 
 func (preparedNoopAction) implPreparedWorkerOutputEvent()      {}
@@ -341,11 +340,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !ok {
 		return preparedNoopAction{}, nil
 	}
-	action := preparedPublicAction{payloads: publicPayloads}
-	if meta.EventType == "assistant" && meta.RequestID != nil {
-		action.proxyRequestID = strings.TrimSpace(*meta.RequestID)
-	}
-	return action, nil
+	return preparedPublicAction{payloads: publicPayloads}, nil
 }
 
 func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (preparedWorkerOutputEvent, error) {
@@ -386,47 +381,10 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 	case preparedControlAction:
 		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
 	case preparedPublicAction:
-		// Claude Code may omit thinking blocks from its final assistant echo,
-		// shifting block indexes away from the proxy's preview/final IDs.
-		if prepared.proxyRequestID != "" {
-			published, err := s.proxyPublishedAssistant(ctx, codeSessionID, prepared.proxyRequestID)
-			if err != nil {
-				return err
-			}
-			if published {
-				s.reconcileSubagentEvents(ctx, codeSessionID)
-				return nil
-			}
-		}
 		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	default:
 		return fmt.Errorf("unsupported non-stream worker output event %T", workerOutputEvent)
 	}
-}
-
-func (s *Service) proxyPublishedAssistant(ctx context.Context, codeSessionID, requestID string) (bool, error) {
-	if !strings.HasPrefix(requestID, "sevt_") {
-		return false, nil
-	}
-	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
-	if err != nil || !found {
-		return false, err
-	}
-	end, err := s.eventPayloads.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, requestID+"_end")
-	if errors.Is(err, db.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if end.EventType != "span.model_request_end" {
-		return false, nil
-	}
-	var result modelRequestEvent
-	if err := json.Unmarshal(end.Payload, &result); err != nil {
-		return false, err
-	}
-	return result.Error == nil && len(result.EventIDs) > 0, nil
 }
 
 func (s *Service) publishWorkerStreamPayload(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payload json.RawMessage) {

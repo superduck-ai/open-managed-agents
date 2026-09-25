@@ -434,8 +434,12 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 			delete(payload, "content")
 			delete(payload, "message")
 		}
-		if schema.Message.ID != "" && (eventType == "agent.message" || eventType == "agent.thinking") {
-			payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
+		if schema.Message.ID != "" {
+			if blockType == "text" || blockType == "redacted" || eventType == "agent.thinking" {
+				payload["id"] = maevents.StableAssistantEventID(codeSessionID, schema.Message.ID, contentBlockIndex, eventType)
+			} else {
+				payload["id"] = stablePublicEventID(codeSessionID, fmt.Sprintf("assistant-extra\x00%s\x00%d\x00%s\x00%s", schema.Message.ID, index, blockType, stringField(block, "id")))
+			}
 		}
 		candidates = append(candidates, publicPayloadCandidate{
 			payload:    payload,

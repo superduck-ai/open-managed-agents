@@ -203,7 +203,7 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
 `observation_limit`（观测超过上限，不代表模型本身失败，`is_error=false`），保留已观察到的 usage。非流式响应已完整观测后客户端才断开，不标记为 `cancelled`。进程被强制杀死的恢复不由请求内 defer 保证。
 
-代理先发布最终消息再发布 end；二者与预览使用原始 content block index 生成的事件 ID。Worker 后续上报的 assistant 如果关联到已经成功持久化、且包含输出事件 ID 的 model request end，属于同一次响应的 echo，不再二次发布。这样即使 Worker 的最终 content 省略了前面的 thinking block、缺少原始 block index，也不会生成另一条消息。若代理未完成观测或未成功持久化 end，仍使用 Worker 的 assistant 输出作为兜底。
+代理最终消息与 end 在同一批次写入；最终消息和预览使用原始 content block index 生成的事件 ID。Worker 的 assistant echo 可能省略 thinking，使文本块索引偏移；它也可能含有代理未发布的 server tool/result 等块。代理消息与 Worker echo 因此按同一 model request、内容块类型与文本摘要，在已有 Session 行锁事务中跨来源去重，先写入的一份保留，另一来源独有的块继续写入。Worker 独有块使用独立于预览索引的 ID，避免索引偏移误撞代理文本 ID。去重元数据仅在存储层使用，历史和 SSE 恢复为原公开 payload。非流式 Worker echo 即使先于代理 end 到达也遵循同一规则；代理失败时仍由 Worker 兜底。
 end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。`model_usage` 中未知的 token 字段保持缺失；中英文 OpenAPI 均将这些字段列为可选，避免把未知用量误报为零。
 `event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。`tool_use_ids` 是 provider 原始工具调用 ID（如 `toolu_...`），不是公开事件 ID，客户端不能用它直接关联 `agent.tool_use` 等公开事件。
 SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。

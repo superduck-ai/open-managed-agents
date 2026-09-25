@@ -1295,6 +1295,9 @@ function sessionStreamPreviewIdForFinalEvent(
   ) {
     return null;
   }
+  if (cache.events.some((event) => sessionStableEventId(event) === incomingId)) {
+    return null;
+  }
 
   const candidates = cache.events.filter((event) => {
     const id = sessionStableEventId(event);

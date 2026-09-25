@@ -29,6 +29,7 @@ describe('managed agents API', () => {
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
     const eventId = 'sevt_answer';
+    const otherId = 'sevt_other';
     const createdAt = '2026-08-26T13:13:00Z';
 
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
@@ -44,6 +45,10 @@ describe('managed agents API', () => {
     expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])[eventId]?.message.content).toEqual([
       { type: 'text', text: 'Part' },
     ]);
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: otherId, type: 'agent.message' },
+    });
 
     const final = {
       id: eventId,
@@ -54,16 +59,23 @@ describe('managed agents API', () => {
     };
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', final);
 
-    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])).toEqual([final]);
-    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+      otherId,
+    ]);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
 
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       type: 'event_start',
       created_at: createdAt,
       event: { id: eventId, type: 'agent.message' },
     });
-    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])).toEqual([final]);
-    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+      otherId,
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
   });
 
   test('history sync replaces a same-ID preview after reconnecting', async () => {
@@ -71,6 +83,7 @@ describe('managed agents API', () => {
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
     const eventId = 'sevt_answer';
+    const otherId = 'sevt_other';
     const final = {
       id: eventId,
       type: 'agent.message',
@@ -87,12 +100,20 @@ describe('managed agents API', () => {
       event_id: eventId,
       delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'Part' } },
     });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: otherId, type: 'agent.message' },
+    });
     globalThis.fetch = async () => new Response(JSON.stringify({ data: [final], next_page: null }));
 
     await syncSessionEventHistory({ queryClient, workspaceId, sessionId, force: true });
 
-    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])).toEqual([final]);
-    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+      otherId,
+    ]);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
   });
 
   test('replaces an orphaned stream preview as soon as the final agent message arrives', () => {

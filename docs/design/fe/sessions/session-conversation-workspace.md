@@ -25,6 +25,7 @@ Viewer 包含两个区域：
 
 ## 转录与对齐
 
+- 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。
 - Transcript 内容列、待处理 Action Card 和消息输入框共享最大 `720px` 的居中内容轨道。
 - 三者在窄容器中使用相同的 `16px` 水平留白；滚动条采用覆盖式自动隐藏样式，不允许通过 Composer 或 Action Card 的伪滚动容器预留 gutter。左右边界必须逐像素一致。
 - 转录先按未过滤的事件流建立 speaker turn，再按 model request bracket 建立 iteration，最后应用搜索；搜索不得把原本由 User、idle、queued、outcome、status 或 speaker 变化分开的 turn 重新合并。

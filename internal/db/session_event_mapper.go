@@ -65,6 +65,7 @@ type SessionEventMapper interface {
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)
+	FindAssistantEchoKeys(ctx context.Context, workspaceUUID, sessionExternalID, requestID, source string) ([]string, error)
 	ListPage(ctx context.Context, params sessionEventPageMapperParams) ([]sessionEventRow, error)
 	ChildSessionToolUseIDs(ctx context.Context, workspaceUUID, sessionExternalID string, eventTypes, toolUseIDs []string) ([]string, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)

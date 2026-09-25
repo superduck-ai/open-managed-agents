@@ -69,6 +69,23 @@ func TestResponseObservationNonStreaming(t *testing.T) {
 	}
 }
 
+func TestResponseObservationRetainsUsageWhenClientWriteFails(t *testing.T) {
+	observation := &responseObservation{request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+	body := `{"id":"msg_json","type":"message","usage":{"input_tokens":2,"output_tokens":3},"content":[{"type":"text","text":"answer"}]}`
+	reader, writer := io.Pipe()
+	_ = reader.Close()
+	defer writer.Close()
+	_, err := io.Copy(writer, io.TeeReader(strings.NewReader(body), observation))
+	if err == nil {
+		t.Fatal("client write unexpectedly succeeded")
+	}
+	observation.result.ErrorType = "stream_error"
+	observation.finish()
+	if !observation.complete || observation.result.ErrorType != "stream_error" || *observation.result.Usage.InputTokens != 2 || *observation.result.Usage.OutputTokens != 3 {
+		t.Fatalf("result = %+v", observation.result)
+	}
+}
+
 func TestResponseObservationClosesAtMessageStopBeforeEOF(t *testing.T) {
 	observation := &responseObservation{streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
 	ended := false

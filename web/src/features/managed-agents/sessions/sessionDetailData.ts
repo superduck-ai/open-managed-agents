@@ -3,7 +3,6 @@ import {
   mergeSessionStreamFrame,
   reconcileIncompleteSessionStreamEvents,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
-  SESSION_DETAIL_STREAM_FALLBACK_LIMIT,
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
   sessionEventHistoryShouldSkipStream,
@@ -96,15 +95,17 @@ export function useSessionDetailEventData({
     setChildLoading(childThreadIds.length > 0);
     setError(null);
     void (async () => {
-      try {
-        await syncScope('');
-      } catch (syncError) {
-        if (!controller.signal.aborted && active) {
-          setError(errorMessage(syncError));
-        }
-      } finally {
-        if (active) {
-          setLoading(false);
+      if (!live) {
+        try {
+          await syncScope('');
+        } catch (syncError) {
+          if (!controller.signal.aborted && active) {
+            setError(errorMessage(syncError));
+          }
+        } finally {
+          if (active) {
+            setLoading(false);
+          }
         }
       }
 
@@ -125,7 +126,7 @@ export function useSessionDetailEventData({
       active = false;
       controller.abort();
     };
-  }, [bump, childThreadIds, queryClient, refreshKey, sessionId, workspaceId]);
+  }, [bump, childThreadIds, live, queryClient, refreshKey, sessionId, workspaceId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -170,7 +171,10 @@ export function useSessionDetailEventData({
       workspaceId,
       threadId: '',
       signal: controller.signal,
-      onCacheChange: bump,
+      onCacheChange: () => {
+        setLoading(false);
+        bump();
+      },
       onPrimaryEvent,
     }).catch(() => undefined);
     return () => {
@@ -240,11 +244,7 @@ export async function runSessionEventStreamLoop({
   onCacheChange: () => void;
   onPrimaryEvent?: (event: QuickstartSessionEvent) => void;
 }) {
-  let consecutiveFailures = 0;
-  let everConnected = false;
-  let fallbackCount = 0;
   let backoff = 0;
-  let historySynced = false;
   let idleReconciliationTimer: number | null = null;
   const cancelIdleReconciliation = () => {
     if (idleReconciliationTimer !== null) {
@@ -267,48 +267,32 @@ export async function runSessionEventStreamLoop({
     }, SESSION_IDLE_RECONCILIATION_GRACE_MS);
   };
   while (!signal.aborted) {
-    const isFallback =
-      !everConnected && fallbackCount < SESSION_DETAIL_STREAM_FALLBACK_LIMIT && consecutiveFailures >= 3;
-    if (isFallback) {
-      fallbackCount += 1;
-      await sleepWithAbort(Math.max(3000, backoff), signal);
-      await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal, force: true });
-      onCacheChange();
-      consecutiveFailures = 0;
-    }
     try {
-      if (!historySynced) {
-        // Force a tail sync before subscribing: the stream is live-only, so events
-        // broadcast between a send/interrupt and this subscribe (e.g. a fast agent
-        // reply) would otherwise be lost for good. Merge dedups by event id.
-        const historyCache = await syncSessionEventHistory({
-          queryClient,
-          sessionId,
-          workspaceId,
-          threadId,
-          signal,
-          force: true,
-        });
-        onCacheChange();
-        historySynced = true;
-        if (
-          sessionEventHistoryShouldSkipStream(historyCache.events, threadId) ||
-          (threadId && sessionPrimaryHistoryShouldSkipStream(queryClient, workspaceId, sessionId))
-        ) {
-          return;
-        }
-      }
+      let completed = false;
       await streamSessionEvents({
         sessionId,
         threadId: threadId || undefined,
         workspaceId,
         signal,
-        onOpen: () => {
-          everConnected = true;
-          consecutiveFailures = 0;
-          backoff = 0;
+        onOpen: async () => {
+          // The stream is subscribed before history is listed. Its response
+          // buffers live frames until the history pages have been merged.
+          const historyCache = await syncSessionEventHistory({
+            queryClient,
+            sessionId,
+            workspaceId,
+            threadId,
+            signal,
+            force: true,
+          });
+          onCacheChange();
+          completed =
+            sessionEventHistoryShouldSkipStream(historyCache.events, threadId) ||
+            Boolean(threadId && sessionPrimaryHistoryShouldSkipStream(queryClient, workspaceId, sessionId));
+          return !completed;
         },
         onEvent: (event) => {
+          backoff = 0;
           mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, event);
           const incompletePreviewIds = sessionIncompleteStreamEventIds(queryClient, workspaceId, sessionId, threadId);
           if (sessionEventType(event).endsWith('status_idle') && incompletePreviewIds.size) {
@@ -322,10 +306,10 @@ export async function runSessionEventStreamLoop({
           onCacheChange();
         },
       });
-      everConnected = true;
-      consecutiveFailures = 0;
-      backoff = 0;
-      return;
+      if (completed || signal.aborted) {
+        return;
+      }
+      throw new Error('Session event stream closed');
     } catch (streamError) {
       cancelIdleReconciliation();
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
@@ -333,12 +317,8 @@ export async function runSessionEventStreamLoop({
       if (signal.aborted || sessionStreamShouldStop(streamError)) {
         return;
       }
-      consecutiveFailures += 1;
       backoff = sessionStreamBackoff(streamError, backoff);
       await sleepWithAbort(Math.max(1000, backoff), signal).catch(() => undefined);
-    }
-    if (fallbackCount >= SESSION_DETAIL_STREAM_FALLBACK_LIMIT) {
-      fallbackCount = 0;
     }
   }
 }

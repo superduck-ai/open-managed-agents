@@ -15,7 +15,7 @@
         thread_external_id,
         event_type,
         payload, payload_blob_uuid, tool_use_id,
-        processed_at,
+        processed_at, delivery_seq,
         created_at,
         deleted_at
     </sql>
@@ -23,14 +23,16 @@
     <sql id="insertColumns">
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, thread_uuid, thread_external_id, event_type,
-        payload, payload_blob_uuid, tool_use_id, processed_at, created_at
+        payload, payload_blob_uuid, tool_use_id, processed_at, delivery_seq, created_at
     </sql>
 
     <sql id="insertValues">
         #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
         #{params.SessionUUID}, #{params.SessionExternalID}, #{params.ThreadUUID},
         #{params.ThreadExternalID}, #{params.EventType}, CAST(#{params.Payload,sensitive=true} AS jsonb), #{params.PayloadBlobUUID}, #{params.ToolUseID},
-        #{params.ProcessedAt}, #{params.CreatedAt}
+        #{params.ProcessedAt},
+        <choose><when test="params.ProcessedAt != nil">nextval('session_event_delivery_seq')</when><otherwise>NULL</otherwise></choose>,
+        #{params.CreatedAt}
     </sql>
 
     <insert id="Insert" result="returning" resultType="sessionEventRow">
@@ -139,9 +141,46 @@
         LIMIT #{params.FetchLimit}
     </select>
 
+    <sql id="streamScope">
+        workspace_uuid = #{params.WorkspaceUUID}
+        AND session_external_id = #{params.SessionExternalID}
+        AND deleted_at IS NULL AND delivery_seq IS NOT NULL
+        <if test="params.ThreadExternalID != ''">
+            AND thread_external_id = #{params.ThreadExternalID}
+        </if>
+        <if test="params.ThreadExternalID == '' &amp;&amp; params.PrimaryOnly">
+            AND thread_external_id = (
+                SELECT external_id FROM session_threads
+                WHERE workspace_uuid = #{params.WorkspaceUUID}
+                AND session_external_id = #{params.SessionExternalID}
+                AND parent_thread_uuid IS NULL AND deleted_at IS NULL
+                ORDER BY created_at ASC, uuid ASC LIMIT 1
+            )
+        </if>
+    </sql>
+
+    <select id="FindStreamPosition" result="optional" resultType="int64">
+        SELECT delivery_seq FROM session_events
+        WHERE <include refid="streamScope"/>
+          AND external_id = #{params.EventExternalID}
+    </select>
+
+    <select id="LatestStreamPosition" result="scalar" resultType="int64">
+        SELECT COALESCE(MAX(delivery_seq), 0) FROM session_events
+        WHERE <include refid="streamScope"/>
+    </select>
+
+    <select id="ListStreamPage" resultType="sessionEventRow">
+        SELECT <include refid="columns"/> FROM session_events
+        WHERE <include refid="streamScope"/>
+          AND delivery_seq &gt; #{params.AfterSeq}
+        ORDER BY delivery_seq ASC
+        LIMIT #{params.FetchLimit}
+    </select>
+
     <select id="MarkProcessed" result="optional" resultType="sessionEventRow">
         WITH changed AS (
-            UPDATE session_events SET processed_at = #{processedAt}
+            UPDATE session_events SET processed_at = #{processedAt}, delivery_seq = nextval('session_event_delivery_seq')
             WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionID}
             AND external_id = #{eventID} AND processed_at IS NULL AND deleted_at IS NULL
             RETURNING <include refid="columns"/>

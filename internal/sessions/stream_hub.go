@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 
 	"github.com/go-chi/chi/v5"
@@ -260,6 +261,27 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		h.errorAdapter.Write(w, r, streamingUnsupported())
 		return
 	}
+	scope := db.SessionEventStreamParams{
+		WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: sessionID,
+		ThreadExternalID: threadID, PrimaryOnly: threadID == "",
+	}
+	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	if len(lastEventID) > 256 {
+		h.errorAdapter.Write(w, r, invalidRequest(errors.New("Last-Event-ID is invalid; reconnect without it")))
+		return
+	}
+	position, err := h.db.SessionEventStreamPosition(r.Context(), scope, lastEventID)
+	if errors.Is(err, db.ErrInvalidCursor) {
+		h.errorAdapter.Write(w, r, invalidRequest(errors.New("Last-Event-ID is invalid; reconnect without it")))
+		return
+	}
+	if err != nil {
+		h.errorAdapter.Write(w, r, internalError("Could not locate session event stream cursor", err))
+		return
+	}
+	// Capture the database waterline before subscribing. Events committed in the
+	// gap are recovered by the first catch-up query, and queued notifications
+	// after subscription can safely trigger the same query again.
 	subID, ch := h.streams.subscribe(session.WorkspaceUUID, sessionID)
 	if err := h.eventBus.Subscribe(r.Context(), session.ExternalID); err != nil {
 		h.streams.unsubscribe(subID)
@@ -278,6 +300,18 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 	w.Header().Set("Connection", "keep-alive")
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
+	catchUp := func() bool {
+		if err := h.catchUpSessionStream(r, w, flusher, connection, scope, subscribeThreadID, &position); err != nil {
+			if r.Context().Err() == nil {
+				h.logger.ErrorContext(r.Context(), "replay session event stream", "session_id", sessionID, "error", err)
+			}
+			return false
+		}
+		return true
+	}
+	if !catchUp() {
+		return
+	}
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -285,17 +319,51 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
+			if !catchUp() {
+				return
+			}
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		case delivery, ok := <-ch:
 			if !ok {
 				return
 			}
+			if persisted, ok := delivery.(sessionEventDelivery); ok && resumableSessionEvent(persisted.event.EventType) {
+				if !catchUp() {
+					return
+				}
+				continue
+			}
 			event, accepted := connection.event(delivery)
 			if accepted {
 				writeSSE(w, event, subscribeThreadID)
 				flusher.Flush()
 			}
+		}
+	}
+}
+
+func (h *Handler) catchUpSessionStream(r *http.Request, w http.ResponseWriter, flusher http.Flusher, connection *streamConnection, scope db.SessionEventStreamParams, threadID string, position *int64) error {
+	const pageSize = 200
+	for {
+		page, err := h.db.ListSessionStreamEventsPage(r.Context(), scope, *position, pageSize)
+		if err != nil {
+			return err
+		}
+		page, err = h.eventPayloads.RestorePublicPage(r.Context(), page)
+		if err != nil {
+			return err
+		}
+		for _, record := range page {
+			*position = record.DeliverySeq
+			event := sessionStreamEventFrom(record)
+			if connection.accepts(event) {
+				writeSSE(w, event, threadID)
+				flusher.Flush()
+			}
+		}
+		if len(page) < pageSize {
+			return nil
 		}
 	}
 }
@@ -318,12 +386,19 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 }
 
 func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
+	if resumableSessionEvent(event.EventType) {
+		fmt.Fprintf(w, "id: %s\n", event.ExternalID)
+	}
 	fmt.Fprintf(w, "event: %s\n", event.EventType)
 	if maevents.IsStreamDelta(event.EventType) {
 		fmt.Fprintf(w, "data: %s\n\n", event.Payload)
 		return
 	}
 	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID))
+}
+
+func resumableSessionEvent(eventType string) bool {
+	return maevents.IsPublicSessionHistoryEvent(eventType) && eventType != "session.deleted"
 }
 
 func streamPreviewTarget(event sessionStreamEvent) (string, string) {

@@ -8,7 +8,7 @@
 - 收到的每条 Worker raw stream event 在每个 API 实例转换一次，session Hub 只投递转换后的事件；每条 SSE 连接只负责线程、事件类型和 preview 生命周期过滤。
 - `ephemeral: true` 的 `stream_event` 只经过消息总线，不持久化到 PostgreSQL 或 JetStream。
 - Worker ingress JWT 中已验证的 `session_id`、`public_session_id` 和 `workspace_uuid` 直接组成 stream route；生产端不为每批 preview 重新查询 code session、public session 或 primary thread。
-- 最终公开事件仍幂等写入现有 `session_events`，事务提交后再通过对应 session subject 通知已订阅实例。
+- 最终公开事件仍幂等写入现有 `session_events`，事务提交后再通过对应 session subject 通知已订阅实例。SSE 以通知触发数据库补拉，持久化事件只从数据库按投递顺序发送。
 - 消息总线中断时允许丢失预览；最终事件仍可通过 Sessions Events API 获取。
 - 消息总线只传递事件，不保存 message、block 或 SSE 连接的关联状态。
 
@@ -33,8 +33,10 @@ sequenceDiagram
     B-->>C: event_start / event_delta
     A->>DB: append final agent.message + span.model_request_end
     A->>R: PUB oma.s.session_id persisted event
-    R-->>B: session fanout
-    B-->>C: agent.message / agent.thinking
+    R-->>B: persisted-event notification
+    B->>DB: list events after delivery_seq
+    DB-->>B: committed events in order
+    B-->>C: id + agent.message / agent.thinking
     A-->>W: completed model response
     W->>A: final assistant echo
     A->>DB: read completed request; skip echo
@@ -78,7 +80,9 @@ id = "sevt_" + first_16_bytes_hex(
 
 `event_deltas[]` 只接受 `agent.message` 和 `agent.thinking`，超过 100 个值或包含其他值返回 `400`。每个订阅者只接收自己已经见过 `event_start` 的后续 delta，避免中途连接收到孤立 delta。
 
-建立 SSE 时先注册本机 subscriber，再订阅 session。NATS 通过 `FlushWithContext` 等待服务端处理 SUB，确认成功后才向客户端发送 `: connected`。确认任务最多运行 5 秒并受 fanout 生命周期约束；单个请求取消会停止自身等待，但不会取消同 subject 的共享确认。多个 SSE 连接订阅同一 session 时复用同一个 broker 订阅、确认结果和实例级 preview converter。NATS subject 的 session ID 只允许字母、数字、下划线和连字符，拒绝通配符、点号和空白；subject 路由不能替代 API 鉴权与 Hub workspace 匹配。
+建立 SSE 时先读取数据库水位或解析 `Last-Event-ID`，再注册本机 subscriber、订阅 session。NATS 通过 `FlushWithContext` 等待服务端处理 SUB，确认成功后才向客户端发送 `: connected`；开流后立即补拉水位之后的事件，覆盖读取水位与订阅完成之间的窗口。确认任务最多运行 5 秒并受 fanout 生命周期约束；单个请求取消会停止自身等待，但不会取消同 subject 的共享确认。多个 SSE 连接订阅同一 session 时复用同一个 broker 订阅、确认结果和实例级 preview converter。NATS subject 的 session ID 只允许字母、数字、下划线和连字符，拒绝通配符、点号和空白；subject 路由不能替代 API 鉴权与 Hub workspace 匹配。
+
+已处理的持久化事件在 SSE 帧写出 `id: <event.id>`；`event_start`/`event_delta` 和删除时临时扇出的 `session.deleted` 不写 SSE `id:`，也不进入历史。`Last-Event-ID` 必须是当前 workspace、session 和线程范围内仍存在的已处理事件 ID；未知、已删除或其他线程的 ID 返回 `400`，客户端应清除游标并通过历史 API 恢复。没有游标时从请求开始时的数据库水位接实时流，不回放已有历史。带游标时按内部 `delivery_seq` 分页回放其后的持久化事件，再接实时通知；通知可能乱序或丢失，因此每次通知和 15 秒 keepalive 都查询数据库。单个 session 的所有事件写入和待处理输入确认都持有同一事务级 Session 行锁，所以该序号在同一 session 内按提交顺序递增。迁移对既有已处理事件按旧 identity 回填序号；迁移前没有可用的 SSE 游标。
 
 实例维护 `subject → subscription state` registry，只用于让同一进程内订阅同一 session 的 SSE 连接复用一个 NATS subscription、首次确认结果和引用计数。registry mutex 只保护 map、引用计数和 ready/result 等内存状态；`FlushWithContext`、publish、handler、reset callback 和 subscription unsubscribe 均不在锁内执行。第一个订阅者启动确认，其他并发订阅者等待同一个 ready 结果。
 
@@ -106,7 +110,7 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 - 后端可以先发布：旧 Worker 的 ephemeral stream 不影响持久化合同；包含 `message.id` 的最终 assistant 会使用新的稳定 ID。
 - 不需要 migration、outbox、Redis Streams 或新的 Yourbatis Mapper。
 
-本版不增加 SSE `id:`/`Last-Event-ID` 回放，也不解决数据库提交后发布前的崩溃窗口。最终事件的可靠恢复依赖客户端通过历史 API 补拉；需要可靠通知时再引入事务 outbox。启用 JetStream 只是基础设施就绪，不会自动持久化 Core NATS 消息。
+数据库提交后发布前的崩溃窗口由客户端重连补历史和服务端 keepalive 补拉覆盖；预览仍是尽力发送，不回放。启用 JetStream 只是基础设施就绪，不会自动持久化 Core NATS 消息。
 
 ## 验收
 

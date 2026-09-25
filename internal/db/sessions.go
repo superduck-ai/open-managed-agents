@@ -116,8 +116,16 @@ type SessionEvent struct {
 	EventType         string
 	Payload           json.RawMessage
 	ProcessedAt       time.Time
+	DeliverySeq       int64
 	CreatedAt         time.Time
 	DeletedAt         *time.Time
+}
+
+type SessionEventStreamParams struct {
+	WorkspaceUUID     string
+	SessionExternalID string
+	ThreadExternalID  string
+	PrimaryOnly       bool
 }
 
 // SessionUsageIncrement contains measured counters; nil means unavailable.
@@ -650,6 +658,38 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 		events = events[:params.Limit]
 	}
 	return events, hasMore, nil
+}
+
+func (d *DB) SessionEventStreamPosition(ctx context.Context, scope SessionEventStreamParams, eventID string) (int64, error) {
+	params := sessionEventStreamMapperParams{
+		WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionExternalID,
+		ThreadExternalID: scope.ThreadExternalID, PrimaryOnly: scope.PrimaryOnly,
+		EventExternalID: eventID,
+	}
+	mapper := NewSessionEventMapper(d.mapperDB)
+	if eventID == "" {
+		return mapper.LatestStreamPosition(ctx, params)
+	}
+	position, found, err := mapper.FindStreamPosition(ctx, params)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, ErrInvalidCursor
+	}
+	return position, nil
+}
+
+func (d *DB) ListSessionStreamEventsPage(ctx context.Context, scope SessionEventStreamParams, afterSeq int64, limit int) ([]SessionEvent, error) {
+	rows, err := NewSessionEventMapper(d.mapperDB).ListStreamPage(ctx, sessionEventStreamMapperParams{
+		WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionExternalID,
+		ThreadExternalID: scope.ThreadExternalID, PrimaryOnly: scope.PrimaryOnly,
+		AfterSeq: afterSeq, FetchLimit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sessionEventsFromRows(rows), nil
 }
 
 func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceUUID string, sessionExternalID string, toolUseIDs []string) (map[string]struct{}, error) {

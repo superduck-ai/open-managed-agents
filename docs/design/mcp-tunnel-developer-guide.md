@@ -617,7 +617,7 @@ MCP payload、tool argument、response 及被转发的 Authorization 会经过 O
 | 全局存储或通知预算超限                              | 429                  | Broker 背压                           |
 | 没有在线 Connector | 等待至 deadline，超时 504 | Connector 可在期限内上线领取 |
 | NATS / JetStream 不可用                                      | 503                  | 不回退到进程内队列                    |
-| 统一 deadline 到期                                           | 504                  | 请求已被 cancel/expired，迟到响应无效 |
+| 统一 deadline 到期                                           | 504                  | 释放原 OMA 本地等待者，不写共享取消状态；迟到响应不能完成本次请求 |
 
 `/healthz` 只表示 OMA 进程存活；`/readyz` 同时检查 PostgreSQL、Tunnel NATS（`tunnel_nats`）和领取绑定 Redis（`tunnel_redis`）；Console presence 只说明近期
 有 poll。要证明 Tunnel 可用，应至少执行 Console probe 或真实 `initialize` + `tools/list`。要证明 Managed
@@ -675,7 +675,7 @@ OMA 主要代码：
 1. 所有资源读写都同时绑定 organization、workspace 和 Tunnel；
 2. workspace key、Tunnel token、SessionIngressToken、Private MCP 凭据不可互换；
 3. response subscription 必须先于 enqueue；
-4. Poll 只在入口鉴权一次，terminal/cancel 必须竞争同一请求 revision；
+4. Poll 只在入口鉴权一次；领取绑定通过 Redis `SET NX PX` 一次性创建且不可覆盖，同一请求最多由原 OMA 接受一个最终响应；
 5. dispatched 请求不能自动重投；
 6. Response 按 requestId 找记录，核对 Tunnel ID、token 哈希、shard=requestId、channel、类型；原 OMA 校验 deadline；
 7. rotate 拒绝旧 token 发起新 Poll，已经授权的 Poll 和已领取请求继续按原期限执行；

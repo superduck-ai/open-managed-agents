@@ -118,7 +118,7 @@ Private MCP 凭据写入 shell history、日志或文档。
 - MCP HTTP 调用方断开后，已入队命令仍可在 deadline 前被领取；响应因无人等待返回 404。队列过期命令不能执行。
 - 原请求在 OMA A、Poll 在 B、Response 在 C：通知和最终结果回到 A，Redis 仅保存不可变领取绑定，结果交付不修改记录、不续期。
 - 并发重复最终响应不覆盖或重复交付，A 本地标记到期后返回 404；A 退出后旧 Origin 不可达返回 503，不从 KV 恢复结果。
-- 本次不验收新的大响应方案；只验证已取消 Poll 累计大小截断，其他既有单消息和 Response 阈值留待下一轮。
+- 确认 Poll 不再按累计大小截断；超过 NATS 上限的正文按下文[超过 NATS 上限的正文验收](#超过-nats-上限的正文验收)执行。
 
 ## 8. 可选的破坏性重置
 
@@ -235,7 +235,7 @@ go test ./internal/tunnels -run '^TestConnector' -count=1 -v
   - `TestCodeSessionAskUserQuestionUsesCustomToolResult` 缺少 `session.status_idle`。在未修改的基线 `ca41d7afd7f627059866e6b2f360386f7a84115b` 临时源码副本中，单项和完整 `tests` package 均复现。
   - `TestSandboxLifecycleDurableScheduleDispatchesReclaim` 等待 15 秒未收到回收事件。本轮全量运行失败，但修改前后单项运行均通过，基线完整 `tests` package 也通过该项；原因尚未确认，不将单项通过等同于全量通过，也不据此宣称已排除回归。
 - 基线完整 `tests` package 另出现 `TestTranscriptArchiveRestoreAfterBlobGC` 清理计数失败；最终变更代码的全新库运行通过该项。保留测试隔离与时序问题的排查范围，不修改无关模块。
-- 已复核投递、鉴权绑定、期限、重复响应与缓冲释放边界；Response 大小方案仍留待下一项讨论。本轮不提交、推送或部署。MCP Tunnel 尚未正式上线，直接调整实现并沿用原有 NATS 资源名称，无旧资源迁移或退役要求。
+- 已复核投递、鉴权绑定、期限、重复响应与缓冲释放边界；当时尚未实现 Response 大正文方案，后续实现与验证见下文[超过 NATS 上限的正文验收](#超过-nats-上限的正文验收)。本轮不提交、推送或部署。MCP Tunnel 尚未正式上线，直接调整实现并沿用原有 NATS 资源名称，无旧资源迁移或退役要求。
 
 ## 超过 NATS 上限的正文验收
 

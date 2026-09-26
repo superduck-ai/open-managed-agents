@@ -12,10 +12,7 @@ import (
 	"time"
 )
 
-const (
-	DefaultAPIKey            = "sk-ant-local-default"
-	MaxTunnelPendingRequests = 512
-)
+const DefaultAPIKey = "sk-ant-local-default"
 
 func Load() (Config, error) {
 	configPath, found, err := findConfigFile()
@@ -369,9 +366,6 @@ func validatePositiveValues(cfg Config) error {
 		{name: "tunnel.request_timeout", valid: cfg.Tunnel.RequestTimeout >= time.Second && cfg.Tunnel.RequestTimeout <= 10*time.Minute},
 		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
 		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
-		{name: "tunnel.max_pending_requests", valid: cfg.Tunnel.MaxPendingRequests > 0 && cfg.Tunnel.MaxPendingRequests <= MaxTunnelPendingRequests},
-		{name: "tunnel.max_stored_requests", valid: cfg.Tunnel.MaxStoredRequests >= cfg.Tunnel.MaxPendingRequests && cfg.Tunnel.MaxStoredRequests <= 65536},
-		{name: "tunnel.max_pending_bytes", valid: cfg.Tunnel.MaxPendingBytes > 0},
 		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
 		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
 		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},
@@ -395,9 +389,6 @@ func validatePositiveValues(cfg Config) error {
 	}
 	for _, check := range checks {
 		if !check.valid {
-			if check.name == "tunnel.max_pending_requests" {
-				return fmt.Errorf("%s must be between 1 and %d", check.name, MaxTunnelPendingRequests)
-			}
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
 	}

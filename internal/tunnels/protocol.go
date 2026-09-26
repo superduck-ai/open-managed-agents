@@ -30,9 +30,7 @@ const (
 )
 
 type ChannelDeclaration struct {
-	Name            string `json:"name"`
-	ProcessAffinity bool   `json:"proc_affinity,omitempty"`
-	Stateless       bool   `json:"stateless,omitempty"`
+	Name string `json:"name"`
 }
 
 type mcpServerInfo struct {
@@ -47,23 +45,21 @@ type channelDeclarationInput struct {
 }
 
 type queuedCommand struct {
-	RequestID      string          `json:"request_id"`
-	CommandType    CommandType     `json:"command_type"`
-	Channel        string          `json:"channel"`
-	CreatedAt      time.Time       `json:"created_at"`
-	Headers        http.Header     `json:"headers"`
-	JSONRPC        json.RawMessage `json:"jsonrpc,omitempty"`
-	ExpiresAt      time.Time       `json:"expires_at"`
-	PayloadSize    int64           `json:"payload_size"`
-	TargetInstance string          `json:"target_instance,omitempty"`
-	SessionID      string          `json:"session_id,omitempty"`
-	StartsSession  bool            `json:"starts_session,omitempty"`
-	LocalClose     bool            `json:"local_close,omitempty"`
+	Scope       payloadScope      `json:"scope"`
+	PayloadRef  *payloadReference `json:"payload_ref,omitempty"`
+	TunnelID    string            `json:"tunnel_id"`
+	Origin      string            `json:"origin"`
+	RequestID   string            `json:"request_id"`
+	CommandType CommandType       `json:"command_type"`
+	Channel     string            `json:"channel"`
+	CreatedAt   time.Time         `json:"created_at"`
+	Headers     http.Header       `json:"headers"`
+	JSONRPC     json.RawMessage   `json:"jsonrpc,omitempty"`
+	ExpiresAt   time.Time         `json:"expires_at"`
 }
 
 type ClaimedCommand struct {
 	RequestID       string
-	ShardToken      string
 	CommandType     CommandType
 	Channel         string
 	CreatedAt       time.Time
@@ -127,7 +123,7 @@ func ParseMCPServerInfo(raw string) ([]ChannelDeclaration, error) {
 			return nil, fmt.Errorf("duplicate tunnel channel %q", channel.Name)
 		}
 		seen[channel.Name] = struct{}{}
-		channels = append(channels, ChannelDeclaration{Name: channel.Name, ProcessAffinity: channel.ProcessAffinity, Stateless: string(channel.Stateless) == "true"})
+		channels = append(channels, ChannelDeclaration{Name: channel.Name})
 	}
 	return channels, nil
 }
@@ -144,12 +140,12 @@ func (command ClaimedCommand) MarshalWireJSON() (json.RawMessage, error) {
 		ResponseTimeout *string         `json:"response_timeout,omitempty"`
 		JSONRPC         json.RawMessage `json:"jsonrpc,omitempty"`
 	}{
-		RequestID: command.RequestID, ShardToken: command.ShardToken,
+		RequestID: command.RequestID, ShardToken: command.RequestID,
 		CommandType: command.CommandType, Channel: command.Channel,
 		CreatedAt: command.CreatedAt, Headers: command.Headers,
 		ResponseTimeout: &timeout, JSONRPC: command.JSONRPC,
 	}
-	data, err := encodeTunnelJSON(value, maxBrokerValueBytes)
+	data, err := encodeTunnelJSON(value, 0)
 	if err != nil {
 		return nil, fmt.Errorf("encode polled tunnel command: %w", err)
 	}

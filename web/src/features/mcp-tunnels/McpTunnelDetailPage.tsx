@@ -377,7 +377,6 @@ export function McpTunnelDetailContent({
               <TableHeader>
                 <TableRow>
                   <TableHead>{msg('mcpTunnels.probe.channel', 'Channel')}</TableHead>
-                  <TableHead>{msg('mcpTunnels.detail.processAffinity', 'Process affinity')}</TableHead>
                   <TableHead>{msg('mcpTunnels.column.instances', 'Instances')}</TableHead>
                   <TableHead>{msg('mcpTunnels.column.mcpUrl', 'MCP URL')}</TableHead>
                   <TableHead className="w-[110px] text-right">{msg('common.actions', 'Actions')}</TableHead>
@@ -390,9 +389,6 @@ export function McpTunnelDetailContent({
                     <TableRow key={channel.name}>
                       <TableCell>
                         <code>{channel.name}</code>
-                      </TableCell>
-                      <TableCell>
-                        {channel.process_affinity ? msg('common.yes', 'Yes') : msg('common.no', 'No')}
                       </TableCell>
                       <TableCell>{channel.instance_count}</TableCell>
                       <TableCell>

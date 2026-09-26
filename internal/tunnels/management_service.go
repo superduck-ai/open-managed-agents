@@ -19,32 +19,29 @@ import (
 )
 
 const (
-	tokenVersionRestoreTimeout = 5 * time.Second
-	tokenTransitionTimeout     = 10 * time.Second
+	tokenTransitionTimeout = 10 * time.Second
 )
 
 type Service struct {
-	cfg         config.TunnelConfig
-	db          *db.DB
-	secretSvc   *secrets.Service
-	now         func() time.Time
-	random      io.Reader
-	broker      *Broker
-	cleanupJobs *CleanupJobs
+	cfg       config.TunnelConfig
+	db        *db.DB
+	secretSvc *secrets.Service
+	now       func() time.Time
+	random    io.Reader
+	broker    *Broker
 }
 
-func NewService(cfg config.TunnelConfig, database *db.DB, secretSvc *secrets.Service, broker *Broker, cleanupJobs *CleanupJobs) *Service {
+func NewService(cfg config.TunnelConfig, database *db.DB, secretSvc *secrets.Service, broker *Broker) *Service {
 	if database == nil {
 		panic("tunnels: database is required")
 	}
 	return &Service{
-		cfg:         cfg,
-		db:          database,
-		secretSvc:   secretSvc,
-		broker:      broker,
-		cleanupJobs: cleanupJobs,
-		now:         func() time.Time { return time.Now().UTC() },
-		random:      rand.Reader,
+		cfg:       cfg,
+		db:        database,
+		secretSvc: secretSvc,
+		broker:    broker,
+		now:       func() time.Time { return time.Now().UTC() },
+		random:    rand.Reader,
 	}
 }
 
@@ -118,24 +115,14 @@ func (s *Service) Archive(ctx context.Context, scope tunnelScope, tunnelID strin
 		return db.MCPTunnel{}, err
 	}
 	if tunnel.ArchivedAt != nil {
-		if err := s.cleanupJobs.enqueue(ctx, tunnel, nil); err != nil {
-			return db.MCPTunnel{}, tokenTransitionError("Could not schedule tunnel cleanup", err)
-		}
 		return tunnel, nil
 	}
 	transitionCtx, cancel := context.WithTimeout(ctx, tokenTransitionTimeout)
 	defer cancel()
-	defer s.restoreDatabaseTokenVersion(ctx, scope, tunnelID)
 	err = s.db.WithMCPTunnelTokenTx(transitionCtx, scope.OrganizationUUID, scope.WorkspaceUUID, tunnelID, func(tx *db.MCPTunnelTokenTx) error {
-		if err := s.suspendTokenVersion(transitionCtx, tx.Tunnel.UUID, tx.Token.Version); err != nil {
-			return tokenTransitionError("Could not archive tunnel", err)
-		}
 		var err error
 		tunnel, err = tx.Archive(transitionCtx)
-		if err != nil {
-			return err
-		}
-		return s.cleanupJobs.enqueue(transitionCtx, tunnel, tx.SQLTx())
+		return err
 	})
 	if err != nil {
 		return db.MCPTunnel{}, mapTunnelLookupError(err, tunnelID, "archive")
@@ -196,38 +183,15 @@ func (s *Service) RotateToken(ctx context.Context, scope tunnelScope, tunnelID s
 		if tx.Token.Version != current.Version {
 			return db.ErrInvalidState
 		}
-		if err := s.suspendTokenVersion(transitionCtx, tx.Tunnel.UUID, tx.Token.Version); err != nil {
-			return tokenTransitionError("Could not rotate tunnel token", err)
-		}
 		var err error
 		created, err = tx.Rotate(transitionCtx, current.Version, tokenVersion(token, envelope, s.now()))
 		return err
 	})
 	if err != nil {
 		clear(plaintext)
-		s.restoreDatabaseTokenVersion(ctx, scope, tunnelID)
 		return db.MCPTunnelTokenVersion{}, nil, mapTunnelLookupError(err, tunnelID, "rotate token for")
 	}
-	restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), tokenVersionRestoreTimeout)
-	defer restoreCancel()
-	if err := reconcileTunnelToken(restoreCtx, s.db, s.broker, scope, tunnelID, 0); err != nil && !errors.Is(err, db.ErrNotFound) {
-		clear(plaintext)
-		return db.MCPTunnelTokenVersion{}, nil, tokenTransitionError("Could not activate rotated tunnel token", err)
-	}
 	return created, plaintext, nil
-}
-
-func (s *Service) suspendTokenVersion(ctx context.Context, tunnelUUID string, tokenVersion int64) error {
-	if s.broker == nil {
-		return nil
-	}
-	return s.broker.SuspendTokenVersion(ctx, tunnelUUID, tokenVersion)
-}
-
-func (s *Service) restoreDatabaseTokenVersion(ctx context.Context, scope tunnelScope, tunnelID string) {
-	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenVersionRestoreTimeout)
-	defer cancel()
-	_ = reconcileTunnelToken(restoreCtx, s.db, s.broker, scope, tunnelID, 0)
 }
 
 func (s *Service) newConnectorToken() (connectorToken, error) {

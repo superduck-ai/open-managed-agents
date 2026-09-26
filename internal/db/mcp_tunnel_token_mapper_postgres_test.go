@@ -94,7 +94,7 @@ func TestMCPTunnelTokenMapperPostgreSQL(t *testing.T) {
 		}
 		assertMissing(t)
 		credential, found, err := mapper.FindByHashAndTunnelExternalID(ctx, []byte("hash"), "tunnel_fixture")
-		if err != nil || !found || credential.RetiredAt == nil || credential.FormatVersion.Valid || credential.Ciphertext != nil {
+		if err != nil || !found || credential.RetiredAt == nil {
 			t.Fatalf("retired context = (%+v, %t, %v)", credential, found, err)
 		}
 		if credential.OrganizationUUID != "22222222-2222-4222-8222-222222222222" || credential.WorkspaceUUID != "33333333-3333-4333-8333-333333333333" {

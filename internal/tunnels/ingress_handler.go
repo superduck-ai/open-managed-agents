@@ -152,13 +152,12 @@ func (h *IngressHandler) forwardTunnel(
 	if err != nil {
 		return err
 	}
-	headers, headerBytes, err := sanitizeIngressHeaders(r.Header, h.cfg)
+	headers, _, err := sanitizeIngressHeaders(r.Header, h.cfg)
 	if err != nil {
 		return invalidRequest(err)
 	}
 	if commandType == CommandTypeOAuthDiscovery {
 		headers = make(http.Header)
-		headerBytes = 0
 	}
 	requestID, err := ids.New("req_")
 	if err != nil {
@@ -170,19 +169,19 @@ func (h *IngressHandler) forwardTunnel(
 	_ = controller.SetWriteDeadline(deadline)
 	defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 	command := queuedCommand{
+		Scope:     payloadScope{OrganizationUUID: tunnel.OrganizationUUID, WorkspaceUUID: tunnel.WorkspaceUUID},
 		RequestID: requestID, CommandType: commandType, Channel: channel,
 		CreatedAt: now, Headers: headers, ExpiresAt: deadline,
-		PayloadSize: int64(len(body)) + headerBytes,
 	}
 	if commandType == CommandTypeJSONRPC {
 		command.JSONRPC = body
 	}
-	waiter, err := h.broker.subscribeResponse(r.Context(), tunnel.UUID, requestID)
+	waiter, err := h.broker.subscribeResponse(r.Context(), requestID, deadline)
 	if err != nil {
 		return ingressQueueError(err)
 	}
 	defer waiter.Close()
-	if err := h.broker.Enqueue(r.Context(), tunnel.UUID, command); err != nil {
+	if err := h.broker.Enqueue(r.Context(), tunnel.UUID, tunnel.ExternalID, command); err != nil {
 		return ingressQueueError(err)
 	}
 	wroteStream := false
@@ -206,9 +205,6 @@ func (h *IngressHandler) forwardTunnel(
 		writeSSEMessage(w, notification.JSONResponse)
 	})
 	if err != nil {
-		if shouldCancelTunnelRequest(err) {
-			h.cancelDisconnectedRequest(tunnel.UUID, requestID)
-		}
 		if wroteStream {
 			return nil
 		}
@@ -226,10 +222,6 @@ func (h *IngressHandler) forwardTunnel(
 	}
 	writeIngressResponse(w, response, canonicalTunnelOAuthMetadataURL(r, h.cfg, tunnel.ExternalID, channel))
 	return nil
-}
-
-func shouldCancelTunnelRequest(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // ServeTunnel implements the Code Session in-process TunnelInvoker boundary.
@@ -468,10 +460,4 @@ func writeSSEMessage(w http.ResponseWriter, payload json.RawMessage) {
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-}
-
-func (h *IngressHandler) cancelDisconnectedRequest(tunnelUUID, requestID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = h.broker.Cancel(ctx, tunnelUUID, requestID)
 }

@@ -4,7 +4,6 @@ export type TunnelConnectionState = 'connected' | 'disconnected' | 'unknown';
 
 export type TunnelChannelConnection = {
   name: string;
-  process_affinity: boolean;
   instance_count: number;
 };
 

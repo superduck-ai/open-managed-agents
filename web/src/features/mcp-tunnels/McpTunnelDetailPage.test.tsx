@@ -280,8 +280,8 @@ const activeTunnel: McpTunnel = {
     state: 'connected',
     instance_count: 2,
     channels: [
-      { name: 'main', process_affinity: true, instance_count: 2 },
-      { name: 'secondary', process_affinity: false, instance_count: 1 },
+      { name: 'main', instance_count: 2 },
+      { name: 'secondary', instance_count: 1 },
     ],
   },
 };

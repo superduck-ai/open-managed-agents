@@ -61,9 +61,12 @@ flowchart LR
 - Overview 显示 domain、主 Channel canonical MCP URL 和复制操作；
 - Connector setup 提供 Token 的 Reveal/Hide/Copy/Rotate、本地 MCP URL 和原版 tunnel-client YAML；YAML 固定
   `url_path: /connector`，Token 始终使用 `env:OMA_TUNNEL_TOKEN` 引用；
-- Connection 显示 connector 状态、实例数和实时 Channel 表格；Channel 行展示名称、process affinity、实例数、
+- Connection 显示 connector 状态、实例数和实时 Channel 表格；Channel 行展示名称、实例数、
   解析后的 MCP URL，并可执行一次性 `initialize + tools/list` Probe；
 - Danger zone 永久 Archive。归档后详情仍可访问，但 reveal、rotate、probe 和再次 archive 都禁用。
+
+快照来自 Redis 8 的最近 Poll 记录，字段 TTL 默认 60 秒；轮换后自然过期，归档直接离线。
+读取失败显示状态未知；`process_affinity` 已从响应、类型和表格删除。
 
 状态完全由持久化状态和实时 snapshot 派生，不以 Probe 成功作为健康条件：
 

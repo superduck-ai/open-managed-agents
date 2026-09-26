@@ -517,13 +517,6 @@ func TestLoadYAMLRejectsNullAndNonPositiveValues(t *testing.T) {
 		}
 	})
 
-	t.Run("tunnel pending request upper bound", func(t *testing.T) {
-		prepareLoadTest(t)
-		_, err := loadConfigTestYAML(t, "tunnel:\n  max_pending_requests: 513\n")
-		if err == nil || !strings.Contains(err.Error(), "tunnel.max_pending_requests must be between 1 and 512") {
-			t.Fatalf("Load() error = %v, want bounded tunnel pending request error", err)
-		}
-	})
 }
 
 func TestLoadYAMLSeedAPIKeyPresence(t *testing.T) {

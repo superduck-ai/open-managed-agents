@@ -9,11 +9,13 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -22,40 +24,15 @@ import (
 )
 
 func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw json.RawMessage) (db.Agent, json.RawMessage, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return db.Agent{}, nil, errors.New("agent is required")
-	}
-	var agentID string
-	var version int
-	if json.Unmarshal(raw, &agentID) != nil {
-		var object struct {
-			Type    string `json:"type"`
-			ID      string `json:"id"`
-			Version *int   `json:"version"`
-		}
-		if err := json.Unmarshal(raw, &object); err != nil {
-			return db.Agent{}, nil, errors.New("agent must be a string or object")
-		}
-		if object.Type != "" && object.Type != "agent" {
-			return db.Agent{}, nil, errors.New("agent.type must be agent")
-		}
-		agentID = object.ID
-		if object.Version != nil {
-			version = *object.Version
-			if version < 1 {
-				return db.Agent{}, nil, errors.New("agent.version must be at least 1")
-			}
-		}
-	}
-	if strings.TrimSpace(agentID) == "" {
-		return db.Agent{}, nil, errors.New("agent id must be non-empty")
+	ref, err := agentconfig.ParseSessionAgent(raw)
+	if err != nil {
+		return db.Agent{}, nil, err
 	}
 	var agent db.Agent
-	var err error
-	if version > 0 {
-		agent, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, agentID, version)
+	if ref.Version > 0 {
+		agent, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, ref.ID, ref.Version)
 	} else {
-		agent, err = h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
+		agent, err = h.db.GetAgent(r.Context(), principal.WorkspaceUUID, ref.ID)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -65,6 +42,20 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	}
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, nil, errors.New("agent must not be archived")
+	}
+	if ref.WithOverrides {
+		var modelIDs []string
+		if ref.Overrides.ReplacesModel() {
+			modelIDs, err = llmproviders.ListModelIDs(r.Context(), h.db, principal.OrganizationUUID, principal.WorkspaceUUID)
+			if err != nil {
+				return db.Agent{}, nil, workspaceModelConfigError(err)
+			}
+		}
+		cfg, err := agentconfig.Apply(agentconfig.FromAgent(agent), ref.Overrides, modelIDs)
+		if err != nil {
+			return db.Agent{}, nil, err
+		}
+		agent = agentconfig.WriteAgent(agent, cfg)
 	}
 	snapshot, err := agentsnapshot.FromAgent(agent)
 	if err != nil {
@@ -475,10 +466,14 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 	}, nil
 }
 
-func responseFromThread(thread db.SessionThread) threadResponse {
+func responseFromThread(thread db.SessionThread, sessionAgent json.RawMessage) threadResponse {
+	agent := thread.AgentSnapshot
+	if thread.ParentThreadExternalID == nil || strings.TrimSpace(*thread.ParentThreadExternalID) == "" {
+		agent = sessionAgent
+	}
 	return threadResponse{
 		ID:             thread.ExternalID,
-		Agent:          httpapi.RawOr(thread.AgentSnapshot, `{}`),
+		Agent:          httpapi.RawOr(agent, `{}`),
 		ArchivedAt:     httpapi.OptionalTime(thread.ArchivedAt),
 		CreatedAt:      httpapi.FormatTime(thread.CreatedAt),
 		ParentThreadID: thread.ParentThreadExternalID,

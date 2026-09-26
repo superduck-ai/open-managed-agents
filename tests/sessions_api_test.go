@@ -38,6 +38,7 @@ import (
 type sessionAPIResponse struct {
 	ID                 string            `json:"id"`
 	Type               string            `json:"type"`
+	Agent              json.RawMessage   `json:"agent"`
 	EnvironmentID      string            `json:"environment_id"`
 	DeploymentID       *string           `json:"deployment_id"`
 	Status             string            `json:"status"`
@@ -56,12 +57,13 @@ type sessionPageAPIResponse struct {
 }
 
 type sessionThreadAPIResponse struct {
-	ID             string  `json:"id"`
-	Type           string  `json:"type"`
-	SessionID      string  `json:"session_id"`
-	Status         string  `json:"status"`
-	ParentThreadID *string `json:"parent_thread_id"`
-	ArchivedAt     *string `json:"archived_at"`
+	ID             string          `json:"id"`
+	Type           string          `json:"type"`
+	SessionID      string          `json:"session_id"`
+	Agent          json.RawMessage `json:"agent"`
+	Status         string          `json:"status"`
+	ParentThreadID *string         `json:"parent_thread_id"`
+	ArchivedAt     *string         `json:"archived_at"`
 }
 
 type sessionThreadPageAPIResponse struct {

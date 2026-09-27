@@ -260,7 +260,7 @@ func normalizeInputEvent(
 		processedAt = time.Time{}
 		payload["processed_at"] = nil
 	}
-	payload["created_at"] = formatEventTime(now)
+	delete(payload, "created_at")
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {
 		value = strings.TrimSpace(value)

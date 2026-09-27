@@ -252,6 +252,13 @@ func TestSessionHistoryFiltersByProcessingTimeAndDefaultsToChronologicalOrder(t 
 		t.Fatalf("session event response exposed created_at: %s", sent.Data[0])
 	}
 	queuedID := sessionEventStringField(t, sent.Data[1], "id")
+	stored, err := app.db.GetSessionEvent(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, queuedID)
+	if err != nil {
+		t.Fatalf("load queued event: %v", err)
+	}
+	if bytes.Contains(stored.Payload, []byte(`"created_at"`)) || stored.CreatedAt.IsZero() {
+		t.Fatal("queued event should keep creation time only in its record")
+	}
 	// Claude's created_at query filters compare against processed_at, despite the parameter name.
 	cutoff := time.Now().UTC().Add(time.Hour)
 	if _, changed, err := app.db.AcknowledgeSessionInput(t.Context(), worker, queuedID, cutoff); err != nil || !changed {

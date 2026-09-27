@@ -61,7 +61,6 @@ func (h *Handler) simpleSessionEvent(eventType, sessionID string, threadID *stri
 	now := eventTime(time.Now())
 	payload := map[string]any{
 		"id":           eventID,
-		"created_at":   formatEventTime(now),
 		"processed_at": formatEventTime(now),
 		"type":         eventType,
 	}

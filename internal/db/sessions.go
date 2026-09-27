@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/yourbatis"
 )
@@ -345,7 +347,7 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalI
 	var removal SessionRemoval
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		var err error
-		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID, true); err != nil {
 			return err
 		}
 		row, err := NewSessionMapper(executor).Archive(ctx, workspaceUUID, externalID)
@@ -359,7 +361,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 	var removal SessionRemoval
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		var err error
-		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID, false); err != nil {
 			return err
 		}
 		sessionMapper := NewSessionMapper(executor)
@@ -455,10 +457,42 @@ func (d *DB) ListSessionThreads(ctx context.Context, workspaceUUID string, sessi
 	return sessionThreadsFromRows(rows), err
 }
 
-func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, error) {
-	mapper := NewSessionThreadMapper(d.mapperDB)
-	row, err := mapper.Archive(ctx, workspaceUUID, sessionExternalID, threadExternalID)
-	return row.thread(), mapNoRows(err)
+func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, []SessionEvent, error) {
+	var archived SessionThread
+	var events []SessionEvent
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		session, err := lockSessionForEvents(ctx, NewSessionMapper(executor), workspaceUUID, sessionExternalID)
+		if err != nil {
+			return err
+		}
+		mapper := NewSessionThreadMapper(executor)
+		row, err := mapper.FindByExternalID(ctx, workspaceUUID, sessionExternalID, threadExternalID)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		thread := row.thread()
+		if thread.Status == "running" || thread.Status == "rescheduling" {
+			return ErrInvalidState
+		}
+		if thread.Status != "terminated" {
+			eventID, err := ids.New("sevt_")
+			if err != nil {
+				return err
+			}
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			events, err = insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
+				UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.thread_status_terminated",
+				ThreadExternalID: &threadExternalID, StatusThreadID: threadExternalID, CreatedAt: now, ProcessedAt: now,
+			}}, false)
+			if err != nil {
+				return err
+			}
+		}
+		row, err = mapper.Archive(ctx, workspaceUUID, sessionExternalID, threadExternalID)
+		archived = row.thread()
+		return mapNoRows(err)
+	})
+	return archived, events, err
 }
 
 func (d *DB) CreateSessionResource(

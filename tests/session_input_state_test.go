@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,99 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
+
+func TestSessionRejectsInvalidUserContentBlocks(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("invalid-user-content"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	for _, block := range []string{
+		`{"type":"redacted"}`,
+		`{"type":"unknown","text":"hello"}`,
+		`{"type":"text","text":""}`,
+		`{"type":"image"}`,
+		`{"type":"image","source":{"type":"url","url":""}}`,
+		`{"type":"document","source":{"type":"mystery"}}`,
+	} {
+		resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+worker.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[`+block+`]}]}`), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	}
+}
+
+func TestSessionUpdatedEventsContainOnlyChangedFields(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("session-updated-fields"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID := worker.SessionExternalID
+	updateSession(t, app, sessionID, `{}`)
+	if events := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("empty update emitted event: %s", events.Data)
+	}
+	updateSession(t, app, sessionID, `{"title":"changed"}`)
+	events := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	if len(events.Data) != 1 {
+		t.Fatalf("title update events: %s", events.Data)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(events.Data[0], &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload["title"]) != `"changed"` || len(payload["agent"]) != 0 || len(payload["metadata"]) != 0 {
+		t.Fatalf("title update included unchanged fields: %s", events.Data[0])
+	}
+	updateSession(t, app, sessionID, `{"title":"changed"}`)
+	if events := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey); len(events.Data) != 1 {
+		t.Fatalf("same-value update emitted event: %s", events.Data)
+	}
+	updateSession(t, app, sessionID, `{"metadata":{"priority":"high"}}`)
+	events = listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	if len(events.Data) != 2 {
+		t.Fatalf("metadata update events: %s", events.Data)
+	}
+	payload = nil
+	if err := json.Unmarshal(events.Data[1], &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload["metadata"]) == 0 || len(payload["title"]) != 0 || len(payload["agent"]) != 0 {
+		t.Fatalf("metadata update included unchanged fields: %s", events.Data[1])
+	}
+}
+
+func TestArchiveIdleSessionEmitsTermination(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("archive-idle-termination"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	archived := archiveSession(t, app, worker.SessionExternalID)
+	if archived.Status != "terminated" {
+		t.Fatalf("archived idle session status = %s", archived.Status)
+	}
+	events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.status_terminated&types[]=session.thread_status_terminated", defaultTestKey)
+	if len(events.Data) != 2 || sessionEventStringField(t, events.Data[0], "type") != "session.thread_status_terminated" || sessionEventStringField(t, events.Data[1], "type") != "session.status_terminated" {
+		t.Fatalf("idle archive termination history: %s", events.Data)
+	}
+	stored, found, err := app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil || !found || stored.Status != "terminated" {
+		t.Fatalf("idle archive left worker active: found=%t status=%s err=%v", found, stored.Status, err)
+	}
+}
+
+func TestArchiveIdleThreadEmitsTermination(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("archive-idle-thread"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	threads := listSessionThreads(t, app, worker.SessionExternalID, defaultTestKey)
+	if len(threads.Data) != 1 {
+		t.Fatalf("primary thread: %+v", threads.Data)
+	}
+	threadID := threads.Data[0].ID
+	archived := archiveSessionThread(t, app, worker.SessionExternalID, threadID)
+	if archived.Status != "terminated" {
+		t.Fatalf("archived thread status = %s", archived.Status)
+	}
+	events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.thread_status_terminated", defaultTestKey)
+	if len(events.Data) != 1 || sessionEventStringField(t, events.Data[0], "session_thread_id") != threadID {
+		t.Fatalf("thread archive missing termination event: %s", events.Data)
+	}
+	threadEvents := listThreadEvents(t, app, worker.SessionExternalID, threadID, defaultTestKey)
+	if len(threadEvents.Data) != 2 || sessionEventStringField(t, threadEvents.Data[0], "type") != "session.thread_status_terminated" {
+		t.Fatalf("thread archive missing thread history: %s", threadEvents.Data)
+	}
+}
 
 func TestSessionPendingToolRulesMatchAcceptance(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("pending-tool-rules"))
@@ -160,16 +254,24 @@ func TestSessionHistoryFiltersByProcessingTimeAndDefaultsToChronologicalOrder(t 
 	queuedID := sessionEventStringField(t, sent.Data[1], "id")
 	// Claude's created_at query filters compare against processed_at, despite the parameter name.
 	cutoff := time.Now().UTC().Add(time.Hour)
-	if _, changed, err := app.db.MarkSessionEventProcessed(t.Context(), worker, queuedID, cutoff.Add(time.Hour)); err != nil || !changed {
+	if _, changed, err := app.db.MarkSessionEventProcessed(t.Context(), worker, queuedID, cutoff); err != nil || !changed {
 		t.Fatalf("process queued input: changed=%t err=%v", changed, err)
 	}
 	events := listSessionEvents(t, app, worker.SessionExternalID, "created_at[gte]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
 	if len(events.Data) != 1 || sessionEventStringField(t, events.Data[0], "id") != queuedID {
 		t.Fatalf("processing filter excluded a later-processed input: %s", events.Data)
 	}
+	newer := listSessionEvents(t, app, worker.SessionExternalID, "created_at[gt]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(newer.Data) != 0 {
+		t.Fatalf("exclusive processing filter included the boundary event: %s", newer.Data)
+	}
 	old := listSessionEvents(t, app, worker.SessionExternalID, "created_at[lt]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
 	if len(old.Data) != 3 {
 		t.Fatalf("processing filter included later-processed input: %s", old.Data)
+	}
+	older := listSessionEvents(t, app, worker.SessionExternalID, "created_at[lte]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(older.Data) != 4 || sessionEventStringField(t, older.Data[len(older.Data)-1], "id") != queuedID {
+		t.Fatalf("inclusive processing filter excluded the boundary event: %s", older.Data)
 	}
 	all := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey)
 	if len(all.Data) != 4 || sessionEventStringField(t, all.Data[len(all.Data)-1], "id") != queuedID {

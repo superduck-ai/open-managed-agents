@@ -19,12 +19,12 @@ type SessionRemoval struct {
 
 // Removal may cancel accepted work that the worker has not started. Serialize
 // with input acceptance and worker reports using the same Session → Worker locks.
-func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string) (SessionRemoval, error) {
+func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string, archive bool) (SessionRemoval, error) {
 	session, err := lockSessionForEvents(ctx, NewSessionMapper(executor), workspaceUUID, sessionID)
 	if err != nil {
 		return SessionRemoval{}, err
 	}
-	if session.Status != "running" && session.Status != "rescheduling" {
+	if session.Status != "running" && session.Status != "rescheduling" && (!archive || session.Status != "idle") {
 		return SessionRemoval{}, nil
 	}
 	codeSessions := NewCodeSessionMapper(executor)
@@ -34,7 +34,7 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 	}
 	var removal SessionRemoval
 	if found {
-		if worker.Status != "terminated" && worker.WorkerTurnStarted {
+		if session.Status != "idle" && worker.Status != "terminated" && worker.WorkerTurnStarted {
 			return SessionRemoval{}, ErrInvalidState
 		}
 		if _, err := codeSessions.TerminateByExternalID(ctx, session.OrganizationUUID, workspaceUUID, worker.ExternalID); err != nil {

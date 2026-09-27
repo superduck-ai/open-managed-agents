@@ -179,6 +179,8 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 
 历史按 processed_at 排序，同时间保留数据库写入顺序；默认 asc，未处理记录在 desc 最前、asc 最后。`created_at[gt|gte|lt|lte]` 按 Claude 合同比较处理时间，未处理输入不匹配。cursor 只携带公开事件 ID，服务端按该事件当前的 processed_at 与 id 定位，旧版本创建时间 cursor 需要重新开始分页；cursor 引用的事件必须存在于当前 workspace/session（允许软删除），否则返回 400；ACK 会改变排序位置，跨页不保证快照一致，客户端以 SSE 更新并重新拉取历史。迁移 `00064_session_input_state.sql` 在事务内添加和回填 `worker_turn_started`，并允许 `processed_at` 为 null；存在 `processed_at=null` 的记录时，00064 回滚会失败并保持原数据；必须先正常处理完排队输入，不能通过回填时间伪造接纳。`00067_restore_nullable_session_input_processed_at.sql` 修复已记录 00064 但列仍为非空的数据库，使工具确认和其他排队输入可以写入。独立迁移 `00065_session_input_index.sql` 使用 `NO TRANSACTION` 和 `CREATE INDEX CONCURRENTLY` 创建索引，避免索引构建期间阻塞事件写入；列变更仍需获取表锁。索引迁移先并发删除同名索引，兼容已运行旧版 00064 的环境及中断构建留下的无效索引，再重新创建；其 Down 仅并发删除索引。
 
+公开事件 JSON 与持久事件 SSE 不回显内部 `created_at`；列表仍保留 Claude 的 `created_at[...]` 查询名及上述 `processed_at` 比较规则。用户消息内容只接受有效的 text、image、document 块，用户不能提交平台专用的 redacted 块。空更新或同值更新不产生 `session.updated`；发生更新时事件只包含实际变化的字段。闲置 Session 归档写入 thread/session terminated 状态事件并终止关联 Worker；线程归档也通过同一事件入口写入和广播状态。`session.deleted` 广播后结束活动 SSE 连接。
+
 验证：`tests/session_input_state_test.go` 覆盖接纳和公开等待列表的一致性、等待原因变化去重、多线程状态和时间筛选；`internal/db/code_session_input_state_postgres_test.go` 覆盖实际 JSONB 读取及并发锁。tests/session_worker_status_test.go 覆盖输入原子性、Worker 重注册、初始化 idle、结束重试，空闲/排队输入时间、并发和批量接纳、对象存储 payload，以及 ACK 前后的 SSE/history 顺序。
 
 本次审阅回归由 `tests/session_review_regressions_test.go` 覆盖未 ACK 输入、通用 requires_action、显式线程归属、未启动回合清理及删除 SSE、分页边界；`tests/worker_event_publication_test.go` 覆盖工具响应发布失败、并发 running 和上传期间 Worker 换代；迁移测试验证有排队输入时拒绝有损回滚。

@@ -420,11 +420,51 @@ func validateContentBlocks(payload map[string]any, field string, required bool) 
 		if !ok {
 			return fmt.Errorf("%s items must be objects", field)
 		}
-		if requiredStringValue(block, "type") == "" {
-			return fmt.Errorf("%s item type is required", field)
+		switch block["type"] {
+		case "text":
+			text, ok := block["text"].(string)
+			if !ok || text == "" {
+				return fmt.Errorf("%s text must be non-empty", field)
+			}
+		case "image", "document":
+			if err := validateContentSource(block); err != nil {
+				return fmt.Errorf("%s %w", field, err)
+			}
+		case "search_result":
+			if required {
+				return fmt.Errorf("%s item type is not accepted", field)
+			}
+		default:
+			return fmt.Errorf("%s item type is not accepted", field)
 		}
 	}
 	return nil
+}
+
+func validateContentSource(block map[string]any) error {
+	source, ok := block["source"].(map[string]any)
+	if !ok {
+		return errors.New("source is required")
+	}
+	switch source["type"] {
+	case "base64":
+		if requiredStringValue(source, "data") != "" && requiredStringValue(source, "media_type") != "" {
+			return nil
+		}
+	case "url":
+		if requiredStringValue(source, "url") != "" {
+			return nil
+		}
+	case "file":
+		if requiredStringValue(source, "file_id") != "" {
+			return nil
+		}
+	case "text":
+		if block["type"] == "document" && requiredStringValue(source, "data") != "" && source["media_type"] == "text/plain" {
+			return nil
+		}
+	}
+	return errors.New("source is invalid")
 }
 
 func requiredStringValue(payload map[string]any, field string) string {

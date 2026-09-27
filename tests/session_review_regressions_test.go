@@ -149,6 +149,11 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 					if !deleted {
 						t.Fatalf("missing deletion SSE: %v", scanner.Err())
 					}
+					for scanner.Scan() {
+					}
+					if err := scanner.Err(); err != nil {
+						t.Fatalf("deletion SSE did not end: %v", err)
+					}
 				}
 
 				if codeID != "" {

@@ -137,6 +137,9 @@ func mapThreadLoadError(err error, threadID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return threadNotFound(threadID, err)
 	}
+	if errors.Is(err, db.ErrInvalidState) {
+		return invalidRequest(errors.New("thread must be idle or terminated to archive"))
+	}
 	return internalError("Thread operation failed", fmt.Errorf("thread %q operation: %w", threadID, err))
 }
 

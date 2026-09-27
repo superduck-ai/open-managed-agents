@@ -445,8 +445,8 @@ func TestPlatformWebSessionStream(t *testing.T) {
 				t.Fatal("platform web stream closed before event arrived")
 			}
 			if strings.HasPrefix(line, "data: ") && strings.Contains(line, "hello from web-api stream") {
-				if !strings.Contains(line, `"created_at"`) {
-					t.Fatalf("streamed event missing created_at: %s", line)
+				if strings.Contains(line, `"created_at"`) || !strings.Contains(line, `"processed_at"`) {
+					t.Fatalf("streamed event timestamp differs from Claude contract: %s", line)
 				}
 				return
 			}

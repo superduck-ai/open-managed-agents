@@ -656,7 +656,7 @@ Every persisted event includes a `processed_at` timestamp set when the event fin
     2. List the full event history to seed a set of seen event IDs.
     3. Tail the live stream, skipping any events already returned by the history list.
 
-    Persisted events on both session and thread SSE streams include an SSE `id:` field equal to the event JSON `id`. Preview frames (`event_start` and `event_delta`) have no SSE `id:` field. The SSE ID is available to display, but `Last-Event-ID` does not trigger server-side replay; reconnect by opening a stream and listing the complete event history as above.
+    Persisted events on both session and thread SSE streams include an SSE `id:` field equal to the event JSON `id`. An `event_start` frame uses its `event.id` as the SSE ID, and each `event_delta` frame uses its `event_id`. A thinking preview and its final `agent.thinking` share one ID; a text preview, its deltas, and its final `agent.message` share another. The SSE ID is available to display, but `Last-Event-ID` does not trigger server-side replay; reconnect by opening a stream and listing the complete event history as above.
 
     <CodeGroup>
       ```bash cURL

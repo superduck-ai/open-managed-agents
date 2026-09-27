@@ -25,7 +25,7 @@ Viewer 包含两个区域：
 
 ## 转录与对齐
 
-- Session 与每条可见子 Thread 都先建立 SSE 订阅，再从第一页扫完事件历史；扫描期间继续接收实时帧。SSE 正常结束、报错、建连超时或流空闲超时后清理未完成预览，退避重连并重新扫全量历史。历史与 SSE 按 JSON 事件 ID 合并，重复事件只展示一次；SSE 帧的 `id:` 仅供查看，不用作 `Last-Event-ID` 回放游标。
+- Session 与每条可见子 Thread 都先建立 SSE 订阅，再从第一页扫完事件历史；扫描期间继续接收实时帧。SSE 正常结束、报错、建连超时或流空闲超时后清理未完成预览，退避重连并重新扫全量历史。历史与 SSE 按 JSON 事件 ID 合并，重复事件只展示一次；持久事件与对应的 `event_start`、`event_delta` 帧都展示同一个 `id:`，但 `id:` 不用作 `Last-Event-ID` 回放游标。Thinking 与文本是两组独立的事件 ID。
 - 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。`span.model_request_end.event_ids` 仅清理所列 ID 的未完成预览。不同 ID 的 Worker echo 属于 #393，前端不猜测它与预览的对应关系。
 - Transcript 内容列、待处理 Action Card 和消息输入框共享最大 `720px` 的居中内容轨道。
 - 三者在窄容器中使用相同的 `16px` 水平留白；滚动条采用覆盖式自动隐藏样式，不允许通过 Composer 或 Action Card 的伪滚动容器预留 gutter。左右边界必须逐像素一致。

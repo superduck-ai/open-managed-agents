@@ -217,6 +217,9 @@ func TestWorkerPreviewConverterEmitsThinkingStartWithoutDeltas(t *testing.T) {
 	}
 	wantID := managedagentsevents.StableAssistantEventID(batch.CodeSessionID, "msg_test", 0, "agent.thinking")
 	assertPreviewStart(t, events[0].Payload, "agent.thinking", wantID)
+	if events[0].ExternalID != wantID {
+		t.Fatalf("thinking preview frame id = %q, want %q", events[0].ExternalID, wantID)
+	}
 }
 
 func TestWorkerPreviewConverterForwardsTextFragmentsAcrossBatches(t *testing.T) {
@@ -244,6 +247,9 @@ func TestWorkerPreviewConverterForwardsTextFragmentsAcrossBatches(t *testing.T) 
 	assertPreviewDelta(t, events[1].Payload, wantID, "Hello")
 	assertPreviewDelta(t, events[2].Payload, wantID, " world")
 	for index, event := range events {
+		if event.ExternalID != wantID {
+			t.Fatalf("text preview frame %d id = %q, want %q", index, event.ExternalID, wantID)
+		}
 		if event.CreatedAt.IsZero() || event.ProcessedAt.IsZero() {
 			t.Fatalf("preview event %d times = created:%v processed:%v, want non-zero", index, event.CreatedAt, event.ProcessedAt)
 		}
@@ -279,16 +285,16 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 		processedAt,
 		"preview-event",
 		previewEventStart,
-		json.RawMessage(`{"type":"event_start"}`),
+		json.RawMessage(`{"type":"event_start","event":{"id":"preview-event","type":"agent.message"}}`),
 	)
 	recorder := httptest.NewRecorder()
 
 	writeSSE(recorder, event, "primary-thread")
-	if strings.Contains(recorder.Body.String(), "\nid: ") || strings.HasPrefix(recorder.Body.String(), "id: ") {
-		t.Fatalf("preview SSE gained an id line: %s", recorder.Body.String())
+	if !strings.HasPrefix(recorder.Body.String(), "id: preview-event\nevent: event_start\n") {
+		t.Fatalf("preview SSE has the wrong target ID: %s", recorder.Body.String())
 	}
 
-	data := strings.TrimSpace(strings.TrimPrefix(strings.Split(recorder.Body.String(), "\n")[1], "data: "))
+	data := strings.TrimSpace(strings.TrimPrefix(strings.Split(recorder.Body.String(), "\n")[2], "data: "))
 	var payload struct {
 		CreatedAt       string `json:"created_at"`
 		ProcessedAt     string `json:"processed_at"`
@@ -302,16 +308,48 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	}
 }
 
-func TestPreviewDeltaSSEHasNoID(t *testing.T) {
-	event := sessionStreamEvent{
-		ExternalID: "sevt_delta",
-		EventType:  previewEventDelta,
-		Payload:    json.RawMessage(`{"type":"event_delta","event_id":"sevt_message"}`),
+func TestPreviewSSEDisplaysItsTargetEventID(t *testing.T) {
+	cases := []struct {
+		name   string
+		event  sessionStreamEvent
+		wantID string
+	}{
+		{
+			name: "thinking start",
+			event: sessionStreamEvent{
+				ExternalID: "sevt_thinking",
+				EventType:  previewEventStart,
+				Payload:    json.RawMessage(`{"type":"event_start","event":{"id":"sevt_thinking","type":"agent.thinking"}}`),
+			},
+			wantID: "sevt_thinking",
+		},
+		{
+			name: "message start",
+			event: sessionStreamEvent{
+				ExternalID: "sevt_message",
+				EventType:  previewEventStart,
+				Payload:    json.RawMessage(`{"type":"event_start","event":{"id":"sevt_message","type":"agent.message"}}`),
+			},
+			wantID: "sevt_message",
+		},
+		{
+			name: "message delta",
+			event: sessionStreamEvent{
+				ExternalID: "sevt_message",
+				EventType:  previewEventDelta,
+				Payload:    json.RawMessage(`{"type":"event_delta","event_id":"sevt_message","delta":{"index":0}}`),
+			},
+			wantID: "sevt_message",
+		},
 	}
-	recorder := httptest.NewRecorder()
-	writeSSE(recorder, event, "child-thread")
-	if body := recorder.Body.String(); strings.Contains(body, "id: ") {
-		t.Fatalf("preview delta SSE gained an id line: %s", body)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeSSE(recorder, tc.event, "primary-thread")
+			if body := recorder.Body.String(); !strings.HasPrefix(body, "id: "+tc.wantID+"\n") {
+				t.Fatalf("SSE frame ID does not match preview target %q: %s", tc.wantID, body)
+			}
+		})
 	}
 }
 

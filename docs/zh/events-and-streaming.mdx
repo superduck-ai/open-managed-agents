@@ -656,7 +656,7 @@ description: "发送事件、流式传输响应，并在执行过程中中断或
     2. 列出完整的事件历史记录，以初始化一组已见事件 ID。
     3. 跟踪实时流，跳过历史记录列表中已返回的任何事件。
 
-    会话和线程 SSE 中的持久事件包含与事件 JSON `id` 相同的 SSE `id:` 字段。预览帧（`event_start` 和 `event_delta`）没有 SSE `id:` 字段。SSE ID 可用于展示，但 `Last-Event-ID` 不触发服务端回放；重连时仍应先打开流，再按上述步骤读取完整事件历史。
+    会话和线程 SSE 中的持久事件包含与事件 JSON `id` 相同的 SSE `id:` 字段。`event_start` 帧使用 `event.id` 作为 SSE ID，`event_delta` 帧使用 `event_id`。Thinking 预览与最终 `agent.thinking` 共用一组 ID；文本预览、增量和最终 `agent.message` 共用另一组 ID。SSE ID 可用于展示，但 `Last-Event-ID` 不触发服务端回放；重连时仍应先打开流，再按上述步骤读取完整事件历史。
 
     <CodeGroup>
       ```bash cURL

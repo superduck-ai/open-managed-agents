@@ -84,7 +84,7 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 
 - `Enter` 发送，`Shift+Enter` 换行；输入法合成中和键盘长按不得触发发送。
 - Composer 使用 shadcn InputGroup 和语义化 form：空状态高 `56px`、圆角 `22px`、单行起步并按内容增长至 `160px`；Send 是 submit，Stop 是普通 button。
-- 空消息、发送中、已归档、已终止或已删除的 Session 不能发送；idle Session 仍允许发送新消息。
+- 空消息、发送中、已归档、已终止或已删除的 Session 不能发送；只有 idle 或初始 queued Session 可提交新消息。运行期间保留输入框草稿，但 Send 和 Enter 不发请求；草稿只在当前页面内存中，刷新后丢失。本次不增加客户端待发队列或自动重发。
 - running、queued 或 rescheduled Session 显示停止按钮，并通过既有 `user.interrupt` 合同停止。
 - 最新 `session.status_idle.stop_reason` 为 `requires_action` 时，在转录与输入框之间展示 Action Card。普通工具审批发送 `user.tool_confirmation`，AskUserQuestion 答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
 - 用户离开列表底部后停止自动跟随并显示“回到最新事件”；位于底部时继续跟随流式正文增长。

@@ -51,10 +51,6 @@ type workerStreamPublication struct {
 	payload     json.RawMessage
 }
 
-func (s *recordingWorkerStreamSink) PublishProcessedInput(context.Context, db.CodeSession, string) error {
-	return nil
-}
-
 func (s *recordingWorkerStreamSink) PublishCodeSessionEvents(context.Context, db.CodeSession, []json.RawMessage) error {
 	return nil
 }

@@ -11,27 +11,6 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func (h *Handler) PublishProcessedInput(ctx context.Context, codeSession db.CodeSession, eventID string) error {
-	// Worker payload IDs are not always public inputs; only stored inputs are acknowledged.
-	original, err := h.eventPayloads.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, eventID)
-	if errors.Is(err, db.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	processed, changed, err := h.db.AcknowledgeSessionInput(ctx, codeSession, eventID, eventTime(time.Now()))
-	if err != nil || !changed {
-		return err
-	}
-	if original.ProcessedAt.IsZero() {
-		original.ProcessedAt = processed.ProcessedAt
-		original.Payload = sessionEventPayload(original)
-		h.publishSessionEvents(ctx, []db.SessionEvent{original})
-	}
-	return nil
-}
-
 func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
 	if h == nil || len(payloads) == 0 {
 		return nil

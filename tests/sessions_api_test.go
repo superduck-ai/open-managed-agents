@@ -777,11 +777,10 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	codeSessionService := newCodeSessionService(app, nil, nil)
 
 	accepted := sendSessionEvents(t, app, session.ID, `{"events":[
-		{"type":"user.message","content":[{"type":"text","text":"startup message one"}]},
-		{"type":"user.message","content":[{"type":"text","text":"startup message two"}]}
+		{"type":"user.message","content":[{"type":"text","text":"startup message"}]}
 	]}`, defaultTestKey)
-	if len(accepted.Data) != 2 {
-		t.Fatalf("accepted session events = %#v, want two", accepted.Data)
+	if len(accepted.Data) != 1 {
+		t.Fatalf("accepted session events = %#v, want one", accepted.Data)
 	}
 
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
@@ -798,13 +797,11 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list inbound after activation: %v", err)
 	}
-	if len(inbound) != 3 ||
-		!bytes.Contains(inbound[1].Payload, []byte("startup message one")) ||
-		!bytes.Contains(inbound[2].Payload, []byte("startup message two")) {
-		t.Fatalf("inbound after activation = %#v, want initialize and both startup messages", inbound)
+	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte("startup message")) {
+		t.Fatalf("inbound after activation = %#v, want initialize and startup message", inbound)
 	}
 
-	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"post-cutover message"}]}]}`, defaultTestKey)
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 	if len(sent.Data) != 1 {
 		t.Fatalf("post-cutover events = %#v, want one", sent.Data)
 	}
@@ -812,8 +809,8 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list post-cutover inbound: %v", err)
 	}
-	if len(inbound) != 4 || !bytes.Contains(inbound[3].Payload, []byte("post-cutover message")) {
-		t.Fatalf("post-cutover inbound = %#v, want realtime message after startup history", inbound)
+	if len(inbound) != 3 || !bytes.Contains(inbound[2].Payload, []byte(`"subtype":"interrupt"`)) {
+		t.Fatalf("post-cutover inbound = %#v, want realtime interrupt after startup history", inbound)
 	}
 }
 
@@ -861,7 +858,7 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 			CreatedAt:   createdAt,
 		})
 	}
-	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events, nil); err != nil {
+	if _, err := app.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events); err != nil {
 		t.Fatalf("append large history: %v", err)
 	}
 	if err := newCodeSessionService(app, nil, nil).
@@ -3069,33 +3066,34 @@ func TestCodeSessionWorkerEventsStreamReceivesQueuedAndLiveUserEvents(t *testing
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 
-	frames := readCodeSessionWorkerSSEFramesAfterConnect(
+	queuedFrames := readCodeSessionWorkerSSEFramesAfterConnect(
 		t,
 		app,
 		codeSessionID,
 		"events/stream?worker_epoch="+url.QueryEscape(workerEpoch),
-		"live over worker sse",
+		"queued over worker sse",
+		nil,
+	)
+	if len(queuedFrames) < 2 {
+		t.Fatalf("worker SSE frames len = %d, want initialize and queued message: %#v", len(queuedFrames), queuedFrames)
+	}
+	if !strings.Contains(queuedFrames[0], "event: client_event") || !strings.Contains(queuedFrames[0], `"event_type":"control_request"`) {
+		t.Fatalf("unexpected first worker SSE frame: %s", queuedFrames[0])
+	}
+	queuedData := decodeWorkerSSEFrameData(t, queuedFrames[len(queuedFrames)-1])
+	queuedID, _ := queuedData["event_id"].(string)
+	if queuedID == "" {
+		t.Fatalf("queued worker SSE event has no ID: %s", queuedFrames[len(queuedFrames)-1])
+	}
+	postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(queuedID)+`,"status":"processed"}]}`)
+	frames := readCodeSessionWorkerSSEFramesAfterConnect(
+		t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(workerEpoch),
+		`"subtype":"interrupt"`,
 		func() {
-			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"live over worker sse"}]}]}`, defaultTestKey)
+			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 		},
 	)
-	if len(frames) < 3 {
-		t.Fatalf("worker SSE frames len = %d, want at least 3: %#v", len(frames), frames)
-	}
-	if !strings.Contains(frames[0], "event: client_event") || !strings.Contains(frames[0], `"event_type":"control_request"`) {
-		t.Fatalf("unexpected first worker SSE frame: %s", frames[0])
-	}
-	queuedSeen := false
-	for _, frame := range frames {
-		if strings.Contains(frame, "queued over worker sse") {
-			queuedSeen = true
-			break
-		}
-	}
-	if !queuedSeen {
-		t.Fatalf("worker SSE frames missing queued event: %#v", frames)
-	}
-	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], "live over worker sse") {
+	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], `"subtype":"interrupt"`) {
 		t.Fatalf("unexpected user worker SSE frame: %s", frames[len(frames)-1])
 	}
 	frameData := decodeWorkerSSEFrameData(t, frames[len(frames)-1])
@@ -3501,8 +3499,8 @@ func TestSessionEventInputValidation(t *testing.T) {
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"done"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
-	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
-	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.custom_tool_result"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
+	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"context"}]},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
+	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"system.message"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
 		t.Fatalf("unexpected valid events response: %+v", valid)
 	}
 	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)

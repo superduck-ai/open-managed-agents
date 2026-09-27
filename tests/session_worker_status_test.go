@@ -64,9 +64,9 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 	codeSession, epoch := newPayloadIntegrationSession(t, app)
 	path := "/v1/sessions/" + codeSession.SessionExternalID + "/events?beta=true"
 	input := `{"type":"user.message","content":[{"type":"text","text":"Hello"}]}`
-	// A later invalid thread must roll back the running pair and the first input.
+	// Two messages in one turn must roll back the whole batch.
 	resp := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[`+input+`,{"type":"user.message","session_thread_id":"sthr_missing","content":[{"type":"text","text":"Invalid"}]}]}`), defaultTestKey, true)
-	assertError(t, resp, http.StatusNotFound, "not_found_error")
+	assertError(t, resp, http.StatusConflict, "conflict_error")
 	if events := listSessionEvents(t, app, codeSession.SessionExternalID, "", defaultTestKey); len(events.Data) != 0 {
 		t.Fatalf("failed batch left events: %s", events.Data)
 	}
@@ -74,12 +74,23 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 		t.Fatalf("failed batch changed status: %s", status)
 	}
 	var group sync.WaitGroup
+	statuses := make(chan int, 2)
 	for range 2 {
 		group.Go(func() {
-			sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
+			response := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[`+input+`]}`), defaultTestKey, true)
+			statuses <- response.StatusCode
+			response.Body.Close()
 		})
 	}
 	group.Wait()
+	close(statuses)
+	countsByStatus := map[int]int{}
+	for status := range statuses {
+		countsByStatus[status]++
+	}
+	if countsByStatus[http.StatusOK] != 1 || countsByStatus[http.StatusConflict] != 1 {
+		t.Fatalf("concurrent send statuses: %v", countsByStatus)
+	}
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
 	postCodeSessionWorkerEvents(t, app, codeSession.ExternalID, internalPayloadRequest(epoch, `{"type":"session.status_running","uuid":"late-worker-running","id":"sevt_late_worker_running"}`))
 	counts := make(map[string]int)
@@ -93,7 +104,7 @@ func TestSessionInputRunningIsAtomic(t *testing.T) {
 	if processed != 1 {
 		t.Fatalf("expected exactly one immediately processed input, got %d", processed)
 	}
-	if counts["session.status_running"] != 1 || counts["session.thread_status_running"] != 1 || counts["user.message"] != 2 {
+	if counts["session.status_running"] != 1 || counts["session.thread_status_running"] != 1 || counts["user.message"] != 1 {
 		t.Fatalf("concurrent inputs duplicated running: %v", counts)
 	}
 }
@@ -130,43 +141,35 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	}
 	var live []publicEvent
 	scanner := bufio.NewScanner(resp.Body)
-	firstProcessedAt := ""
-	for i := range 2 {
-		sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Hello"}]}]}`, defaultTestKey)
-		if len(sent.Data) != 1 || sessionEventStringField(t, sent.Data[0], "type") != "user.message" {
-			t.Fatalf("send response must contain only submitted events: %s", sent.Data)
-		}
-		processedAt := sessionInputProcessedAt(t, sent.Data[0])
-		if i == 0 {
-			firstProcessedAt = processedAt
-			if processedAt == "" {
-				t.Fatalf("idle input must be processed on acceptance: %s", sent.Data)
-			}
-			// The running pair and first message must arrive before any worker ACK.
-			for scanner.Scan() {
-				data, ok := strings.CutPrefix(scanner.Text(), "data: ")
-				if !ok {
-					continue
-				}
-				var event publicEvent
-				if err := json.Unmarshal([]byte(data), &event); err != nil {
-					t.Fatal(err)
-				}
-				if event.ID != "" {
-					live = append(live, event)
-				}
-				if len(live) == 3 {
-					break
-				}
-			}
-			if len(live) != 3 || live[2].ProcessedAt != processedAt {
-				t.Fatalf("first input missing before ACK: %+v, scan: %v", live, scanner.Err())
-			}
-		} else if processedAt != "" {
-			t.Fatalf("busy input must remain queued: %s", sent.Data)
-		}
-		consumePublicInput(t, app, codeSession, epoch, sessionEventStringField(t, sent.Data[0], "id"))
+	sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Hello"}]}]}`, defaultTestKey)
+	if len(sent.Data) != 1 || sessionEventStringField(t, sent.Data[0], "type") != "user.message" {
+		t.Fatalf("send response must contain only submitted events: %s", sent.Data)
 	}
+	firstProcessedAt := sessionInputProcessedAt(t, sent.Data[0])
+	if firstProcessedAt == "" {
+		t.Fatalf("idle input must be processed on acceptance: %s", sent.Data)
+	}
+	// The running pair and message must arrive before any worker ACK.
+	for scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var event publicEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.ID != "" {
+			live = append(live, event)
+		}
+		if len(live) == 3 {
+			break
+		}
+	}
+	if len(live) != 3 || live[2].ProcessedAt != firstProcessedAt {
+		t.Fatalf("input missing before ACK: %+v, scan: %v", live, scanner.Err())
+	}
+	consumePublicInput(t, app, codeSession, epoch, sessionEventStringField(t, sent.Data[0], "id"))
 
 	// Worker initialization reports idle before consuming the accepted inputs.
 	for range 2 {
@@ -184,7 +187,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		`{"type":"system.message","uuid":"context","content":[{"type":"text","text":"Public context"}]}`,
 	))
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
-	want := []string{"session.status_running", "session.thread_status_running", "user.message", "user.message", "agent.message", "system.message", "session.thread_status_idle", "session.usage", "session.status_idle"}
+	want := []string{"session.status_running", "session.thread_status_running", "user.message", "agent.message", "system.message", "session.thread_status_idle", "session.usage", "session.status_idle"}
 	for scanner.Scan() {
 		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
 		if !ok {
@@ -231,8 +234,8 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		}
 	}
 
-	if live[2].ProcessedAt != firstProcessedAt || live[3].ProcessedAt == "" {
-		t.Fatalf("ACK changed accepted time or left queued input unprocessed: %+v", live)
+	if live[2].ProcessedAt != firstProcessedAt {
+		t.Fatalf("ACK changed accepted time: %+v", live)
 	}
 	next := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Next turn"}]}]}`, defaultTestKey)
 	if sessionInputProcessedAt(t, next.Data[0]) == "" {
@@ -260,11 +263,11 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if reportRequiresAction {
 			putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"requires_action"}`, epoch))
 		}
-		waiting := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Wait for approval"}]}]}`, defaultTestKey)
-		if sessionInputProcessedAt(t, waiting.Data[0]) != "" {
-			t.Fatal("pending tool request must block acceptance before and after requires_action")
+		waiting := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+codeSession.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"Wait for approval"}]}]}`), defaultTestKey, true)
+		assertError(t, waiting, http.StatusConflict, "conflict_error")
+		if history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message", defaultTestKey); len(history.Data) != 2 {
+			t.Fatalf("pending tool request persisted a message: %s", history.Data)
 		}
-		assertQueuedInputPreservesIdle(t, app, codeSession)
 	}
 	pauses := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=session.status_idle&types[]=session.thread_status_idle&order=desc&limit=2", defaultTestKey)
 	if len(pauses.Data) != 2 {
@@ -277,32 +280,26 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	}
 }
 
-func TestSessionIdleInputBatch(t *testing.T) {
+func TestSessionRejectsMultipleMessagesInBatch(t *testing.T) {
 	for _, size := range []int{10, 40000} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			app := newPayloadIntegrationApp(t, newFakeStore("idle-input-batch"))
-			codeSession, epoch := newPayloadIntegrationSession(t, app)
+			codeSession, _ := newPayloadIntegrationSession(t, app)
 			input := `{"type":"user.message","content":[{"type":"text","text":` + quoteJSON(strings.Repeat("x", size)) + `}]}`
-			sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[`+input+`,`+input+`]}`, defaultTestKey)
-			if len(sent.Data) != 2 {
-				t.Fatalf("expected two inputs, got %d", len(sent.Data))
+			response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+codeSession.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[`+input+`,`+input+`]}`), defaultTestKey, true)
+			assertError(t, response, http.StatusConflict, "conflict_error")
+			if history := listSessionEvents(t, app, codeSession.SessionExternalID, "", defaultTestKey); len(history.Data) != 0 {
+				t.Fatalf("rejected batch persisted events: %s", history.Data)
 			}
-			first := sessionInputProcessedAt(t, sent.Data[0])
-			if first == "" || sessionInputProcessedAt(t, sent.Data[1]) != "" {
-				t.Fatal("only the first batch input should be processed immediately")
+			sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
+			processedAt := sessionInputProcessedAt(t, sent.Data[0])
+			if processedAt == "" {
+				t.Fatal("accepted input has no processing time")
 			}
 			history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message&order=asc", defaultTestKey)
-			if len(history.Data) != 2 || sessionInputProcessedAt(t, history.Data[0]) != first || sessionInputProcessedAt(t, history.Data[1]) != "" {
-				t.Fatal("history must preserve immediate and queued timestamps, including offloaded payloads")
+			if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != processedAt {
+				t.Fatal("history must preserve receipt time, including offloaded payloads")
 			}
-			// Idle can arrive while a later input is still queued. New input must not overtake it.
-			putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
-			putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
-			later := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
-			if sessionInputProcessedAt(t, later.Data[0]) != "" {
-				t.Fatal("new input overtook a queued message")
-			}
-			assertQueuedInputPreservesIdle(t, app, codeSession)
 		})
 	}
 }
@@ -441,22 +438,7 @@ func sessionInputProcessedAt(t *testing.T, raw []byte) string {
 	return event.ProcessedAt
 }
 
-func assertQueuedInputPreservesIdle(t *testing.T, app *testApp, session db.CodeSession) {
-	t.Helper()
-	if status := retrieveSession(t, app, session.SessionExternalID, defaultTestKey).Status; status != "idle" {
-		t.Fatalf("queued input changed session status to %s", status)
-	}
-	primary, found, err := app.db.GetPrimarySessionThread(t.Context(), session.WorkspaceUUID, session.SessionExternalID)
-	if err != nil || !found || primary.Status != "idle" {
-		t.Fatalf("queued input changed primary status: %+v, %v", primary, err)
-	}
-	worker, found, err := app.db.GetCodeSession(t.Context(), session.ExternalID)
-	if err != nil || !found || !worker.WorkerTurnStarted {
-		t.Fatalf("queued input cleared the existing turn marker: %+v, %v", worker.WorkerTurnStarted, err)
-	}
-}
-
-func TestSessionToolConfirmationACKPublishesOriginalInput(t *testing.T) {
+func TestSessionToolConfirmationACKLeavesOriginalInputUnchanged(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("confirmation-ack"))
 	codeSession, epoch := newPayloadIntegrationSession(t, app)
 	// The large request also exercises offloaded control responses.
@@ -487,15 +469,15 @@ func TestSessionToolConfirmationACKPublishesOriginalInput(t *testing.T) {
 
 	sent := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(toolID)+`,"result":"allow"}]}`, defaultTestKey)
 	inputID := sessionEventStringField(t, sent.Data[0], "id")
-	if sessionInputProcessedAt(t, sent.Data[0]) != "" {
-		t.Fatal("confirmation must wait for the worker ACK")
+	processedAt := sessionInputProcessedAt(t, sent.Data[0])
+	if processedAt == "" {
+		t.Fatal("confirmation must be processed on receipt")
 	}
 	deliveryID := consumePublicInput(t, app, codeSession, epoch, inputID)
 	history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.tool_confirmation", defaultTestKey)
-	if len(history.Data) != 1 || sessionEventStringField(t, history.Data[0], "id") != inputID || sessionInputProcessedAt(t, history.Data[0]) == "" {
-		t.Fatal("ACK did not process the original confirmation")
+	if len(history.Data) != 1 || sessionEventStringField(t, history.Data[0], "id") != inputID || sessionInputProcessedAt(t, history.Data[0]) != processedAt {
+		t.Fatal("ACK changed the original confirmation time")
 	}
-	processedAt := sessionInputProcessedAt(t, history.Data[0])
 	retry := postCodeSessionWorkerDelivery(t, app, codeSession.ExternalID, `{"worker_epoch":`+quoteJSON(epoch)+`,"updates":[{"event_id":`+quoteJSON(deliveryID)+`,"status":"processed"}]}`)
 	if retry.Applied != 0 || retry.Ignored != 1 {
 		t.Fatalf("repeated ACK: %+v", retry)

@@ -188,7 +188,7 @@ func TestActivationRechecksHistoryAfterOffloadWithOneConnection(t *testing.T) {
 	sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":`+quoteJSON(strings.Repeat("x", 950<<10))+`}]}]}`, defaultTestKey)
 	app.db.SQLDB().SetMaxOpenConns(1)
 	store.onUpload = func() {
-		sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"arrived during upload"}]}]}`, defaultTestKey)
+		sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 	}
 	broker := workerevents.NewMemory()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -197,7 +197,7 @@ func TestActivationRechecksHistoryAfterOffloadWithOneConnection(t *testing.T) {
 		t.Fatalf("activate with one connection and concurrent history: %v", err)
 	}
 	pending := broker.Pending(codeSession.ExternalID)
-	if len(pending) != 3 || pending[1].PayloadRef == nil || !strings.Contains(string(pending[2].Payload), "arrived during upload") {
+	if len(pending) != 3 || pending[1].PayloadRef == nil || !strings.Contains(string(pending[2].Payload), `"subtype":"interrupt"`) {
 		t.Fatalf("activation missed history cutover: %d events", len(pending))
 	}
 	if store.uploads != 3 {

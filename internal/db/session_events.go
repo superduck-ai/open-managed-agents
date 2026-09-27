@@ -22,7 +22,7 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return nil, err
 	}
-	acceptedID, err := idlePrimaryInputID(ctx, executor, session, primary, worker, events)
+	acceptedID, err := acceptedMessageID(primary, worker, events, ignoreExisting)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,6 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 		batch := []SessionEvent{event}
 		if event.ExternalID == acceptedID {
-			event.ProcessedAt = event.CreatedAt
 			running := event
 			running.EventType = "session.status_running"
 			running.ExternalID = derivedStatusEventID(event.ExternalID, running.EventType)
@@ -107,35 +106,68 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	return created, nil
 }
 
-func idlePrimaryInputID(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, worker codeSessionInputStateRow, events []SessionEvent) (string, error) {
-	if primary.Status != "idle" || worker.WorkerStatus == "requires_action" {
+// Deployment initial events are startup history on a newly created Session,
+// not new input submitted to an active turn.
+func insertDeploymentInitialEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
+	primaryRow, err := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil {
+		return nil, mapNoRows(err)
+	}
+	primary := primaryRow.thread()
+	created := make([]SessionEvent, 0, len(events))
+	for _, event := range events {
+		stored, _, err := insertSessionEventTx(ctx, executor, &session, primary, event, false)
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, stored)
+	}
+	return created, nil
+}
+
+func acceptedMessageID(primary SessionThread, worker codeSessionInputStateRow, events []SessionEvent, ignoreExisting bool) (string, error) {
+	if ignoreExisting {
 		return "", nil
 	}
-	first := slices.IndexFunc(events, func(event SessionEvent) bool {
-		return event.EventType == "user.message" && event.ProcessedAt.IsZero() &&
-			(event.ThreadExternalID == nil || *event.ThreadExternalID == primary.ExternalID)
-	})
-	if first < 0 {
-		return "", nil
-	}
-	if slices.ContainsFunc(events[:first], func(event SessionEvent) bool {
-		return maevents.IsPublicWorkerInputEvent(event.EventType) &&
-			(event.ThreadExternalID == nil || *event.ThreadExternalID == primary.ExternalID)
-	}) {
-		return "", nil
-	}
-	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, primary.ExternalID)
-	if err != nil || len(pending) > 0 {
-		return "", err
-	}
-	unacknowledged, err := NewSessionEventMapper(executor).HasUnacknowledgedPrimaryInput(ctx, session.WorkspaceUUID, session.ExternalID, primary.ExternalID)
+	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, "")
 	if err != nil {
 		return "", err
 	}
-	if unacknowledged {
-		return "", nil
+	acceptedID := ""
+	for _, event := range events {
+		switch event.EventType {
+		case "user.message":
+			if acceptedID != "" || primary.Status != "idle" || worker.WorkerStatus == "running" || worker.WorkerStatus == "requires_action" || len(pending) > 0 ||
+				(event.ThreadExternalID != nil && *event.ThreadExternalID != primary.ExternalID) {
+				return "", ErrSessionInputConflict
+			}
+			acceptedID = event.ExternalID
+		case "user.interrupt":
+			if primary.Status != "running" && worker.WorkerStatus != "running" && worker.WorkerStatus != "requires_action" {
+				return "", ErrSessionInputConflict
+			}
+		case "user.tool_confirmation", "user.custom_tool_result":
+			threadID := primary.ExternalID
+			if event.ThreadExternalID != nil {
+				threadID = *event.ThreadExternalID
+			}
+			threadPending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, threadID)
+			if err != nil {
+				return "", err
+			}
+			if len(threadPending) == 0 && worker.WorkerStatus != "requires_action" {
+				return "", ErrSessionInputConflict
+			}
+		case "user.tool_result":
+			if primary.Status != "running" && worker.WorkerStatus != "requires_action" {
+				return "", ErrSessionInputConflict
+			}
+		}
+		if maevents.IsPublicWorkerInputEvent(event.EventType) && event.EventType != "user.message" && acceptedID != "" {
+			return "", ErrSessionInputConflict
+		}
 	}
-	return events[first].ExternalID, nil
+	return acceptedID, nil
 }
 
 func insertSessionEventTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent, ignoreExisting bool) (SessionEvent, bool, error) {

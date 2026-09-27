@@ -255,11 +255,6 @@ func normalizeInputEvent(
 	}
 	payload["id"] = eventID
 	payload["processed_at"] = formatEventTime(now)
-	processedAt := now
-	if maevents.IsPublicWorkerInputEvent(eventType) && eventType != "user.custom_tool_result" && eventType != "user.tool_result" {
-		processedAt = time.Time{}
-		payload["processed_at"] = nil
-	}
 	delete(payload, "created_at")
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {
@@ -305,7 +300,7 @@ func normalizeInputEvent(
 		ThreadExternalID:  threadExternalID,
 		EventType:         eventType,
 		Payload:           payloadRaw,
-		ProcessedAt:       processedAt,
+		ProcessedAt:       now,
 		CreatedAt:         now,
 	}, session.OutcomeEvaluations, outcomesChanged, nil
 }

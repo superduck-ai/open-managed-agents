@@ -657,27 +657,6 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionE
 	return row.event(), mapNoRows(err)
 }
 
-func (d *DB) AcknowledgeSessionInput(ctx context.Context, worker CodeSession, eventID string, at time.Time) (SessionEvent, bool, error) {
-	var row sessionEventRow
-	var changed bool
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		_, err := lockSessionForEvents(ctx, NewSessionMapper(executor), worker.WorkspaceUUID, worker.SessionExternalID)
-		if err != nil {
-			return err
-		}
-		current, err := NewCodeSessionMapper(executor).LockWorkerLeaseByExternalID(ctx, worker.ExternalID)
-		if err != nil {
-			return err
-		}
-		if current.CurrentWorkerEpoch != worker.CurrentWorkerEpoch {
-			return ErrWorkerEpochMismatch
-		}
-		row, changed, err = NewSessionEventMapper(executor).AcknowledgeInput(ctx, worker.WorkspaceUUID, worker.SessionExternalID, eventID, at)
-		return err
-	})
-	return row.event(), changed, err
-}
-
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20

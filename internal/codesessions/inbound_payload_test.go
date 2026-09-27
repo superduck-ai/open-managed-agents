@@ -24,26 +24,40 @@ func TestPrepareInboundEventRejectsOversizedPayloadBeforeStorage(t *testing.T) {
 	}
 }
 
-func TestActivationReplayPreservesQueuedEventCreationTime(t *testing.T) {
-	createdAt := time.Date(2026, time.September, 27, 8, 10, 0, 0, time.UTC)
+func TestActivationReplayPreservesReceiveTimeAcrossInputProcessing(t *testing.T) {
+	receivedAt := time.Date(2026, time.September, 27, 8, 10, 0, 0, time.UTC)
+	processedAt := receivedAt.Add(5 * time.Minute)
 	event := db.SessionEvent{
-		UUID: "event-uuid", ExternalID: "sevt_queued", CreatedAt: createdAt,
+		UUID: "event-uuid", ExternalID: "sevt_queued", EventType: "user.message", CreatedAt: receivedAt,
 		Payload: json.RawMessage(`{"type":"user.message","id":"sevt_queued","processed_at":null,"content":[{"type":"text","text":"hello"}]}`),
 	}
-	inbound, err := (&Service{}).convertSessionEventToInbound(t.Context(), db.CodeSession{ExternalID: "cse_test"}, event)
+	service := &Service{}
+	codeSession := db.CodeSession{ExternalID: "cse_test"}
+	queued, err := service.convertSessionEventToInbound(t.Context(), codeSession, event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var payload struct {
-		CreatedAt string `json:"created_at"`
-		Timestamp string `json:"timestamp"`
-	}
-	if err := json.Unmarshal(inbound.envelope.Payload, &payload); err != nil {
+	event.ProcessedAt = processedAt
+	event.Payload = json.RawMessage(`{"type":"user.message","id":"sevt_queued","processed_at":"2026-09-27T08:15:00Z","content":[{"type":"text","text":"hello"}]}`)
+	processed, err := service.convertSessionEventToInbound(t.Context(), codeSession, event)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := createdAt.Format(time.RFC3339Nano)
-	if payload.CreatedAt != want || payload.Timestamp != want {
-		t.Fatalf("activation input times = %+v, want %s", payload, want)
+	if queued.messageID != processed.messageID {
+		t.Fatalf("replay changed Worker message ID: %s != %s", queued.messageID, processed.messageID)
+	}
+	for _, inbound := range []preparedInboundEvent{queued, processed} {
+		var payload struct {
+			CreatedAt string `json:"created_at"`
+			Timestamp string `json:"timestamp"`
+		}
+		if err := json.Unmarshal(inbound.envelope.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		want := receivedAt.Format(time.RFC3339Nano)
+		if payload.CreatedAt != want || payload.Timestamp != want {
+			t.Fatalf("replayed Worker time = %+v, want %s", payload, want)
+		}
 	}
 }
 

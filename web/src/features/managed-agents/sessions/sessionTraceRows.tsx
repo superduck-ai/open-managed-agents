@@ -24,21 +24,16 @@ import { formatSessionDuration } from './sessionDetailModel';
 import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
   sessionEventFamily,
-  sessionEventIsThinking,
   sessionEventLabel,
-  sessionEventStructuredContentText,
   sessionEventSummary,
-  sessionEventTranscriptText,
   sessionEventType,
-  sessionResultText,
+  sessionLiveDisplayText,
   sessionSubagentName,
   sessionSubagentThreadId,
   sessionThinkingPreview,
-  sessionThinkingText,
-  sessionToolResultText,
 } from './sessionTraceModel';
 import { EventTypeBadge } from './SessionTracePanel';
-import { TranscriptContent } from './SessionTranscriptContent';
+import { TranscriptMessageBody } from './SessionTranscriptBody';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 
 export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
@@ -219,7 +214,7 @@ function TranscriptMessageRow({
               entry.isError && 'text-destructive',
             )}
           >
-            <TranscriptMessageContent entry={entry} content={content} inProgress={inProgress} msg={msg} />
+            <TranscriptMessageContent entry={entry} content={content} inProgress={inProgress} />
           </BubbleContent>
         </Bubble>
       ) : (
@@ -239,7 +234,7 @@ function TranscriptMessageRow({
               entry.isError && '!bg-destructive/5 text-destructive',
             )}
           >
-            <TranscriptMessageContent entry={entry} content={content} inProgress={inProgress} msg={msg} />
+            <TranscriptMessageContent entry={entry} content={content} inProgress={inProgress} />
           </BubbleContent>
         </Bubble>
       )}
@@ -251,20 +246,21 @@ function TranscriptMessageContent({
   entry,
   content,
   inProgress,
-  msg,
 }: {
   entry: DisplayEventEntry;
   content: string;
   inProgress: boolean;
-  msg: I18nMsg;
 }) {
-  if (entry.displayEvent.isStreaming) {
-    return <LiveRowPreview displayEvent={entry.displayEvent} msg={msg} compact={false} />;
-  }
-  if (inProgress) {
+  if (!entry.displayEvent.isStreaming && inProgress) {
     return <SynchronizedShimmerText>{content}</SynchronizedShimmerText>;
   }
-  return <TranscriptContent value={content} />;
+  return (
+    <TranscriptMessageBody
+      displayEvent={entry.displayEvent}
+      content={content}
+      streaming={entry.displayEvent.isStreaming}
+    />
+  );
 }
 
 export function TranscriptSpeakerHeader({
@@ -931,17 +927,8 @@ export function LiveRowPreview({
 }) {
   const deltaFrames = useContext(SessionDetailDeltaFramesContext);
   const liveEvent = deltaFrames[displayEvent.id]?.message ?? displayEvent.event;
-  const family = sessionEventFamily(liveEvent);
-  const label = sessionEventLabel(liveEvent, family, msg);
-  const value = sessionEventIsThinking(liveEvent)
-    ? sessionThinkingText(liveEvent)
-    : sessionEventTranscriptText(liveEvent) ||
-      sessionEventStructuredContentText(liveEvent) ||
-      sessionToolResultText(liveEvent) ||
-      sessionResultText(liveEvent) ||
-      displayEvent.content ||
-      displayEvent.label ||
-      label;
+  const label = sessionEventLabel(liveEvent, sessionEventFamily(liveEvent), msg);
+  const value = sessionLiveDisplayText(displayEvent, liveEvent, label);
   return <>{compact ? sessionInlineRowPreview(value) : value}</>;
 }
 

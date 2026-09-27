@@ -86,8 +86,12 @@ const transcriptMarkdownUrlTransform: UrlTransform = (value, key) => {
   return '';
 };
 
+export function transcriptContentCode(value: string) {
+  return value.length <= TRANSCRIPT_TEXT_LIMIT ? parseTranscriptCode(value) : null;
+}
+
 export function TranscriptContent({ value }: { value: string }) {
-  const code = value.length <= TRANSCRIPT_TEXT_LIMIT ? parseTranscriptCode(value) : null;
+  const code = transcriptContentCode(value);
   if (code) {
     return <SyntaxCodeBlock value={code.value} language={code.language} />;
   }

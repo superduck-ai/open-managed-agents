@@ -100,6 +100,104 @@ describe('managed agents API', () => {
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).length).toBe(502);
   });
 
+  test('an interrupted forced scan lets a terminated session reload missing history', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId);
+    queryClient.setQueryData(cacheKey, {
+      events: [{ id: 'sevt_old', type: 'user.message', processed_at: '2026-08-26T13:13:00Z' }],
+      syncedThrough: null,
+      historyComplete: true,
+      sawTerminated: false,
+    });
+    const attempt = new AbortController();
+    let requests = 0;
+    globalThis.fetch = async (_input, init) => {
+      requests += 1;
+      if (requests === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'sevt_old', type: 'user.message', processed_at: '2026-08-26T13:13:00Z' },
+            { id: 'sevt_final', type: 'agent.message', processed_at: '2026-08-26T13:13:01Z' },
+          ],
+          next_page: null,
+        }),
+      );
+    };
+
+    const interrupted = syncSessionEventHistory({
+      queryClient,
+      workspaceId,
+      sessionId,
+      force: true,
+      signal: attempt.signal,
+    });
+    attempt.abort(new Error('session terminated'));
+    await expect(interrupted).rejects.toThrow('session terminated');
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId });
+
+    expect(requests).toBe(2);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_old',
+      'sevt_final',
+    ]);
+  });
+
+  test('an interrupted later page restarts history so its order stays authoritative', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const attempt = new AbortController();
+    const pages: string[] = [];
+    let requests = 0;
+    globalThis.fetch = async (input, init) => {
+      const page = new URL(String(input), 'https://oma.duck.ai').searchParams.get('page') ?? '';
+      pages.push(page);
+      requests += 1;
+      if (requests === 2) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: page ? 'sevt_final' : 'sevt_first',
+              type: 'agent.message',
+              processed_at: page ? '2026-08-26T13:13:01Z' : '2026-08-26T13:13:00Z',
+            },
+          ],
+          next_page: page ? null : 'next',
+        }),
+      );
+    };
+
+    const interrupted = syncSessionEventHistory({
+      queryClient,
+      workspaceId,
+      sessionId,
+      force: true,
+      signal: attempt.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    attempt.abort(new Error('session terminated'));
+    await expect(interrupted).rejects.toThrow('session terminated');
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId });
+
+    expect(pages).toEqual(['', 'next', '', 'next']);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_first',
+      'sevt_final',
+    ]);
+  });
+
   test('model request end removes only its unfinished previews', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';

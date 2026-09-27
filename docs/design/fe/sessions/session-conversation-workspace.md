@@ -25,12 +25,12 @@ Viewer 包含两个区域：
 
 ## 转录与对齐
 
-- Session 与每条可见子 Thread 都先建立 SSE 订阅，再从第一页扫完事件历史；扫描期间继续接收实时帧。SSE 正常结束、报错、建连超时或流空闲超时后清理未完成预览，退避重连并重新扫全量历史。历史与 SSE 按 JSON 事件 ID 合并，重复事件只展示一次；持久事件与对应的 `event_start`、`event_delta` 帧都展示同一个 `id:`，但 `id:` 不用作 `Last-Event-ID` 回放游标。Thinking 与文本是两组独立的事件 ID。
+- Session 与每条可见子 Thread 都先建立 SSE 订阅，再从第一页扫完事件历史；扫描期间继续接收实时帧。SSE 正常结束、报错、建连超时或流空闲超时后清理未完成预览，退避重连并重新扫全量历史。流已结束时取消尚未完成的本次历史请求，下一次订阅重新扫描；中断的扫描不能留下可用于跳页的游标或“历史已完整”标记。手动刷新实时 Session 也重新订阅并扫描历史。永久停流的子 Thread 结束加载状态。历史与 SSE 按 JSON 事件 ID 合并，重复事件只展示一次；持久事件与对应的 `event_start`、`event_delta` 帧都展示同一个 `id:`，但 `id:` 不用作 `Last-Event-ID` 回放游标。Thinking 与文本是两组独立的事件 ID。
 - 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。`span.model_request_end.event_ids` 仅清理所列 ID 的未完成预览。不同 ID 的 Worker echo 属于 #393，前端不猜测它与预览的对应关系。
 - Transcript 内容列、待处理 Action Card 和消息输入框共享最大 `720px` 的居中内容轨道。
 - 三者在窄容器中使用相同的 `16px` 水平留白；滚动条采用覆盖式自动隐藏样式，不允许通过 Composer 或 Action Card 的伪滚动容器预留 gutter。左右边界必须逐像素一致。
 - 转录先按未过滤的事件流建立 speaker turn，再按 model request bracket 建立 iteration，最后应用搜索；搜索不得把原本由 User、idle、queued、outcome、status 或 speaker 变化分开的 turn 重新合并。
-- 前端缓存、Transcript、Inspector Events 和 minimap 必须保持后端 `data[]` 或 SSE 的到达顺序，不得按时间、speaker 或事件类型再次排序。同 ID 更新在原位置替换，新 ID 按到达顺序追加；流式预览被正式消息替换时也必须保留预览原位置，即使 `status_idle` 先到也不能先删除预览再把正式消息追加到 turn 之后。Idle 去重和 Tool Batch 折叠只删除或压缩事件，并将聚合项放在第一条被折叠事件的位置，不能移动其他事件。`status_idle` 到达后保留短暂 grace period，再强制同步历史并清理仍未完成的流式预览；Idle 可以结束 UI 的生成状态，但不能提前销毁等待后续 Agent/message end 事件补齐的 model bracket。
+- 前端缓存、Transcript、Inspector Events 和 minimap 以历史 `data[]` 顺序为准；扫描期间实时帧即时展示，后续历史分页到达时按历史顺序对账，仍未出现在历史中的实时事件留在末尾。不得按时间、speaker 或事件类型再次排序。同 ID 更新在原位置替换，不同 ID 的排队消息即使内容相同也各自保留；流式预览被正式消息替换时也必须保留预览原位置，即使 `status_idle` 先到也不能先删除预览再把正式消息追加到 turn 之后。Idle 去重和 Tool Batch 折叠只删除或压缩事件，并将聚合项放在第一条被折叠事件的位置，不能移动其他事件。`status_idle` 到达后保留短暂 grace period，再强制同步历史并清理仍未完成的流式预览；Idle 可以结束 UI 的生成状态，但不能提前销毁等待后续 Agent/message end 事件补齐的 model bracket。
 - 对话使用仓库共享的 shadcn `Message` / `Bubble` 结构：User turn 是 OMA 明确保留的右对齐风格，桌面最大占内容轨 `80%`，窄屏放宽到 `92%`；Agent turn 按 Claude 逻辑占满 720px 内容轨，不再额外收窄到 `90%/94%`。
 - User 使用 `session-speaker-user/10` 角色色背景和 `0.5px session-border` 的轻量 panel bubble，圆角 `10px`、水平内边距 `11px`、垂直内边距 `6px`；Bubble 高度由正文自然决定，不设置会在单行正文下方制造额外空白的固定最小高度。Agent 名称和时间在连续 turn 中只展示一次；每个 Agent iteration 使用 `10px` 圆角、`0.5px` 语义边框、`10px 4px` 内边距和 `5px` 间距，Agent text、Thinking 和 Tool Call 在 panel 内保持 `6px 2px` 行内节奏。idle、queued、outcome 和 status 等系统边界保持全宽，不伪装成对话气泡。
 - Agent 标签使用 `session-speaker-agent` 主题变量，User 标签使用 `session-speaker-user`；两个变量必须同时定义浅色和深色值，不使用 chart token 或硬编码颜色冒充领域语义。

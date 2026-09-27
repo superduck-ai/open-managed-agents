@@ -11,6 +11,7 @@ import {
   applyModelRequestBrackets,
   buildSessionEventEntries,
   latestOpenModelRequest,
+  mergeSessionEvents,
   sessionTimestampMs,
 } from './sessionTraceModel';
 
@@ -24,6 +25,23 @@ const EMPTY_USAGE: SessionEventUsage = {
 };
 
 describe('sessionTranscriptModel', () => {
+  test('keeps distinct queued user messages with the same text', () => {
+    const first = {
+      id: 'sevt_first',
+      type: 'user.message',
+      processed_at: null,
+      content: [{ type: 'text', text: 'same' }],
+    };
+    const second = {
+      id: 'sevt_second',
+      type: 'user.message',
+      processed_at: null,
+      content: [{ type: 'text', text: 'same' }],
+    };
+
+    expect(mergeSessionEvents([first], [second]).map((event) => event.id)).toEqual(['sevt_first', 'sevt_second']);
+  });
+
   test('preserves RFC3339 precision beyond milliseconds', () => {
     expect(sessionTimestampMs('2026-01-01T08:00:00.123456789Z')).toBeCloseTo(
       Date.parse('2026-01-01T08:00:00.123Z') + 0.456789,

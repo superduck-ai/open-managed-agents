@@ -38,7 +38,11 @@ for (const threadId of ['', 'sthr_child']) {
       }
       return new Response(
         JSON.stringify({
-          data: [{ id: `sevt_${listCount}`, type: 'user.message', processed_at: '2026-08-26T13:13:00Z' }],
+          data: Array.from({ length: listCount }, (_, index) => ({
+            id: `sevt_${index + 1}`,
+            type: 'user.message',
+            processed_at: '2026-08-26T13:13:00Z',
+          })),
           next_page: null,
         }),
       );
@@ -59,6 +63,51 @@ for (const threadId of ['', 'sthr_child']) {
     ).toEqual(['sevt_1', 'sevt_2']);
   });
 }
+
+test('reconnects when an EOF interrupts a pending history request', async () => {
+  const queryClient = new QueryClient();
+  const controller = new AbortController();
+  const calls: string[] = [];
+  let streamCount = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes('/stream?')) {
+      streamCount += 1;
+      calls.push('stream');
+      return new Response(': connected\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    calls.push('list');
+    if (streamCount === 1) {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      });
+    }
+    return new Response(JSON.stringify({ data: [{ id: 'sevt_final', type: 'agent.message' }], next_page: null }));
+  };
+
+  const loop = runSessionEventStreamLoop({
+    queryClient,
+    sessionId: 'sesn_123',
+    workspaceId: 'workspace_123',
+    threadId: '',
+    signal: controller.signal,
+    onCacheChange: () => undefined,
+    onHistorySynced: () => controller.abort(),
+  });
+  let timeout: ReturnType<typeof setTimeout>;
+  try {
+    await Promise.race([
+      loop,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('reconnect stalled')), 2500);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout!);
+    controller.abort();
+  }
+
+  expect(calls).toEqual(['stream', 'list', 'stream', 'list']);
+});
 
 test('reconnects after a connection error and scans history once subscribed', async () => {
   const queryClient = new QueryClient();
@@ -150,7 +199,7 @@ test('times out while waiting for an SSE connection to open', async () => {
   linked.dispose();
 });
 
-test('keeps a final SSE event while a later history page is pending and removes an unfinished preview on disconnect', async () => {
+test('keeps history ahead of a live final while a later page is pending and removes an unfinished preview', async () => {
   const queryClient = new QueryClient();
   const controller = new AbortController();
   const calls: string[] = [];
@@ -218,7 +267,7 @@ test('keeps a final SSE event while a later history page is pending and removes 
         finishSecondPage(
           new Response(
             JSON.stringify({
-              data: [{ id: 'sevt_second', type: 'system.message', processed_at: '2026-08-26T13:13:02Z' }],
+              data: [{ id: 'sevt_second', type: 'system.message', processed_at: '2026-08-26T13:13:00.5Z' }],
               next_page: null,
             }),
           ),
@@ -231,7 +280,7 @@ test('keeps a final SSE event while a later history page is pending and removes 
 
   expect(calls).toEqual(['stream', 'list:', 'list:next']);
   const events = sessionDetailScopeEvents(queryClient, 'workspace_123', 'sesn_123', ['']);
-  expect(events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_answer', 'sevt_second']);
-  expect(events[1]).toEqual(final);
+  expect(events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_second', 'sevt_answer']);
+  expect(events[2]).toEqual(final);
   expect(sessionDetailDeltaFrames(queryClient, 'workspace_123', 'sesn_123', [''])).toEqual({});
 });

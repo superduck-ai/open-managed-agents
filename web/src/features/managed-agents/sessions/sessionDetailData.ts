@@ -187,7 +187,7 @@ export function useSessionDetailEventData({
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '');
       bump();
     };
-  }, [bump, live, onPrimaryEvent, queryClient, sessionId, workspaceId]);
+  }, [bump, live, onPrimaryEvent, queryClient, refreshKey, sessionId, workspaceId]);
 
   useEffect(() => {
     if (!sessionId || !live || !childThreadIds.length) {
@@ -209,9 +209,15 @@ export function useSessionDetailEventData({
           if (!pending.size) setChildLoading(false);
           bump();
         },
-      }).catch((streamError: unknown) => {
-        if (!controller.signal.aborted) setError(errorMessage(streamError));
-      });
+      })
+        .catch((streamError: unknown) => {
+          if (!controller.signal.aborted) setError(errorMessage(streamError));
+        })
+        .finally(() => {
+          if (controller.signal.aborted) return;
+          pending.delete(threadId);
+          if (!pending.size) setChildLoading(false);
+        });
     }
     return () => {
       controller.abort();
@@ -219,7 +225,7 @@ export function useSessionDetailEventData({
         cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId),
       );
     };
-  }, [bump, childThreadIds, live, queryClient, sessionId, workspaceId]);
+  }, [bump, childThreadIds, live, queryClient, refreshKey, sessionId, workspaceId]);
 
   const events = useMemo(
     () => (sessionId ? sessionDetailScopeEvents(queryClient, workspaceId, sessionId, scopeThreadIds) : []),
@@ -336,7 +342,8 @@ export async function runSessionEventStreamLoop({
           onCacheChange();
         },
       });
-      await historyScan;
+      // Let a completed scan settle, but never hold a closed stream open for a stalled page.
+      await Promise.race([historyScan, new Promise<void>((resolve) => window.setTimeout(resolve, 0))]);
       if (historyError) throw historyError;
       throw new Error('Session event stream ended');
     } catch (streamError) {

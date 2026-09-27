@@ -1709,6 +1709,38 @@ export function registerManagedAgentsResourceTests() {
     );
   });
 
+  test('Refresh rescans events while a live session stream stays open', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'running';
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes('/stream?')) {
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              init?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+            },
+          }),
+          { headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      }
+      return fetchResource(input, init);
+    });
+
+    renderManagedAgentsPage('sessions');
+    await screen.findByTestId('session-detail-page');
+    const eventRequests = () =>
+      api.requests.filter((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?')).length;
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(0));
+    const beforeRefresh = eventRequests();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refresh' }));
+
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(beforeRefresh));
+  });
+
   test('keeps the primary session stream open when running metadata has completed history', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();

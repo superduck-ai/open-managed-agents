@@ -104,6 +104,10 @@ func TestArchiveIdleThreadEmitsTermination(t *testing.T) {
 	if len(threadEvents.Data) != 2 || sessionEventStringField(t, threadEvents.Data[0], "type") != "session.thread_status_terminated" {
 		t.Fatalf("thread archive missing thread history: %s", threadEvents.Data)
 	}
+	stored, found, err := app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil || !found || stored.Status != "terminated" {
+		t.Fatalf("thread archive left worker active: found=%t status=%s err=%v", found, stored.Status, err)
+	}
 }
 
 func TestSessionPendingToolRulesMatchAcceptance(t *testing.T) {

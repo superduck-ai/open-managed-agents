@@ -1193,43 +1193,81 @@ export async function syncSessionEventHistory({
     if (fromStart) {
       queryClient.setQueryData(cacheKey, emptySessionDetailEventCache());
       queryClient.setQueryData(sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId), {});
+    } else if (force) {
+      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => ({
+        ...(cache ?? emptySessionDetailEventCache()),
+        syncedThrough: null,
+        historyComplete: false,
+      }));
     }
+    const historyOrder: string[] = [];
+    const historyIds = new Set<string>();
     let page = initialPage;
     let sawTerminated = false;
-    do {
-      if (signal?.aborted) {
-        throw signal.reason;
-      }
-      const response = await fetchSessionEventsPage({
-        sessionId,
-        threadId: threadId || undefined,
-        workspaceId,
-        order: 'asc',
-        limit: SESSION_DETAIL_EVENT_PAGE_LIMIT,
-        page,
-        signal,
-      });
-      if (signal?.aborted) {
-        throw signal.reason;
-      }
-      const nextPage = response.next_page ?? null;
-      sawTerminated =
-        sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
-      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
-        mergeSessionEventCache(
-          cache,
-          response.data,
-          nextPage
-            ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
-            : { historyComplete: true, syncedThrough: null, sawTerminated },
-        ),
-      );
-      response.data.forEach((event) => {
-        const finalId = sessionFinalAgentEventId(event);
-        if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
-      });
-      page = nextPage;
-    } while (page && !signal?.aborted);
+    try {
+      do {
+        if (signal?.aborted) {
+          throw signal.reason;
+        }
+        const response = await fetchSessionEventsPage({
+          sessionId,
+          threadId: threadId || undefined,
+          workspaceId,
+          order: 'asc',
+          limit: SESSION_DETAIL_EVENT_PAGE_LIMIT,
+          page,
+          signal,
+        });
+        if (signal?.aborted) {
+          throw signal.reason;
+        }
+        const nextPage = response.next_page ?? null;
+        sawTerminated =
+          sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
+        if (initialPage === null) {
+          for (const event of response.data) {
+            const id = sessionStableEventId(event);
+            if (id && !historyIds.has(id)) {
+              historyIds.add(id);
+              historyOrder.push(id);
+            }
+          }
+        }
+        queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
+          const merged = mergeSessionEventCache(
+            cache,
+            response.data,
+            nextPage
+              ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
+              : { historyComplete: true, syncedThrough: null, sawTerminated },
+          );
+          if (initialPage !== null) return merged;
+          const byId = new Map(merged.events.map((event) => [sessionStableEventId(event), event]));
+          return {
+            ...merged,
+            events: [
+              ...historyOrder
+                .map((id) => byId.get(id))
+                .filter((event): event is QuickstartSessionEvent => Boolean(event)),
+              ...merged.events.filter((event) => !historyIds.has(sessionStableEventId(event) ?? '')),
+            ],
+          };
+        });
+        response.data.forEach((event) => {
+          const finalId = sessionFinalAgentEventId(event);
+          if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+        });
+        page = nextPage;
+      } while (page && !signal?.aborted);
+      if (signal?.aborted) throw signal.reason;
+    } catch (error) {
+      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => ({
+        ...(cache ?? emptySessionDetailEventCache()),
+        syncedThrough: null,
+        historyComplete: false,
+      }));
+      throw error;
+    }
     return queryClient.getQueryData<SessionDetailEventCache>(cacheKey) ?? emptySessionDetailEventCache();
   };
   return force ? scan() : sessionDetailSingleFlight(requestKey, scan);

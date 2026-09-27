@@ -779,12 +779,11 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	thread, events, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
+	thread, removal, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	h.publishSessionEvents(r.Context(), events)
-	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events)
+	h.finishSessionRemoval(r.Context(), removal)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
 	return nil
 }

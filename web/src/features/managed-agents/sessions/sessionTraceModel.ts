@@ -2474,6 +2474,9 @@ export function sessionEventCanonicalKey(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventsShouldCoalesce(left: QuickstartSessionEvent, right: QuickstartSessionEvent) {
+  if (typeof left.id === 'string' && left.id && typeof right.id === 'string' && right.id && left.id !== right.id) {
+    return false;
+  }
   return !sessionEventTimestamp(left) || !sessionEventTimestamp(right);
 }
 

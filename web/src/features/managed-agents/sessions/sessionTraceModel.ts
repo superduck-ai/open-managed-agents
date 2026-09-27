@@ -2506,7 +2506,7 @@ export function sessionEventType(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventTimestamp(event: QuickstartSessionEvent) {
-  return sessionTimestampMs(event.created_at);
+  return sessionTimestampMs(event.processed_at) || sessionTimestampMs(event.created_at);
 }
 
 export function sessionTimestampMs(value: unknown) {

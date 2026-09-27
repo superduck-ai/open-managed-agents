@@ -326,7 +326,7 @@ func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) 
 		fmt.Fprintf(w, "data: %s\n\n", event.Payload)
 		return
 	}
-	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID))
+	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID))
 }
 
 func streamPreviewTarget(event sessionStreamEvent) (string, string) {

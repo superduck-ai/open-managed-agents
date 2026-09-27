@@ -119,10 +119,10 @@
                 AND event_type IN
                 <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
             </if>
-            <if test="params.CreatedAtGT != nil">AND created_at &gt; #{params.CreatedAtGT}</if>
-            <if test="params.CreatedAtGTE != nil">AND created_at &gt;= #{params.CreatedAtGTE}</if>
-            <if test="params.CreatedAtLT != nil">AND created_at &lt; #{params.CreatedAtLT}</if>
-            <if test="params.CreatedAtLTE != nil">AND created_at &lt;= #{params.CreatedAtLTE}</if>
+            <if test="params.CreatedAtGT != nil">AND processed_at &gt; #{params.CreatedAtGT}</if>
+            <if test="params.CreatedAtGTE != nil">AND processed_at &gt;= #{params.CreatedAtGTE}</if>
+            <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
+            <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
                 AND (COALESCE(processed_at, CAST('infinity' AS timestamptz)), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>

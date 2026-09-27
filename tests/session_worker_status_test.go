@@ -121,6 +121,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 	type publicEvent struct {
 		ID          string `json:"id"`
 		Type        string `json:"type"`
+		CreatedAt   string `json:"created_at"`
 		ThreadID    string `json:"session_thread_id"`
 		ProcessedAt string `json:"processed_at"`
 		StopReason  struct {
@@ -138,7 +139,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		processedAt := sessionInputProcessedAt(t, sent.Data[0])
 		if i == 0 {
 			firstProcessedAt = processedAt
-			if processedAt == "" || processedAt != sessionEventStringField(t, sent.Data[0], "created_at") {
+			if processedAt == "" {
 				t.Fatalf("idle input must be processed on acceptance: %s", sent.Data)
 			}
 			// The running pair and first message must arrive before any worker ACK.
@@ -196,6 +197,9 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		if event.ID == "" {
 			continue
 		}
+		if event.CreatedAt != "" {
+			t.Fatalf("live session event exposed created_at: %+v", event)
+		}
 		live = append(live, event)
 		if len(live) == len(want) {
 			break
@@ -231,7 +235,7 @@ func TestSessionPublicStatusOrderMatchesLiveHistory(t *testing.T) {
 		t.Fatalf("ACK changed accepted time or left queued input unprocessed: %+v", live)
 	}
 	next := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"Next turn"}]}]}`, defaultTestKey)
-	if sessionInputProcessedAt(t, next.Data[0]) != sessionEventStringField(t, next.Data[0], "created_at") {
+	if sessionInputProcessedAt(t, next.Data[0]) == "" {
 		t.Fatalf("next idle turn must be accepted immediately: %s", next.Data)
 	}
 	putCodeSessionWorkerState(t, app, codeSession.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
@@ -284,7 +288,7 @@ func TestSessionIdleInputBatch(t *testing.T) {
 				t.Fatalf("expected two inputs, got %d", len(sent.Data))
 			}
 			first := sessionInputProcessedAt(t, sent.Data[0])
-			if first == "" || first != sessionEventStringField(t, sent.Data[0], "created_at") || sessionInputProcessedAt(t, sent.Data[1]) != "" {
+			if first == "" || sessionInputProcessedAt(t, sent.Data[1]) != "" {
 				t.Fatal("only the first batch input should be processed immediately")
 			}
 			history := listSessionEvents(t, app, codeSession.SessionExternalID, "types[]=user.message&order=asc", defaultTestKey)
@@ -499,7 +503,7 @@ func TestSessionToolConfirmationACKPublishesOriginalInput(t *testing.T) {
 	// A later system message marks the end of the live events we need to inspect.
 	system := sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"Context"}]}]}`, defaultTestKey)
 	systemID := sessionEventStringField(t, system.Data[0], "id")
-	if sessionInputProcessedAt(t, system.Data[0]) != sessionEventStringField(t, system.Data[0], "created_at") {
+	if sessionInputProcessedAt(t, system.Data[0]) == "" {
 		t.Fatal("system message must be processed on receipt")
 	}
 	confirmationCount, sawSystem := 0, false

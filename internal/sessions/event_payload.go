@@ -194,15 +194,16 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 }
 
 func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
-	return eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID)
+	return eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID)
 }
 
-func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt time.Time, threadID string) json.RawMessage {
+func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, threadID string) json.RawMessage {
 	var payload map[string]any
 	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
 		return payloadRaw
 	}
-	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)
+	_, changed := payload["created_at"]
+	delete(payload, "created_at")
 	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
 		payload["session_thread_id"] = strings.TrimSpace(threadID)
@@ -245,10 +246,10 @@ func eventTime(t time.Time) time.Time { return t.UTC().Truncate(time.Microsecond
 
 func formatEventTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
-func parseOrder(r *http.Request) (string, error) {
+func parseOrder(r *http.Request, defaultOrder string) (string, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("order"))
 	if raw == "" {
-		return "desc", nil
+		return defaultOrder, nil
 	}
 	if raw != "asc" && raw != "desc" {
 		return "", errors.New("order must be asc or desc")

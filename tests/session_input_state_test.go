@@ -1,11 +1,13 @@
 package tests
 
 import (
+	"bytes"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -148,19 +150,29 @@ func TestSessionStatusRespectsOtherThreads(t *testing.T) {
 	}
 }
 
-func TestSessionHistoryCreationFiltersAndDefaultOrder(t *testing.T) {
+func TestSessionHistoryFiltersByProcessingTimeAndDefaultsToChronologicalOrder(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("history-creation-filter"))
-	worker, epoch := newPayloadIntegrationSession(t, app)
+	worker, _ := newPayloadIntegrationSession(t, app)
 	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first"}]},{"type":"user.message","content":[{"type":"text","text":"queued"}]}]}`, defaultTestKey)
-	queuedID := sessionEventStringField(t, sent.Data[1], "id")
-	// An old creation time and a current processing time must not satisfy this range.
-	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"system.message","id":"sevt_old_creation","uuid":"old-creation","created_at":"2000-01-01T00:00:00Z","message":"old"}`))
-	events := listSessionEvents(t, app, worker.SessionExternalID, "created_at[gte]=2020-01-01T00:00:00Z", defaultTestKey)
-	if len(events.Data) != 4 || sessionEventStringField(t, events.Data[0], "id") != queuedID {
-		t.Fatalf("creation filter must include queued input first in default desc: %s", events.Data)
+	if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) {
+		t.Fatalf("session event response exposed created_at: %s", sent.Data[0])
 	}
-	old := listSessionEvents(t, app, worker.SessionExternalID, "created_at[lt]=2020-01-01T00:00:00Z", defaultTestKey)
-	if len(old.Data) != 1 || sessionEventStringField(t, old.Data[0], "id") != "sevt_old_creation" {
-		t.Fatalf("creation filter used processing time: %s", old.Data)
+	queuedID := sessionEventStringField(t, sent.Data[1], "id")
+	// Claude's created_at query filters compare against processed_at, despite the parameter name.
+	cutoff := time.Now().UTC().Add(time.Hour)
+	if _, changed, err := app.db.MarkSessionEventProcessed(t.Context(), worker, queuedID, cutoff.Add(time.Hour)); err != nil || !changed {
+		t.Fatalf("process queued input: changed=%t err=%v", changed, err)
+	}
+	events := listSessionEvents(t, app, worker.SessionExternalID, "created_at[gte]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(events.Data) != 1 || sessionEventStringField(t, events.Data[0], "id") != queuedID {
+		t.Fatalf("processing filter excluded a later-processed input: %s", events.Data)
+	}
+	old := listSessionEvents(t, app, worker.SessionExternalID, "created_at[lt]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(old.Data) != 3 {
+		t.Fatalf("processing filter included later-processed input: %s", old.Data)
+	}
+	all := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey)
+	if len(all.Data) != 4 || sessionEventStringField(t, all.Data[len(all.Data)-1], "id") != queuedID {
+		t.Fatalf("default history order is not processed_at ascending: %s", all.Data)
 	}
 }

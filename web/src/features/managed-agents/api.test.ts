@@ -15,7 +15,7 @@ import {
   sessionIncompleteStreamEventIds,
   syncSessionEventHistory,
 } from './api';
-import { buildSessionEventEntries } from './sessions/sessionTraceModel';
+import { buildSessionEventEntries, sessionEventTimestamp } from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
 
@@ -25,6 +25,12 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('session event timestamp uses processed_at without created_at', () => {
+    expect(sessionEventTimestamp({ id: 'sevt_message', processed_at: '2026-08-26T13:13:00Z' })).toBe(
+      Date.parse('2026-08-26T13:13:00Z'),
+    );
+  });
+
   test('force history sync scans from the first page without clearing cached events', async () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';

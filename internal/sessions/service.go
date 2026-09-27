@@ -165,7 +165,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "desc")
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -426,7 +426,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "asc")
 	if err != nil {
 		return invalidRequest(err)
 	}

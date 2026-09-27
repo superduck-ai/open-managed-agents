@@ -236,7 +236,7 @@ func TestSessionEventMapperFindAssistantEchoKeys(t *testing.T) {
 	})
 }
 
-func TestSessionEventMapperFiltersCreationTime(t *testing.T) {
+func TestSessionEventMapperCreatedAtParametersFilterProcessingTime(t *testing.T) {
 	now := time.Now().UTC()
 	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 20,
@@ -246,7 +246,7 @@ func TestSessionEventMapperFiltersCreationTime(t *testing.T) {
 		statement: sessionEventMapperListPageStatement, bound: bound,
 		wantID: "SessionEventMapper.ListPage", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionExternalID", "params.CreatedAtGT", "params.CreatedAtGTE", "params.CreatedAtLT", "params.CreatedAtLTE", "params.FetchLimit"},
-		wantSQLFragments:  []string{"created_at > $3", "created_at >= $4", "created_at < $5", "created_at <= $6"},
+		wantSQLFragments:  []string{"processed_at > $3", "processed_at >= $4", "processed_at < $5", "processed_at <= $6"},
 	})
 }
 

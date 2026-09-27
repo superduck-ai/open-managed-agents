@@ -153,20 +153,15 @@ func TestSessionsAPI(t *testing.T) {
 		if len(sent.Data) != 1 || !bytes.Contains(sent.Data[0], []byte(`"type":"user.message"`)) {
 			t.Fatalf("unexpected sent events: %+v", sent)
 		}
-		sentEventID := sessionEventStringField(t, sent.Data[0], "id")
-		sentCreatedAt := sessionEventStringField(t, sent.Data[0], "created_at")
-		if _, err := time.Parse(time.RFC3339, sentCreatedAt); err != nil {
-			t.Fatalf("sent event created_at = %q, want RFC3339: %v", sentCreatedAt, err)
-		}
-		if _, err := app.pool.Exec(context.Background(), `update session_events set payload = payload - 'created_at' where external_id = $1`, sentEventID); err != nil {
-			t.Fatalf("remove stored event created_at: %v", err)
+		if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) || sessionEventStringField(t, sent.Data[0], "processed_at") == "" {
+			t.Fatalf("sent event must expose processed_at without created_at: %s", sent.Data[0])
 		}
 		events := listSessionEvents(t, app, created.ID, "types[]=user.message", defaultTestKey)
 		if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(`"id":"sevt_`)) {
 			t.Fatalf("unexpected listed events: %+v", events)
 		}
-		if listedCreatedAt := sessionEventStringField(t, events.Data[0], "created_at"); listedCreatedAt != sentCreatedAt {
-			t.Fatalf("listed event created_at = %q, want %q", listedCreatedAt, sentCreatedAt)
+		if bytes.Contains(events.Data[0], []byte(`"created_at"`)) {
+			t.Fatalf("listed event exposed created_at: %s", events.Data[0])
 		}
 		threadEvents := listThreadEvents(t, app, created.ID, thread.ID, defaultTestKey)
 		if len(threadEvents.Data) != 3 {

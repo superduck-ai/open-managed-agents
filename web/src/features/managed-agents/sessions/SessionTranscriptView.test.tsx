@@ -8,6 +8,7 @@ import {
 } from '../../../shared/ui/message-scroller';
 import { resetTestDom } from '../../../test/setup';
 import { type DisplayEventEntry, type IdleGapEntry, type SessionEventUsage, type ToolCallEntry } from '../types';
+import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { SessionTranscriptView } from './SessionTranscriptView';
 import { type ReactNode } from 'react';
 
@@ -23,6 +24,87 @@ const EMPTY_USAGE: SessionEventUsage = {
 };
 
 afterEach(() => cleanup());
+
+describe('SessionTranscriptView streaming markdown', () => {
+  test('does not paint an unfinished table over the markdown that already arrived', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const answer = streamingAnswer('partial-table', '## Title\n\n| Name | Value |');
+
+    renderTranscript([answer], () => {});
+
+    expect(screen.getByRole('heading', { name: 'Title' })).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.getByTestId('session-streaming-markdown-pending').textContent).toContain('| Name | Value |');
+    expect(screen.getByTestId('session-transcript-body').textContent).not.toContain('## Title');
+  });
+
+  test('renders headings, lists, and an open code fence while the reply is still streaming', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const partial = '## Title\n\n- alpha\n- beta\n\n```ts\nconst answer = 1';
+    const answer = streamingAnswer('stream', partial);
+
+    const view = renderTranscript([answer], () => {});
+    const body = screen.getByTestId('session-transcript-body');
+    const markdown = screen.getByTestId('session-trace-markdown');
+
+    expect(body.getAttribute('data-streaming')).toBe('true');
+    expect(screen.getByRole('heading', { name: 'Title' })).toBeTruthy();
+    expect(screen.getByText('alpha').closest('ul')).toBeTruthy();
+    expect(screen.getByText('beta').closest('li')).toBeTruthy();
+    expect(screen.getByTestId('session-trace-code-block').textContent).toContain('const answer = 1');
+    expect(body.textContent).not.toContain('```');
+
+    const finished = '## Title\n\n- alpha\n- beta\n\n```ts\nconst answer = 1\n```\n';
+    answer.displayEvent.isStreaming = false;
+    answer.displayEvent.content = finished;
+    answer.inProgress = false;
+    view.rerender(transcriptTree([answer]));
+
+    expect(screen.getByTestId('session-transcript-body')).toBe(body);
+    expect(screen.getByTestId('session-trace-markdown')).toBe(markdown);
+    expect(screen.getByRole('heading', { name: 'Title' })).toBeTruthy();
+    expect(screen.getByTestId('session-trace-code-block').textContent).toContain('const answer = 1');
+    expect(screen.getByTestId('session-transcript-body').textContent).not.toContain('```');
+    expect(screen.getByTestId('session-transcript-body').getAttribute('data-streaming')).toBe('false');
+  });
+
+  test('updates the same markdown node from delta text instead of the stale preview', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const answer = streamingAnswer('delta', 'stale preview');
+    const view = render(
+      <SessionDetailDeltaFramesContext.Provider
+        value={{
+          [answer.displayEvent.id]: {
+            message: { content: [{ type: 'text', text: '## Live title\n\n- one' }] },
+            frames: [],
+          },
+        }}
+      >
+        {transcriptTree([answer])}
+      </SessionDetailDeltaFramesContext.Provider>,
+    );
+    const markdown = screen.getByTestId('session-trace-markdown');
+
+    expect(screen.getByRole('heading', { name: 'Live title' })).toBeTruthy();
+    expect(screen.queryByText('stale preview')).toBeNull();
+
+    view.rerender(
+      <SessionDetailDeltaFramesContext.Provider
+        value={{
+          [answer.displayEvent.id]: {
+            message: { content: [{ type: 'text', text: '## Live title\n\n- one\n- two' }] },
+            frames: [],
+          },
+        }}
+      >
+        {transcriptTree([answer])}
+      </SessionDetailDeltaFramesContext.Provider>,
+    );
+
+    expect(screen.getByTestId('session-trace-markdown')).toBe(markdown);
+    expect(screen.getByText('two').closest('ul')).toBeTruthy();
+  });
+});
 
 describe('SessionTranscriptView', () => {
   test('keeps markdown links outside buttons and ignores them when selecting a message', () => {
@@ -300,6 +382,13 @@ function transcriptScrollerTree(children: ReactNode) {
       </MessageScrollerProvider>
     </I18nProvider>
   );
+}
+
+function streamingAnswer(id: string, content: string) {
+  const entry = displayEntry(id, 'agent', content, `bracket-${id}`);
+  entry.displayEvent.isStreaming = true;
+  entry.inProgress = true;
+  return entry;
 }
 
 function streamingThinkingEntry(id: string) {

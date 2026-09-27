@@ -2578,6 +2578,21 @@ export function sessionEventSummary(event: QuickstartSessionEvent) {
   return JSON.stringify(event).slice(0, 120);
 }
 
+export function sessionLiveDisplayText(displayEvent: DisplayEvent, liveEvent: QuickstartSessionEvent, label = '') {
+  if (sessionEventIsThinking(liveEvent)) {
+    return sessionThinkingText(liveEvent);
+  }
+  return (
+    sessionEventTranscriptText(liveEvent) ||
+    sessionEventStructuredContentText(liveEvent) ||
+    sessionToolResultText(liveEvent) ||
+    sessionResultText(liveEvent) ||
+    displayEvent.content ||
+    displayEvent.label ||
+    label
+  );
+}
+
 export function sessionEventTranscriptText(event: QuickstartSessionEvent) {
   if (typeof event.content === 'string' && event.content.trim()) {
     return event.content.trim();

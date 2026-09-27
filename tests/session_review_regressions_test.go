@@ -140,18 +140,8 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 				if stream != nil {
 					scanner := bufio.NewScanner(stream.Body)
 					deleted := false
-					frameID := ""
 					for scanner.Scan() {
-						line := scanner.Text()
-						if line == "" {
-							frameID = ""
-						} else if strings.HasPrefix(line, "id: ") {
-							frameID = strings.TrimPrefix(line, "id: ")
-						}
-						if strings.Contains(line, `"type":"session.deleted"`) {
-							if frameID != "" {
-								t.Fatalf("deleted notification advanced SSE cursor: %q", frameID)
-							}
+						if strings.Contains(scanner.Text(), `"type":"session.deleted"`) {
 							deleted = true
 							break
 						}

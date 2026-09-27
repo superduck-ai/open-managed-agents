@@ -243,17 +243,13 @@ func (r sessionResourceRow) resource() SessionResource {
 }
 
 func (r sessionEventRow) event() SessionEvent {
-	event := SessionEvent{
+	return SessionEvent{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
 		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
 		Payload: bytes.Clone(r.Payload), ProcessedAt: timeFromNullable(r.ProcessedAt), CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
-	if r.DeliverySeq != nil {
-		event.DeliverySeq = *r.DeliverySeq
-	}
-	return event
 }
 
 func (tx ManagedAgentActivationTx) LockSessionForEvents(

@@ -22,7 +22,6 @@ type sessionStreamEvent struct {
 	ThreadExternalID  *string         `json:"thread_id,omitempty"`
 	PrimaryThread     bool            `json:"primary_thread,omitempty"`
 	EventType         string          `json:"event_type"`
-	Persisted         bool            `json:"persisted,omitzero"`
 	Payload           json.RawMessage `json:"payload"`
 	ProcessedAt       time.Time       `json:"processed_at,omitempty"`
 	CreatedAt         time.Time       `json:"created_at,omitempty"`
@@ -134,7 +133,6 @@ func sessionStreamEventFrom(event db.SessionEvent) sessionStreamEvent {
 		SessionExternalID: event.SessionExternalID,
 		ThreadExternalID:  event.ThreadExternalID,
 		EventType:         event.EventType,
-		Persisted:         event.DeliverySeq > 0,
 		Payload:           event.Payload,
 		ProcessedAt:       event.ProcessedAt,
 		CreatedAt:         event.CreatedAt,

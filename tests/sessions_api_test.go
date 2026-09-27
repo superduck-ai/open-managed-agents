@@ -1049,8 +1049,8 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 	}
 }
 
-func TestSessionEventStreamReceivesCodeSessionIngressEvents(t *testing.T) {
-	ctx := context.Background()
+func TestSessionEventStreamOnlyReceivesEventsAfterSubscription(t *testing.T) {
+	ctx := t.Context()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -1066,6 +1066,13 @@ func TestSessionEventStreamReceivesCodeSessionIngressEvents(t *testing.T) {
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
+	postCodeSessionIngressEvents(t, app, codeSessionID, `{"events":[{"type":"assistant","uuid":"assistant-old-one-`+eventSuffix+`","message":{"role":"assistant","content":"historical one"},"created_at":"2026-06-16T01:10:00Z"},{"type":"assistant","uuid":"assistant-old-two-`+eventSuffix+`","message":{"role":"assistant","content":"historical two"},"created_at":"2026-06-16T01:10:01Z"}]}`)
+	history := listSessionEvents(t, app, session.ID, "order=asc&types[]=agent.message", defaultTestKey)
+	if len(history.Data) != 2 {
+		t.Fatalf("historical agent messages = %d, want 2", len(history.Data))
+	}
+	cursor := sessionEventStringField(t, history.Data[0], "id")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+session.ID+"/events/stream?beta=true", nil)
 	if err != nil {
@@ -1075,6 +1082,7 @@ func TestSessionEventStreamReceivesCodeSessionIngressEvents(t *testing.T) {
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Last-Event-ID", cursor)
 	resp, err := app.client.Do(req)
 	if err != nil {
 		t.Fatalf("open event stream: %v", err)
@@ -1084,7 +1092,6 @@ func TestSessionEventStreamReceivesCodeSessionIngressEvents(t *testing.T) {
 		t.Fatalf("stream status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
-	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionIngressEvents(t, app, codeSessionID, `{"events":[{"type":"assistant","uuid":"assistant-stream-`+eventSuffix+`","message":{"role":"assistant","content":"streamed from worker"},"created_at":"2026-06-16T01:10:00Z"}]}`)
 
 	lineCh := make(chan string, 16)
@@ -1103,7 +1110,13 @@ func TestSessionEventStreamReceivesCodeSessionIngressEvents(t *testing.T) {
 			if !ok {
 				t.Fatal("event stream closed before ingress event arrived")
 			}
+			if strings.HasPrefix(line, "id: ") {
+				t.Fatalf("live-only stream emitted an SSE cursor: %q", line)
+			}
 			if strings.HasPrefix(line, "data: ") && strings.Contains(line, "agent.message") {
+				if !strings.Contains(line, "streamed from worker") {
+					t.Fatalf("stream replayed historical event: %s", line)
+				}
 				return
 			}
 		case <-deadline:
@@ -1159,22 +1172,13 @@ func TestSessionEventStreamForwardsWorkerStreamDeltasWithoutHistory(t *testing.T
 	]}`)
 
 	deadline := time.After(5 * time.Second)
-	currentFrameID := ""
 	for {
 		select {
 		case line, ok := <-lineCh:
 			if !ok {
 				t.Fatal("event stream closed before stream delta arrived")
 			}
-			if line == "" {
-				currentFrameID = ""
-			} else if strings.HasPrefix(line, "id: ") {
-				currentFrameID = strings.TrimPrefix(line, "id: ")
-			}
 			if strings.HasPrefix(line, "data: ") && strings.Contains(line, "stream preview over sse") {
-				if currentFrameID != "" {
-					t.Fatalf("preview advanced SSE cursor: %q", currentFrameID)
-				}
 				if !strings.Contains(line, `"type":"event_delta"`) {
 					t.Fatalf("stream delta data missing event_delta type: %s", line)
 				}

@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
-  test('buffers stream frames until the history sync finishes', async () => {
+  test('consumes stream frames while the history sync is running', async () => {
     let signalOpen: () => void = () => undefined;
     let finishHistory: () => void = () => undefined;
     const opened = new Promise<void>((resolve) => {
@@ -50,17 +50,40 @@ describe('managed agents API', () => {
       onEvent: (event) => seen.push(String(event.id)),
     });
     await opened;
-    expect(seen).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual(['sevt_live']);
     finishHistory();
     await stream;
     expect(seen).toEqual(['sevt_live']);
   });
 
-  test('opens each stream before paginating history and resyncs after EOF', async () => {
+  test('stops a completed stream without parsing an unfinished frame', async () => {
+    globalThis.fetch = async () => new Response('event: agent.message\ndata: {"id":"unfinished"');
+    const seen: string[] = [];
+
+    await streamSessionEvents({
+      sessionId: 'sesn_test',
+      workspaceId: 'default',
+      signal: new AbortController().signal,
+      onOpen: async () => false,
+      onEvent: (event) => seen.push(String(event.id)),
+    });
+
+    expect(seen).toEqual([]);
+  });
+
+  test('reconnects from the first history page and merges a late event older than the cached cursor', async () => {
     const queryClient = new QueryClient();
     const controller = new AbortController();
     const requests: string[] = [];
+    let cachedBeforeReconnectScan = 0;
     let connections = 0;
+    const original = Array.from({ length: 501 }, (_, index) => ({
+      id: `sevt_${index}`,
+      type: 'agent.message',
+      processed_at: new Date(Date.UTC(2026, 8, 25, 0, 0, index)).toISOString(),
+    }));
+    const late = { id: 'sevt_late', type: 'agent.message', processed_at: original[200].processed_at };
     globalThis.fetch = async (input) => {
       const url = String(input);
       if (url.includes('/stream?')) {
@@ -70,21 +93,13 @@ describe('managed agents API', () => {
       }
       const page = new URL(url, 'http://localhost').searchParams.get('page');
       requests.push(`history-${connections}-${page ?? 'first'}`);
-      if (connections === 1 && !page) {
-        return Response.json({
-          data: [{ id: 'sevt_one', type: 'agent.message', processed_at: '2026-09-25T00:00:00Z' }],
-          next_page: 'page-two',
-        });
+      if (connections === 2 && !page) {
+        cachedBeforeReconnectScan = sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['']).length;
       }
-      if (connections === 1) {
-        return Response.json({
-          data: [{ id: 'sevt_two', type: 'agent.message', processed_at: '2026-09-25T00:00:01Z' }],
-          next_page: null,
-        });
-      }
+      const history = connections === 1 ? original : [...original.slice(0, 201), late, ...original.slice(201)];
       return Response.json({
-        data: [{ id: 'sevt_three', type: 'agent.message', processed_at: '2026-09-25T00:00:02Z' }],
-        next_page: null,
+        data: page ? history.slice(500) : history.slice(0, 500),
+        next_page: page ? null : 'page-two',
       });
     };
 
@@ -98,12 +113,58 @@ describe('managed agents API', () => {
         if (connections === 2) controller.abort();
       },
     });
-    expect(requests).toEqual(['stream-1', 'history-1-first', 'history-1-page-two', 'stream-2', 'history-2-page-two']);
-    expect(sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['']).map((event) => event.id)).toEqual([
-      'sevt_one',
-      'sevt_two',
-      'sevt_three',
+    expect(requests).toEqual([
+      'stream-1',
+      'history-1-first',
+      'history-1-page-two',
+      'stream-2',
+      'history-2-first',
+      'history-2-page-two',
     ]);
+    const events = sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['']);
+    expect(cachedBeforeReconnectScan).toBe(501);
+    expect(events).toHaveLength(502);
+    expect(events.filter((event) => event.id === 'sevt_late')).toHaveLength(1);
+  });
+
+  test('merges child-thread history with a live event received during the scan', async () => {
+    const queryClient = new QueryClient();
+    const controller = new AbortController();
+    const event = { id: 'sevt_child', type: 'agent.message', processed_at: '2026-09-25T00:00:01Z' };
+    let finishHistory: (response: Response) => void = () => undefined;
+    const history = new Promise<Response>((resolve) => {
+      finishHistory = resolve;
+    });
+    const requests: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes('/stream?')) {
+        return new Response(`event: agent.message\ndata: ${JSON.stringify(event)}\n\n`);
+      }
+      return history;
+    };
+
+    const loop = runSessionEventStreamLoop({
+      queryClient,
+      sessionId: 'sesn_test',
+      workspaceId: 'default',
+      threadId: 'thread_child',
+      signal: controller.signal,
+      onCacheChange: () => controller.abort(),
+    });
+    while (requests.length < 2) await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['thread_child']).map((item) => item.id),
+    ).toEqual([event.id]);
+    finishHistory(Response.json({ data: [event], next_page: null }));
+    await loop;
+
+    expect(requests[0]).toContain('/threads/thread_child/stream?');
+    expect(requests[1]).toContain('/threads/thread_child/events?');
+    expect(
+      sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['thread_child']).map((item) => item.id),
+    ).toEqual([event.id]);
   });
 
   test('drops an incomplete preview on disconnect and loads its final message from history', async () => {
@@ -144,6 +205,70 @@ describe('managed agents API', () => {
     expect(seen).toContainEqual(['sevt_answer']);
     expect(seen).toContainEqual([]);
     expect(sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', [''])).toEqual([final]);
+    expect(sessionDetailDeltaFrames(queryClient, 'default', 'sesn_test', [''])).toEqual({});
+  });
+
+  test('model request end clears only unresolved previews in its thread', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'default';
+    const sessionId = 'sesn_test';
+    for (const threadId of ['', 'thread_other']) {
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        type: 'event_start',
+        event: { id: `preview_${threadId || 'primary'}`, type: 'agent.message' },
+      });
+    }
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'final_primary', type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'preview_next_request', type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'final_primary',
+      type: 'agent.message',
+      processed_at: '2026-09-25T00:00:01Z',
+      content: [{ type: 'text', text: 'Complete answer' }],
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'request_end',
+      type: 'span.model_request_end',
+      model_request_start_id: 'request_start',
+      event_ids: ['preview_primary', 'final_primary'],
+      processed_at: '2026-09-25T00:00:02Z',
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'final_primary',
+      'preview_next_request',
+      'request_end',
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      'preview_next_request',
+    ]);
+    expect(
+      sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['thread_other']).map((event) => event.id),
+    ).toEqual(['preview_thread_other']);
+  });
+
+  test('history reconciles a failed request and ignores its late preview start', async () => {
+    const queryClient = new QueryClient();
+    const preview = { type: 'event_start', event: { id: 'sevt_orphan', type: 'agent.message' } };
+    mergeSessionStreamFrame(queryClient, 'default', 'sesn_test', '', preview);
+    globalThis.fetch = async () =>
+      Response.json({
+        data: [{ id: 'sevt_end', type: 'span.model_request_end', event_ids: ['sevt_orphan'] }],
+        next_page: null,
+      });
+
+    await syncSessionEventHistory({ queryClient, workspaceId: 'default', sessionId: 'sesn_test', force: true });
+    mergeSessionStreamFrame(queryClient, 'default', 'sesn_test', '', preview);
+
+    expect(sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['']).map((event) => event.id)).toEqual([
+      'sevt_end',
+    ]);
     expect(sessionDetailDeltaFrames(queryClient, 'default', 'sesn_test', [''])).toEqual({});
   });
 

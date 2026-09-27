@@ -275,15 +275,17 @@ export async function runSessionEventStreamLoop({
         workspaceId,
         signal,
         onOpen: async () => {
-          // The stream is subscribed before history is listed. Its response
-          // buffers live frames until the history pages have been merged.
+          // The stream is subscribed before history is listed. Live frames
+          // are merged while the history pages are fetched.
           const historyCache = await syncSessionEventHistory({
             queryClient,
             sessionId,
             workspaceId,
             threadId,
             signal,
+            fromStart: true,
             force: true,
+            preserveCache: true,
           });
           onCacheChange();
           completed =

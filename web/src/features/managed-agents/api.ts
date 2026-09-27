@@ -1005,10 +1005,16 @@ export async function streamSessionEvents({
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  const opening = Promise.resolve().then(() => onOpen?.());
+  void opening.then(
+    (keepOpen) => {
+      if (keepOpen === false) void reader.cancel();
+    },
+    () => {
+      void reader.cancel();
+    },
+  );
   try {
-    if ((await onOpen?.()) === false) {
-      return;
-    }
     streamSignal.touch();
     for (;;) {
       const { value, done } = await reader.read();
@@ -1021,12 +1027,14 @@ export async function streamSessionEvents({
       buffer = parsed.remaining;
       parsed.events.forEach((event) => onEvent(sessionEventWithResponseThread(event.data, threadId)));
     }
+    if ((await opening) === false) return;
     buffer += decoder.decode();
     consumeSseBuffer<QuickstartSessionEvent>(`${buffer}\n\n`).events.forEach((event) =>
       onEvent(sessionEventWithResponseThread(event.data, threadId)),
     );
   } finally {
     await reader.cancel().catch(() => undefined);
+    await opening.catch(() => undefined);
     streamSignal.dispose();
   }
 }
@@ -1171,6 +1179,7 @@ export async function syncSessionEventHistory({
   signal,
   fromStart = false,
   force = false,
+  preserveCache = false,
 }: {
   queryClient: QueryClient;
   sessionId: string;
@@ -1179,6 +1188,7 @@ export async function syncSessionEventHistory({
   signal?: AbortSignal;
   fromStart?: boolean;
   force?: boolean;
+  preserveCache?: boolean;
 }) {
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
   const current = queryClient.getQueryData<SessionDetailEventCache>(cacheKey);
@@ -1186,12 +1196,12 @@ export async function syncSessionEventHistory({
     return current;
   }
   const initialPage = fromStart ? null : (current?.syncedThrough ?? null);
-  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}:${fromStart ? 'start' : force ? 'force' : (initialPage ?? 'tail')}`;
+  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}:${fromStart ? (preserveCache ? 'reconcile' : 'start') : force ? 'force' : (initialPage ?? 'tail')}`;
   return sessionDetailSingleFlight(requestKey, async () => {
     if (signal?.aborted) {
       throw signal.reason;
     }
-    if (fromStart) {
+    if (fromStart && !preserveCache) {
       queryClient.setQueryData(cacheKey, emptySessionDetailEventCache());
       queryClient.setQueryData(sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId), {});
     }
@@ -1237,6 +1247,10 @@ export async function syncSessionEventHistory({
       response.data.forEach((event) => {
         const finalId = sessionFinalAgentEventId(event);
         if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+        const endedPreviewIds = sessionModelRequestPreviewIds(event);
+        if (endedPreviewIds.length) {
+          cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, new Set(endedPreviewIds));
+        }
       });
       page = nextPage;
     } while (page && !signal?.aborted);
@@ -1271,6 +1285,10 @@ export function mergeSessionStreamFrame(
   if (finalId) {
     removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
   }
+  const endedPreviewIds = sessionModelRequestPreviewIds(event);
+  if (endedPreviewIds.length) {
+    cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, new Set(endedPreviewIds));
+  }
   if (eventType.endsWith('status_terminated')) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
   }
@@ -1281,6 +1299,12 @@ function sessionFinalAgentEventId(event: QuickstartSessionEvent) {
   return (type === 'agent.message' || type === 'agent.thinking') && sessionNullableProcessedAt(event) !== null
     ? sessionStableEventId(event)
     : null;
+}
+
+function sessionModelRequestPreviewIds(event: QuickstartSessionEvent): string[] {
+  return sessionEventType(event) === 'span.model_request_end' && Array.isArray(event.event_ids)
+    ? event.event_ids.filter((id): id is string => typeof id === 'string')
+    : [];
 }
 
 function sessionStreamPreviewIdForFinalEvent(
@@ -1428,7 +1452,11 @@ export function mergeSessionDeltaFrame(
     const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
     const completed = queryClient
       .getQueryData<SessionDetailEventCache>(cacheKey)
-      ?.events.some((cached) => sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null);
+      ?.events.some(
+        (cached) =>
+          (sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null) ||
+          sessionModelRequestPreviewIds(cached).includes(id),
+      );
     if (completed) {
       return;
     }
@@ -1575,7 +1603,16 @@ export async function reconcileIncompleteSessionStreamEvents(
   signal?: AbortSignal,
   eventIds?: ReadonlySet<string>,
 ) {
-  await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, force: true });
+  await syncSessionEventHistory({
+    queryClient,
+    workspaceId,
+    sessionId,
+    threadId,
+    signal,
+    fromStart: true,
+    force: true,
+    preserveCache: true,
+  });
   if (!signal?.aborted) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, eventIds);
   }

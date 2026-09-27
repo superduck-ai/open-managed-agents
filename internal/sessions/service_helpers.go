@@ -256,7 +256,7 @@ func normalizeInputEvent(
 	payload["id"] = eventID
 	payload["processed_at"] = formatEventTime(now)
 	processedAt := now
-	if maevents.IsPublicWorkerInputEvent(eventType) {
+	if maevents.IsPublicWorkerInputEvent(eventType) && eventType != "user.custom_tool_result" && eventType != "user.tool_result" {
 		processedAt = time.Time{}
 		payload["processed_at"] = nil
 	}

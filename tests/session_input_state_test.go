@@ -254,7 +254,7 @@ func TestSessionHistoryFiltersByProcessingTimeAndDefaultsToChronologicalOrder(t 
 	queuedID := sessionEventStringField(t, sent.Data[1], "id")
 	// Claude's created_at query filters compare against processed_at, despite the parameter name.
 	cutoff := time.Now().UTC().Add(time.Hour)
-	if _, changed, err := app.db.MarkSessionEventProcessed(t.Context(), worker, queuedID, cutoff); err != nil || !changed {
+	if _, changed, err := app.db.AcknowledgeSessionInput(t.Context(), worker, queuedID, cutoff); err != nil || !changed {
 		t.Fatalf("process queued input: changed=%t err=%v", changed, err)
 	}
 	events := listSessionEvents(t, app, worker.SessionExternalID, "created_at[gte]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)

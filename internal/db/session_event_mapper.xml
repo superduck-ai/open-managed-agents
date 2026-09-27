@@ -77,6 +77,20 @@
         )
     </select>
 
+    <select id="HasUnacknowledgedPrimaryInput" result="scalar" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID}
+              AND session_external_id = #{sessionExternalID}
+              AND thread_external_id = #{threadExternalID}
+              AND (
+                  (event_type IN ('user.custom_tool_result', 'user.tool_result') AND worker_ack_at IS NULL)
+                  OR (event_type IN ('user.message', 'user.interrupt', 'user.tool_confirmation') AND processed_at IS NULL)
+              )
+              AND deleted_at IS NULL
+        )
+    </select>
+
     <select id="FindLatestStatus" result="optional" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
@@ -139,11 +153,11 @@
         LIMIT #{params.FetchLimit}
     </select>
 
-    <select id="MarkProcessed" result="optional" resultType="sessionEventRow">
+    <select id="AcknowledgeInput" result="optional" resultType="sessionEventRow">
         WITH changed AS (
-            UPDATE session_events SET processed_at = #{processedAt}
+            UPDATE session_events SET processed_at = COALESCE(processed_at, #{acknowledgedAt}), worker_ack_at = #{acknowledgedAt}
             WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionID}
-            AND external_id = #{eventID} AND processed_at IS NULL AND deleted_at IS NULL
+            AND external_id = #{eventID} AND worker_ack_at IS NULL AND deleted_at IS NULL
             RETURNING <include refid="columns"/>
         ) SELECT <include refid="columns"/> FROM changed
     </select>

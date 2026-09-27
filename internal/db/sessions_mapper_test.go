@@ -293,3 +293,20 @@ func TestSessionEventCursorExistsMapper(t *testing.T) {
 		wantSQLFragments:  []string{"SELECT EXISTS", "workspace_uuid = $1", "session_external_id = $2", "external_id = $3"},
 	})
 }
+
+func TestSessionInputAcknowledgementMapper(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperHasUnacknowledgedPrimaryInputStatement,
+		bound:     buildSessionEventMapperHasUnacknowledgedPrimaryInput(yourbatis.DialectPostgres, "workspace", "session", "thread"),
+		wantID:    "SessionEventMapper.HasUnacknowledgedPrimaryInput", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadExternalID"},
+		wantSQLFragments:  []string{"SELECT EXISTS", "worker_ack_at IS NULL", "processed_at IS NULL", "thread_external_id = $3"},
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperAcknowledgeInputStatement,
+		bound:     buildSessionEventMapperAcknowledgeInput(yourbatis.DialectPostgres, "workspace", "session", "event", time.Now().UTC()),
+		wantID:    "SessionEventMapper.AcknowledgeInput", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"acknowledgedAt", "acknowledgedAt", "workspaceUUID", "sessionID", "eventID"},
+		wantSQLFragments:  []string{"processed_at = COALESCE(processed_at, $1)", "worker_ack_at = $2", "worker_ack_at IS NULL"},
+	})
+}

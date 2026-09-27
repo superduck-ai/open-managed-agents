@@ -119,7 +119,7 @@ func idlePrimaryInputID(ctx context.Context, executor yourbatis.Executor, sessio
 		return "", nil
 	}
 	if slices.ContainsFunc(events[:first], func(event SessionEvent) bool {
-		return maevents.IsPublicWorkerInputEvent(event.EventType) && event.ProcessedAt.IsZero() &&
+		return maevents.IsPublicWorkerInputEvent(event.EventType) &&
 			(event.ThreadExternalID == nil || *event.ThreadExternalID == primary.ExternalID)
 	}) {
 		return "", nil
@@ -128,16 +128,11 @@ func idlePrimaryInputID(ctx context.Context, executor yourbatis.Executor, sessio
 	if err != nil || len(pending) > 0 {
 		return "", err
 	}
-	// Descending history puts every unacknowledged worker input first.
-	latest, err := NewSessionEventMapper(executor).ListPage(ctx, sessionEventPageMapperParams{
-		WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.ExternalID,
-		ThreadExternalID: primary.ExternalID,
-		Descending:       true, FetchLimit: 1,
-	})
+	unacknowledged, err := NewSessionEventMapper(executor).HasUnacknowledgedPrimaryInput(ctx, session.WorkspaceUUID, session.ExternalID, primary.ExternalID)
 	if err != nil {
 		return "", err
 	}
-	if len(latest) > 0 && latest[0].ProcessedAt == nil {
+	if unacknowledged {
 		return "", nil
 	}
 	return events[first].ExternalID, nil

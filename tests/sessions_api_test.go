@@ -2213,8 +2213,9 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	var submitted sessionEventPageAPIResponse
 	decodeJSON(t, resp.Body, &submitted)
 
-	if sessionInputProcessedAt(t, submitted.Data[0]) != "" {
-		t.Fatal("custom tool result must wait for ACK")
+	receiptTime := sessionInputProcessedAt(t, submitted.Data[0])
+	if receiptTime == "" {
+		t.Fatal("custom tool result must be processed on receipt")
 	}
 
 	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
@@ -2251,8 +2252,8 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	}
 	consumePublicInput(t, app, codeSession, workerEpoch, inputID)
 	history := listSessionEvents(t, app, session.ID, "types[]=user.custom_tool_result", defaultTestKey)
-	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
-		t.Fatal("ACK did not process custom tool result")
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != receiptTime {
+		t.Fatal("ACK changed custom tool result processing time")
 	}
 
 }

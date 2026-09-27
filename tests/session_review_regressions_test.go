@@ -20,14 +20,18 @@ func TestSessionUnacknowledgedInputsBlockAcceptance(t *testing.T) {
 	worker, epoch := newPayloadIntegrationSession(t, app)
 	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"running"}`)
 	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
-	for _, input := range []string{
-		`{"type":"user.tool_confirmation","tool_use_id":"sevt_tool","result":"allow"}`,
-		`{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"test"}]}`,
-		`{"type":"user.interrupt"}`,
+	for _, tc := range []struct {
+		input     string
+		immediate bool
+	}{
+		{`{"type":"user.tool_confirmation","tool_use_id":"sevt_tool","result":"allow"}`, false},
+		{`{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"test"}]}`, true},
+		{`{"type":"user.tool_result","tool_use_id":"sevt_tool","content":[{"type":"text","text":"test"}]}`, true},
+		{`{"type":"user.interrupt"}`, false},
 	} {
-		sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
-		if sessionInputProcessedAt(t, sent.Data[0]) != "" {
-			t.Fatal("worker input processed before ACK")
+		sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+tc.input+`]}`, defaultTestKey)
+		if (sessionInputProcessedAt(t, sent.Data[0]) != "") != tc.immediate {
+			t.Fatalf("input processing time differs from Claude contract: %s", sent.Data[0])
 		}
 		next := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"test"}]}]}`, defaultTestKey)
 		if sessionInputProcessedAt(t, next.Data[0]) != "" {
@@ -35,7 +39,7 @@ func TestSessionUnacknowledgedInputsBlockAcceptance(t *testing.T) {
 		}
 		assertQueuedInputPreservesIdle(t, app, worker)
 		for _, raw := range []json.RawMessage{sent.Data[0], next.Data[0]} {
-			if _, changed, err := app.db.MarkSessionEventProcessed(t.Context(), worker, sessionEventStringField(t, raw, "id"), time.Now().UTC()); err != nil || !changed {
+			if _, changed, err := app.db.AcknowledgeSessionInput(t.Context(), worker, sessionEventStringField(t, raw, "id"), time.Now().UTC()); err != nil || !changed {
 				t.Fatalf("process pending input: %t %v", changed, err)
 			}
 		}
@@ -43,6 +47,78 @@ func TestSessionUnacknowledgedInputsBlockAcceptance(t *testing.T) {
 	batch := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"test"}]},{"type":"user.message","content":[{"type":"text","text":"test"}]}]}`, defaultTestKey)
 	if sessionInputProcessedAt(t, batch.Data[1]) != "" {
 		t.Fatal("earlier control input in the same batch did not block acceptance")
+	}
+}
+
+func TestSessionCanAcceptNextTurnAfterUnacknowledgedAcceptedMessage(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("accepted-input-recovery"))
+	worker, epoch := newPayloadIntegrationSession(t, app)
+	first := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first"}]}]}`, defaultTestKey)
+	if sessionInputProcessedAt(t, first.Data[0]) == "" {
+		t.Fatal("first message was not accepted")
+	}
+	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"running"}`)
+	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
+	next := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"next"}]}]}`, defaultTestKey)
+	if sessionInputProcessedAt(t, next.Data[0]) == "" {
+		t.Fatal("prior accepted message blocked the next turn after idle")
+	}
+}
+
+func TestCustomToolResultIsProcessedOnReceiptAndNotRepublishedOnACK(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("custom-result-immediate"))
+	worker, epoch := newPayloadIntegrationSession(t, app)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+worker.SessionExternalID+"/events/stream?beta=true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Api-Key", defaultTestKey)
+	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+	resp, err := app.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream: %d", resp.StatusCode)
+	}
+	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"done"}]}]}`, defaultTestKey)
+	inputID := sessionEventStringField(t, sent.Data[0], "id")
+	processedAt := sessionInputProcessedAt(t, sent.Data[0])
+	if processedAt == "" {
+		t.Fatal("custom tool result was not processed on receipt")
+	}
+	consumePublicInput(t, app, worker, epoch, inputID)
+	history := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.custom_tool_result", defaultTestKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != processedAt {
+		t.Fatalf("worker ACK changed receipt processing time: %s", history.Data)
+	}
+	system := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"end"}]}]}`, defaultTestKey)
+	systemID := sessionEventStringField(t, system.Data[0], "id")
+	count := 0
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var event struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.ID == inputID {
+			count++
+		}
+		if event.ID == systemID {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil || count != 1 {
+		t.Fatalf("custom result appeared %d times in SSE: %v", count, err)
 	}
 }
 

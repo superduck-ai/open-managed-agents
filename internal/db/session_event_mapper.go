@@ -60,8 +60,9 @@ type sessionEventPageMapperParams struct {
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
 	CursorExists(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (bool, error)
+	HasUnacknowledgedPrimaryInput(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string) (bool, error)
 	FindLatestStatus(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
-	MarkProcessed(ctx context.Context, workspaceUUID, sessionID, eventID string, processedAt time.Time) (sessionEventRow, bool, error)
+	AcknowledgeInput(ctx context.Context, workspaceUUID, sessionID, eventID string, acknowledgedAt time.Time) (sessionEventRow, bool, error)
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)

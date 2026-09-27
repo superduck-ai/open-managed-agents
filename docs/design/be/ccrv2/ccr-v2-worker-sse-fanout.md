@@ -167,7 +167,7 @@ flowchart TD
 
 接纳判断与事件写入共用 Session 事务锁，再锁定对应的 Code Session 行，读取 Worker 状态和主线程待确认请求。待确认 metadata 已写入而 Worker 尚未上报 `requires_action` 时也必须排队；并发发送只有一条能立即被接纳。
 
-`system.message` 不需要 Worker ACK，在接收时设置处理时间并广播。工具确认和 `AskUserQuestion` 回答（`user.custom_tool_result`）生成的 `control_response` 使用顶层 `id` 携带原始公开输入 ID，`uuid` 仍标识控制响应。Worker 继续用外层 `event_id`（控制响应的 `uuid`）回 ACK，服务端通过 `id` 关联原始输入；尚未处理的输入更新处理时间并广播，已有处理时间的输入不重复广播。自动工具响应没有公开输入 ID，不触发公开输入更新。除立即接纳的 user.message 外，所有 Worker 输入（包括自定义工具结果）先以 null 排队；工具控制响应发布成功与清理对应待确认 metadata 共用同一个 Worker 行锁，发布失败保留请求以便重试，发布前在锁内复核 Worker epoch。清理同时移除对应的旧格式请求，避免旧值重新生效。
+`system.message` 不需要 Worker ACK，在接收时设置处理时间并广播。`user.custom_tool_result` 与 `user.tool_result` 按 Claude 合同在接收时填充 `processed_at`，但仍等待 Worker 确认投递；内部 `worker_ack_at` 独立记录该确认，不能用对外处理时间推断。工具确认和 `AskUserQuestion` 回答（`user.custom_tool_result`）生成的 `control_response` 使用顶层 `id` 携带原始公开输入 ID，`uuid` 仍标识控制响应。Worker 继续用外层 `event_id`（控制响应的 `uuid`）回 ACK，服务端通过 `id` 关联原始输入；尚未处理的输入更新处理时间并广播，已有处理时间的输入不重复广播。自动工具响应没有公开输入 ID，不触发公开输入更新。除立即接纳的 user.message 和上述工具结果外，Worker 输入先以 null 排队；工具控制响应发布成功与清理对应待确认 metadata 共用同一个 Worker 行锁，发布失败保留请求以便重试，发布前在锁内复核 Worker epoch。清理同时移除对应的旧格式请求，避免旧值重新生效。
 
 Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。result 不再驱动 idle，也不再补造模型 span；结束状态由 Worker 状态上报产生，模型 span 由下文的代理请求生命周期产生。已接纳但 Worker 尚未开始的回合，可以直接归档或删除：事务按 Session → Worker 锁定并复核，撤销 Worker 凭证，并经统一写入入口写入 session.thread_status_terminated → session.status_terminated；提交后清空该 Worker 的 JetStream 投递队列，再广播状态事件并投递 webhook。已开始执行的回合仍拒绝归档、删除。归档后的 Session 不能再激活 Worker。
 

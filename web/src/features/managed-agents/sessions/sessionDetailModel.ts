@@ -605,7 +605,7 @@ export function sessionStatusFromEventType(type: string) {
 }
 
 export function sessionEventUpdateTimestamp(event: QuickstartSessionEvent, fallback: string) {
-  return sessionNullableProcessedAt(event) ?? (typeof event.created_at === 'string' ? event.created_at : fallback);
+  return sessionNullableProcessedAt(event) ?? fallback;
 }
 
 export function sessionShouldStreamEvents(session: Pick<SessionApiResponse, 'archived_at' | 'status'> | null) {

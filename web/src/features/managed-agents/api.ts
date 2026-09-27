@@ -1354,7 +1354,6 @@ export function sessionStreamingMessageFromStart(
       ...started,
       type: type === 'agent.thinking' ? 'agent.thinking' : 'agent.message',
       content,
-      created_at: started.created_at ?? event.created_at,
       processed_at: started.processed_at ?? event.processed_at,
     },
     threadId || undefined,

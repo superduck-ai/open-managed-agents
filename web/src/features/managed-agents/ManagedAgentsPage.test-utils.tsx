@@ -1089,7 +1089,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         id: 'evt_user_queued',
         type: 'user.message',
         created_at: new Date(Date.now() - 84_000).toISOString(),
-        is_queued: true,
+        processed_at: null,
         content: [{ type: 'text', text: 'Queued warmup request' }],
       },
       {
@@ -1656,7 +1656,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const createdEvents = incomingEvents.map((event, index) => ({
         ...event,
         id: `evt_user_action_${resources.sessionEvents.length + index + 1}`,
-        created_at: new Date().toISOString(),
+        processed_at: new Date().toISOString(),
       }));
       (resources.sessionEvents as Record<string, unknown>[]).push(...createdEvents);
       return jsonResponse({ data: createdEvents });
@@ -2241,9 +2241,9 @@ function applyMetadataPatch(current: unknown, patch: unknown) {
 }
 
 export function persistedSessionEvents<T extends Record<string, unknown>>(events: T[]) {
-  return events.map((event) => ({
+  return events.map(({ created_at: createdAt, ...event }) => ({
     ...event,
-    processed_at: typeof event.processed_at === 'string' ? event.processed_at : event.created_at,
+    processed_at: event.processed_at === undefined ? createdAt : event.processed_at,
   }));
 }
 

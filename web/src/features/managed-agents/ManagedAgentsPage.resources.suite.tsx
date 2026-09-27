@@ -20,6 +20,7 @@ import {
   within,
 } from './ManagedAgentsPage.test-utils';
 import { managedEntityListLimit } from './api';
+import { SessionNestedPanel } from './resources/detail';
 import { objectRecord } from './utils';
 
 function requestUrl(input: RequestInfo | URL) {
@@ -45,6 +46,18 @@ async function confirmFirstRowAction(menuName: string, confirmName: string) {
 }
 
 export function registerManagedAgentsResourceTests() {
+  test('shows session event processing time without a created_at field', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<SessionNestedPanel session={api.resources.sessions[0]} workspaceId="default" refreshKey={0} />);
+
+    const eventType = await screen.findByText('session.status_running');
+    const row = eventType.closest('tr');
+    expect(row).not.toBeNull();
+    expect(within(row!).getAllByRole('cell')[1].textContent).not.toBe('—');
+    expect(screen.getByRole('columnheader', { name: 'Time' })).toBeTruthy();
+  });
+
   test('renders managed resource rows from the real v1 resource endpoints', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();

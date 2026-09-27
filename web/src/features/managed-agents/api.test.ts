@@ -13,9 +13,16 @@ import {
   sessionDetailEventCacheKey,
   sessionDetailScopeEvents,
   sessionIncompleteStreamEventIds,
+  sessionStreamingMessageFromStart,
   syncSessionEventHistory,
 } from './api';
-import { buildSessionEventEntries, sessionEventTimestamp } from './sessions/sessionTraceModel';
+import { sessionEventUpdateTimestamp } from './sessions/sessionDetailModel';
+import {
+  buildSessionEventEntries,
+  sessionCanonicalDisplayEvent,
+  sessionEventIsQueuedUserMessage,
+  sessionEventTimestamp,
+} from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
 
@@ -29,6 +36,34 @@ describe('managed agents API', () => {
     expect(sessionEventTimestamp({ id: 'sevt_message', processed_at: '2026-08-26T13:13:00Z' })).toBe(
       Date.parse('2026-08-26T13:13:00Z'),
     );
+    const queued = { id: 'sevt_queued', processed_at: null, created_at: '2026-08-26T13:13:00Z' };
+    expect(sessionEventTimestamp(queued)).toBe(0);
+    expect(sessionEventUpdateTimestamp(queued, '2026-08-26T13:14:00Z')).toBe('2026-08-26T13:14:00Z');
+  });
+
+  test('stream preview does not invent an event creation timestamp', () => {
+    const preview = sessionStreamingMessageFromStart(
+      { type: 'event_start', event: { id: 'sevt_preview', type: 'agent.message' } },
+      '',
+    );
+    expect(preview).not.toHaveProperty('created_at');
+  });
+
+  test('queued user messages follow Claude processed_at', () => {
+    expect(sessionEventIsQueuedUserMessage({ type: 'user.message', processed_at: null })).toBe(true);
+    expect(sessionEventIsQueuedUserMessage({ type: 'user.message', processed_at: '2026-08-26T13:13:00Z' })).toBe(false);
+    expect(sessionEventIsQueuedUserMessage({ type: 'agent.message', processed_at: null })).toBe(false);
+  });
+
+  test('serialized canonical events do not restore created_at', () => {
+    const event = sessionCanonicalDisplayEvent({
+      id: 'sevt_wrapper',
+      type: 'system.message',
+      content: JSON.stringify({ type: 'session.status_idle', created_at: '2026-08-26T13:13:00Z' }),
+      processed_at: '2026-08-26T13:14:00Z',
+    });
+    expect(event).toMatchObject({ type: 'session.status_idle', processed_at: '2026-08-26T13:14:00Z' });
+    expect(event).not.toHaveProperty('created_at');
   });
 
   test('force history sync scans from the first page without clearing cached events', async () => {
@@ -224,14 +259,12 @@ describe('managed agents API', () => {
 
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       type: 'event_start',
-      created_at: createdAt,
       processed_at: createdAt,
       event: { id: 'sevt_preview', type: 'agent.message' },
     });
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toMatchObject({
       id: 'sevt_preview',
-      created_at: createdAt,
       processed_at: null,
       is_streaming: true,
     });
@@ -239,7 +272,6 @@ describe('managed agents API', () => {
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       id: 'sevt_final',
       type: 'agent.message',
-      created_at: createdAt,
       processed_at: createdAt,
       content: [{ type: 'text', text: 'Final answer' }],
     });

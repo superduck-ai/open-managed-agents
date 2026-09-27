@@ -41,9 +41,9 @@ export function sessionCanonicalDisplayEvent(event: QuickstartSessionEvent): Qui
   }
   const payload = sessionSerializedCanonicalPayload(event);
   if (!payload) return event;
+  delete payload.created_at;
   return {
     ...payload,
-    created_at: payload.created_at ?? event.created_at,
     processed_at: payload.processed_at ?? event.processed_at,
     session_id: payload.session_id ?? event.session_id,
     session_thread_id: payload.session_thread_id ?? event.session_thread_id,
@@ -839,7 +839,7 @@ export function idleGapEntry(idleAtMs: number, nextAtMs: number, traceStartMs: n
     durationMs,
     createdAtMs: idleAtMs,
     processedAtMs: nextAtMs,
-    relativeTime: sessionEventElapsedTime({ created_at: new Date(idleAtMs).toISOString() }, traceStartMs),
+    relativeTime: sessionEventElapsedTime({ processed_at: new Date(idleAtMs).toISOString() }, traceStartMs),
     searchText: `idle gap ${durationMs}`,
     isError: false,
   };
@@ -860,7 +860,7 @@ export function queuedBoundaryEntry(
     count,
     createdAtMs,
     processedAtMs: createdAtMs,
-    relativeTime: sessionEventElapsedTime({ created_at: new Date(createdAtMs).toISOString() }, traceStartMs),
+    relativeTime: sessionEventElapsedTime({ processed_at: new Date(createdAtMs).toISOString() }, traceStartMs),
     searchText: text.toLowerCase(),
     isError: false,
   };
@@ -1157,7 +1157,7 @@ export function sessionEventIsQueuedUserMessage(event: QuickstartSessionEvent) {
   if (sessionEventType(event) !== 'user.message') {
     return false;
   }
-  return event.is_queued === true || event.queued === true || toRecord(event.metadata)?.queued === true;
+  return event.processed_at === null;
 }
 
 export function sessionContentBlockEntries(
@@ -1213,7 +1213,7 @@ export function sessionContentBlockEntries(
         session_id: event.session_id,
         session_thread_id: event.session_thread_id,
         thread_id: event.thread_id,
-        created_at: event.created_at,
+        processed_at: event.processed_at,
         name: typeof record.name === 'string' ? record.name : 'tool_use',
         input: record.input ?? {},
         parent_event_id: sessionEventKey(event),
@@ -1244,7 +1244,7 @@ export function sessionContentBlockEntries(
         session_id: event.session_id,
         session_thread_id: event.session_thread_id,
         thread_id: event.thread_id,
-        created_at: event.created_at,
+        processed_at: event.processed_at,
         tool_use_id: record.tool_use_id,
         content: record.content,
         is_error: record.is_error,
@@ -1264,7 +1264,7 @@ export function sessionContentBlockEntries(
       const resultEvent: QuickstartSessionEvent = {
         id: `${toolUseId}-thread-result`,
         type: 'agent.thread_message_received',
-        created_at: event.created_at,
+        processed_at: event.processed_at,
         tool_use_id: toolUseId,
         from_session_thread_id: threadHint.id,
         from_agent_name: threadHint.name,
@@ -2506,7 +2506,7 @@ export function sessionEventType(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventTimestamp(event: QuickstartSessionEvent) {
-  return sessionTimestampMs(event.processed_at) || sessionTimestampMs(event.created_at);
+  return sessionTimestampMs(event.processed_at);
 }
 
 export function sessionTimestampMs(value: unknown) {

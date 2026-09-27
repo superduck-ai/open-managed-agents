@@ -250,8 +250,8 @@ func TestWorkerPreviewConverterForwardsTextFragmentsAcrossBatches(t *testing.T) 
 		if event.ExternalID != wantID {
 			t.Fatalf("text preview frame %d id = %q, want %q", index, event.ExternalID, wantID)
 		}
-		if event.CreatedAt.IsZero() || event.ProcessedAt.IsZero() {
-			t.Fatalf("preview event %d times = created:%v processed:%v, want non-zero", index, event.CreatedAt, event.ProcessedAt)
+		if event.ProcessedAt.IsZero() {
+			t.Fatalf("preview event %d processing time is zero", index)
 		}
 	}
 
@@ -277,11 +277,10 @@ func TestPreviewSessionEventDistinguishesPrimaryAndChildScopes(t *testing.T) {
 }
 
 func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
-	createdAt := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC)
-	processedAt := createdAt.Add(2 * time.Second)
+	processedAt := time.Date(2026, time.August, 20, 1, 2, 5, 0, time.UTC)
 	event := previewSessionEvent(
 		previewTestBatch(),
-		workerStreamPayload{CreatedAt: createdAt.Format(time.RFC3339Nano)},
+		workerStreamPayload{},
 		processedAt,
 		"preview-event",
 		previewEventStart,

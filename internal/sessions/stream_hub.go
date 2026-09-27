@@ -266,10 +266,6 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		ThreadExternalID: threadID, PrimaryOnly: threadID == "",
 	}
 	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	if len(lastEventID) > 256 {
-		h.errorAdapter.Write(w, r, invalidRequest(errors.New("Last-Event-ID is invalid; reconnect without it")))
-		return
-	}
 	position, err := h.db.SessionEventStreamPosition(r.Context(), scope, lastEventID)
 	if errors.Is(err, db.ErrInvalidCursor) {
 		h.errorAdapter.Write(w, r, invalidRequest(errors.New("Last-Event-ID is invalid; reconnect without it")))
@@ -328,7 +324,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			if !ok {
 				return
 			}
-			if persisted, ok := delivery.(sessionEventDelivery); ok && resumableSessionEvent(persisted.event.EventType) {
+			if persisted, ok := delivery.(sessionEventDelivery); ok && resumableSessionEvent(persisted.event) {
 				if !catchUp() {
 					return
 				}
@@ -386,7 +382,7 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 }
 
 func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
-	if resumableSessionEvent(event.EventType) {
+	if resumableSessionEvent(event) {
 		fmt.Fprintf(w, "id: %s\n", event.ExternalID)
 	}
 	fmt.Fprintf(w, "event: %s\n", event.EventType)
@@ -397,8 +393,8 @@ func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) 
 	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID))
 }
 
-func resumableSessionEvent(eventType string) bool {
-	return maevents.IsPublicSessionHistoryEvent(eventType) && eventType != "session.deleted"
+func resumableSessionEvent(event sessionStreamEvent) bool {
+	return event.Persisted || (maevents.IsPublicSessionHistoryEvent(event.EventType) && event.EventType != "session.deleted")
 }
 
 func streamPreviewTarget(event sessionStreamEvent) (string, string) {

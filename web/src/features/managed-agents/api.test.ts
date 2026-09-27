@@ -106,6 +106,47 @@ describe('managed agents API', () => {
     ]);
   });
 
+  test('drops an incomplete preview on disconnect and loads its final message from history', async () => {
+    const queryClient = new QueryClient();
+    const controller = new AbortController();
+    const seen: string[][] = [];
+    let connections = 0;
+    const final = {
+      id: 'sevt_answer',
+      type: 'agent.message',
+      processed_at: '2026-09-25T00:00:01Z',
+      content: [{ type: 'text', text: 'Complete answer' }],
+    };
+    globalThis.fetch = async (input) => {
+      if (String(input).includes('/stream?')) {
+        connections += 1;
+        return new Response(
+          connections === 1
+            ? 'event: event_start\ndata: {"type":"event_start","event":{"id":"sevt_answer","type":"agent.message"}}\n\n'
+            : ': connected\n\n',
+        );
+      }
+      return Response.json({ data: connections === 1 ? [] : [final], next_page: null });
+    };
+
+    await runSessionEventStreamLoop({
+      queryClient,
+      sessionId: 'sesn_test',
+      workspaceId: 'default',
+      threadId: '',
+      signal: controller.signal,
+      onCacheChange: () => {
+        const events = sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', ['']);
+        seen.push(events.map((event) => String(event.id)));
+        if (connections === 2 && events.some((event) => event.processed_at === final.processed_at)) controller.abort();
+      },
+    });
+    expect(seen).toContainEqual(['sevt_answer']);
+    expect(seen).toContainEqual([]);
+    expect(sessionDetailScopeEvents(queryClient, 'default', 'sesn_test', [''])).toEqual([final]);
+    expect(sessionDetailDeltaFrames(queryClient, 'default', 'sesn_test', [''])).toEqual({});
+  });
+
   test('replaces a same-ID streaming preview with the complete final message', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';

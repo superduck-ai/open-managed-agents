@@ -3,6 +3,7 @@ package tests
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -106,6 +107,114 @@ func TestSessionStreamReplaysPersistedEventsAfterCursor(t *testing.T) {
 	defer invalidResponse.Body.Close()
 	if invalidResponse.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unknown cursor status = %d, want 400", invalidResponse.StatusCode)
+	}
+}
+
+func TestSessionStreamReplaysAcrossPagesWithoutDuplicates(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("session-stream-pages-bucket"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID, workerID := worker.SessionExternalID, worker.ExternalID
+	postRecoveryMessage(t, app, workerID, "cursor")
+	history := listSessionEvents(t, app, sessionID, "types[]=agent.message", defaultTestKey)
+	cursor := sessionEventStringField(t, history.Data[0], "id")
+
+	const eventCount = 205 // The server replay page holds 200 events.
+	events := make([]string, 0, eventCount)
+	for i := range eventCount {
+		name := fmt.Sprintf("bulk %03d", i)
+		events = append(events, `{"type":"agent.message","uuid":"`+sessionID+`-`+name+`","content":[{"type":"text","text":`+quoteJSON(name)+`}],"created_at":"2026-06-16T01:10:00Z"}`)
+	}
+	postCodeSessionIngressEvents(t, app, workerID, `{"events":[`+strings.Join(events, ",")+`]}`)
+
+	response, scanner := openRecoveryStream(t, app, sessionID, cursor)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("stream status = %d", response.StatusCode)
+	}
+	var pageBoundaryID string
+	for i := range eventCount {
+		frame := readRecoveryMessage(t, scanner)
+		want := fmt.Sprintf(`"text":"bulk %03d"`, i)
+		if frame.id == "" || !strings.Contains(frame.data, want) {
+			t.Fatalf("replay frame %d = %+v, want %s", i, frame, want)
+		}
+		if i == 199 {
+			pageBoundaryID = frame.id
+		}
+	}
+	postRecoveryMessage(t, app, workerID, "live after pages")
+	if live := readRecoveryMessage(t, scanner); !strings.Contains(live.data, "live after pages") {
+		t.Fatalf("live frame after pages = %+v", live)
+	}
+	response.Body.Close()
+
+	resume, resumedScanner := openRecoveryStream(t, app, sessionID, pageBoundaryID)
+	defer resume.Body.Close()
+	if resume.StatusCode != http.StatusOK {
+		t.Fatalf("resume status = %d", resume.StatusCode)
+	}
+	for i := 200; i < eventCount; i++ {
+		frame := readRecoveryMessage(t, resumedScanner)
+		want := fmt.Sprintf(`"text":"bulk %03d"`, i)
+		if !strings.Contains(frame.data, want) {
+			t.Fatalf("resumed frame %d = %+v, want %s", i, frame, want)
+		}
+	}
+}
+
+func TestPersistedDeletedEventCanResumeFromSSECursor(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("persisted-deleted-stream-bucket"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID, workerID := worker.SessionExternalID, worker.ExternalID
+	postRecoveryMessage(t, app, workerID, "cursor")
+	history := listSessionEvents(t, app, sessionID, "types[]=agent.message", defaultTestKey)
+	cursor := sessionEventStringField(t, history.Data[0], "id")
+	deletedID := "sevt_persisted_deleted_" + sessionID
+	postCodeSessionIngressEvents(t, app, workerID, `{"events":[{"type":"session.deleted","id":`+quoteJSON(deletedID)+`,"uuid":"persisted-deleted-`+sessionID+`","created_at":"2026-06-16T01:10:00Z"}]}`)
+	deleted := listSessionEvents(t, app, sessionID, "types[]=session.deleted", defaultTestKey)
+	if len(deleted.Data) != 1 || sessionEventStringField(t, deleted.Data[0], "id") != deletedID {
+		t.Fatalf("session.deleted not persisted in history: %+v", deleted.Data)
+	}
+
+	response, scanner := openRecoveryStream(t, app, sessionID, cursor)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("stream status = %d", response.StatusCode)
+	}
+	var streamID string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "id: ") {
+			streamID = strings.TrimPrefix(line, "id: ")
+		}
+		if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"type":"session.deleted"`) {
+			if streamID != deletedID {
+				t.Fatalf("persisted deletion SSE id = %q, want %q", streamID, deletedID)
+			}
+			return
+		}
+	}
+	t.Fatalf("persisted deletion missing from resumed stream: %v", scanner.Err())
+}
+
+func TestSessionStreamAcceptsAStoredLongEventIDAsCursor(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("long-stream-cursor-bucket"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID, workerID := worker.SessionExternalID, worker.ExternalID
+	cursor := "sevt_" + strings.Repeat("A", 300)
+	postCodeSessionIngressEvents(t, app, workerID, `{"events":[{"type":"agent.message","id":`+quoteJSON(cursor)+`,"uuid":"long-cursor-`+sessionID+`","content":[{"type":"text","text":"long cursor"}],"created_at":"2026-06-16T01:10:00Z"}]}`)
+	history := listSessionEvents(t, app, sessionID, "types[]=agent.message", defaultTestKey)
+	if len(history.Data) != 1 || sessionEventStringField(t, history.Data[0], "id") != cursor {
+		t.Fatalf("long event ID was not stored: %+v", history.Data)
+	}
+	postRecoveryMessage(t, app, workerID, "after long cursor")
+	response, scanner := openRecoveryStream(t, app, sessionID, cursor)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("stored cursor status = %d, want 200", response.StatusCode)
+	}
+	if got := readRecoveryMessage(t, scanner); !strings.Contains(got.data, "after long cursor") {
+		t.Fatalf("resumed frame = %+v", got)
 	}
 }
 

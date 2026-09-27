@@ -82,7 +82,7 @@ id = "sevt_" + first_16_bytes_hex(
 
 建立 SSE 时先读取数据库水位或解析 `Last-Event-ID`，再注册本机 subscriber、订阅 session。NATS 通过 `FlushWithContext` 等待服务端处理 SUB，确认成功后才向客户端发送 `: connected`；开流后立即补拉水位之后的事件，覆盖读取水位与订阅完成之间的窗口。确认任务最多运行 5 秒并受 fanout 生命周期约束；单个请求取消会停止自身等待，但不会取消同 subject 的共享确认。多个 SSE 连接订阅同一 session 时复用同一个 broker 订阅、确认结果和实例级 preview converter。NATS subject 的 session ID 只允许字母、数字、下划线和连字符，拒绝通配符、点号和空白；subject 路由不能替代 API 鉴权与 Hub workspace 匹配。
 
-已处理的持久化事件在 SSE 帧写出 `id: <event.id>`；`event_start`/`event_delta` 和删除时临时扇出的 `session.deleted` 不写 SSE `id:`，也不进入历史。`Last-Event-ID` 必须是当前 workspace、session 和线程范围内仍存在的已处理事件 ID；未知、已删除或其他线程的 ID 返回 `400`，客户端应清除游标并通过历史 API 恢复。没有游标时从请求开始时的数据库水位接实时流，不回放已有历史。带游标时按内部 `delivery_seq` 分页回放其后的持久化事件，再接实时通知；通知可能乱序或丢失，因此每次通知和 15 秒 keepalive 都查询数据库。单个 session 的所有事件写入和待处理输入确认都持有同一事务级 Session 行锁，所以该序号在同一 session 内按提交顺序递增。迁移对既有已处理事件按旧 identity 回填序号；迁移前没有可用的 SSE 游标。
+已处理的持久化事件（包括持久化的 `session.deleted`）在 SSE 帧写出 `id: <event.id>`；`event_start`/`event_delta` 和删除时临时扇出的 `session.deleted` 不写 SSE `id:`，也不进入历史。`Last-Event-ID` 必须是当前 workspace、session 和线程范围内仍存在的已处理事件 ID；未知、已删除或其他线程的 ID 返回 `400`，客户端应清除游标并通过历史 API 恢复。合法游标以存储的事件 ID 为准，不额外施加与数据库不一致的长度限制。没有游标时从请求开始时的数据库水位接实时流，不回放已有历史。带游标时按内部 `delivery_seq` 分页回放其后的持久化事件，再接实时通知；通知可能乱序或丢失，因此每次通知和 15 秒 keepalive 都查询数据库。单个 session 的所有事件写入和待处理输入确认都持有同一事务级 Session 行锁，所以该序号在同一 session 内按提交顺序递增。迁移对既有已处理事件按旧 identity 回填序号；迁移前没有可用的 SSE 游标。
 
 实例维护 `subject → subscription state` registry，只用于让同一进程内订阅同一 session 的 SSE 连接复用一个 NATS subscription、首次确认结果和引用计数。registry mutex 只保护 map、引用计数和 ready/result 等内存状态；`FlushWithContext`、publish、handler、reset callback 和 subscription unsubscribe 均不在锁内执行。第一个订阅者启动确认，其他并发订阅者等待同一个 ready 结果。
 

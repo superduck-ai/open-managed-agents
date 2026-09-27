@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -20,6 +21,29 @@ func TestPrepareInboundEventRejectsOversizedPayloadBeforeStorage(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), workerevents.MaxOffloadedPayloadBytes+1)
 	if _, err := service.prepareInboundEvent(t.Context(), db.CodeSession{}, payload, "test", ""); !errors.Is(err, errInboundPayloadTooLarge) {
 		t.Fatalf("oversized preparation error = %v", err)
+	}
+}
+
+func TestActivationReplayPreservesQueuedEventCreationTime(t *testing.T) {
+	createdAt := time.Date(2026, time.September, 27, 8, 10, 0, 0, time.UTC)
+	event := db.SessionEvent{
+		UUID: "event-uuid", ExternalID: "sevt_queued", CreatedAt: createdAt,
+		Payload: json.RawMessage(`{"type":"user.message","id":"sevt_queued","processed_at":null,"content":[{"type":"text","text":"hello"}]}`),
+	}
+	inbound, err := (&Service{}).convertSessionEventToInbound(t.Context(), db.CodeSession{ExternalID: "cse_test"}, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		CreatedAt string `json:"created_at"`
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal(inbound.envelope.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	want := createdAt.Format(time.RFC3339Nano)
+	if payload.CreatedAt != want || payload.Timestamp != want {
+		t.Fatalf("activation input times = %+v, want %s", payload, want)
 	}
 }
 

@@ -10,6 +10,7 @@ import {
   mergeSessionStreamFrame,
   reconcileIncompleteSessionStreamEvents,
   sessionDetailDeltaFrames,
+  sessionDetailEventCacheKey,
   sessionDetailScopeEvents,
   sessionIncompleteStreamEventIds,
   syncSessionEventHistory,
@@ -24,6 +25,99 @@ afterEach(() => {
 });
 
 describe('managed agents API', () => {
+  test('force history sync scans from the first page without clearing cached events', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const cachedEvents = Array.from({ length: 500 }, (_, index) => ({
+      id: `sevt_${index}`,
+      type: 'user.message',
+      processed_at: '2026-08-26T13:13:00Z',
+    }));
+    queryClient.setQueryData(sessionDetailEventCacheKey(workspaceId, sessionId), {
+      events: cachedEvents,
+      syncedThrough: 'old-cursor',
+      historyComplete: true,
+      sawTerminated: false,
+    });
+    const requestedPages: string[] = [];
+    globalThis.fetch = async (input) => {
+      const page = new URL(String(input), 'https://oma.duck.ai').searchParams.get('page') ?? '';
+      requestedPages.push(page);
+      const data = page
+        ? [{ id: 'sevt_500', type: 'agent.message', processed_at: '2026-08-26T13:13:01Z' }]
+        : [{ id: 'sevt_late', type: 'agent.message', processed_at: '2026-08-26T13:12:59Z' }, ...cachedEvents];
+      return new Response(JSON.stringify({ data, next_page: page ? null : 'new-cursor' }));
+    };
+
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, force: true });
+
+    expect(requestedPages).toEqual(['', 'new-cursor']);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toContain(
+      'sevt_late',
+    );
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).length).toBe(502);
+  });
+
+  test('model request end removes only its unfinished previews', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    for (const id of ['sevt_done', 'sevt_unfinished', 'sevt_other']) {
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+        type: 'event_start',
+        event: { id, type: 'agent.message' },
+      });
+    }
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_done',
+      type: 'agent.message',
+      processed_at: '2026-08-26T13:13:00Z',
+      content: [{ type: 'text', text: 'Done' }],
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_end',
+      type: 'span.model_request_end',
+      event_ids: ['sevt_done', 'sevt_unfinished'],
+      processed_at: '2026-08-26T13:13:01Z',
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_done',
+      'sevt_other',
+      'sevt_end',
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_other']);
+  });
+
+  test('model request end in a child thread does not remove a primary preview', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const eventId = 'sevt_shared';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: eventId, type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, 'sthr_child', {
+      type: 'event_start',
+      event: { id: eventId, type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, 'sthr_child', {
+      id: 'sevt_end',
+      type: 'span.model_request_end',
+      event_ids: [eventId],
+      processed_at: '2026-08-26T13:13:00Z',
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+    ]);
+    expect(
+      sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['sthr_child']).map((event) => event.id),
+    ).toEqual(['sevt_end']);
+  });
+
   test('replaces a same-ID streaming preview with the complete final message', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
@@ -116,7 +210,7 @@ describe('managed agents API', () => {
     expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
   });
 
-  test('replaces an orphaned stream preview as soon as the final agent message arrives', () => {
+  test('does not match a final message to a different preview ID', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -152,9 +246,10 @@ describe('managed agents API', () => {
       { platformTranscriptFiltering: true },
     );
     expect(visibleBeforeIdle.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_preview',
       'sevt_final',
     ]);
-    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_preview']);
 
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       id: 'sevt_idle',
@@ -165,6 +260,7 @@ describe('managed agents API', () => {
     });
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_preview',
       'sevt_final',
       'sevt_idle',
     ]);
@@ -203,7 +299,7 @@ describe('managed agents API', () => {
     ]);
 
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
-      id: 'sevt_final',
+      id: 'sevt_preview',
       type: 'agent.message',
       created_at: messageAt,
       processed_at: idleAt,
@@ -211,7 +307,7 @@ describe('managed agents API', () => {
     });
 
     const events = sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']);
-    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_final', 'sevt_idle']);
+    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_preview', 'sevt_idle']);
 
     const entries = buildSessionEventEntries(events, 'transcript', Date.parse(startAt), undefined, {
       platformTranscriptFiltering: true,
@@ -269,7 +365,7 @@ describe('managed agents API', () => {
         JSON.stringify({
           data: [
             {
-              id: 'sevt_final',
+              id: 'sevt_preview',
               type: 'agent.message',
               created_at: createdAt,
               processed_at: createdAt,
@@ -290,7 +386,7 @@ describe('managed agents API', () => {
     await reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId);
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
-      'sevt_final',
+      'sevt_preview',
       'sevt_idle',
     ]);
     expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});

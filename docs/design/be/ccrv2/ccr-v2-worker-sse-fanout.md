@@ -106,7 +106,7 @@ Worker HTTP 重试可能重复发布 ephemeral 事件。每个 API 实例按 `se
 - 后端可以先发布：旧 Worker 的 ephemeral stream 不影响持久化合同；包含 `message.id` 的最终 assistant 会使用新的稳定 ID。
 - 不需要 migration、outbox、Redis Streams 或新的 Yourbatis Mapper。
 
-本版不增加 SSE `id:`/`Last-Event-ID` 回放，也不解决数据库提交后发布前的崩溃窗口。最终事件的可靠恢复依赖客户端通过历史 API 补拉；需要可靠通知时再引入事务 outbox。启用 JetStream 只是基础设施就绪，不会自动持久化 Core NATS 消息。
+Session 与 Thread SSE 对持久化事件写入 `id: <event.id>`，使用公开事件 ID；`event_start` 和 `event_delta` 不写 SSE `id:`，只通过 payload 中的关联 ID 匹配最终事件。SSE `id:` 可供客户端展示，但不作为回放游标；`Last-Event-ID` 仍不触发服务端回放。本版不解决数据库提交后发布前的崩溃窗口。最终事件的可靠恢复依赖客户端通过历史 API 补拉；需要可靠通知时再引入事务 outbox。启用 JetStream 只是基础设施就绪，不会自动持久化 Core NATS 消息。
 
 ## 验收
 

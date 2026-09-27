@@ -1622,6 +1622,21 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     if (sessionThreadsMatch && method === 'GET') {
       return jsonResponse({ data: resources.sessionThreads, next_page: null });
     }
+    if (url.match(/^\/v1\/sessions\/[^/]+\/(?:events\/stream|threads\/[^/]+\/stream)\?/) && method === 'GET') {
+      return new Response(
+        new ReadableStream({
+          start(stream) {
+            if (init?.signal?.aborted) {
+              stream.close();
+              return;
+            }
+            stream.enqueue(new TextEncoder().encode(': connected\n\n'));
+            init?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
     const sessionThreadEventsMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/threads\/([^/?]+)\/events\?/);
     if (sessionThreadEventsMatch && method === 'GET') {
       const threadId = decodeURIComponent(sessionThreadEventsMatch[2]);

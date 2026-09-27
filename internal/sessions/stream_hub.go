@@ -318,6 +318,9 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 }
 
 func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
+	if !maevents.IsStreamDelta(event.EventType) && event.ExternalID != "" && !strings.ContainsAny(event.ExternalID, "\r\n\x00") {
+		fmt.Fprintf(w, "id: %s\n", event.ExternalID)
+	}
 	fmt.Fprintf(w, "event: %s\n", event.EventType)
 	if maevents.IsStreamDelta(event.EventType) {
 		fmt.Fprintf(w, "data: %s\n\n", event.Payload)

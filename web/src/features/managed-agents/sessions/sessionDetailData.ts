@@ -2,13 +2,10 @@ import {
   cleanupIncompleteSessionStreamEvents,
   mergeSessionStreamFrame,
   reconcileIncompleteSessionStreamEvents,
-  SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
   SESSION_DETAIL_STREAM_FALLBACK_LIMIT,
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
-  sessionEventHistoryShouldSkipStream,
   sessionIncompleteStreamEventIds,
-  sessionPrimaryHistoryShouldSkipStream,
   sessionStreamBackoff,
   sessionStreamShouldStop,
   sessionThreadShouldFetchEvents,
@@ -71,7 +68,7 @@ export function useSessionDetailEventData({
   );
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!sessionId || live) {
       return;
     }
     const controller = new AbortController();
@@ -125,10 +122,10 @@ export function useSessionDetailEventData({
       active = false;
       controller.abort();
     };
-  }, [bump, childThreadIds, queryClient, refreshKey, sessionId, workspaceId]);
+  }, [bump, childThreadIds, live, queryClient, refreshKey, sessionId, workspaceId]);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!sessionId || live) {
       return;
     }
     const handleRefetch = () => {
@@ -157,13 +154,15 @@ export function useSessionDetailEventData({
       window.removeEventListener('online', handleRefetch);
       document.removeEventListener('visibilitychange', handleRefetch);
     };
-  }, [bump, queryClient, scopeThreadIds, sessionId, workspaceId]);
+  }, [bump, live, queryClient, scopeThreadIds, sessionId, workspaceId]);
 
   useEffect(() => {
     if (!sessionId || !live) {
       return;
     }
     const controller = new AbortController();
+    setLoading(true);
+    setError(null);
     void runSessionEventStreamLoop({
       queryClient,
       sessionId,
@@ -171,8 +170,18 @@ export function useSessionDetailEventData({
       threadId: '',
       signal: controller.signal,
       onCacheChange: bump,
+      onHistorySynced: () => {
+        bump();
+        setLoading(false);
+      },
       onPrimaryEvent,
-    }).catch(() => undefined);
+    })
+      .catch((streamError: unknown) => {
+        if (!controller.signal.aborted) setError(errorMessage(streamError));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
     return () => {
       controller.abort();
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '');
@@ -185,29 +194,30 @@ export function useSessionDetailEventData({
       return;
     }
     const controller = new AbortController();
-    const syncChildren = () => {
-      if (controller.signal.aborted || (document.visibilityState && document.visibilityState !== 'visible')) {
-        return;
-      }
-      void Promise.all(
-        childThreadIds.map((threadId) =>
-          syncSessionEventHistory({
-            queryClient,
-            sessionId,
-            workspaceId,
-            threadId,
-            signal: controller.signal,
-            force: true,
-          }),
-        ),
-      )
-        .then(bump)
-        .catch(() => undefined);
-    };
-    const interval = window.setInterval(syncChildren, SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS);
+    const pending = new Set(childThreadIds);
+    setChildLoading(true);
+    for (const threadId of childThreadIds) {
+      void runSessionEventStreamLoop({
+        queryClient,
+        sessionId,
+        workspaceId,
+        threadId,
+        signal: controller.signal,
+        onCacheChange: bump,
+        onHistorySynced: () => {
+          pending.delete(threadId);
+          if (!pending.size) setChildLoading(false);
+          bump();
+        },
+      }).catch((streamError: unknown) => {
+        if (!controller.signal.aborted) setError(errorMessage(streamError));
+      });
+    }
     return () => {
-      window.clearInterval(interval);
       controller.abort();
+      childThreadIds.forEach((threadId) =>
+        cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId),
+      );
     };
   }, [bump, childThreadIds, live, queryClient, sessionId, workspaceId]);
 
@@ -230,6 +240,7 @@ export async function runSessionEventStreamLoop({
   threadId,
   signal,
   onCacheChange,
+  onHistorySynced,
   onPrimaryEvent,
 }: {
   queryClient: QueryClient;
@@ -238,13 +249,13 @@ export async function runSessionEventStreamLoop({
   threadId: string;
   signal: AbortSignal;
   onCacheChange: () => void;
+  onHistorySynced?: () => void;
   onPrimaryEvent?: (event: QuickstartSessionEvent) => void;
 }) {
   let consecutiveFailures = 0;
   let everConnected = false;
   let fallbackCount = 0;
   let backoff = 0;
-  let historySynced = false;
   let idleReconciliationTimer: number | null = null;
   const cancelIdleReconciliation = () => {
     if (idleReconciliationTimer !== null) {
@@ -274,39 +285,42 @@ export async function runSessionEventStreamLoop({
       await sleepWithAbort(Math.max(3000, backoff), signal);
       await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal, force: true });
       onCacheChange();
+      onHistorySynced?.();
       consecutiveFailures = 0;
     }
+    const attempt = new AbortController();
+    const abortAttempt = () => attempt.abort(signal.reason);
+    signal.addEventListener('abort', abortAttempt, { once: true });
+    let historyScan: Promise<void> | undefined;
+    let historyError: unknown;
     try {
-      if (!historySynced) {
-        // Force a tail sync before subscribing: the stream is live-only, so events
-        // broadcast between a send/interrupt and this subscribe (e.g. a fast agent
-        // reply) would otherwise be lost for good. Merge dedups by event id.
-        const historyCache = await syncSessionEventHistory({
-          queryClient,
-          sessionId,
-          workspaceId,
-          threadId,
-          signal,
-          force: true,
-        });
-        onCacheChange();
-        historySynced = true;
-        if (
-          sessionEventHistoryShouldSkipStream(historyCache.events, threadId) ||
-          (threadId && sessionPrimaryHistoryShouldSkipStream(queryClient, workspaceId, sessionId))
-        ) {
-          return;
-        }
-      }
       await streamSessionEvents({
         sessionId,
         threadId: threadId || undefined,
         workspaceId,
-        signal,
+        signal: attempt.signal,
         onOpen: () => {
           everConnected = true;
           consecutiveFailures = 0;
           backoff = 0;
+          historyScan = syncSessionEventHistory({
+            queryClient,
+            sessionId,
+            workspaceId,
+            threadId,
+            signal: attempt.signal,
+            force: true,
+          })
+            .then(() => {
+              if (!attempt.signal.aborted) {
+                onCacheChange();
+                onHistorySynced?.();
+              }
+            })
+            .catch((error: unknown) => {
+              historyError = error;
+              attempt.abort(error);
+            });
         },
         onEvent: (event) => {
           mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, event);
@@ -322,11 +336,12 @@ export async function runSessionEventStreamLoop({
           onCacheChange();
         },
       });
-      everConnected = true;
-      consecutiveFailures = 0;
-      backoff = 0;
-      return;
+      await historyScan;
+      if (historyError) throw historyError;
+      throw new Error('Session event stream ended');
     } catch (streamError) {
+      attempt.abort(streamError);
+      await historyScan;
       cancelIdleReconciliation();
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
       onCacheChange();
@@ -336,6 +351,8 @@ export async function runSessionEventStreamLoop({
       consecutiveFailures += 1;
       backoff = sessionStreamBackoff(streamError, backoff);
       await sleepWithAbort(Math.max(1000, backoff), signal).catch(() => undefined);
+    } finally {
+      signal.removeEventListener('abort', abortAttempt);
     }
     if (fallbackCount >= SESSION_DETAIL_STREAM_FALLBACK_LIMIT) {
       fallbackCount = 0;

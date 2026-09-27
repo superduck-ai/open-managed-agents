@@ -1670,6 +1670,14 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(true),
+    );
+    await waitFor(() =>
       expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?'))).toBe(true),
     );
     await waitFor(() =>
@@ -1679,12 +1687,13 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    await waitFor(() =>
-      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
-        true,
-      ),
+    const urls = api.requests.map((request) => request.url);
+    expect(urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events?')),
     );
-    expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(false);
+    expect(urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/events?')),
+    );
   });
 
   test('keeps the primary session stream open when running metadata has completed history', async () => {

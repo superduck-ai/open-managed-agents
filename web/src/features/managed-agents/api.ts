@@ -995,20 +995,19 @@ export async function streamSessionEvents({
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/stream?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?${params.toString()}`;
   const streamSignal = sessionLinkedAbortSignal(signal, SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS);
-  const response = await fetch(path, {
-    credentials: 'include',
-    headers,
-    signal: streamSignal.signal,
-  });
-  if (!response.ok || !response.body) {
-    streamSignal.dispose();
-    throw new SessionStreamError(response.status);
-  }
-  onOpen?.();
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   try {
+    const response = await fetch(path, {
+      credentials: 'include',
+      headers,
+      signal: streamSignal.signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new SessionStreamError(response.status);
+    }
+    onOpen?.();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
     streamSignal.touch();
     for (;;) {
       const { value, done } = await reader.read();
@@ -1057,6 +1056,7 @@ export function sessionLinkedAbortSignal(parent: AbortSignal, idleTimeoutMs: num
     abort();
   } else {
     parent.addEventListener('abort', abort, { once: true });
+    touch();
   }
   return {
     signal: controller.signal,
@@ -1184,9 +1184,9 @@ export async function syncSessionEventHistory({
   if (!fromStart && !force && current?.historyComplete) {
     return current;
   }
-  const initialPage = fromStart ? null : (current?.syncedThrough ?? null);
+  const initialPage = fromStart || force ? null : (current?.syncedThrough ?? null);
   const requestKey = `events:${workspaceId}:${sessionId}:${threadId}:${fromStart ? 'start' : force ? 'force' : (initialPage ?? 'tail')}`;
-  return sessionDetailSingleFlight(requestKey, async () => {
+  const scan = async () => {
     if (signal?.aborted) {
       throw signal.reason;
     }
@@ -1207,30 +1207,22 @@ export async function syncSessionEventHistory({
         order: 'asc',
         limit: SESSION_DETAIL_EVENT_PAGE_LIMIT,
         page,
+        signal,
       });
+      if (signal?.aborted) {
+        throw signal.reason;
+      }
       const nextPage = response.next_page ?? null;
       sawTerminated =
         sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
-      const replacedPreviewIds: string[] = [];
-      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
-        let mergedCache = cache;
-        const remainingEvents = response.data.filter((event) => {
-          const previewId = sessionStreamPreviewIdForFinalEvent(mergedCache, event);
-          if (!previewId) return true;
-          replacedPreviewIds.push(previewId);
-          mergedCache = sessionEventCacheReplacingId(mergedCache, previewId, event);
-          return false;
-        });
-        return mergeSessionEventCache(
-          mergedCache,
-          remainingEvents,
+      queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
+        mergeSessionEventCache(
+          cache,
+          response.data,
           nextPage
             ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
-            : { historyComplete: true, sawTerminated },
-        );
-      });
-      replacedPreviewIds.forEach((previewId) =>
-        removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, previewId),
+            : { historyComplete: true, syncedThrough: null, sawTerminated },
+        ),
       );
       response.data.forEach((event) => {
         const finalId = sessionFinalAgentEventId(event);
@@ -1239,7 +1231,8 @@ export async function syncSessionEventHistory({
       page = nextPage;
     } while (page && !signal?.aborted);
     return queryClient.getQueryData<SessionDetailEventCache>(cacheKey) ?? emptySessionDetailEventCache();
-  });
+  };
+  return force ? scan() : sessionDetailSingleFlight(requestKey, scan);
 }
 
 export function mergeSessionStreamFrame(
@@ -1255,19 +1248,19 @@ export function mergeSessionStreamFrame(
     return;
   }
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
-  let replacedPreviewId: string | null = null;
-  queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
-    replacedPreviewId = sessionStreamPreviewIdForFinalEvent(cache, event);
-    return replacedPreviewId
-      ? sessionEventCacheReplacingId(cache, replacedPreviewId, event)
-      : mergeSessionEventCache(cache, [event]);
-  });
-  if (replacedPreviewId) {
-    removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, replacedPreviewId);
-  }
+  queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => mergeSessionEventCache(cache, [event]));
   const finalId = sessionFinalAgentEventId(event);
   if (finalId) {
     removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+  }
+  if (eventType === 'span.model_request_end' && Array.isArray(event.event_ids)) {
+    cleanupIncompleteSessionStreamEvents(
+      queryClient,
+      workspaceId,
+      sessionId,
+      threadId,
+      new Set(event.event_ids.filter((id): id is string => typeof id === 'string')),
+    );
   }
   if (eventType.endsWith('status_terminated')) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
@@ -1279,80 +1272,6 @@ function sessionFinalAgentEventId(event: QuickstartSessionEvent) {
   return (type === 'agent.message' || type === 'agent.thinking') && sessionNullableProcessedAt(event) !== null
     ? sessionStableEventId(event)
     : null;
-}
-
-function sessionStreamPreviewIdForFinalEvent(
-  cache: SessionDetailEventCache | undefined,
-  incoming: QuickstartSessionEvent,
-) {
-  const incomingId = sessionStableEventId(incoming);
-  const incomingType = sessionEventType(incoming);
-  if (
-    !cache ||
-    !incomingId ||
-    (incomingType !== 'agent.message' && incomingType !== 'agent.thinking') ||
-    sessionNullableProcessedAt(incoming) === null
-  ) {
-    return null;
-  }
-  if (cache.events.some((event) => sessionStableEventId(event) === incomingId)) {
-    return null;
-  }
-
-  const candidates = cache.events.filter((event) => {
-    const id = sessionStableEventId(event);
-    return (
-      id !== null &&
-      id !== incomingId &&
-      sessionEventType(event) === incomingType &&
-      sessionNullableProcessedAt(event) === null &&
-      event.is_streaming === true
-    );
-  });
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  const incomingCreatedAt = sessionEventCreatedAtMs(incoming);
-  const timestampMatches =
-    incomingCreatedAt === null
-      ? []
-      : candidates.filter((candidate) => sessionEventCreatedAtMs(candidate) === incomingCreatedAt);
-  const matchedCandidate =
-    timestampMatches.length === 1 ? timestampMatches[0] : candidates.length === 1 ? candidates[0] : null;
-  return matchedCandidate ? sessionStableEventId(matchedCandidate) : null;
-}
-
-function sessionEventCreatedAtMs(event: QuickstartSessionEvent) {
-  if (typeof event.created_at !== 'string' || !event.created_at) {
-    return null;
-  }
-  const createdAtMs = Date.parse(event.created_at);
-  return Number.isFinite(createdAtMs) ? createdAtMs : null;
-}
-
-function sessionEventCacheReplacingId(
-  cache: SessionDetailEventCache | undefined,
-  previewId: string,
-  finalEvent: QuickstartSessionEvent,
-) {
-  if (!cache) {
-    return mergeSessionEventCache(cache, [finalEvent]);
-  }
-  const finalId = sessionStableEventId(finalEvent);
-  const events: QuickstartSessionEvent[] = [];
-  cache.events.forEach((event) => {
-    const eventId = sessionStableEventId(event);
-    if (eventId === previewId) {
-      events.push(finalEvent);
-      return;
-    }
-    if (finalId && eventId === finalId) {
-      return;
-    }
-    events.push(event);
-  });
-  return { ...cache, events };
 }
 
 function removeSessionDeltaFrame(
@@ -1371,42 +1290,6 @@ function removeSessionDeltaFrame(
     delete next[eventId];
     return next;
   });
-}
-
-export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEvent[], threadId: string) {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const type = sessionEventType(events[index]);
-    if (threadId) {
-      if (type === 'session.thread_status_idle' || type === 'session.thread_status_terminated') {
-        return true;
-      }
-      if (type === 'session.thread_status_running' || type === 'session.thread_status_rescheduled') {
-        return false;
-      }
-      continue;
-    }
-    if (type === 'user.message') {
-      return false;
-    }
-    if (type === 'session.status_terminated' || type === 'session.deleted') {
-      return true;
-    }
-    if (type === 'session.status_running' || type === 'session.status_rescheduled') {
-      return false;
-    }
-  }
-  return false;
-}
-
-export function sessionPrimaryHistoryShouldSkipStream(
-  queryClient: QueryClient,
-  workspaceId: string,
-  sessionId: string,
-) {
-  const primaryCache = queryClient.getQueryData<SessionDetailEventCache>(
-    sessionDetailEventCacheKey(workspaceId, sessionId, ''),
-  );
-  return primaryCache ? sessionEventHistoryShouldSkipStream(primaryCache.events, '') : false;
 }
 
 export function mergeSessionDeltaFrame(

@@ -25,7 +25,8 @@ Viewer 包含两个区域：
 
 ## 转录与对齐
 
-- 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。
+- Session 与每条可见子 Thread 都先建立 SSE 订阅，再从第一页扫完事件历史；扫描期间继续接收实时帧。SSE 正常结束、报错、建连超时或流空闲超时后清理未完成预览，退避重连并重新扫全量历史。历史与 SSE 按 JSON 事件 ID 合并，重复事件只展示一次；SSE 帧的 `id:` 仅供查看，不用作 `Last-Event-ID` 回放游标。
+- 同 ID 的最终 `agent.message` / `agent.thinking` 通过 SSE 或历史同步到达时，清除对应的临时 delta 帧，由最终事件的完整内容接管展示；已完成的事件不再接受迟到的预览开始。`span.model_request_end.event_ids` 仅清理所列 ID 的未完成预览。不同 ID 的 Worker echo 属于 #393，前端不猜测它与预览的对应关系。
 - Transcript 内容列、待处理 Action Card 和消息输入框共享最大 `720px` 的居中内容轨道。
 - 三者在窄容器中使用相同的 `16px` 水平留白；滚动条采用覆盖式自动隐藏样式，不允许通过 Composer 或 Action Card 的伪滚动容器预留 gutter。左右边界必须逐像素一致。
 - 转录先按未过滤的事件流建立 speaker turn，再按 model request bracket 建立 iteration，最后应用搜索；搜索不得把原本由 User、idle、queued、outcome、status 或 speaker 变化分开的 turn 重新合并。
@@ -91,7 +92,7 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 
 ## 非目标
 
-- 不重写事件归一化、SSE 重连、thread lane 或 minimap 算法。
+- 不重写事件归一化、thread lane 或 minimap 算法。
 - 复用现有 Session resources add 挂载文件；不新增后端 API，也不开放关联实体编辑。
 - 不伪造 Thread cost、等待时长或后端未返回的统计数据。
 - 不展示 credential secret，也不恢复旧版关联实体完整配置卡片。

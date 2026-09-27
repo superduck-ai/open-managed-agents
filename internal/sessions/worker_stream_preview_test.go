@@ -284,6 +284,9 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	writeSSE(recorder, event, "primary-thread")
+	if strings.Contains(recorder.Body.String(), "\nid: ") || strings.HasPrefix(recorder.Body.String(), "id: ") {
+		t.Fatalf("preview SSE gained an id line: %s", recorder.Body.String())
+	}
 
 	data := strings.TrimSpace(strings.TrimPrefix(strings.Split(recorder.Body.String(), "\n")[1], "data: "))
 	var payload struct {
@@ -296,6 +299,92 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	}
 	if payload.CreatedAt != "" || payload.ProcessedAt != "" || payload.SessionThreadID != "" {
 		t.Fatalf("preview gained persisted event fields: %+v", payload)
+	}
+}
+
+func TestPreviewDeltaSSEHasNoID(t *testing.T) {
+	event := sessionStreamEvent{
+		ExternalID: "sevt_delta",
+		EventType:  previewEventDelta,
+		Payload:    json.RawMessage(`{"type":"event_delta","event_id":"sevt_message"}`),
+	}
+	recorder := httptest.NewRecorder()
+	writeSSE(recorder, event, "child-thread")
+	if body := recorder.Body.String(); strings.Contains(body, "id: ") {
+		t.Fatalf("preview delta SSE gained an id line: %s", body)
+	}
+}
+
+func TestPersistedSSEUsesEventID(t *testing.T) {
+	event := sessionStreamEvent{
+		ExternalID: "sevt_test",
+		EventType:  "agent.message",
+		Payload:    json.RawMessage(`{"type":"agent.message","id":"sevt_test"}`),
+	}
+	for _, threadID := range []string{"primary-thread", "child-thread"} {
+		t.Run(threadID, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeSSE(recorder, event, threadID)
+			body := recorder.Body.String()
+			if !strings.HasPrefix(body, "id: sevt_test\nevent: agent.message\n") {
+				t.Fatalf("persisted SSE does not use the event id: %s", body)
+			}
+			var payload struct {
+				ID              string `json:"id"`
+				SessionThreadID string `json:"session_thread_id"`
+			}
+			data := strings.TrimSpace(strings.TrimPrefix(strings.Split(body, "\n")[2], "data: "))
+			if err := json.Unmarshal([]byte(data), &payload); err != nil {
+				t.Fatalf("decode SSE data: %v", err)
+			}
+			if payload.ID != event.ExternalID || payload.SessionThreadID != threadID {
+				t.Fatalf("SSE data and frame id differ: %+v", payload)
+			}
+		})
+	}
+}
+
+func TestPersistedSSEDoesNotWriteInvalidEventID(t *testing.T) {
+	event := sessionStreamEvent{
+		ExternalID: "sevt_test\nretry: 0",
+		EventType:  "agent.message",
+		Payload:    json.RawMessage(`{"type":"agent.message"}`),
+	}
+	recorder := httptest.NewRecorder()
+
+	writeSSE(recorder, event, "primary-thread")
+
+	if body := recorder.Body.String(); strings.Contains(body, "id: ") || strings.Contains(body, "retry: 0\n") {
+		t.Fatalf("invalid event id escaped into SSE fields: %s", body)
+	}
+}
+
+func TestNewStreamSubscriberReceivesOnlyLaterEvents(t *testing.T) {
+	hub := newStreamHub()
+	event := sessionStreamEvent{
+		ExternalID:        "sevt_before",
+		WorkspaceUUID:     "workspace-test",
+		SessionExternalID: "session-test",
+		EventType:         "agent.message",
+	}
+	hub.broadcastEvent(event)
+	subID, deliveries := hub.subscribe("workspace-test", "session-test")
+	defer hub.unsubscribe(subID)
+	select {
+	case delivery := <-deliveries:
+		t.Fatalf("new subscriber replayed an earlier event: %#v", delivery)
+	default:
+	}
+	event.ExternalID = "sevt_after"
+	hub.broadcastEvent(event)
+	select {
+	case delivery := <-deliveries:
+		got, ok := delivery.(sessionEventDelivery)
+		if !ok || got.event.ExternalID != "sevt_after" {
+			t.Fatalf("new subscriber received %#v, want later event", delivery)
+		}
+	default:
+		t.Fatal("new subscriber missed a later event")
 	}
 }
 

@@ -150,6 +150,46 @@ func TestWebhookDeploymentLifecycleConcurrentDelivery(t *testing.T) {
 	}, assertResourceWebhookPayload)
 }
 
+func TestWebhookDeploymentGitTokenChanges(t *testing.T) {
+	app, _, _ := newEventSubscription(t, deploymentLifecycleEvents)
+	deployment := newWebhookDeployment(t, app)
+	scope := getDefaultDBIDs(t, app.pool).WorkspaceUUID
+	wantUpdates := 1
+	for _, tc := range []struct {
+		name, fields string
+		changed      bool
+	}{
+		{"initial token", `,"authorization_token":"first-test-token"`, true},
+		{"same token", `,"authorization_token":"first-test-token"`, false},
+		{"new token", `,"authorization_token":"second-test-token"`, true},
+		{"omitted token removes credential", "", true},
+		{"still absent", "", false},
+		{"restore token", `,"authorization_token":"second-test-token"`, true},
+		{"empty token removes credential", `,"authorization_token":""`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := app.db.GetDeployment(t.Context(), scope, deployment.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updateDeployment(t, app, deployment.ID, `{"resources":[{"type":"github_repository","url":"https://github.com/example/repo"`+tc.fields+`}]}`)
+			after, err := app.db.GetDeployment(t.Context(), scope, deployment.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.changed {
+				wantUpdates++
+				if before.UpdatedAt.Equal(after.UpdatedAt) || string(before.ResourceSecrets) == string(after.ResourceSecrets) {
+					t.Fatal("credential change was not persisted")
+				}
+			} else if !reflect.DeepEqual(before, after) {
+				t.Fatal("same credential changed the stored deployment")
+			}
+			assertWebhookCount(t, app, "deployment.updated", deployment.ID, wantUpdates)
+		})
+	}
+}
+
 func TestWebhookDeploymentLifecycleCascade(t *testing.T) {
 	app, endpoint, received := newEventSubscription(t, deploymentLifecycleEvents)
 	agent := newWebhookAgent(t, app)

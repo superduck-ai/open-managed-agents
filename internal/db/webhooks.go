@@ -81,14 +81,15 @@ func (d *DB) LeaseWebhookDeliveryJobs(ctx context.Context, workerID string, limi
 
 // CompleteWebhookDeliveryJob marks a current claim complete. Skips do not count as deliveries.
 func (d *DB) CompleteWebhookDeliveryJob(ctx context.Context, job WebhookDeliveryJob, delivered bool) (bool, error) {
+	var record func(WebhookEndpointMapper) error
+	if delivered && job.WebhookEndpointUUID != nil {
+		record = func(mapper WebhookEndpointMapper) error {
+			return mapper.RecordDeliverySuccess(ctx, *job.WebhookEndpointUUID, job.WorkspaceUUID)
+		}
+	}
 	return d.finishWebhookDeliveryJob(ctx, job, func(mapper WebhookDeliveryJobMapper) (int64, error) {
 		return mapper.Complete(ctx, job.UUID, job.WorkspaceUUID, job.ClaimToken)
-	}, func(mapper WebhookEndpointMapper) error {
-		if !delivered {
-			return nil
-		}
-		return mapper.RecordDeliverySuccess(ctx, *job.WebhookEndpointUUID, job.WorkspaceUUID)
-	})
+	}, record)
 }
 
 // WebhookDeliveryFailure separates terminal rejections from retryable failures.
@@ -167,16 +168,29 @@ func (d *DB) ExhaustWebhookDeliveryJob(ctx context.Context, job WebhookDeliveryJ
 func (d *DB) finishWebhookDeliveryJob(ctx context.Context, job WebhookDeliveryJob, update func(WebhookDeliveryJobMapper) (int64, error), record func(WebhookEndpointMapper) error) (bool, error) {
 	var applied bool
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		rows, err := update(NewWebhookDeliveryJobMapper(executor))
-		if err != nil || rows == 0 {
+		mapper := NewWebhookDeliveryJobMapper(executor)
+		if record != nil {
+			_, found, err := mapper.LockClaim(ctx, job.UUID, job.WorkspaceUUID, job.ClaimToken)
+			if err != nil || !found {
+				return err
+			}
+			if err := record(NewWebhookEndpointMapper(executor)); err != nil {
+				return err
+			}
+		}
+		rows, err := update(mapper)
+		if err != nil {
 			return err
 		}
-		applied = true
-		if job.WebhookEndpointUUID != nil && record != nil {
-			return record(NewWebhookEndpointMapper(executor))
+		if rows == 0 {
+			return errWebhookClaimExpired
 		}
+		applied = true
 		return nil
 	})
+	if errors.Is(err, errWebhookClaimExpired) {
+		return false, nil
+	}
 	return applied && err == nil, err
 }
 

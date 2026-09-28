@@ -39,43 +39,61 @@ func TestWebhookFailureWindowResultRollback(t *testing.T) {
 	f.assertState(t, job, "failed", 1, 1)
 }
 
-func TestWebhookFailureWindowExpiredWhileWaiting(t *testing.T) {
-	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
-	f.enqueue(t, 1)
-	job := f.lease(t)
-	blocker, err := f.app.pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
+func TestWebhookResultExpiredWhileWaiting(t *testing.T) {
+	for _, operation := range []struct {
+		name, blockedQuery string
+		finish             func(context.Context, *db.DB, db.WebhookDeliveryJob) (bool, error)
+	}{
+		{"failure", "%WITH locked_endpoint%", func(ctx context.Context, database *db.DB, job db.WebhookDeliveryJob) (bool, error) {
+			return database.FailWebhookDeliveryJob(ctx, job, windowFailure())
+		}},
+		{"success", "%UPDATE webhook_endpoints%failure_started_at = NULL%", func(ctx context.Context, database *db.DB, job db.WebhookDeliveryJob) (bool, error) {
+			return database.CompleteWebhookDeliveryJob(ctx, job, true)
+		}},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
+			f.enqueue(t, 1)
+			job := f.lease(t)
+			f.exec(t, `UPDATE webhook_endpoints SET consecutive_failures=7,failure_started_at=clock_timestamp()-interval '1 hour' WHERE uuid=$1`, f.endpoint.UUID)
+			before, err := f.app.db.GetWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocker, err := f.app.pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = blocker.Rollback(context.Background()) }()
+			var id string
+			if err := blocker.QueryRow(t.Context(), `SELECT uuid FROM webhook_endpoints WHERE uuid=$1 FOR UPDATE`, f.endpoint.UUID).Scan(&id); err != nil {
+				t.Fatal(err)
+			}
+			f.exec(t, `UPDATE jobs SET locked_until=clock_timestamp()+interval '500 milliseconds' WHERE uuid=$1`, job.UUID)
+			type result struct {
+				applied bool
+				err     error
+			}
+			done := make(chan result, 1)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			go func() {
+				applied, err := operation.finish(ctx, f.app.db, job)
+				done <- result{applied, err}
+			}()
+			waitWindowSQL(t, f, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0 AND query LIKE $1)`, operation.blockedQuery)
+			waitWindowSQL(t, f, `SELECT locked_until<=clock_timestamp() FROM jobs WHERE uuid=$1`, job.UUID)
+			if err := blocker.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			r := <-done
+			if r.err != nil || r.applied {
+				t.Fatalf("expired result=%+v", r)
+			}
+			f.assertState(t, job, "running", 0, 7)
+			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND failure_started_at=$2 AND status='enabled'`, 1, f.endpoint.UUID, before.FailureStartedAt)
+		})
 	}
-	defer func() { _ = blocker.Rollback(context.Background()) }()
-	var id string
-	if err := blocker.QueryRow(t.Context(), `SELECT uuid FROM webhook_endpoints WHERE uuid=$1 FOR UPDATE`, f.endpoint.UUID).Scan(&id); err != nil {
-		t.Fatal(err)
-	}
-	f.exec(t, `UPDATE jobs SET locked_until=clock_timestamp()+interval '500 milliseconds' WHERE uuid=$1`, job.UUID)
-	type result struct {
-		applied bool
-		err     error
-	}
-	done := make(chan result, 1)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	go func() {
-		applied, err := f.app.db.FailWebhookDeliveryJob(ctx, job, windowFailure())
-		done <- result{applied, err}
-	}()
-	// Observe an actual lock wait before allowing the lease to expire.
-	waitWindowSQL(t, f, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0 AND query LIKE '%WITH locked_endpoint%')`)
-	waitWindowSQL(t, f, `SELECT locked_until<=clock_timestamp() FROM jobs WHERE uuid=$1`, job.UUID)
-	if err := blocker.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	r := <-done
-	if r.err != nil || r.applied {
-		t.Fatalf("expired result=%+v", r)
-	}
-	f.assertState(t, job, "running", 0, 0)
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND failure_started_at IS NULL AND status='enabled'`, 1, f.endpoint.UUID)
 }
 
 func waitWindowSQL(t *testing.T, f deliveryFixture, query string, args ...any) {

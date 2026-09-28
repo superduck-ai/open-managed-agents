@@ -147,18 +147,6 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 	return row.environment(), nil
 }
 
-func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, bool, error) {
-	next.WorkspaceUUID, next.ExternalID = workspaceUUID, externalID
-	var updated Environment
-	var changed bool
-	err := d.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
-		var err error
-		updated, changed, err = d.UpdateEnvironmentTx(ctx, tx, next)
-		return err
-	})
-	return updated, changed && err == nil, err
-}
-
 func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, bool, error) {
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)

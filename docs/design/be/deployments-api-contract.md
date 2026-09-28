@@ -55,7 +55,7 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 `ArchiveAgentTx` 和 `Store.ArchiveAgent` 返回资源、changed 与 error。Agent 的条件归档只修改首次归档的记录，重复归档不刷新 Agent 时间戳；未命中时在同一 Yourbatis 事务内按 workspace 重读。无论 Agent 是否已归档，都继续保留既有 Deployment 级联及 River schedule 清理流程。任一后续步骤失败会整体回滚，Store 不返回有效 changed。
 
-Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `agent.archived`，不额外发送 updated，也不发送 Deployment 资源事件。通知入队在事务之外，失败只记录日志。`tests/agent_webhooks_test.go` 覆盖 Deployment 更新及 River schedule 删除故障回滚、并发归档、带计划/不带计划资源、实际通知及 SDK 验签。
+Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `agent.archived`，不额外发送 updated；Store 在同一事务成功后，为实际归档的 Deployment 分别发送 `deployment.archived`。通知入队在事务之外，失败只记录日志。`tests/agent_webhooks_test.go` 覆盖 Deployment 更新及 River schedule 删除故障回滚、并发归档、带计划/不带计划资源、实际通知及 SDK 验签。
 
 ## 创建 Session 的 Webhook 通知
 
@@ -63,7 +63,7 @@ Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `ag
 
 创建主线程不产生 `session.thread_created` / `session.thread_idled`，初始 `user.define_outcome` 不产生 `session.outcome_evaluation_ended`；真实子线程及评估结束仍走 Session 事件入口。失败运行、事务回滚、归档分支、过期或重复定时任务不新增通知；独立手动运行各自通知。既有全局配置仍可接收 `session.created` / `session.pending`，但它们不属于数据库订阅目录。
 
-本轮不增加 Deployment / Deployment Run 资源事件，不更改公开响应和调度事务。通知准备或入队失败不改变已成功提交的业务结果，业务写入与 Webhook 入队尚未原子化。`tests/deployment_webhooks_test.go` 使用真实 River worker 验证定时创建、重复 occurrence 与 SDK 验签；归档分支另通过 Store occurrence 入口验证。
+Deployment / Deployment Run 的资源通知见下文，沿用既有公开响应和调度事务。通知准备或入队失败不改变已成功提交的业务结果，业务写入与 Webhook 入队尚未原子化。`tests/deployment_webhooks_test.go` 使用真实 River worker 验证定时创建、重复 occurrence 与 SDK 验签；归档分支另通过 Store occurrence 入口验证。
 
 ## Scheduled Deployment 执行
 
@@ -131,7 +131,7 @@ sequenceDiagram
 
 ## Deployment Webhook 资源通知
 
-共享 Store 在 Deployment/River 计划整体事务成功后发送 created、updated、paused、unpaused、archived；具体触发条件与 38 项目录（含三项预留）见 [Webhook 设计](../webhook-subscriptions.md)。Update 在既有行锁内比较实际配置，只在属性改变时写入；无变化更新不改 updated_at。直接 Archive 为条件写入并返回 changed，重复归档不改时间戳但不跳过原计划清理。Pause 在锁内识别 active → paused；重复同原因暂停不写入，修改已有暂停原因仍保留但不重复发 paused。Unpause 使用已有 resumed 标记。
+共享 Store 在 Deployment/River 计划整体事务成功后发送 created、updated、paused、unpaused、archived；具体触发条件与 38 项目录（含三项预留）见 [Webhook 设计](../webhook-subscriptions.md)。Update 在既有行锁内比较实际配置，只在属性改变时写入；无变化更新不改 updated_at。替换 resources 时，同一位置的 Git token 若与已保存凭据相同则复用已有密文，避免随机加密导致误判变更；真实替换或移除凭据仍产生 updated。直接 Archive 为条件写入并返回 changed，重复归档不改时间戳但不跳过原计划清理。Pause 在锁内识别 active → paused；重复同原因暂停不写入，修改已有暂停原因仍保留但不重复发 paused。Unpause 使用已有 resumed 标记。
 
 Agent 归档仍在同一事务处理 Agent、所有实际归档的 Deployment 及 River 计划，事务成功后分别通知；已归档 Agent 仍执行原有下游级联。定时归档和自动暂停沿用 occurrence 幂等检查，只有成功事务通知。无计划 Deployment 同样支持资源事件；Run 和 last_run_at 变化不产生 deployment.updated。没有公开 Deployment 删除入口，deployment.deleted 作为可保存的预留订阅开放，但当前没有产生入口、不发送通知，归档也不发送 deleted，不为 Webhook 新增路由或数据库列。
 

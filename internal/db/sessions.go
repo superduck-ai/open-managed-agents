@@ -432,6 +432,10 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	return sessions, hasMore, nil
 }
 
+func (d *DB) GetPrimarySessionThreadExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (string, bool, error) {
+	return NewSessionThreadMapper(d.mapperDB).FindPrimaryExternalID(ctx, workspaceUUID, sessionExternalID)
+}
+
 func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, bool, error) {
 	mapper := NewSessionThreadMapper(d.mapperDB)
 	row, err := mapper.FindPrimary(ctx, workspaceUUID, sessionExternalID)

@@ -184,34 +184,40 @@ func TestWebhookWorkerClaimFencing(t *testing.T) {
 }
 
 func TestWebhookWorkerResultRollback(t *testing.T) {
-	for _, failure := range []bool{true, false} {
-		t.Run(fmt.Sprintf("failure=%t", failure), func(t *testing.T) {
-			f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-			f.enqueue(t, 1)
-			job := f.lease(t)
-			f.exec(t, `UPDATE webhook_endpoints SET consecutive_failures=4 WHERE uuid=$1`, f.endpoint.UUID)
-			remove := installWebhookMutationFailure(t, f.app, "webhook_endpoints", "UPDATE", "NEW.uuid = '"+f.endpoint.UUID+"'")
-			finish := func() (bool, error) {
-				if failure {
-					return f.app.db.FailWebhookDeliveryJob(t.Context(), job, db.WebhookDeliveryFailure{Reason: "temporary", RetryDelay: time.Minute, MaxAttempts: 3, DisableAfter: 24 * time.Hour})
+	for _, table := range []string{"webhook_endpoints", "jobs"} {
+		for _, failure := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/failure=%t", table, failure), func(t *testing.T) {
+				f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
+				f.enqueue(t, 1)
+				job := f.lease(t)
+				f.exec(t, `UPDATE webhook_endpoints SET consecutive_failures=4 WHERE uuid=$1`, f.endpoint.UUID)
+				targetID := f.endpoint.UUID
+				if table == "jobs" {
+					targetID = job.UUID
 				}
-				return f.app.db.CompleteWebhookDeliveryJob(t.Context(), job, true)
-			}
-			if applied, err := finish(); err == nil || applied {
-				t.Fatalf("rollback=%t %v", applied, err)
-			}
-			f.assertState(t, job, "running", 0, 4)
-			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE uuid=$1 AND locked_by=$2`, 1, job.UUID, job.ClaimToken)
-			remove()
-			if applied, err := finish(); err != nil || !applied {
-				t.Fatalf("retry result=%t %v", applied, err)
-			}
-			if failure {
-				f.assertState(t, job, "retry", 1, 5)
-			} else {
-				f.assertState(t, job, "completed", 0, 0)
-			}
-		})
+				remove := installWebhookMutationFailure(t, f.app, table, "UPDATE", "NEW.uuid = '"+targetID+"'")
+				finish := func() (bool, error) {
+					if failure {
+						return f.app.db.FailWebhookDeliveryJob(t.Context(), job, db.WebhookDeliveryFailure{Reason: "temporary", RetryDelay: time.Minute, MaxAttempts: 3, DisableAfter: 24 * time.Hour})
+					}
+					return f.app.db.CompleteWebhookDeliveryJob(t.Context(), job, true)
+				}
+				if applied, err := finish(); err == nil || applied {
+					t.Fatalf("rollback=%t %v", applied, err)
+				}
+				f.assertState(t, job, "running", 0, 4)
+				assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE uuid=$1 AND locked_by=$2`, 1, job.UUID, job.ClaimToken)
+				remove()
+				if applied, err := finish(); err != nil || !applied {
+					t.Fatalf("retry result=%t %v", applied, err)
+				}
+				if failure {
+					f.assertState(t, job, "retry", 1, 5)
+				} else {
+					f.assertState(t, job, "completed", 0, 0)
+				}
+			})
+		}
 	}
 }
 

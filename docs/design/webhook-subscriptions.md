@@ -98,13 +98,11 @@ flowchart TD
     Endpoint -->|是| HTTP[签名并投递]
     Global -->|是| HTTP
     Global -->|否| Skip
-    HTTP --> Result[事务：校验当前领取并写任务结果]
+    HTTP --> Result[同事务：校验领取、按需更新统计、最终复检租约并写结果]
     Skip --> Result
-    Result -->|生效且实际投递| Stats[同事务更新订阅统计]
-    Result -->|领取失效| Ignore[不写回、不更新统计]
-    Stats --> Wait[等待整批结束]
+    Result -->|生效| Wait[等待整批结束]
+    Result -->|领取失效或写入失败| Ignore[回滚任务结果和统计]
     Ignore --> Wait
-    Result -->|跳过生效| Wait
     Wait --> Poll[下一次轮询]
 ```
 
@@ -186,6 +184,8 @@ lint、dead-code、duplicates、complexity、large-files、web-format-check、ho
 
 
 ## 持续失败时间窗口（第三阶段，2026-09-24）
+
+成功和失败写回均先锁定有效任务领取，再更新订阅统计，最后以当前领取标记和数据库时钟条件写入任务结果；等待订阅行锁期间租约过期时，统计和任务一起回滚。跳过及已耗尽任务不更新订阅统计，直接使用现有条件写回，不增加额外领取查询。
 
 普通失败禁用不再使用 20 次阈值。新增 `webhook.failure_disable_after`，默认 `24h`，必须为正时长；配置加载和 Worker 的未配置回退一致。Claude 未公开持续失败阈值，这一默认值和可配置能力属于 OMA 的选择。
 
@@ -315,6 +315,10 @@ sequenceDiagram
 | `deployment.deleted` | 预留：可创建、编辑、查询订阅，当前没有事件产生入口；直接/级联归档不触发 |
 
 
+
+Session 事件桥先筛选可映射的 Webhook 事件；未配置 Enqueuer 或批次没有可映射事件时不查询数据库。仅子线程通知查询主线程 external ID，并且每批最多查询一次，不加载 agent snapshot、usage 或 stats；普通 Session 通知不查询主线程。
+
+Deployment 更新对同值 Git token 复用已有密文，避免随机加密误触发 updated；真实凭据替换或移除仍视为变更，沿用既有调度快照比较与事务边界。
 
 Session 条件更新在 SQL 写入处比较属性，JSON 使用 JSONB 语义比较并保留服务器内部 metadata。重复归档通过写入条件只认领一次改变；DB API 返回是否改变。Vault 级联更新/删除在原有 Yourbatis 事务内通过 `RETURNING external_id` 获取受影响凭据，无单页 1,000 条截断，也不读取凭据密文。归档仅返回此次由 active 变为 archived 的凭据。
 

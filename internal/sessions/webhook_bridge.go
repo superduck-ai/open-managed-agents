@@ -12,24 +12,40 @@ import (
 )
 
 func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) {
-	if len(events) == 0 {
+	if h.webhooks == nil || len(events) == 0 {
 		return
 	}
-	workspaceIDs, err := h.db.GetWorkspaceIdentifiers(ctx, workspaceUUID)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "load workspace identifiers for session webhook", "session_id", sessionID, "error", err)
-		return
-	}
-	primary, primaryFound, primaryErr := h.db.GetPrimarySessionThread(ctx, workspaceUUID, sessionID)
-	if primaryErr != nil {
-		h.logger.ErrorContext(ctx, "load primary thread for session webhook", "session_id", sessionID, "error", primaryErr)
-	}
+	var workspaceIDs db.WorkspaceIdentifiers
+	var workspaceLoaded, primaryLoaded, primaryFound bool
+	var primaryID string
 	seen := map[string]struct{}{}
 	for _, event := range events {
 		for _, webhookEvent := range webhookEventsFromSessionEvent(event) {
-			if strings.HasPrefix(webhookEvent.EventType, "session.thread_") &&
-				(!primaryFound || primaryErr != nil || webhookEvent.ThreadID == nil || *webhookEvent.ThreadID == primary.ExternalID) {
-				continue
+			if strings.HasPrefix(webhookEvent.EventType, "session.thread_") {
+				if webhookEvent.ThreadID == nil {
+					continue
+				}
+				if !primaryLoaded {
+					var err error
+					primaryID, primaryFound, err = h.db.GetPrimarySessionThreadExternalID(ctx, workspaceUUID, sessionID)
+					primaryLoaded = true
+					if err != nil {
+						primaryFound = false
+						h.logger.ErrorContext(ctx, "load primary thread for session webhook", "session_id", sessionID, "error", err)
+					}
+				}
+				if !primaryFound || *webhookEvent.ThreadID == primaryID {
+					continue
+				}
+			}
+			if !workspaceLoaded {
+				var err error
+				workspaceIDs, err = h.db.GetWorkspaceIdentifiers(ctx, workspaceUUID)
+				if err != nil {
+					h.logger.ErrorContext(ctx, "load workspace identifiers for session webhook", "session_id", sessionID, "error", err)
+					return
+				}
+				workspaceLoaded = true
 			}
 			key := webhookEvent.EventType + "\x00" + event.CreatedAt.Format(time.RFC3339Nano)
 			if webhookEvent.ThreadID != nil {

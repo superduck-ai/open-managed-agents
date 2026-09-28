@@ -338,7 +338,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
 	}
-	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`))
+	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`), nil)
 	if err != nil {
 		return resourceBuildError(err)
 	}
@@ -532,7 +532,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(body.Resources) > 0 {
-		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources)
+		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources, next.ResourceSecrets)
 		if err != nil {
 			return resourceBuildError(err)
 		}

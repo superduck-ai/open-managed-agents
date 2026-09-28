@@ -36,6 +36,14 @@
         SELECT <include refid="columns"/> FROM inserted
     </select>
 
+    <select id="FindPrimaryExternalID" result="optional" resultType="string">
+        SELECT external_id FROM session_threads
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND session_external_id = #{sessionExternalID}
+          AND parent_thread_uuid IS NULL AND deleted_at IS NULL
+        ORDER BY created_at ASC, uuid ASC LIMIT 1
+    </select>
+
     <select id="FindPrimary" resultType="sessionThreadRow">
         SELECT <include refid="columns"/>
         FROM session_threads

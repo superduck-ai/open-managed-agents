@@ -625,8 +625,6 @@ export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;
 
 export const SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS = 90_000;
 
-export const SESSION_DETAIL_STREAM_FALLBACK_LIMIT = 20;
-
 export const SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS = 5000;
 
 export const sessionDetailRequestInFlight = new Map<string, Promise<unknown>>();
@@ -1073,7 +1071,6 @@ export function emptySessionDetailEventCache(): SessionDetailEventCache {
     events: [],
     syncedThrough: null,
     historyComplete: false,
-    sawTerminated: false,
   };
 }
 
@@ -1100,14 +1097,10 @@ export function mergeSessionEventCache(
   });
 
   let nextEvents: QuickstartSessionEvent[] | null = null;
-  let sawTerminated = current.sawTerminated || patch.sawTerminated === true;
   for (const event of incoming) {
     const id = sessionStableEventId(event);
     if (!id) {
       continue;
-    }
-    if (sessionEventType(event) === 'session.status_terminated') {
-      sawTerminated = true;
     }
     const existingIndex = indexById.get(id);
     if (existingIndex === undefined) {
@@ -1126,19 +1119,13 @@ export function mergeSessionEventCache(
 
   const syncedThrough = patch.syncedThrough !== undefined ? patch.syncedThrough : current.syncedThrough;
   const historyComplete = patch.historyComplete !== undefined ? patch.historyComplete : current.historyComplete;
-  if (
-    nextEvents === null &&
-    syncedThrough === current.syncedThrough &&
-    historyComplete === current.historyComplete &&
-    sawTerminated === current.sawTerminated
-  ) {
+  if (nextEvents === null && syncedThrough === current.syncedThrough && historyComplete === current.historyComplete) {
     return current;
   }
   return {
     events: nextEvents ?? current.events,
     syncedThrough,
     historyComplete,
-    sawTerminated,
   };
 }
 
@@ -1168,32 +1155,30 @@ export async function syncSessionEventHistory({
   workspaceId,
   threadId = '',
   signal,
-  fromStart = false,
-  force = false,
+  mode,
 }: {
   queryClient: QueryClient;
   sessionId: string;
   workspaceId: string;
   threadId?: string;
   signal?: AbortSignal;
-  fromStart?: boolean;
-  force?: boolean;
+  mode: 'resume' | 'reset' | 'refresh';
 }) {
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
-  const current = queryClient.getQueryData<SessionDetailEventCache>(cacheKey);
-  if (!fromStart && !force && current?.historyComplete) {
-    return current;
-  }
-  const initialPage = fromStart || force ? null : (current?.syncedThrough ?? null);
-  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}:${fromStart ? 'start' : force ? 'force' : (initialPage ?? 'tail')}`;
+  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}`;
+  const previous = sessionDetailRequestInFlight.get(requestKey);
   const scan = async () => {
-    if (signal?.aborted) {
-      throw signal.reason;
+    if (previous) await previous.catch(() => undefined);
+    signal?.throwIfAborted();
+    const current = queryClient.getQueryData<SessionDetailEventCache>(cacheKey);
+    if (mode === 'resume' && current?.historyComplete) {
+      return current;
     }
-    if (fromStart) {
+    const initialPage = mode === 'resume' ? (current?.syncedThrough ?? null) : null;
+    if (mode === 'reset') {
       queryClient.setQueryData(cacheKey, emptySessionDetailEventCache());
       queryClient.setQueryData(sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId), {});
-    } else if (force) {
+    } else if (mode === 'refresh') {
       queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => ({
         ...(cache ?? emptySessionDetailEventCache()),
         syncedThrough: null,
@@ -1203,12 +1188,9 @@ export async function syncSessionEventHistory({
     const historyOrder: string[] = [];
     const historyIds = new Set<string>();
     let page = initialPage;
-    let sawTerminated = false;
     try {
       do {
-        if (signal?.aborted) {
-          throw signal.reason;
-        }
+        signal?.throwIfAborted();
         const response = await fetchSessionEventsPage({
           sessionId,
           threadId: threadId || undefined,
@@ -1218,12 +1200,8 @@ export async function syncSessionEventHistory({
           page,
           signal,
         });
-        if (signal?.aborted) {
-          throw signal.reason;
-        }
+        signal?.throwIfAborted();
         const nextPage = response.next_page ?? null;
-        sawTerminated =
-          sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
         if (initialPage === null) {
           for (const event of response.data) {
             const id = sessionStableEventId(event);
@@ -1238,8 +1216,8 @@ export async function syncSessionEventHistory({
             cache,
             response.data,
             nextPage
-              ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
-              : { historyComplete: true, syncedThrough: null, sawTerminated },
+              ? { historyComplete: false, syncedThrough: nextPage }
+              : { historyComplete: true, syncedThrough: null },
           );
           if (initialPage !== null) return merged;
           const byId = new Map(merged.events.map((event) => [sessionStableEventId(event), event]));
@@ -1258,8 +1236,8 @@ export async function syncSessionEventHistory({
           if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
         });
         page = nextPage;
-      } while (page && !signal?.aborted);
-      if (signal?.aborted) throw signal.reason;
+      } while (page);
+      signal?.throwIfAborted();
     } catch (error) {
       queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => ({
         ...(cache ?? emptySessionDetailEventCache()),
@@ -1270,7 +1248,13 @@ export async function syncSessionEventHistory({
     }
     return queryClient.getQueryData<SessionDetailEventCache>(cacheKey) ?? emptySessionDetailEventCache();
   };
-  return force ? scan() : sessionDetailSingleFlight(requestKey, scan);
+  const request = scan();
+  sessionDetailRequestInFlight.set(requestKey, request);
+  const cleanup = () => {
+    if (sessionDetailRequestInFlight.get(requestKey) === request) sessionDetailRequestInFlight.delete(requestKey);
+  };
+  void request.then(cleanup, cleanup);
+  return request;
 }
 
 export function mergeSessionStreamFrame(
@@ -1493,7 +1477,7 @@ export async function reconcileIncompleteSessionStreamEvents(
   signal?: AbortSignal,
   eventIds?: ReadonlySet<string>,
 ) {
-  await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, force: true });
+  await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, signal, mode: 'refresh' });
   if (!signal?.aborted) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId, eventIds);
   }

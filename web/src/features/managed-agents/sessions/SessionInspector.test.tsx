@@ -478,7 +478,6 @@ function sessionEventEntry(event: QuickstartSessionEvent): DisplayEventEntry {
       label: 'Agent',
       content: 'A compact event preview.',
       event,
-      isQueued: false,
       isStreaming: false,
       isError: false,
       createdAtMs,

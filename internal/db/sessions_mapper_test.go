@@ -52,7 +52,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	eventParams := sessionEventWriteParams{
 		UUID: "event-uuid", ExternalID: "event_test", OrganizationUUID: "organization-uuid",
 		WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid", SessionExternalID: "ses_test",
-		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: &now, CreatedAt: now,
+		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: now, CreatedAt: now,
 	}
 
 	tests := []mapperBuilderContract{
@@ -193,7 +193,7 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, `ORDER BY session_events.processed_at ASC NULLS LAST, id ASC`)
+	assertMapperSQLContains(t, eventBound, `ORDER BY session_events.processed_at ASC, id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,

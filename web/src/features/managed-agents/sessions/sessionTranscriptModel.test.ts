@@ -25,17 +25,17 @@ const EMPTY_USAGE: SessionEventUsage = {
 };
 
 describe('sessionTranscriptModel', () => {
-  test('keeps distinct queued user messages with the same text', () => {
+  test('keeps distinct user messages with the same text', () => {
     const first = {
       id: 'sevt_first',
       type: 'user.message',
-      processed_at: null,
+      processed_at: '2026-08-26T13:13:00Z',
       content: [{ type: 'text', text: 'same' }],
     };
     const second = {
       id: 'sevt_second',
       type: 'user.message',
-      processed_at: null,
+      processed_at: '2026-08-26T13:13:01Z',
       content: [{ type: 'text', text: 'same' }],
     };
 
@@ -233,7 +233,6 @@ function displayEntry(
       label: options.label ?? (type === 'user' ? 'You' : 'Agent'),
       content: `${id} content`,
       event,
-      isQueued: false,
       isStreaming: false,
       isError: false,
       createdAtMs: 1,

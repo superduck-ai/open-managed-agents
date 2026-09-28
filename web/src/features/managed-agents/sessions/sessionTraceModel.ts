@@ -10,7 +10,6 @@ import {
   type ModelBracketTargetEntry,
   type ModelRequestBracket,
   type ModelRequestBracketMeta,
-  type QueuedBoundaryEntry,
   type QuickstartSessionEvent,
   type SessionEventListEntry,
   type SessionEventUsage,
@@ -336,7 +335,6 @@ export function buildSessionEventEntries(
 
   const entries: SessionEventListEntry[] = [];
   let lastIdleAt = 0;
-  let queuedBoundaryInserted = false;
   const rawEvents = events.map(sessionCanonicalDisplayEvent);
   const rawEventKeys = new Set(rawEvents.map(sessionEventKey));
   const traceEntriesByRawKey = new Map<string, SessionTraceEntry[]>();
@@ -347,19 +345,12 @@ export function buildSessionEventEntries(
     traceEntriesByRawKey.set(rawKey, list);
   });
 
-  rawEvents.forEach((event, eventIndex) => {
+  rawEvents.forEach((event) => {
     const type = sessionEventType(event);
     if (type === 'session.status_idle' && !sessionIsResultEvent(event)) {
       lastIdleAt = sessionEventTimestamp(event);
       return;
     }
-    const isQueuedUserMessage = sessionEventIsQueuedUserMessage(event);
-    if (!queuedBoundaryInserted && isQueuedUserMessage) {
-      queuedBoundaryInserted = true;
-      const queuedCount = rawEvents.slice(eventIndex).filter(sessionEventIsQueuedUserMessage).length;
-      entries.push(queuedBoundaryEntry(queuedCount, sessionEventTimestamp(event) || traceStartMs, traceStartMs, msg));
-    }
-
     const rawKey = sessionEventKey(event);
     const matchingTraceEntries = traceEntriesByRawKey.get(rawKey) ?? [];
     matchingTraceEntries.forEach((traceEntry) => {
@@ -529,7 +520,6 @@ function sessionEventEndsTranscriptTurn(event: QuickstartSessionEvent) {
   const type = sessionEventType(event);
   return (
     sessionEventFamily(event) === 'user' ||
-    sessionEventIsQueuedUserMessage(event) ||
     sessionStatusFromEventType(type) !== null ||
     sessionEventFamily(event) === 'outcome'
   );
@@ -640,7 +630,6 @@ export function h(
     label: traceEntry?.label ?? sessionEventLabel(canonicalEvent, family, msg),
     content: displayText,
     event: canonicalEvent,
-    isQueued: sessionEventIsQueuedUserMessage(canonicalEvent),
     isStreaming:
       canonicalEvent.is_streaming === true ||
       canonicalEvent.streaming === true ||
@@ -841,27 +830,6 @@ export function idleGapEntry(idleAtMs: number, nextAtMs: number, traceStartMs: n
     processedAtMs: nextAtMs,
     relativeTime: sessionEventElapsedTime({ processed_at: new Date(idleAtMs).toISOString() }, traceStartMs),
     searchText: `idle gap ${durationMs}`,
-    isError: false,
-  };
-}
-
-export function queuedBoundaryEntry(
-  count: number,
-  createdAtMs: number,
-  traceStartMs: number,
-  msg?: I18nMsg,
-): QueuedBoundaryEntry {
-  const text = msg
-    ? msg('managedAgents.sessions.trace.queuedMessages', '{count} queued messages', { count })
-    : `${count} queued messages`;
-  return {
-    id: `queued-boundary-${createdAtMs}-${count}`,
-    kind: 'queued_boundary',
-    count,
-    createdAtMs,
-    processedAtMs: createdAtMs,
-    relativeTime: sessionEventElapsedTime({ processed_at: new Date(createdAtMs).toISOString() }, traceStartMs),
-    searchText: text.toLowerCase(),
     isError: false,
   };
 }
@@ -1151,13 +1119,6 @@ export function sessionEventBracketId(event: QuickstartSessionEvent) {
   ];
   const bracketId = candidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0);
   return bracketId ? bracketId.trim() : '';
-}
-
-export function sessionEventIsQueuedUserMessage(event: QuickstartSessionEvent) {
-  if (sessionEventType(event) !== 'user.message') {
-    return false;
-  }
-  return event.processed_at === null;
 }
 
 export function sessionContentBlockEntries(

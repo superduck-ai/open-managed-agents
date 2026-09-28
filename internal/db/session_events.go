@@ -17,7 +17,7 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 	if err != nil {
 		return nil, err
 	}
-	acceptedID, err := acceptedMessageID(primary, worker, events)
+	acceptedID, err := validateSessionInputBatch(primary, worker, events)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func sessionEventBatchTx(ctx context.Context, executor yourbatis.Executor, sessi
 	return []SessionEvent{event}, nil
 }
 
-func acceptedMessageID(primary SessionThread, worker codeSessionInputStateRow, events []SessionEvent) (string, error) {
+func validateSessionInputBatch(primary SessionThread, worker codeSessionInputStateRow, events []SessionEvent) (string, error) {
 	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, "")
 	if err != nil {
 		return "", err

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { QueryClient } from '@tanstack/react-query';
 import { setAnthropicClientForTest } from '@/shared/api/anthropic';
+import { type SessionDetailEventCache } from './types';
 import {
   addSessionFileResource,
   listMemoryStoreOptions,
@@ -20,7 +21,6 @@ import { sessionEventUpdateTimestamp } from './sessions/sessionDetailModel';
 import {
   buildSessionEventEntries,
   sessionCanonicalDisplayEvent,
-  sessionEventIsQueuedUserMessage,
   sessionEventTimestamp,
 } from './sessions/sessionTraceModel';
 
@@ -36,9 +36,14 @@ describe('managed agents API', () => {
     expect(sessionEventTimestamp({ id: 'sevt_message', processed_at: '2026-08-26T13:13:00Z' })).toBe(
       Date.parse('2026-08-26T13:13:00Z'),
     );
-    const queued = { id: 'sevt_queued', processed_at: null, created_at: '2026-08-26T13:13:00Z' };
-    expect(sessionEventTimestamp(queued)).toBe(0);
-    expect(sessionEventUpdateTimestamp(queued, '2026-08-26T13:14:00Z')).toBe('2026-08-26T13:14:00Z');
+    const preview = {
+      id: 'sevt_preview',
+      type: 'agent.message',
+      processed_at: null,
+      created_at: '2026-08-26T13:13:00Z',
+    };
+    expect(sessionEventTimestamp(preview)).toBe(0);
+    expect(sessionEventUpdateTimestamp(preview, '2026-08-26T13:14:00Z')).toBe('2026-08-26T13:14:00Z');
   });
 
   test('stream preview does not invent an event creation timestamp', () => {
@@ -47,12 +52,6 @@ describe('managed agents API', () => {
       '',
     );
     expect(preview).not.toHaveProperty('created_at');
-  });
-
-  test('queued user messages follow Claude processed_at', () => {
-    expect(sessionEventIsQueuedUserMessage({ type: 'user.message', processed_at: null })).toBe(true);
-    expect(sessionEventIsQueuedUserMessage({ type: 'user.message', processed_at: '2026-08-26T13:13:00Z' })).toBe(false);
-    expect(sessionEventIsQueuedUserMessage({ type: 'agent.message', processed_at: null })).toBe(false);
   });
 
   test('serialized canonical events do not restore created_at', () => {
@@ -66,7 +65,7 @@ describe('managed agents API', () => {
     expect(event).not.toHaveProperty('created_at');
   });
 
-  test('force history sync scans from the first page without clearing cached events', async () => {
+  test('refresh history sync scans from the first page without clearing cached events', async () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -79,7 +78,6 @@ describe('managed agents API', () => {
       events: cachedEvents,
       syncedThrough: 'old-cursor',
       historyComplete: true,
-      sawTerminated: false,
     });
     const requestedPages: string[] = [];
     globalThis.fetch = async (input) => {
@@ -91,7 +89,7 @@ describe('managed agents API', () => {
       return new Response(JSON.stringify({ data, next_page: page ? null : 'new-cursor' }));
     };
 
-    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, force: true });
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
 
     expect(requestedPages).toEqual(['', 'new-cursor']);
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toContain(
@@ -100,7 +98,61 @@ describe('managed agents API', () => {
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).length).toBe(502);
   });
 
-  test('an interrupted forced scan lets a terminated session reload missing history', async () => {
+  test('reset history sync replaces cached events and preview frames', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'sevt_history', type: 'user.message', processed_at: '2026-08-26T13:13:00Z' }],
+          next_page: null,
+        }),
+      );
+
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'reset' });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_history',
+    ]);
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+  });
+
+  test('a failed older scan cannot mark a completed history scan incomplete', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    let releaseFirst: ((response: Response) => void) | undefined;
+    let requests = 0;
+    globalThis.fetch = async () => {
+      requests += 1;
+      if (requests === 1) {
+        return new Promise<Response>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'sevt_new', type: 'user.message' }], next_page: null }));
+    };
+
+    const first = syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
+    const second = syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
+    const startedTogether = requests;
+    releaseFirst?.(new Response('temporary failure', { status: 500 }));
+    await expect(first).rejects.toThrow('Could not list session events (500)');
+    await second;
+
+    const cache = queryClient.getQueryData<SessionDetailEventCache>(sessionDetailEventCacheKey(workspaceId, sessionId));
+    expect(startedTogether).toBe(1);
+    expect(requests).toBe(2);
+    expect(cache?.historyComplete).toBe(true);
+    expect(cache?.events.map((event) => event.id)).toEqual(['sevt_new']);
+  });
+
+  test('an interrupted refresh scan lets a terminated session reload missing history', async () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -109,7 +161,6 @@ describe('managed agents API', () => {
       events: [{ id: 'sevt_old', type: 'user.message', processed_at: '2026-08-26T13:13:00Z' }],
       syncedThrough: null,
       historyComplete: true,
-      sawTerminated: false,
     });
     const attempt = new AbortController();
     let requests = 0;
@@ -135,12 +186,12 @@ describe('managed agents API', () => {
       queryClient,
       workspaceId,
       sessionId,
-      force: true,
+      mode: 'refresh',
       signal: attempt.signal,
     });
     attempt.abort(new Error('session terminated'));
     await expect(interrupted).rejects.toThrow('session terminated');
-    await syncSessionEventHistory({ queryClient, workspaceId, sessionId });
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'resume' });
 
     expect(requests).toBe(2);
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
@@ -183,13 +234,13 @@ describe('managed agents API', () => {
       queryClient,
       workspaceId,
       sessionId,
-      force: true,
+      mode: 'refresh',
       signal: attempt.signal,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     attempt.abort(new Error('session terminated'));
     await expect(interrupted).rejects.toThrow('session terminated');
-    await syncSessionEventHistory({ queryClient, workspaceId, sessionId });
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'resume' });
 
     expect(pages).toEqual(['', 'next', '', 'next']);
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
@@ -339,7 +390,7 @@ describe('managed agents API', () => {
     });
     globalThis.fetch = async () => new Response(JSON.stringify({ data: [final], next_page: null }));
 
-    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, force: true });
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
 
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
       eventId,

@@ -2,7 +2,6 @@ import {
   cleanupIncompleteSessionStreamEvents,
   mergeSessionStreamFrame,
   reconcileIncompleteSessionStreamEvents,
-  SESSION_DETAIL_STREAM_FALLBACK_LIMIT,
   sessionDetailEventCacheKey,
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
@@ -92,7 +91,7 @@ export function useSessionDetailEventData({
         workspaceId,
         threadId,
         signal: controller.signal,
-        fromStart,
+        mode: fromStart ? 'reset' : 'resume',
       });
       if (active) {
         bump();
@@ -151,7 +150,7 @@ export function useSessionDetailEventData({
             workspaceId,
             threadId,
             signal: controller.signal,
-            force: true,
+            mode: 'refresh',
           }),
         ),
       )
@@ -269,7 +268,6 @@ export async function runSessionEventStreamLoop({
   onPrimaryEvent?: (event: QuickstartSessionEvent) => void;
 }) {
   let consecutiveFailures = 0;
-  let fallbackCount = 0;
   let backoff = 0;
   let idleReconciliationTimer: number | null = null;
   const cancelIdleReconciliation = () => {
@@ -293,21 +291,18 @@ export async function runSessionEventStreamLoop({
     }, SESSION_IDLE_RECONCILIATION_GRACE_MS);
   };
   while (!signal.aborted) {
-    const isFallback = fallbackCount < SESSION_DETAIL_STREAM_FALLBACK_LIMIT && consecutiveFailures >= 3;
-    if (isFallback) {
-      fallbackCount += 1;
-      await sleepWithAbort(Math.max(3000, backoff), signal);
-      await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal, force: true });
-      onCacheChange();
-      onHistorySynced?.();
-      consecutiveFailures = 0;
-    }
     const attempt = new AbortController();
     const abortAttempt = () => attempt.abort(signal.reason);
     signal.addEventListener('abort', abortAttempt, { once: true });
     let historyScan: Promise<void> | undefined;
     let historyError: unknown;
     try {
+      if (consecutiveFailures >= 3) {
+        await syncSessionEventHistory({ queryClient, sessionId, workspaceId, threadId, signal, mode: 'refresh' });
+        onCacheChange();
+        onHistorySynced?.();
+        consecutiveFailures = 0;
+      }
       await streamSessionEvents({
         sessionId,
         threadId: threadId || undefined,
@@ -322,7 +317,7 @@ export async function runSessionEventStreamLoop({
             workspaceId,
             threadId,
             signal: attempt.signal,
-            force: true,
+            mode: 'refresh',
           })
             .then(() => {
               if (!attempt.signal.aborted) {
@@ -367,9 +362,6 @@ export async function runSessionEventStreamLoop({
       await sleepWithAbort(Math.max(1000, backoff), signal).catch(() => undefined);
     } finally {
       signal.removeEventListener('abort', abortAttempt);
-    }
-    if (fallbackCount >= SESSION_DETAIL_STREAM_FALLBACK_LIMIT) {
-      fallbackCount = 0;
     }
   }
 }

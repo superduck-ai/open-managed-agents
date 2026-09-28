@@ -234,6 +234,47 @@ test('rescans history after a previous SSE connection is followed by failed reco
   ]);
 });
 
+test('retries a failed fallback history scan after repeated stream errors', async () => {
+  const queryClient = new QueryClient();
+  const controller = new AbortController();
+  const originalSetTimeout = window.setTimeout;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) =>
+    originalSetTimeout(callback, delay && delay <= 10_000 ? 0 : delay)) as typeof window.setTimeout;
+  let streamCount = 0;
+  let listCount = 0;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes('/stream?')) {
+      streamCount += 1;
+      return new Response('Unavailable', { status: 503 });
+    }
+    listCount += 1;
+    return listCount === 1
+      ? new Response('temporary failure', { status: 500 })
+      : new Response(JSON.stringify({ data: [{ id: 'sevt_recovered', type: 'user.message' }], next_page: null }));
+  };
+
+  try {
+    await runSessionEventStreamLoop({
+      queryClient,
+      sessionId: 'sesn_123',
+      workspaceId: 'workspace_123',
+      threadId: '',
+      signal: controller.signal,
+      onCacheChange: () => undefined,
+      onHistorySynced: () => controller.abort(),
+    });
+  } finally {
+    window.setTimeout = originalSetTimeout;
+    controller.abort();
+  }
+
+  expect(streamCount).toBe(4);
+  expect(listCount).toBe(2);
+  expect(sessionDetailScopeEvents(queryClient, 'workspace_123', 'sesn_123', ['']).map((event) => event.id)).toEqual([
+    'sevt_recovered',
+  ]);
+});
+
 test('ends an idle stream after its timeout', async () => {
   const controller = new AbortController();
   const linked = sessionLinkedAbortSignal(controller.signal, 5);

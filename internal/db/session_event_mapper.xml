@@ -124,10 +124,10 @@
             <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (COALESCE(processed_at, CAST('infinity' AS timestamptz)), id)
+                AND (processed_at, id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
-                    SELECT COALESCE(processed_at, CAST('infinity' AS timestamptz)), id FROM session_events
+                    SELECT processed_at, id FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}
@@ -135,7 +135,7 @@
             </if>
         </where>
         ORDER BY session_events.processed_at
-        <choose><when test="params.Descending">DESC NULLS FIRST, id DESC</when><otherwise>ASC NULLS LAST, id ASC</otherwise></choose>
+        <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>
 

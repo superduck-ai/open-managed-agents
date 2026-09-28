@@ -328,7 +328,6 @@ function displayEntry(
       label: 'Researcher',
       content,
       event,
-      isQueued: false,
       isStreaming: false,
       isError: false,
       createdAtMs: Date.UTC(2026, 0, 1, 8),

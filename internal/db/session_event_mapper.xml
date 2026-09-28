@@ -58,6 +58,17 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="FindAssistantEchoKeys" resultType="string">
+        SELECT payload-&gt;&gt;'_echo_key'
+        FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND session_external_id = #{sessionExternalID}
+          AND payload-&gt;&gt;'model_request_start_id' = #{requestID}
+          AND payload-&gt;&gt;'_echo_source' = #{source}
+          AND payload-&gt;&gt;'_echo_key' IS NOT NULL
+          AND deleted_at IS NULL
+    </select>
+
     <select id="CursorExists" result="scalar" resultType="bool">
         SELECT EXISTS (
             SELECT 1 FROM session_events

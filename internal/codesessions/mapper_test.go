@@ -560,6 +560,22 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 	if !ok || stopReason["type"] != "end_turn" {
 		t.Fatalf("stop_reason = %#v", doneObjects[0]["stop_reason"])
 	}
+	stoppedPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+		ExternalID: "csev_task_stopped", EventType: "system", IdempotencyKey: "task_stopped",
+	}, mustRawJSON(t, map[string]any{
+		"type": "system", "uuid": "system-task-stopped", "subtype": "task_notification",
+		"task_id": "abc123", "tool_use_id": "tool_translate", "status": "stopped",
+	}))
+	if err != nil || !ok {
+		t.Fatalf("stopped task_notification: ok=%v err=%v", ok, err)
+	}
+	stoppedObjects := decodePublicPayloads(t, stoppedPayloads)
+	if len(stoppedObjects) != 1 || stoppedObjects[0]["type"] != "session.thread_status_terminated" || stoppedObjects[0]["session_thread_id"] != expectedThreadID {
+		t.Fatalf("stopped task_notification payloads = %#v", stoppedObjects)
+	}
+	if _, hasReason := stoppedObjects[0]["stop_reason"]; hasReason {
+		t.Fatalf("terminated thread has stop_reason: %#v", stoppedObjects[0])
+	}
 }
 
 func decodePublicPayloads(t *testing.T, payloads []json.RawMessage) []map[string]any {

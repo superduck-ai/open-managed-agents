@@ -2239,6 +2239,56 @@ export function registerManagedAgentsResourceTests() {
     ).toBeGreaterThan(1);
   });
 
+  test('stays on the session list when creating a session fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input) === '/v1/sessions?beta=true' && requestMethod(input, init) === 'POST') {
+        return new Response(JSON.stringify({ error: { message: 'session create failed' } }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    expect(await within(dialog).findByText('session create failed')).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+    expect(screen.getByRole('dialog', { name: 'Create session' })).toBeTruthy();
+    expect(screen.getByRole('heading', { hidden: true, name: 'Sessions' })).toBeTruthy();
+  });
+
+  test('opens the created session detail after the list create succeeds', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
+    expect(screen.getByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Opened session' } });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/sessions/sesn_created123456'));
+    expect(screen.queryByRole('dialog', { name: 'Create session' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Sessions' })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Opened session' })).toBeTruthy();
+  });
+
   test('creates a session with selected agent and environment references', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();

@@ -115,8 +115,17 @@ func (h *Handler) finishModelRequest(ctx context.Context, observation *responseO
 	// End must survive client cancellation, but cannot hold a handler indefinitely.
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := h.codeSessions.EndModelRequest(cleanup, observation.request, observation.result); err != nil {
-		h.logger.ErrorContext(cleanup, "persist model request end", "model_request_start_id", observation.request.StartID, "error", err)
+	for {
+		err := h.codeSessions.EndModelRequest(cleanup, observation.request, observation.result)
+		if err == nil {
+			return
+		}
+		select {
+		case <-cleanup.Done():
+			h.logger.ErrorContext(cleanup, "persist model request end", "model_request_start_id", observation.request.StartID, "error", err)
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
 }
 
@@ -250,7 +259,7 @@ func (o *responseObservation) addEventID(index int, blockType string) {
 }
 
 func (o *responseObservation) finish() {
-	if !o.streaming && !o.complete && !o.malformed && o.result.ErrorType == "" {
+	if !o.streaming && !o.complete && !o.malformed && (o.result.ErrorType == "" || o.result.ErrorType == "stream_error") {
 		var message responseMessage
 		if err := json.Unmarshal(o.buffer, &message); err != nil || message.ID == "" || message.Type != "message" {
 			o.malformed = true

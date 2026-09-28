@@ -1232,6 +1232,10 @@ export async function syncSessionEventHistory({
       replacedPreviewIds.forEach((previewId) =>
         removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, previewId),
       );
+      response.data.forEach((event) => {
+        const finalId = sessionFinalAgentEventId(event);
+        if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+      });
       page = nextPage;
     } while (page && !signal?.aborted);
     return queryClient.getQueryData<SessionDetailEventCache>(cacheKey) ?? emptySessionDetailEventCache();
@@ -1261,9 +1265,20 @@ export function mergeSessionStreamFrame(
   if (replacedPreviewId) {
     removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, replacedPreviewId);
   }
+  const finalId = sessionFinalAgentEventId(event);
+  if (finalId) {
+    removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+  }
   if (eventType.endsWith('status_terminated')) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
   }
+}
+
+function sessionFinalAgentEventId(event: QuickstartSessionEvent) {
+  const type = sessionEventType(event);
+  return (type === 'agent.message' || type === 'agent.thinking') && sessionNullableProcessedAt(event) !== null
+    ? sessionStableEventId(event)
+    : null;
 }
 
 function sessionStreamPreviewIdForFinalEvent(
@@ -1278,6 +1293,9 @@ function sessionStreamPreviewIdForFinalEvent(
     (incomingType !== 'agent.message' && incomingType !== 'agent.thinking') ||
     sessionNullableProcessedAt(incoming) === null
   ) {
+    return null;
+  }
+  if (cache.events.some((event) => sessionStableEventId(event) === incomingId)) {
     return null;
   }
 
@@ -1405,11 +1423,17 @@ export function mergeSessionDeltaFrame(
     if (!id) {
       return;
     }
+    const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
+    const completed = queryClient
+      .getQueryData<SessionDetailEventCache>(cacheKey)
+      ?.events.some((cached) => sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null);
+    if (completed) {
+      return;
+    }
     queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => ({
       ...(cache ?? {}),
       [id]: { message: started, frames: [event] },
     }));
-    const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
     queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
       mergeSessionEventCache(cache, [{ ...started, processed_at: null, is_streaming: true }]),
     );

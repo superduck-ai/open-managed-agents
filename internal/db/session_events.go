@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"slices"
 
@@ -26,7 +27,43 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		return nil, err
 	}
 	created := make([]SessionEvent, 0, len(events)+2)
+	// The Session lock makes proxy finals and Worker echoes compare against one
+	// committed source at a time, even when they arrive on different API instances.
+	echoKeys := make(map[string]map[string]int)
 	for _, event := range events {
+		var echo struct {
+			RequestID string `json:"model_request_start_id"`
+			Source    string `json:"_echo_source"`
+			Key       string `json:"_echo_key"`
+		}
+		if ignoreExisting && (event.EventType == "agent.message" || event.EventType == "agent.thinking") && len(event.Payload) > 0 {
+			if err := jsonv2.Unmarshal(event.Payload, &echo); err != nil {
+				return nil, err
+			}
+		}
+		if echo.RequestID != "" && echo.Source != "" && echo.Key != "" {
+			opposite := "worker"
+			if echo.Source == "worker" {
+				opposite = "proxy"
+			}
+			cacheKey := echo.RequestID + "\x00" + opposite
+			keys, ok := echoKeys[cacheKey]
+			if !ok {
+				stored, err := NewSessionEventMapper(executor).FindAssistantEchoKeys(ctx, session.WorkspaceUUID, session.ExternalID, echo.RequestID, opposite)
+				if err != nil {
+					return nil, err
+				}
+				keys = make(map[string]int, len(stored))
+				for _, key := range stored {
+					keys[key]++
+				}
+				echoKeys[cacheKey] = keys
+			}
+			if keys[echo.Key] > 0 {
+				keys[echo.Key]--
+				continue
+			}
+		}
 		if ignoreExisting {
 			_, err := NewSessionEventMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)
 			if err == nil {

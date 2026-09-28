@@ -2,8 +2,12 @@ package eventpayload
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -32,6 +36,23 @@ func (s *Store) PreparePublic(ctx context.Context, organizationUUID, workspaceUU
 		if err != nil {
 			return nil, err
 		}
+		requestID, source, key, err := assistantEchoKey(events[i].Payload, event.EventType)
+		if err != nil {
+			return nil, err
+		}
+		if key != "" {
+			var stored map[string]any
+			if err := jsonv2.Unmarshal(event.Payload, &stored); err != nil {
+				return nil, err
+			}
+			stored["model_request_start_id"] = requestID
+			stored["_echo_source"] = source
+			stored["_echo_key"] = key
+			event.Payload, err = jsonv2.Marshal(stored)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return prepared, nil
 }
@@ -42,7 +63,67 @@ func (s *Store) RestorePublic(ctx context.Context, event db.SessionEvent) (db.Se
 		return db.SessionEvent{}, err
 	}
 	event.Payload = payload
+	if len(event.Payload) > 0 && strings.Contains(string(event.Payload), `"_echo_key"`) {
+		var stored map[string]any
+		if err := jsonv2.Unmarshal(event.Payload, &stored); err != nil {
+			return db.SessionEvent{}, err
+		}
+		delete(stored, "_echo_source")
+		delete(stored, "_echo_key")
+		event.Payload, err = jsonv2.Marshal(stored)
+		if err != nil {
+			return db.SessionEvent{}, err
+		}
+	}
 	return event, nil
+}
+
+func assistantEchoKey(raw json.RawMessage, eventType string) (requestID, source, key string, err error) {
+	if eventType != "agent.message" && eventType != "agent.thinking" {
+		return "", "", "", nil
+	}
+	var payload struct {
+		RequestID string          `json:"model_request_start_id"`
+		UUID      string          `json:"uuid"`
+		Content   json.RawMessage `json:"content"`
+	}
+	if err := jsonv2.Unmarshal(raw, &payload); err != nil {
+		return "", "", "", err
+	}
+	if !strings.HasPrefix(payload.RequestID, "sevt_") {
+		return "", "", "", nil
+	}
+	source = "proxy"
+	if payload.UUID != "" {
+		source = "worker"
+	}
+	content := eventType
+	if eventType == "agent.message" {
+		var blocks []json.RawMessage
+		if jsonv2.Unmarshal(payload.Content, &blocks) != nil || len(blocks) != 1 {
+			return "", "", "", nil
+		}
+		var block struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if jsonv2.Unmarshal(blocks[0], &block) != nil {
+			// Worker assistant content may contain a scalar string text block.
+			if jsonv2.Unmarshal(blocks[0], &block.Text) != nil {
+				return "", "", "", nil
+			}
+			block.Type = "text"
+		}
+		switch block.Type {
+		case "text":
+			content = "text\x00" + block.Text
+		case "redacted":
+			content = "redacted"
+		default:
+			return "", "", "", nil
+		}
+	}
+	return payload.RequestID, source, fmt.Sprintf("%x", sha256.Sum256([]byte(content))), nil
 }
 
 func (s *Store) RestorePublicPage(ctx context.Context, events []db.SessionEvent) ([]db.SessionEvent, error) {
@@ -141,7 +222,7 @@ func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEven
 		}
 	}
 	for i := range created {
-		if payload, ok := payloads[created[i].ExternalID]; ok && created[i].PayloadBlobUUID != nil {
+		if payload, ok := payloads[created[i].ExternalID]; ok && (created[i].PayloadBlobUUID != nil || strings.Contains(string(created[i].Payload), `"_echo_key"`)) {
 			created[i].Payload = payload
 		}
 	}

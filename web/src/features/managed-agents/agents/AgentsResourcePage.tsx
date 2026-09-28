@@ -291,11 +291,11 @@ export function AgentsResourcePage({
     const request =
       agentLoadMode === 'retrieve'
         ? retrieveAgent(normalizedSearch, requestWorkspaceId)
-            .then((agent) => ({ data: [agent], next_page: null, truncated: false }))
+            .then((agent) => ({ data: [agent], next_page: null, truncated: false, total_count: 1 }))
             .catch((error: unknown) => {
               const apiError = error as ApiError;
               if (apiError?.status === 404) {
-                return { data: [], next_page: null, truncated: false };
+                return { data: [], next_page: null, truncated: false, total_count: 0 };
               }
               throw error;
             })

@@ -226,6 +226,16 @@ func TestSessionEventMapperLatestStatus(t *testing.T) {
 	}
 }
 
+func TestSessionEventMapperFindAssistantEchoKeys(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperFindAssistantEchoKeysStatement,
+		bound:     buildSessionEventMapperFindAssistantEchoKeys(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", "sevt_request", "worker"),
+		wantID:    "SessionEventMapper.FindAssistantEchoKeys", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "requestID", "source"},
+		wantSQLFragments:  []string{"FROM session_events", "payload->>'model_request_start_id' = $3", "payload->>'_echo_source' = $4", "payload->>'_echo_key' IS NOT NULL"},
+	})
+}
+
 func TestSessionEventMapperFiltersCreationTime(t *testing.T) {
 	now := time.Now().UTC()
 	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{

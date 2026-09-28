@@ -30,7 +30,7 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.CreatedByAPIKeyUUID", "params.Name", "params.Description", "params.Config", "params.Metadata",
-				"params.Scope", "params.Provider", "params.ResolvedTemplate", "params.CreatedAt", "params.CreatedAt",
+				"params.Scope", "params.Provider", "params.ResolvedTemplate", "params.BuildJobID", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Config", "params.Metadata"},
 			wantSQLFragments:           []string{"INSERT INTO environments", "CAST($8 AS jsonb)", "RETURNING"},
@@ -53,10 +53,10 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 			wantID:    "EnvironmentMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
 				"params.Name", "params.Description", "params.Config", "params.Metadata", "params.Scope",
-				"params.ResolvedTemplate", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
+				"params.ResolvedTemplate", "params.BuildJobID", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
 			},
 			wantSensitiveArgumentNames: []string{"params.Config", "params.Metadata"},
-			wantSQLFragments:           []string{"UPDATE environments", "workspace_uuid = $8", "RETURNING"},
+			wantSQLFragments:           []string{"UPDATE environments", "workspace_uuid = $9", "RETURNING"},
 		}},
 		{"archive", mapperBuilderContract{
 			statement: environmentMapperArchiveByExternalIDStatement,
@@ -85,6 +85,34 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) { assertMapperBuilderContract(t, test.contract) })
+	}
+}
+
+func TestEnvironmentListFilterBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		includeArchived bool
+		archivedOnly    bool
+		search          string
+		fragments       []string
+		names           []string
+	}{
+		{name: "active", fragments: []string{"archived_at IS NULL"}, names: []string{"params.WorkspaceUUID", "params.FetchLimit"}},
+		{name: "all", includeArchived: true, fragments: []string{"deleted_at IS NULL"}, names: []string{"params.WorkspaceUUID", "params.FetchLimit"}},
+		{name: "archived search", includeArchived: true, archivedOnly: true, search: "literal_%", fragments: []string{"archived_at IS NOT NULL", "external_id = $2", "strpos(lower(name), lower($3)) > 0", "LIMIT $4"}, names: []string{"params.WorkspaceUUID", "params.Search", "params.Search", "params.FetchLimit"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bound := buildEnvironmentMapperListPage(yourbatis.DialectPostgres, environmentPageMapperParams{WorkspaceUUID: "workspace", FetchLimit: 51, IncludeArchived: tc.includeArchived, ArchivedOnly: tc.archivedOnly, Search: tc.search})
+			assertMapperBuilderContract(t, mapperBuilderContract{statement: environmentMapperListPageStatement, bound: bound, wantID: "EnvironmentMapper.ListPage", wantKind: yourbatis.StatementSelect, wantArgumentNames: tc.names, wantSQLFragments: tc.fragments})
+			if tc.includeArchived && !tc.archivedOnly && strings.Contains(bound.SQL, "archived_at IS NULL") {
+				t.Fatal("all excludes archived rows")
+			}
+			if tc.search != "" {
+				if bound.Args[1].Value != tc.search || bound.Args[2].Value != tc.search {
+					t.Fatalf("search values = %+v", bound.Args)
+				}
+			}
+		})
 	}
 }
 
@@ -413,7 +441,7 @@ func TestEnvironmentMapperResultSemantics(t *testing.T) {
 
 	t.Run("scan error", func(t *testing.T) {
 		row := environmentMapperTestRow()
-		row[12] = "not-a-time"
+		row[13] = "not-a-time"
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: environmentMapperTestColumns(), rows: [][]driver.Value{row},
 		})
@@ -521,7 +549,7 @@ func environmentSandboxMapperTestWriteParams(now time.Time) environmentSandboxWr
 func environmentMapperTestColumns() []string {
 	return []string{
 		"uuid", "external_id", "organization_uuid", "workspace_uuid", "created_by_api_key_uuid",
-		"name", "description", "config", "metadata", "scope", "provider", "resolved_template",
+		"name", "description", "config", "metadata", "scope", "provider", "resolved_template", "build_job_id",
 		"created_at", "updated_at", "archived_at", "deleted_at",
 	}
 }
@@ -531,7 +559,7 @@ func environmentMapperTestRow() []driver.Value {
 	return []driver.Value{
 		"00000000-0000-4000-8000-000000000001", "env_test", "00000000-0000-4000-8000-000000000002",
 		"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004",
-		"test", "description", []byte(`{}`), []byte(`{}`), nil, "local", "default", now, now, nil, nil,
+		"test", "description", []byte(`{}`), []byte(`{}`), nil, "local", "default", nil, now, now, nil, nil,
 	}
 }
 
@@ -551,4 +579,41 @@ func environmentWorkMapperTestRow() []driver.Value {
 		"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", "env_test",
 		"00000000-0000-4000-8000-000000000006", "ses_test", []byte(`{}`), "secret", "queued", nil, nil, nil, nil, nil, nil, nil, nil, now, now, nil,
 	}
+}
+
+func TestEnvironmentPrebuildMapperContracts(t *testing.T) {
+	for _, contract := range []mapperBuilderContract{
+		{statement: environmentMapperLockByUUIDStatement, bound: buildEnvironmentMapperLockByUUID(yourbatis.DialectPostgres, "workspace", "environment"), wantID: "EnvironmentMapper.LockByUUID", wantKind: yourbatis.StatementSelect, wantArgumentNames: []string{"workspaceUUID", "environmentUUID"}, wantSQLFragments: []string{"workspace_uuid = $1", "uuid = $2", "deleted_at IS NULL", "FOR UPDATE"}},
+		{statement: environmentMapperResolvePrebuildStatement, bound: buildEnvironmentMapperResolvePrebuild(yourbatis.DialectPostgres, "workspace", "environment", 42, "template"), wantID: "EnvironmentMapper.ResolvePrebuild", wantKind: yourbatis.StatementUpdate, wantArgumentNames: []string{"template", "workspaceUUID", "environmentUUID", "jobID"}, wantSQLFragments: []string{"resolved_template = $1", "workspace_uuid = $2", "uuid = $3", "build_job_id = $4", "deleted_at IS NULL"}},
+	} {
+		t.Run(contract.wantID, func(t *testing.T) { assertMapperBuilderContract(t, contract) })
+	}
+}
+
+func TestEnvironmentPrebuildLockOptionalResult(t *testing.T) {
+	ctx := context.Background()
+	t.Run("missing environment", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: environmentMapperTestColumns()})
+		_, found, err := NewEnvironmentMapper(executor).LockByUUID(ctx, "workspace", "missing")
+		if err != nil || found {
+			t.Fatalf("LockByUUID() = (found=%t, err=%v), want (false, nil)", found, err)
+		}
+	})
+	t.Run("query error", func(t *testing.T) {
+		queryErr := errors.New("query failed")
+		executor := newMapperTestExecutor(t, mapperTestResponse{queryErr: queryErr})
+		_, found, err := NewEnvironmentMapper(executor).LockByUUID(ctx, "workspace", "environment")
+		if found || !errors.Is(err, queryErr) {
+			t.Fatalf("LockByUUID() = (found=%t, err=%v), want query error", found, err)
+		}
+	})
+	t.Run("existing environment", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{
+			columns: environmentMapperTestColumns(), rows: [][]driver.Value{environmentMapperTestRow()},
+		})
+		row, found, err := NewEnvironmentMapper(executor).LockByUUID(ctx, "workspace", "environment")
+		if err != nil || !found || row.UUID != "00000000-0000-4000-8000-000000000001" {
+			t.Fatalf("LockByUUID() = (%+v, %t, %v), want environment row", row, found, err)
+		}
+	})
 }

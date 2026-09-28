@@ -98,7 +98,7 @@ func endpointHost(endpoint string) (string, error) {
 		endpoint = "https://" + endpoint
 	}
 	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
 		return "", errors.New("aliyun_kms: endpoint must be an HTTPS host without credentials, path, query or fragment")
 	}
 	return u.Host, nil

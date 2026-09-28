@@ -123,6 +123,23 @@ func TestConfigurationRejections(t *testing.T) {
 	}
 }
 
+func TestEndpointHost(t *testing.T) {
+	for _, endpoint := range []string{"https://kms.example//", "https://kms.example/path/", "https://kms.example/?query=1", "https://kms.example/#fragment", "https://kms.example/?"} {
+		if _, err := endpointHost(endpoint); err == nil {
+			t.Errorf("accepted invalid endpoint %q", endpoint)
+		}
+	}
+	for _, endpoint := range []string{"kms.example", "kms.example/", "https://kms.example", "https://kms.example/", "https://kms.example:8443/"} {
+		want := "kms.example"
+		if strings.Contains(endpoint, ":8443") {
+			want += ":8443"
+		}
+		if got, err := endpointHost(endpoint); err != nil || got != want {
+			t.Errorf("endpointHost(%q) = %q, %v; want %q", endpoint, got, err, want)
+		}
+	}
+}
+
 func TestEnvelopeRoundTripAndTamper(t *testing.T) {
 	local, err := localkeys.New(localkeys.KeyMaterial{Version: 1, KEK: bytes.Repeat([]byte{7}, 32)}, nil)
 	if err != nil {

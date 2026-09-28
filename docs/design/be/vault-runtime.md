@@ -90,7 +90,7 @@ vault:
       key_id: acs:kms:cn-hangzhou:1234567890123456:key/key-example
 ```
 
-- `endpoint` 必填，接受域名或 `https://域名`，可带端口，不接受 HTTP、用户名、路径、查询或 fragment。填写 VPC 可达的 KMS 私网域名；客户端不推导公共端点、不跟随重定向，沿用 SDK 提供的 HTTP Transport，TLS 始终验证证书。DNS、路由和安全组由部署方保证。
+- `endpoint` 必填，接受域名或 `https://域名`，可带端口或末尾 `/`，末尾 `/` 会归一化为主机地址；不接受 HTTP、用户名、非根路径、查询或 fragment。填写 VPC 可达的 KMS 私网域名；客户端不推导公共端点、不跟随重定向，沿用 SDK 提供的 HTTP Transport，TLS 始终验证证书。DNS、路由和安全组由部署方保证。
 - `key_id` 必填，接受 CMK ID 或 `acs:kms:<region>:<account>:key/<key-id>` ARN，不接受别名。Encrypt 使用指定值；Encrypt / Decrypt 返回的 CMK ID 必须匹配配置。更换 CMK 不会允许旧 CMK 的密文自动解封。
 - 不配置 AK 时优先使用 ACK RRSA：检测 `ALIBABA_CLOUD_OIDC_TOKEN_FILE`、`ALIBABA_CLOUD_OIDC_PROVIDER_ARN`、`ALIBABA_CLOUD_ROLE_ARN`，由官方 Credentials SDK 获取并自动刷新 STS 凭证。部分配置或 OIDC 获取失败直接失败，不改用节点角色。
 - 没有 OIDC 配置时使用 ECS 实例 RAM 角色，由 SDK 从 IMDSv2 自动发现角色并刷新；禁止 IMDSv1 回退。可用 `ALIBABA_CLOUD_ECS_METADATA` 指定角色名。不会读取开发机上的 CLI/profile 凭证，也不会以环境 AK 覆盖工作负载身份。

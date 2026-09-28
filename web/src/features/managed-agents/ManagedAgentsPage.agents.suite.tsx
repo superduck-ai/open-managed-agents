@@ -614,7 +614,7 @@ export function registerManagedAgentsAgentsTests() {
           connection: {
             state: 'connected',
             instance_count: 1,
-            channels: [{ name: 'main', process_affinity: true, instance_count: 1 }],
+            channels: [{ name: 'main', instance_count: 1 }],
           },
         },
       ],
@@ -718,7 +718,7 @@ export function registerManagedAgentsAgentsTests() {
           connection: {
             state: 'connected',
             instance_count: 1,
-            channels: [{ name: 'reports', process_affinity: false, instance_count: 1 }],
+            channels: [{ name: 'reports', instance_count: 1 }],
           },
         },
       ],
@@ -881,8 +881,8 @@ export function registerManagedAgentsAgentsTests() {
             state: 'connected',
             instance_count: 1,
             channels: [
-              { name: 'main', process_affinity: true, instance_count: 1 },
-              { name: 'secondary', process_affinity: false, instance_count: 1 },
+              { name: 'main', instance_count: 1 },
+              { name: 'secondary', instance_count: 1 },
             ],
           },
         },

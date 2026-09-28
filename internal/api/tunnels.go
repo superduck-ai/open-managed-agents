@@ -12,23 +12,23 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 )
 
-func (s *Server) configureTunnels(catalog *mcpcatalogs.Handler, logger *slog.Logger, cleanupJobs *tunnels.CleanupJobs) {
+func (s *Server) configureTunnels(catalog *mcpcatalogs.Handler, logger *slog.Logger, presence *tunnels.ConnectorPresence) {
 	// Lightweight routing tests omit DB and Broker; production supplies both.
 	if s.db == nil {
 		return
 	}
-	service := tunnels.NewService(s.cfg.Tunnel, s.db, s.vaultSecrets, s.tunnelBroker, cleanupJobs)
+	service := tunnels.NewService(s.cfg.Tunnel, s.db, s.vaultSecrets, s.tunnelBroker)
 	prober := tunnelCatalogProber{service: service}
 	catalog.WithTunnelProber(prober.recognize, prober.probe)
 	s.tunnels = tunnels.NewHandler(service, logger.With("component", "tunnels"))
 	s.consoleTunnels = tunnels.NewConsoleHandler(
-		service, s.tunnelBroker, s.resolveTunnelConsoleScope,
+		service, presence, s.resolveTunnelConsoleScope,
 		logger.With("component", "console_mcp_tunnels"),
 	)
 	if s.tunnelBroker == nil {
 		return
 	}
-	s.connector = tunnels.NewConnectorHandler(s.cfg.Tunnel, s.db, s.tunnelBroker, logger.With("component", "tunnel_connector"))
+	s.connector = tunnels.NewConnectorHandler(s.cfg.Tunnel, s.db, s.tunnelBroker, presence, logger.With("component", "tunnel_connector"))
 	s.tunnelIngress = tunnels.NewIngressHandler(s.cfg.Tunnel, s.db, s.tunnelBroker, logger.With("component", "tunnel_ingress"))
 	s.codeSessions.WithTunnelInvoker(s.tunnelIngress)
 }

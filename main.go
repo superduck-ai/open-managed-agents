@@ -104,11 +104,6 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open worker event broker: %w", err)
 	}
 	logger.Info("nats messaging ready", "jetstream", true)
-	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel)
-	if err != nil {
-		return fmt.Errorf("open tunnel broker: %w", err)
-	}
-	defer tunnelBroker.Close()
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
@@ -121,6 +116,12 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
+	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
+	if err != nil {
+		return fmt.Errorf("open tunnel broker: %w", err)
+	}
+	defer tunnelBroker.Close()
+
 	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
 	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)
@@ -173,7 +174,6 @@ func run(logger *slog.Logger) error {
 	workers := river.NewWorkers()
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
-	tunnels.RegisterCleanupWorker(workers, database, tunnelBroker, logger.With("component", "tunnel_cleanup"))
 	deploymentStore := deployments.NewStore(database).WithEventPayloadStorage(objectStore)
 	deployments.RegisterWorkers(workers, deploymentStore)
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
@@ -187,7 +187,6 @@ func run(logger *slog.Logger) error {
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
 		map[string]river.QueueConfig{
 			environments.PrebuildQueue:         {MaxWorkers: 4},
-			tunnels.CleanupQueue:               {MaxWorkers: 2},
 			deploymentjobs.Queue:               {MaxWorkers: 10},
 			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
 			transcriptretention.Queue:          {MaxWorkers: 2},
@@ -234,7 +233,7 @@ func run(logger *slog.Logger) error {
 			SessionEventBus:        sessionEventBus,
 			WorkerEventBroker:      workerEventBroker,
 			TunnelBroker:           tunnelBroker,
-			TunnelCleanupJobs:      tunnels.NewCleanupJobs(jobClient),
+			TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
 			WorkerEventAcks:        workerEventAcks,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

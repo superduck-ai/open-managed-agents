@@ -1755,7 +1755,6 @@
   "mcpTunnels.detail.noChannelsDescription": "启动 tunnel-client 以发布配置的 MCP 通道。",
   "mcpTunnels.detail.overview": "概览",
   "mcpTunnels.detail.overviewDescription": "此隧道的稳定标识和主 MCP 端点。",
-  "mcpTunnels.detail.processAffinity": "进程亲和",
   "mcpTunnels.detail.test": "测试",
   "mcpTunnels.empty.body": "创建隧道，将本地 MCP 服务器连接到托管 Agent 会话。",
   "mcpTunnels.empty.filteredBody": "请尝试其他搜索内容，或重置筛选条件。",

@@ -39,8 +39,10 @@ func (h *Handler) updateEnvironment(ctx context.Context, workspace, id string, b
 		if err != nil {
 			return err
 		}
-		if err := h.prebuilds.reconcilePrebuild(ctx, tx, &current, &next); err != nil {
-			return err
+		if len(body.Config) > 0 {
+			if err := h.prebuilds.reconcilePrebuild(ctx, tx, &current, &next); err != nil {
+				return err
+			}
 		}
 		result, err = h.db.UpdateEnvironmentTx(ctx, tx, next)
 		return err

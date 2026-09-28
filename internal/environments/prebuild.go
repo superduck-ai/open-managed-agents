@@ -193,10 +193,9 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 	}
 	if current != nil {
 		previous, err := decodeEnvironmentPackages(current.Config)
-		if err != nil {
-			return err
-		}
-		if samePackages(previous, packages) {
+		// A valid replacement can repair malformed packages already stored in the row.
+		// In that case the old prebuild must be treated as superseded.
+		if err == nil && samePackages(previous, packages) {
 			next.BuildJobID = current.BuildJobID
 			if current.BuildJobID != nil {
 				next.ResolvedTemplate = current.ResolvedTemplate
@@ -214,6 +213,19 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 // The environment row serializes API mutations and worker checkpoints. A stale
 // job cannot overwrite a new configuration, retry, or cancellation.
 func (svc *Prebuilds) saveCheckpoint(ctx context.Context, task *prebuildTask) error {
+	superseded, err := svc.persistCheckpoint(ctx, task)
+	if err != nil {
+		// Do not discard a job before its uncertain remote outcome is recorded.
+		// A later attempt can persist that state once the database recovers.
+		return river.JobSnooze(prebuildPollInterval)
+	}
+	if superseded {
+		return svc.cancelSuperseded(ctx, *task)
+	}
+	return nil
+}
+
+func (svc *Prebuilds) persistCheckpoint(ctx context.Context, task *prebuildTask) (bool, error) {
 	superseded := false
 	err := svc.db.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
 		env, found, err := svc.db.LockEnvironmentByUUIDTx(ctx, tx, task.job.Args.WorkspaceUUID, task.job.Args.EnvironmentUUID)
@@ -243,16 +255,7 @@ func (svc *Prebuilds) saveCheckpoint(ctx context.Context, task *prebuildTask) er
 		}
 		return nil
 	})
-	if err != nil {
-		if time.Since(task.job.CreatedAt) > svc.cfg.Timeout {
-			return fmt.Errorf("save prebuild checkpoint: %w", err)
-		}
-		return river.JobSnooze(prebuildPollInterval)
-	}
-	if superseded {
-		return svc.cancelSuperseded(ctx, *task)
-	}
-	return nil
+	return superseded, err
 }
 
 func (svc *Prebuilds) StartOrRetryPrebuild(ctx context.Context, env db.Environment) error {
@@ -328,7 +331,13 @@ func (svc *Prebuilds) readLogs(ctx context.Context, task prebuildTask, stage, cu
 		return buildLogChunk{}, errPrebuildUnavailable
 	}
 	if stage == "image" {
+		if task.output.ImageJobRef == "" {
+			return buildLogChunk{}, errPrebuildStageNotStarted
+		}
 		return svc.images.ReadLogs(ctx, task.output.ImageJobRef, cursor)
+	}
+	if task.output.TemplateJobRef == "" {
+		return buildLogChunk{}, errPrebuildStageNotStarted
 	}
 	return svc.templates.ReadLogs(ctx, task.output.TemplateJobRef, cursor)
 }

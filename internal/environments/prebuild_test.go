@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
@@ -252,6 +253,36 @@ func TestPrebuildReconcileUnchangedPackagesKeepsCorrectTemplate(t *testing.T) {
 	}
 }
 
+func TestPrebuildReconcileRepairsInvalidStoredPackages(t *testing.T) {
+	jobID := int64(42)
+	current := db.Environment{
+		Config:           json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`),
+		BuildJobID:       &jobID,
+		ResolvedTemplate: "old-template",
+	}
+	handler := &Handler{cfg: config.Config{E2B: config.E2BConfig{Template: "base-b"}}}
+	next, err := handler.applyEnvironmentMutation(current, environmentMutationRequest{
+		Config: json.RawMessage(`{"type":"cloud","packages":{}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err != nil {
+		t.Fatal(err)
+	}
+	if next.BuildJobID != nil || next.ResolvedTemplate != "base-b" {
+		t.Fatalf("repaired environment kept stale prebuild: job=%v template=%q", next.BuildJobID, next.ResolvedTemplate)
+	}
+}
+
+func TestPrebuildReconcileRejectsInvalidReplacementPackages(t *testing.T) {
+	current := db.Environment{Config: json.RawMessage(`{"type":"cloud"}`)}
+	next := db.Environment{Config: json.RawMessage(`{"type":"cloud","packages":{"apt":"vim"}}`)}
+	if err := (&Prebuilds{}).reconcilePrebuild(context.Background(), nil, &current, &next); err == nil {
+		t.Fatal("invalid replacement packages accepted")
+	}
+}
+
 func TestPrebuildFailedResponse(t *testing.T) {
 	jobID := int64(42)
 	service := &Prebuilds{cfg: config.EnvironmentPrebuildConfig{Enabled: true}, providerKey: "provider", images: &aliyunFlowImageBuilder{}, templates: &cubeSandboxTemplateBuilder{}}
@@ -269,5 +300,65 @@ func TestPrebuildFailedResponse(t *testing.T) {
 	current = service.currentPrebuildResponse(env, build)
 	if current.HasImageLogs || !current.CanStart {
 		t.Fatal("new provider must allow a fresh job without accessing old logs")
+	}
+}
+
+func TestPrebuildLogsBeforeStageSubmission(t *testing.T) {
+	svc := &Prebuilds{
+		cfg:         config.EnvironmentPrebuildConfig{Enabled: true},
+		providerKey: "provider",
+		images:      &aliyunFlowImageBuilder{},
+		templates:   &cubeSandboxTemplateBuilder{},
+	}
+	task := prebuildTask{job: &river.Job[prebuildJobArgs]{
+		JobRow: &rivertype.JobRow{ID: 42},
+		Args:   prebuildJobArgs{ProviderKey: "provider"},
+	}}
+	for _, stage := range []string{"image", "template"} {
+		t.Run(stage, func(t *testing.T) {
+			_, err := svc.readLogs(context.Background(), task, stage, "")
+			var appError *apperr.Error
+			if !errors.As(prebuildError(err), &appError) || appError.Kind != apperr.Conflict || appError.PublicMessage != "Build stage has not started yet" {
+				t.Fatalf("readLogs(%q) error = %v, want stage-not-started conflict", stage, err)
+			}
+		})
+	}
+}
+
+func TestPrebuildDeletedEnvironmentMapsToNotFound(t *testing.T) {
+	var appError *apperr.Error
+	if !errors.As(prebuildError(db.ErrNotFound), &appError) || appError.Kind != apperr.NotFound {
+		t.Fatalf("prebuildError(db.ErrNotFound) = %v, want not found", appError)
+	}
+}
+
+func TestSubmittedCheckpointRetainsRemoteRefAcrossWriteFailure(t *testing.T) {
+	task := prebuildTask{output: prebuildJobOutput{ImageJobRef: `{"run":"42"}`}}
+	persisted := prebuildJobOutput{Submitting: true}
+	attempts := 0
+	superseded, err := retryCheckpointWrite(context.Background(), time.Millisecond, func() (bool, error) {
+		attempts++
+		if attempts == 1 {
+			return false, errors.New("temporary database failure")
+		}
+		persisted = task.output
+		return false, nil
+	})
+	if err != nil || superseded || attempts != 2 || persisted.ImageJobRef != `{"run":"42"}` || persisted.Submitting {
+		t.Fatalf("checkpoint retry = (superseded=%t, err=%v, attempts=%d, persisted=%+v)", superseded, err, attempts, persisted)
+	}
+}
+
+func TestSubmittedCheckpointStopsRetryingWhenWorkerStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	attempts := 0
+	_, err := retryCheckpointWrite(ctx, time.Millisecond, func() (bool, error) {
+		attempts++
+		cancel()
+		return false, errors.New("database unavailable")
+	})
+	if !errors.Is(err, context.Canceled) || attempts != 1 {
+		t.Fatalf("checkpoint retry = (err=%v, attempts=%d), want cancellation after one attempt", err, attempts)
 	}
 }

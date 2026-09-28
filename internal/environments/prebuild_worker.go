@@ -109,11 +109,37 @@ func (svc *Prebuilds) submit(ctx context.Context, task *prebuildTask) error {
 		task.output.TemplateJobRef = ref
 	}
 	task.output.Submitting = false
-	if err := svc.saveCheckpoint(ctx, task); err != nil {
-		return err
+	// Keep the returned remote reference in this worker until it is durable.
+	// Snoozing after a failed write would reload only the older Submitting flag.
+	superseded, err := retryCheckpointWrite(ctx, prebuildPollInterval, func() (bool, error) {
+		return svc.persistCheckpoint(ctx, task)
+	})
+	if err != nil {
+		return river.JobSnooze(0)
+	}
+	if superseded {
+		return svc.cancelSuperseded(ctx, *task)
 	}
 	return river.JobSnooze(prebuildPollInterval)
 }
+
+func retryCheckpointWrite(ctx context.Context, delay time.Duration, write func() (bool, error)) (bool, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		superseded, err := write()
+		if err == nil {
+			return superseded, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
 func (svc *Prebuilds) readStatus(ctx context.Context, task *prebuildTask) (buildJobStatus, error) {
 	if task.stage() == "image" {
 		status, err := svc.images.GetStatus(ctx, task.output.ImageJobRef)

@@ -4,20 +4,26 @@ import (
 	"errors"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 var (
-	errPrebuildUnsupported   = errors.New("this provider does not support this build operation")
-	errPrebuildUnavailable   = errors.New("package build provider is not configured for this build")
-	errPrebuildSuperseded    = errors.New("Build no longer belongs to the current environment configuration.")
-	errPrebuildConflict      = errors.New("package build changed; refresh before retrying this operation")
-	errPrebuildStage         = errors.New("stage must be image or template")
-	errPrebuildCursor        = errors.New("invalid build log cursor")
-	errPrebuildMissingOutput = errors.New("successful build is missing its output")
+	errPrebuildUnsupported     = errors.New("this provider does not support this build operation")
+	errPrebuildUnavailable     = errors.New("package build provider is not configured for this build")
+	errPrebuildSuperseded      = errors.New("Build no longer belongs to the current environment configuration.")
+	errPrebuildConflict        = errors.New("package build changed; refresh before retrying this operation")
+	errPrebuildStageNotStarted = errors.New("Build stage has not started yet")
+	errPrebuildStage           = errors.New("stage must be image or template")
+	errPrebuildCursor          = errors.New("invalid build log cursor")
+	errPrebuildMissingOutput   = errors.New("successful build is missing its output")
 )
 
 func prebuildError(err error) error {
 	switch {
+	case errors.Is(err, db.ErrNotFound):
+		return apperr.New(apperr.NotFound, "Environment not found", err)
+	case errors.Is(err, errPrebuildStageNotStarted):
+		return apperr.New(apperr.Conflict, errPrebuildStageNotStarted.Error(), err)
 	case errors.Is(err, errPrebuildConflict):
 		return apperr.New(apperr.Conflict, errPrebuildConflict.Error(), err)
 	case errors.Is(err, errPrebuildUnsupported), errors.Is(err, errPrebuildUnavailable):

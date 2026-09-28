@@ -16,6 +16,14 @@
 
 `rclone-filestore` 路径固定为 `/opt/rclone/rclone-filestore`，不提供 `rclone_filestore_path` 配置。镜像若缺失该文件或没有执行权限，后台命令启动失败或 ready marker 在 `20s` 内不会出现；Runner 会把 Sandbox 标记为失败并 Kill，不会启动 Environment Manager。
 
+## Claude Code 版本
+
+Claude Code 随镜像发布，Environment 使用其绑定模板中的版本。Runner 检查 Manager 和 Claude 二进制可执行，并以 `--claude-agent-version current --claude-path <镜像内路径>` 启动 Environment Manager。
+
+`current` 模式读取二进制的 `--version`，使用并记录实际版本；无法识别版本时初始化失败，不尝试下载安装。
+
+升级 Claude Code 通过发布新镜像完成，构建时固定版本并校验产物。已有 Environment 继续使用绑定模板，不在会话启动时升级。
+
 ## Runner 创建的临时状态
 
 镜像不应预置以下运行时文件：

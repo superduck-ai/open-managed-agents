@@ -180,6 +180,60 @@ test('reconnects when the history scan fails after subscribing', async () => {
   ]);
 });
 
+test('rescans history after a previous SSE connection is followed by failed reconnects', async () => {
+  const queryClient = new QueryClient();
+  const controller = new AbortController();
+  const originalSetTimeout = window.setTimeout;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) =>
+    originalSetTimeout(callback, delay && delay <= 10_000 ? 0 : delay)) as typeof window.setTimeout;
+  let streamCount = 0;
+  let listCount = 0;
+  globalThis.fetch = async (input, init) => {
+    if (init?.signal?.aborted) throw init.signal.reason;
+    if (String(input).includes('/stream?')) {
+      streamCount += 1;
+      if (streamCount === 1) {
+        return new Response(': connected\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (streamCount >= 5) controller.abort();
+      return new Response('Unavailable', { status: 503 });
+    }
+    listCount += 1;
+    return new Response(
+      JSON.stringify({
+        data: [
+          { id: 'sevt_old', type: 'user.message' },
+          ...(listCount > 1 ? [{ id: 'sevt_new', type: 'agent.message', processed_at: '2026-08-26T13:13:01Z' }] : []),
+        ],
+        next_page: null,
+      }),
+    );
+  };
+
+  try {
+    await runSessionEventStreamLoop({
+      queryClient,
+      sessionId: 'sesn_123',
+      workspaceId: 'workspace_123',
+      threadId: '',
+      signal: controller.signal,
+      onCacheChange: () => undefined,
+      onHistorySynced: () => {
+        if (listCount > 1) controller.abort();
+      },
+    });
+  } finally {
+    window.setTimeout = originalSetTimeout;
+    controller.abort();
+  }
+
+  expect(listCount).toBe(2);
+  expect(sessionDetailScopeEvents(queryClient, 'workspace_123', 'sesn_123', ['']).map((event) => event.id)).toEqual([
+    'sevt_old',
+    'sevt_new',
+  ]);
+});
+
 test('ends an idle stream after its timeout', async () => {
   const controller = new AbortController();
   const linked = sessionLinkedAbortSignal(controller.signal, 5);

@@ -3,6 +3,7 @@ import {
   mergeSessionStreamFrame,
   reconcileIncompleteSessionStreamEvents,
   SESSION_DETAIL_STREAM_FALLBACK_LIMIT,
+  sessionDetailEventCacheKey,
   sessionDetailDeltaFrames,
   sessionDetailScopeEvents,
   sessionIncompleteStreamEventIds,
@@ -16,7 +17,7 @@ import {
 import { type QuickstartSessionEvent, type SessionDetailDeltaFrames, type SessionThreadApiResponse } from '../types';
 import { errorMessage } from '../utils';
 import { sessionEventType } from './sessionTraceModel';
-import { type QueryClient, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, skipToken, useQueries, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export const SessionDetailDeltaFramesContext = createContext<SessionDetailDeltaFrames>({});
@@ -55,6 +56,15 @@ export function useSessionDetailEventData({
   );
   const scopeThreadIds = useMemo(() => ['', ...childThreadIds], [childThreadIds]);
   const scopeKey = scopeThreadIds.join('\0');
+  // Keep manually populated event caches observed while this page is open.
+  useQueries({
+    queries: sessionId
+      ? scopeThreadIds.map((threadId) => ({
+          queryKey: sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
+          queryFn: skipToken,
+        }))
+      : [],
+  });
   const bump = useCallback(() => setVersion((value) => value + 1), []);
   const appendPrimaryEvents = useCallback(
     (events: QuickstartSessionEvent[]) => {
@@ -259,7 +269,6 @@ export async function runSessionEventStreamLoop({
   onPrimaryEvent?: (event: QuickstartSessionEvent) => void;
 }) {
   let consecutiveFailures = 0;
-  let everConnected = false;
   let fallbackCount = 0;
   let backoff = 0;
   let idleReconciliationTimer: number | null = null;
@@ -284,8 +293,7 @@ export async function runSessionEventStreamLoop({
     }, SESSION_IDLE_RECONCILIATION_GRACE_MS);
   };
   while (!signal.aborted) {
-    const isFallback =
-      !everConnected && fallbackCount < SESSION_DETAIL_STREAM_FALLBACK_LIMIT && consecutiveFailures >= 3;
+    const isFallback = fallbackCount < SESSION_DETAIL_STREAM_FALLBACK_LIMIT && consecutiveFailures >= 3;
     if (isFallback) {
       fallbackCount += 1;
       await sleepWithAbort(Math.max(3000, backoff), signal);
@@ -306,7 +314,6 @@ export async function runSessionEventStreamLoop({
         workspaceId,
         signal: attempt.signal,
         onOpen: () => {
-          everConnected = true;
           consecutiveFailures = 0;
           backoff = 0;
           historyScan = syncSessionEventHistory({

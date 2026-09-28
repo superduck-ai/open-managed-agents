@@ -167,6 +167,78 @@ bootstrap:
 	}
 }
 
+func TestLoadEnvironmentPrebuildYAML(t *testing.T) {
+	prepareLoadTest(t)
+	contents := `
+e2b:
+  api_url: https://cubesandbox.example
+  api_key: key
+environment_prebuilds:
+  enabled: true
+  image:
+    base_image: " registry:5000/team/base:stable@sha256:` + strings.Repeat("a", 64) + ` "
+    flow:
+      pipeline_url: " https://aliyun-flow.example/pipelines/1/ "
+      token: " token "
+  template:
+    network:
+      dns_servers: [" 10.0.0.2 "]
+      allow_outbound_cidrs: [" 10.0.0.0/8 "]
+      deny_outbound_cidrs: [" 169.254.0.0/16 "]
+      allow_internet: false
+      inject_egress_ca: false
+    registry_auth:
+      username: " user "
+      password: " password "
+`
+	for _, tc := range []struct{ name, from, to, field string }{
+		{"zero timeout", "  enabled: true", "  enabled: true\n  timeout: 0s", "environment_prebuilds.timeout"},
+		{"negative timeout", "  enabled: true", "  enabled: true\n  timeout: -1s", "environment_prebuilds.timeout"},
+		{"empty disk size", "  template:", "  template:\n    disk_size: \" \"", "environment_prebuilds.template.disk_size"},
+		{"pipeline URL", "https://aliyun-flow.example", "http://aliyun-flow.example", "environment_prebuilds.image.flow.pipeline_url"},
+		{"template URL", "https://cubesandbox.example", "http://cubesandbox.example", "e2b.api_url"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadConfigTestYAML(t, strings.Replace(contents, tc.from, tc.to, 1))
+			if err == nil || !strings.HasPrefix(err.Error(), tc.field+" ") {
+				t.Fatalf("error = %v, want error for %s", err, tc.field)
+			}
+		})
+	}
+	cfg, err := loadConfigTestYAML(t, contents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.EnvironmentPrebuilds
+	if c.Timeout != time.Hour || c.Template.DiskSize != "20G" {
+		t.Fatalf("defaults: timeout=%s disk_size=%q", c.Timeout, c.Template.DiskSize)
+	}
+	if got := c.Image.Repository(); got != "registry:5000/team/base" {
+		t.Fatalf("image repository = %q, want registry:5000/team/base", got)
+	}
+	if c.Template.Network.AllowInternet || c.Template.Network.InjectEgressCA {
+		t.Fatal("explicit false network options must override defaults")
+	}
+	if c.Template.RegistryAuth.Password != " password " {
+		t.Fatal("registry password must preserve whitespace")
+	}
+	if c.Image.Flow.PipelineURL != "https://aliyun-flow.example/pipelines/1" || c.Image.Flow.Token != "token" || c.Template.RegistryAuth.Username != "user" {
+		t.Fatal("prebuild fields were not normalized")
+	}
+	if c.Template.Network.DNSServers[0] != "10.0.0.2" || c.Template.Network.AllowOutboundCIDRs[0] != "10.0.0.0/8" || c.Template.Network.DenyOutboundCIDRs[0] != "169.254.0.0/16" {
+		t.Fatal("network addresses were not normalized")
+	}
+	taggedImageConfig := strings.Replace(contents, "@sha256:"+strings.Repeat("a", 64), "", 1)
+	taggedImageConfig = strings.Replace(taggedImageConfig, "  enabled: true", "  enabled: true\n  timeout: 1s", 1)
+	cfg, err = loadConfigTestYAML(t, taggedImageConfig)
+	if err != nil || cfg.EnvironmentPrebuilds.Timeout != time.Second {
+		t.Fatalf("positive timeout override was not accepted: %v", err)
+	}
+	if cfg.EnvironmentPrebuilds.Image.BaseImage != "registry:5000/team/base:stable" || cfg.EnvironmentPrebuilds.Image.Repository() != "registry:5000/team/base" {
+		t.Fatal("tagged base image was not preserved or its repository was incorrect")
+	}
+}
+
 func TestLoadDefaultsObservabilitySignalPolicy(t *testing.T) {
 	prepareLoadTest(t)
 	cfg, err := loadConfigTestYAML(t, "")

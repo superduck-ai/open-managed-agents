@@ -6,6 +6,13 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
+		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
+			Timeout: time.Hour,
+			Template: TemplateBuildConfig{
+				DiskSize: "20G",
+				Network:  TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true},
+			},
+		},
 		NATS: NATSConfig{
 			ConnectTimeout: 5 * time.Second,
 			DrainTimeout:   10 * time.Second,

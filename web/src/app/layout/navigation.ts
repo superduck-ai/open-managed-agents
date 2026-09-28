@@ -146,7 +146,7 @@ export const consoleNavigation: NavItem[] = [
 ];
 
 export function visibleConsoleNavigation(items: readonly NavItem[] = consoleNavigation): NavItem[] {
-  return items.flatMap((item) => {
+  return items.flatMap<NavItem>((item) => {
     if (item.type === 'link') {
       return [item];
     }

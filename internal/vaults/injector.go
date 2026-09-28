@@ -3,6 +3,7 @@ package vaults
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,7 @@ const oauthRefreshTimeout = 15 * time.Second
 // production only ever uses *db.DB. Tests substitute a fake to inject
 // deterministic credentials without a live database.
 type credentialStore interface {
+	ClearVaultCredentialSecret(ctx context.Context, expected db.VaultCredential) error
 	UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string, next db.VaultCredential) (db.VaultCredential, error)
 	GetVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (db.VaultCredential, error)
 	GetCodeSessionVaultIDs(ctx context.Context, codeSessionExternalID, organizationUUID, workspaceUUID string) ([]string, error)
@@ -245,6 +247,7 @@ func (i *Injector) resolveFromPlan(
 	excluded map[string]struct{},
 	forceRefresh map[string]struct{},
 ) (*resolvedInjection, error) {
+	var failure error
 	for _, cred := range plan.matches {
 		if _, skip := excluded[cred.ExternalID]; skip {
 			continue
@@ -252,6 +255,7 @@ func (i *Injector) resolveFromPlan(
 		_, force := forceRefresh[cred.ExternalID]
 		result, err := i.resolveInjectableToken(ctx, cred, force)
 		if err != nil {
+			failure = errors.Join(failure, err)
 			i.logger.WarnContext(ctx, "skip injectable vault credential", "credential_id", cred.ExternalID, "auth_type", cred.AuthType, "error", err)
 			continue
 		}
@@ -260,7 +264,7 @@ func (i *Injector) resolveFromPlan(
 		return result, nil
 	}
 	if plan.hostCovered {
-		return nil, injectionRejected(nil)
+		return nil, injectionRejected(failure)
 	}
 	return nil, nil
 }

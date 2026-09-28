@@ -84,6 +84,7 @@ type listVaultCredentialsMapperParams struct {
 }
 
 type VaultCredentialMapper interface {
+	ClearSecretIfMatches(ctx context.Context, params updateVaultCredentialParams) error
 	ArchiveByVaultUUID(ctx context.Context, workspaceUUID, vaultUUID string) error
 	DeleteByVaultUUID(ctx context.Context, workspaceUUID, vaultUUID string) error
 	CountActive(ctx context.Context, workspaceUUID, vaultUUID string) (int, error)

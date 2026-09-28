@@ -24,6 +24,11 @@ nats:
   url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
   connect_timeout: 5s
   drain_timeout: 10s
+  worker_event_stream:
+    max_bytes: 268435456
+    max_age: 0s
+    replicas: 3
+    max_msg_size: 1048576
 
 # Optional. Omit the entire auth.smtp block to accept any non-empty verification
 # code without sending email. Configure every SMTP field together for real email.

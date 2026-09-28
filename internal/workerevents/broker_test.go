@@ -5,19 +5,54 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 
 	server "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+var testStreamConfig = config.WorkerEventStreamConfig{MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3}
+
 func TestJetStreamBrokerRejectsInsufficientReplicas(t *testing.T) {
 	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
 	connection := connectNATS(t, srv.ClientURL())
-	if _, err := NewJetStream(t.Context(), connection); err == nil {
+	if _, err := NewJetStream(t.Context(), connection, testStreamConfig); err == nil {
 		t.Fatal("NewJetStream() error = nil, want three-replica stream failure")
+	}
+}
+
+func TestJetStreamBrokerAppliesConfiguredLimits(t *testing.T) {
+	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
+	connection := connectNATS(t, srv.ClientURL())
+	for _, capacity := range []int64{2 << 20, 4 << 20} {
+		broker, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{MaxBytes: capacity, MaxMsgSize: 1024, MaxAge: time.Hour, Replicas: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream, err := broker.js.Stream(t.Context(), StreamName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := stream.Info(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Config.MaxBytes != capacity || info.Config.Replicas != 1 || info.Config.MaxMsgSize != 1024 || info.Config.MaxAge != time.Hour || info.Config.Duplicates != time.Hour {
+			t.Fatalf("stream config = %#v, want capacity %d and one replica", info.Config, capacity)
+		}
+		oversized := EventEnvelope("csess_config", "event_large", "", "user.message", "", []byte(`"`+strings.Repeat("x", 1024)+`"`), time.Now().Add(time.Hour))
+		if err := broker.Publish(t.Context(), "oversized", oversized); err == nil || !strings.Contains(err.Error(), "limit is 1024") {
+			t.Fatalf("Publish() error = %v, want configured message limit", err)
+		}
+		envelope := EventEnvelope("csess_config", "event_config", "", "user.message", "", []byte(`{}`), time.Now().Add(time.Hour))
+		if err := broker.Publish(t.Context(), strconv.FormatInt(capacity, 10), envelope); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -25,11 +60,11 @@ func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
 	servers := runNATSCluster(t)
 	publisherConnection := connectNATS(t, servers[0].ClientURL())
 	subscriberConnection := connectNATS(t, servers[1].ClientURL())
-	publisher, err := NewJetStream(t.Context(), publisherConnection)
+	publisher, err := NewJetStream(t.Context(), publisherConnection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	subscriber, err := NewJetStream(t.Context(), subscriberConnection)
+	subscriber, err := NewJetStream(t.Context(), subscriberConnection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +126,7 @@ func TestJetStreamBrokerDeliversSeriallyAndKeepsDurableConsumer(t *testing.T) {
 	}
 	if info.Config.Replicas != 3 || info.Config.Retention != jetstream.WorkQueuePolicy ||
 		info.Config.Discard != jetstream.DiscardNew || info.Config.MaxAge != 0 ||
-		info.Config.MaxBytes != 10<<30 || info.Config.MaxMsgSize != MaxMessageBytes ||
+		info.Config.MaxBytes != 1<<28 || info.Config.MaxMsgSize != 1<<20 ||
 		info.Config.Duplicates != 24*time.Hour || info.Config.Storage != jetstream.FileStorage {
 		t.Fatalf("stream config = %#v", info.Config)
 	}

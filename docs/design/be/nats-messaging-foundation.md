@@ -41,12 +41,12 @@ Docker Compose 使用三个独立 NATS 节点组成 `oma-nats` JetStream 集群�
 
 - subjects：`oma.worker.inbound.v2.>`；
 - retention：`WorkQueuePolicy`；
-- storage：file；replicas：3；
-- capacity：10 GiB；discard：`DiscardNew`；
-- 单消息上限：1 MiB；duplicate window：24 小时；
-- `MaxAge=0`。
+- storage：file；
+- capacity：默认 256 MiB（`1 << 28`），通过 `nats.worker_event_stream.max_bytes` 配置；discard：`DiscardNew`；
+- 单消息上限：默认 1 MiB，通过 `max_msg_size` 配置；duplicate window 默认 24 小时，非零 `max_age` 更短时同步缩短；
+- `max_age` 默认 `0s`；副本数通过 `replicas` 配置，默认 3。
 
-`MaxAge=0` 避免服务端静默删除未处理消息。30 天逻辑期限由 envelope 的 `expires_at` 和应用 expiry
+配置非零 `max_age` 会自动删除到期的未 ACK 消息；默认 `MaxAge=0` 避免服务端静默删除未处理消息。30 天逻辑期限由 envelope 的 `expires_at` 和应用 expiry
 worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没有 PostgreSQL outbox 或后台补发。
 
 每条版本 2 envelope 包含 Code Session ID、稳定 transport event ID、可选 payload event ID、事件
@@ -81,7 +81,7 @@ envelope 会告警，但不阻塞其他 Session 的扫描。同通道后续消�
 
 JetStream envelope 可能包含用户内容，不得写入运行日志。Worker 入站事件的原始字节数超过 32 KiB 时，payload 存入对象
 存储，envelope 只携带租户作用域 key、字节数、SHA-256 和 cleanup job ID；引用 envelope 仍不得
-超过 1 MiB。Worker 入站链路中的 Redis 只保存短期 ACK subject，不保存 payload，也不是消息事实源。
+超过配置的 `nats.worker_event_stream.max_msg_size`，默认 1 MiB。Worker 入站链路中的 Redis 只保存短期 ACK subject，不保存 payload，也不是消息事实源。
 
 ## 其他消息能力的接入约束
 
@@ -111,4 +111,4 @@ MCP Tunnel 的 Commands Stream、Redis 绑定、2 MiB 节点 payload 要求、�
 
 Tunnel 完整 NATS 消息（命令包含去重 header）超过 2 MiB 时才将正文暂存对象存储，队列/响应通道传引用；未超限保持内联。接收 OMA 恢复并校验完整正文，客户端协议不变。对象清理复用 PostgreSQL 任务，原 deadline 后 5 分钟开始删除所有版本。此阈值与 Worker 事件 32 KiB 外置阈值无关。
 
-Tunnel 不设置请求数量准入，Commands 的 MaxMsgs=-1，固定每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB。删除 max_stored_requests，不新增容量配置；Redis 绑定不占 NATS 存储预算。默认正文上限 16 MiB 不改变命令预算。Worker Stream 仍为 10 GiB、R3，不调整 NATS 集群容量，也不保证任意小磁盘都能运行完整应用。
+Tunnel 不设置请求数量准入，Commands 的 MaxMsgs=-1，固定每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB。删除 max_stored_requests，不新增容量配置；Redis 绑定不占 NATS 存储预算。默认正文上限 16 MiB 不改变命令预算。Worker Stream 默认 256 MiB、R3，可通过 `nats.worker_event_stream` 调整容量与副本数；这些设置不调整 NATS 集群容量，也不保证任意小磁盘都能运行完整应用。

@@ -86,7 +86,7 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(broker.Close)
-	workerBroker, err := workerevents.NewJetStream(ctx, connection)
+	workerBroker, err := workerevents.NewJetStream(ctx, connection, cfg.NATS.WorkerEventStream)
 	if err != nil {
 		t.Fatal(err)
 	}

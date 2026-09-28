@@ -36,7 +36,7 @@ func TestMemoryPurgeRejectsInvalidSessionWithoutRemovingReply(t *testing.T) {
 func TestReplyDecodeFailureClosesBothReadersWithoutAcknowledging(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestReplyDecodeFailureClosesBothReadersWithoutAcknowledging(t *testing.T) {
 func TestWorkerSubscriptionCloseReleasesIdleAndBlockedReaders(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func assertNATSSubscriptionsReleased(t *testing.T, connection *nats.Conn, want i
 func TestReplyPurgeRetainsMessagesWhenConsumerDeletionFails(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestReplyPurgeRetainsMessagesWhenConsumerDeletionFails(t *testing.T) {
 func TestSessionPurgeRetriesAfterSecondLaneFailure(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestSessionPurgeRetriesAfterSecondLaneFailure(t *testing.T) {
 func TestControlDeliveryPreservesTaskOrdering(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	jsBroker, err := NewJetStream(t.Context(), connection)
+	jsBroker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestWorkerDeliveryLaneClassification(t *testing.T) {
 func TestReplySubjectExpiryAndSessionPurge(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

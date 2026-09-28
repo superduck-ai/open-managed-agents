@@ -3305,8 +3305,8 @@ func TestCodeSessionWorkerStreamLoadsOffloadedLargePayloadAndTriggersCleanupNow(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(encoded) > workerevents.MaxMessageBytes {
-		t.Fatalf("referenced worker envelope size = %d, want <= %d", len(encoded), workerevents.MaxMessageBytes)
+	if len(encoded) > (1 << 20) {
+		t.Fatalf("referenced worker envelope size = %d, want <= %d", len(encoded), (1 << 20))
 	}
 	stored, found := store.objects[largeEnvelope.PayloadRef.Key]
 	if !found || !bytes.Equal(stored.data, payload) {

@@ -29,6 +29,7 @@
         worker_token_session_id,
         worker_binding,
         worker_status,
+        worker_turn_started,
         worker_external_metadata,
         worker_requires_action_details,
         created_at,
@@ -205,6 +206,16 @@
         LIMIT 1
     </select>
 
+    <select id="LockLatestInputState" result="optional" resultType="codeSessionInputStateRow">
+        SELECT external_id, status, worker_turn_started, worker_status, worker_external_metadata
+        FROM code_sessions
+        WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
     <select id="LockCodeSessionByExternalID" resultType="codeSessionRow" result="optional">
         SELECT
         <include refid="columns"/>
@@ -243,6 +254,7 @@
     <update id="RegisterWorker" result="returning" resultType="int64">
         UPDATE code_sessions
         SET current_worker_epoch = #{params.Epoch},
+            worker_turn_started = false,
             worker_lease_expires_at = #{params.ExpiresAt},
             worker_registered_at = #{params.Now},
             worker_last_heartbeat_at = NULL,
@@ -317,6 +329,7 @@
         SET idle_since = CASE WHEN #{params.WorkerStatus} = 'idle'
                     THEN COALESCE(idle_since, #{params.Now}) ELSE NULL END,
             worker_status = #{params.WorkerStatus},
+            worker_turn_started = worker_turn_started OR #{params.TurnStarted},
             worker_requires_action_details = CAST(#{params.RequiresActionDetails,sensitive=true} AS jsonb),
             worker_external_metadata = CAST(#{params.ExternalMetadata,sensitive=true} AS jsonb),
             connection_status = 'connected',
@@ -329,7 +342,8 @@
     </update>
 
     <update id="ResetIdleSinceForSession">
-        UPDATE code_sessions SET idle_since = NULL
+        UPDATE code_sessions SET idle_since = NULL,
+            worker_turn_started = worker_turn_started AND NOT #{newTurn}
         WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID}
             AND session_uuid = #{sessionUUID} AND status = 'active' AND deleted_at IS NULL
     </update>
@@ -409,6 +423,17 @@
           AND status = 'active'
           AND deleted_at IS NULL
         RETURNING current_worker_epoch
+    </update>
+
+    <update id="ClearToolPermissionRequest" result="exec">
+        UPDATE code_sessions
+        SET worker_external_metadata = (CASE WHEN worker_external_metadata->'managed_agent_tool_permission_request'->>'public_event_id' = #{publicEventID}
+                   THEN worker_external_metadata - 'managed_agent_tool_permission_request'
+                   ELSE worker_external_metadata END)
+            - ('managed_agent_tool_permission_request:' || #{publicEventID}),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
     </update>
 
     <update id="TerminateByExternalID" result="rows">

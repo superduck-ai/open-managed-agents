@@ -3,9 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
-	"slices"
 
-	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -107,78 +105,6 @@ func insertSessionResourceWithLockedSessionTx(
 	return row.resource(), nil
 }
 
-func insertSessionEventsTx(
-	ctx context.Context,
-	executor yourbatis.Executor,
-	session Session,
-	events []SessionEvent,
-	ignoreExisting bool,
-) ([]SessionEvent, error) {
-	threadMapper := NewSessionThreadMapper(executor)
-	eventMapper := NewSessionEventMapper(executor)
-	primaryRow, err := threadMapper.FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
-	if err != nil {
-		return nil, mapNoRows(err)
-	}
-	primary := primaryRow.thread()
-
-	created := make([]SessionEvent, 0, len(events))
-	for _, event := range events {
-		event.OrganizationUUID = session.OrganizationUUID
-		event.WorkspaceUUID = session.WorkspaceUUID
-		event.SessionUUID = session.UUID
-		event.SessionExternalID = session.ExternalID
-		if event.ThreadExternalID == nil {
-			event.ThreadUUID = &primary.UUID
-			threadExternalID := primary.ExternalID
-			event.ThreadExternalID = &threadExternalID
-		} else {
-			threadRow, findErr := threadMapper.FindByExternalID(
-				ctx,
-				session.WorkspaceUUID,
-				session.ExternalID,
-				*event.ThreadExternalID,
-			)
-			if findErr != nil {
-				return nil, mapNoRows(findErr)
-			}
-			thread := threadRow.thread()
-			event.ThreadUUID = &thread.UUID
-		}
-
-		params := sessionEventWriteParameters(event)
-		if ignoreExisting {
-			row, found, insertErr := eventMapper.InsertIfAbsent(ctx, params)
-			if insertErr != nil {
-				return nil, insertErr
-			}
-			if found {
-				if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
-					return nil, err
-				}
-				created = append(created, row.event())
-			}
-			continue
-		}
-		row, insertErr := eventMapper.Insert(ctx, params)
-		if insertErr != nil {
-			return nil, insertErr
-		}
-		if err := attachEventPayloadBlob(ctx, executor, session.WorkspaceUUID, event.PayloadBlobUUID); err != nil {
-			return nil, err
-		}
-		created = append(created, row.event())
-	}
-	if slices.ContainsFunc(created, func(event SessionEvent) bool {
-		return maevents.IsPublicWorkerInputEvent(event.EventType)
-	}) {
-		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID); err != nil {
-			return nil, err
-		}
-	}
-	return created, nil
-}
-
 func sessionWriteParameters(session Session) sessionWriteParams {
 	return sessionWriteParams{
 		RuntimeUserUUID: nullableString(session.RuntimeUserUUID),
@@ -223,7 +149,7 @@ func sessionEventWriteParameters(event SessionEvent) sessionEventWriteParams {
 		SessionExternalID: event.SessionExternalID, ThreadUUID: event.ThreadUUID,
 		ThreadExternalID: event.ThreadExternalID, EventType: event.EventType,
 		PayloadBlobUUID: event.PayloadBlobUUID, ToolUseID: event.ToolUseID,
-		Payload: agentJSONArg(event.Payload), ProcessedAt: event.ProcessedAt, CreatedAt: event.CreatedAt,
+		Payload: agentJSONArg(event.Payload), ProcessedAt: nullableTime(event.ProcessedAt), CreatedAt: event.CreatedAt,
 	}
 }
 
@@ -322,7 +248,7 @@ func (r sessionEventRow) event() SessionEvent {
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
 		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
-		Payload: bytes.Clone(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		Payload: bytes.Clone(r.Payload), ProcessedAt: timeFromNullable(r.ProcessedAt), CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }
 
@@ -331,7 +257,11 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 	workspaceUUID string,
 	sessionExternalID string,
 ) (Session, error) {
-	row, found, err := tx.sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+	return lockSessionForEvents(ctx, tx.sessionMapper, workspaceUUID, sessionExternalID)
+}
+
+func lockSessionForEvents(ctx context.Context, mapper SessionMapper, workspaceUUID, sessionID string) (Session, error) {
+	row, found, err := mapper.LockSessionForEvents(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		return Session{}, err
 	}

@@ -25,6 +25,7 @@ import (
 var (
 	ErrNotFound                 = platform.ErrNotFound
 	ErrInvalidState             = errors.New("invalid state")
+	ErrInvalidCursor            = errors.New("invalid page cursor")
 	ErrPreconditionFailed       = errors.New("precondition failed")
 	ErrDuplicate                = errors.New("duplicate")
 	ErrVersionConflict          = errors.New("version conflict")

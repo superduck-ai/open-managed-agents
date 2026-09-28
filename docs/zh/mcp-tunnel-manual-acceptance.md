@@ -172,8 +172,8 @@ Worker 事件与 Session 广播也按生产方式复用同一个 NATS 连接。�
 它仅接受本机 PostgreSQL，自动创建唯一的 `oma_tunnel_e2e_<timestamp>` 数据库，并在停止测试 Sandbox、关闭连接后删除该库。
 不会把现有数据库传入会替换 LLM provider 的测试 helper。验收中 provider 凭据仅加密写入独立测试库。
 
-先准备权限 0600 的独立 `CONFIG_FILE`：使用当前 checkout 的完整配置，保留可用 E2B 地址，确认镜像存在；
-`environment_runner.claude_agent_version` 必须与镜像内的 `/opt/claude-code/bin/claude --version` 一致，否则启动脚本会在 Agent 启动前退出。
+先准备权限 0600 的独立 `CONFIG_FILE`：使用当前 checkout 的完整配置，保留可用 E2B 地址；按[配置迁移说明](../design/be/runtime-configuration.md)移除旧字段。
+确认镜像存在，且预装的 `/opt/claude-code/bin/claude` 可执行、`--version` 输出可识别。
 所有相对密钥文件和 manager/Claude 路径应改为相对于原配置目录的绝对路径。服务使用 `127.0.0.1:18080`，Sandbox 从
 `http://host.docker.internal:18080` 访问；端口占用时直接失败，不停止已有服务。此用例面向本机 E2B，不能原样用于云 Sandbox。
 

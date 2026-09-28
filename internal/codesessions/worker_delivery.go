@@ -25,11 +25,15 @@ func (s *Service) applyWorkerDeliveryUpdates(
 	epoch int64,
 	updates []workerDeliveryUpdate,
 ) (workerDeliveryResult, error) {
+	ackCtx, cancel := context.WithTimeout(ctx, workerDeliveryTimeout)
+	defer cancel()
 	result := workerDeliveryResult{}
+	if err := s.publishProcessedInputs(ackCtx, codeSessionID, epoch, updates); err != nil {
+		return result, err
+	}
 	cleanupJobIDs := make([]string, 0)
 	// 锁一直持有到 JetStream 确认完成；限定整个批次的等待时间，避免 Redis/NATS
 	// 不响应时无限阻塞 register、凭证轮换或 sandbox recovery。
-	ackCtx, cancel := context.WithTimeout(ctx, workerDeliveryTimeout)
 	err := s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, func() (bool, error) {
 		var applyErr error
 		result, cleanupJobIDs, applyErr = s.applyLockedWorkerDeliveryUpdates(ackCtx, codeSessionID, epoch, updates)
@@ -42,6 +46,40 @@ func (s *Service) applyWorkerDeliveryUpdates(
 		s.triggerPayloadCleanupNow(ctx, cleanupJobID)
 	}
 	return result, err
+}
+
+func (s *Service) publishProcessedInputs(ctx context.Context, codeSessionID string, epoch int64, updates []workerDeliveryUpdate) error {
+	if s.sink == nil {
+		return nil
+	}
+	if epoch <= 0 {
+		return db.ErrWorkerEpochMismatch
+	}
+	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return db.ErrNotFound
+	}
+	if codeSession.CurrentWorkerEpoch != epoch {
+		return db.ErrWorkerEpochMismatch
+	}
+	for _, update := range updates {
+		if update.Status != "processing" && update.Status != "processed" {
+			continue
+		}
+		ref, found, err := s.workerEventAcks.Get(ctx, codeSessionID, epoch, update.EventID)
+		if err != nil {
+			return err
+		}
+		if found && ref.PublicEventID != "" {
+			if err := s.sink.PublishProcessedInput(ctx, codeSession, ref.PublicEventID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Service) applyLockedWorkerDeliveryUpdates(

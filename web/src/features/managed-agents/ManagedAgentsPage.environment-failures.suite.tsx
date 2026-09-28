@@ -250,7 +250,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
     const dialog = screen.getByRole('dialog', { name: 'Create environment' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Pending create' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create environment' }));
 
     expect((within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(dialog).getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);
@@ -309,7 +309,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     fireEvent.click(screen.getByRole('button', { name: '创建环境' }));
     const dialog = screen.getByRole('dialog', { name: '创建环境' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '失败环境' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建环境' }));
     expect(await within(dialog).findByText('无法创建环境。')).toBeTruthy();
   });
 

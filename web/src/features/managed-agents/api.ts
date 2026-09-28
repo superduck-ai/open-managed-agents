@@ -1,6 +1,7 @@
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { consoleApi } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
+import { consoleResourceListLimit } from '../../shared/console-list';
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
@@ -62,6 +63,8 @@ export const defaultAgentFilters: AgentListFilters = { created: 'all', status: '
 
 export const agentsListLimit = 20;
 
+export const managedEntityListLimit = consoleResourceListLimit;
+
 export const agentSearchLimit = 100;
 
 export const agentSearchMaxPages = 3;
@@ -79,9 +82,14 @@ export function createdFilterStartISOString(filter: AgentCreatedFilter) {
   return null;
 }
 
-export function listAgents(workspaceId: string, page?: PageCursor, filters: AgentListFilters = defaultAgentFilters) {
+export function listAgents(
+  workspaceId: string,
+  page?: PageCursor,
+  filters: AgentListFilters = defaultAgentFilters,
+  limit = agentsListLimit,
+) {
   const params: Record<string, string | number | boolean> = {
-    limit: agentsListLimit,
+    limit,
     include_archived: filters.status === 'all',
   };
   const createdAtGTE = createdFilterStartISOString(filters.created);
@@ -294,7 +302,7 @@ export function listManagedEntities(
   filters?: ManagedEntityListFilters,
 ) {
   const params: Record<string, unknown> = {
-    limit: 5,
+    limit: managedEntityListLimit,
     include_archived: filters?.includeArchived ?? false,
   };
   if (page) {
@@ -1224,6 +1232,10 @@ export async function syncSessionEventHistory({
       replacedPreviewIds.forEach((previewId) =>
         removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, previewId),
       );
+      response.data.forEach((event) => {
+        const finalId = sessionFinalAgentEventId(event);
+        if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+      });
       page = nextPage;
     } while (page && !signal?.aborted);
     return queryClient.getQueryData<SessionDetailEventCache>(cacheKey) ?? emptySessionDetailEventCache();
@@ -1253,9 +1265,20 @@ export function mergeSessionStreamFrame(
   if (replacedPreviewId) {
     removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, replacedPreviewId);
   }
+  const finalId = sessionFinalAgentEventId(event);
+  if (finalId) {
+    removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+  }
   if (eventType.endsWith('status_terminated')) {
     cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
   }
+}
+
+function sessionFinalAgentEventId(event: QuickstartSessionEvent) {
+  const type = sessionEventType(event);
+  return (type === 'agent.message' || type === 'agent.thinking') && sessionNullableProcessedAt(event) !== null
+    ? sessionStableEventId(event)
+    : null;
 }
 
 function sessionStreamPreviewIdForFinalEvent(
@@ -1270,6 +1293,9 @@ function sessionStreamPreviewIdForFinalEvent(
     (incomingType !== 'agent.message' && incomingType !== 'agent.thinking') ||
     sessionNullableProcessedAt(incoming) === null
   ) {
+    return null;
+  }
+  if (cache.events.some((event) => sessionStableEventId(event) === incomingId)) {
     return null;
   }
 
@@ -1397,11 +1423,17 @@ export function mergeSessionDeltaFrame(
     if (!id) {
       return;
     }
+    const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
+    const completed = queryClient
+      .getQueryData<SessionDetailEventCache>(cacheKey)
+      ?.events.some((cached) => sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null);
+    if (completed) {
+      return;
+    }
     queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => ({
       ...(cache ?? {}),
       [id]: { message: started, frames: [event] },
     }));
-    const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
     queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
       mergeSessionEventCache(cache, [{ ...started, processed_at: null, is_streaming: true }]),
     );

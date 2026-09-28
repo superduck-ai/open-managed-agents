@@ -55,7 +55,10 @@ func prebuildError(err error) error {
 	}
 }
 
-var errGitResourcesRequireMITM = errors.New("git resources require code_session.upstream_proxy_mitm_enabled")
+var (
+	errGitResourcesRequireMITM = errors.New("git resources require code_session.upstream_proxy_mitm_enabled")
+	errMemorySnapshotInvalid   = errors.New("memory mount snapshot is invalid")
+)
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)

@@ -60,6 +60,13 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 		name     string
 		contract mapperBuilderContract
 	}{
+		{"lock latest input state", mapperBuilderContract{
+			statement: codeSessionMapperLockLatestInputStateStatement,
+			bound:     buildCodeSessionMapperLockLatestInputState(yourbatis.DialectPostgres, "workspace-uuid", "session-uuid"),
+			wantID:    "CodeSessionMapper.LockLatestInputState", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionUUID"},
+			wantSQLFragments:  []string{"worker_external_metadata", "workspace_uuid = $1", "session_uuid = $2", "ORDER BY created_at DESC, uuid DESC", "LIMIT 1 FOR UPDATE"},
+		}},
 		{"insert", mapperBuilderContract{
 			statement: codeSessionMapperInsertStatement,
 			bound:     buildCodeSessionMapperInsert(yourbatis.DialectPostgres, createParams),
@@ -127,7 +134,7 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 				"params.WorkerBinding", "params.Now", "params.Now", "params.Now", "params.UUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.WorkerTokenSessionID", "params.WorkerBinding"},
-			wantSQLFragments:           []string{"UPDATE code_sessions", "CAST($5 AS jsonb)", "RETURNING current_worker_epoch"},
+			wantSQLFragments:           []string{"UPDATE code_sessions", "worker_turn_started = false", "CAST($5 AS jsonb)", "RETURNING current_worker_epoch"},
 		}},
 		{"resume worker lease for sandbox", mapperBuilderContract{
 			statement: codeSessionMapperResumeWorkerLeaseForSandboxStatement,
@@ -149,16 +156,16 @@ func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 		{"update worker state", mapperBuilderContract{
 			statement: codeSessionMapperUpdateWorkerStateStatement,
 			bound: buildCodeSessionMapperUpdateWorkerState(yourbatis.DialectPostgres, updateCodeSessionWorkerStateParams{
-				UUID: "code-session-uuid", WorkerStatus: "running", RequiresActionDetails: []byte("null"),
+				UUID: "code-session-uuid", WorkerStatus: "running", TurnStarted: true, RequiresActionDetails: []byte("null"),
 				ExternalMetadata: []byte(`{"worker":"test"}`), Now: now,
 			}),
 			wantID: "CodeSessionMapper.UpdateWorkerState", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.WorkerStatus", "params.Now", "params.WorkerStatus", "params.RequiresActionDetails", "params.ExternalMetadata",
+				"params.WorkerStatus", "params.Now", "params.WorkerStatus", "params.TurnStarted", "params.RequiresActionDetails", "params.ExternalMetadata",
 				"params.Now", "params.Now", "params.Now", "params.UUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.RequiresActionDetails", "params.ExternalMetadata"},
-			wantSQLFragments:           []string{"worker_requires_action_details = CAST($4 AS jsonb)", "RETURNING uuid"},
+			wantSQLFragments:           []string{"worker_turn_started = worker_turn_started OR $4", "worker_requires_action_details = CAST($5 AS jsonb)", "RETURNING uuid"},
 		}},
 	}
 	for _, test := range tests {
@@ -245,5 +252,15 @@ func TestInternalEventIdempotencyLookupBindings(t *testing.T) {
 		wantID:    "CodeSessionInternalEventMapper.ExistsByIdempotencyKey", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"workspaceUUID", "idempotencyKey"},
 		wantSQLFragments:  []string{"workspace_uuid = $1", "idempotency_key = $2", "idempotency_key <> ''", "deleted_at IS NULL"},
+	})
+}
+
+func TestClearToolPermissionRequestMapper(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionMapperClearToolPermissionRequestStatement,
+		bound:     buildCodeSessionMapperClearToolPermissionRequest(yourbatis.DialectPostgres, "workspace", "worker", "tool"),
+		wantID:    "CodeSessionMapper.ClearToolPermissionRequest", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames: []string{"publicEventID", "publicEventID", "workspaceUUID", "codeSessionExternalID"},
+		wantSQLFragments:  []string{"- ('managed_agent_tool_permission_request:' || $2)", "->>'public_event_id' = $1", "workspace_uuid = $3", "external_id = $4"},
 	})
 }

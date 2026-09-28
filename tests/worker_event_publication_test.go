@@ -4,19 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 type failingPubAckBroker struct {
 	*workerevents.MemoryBroker
-	mu       sync.Mutex
-	failNext bool
+	mu        sync.Mutex
+	failNext  bool
+	published chan struct{}
+	release   <-chan struct{}
 }
 
 func (b *failingPubAckBroker) Publish(ctx context.Context, messageID string, envelope workerevents.EnvelopeV1) error {
@@ -28,6 +32,14 @@ func (b *failingPubAckBroker) Publish(ctx context.Context, messageID string, env
 	if b.failNext {
 		b.failNext = false
 		return errors.New("injected ambiguous PubAck failure")
+	}
+	if b.published != nil {
+		close(b.published)
+		select {
+		case <-b.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return nil
 }
@@ -150,5 +162,137 @@ func TestExpiredJetStreamEventTerminatesCodeSessionAndPurgesSubject(t *testing.T
 	}
 	if pending := app.workerEvents.Pending(codeSessionID); len(pending) != 0 {
 		t.Fatalf("terminated Code Session still has %d JetStream messages", len(pending))
+	}
+}
+
+func TestToolResponsePublicationClearsPendingOnlyAfterSuccess(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("tool-response-publication"))
+	worker, epoch := newPayloadIntegrationSession(t, app)
+	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"running"}`)
+	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
+		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{}}}`))
+	tool := listSessionEvents(t, app, worker.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
+	toolID := sessionEventStringField(t, tool.Data[0], "id")
+	session, found, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+	if err != nil || !found {
+		t.Fatalf("session: %v", err)
+	}
+	// Include a legacy duplicate: clearing the keyed entry must not revive it.
+	worker, _, err = app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(worker.WorkerExternalMetadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata["managed_agent_tool_permission_request"] = metadata["managed_agent_tool_permission_request:"+toolID]
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.UpdateCodeSessionWorkerState(t.Context(), worker.ExternalID, db.UpdateCodeSessionWorkerStateInput{WorkerEpoch: worker.CurrentWorkerEpoch, ExternalMetadataSet: true, ExternalMetadata: raw}); err != nil {
+		t.Fatal(err)
+	}
+	event := db.SessionEvent{ExternalID: "sevt_confirmation", EventType: "user.tool_confirmation", Payload: json.RawMessage(`{"type":"user.tool_confirmation","tool_use_id":` + quoteJSON(toolID) + `,"result":"allow"}`)}
+	broker := &failingPubAckBroker{MemoryBroker: workerevents.NewMemory(), failNext: true}
+	service := newCodeSessionService(app, broker, nil)
+	if err := service.QueuePublicSessionEvents(t.Context(), session, []db.SessionEvent{event}); err == nil {
+		t.Fatal("expected failed publish")
+	}
+	current, _, err := app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil || !strings.Contains(string(current.WorkerExternalMetadata), toolID) {
+		t.Fatal("failed publish lost request")
+	}
+	// Queue a running report behind the publication lock. PostgreSQL hands the
+	// waiting worker the lock as soon as publication commits; it must see the
+	// pending request already cleared, never the old metadata.
+	broker.published = make(chan struct{})
+	release := make(chan struct{})
+	broker.release = release
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	published := make(chan error, 1)
+	go func() { published <- service.QueuePublicSessionEvents(t.Context(), session, []db.SessionEvent{event}) }()
+	<-broker.published
+	reported := make(chan *http.Response, 1)
+	go func() {
+		reported <- doCodeSessionWorkerRequestWithMethod(t, app, http.MethodPut, worker.ExternalID, "", `{"worker_epoch":`+epoch+`,"worker_status":"running"}`)
+	}()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		err := app.pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_locks waiting JOIN pg_locks held USING (pid) WHERE NOT waiting.granted AND held.relation='code_sessions'::regclass)`).Scan(&waiting)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("worker did not wait for publication lock")
+		case <-ticker.C:
+		}
+	}
+	close(release)
+	if err := <-published; err != nil {
+		t.Fatal(err)
+	}
+	response := <-reported
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("running report: %d %s", response.StatusCode, readAll(t, response.Body))
+	}
+
+	current, _, err = app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil || strings.Contains(string(current.WorkerExternalMetadata), toolID) {
+		t.Fatal("successful publication retained pending request")
+	}
+	if status := retrieveSession(t, app, worker.SessionExternalID, defaultTestKey).Status; status != "running" {
+		t.Fatalf("resume lost: %s", status)
+	}
+	if len(broker.Pending(worker.ExternalID)) != 1 {
+		t.Fatal("retry duplicated response")
+	}
+}
+
+func TestToolResponseRejectsWorkerRotationDuringUpload(t *testing.T) {
+	objects := &payloadFaultStore{fakeStore: newFakeStore("tool-response-epoch")}
+	app := newPayloadIntegrationApp(t, objects)
+	worker, epoch := newPayloadIntegrationSession(t, app)
+	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch,
+		`{"type":"control_request","uuid":"approval","request_id":"approval-request","request":{"subtype":"can_use_tool","tool_name":"MysteryTool","tool_use_id":"tool-approval","input":{"text":`+quoteJSON(strings.Repeat("x", 40000))+`}}}`))
+	tool := listSessionEvents(t, app, worker.SessionExternalID, "types[]=agent.tool_use", defaultTestKey)
+	toolID := sessionEventStringField(t, tool.Data[0], "id")
+	session, found, err := app.db.GetSession(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID)
+	if err != nil || !found {
+		t.Fatalf("session: %v", err)
+	}
+	objects.afterUpload = func(string) error {
+		objects.afterUpload = nil
+		registerCodeSessionWorker(t, app, worker.ExternalID)
+		return nil
+	}
+	event := db.SessionEvent{ExternalID: "sevt_confirmation", EventType: "user.tool_confirmation", Payload: json.RawMessage(`{"type":"user.tool_confirmation","tool_use_id":` + quoteJSON(toolID) + `,"result":"allow"}`)}
+	broker := workerevents.NewMemory()
+	service := newCodeSessionService(app, broker, nil)
+	if err := service.QueuePublicSessionEvents(t.Context(), session, []db.SessionEvent{event}); !errors.Is(err, db.ErrWorkerEpochMismatch) {
+		t.Fatalf("rotation error: %v", err)
+	}
+	current, _, err := app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil || !strings.Contains(string(current.WorkerExternalMetadata), toolID) {
+		t.Fatal("old epoch cleared pending request")
+	}
+	if len(broker.Pending(worker.ExternalID)) != 0 {
+		t.Fatal("old epoch published a control response")
 	}
 }

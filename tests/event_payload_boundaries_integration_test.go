@@ -110,7 +110,7 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 		t.Fatalf("pagination: %d %t %v", len(pageEvents), more, err)
 	}
 	last := pageEvents[len(pageEvents)-1]
-	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}, Cursor: &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}})
+	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}, Cursor: &db.SessionEventPageCursor{ExternalID: last.ExternalID}})
 	if err != nil || len(next) != 3 || more {
 		t.Fatalf("next page: %d %t %v", len(next), more, err)
 	}

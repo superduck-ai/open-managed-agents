@@ -16,6 +16,10 @@ type PageLike<T> = {
   last_id?: string | null;
   next_page?: string | null;
   prefixes?: unknown[];
+  total_count?: unknown;
+  body?: {
+    total_count?: unknown;
+  };
 };
 
 export type AnthropicPageResponse<T> = {
@@ -25,6 +29,7 @@ export type AnthropicPageResponse<T> = {
   last_id?: string | null;
   next_page?: string | null;
   prefixes?: unknown[];
+  total_count?: number;
 };
 
 let cachedClient: Anthropic | null = null;
@@ -136,7 +141,15 @@ export function toPlainPage<T>(page: PageLike<T>): AnthropicPageResponse<T> {
   if ('prefixes' in page) {
     response.prefixes = page.prefixes ?? [];
   }
+  const totalCount = finiteCount(page.total_count) ?? finiteCount(page.body?.total_count);
+  if (totalCount !== undefined) {
+    response.total_count = totalCount;
+  }
   return response;
+}
+
+function finiteCount(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 async function sdkCall<T>(operation: () => Promise<T>): Promise<T> {

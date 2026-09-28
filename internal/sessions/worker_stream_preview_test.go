@@ -289,11 +289,11 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	writeSSE(recorder, event, "primary-thread")
-	if !strings.HasPrefix(recorder.Body.String(), "id: preview-event\nevent: event_start\n") {
-		t.Fatalf("preview SSE has the wrong target ID: %s", recorder.Body.String())
+	if !strings.HasPrefix(recorder.Body.String(), "event: event_start\n") {
+		t.Fatalf("preview SSE must not have a frame ID: %s", recorder.Body.String())
 	}
 
-	data := strings.TrimSpace(strings.TrimPrefix(strings.Split(recorder.Body.String(), "\n")[2], "data: "))
+	data := strings.TrimSpace(strings.TrimPrefix(strings.Split(recorder.Body.String(), "\n")[1], "data: "))
 	var payload struct {
 		CreatedAt       string `json:"created_at"`
 		ProcessedAt     string `json:"processed_at"`
@@ -307,7 +307,7 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	}
 }
 
-func TestPreviewSSEDisplaysItsTargetEventID(t *testing.T) {
+func TestPreviewSSEKeepsTargetEventIDOnlyInPayload(t *testing.T) {
 	cases := []struct {
 		name   string
 		event  sessionStreamEvent
@@ -343,10 +343,13 @@ func TestPreviewSSEDisplaysItsTargetEventID(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			writeSSE(recorder, tc.event, "primary-thread")
-			if body := recorder.Body.String(); !strings.HasPrefix(body, "id: "+tc.wantID+"\n") {
-				t.Fatalf("SSE frame ID does not match preview target %q: %s", tc.wantID, body)
+			for _, threadID := range []string{"primary-thread", "child-thread"} {
+				recorder := httptest.NewRecorder()
+				writeSSE(recorder, tc.event, threadID)
+				body := recorder.Body.String()
+				if !strings.HasPrefix(body, "event: "+tc.event.EventType+"\ndata: ") || !strings.Contains(body, tc.wantID) {
+					t.Fatalf("preview SSE must have a payload target ID but no frame ID: %s", body)
+				}
 			}
 		})
 	}

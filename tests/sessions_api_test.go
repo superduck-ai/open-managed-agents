@@ -90,9 +90,25 @@ func TestSessionsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
+	t.Run("success missing beta query", func(t *testing.T) {
 		resp := doSessionRequest(t, app, http.MethodGet, "/v1/sessions", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want %d: %s", resp.StatusCode, http.StatusOK, readAll(t, resp.Body))
+		}
+	})
+
+	t.Run("create without beta query reaches validation", func(t *testing.T) {
+		resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions", strings.NewReader(`{}`), defaultTestKey, true)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d: %s", resp.StatusCode, http.StatusBadRequest, readAll(t, resp.Body))
+		}
+		var response errorResponse
+		decodeJSON(t, resp.Body, &response)
+		if response.Error.Message != "agent is required" {
+			t.Fatalf("error message = %q, want %q", response.Error.Message, "agent is required")
+		}
 	})
 
 	t.Run("success lifecycle resources threads events work and archive", func(t *testing.T) {

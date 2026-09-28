@@ -27,10 +27,6 @@ func queueCodeSessionEventsError(cause error) error {
 	return internalError("Could not queue events for the code session worker", cause)
 }
 
-func sessionsBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Sessions API requires beta=true", nil)
-}
-
 func sessionRouteNotFound() error {
 	return apperr.New(apperr.NotFound, "Not found", nil)
 }

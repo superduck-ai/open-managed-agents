@@ -405,8 +405,8 @@ func TestMessagesProxyRequestLifecycle(t *testing.T) {
 		params.CreatedAtGTE, params.CreatedAtLTE = &at, &at
 		params.Limit = 10
 		filtered, _, err := app.db.ListSessionEventsPage(t.Context(), params)
-		if err != nil || len(filtered) != 1 || filtered[0].ExternalID != codeSession.ExternalID+"c" {
-			t.Fatalf("created_at filter must compare created_at: %+v %v", filtered, err)
+		if err != nil || len(filtered) != 3 {
+			t.Fatalf("created_at query parameters must compare processed_at: %+v %v", filtered, err)
 		}
 
 	})

@@ -52,7 +52,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	eventParams := sessionEventWriteParams{
 		UUID: "event-uuid", ExternalID: "event_test", OrganizationUUID: "organization-uuid",
 		WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid", SessionExternalID: "ses_test",
-		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: &now, CreatedAt: now,
+		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: now, CreatedAt: now,
 	}
 
 	tests := []mapperBuilderContract{
@@ -193,7 +193,7 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, `ORDER BY session_events.processed_at ASC NULLS LAST, id ASC`)
+	assertMapperSQLContains(t, eventBound, `ORDER BY session_events.processed_at ASC, id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -236,7 +236,7 @@ func TestSessionEventMapperFindAssistantEchoKeys(t *testing.T) {
 	})
 }
 
-func TestSessionEventMapperFiltersCreationTime(t *testing.T) {
+func TestSessionEventMapperCreatedAtParametersFilterProcessingTime(t *testing.T) {
 	now := time.Now().UTC()
 	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 20,
@@ -246,7 +246,7 @@ func TestSessionEventMapperFiltersCreationTime(t *testing.T) {
 		statement: sessionEventMapperListPageStatement, bound: bound,
 		wantID: "SessionEventMapper.ListPage", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionExternalID", "params.CreatedAtGT", "params.CreatedAtGTE", "params.CreatedAtLT", "params.CreatedAtLTE", "params.FetchLimit"},
-		wantSQLFragments:  []string{"created_at > $3", "created_at >= $4", "created_at < $5", "created_at <= $6"},
+		wantSQLFragments:  []string{"processed_at > $3", "processed_at >= $4", "processed_at < $5", "processed_at <= $6"},
 	})
 }
 

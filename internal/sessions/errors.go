@@ -104,6 +104,9 @@ func mapSessionLoadError(err error, sessionID string) error {
 	if errors.Is(err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "session state does not allow this operation", err)
 	}
+	if errors.Is(err, db.ErrSessionInputConflict) {
+		return apperr.New(apperr.Conflict, "Session cannot accept this input now", err)
+	}
 	return internalError("Session operation failed", fmt.Errorf("session %q operation: %w", sessionID, err))
 }
 
@@ -136,6 +139,9 @@ func mapFileResourcePersistenceError(err error) (error, bool) {
 func mapThreadLoadError(err error, threadID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return threadNotFound(threadID, err)
+	}
+	if errors.Is(err, db.ErrInvalidState) {
+		return invalidRequest(errors.New("thread must be idle or terminated to archive"))
 	}
 	return internalError("Thread operation failed", fmt.Errorf("thread %q operation: %w", threadID, err))
 }

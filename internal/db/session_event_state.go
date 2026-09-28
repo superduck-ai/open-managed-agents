@@ -23,7 +23,6 @@ type sessionStopReason struct {
 type sessionStatusPayload struct {
 	ID              string             `json:"id"`
 	Type            string             `json:"type"`
-	CreatedAt       time.Time          `json:"created_at"`
 	ProcessedAt     time.Time          `json:"processed_at"`
 	SessionThreadID string             `json:"session_thread_id,omitempty"`
 	AgentName       string             `json:"agent_name,omitempty"`
@@ -186,7 +185,7 @@ func newSessionStatusEvent(source SessionEvent, eventType string, thread Session
 		agent.Name = agent.DisplayName
 	}
 	payload, err := jsonv2.Marshal(sessionStatusPayload{
-		ID: eventID, Type: eventType, CreatedAt: source.CreatedAt, ProcessedAt: source.ProcessedAt,
+		ID: eventID, Type: eventType, ProcessedAt: source.ProcessedAt,
 		SessionThreadID: thread.ExternalID, AgentName: agent.Name, StopReason: reason,
 	})
 	if err != nil {

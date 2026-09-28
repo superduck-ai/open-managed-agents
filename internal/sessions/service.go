@@ -165,7 +165,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "desc")
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -291,14 +291,19 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
-	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
-	if err != nil {
-		return mapSessionLoadError(err, sessionID)
-	}
-	event, err := h.sessionUpdatedEvent(updated)
-	if err == nil {
-		h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+	updated := current
+	if len(changedSessionFields(current, next)) > 0 {
+		next.UpdatedAt = time.Now().UTC()
+		updated, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
+		if err != nil {
+			return mapSessionLoadError(err, sessionID)
+		}
+		if fields := changedSessionFields(current, updated); len(fields) > 0 {
+			event, err := h.sessionUpdatedEvent(updated, fields)
+			if err == nil {
+				h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+			}
+		}
 	}
 	response, err := h.responseFromSession(r, updated)
 	if err != nil {
@@ -426,7 +431,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "asc")
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -774,11 +779,11 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
+	thread, removal, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
+	h.finishSessionRemoval(r.Context(), removal)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
 	return nil
 }

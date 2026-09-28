@@ -153,20 +153,15 @@ func TestSessionsAPI(t *testing.T) {
 		if len(sent.Data) != 1 || !bytes.Contains(sent.Data[0], []byte(`"type":"user.message"`)) {
 			t.Fatalf("unexpected sent events: %+v", sent)
 		}
-		sentEventID := sessionEventStringField(t, sent.Data[0], "id")
-		sentCreatedAt := sessionEventStringField(t, sent.Data[0], "created_at")
-		if _, err := time.Parse(time.RFC3339, sentCreatedAt); err != nil {
-			t.Fatalf("sent event created_at = %q, want RFC3339: %v", sentCreatedAt, err)
-		}
-		if _, err := app.pool.Exec(context.Background(), `update session_events set payload = payload - 'created_at' where external_id = $1`, sentEventID); err != nil {
-			t.Fatalf("remove stored event created_at: %v", err)
+		if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) || sessionEventStringField(t, sent.Data[0], "processed_at") == "" {
+			t.Fatalf("sent event must expose processed_at without created_at: %s", sent.Data[0])
 		}
 		events := listSessionEvents(t, app, created.ID, "types[]=user.message", defaultTestKey)
 		if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(`"id":"sevt_`)) {
 			t.Fatalf("unexpected listed events: %+v", events)
 		}
-		if listedCreatedAt := sessionEventStringField(t, events.Data[0], "created_at"); listedCreatedAt != sentCreatedAt {
-			t.Fatalf("listed event created_at = %q, want %q", listedCreatedAt, sentCreatedAt)
+		if bytes.Contains(events.Data[0], []byte(`"created_at"`)) {
+			t.Fatalf("listed event exposed created_at: %s", events.Data[0])
 		}
 		threadEvents := listThreadEvents(t, app, created.ID, thread.ID, defaultTestKey)
 		if len(threadEvents.Data) != 3 {
@@ -450,8 +445,8 @@ func TestPlatformWebSessionStream(t *testing.T) {
 				t.Fatal("platform web stream closed before event arrived")
 			}
 			if strings.HasPrefix(line, "data: ") && strings.Contains(line, "hello from web-api stream") {
-				if !strings.Contains(line, `"created_at"`) {
-					t.Fatalf("streamed event missing created_at: %s", line)
+				if strings.Contains(line, `"created_at"`) || !strings.Contains(line, `"processed_at"`) {
+					t.Fatalf("streamed event timestamp differs from Claude contract: %s", line)
 				}
 				return
 			}
@@ -782,11 +777,10 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	codeSessionService := newCodeSessionService(app, nil, nil)
 
 	accepted := sendSessionEvents(t, app, session.ID, `{"events":[
-		{"type":"user.message","content":[{"type":"text","text":"startup message one"}]},
-		{"type":"user.message","content":[{"type":"text","text":"startup message two"}]}
+		{"type":"user.message","content":[{"type":"text","text":"startup message"}]}
 	]}`, defaultTestKey)
-	if len(accepted.Data) != 2 {
-		t.Fatalf("accepted session events = %#v, want two", accepted.Data)
+	if len(accepted.Data) != 1 {
+		t.Fatalf("accepted session events = %#v, want one", accepted.Data)
 	}
 
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
@@ -803,13 +797,11 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list inbound after activation: %v", err)
 	}
-	if len(inbound) != 3 ||
-		!bytes.Contains(inbound[1].Payload, []byte("startup message one")) ||
-		!bytes.Contains(inbound[2].Payload, []byte("startup message two")) {
-		t.Fatalf("inbound after activation = %#v, want initialize and both startup messages", inbound)
+	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte("startup message")) {
+		t.Fatalf("inbound after activation = %#v, want initialize and startup message", inbound)
 	}
 
-	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"post-cutover message"}]}]}`, defaultTestKey)
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 	if len(sent.Data) != 1 {
 		t.Fatalf("post-cutover events = %#v, want one", sent.Data)
 	}
@@ -817,8 +809,8 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list post-cutover inbound: %v", err)
 	}
-	if len(inbound) != 4 || !bytes.Contains(inbound[3].Payload, []byte("post-cutover message")) {
-		t.Fatalf("post-cutover inbound = %#v, want realtime message after startup history", inbound)
+	if len(inbound) != 3 || !bytes.Contains(inbound[2].Payload, []byte(`"subtype":"interrupt"`)) {
+		t.Fatalf("post-cutover inbound = %#v, want realtime interrupt after startup history", inbound)
 	}
 }
 
@@ -866,7 +858,7 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 			CreatedAt:   createdAt,
 		})
 	}
-	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events, nil); err != nil {
+	if _, err := app.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events); err != nil {
 		t.Fatalf("append large history: %v", err)
 	}
 	if err := newCodeSessionService(app, nil, nil).
@@ -2218,8 +2210,9 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	var submitted sessionEventPageAPIResponse
 	decodeJSON(t, resp.Body, &submitted)
 
-	if sessionInputProcessedAt(t, submitted.Data[0]) != "" {
-		t.Fatal("custom tool result must wait for ACK")
+	receiptTime := sessionInputProcessedAt(t, submitted.Data[0])
+	if receiptTime == "" {
+		t.Fatal("custom tool result must be processed on receipt")
 	}
 
 	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
@@ -2256,8 +2249,8 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	}
 	consumePublicInput(t, app, codeSession, workerEpoch, inputID)
 	history := listSessionEvents(t, app, session.ID, "types[]=user.custom_tool_result", defaultTestKey)
-	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
-		t.Fatal("ACK did not process custom tool result")
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != receiptTime {
+		t.Fatal("ACK changed custom tool result processing time")
 	}
 
 }
@@ -3073,33 +3066,34 @@ func TestCodeSessionWorkerEventsStreamReceivesQueuedAndLiveUserEvents(t *testing
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 
-	frames := readCodeSessionWorkerSSEFramesAfterConnect(
+	queuedFrames := readCodeSessionWorkerSSEFramesAfterConnect(
 		t,
 		app,
 		codeSessionID,
 		"events/stream?worker_epoch="+url.QueryEscape(workerEpoch),
-		"live over worker sse",
+		"queued over worker sse",
+		nil,
+	)
+	if len(queuedFrames) < 2 {
+		t.Fatalf("worker SSE frames len = %d, want initialize and queued message: %#v", len(queuedFrames), queuedFrames)
+	}
+	if !strings.Contains(queuedFrames[0], "event: client_event") || !strings.Contains(queuedFrames[0], `"event_type":"control_request"`) {
+		t.Fatalf("unexpected first worker SSE frame: %s", queuedFrames[0])
+	}
+	queuedData := decodeWorkerSSEFrameData(t, queuedFrames[len(queuedFrames)-1])
+	queuedID, _ := queuedData["event_id"].(string)
+	if queuedID == "" {
+		t.Fatalf("queued worker SSE event has no ID: %s", queuedFrames[len(queuedFrames)-1])
+	}
+	postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(queuedID)+`,"status":"processed"}]}`)
+	frames := readCodeSessionWorkerSSEFramesAfterConnect(
+		t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(workerEpoch),
+		`"subtype":"interrupt"`,
 		func() {
-			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"live over worker sse"}]}]}`, defaultTestKey)
+			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 		},
 	)
-	if len(frames) < 3 {
-		t.Fatalf("worker SSE frames len = %d, want at least 3: %#v", len(frames), frames)
-	}
-	if !strings.Contains(frames[0], "event: client_event") || !strings.Contains(frames[0], `"event_type":"control_request"`) {
-		t.Fatalf("unexpected first worker SSE frame: %s", frames[0])
-	}
-	queuedSeen := false
-	for _, frame := range frames {
-		if strings.Contains(frame, "queued over worker sse") {
-			queuedSeen = true
-			break
-		}
-	}
-	if !queuedSeen {
-		t.Fatalf("worker SSE frames missing queued event: %#v", frames)
-	}
-	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], "live over worker sse") {
+	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], `"subtype":"interrupt"`) {
 		t.Fatalf("unexpected user worker SSE frame: %s", frames[len(frames)-1])
 	}
 	frameData := decodeWorkerSSEFrameData(t, frames[len(frames)-1])
@@ -3505,8 +3499,8 @@ func TestSessionEventInputValidation(t *testing.T) {
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"done"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
-	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
-	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.custom_tool_result"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
+	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"context"}]},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
+	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"system.message"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
 		t.Fatalf("unexpected valid events response: %+v", valid)
 	}
 	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)

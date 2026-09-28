@@ -15,34 +15,76 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestSessionUnacknowledgedInputsBlockAcceptance(t *testing.T) {
-	app := newPayloadIntegrationApp(t, newFakeStore("pending-inputs"))
+func TestSessionCanAcceptNextTurnAfterWorkerReturnsIdle(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("accepted-input-recovery"))
 	worker, epoch := newPayloadIntegrationSession(t, app)
+	first := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first"}]}]}`, defaultTestKey)
+	if sessionInputProcessedAt(t, first.Data[0]) == "" {
+		t.Fatal("first message was not accepted")
+	}
 	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"running"}`)
 	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"idle"}`)
-	for _, input := range []string{
-		`{"type":"user.tool_confirmation","tool_use_id":"sevt_tool","result":"allow"}`,
-		`{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"test"}]}`,
-		`{"type":"user.interrupt"}`,
-	} {
-		sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
-		if sessionInputProcessedAt(t, sent.Data[0]) != "" {
-			t.Fatal("worker input processed before ACK")
+	next := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"next"}]}]}`, defaultTestKey)
+	if sessionInputProcessedAt(t, next.Data[0]) == "" {
+		t.Fatal("prior accepted message blocked the next turn after idle")
+	}
+}
+
+func TestCustomToolResultIsProcessedOnReceiptAndNotRepublishedOnACK(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("custom-result-immediate"))
+	worker, epoch := newPayloadIntegrationSession(t, app)
+	putCodeSessionWorkerState(t, app, worker.ExternalID, `{"worker_epoch":`+epoch+`,"worker_status":"requires_action"}`)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.baseURL+"/v1/sessions/"+worker.SessionExternalID+"/events/stream?beta=true", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Api-Key", defaultTestKey)
+	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+	resp, err := app.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream: %d", resp.StatusCode)
+	}
+	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"done"}]}]}`, defaultTestKey)
+	inputID := sessionEventStringField(t, sent.Data[0], "id")
+	processedAt := sessionInputProcessedAt(t, sent.Data[0])
+	if processedAt == "" {
+		t.Fatal("custom tool result was not processed on receipt")
+	}
+	consumePublicInput(t, app, worker, epoch, inputID)
+	history := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.custom_tool_result", defaultTestKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != processedAt {
+		t.Fatalf("worker ACK changed receipt processing time: %s", history.Data)
+	}
+	system := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"end"}]}]}`, defaultTestKey)
+	systemID := sessionEventStringField(t, system.Data[0], "id")
+	count := 0
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
 		}
-		next := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"test"}]}]}`, defaultTestKey)
-		if sessionInputProcessedAt(t, next.Data[0]) != "" {
-			t.Fatal("unacknowledged input did not block acceptance")
+		var event struct {
+			ID string `json:"id"`
 		}
-		assertQueuedInputPreservesIdle(t, app, worker)
-		for _, raw := range []json.RawMessage{sent.Data[0], next.Data[0]} {
-			if _, changed, err := app.db.MarkSessionEventProcessed(t.Context(), worker, sessionEventStringField(t, raw, "id"), time.Now().UTC()); err != nil || !changed {
-				t.Fatalf("process pending input: %t %v", changed, err)
-			}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.ID == inputID {
+			count++
+		}
+		if event.ID == systemID {
+			break
 		}
 	}
-	batch := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"sevt_tool","content":[{"type":"text","text":"test"}]},{"type":"user.message","content":[{"type":"text","text":"test"}]}]}`, defaultTestKey)
-	if sessionInputProcessedAt(t, batch.Data[1]) != "" {
-		t.Fatal("earlier control input in the same batch did not block acceptance")
+	if err := scanner.Err(); err != nil || count != 1 {
+		t.Fatalf("custom result appeared %d times in SSE: %v", count, err)
 	}
 }
 
@@ -149,6 +191,11 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 					if !deleted {
 						t.Fatalf("missing deletion SSE: %v", scanner.Err())
 					}
+					for scanner.Scan() {
+					}
+					if err := scanner.Err(); err != nil {
+						t.Fatalf("deletion SSE did not end: %v", err)
+					}
 				}
 
 				if codeID != "" {
@@ -174,7 +221,7 @@ func TestSessionRemovalBeforeWorkerStarts(t *testing.T) {
 func TestSessionHistoryCursorBoundaries(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("cursor-boundaries"))
 	worker, _ := newPayloadIntegrationSession(t, app)
-	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"test"}]},{"type":"user.message","content":[{"type":"text","text":"test"}]},{"type":"user.message","content":[{"type":"text","text":"test"}]}]}`, defaultTestKey)
+	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"one"}]},{"type":"system.message","content":[{"type":"text","text":"two"}]},{"type":"system.message","content":[{"type":"text","text":"three"}]}]}`, defaultTestKey)
 	for _, order := range []string{"asc", "desc"} {
 		var cursor *db.SessionEventPageCursor
 		var ids []string
@@ -195,14 +242,14 @@ func TestSessionHistoryCursorBoundaries(t *testing.T) {
 			}
 			cursor = &db.SessionEventPageCursor{ExternalID: events[0].ExternalID}
 		}
-		if len(ids) != 5 {
+		if len(ids) != 3 {
 			t.Fatalf("%s lost rows: %v", order, ids)
 		}
 		if order == "desc" {
 			slices.Reverse(ids)
 		}
-		if ids[2] != sessionEventStringField(t, sent.Data[0], "id") || ids[4] != sessionEventStringField(t, sent.Data[2], "id") {
-			t.Fatalf("processed/null tie order: %v", ids)
+		if ids[0] != sessionEventStringField(t, sent.Data[0], "id") || ids[2] != sessionEventStringField(t, sent.Data[2], "id") {
+			t.Fatalf("processing time tie order: %v", ids)
 		}
 	}
 	firstID := sessionEventStringField(t, sent.Data[0], "id")

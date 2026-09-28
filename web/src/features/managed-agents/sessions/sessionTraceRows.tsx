@@ -8,7 +8,6 @@ import {
   type DisplayEventEntry,
   type I18nMsg,
   type IdleGapEntry,
-  type QueuedBoundaryEntry,
   type QuickstartSessionEvent,
   type SessionEventListEntry,
   type ToolBatchEntry,
@@ -79,27 +78,6 @@ export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
   );
 }
 
-export function QueuedBoundaryRow({ entry }: { entry: QueuedBoundaryEntry }) {
-  const { msg } = useI18n();
-  const label = msg(
-    'managedAgents.sessions.trace.queuedMessages',
-    '{count, plural, one {# queued message} other {# queued messages}}',
-    { count: entry.count },
-  );
-  return (
-    <div
-      role="separator"
-      aria-label={label}
-      data-entry-kind="queued_boundary"
-      className="relative my-2 flex h-6 items-center gap-3 text-xs text-muted-foreground"
-    >
-      <span className="h-px flex-1 bg-border/30" aria-hidden />
-      <span>{label}</span>
-      <span className="h-px flex-1 bg-border/30" aria-hidden />
-    </div>
-  );
-}
-
 export function DisplayEventRow({
   entry,
   selected,
@@ -123,7 +101,7 @@ export function DisplayEventRow({
     return <TranscriptThinkingRow entry={entry} selected={selected} onSelect={onSelect} presentation={presentation} />;
   }
   const title = sessionDisplayEventInlinePreview(entry, msg);
-  const textInProgress = Boolean(entry.inProgress || entry.displayEvent.isQueued || entry.displayEvent.isStreaming);
+  const textInProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
   const showGenerating = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
   return (
     <div
@@ -170,7 +148,7 @@ function TranscriptMessageRow({
   presentation: 'standalone' | 'iteration';
 }) {
   const { msg } = useI18n();
-  const inProgress = Boolean(entry.inProgress || entry.displayEvent.isQueued || entry.displayEvent.isStreaming);
+  const inProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
   const content = entry.displayEvent.content || sessionDisplayEventInlinePreview(entry, msg);
   const speaker = entry.displayEvent.type === 'agent' ? 'agent' : 'user';
   const handleClick = (event: ReactMouseEvent<HTMLElement>) => {
@@ -814,8 +792,6 @@ export function TranscriptRow({
   switch (entry.kind) {
     case 'idle_gap':
       return <IdleGapRow entry={entry} />;
-    case 'queued_boundary':
-      return <QueuedBoundaryRow entry={entry} />;
     case 'outcome':
       return <OutcomeRow entry={entry} selected={selected} onSelect={onSelect} />;
     case 'tool_call':

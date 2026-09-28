@@ -24,7 +24,6 @@ type sessionStreamEvent struct {
 	EventType         string          `json:"event_type"`
 	Payload           json.RawMessage `json:"payload"`
 	ProcessedAt       time.Time       `json:"processed_at,omitempty"`
-	CreatedAt         time.Time       `json:"created_at,omitempty"`
 }
 
 type codeSessionStreamFanout struct {
@@ -42,9 +41,6 @@ func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionE
 	payloads := make(map[string]*sessionEventsFanout)
 	sessionIDs := make([]string, 0, 1)
 	for _, event := range events {
-		if event.ProcessedAt.IsZero() && maevents.IsClientInput(event.EventType) {
-			continue
-		}
 		payload, exists := payloads[event.SessionExternalID]
 		if !exists {
 			payload = &sessionEventsFanout{}
@@ -135,6 +131,5 @@ func sessionStreamEventFrom(event db.SessionEvent) sessionStreamEvent {
 		EventType:         event.EventType,
 		Payload:           event.Payload,
 		ProcessedAt:       event.ProcessedAt,
-		CreatedAt:         event.CreatedAt,
 	}
 }

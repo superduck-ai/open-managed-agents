@@ -918,7 +918,7 @@ export function LiveRowPreview({
       displayEvent.content ||
       displayEvent.label ||
       label;
-  return <>{compact ? sessionInlineRowPreview(value) : value}</>;
+  return <>{compact ? sessionInlineRowPreview(value) : <TranscriptContent value={value} />}</>;
 }
 
 export function sessionDisplayEventInlinePreview(entry: DisplayEventEntry, msg: I18nMsg) {

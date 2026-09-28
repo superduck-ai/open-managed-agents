@@ -109,7 +109,7 @@ func TestLoadOffloadedPayloadRestoresExactPayload(t *testing.T) {
 	if !bytes.Equal(loaded.Payload, payload) || loaded.PayloadRef == nil || loaded.PayloadRef.CleanupJobID != "job_test" {
 		t.Fatalf("loaded envelope = %#v", loaded)
 	}
-	if workerevents.LargePayloadThreshold >= workerevents.MaxMessageBytes {
+	if workerevents.LargePayloadThreshold >= (1 << 20) {
 		t.Fatal("large payload threshold leaves no room for the reference envelope")
 	}
 }

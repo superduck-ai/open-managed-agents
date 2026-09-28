@@ -57,7 +57,7 @@ payload 转换、cleanup job 提交和 S3 上传都在该事务之前完成；�
 
 公开 Send Events 已经先把事件提交到 `session_events`。若随后 Publish 失败，API 返回 503，但
 服务端没有后台补发记录。调用方必须重试。存在 payload UUID 或 request ID 时，服务端据此派生稳定
-`csev_* Nats-Msg-Id`；PubAck 已成功但响应丢失时，JetStream 在 24 小时内去重。无稳定 ID 的调用
+`csev_* Nats-Msg-Id`；PubAck 已成功但响应丢失时，JetStream 在配置允许的去重窗口内去重，默认 24 小时。无稳定 ID 的调用
 被视为新事件。
 
 activation 是例外的启动编排：先短事务锁定 Session 与 initializing Code Session 并读取完整历史，
@@ -72,7 +72,11 @@ Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发�
 ## Stream 与顺序
 
 `OMA_WORKER_INBOUND` 捕获 `oma.worker.inbound.v2.>`，使用 `WorkQueuePolicy`、file storage、
-3 replicas、10 GiB、`DiscardNew`、1 MiB 单消息上限、24 小时 duplicate window 和 `MaxAge=0`。
+`nats.worker_event_stream` 可配置 `max_bytes`、`max_age`、`replicas`、`max_msg_size`，
+默认分别为 256 MiB（`1 << 28`）、`0s`、3、1 MiB；字段省略时各自使用默认值。
+固定使用 `DiscardNew`。duplicate window 默认 24 小时，非零 MaxAge 更短时同步缩短。
+启动时创建或更新 Stream，各 API 实例须使用一致配置；完整取值限制见 [运行配置](../runtime-configuration.md)。
+非零 MaxAge 会自动删除到期的未 ACK 消息，下面依赖应用过期清理的保证只适用于默认 `MaxAge=0`。
 
 每个 Code Session 使用两条互不重叠的 subject，各创建一个精确过滤的 durable pull consumer：
 
@@ -168,7 +172,7 @@ SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，�
 2. 把原始 payload 上传到租户隔离 key；
 3. key 使用 Code Session、稳定 event ID 和随机 cleanup job ID，避免重试对象相互覆盖；
 4. envelope 改存 key、size、SHA-256 与 cleanup job ID；
-5. 再次校验引用 envelope 小于 1 MiB。
+5. 发布前由 Broker 校验最终 envelope 不超过配置的 `max_msg_size`，默认 1 MiB。
 
 SSE 读取时限制为声明长度加一字节，并校验对象报告大小、实际大小和 SHA-256。缺失、截断、篡改或
 读取失败都不发送、不 ACK；`MaxAckPending=1` 使同通道的后续消息继续阻塞。PubAck 失败可能是模糊成功，

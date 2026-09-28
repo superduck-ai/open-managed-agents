@@ -62,9 +62,10 @@ type yamlDatabaseConfig struct {
 }
 
 type yamlNATSConfig struct {
-	URL            string        `yaml:"url"`
-	ConnectTimeout time.Duration `yaml:"connect_timeout"`
-	DrainTimeout   time.Duration `yaml:"drain_timeout"`
+	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL               string                  `yaml:"url"`
+	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
 
 type yamlCodeSessionConfig struct {
@@ -102,9 +103,10 @@ func newYAMLConfig() yamlConfig {
 		Database: yamlDatabaseConfig{URL: defaults.Database.URL},
 		Redis:    defaults.Redis,
 		NATS: yamlNATSConfig{
-			URL:            defaults.NATS.URL,
-			ConnectTimeout: defaults.NATS.ConnectTimeout,
-			DrainTimeout:   defaults.NATS.DrainTimeout,
+			WorkerEventStream: defaults.NATS.WorkerEventStream,
+			URL:               defaults.NATS.URL,
+			ConnectTimeout:    defaults.NATS.ConnectTimeout,
+			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
 		Auth:                 defaults.Auth,
 		Tunnel:               defaults.Tunnel,
@@ -149,9 +151,10 @@ func (input yamlConfig) resolve() Config {
 		Database: DatabaseConfig{URL: input.Database.URL},
 		Redis:    input.Redis,
 		NATS: NATSConfig{
-			URL:            input.NATS.URL,
-			ConnectTimeout: input.NATS.ConnectTimeout,
-			DrainTimeout:   input.NATS.DrainTimeout,
+			WorkerEventStream: input.NATS.WorkerEventStream,
+			URL:               input.NATS.URL,
+			ConnectTimeout:    input.NATS.ConnectTimeout,
+			DrainTimeout:      input.NATS.DrainTimeout,
 		},
 		Auth:                 input.Auth,
 		Tunnel:               input.Tunnel,

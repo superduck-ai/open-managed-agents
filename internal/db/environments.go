@@ -41,6 +41,8 @@ type ListEnvironmentsPageParams struct {
 	Limit           int
 	Cursor          *EnvironmentPageCursor
 	IncludeArchived bool
+	ArchivedOnly    bool
+	Search          string
 }
 
 type EnvironmentKey struct {
@@ -565,6 +567,7 @@ func environmentPageParams(params ListEnvironmentsPageParams) environmentPageMap
 	return environmentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: params.Limit + 1,
 		Cursor: params.Cursor, IncludeArchived: params.IncludeArchived,
+		ArchivedOnly: params.ArchivedOnly, Search: params.Search,
 	}
 }
 

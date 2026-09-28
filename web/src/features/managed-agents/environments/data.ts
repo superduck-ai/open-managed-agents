@@ -16,23 +16,20 @@ export function useEnvironment(workspaceId: string, id?: string) {
   });
 }
 
-export function useEnvironments(workspaceId: string, page: PageCursor, filtered = false) {
+export function useEnvironments(workspaceId: string, page: PageCursor, search = '', status = 'all') {
   return useQuery({
-    queryKey: [...environmentQueryKey(workspaceId), 'list', filtered ? 'filtered' : page],
-    queryFn: async () => {
-      let cursor = filtered ? null : page;
-      const data: EnvironmentApiResponse[] = [];
-      do {
-        const result = await anthropicBetaApi.environments.list<EnvironmentApiResponse>(
-          { limit: 50, include_archived: true, ...(cursor ? { page: cursor } : {}) },
-          workspaceId,
-        );
-        data.push(...result.data);
-        cursor = result.next_page ?? null;
-        if (!filtered) return result;
-      } while (cursor);
-      return { data, has_more: false, next_page: null };
-    },
+    queryKey: [...environmentQueryKey(workspaceId), 'list', { page, search, status }],
+    queryFn: () =>
+      anthropicBetaApi.environments.list<EnvironmentApiResponse>(
+        {
+          limit: 50,
+          include_archived: status !== 'active',
+          status,
+          ...(search ? { search } : {}),
+          ...(page ? { page } : {}),
+        },
+        workspaceId,
+      ),
     retry: false,
   });
 }

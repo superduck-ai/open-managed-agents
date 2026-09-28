@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../shared/i18n';
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
+import type { ApiError } from '../../../shared/api/client';
 import { Button } from '../../../shared/ui/button';
 import { environmentQueryKey } from './data';
 import type { PrebuildStage } from './prebuild';
@@ -24,8 +25,10 @@ export function EnvironmentPrebuildLogs({
   const { msg } = useI18n();
   const logRef = useRef<HTMLPreElement>(null);
   const followTail = useRef(true);
+  const queryClient = useQueryClient();
+  const queryKey = [...environmentQueryKey(workspaceId), 'prebuild-logs', environmentId, jobId, stage];
   const query = useInfiniteQuery({
-    queryKey: [...environmentQueryKey(workspaceId), 'prebuild-logs', environmentId, jobId, stage],
+    queryKey,
     initialPageParam: '',
     queryFn: async ({ pageParam, signal }) => {
       const chunk = await anthropicBetaApi.environments.prebuild.logs<LogResponse>(
@@ -44,6 +47,9 @@ export function EnvironmentPrebuildLogs({
   const last = query.data?.pages.at(-1);
   const cursor = query.data?.pageParams.at(-1);
   const { hasNextPage, isFetching, isError, fetchNextPage } = query;
+  const logError = query.error as Partial<ApiError> | null;
+  const restartRequired =
+    logError?.status === 409 && logError.message === 'Build log changed; reload logs from the beginning';
   useEffect(() => {
     if (!hasNextPage || isFetching || isError) return;
     // Drain available pages immediately; wait only when caught up with a live step.
@@ -69,7 +75,9 @@ export function EnvironmentPrebuildLogs({
       </pre>
       {query.isError ? (
         <p role="alert" className="px-4 py-2 text-xs text-destructive">
-          {msg('environmentPrebuild.logsFailed', 'Could not load logs.')}
+          {restartRequired
+            ? msg('environmentPrebuild.logsChanged', 'Logs changed. Reload them from the beginning.')
+            : msg('environmentPrebuild.logsFailed', 'Could not load logs.')}
         </p>
       ) : null}
       {query.isError ? (
@@ -79,9 +87,20 @@ export function EnvironmentPrebuildLogs({
             variant="outline"
             size="sm"
             disabled={query.isFetching}
-            onClick={() => void (query.hasNextPage ? query.fetchNextPage() : query.refetch())}
+            onClick={() => {
+              if (restartRequired) {
+                followTail.current = true;
+                void queryClient.resetQueries({ queryKey, exact: true });
+              } else {
+                void (query.hasNextPage ? query.fetchNextPage() : query.refetch());
+              }
+            }}
           >
-            {query.isFetching ? msg('common.loading', 'Loading...') : msg('common.retry', 'Retry')}
+            {query.isFetching
+              ? msg('common.loading', 'Loading...')
+              : restartRequired
+                ? msg('environmentPrebuild.reloadLogs', 'Reload from beginning')
+                : msg('common.retry', 'Retry')}
           </Button>
         </div>
       ) : null}

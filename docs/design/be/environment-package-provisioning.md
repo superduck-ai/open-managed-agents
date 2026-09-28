@@ -30,6 +30,20 @@ APT 列表非空时，索引更新与软件包安装在同一条 `RUN` 中执行
 
 提交远端任务前先持久化提交标记。响应丢失时停止自动提交，避免重复创建；远端成功返回任务引用后，当前 worker 持有该引用并持续重试检查点写入，成功落库后才延后任务继续轮询。worker 在引用落库前退出时保留 `submitting` 标记，结果仍按不确定处理。查询进度失败时继续轮询。其他检查点写入失败时持续延后 River 任务，即使观察时间已经超限，也要等检查点可写后先保存不确定结果，再结束观察。超时、停用或服务商配置变化会停止观察，远端任务可能仍在执行；状态显示为 `unknown` 时提示显式重试可能重复运行远端任务。显式重试创建新 River job 和镜像 tag，使用当前配置，从镜像阶段完整重跑。
 
+提交失败必须区分「服务商已明确拒绝」和「结果不可知」：4xx 响应在服务商执行任何远端工作之前就被拒绝，因此清除 `submitting` 标记、把 HTTP 状态写入 `message`，并以 `status_code` 记录结构化日志，状态显示为 `failed`，操作者据状态码直接定位凭据或端点配置错误，显式重试不会重复运行远端任务。传输丢失、未跟随的重定向、5xx 响应以及缺少构建引用只证明请求结果不可知，此时保留 `submitting` 标记并写入 `OutcomeUncertain` 与稳定文案，详细原因只进入结构化日志，不进入面向操作者的 `message`；检查点写入失败时任务继续延后，不会在结果落库前结束观察。
+
+```mermaid
+flowchart TD
+    Guard["持久化 submitting=true"] --> Start["调用服务商 Start"]
+    Start --> Ok{"返回构建引用"}
+    Ok -->|是| Keep["持有引用并重试写入检查点"]
+    Ok -->|否| Kind{"失败类型"}
+    Kind -->|"4xx 明确拒绝"| Failed["清除 submitting<br/>message 写入 HTTP 状态<br/>日志记录 status_code"]
+    Kind -->|"传输丢失 / 3xx / 5xx / 空引用"| Unknown["保留 submitting<br/>写入 OutcomeUncertain<br/>日志记录原因"]
+    Failed --> FailedState["状态 failed：可直接显式重试"]
+    Unknown --> UnknownState["状态 unknown：重试可能重复运行远端任务"]
+```
+
 模板绑定遵循以下规则：
 
 - 仅修改名称、描述、网络或环境变量时保留原构建；清空软件包时解除绑定并恢复基础模板。
@@ -69,13 +83,21 @@ API 沿用 `/v1/environments` 的鉴权和 `beta=true` 要求，返回 `build` �
 
 控制台在软件包标题旁显示预安装状态，详情弹窗呈现两个阶段、状态、发起时间、耗时及可用操作。耗时包含排队与观察时间。操作遵从后端能力，归档环境不显示操作；软件包有未保存修改时显示「待保存」。软件包输入框每次添加一个包，通过「添加」按钮或 Enter 生成独立条目；空白输入或同时输入多个包时禁用按钮，输入法组词确认不提交；创建或保存环境时统一提交草稿。包名、输入框和日志禁用字体连字，确保版本符号逐字符显示。
 
-状态缓存按组织、workspace、环境及已保存的软件包隔离，仅活动任务轮询。日志缓存另按 job ID 和阶段隔离，拼接分页后去除 ANSI 颜色控制码，以纯文本呈现且不入库。前端连续读取分页，追上输出后每 3 秒查询新增日志，直到服务商确认完整；构建结束不提前停读，失败保留已读内容并从失败游标重试。自动跟随末尾，用户上滚时保留位置。Flow 已完成步骤读完后继续下一步。不支持日志的阶段显示失败原因或「此阶段不提供日志」。
+状态缓存按组织、workspace、环境及已保存的软件包隔离，仅活动任务轮询。日志缓存另按 job ID 和阶段隔离，拼接分页后去除 ANSI 颜色控制码，以纯文本呈现且不入库。前端连续读取分页，追上输出后每 3 秒查询新增日志，直到服务商确认完整；构建结束不提前停读，暂时性下载失败保留已读内容并从失败游标重试。Flow 日志缩短导致游标失效时返回 409，控制台提示从头加载并重置该任务阶段的分页缓存；416 缺少长度或与游标不一致时，通过无 Range 下载确认是否发生截断，当前位置恰好位于末尾时继续正常轮询。自动跟随末尾，用户上滚时保留位置。Flow 已完成步骤读完后继续下一步。不支持日志的阶段显示失败原因或「此阶段不提供日志」。
 
 ### 验证
 
 ```bash
-go test ./internal/config ./internal/environments ./internal/db -run 'Test(LoadEnvironmentPrebuild|Prebuild|EnvironmentMapper|BuildPackage|NormalizePackages|ValidatePackage|ProvisionPackages)' -count=1
+go test ./internal/config ./internal/environments ./internal/db -run 'Test(BuildHTTP|LoadEnvironmentPrebuild|Prebuild|EnvironmentMapper|BuildPackage|NormalizePackages|ValidatePackage|ProvisionPackages)' -count=1
 go test ./internal/runtime/e2bruntime -count=1
 ```
 
-CubeSandbox HTTP 测试验证模板请求与状态映射。真实部署还需验证镜像推送、拉取、模板转换及 Session 回连；镜像与模板构建本身无需 Sandbox 回连 OMA，启动 Session 后的注册、心跳、消息与模型代理需要此连通性。
+CubeSandbox HTTP 测试验证模板请求与状态映射，`BuildHTTP` 测试验证服务商状态码被区分为明确拒绝或结果不可知。真实部署还需验证镜像推送、拉取、模板转换及 Session 回连；镜像与模板构建本身无需 Sandbox 回连 OMA，启动 Session 后的注册、心跳、消息与模型代理需要此连通性。
+
+### 环境列表筛选与归档详情
+
+`GET /v1/environments` 支持可选 `search`（名称不区分大小写的字面子串或精确 external ID）与 `status=all|active|archived`。搜索输入在 HTTP 边界修剪一次；查询通过绑定参数保持 workspace 范围和原有游标排序，不把 `%` / `_` 解释为通配符。未传状态时保留原有 `include_archived` 语义；`active` 排除归档，`archived` 只返回归档，`all` 仍由 `include_archived` 决定是否包含归档。
+
+控制台按搜索、状态和游标分别缓存，每次只请求一页（最多 50 项），不再下载全量列表进行本地筛选。切换或清空搜索、状态时同时清空选择并重置到第一页；筛选结果也支持前后翻页。归档详情显示 Archived 徽标与只读说明，配置和工作队列仍可查阅。
+
+验收覆盖筛选 SQL 与参数绑定、真实 PostgreSQL/API 的搜索及归档分页、前端筛选往返的分页重置，以及归档详情提示。

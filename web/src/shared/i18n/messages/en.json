@@ -2154,6 +2154,8 @@
   "environmentPrebuild.start": "Prepare now",
   "environmentPrebuild.noLogs": "No logs yet.",
   "environmentPrebuild.logsFailed": "Could not load logs.",
+  "environmentPrebuild.logsChanged": "Logs changed. Reload them from the beginning.",
+  "environmentPrebuild.reloadLogs": "Reload from beginning",
   "environmentPrebuild.dialogDescription": "Preparation status and logs for the saved packages.",
   "environmentPrebuild.stages": "Build stages",
   "environmentPrebuild.expired": "Run details are no longer available.",

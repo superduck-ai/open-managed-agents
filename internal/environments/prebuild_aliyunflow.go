@@ -269,13 +269,20 @@ func readAliyunFlowLogDownload(ctx context.Context, client *http.Client, address
 	if err != nil {
 		return "", false, fmt.Errorf("Aliyun Flow log download failed")
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-		if resp.Header.Get("Content-Range") != fmt.Sprintf("bytes */%d", offset) {
-			return "", false, fmt.Errorf("Aliyun Flow log size changed; reopen logs from the beginning")
+		resp.Body.Close()
+		if resp.Header.Get("Content-Range") == fmt.Sprintf("bytes */%d", offset) {
+			return "", true, nil
 		}
-		return "", true, nil
+		// A 416 need not include the length. Read the full representation to
+		// distinguish a live tail from a cursor invalidated by truncation.
+		req.Header.Del("Range")
+		resp, err = client.Do(req)
+		if err != nil {
+			return "", false, fmt.Errorf("Aliyun Flow log download failed")
+		}
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return "", false, fmt.Errorf("Aliyun Flow log download returned HTTP %d", resp.StatusCode)
 	}
@@ -284,7 +291,10 @@ func readAliyunFlowLogDownload(ctx context.Context, client *http.Client, address
 	}
 	if resp.StatusCode == http.StatusOK && offset > 0 {
 		if _, err := io.CopyN(io.Discard, resp.Body, offset); err != nil {
-			return "", err == io.EOF, err
+			if err == io.EOF {
+				return "", false, errPrebuildLogCursorExpired
+			}
+			return "", false, err
 		}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))

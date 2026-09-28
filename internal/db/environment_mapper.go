@@ -50,6 +50,8 @@ type environmentPageMapperParams struct {
 	FetchLimit      int
 	Cursor          *EnvironmentPageCursor
 	IncludeArchived bool
+	ArchivedOnly    bool
+	Search          string
 }
 
 type EnvironmentMapper interface {

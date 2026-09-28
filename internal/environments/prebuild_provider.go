@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,30 @@ import (
 
 // buildJobRef is an opaque, persistable locator for one remote build job.
 type buildJobRef string
+
+// buildProviderError is a completed build provider response that rejected the
+// request. Callers must not treat every provider failure alike: a client-side
+// rejection proves that no remote work started, while transport loss,
+// redirects and server-side failures leave the remote outcome unknown.
+type buildProviderError struct {
+	Status int
+}
+
+func (e *buildProviderError) Error() string {
+	return fmt.Sprintf("build provider returned HTTP %d", e.Status)
+}
+
+// providerRejectionStatus reports the status code of a response that
+// definitively rejected the submission without starting remote work. 4xx
+// responses are decided before the provider acts on the request; 5xx responses
+// may follow partial work, so they stay ambiguous.
+func providerRejectionStatus(err error) (int, bool) {
+	var providerError *buildProviderError
+	if errors.As(err, &providerError) && providerError.Status >= 400 && providerError.Status < 500 {
+		return providerError.Status, true
+	}
+	return 0, false
+}
 
 type buildJobStatus struct {
 	State   string // queued, running, succeeded, failed, cancelled
@@ -82,7 +107,7 @@ func (c buildHTTP) call(ctx context.Context, method, endpoint string, input, out
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("build provider returned HTTP %d", resp.StatusCode)
+		return &buildProviderError{Status: resp.StatusCode}
 	}
 	if output == nil {
 		return nil

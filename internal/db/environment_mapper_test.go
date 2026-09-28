@@ -88,6 +88,34 @@ func TestEnvironmentMapperBuilderContracts(t *testing.T) {
 	}
 }
 
+func TestEnvironmentListFilterBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		includeArchived bool
+		archivedOnly    bool
+		search          string
+		fragments       []string
+		names           []string
+	}{
+		{name: "active", fragments: []string{"archived_at IS NULL"}, names: []string{"params.WorkspaceUUID", "params.FetchLimit"}},
+		{name: "all", includeArchived: true, fragments: []string{"deleted_at IS NULL"}, names: []string{"params.WorkspaceUUID", "params.FetchLimit"}},
+		{name: "archived search", includeArchived: true, archivedOnly: true, search: "literal_%", fragments: []string{"archived_at IS NOT NULL", "external_id = $2", "strpos(lower(name), lower($3)) > 0", "LIMIT $4"}, names: []string{"params.WorkspaceUUID", "params.Search", "params.Search", "params.FetchLimit"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bound := buildEnvironmentMapperListPage(yourbatis.DialectPostgres, environmentPageMapperParams{WorkspaceUUID: "workspace", FetchLimit: 51, IncludeArchived: tc.includeArchived, ArchivedOnly: tc.archivedOnly, Search: tc.search})
+			assertMapperBuilderContract(t, mapperBuilderContract{statement: environmentMapperListPageStatement, bound: bound, wantID: "EnvironmentMapper.ListPage", wantKind: yourbatis.StatementSelect, wantArgumentNames: tc.names, wantSQLFragments: tc.fragments})
+			if tc.includeArchived && !tc.archivedOnly && strings.Contains(bound.SQL, "archived_at IS NULL") {
+				t.Fatal("all excludes archived rows")
+			}
+			if tc.search != "" {
+				if bound.Args[1].Value != tc.search || bound.Args[2].Value != tc.search {
+					t.Fatalf("search values = %+v", bound.Args)
+				}
+			}
+		})
+	}
+}
+
 func TestEnvironmentKeyAndWorkerPollMapperBuilderContracts(t *testing.T) {
 	params := environmentKeyUpsertParams{
 		ExternalID: "envkey_test", OrganizationUUID: "00000000-0000-4000-8000-000000000001",

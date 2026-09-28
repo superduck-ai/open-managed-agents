@@ -132,6 +132,12 @@
             <if test="!params.IncludeArchived">
                 AND archived_at IS NULL
             </if>
+            <if test="params.ArchivedOnly">
+                AND archived_at IS NOT NULL
+            </if>
+            <if test='params.Search != ""'>
+                AND (external_id = #{params.Search} OR strpos(lower(name), lower(#{params.Search})) > 0)
+            </if>
             <if test="params.Cursor != nil">
                 AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
             </if>

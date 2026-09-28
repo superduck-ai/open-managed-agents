@@ -36,20 +36,8 @@ export function EnvironmentList({
   const [filterOpen, setFilterOpen] = useState(false);
   const [pages, setPages] = useState<PageCursor[]>([null]);
   const [selection, setSelection] = useState<Record<string, boolean>>({});
-  const query = useEnvironments(workspaceId, pages.at(-1) ?? null, Boolean(search.trim()) || status !== 'all');
-  const entities = useMemo(
-    () =>
-      (query.data?.data ?? []).filter((entity) => {
-        const archived = Boolean(entity.archived_at || entity.state === 'archived');
-        return (
-          (status === 'all' || (status === 'archived') === archived) &&
-          (!search.trim() ||
-            entity.id === search.trim() ||
-            entity.name.toLowerCase().includes(search.trim().toLowerCase()))
-        );
-      }),
-    [query.data, search, status],
-  );
+  const query = useEnvironments(workspaceId, pages.at(-1) ?? null, search.trim(), status);
+  const entities = query.data?.data ?? [];
   const columns = useMemo<ColumnDef<EnvironmentApiResponse>[]>(() => [{ accessorKey: 'id' }], []);
   const table = useReactTable({
     data: entities,
@@ -105,6 +93,7 @@ export function EnvironmentList({
           placeholder={msg('managedAgents.common.searchByNameOrId', 'Search by name or exact ID')}
           onChange={(value) => {
             setSearch(value);
+            setPages([null]);
             setSelection({});
           }}
         />
@@ -119,6 +108,7 @@ export function EnvironmentList({
           onOpenChange={(open) => setFilterOpen(Boolean(open))}
           onSelect={(value) => {
             setStatus(value);
+            setPages([null]);
             setSelection({});
             setFilterOpen(false);
           }}
@@ -198,7 +188,7 @@ export function EnvironmentList({
               variant="outline"
               size="icon"
               aria-label={msg('common.previousPage', 'Previous page')}
-              disabled={pages.length === 1 || query.isFetching || Boolean(search.trim()) || status !== 'all'}
+              disabled={pages.length === 1 || query.isFetching}
               onClick={() => {
                 setPages(pages.slice(0, -1));
                 setSelection({});

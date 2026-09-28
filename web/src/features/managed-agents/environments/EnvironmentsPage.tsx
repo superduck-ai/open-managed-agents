@@ -5,19 +5,21 @@ import { useLocation } from '@tanstack/react-router';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
+import { Badge } from '../../../shared/ui/badge';
 import { Skeleton } from '../../../shared/ui/skeleton';
 import { Button } from '../../../shared/ui/button';
 import { CopyIdCell } from '../../../shared/ui/data-table-interactions';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { managedEntityListHref, navigateToInternalHref, objectRecord } from '../utils';
 import { environmentErrorMessage } from '../resources/environment-model';
-import { EnvironmentWorkPanel } from '../resources/environment-details';
+import { EnvironmentArchivedNotice, EnvironmentWorkPanel } from '../resources/environment-details';
 import { EnvironmentActionDialog, EnvironmentActions, type EnvironmentActionRequest } from './actions';
 import { EnvironmentHosting, EnvironmentScope } from './common';
 import { useEnvironment, useEnvironmentRefresh } from './data';
 import { EnvironmentForm } from './form';
 import { EnvironmentList } from './list';
 import { EnvironmentPreview } from './preview';
+import type { EnvironmentApiResponse } from '../types';
 
 export function EnvironmentsPage() {
   const { activeWorkspaceId } = useWorkspace();
@@ -101,13 +103,12 @@ function EnvironmentDetail({
   onAction: (request: EnvironmentActionRequest) => void;
 }) {
   const { msg } = useI18n();
-  const format = useFormatters();
   const creating = id === 'new';
   const query = useEnvironment(workspaceId, creating ? undefined : id);
   const refresh = useEnvironmentRefresh(workspaceId);
   const entity = query.data;
+  const archived = Boolean(entity?.archived_at || entity?.state === 'archived');
   const label = creating ? msg('environmentPage.newEnvironment', 'New environment') : entity?.name || id;
-  const Icon = objectRecord(entity?.config).type === 'self_hosted' ? Monitor : Cloud;
   return (
     <div className="flex min-h-[calc(100dvh-112px)] flex-col md:min-h-[calc(100dvh-48px)]">
       <ManagedDetailBreadcrumb
@@ -127,34 +128,11 @@ function EnvironmentDetail({
             </p>
           </header>
         ) : entity ? (
-          <header className="mb-4 shrink-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Icon className="size-5" strokeWidth={1.5} />
-              <h1 className="min-w-0 break-words text-[22px] font-medium tracking-tight">{entity.name}</h1>
-              <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                <EnvironmentHosting entity={entity} />
-              </span>
-              <EnvironmentScope scope={entity.scope} />
-              <div className="ml-auto">
-                <EnvironmentActions entity={entity} onAction={onAction} />
-              </div>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <CopyIdCell
-                value={entity.id}
-                ariaLabel={msg('common.copyValue', 'Copy {value}', { value: entity.id })}
-                textClassName="font-normal text-muted-foreground"
-              />
-              <span>
-                {msg('environmentPage.lastUpdated', 'Last updated {date}', {
-                  date: format.date(entity.updated_at, { month: 'short', day: 'numeric' }),
-                })}
-              </span>
-            </div>
-          </header>
+          <EnvironmentDetailHeader entity={entity} archived={archived} onAction={onAction} />
         ) : null}
         {creating || entity ? (
           <>
+            {archived ? <EnvironmentArchivedNotice /> : null}
             <EnvironmentForm
               key={entity?.id ?? 'new'}
               entity={entity}
@@ -183,5 +161,47 @@ function EnvironmentDetail({
         )}
       </div>
     </div>
+  );
+}
+
+function EnvironmentDetailHeader({
+  entity,
+  archived,
+  onAction,
+}: {
+  entity: EnvironmentApiResponse;
+  archived: boolean;
+  onAction: (request: EnvironmentActionRequest) => void;
+}) {
+  const { msg } = useI18n();
+  const format = useFormatters();
+  const Icon = objectRecord(entity.config).type === 'self_hosted' ? Monitor : Cloud;
+  return (
+    <header className="mb-4 shrink-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <Icon className="size-5" strokeWidth={1.5} />
+        <h1 className="min-w-0 break-words text-[22px] font-medium tracking-tight">{entity.name}</h1>
+        <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+          <EnvironmentHosting entity={entity} />
+        </span>
+        <EnvironmentScope scope={entity.scope} />
+        {archived ? <Badge variant="secondary">{msg('common.archived', 'Archived')}</Badge> : null}
+        <div className="ml-auto">
+          <EnvironmentActions entity={entity} onAction={onAction} />
+        </div>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        <CopyIdCell
+          value={entity.id}
+          ariaLabel={msg('common.copyValue', 'Copy {value}', { value: entity.id })}
+          textClassName="font-normal text-muted-foreground"
+        />
+        <span>
+          {msg('environmentPage.lastUpdated', 'Last updated {date}', {
+            date: format.date(entity.updated_at, { month: 'short', day: 'numeric' }),
+          })}
+        </span>
+      </div>
+    </header>
   );
 }

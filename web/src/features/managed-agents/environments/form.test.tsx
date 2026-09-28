@@ -147,6 +147,64 @@ test('archived environments cannot be edited', () => {
   expect(screen.queryByRole('button', { name: 'Add metadata' })).toBeNull();
 });
 
+test('archived detail explains its read-only state', async () => {
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    if (String(input).includes('/work')) return Response.json({ data: [], has_more: false });
+    return Response.json({ ...entity, state: 'archived', archived_at: entity.updated_at });
+  }) as typeof fetch;
+  mount(<EnvironmentsPage />, '/workspaces/default/environments/env_form');
+  expect(await screen.findByText('Archived environment')).toBeTruthy();
+  expect(screen.getByText('Archived', { exact: true })).toBeTruthy();
+  expect(screen.getByText(/This environment is read-only/)).toBeTruthy();
+  expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
+});
+
+test('search and status filters reset pagination and request only matching pages', async () => {
+  const requests: URL[] = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'https://oma.duck.ai');
+    requests.push(url);
+    const page = url.searchParams.get('page');
+    return Response.json({
+      data: [{ ...entity, name: page || url.searchParams.get('search') || url.searchParams.get('status') || 'all' }],
+      next_page: page === 'c2' ? null : page === 'c1' ? 'c2' : 'c1',
+    });
+  }) as typeof fetch;
+  mount(
+    <EnvironmentList
+      workspaceId="default"
+      listHref="/workspaces/default/environments"
+      onPreview={() => {}}
+      onAction={() => {}}
+    />,
+  );
+  await screen.findByRole('link', { name: 'all', exact: true });
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  await screen.findByRole('link', { name: 'c1' });
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  await screen.findByRole('link', { name: 'c2' });
+  const search = screen.getByRole('searchbox');
+  fireEvent.change(search, { target: { value: 'Needle' } });
+  await screen.findByRole('link', { name: 'Needle' });
+  expect(requests.at(-1)?.searchParams.get('page')).toBeNull();
+  expect(requests.filter((url) => url.searchParams.get('search') === 'Needle')).toHaveLength(1);
+  fireEvent.change(search, { target: { value: '' } });
+  await screen.findByRole('link', { name: 'all', exact: true });
+  expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  await screen.findByRole('link', { name: 'c1' });
+  fireEvent.click(screen.getByRole('button', { name: /Status All/ }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Active', exact: true }));
+  await screen.findByRole('link', { name: 'active', exact: true });
+  expect(requests.at(-1)?.searchParams.get('page')).toBeNull();
+  expect(requests.at(-1)?.searchParams.get('include_archived')).toBe('false');
+  expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: /Status Active/ }));
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All', exact: true }));
+  await screen.findByRole('link', { name: 'all', exact: true });
+  expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
 test('selection and name links do not open preview; clicking the row does', async () => {
   globalThis.fetch = mock(
     async () =>
@@ -286,6 +344,30 @@ test('logs wait at the live tail and automatically read the final failure', asyn
   expect(await screen.findByText(/ERROR: Invalid requirement/, {}, { timeout: 4000 })).toBeTruthy();
   expect(cursors).toEqual(['', 'tail', 'tail']);
   expect(screen.queryByRole('button')).toBeNull();
+});
+
+test('an expired log cursor reloads from the beginning and replaces cached output', async () => {
+  const cursors: string[] = [];
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    cursors.push(new URL(String(input), 'https://oma.duck.ai').searchParams.get('cursor') || '');
+    if (cursors.length === 2)
+      return Response.json(
+        { error: { type: 'conflict_error', message: 'Build log changed; reload logs from the beginning' } },
+        { status: 409 },
+      );
+    return Response.json(
+      cursors.length === 1
+        ? { text: 'Old log content', next_cursor: 'oversized', complete: false }
+        : { text: 'Replacement log content', next_cursor: '', complete: true },
+    );
+  }) as typeof fetch;
+  mount(<EnvironmentPrebuildLogs environmentId="env_form" workspaceId="default" jobId="42" stage="image" />);
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByText('Old log content')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Reload from beginning' }));
+  expect(await screen.findByText('Replacement log content')).toBeTruthy();
+  expect(screen.queryByText('Old log content')).toBeNull();
+  expect(cursors).toEqual(['', 'oversized', '']);
 });
 
 test('a log download failure retains output and retries the same cursor', async () => {

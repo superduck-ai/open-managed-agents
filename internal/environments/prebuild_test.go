@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -71,7 +74,7 @@ func TestPrebuildCubeSandboxContracts(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := config.Config{EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Template: tc.template}, E2B: config.E2BConfig{APIURL: server.URL, APIKey: "key"}}
-			c := NewPrebuilds(nil, cfg).templates.(*cubeSandboxTemplateBuilder)
+			c := NewPrebuilds(nil, cfg, nil).templates.(*cubeSandboxTemplateBuilder)
 			c.http.client = server.Client()
 			if err := c.Cancel(context.Background(), "anything"); !errors.Is(err, errPrebuildUnsupported) {
 				t.Fatal(err)
@@ -360,5 +363,242 @@ func TestSubmittedCheckpointStopsRetryingWhenWorkerStops(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) || attempts != 1 {
 		t.Fatalf("checkpoint retry = (err=%v, attempts=%d), want cancellation after one attempt", err, attempts)
+	}
+}
+
+func TestBuildHTTPRejectsAndAmbiguousFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		wantStatus int
+		rejected   bool
+	}{
+		{"invalid flow token", http.StatusUnauthorized, http.StatusUnauthorized, true},
+		{"invalid template request", http.StatusBadRequest, http.StatusBadRequest, true},
+		{"missing pipeline endpoint", http.StatusNotFound, http.StatusNotFound, true},
+		{"provider failure after accepting", http.StatusInternalServerError, 0, false},
+		{"redirect is not followed", http.StatusFound, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+			client := newBuildHTTP("x-yunxiao-token", "token")
+			var output json.RawMessage
+			err := client.call(context.Background(), http.MethodPost, server.URL+"/runs", nil, &output)
+			var providerError *buildProviderError
+			if !errors.As(err, &providerError) || providerError.Status != tc.status {
+				t.Fatalf("call error = %v, want provider status %d", err, tc.status)
+			}
+			if want := fmt.Sprintf("build provider returned HTTP %d", tc.status); err.Error() != want {
+				t.Fatalf("call error = %q, want %q", err, want)
+			}
+			status, rejected := providerRejectionStatus(err)
+			if rejected != tc.rejected || status != tc.wantStatus {
+				t.Fatalf("providerRejectionStatus = (%d, %t), want (%d, %t)", status, rejected, tc.wantStatus, tc.rejected)
+			}
+		})
+	}
+
+	t.Run("transport loss stays unknown", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		endpoint := server.URL + "/runs"
+		server.Close()
+		err := newBuildHTTP("x-yunxiao-token", "token").call(context.Background(), http.MethodPost, endpoint, nil, nil)
+		var providerError *buildProviderError
+		if err == nil || errors.As(err, &providerError) || !strings.Contains(err.Error(), "build provider request failed") {
+			t.Fatalf("transport error = %v, want an unclassified request failure", err)
+		}
+		if _, rejected := providerRejectionStatus(err); rejected {
+			t.Fatalf("transport error %v classified as a provider rejection", err)
+		}
+	})
+}
+
+func TestPrebuildSubmitFailureOutcome(t *testing.T) {
+	job := &river.Job[prebuildJobArgs]{
+		JobRow: &rivertype.JobRow{ID: 42, State: rivertype.JobStateDiscarded},
+		Args:   prebuildJobArgs{EnvironmentUUID: "env-1", WorkspaceUUID: "ws-1"},
+	}
+	for _, tc := range []struct {
+		name           string
+		cause          error
+		wantState      string
+		wantSubmitting bool
+		wantUncertain  bool
+		wantMessage    string
+	}{
+		{
+			name:        "provider rejection fails without ambiguity",
+			cause:       fmt.Errorf("start image build: %w", &buildProviderError{Status: http.StatusUnauthorized}),
+			wantState:   "failed",
+			wantMessage: prebuildSubmissionRejectedMessage(http.StatusUnauthorized),
+		},
+		{
+			name:           "provider server failure stays unknown",
+			cause:          &buildProviderError{Status: http.StatusInternalServerError},
+			wantState:      "unknown",
+			wantSubmitting: true,
+			wantUncertain:  true,
+			wantMessage:    errPrebuildSubmissionUnknown.Error(),
+		},
+		{
+			name:           "transport loss stays unknown",
+			cause:          errors.New("build provider request failed: connection reset by peer"),
+			wantState:      "unknown",
+			wantSubmitting: true,
+			wantUncertain:  true,
+			wantMessage:    errPrebuildSubmissionUnknown.Error(),
+		},
+		{
+			name:           "missing build reference stays unknown",
+			cause:          errPrebuildMissingBuildRef,
+			wantState:      "unknown",
+			wantSubmitting: true,
+			wantUncertain:  true,
+			wantMessage:    errPrebuildSubmissionUnknown.Error(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := prebuildTask{job: job}
+			failure := classifySubmitFailure(tc.cause)
+			if failure.definitive != (tc.wantState == "failed") {
+				t.Fatalf("classifySubmitFailure(%v) = %+v", tc.cause, failure)
+			}
+			failure.apply(&task.output)
+			if task.output.Submitting != tc.wantSubmitting || task.output.OutcomeUncertain != tc.wantUncertain || task.output.Message != tc.wantMessage {
+				t.Fatalf("recorded output = %+v, want submitting=%t uncertain=%t message=%q", task.output, tc.wantSubmitting, tc.wantUncertain, tc.wantMessage)
+			}
+			if state := task.state(); state != tc.wantState {
+				t.Fatalf("reported state = %q, want %q", state, tc.wantState)
+			}
+			if tc.wantState == "failed" && !strings.Contains(task.output.Message, "401") {
+				t.Fatalf("rejection message %q omits the provider status", task.output.Message)
+			}
+			if tc.wantState == "unknown" && strings.Contains(task.output.Message, "connection reset") {
+				t.Fatalf("uncertain message %q leaks transport internals", task.output.Message)
+			}
+		})
+	}
+}
+
+func TestPrebuildSubmitFailureLogsProviderStatus(t *testing.T) {
+	recorder := &prebuildLogRecorder{}
+	svc := &Prebuilds{logger: slog.New(recorder)}
+	task := prebuildTask{job: &river.Job[prebuildJobArgs]{
+		JobRow: &rivertype.JobRow{ID: 42},
+		Args:   prebuildJobArgs{EnvironmentUUID: "env-1", WorkspaceUUID: "ws-1"},
+	}}
+	for _, tc := range []struct {
+		name       string
+		cause      error
+		wantEvent  string
+		wantStatus int
+	}{
+		{name: "rejection records the provider status", cause: &buildProviderError{Status: http.StatusUnauthorized}, wantEvent: "environment prebuild submission rejected", wantStatus: http.StatusUnauthorized},
+		{name: "unknown outcome records the cause", cause: errors.New("build provider request failed: connection reset by peer"), wantEvent: "environment prebuild submission outcome unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder.records = nil
+			svc.logSubmitFailure(context.Background(), &task, classifySubmitFailure(tc.cause), tc.cause)
+			if len(recorder.records) != 1 {
+				t.Fatalf("log records = %+v, want one", recorder.records)
+			}
+			record := recorder.records[0]
+			if record.level != slog.LevelError || record.message != tc.wantEvent {
+				t.Fatalf("log record = %+v, want an error event %q", record, tc.wantEvent)
+			}
+			want := map[string]any{"stage": task.stage(), "job_id": int64(42), "environment_id": "env-1", "workspace_id": "ws-1"}
+			for key, value := range want {
+				if record.attrs[key] != value {
+					t.Fatalf("log record %q = %v, want %v", key, record.attrs[key], value)
+				}
+			}
+			if tc.wantStatus != 0 {
+				if record.attrs["status_code"] != int64(tc.wantStatus) {
+					t.Fatalf("log status_code = %v, want %d", record.attrs["status_code"], tc.wantStatus)
+				}
+			} else if _, found := record.attrs["status_code"]; found {
+				t.Fatalf("log record for an unknown outcome carries status_code %v", record.attrs["status_code"])
+			}
+			if cause, ok := record.attrs["error"].(error); !ok || !errors.Is(cause, tc.cause) {
+				t.Fatalf("log error attribute = %v, want the submission cause", record.attrs["error"])
+			}
+		})
+	}
+}
+
+type prebuildLogRecord struct {
+	level   slog.Level
+	message string
+	attrs   map[string]any
+}
+
+type prebuildLogRecorder struct{ records []prebuildLogRecord }
+
+func (r *prebuildLogRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (r *prebuildLogRecorder) WithAttrs([]slog.Attr) slog.Handler       { return r }
+func (r *prebuildLogRecorder) WithGroup(string) slog.Handler            { return r }
+
+func (r *prebuildLogRecorder) Handle(_ context.Context, record slog.Record) error {
+	attrs := make(map[string]any, record.NumAttrs())
+	record.Attrs(func(attr slog.Attr) bool {
+		attrs[attr.Key] = attr.Value.Any()
+		return true
+	})
+	r.records = append(r.records, prebuildLogRecord{level: record.Level, message: record.Message, attrs: attrs})
+	return nil
+}
+
+func TestAliyunFlowLogDownloadCursorRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		rangeStatus  int
+		contentRange string
+		body         string
+		offset       int64
+		expired      bool
+		wantText     string
+		wantRequests int
+	}{
+		{name: "range ignored after truncation", rangeStatus: 200, body: "abc", offset: 5, expired: true, wantRequests: 1},
+		{name: "416 after truncation", rangeStatus: 416, contentRange: "bytes */3", body: "abc", offset: 5, expired: true, wantRequests: 2},
+		{name: "416 without header after truncation", rangeStatus: 416, body: "abc", offset: 5, expired: true, wantRequests: 2},
+		{name: "416 without header at tail", rangeStatus: 416, body: "abc", offset: 3, wantRequests: 2},
+		{name: "416 at tail", rangeStatus: 416, contentRange: "bytes */3", body: "abc", offset: 3, wantRequests: 1},
+		{name: "range ignored at tail", rangeStatus: 200, body: "abc", offset: 3, wantRequests: 1},
+		{name: "416 fallback finds new bytes", rangeStatus: 416, body: "abcdef", offset: 3, wantText: "def", wantRequests: 2},
+		{name: "range ignored with new bytes", rangeStatus: 200, body: "abcdef", offset: 3, wantText: "def", wantRequests: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Header.Get("Range") != "" {
+					if tc.contentRange != "" {
+						w.Header().Set("Content-Range", tc.contentRange)
+					}
+					w.WriteHeader(tc.rangeStatus)
+					if tc.rangeStatus == 416 {
+						return
+					}
+				}
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			text, eof, err := readAliyunFlowLogDownload(context.Background(), server.Client(), server.URL, tc.offset)
+			if tc.expired {
+				var appError *apperr.Error
+				if !errors.Is(err, errPrebuildLogCursorExpired) || !errors.As(prebuildError(err), &appError) || appError.Kind != apperr.Conflict {
+					t.Fatalf("download error = %v, want expired cursor conflict", err)
+				}
+			} else if err != nil || !eof || text != tc.wantText {
+				t.Fatalf("download = (%q, %t, %v), want (%q, true, nil)", text, eof, err, tc.wantText)
+			}
+			if requests != tc.wantRequests {
+				t.Fatalf("requests = %d, want %d", requests, tc.wantRequests)
+			}
+		})
 	}
 }

@@ -30,7 +30,10 @@ func (worker *prebuildWorker) Work(ctx context.Context, job *river.Job[prebuildJ
 		return nil
 	}
 	if task.output.Submitting {
-		return errors.New("Submission outcome unknown; inspect the provider before retrying.")
+		svc.logger.WarnContext(ctx, "environment prebuild submission interrupted",
+			"stage", task.stage(), "job_id", task.job.ID,
+			"environment_id", task.job.Args.EnvironmentUUID, "workspace_id", task.job.Args.WorkspaceUUID)
+		return errPrebuildSubmissionUnknown
 	}
 	if !svc.cfg.Enabled || job.Args.ProviderKey != svc.providerKey || time.Since(job.CreatedAt) > svc.cfg.Timeout {
 		task.output.OutcomeUncertain = true
@@ -100,8 +103,11 @@ func (svc *Prebuilds) submit(ctx context.Context, task *prebuildTask) error {
 	} else {
 		ref, err = svc.templates.Start(ctx, task.output.ImageRef)
 	}
-	if err != nil || ref == "" {
-		return errors.New("Submission outcome unknown; inspect the provider before retrying.")
+	if err == nil && ref == "" {
+		err = errPrebuildMissingBuildRef
+	}
+	if err != nil {
+		return svc.recordSubmitFailure(ctx, task, err)
 	}
 	if task.stage() == "image" {
 		task.output.ImageJobRef = ref
@@ -121,6 +127,66 @@ func (svc *Prebuilds) submit(ctx context.Context, task *prebuildTask) error {
 		return svc.cancelSuperseded(ctx, *task)
 	}
 	return river.JobSnooze(prebuildPollInterval)
+}
+
+// submitFailure is how a failed submission attempt must be reported. Definitive
+// failures prove that no remote work started; every other failure leaves the
+// remote outcome unknown.
+type submitFailure struct {
+	definitive bool
+	status     int
+	message    string
+}
+
+// classifySubmitFailure separates a provider rejection from a failure whose
+// remote outcome cannot be proven. 4xx responses reject the request before the
+// provider acts on it; transport loss, redirects, 5xx responses and missing
+// references may follow an accepted submission.
+func classifySubmitFailure(cause error) submitFailure {
+	status, rejected := providerRejectionStatus(cause)
+	if !rejected {
+		return submitFailure{message: errPrebuildSubmissionUnknown.Error()}
+	}
+	return submitFailure{definitive: true, status: status, message: prebuildSubmissionRejectedMessage(status)}
+}
+
+// The ambiguity guard and the uncertainty flag must agree with the
+// classification before the checkpoint is persisted: a rejection is a
+// diagnosable failure, not an outcome the operator has to disambiguate against
+// the provider.
+func (failure submitFailure) apply(output *prebuildJobOutput) {
+	output.Submitting = !failure.definitive
+	output.OutcomeUncertain = !failure.definitive
+	output.Message = failure.message
+}
+
+// recordSubmitFailure reports and persists the outcome of a failed submission
+// attempt. A checkpoint write failure keeps the guard and snoozes the job, so
+// the remote outcome is never discarded before it is recorded.
+func (svc *Prebuilds) recordSubmitFailure(ctx context.Context, task *prebuildTask, cause error) error {
+	failure := classifySubmitFailure(cause)
+	failure.apply(&task.output)
+	svc.logSubmitFailure(ctx, task, failure, cause)
+	if err := svc.saveCheckpoint(ctx, task); err != nil {
+		return err
+	}
+	if failure.definitive {
+		return errors.Join(errPrebuildSubmissionRejected, cause)
+	}
+	return errors.Join(errPrebuildSubmissionUnknown, cause)
+}
+
+func (svc *Prebuilds) logSubmitFailure(ctx context.Context, task *prebuildTask, failure submitFailure, cause error) {
+	attrs := []any{
+		"stage", task.stage(), "job_id", task.job.ID,
+		"environment_id", task.job.Args.EnvironmentUUID, "workspace_id", task.job.Args.WorkspaceUUID,
+		"error", cause,
+	}
+	if failure.definitive {
+		svc.logger.ErrorContext(ctx, "environment prebuild submission rejected", append(attrs, "status_code", failure.status)...)
+		return
+	}
+	svc.logger.ErrorContext(ctx, "environment prebuild submission outcome unknown", attrs...)
 }
 
 func retryCheckpointWrite(ctx context.Context, delay time.Duration, write func() (bool, error)) (bool, error) {

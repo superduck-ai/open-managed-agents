@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -26,14 +28,16 @@ type Prebuilds struct {
 	db          *db.DB
 	cfg         config.EnvironmentPrebuildConfig
 	providerKey string
+	logger      *slog.Logger
 	images      imageBuilder
 	templates   templateBuilder
 	client      *river.Client[*sql.Tx]
 }
 
-func NewPrebuilds(database *db.DB, cfg config.Config) *Prebuilds {
+func NewPrebuilds(database *db.DB, cfg config.Config, logger *slog.Logger) *Prebuilds {
 	settings := cfg.EnvironmentPrebuilds
 	return &Prebuilds{db: database, cfg: settings, providerKey: prebuildProviderKey(cfg),
+		logger:    logging.LoggerOrDefault(logger),
 		images:    &aliyunFlowImageBuilder{http: newBuildHTTP("x-yunxiao-token", settings.Image.Flow.Token), pipelineURL: settings.Image.Flow.PipelineURL},
 		templates: &cubeSandboxTemplateBuilder{http: newBuildHTTP("Authorization", "Bearer "+cfg.E2B.APIKey), apiURL: strings.TrimRight(cfg.E2B.APIURL, "/"), cfg: settings.Template}}
 }

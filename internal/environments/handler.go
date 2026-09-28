@@ -238,11 +238,24 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	status := r.URL.Query().Get("status")
+	switch status {
+	case "", "all":
+	case "active":
+		includeArchived = false
+	case "archived":
+		includeArchived = true
+	default:
+		return invalidEnvironmentListStatus()
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	records, hasMore, err := h.db.ListEnvironmentsPage(r.Context(), db.ListEnvironmentsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
+		ArchivedOnly:    status == "archived",
+		Search:          search,
 	})
 	if err != nil {
 		return internalError("Could not list environments", fmt.Errorf("list environments: %w", err))

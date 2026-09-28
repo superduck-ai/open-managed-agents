@@ -2154,6 +2154,8 @@
   "environmentPrebuild.start": "立即准备",
   "environmentPrebuild.noLogs": "暂无日志",
   "environmentPrebuild.logsFailed": "日志加载失败。",
+  "environmentPrebuild.logsChanged": "日志已变化，请从头重新加载。",
+  "environmentPrebuild.reloadLogs": "从头加载",
   "environmentPrebuild.dialogDescription": "已保存软件包配置的准备状态和日志。",
   "environmentPrebuild.stages": "构建阶段",
   "environmentPrebuild.expired": "运行记录已过期。",

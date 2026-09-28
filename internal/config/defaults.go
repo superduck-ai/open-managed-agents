@@ -6,6 +6,13 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
+		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
+			Timeout: time.Hour,
+			Template: TemplateBuildConfig{
+				DiskSize: "20G",
+				Network:  TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true},
+			},
+		},
 		NATS: NATSConfig{
 			ConnectTimeout: 5 * time.Second,
 			DrainTimeout:   10 * time.Second,
@@ -23,10 +30,7 @@ func defaultConfig() Config {
 			RequestTimeout:      2 * time.Minute,
 			PresenceTTL:         60 * time.Second,
 			TombstoneTTL:        5 * time.Minute,
-			MaxPendingRequests:  256,
-			MaxStoredRequests:   4096,
-			MaxPendingBytes:     32 * 1024 * 1024,
-			MaxBodyBytes:        1024 * 1024,
+			MaxBodyBytes:        16 * 1024 * 1024,
 			MaxHeaderBytes:      32 * 1024,
 			MaxHeaderValueBytes: 8 * 1024,
 		},
@@ -53,7 +57,6 @@ func defaultConfig() Config {
 			Concurrency:             2,
 			PackageProvisionTimeout: 2 * time.Minute,
 			ManagerPath:             "/usr/local/bin/environment-manager",
-			ClaudeAgentVersion:      "2.1.251",
 			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
 		Observability: ObservabilityConfig{

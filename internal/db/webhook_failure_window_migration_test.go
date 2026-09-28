@@ -11,7 +11,7 @@ func TestWebhookFailureWindowMigration(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
-	if _, err := provider.UpTo(ctx, 63); err != nil {
+	if _, err := provider.UpTo(ctx, 68); err != nil {
 		t.Fatal(err)
 	}
 	_, err := database.ExecContext(ctx, `INSERT INTO webhook_endpoints
@@ -21,7 +21,7 @@ func TestWebhookFailureWindowMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 64); err != nil {
+	if _, err := provider.UpTo(ctx, 69); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -34,7 +34,7 @@ func TestWebhookFailureWindowMigration(t *testing.T) {
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 64); err != nil {
+	if _, err := provider.UpTo(ctx, 69); err != nil {
 		t.Fatal(err)
 	}
 }

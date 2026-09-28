@@ -4,11 +4,13 @@ package tests
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"net/http"
 	"testing"
@@ -24,7 +26,12 @@ func TestTunnelProbePaginationThroughNATS(t *testing.T) {
 	cfg.Tunnel.PublicBaseURL = "https://oma.example"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("tunnel-probe-pages"))
 	t.Cleanup(app.close)
-	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel)
+	bindingRedis, err := redisclient.Open(t.Context(), cfg.Redis.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bindingRedis.Close() })
+	broker, err := tunnels.NewBroker(t.Context(), managedTunnelNATS(t), cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +51,9 @@ func TestTunnelProbePaginationThroughNATS(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 			defer cancel()
 			channels := []tunnels.ChannelDeclaration{{Name: "main"}}
-			if err := broker.RegisterConnector(ctx, record.UUID, "pages", 1, channels); err != nil {
-				t.Fatal(err)
-			}
 			done := make(chan error, 1)
-			go func() { done <- respondToTunnelProbePages(ctx, broker, record.UUID, channels, failSecond) }()
-			result, recognized, err := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker, tunnels.NewCleanupJobs(app.deploymentJobs)).ProbeTarget(ctx, tunnels.ConsoleScope{OrganizationUUID: ids.OrganizationUUID, WorkspaceUUID: ids.WorkspaceUUID}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+created.ID)
+			go func() { done <- respondToTunnelProbePages(ctx, broker, record.UUID, created.ID, channels, failSecond) }()
+			result, recognized, err := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker).ProbeTarget(ctx, tunnels.ConsoleScope{OrganizationUUID: ids.OrganizationUUID, WorkspaceUUID: ids.WorkspaceUUID}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+created.ID)
 			t.Logf("probe returned tools=%d error=%v", len(result.Tools), err)
 			if !recognized {
 				t.Fatal("not recognized")
@@ -73,10 +77,10 @@ func TestTunnelProbePaginationThroughNATS(t *testing.T) {
 	}
 }
 
-func respondToTunnelProbePages(ctx context.Context, broker *tunnels.Broker, tunnelUUID string, channels []tunnels.ChannelDeclaration, failSecond bool) error {
+func respondToTunnelProbePages(ctx context.Context, broker *tunnels.Broker, tunnelUUID, tunnelID string, channels []tunnels.ChannelDeclaration, failSecond bool) error {
 	pages := 0
 	for ctx.Err() == nil {
-		commands, err := broker.Poll(ctx, tunnelUUID, "pages", 1, channels, 25, time.Second)
+		commands, err := broker.Poll(ctx, tunnelUUID, sha256.Sum256([]byte("pages-token")), channels, 25, time.Second)
 		if err != nil {
 			return err
 		}
@@ -139,7 +143,7 @@ func respondToTunnelProbePages(ctx context.Context, broker *tunnels.Broker, tunn
 					}
 				}
 			}
-			if err := broker.SubmitResponse(ctx, tunnelUUID, "pages", 1, command.ShardToken, response); err != nil {
+			if err := broker.SubmitResponse(ctx, tunnelID, sha256.Sum256([]byte("pages-token")), response); err != nil {
 				return err
 			}
 			if finished {

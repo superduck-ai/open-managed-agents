@@ -34,6 +34,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
@@ -75,7 +76,12 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 	clearTestLLMProviders(t, app)
 	seedTestLLMProvider(t, app, "Isolated Claude tunnel acceptance", managedTunnelModelProxy(t), os.Getenv("ANTHROPIC_AUTH_TOKEN"), os.Getenv("TEST_CLAUDE_MODEL"))
 	connection := managedTunnelNATS(t)
-	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel)
+	bindingRedis, err := redisclient.Open(t.Context(), cfg.Redis.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bindingRedis.Close() })
+	broker, err := tunnels.NewBroker(ctx, connection, cfg.Tunnel, nil, tunnels.NewRequestBindings(bindingRedis, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +106,7 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 		Config: cfg, DB: app.db, ObjectStore: app.store, Deployments: app.deployments,
 		Logger:                 logger,
 		CodeSessionCredentials: app.credentials, FilestoreCredentials: app.filestoreCredentials,
-		VaultSecrets: app.vaultSecrets, TunnelBroker: broker, TunnelCleanupJobs: tunnels.NewCleanupJobs(app.deploymentJobs),
+		VaultSecrets: app.vaultSecrets, TunnelBroker: broker,
 		WorkerEventBroker: workerBroker, SessionEventBus: eventBus,
 		SandboxTimeoutExtender: provider,
 	})
@@ -149,7 +155,7 @@ func TestManagedAgentNATSTunnelE2E(t *testing.T) {
 	managedTunnelConnector(t, app.baseURL, tunnel.ID, token.TunnelToken, privateHTTP.URL, channel)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		result, _, probeErr := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker, tunnels.NewCleanupJobs(app.deploymentJobs)).ProbeTarget(ctx, tunnels.ConsoleScope{
+		result, _, probeErr := tunnels.NewService(cfg.Tunnel, app.db, app.vaultSecrets, broker).ProbeTarget(ctx, tunnels.ConsoleScope{
 			OrganizationUUID: getDefaultDBIDs(t, app.pool).OrganizationUUID, WorkspaceUUID: getDefaultDBIDs(t, app.pool).WorkspaceUUID,
 		}, cfg.Tunnel.PublicBaseURL+"/v1/mcp/"+tunnel.ID+"/"+channel)
 		if probeErr == nil && len(result.Tools) == 1 {

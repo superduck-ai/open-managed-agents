@@ -65,13 +65,14 @@ func TestWebhookResourceEventDelivery(t *testing.T) {
  {"type":"session.status_rescheduled","uuid":"rescheduled","created_at":"2026-09-20T01:00:01Z"},
  {"type":"session.status_idle","uuid":"idle","created_at":"2026-09-20T01:00:02Z"},
  {"type":"session.thread_created","uuid":"child-created","session_thread_id":` + quoteJSON(threadID) + `,"created_at":"2026-09-20T01:00:03Z"},
+ {"type":"session.thread_status_running","uuid":"child-running","session_thread_id":` + quoteJSON(threadID) + `,"created_at":"2026-09-20T01:00:03.5Z"},
  {"type":"session.thread_status_idle","uuid":"child-idle","session_thread_id":` + quoteJSON(threadID) + `,"created_at":"2026-09-20T01:00:04Z"},
  {"type":"span.outcome_evaluation_end","uuid":"outcome-ended","created_at":"2026-09-20T01:00:05Z"}
  ]}`
 	postCodeSessionIngressEvents(t, app, codeID, ingress)
 	postCodeSessionIngressEvents(t, app, codeID, ingress)
 	assertPayloadSQLCount(t, app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND payload->'event'->'data'->>'id'=$1 AND payload->'event'->'data'->>'type'='session.status_run_started' AND payload->'event'->>'created_at'='2026-09-20T01:00:00Z'`, 1, session.ID)
-	assertWebhookCount(t, app, "session.status_run_started", session.ID, 1)
+	assertWebhookCount(t, app, "session.status_run_started", session.ID, 2)
 	assertWebhookCount(t, app, "session.thread_created", session.ID, 1)
 	assertWebhookCount(t, app, "session.thread_idled", session.ID, 1)
 	assertWebhookCount(t, app, "session.outcome_evaluation_ended", session.ID, 1)

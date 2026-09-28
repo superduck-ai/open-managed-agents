@@ -85,6 +85,7 @@ type Server struct {
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
+	Prebuilds              *environments.Prebuilds
 	Config                 config.Config
 	DB                     *db.DB
 	Deployments            *deploymentsapi.Store
@@ -102,7 +103,7 @@ type ServerDeps struct {
 	SessionEventBus        sessionfanout.EventBus
 	WorkerEventBroker      workerevents.Broker
 	TunnelBroker           *tunnelsapi.Broker
-	TunnelCleanupJobs      *tunnelsapi.CleanupJobs
+	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
 }
 
@@ -162,11 +163,11 @@ func NewServer(deps ServerDeps) *Server {
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer),
 		deployments:          deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
-		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer),
+		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, componentLogger("messages")),
+		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")),
 		models:               modelsapi.NewHandler(deps.DB),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
 		skills:               skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
@@ -174,7 +175,7 @@ func NewServer(deps ServerDeps) *Server {
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:         deps.TunnelBroker,
 	}
-	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelCleanupJobs)
+	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
 	router.Use(requestLoggingMiddleware(componentLogger("http")))
@@ -200,7 +201,7 @@ func NewServer(deps ServerDeps) *Server {
 func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	checks := map[string]string{"database": "ok", "tunnel_nats": "ok"}
+	checks := map[string]string{"database": "ok", "tunnel_nats": "ok", "tunnel_redis": "ok"}
 	ready := true
 	if s.db == nil || s.db.SQLDB().PingContext(ctx) != nil {
 		checks["database"] = "unavailable"
@@ -208,6 +209,10 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.tunnelBroker == nil || s.tunnelBroker.Ping(ctx) != nil {
 		checks["tunnel_nats"] = "unavailable"
+		ready = false
+	}
+	if s.tunnelBroker == nil || s.tunnelBroker.PingRedis(ctx) != nil {
+		checks["tunnel_redis"] = "unavailable"
 		ready = false
 	}
 	status := http.StatusOK

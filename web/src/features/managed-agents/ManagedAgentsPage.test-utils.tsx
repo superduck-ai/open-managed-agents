@@ -959,6 +959,17 @@ type MockManagedResourceApiOptions = {
   memoryStoresPageSize?: number;
 };
 
+export function pageResourceRows<T>(rows: T[], limit: number, page: string | null) {
+  const parsedOffset = page?.startsWith('offset_') ? Number(page.slice('offset_'.length)) : Number.NaN;
+  const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+  const data = rows.slice(offset, offset + limit);
+  const nextOffset = offset + data.length;
+  return {
+    data,
+    next_page: nextOffset < rows.length ? `offset_${nextOffset}` : null,
+  };
+}
+
 export function mockManagedResourceApi(options: MockManagedResourceApiOptions = {}) {
   const now = new Date().toISOString();
   const requests: RecordedRequest[] = [];
@@ -972,6 +983,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     },
   ];
   const resources = {
+    failSessionList: false,
     files: [
       {
         id: 'file_input123456',
@@ -1545,6 +1557,10 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       });
     }
     if (url.startsWith('/v1/sessions?') && method === 'GET') {
+      if (resources.failSessionList) {
+        resources.failSessionList = false;
+        return jsonResponse({ error: { message: 'list failed' } }, 500);
+      }
       const params = new URL(url, 'https://oma.duck.ai').searchParams;
       const agentId = params.get('agent_id');
       const deploymentId = params.get('deployment_id');
@@ -1566,7 +1582,8 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(session, params);
       });
-      return jsonResponse({ data: filteredSessions, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredSessions.length) || filteredSessions.length;
+      return jsonResponse(pageResourceRows(filteredSessions, limit, params.get('page')));
     }
     if (url.startsWith('/v1/files?') && method === 'GET') {
       return jsonResponse({
@@ -1646,7 +1663,8 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(deployment, params);
       });
-      return jsonResponse({ data: filteredDeployments, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredDeployments.length) || filteredDeployments.length;
+      return jsonResponse(pageResourceRows(filteredDeployments, limit, params.get('page')));
     }
     const retrieveDeploymentMatch = url.match(/^\/v1\/deployments\/([^/?]+)\?beta=true$/);
     if (retrieveDeploymentMatch && method === 'GET') {
@@ -1686,7 +1704,8 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(environment, params);
       });
-      return jsonResponse({ data: filteredEnvironments, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredEnvironments.length) || filteredEnvironments.length;
+      return jsonResponse(pageResourceRows(filteredEnvironments, limit, params.get('page')));
     }
     const retrieveEnvironmentMatch = url.match(/^\/v1\/environments\/([^/?]+)\?beta=true$/);
     if (retrieveEnvironmentMatch && method === 'GET') {
@@ -1728,7 +1747,8 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(vault, params);
       });
-      return jsonResponse({ data: filteredVaults, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredVaults.length) || filteredVaults.length;
+      return jsonResponse(pageResourceRows(filteredVaults, limit, params.get('page')));
     }
     const retrieveVaultMatch = url.match(/^\/v1\/vaults\/([^/?]+)\?beta=true$/);
     if (retrieveVaultMatch && method === 'GET') {

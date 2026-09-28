@@ -101,6 +101,8 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
+	StatusThreadID    string
+	UsageIncrement    *SessionUsageIncrement
 	PayloadBlobUUID   *string
 	ToolUseID         *string
 	UUID              string
@@ -118,14 +120,22 @@ type SessionEvent struct {
 	DeletedAt         *time.Time
 }
 
+// SessionUsageIncrement contains measured counters; nil means unavailable.
+type SessionUsageIncrement struct {
+	CacheCreation5mInputTokens *int64
+	CacheCreation1hInputTokens *int64
+	InputTokens                *int64
+	OutputTokens               *int64
+	CacheReadInputTokens       *int64
+}
+
 type SessionPageCursor struct {
 	CreatedAt time.Time
 	UUID      string
 }
 
 type SessionEventPageCursor struct {
-	CreatedAt time.Time
-	UUID      string
+	ExternalID string
 }
 
 type SessionThreadPageCursor struct {
@@ -341,24 +351,40 @@ func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThre
 	return d.GetSessionThread(ctx, thread.WorkspaceUUID, thread.SessionExternalID, thread.ExternalID)
 }
 
-func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, bool, error) {
-	row, err := NewSessionMapper(d.mapperDB).Archive(ctx, workspaceUUID, externalID)
-	if !errors.Is(err, sql.ErrNoRows) {
-		return row.session(), err == nil, err
-	}
-	current, found, loadErr := d.GetSession(ctx, workspaceUUID, externalID)
-	if loadErr != nil {
-		return Session{}, false, loadErr
-	}
-	if !found || current.ArchivedAt == nil {
-		return Session{}, false, ErrNotFound
-	}
-	return current, false, nil
+func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (SessionRemoval, bool, error) {
+	var removal SessionRemoval
+	var changed bool
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var err error
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+			return err
+		}
+		row, err := NewSessionMapper(executor).Archive(ctx, workspaceUUID, externalID)
+		if errors.Is(err, sql.ErrNoRows) {
+			current, found, loadErr := NewSessionMapper(executor).FindByExternalID(ctx, workspaceUUID, externalID)
+			if loadErr != nil {
+				return loadErr
+			}
+			if !found || current.ArchivedAt == nil {
+				return ErrNotFound
+			}
+			removal.Session = current.session()
+			return nil
+		}
+		removal.Session = row.session()
+		changed = err == nil
+		return err
+	})
+	return removal, changed && err == nil, err
 }
 
-func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
-	var session Session
+func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (SessionRemoval, error) {
+	var removal SessionRemoval
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var err error
+		if removal, err = prepareSessionRemovalTx(ctx, executor, workspaceUUID, externalID); err != nil {
+			return err
+		}
 		sessionMapper := NewSessionMapper(executor)
 		threadMapper := NewSessionThreadMapper(executor)
 		resourceMapper := NewSessionResourceMapper(executor)
@@ -369,7 +395,8 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		if txErr != nil {
 			return mapNoRows(txErr)
 		}
-		session = row.session()
+		session := row.session()
+		removal.Session = session
 		if txErr = retireSessionFilesystemTx(ctx, executor, session); txErr != nil {
 			return txErr
 		}
@@ -385,7 +412,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		_, txErr = workMapper.StopForDeletedSession(ctx, workspaceUUID, session.EnvironmentExternalID, session.UUID)
 		return txErr
 	})
-	return session, err
+	return removal, err
 }
 
 func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams) ([]Session, bool, error) {
@@ -566,14 +593,10 @@ func (d *DB) AppendSessionEvents(
 	var created []SessionEvent
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
 		if txErr != nil {
 			return txErr
 		}
-		if !found {
-			return ErrNotFound
-		}
-		session := row.session()
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
@@ -591,14 +614,10 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 	var created []SessionEvent
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
 		if txErr != nil {
 			return txErr
 		}
-		if !found {
-			return ErrNotFound
-		}
-		session := row.session()
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
@@ -618,11 +637,41 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionE
 	return row.event(), mapNoRows(err)
 }
 
+func (d *DB) MarkSessionEventProcessed(ctx context.Context, worker CodeSession, eventID string, at time.Time) (SessionEvent, bool, error) {
+	var row sessionEventRow
+	var changed bool
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		_, err := lockSessionForEvents(ctx, NewSessionMapper(executor), worker.WorkspaceUUID, worker.SessionExternalID)
+		if err != nil {
+			return err
+		}
+		current, err := NewCodeSessionMapper(executor).LockWorkerLeaseByExternalID(ctx, worker.ExternalID)
+		if err != nil {
+			return err
+		}
+		if current.CurrentWorkerEpoch != worker.CurrentWorkerEpoch {
+			return ErrWorkerEpochMismatch
+		}
+		row, changed, err = NewSessionEventMapper(executor).MarkProcessed(ctx, worker.WorkspaceUUID, worker.SessionExternalID, eventID, at)
+		return err
+	})
+	return row.event(), changed, err
+}
+
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
 	mapper := NewSessionEventMapper(d.mapperDB)
+	if params.Cursor != nil {
+		exists, err := mapper.CursorExists(ctx, params.WorkspaceUUID, params.SessionExternalID, params.Cursor.ExternalID)
+		if err != nil {
+			return nil, false, err
+		}
+		if !exists {
+			return nil, false, ErrInvalidCursor
+		}
+	}
 	rows, err := mapper.ListPage(ctx, sessionEventPageParameters(params))
 	if err != nil {
 		return nil, false, err

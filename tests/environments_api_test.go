@@ -386,6 +386,48 @@ func doEnvironmentBearerRequest(t *testing.T, app *testApp, method, path string,
 	return resp
 }
 
+func TestEnvironmentListFilters(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("environment-filters-bucket"))
+	defer app.close()
+	t.Run("invalid status", func(t *testing.T) {
+		resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments?beta=true&status=invalid", nil, defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+	t.Run("search and status paginate matching rows", func(t *testing.T) {
+		prefix := "Filter_%" + uuid.NewV4().String()
+		first := createEnvironment(t, app, `{"name":"`+prefix+` alpha"}`)
+		defer cleanupEnvironmentRows(t, app.pool, first.ID)
+		second := createEnvironment(t, app, `{"name":"`+prefix+` beta"}`)
+		defer cleanupEnvironmentRows(t, app.pool, second.ID)
+		archiveEnvironment(t, app, first.ID)
+		search := url.QueryEscape(strings.ToUpper(prefix))
+		page := listEnvironments(t, app, "search="+search+"&include_archived=true&limit=1")
+		if len(page.Data) != 1 || page.NextPage == nil {
+			t.Fatalf("filtered first page = %+v", page)
+		}
+		next := listEnvironments(t, app, "search="+search+"&include_archived=true&limit=1&page="+url.QueryEscape(*page.NextPage))
+		if len(next.Data) != 1 || next.NextPage != nil || page.Data[0].ID == next.Data[0].ID {
+			t.Fatalf("filtered next page = %+v", next)
+		}
+		active := listEnvironments(t, app, "search="+search+"&status=active&include_archived=true")
+		if len(active.Data) != 1 || active.Data[0].ID != second.ID {
+			t.Fatalf("active page = %+v", active)
+		}
+		archived := listEnvironments(t, app, "search="+search+"&status=archived")
+		if len(archived.Data) != 1 || archived.Data[0].ID != first.ID {
+			t.Fatalf("archived page = %+v", archived)
+		}
+		exact := listEnvironments(t, app, "search="+url.QueryEscape(second.ID))
+		if len(exact.Data) != 1 || exact.Data[0].ID != second.ID {
+			t.Fatalf("exact ID page = %+v", exact)
+		}
+		empty := listEnvironments(t, app, "search="+url.QueryEscape(prefix+" missing"))
+		if len(empty.Data) != 0 {
+			t.Fatalf("unmatched page = %+v", empty)
+		}
+	})
+}
+
 func createEnvironment(t *testing.T, app *testApp, body string) environmentAPIResponse {
 	t.Helper()
 	resp := doEnvironmentRequest(t, app, http.MethodPost, "/v1/environments?beta=true", strings.NewReader(body), defaultTestKey, true)

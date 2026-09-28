@@ -35,11 +35,20 @@ type codeSessionRow struct {
 	WorkerTokenSessionID        *string    `db:"worker_token_session_id"`
 	WorkerBinding               []byte     `db:"worker_binding"`
 	WorkerStatus                string     `db:"worker_status"`
+	WorkerTurnStarted           bool       `db:"worker_turn_started"`
 	WorkerExternalMetadata      []byte     `db:"worker_external_metadata"`
 	WorkerRequiresActionDetails []byte     `db:"worker_requires_action_details"`
 	CreatedAt                   time.Time  `db:"created_at"`
 	UpdatedAt                   time.Time  `db:"updated_at"`
 	DeletedAt                   *time.Time `db:"deleted_at"`
+}
+
+type codeSessionInputStateRow struct {
+	ExternalID             string `db:"external_id"`
+	Status                 string `db:"status"`
+	WorkerTurnStarted      bool   `db:"worker_turn_started"`
+	WorkerStatus           string `db:"worker_status"`
+	WorkerExternalMetadata []byte `db:"worker_external_metadata"`
 }
 
 type createCodeSessionParams struct {
@@ -80,6 +89,7 @@ type heartbeatCodeSessionWorkerParams struct {
 type updateCodeSessionWorkerStateParams struct {
 	UUID                  string
 	WorkerStatus          string
+	TurnStarted           bool
 	RequiresActionDetails []byte
 	ExternalMetadata      []byte
 	Now                   time.Time
@@ -148,7 +158,9 @@ type resumeCodeSessionWorkerLeaseParams struct {
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
-	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) error
+	ClearToolPermissionRequest(ctx context.Context, workspaceUUID, codeSessionExternalID, publicEventID string) error
+	LockLatestInputState(ctx context.Context, workspaceUUID, sessionUUID string) (codeSessionInputStateRow, bool, error)
+	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string, newTurn bool) error
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
 	FindCredentialByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (codeSessionCredentialContextRow, error)
 	FindCredentialForIssue(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionCredentialContextRow, error)
@@ -206,6 +218,7 @@ func (r codeSessionRow) session() CodeSession {
 		WorkerTokenSessionID:        r.WorkerTokenSessionID,
 		WorkerBinding:               bytes.Clone(r.WorkerBinding),
 		WorkerStatus:                r.WorkerStatus,
+		WorkerTurnStarted:           r.WorkerTurnStarted,
 		WorkerExternalMetadata:      workerExternalMetadata,
 		WorkerRequiresActionDetails: bytes.Clone(r.WorkerRequiresActionDetails),
 		CreatedAt:                   r.CreatedAt,

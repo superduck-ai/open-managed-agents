@@ -10,24 +10,25 @@ const (
 )
 
 type Config struct {
-	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
-	Env               string                  `yaml:"env"`
-	Server            ServerConfig            `yaml:"server"`
-	Database          DatabaseConfig          `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	NATS              NATSConfig              `yaml:"nats"`
-	Auth              AuthConfig              `yaml:"auth"`
-	Tunnel            TunnelConfig            `yaml:"tunnel"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Batch             BatchConfig             `yaml:"batch"`
-	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
-	E2B               E2BConfig               `yaml:"e2b"`
-	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
-	CodeSession       CodeSessionConfig       `yaml:"code_session"`
-	Observability     ObservabilityConfig     `yaml:"observability"`
-	Webhook           WebhookConfig           `yaml:"webhook"`
-	Vault             VaultConfig             `yaml:"vault"`
-	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
+	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                  string                    `yaml:"env"`
+	Server               ServerConfig              `yaml:"server"`
+	Database             DatabaseConfig            `yaml:"database"`
+	Redis                RedisConfig               `yaml:"redis"`
+	NATS                 NATSConfig                `yaml:"nats"`
+	Auth                 AuthConfig                `yaml:"auth"`
+	Tunnel               TunnelConfig              `yaml:"tunnel"`
+	Storage              StorageConfig             `yaml:"storage"`
+	Batch                BatchConfig               `yaml:"batch"`
+	SandboxLifecycle     SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                  E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession          CodeSessionConfig         `yaml:"code_session"`
+	Observability        ObservabilityConfig       `yaml:"observability"`
+	Webhook              WebhookConfig             `yaml:"webhook"`
+	Vault                VaultConfig               `yaml:"vault"`
+	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and
@@ -106,9 +107,6 @@ type TunnelConfig struct {
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
 	PresenceTTL         time.Duration `yaml:"presence_ttl"`
 	TombstoneTTL        time.Duration `yaml:"tombstone_ttl"`
-	MaxPendingRequests  int           `yaml:"max_pending_requests"`
-	MaxStoredRequests   int           `yaml:"max_stored_requests"`
-	MaxPendingBytes     int64         `yaml:"max_pending_bytes"`
 	MaxBodyBytes        int64         `yaml:"max_body_bytes"`
 	MaxHeaderBytes      int64         `yaml:"max_header_bytes"`
 	MaxHeaderValueBytes int64         `yaml:"max_header_value_bytes"`
@@ -159,7 +157,6 @@ type EnvironmentRunnerConfig struct {
 	Concurrency             int           `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
 	ManagerPath             string        `yaml:"manager_path"`
-	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
 	ClaudePath              string        `yaml:"claude_path"`
 	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
 	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).

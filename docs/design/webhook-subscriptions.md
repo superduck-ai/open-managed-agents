@@ -189,7 +189,7 @@ lint、dead-code、duplicates、complexity、large-files、web-format-check、ho
 
 普通失败禁用不再使用 20 次阈值。新增 `webhook.failure_disable_after`，默认 `24h`，必须为正时长；配置加载和 Worker 的未配置回退一致。Claude 未公开持续失败阈值，这一默认值和可配置能力属于 OMA 的选择。
 
-migration 00064 为 webhook_endpoints 增加 nullable `failure_started_at timestamptz`。失败次数保留用于内部统计，不再决定禁用。旧启用记录从升级后首次失败开始计时，不用 updated_at 或历史任务推算；原禁用状态与原因不变。公开 API、前端及事件目录不增加字段。
+migration 00069 为 webhook_endpoints 增加 nullable `failure_started_at timestamptz`。失败次数保留用于内部统计，不再决定禁用。旧启用记录从升级后首次失败开始计时，不用 updated_at 或历史任务推算；原禁用状态与原因不变。公开 API、前端及事件目录不增加字段。
 
 ```mermaid
 flowchart TD
@@ -620,3 +620,22 @@ API 白名单、Console 和两份 OpenAPI 同步增加 `agent.deleted`、`deploy
 - Webhook 页面、受影响 Agent API 与 Memory attach 纯逻辑测试合计 50 项、327 次断言通过；前端格式、命名、构建通过。完整前端套件及独立 ConsoleLayout、ManagedAgentsPage 仍分别 SIGTRAP（subprocess -5 / shell 133），不能记为全量通过。
 - lint、dead-code 修复新增测试的归档签名后复跑通过；duplicates、complexity、large-files 和全量 hooks-run 通过。最终合并提交继续运行正常 pre-commit。
 - Review 复核冲突处归档变更标记、上游 Memory 事务/挂载合同、共享 Enqueuer 启动顺序与租户标识；未引入新产生入口或恢复 SDK 绕过。验证日志保存在 `/tmp/oma-upstream-sync-*.log`。
+
+## 2026-09-28 upstream/main 合并适配
+
+合入 upstream/main `0abeb78`。保留上游 Environment 预构建事务、Session 输入取消及队列清理、Console 资源页头与空状态，同时保留当前订阅表单、38 项目录、搜索排序和全部投递保护。
+
+Environment 更新在原有预构建事务中返回 changed，条件写入包含新增 build_job_id；未变化时在同一事务读取当前记录。只有事务提交且 changed 时通知。预构建后台状态更新不新增资源通知。
+
+Session 归档保留上游 SessionRemoval 事务，重复归档返回未变更；取消待执行输入已产生终止事件时复用该事件，避免再发一次归档终止通知。删除在成功后立即采集发生时间，再完成队列清理和 SSE 发布，保留删除通知。测试覆盖运行中拒绝、未启动/不存在 Worker 的取消、重复归档与事件计数。
+
+上游占用 00064–00068 范围，分支新增的 Webhook 失败窗口迁移从 00064 改为 00069，SQL 内容不变；迁移测试改为从上游 68 升级到 69。前述第三阶段验证记录保留当时编号。此次不操作开发数据库；若某数据库曾应用分支旧 00064，启动前需核对并协调 goose 迁移历史，不能直接把它视为上游同号迁移已执行。
+
+
+本次合并验证与 review：
+
+- 使用独立 Docker PostgreSQL、Redis、NATS 集群与对象存储，`CONFIG_FILE=/tmp/oma-webhooks-test-config.yaml just test` 的 53 个有测试 Go package 全部通过。Webhook 失败窗口迁移测试另外在独立数据库验证 68 → 69 升级及回退。未使用开发数据库或付费 sandbox。
+- 定向验证 Session 取消待执行输入后的通知、运行中拒绝、重复归档去重。上游现在过滤重复 idle，事件验收测试改为真实子线程 running → idle 状态转换，并同步聚合 Session running 事件计数；修正后定向测试及完整 Go 套件通过。
+- 保留上游新增事件名称、分组、计数与无障碍标签翻译，适配到本分支独立事件选择器和详情摘要。Webhook 页面 26 项测试、273 次断言通过；前端格式、命名和构建通过。完整前端套件与单独 ConsoleLayout 仍触发 SIGTRAP（subprocess -5，对应 shell 133），不记为全量通过。
+- lint、dead-code、duplicates、complexity、large-files、全量 hooks-run 通过。复杂度检查初次发现合并后冗余的空列表判断，移除不可达分支后通过，未调整门禁预算。
+- Review 重点复核 Environment 预构建事务的变更标记、Session 取消与通知去重、共享 Enqueuer 启动顺序、租户范围和迁移编号；保留上游 MCP Tunnel 调整，不恢复已移除的清理 worker。日志保存在 `/tmp/oma-webhook-sync-*.log`。合并提交正常执行 pre-commit，不推送。

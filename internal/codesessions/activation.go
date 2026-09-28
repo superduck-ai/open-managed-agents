@@ -40,6 +40,9 @@ func loadActivationSnapshot(ctx context.Context, tx db.ManagedAgentActivationTx,
 	if err != nil {
 		return activationSnapshot{}, err
 	}
+	if session.ArchivedAt != nil {
+		return activationSnapshot{}, db.ErrInvalidState
+	}
 	locked, err := tx.LockInitializingCodeSession(ctx, codeSession.WorkspaceUUID, codeSession.UUID)
 	if err != nil {
 		return activationSnapshot{}, err

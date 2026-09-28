@@ -1,6 +1,6 @@
 import { useI18n } from '../../../shared/i18n';
 import { Bot, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { AgentDetailPage, AgentsResourcePage } from '../agents/AgentsResourcePage';
 import { CompactChip, StatusPill } from '../components/common';
 import { SessionDetailPage } from '../sessions/SessionDetailPage';
@@ -97,21 +97,21 @@ export const resourceConfigs: Record<
     filters: ['Created  All time', 'Status  Active'],
     columns: ['ID', 'Name', 'Model', 'Status', 'Created', 'Last updated'],
     emptyTitle: 'No agents yet',
-    emptyAction: 'Get started with agents',
+    emptyBody: 'Create an agent to start building managed workflows.',
     emptyIcon: Bot,
     rows: agentRows,
   },
   sessions: {
     section: 'sessions',
     title: 'Sessions',
-    description: 'Trace and debug Claude Managed Agents sessions.',
+    description: 'Trace and debug Open Managed Agents sessions.',
     createLabel: 'Create session',
     searchPrefix: 'ID',
     searchPlaceholder: 'Search by session ID',
     filters: ['Created  All time', 'Agent  All', 'Deployment  All', 'Status  Active'],
     columns: ['ID', 'Name', 'Status', 'Agent', 'Tokens in / out', 'Cost', 'Created'],
     emptyTitle: 'No sessions yet',
-    emptyBody: 'Sessions will appear here once created through the API.',
+    emptyBody: 'Create a session to trace and debug it here.',
     emptyIcon: MessageCircle,
   },
   deployments: {
@@ -123,7 +123,7 @@ export const resourceConfigs: Record<
     filters: ['Agent  All', 'Status  All'],
     columns: ['ID', 'Name', 'Status', 'Agent', 'Trigger', 'Created'],
     emptyTitle: 'No deployments yet',
-    emptyBody: 'Deployments will appear after an agent is deployed.',
+    emptyBody: 'Create a deployment to bind an agent to credentials, an environment, and a schedule.',
     emptyIcon: BriefcaseBusiness,
     rows: deploymentRows,
   },
@@ -160,10 +160,23 @@ export const resourceConfigs: Record<
     filters: ['Created  All time', 'Status  Active'],
     columns: ['', 'ID', 'Name', 'Status', 'Created'],
     emptyTitle: 'No memory stores yet',
-    emptyBody: 'Memory stores give agents persistent, cross-session memory.',
+    emptyBody: 'Create a memory store to give agents persistent, cross-session memory.',
     emptyIcon: Database,
   },
 };
+
+function useWindowPathname(enabled: boolean) {
+  const [pathname, setPathname] = useState(currentPathname);
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const syncPathname = () => setPathname(currentPathname());
+    window.addEventListener('popstate', syncPathname);
+    return () => window.removeEventListener('popstate', syncPathname);
+  }, [enabled]);
+  return pathname;
+}
 
 export function ManagedResourcePage({
   config,
@@ -172,9 +185,11 @@ export function ManagedResourcePage({
   config: ResourceConfig;
   routeWorkspaceId?: string;
 }) {
+  const trackedPathname = useWindowPathname(config.section === 'sessions');
+  const pathname = config.section === 'sessions' ? trackedPathname : currentPathname();
   if (config.section !== 'agents') {
     const entityConfig = config as ResourceConfig & { section: ManagedEntitySection };
-    const detailId = managedEntityIdFromPath(entityConfig.section);
+    const detailId = managedEntityIdFromPath(entityConfig.section, pathname);
     if (detailId) {
       if (entityConfig.section === 'sessions') {
         return <SessionDetailPage config={entityConfig} sessionId={detailId} />;
@@ -184,7 +199,7 @@ export function ManagedResourcePage({
     return <ManagedEntitiesPage config={entityConfig} />;
   }
 
-  const agentId = managedAgentIdFromPath(currentPathname());
+  const agentId = managedAgentIdFromPath(pathname);
   if (agentId) {
     return <AgentDetailPage agentId={agentId} routeWorkspaceId={routeWorkspaceId} />;
   }

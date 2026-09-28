@@ -91,9 +91,12 @@ function CreateAgentDialogLoading({
         aria-label={msg('managedAgents.agents.createLabel', 'Create agent')}
         aria-busy={error ? undefined : true}
         className="max-w-[720px] sm:max-w-[720px]"
+        showCloseButton={false}
       >
         <DialogHeader>
-          <DialogTitle>{msg('managedAgents.agents.createLabel', 'Create agent')}</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            {msg('managedAgents.agents.createLabel', 'Create agent')}
+          </DialogTitle>
           <DialogDescription className={noModels ? 'sr-only' : undefined}>
             {noModels
               ? msg('llmModels.requiredDescription', 'Configure a model to get started.')
@@ -103,12 +106,19 @@ function CreateAgentDialogLoading({
           </DialogDescription>
         </DialogHeader>
         {noModels ? (
-          <LLMProviderRequired
-            compact
-            onConfigure={() =>
-              window.location.assign(`/workspaces/${encodeURIComponent(workspaceId ?? '')}/llm-models`)
-            }
-          />
+          <>
+            <LLMProviderRequired
+              compact
+              onConfigure={() =>
+                window.location.assign(`/workspaces/${encodeURIComponent(workspaceId ?? '')}/llm-models`)
+              }
+            />
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" onClick={onClose}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
+            </div>
+          </>
         ) : error ? (
           <>
             <ManagedErrorAlert>
@@ -117,11 +127,22 @@ function CreateAgentDialogLoading({
                 'Retry before creating an agent so its displayed and saved model IDs stay consistent.',
               )}
             </ManagedErrorAlert>
-            <Button type="button" className="justify-self-end" onClick={onRetry}>
-              {msg('common.retry', 'Retry')}
-            </Button>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={onClose}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
+              <Button type="button" onClick={onRetry}>
+                {msg('common.retry', 'Retry')}
+              </Button>
+            </div>
           </>
-        ) : null}
+        ) : (
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" onClick={onClose}>
+              {msg('common.cancel', 'Cancel')}
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -457,22 +478,27 @@ function CreateAgentDialogContent({
             ) : (
               <span />
             )}
-            <Button
-              type="button"
-              disabled={createDisabled}
-              size="sm"
-              className={clsx(
-                'px-3 text-[14px] font-semibold leading-5',
-                createDisabled
-                  ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
-                  : 'bg-foreground text-background hover:bg-muted',
-              )}
-              onClick={handleCreate}
-            >
-              {isCreating
-                ? msg('common.creating', 'Creating...')
-                : msg('managedAgents.agents.createLabel', 'Create agent')}
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={onClose}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
+              <Button
+                type="button"
+                disabled={createDisabled}
+                size="sm"
+                className={clsx(
+                  'px-3 text-[14px] font-semibold leading-5',
+                  createDisabled
+                    ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
+                    : 'bg-foreground text-background hover:bg-muted',
+                )}
+                onClick={handleCreate}
+              >
+                {isCreating
+                  ? msg('common.creating', 'Creating...')
+                  : msg('managedAgents.agents.createLabel', 'Create agent')}
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>

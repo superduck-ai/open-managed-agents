@@ -46,6 +46,7 @@ import {
   credentialFormValues,
   credentialDisplayName,
   initialFormValues,
+  isPlatformMemoryMarkdownPath,
   parseCredentialAuthType,
   patchCredentialFormValues,
   vaultOAuthErrorMessage,
@@ -623,7 +624,7 @@ export function MemoryDialog({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canSubmit = values.path.trim() && values.content.length > 0;
+  const canSubmit = values.path.trim() && values.content.length > 0 && !isPlatformMemoryMarkdownPath(values.path);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) {
@@ -663,6 +664,14 @@ export function MemoryDialog({
               onChange={(path) => setValues((current) => ({ ...current, path }))}
               autoFocus
             />
+            {isPlatformMemoryMarkdownPath(values.path) ? (
+              <p className="text-sm text-destructive" role="alert">
+                {msg(
+                  'managedAgents.memoryStores.memoryDialog.platformMemoryMd',
+                  'Platform MEMORY.md is created in the sandbox and cannot be added to a store.',
+                )}
+              </p>
+            ) : null}
             <ManagedTextArea
               label={msg('managedAgents.memoryStores.memoryDialog.content', 'Content')}
               value={values.content}
@@ -871,7 +880,12 @@ function GenericManagedEntityDialog({
 
             {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-            <DeploymentDialogActions editing={Boolean(entity)} submitting={submitting} canSubmit={canSubmit} />
+            <DeploymentDialogActions
+              editing={Boolean(entity)}
+              submitting={submitting}
+              canSubmit={canSubmit}
+              onCancel={onClose}
+            />
           </form>
         </DialogContent>
       </Dialog>
@@ -969,7 +983,7 @@ function GenericManagedEntityDialog({
               <p className="text-sm leading-5 text-muted-foreground">
                 {msg(
                   'managedAgents.credentialVaults.createHint',
-                  'Continue after creating the vault to add credentials for tools and MCP servers.',
+                  'After you create the vault, add credentials for tools and MCP servers.',
                 )}
               </p>
             ) : null}

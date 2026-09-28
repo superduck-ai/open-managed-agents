@@ -57,6 +57,9 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Badge } from '../../shared/ui/badge';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { Card, CardContent } from '../../shared/ui/card';
 import { Input } from '../../shared/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
@@ -139,6 +142,7 @@ function WorkspaceWebhookManager({
   const [selectedWebhookId, setSelectedWebhookId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+  const workspaceName = localizedWorkspaceName(workspace.name, msg);
   const queryKey = useMemo(
     () => ['console', 'workspace-webhooks', orgUuid, workspace.id] as const,
     [orgUuid, workspace.id],
@@ -271,23 +275,20 @@ function WorkspaceWebhookManager({
   return (
     <section className="w-full max-w-none" data-testid="workspace-webhooks-page">
       <div className="min-w-0" data-testid="workspace-webhooks-list">
-        <div className="mb-7 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-              {msg('webhooks.title', 'Webhooks')}
-            </h1>
-            <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-              {msg(
-                'webhooks.description',
-                'Webhook endpoints receive event notifications when things happen in your workspace.',
-              )}
-            </p>
-          </div>
-          <Button type="button" size="lg" className="shrink-0" disabled={!ready} onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {msg('webhooks.addEndpoint', 'Add webhook endpoint')}
-          </Button>
-        </div>
+        <ResourcePageHeader
+          contentGap="content"
+          title={msg('webhooks.title', 'Webhooks')}
+          description={msg(
+            'webhooks.description',
+            'Webhook endpoints receive event notifications when things happen in your workspace.',
+          )}
+          actions={
+            <Button type="button" size="lg" disabled={!ready} onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {msg('webhooks.addEndpoint', 'Add webhook endpoint')}
+            </Button>
+          }
+        />
 
         <Input
           aria-label={msg('webhooks.search', 'Find webhook by ID')}
@@ -296,7 +297,7 @@ function WorkspaceWebhookManager({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
-        <div className="border-t border-border">
+        <div className="overflow-x-auto border-t border-border">
           <Table className="min-w-[880px] table-fixed text-left">
             <colgroup>
               <col className="w-[18%]" />
@@ -357,21 +358,24 @@ function WorkspaceWebhookManager({
                       onAction={(action) => handleAction(action, webhook)}
                     />
                   ))
-              ) : (
-                <WebhooksState
-                  onCreate={webhooks.length === 0 ? () => setCreateOpen(true) : undefined}
-                  text={
-                    webhooks.length > 0
-                      ? msg('webhooks.noMatches', 'No matching webhook IDs.')
-                      : msg('webhooks.empty', 'No webhook endpoints have been created for {workspaceName}.', {
-                          workspaceName: workspace.name,
-                        })
-                  }
-                />
-              )}
+              ) : webhooks.length > 0 ? (
+                <WebhooksState text={msg('webhooks.noMatches', 'No matching webhook IDs.')} />
+              ) : null}
             </TableBody>
           </Table>
         </div>
+
+        {!webhooksQuery.isLoading && !errorMessage && webhooks.length === 0 ? (
+          <ResourceListState
+            icon={Webhook}
+            title={msg('webhooks.emptyTitle', 'No webhook endpoints yet')}
+            body={msg(
+              'webhooks.empty',
+              'Create a webhook endpoint for the {workspaceName} workspace to receive event notifications.',
+              { workspaceName },
+            )}
+          />
+        ) : null}
       </div>
 
       {selectedWebhook ? (
@@ -704,7 +708,7 @@ function WebhookEndpointDisplay({ url, copied, onCopy }: { url: string; copied: 
 
 function WebhookSubscribedEvents({ events }: { events: string[] }) {
   const { msg } = useI18n();
-  const groups = summarizeWebhookEvents(events);
+  const groups = summarizeWebhookEvents(events, msg);
 
   return (
     <section className="border-t border-border pt-8">

@@ -6,6 +6,7 @@ import { ConsoleShell } from '../../app/layout/ConsoleLayout';
 import { setConsoleRequestContext } from '../../shared/api/client';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
+import { I18nProvider } from '../../shared/i18n';
 import { WorkspaceWebhooksContent } from './WorkspaceWebhooksPage';
 import type { WebhookEndpoint } from './webhooksApi';
 
@@ -21,6 +22,28 @@ afterEach(() => {
 });
 
 describe('Workspace webhooks page', () => {
+  test('preserves upstream event translations with the complete subscription catalog', async () => {
+    resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
+    mockWebhooks([]);
+    render(
+      <I18nProvider initialLocale="zh-CN">
+        <WorkspaceWebhooksHarness>
+          <WorkspaceWebhooksContent />
+        </WorkspaceWebhooksHarness>
+      </I18nProvider>,
+    );
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Add webhook endpoint' }))[0]);
+    const dialog = screen.getByRole('dialog', { name: '创建 Webhook 端点' });
+    expect(within(dialog).getByText('会话生命周期')).toBeTruthy();
+    expect(within(dialog).getByText('运行已开始')).toBeTruthy();
+    expect(within(dialog).getByText('0/38')).toBeTruthy();
+    await toggleCheckbox(within(dialog).getByRole('checkbox', { name: '会话生命周期事件' }));
+    expect(within(dialog).getByText('4/38')).toBeTruthy();
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'session.status_run_started' }).getAttribute('aria-checked'),
+    ).toBe('true');
+  });
+
   test('requires a valid HTTPS URL and an explicit event selection', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
     const api = mockWebhooks([]);
@@ -29,7 +52,7 @@ describe('Workspace webhooks page', () => {
         <WorkspaceWebhooksContent />
       </WorkspaceWebhooksHarness>,
     );
-    await screen.findByText('No webhook endpoints have been created for Default.');
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
     const submit = within(dialog).getByRole('button', { name: 'Create' });
@@ -78,7 +101,7 @@ describe('Workspace webhooks page', () => {
         <WorkspaceWebhooksContent />
       </WorkspaceWebhooksHarness>,
     );
-    await screen.findByText('No webhook endpoints have been created for Default.');
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://example.com/hooks' } });
     await toggleCheckbox(screen.getByRole('checkbox', { name: 'session.updated' }));
@@ -220,7 +243,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('No webhook endpoints have been created for Default.');
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
 
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
@@ -246,7 +269,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('No webhook endpoints have been created for Default.');
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
 
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
@@ -339,7 +362,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
 
-    await screen.findByText('No webhook endpoints have been created for Default.');
+    await screen.findByText('Create a webhook endpoint for the Default workspace to receive event notifications.');
     fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
     const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
 

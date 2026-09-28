@@ -4,7 +4,7 @@ import { Button } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Label } from '../../../shared/ui/label';
 import { useI18n } from '../../../shared/i18n';
-import { allWebhookEventTypes, orderedEvents, webhookEventGroups } from './events';
+import { allWebhookEventTypes, orderedEvents, localizedWebhookEventGroups } from './events';
 import { InlineError } from './feedback';
 
 export function WebhookEventPicker({
@@ -20,7 +20,7 @@ export function WebhookEventPicker({
   const pickerId = useId();
   const [copied, setCopied] = useState('');
   const [copyError, setCopyError] = useState(false);
-  const groups = webhookEventGroups;
+  const groups = localizedWebhookEventGroups(msg);
   const availableTypes = allWebhookEventTypes;
 
   const toggle = (types: string[]) => {
@@ -54,9 +54,9 @@ export function WebhookEventPicker({
           onChange={() => toggle(availableTypes)}
         />
         {groups.map((group) => (
-          <div key={group.label}>
+          <div key={group.labelId}>
             <EventGroupToggle
-              label={`${group.label} events`}
+              label={msg('webhooks.group.eventsAria', '{group} events', { group: group.label })}
               displayLabel={group.label}
               selectedCount={group.events.filter((event) => selected.includes(event.type)).length}
               total={group.events.length}
@@ -127,6 +127,7 @@ function EventGroupToggle({
   disabled: boolean;
   onChange: () => void;
 }) {
+  const { msg } = useI18n();
   const labelId = useId();
   return (
     <div className="flex min-h-7 items-center justify-between gap-3 text-sm">
@@ -147,7 +148,7 @@ function EventGroupToggle({
         </Label>
       </div>
       <span className="shrink-0 text-xs text-muted-foreground" aria-live="polite">
-        {selectedCount} of {total}
+        {msg('webhooks.group.count', '{selected} of {total}', { selected: selectedCount, total })}
       </span>
     </div>
   );

@@ -24,6 +24,7 @@ type Environment struct {
 	Scope               *string
 	Provider            string
 	ResolvedTemplate    string
+	BuildJobID          *int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	ArchivedAt          *time.Time
@@ -40,6 +41,8 @@ type ListEnvironmentsPageParams struct {
 	Limit           int
 	Cursor          *EnvironmentPageCursor
 	IncludeArchived bool
+	ArchivedOnly    bool
+	Search          string
 }
 
 type EnvironmentKey struct {
@@ -145,19 +148,15 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 }
 
 func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, bool, error) {
-	params := environmentWriteParamsFrom(next)
-	params.WorkspaceUUID = workspaceUUID
-	params.ExternalID = externalID
-	mapper := NewEnvironmentMapper(d.mapperDB)
-	row, err := mapper.UpdateByExternalID(ctx, params)
-	if isUniqueViolation(err) {
-		return Environment{}, false, ErrDuplicate
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return row.environment(), err == nil, err
-	}
-	current, loadErr := d.GetEnvironment(ctx, workspaceUUID, externalID)
-	return current, false, loadErr
+	next.WorkspaceUUID, next.ExternalID = workspaceUUID, externalID
+	var updated Environment
+	var changed bool
+	err := d.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
+		var err error
+		updated, changed, err = d.UpdateEnvironmentTx(ctx, tx, next)
+		return err
+	})
+	return updated, changed && err == nil, err
 }
 
 func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, bool, error) {
@@ -572,7 +571,7 @@ func environmentWriteParamsFrom(env Environment) environmentWriteParams {
 		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: nullableString(env.CreatedByAPIKeyUUID),
 		Name: env.Name, Description: env.Description,
 		Config: agentJSONArg(env.Config), Metadata: agentJSONArg(env.Metadata),
-		Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
+		BuildJobID: env.BuildJobID, Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
 		CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
 	}
 }
@@ -581,6 +580,7 @@ func environmentPageParams(params ListEnvironmentsPageParams) environmentPageMap
 	return environmentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: params.Limit + 1,
 		Cursor: params.Cursor, IncludeArchived: params.IncludeArchived,
+		ArchivedOnly: params.ArchivedOnly, Search: params.Search,
 	}
 }
 
@@ -634,7 +634,7 @@ func (r environmentMapperRow) environment() Environment {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
-		Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
+		BuildJobID: r.BuildJobID, Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }

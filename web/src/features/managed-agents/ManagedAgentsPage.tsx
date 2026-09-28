@@ -1,5 +1,6 @@
 import { useWorkspace } from '../../shared/workspaces/context';
 import { useEffect } from 'react';
+import { EnvironmentsPage } from './environments/EnvironmentsPage';
 import { AgentQuickstartPage } from './quickstart/AgentQuickstartPage';
 import { ObservabilityPage } from '../observability/ObservabilityPage';
 import { DreamingPage, ManagedResourcePage, resourceConfigs } from './resources/ManagedResources';
@@ -21,6 +22,10 @@ export function ManagedAgentsPage({ section }: { section: ManagedAgentSection })
 
   if (section === 'observability') {
     return <ObservabilityPage key={activeWorkspaceId} scope={{ kind: 'workspace' }} />;
+  }
+
+  if (section === 'environments') {
+    return <EnvironmentsPage />;
   }
 
   if (section === 'dreams') {

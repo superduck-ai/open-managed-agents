@@ -9,39 +9,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 type failingEnqueueStore struct{}
 
-func (failingEnqueueStore) HasWebhookEndpoints(context.Context, string) (bool, error) {
-	return false, errors.New("load endpoints")
-}
-
 func (failingEnqueueStore) ListActiveWebhookEndpointsForEvent(context.Context, string, string) ([]db.WebhookEndpoint, error) {
-	return nil, nil
+	return nil, errors.New("load endpoints")
 }
 
 func (failingEnqueueStore) EnqueueWebhookDeliveryJobForEndpoint(context.Context, string, string, json.RawMessage, string) error {
 	return nil
 }
 
-func (failingEnqueueStore) EnqueueWebhookDeliveryJob(context.Context, string, string, json.RawMessage) error {
-	return nil
-}
-
 func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil)).With("component", "webhooks")
-	enqueuer := newEnqueuer(failingEnqueueStore{}, config.WebhookConfig{}, logger)
+	enqueuer := newEnqueuer(failingEnqueueStore{}, logger)
 
 	enqueuer.Enqueue(context.Background(), EnqueueInput{
 		OccurredAt:          time.Now().UTC(),
 		WorkspaceUUID:       "00000000-0000-0000-0000-000000000042",
 		OrganizationUUID:    "11111111-1111-4111-8111-111111111111",
 		WorkspaceExternalID: "wrk_test",
-		EventType:           "session.created",
+		EventType:           "session.status_idled",
 		ResourceID:          "session_test",
 	})
 
@@ -52,8 +43,8 @@ func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	if got := record["component"]; got != "webhooks" {
 		t.Fatalf("component = %v, want webhooks", got)
 	}
-	if got := record["msg"]; got != "load webhook endpoint configuration" {
-		t.Fatalf("msg = %v, want load webhook endpoint configuration", got)
+	if got := record["msg"]; got != "list webhook endpoints event" {
+		t.Fatalf("msg = %v, want list webhook endpoints event", got)
 	}
 	if got := record["workspace_uuid"]; got != "00000000-0000-0000-0000-000000000042" {
 		t.Fatalf("workspace_uuid = %v, want UUID", got)
@@ -61,13 +52,9 @@ func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 }
 
 type capturingEnqueueStore struct {
-	failingEnqueueStore
 	payloads []json.RawMessage
 }
 
-func (s *capturingEnqueueStore) HasWebhookEndpoints(context.Context, string) (bool, error) {
-	return true, nil
-}
 func (s *capturingEnqueueStore) ListActiveWebhookEndpointsForEvent(context.Context, string, string) ([]db.WebhookEndpoint, error) {
 	return []db.WebhookEndpoint{{UUID: "one"}, {UUID: "two"}}, nil
 }
@@ -80,7 +67,7 @@ func TestEnqueuerOccurrenceTime(t *testing.T) {
 	store := &capturingEnqueueStore{}
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
-	enqueuer := newEnqueuer(store, config.WebhookConfig{}, logger)
+	enqueuer := newEnqueuer(store, logger)
 	input := EnqueueInput{EventType: "agent.created", ResourceID: "agent_test"}
 	enqueuer.Enqueue(t.Context(), input)
 	if len(store.payloads) != 0 {

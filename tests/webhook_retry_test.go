@@ -16,7 +16,7 @@ const redirectDisableReason = "auto-disabled: endpoint URL returned a redirect (
 const addressDisableReason = "auto-disabled: endpoint URL resolved to an invalid address"
 
 func TestWebhookPermanentFailureDoesNotRevive(t *testing.T) {
-	for _, mode := range []string{"redirect", "address", "global"} {
+	for _, mode := range []string{"redirect", "address"} {
 		t.Run(mode, func(t *testing.T) {
 			var calls atomic.Int32
 			var responseStatus atomic.Int32
@@ -29,23 +29,13 @@ func TestWebhookPermanentFailureDoesNotRevive(t *testing.T) {
 				f.app.cfg.Webhook.AllowInsecure = false
 				reason = addressDisableReason
 			}
-			if mode == "global" {
-				f.exec(t, `UPDATE jobs SET payload=payload-'webhook_endpoint_uuid' WHERE type='webhook_delivery'`)
-				f.app.cfg.Webhook.EndpointURL = f.endpoint.URL
-				f.app.cfg.Webhook.SigningKey = f.endpoint.SigningSecret
-				f.app.cfg.Webhook.EventTypes = []string{"session.status_idled"}
-			}
 			worker := webhooks.NewWorker(f.app.db, f.app.cfg.Webhook, nil)
 			if err := worker.RunOnce(t.Context(), "permanent"); err != nil {
 				t.Fatal(err)
 			}
 			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='failed' AND attempts=1 AND payload->>'last_error'=$1`, 1, reason)
-			if mode != "global" {
-				assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND status='disabled' AND disabled_reason=$2 AND consecutive_failures=1`, 1, f.endpoint.UUID, reason)
-				updateWebhook(t, f.app, f.endpoint.ExternalID, `{"status":"enabled"}`)
-			} else {
-				assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=0 AND status='enabled'`, 1, f.endpoint.UUID)
-			}
+			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND status='disabled' AND disabled_reason=$2 AND consecutive_failures=1`, 1, f.endpoint.UUID, reason)
+			updateWebhook(t, f.app, f.endpoint.ExternalID, `{"status":"enabled"}`)
 			before := calls.Load()
 			f.exec(t, `UPDATE jobs SET run_after=NOW()-interval '1 second' WHERE type='webhook_delivery'`)
 			if err := worker.RunOnce(t.Context(), "after-reenable"); err != nil {
@@ -67,7 +57,7 @@ func TestWebhookPermanentFailureDoesNotRevive(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				webhooks.NewEnqueuer(f.app.db, f.app.cfg.Webhook, nil).Enqueue(t.Context(), webhooks.EnqueueInput{
+				webhooks.NewEnqueuer(f.app.db, nil).Enqueue(t.Context(), webhooks.EnqueueInput{
 					OccurredAt: time.Now().UTC(), WorkspaceUUID: f.endpoint.WorkspaceUUID, OrganizationUUID: scope.OrganizationUUID,
 					WorkspaceExternalID: scope.WorkspaceExternalID, EventType: "session.status_idled", ResourceID: "sesn_after_reenable",
 				})

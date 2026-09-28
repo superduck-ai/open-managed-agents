@@ -17,7 +17,6 @@ type WebhookDeliveryJob struct {
 	ExternalID                string
 	WorkspaceUUID             string
 	ClaimToken                string
-	EventType                 string
 	Event                     json.RawMessage
 	Attempts                  int
 	WebhookEndpointUUID       *string
@@ -31,15 +30,6 @@ type webhookDeliveryJobPayload struct {
 	EventType           string          `json:"event_type"`
 	Event               json.RawMessage `json:"event"`
 	WebhookEndpointUUID string          `json:"webhook_endpoint_uuid,omitempty"`
-}
-
-func (d *DB) EnqueueWebhookDeliveryJob(ctx context.Context, workspaceUUID, eventType string, event json.RawMessage) error {
-	payload, err := json.Marshal(webhookDeliveryJobPayload{EventType: eventType, Event: event})
-	if err != nil {
-		return err
-	}
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	return mapper.Insert(ctx, workspaceUUID, payload)
 }
 
 func (d *DB) EnqueueWebhookDeliveryJobForEndpoint(ctx context.Context, workspaceUUID, eventType string, event json.RawMessage, endpointUUID string) error {
@@ -200,7 +190,6 @@ func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
 		ExternalID:                r.ExternalID,
 		WorkspaceUUID:             r.WorkspaceUUID,
 		ClaimToken:                r.ClaimToken,
-		EventType:                 r.EventType,
 		Event:                     bytes.Clone(r.Event),
 		Attempts:                  r.Attempts,
 		WebhookEndpointExternalID: r.WebhookEndpointExternalID.String,

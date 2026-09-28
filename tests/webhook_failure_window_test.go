@@ -250,7 +250,7 @@ func TestWebhookFailureWindowWorkerAndReenable(t *testing.T) {
 		t.Fatalf("old job revived: %d", calls.Load())
 	}
 	// Enqueue a fresh event through the existing producer boundary.
-	webhooks.NewEnqueuer(f.app.db, f.app.cfg.Webhook, nil).Enqueue(t.Context(), webhooks.EnqueueInput{OccurredAt: time.Now(), WorkspaceUUID: f.endpoint.WorkspaceUUID, OrganizationUUID: f.endpoint.OrganizationUUID, EventType: "session.status_idled", ResourceID: "sesn_fresh"})
+	webhooks.NewEnqueuer(f.app.db, nil).Enqueue(t.Context(), webhooks.EnqueueInput{OccurredAt: time.Now(), WorkspaceUUID: f.endpoint.WorkspaceUUID, OrganizationUUID: f.endpoint.OrganizationUUID, EventType: "session.status_idled", ResourceID: "sesn_fresh"})
 	if err := worker.RunOnce(t.Context(), "fresh-event"); err != nil {
 		t.Fatal(err)
 	}

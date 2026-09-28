@@ -138,8 +138,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		}
 		return internalError("Could not create session", fmt.Errorf("create session %q: %w", sessionID, err))
 	}
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.created", created.ExternalID, nil, created.CreatedAt)
-	h.enqueuePrincipalWebhook(r.Context(), principal, "session.pending", created.ExternalID, nil, created.CreatedAt)
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
 	response, err := h.responseFromSession(r, created)
 	if err != nil {

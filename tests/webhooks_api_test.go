@@ -241,7 +241,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load api key: %v", err)
 	}
-	enqueuer := webhooks.NewEnqueuer(app.db, app.cfg.Webhook, nil)
+	enqueuer := webhooks.NewEnqueuer(app.db, nil)
 	occurredAt := time.Date(2020, 1, 2, 3, 4, 5, 123456789, time.UTC)
 	enqueue := func(eventType, resourceID string) {
 		enqueuer.Enqueue(ctx, webhooks.EnqueueInput{

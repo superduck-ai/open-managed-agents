@@ -40,7 +40,6 @@
             u.external_id,
             u.workspace_uuid,
             u.locked_by,
-            COALESCE(u.payload-&gt;&gt;'event_type', '') AS event_type,
             COALESCE(u.payload-&gt;'event', CAST('{}' AS jsonb)) AS event,
             u.attempts,
             NULLIF(u.payload-&gt;&gt;'webhook_endpoint_uuid', '') AS webhook_endpoint_uuid,

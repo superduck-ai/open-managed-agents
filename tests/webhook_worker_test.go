@@ -2,7 +2,6 @@ package tests
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,7 +52,7 @@ func newDeliveryFixture(t *testing.T, handler http.HandlerFunc) deliveryFixture 
 
 func (f deliveryFixture) enqueue(t *testing.T, count int) {
 	t.Helper()
-	enqueuer := webhooks.NewEnqueuer(f.app.db, f.app.cfg.Webhook, nil)
+	enqueuer := webhooks.NewEnqueuer(f.app.db, nil)
 	for range count {
 		enqueuer.Enqueue(t.Context(), webhooks.EnqueueInput{
 			OccurredAt:    time.Now().UTC(),
@@ -89,12 +88,9 @@ func (f deliveryFixture) assertState(t *testing.T, job db.WebhookDeliveryJob, st
 func TestWebhookWorkerTargetIsolation(t *testing.T) {
 	for _, mode := range []string{"deleted", "missing", "disabled", "other-workspace"} {
 		t.Run(mode, func(t *testing.T) {
-			var endpointCalls, globalCalls atomic.Int32
+			var endpointCalls atomic.Int32
 			f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { endpointCalls.Add(1); w.WriteHeader(204) })
-			global := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { globalCalls.Add(1); w.WriteHeader(204) }))
-			defer global.Close()
 			cfg := f.app.cfg.Webhook
-			cfg.EndpointURL, cfg.SigningKey = global.URL, f.endpoint.SigningSecret
 			f.enqueue(t, 1)
 			switch mode {
 			case "deleted":
@@ -111,25 +107,14 @@ func TestWebhookWorkerTargetIsolation(t *testing.T) {
 			if err := webhooks.NewWorker(f.app.db, cfg, nil).RunOnce(t.Context(), "isolation"); err != nil {
 				t.Fatal(err)
 			}
-			if endpointCalls.Load() != 0 || globalCalls.Load() != 0 {
-				t.Fatalf("unexpected calls: endpoint=%d global=%d", endpointCalls.Load(), globalCalls.Load())
+			if endpointCalls.Load() != 0 {
+				t.Fatalf("unexpected calls: endpoint=%d", endpointCalls.Load())
 			}
 			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='completed' AND attempts=0`, 1)
 			if mode == "disabled" {
 				assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=4`, 1, f.endpoint.UUID)
 			}
 
-			// Only an originally global job may take the configured global route.
-			event := json.RawMessage(`{"id":"wevt_legacy","type":"event","data":{"type":"session.status_idled"}}`)
-			if err := f.app.db.EnqueueWebhookDeliveryJob(t.Context(), f.endpoint.WorkspaceUUID, "session.status_idled", event); err != nil {
-				t.Fatal(err)
-			}
-			if err := webhooks.NewWorker(f.app.db, cfg, nil).RunOnce(t.Context(), "legacy"); err != nil {
-				t.Fatal(err)
-			}
-			if globalCalls.Load() != 1 || endpointCalls.Load() != 0 {
-				t.Fatal("global-only job did not preserve its target")
-			}
 		})
 	}
 }

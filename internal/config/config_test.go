@@ -127,10 +127,7 @@ code_session:
 observability:
   content_capture_enabled: false
 webhook:
-  endpoint_url: https://example.com/webhooks
-  signing_key: yaml-signing-key
-  event_types:
-    - session.created
+  timeout: 10s
 bootstrap:
   workspace_name: yaml-workspace
 `)
@@ -390,8 +387,6 @@ database:
   url: postgresql://yaml/database
   auto_migrate: false
 webhook:
-  endpoint_url: https://example.com/webhooks
-  signing_key: yaml-signing-key
   worker_enabled: true
 `)
 	t.Setenv("CONFIG_FILE", configPath)
@@ -467,8 +462,6 @@ env: prod
 database:
   auto_migrate: true
 webhook:
-  endpoint_url: https://example.com/webhooks
-  signing_key: yaml-signing-key
   worker_enabled: false
 `)
 	t.Setenv("CONFIG_FILE", configPath)
@@ -656,9 +649,8 @@ func TestDockerComposeKeepsSecretsOutOfTrackedTemplate(t *testing.T) {
 	}
 	cfg := loadValidatedConfigTestFile(t, configPath)
 	secretValues := map[string]string{
-		"e2b.api_key":         cfg.E2B.APIKey,
-		"e2b.access_token":    cfg.E2B.AccessToken,
-		"webhook.signing_key": cfg.Webhook.SigningKey,
+		"e2b.api_key":      cfg.E2B.APIKey,
+		"e2b.access_token": cfg.E2B.AccessToken,
 	}
 	for name, value := range secretValues {
 		if strings.TrimSpace(value) != "" {

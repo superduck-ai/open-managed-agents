@@ -19,9 +19,8 @@ func (s *Store) WithWebhooks(enqueuer webhookEnqueuer) *Store {
 }
 
 func (s *Store) enqueueSessionCreated(ctx context.Context, session db.Session) {
-	// The first two events remain available only through legacy global configuration.
 	s.enqueueResource(ctx, session.WorkspaceUUID, session.ExternalID, session.CreatedAt,
-		"session.created", "session.pending", "session.status_idled")
+		"session.status_idled")
 }
 
 func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID string, occurredAt time.Time, eventTypes ...string) {

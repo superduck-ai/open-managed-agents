@@ -215,9 +215,6 @@ type ObservabilityOTLPConfig struct {
 }
 
 type WebhookConfig struct {
-	EndpointURL         string        `yaml:"endpoint_url"`
-	SigningKey          string        `yaml:"signing_key"`
-	EventTypes          []string      `yaml:"event_types"`
 	WorkerEnabled       bool          `yaml:"worker_enabled"`
 	Timeout             time.Duration `yaml:"timeout"`
 	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`

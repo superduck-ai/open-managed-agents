@@ -34,8 +34,8 @@ func TestWebhookMapperStatements(t *testing.T) {
 	)
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	disabledReason := "temporary failure"
-	payload := []byte(`{"event_type":"session.created","event":{"type":"session.created"}}`)
-	events := json.RawMessage(`["session.created"]`)
+	payload := []byte(`{"event_type":"session.status_idled","event":{"type":"session.status_idled"}}`)
+	events := json.RawMessage(`["session.status_idled"]`)
 	insertParams := insertWebhookEndpointParams{
 		UUID:                endpointUUID,
 		ExternalID:          "wh_test",
@@ -155,16 +155,10 @@ func TestWebhookMapperStatements(t *testing.T) {
 			values: []any{workspaceUUID, "wh_test"}, fragments: []string{"deleted_at = NOW()", "workspace_uuid = $1", "external_id = $2"},
 		},
 		{
-			name: "endpoint exists", statement: webhookEndpointMapperExistsStatement,
-			bound: buildWebhookEndpointMapperExists(yourbatis.DialectPostgres, workspaceUUID),
-			id:    "WebhookEndpointMapper.Exists", kind: yourbatis.StatementSelect,
-			values: []any{workspaceUUID}, fragments: []string{"SELECT EXISTS", "workspace_uuid = $1"},
-		},
-		{
 			name: "list active endpoints", statement: webhookEndpointMapperListActiveForEventStatement,
-			bound: buildWebhookEndpointMapperListActiveForEvent(yourbatis.DialectPostgres, workspaceUUID, "session.created"),
+			bound: buildWebhookEndpointMapperListActiveForEvent(yourbatis.DialectPostgres, workspaceUUID, "session.status_idled"),
 			id:    "WebhookEndpointMapper.ListActiveForEvent", kind: yourbatis.StatementSelect,
-			values: []any{workspaceUUID, "session.created"}, fragments: []string{"status = 'enabled'", "jsonb_exists(enabled_events, $2)", "ORDER BY created_at ASC"},
+			values: []any{workspaceUUID, "session.status_idled"}, fragments: []string{"status = 'enabled'", "jsonb_exists(enabled_events, $2)", "ORDER BY created_at ASC"},
 		},
 		{
 			name: "record delivery success", statement: webhookEndpointMapperRecordDeliverySuccessStatement,
@@ -277,14 +271,7 @@ func TestWebhookMapperResultSemantics(t *testing.T) {
 		}
 	})
 
-	t.Run("scalar and rows affected", func(t *testing.T) {
-		existsExecutor := newMapperTestExecutor(t, mapperTestResponse{
-			columns: []string{"exists"}, rows: [][]driver.Value{{true}},
-		})
-		exists, err := NewWebhookEndpointMapper(existsExecutor).Exists(context.Background(), "workspace")
-		if err != nil || !exists {
-			t.Fatalf("Exists() = (%t, %v)", exists, err)
-		}
+	t.Run("rows affected", func(t *testing.T) {
 		rowsExecutor := newMapperTestExecutor(t, mapperTestResponse{rowsAffected: 1})
 		rowsAffected, err := NewWebhookEndpointMapper(rowsExecutor).UpdateSigningSecret(context.Background(), regenerateWebhookEndpointSecretParams{})
 		if err != nil || rowsAffected != 1 {
@@ -364,10 +351,6 @@ func TestWebhookMapperMethodsPropagateExecutionErrors(t *testing.T) {
 			_, err := NewWebhookEndpointMapper(executor).SoftDeleteByExternalID(ctx, "workspace", "external")
 			return err
 		}}},
-		{"endpoint exists", mapperExecutionErrorContract{"WebhookEndpointMapper.Exists", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).Exists(ctx, "workspace")
-			return err
-		}}},
 		{"list active endpoints", mapperExecutionErrorContract{"WebhookEndpointMapper.ListActiveForEvent", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
 			_, err := NewWebhookEndpointMapper(executor).ListActiveForEvent(ctx, "workspace", "event")
 			return err
@@ -401,13 +384,13 @@ func webhookEndpointMapperTestRow() []driver.Value {
 		"00000000-0000-4000-8000-000000000004", "wh_test",
 		"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
 		"00000000-0000-4000-8000-000000000003", "https://example.test", "Test", "Description",
-		[]byte(`["session.created"]`), "secret", "disabled", "temporary failure", 1, nil, now, now, nil,
+		[]byte(`["session.status_idled"]`), "secret", "disabled", "temporary failure", 1, nil, now, now, nil,
 	}
 }
 
 func webhookDeliveryJobMapperTestColumns() []string {
 	return []string{
-		"uuid", "external_id", "workspace_uuid", "locked_by", "event_type", "event", "attempts",
+		"uuid", "external_id", "workspace_uuid", "locked_by", "event", "attempts",
 		"webhook_endpoint_uuid", "webhook_endpoint_external_id", "webhook_endpoint_url",
 		"webhook_endpoint_secret", "webhook_endpoint_status",
 	}
@@ -416,7 +399,7 @@ func webhookDeliveryJobMapperTestColumns() []string {
 func webhookDeliveryJobMapperTestRow() []driver.Value {
 	return []driver.Value{
 		"00000000-0000-4000-8000-000000000005", "job_test",
-		"00000000-0000-4000-8000-000000000002", "claim_test", "session.created", []byte(`{"type":"session.created"}`), 1,
+		"00000000-0000-4000-8000-000000000002", "claim_test", []byte(`{"type":"session.status_idled"}`), 1,
 		"00000000-0000-4000-8000-000000000004", "wh_test", "https://example.test", "secret", "enabled",
 	}
 }

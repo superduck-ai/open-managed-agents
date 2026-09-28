@@ -6,6 +6,37 @@
 
 保留现有 `internal/webhooks` resource、Yourbatis Mapper、endpoint/job 表、Enqueuer、Worker 和鉴权路径。前端继续使用现有 Console 路由、TanStack Query、shadcn Dialog/Sheet；只拆出事件目录、反馈、复用的事件选择和表单模块，不引入新的事件总线、服务或数据库表。
 
+## 数据库订阅单一路径（2026-09-28）
+
+全局 Webhook 已移除。没有同 workspace 下启用且匹配事件的订阅就不入队，没有有效订阅目标就不发送。Enqueuer 仅持有 DB 和 logger，直接查询匹配订阅并逐个创建绑定订阅 UUID 的任务；不再预查询订阅是否存在，也不提供无目标入队方法。多个订阅共享事件 ID、发生时间和 payload，分别使用各订阅的密钥签名。
+
+Worker 保留原始订阅 UUID 与当前订阅状态的区分，以及带 workspace 条件的 LEFT JOIN。历史无 UUID（包括空值）的任务，和删除、缺失、禁用、跨 workspace 的订阅任务一样，在正常领取后跳过并 completed；不发 HTTP、不增 attempts、不改订阅统计。pending/retry 与过期 running 可处理；未过期 running 不抢占，completed/failed 不恢复。跳过仍检查领取标记与租约。Worker 关闭时保留任务，不扫描迁移、不改 payload、不自动绑定订阅。
+
+升级：停止旧版生产者及 Worker → 删除 YAML 中 endpoint_url、signing_key、event_types 三个 webhook 字段（即使为空也拒绝）→ 启动新版。依赖全局地址的部署需提前创建 workspace 订阅。无新增迁移，现有订阅和密钥有效；接收方 SDK 的 ANTHROPIC_WEBHOOK_SIGNING_KEY 继续用于验签。38 项目录、签名、并发、租约、重试和失败窗口不变；业务提交与通知入队仍非原子。
+
+本文各历史阶段的提交与验证记录保留当时事实；其中“保留全局兼容”的表述已被本节取代，不代表当前行为。
+
+### 本轮验证与人工验收
+
+2026-09-28，基于 `357a12c`，代码保留未暂存、未提交、未推送。本轮没有前端行为、数据库 migration 或非 Webhook 业务逻辑变更。
+
+| 验收内容 | 自动化证据 |
+| --- | --- |
+| 无订阅、仅禁用、未选中、其他 workspace、删除最后一个订阅均不入队 | `TestWebhookNoMatchingSubscriptionDoesNotEnqueue` |
+| 历史 pending/retry/过期 running 跳过；有效租约不抢占、终态不恢复、Worker 关闭保留任务 | `TestWebhookHistoricalUntargetedJobs`；同时检查原 payload、attempts、失败窗口和计数未改 |
+| 跳过写回拒绝过期、被重新领取和重复结果 | `TestWebhookHistoricalSkipClaimFencing` |
+| 多订阅扇出与历史任务混合，使用各自密钥通过官方 Go SDK 验签 | `TestWebhookSubscriptionFanoutWithHistoricalJob`；事件 ID、发生时间及 payload 相同 |
+| Session API、手动与 River 定时 Deployment 仅产生规范创建通知 | 现有 Session/Deployment 测试改为数据库订阅，并在测试库加入旧事件名作为误报探针；重复 occurrence 不重复通知 |
+| 三个旧 YAML 字段（包括空字符串和空值）严格拒绝，其余默认值不变 | `TestWebhookRetiredConfigurationRejected` 与配置回归 |
+
+- Webhook 定向测试通过（包含 Session/Vault 入口、Deployment、事件目录、订阅过滤、并发、重试、永久失败、失败窗口、事务回滚与 SDK 验签）。定向 race 覆盖 config、db、webhooks、sessions、tests 五个包，全部通过；不是全仓库 race。
+- 源码生成、`just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files`、`just hooks-run` 全部通过；新增未跟踪测试文件单独执行 hooks 通过。首次发现的旧配置夹具与不可达测试嵌入已删除，并复跑相关检查；没有跳过失败项。
+- **全量 `just test` 未通过，不能视为发布门禁全部通过。** 复用独立测试库时，52 个包通过，集成包报告 `TestSandboxLifecycleDurableScheduleDispatchesReclaim` 超时和 `TestTypedUUIDFilesAndFilestorePostgres` 未领取到目标清理任务。更换全新数据库后这两项未再失败，但 `TestTranscriptArchiveRestoreAfterBlobGC` 在 `transcript_restore_test.go:38` 得到 `count=3, want=0`；52 个包通过、集成包失败。在第三个空库仅运行上述三项，仍只报告 Transcript 失败。这些失败记录保留，不修改相应的非 Webhook 业务或测试行为来绕过门禁。
+- 本轮使用独立 PostgreSQL、对象存储测试替身和本地 HTTP 接收器，没有使用开发数据库或付费 sandbox。主要日志：`/tmp/oma-webhook-subscription-targeted.log`、`/tmp/oma-webhook-final-race.log`、`/tmp/oma-webhook-final-test.log`、`/tmp/oma-webhook-clean-test.log`、`/tmp/oma-webhook-isolated-checks.log`。未扩展前端测试范围。测试接收器已随测试关闭；本轮 6 个依赖容器、三个临时测试数据库及网络均已清理。
+- Review 核查删除完整性、Session 内部事件保留、workspace 查询条件、原始目标与 LEFT JOIN、历史任务跳过优先级、租约和统计事务边界；未改签名、38 项目录、重试或持续失败策略。移除存在性预查询，并在无匹配订阅时不构造事件 payload。
+
+人工验收顺序：无订阅时创建 Session，确认无任务 → 创建两个匹配订阅，再创建 Session，核对两条任务、同一事件与各自签名 → 暂停 Worker 后产生任务、删除订阅，再启动 Worker，确认跳过且无 HTTP → 在独立测试库构造历史无目标任务，核对收尾与租约保护 → 用含任一旧字段的测试配置确认启动被拒绝，再移除字段确认正常启动。人工 Console 操作未执行，以上证据来自自动化测试。
+
 ## Claude 合同与证据
 
 截至 2026-09-20：
@@ -65,7 +96,7 @@ flowchart LR
     Jobs --> Worker[Webhook worker 签名投递]
 ```
 
-- 数据库订阅创建阶段发送 `session.status_idled`。`session.created`、`session.pending` 仅保留在既有全局配置路径，不加入 Console 目录。
+- 数据库订阅创建阶段发送 `session.status_idled`。`session.created`、`session.pending` 的全局兼容 Webhook 入队已移除，不改内部事件流及规范名称转换。
 - 主线程创建不发送子线程通知；初始 `user.define_outcome` 不发送评估结束通知，后者由 `span.outcome_evaluation_end` 事件入口触发。
 - 失败运行、事务回滚、过期任务、归档分支，以及同一定时执行时刻的重复处理不新增通知。两次独立手动运行各自创建 Session、分别通知。
 - 通知准备和入队失败只记录错误，不将已提交的运行报告为失败；业务提交和入队尚未原子化。不增加 `deployment.*` 或 `deployment_run.*` 订阅。
@@ -74,13 +105,13 @@ flowchart LR
 
 沿用现有按事件发生时的 workspace 订阅选择、持久化 delivery jobs 和 Standard Webhooks 签名。投递策略由下述各阶段逐步对齐，不引入事务 outbox，不增加测试通知、投递日志 UI、手动/批量重放或多密钥宽限期。
 
-`webhook.worker_enabled` 默认 `true`，显式 `false` 仍关闭当前实例 worker；数据库订阅无需全局 endpoint/key。复用主进程中的后台协程和 PostgreSQL jobs，不按订阅数动态启动进程。没有匹配的启用订阅时不创建 endpoint 投递任务。既有全局配置投递路径保留，只有 workspace 没有订阅记录时才可能使用。
+`webhook.worker_enabled` 默认 `true`，显式 `false` 仍关闭当前实例 worker；仅投递数据库订阅。复用主进程中的后台协程和 PostgreSQL jobs，不按订阅数动态启动进程。没有匹配的启用订阅时不创建任务。
 
 ### 批次并发、目标隔离与领取保护
 
-2026-09-24 投递改进继续使用现有 jobs 表和 Yourbatis，不增加 schema 或更换队列。全局配置任务指 payload 没有 `webhook_endpoint_uuid` 的任务，不能根据关联查询是否命中来推断。
+2026-09-24 投递改进继续使用现有 jobs 表和 Yourbatis，不增加 schema 或更换队列。历史无目标任务指 payload 没有 `webhook_endpoint_uuid` 的任务，不能根据关联查询是否命中来推断。
 
-- 领取查询从任务 payload 保留原始订阅 UUID，并按订阅 UUID 与任务 workspace 关联有效订阅。指定订阅的任务遇到删除、不存在、禁用或 workspace 不匹配时跳过发送并完成任务，不修改订阅成功/失败统计，绝不回退全局 URL/密钥。真正的全局任务和新事件入队时的原有回退规则不变。
+- 领取查询从任务 payload 保留原始订阅 UUID，并按订阅 UUID 与任务 workspace 关联有效订阅。指定订阅的任务遇到删除、不存在、禁用或 workspace 不匹配时跳过发送并完成任务，不修改订阅成功/失败统计，不支持全局 URL/密钥；历史无目标任务使用相同跳过规则。
 - 每次领取最多 10 条，使用共享 HTTP Client 并发执行目标检查、HTTP 投递和结果写回；整批结束后才进入下一次轮询。保留 5 秒 ticker，一条投递失败不取消其他任务。并发上限按 Worker 实例计算，多实例叠加；没有每订阅串行、全局限流或顺序保证。
 - 每次领取生成新随机标记（worker 名称加随机 UUID），写入已有 `locked_by` 并随任务返回。完成、失败和跳过都要求同 workspace、同领取标记、仍为 running 且 `locked_until > clock_timestamp()`；未命中返回 `applied=false`，属于失去执行权，不更新统计。
 - 任务结果与订阅统计使用同一个 Yourbatis 事务；任务行锁保护结果和统计直到提交。事务中任意一步或提交失败，返回 `applied=false` 与错误，任务结果不应被视为已保存。跳过任务不算投递成功。
@@ -93,11 +124,9 @@ flowchart TD
     Claim[领取最多 10 条：写入随机领取标记与租约] --> Parallel[并发处理每条任务]
     Parallel --> Target{原始任务指定订阅?}
     Target -->|是| Endpoint{同 workspace 的订阅有效且启用?}
-    Target -->|否| Global{全局配置规则允许投递?}
+    Target -->|否| Skip[跳过发送]
     Endpoint -->|否| Skip[跳过发送]
     Endpoint -->|是| HTTP[签名并投递]
-    Global -->|是| HTTP
-    Global -->|否| Skip
     HTTP --> Result[同事务：校验领取、按需更新统计、最终复检租约并写结果]
     Skip --> Result
     Result -->|生效| Wait[等待整批结束]
@@ -106,11 +135,11 @@ flowchart TD
     Wait --> Poll[下一次轮询]
 ```
 
-升级时先停止所有旧版 Webhook Worker，再启动新版；旧版缺少领取标记校验，不能在新旧混跑期间承诺写回保护。现存任务使用原表格式继续领取，运行中的遗留任务到期后恢复，不需要迁移。
+升级遵循上文单一路径的停机与配置清理顺序，不混跑旧生产者或旧 Worker。现存任务使用原表格式继续领取，运行中的遗留任务到期后恢复并按目标状态收尾，本次无需新增迁移。
 
-`tests/webhook_worker_test.go` 使用独立 PostgreSQL、本地可控接收器和官方 Go SDK，覆盖目标丢失但全局配置有效、跨 workspace、禁用、全局任务、10 路并发与第 11 条留待下一批、失败隔离、重试验签和稳定事件 ID、过期/重复/错误领取标记、统计写入回滚、取消恢复及多实例互斥领取。Mapper 单测检查 SQL、参数、影响行数和错误传播；另执行定向 race 检查。
+`tests/webhook_worker_test.go` 与 `tests/webhook_subscription_only_test.go` 使用独立 PostgreSQL、本地可控接收器和官方 Go SDK，覆盖目标丢失、跨 workspace、禁用、10 路并发与第 11 条留待下一批、失败隔离、重试验签和稳定事件 ID、过期/重复/错误领取标记、统计写入回滚、取消恢复及多实例互斥领取。Mapper 单测检查 SQL、参数、影响行数和错误传播；另执行定向 race 检查。
 
-人工验收：创建两个独立接收器（订阅与全局）→ 暂停 worker → 创建订阅并产生待投递事件 → 删除订阅 → 启动新版 worker，确认两处均未收到旧任务 → 新建订阅并产生 11 条事件 → 阻塞接收器前 10 条响应，确认 10 路并发且第 11 条尚未投递 → 释放响应并核对后续批次、签名及事件 ID。租约过期/故障注入仅在独立测试库执行。
+人工验收：创建本地订阅接收器→ 暂停 worker → 创建订阅并产生待投递事件 → 删除订阅 → 启动新版 worker，确认接收器未收到旧任务 → 新建订阅并产生 11 条事件 → 阻塞接收器前 10 条响应，确认 10 路并发且第 11 条尚未投递 → 释放响应并核对后续批次、签名及事件 ID。租约过期/故障注入仅在独立测试库执行。
 
 本次验证（2026-09-24，基于 `064c3d7` 的未提交变更）：
 
@@ -124,9 +153,9 @@ flowchart TD
 
 ## 重试节奏与永久失败终止（第二阶段，2026-09-24）
 
-配置与 Worker 默认总尝试次数改为 3（包含首次发送），显式正数 max_attempts 继续生效，数据库订阅与全局路径共用规则。第 n 次失败的上界为 min(120秒, 5秒 × 2ⁿ)，从 [5秒, 上界) 均匀随机采样，默认两次重试为 5–10、5–20 秒。指数提前封顶避免溢出，使用 math/rand/v2 的并发安全随机源。随机值写入 jobs.run_after，不在 goroutine 内等待；轮询、整批耗时和积压可能延后真正发送。
+配置与 Worker 默认总尝试次数改为 3（包含首次发送），显式正数 max_attempts 继续生效，应用于所有有效订阅目标。第 n 次失败的上界为 min(120秒, 5秒 × 2ⁿ)，从 [5秒, 上界) 均匀随机采样，默认两次重试为 5–10、5–20 秒。指数提前封顶避免溢出，使用 math/rand/v2 的并发安全随机源。随机值写入 jobs.run_after，不在 goroutine 内等待；轮询、整批耗时和积压可能延后真正发送。
 
-内部 WebhookDeliveryFailure 显式区分终止与可重试结果。3xx、DNS/私网地址及已有永久 URL 校验拒绝立即将当前任务写成 failed，不再修改 run_after，并在同一 Yourbatis 事务禁用订阅。重定向原因统一为 `auto-disabled: endpoint URL returned a redirect (3xx)`，DNS/私网原因为 `auto-disabled: endpoint URL resolved to an invalid address`；管理 API 保留原校验文案，Worker 通过错误类别识别，不匹配文本。全局任务同样终止但不写订阅统计。
+内部 WebhookDeliveryFailure 显式区分终止与可重试结果。3xx、DNS/私网地址及已有永久 URL 校验拒绝立即将当前任务写成 failed，不再修改 run_after，并在同一 Yourbatis 事务禁用订阅。重定向原因统一为 `auto-disabled: endpoint URL returned a redirect (3xx)`，DNS/私网原因为 `auto-disabled: endpoint URL resolved to an invalid address`；管理 API 保留原校验文案，Worker 通过错误类别识别，不匹配文本。
 
 历史任务保留原 payload、事件 ID、时间、次数和 run_after。下一次领取后，失效订阅仍按原规则跳过完成；有效目标已达到当前次数上限时，Exhaust 只将任务转为 failed 并释放领取，不修改 attempts、last_error、run_after 或订阅统计。未耗尽任务再次失败后使用新退避，failed 不自动复活。所有结果继续按 workspace、running、领取标记及未过期租约保护；订阅统计失败会回滚整个结果事务。
 
@@ -159,7 +188,7 @@ flowchart TD
 
 订阅编辑通过 `WebhookEndpointUpdate` 表示字段是否提供，Yourbatis 只写明确提供的字段。未传 status 时不写状态、禁用原因或计数，避免旧快照覆盖 Worker 结果。显式 enabled 在 SQL 内清空原因和计数；disabled 保留当前原因或填入 manual。更新保持 workspace 和未删除条件；同一字段以执行顺序为准，不引入新版本协议。
 
-Webhook 每批使用独立 Transport，Proxy=nil，忽略环境 HTTP 代理。HTTPS/443 为默认要求。新连接解析一次 DNS，复用 networkpolicy.PublicAddress 过滤，按剩余期限尝试公网 IP；实际拨号只接收数字地址，原 URL 保留 Host、TLS SNI 和证书校验。DNS 临时失败走普通重试；无可用公网地址产生可识别的永久失败，在既有结果/统计事务内立即禁用订阅，原因是 `auto-disabled: endpoint URL resolved to an invalid address`。全局任务执行相同检查但没有订阅状态可更新。allow_insecure 保留本地测试例外，仍直连且不跟随重定向。批次结束关闭空闲连接，拨号受批次取消和 HTTP 超时限制。代理依赖部署需先确认直连出口。
+Webhook 每批使用独立 Transport，Proxy=nil，忽略环境 HTTP 代理。HTTPS/443 为默认要求。新连接解析一次 DNS，复用 networkpolicy.PublicAddress 过滤，按剩余期限尝试公网 IP；实际拨号只接收数字地址，原 URL 保留 Host、TLS SNI 和证书校验。DNS 临时失败走普通重试；无可用公网地址产生可识别的永久失败，在既有结果/统计事务内立即禁用订阅，原因是 `auto-disabled: endpoint URL resolved to an invalid address`。allow_insecure 保留本地测试例外，仍直连且不跟随重定向。批次结束关闭空闲连接，拨号受批次取消和 HTTP 超时限制。代理依赖部署需先确认直连出口。
 
 ```mermaid
 flowchart LR
@@ -172,7 +201,7 @@ flowchart LR
 
 EnqueueInput.OccurredAt 必填，零值记录结构化错误并停止该次入队，不回滚已完成业务操作。已持久化 Session 事件取 CreatedAt；资源取成功返回记录的 CreatedAt/UpdatedAt/ArchivedAt。删除、仅返回标识的级联在事务成功返回时采集一次，早于租户查询和对象清理；OAuth 取最终失败判断时间。定时 Run started 取 Run.CreatedAt，结果取事务成功返回时间。无持久化时间时采用应用观察时间，不伪称精确提交时间，也不增加子资源查询或表字段。
 
-payload.created_at 使用 UTC RFC3339Nano；扇出和重试保留同一事件 ID、时间与 payload，签名头按每次尝试重新生成；不改写历史任务。事件目录、预留事件、全局订阅回退和业务提交/入队非原子边界保持不变。
+payload.created_at 使用 UTC RFC3339Nano；扇出和重试保留同一事件 ID、时间与 payload，签名头按每次尝试重新生成；不改写历史任务。事件目录、预留事件和业务提交/入队非原子边界保持不变。
 
 验收覆盖部分更新与 Worker 并发、显式启用/禁用、JSON 空数组绑定、跨 workspace，DNS 私网/混合结果/临时故障/IP 固定、TLS Host 与证书验证，以及历史事件时间和重试 payload 一致。测试使用独立 PostgreSQL、可控解析/拨号替身与本地接收器；公网真实出口和人工 Console 操作需另行验收。
 
@@ -209,7 +238,7 @@ flowchart TD
 
 显式启用清空窗口、原因及次数；普通编辑、换密钥、手动禁用不清空窗口。成功只有在订阅仍启用时才重置；迟到成功不能自动恢复订阅。并发结果按数据库接受顺序，不按 HTTP 开始顺序推进。HTTP 期间不持有数据库事务；已经发出的请求不会因禁用追溯取消。
 
-只在新的失败写回时检查时长，不新增扫描、定时禁用或主动探测。空闲超过阈值不会自行禁用；下一次成功清空窗口，下一次失败才触发判断。阈值变更在下次失败生效。全局配置任务无订阅窗口，仍沿用次数和永久失败策略；显式重新启用不复活 failed 任务。
+只在新的失败写回时检查时长，不新增扫描、定时禁用或主动探测。空闲超过阈值不会自行禁用；下一次成功清空窗口，下一次失败才触发判断。阈值变更在下次失败生效。显式重新启用不复活 failed 任务。
 
 部署先停止旧 Worker，执行新增字段迁移，再启动新版；禁止混用旧计数策略。业务提交与通知入队仍非原子，HTTP 成功但写回失败仍可能重复投递，接收方按事件 ID 去重。
 

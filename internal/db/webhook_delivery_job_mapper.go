@@ -13,7 +13,6 @@ type webhookDeliveryJobRow struct {
 	ExternalID                string         `db:"external_id"`
 	WorkspaceUUID             string         `db:"workspace_uuid"`
 	ClaimToken                string         `db:"locked_by"`
-	EventType                 string         `db:"event_type"`
 	Event                     []byte         `db:"event"`
 	Attempts                  int            `db:"attempts"`
 	WebhookEndpointUUID       sql.NullString `db:"webhook_endpoint_uuid"`

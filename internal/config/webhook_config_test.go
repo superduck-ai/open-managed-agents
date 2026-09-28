@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,7 +12,7 @@ func TestWebhookWorkerConfiguration(t *testing.T) {
 		want          bool
 	}{
 		{"explicit false", "webhook:\n  worker_enabled: false\n", false},
-		{"default without global endpoint", "", true},
+		{"default", "", true},
 		{"explicit true", "webhook:\n  worker_enabled: true\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -22,9 +23,6 @@ func TestWebhookWorkerConfiguration(t *testing.T) {
 			}
 			if cfg.Webhook.WorkerEnabled != tc.want {
 				t.Fatalf("enabled=%v want %v", cfg.Webhook.WorkerEnabled, tc.want)
-			}
-			if cfg.Webhook.EndpointURL != "" || cfg.Webhook.SigningKey != "" {
-				t.Fatal("test must not depend on a global endpoint")
 			}
 		})
 	}
@@ -89,5 +87,18 @@ func TestWebhookFailureWindowConfiguration(t *testing.T) {
 				t.Fatalf("duration=%s want=%s", cfg.Webhook.FailureDisableAfter, tc.want)
 			}
 		})
+	}
+}
+
+func TestWebhookRetiredConfigurationRejected(t *testing.T) {
+	for _, field := range []string{"endpoint_url", "signing_key", "event_types"} {
+		for _, value := range []string{"", `""`, "[]", "legacy-value"} {
+			t.Run(field+"/"+value, func(t *testing.T) {
+				prepareLoadTest(t)
+				if _, err := loadConfigTestYAML(t, "webhook:\n  "+field+": "+value+"\n"); err == nil || !strings.Contains(err.Error(), "field "+field+" not found") {
+					t.Fatalf("retired configuration error = %v", err)
+				}
+			})
+		}
 	}
 }

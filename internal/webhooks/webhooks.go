@@ -170,26 +170,15 @@ func (w *Worker) processJob(ctx context.Context, client *http.Client, job db.Web
 }
 
 func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (deliveryTarget, bool, error) {
-	if job.WebhookEndpointUUID != nil {
-		if job.WebhookEndpointStatus != "enabled" || job.WebhookEndpointURL == "" || job.WebhookEndpointSecret == "" {
-			return deliveryTarget{}, true, nil
-		}
-		target := deliveryTarget{
-			URL:           job.WebhookEndpointURL,
-			SigningKey:    job.WebhookEndpointSecret,
-			AllowInsecure: cfg.AllowInsecure,
-		}
-		return target, false, validateDeliveryTarget(target, "webhook endpoint")
-	}
-	if !enabled(cfg) || !subscribed(cfg, job.EventType) {
+	if job.WebhookEndpointUUID == nil || job.WebhookEndpointStatus != "enabled" || job.WebhookEndpointURL == "" || job.WebhookEndpointSecret == "" {
 		return deliveryTarget{}, true, nil
 	}
 	target := deliveryTarget{
-		URL:           cfg.EndpointURL,
-		SigningKey:    cfg.SigningKey,
+		URL:           job.WebhookEndpointURL,
+		SigningKey:    job.WebhookEndpointSecret,
 		AllowInsecure: cfg.AllowInsecure,
 	}
-	return target, false, validateDeliveryTarget(target, "webhook.endpoint_url")
+	return target, false, validateDeliveryTarget(target, "webhook endpoint")
 }
 
 func deliver(ctx context.Context, client *http.Client, target deliveryTarget, payload []byte) error {
@@ -243,10 +232,6 @@ func deliver(ctx context.Context, client *http.Client, target deliveryTarget, pa
 	return nil
 }
 
-func enabled(cfg config.WebhookConfig) bool {
-	return cfg.WorkerEnabled && cfg.EndpointURL != "" && cfg.SigningKey != ""
-}
-
 func validateDeliveryTarget(target deliveryTarget, name string) error {
 	if target.URL == "" {
 		return fmt.Errorf("%s is empty", name)
@@ -261,18 +246,6 @@ func validateDeliveryTarget(target deliveryTarget, name string) error {
 		return deliveryFailure{reason: err.Error(), immediateDisable: true}
 	}
 	return nil
-}
-
-func subscribed(cfg config.WebhookConfig, eventType string) bool {
-	if len(cfg.EventTypes) == 0 {
-		return true
-	}
-	for _, subscribed := range cfg.EventTypes {
-		if subscribed == eventType {
-			return true
-		}
-	}
-	return false
 }
 
 // retryDelay randomizes the next eligibility time; the worker never sleeps here.

@@ -83,7 +83,6 @@ type WebhookEndpointMapper interface {
 	UpdateByExternalID(ctx context.Context, params updateWebhookEndpointParams) (webhookEndpointRow, error)
 	UpdateSigningSecret(ctx context.Context, params regenerateWebhookEndpointSecretParams) (int64, error)
 	SoftDeleteByExternalID(ctx context.Context, workspaceUUID, externalID string) (int64, error)
-	Exists(ctx context.Context, workspaceUUID string) (bool, error)
 	ListActiveForEvent(ctx context.Context, workspaceUUID, eventType string) ([]webhookEndpointRow, error)
 	RecordDeliverySuccess(ctx context.Context, endpointUUID, workspaceUUID string) error
 	RecordDeliveryFailure(ctx context.Context, params recordWebhookEndpointFailureParams) (webhookEndpointFailureRow, error)

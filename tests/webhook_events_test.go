@@ -30,7 +30,7 @@ var subscriptionEvents = []string{
 
 func TestWebhookSubscriptionRejectsLegacyEvents(t *testing.T) {
 	app, _, _ := newEventSubscription(t, subscriptionEvents)
-	for _, event := range []string{"session.error", "session.thread_status_idle", "session.thread_status_running", "session.thread_status_rescheduled", "session.thread_status_terminated", "session.record_updated"} {
+	for _, event := range []string{"session.created", "session.pending", "session.error", "session.thread_status_idle", "session.thread_status_running", "session.thread_status_rescheduled", "session.thread_status_terminated", "session.record_updated"} {
 		resp := doWebhookRequest(t, app, http.MethodPost, "/v1/webhooks", strings.NewReader(`{"url":"https://example.com/hook","enabled_events":[`+quoteJSON(event)+`]}`), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	}
@@ -122,7 +122,7 @@ func triggerOAuthRefreshFailure(t *testing.T, app *testApp, vaultID, codeID stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	injector := vaults.NewInjector(app.db, app.vaultSecrets, nil).WithWebhooks(webhooks.NewEnqueuer(app.db, app.cfg.Webhook, nil))
+	injector := vaults.NewInjector(app.db, app.vaultSecrets, nil).WithWebhooks(webhooks.NewEnqueuer(app.db, nil))
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		t.Fatal(err)
@@ -183,8 +183,7 @@ func newEventSubscriptionWithStore(t *testing.T, events []string, store storage.
 	if !cfg.Webhook.WorkerEnabled {
 		t.Fatal("database subscriptions require worker enabled by default")
 	}
-	cfg.Webhook.EndpointURL = ""
-	cfg.Webhook.SigningKey = ""
+
 	cfg.Webhook.AllowInsecure = true
 	cfg.Webhook.Timeout = time.Second
 	app := newTestAppWithStore(t, &cfg, store)
@@ -251,7 +250,7 @@ func assertDeliveredEventMatrix(t *testing.T, app *testApp, endpoint webhookAPIR
 	}
 }
 
-func TestWebhookWorkerStartWithoutGlobalEndpoint(t *testing.T) {
+func TestWebhookSubscriptionWorkerStart(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		name := "disabled"
 		if enabled {

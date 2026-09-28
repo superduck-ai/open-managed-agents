@@ -78,7 +78,6 @@ func defaultConfig() Config {
 		},
 		Webhook: WebhookConfig{
 			WorkerEnabled:       true,
-			EventTypes:          defaultWebhookEventTypes(),
 			Timeout:             10 * time.Second,
 			MaxAttempts:         3,
 			FailureDisableAfter: 24 * time.Hour,
@@ -102,38 +101,5 @@ func defaultDatabaseAutoMigrate(appEnv string) bool {
 func setDefaultSeedAPIKeys(cfg *Config) {
 	cfg.Bootstrap.SeedAPIKeys = []SeedAPIKey{
 		{ExternalID: cfg.Bootstrap.APIKeyExternalID, Key: DefaultAPIKey},
-	}
-}
-
-func defaultWebhookEventTypes() []string {
-	return []string{
-		"session.created",
-		"session.pending",
-		"session.running",
-		"session.idled",
-		"session.requires_action",
-		"session.archived",
-		"session.deleted",
-		"session.status_rescheduled",
-		"session.status_run_started",
-		"session.status_idled",
-		"session.status_terminated",
-		"session.updated",
-		"session.error",
-		"session.thread_created",
-		"session.thread_status_running",
-		"session.thread_status_idle",
-		"session.thread_status_rescheduled",
-		"session.thread_status_terminated",
-		"session.thread_idled",
-		"session.thread_terminated",
-		"session.outcome_evaluation_ended",
-		"vault.created",
-		"vault.archived",
-		"vault.deleted",
-		"vault_credential.created",
-		"vault_credential.archived",
-		"vault_credential.deleted",
-		"vault_credential.refresh_failed",
 	}
 }

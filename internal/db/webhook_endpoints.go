@@ -149,11 +149,6 @@ func (d *DB) DeleteWebhookEndpoint(ctx context.Context, workspaceUUID string, ex
 	return nil
 }
 
-func (d *DB) HasWebhookEndpoints(ctx context.Context, workspaceUUID string) (bool, error) {
-	mapper := NewWebhookEndpointMapper(d.mapperDB)
-	return mapper.Exists(ctx, workspaceUUID)
-}
-
 func (d *DB) ListActiveWebhookEndpointsForEvent(ctx context.Context, workspaceUUID string, eventType string) ([]WebhookEndpoint, error) {
 	mapper := NewWebhookEndpointMapper(d.mapperDB)
 	rows, err := mapper.ListActiveForEvent(ctx, workspaceUUID, eventType)

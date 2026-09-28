@@ -108,6 +108,9 @@ func TestWebhookDeploymentManualAndScheduledDelivery(t *testing.T) {
 	for _, mode := range []string{"manual", "scheduled worker"} {
 		t.Run(mode, func(t *testing.T) {
 			app, endpoint, received := newEventSubscription(t, deploymentSessionEvents)
+			if _, err := app.pool.Exec(t.Context(), `UPDATE webhook_endpoints SET enabled_events=enabled_events || '["session.created","session.pending"]'::jsonb WHERE external_id=$1`, endpoint.ID); err != nil {
+				t.Fatal(err)
+			}
 			deployment := newWebhookDeployment(t, app)
 			expected := map[string]int{}
 			var sessionID string

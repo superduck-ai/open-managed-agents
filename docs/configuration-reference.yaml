@@ -145,11 +145,7 @@ observability:
       timeout: 15s
 
 webhook:
-  endpoint_url: ""
-  signing_key: ""
-  event_types:
-    - session.created
-  # Database subscriptions work without a global endpoint/key. Set false to pause this instance.
+  # Delivery uses workspace subscriptions only. Set false to pause this instance.
   worker_enabled: true
   timeout: 10s
   # Includes the first attempt; explicit positive values override this default.

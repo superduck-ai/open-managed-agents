@@ -76,9 +76,6 @@ type yamlCodeSessionConfig struct {
 }
 
 type yamlWebhookConfig struct {
-	EndpointURL         string         `yaml:"endpoint_url"`
-	SigningKey          string         `yaml:"signing_key"`
-	EventTypes          []string       `yaml:"event_types"`
 	WorkerEnabled       optional[bool] `yaml:"worker_enabled"`
 	Timeout             time.Duration  `yaml:"timeout"`
 	FailureDisableAfter time.Duration  `yaml:"failure_disable_after"`
@@ -125,9 +122,6 @@ func newYAMLConfig() yamlConfig {
 		},
 		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
-			EndpointURL:         defaults.Webhook.EndpointURL,
-			SigningKey:          defaults.Webhook.SigningKey,
-			EventTypes:          defaults.Webhook.EventTypes,
 			Timeout:             defaults.Webhook.Timeout,
 			MaxAttempts:         defaults.Webhook.MaxAttempts,
 			FailureDisableAfter: defaults.Webhook.FailureDisableAfter,
@@ -173,9 +167,6 @@ func (input yamlConfig) resolve() Config {
 		},
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
-			EndpointURL:         input.Webhook.EndpointURL,
-			SigningKey:          input.Webhook.SigningKey,
-			EventTypes:          input.Webhook.EventTypes,
 			Timeout:             input.Webhook.Timeout,
 			MaxAttempts:         input.Webhook.MaxAttempts,
 			FailureDisableAfter: input.Webhook.FailureDisableAfter,

@@ -116,15 +116,6 @@
         AND deleted_at IS NULL
     </update>
 
-    <select id="Exists" result="scalar">
-        SELECT EXISTS(
-            SELECT 1
-            FROM webhook_endpoints
-            WHERE workspace_uuid = #{workspaceUUID}
-            AND deleted_at IS NULL
-        )
-    </select>
-
     <select id="ListActiveForEvent" resultType="webhookEndpointRow">
         SELECT
         <include refid="columns"/>

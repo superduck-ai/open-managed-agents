@@ -174,7 +174,7 @@ func run(logger *slog.Logger) error {
 	workers := river.NewWorkers()
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
-	webhookEnqueuer := webhooks.NewEnqueuer(database, cfg.Webhook, logger.With("component", "webhooks"))
+	webhookEnqueuer := webhooks.NewEnqueuer(database, logger.With("component", "webhooks"))
 	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
 		WithEventPayloadStorage(objectStore).WithWebhooks(webhookEnqueuer)
 	deployments.RegisterWorkers(workers, deploymentStore)

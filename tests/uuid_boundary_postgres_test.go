@@ -639,10 +639,8 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}
 	foundJob := false
 	for _, job := range jobs {
-		if job.EventType == eventType {
-			foundJob = job.WorkspaceUUID == ids.WorkspaceUUID &&
-				job.WebhookEndpointUUID != nil &&
-				*job.WebhookEndpointUUID == endpoint.UUID
+		if job.WebhookEndpointUUID != nil && *job.WebhookEndpointUUID == endpoint.UUID {
+			foundJob = job.WorkspaceUUID == ids.WorkspaceUUID
 			if _, err := app.db.CompleteWebhookDeliveryJob(ctx, job, false); err != nil {
 				t.Fatalf("complete Webhook job through typed UUID parameter: %v", err)
 			}

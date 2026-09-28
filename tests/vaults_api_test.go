@@ -361,21 +361,13 @@ func TestVaultWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Webhook.EndpointURL = "https://webhook.example.com"
-	cfg.Webhook.SigningKey = "whsec_c2VjcmV0Cg=="
-	cfg.Webhook.EventTypes = []string{
-		"vault.created",
-		"vault.archived",
-		"vault.deleted",
-		"vault_credential.created",
-		"vault_credential.archived",
-		"vault_credential.deleted",
-	}
+
 	cfg.Webhook.WorkerEnabled = true
 	app := newTestAppWithStore(t, &cfg, newFakeStore("vaults-webhooks-bucket"))
 	defer app.close()
 	clearWebhookState(t, app)
 	defer clearWebhookState(t, app)
+	createWebhook(t, app, `{"url":"https://webhook.example.com","enabled_events":["vault.created","vault.archived","vault.deleted","vault_credential.created","vault_credential.archived","vault_credential.deleted"]}`)
 
 	vault := createVault(t, app, `{"display_name":"vault webhook lifecycle"}`)
 	defer cleanupVaultRows(t, app, vault.ID)

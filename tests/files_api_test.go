@@ -1173,7 +1173,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("create vault secrets service: %v", err)
 	}
-	webhookEnqueuer := webhooks.NewEnqueuer(database, cfg.Webhook, logger)
+	webhookEnqueuer := webhooks.NewEnqueuer(database, logger)
 	deploymentStore := deploymentsapi.NewStore(database, logger).WithEventPayloadStorage(store).WithWebhooks(webhookEnqueuer)
 	workers := river.NewWorkers()
 	deploymentsapi.RegisterWorkers(workers, deploymentStore)

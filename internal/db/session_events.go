@@ -12,6 +12,8 @@ import (
 
 // The caller holds the Session lock. Lock the Worker second, decide acceptance,
 // then persist each action's events and state in their public order.
+// Idempotent history writes, including events seeded with a new Session, do not
+// admit a new client turn.
 func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent, ignoreExisting bool) ([]SessionEvent, error) {
 	primaryRow, err := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
@@ -102,25 +104,6 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		if err := NewCodeSessionMapper(executor).ResetIdleSinceForSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID, newTurn); err != nil {
 			return nil, err
 		}
-	}
-	return created, nil
-}
-
-// Deployment initial events are startup history on a newly created Session,
-// not new input submitted to an active turn.
-func insertDeploymentInitialEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
-	primaryRow, err := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
-	if err != nil {
-		return nil, mapNoRows(err)
-	}
-	primary := primaryRow.thread()
-	created := make([]SessionEvent, 0, len(events))
-	for _, event := range events {
-		stored, _, err := insertSessionEventTx(ctx, executor, &session, primary, event, false)
-		if err != nil {
-			return nil, err
-		}
-		created = append(created, stored)
 	}
 	return created, nil
 }

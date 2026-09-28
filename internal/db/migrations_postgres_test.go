@@ -460,7 +460,7 @@ func TestSessionInputProcessedAtMigrationRepairsAppliedSchema(t *testing.T) {
 	}
 }
 
-func TestSessionInputProcessedAtMigrationRejectsQueuedEvents(t *testing.T) {
+func TestSessionInputProcessedAtMigrationRejectsUnprocessedInputs(t *testing.T) {
 	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
@@ -471,66 +471,27 @@ func TestSessionInputProcessedAtMigrationRejectsQueuedEvents(t *testing.T) {
 	}
 	if _, err := database.ExecContext(ctx, `
 		INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload, processed_at, created_at)
-		VALUES ('60000000-0000-0000-0000-000000000001', 'sevt_queued', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.message', '{}', NULL, NOW())
+		VALUES
+		('60000000-0000-0000-0000-000000000001', 'sevt_queued', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.message', '{}', NULL, NOW()),
+		('60000000-0000-0000-0000-000000000002', 'sevt_unprocessed_tool', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.tool_result', '{}', NULL, NOW())
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 70); err == nil {
+	if _, err := provider.UpTo(ctx, 69); err == nil {
 		t.Fatal("migration discarded queued input")
 	}
 	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_queued'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 70); err != nil {
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded unprocessed tool result")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_unprocessed_tool'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err != nil {
 		t.Fatalf("migrate resolved input history: %v", err)
 	}
-	assertMigrationColumnExists(t, ctx, database, "session_events", "worker_ack_at", false)
-	assertMigrationColumnNullable(t, ctx, database, "session_events", "processed_at", "NO")
-}
-
-func TestSessionInputProcessedAtMigrationRequiresLegacyToolResultsResolved(t *testing.T) {
-	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
-	}
-	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
-	if _, err := provider.UpTo(ctx, 67); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, `ALTER TABLE session_events ADD COLUMN worker_ack_at timestamptz`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (69, true)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, `
-		INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload, processed_at, created_at)
-		VALUES ('60000000-0000-0000-0000-000000000012', 'sevt_unacked_tool', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.tool_result', '{}', NOW(), NOW())
-	`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 70); err == nil {
-		t.Fatal("migration discarded unacknowledged tool result")
-	}
-	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_unacked_tool'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, `
-		INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload, processed_at, created_at, worker_ack_at)
-		VALUES ('60000000-0000-0000-0000-000000000013', 'sevt_backfilled_ack', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.tool_result', '{}', NOW(), NOW(), NOW())
-	`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 70); err == nil {
-		t.Fatal("migration trusted a backfilled tool result ACK")
-	}
-	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_backfilled_ack'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.UpTo(ctx, 70); err != nil {
-		t.Fatalf("migrate resolved input history: %v", err)
-	}
-	assertMigrationColumnExists(t, ctx, database, "session_events", "worker_ack_at", false)
 	assertMigrationColumnNullable(t, ctx, database, "session_events", "processed_at", "NO")
 }
 

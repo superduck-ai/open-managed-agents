@@ -39,6 +39,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
@@ -1117,6 +1118,11 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 
 func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store storage.ObjectStore, logger *slog.Logger) *testApp {
 	t.Helper()
+	return newTestAppWithSecrets(t, override, store, logger, nil)
+}
+
+func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.ObjectStore, logger *slog.Logger, vaultSecrets *secrets.Service) *testApp {
+	t.Helper()
 	ctx := context.Background()
 	cfg, err := config.Load()
 	if err != nil {
@@ -1163,15 +1169,19 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("ensure object store bucket: %v", err)
 	}
-	kek, err := secrets.GenerateKEK()
-	if err != nil {
-		database.Close()
-		t.Fatalf("generate vault KEK: %v", err)
-	}
-	vaultSecrets, err := secrets.NewLocalService(ctx, kek)
-	if err != nil {
-		database.Close()
-		t.Fatalf("create vault secrets service: %v", err)
+	if vaultSecrets == nil {
+		kek, err := localkeys.GenerateKEK()
+		if err != nil {
+			database.Close()
+			t.Fatalf("generate vault KEK: %v", err)
+		}
+		vaultSecretsProvider, err := localkeys.New(localkeys.KeyMaterial{KEK: kek}, nil)
+		clear(kek)
+		if err != nil {
+			database.Close()
+			t.Fatalf("create vault secrets service: %v", err)
+		}
+		vaultSecrets = secrets.NewService(vaultSecretsProvider)
 	}
 	deploymentStore := deploymentsapi.NewStore(database).WithEventPayloadStorage(store)
 	workers := river.NewWorkers()

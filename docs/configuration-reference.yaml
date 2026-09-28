@@ -157,27 +157,58 @@ webhook:
 
 vault:
   master_key:
-    # Base64-encoded 32-byte key-encryption key. Exactly one of kek or kek_file
-    # must be set in every env (same discipline as storage.s3 access keys).
-    # Generate with: just generate-vault-kek config/secrets/vault-kek
-    # then set kek_file, or paste the printed base64 into kek.
-    # The value below is a documentation placeholder only — replace before deploy.
-    kek: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
-    # Same base64 KEK read from a mounted file; mirrors the
-    # code_session.jwt_signing_private_key_file mount discipline.
-    kek_file: ""
-    # Current wrap key version persisted on new envelopes as key_version.
-    # Omit or 0 defaults to 1.
-    version: 2
-    # Prior KEKs retained only for Open after rotation (no rewrap). Keep this
-    # list empty until you rotate; then move the old current here with its
-    # original version (must be lower than the new current version). The entry
-    # below is a schema placeholder for the configuration contract — replace
-    # with a real prior KEK after rotation, or use decrypt_only: [].
-    decrypt_only:
-      - version: 1
-        kek: "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE="
-        kek_file: ""
+    # Omitted provider defaults to local. Also supports aliyun_kms and hashicorp_vault.
+    provider: local
+    # Used only when provider is hashicorp_vault. Remove the local block before selecting it.
+    hashicorp_vault:
+      # A reverse proxy, if used, must forward /v1/<mount>/* unchanged to Vault.
+      # HTTPS verifies the certificate using the OS/container trust store.
+      # Local development permits HTTP only for loopback, localhost or host vault.
+      address: "https://vault.example.com"
+      transit_mount: "transit"
+      key_name: "oma-dek"
+      # Externally issued/renewed token. Reopened on each operation so atomic
+      # replacement takes effect without restarting OMA. No login or renewal.
+      token_file: "/run/secrets/vault-token"
+    # Used only when provider is aliyun_kms. Remove the local block before selecting it.
+    # No local fallback.
+    aliyun_kms:
+      # Required host or HTTPS origin without path; use your private gateway.
+      # TLS certificate verification stays enabled.
+      # DEBUG=1 or app is allowed; exact dara/tea/credential flags enable unsafe SDK logs
+      # and must be removed before starting the process.
+      endpoint: "kst-example.cryptoservice.kms.aliyuncs.com"
+      # CMK ID or acs:kms:<region>:<account>:key/<key-id> ARN; no aliases.
+      key_id: "key-example"
+      # Empty selects the workload identity: ACK RRSA when OIDC env vars are set, else ECS RAM.
+      # For explicit AK credentials set both. Never commit real credentials.
+      access_key_id: ""
+      access_key_secret: ""
+      # Optional for explicit temporary STS credentials; requires both AK fields.
+      security_token: ""
+    # Legacy flat local fields are accepted on input, but cannot coexist with local.
+    local:
+      # Base64-encoded 32-byte key-encryption key. Exactly one of kek or kek_file
+      # must be set for provider local (same discipline as storage.s3 access keys).
+      # Generate with: just generate-vault-kek config/secrets/vault-kek
+      # then set kek_file, or paste the printed base64 into kek.
+      # The value below is a documentation placeholder only — replace before deploy.
+      kek: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+      # Same base64 KEK read from a mounted file; mirrors the
+      # code_session.jwt_signing_private_key_file mount discipline.
+      kek_file: ""
+      # Current wrap key version persisted on new envelopes as key_version.
+      # Omit or 0 defaults to 1.
+      version: 2
+      # Prior KEKs retained only for Open after rotation (no rewrap). Keep this
+      # list empty until you rotate; then move the old current here with its
+      # original version (must be lower than the new current version). The entry
+      # below is a schema placeholder for the configuration contract — replace
+      # with a real prior KEK after rotation, or use decrypt_only: [].
+      decrypt_only:
+        - version: 1
+          kek: "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE="
+          kek_file: ""
   # Deployment-owned OAuth clients for vault MCP OAuth enrollment. Exact
   # mcp_server_url match only. BYO client_id on vault-auth/start overrides.
   # Inline client_secret is accepted for local/dev; do not commit secrets.

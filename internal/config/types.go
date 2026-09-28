@@ -47,24 +47,52 @@ type PlatformOAuthClientConfig struct {
 	ClientSecret string `yaml:"client_secret"`
 }
 
-// MasterKeyConfig supplies the key-encryption key (KEK) that wraps per-secret
-// DEKs. Exactly one of Kek or KekFile must be set (required in every env, same
-// as storage.s3 access keys). KekFile holds the same base64 text as Kek but
-// read from a mounted file (mirroring the
-// code_session.jwt_signing_private_key_file discipline).
-//
-// Version identifies the current wrap key (defaults to 1 when unset/0).
-// DecryptOnly holds older KEKs that may still open existing envelopes; Seal
-// always uses the current key. There is no rewrap step.
+// MasterKeyConfig selects the provider that wraps per-secret DEKs. An omitted
+// provider preserves the local KEK configuration and rotation contract.
 type MasterKeyConfig struct {
+	Provider       string                `yaml:"provider"`
+	Local          *LocalKeyConfig       `yaml:"local,omitempty"`
+	AliyunKMS      *AliyunKMSConfig      `yaml:"aliyun_kms,omitempty"`
+	HashicorpVault *HashicorpVaultConfig `yaml:"hashicorp_vault,omitempty"`
+}
+
+// LocalKeyConfig holds the current KEK and keys retained for decrypting old envelopes.
+type LocalKeyConfig struct {
 	Kek         string                 `yaml:"kek"`
 	KekFile     string                 `yaml:"kek_file"`
 	Version     int64                  `yaml:"version"`
 	DecryptOnly []DecryptOnlyKeyConfig `yaml:"decrypt_only"`
 }
 
+// HashicorpVaultConfig selects a pre-provisioned Transit key. Authentication
+// and token renewal are managed outside OMA; HTTPS uses the system trust store.
+type HashicorpVaultConfig struct {
+	Address      string `yaml:"address"`
+	TransitMount string `yaml:"transit_mount"`
+	KeyName      string `yaml:"key_name"`
+	TokenFile    string `yaml:"token_file"`
+}
+
+// AliyunKMSConfig contains deployment inputs, never key material. Empty access
+// keys select the official SDK workload identity providers (ACK RRSA first, then ECS RAM).
+type AliyunKMSConfig struct {
+	Endpoint        string `yaml:"endpoint"`
+	KeyID           string `yaml:"key_id"`
+	AccessKeyID     string `yaml:"access_key_id"`
+	AccessKeySecret string `yaml:"access_key_secret"`
+	SecurityToken   string `yaml:"security_token"`
+}
+
+// EffectiveProvider preserves existing local deployments when provider is unset.
+func (m MasterKeyConfig) EffectiveProvider() string {
+	if m.Provider == "" {
+		return "local"
+	}
+	return m.Provider
+}
+
 // DecryptOnlyKeyConfig is a prior KEK retained only for Open. Version is
-// required and must not collide with the current master_key.version.
+// required and must not collide with the current master_key.local.version.
 type DecryptOnlyKeyConfig struct {
 	Version int64  `yaml:"version"`
 	Kek     string `yaml:"kek"`

@@ -927,14 +927,14 @@ func TestLoadCodeSessionUpstreamProxyMITMConfiguration(t *testing.T) {
 func TestLoadVaultMasterKeyContract(t *testing.T) {
 	t.Run("at most one KEK source", func(t *testing.T) {
 		prepareLoadTest(t)
-		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: aaaa\n    kek_file: /tmp/k\n"); err == nil || !strings.Contains(err.Error(), "at most one of vault.master_key.kek") {
+		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: aaaa\n    kek_file: /tmp/k\n"); err == nil || !strings.Contains(err.Error(), "at most one of vault.master_key.local.kek") {
 			t.Fatalf("Load() error = %v, want at-most-one KEK error", err)
 		}
 	})
 
 	t.Run("current KEK is required", func(t *testing.T) {
 		prepareLoadTest(t)
-		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: \"\"\n    kek_file: \"\"\n"); err == nil || !strings.Contains(err.Error(), "vault.master_key.kek or kek_file is required") {
+		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: \"\"\n    kek_file: \"\"\n"); err == nil || !strings.Contains(err.Error(), "vault.master_key.local.kek or kek_file is required") {
 			t.Fatalf("Load() error = %v, want required KEK error", err)
 		}
 	})
@@ -962,11 +962,11 @@ func TestLoadVaultMasterKeyContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v, want nil", err)
 		}
-		if cfg.Vault.MasterKey.EffectiveVersion() != 2 {
-			t.Fatalf("EffectiveVersion() = %d, want 2", cfg.Vault.MasterKey.EffectiveVersion())
+		if cfg.Vault.MasterKey.Local.EffectiveVersion() != 2 {
+			t.Fatalf("EffectiveVersion() = %d, want 2", cfg.Vault.MasterKey.Local.EffectiveVersion())
 		}
-		if len(cfg.Vault.MasterKey.DecryptOnly) != 1 || cfg.Vault.MasterKey.DecryptOnly[0].Version != 1 {
-			t.Fatalf("DecryptOnly = %+v, want one entry at version 1", cfg.Vault.MasterKey.DecryptOnly)
+		if len(cfg.Vault.MasterKey.Local.DecryptOnly) != 1 || cfg.Vault.MasterKey.Local.DecryptOnly[0].Version != 1 {
+			t.Fatalf("DecryptOnly = %+v, want one entry at version 1", cfg.Vault.MasterKey.Local.DecryptOnly)
 		}
 	})
 }

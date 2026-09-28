@@ -40,8 +40,9 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"tunnel.public_base_url",
 		"vault",
 		"vault.master_key",
-		"vault.master_key.kek",
-		"vault.master_key.version",
+		"vault.master_key.local",
+		"vault.master_key.local.kek",
+		"vault.master_key.local.version",
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {

@@ -101,7 +101,7 @@ func validate(cfg Config) error {
 	if err := validateTunnelPublicBaseURL(cfg.Tunnel.PublicBaseURL); err != nil {
 		return err
 	}
-	if err := validateVaultMasterKey(cfg.Vault); err != nil {
+	if err := ValidateMasterKey(cfg.Vault.MasterKey); err != nil {
 		return err
 	}
 	if err := validateObservabilityConfig(cfg.Observability); err != nil {
@@ -271,53 +271,68 @@ func validateTunnelDomainSuffix(value string) error {
 	return nil
 }
 
-func (m MasterKeyConfig) inlineKEKSet() bool {
+func (m LocalKeyConfig) inlineKEKSet() bool {
 	return strings.TrimSpace(m.Kek) != ""
 }
 
-func (m MasterKeyConfig) fileKEKSet() bool {
+func (m LocalKeyConfig) fileKEKSet() bool {
 	return strings.TrimSpace(m.KekFile) != ""
 }
 
 // KEKConfigured reports whether either inline kek or kek_file is set.
-func (m MasterKeyConfig) KEKConfigured() bool {
+func (m LocalKeyConfig) KEKConfigured() bool {
 	return m.inlineKEKSet() || m.fileKEKSet()
 }
 
 // EffectiveVersion returns the current wrap key version. Unset/0 defaults to 1
 // so single-key deployments need not declare version explicitly.
-func (m MasterKeyConfig) EffectiveVersion() int64 {
+func (m LocalKeyConfig) EffectiveVersion() int64 {
 	if m.Version == 0 {
 		return 1
 	}
 	return m.Version
 }
 
-// validateVaultMasterKey enforces the vault KEK input contract: exactly one of
-// kek / kek_file on the current key (required in every env, same as S3 keys),
-// at most one source on each decrypt_only entry, and unique positive versions
-// that do not collide with the current wrap version.
-func validateVaultMasterKey(cfg VaultConfig) error {
-	mk := cfg.MasterKey
+// ValidateMasterKey validates the configuration for the active provider.
+func ValidateMasterKey(mk MasterKeyConfig) error {
+	switch mk.EffectiveProvider() {
+	case "local":
+		return validateLocalMasterKey(mk)
+	case "aliyun_kms":
+		return validateAliyunKMSMasterKey(mk)
+	case "hashicorp_vault":
+		return validateHashicorpVaultMasterKey(mk)
+	default:
+		return errors.New("unsupported vault.master_key.provider")
+	}
+}
+
+// validateLocalMasterKey requires one KEK source per key and unique positive
+// decrypt-only versions that do not collide with the current wrap version.
+func validateLocalMasterKey(mk MasterKeyConfig) error {
+	local := mk.Local
+	if local == nil {
+		return errors.New("vault.master_key.local is required")
+	}
 	switch {
-	case mk.inlineKEKSet() && mk.fileKEKSet():
-		return errors.New("configure at most one of vault.master_key.kek or kek_file")
-	case !mk.KEKConfigured():
-		return errors.New("vault.master_key.kek or kek_file is required")
+	case local.inlineKEKSet() && local.fileKEKSet():
+		return errors.New("configure at most one of vault.master_key.local.kek or kek_file")
+	case !local.KEKConfigured():
+		return errors.New("vault.master_key.local.kek or kek_file is required")
 	}
-	if mk.Version < 0 {
-		return errors.New("vault.master_key.version must be >= 0")
+	if local.Version < 0 {
+		return errors.New("vault.master_key.local.version must be >= 0")
 	}
-	currentVersion := mk.EffectiveVersion()
+	currentVersion := local.EffectiveVersion()
 	seen := map[int64]struct{}{currentVersion: {}}
-	for i, entry := range mk.DecryptOnly {
-		prefix := fmt.Sprintf("vault.master_key.decrypt_only[%d]", i)
+	for i, entry := range local.DecryptOnly {
+		prefix := fmt.Sprintf("vault.master_key.local.decrypt_only[%d]", i)
 		if entry.Version <= 0 {
 			return fmt.Errorf("%s.version must be a positive integer", prefix)
 		}
 		if _, ok := seen[entry.Version]; ok {
 			if entry.Version == currentVersion {
-				return fmt.Errorf("%s.version %d collides with vault.master_key.version", prefix, entry.Version)
+				return fmt.Errorf("%s.version %d collides with vault.master_key.local.version", prefix, entry.Version)
 			}
 			return fmt.Errorf("%s.version %d is duplicated", prefix, entry.Version)
 		}
@@ -330,6 +345,30 @@ func validateVaultMasterKey(cfg VaultConfig) error {
 		case !inline && !file:
 			return fmt.Errorf("%s: kek or kek_file is required", prefix)
 		}
+	}
+	return nil
+}
+
+func validateAliyunKMSMasterKey(mk MasterKeyConfig) error {
+	if mk.Local != nil {
+		return errors.New("vault.master_key: local key settings cannot be combined with aliyun_kms")
+	}
+	if mk.AliyunKMS == nil || mk.AliyunKMS.Endpoint == "" || mk.AliyunKMS.KeyID == "" {
+		return errors.New("vault.master_key.aliyun_kms.endpoint and key_id are required")
+	}
+	if (mk.AliyunKMS.AccessKeyID == "") != (mk.AliyunKMS.AccessKeySecret == "") || (mk.AliyunKMS.SecurityToken != "" && mk.AliyunKMS.AccessKeyID == "") {
+		return errors.New("vault.master_key.aliyun_kms: access_key_id and access_key_secret must be configured together; security_token requires both")
+	}
+	return nil
+}
+
+func validateHashicorpVaultMasterKey(mk MasterKeyConfig) error {
+	if mk.Local != nil {
+		return errors.New("vault.master_key: local key settings cannot be combined with hashicorp_vault")
+	}
+	v := mk.HashicorpVault
+	if v == nil || strings.TrimSpace(v.Address) == "" || strings.TrimSpace(v.TransitMount) == "" || strings.TrimSpace(v.KeyName) == "" || strings.TrimSpace(v.TokenFile) == "" {
+		return errors.New("vault.master_key.hashicorp_vault: address, transit_mount, key_name and token_file are required")
 	}
 	return nil
 }

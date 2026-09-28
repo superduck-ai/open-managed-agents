@@ -25,11 +25,12 @@ func (s *Service) applyWorkerDeliveryUpdates(
 	epoch int64,
 	updates []workerDeliveryUpdate,
 ) (workerDeliveryResult, error) {
+	ackCtx, cancel := context.WithTimeout(ctx, workerDeliveryTimeout)
+	defer cancel()
 	result := workerDeliveryResult{}
 	cleanupJobIDs := make([]string, 0)
 	// 锁一直持有到 JetStream 确认完成；限定整个批次的等待时间，避免 Redis/NATS
 	// 不响应时无限阻塞 register、凭证轮换或 sandbox recovery。
-	ackCtx, cancel := context.WithTimeout(ctx, workerDeliveryTimeout)
 	err := s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, func() (bool, error) {
 		var applyErr error
 		result, cleanupJobIDs, applyErr = s.applyLockedWorkerDeliveryUpdates(ackCtx, codeSessionID, epoch, updates)

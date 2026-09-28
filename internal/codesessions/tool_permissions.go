@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 type resolvedToolPermission string
@@ -65,9 +66,9 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	}
 	switch permission {
 	case resolvedToolPermissionAllow:
-		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-approve", "", "")
+		return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, request, permission, "auto-approve", "", "", "")
 	case resolvedToolPermissionDeny:
-		return s.respondToToolPermissionRequest(ctx, codeSessionID, request, permission, "auto-deny", "", "")
+		return s.respondToToolPermissionRequest(ctx, codeSessionID, workerEpoch, request, permission, "auto-deny", "", "", "")
 	case resolvedToolPermissionAsk:
 		return nil
 	default:
@@ -362,16 +363,13 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	}
 	denyMessage := stringField(payload, "deny_message")
 	sessionThreadID := firstNonEmpty(toolPermissionSessionThreadID(payload), request.SessionThreadID)
-	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, request, behavior, "tool-confirmation", denyMessage, sessionThreadID); err != nil {
-		return false, err
-	}
-	if err := s.clearToolPermissionRequest(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request.PublicEventID); err != nil {
+	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request, behavior, "tool-confirmation", denyMessage, sessionThreadID, event.ExternalID); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-const legacyToolPermissionRequestMetadataKey = "managed_agent_tool_permission_request"
+const legacyToolPermissionRequestMetadataKey = maevents.ToolPermissionRequestMetadataKey
 
 func toolPermissionRequestMetadataKey(publicEventID string) string {
 	return legacyToolPermissionRequestMetadataKey + ":" + publicEventID
@@ -425,19 +423,6 @@ func toolPermissionRequestFromMetadata(raw json.RawMessage, publicEventID string
 	return request, nil
 }
 
-func (s *Service) clearToolPermissionRequest(ctx context.Context, codeSessionID string, workerEpoch int64, publicEventID string) error {
-	metadata, err := marshalRaw(map[string]any{toolPermissionRequestMetadataKey(publicEventID): nil})
-	if err != nil {
-		return err
-	}
-	_, err = s.db.UpdateCodeSessionWorkerState(ctx, codeSessionID, db.UpdateCodeSessionWorkerStateInput{
-		WorkerEpoch:         workerEpoch,
-		ExternalMetadataSet: true,
-		ExternalMetadata:    metadata,
-	})
-	return err
-}
-
 type userCustomToolResultPayload struct {
 	CustomToolUseID string `json:"custom_tool_use_id"`
 	Content         []struct {
@@ -477,10 +462,7 @@ func (s *Service) queueControlResponseForCustomToolResult(ctx context.Context, c
 		request.Input["answers"] = answers
 	}
 	sessionThreadID := firstNonEmpty(payload.SessionThreadID, request.SessionThreadID)
-	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, request, behavior, "custom-tool-result", denyMessage, sessionThreadID); err != nil {
-		return false, err
-	}
-	if err := s.clearToolPermissionRequest(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request.PublicEventID); err != nil {
+	if err := s.respondToToolPermissionRequest(ctx, codeSession.ExternalID, codeSession.CurrentWorkerEpoch, request, behavior, "custom-tool-result", denyMessage, sessionThreadID, event.ExternalID); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -516,7 +498,7 @@ func cloneStringAnyMap(value map[string]any) map[string]any {
 	return cloned
 }
 
-func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessionID string, request toolPermissionRequest, behavior resolvedToolPermission, source string, denyMessage string, sessionThreadID string) error {
+func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessionID string, workerEpoch int64, request toolPermissionRequest, behavior resolvedToolPermission, source string, denyMessage string, sessionThreadID string, inputEventID string) error {
 	if request.RequestID == "" {
 		return nil
 	}
@@ -555,6 +537,9 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 			"response":   response,
 		},
 	}
+	if inputEventID != "" {
+		payloadObject["id"] = inputEventID
+	}
 	if sessionThreadID != "" {
 		payloadObject["session_thread_id"] = sessionThreadID
 	}
@@ -562,7 +547,11 @@ func (s *Service) respondToToolPermissionRequest(ctx context.Context, codeSessio
 	if err != nil {
 		return err
 	}
-	return s.publishControlResponse(ctx, codeSessionID, payload, source, "control-response:"+request.RequestID)
+	completedToolID := ""
+	if inputEventID != "" {
+		completedToolID = request.PublicEventID
+	}
+	return s.publishControlResponse(ctx, codeSessionID, workerEpoch, payload, source, "control-response:"+request.RequestID, completedToolID)
 }
 
 // controlResponseUUID preserves the UUIDv5 output previously produced with the
@@ -625,15 +614,15 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 	if permission != resolvedToolPermissionAsk {
 		return request, payloads, nil
 	}
-	statusTime := now.Add(time.Millisecond)
 	statusRaw, err := marshalRaw(map[string]any{
-		"id":   stablePublicEventID(codeSessionID, request.RequestID+"\x00tool_permission_requires_action"),
-		"type": "session.status_idle",
+		"id":                stablePublicEventID(codeSessionID, request.RequestID+"\x00tool_permission_requires_action"),
+		"type":              "session.thread_status_idle",
+		"session_thread_id": request.SessionThreadID,
 		"stop_reason": map[string]any{
 			"event_ids": []string{request.PublicEventID},
 			"type":      "requires_action",
 		},
-		"processed_at": formatTime(statusTime),
+		"processed_at": formatTime(now),
 	})
 	if err != nil {
 		return toolPermissionRequest{}, nil, err

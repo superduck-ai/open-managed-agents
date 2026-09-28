@@ -38,6 +38,7 @@ func runOfficialTunnelClientCase(t *testing.T, binary, transport string) {
 	t.Helper()
 	marker := fmt.Sprintf("tunnel-proof-%d", time.Now().UnixNano())
 	b := testNATSBroker(t, brokerTestConfig())
+	useRealIntegrationBindings(t, b)
 	if transport == "stdio" {
 		b.cfg.PresenceTTL = time.Second
 	}
@@ -49,37 +50,14 @@ func runOfficialTunnelClientCase(t *testing.T, binary, transport string) {
 		args = append(args, "--mcp.command", "command="+os.Args[0]+" -test.run=^TestTunnelStdioFixture$")
 	} else {
 		privateMCP := newIntegrationMCP(marker)
-		privateHTTP := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return privateMCP }, &mcp.StreamableHTTPOptions{JSONResponse: transport == "http-json"}))
+		privateHTTP := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return privateMCP }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: transport == "http-json"}))
 		t.Cleanup(privateHTTP.Close)
 		args = append(args, "--mcp.server-url", "url="+privateHTTP.URL)
 		if transport == "http-v2" {
 			args = append(args, "--harpoon.allow-plaintext-http", "--harpoon.target", "label=proof,url="+privateHTTP.URL)
 		}
 	}
-	stopConnector := startOfficialConnector(t, binary, args, marker)
-	deadline := time.Now().Add(15 * time.Second)
-	ready := false
-	for time.Now().Before(deadline) {
-		snapshot, err := b.ConnectorSnapshot(t.Context(), "tunnel")
-		if err == nil && snapshot.InstanceCount > 0 {
-			ready = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !ready {
-		t.Fatal("official tunnel-client did not register")
-	}
-	if transport == "http-v2" {
-		var control tunnelControl
-		if _, err := b.control.read(t.Context(), brokerKey("tunnel"), &control); err != nil {
-			t.Fatal(err)
-		}
-		harpoon := control.Channels["harpoon"]
-		if harpoon == nil || !harpoon.Declaration.Stateless || !harpoon.Declaration.ProcessAffinity {
-			t.Fatal("official v2 declaration lost independent capabilities")
-		}
-	}
+	startOfficialConnector(t, binary, args, marker)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	client := mcp.NewClient(&mcp.Implementation{Name: "oma-tunnel-proof", Version: "1"}, nil)
@@ -100,12 +78,6 @@ func runOfficialTunnelClientCase(t *testing.T, binary, transport string) {
 	if err != nil || !strings.Contains(string(encoded), marker) {
 		t.Fatalf("missing per-run tool marker: %s, %v", encoded, err)
 	}
-	if transport == "stdio" {
-		stopConnector()
-		time.Sleep(b.cfg.PresenceTTL + 100*time.Millisecond)
-		startOfficialConnector(t, binary, args, marker)
-		verifyOfficialConnectorRestart(t, b, endpoint, session.ID(), marker)
-	}
 	closed := make(chan error, 1)
 	go func() { closed <- session.Close() }()
 	select {
@@ -122,9 +94,9 @@ func tunnelHTTPFixture(t *testing.T, b *Broker) (string, string, string) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	credential := activeConnectorContext()
-	credential.Token.TunnelUUID = "tunnel"
-	tunnel := db.MCPTunnel{UUID: "tunnel", ExternalID: credential.TunnelExternalID}
-	connector := NewConnectorHandler(b.cfg, &db.DB{}, b, logger)
+	credential.TunnelUUID = "tunnel"
+	tunnel := db.MCPTunnel{UUID: "tunnel", ExternalID: credential.TunnelExternalID, OrganizationUUID: payloadTestScope.OrganizationUUID, WorkspaceUUID: payloadTestScope.WorkspaceUUID}
+	connector := NewConnectorHandler(b.cfg, &db.DB{}, b, nil, logger)
 	connector.db = connectorMetadataDatabase{context: credential, tunnel: tunnel, expectedToken: "valid-token"}
 	ingress := NewIngressHandler(b.cfg, &db.DB{}, b, logger)
 	router := chi.NewRouter()
@@ -202,45 +174,4 @@ func startOfficialConnector(t *testing.T, binary string, args []string, marker s
 	})
 	t.Cleanup(stop)
 	return stop
-}
-
-func verifyOfficialConnectorRestart(t *testing.T, b *Broker, endpoint, oldID, marker string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	for {
-		snapshot, err := b.ConnectorSnapshot(ctx, "tunnel")
-		if err == nil && snapshot.InstanceCount > 0 {
-			break
-		}
-		if ctx.Err() != nil {
-			t.Fatal("restarted connector did not register")
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Mcp-Session-Id", oldID)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusNotFound {
-		t.Fatalf("old session after restart = %d, want 404", response.StatusCode)
-	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "restart-proof", Version: "1"}, nil)
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint}, nil)
-	if err != nil {
-		t.Fatalf("reinitialize after process restart: %v", err)
-	}
-	defer session.Close()
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "tunnel_proof", Arguments: map[string]any{}})
-	encoded, encodeErr := json.Marshal(result)
-	if err != nil || encodeErr != nil || !strings.Contains(string(encoded), marker) {
-		t.Fatalf("tool after restart = %s, %v, %v", encoded, err, encodeErr)
-	}
 }

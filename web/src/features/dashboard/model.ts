@@ -3,6 +3,7 @@ import { useLocation } from '@tanstack/react-router';
 import { copyText } from '@/shared/lib/clipboard';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { filesRequestHeaders, messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
+import { consoleResourceListLimit } from '../../shared/console-list';
 import type { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
@@ -24,6 +25,7 @@ export type FilesListResponse = {
   has_more: boolean;
   first_id?: string | null;
   last_id?: string | null;
+  total_count?: number;
 };
 
 export type FilesPageCursor = {
@@ -57,6 +59,7 @@ export type MessageBatchesListResponse = {
   has_more: boolean;
   first_id?: string | null;
   last_id?: string | null;
+  total_count?: number;
 };
 
 export type MessageBatchesPageCursor = {
@@ -89,6 +92,7 @@ export type SkillsListResponse = {
   data: ConsoleSkill[];
   has_more: boolean;
   next_page?: string | null;
+  total_count?: number;
 };
 
 export type SkillVersionsListResponse = {
@@ -106,10 +110,6 @@ export type EnrichedConsoleSkill = ConsoleSkill & {
 export type EnrichedSkillsListResponse = Omit<SkillsListResponse, 'data'> & {
   data: EnrichedConsoleSkill[];
 };
-
-const filesPageLimit = 20;
-const messageBatchesPageLimit = 20;
-const skillsPageLimit = 100;
 
 function workspaceRequestHeaders(workspaceId: string) {
   const headers = new Headers();
@@ -134,7 +134,7 @@ export function useDashboardWorkspaceScope() {
 
 export function listFiles(cursor: FilesPageCursor, workspaceId: string) {
   const params: Record<string, string | number> = {
-    limit: filesPageLimit,
+    limit: consoleResourceListLimit,
   };
   if (cursor.afterId) {
     params.after_id = cursor.afterId;
@@ -151,7 +151,7 @@ export function uploadFile(file: File, workspaceId: string) {
 
 export function listMessageBatches(cursor: MessageBatchesPageCursor, workspaceId: string) {
   const params: Record<string, string | number> = {
-    limit: messageBatchesPageLimit,
+    limit: consoleResourceListLimit,
   };
   if (cursor.afterId) {
     params.after_id = cursor.afterId;
@@ -175,7 +175,7 @@ export function cancelMessageBatch(batchId: string, workspaceId: string) {
 
 export async function listSkills(pageToken: string | undefined, workspaceId: string): Promise<SkillsListResponse> {
   const params: Record<string, string | number> = {
-    limit: skillsPageLimit,
+    limit: consoleResourceListLimit,
   };
   if (pageToken) {
     params.page = pageToken;

@@ -65,6 +65,9 @@ Send Events 与 activation 都锁定同一条 Session：
 重试。多个 active 请求的发布会被 Code Session 行锁串行，但获得锁的顺序不承诺与并发
 `session_events` 的提交顺序一致；consumer 只保证按 JetStream 已接受的顺序逐条处理。
 
+归档唯一主 Thread 若同时产生 `session.status_terminated`，必须在同一事务内终止对应的
+Code Session，提交后清理 Worker 事件。只终止子 Thread 时不能终止整个 Session 的 Worker。
+
 ## 验收
 
 - Runner prepare 后、activation 前接受的消息进入启动历史；

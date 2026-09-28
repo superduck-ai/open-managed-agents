@@ -26,6 +26,37 @@ func TestPublicWorkerInputConversionFailureIsReturned(t *testing.T) {
 	}
 }
 
+func TestRealtimePublicInputUsesRecordedReceiveTime(t *testing.T) {
+	app, codeSession := workerEventRegressionFixture(t, newFakeStore("input-receive-time"))
+	broker := workerevents.NewMemory()
+	receivedAt := time.Date(2026, time.September, 27, 8, 10, 0, 0, time.UTC)
+	event := db.SessionEvent{
+		UUID: "event-uuid", ExternalID: "sevt_live", EventType: "user.message",
+		CreatedAt: receivedAt, ProcessedAt: receivedAt,
+		Payload: json.RawMessage(`{"type":"user.message","id":"sevt_live","processed_at":"2026-09-27T08:10:00Z","content":[{"type":"text","text":"hello"}]}`),
+	}
+	if err := newCodeSessionService(app, broker, nil).QueuePublicSessionEvents(t.Context(), db.Session{
+		WorkspaceUUID: codeSession.WorkspaceUUID, ExternalID: codeSession.SessionExternalID,
+	}, []db.SessionEvent{event}); err != nil {
+		t.Fatal(err)
+	}
+	pending := broker.Pending(codeSession.ExternalID)
+	if len(pending) != 1 {
+		t.Fatalf("published Worker inputs = %d, want 1", len(pending))
+	}
+	var payload struct {
+		CreatedAt string `json:"created_at"`
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal(pending[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	want := receivedAt.Format(time.RFC3339Nano)
+	if payload.CreatedAt != want || payload.Timestamp != want {
+		t.Fatalf("immediately accepted Worker time = %+v, want %s", payload, want)
+	}
+}
+
 func TestWorkerEventExpiryRetainsMessageWhenTerminationFails(t *testing.T) {
 	app, codeSession := workerEventRegressionFixture(t, newFakeStore("expiry-retry"))
 	broker := workerevents.NewMemory()
@@ -157,7 +188,7 @@ func TestActivationRechecksHistoryAfterOffloadWithOneConnection(t *testing.T) {
 	sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":`+quoteJSON(strings.Repeat("x", 950<<10))+`}]}]}`, defaultTestKey)
 	app.db.SQLDB().SetMaxOpenConns(1)
 	store.onUpload = func() {
-		sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"arrived during upload"}]}]}`, defaultTestKey)
+		sendSessionEvents(t, app, codeSession.SessionExternalID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 	}
 	broker := workerevents.NewMemory()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -166,11 +197,14 @@ func TestActivationRechecksHistoryAfterOffloadWithOneConnection(t *testing.T) {
 		t.Fatalf("activate with one connection and concurrent history: %v", err)
 	}
 	pending := broker.Pending(codeSession.ExternalID)
-	if len(pending) != 3 || pending[1].PayloadRef == nil || !strings.Contains(string(pending[2].Payload), "arrived during upload") {
+	if len(pending) != 3 || pending[1].PayloadRef == nil || !strings.Contains(string(pending[2].Payload), `"subtype":"interrupt"`) {
 		t.Fatalf("activation missed history cutover: %d events", len(pending))
 	}
 	if store.uploads != 3 {
 		t.Fatalf("uploads = %d, want history archive plus snapshot preparation and re-preparation", store.uploads)
+	}
+	if err := app.db.SetSessionStatus(t.Context(), codeSession.WorkspaceUUID, codeSession.SessionExternalID, "idle"); err != nil {
+		t.Fatal(err)
 	}
 }
 

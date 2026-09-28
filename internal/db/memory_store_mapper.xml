@@ -52,6 +52,15 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="FindByExternalIDs" resultType="memoryStoreRow">
+        SELECT <include refid="columns"/>
+        FROM memory_stores
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        AND external_id IN
+        <foreach collection="externalIDs" item="externalID" open="(" separator="," close=")">#{externalID}</foreach>
+    </select>
+
     <select id="FindByOrganizationAndExternalID" resultType="memoryStoreRow">
         SELECT
         <include refid="columns"/>

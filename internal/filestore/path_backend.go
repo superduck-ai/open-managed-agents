@@ -2,6 +2,7 @@ package filestore
 
 import (
 	"context"
+	"io"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -48,8 +49,28 @@ type readOnlyPathBackend interface {
 	containsPath(string) bool
 }
 
+// writablePathBackend 接管可写虚拟命名空间的操作；普通写入仍留在 Service。
+type writablePathBackend interface {
+	pathBackend
+	makeDirectory(context.Context, Principal, db.FilestoreFilesystem, makeDirectoryRequest) (directoryResponse, *apiError)
+	removeDirectory(context.Context, Principal, db.FilestoreFilesystem, removeDirectoryRequest) *apiError
+	createFile(context.Context, Principal, db.FilestoreFilesystem, createFileParams, io.Reader) (fileResponse, *apiError)
+	removeFile(context.Context, Principal, db.FilestoreFilesystem, pathRequest) *apiError
+	copyFile(context.Context, Principal, db.FilestoreFilesystem, copyMoveFileRequest) (fileResponse, *apiError)
+	moveFile(context.Context, Principal, db.FilestoreFilesystem, copyMoveFileRequest) (fileResponse, *apiError)
+}
+
+type mutationOperation uint8
+
+const (
+	mutationSinglePath mutationOperation = iota
+	mutationFileTransfer
+	mutationDirectoryTransfer
+)
+
 type pathRouter struct {
 	persistent pathBackend
+	memory     writablePathBackend
 	readOnly   []readOnlyPathBackend
 }
 
@@ -59,7 +80,37 @@ func (r pathRouter) backendFor(operation readOperation, value string) pathBacken
 			return backend
 		}
 	}
+	if r.memory != nil {
+		if _, claimed := parseMemoryFilestorePath(value); claimed {
+			return r.memory
+		}
+	}
 	return r.persistent
+}
+
+// mutationBackendFor 先保护只读命名空间，再解析写入归属和传输边界。
+// nil backend 表示由 Service 继续普通持久化写入；所有错误都禁止继续写入。
+func (r pathRouter) mutationBackendFor(operation mutationOperation, paths ...string) (writablePathBackend, *apiError) {
+	if apiErr := r.authorizeMutation(paths...); apiErr != nil {
+		return nil, apiErr
+	}
+	if operation == mutationSinglePath {
+		if _, claimed := parseMemoryFilestorePath(paths[0]); claimed {
+			return r.memory, nil
+		}
+		return nil, nil
+	}
+	_, _, sameStore, claimed := classifyMemoryTransfer(paths[0], paths[1])
+	if !claimed {
+		return nil, nil
+	}
+	if operation == mutationDirectoryTransfer {
+		return nil, memoryDirectoryMoveError()
+	}
+	if !sameStore {
+		return nil, memoryTransferBoundaryError()
+	}
+	return r.memory, nil
 }
 
 func (r pathRouter) authorizeMutation(paths ...string) *apiError {

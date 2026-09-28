@@ -19,7 +19,7 @@ func TestPrepareDeploymentExecutionRuntimeIdentity(t *testing.T) {
 		{"manual invocation uses current user", "other-workspace-member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			run, err := prepareDeploymentExecution(deployment, "", test.user, time.Now().UTC())
+			run, err := prepareDeploymentExecution(deployment, "", test.user, time.Now().UTC(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

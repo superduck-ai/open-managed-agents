@@ -19,14 +19,19 @@ export function DeploymentDialogActions({
   editing,
   submitting,
   canSubmit,
+  onCancel,
 }: {
   editing: boolean;
   submitting: boolean;
   canSubmit: boolean;
+  onCancel: () => void;
 }) {
   const { msg } = useI18n();
   return (
-    <div className="mt-6 flex shrink-0 justify-end border-t border-border pt-5">
+    <div className="mt-6 flex shrink-0 justify-end gap-2 border-t border-border pt-5">
+      <Button type="button" variant="outline" disabled={submitting} onClick={onCancel}>
+        {msg('common.cancel', 'Cancel')}
+      </Button>
       <Button type="submit" disabled={!canSubmit}>
         {submitting
           ? msg('common.saving', 'Saving...')

@@ -57,11 +57,11 @@ describe('SessionInspector', () => {
     const onHoverEvent = mock(() => {});
     const onSelectEntry = mock(() => {});
     const events: QuickstartSessionEvent[] = [
-      { id: 'user_first', type: 'user.message', created_at: '2026-08-27T08:00:00.000Z' },
+      { id: 'user_first', type: 'user.message', processed_at: '2026-08-27T08:00:00.000Z' },
       {
         id: 'usage_first',
         type: 'session.usage',
-        created_at: '2026-08-27T08:00:01.000Z',
+        processed_at: '2026-08-27T08:00:01.000Z',
         usage: {
           input_tokens: 100,
           output_tokens: 20,
@@ -75,7 +75,7 @@ describe('SessionInspector', () => {
       {
         id: 'usage_second',
         type: 'session.usage',
-        created_at: '2026-08-27T08:00:02.000Z',
+        processed_at: '2026-08-27T08:00:02.000Z',
         usage: {
           input_tokens: 150,
           output_tokens: 25,
@@ -117,7 +117,7 @@ describe('SessionInspector', () => {
   test('opens event detail in the resizable Claude-style list/detail split', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
     const event = sessionEvent();
-    const nextEvent = { ...sessionEvent(), id: 'evt_agent_message_2', created_at: '2026-08-27T07:25:12.000Z' };
+    const nextEvent = { ...sessionEvent(), id: 'evt_agent_message_2', processed_at: '2026-08-27T07:25:12.000Z' };
     const entry = sessionEventEntry(event);
     const onSelectEntry = mock(() => {});
 
@@ -178,12 +178,12 @@ describe('SessionInspector', () => {
     const statusEvent: QuickstartSessionEvent = {
       id: 'evt_status_running',
       type: 'session.status_running',
-      created_at: '2026-08-27T07:25:12.000Z',
+      processed_at: '2026-08-27T07:25:12.000Z',
     };
     const systemEvent: QuickstartSessionEvent = {
       id: 'evt_system_message',
       type: 'system.message',
-      created_at: '2026-08-27T07:25:13.000Z',
+      processed_at: '2026-08-27T07:25:13.000Z',
       content: 'Internal status update.',
     };
 
@@ -341,7 +341,7 @@ describe('SessionInspector', () => {
     const confirmation: QuickstartSessionEvent = {
       id: 'confirmation_bash',
       type: 'user.tool_confirmation',
-      created_at: '2026-08-27T08:00:01.000Z',
+      processed_at: '2026-08-27T08:00:01.000Z',
       tool_use_id: 'tool_bash',
       result: 'allow',
     };
@@ -445,21 +445,21 @@ function sessionEvent(): QuickstartSessionEvent {
   return {
     id: 'evt_agent_message',
     type: 'agent.message',
-    created_at: '2026-08-27T07:25:11.000Z',
+    processed_at: '2026-08-27T07:25:11.000Z',
     content: [{ type: 'text', text: 'A compact event preview.' }],
   };
 }
 
-function toolUseEvent(id: string, name: string, createdAt: string): QuickstartSessionEvent {
-  return { id, type: 'agent.tool_use', created_at: createdAt, name, input: {} };
+function toolUseEvent(id: string, name: string, processedAt: string): QuickstartSessionEvent {
+  return { id, type: 'agent.tool_use', processed_at: processedAt, name, input: {} };
 }
 
-function toolResultEvent(id: string, toolUseId: string, createdAt: string): QuickstartSessionEvent {
-  return { id, type: 'agent.tool_result', created_at: createdAt, tool_use_id: toolUseId, content: [] };
+function toolResultEvent(id: string, toolUseId: string, processedAt: string): QuickstartSessionEvent {
+  return { id, type: 'agent.tool_result', processed_at: processedAt, tool_use_id: toolUseId, content: [] };
 }
 
 function sessionEventEntry(event: QuickstartSessionEvent): DisplayEventEntry {
-  const createdAtMs = Date.parse(String(event.created_at));
+  const createdAtMs = Date.parse(String(event.processed_at));
   const usage = {
     input: 0,
     output: 0,
@@ -478,7 +478,6 @@ function sessionEventEntry(event: QuickstartSessionEvent): DisplayEventEntry {
       label: 'Agent',
       content: 'A compact event preview.',
       event,
-      isQueued: false,
       isStreaming: false,
       isError: false,
       createdAtMs,

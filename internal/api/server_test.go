@@ -82,7 +82,7 @@ func TestReadinessReportsMissingDependencies(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readiness status = %d, want %d", response.Code, http.StatusServiceUnavailable)
 	}
-	if body := response.Body.String(); !bytes.Contains([]byte(body), []byte(`"database":"unavailable"`)) || !bytes.Contains([]byte(body), []byte(`"tunnel_nats":"unavailable"`)) {
+	if body := response.Body.String(); !bytes.Contains([]byte(body), []byte(`"database":"unavailable"`)) || !bytes.Contains([]byte(body), []byte(`"tunnel_nats":"unavailable"`)) || !bytes.Contains([]byte(body), []byte(`"tunnel_redis":"unavailable"`)) {
 		t.Fatalf("readiness body = %s", body)
 	}
 }

@@ -72,9 +72,9 @@ func TestSandboxReclamationRecoveryWithoutProviderIDOnlyTargetsReclaimed(t *test
 func TestCodeSessionMapperPublicInputResetsIdleClockWithinTenant(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: codeSessionMapperResetIdleSinceForSessionStatement,
-		bound:     buildCodeSessionMapperResetIdleSinceForSession(yourbatis.DialectPostgres, "org", "workspace", "session"),
+		bound:     buildCodeSessionMapperResetIdleSinceForSession(yourbatis.DialectPostgres, "org", "workspace", "session", true),
 		wantID:    "CodeSessionMapper.ResetIdleSinceForSession", wantKind: yourbatis.StatementUpdate,
-		wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "sessionUUID"},
-		wantSQLFragments:  []string{"idle_since = NULL", "organization_uuid = $1", "workspace_uuid = $2", "session_uuid = $3", "status = 'active'"},
+		wantArgumentNames: []string{"newTurn", "organizationUUID", "workspaceUUID", "sessionUUID"},
+		wantSQLFragments:  []string{"idle_since = NULL", "worker_turn_started = worker_turn_started AND NOT $1", "organization_uuid = $2", "workspace_uuid = $3", "session_uuid = $4", "status = 'active'"},
 	})
 }

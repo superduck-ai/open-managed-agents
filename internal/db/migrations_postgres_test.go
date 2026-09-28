@@ -433,6 +433,68 @@ func TestEnvironmentWorkSessionUUIDMigration(t *testing.T) {
 	}
 }
 
+func TestSessionInputProcessedAtMigrationRepairsAppliedSchema(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 65); err != nil {
+		t.Fatalf("migrate fixture database to 65: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `ALTER TABLE session_events ALTER COLUMN processed_at SET NOT NULL`); err != nil {
+		t.Fatalf("recreate applied-schema drift: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (66, true)`); err != nil {
+		t.Fatalf("recreate migration history: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("migrate drifted database: %v", err)
+	}
+	var nullable bool
+	if err := database.QueryRowContext(ctx, `SELECT NOT attnotnull FROM pg_attribute WHERE attrelid = 'session_events'::regclass AND attname = 'processed_at'`).Scan(&nullable); err != nil {
+		t.Fatalf("inspect processed_at: %v", err)
+	}
+	if nullable {
+		t.Fatal("session_events.processed_at still allows queued inputs")
+	}
+}
+
+func TestSessionInputProcessedAtMigrationRejectsUnprocessedInputs(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 67); err != nil {
+		t.Fatalf("migrate fixture database to 67: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload, processed_at, created_at)
+		VALUES
+		('60000000-0000-0000-0000-000000000001', 'sevt_queued', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.message', '{}', NULL, NOW()),
+		('60000000-0000-0000-0000-000000000002', 'sevt_unprocessed_tool', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.tool_result', '{}', NULL, NOW())
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded queued input")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_queued'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded unprocessed tool result")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_unprocessed_tool'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err != nil {
+		t.Fatalf("migrate resolved input history: %v", err)
+	}
+	assertMigrationColumnNullable(t, ctx, database, "session_events", "processed_at", "NO")
+}
+
 func newIsolatedMigrationTestDatabase(
 	t *testing.T,
 	databaseURL string,
@@ -604,7 +666,8 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 	}
 	createdAt := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
 	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres, yourbatis.WithDatabaseID("postgres"))
-	created, err := createSessionResource(ctx, mapperDB, SessionResource{
+	databaseAPI := &DB{mapperDB: mapperDB}
+	created, err := databaseAPI.CreateSessionResource(ctx, CreateSessionResourceInput{Resource: SessionResource{
 		UUID:              "50000000-0000-0000-0000-000000000099",
 		ExternalID:        "sesrsc_runtime_after_uuid_migration",
 		OrganizationUUID:  organizationUUID,
@@ -613,7 +676,7 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 		ResourceType:      "github_repository",
 		Payload:           json.RawMessage(`{"repository":"example/repository"}`),
 		CreatedAt:         createdAt,
-	})
+	}})
 	if err != nil {
 		t.Fatalf("create Session Resource after UUID migration: %v", err)
 	}

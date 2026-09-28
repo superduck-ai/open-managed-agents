@@ -10,25 +10,25 @@ const (
 )
 
 type Config struct {
-	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
-	Env               string                  `yaml:"env"`
-	Server            ServerConfig            `yaml:"server"`
-	Database          DatabaseConfig          `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	NATS              NATSConfig              `yaml:"nats"`
-	Auth              AuthConfig              `yaml:"auth"`
-	Tunnel            TunnelConfig            `yaml:"tunnel"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Batch             BatchConfig             `yaml:"batch"`
-	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
-	E2B               E2BConfig               `yaml:"e2b"`
-	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
-	CodeSession       CodeSessionConfig       `yaml:"code_session"`
-	Observability     ObservabilityConfig     `yaml:"observability"`
-	Webhook           WebhookConfig           `yaml:"webhook"`
-	Vault             VaultConfig             `yaml:"vault"`
-	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                  string                    `yaml:"env"`
+	Server               ServerConfig              `yaml:"server"`
+	Database             DatabaseConfig            `yaml:"database"`
+	Redis                RedisConfig               `yaml:"redis"`
+	NATS                 NATSConfig                `yaml:"nats"`
+	Auth                 AuthConfig                `yaml:"auth"`
+	Tunnel               TunnelConfig              `yaml:"tunnel"`
+	Storage              StorageConfig             `yaml:"storage"`
+	Batch                BatchConfig               `yaml:"batch"`
+	SandboxLifecycle     SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                  E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession          CodeSessionConfig         `yaml:"code_session"`
+	Observability        ObservabilityConfig       `yaml:"observability"`
+	Webhook              WebhookConfig             `yaml:"webhook"`
+	Vault                VaultConfig               `yaml:"vault"`
+	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and
@@ -112,10 +112,18 @@ type RedisConfig struct {
 	URL string `yaml:"url"`
 }
 
+type WorkerEventStreamConfig struct {
+	MaxBytes   int64         `yaml:"max_bytes"`
+	MaxAge     time.Duration `yaml:"max_age"`
+	Replicas   int           `yaml:"replicas"`
+	MaxMsgSize int32         `yaml:"max_msg_size"`
+}
+
 type NATSConfig struct {
-	URL            string        `yaml:"url"`
-	ConnectTimeout time.Duration `yaml:"connect_timeout"`
-	DrainTimeout   time.Duration `yaml:"drain_timeout"`
+	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL               string                  `yaml:"url"`
+	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
 
 type AuthConfig struct {
@@ -135,9 +143,6 @@ type TunnelConfig struct {
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
 	PresenceTTL         time.Duration `yaml:"presence_ttl"`
 	TombstoneTTL        time.Duration `yaml:"tombstone_ttl"`
-	MaxPendingRequests  int           `yaml:"max_pending_requests"`
-	MaxStoredRequests   int           `yaml:"max_stored_requests"`
-	MaxPendingBytes     int64         `yaml:"max_pending_bytes"`
 	MaxBodyBytes        int64         `yaml:"max_body_bytes"`
 	MaxHeaderBytes      int64         `yaml:"max_header_bytes"`
 	MaxHeaderValueBytes int64         `yaml:"max_header_value_bytes"`
@@ -188,7 +193,6 @@ type EnvironmentRunnerConfig struct {
 	Concurrency             int           `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
 	ManagerPath             string        `yaml:"manager_path"`
-	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
 	ClaudePath              string        `yaml:"claude_path"`
 	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
 	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
@@ -263,25 +267,6 @@ type BootstrapConfig struct {
 	WorkspaceExternalID string       `yaml:"workspace_external_id"`
 	UserExternalID      string       `yaml:"user_external_id"`
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
-}
-
-type SDKFixtureConfig struct {
-	FileID            string `yaml:"file_id"`
-	BatchID           string `yaml:"batch_id"`
-	AgentID           string `yaml:"agent_id"`
-	ReferenceAgentID  string `yaml:"reference_agent_id"`
-	EnvironmentID     string `yaml:"environment_id"`
-	WorkID            string `yaml:"work_id"`
-	SessionID         string `yaml:"session_id"`
-	SessionResourceID string `yaml:"session_resource_id"`
-	SessionThreadID   string `yaml:"session_thread_id"`
-	SessionEventID    string `yaml:"session_event_id"`
-	SkillID           string `yaml:"skill_id"`
-	SkillVersion      string `yaml:"skill_version"`
-	DeploymentID      string `yaml:"deployment_id"`
-	DeploymentRunID   string `yaml:"deployment_run_id"`
-	APIKey            string `yaml:"api_key"`
-	APIKeyExternalID  string `yaml:"api_key_external_id"`
 }
 
 type SeedAPIKey struct {

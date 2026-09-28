@@ -63,9 +63,9 @@ describe('session inspector event order', () => {
 
   test('intersects Claude transcript and wire-type filters without reordering rows', () => {
     const rows = buildInspectorEventRows([
-      { id: 'evt_agent', type: 'agent.message', created_at: '2026-08-27T08:00:02.000Z', content: 'Agent' },
-      { id: 'evt_status', type: 'session.status_running', created_at: '2026-08-27T08:00:01.000Z' },
-      { id: 'evt_system', type: 'system.message', created_at: '2026-08-27T08:00:00.000Z', content: 'System' },
+      { id: 'evt_agent', type: 'agent.message', processed_at: '2026-08-27T08:00:02.000Z', content: 'Agent' },
+      { id: 'evt_status', type: 'session.status_running', processed_at: '2026-08-27T08:00:01.000Z' },
+      { id: 'evt_system', type: 'system.message', processed_at: '2026-08-27T08:00:00.000Z', content: 'System' },
     ]);
 
     expect(filterInspectorEventRows(rows, { transcriptOnly: false, types: [] }).map((row) => row.id)).toEqual([
@@ -181,7 +181,7 @@ describe('session inspector tool metrics', () => {
       {
         id: 'confirmation_bash',
         type: 'user.tool_confirmation',
-        created_at: '2026-08-27T08:00:02.000Z',
+        processed_at: '2026-08-27T08:00:02.000Z',
         tool_use_id: 'tool_bash_approval',
         result: 'allow',
       },
@@ -293,11 +293,11 @@ describe('session inspector tool metrics', () => {
 describe('session inspector cost', () => {
   test('builds monotonic cumulative cost snapshots with Claude usage fields', () => {
     const points = buildInspectorCostPoints([
-      { id: 'user', type: 'user.message', created_at: '2026-08-27T08:00:00.000Z' },
+      { id: 'user', type: 'user.message', processed_at: '2026-08-27T08:00:00.000Z' },
       {
         id: 'usage_first',
         type: 'session.usage',
-        created_at: '2026-08-27T08:00:01.000Z',
+        processed_at: '2026-08-27T08:00:01.000Z',
         usage: {
           input_tokens: 100,
           output_tokens: 20,
@@ -314,7 +314,7 @@ describe('session inspector cost', () => {
         processed_at: '2026-08-27T08:00:02.000Z',
         usage: { list_cost: { amount: '120', currency: 'USD' } },
       },
-      { id: 'usage_missing_cost', type: 'session.usage', created_at: '2026-08-27T08:00:03.000Z', usage: {} },
+      { id: 'usage_missing_cost', type: 'session.usage', processed_at: '2026-08-27T08:00:03.000Z', usage: {} },
     ]);
 
     expect(points).toEqual([
@@ -398,21 +398,21 @@ describe('session inspector thread context', () => {
   });
 });
 
-function toolUse(id: string, name: string, createdAt: string): QuickstartSessionEvent {
+function toolUse(id: string, name: string, processedAt: string): QuickstartSessionEvent {
   return {
     id,
     type: 'agent.tool_use',
-    created_at: createdAt,
+    processed_at: processedAt,
     name,
     input: {},
   };
 }
 
-function toolResult(id: string, toolUseId: string, createdAt: string): QuickstartSessionEvent {
+function toolResult(id: string, toolUseId: string, processedAt: string): QuickstartSessionEvent {
   return {
     id,
     type: 'agent.tool_result',
-    created_at: createdAt,
+    processed_at: processedAt,
     tool_use_id: toolUseId,
     content: [],
   };

@@ -7,6 +7,7 @@ import { type QuickstartSessionEvent } from '../types';
 import { errorMessage } from '../utils';
 
 export function SessionMessageComposer({
+  acceptingMessages,
   awaitingAction = false,
   disabled,
   live,
@@ -16,6 +17,7 @@ export function SessionMessageComposer({
   sessionId,
   workspaceId,
 }: {
+  acceptingMessages: boolean;
   awaitingAction?: boolean;
   disabled: boolean;
   live: boolean;
@@ -36,9 +38,10 @@ export function SessionMessageComposer({
   const interruptingRef = useRef(false);
   const trimmedDraft = draft.trim();
   const composerDisabled = disabled || awaitingAction;
+  const sendDisabled = composerDisabled || !acceptingMessages || sending;
 
   const submit = async () => {
-    if (!trimmedDraft || composerDisabled || sendingRef.current) {
+    if (!trimmedDraft || sendDisabled || sendingRef.current) {
       return;
     }
     sendingRef.current = true;
@@ -112,8 +115,7 @@ export function SessionMessageComposer({
                 event.shiftKey ||
                 event.repeat ||
                 event.nativeEvent.isComposing ||
-                composerDisabled ||
-                sending
+                sendDisabled
               ) {
                 return;
               }
@@ -150,7 +152,7 @@ export function SessionMessageComposer({
                     ? msg('managedAgents.sessions.detail.sending', 'Sending message')
                     : msg('managedAgents.sessions.detail.send', 'Send message')
                 }
-                disabled={composerDisabled || sending || !trimmedDraft}
+                disabled={sendDisabled || !trimmedDraft}
               >
                 <ArrowUp className="size-4" aria-hidden />
               </InputGroupButton>

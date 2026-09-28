@@ -35,7 +35,7 @@ func runClaudeTransportCase(t *testing.T, transport string) {
 	for _, server := range servers {
 		urls = append(urls, server.ClientURL())
 	}
-	broker, err := NewBroker(t.Context(), connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig())
+	broker, err := NewBroker(t.Context(), connectTunnelNATS(t, strings.Join(urls, ",")), brokerTestConfig(), nil, testRequestBindings(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,22 +50,11 @@ func runClaudeTransportCase(t *testing.T, transport string) {
 		args = append(args, "--mcp.command", "command="+os.Args[0]+" -test.run=^TestTunnelStdioFixture$")
 	} else {
 		privateMCP := newIntegrationMCP(marker)
-		privateHTTP := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return privateMCP }, &mcp.StreamableHTTPOptions{JSONResponse: transport == "http-json"}))
+		privateHTTP := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return privateMCP }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: transport == "http-json"}))
 		t.Cleanup(privateHTTP.Close)
 		args = append(args, "--mcp.server-url", "url="+privateHTTP.URL)
 	}
 	startOfficialConnector(t, os.Getenv("TEST_TUNNEL_CLIENT_BINARY"), args, marker)
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		snapshot, err := broker.ConnectorSnapshot(t.Context(), "tunnel")
-		if err == nil && snapshot.InstanceCount > 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("connector did not register")
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
 	script, err := filepath.Abs("../../tests/e2e/claude/tunnel_clients.py")
 	if err != nil {
 		t.Fatal(err)

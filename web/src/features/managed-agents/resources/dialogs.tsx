@@ -18,7 +18,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, startMCPVaultAuth } from '../api';
+import { listAgents, listManagedEntities, listMemoryStoreOptions, startMCPVaultAuth } from '../api';
 import { LockedAgentReferenceField, ManagedSelectField, ManagedTextArea, ManagedTextField } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
@@ -33,19 +33,20 @@ import {
   type MemoryApiResponse,
   type MemoryFormValues,
   type MemoryStoreApiResponse,
-  type PageResponse,
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from '../types';
 import { errorMessage } from '../utils';
-import { ManagedResourceFields, managedResourceFieldsValid } from './ManagedResourceFields';
+import { ManagedResourceFields } from './ManagedResourceFields';
 import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
+import { managedEntityDialogCanSubmit } from './entity-dialog-ready';
 import {
   credentialAuthTypeLabel,
   credentialFormReady,
   credentialFormValues,
   credentialDisplayName,
   initialFormValues,
+  isPlatformMemoryMarkdownPath,
   parseCredentialAuthType,
   patchCredentialFormValues,
   vaultOAuthErrorMessage,
@@ -53,7 +54,6 @@ import {
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { DeploymentFormFields } from './deployment-form-fields';
-import { previewSchedule } from './deployment-schedule';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 import { EnvironmentEntityDialog } from './environment-dialog';
 import { ManagedVaultSelectField } from './vault-select-field';
@@ -624,7 +624,7 @@ export function MemoryDialog({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canSubmit = values.path.trim() && values.content.length > 0;
+  const canSubmit = values.path.trim() && values.content.length > 0 && !isPlatformMemoryMarkdownPath(values.path);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) {
@@ -664,6 +664,14 @@ export function MemoryDialog({
               onChange={(path) => setValues((current) => ({ ...current, path }))}
               autoFocus
             />
+            {isPlatformMemoryMarkdownPath(values.path) ? (
+              <p className="text-sm text-destructive" role="alert">
+                {msg(
+                  'managedAgents.memoryStores.memoryDialog.platformMemoryMd',
+                  'Platform MEMORY.md is created in the sandbox and cannot be added to a store.',
+                )}
+              </p>
+            ) : null}
             <ManagedTextArea
               label={msg('managedAgents.memoryStores.memoryDialog.content', 'Content')}
               value={values.content}
@@ -760,9 +768,7 @@ function GenericManagedEntityDialog({
           lockedAgent ? Promise.resolve({ data: [], next_page: null } as AgentPageResponse) : listAgents(workspaceId),
           listManagedEntities('environments', workspaceId),
           listManagedEntities('credential-vaults', workspaceId),
-          section === 'deployments'
-            ? listManagedEntities('memory-stores', workspaceId)
-            : Promise.resolve({ data: [], next_page: null } as PageResponse<ManagedEntityApiResponse>),
+          listMemoryStoreOptions(workspaceId),
         ]);
         if (!active) {
           return;
@@ -819,27 +825,13 @@ function GenericManagedEntityDialog({
     };
   }, [lockedAgent, needsReferences, section, workspaceId]);
 
-  const canSubmit =
-    section === 'deployments'
-      ? values.name.trim().length > 0 &&
-        values.agentId.trim().length > 0 &&
-        values.environmentId.trim().length > 0 &&
-        values.initialMessage.trim().length > 0 &&
-        managedResourceFieldsValid(values, Boolean(entity)) &&
-        (values.triggerType === 'manual' ||
-          (values.triggerType === 'schedule' && !previewSchedule(values.cronExpression, values.timezone).error)) &&
-        !submitting &&
-        !loadingOptions
-      : section === 'sessions'
-        ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
-          managedResourceFieldsValid(values, false) &&
-          (!values.vaultIds.length || vaultAcknowledged) &&
-          !submitting &&
-          !loadingOptions
-        : values.name.trim().length > 0 &&
-          (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
-          !submitting &&
-          !loadingOptions;
+  const canSubmit = managedEntityDialogCanSubmit(section, values, {
+    submitting,
+    loadingOptions,
+    needsReferences,
+    editing: Boolean(entity),
+    vaultAcknowledged,
+  });
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -888,7 +880,12 @@ function GenericManagedEntityDialog({
 
             {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-            <DeploymentDialogActions editing={Boolean(entity)} submitting={submitting} canSubmit={canSubmit} />
+            <DeploymentDialogActions
+              editing={Boolean(entity)}
+              submitting={submitting}
+              canSubmit={canSubmit}
+              onCancel={onClose}
+            />
           </form>
         </DialogContent>
       </Dialog>
@@ -972,7 +969,12 @@ function GenericManagedEntityDialog({
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
                 {section === 'sessions' ? (
-                  <ManagedResourceFields values={values} onChange={setValues} workspaceId={workspaceId} />
+                  <ManagedResourceFields
+                    values={values}
+                    onChange={setValues}
+                    workspaceId={workspaceId}
+                    memoryStores={memoryStores}
+                  />
                 ) : null}
               </>
             ) : null}
@@ -981,7 +983,7 @@ function GenericManagedEntityDialog({
               <p className="text-sm leading-5 text-muted-foreground">
                 {msg(
                   'managedAgents.credentialVaults.createHint',
-                  'Continue after creating the vault to add credentials for tools and MCP servers.',
+                  'After you create the vault, add credentials for tools and MCP servers.',
                 )}
               </p>
             ) : null}

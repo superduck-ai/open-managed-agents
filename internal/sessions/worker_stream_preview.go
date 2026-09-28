@@ -62,8 +62,6 @@ type workerStreamPayload struct {
 	SessionID       string            `json:"session_id"`
 	ParentToolUseID *string           `json:"parent_tool_use_id"`
 	UUID            string            `json:"uuid"`
-	CreatedAt       string            `json:"created_at"`
-	Timestamp       string            `json:"timestamp"`
 }
 
 type workerStreamEventType string
@@ -132,8 +130,6 @@ func decodeWorkerStreamPayload(raw json.RawMessage) (workerStreamPayload, bool) 
 		return workerStreamPayload{}, false
 	}
 	payload.SessionID = strings.TrimSpace(payload.SessionID)
-	payload.CreatedAt = strings.TrimSpace(payload.CreatedAt)
-	payload.Timestamp = strings.TrimSpace(payload.Timestamp)
 	if payload.ParentToolUseID != nil {
 		*payload.ParentToolUseID = strings.TrimSpace(*payload.ParentToolUseID)
 	}
@@ -301,7 +297,6 @@ func previewSessionEvent(batch codeSessionStreamFanout, source workerStreamPaylo
 		EventType:         eventType,
 		Payload:           payload,
 		ProcessedAt:       processedAt,
-		CreatedAt:         source.previewCreatedAt(processedAt),
 	}
 	if parentToolUseID := optionalString(source.ParentToolUseID); parentToolUseID != "" {
 		threadID := managedagentsevents.ClaudeTaskThreadID(batch.CodeSessionID, parentToolUseID)
@@ -309,19 +304,6 @@ func previewSessionEvent(batch codeSessionStreamFanout, source workerStreamPaylo
 		event.ThreadExternalID = &threadID
 	}
 	return event
-}
-
-func (payload workerStreamPayload) previewCreatedAt(fallback time.Time) time.Time {
-	for _, value := range []string{payload.CreatedAt, payload.Timestamp} {
-		if value == "" {
-			continue
-		}
-		parsed, err := time.Parse(time.RFC3339Nano, value)
-		if err == nil {
-			return parsed.UTC()
-		}
-	}
-	return fallback
 }
 
 func eventStartPayload(block previewBlock) json.RawMessage {

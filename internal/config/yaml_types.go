@@ -35,25 +35,25 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
-	TranscriptArchive TranscriptArchiveConfig `yaml:"transcript_archive"`
-	Env               string                  `yaml:"env"`
-	Server            ServerConfig            `yaml:"server"`
-	Database          yamlDatabaseConfig      `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	NATS              yamlNATSConfig          `yaml:"nats"`
-	Auth              AuthConfig              `yaml:"auth"`
-	Tunnel            TunnelConfig            `yaml:"tunnel"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Batch             BatchConfig             `yaml:"batch"`
-	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
-	E2B               E2BConfig               `yaml:"e2b"`
-	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
-	CodeSession       yamlCodeSessionConfig   `yaml:"code_session"`
-	Observability     ObservabilityConfig     `yaml:"observability"`
-	Webhook           yamlWebhookConfig       `yaml:"webhook"`
-	Vault             VaultConfig             `yaml:"vault"`
-	Bootstrap         yamlBootstrapConfig     `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                  string                    `yaml:"env"`
+	Server               ServerConfig              `yaml:"server"`
+	Database             yamlDatabaseConfig        `yaml:"database"`
+	Redis                RedisConfig               `yaml:"redis"`
+	NATS                 yamlNATSConfig            `yaml:"nats"`
+	Auth                 AuthConfig                `yaml:"auth"`
+	Tunnel               TunnelConfig              `yaml:"tunnel"`
+	Storage              StorageConfig             `yaml:"storage"`
+	Batch                BatchConfig               `yaml:"batch"`
+	SandboxLifecycle     SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                  E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession          yamlCodeSessionConfig     `yaml:"code_session"`
+	Observability        ObservabilityConfig       `yaml:"observability"`
+	Webhook              yamlWebhookConfig         `yaml:"webhook"`
+	Vault                VaultConfig               `yaml:"vault"`
+	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
 }
 
 // Legacy flat fields exist only at the YAML boundary. All consumers use Local.
@@ -100,9 +100,10 @@ type yamlDatabaseConfig struct {
 }
 
 type yamlNATSConfig struct {
-	URL            string        `yaml:"url"`
-	ConnectTimeout time.Duration `yaml:"connect_timeout"`
-	DrainTimeout   time.Duration `yaml:"drain_timeout"`
+	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL               string                  `yaml:"url"`
+	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
 
 type yamlCodeSessionConfig struct {
@@ -140,18 +141,20 @@ func newYAMLConfig() yamlConfig {
 		Database: yamlDatabaseConfig{URL: defaults.Database.URL},
 		Redis:    defaults.Redis,
 		NATS: yamlNATSConfig{
-			URL:            defaults.NATS.URL,
-			ConnectTimeout: defaults.NATS.ConnectTimeout,
-			DrainTimeout:   defaults.NATS.DrainTimeout,
+			WorkerEventStream: defaults.NATS.WorkerEventStream,
+			URL:               defaults.NATS.URL,
+			ConnectTimeout:    defaults.NATS.ConnectTimeout,
+			DrainTimeout:      defaults.NATS.DrainTimeout,
 		},
-		Auth:              defaults.Auth,
-		Tunnel:            defaults.Tunnel,
-		Storage:           defaults.Storage,
-		Batch:             defaults.Batch,
-		E2B:               defaults.E2B,
-		SandboxLifecycle:  defaults.SandboxLifecycle,
-		TranscriptArchive: defaults.TranscriptArchive,
-		EnvironmentRunner: defaults.EnvironmentRunner,
+		Auth:                 defaults.Auth,
+		Tunnel:               defaults.Tunnel,
+		Storage:              defaults.Storage,
+		Batch:                defaults.Batch,
+		E2B:                  defaults.E2B,
+		EnvironmentPrebuilds: defaults.EnvironmentPrebuilds,
+		TranscriptArchive:    defaults.TranscriptArchive,
+		SandboxLifecycle:     defaults.SandboxLifecycle,
+		EnvironmentRunner:    defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           defaults.CodeSession.JWTSigningPrivateKeyFile,
@@ -176,7 +179,6 @@ func newYAMLConfig() yamlConfig {
 			UserExternalID:      defaults.Bootstrap.UserExternalID,
 			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: defaults.SDKFixtures,
 	}
 }
 
@@ -187,18 +189,20 @@ func (input yamlConfig) resolve() Config {
 		Database: DatabaseConfig{URL: input.Database.URL},
 		Redis:    input.Redis,
 		NATS: NATSConfig{
-			URL:            input.NATS.URL,
-			ConnectTimeout: input.NATS.ConnectTimeout,
-			DrainTimeout:   input.NATS.DrainTimeout,
+			WorkerEventStream: input.NATS.WorkerEventStream,
+			URL:               input.NATS.URL,
+			ConnectTimeout:    input.NATS.ConnectTimeout,
+			DrainTimeout:      input.NATS.DrainTimeout,
 		},
-		Auth:              input.Auth,
-		Tunnel:            input.Tunnel,
-		Storage:           input.Storage,
-		Batch:             input.Batch,
-		E2B:               input.E2B,
-		SandboxLifecycle:  input.SandboxLifecycle,
-		TranscriptArchive: input.TranscriptArchive,
-		EnvironmentRunner: input.EnvironmentRunner,
+		Auth:                 input.Auth,
+		Tunnel:               input.Tunnel,
+		Storage:              input.Storage,
+		Batch:                input.Batch,
+		E2B:                  input.E2B,
+		EnvironmentPrebuilds: input.EnvironmentPrebuilds,
+		TranscriptArchive:    input.TranscriptArchive,
+		SandboxLifecycle:     input.SandboxLifecycle,
+		EnvironmentRunner:    input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           input.CodeSession.JWTSigningPrivateKeyFile,
@@ -223,7 +227,6 @@ func (input yamlConfig) resolve() Config {
 			UserExternalID:      input.Bootstrap.UserExternalID,
 			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")

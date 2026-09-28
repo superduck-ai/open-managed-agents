@@ -19,7 +19,7 @@ import (
 )
 
 func publicPayloadEvent(id, payload string) db.SessionEvent {
-	return db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: id, EventType: "user.message", Payload: json.RawMessage(payload), CreatedAt: time.Now().UTC(), ProcessedAt: time.Now().UTC()}
+	return db.SessionEvent{UUID: uuid.NewV4().String(), ExternalID: id, EventType: "agent.message", Payload: json.RawMessage(payload), CreatedAt: time.Now().UTC(), ProcessedAt: time.Now().UTC()}
 }
 
 func TestEventPayloadIntegrationBoundaries(t *testing.T) {
@@ -105,12 +105,12 @@ func TestEventPayloadIntegrationBoundaries(t *testing.T) {
 		assertRawJSONEqual(t, event.Payload, expectedPrivate[i])
 	}
 	// Service pagination must hydrate a page containing both inline and S3 records.
-	pageEvents, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}})
+	pageEvents, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"agent.message"}})
 	if err != nil || len(pageEvents) != 3 || !more {
 		t.Fatalf("pagination: %d %t %v", len(pageEvents), more, err)
 	}
 	last := pageEvents[len(pageEvents)-1]
-	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"user.message"}, Cursor: &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}})
+	next, more, err := store.ListSessionEventsPage(context.Background(), db.ListSessionEventsPageParams{WorkspaceUUID: session.WorkspaceUUID, SessionExternalID: session.SessionExternalID, Limit: 3, Order: "asc", Types: []string{"agent.message"}, Cursor: &db.SessionEventPageCursor{ExternalID: last.ExternalID}})
 	if err != nil || len(next) != 3 || more {
 		t.Fatalf("next page: %d %t %v", len(next), more, err)
 	}
@@ -209,7 +209,7 @@ func TestEventPayloadIntegrationConcurrentReplay(t *testing.T) {
 }
 
 func sizedPublicPayload(size int) string {
-	prefix := `{"type":"user.message","content":[{"type":"text","text":"`
+	prefix := `{"type":"agent.message","content":[{"type":"text","text":"`
 	suffix := `"}]}`
 	return prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix
 }

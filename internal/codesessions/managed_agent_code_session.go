@@ -181,7 +181,7 @@ func (s *Service) convertSessionEventToInbound(
 	codeSession db.CodeSession,
 	event db.SessionEvent,
 ) (preparedInboundEvent, error) {
-	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.UUID, event.ProcessedAt)
+	payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event)
 	if err != nil {
 		return preparedInboundEvent{}, err
 	}

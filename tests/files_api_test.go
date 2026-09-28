@@ -41,7 +41,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
-	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/jackc/pgx/v5"
@@ -1185,11 +1184,9 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 	}
 	deploymentStore := deploymentsapi.NewStore(database).WithEventPayloadStorage(store)
 	workers := river.NewWorkers()
-	tunnels.RegisterCleanupWorker(workers, database, nil, logger)
 	deploymentsapi.RegisterWorkers(workers, deploymentStore)
 	deploymentJobs, err := riverjobs.NewClient(database, logger, workers, map[string]river.QueueConfig{
 		deploymentjobs.Queue: {MaxWorkers: 10},
-		tunnels.CleanupQueue: {MaxWorkers: 2},
 	})
 	if err != nil {
 		database.Close()
@@ -1203,7 +1200,6 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		Config:                 cfg,
 		DB:                     database,
 		Deployments:            deploymentStore,
-		TunnelCleanupJobs:      tunnels.NewCleanupJobs(deploymentJobs),
 		ObjectStore:            store,
 		Logger:                 logger,
 		PlatformStore:          platformSessions,

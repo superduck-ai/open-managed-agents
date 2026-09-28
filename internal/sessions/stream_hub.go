@@ -321,11 +321,18 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 }
 
 func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
-	if maevents.IsPublicSessionHistoryEvent(event.EventType) && event.ExternalID != "" && !strings.ContainsAny(event.ExternalID, "\r\n\x00") {
-		fmt.Fprintf(w, "id: %s\n", event.ExternalID)
+	isPreview := maevents.IsStreamDelta(event.EventType)
+	eventID := event.ExternalID
+	if isPreview {
+		_, eventID = streamPreviewTarget(event)
+	}
+	if (isPreview || maevents.IsPublicSessionHistoryEvent(event.EventType)) && eventID != "" && !strings.ContainsAny(eventID, "\r\n\x00") {
+		fmt.Fprintf(w, "id: %s\n", eventID)
+	} else if isPreview {
+		fmt.Fprint(w, "id:\n")
 	}
 	fmt.Fprintf(w, "event: %s\n", event.EventType)
-	if maevents.IsStreamDelta(event.EventType) {
+	if isPreview {
 		fmt.Fprintf(w, "data: %s\n\n", event.Payload)
 		return
 	}

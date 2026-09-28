@@ -209,6 +209,9 @@ environment_prebuilds:
   enabled: false
   timeout: 1h
   image:
+    # Must name its registry host explicitly, with an optional tag or digest.
+    # A registry-less reference such as "team/base:base" is rejected: Docker
+    # resolves it against docker.io instead of the configured registry.
     base_image: "registry.example.com/example/managed-agent-sandbox:base"
     flow:
       # The full Aliyun Flow pipeline API URL, without the /runs suffix.

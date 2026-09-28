@@ -72,9 +72,8 @@ func validateEnvironmentPrebuildConfig(prebuild EnvironmentPrebuildConfig, e2b E
 	if prebuild.Template.DiskSize == "" {
 		return errors.New("environment_prebuilds.template.disk_size is required")
 	}
-	registry, imagePath, found := strings.Cut(prebuild.Image.Repository(), "/")
-	if !found || registry == "" || imagePath == "" {
-		return errors.New("environment_prebuilds.image.base_image must include a registry/repository")
+	if err := validateImageBaseImage(prebuild.Image); err != nil {
+		return err
 	}
 	auth := prebuild.Template.RegistryAuth
 	if (auth.Username == "") != (auth.Password == "") {
@@ -96,6 +95,36 @@ func validateEnvironmentPrebuildConfig(prebuild EnvironmentPrebuildConfig, e2b E
 		}
 	}
 	return nil
+}
+
+// validateImageBaseImage requires the base image to name its registry host
+// explicitly. Without one, Docker resolves the first path component as a
+// namespace on the implicit default registry (docker.io), so the prebuild would
+// push to and pull from a repository the operator never configured.
+func validateImageBaseImage(image ImageBuildConfig) error {
+	host, repository, found := strings.Cut(image.Repository(), "/")
+	if !found || host == "" || repository == "" {
+		return fmt.Errorf("environment_prebuilds.image.base_image must include a registry and repository, got %q", image.BaseImage)
+	}
+	if !isExplicitImageRegistry(host) {
+		return fmt.Errorf("environment_prebuilds.image.base_image must start with an explicit registry host such as registry.example.com/team/base, got %q in %q", host, image.BaseImage)
+	}
+	return nil
+}
+
+// isExplicitImageRegistry reports whether Docker treats the first component of an
+// image reference as the registry host instead of a namespace on the default
+// registry. It mirrors distribution/reference's splitDockerDomain rule: the
+// component is a host when it contains "." or ":", is "localhost", or is not all
+// lowercase. A component ending in ":" is a URL scheme such as "https:", not a
+// host with a port.
+func isExplicitImageRegistry(host string) bool {
+	if strings.HasSuffix(host, ":") {
+		return false
+	}
+	return strings.ContainsAny(host, ".:") ||
+		strings.EqualFold(host, "localhost") ||
+		strings.ToLower(host) != host
 }
 
 // Repository returns the base image's registry/repository without its tag or digest.

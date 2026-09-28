@@ -55,11 +55,13 @@ flowchart TD
 
 ### 配置与服务商合同
 
-完整配置见 [`docs/configuration-reference.yaml`](../../configuration-reference.yaml) 的 `environment_prebuilds` 部分。`image.base_image` 支持 tag 或 digest，需包含 registry/repository；构建产物固定写入同一镜像仓库，去掉基础镜像的 tag 和 digest，使用环境 UUID 与 River job ID 组成的新 tag。`image.flow` 保存流水线地址与 token。
+完整配置见 [`docs/configuration-reference.yaml`](../../configuration-reference.yaml) 的 `environment_prebuilds` 部分。`image.base_image` 支持 tag 或 digest，但必须显式写出 registry 主机名；构建产物固定写入同一镜像仓库，去掉基础镜像的 tag 和 digest，使用环境 UUID 与 River job ID 组成的新 tag。`image.flow` 保存流水线地址与 token。
+
+`image.base_image` 的 registry 主机名判定与 Docker 的 `splitDockerDomain` 一致：首个路径段包含 `.` 或 `:`、等于 `localhost`（忽略大小写），或不是全小写时才是 registry 主机名。省略主机名的引用（如 `team/base:stable`）以及带协议的引用（如 `https://registry.example.com/team/base`）在配置校验阶段即被拒绝，因为 Docker 会把前者的首段当作默认 registry（docker.io）上的命名空间、直接拒绝后者，两者都会让预构建推送到运维从未配置的仓库，并在流水线的远端日志或 CubeSandbox 的拉取阶段以无法定位的形式失败。
 
 Flow 运行请求的 `params` 为 JSON 字符串，其中 `envs` 仅包含 `DOCKERFILE_TEXT`、`IMAGE_REPO` 和 `IMAGE_TAG`。Dockerfile 内容使用 `base64:` 前缀加 Base64 编码传递。
 
-配置按默认值、YAML 覆盖、输入整理、校验的顺序加载。默认值统一由 `defaultConfig()` 提供：`timeout` 为 `1h`，`template.disk_size` 为 `20G`；启用预构建时，超时必须为正数、磁盘大小不能为空，显式无效值不回退为默认值。
+配置按默认值、YAML 覆盖、输入整理、校验的顺序加载。默认值统一由 `defaultConfig()` 提供：`timeout` 为 `1h`，`template.disk_size` 为 `20G`；启用预构建时，超时必须为正数、磁盘大小不能为空、`image.base_image` 必须带显式 registry 主机名与仓库路径，显式无效值不回退为默认值。
 
 CPU 单位为毫核，内存单位为 MiB；CPU/内存为 `0` 时由集群选择默认规格。网络 DNS 填写 IP，出站列表填写 CIDR；配置层只整理首尾空白，具体格式交由模板 API 处理，空列表不发送。`allow_internet` 和 `inject_egress_ca` 默认 `true`，显式 `false` 原样发送。
 

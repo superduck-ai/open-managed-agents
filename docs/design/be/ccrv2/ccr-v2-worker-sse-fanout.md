@@ -145,7 +145,7 @@ Session 与 thread 的 running/idle 事件分别表达整体任务状态和线�
 本轮用户消息与前置 running 对共用服务端接收时间；已接纳输入在写入时确定 `processed_at`。
 批次写入失败时状态转换和事件一起回滚；子线程输入不激活主线程。
 
-`internal/db/session_events.go` 的 `insertSessionEventsTx` 是统一写入入口：先锁 Session，再锁 Code Session，校验整批输入。主线程空闲、Worker 未运行且没有待确认工具时，只接纳一条 `user.message`，再按 session.status_running → session.thread_status_running → user.message 写入。忙碌时返回 409，事务不写任何事件。发送接口只返回提交的用户事件。界面在忙碌时保留未提交草稿并禁用发送；本次不实现客户端待发队列。
+`internal/db/session_events.go` 通过 `insertSessionEventsTx` 接纳实时输入，通过 `insertSessionHistoryTx` 写入启动历史或幂等补写事件，两者共用事件持久化和状态更新。写入时先锁 Session，再锁 Code Session；实时输入会校验整批事件。主线程空闲、Worker 未运行且没有待确认工具时，只接纳一条 `user.message`，再按 session.status_running → session.thread_status_running → user.message 写入。忙碌时返回 409，事务不写任何事件。发送接口只返回提交的用户事件。界面在忙碌时保留未提交草稿并禁用发送；本次不实现客户端待发队列。
 
 Deployment 的 `initial_events` 在创建新 Session 的同一事务内写为启动历史，可以包含多条消息；它们不经过活动回合的输入接纳校验。后续通过 Session 发送接口提交的消息仍受上述每轮一条的规则约束。
 

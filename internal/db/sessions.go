@@ -484,7 +484,7 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, ses
 			removal.StatusEvents, err = insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 				UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.thread_status_terminated",
 				ThreadExternalID: &threadExternalID, StatusThreadID: threadExternalID, CreatedAt: now, ProcessedAt: now,
-			}}, false)
+			}})
 			if err != nil {
 				return err
 			}
@@ -620,7 +620,7 @@ func (d *DB) AppendSessionEvents(
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		created, txErr = insertSessionEventsTx(ctx, executor, session, events, false)
+		created, txErr = insertSessionEventsTx(ctx, executor, session, events)
 		if txErr != nil || len(outcomeEvaluations) == 0 {
 			return txErr
 		}
@@ -641,7 +641,7 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID stri
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
 		}
-		created, txErr = insertSessionEventsTx(ctx, executor, session, events, true)
+		created, txErr = insertSessionHistoryTx(ctx, executor, session, events)
 		return txErr
 	})
 	return created, err

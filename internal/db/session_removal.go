@@ -49,6 +49,6 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	removal.StatusEvents, err = insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
 		UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.status_terminated", CreatedAt: now, ProcessedAt: now,
-	}}, false)
+	}})
 	return removal, err
 }

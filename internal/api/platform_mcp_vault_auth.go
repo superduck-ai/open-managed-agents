@@ -509,6 +509,21 @@ func (s *Server) savePlatformMCPOAuthCredential(ctx context.Context, next db.Vau
 		next.CreatedAt = current.CreatedAt
 		next.CreatedByAPIKeyUUID = current.CreatedByAPIKeyUUID
 		next.SecretVersion = current.SecretVersion
+		next.DisplayName = current.DisplayName
+		metadata := make(map[string]json.RawMessage)
+		for _, raw := range []json.RawMessage{current.Metadata, next.Metadata} {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return db.VaultCredential{}, fmt.Errorf("decode OAuth credential metadata: %w", err)
+			}
+			for key, value := range fields {
+				metadata[key] = value
+			}
+		}
+		next.Metadata, err = json.Marshal(metadata)
+		if err != nil {
+			return db.VaultCredential{}, err
+		}
 		replacing = true
 		break
 	}

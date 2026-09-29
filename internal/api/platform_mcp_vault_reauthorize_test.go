@@ -90,6 +90,7 @@ func TestPlatformMCPOAuthReauthorizationPostgres(t *testing.T) {
 	// Rename changes version, not grant. Retirement still succeeds without KMS.
 	renamed := current
 	renamed.DisplayName = "renamed"
+	renamed.Metadata = json.RawMessage(`{"team":"backend","oauth_flow_id":"old-flow","source":"catalog"}`)
 	renamed, err = database.UpdateVaultCredential(t.Context(), current.WorkspaceUUID, current.VaultExternalID, current.ExternalID, renamed)
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +105,12 @@ func TestPlatformMCPOAuthReauthorizationPostgres(t *testing.T) {
 	if platformMCPVaultCredentialExists([]db.VaultCredential{invalid}, next.CredentialKey) {
 		t.Fatal("invalid grant cannot start reauthorization")
 	}
+	next.Metadata = json.RawMessage(`[]`)
+	next.SecretPayload = json.RawMessage(`{"type":"mcp_oauth","access_token":"new-access"}`)
+	if _, err := server.savePlatformMCPOAuthCredential(t.Context(), next); err == nil {
+		t.Fatal("invalid metadata accepted during reauthorization")
+	}
+	next.Metadata = json.RawMessage(`{"oauth_flow_id":"new-flow"}`)
 	next.SecretPayload = json.RawMessage(`{"type":"mcp_oauth","access_token":"new-access"}`)
 	restored, err := server.savePlatformMCPOAuthCredential(t.Context(), next)
 	if err != nil {
@@ -111,6 +118,16 @@ func TestPlatformMCPOAuthReauthorizationPostgres(t *testing.T) {
 	}
 	if restored.ExternalID != current.ExternalID || restored.UUID != current.UUID {
 		t.Fatal("reauthorization replaced resource identity")
+	}
+	if restored.DisplayName != "renamed" {
+		t.Error("reauthorization replaced the user-defined name")
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(restored.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["team"] != "backend" || metadata["source"] != "catalog" || metadata["oauth_flow_id"] != "new-flow" {
+		t.Error("reauthorization did not preserve user metadata and update the OAuth flow")
 	}
 	// Delayed failure of the old refresh must not erase the new grant.
 	if err := database.ClearVaultCredentialSecret(t.Context(), current); err != nil {

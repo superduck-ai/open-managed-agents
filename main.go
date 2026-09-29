@@ -20,8 +20,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
+	"github.com/superduck-ai/open-managed-agents/internal/diagnostics"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
@@ -57,6 +59,11 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	closeDiagnostics, err := diagnostics.Start(cfg.Server.DiagnosticsAddr, os.Getenv("OMA_DIAGNOSTICS_LISTENER_FD"), logger.With("component", "diagnostics"))
+	if err != nil {
+		return fmt.Errorf("start diagnostics: %w", err)
+	}
+	defer func() { _ = closeDiagnostics() }()
 
 	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
@@ -169,7 +176,8 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create environment runner: %w", err)
 	}
-	environmentRunner.Start(ctx)
+	stopRunner := environmentRunner.Start(ctx)
+	defer stopRunner()
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
@@ -249,10 +257,15 @@ func run(logger *slog.Logger) error {
 }
 
 func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
+	listener, err := listeners.Open(server.Addr, os.Getenv("OMA_HTTP_LISTENER_FD"))
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	defer listener.Close()
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("claude api server listening", "addr", server.Addr)
-		errCh <- server.ListenAndServe()
+		errCh <- server.Serve(listener)
 	}()
 
 	select {

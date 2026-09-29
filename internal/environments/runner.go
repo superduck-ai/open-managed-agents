@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 	"uuid"
@@ -126,20 +127,21 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 	}, nil
 }
 
-// Start launches the configured number of background workers. It is a no-op
-// when the environment runner is disabled.
-func (r *Runner) Start(ctx context.Context) {
+func (r *Runner) Start(ctx context.Context) func() {
 	if !r.cfg.EnvironmentRunner.Enabled {
-		return
+		return func() {}
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
 	concurrency := r.cfg.EnvironmentRunner.Concurrency
 	if concurrency <= 0 {
 		concurrency = 1
 	}
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
-		go r.loop(ctx, workerID)
+		workers.Go(func() { r.loop(ctx, workerID) })
 	}
+	return func() { cancel(); workers.Wait() }
 }
 
 // loop 持续领取并处理排队中的 Environment Work，直到服务通过 ctx 通知它退出。

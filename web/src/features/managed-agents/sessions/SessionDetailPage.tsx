@@ -15,6 +15,7 @@ import {
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from '../../../shared/ui/message-scroller';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import {
@@ -156,6 +157,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [eventRefreshKey, setEventRefreshKey] = useState(0);
+  const [sentMessageVersion, setSentMessageVersion] = useState(0);
   const [summaryClock, setSummaryClock] = useState(Date.now);
   const [query, setQuery] = useState('');
   const [selectedLaneId, setSelectedLaneId] = useState(readSessionDetailInitialLaneId);
@@ -756,6 +758,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
                   onMessageSent={(sentEvents) => {
                     eventData.appendPrimaryEvents(sentEvents);
+                    setSentMessageVersion((version) => version + 1);
                     setSession((currentSession) =>
                       currentSession && currentSession.id === session.id
                         ? { ...currentSession, status: 'running' }
@@ -834,6 +837,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               scrollerRef={scrollerRef}
               selectedEntry={selectedEntry}
               selectedEntryId={selectedEntryId}
+              sentMessageVersion={sentMessageVersion}
               showArchivedLanes={showArchivedLanes}
               suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
               threadNameById={threadNameById}
@@ -891,6 +895,18 @@ function sessionConversationState(session: SessionApiResponse) {
   };
 }
 
+function FollowSentSessionMessage({ version }: { version: number }) {
+  const { scrollToEnd } = useMessageScroller();
+  const previousVersion = useRef(version);
+  useLayoutEffect(() => {
+    if (version !== previousVersion.current) {
+      previousVersion.current = version;
+      scrollToEnd({ behavior: 'auto' });
+    }
+  }, [scrollToEnd, version]);
+  return null;
+}
+
 export function EventsTab({
   activeLane,
   archivedLaneCount,
@@ -922,6 +938,7 @@ export function EventsTab({
   scrollerRef,
   selectedEntry,
   selectedEntryId,
+  sentMessageVersion,
   showArchivedLanes,
   suppressScrollSeekUntilRef,
   threadNameById,
@@ -1067,6 +1084,7 @@ export function EventsTab({
                 onToggleArchivedLanes={onToggleArchivedLanes}
               />
               <MessageScrollerProvider key={activeLane} autoScroll defaultScrollPosition="end">
+                <FollowSentSessionMessage version={sentMessageVersion} />
                 <MessageScroller className="min-h-0 flex-1">
                   <MessageScrollerViewport
                     ref={scrollerRef}

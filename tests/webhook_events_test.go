@@ -87,8 +87,21 @@ func TestWebhookResourceEventDelivery(t *testing.T) {
 	postCodeSessionIngressEvents(t, app, codeID, `{"events":[{"type":"session.thread_status_idle","uuid":"primary-idle","session_thread_id":`+quoteJSON(primary.ExternalID)+`,"created_at":"2026-09-20T01:00:06Z"}]}`)
 	assertWebhookCount(t, app, "session.thread_idled", session.ID, 1)
 
-	archiveSessionThread(t, app, session.ID, threadID)
-	archiveSessionThread(t, app, session.ID, threadID)
+	archivedThread := archiveSessionThread(t, app, session.ID, threadID)
+	repeatedThread := archiveSessionThread(t, app, session.ID, threadID)
+	if archivedThread.ArchivedAt == nil || repeatedThread.ArchivedAt == nil || *archivedThread.ArchivedAt != *repeatedThread.ArchivedAt {
+		t.Fatal("repeat thread archive changed its timestamp")
+	}
+	threadHistory := listThreadEvents(t, app, session.ID, threadID, defaultTestKey)
+	terminationCount := 0
+	for _, event := range threadHistory.Data {
+		if sessionEventStringField(t, event, "type") == "session.thread_status_terminated" {
+			terminationCount++
+		}
+	}
+	if terminationCount != 1 {
+		t.Fatalf("thread archive termination history: %s", threadHistory.Data)
+	}
 	assertWebhookCount(t, app, "session.thread_terminated", session.ID, 1)
 	triggerOAuthRefreshFailure(t, app, vault.ID, codeID)
 	archiveVaultCredential(t, app, vault.ID, credential.ID)

@@ -27,6 +27,17 @@ flowchart LR
 
 `env`、`server.addr`、`database.url`、`redis.url`、`nats.url`、`storage.type` 以及 S3 endpoint、bucket、region 和静态凭证属于部署必填项，不提供代码默认值。Batch、Webhook、Environment Runner、NATS 连接/排空超时和容量限制等运行策略继续使用稳定代码默认值，因此正常启动无需在最小 YAML 中逐项配置。
 
+`nats.worker_event_stream` 支持以下可选字段。省略整个块或任一字段均使用对应默认值；显式零值只允许用于 `max_age`。
+
+| 字段 | 默认值 | 校验 |
+| --- | --- | --- |
+| `max_bytes` | 268435456（`1 << 28`，256 MiB） | 正数字节数 |
+| `max_age` | `0s`（不自动过期） | `0s` 或至少 `100ms` |
+| `replicas` | 3 | 1–5，且 NATS 集群有足够节点 |
+| `max_msg_size` | 1048576（1 MiB） | 正数，int32 字节数 |
+
+启动时通过 `CreateOrUpdateStream` 应用配置，修改后需要重启服务；所有 API 实例必须使用一致的值。发布前按 `max_msg_size` 校验最终 envelope。Stream 名称、subjects、WorkQueue retention、DiscardNew 和 FileStorage 保持固定。去重窗口默认 24 小时；非零 `max_age` 小于 24 小时时，去重窗口同步缩短至 `max_age`，满足 JetStream 的限制。100ms 下限来自 JetStream 去重窗口的最小值。设置非零 `max_age` 会让 NATS 自动删除到期消息，包括未 ACK 的消息，不再保证这些消息保留到应用的 30 天逻辑过期清理。
+
 Session SSE fanout 固定使用 Core NATS，不再提供 Redis Pub/Sub 实现或故障回退。Redis 仍用于平台登录会话等运行时协调能力；详见 [NATS 消息基础设施](nats-messaging-foundation.md)。
 
 本地 `scripts/restart-server.sh` 在清理监听端口前要求存在 `config/config.yaml`，并显式将该路径作为 `CONFIG_FILE` 传给服务。这样脚本不会在缺少配置时按 `PORT=38080` 清理端口、却启动一个没有有效配置的进程。

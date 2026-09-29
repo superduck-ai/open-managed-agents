@@ -8,6 +8,7 @@ import {
 } from '../../../shared/ui/message-scroller';
 import { resetTestDom } from '../../../test/setup';
 import { type DisplayEventEntry, type IdleGapEntry, type SessionEventUsage, type ToolCallEntry } from '../types';
+import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { SessionTranscriptView } from './SessionTranscriptView';
 import { type ReactNode } from 'react';
 
@@ -25,6 +26,35 @@ const EMPTY_USAGE: SessionEventUsage = {
 afterEach(() => cleanup());
 
 describe('SessionTranscriptView', () => {
+  test('renders Markdown as an agent message grows and after the stream ends', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const answer = displayEntry('live-answer', 'agent', 'A **stale reply**', 'bracket-live');
+    answer.displayEvent.isStreaming = true;
+    answer.inProgress = true;
+    const liveTranscript = (content: string) => (
+      <SessionDetailDeltaFramesContext.Provider
+        value={{
+          'display-live-answer': {
+            message: { type: 'agent.message', content: [{ type: 'text', text: content }] },
+            frames: [],
+          },
+        }}
+      >
+        {transcriptTree([answer])}
+      </SessionDetailDeltaFramesContext.Provider>
+    );
+
+    const view = render(liveTranscript('A **bold reply**'));
+    expect(view.container.querySelector('[data-event-id="trace-live-answer"] strong')?.textContent).toBe('bold reply');
+
+    view.rerender(liveTranscript('A **bold reply**\n\n- first item'));
+    expect(view.container.querySelector('[data-event-id="trace-live-answer"] li')?.textContent).toBe('first item');
+
+    const complete = displayEntry('live-answer', 'agent', 'A **bold reply**\n\n- first item', 'bracket-live');
+    view.rerender(transcriptTree([complete]));
+    expect(view.container.querySelector('[data-event-id="trace-live-answer"] li')?.textContent).toBe('first item');
+  });
+
   test('keeps markdown links outside buttons and ignores them when selecting a message', () => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const onSelectEntry = mock(() => {});
@@ -328,7 +358,6 @@ function displayEntry(
       label: 'Researcher',
       content,
       event,
-      isQueued: false,
       isStreaming: false,
       isError: false,
       createdAtMs: Date.UTC(2026, 0, 1, 8),

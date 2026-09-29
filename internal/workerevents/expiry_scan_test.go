@@ -14,7 +14,7 @@ import (
 func TestJetStreamExpiryScanRetriesFailedInvalidSubjectDeletion(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestJetStreamExpiryScanRetriesFailedInvalidSubjectDeletion(t *testing.T) {
 func TestJetStreamExpiryScanRemovesOnlyInvalidSubjects(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestStoredWorkerEventDoesNotTrustMalformedEnvelope(t *testing.T) {
 func TestJetStreamExpiryScanSkipsHolesAndIsolatesMalformedMessages(t *testing.T) {
 	servers := runNATSCluster(t)
 	connection := connectNATS(t, servers[0].ClientURL())
-	broker, err := NewJetStream(t.Context(), connection)
+	broker, err := NewJetStream(t.Context(), connection, testStreamConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

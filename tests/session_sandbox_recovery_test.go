@@ -15,7 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 )
 
-func TestSessionEventsRetryIdleSandboxResumeAfterProviderFailure(t *testing.T) {
+func TestSessionEventsReportIdleSandboxResumeFailure(t *testing.T) {
 	ctx := context.Background()
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-idle-sandbox-resume-bucket"))
 	defer app.close()
@@ -63,20 +63,17 @@ func TestSessionEventsRetryIdleSandboxResumeAfterProviderFailure(t *testing.T) {
 	if failed.WorkerLeaseExpiresAt == nil || !failed.WorkerLeaseExpiresAt.Before(time.Now().UTC()) {
 		t.Fatalf("failed provider resume renewed worker lease to %v", failed.WorkerLeaseExpiresAt)
 	}
+	history := listSessionEvents(t, app, session.ID, "types[]=user.message", defaultTestKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) == "" {
+		t.Fatalf("failed delivery did not leave its committed input visible: %s", history.Data)
+	}
 
-	app.sandboxTimeouts.setError(nil)
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"second resume attempt"}]}]}`, defaultTestKey)
-	resumed, err := getCodeSession(app, ctx, codeSessionID)
-	if err != nil {
-		t.Fatalf("load worker lease after successful retry: %v", err)
-	}
-	if resumed.WorkerLeaseExpiresAt == nil || !resumed.WorkerLeaseExpiresAt.After(time.Now().UTC()) {
-		t.Fatalf("successful provider resume left worker lease at %v", resumed.WorkerLeaseExpiresAt)
-	}
+	retry := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"second resume attempt"}]}]}`), defaultTestKey, true)
+	assertError(t, retry, http.StatusConflict, "conflict_error")
 
 	calls := app.sandboxTimeouts.snapshotCalls()
-	if len(calls) != 2 {
-		t.Fatalf("sandbox resume calls = %d, want failed attempt followed by retry", len(calls))
+	if len(calls) != 1 {
+		t.Fatalf("sandbox resume calls = %d, want only the failed attempt", len(calls))
 	}
 	for _, call := range calls {
 		if call.sandboxID != *sandbox.ProviderSandboxID || call.timeout != app.cfg.E2B.SandboxTimeout {

@@ -1067,10 +1067,14 @@ export function SessionNestedPanel({
         loading={events.loading}
         error={events.error}
         emptyTitle={msg('managedAgents.sessions.nested.noEvents', 'No events yet')}
-        columns={['Type', 'Created', 'Payload'].map((column) => managedColumnLabel(column, msg))}
+        columns={[
+          managedColumnLabel('Type', msg),
+          msg('managedAgents.sessions.inspector.time', 'Time'),
+          managedColumnLabel('Payload', msg),
+        ]}
         rows={events.data.map((event) => [
           String(event.type || 'event'),
-          typeof event.created_at === 'string' ? relativeTime(event.created_at, formatters.relativeTime) : '—',
+          typeof event.processed_at === 'string' ? relativeTime(event.processed_at, formatters.relativeTime) : '—',
           JSON.stringify(event).slice(0, 90),
         ])}
       />

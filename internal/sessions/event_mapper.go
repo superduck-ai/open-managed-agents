@@ -129,7 +129,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 		}
 	}
 	createdAt = eventTime(createdAt)
-	payload["created_at"] = formatEventTime(createdAt)
+	delete(payload, "created_at")
 	if err := h.populateThreadCoordinationAgentNames(ctx, session, eventType, payload); err != nil {
 		return nil, err
 	}

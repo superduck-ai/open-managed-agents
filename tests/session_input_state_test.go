@@ -1,14 +1,172 @@
 package tests
 
 import (
+	"bytes"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
+
+func TestSessionRejectsInvalidUserContentBlocks(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("invalid-user-content"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	for _, block := range []string{
+		`{"type":"redacted"}`,
+		`{"type":"unknown","text":"hello"}`,
+		`{"type":"text","text":""}`,
+		`{"type":"image"}`,
+		`{"type":"image","source":{"type":"url","url":""}}`,
+		`{"type":"document","source":{"type":"mystery"}}`,
+	} {
+		resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+worker.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.message","content":[`+block+`]}]}`), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	}
+}
+
+func TestSessionMessageIsAcceptedOnceAtServerTime(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("message-acceptance"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	path := "/v1/sessions/" + worker.SessionExternalID + "/events?beta=true"
+	message := `{"type":"user.message","processed_at":"2000-01-01T00:00:00Z","content":[{"type":"text","text":"hello"}]}`
+	before := time.Now().UTC()
+	accepted := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+message+`]}`, defaultTestKey)
+	after := time.Now().UTC()
+	if len(accepted.Data) != 1 {
+		t.Fatalf("accepted events = %s", accepted.Data)
+	}
+	input := accepted.Data[0]
+	processed, err := time.Parse(time.RFC3339Nano, sessionInputProcessedAt(t, input))
+	if err != nil || processed.Before(before) || processed.After(after) {
+		t.Fatalf("processed_at = %s, server window [%s, %s]: %v", sessionInputProcessedAt(t, input), before, after, err)
+	}
+	history := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != sessionInputProcessedAt(t, input) {
+		t.Fatalf("response and history processing times differ: %s / %s", input, history.Data)
+	}
+	baseline := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey)
+	busy := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[`+message+`]}`), defaultTestKey, true)
+	assertError(t, busy, http.StatusConflict, "conflict_error")
+	batch := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[{"type":"system.message","content":[{"type":"text","text":"marker"}]},`+message+`]}`), defaultTestKey, true)
+	assertError(t, batch, http.StatusConflict, "conflict_error")
+	all := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey)
+	if len(all.Data) != len(baseline.Data) {
+		t.Fatalf("rejected requests persisted events: %s", all.Data)
+	}
+}
+
+func TestSessionAcceptsControlInputsForActiveTurn(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("active-control-inputs"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	path := "/v1/sessions/" + worker.SessionExternalID + "/events?beta=true"
+	idleInterrupt := doSessionRequest(t, app, http.MethodPost, path, strings.NewReader(`{"events":[{"type":"user.interrupt"}]}`), defaultTestKey, true)
+	assertError(t, idleInterrupt, http.StatusConflict, "conflict_error")
+	if events := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("idle control input persisted: %s", events.Data)
+	}
+	sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"work"}]}]}`, defaultTestKey)
+	for _, input := range []string{
+		`{"type":"user.interrupt"}`,
+		`{"type":"user.tool_result","tool_use_id":"tool_one","content":[{"type":"text","text":"done"}]}`,
+	} {
+		sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[`+input+`]}`, defaultTestKey)
+		if len(sent.Data) != 1 || sessionInputProcessedAt(t, sent.Data[0]) == "" {
+			t.Fatalf("active control input was not processed on receipt: %s", sent.Data)
+		}
+	}
+}
+
+func TestSessionUpdatedEventsContainOnlyChangedFields(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("session-updated-fields"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sessionID := worker.SessionExternalID
+	updateSession(t, app, sessionID, `{}`)
+	if events := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("empty update emitted event: %s", events.Data)
+	}
+	updateSession(t, app, sessionID, `{"title":"changed"}`)
+	events := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	if len(events.Data) != 1 {
+		t.Fatalf("title update events: %s", events.Data)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(events.Data[0], &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload["title"]) != `"changed"` || len(payload["agent"]) != 0 || len(payload["metadata"]) != 0 {
+		t.Fatalf("title update included unchanged fields: %s", events.Data[0])
+	}
+	updateSession(t, app, sessionID, `{"title":"changed"}`)
+	if events := listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey); len(events.Data) != 1 {
+		t.Fatalf("same-value update emitted event: %s", events.Data)
+	}
+	updateSession(t, app, sessionID, `{"metadata":{"priority":"high"}}`)
+	events = listSessionEvents(t, app, sessionID, "types[]=session.updated", defaultTestKey)
+	if len(events.Data) != 2 {
+		t.Fatalf("metadata update events: %s", events.Data)
+	}
+	payload = nil
+	if err := json.Unmarshal(events.Data[1], &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload["metadata"]) == 0 || len(payload["title"]) != 0 || len(payload["agent"]) != 0 {
+		t.Fatalf("metadata update included unchanged fields: %s", events.Data[1])
+	}
+}
+
+func TestArchiveIdleSessionEmitsTermination(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("archive-idle-termination"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	archived := archiveSession(t, app, worker.SessionExternalID)
+	if archived.Status != "terminated" {
+		t.Fatalf("archived idle session status = %s", archived.Status)
+	}
+	events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.status_terminated&types[]=session.thread_status_terminated", defaultTestKey)
+	if len(events.Data) != 2 || sessionEventStringField(t, events.Data[0], "type") != "session.thread_status_terminated" || sessionEventStringField(t, events.Data[1], "type") != "session.status_terminated" {
+		t.Fatalf("idle archive termination history: %s", events.Data)
+	}
+	stored, found, err := app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil || !found || stored.Status != "terminated" {
+		t.Fatalf("idle archive left worker active: found=%t status=%s err=%v", found, stored.Status, err)
+	}
+}
+
+func TestArchiveIdleThreadEmitsTermination(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("archive-idle-thread"))
+	clearWebhookState(t, app)
+	t.Cleanup(func() { clearWebhookState(t, app) })
+	createWebhook(t, app, `{"url":"https://example.com/hooks","enabled_events":["session.status_terminated","session.thread_terminated"]}`)
+	worker, _ := newPayloadIntegrationSession(t, app)
+	threads := listSessionThreads(t, app, worker.SessionExternalID, defaultTestKey)
+	if len(threads.Data) != 1 {
+		t.Fatalf("primary thread: %+v", threads.Data)
+	}
+	threadID := threads.Data[0].ID
+	archived := archiveSessionThread(t, app, worker.SessionExternalID, threadID)
+	if archived.Status != "terminated" {
+		t.Fatalf("archived thread status = %s", archived.Status)
+	}
+	events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.thread_status_terminated", defaultTestKey)
+	if len(events.Data) != 1 || sessionEventStringField(t, events.Data[0], "session_thread_id") != threadID {
+		t.Fatalf("thread archive missing termination event: %s", events.Data)
+	}
+	archiveSessionThread(t, app, worker.SessionExternalID, threadID)
+	assertWebhookCount(t, app, "session.status_terminated", worker.SessionExternalID, 1)
+	assertWebhookCount(t, app, "session.thread_terminated", worker.SessionExternalID, 0)
+	threadEvents := listThreadEvents(t, app, worker.SessionExternalID, threadID, defaultTestKey)
+	if len(threadEvents.Data) != 2 || sessionEventStringField(t, threadEvents.Data[0], "type") != "session.thread_status_terminated" {
+		t.Fatalf("thread archive missing thread history: %s", threadEvents.Data)
+	}
+	stored, found, err := app.db.GetCodeSession(t.Context(), worker.ExternalID)
+	if err != nil || !found || stored.Status != "terminated" {
+		t.Fatalf("thread archive left worker active: found=%t status=%s err=%v", found, stored.Status, err)
+	}
+}
 
 func TestSessionPendingToolRulesMatchAcceptance(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("pending-tool-rules"))
@@ -81,13 +239,18 @@ func TestSessionPendingToolRulesMatchAcceptance(t *testing.T) {
 					t.Fatalf("%s unexpected pending reason: %+v", kind, payload.StopReason)
 				}
 			}
-			sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"next"}]}]}`, defaultTestKey)
-			queued := sessionInputProcessedAt(t, sent.Data[0]) == ""
-			if queued != tc.primary {
-				t.Fatalf("queued=%t, primary pending=%t", queued, tc.primary)
-			}
-			if queued {
-				assertQueuedInputPreservesIdle(t, app, worker)
+			body := `{"events":[{"type":"user.message","content":[{"type":"text","text":"next"}]}]}`
+			if tc.primary {
+				resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+worker.SessionExternalID+"/events?beta=true", strings.NewReader(body), defaultTestKey, true)
+				assertError(t, resp, http.StatusConflict, "conflict_error")
+				if events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message", defaultTestKey); len(events.Data) != 0 {
+					t.Fatalf("rejected input persisted: %s", events.Data)
+				}
+			} else {
+				sent := sendSessionEvents(t, app, worker.SessionExternalID, body, defaultTestKey)
+				if sessionInputProcessedAt(t, sent.Data[0]) == "" {
+					t.Fatalf("accepted input has no processing time: %s", sent.Data[0])
+				}
 			}
 		})
 	}
@@ -148,19 +311,44 @@ func TestSessionStatusRespectsOtherThreads(t *testing.T) {
 	}
 }
 
-func TestSessionHistoryCreationFiltersAndDefaultOrder(t *testing.T) {
+func TestSessionHistoryFiltersByProcessingTimeAndDefaultsToChronologicalOrder(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("history-creation-filter"))
-	worker, epoch := newPayloadIntegrationSession(t, app)
-	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first"}]},{"type":"user.message","content":[{"type":"text","text":"queued"}]}]}`, defaultTestKey)
-	queuedID := sessionEventStringField(t, sent.Data[1], "id")
-	// An old creation time and a current processing time must not satisfy this range.
-	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"type":"system.message","id":"sevt_old_creation","uuid":"old-creation","created_at":"2000-01-01T00:00:00Z","message":"old"}`))
-	events := listSessionEvents(t, app, worker.SessionExternalID, "created_at[gte]=2020-01-01T00:00:00Z", defaultTestKey)
-	if len(events.Data) != 4 || sessionEventStringField(t, events.Data[0], "id") != queuedID {
-		t.Fatalf("creation filter must include queued input first in default desc: %s", events.Data)
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sent := sendSessionEvents(t, app, worker.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first"}]}]}`, defaultTestKey)
+	if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) {
+		t.Fatalf("session event response exposed created_at: %s", sent.Data[0])
 	}
-	old := listSessionEvents(t, app, worker.SessionExternalID, "created_at[lt]=2020-01-01T00:00:00Z", defaultTestKey)
-	if len(old.Data) != 1 || sessionEventStringField(t, old.Data[0], "id") != "sevt_old_creation" {
-		t.Fatalf("creation filter used processing time: %s", old.Data)
+	inputID := sessionEventStringField(t, sent.Data[0], "id")
+	stored, err := app.db.GetSessionEvent(t.Context(), worker.WorkspaceUUID, worker.SessionExternalID, inputID)
+	if err != nil {
+		t.Fatalf("load accepted event: %v", err)
+	}
+	if bytes.Contains(stored.Payload, []byte(`"created_at"`)) || stored.CreatedAt.IsZero() {
+		t.Fatal("accepted event should keep creation time only in its record")
+	}
+	// Claude's created_at query filters compare against processed_at, despite the parameter name.
+	cutoff, err := time.Parse(time.RFC3339Nano, sessionInputProcessedAt(t, sent.Data[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message&created_at[gte]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(events.Data) != 1 || sessionEventStringField(t, events.Data[0], "id") != inputID {
+		t.Fatalf("processing filter excluded the accepted input: %s", events.Data)
+	}
+	newer := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message&created_at[gt]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(newer.Data) != 0 {
+		t.Fatalf("exclusive processing filter included the boundary event: %s", newer.Data)
+	}
+	old := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message&created_at[lt]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(old.Data) != 0 {
+		t.Fatalf("exclusive processing filter included the boundary event: %s", old.Data)
+	}
+	older := listSessionEvents(t, app, worker.SessionExternalID, "types[]=user.message&created_at[lte]="+cutoff.Format(time.RFC3339Nano), defaultTestKey)
+	if len(older.Data) != 1 || sessionEventStringField(t, older.Data[0], "id") != inputID {
+		t.Fatalf("inclusive processing filter excluded the boundary event: %s", older.Data)
+	}
+	all := listSessionEvents(t, app, worker.SessionExternalID, "", defaultTestKey)
+	if len(all.Data) != 3 || sessionEventStringField(t, all.Data[len(all.Data)-1], "id") != inputID {
+		t.Fatalf("default history order is not processed_at ascending: %s", all.Data)
 	}
 }

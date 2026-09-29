@@ -99,7 +99,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
-	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection)
+	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection, cfg.NATS.WorkerEventStream)
 	if err != nil {
 		return fmt.Errorf("open worker event broker: %w", err)
 	}

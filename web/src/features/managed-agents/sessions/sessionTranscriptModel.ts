@@ -160,12 +160,7 @@ export function sessionTranscriptEntryBracketId(entry: SessionEventListEntry) {
 }
 
 export function sessionTranscriptEntryIsBoundary(entry: SessionEventListEntry) {
-  if (
-    entry.kind === 'idle_gap' ||
-    entry.kind === 'queued_boundary' ||
-    entry.kind === 'outcome' ||
-    entry.kind === 'status'
-  ) {
+  if (entry.kind === 'idle_gap' || entry.kind === 'outcome' || entry.kind === 'status') {
     return true;
   }
   if (!('displayEvent' in entry)) {

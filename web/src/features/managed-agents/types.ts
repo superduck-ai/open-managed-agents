@@ -355,7 +355,6 @@ export type SessionDetailEventCache = {
   events: QuickstartSessionEvent[];
   syncedThrough: PageCursor;
   historyComplete: boolean;
-  sawTerminated: boolean;
 };
 
 export type SessionDetailDeltaFrame = {
@@ -447,7 +446,6 @@ export type DisplayEvent = {
   label: string;
   content: string;
   event: QuickstartSessionEvent;
-  isQueued: boolean;
   isStreaming: boolean;
   isError: boolean;
   createdAtMs: number;
@@ -456,7 +454,7 @@ export type DisplayEvent = {
 };
 
 export type TranscriptEntryKind =
-  'idle_gap' | 'queued_boundary' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
+  'idle_gap' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
 
 export type ToolLifecycle = 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'denied';
 
@@ -482,17 +480,6 @@ export type IdleGapEntry = {
   id: string;
   kind: 'idle_gap';
   durationMs: number;
-  createdAtMs: number;
-  processedAtMs: number;
-  relativeTime: string;
-  searchText: string;
-  isError: false;
-};
-
-export type QueuedBoundaryEntry = {
-  id: string;
-  kind: 'queued_boundary';
-  count: number;
   createdAtMs: number;
   processedAtMs: number;
   relativeTime: string;
@@ -554,8 +541,7 @@ export type ModelRequestBracketMeta = {
   usage: SessionEventUsage;
 };
 
-export type SessionEventListEntry =
-  IdleGapEntry | QueuedBoundaryEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
+export type SessionEventListEntry = IdleGapEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
 
 export type MemoryAttachAccess = 'read_write' | 'read_only';
 

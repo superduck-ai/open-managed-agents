@@ -76,10 +76,6 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		h.errorAdapter.Write(w, r, sessionsBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 

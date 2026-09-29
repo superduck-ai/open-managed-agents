@@ -160,7 +160,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "desc")
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -286,14 +286,20 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
-	next.UpdatedAt = time.Now().UTC()
-	updated, changed, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
-	if err != nil {
-		return mapSessionLoadError(err, sessionID)
-	}
-	event, err := h.sessionUpdatedEvent(updated)
-	if err == nil && changed {
-		h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+	updated := current
+	var changed bool
+	if len(changedSessionFields(current, next)) > 0 {
+		next.UpdatedAt = time.Now().UTC()
+		updated, changed, err = h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
+		if err != nil {
+			return mapSessionLoadError(err, sessionID)
+		}
+		if fields := changedSessionFields(current, updated); changed && len(fields) > 0 {
+			event, err := h.sessionUpdatedEvent(updated, fields)
+			if err == nil {
+				h.appendAndBroadcastInternal(r, updated.ExternalID, []db.SessionEvent{event})
+			}
+		}
 	}
 	if changed {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.updated", updated.ExternalID, nil, updated.UpdatedAt)
@@ -427,7 +433,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	if err != nil {
 		return invalidRequest(err)
 	}
-	order, err := parseOrder(r)
+	order, err := parseOrder(r, "asc")
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -767,11 +773,12 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) err
 	if !found {
 		return mapSessionLoadError(db.ErrNotFound, sessionID)
 	}
-	thread, changed, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
+	thread, removal, changed, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		return mapThreadLoadError(err, threadID)
 	}
-	if changed && thread.ParentThreadUUID != nil {
+	h.finishSessionRemoval(r.Context(), removal)
+	if changed && thread.ParentThreadUUID != nil && len(removal.StatusEvents) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID, *thread.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))

@@ -455,9 +455,44 @@ func TestSessionInputProcessedAtMigrationRepairsAppliedSchema(t *testing.T) {
 	if err := database.QueryRowContext(ctx, `SELECT NOT attnotnull FROM pg_attribute WHERE attrelid = 'session_events'::regclass AND attname = 'processed_at'`).Scan(&nullable); err != nil {
 		t.Fatalf("inspect processed_at: %v", err)
 	}
-	if !nullable {
-		t.Fatal("session_events.processed_at still rejects pending inputs")
+	if nullable {
+		t.Fatal("session_events.processed_at still allows queued inputs")
 	}
+}
+
+func TestSessionInputProcessedAtMigrationRejectsUnprocessedInputs(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 67); err != nil {
+		t.Fatalf("migrate fixture database to 67: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload, processed_at, created_at)
+		VALUES
+		('60000000-0000-0000-0000-000000000001', 'sevt_queued', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.message', '{}', NULL, NOW()),
+		('60000000-0000-0000-0000-000000000002', 'sevt_unprocessed_tool', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.tool_result', '{}', NULL, NOW())
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded queued input")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_queued'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded unprocessed tool result")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_unprocessed_tool'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err != nil {
+		t.Fatalf("migrate resolved input history: %v", err)
+	}
+	assertMigrationColumnNullable(t, ctx, database, "session_events", "processed_at", "NO")
 }
 
 func newIsolatedMigrationTestDatabase(

@@ -84,10 +84,18 @@ type RedisConfig struct {
 	URL string `yaml:"url"`
 }
 
+type WorkerEventStreamConfig struct {
+	MaxBytes   int64         `yaml:"max_bytes"`
+	MaxAge     time.Duration `yaml:"max_age"`
+	Replicas   int           `yaml:"replicas"`
+	MaxMsgSize int32         `yaml:"max_msg_size"`
+}
+
 type NATSConfig struct {
-	URL            string        `yaml:"url"`
-	ConnectTimeout time.Duration `yaml:"connect_timeout"`
-	DrainTimeout   time.Duration `yaml:"drain_timeout"`
+	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL               string                  `yaml:"url"`
+	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
 
 type AuthConfig struct {

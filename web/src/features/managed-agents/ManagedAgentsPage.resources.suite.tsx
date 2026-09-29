@@ -20,6 +20,7 @@ import {
   within,
 } from './ManagedAgentsPage.test-utils';
 import { managedEntityListLimit } from './api';
+import { SessionNestedPanel } from './resources/detail';
 import { objectRecord } from './utils';
 
 function requestUrl(input: RequestInfo | URL) {
@@ -45,6 +46,18 @@ async function confirmFirstRowAction(menuName: string, confirmName: string) {
 }
 
 export function registerManagedAgentsResourceTests() {
+  test('shows session event processing time without a created_at field', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<SessionNestedPanel session={api.resources.sessions[0]} workspaceId="default" refreshKey={0} />);
+
+    const eventType = await screen.findByText('session.status_running');
+    const row = eventType.closest('tr');
+    expect(row).not.toBeNull();
+    expect(within(row!).getAllByRole('cell')[1].textContent).not.toBe('—');
+    expect(screen.getByRole('columnheader', { name: 'Time' })).toBeTruthy();
+  });
+
   test('renders managed resource rows from the real v1 resource endpoints', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
@@ -1670,6 +1683,14 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(true),
+    );
+    await waitFor(() =>
       expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?'))).toBe(true),
     );
     await waitFor(() =>
@@ -1679,12 +1700,45 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    await waitFor(() =>
-      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
-        true,
-      ),
+    const urls = api.requests.map((request) => request.url);
+    expect(urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events?')),
     );
-    expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(false);
+    expect(urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/events?')),
+    );
+  });
+
+  test('Refresh rescans events while a live session stream stays open', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'running';
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes('/stream?')) {
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              init?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+            },
+          }),
+          { headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      }
+      return fetchResource(input, init);
+    });
+
+    renderManagedAgentsPage('sessions');
+    await screen.findByTestId('session-detail-page');
+    const eventRequests = () =>
+      api.requests.filter((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?')).length;
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(0));
+    const beforeRefresh = eventRequests();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refresh' }));
+
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(beforeRefresh));
   });
 
   test('keeps the primary session stream open when running metadata has completed history', async () => {

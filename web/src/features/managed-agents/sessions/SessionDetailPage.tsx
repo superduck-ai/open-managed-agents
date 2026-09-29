@@ -748,6 +748,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               childLoading={eventsLoading}
               composer={
                 <SessionMessageComposer
+                  acceptingMessages={conversationState.acceptingMessages}
                   awaitingAction={Boolean(activeAwaitingToolCall)}
                   disabled={conversationState.disabled}
                   live={conversationState.live}
@@ -884,6 +885,7 @@ function sessionConversationState(session: SessionApiResponse) {
   const archived = Boolean(session.archived_at);
   const status = session.status.toLowerCase();
   return {
+    acceptingMessages: !archived && (status === 'idle' || status === 'queued'),
     disabled: archived || status === 'deleted' || status === 'terminated',
     live: !archived && sessionStatusIsLive(status),
   };

@@ -6,6 +6,14 @@
 
 保留现有 `internal/webhooks` resource、Yourbatis Mapper、endpoint/job 表、Enqueuer、Worker 和鉴权路径。前端继续使用现有 Console 路由、TanStack Query、shadcn Dialog/Sheet；只拆出事件目录、反馈、复用的事件选择和表单模块，不引入新的事件总线、服务或数据库表。
 
+## upstream Session 历史合并（2026-09-28）
+
+Session 更新保留 upstream 的变更字段事件体，并由数据库实际变更标记决定是否发送 Webhook。线程归档保留 upstream 同一事务内的终止历史和 Worker 清理；提交后通过事件桥发送通知，不再重复发送归档通知。首次归档已终止子线程、没有新增状态历史时，沿用归档时间补发通知；重复归档不刷新时间戳或通知。主线程仍不产生子线程 Webhook。
+
+保留 upstream 的 `00069_require_session_event_processed_at.sql`；尚未合入 upstream 的 Webhook 迁移顺延为 `00070_webhook_failure_window.sql`，两份 SQL 内容均不变。新数据库以及已应用 upstream 69 的数据库按 69 → 70 升级。升级前应确认没有 `processed_at IS NULL` 的旧 Session 事件，否则该 NOT NULL 迁移按 upstream 规则拒绝执行，不丢弃历史数据。
+
+曾应用本分支旧编号 69（或更早 64）Webhook 迁移的本地数据库需要单独协调迁移历史：停止服务并备份后，核对 `failure_started_at` 列、`processed_at` 约束及 goose 记录，再处理版本对应关系。不能把旧 Webhook 69 当作 upstream 69 已执行，也不能仅重命名文件后直接启动；否则可能漏跑 upstream 约束迁移，并因重复添加 Webhook 列而失败。本次仅修正仓库迁移顺序，不自动改写开发数据库。
+
 ## 数据库订阅单一路径（2026-09-28）
 
 全局 Webhook 已移除。没有同 workspace 下启用且匹配事件的订阅就不入队，没有有效订阅目标就不发送。Enqueuer 仅持有 DB 和 logger，直接查询匹配订阅并逐个创建绑定订阅 UUID 的任务；不再预查询订阅是否存在，也不提供无目标入队方法。多个订阅共享事件 ID、发生时间和 payload，分别使用各订阅的密钥签名。
@@ -218,7 +226,7 @@ lint、dead-code、duplicates、complexity、large-files、web-format-check、ho
 
 普通失败禁用不再使用 20 次阈值。新增 `webhook.failure_disable_after`，默认 `24h`，必须为正时长；配置加载和 Worker 的未配置回退一致。Claude 未公开持续失败阈值，这一默认值和可配置能力属于 OMA 的选择。
 
-migration 00069 为 webhook_endpoints 增加 nullable `failure_started_at timestamptz`。失败次数保留用于内部统计，不再决定禁用。旧启用记录从升级后首次失败开始计时，不用 updated_at 或历史任务推算；原禁用状态与原因不变。公开 API、前端及事件目录不增加字段。
+migration 00070 为 webhook_endpoints 增加 nullable `failure_started_at timestamptz`。失败次数保留用于内部统计，不再决定禁用。旧启用记录从升级后首次失败开始计时，不用 updated_at 或历史任务推算；原禁用状态与原因不变。公开 API、前端及事件目录不增加字段。
 
 ```mermaid
 flowchart TD
@@ -662,7 +670,7 @@ Environment 更新在原有预构建事务中返回 changed，条件写入包含
 
 Session 归档保留上游 SessionRemoval 事务，重复归档返回未变更；取消待执行输入已产生终止事件时复用该事件，避免再发一次归档终止通知。删除在成功后立即采集发生时间，再完成队列清理和 SSE 发布，保留删除通知。测试覆盖运行中拒绝、未启动/不存在 Worker 的取消、重复归档与事件计数。
 
-上游占用 00064–00068 范围，分支新增的 Webhook 失败窗口迁移从 00064 改为 00069，SQL 内容不变；迁移测试改为从上游 68 升级到 69。前述第三阶段验证记录保留当时编号。此次不操作开发数据库；若某数据库曾应用分支旧 00064，启动前需核对并协调 goose 迁移历史，不能直接把它视为上游同号迁移已执行。
+该次合并时上游占用 00064–00068 范围，分支新增的 Webhook 失败窗口迁移从 00064 改为 00069（此为历史编号，最新合并已顺延为 00070），SQL 内容不变；迁移测试改为从上游 68 升级到 69。前述第三阶段验证记录保留当时编号。此次不操作开发数据库；若某数据库曾应用分支旧 00064，启动前需核对并协调 goose 迁移历史，不能直接把它视为上游同号迁移已执行。
 
 
 本次合并验证与 review：

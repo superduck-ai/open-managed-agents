@@ -11,31 +11,31 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallbackUUID string, fallback time.Time) (json.RawMessage, error) {
-	fields, err := decodeRawJSONObject(raw)
+func workerPayloadForPublicEvent(codeSessionID string, event db.SessionEvent) (json.RawMessage, error) {
+	fields, err := decodeRawJSONObject(event.Payload)
 	if err != nil {
 		return nil, err
 	}
 	var schema workerOutputCommonPayload
-	if err := json.Unmarshal(raw, &schema); err != nil {
+	if err := json.Unmarshal(event.Payload, &schema); err != nil {
 		return nil, fmt.Errorf("%w: invalid public event payload: %w", ErrProtocol, err)
 	}
-	now := firstWorkerPayloadTime(schema, fallback)
-	if now.IsZero() {
-		now = time.Now().UTC()
+	if event.CreatedAt.IsZero() {
+		return nil, fmt.Errorf("%w: public event has no receive time", ErrProtocol)
 	}
+	receivedAt := event.CreatedAt.UTC()
 	switch schema.Type {
 	case "user.interrupt":
-		return marshalRaw(map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, fallbackUUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}})
+		return marshalRaw(map[string]any{"id": schema.ID, "uuid": firstNonEmpty(schema.UUID, schema.ID, event.UUID), "type": "control_request", "request_id": schema.ID, "request": map[string]string{"subtype": "interrupt"}})
 	case "user.message":
-		eventUUID := firstNonEmpty(schema.UUID, schema.ID, fallbackUUID, uuid.NewV4().String())
+		eventUUID := firstNonEmpty(schema.UUID, schema.ID, event.UUID, uuid.NewV4().String())
 		payload := map[string]any{
 			"id":                 schema.ID,
 			"type":               "user",
 			"uuid":               eventUUID,
 			"session_id":         codeSessionID,
-			"created_at":         formatTime(now),
-			"timestamp":          formatTime(now),
+			"created_at":         formatTime(receivedAt),
+			"timestamp":          formatTime(receivedAt),
 			"client_platform":    "web_claude_ai",
 			"parent_tool_use_id": nil,
 			"message": map[string]any{
@@ -49,17 +49,13 @@ func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fall
 		return marshalRaw(payload)
 	default:
 		if schema.UUID == "" {
-			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, fallbackUUID, uuid.NewV4().String()))
+			setRawJSONField(fields, "uuid", firstNonEmpty(schema.ID, event.UUID, uuid.NewV4().String()))
 		}
 		if schema.SessionID == "" {
 			setRawJSONField(fields, "session_id", codeSessionID)
 		}
-		if schema.CreatedAt == "" {
-			setRawJSONField(fields, "created_at", formatTime(now))
-		}
-		if schema.Timestamp == "" {
-			fields["timestamp"] = fields["created_at"]
-		}
+		setRawJSONField(fields, "created_at", formatTime(receivedAt))
+		fields["timestamp"] = fields["created_at"]
 		return marshalRaw(fields)
 	}
 }

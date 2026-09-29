@@ -2,6 +2,7 @@ package sessions
 
 import (
 	jsonv2 "encoding/json/v2"
+	"reflect"
 	"time"
 	"uuid"
 
@@ -11,21 +12,30 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
-func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, error) {
+func changedSessionFields(before, after db.Session) map[string]any {
+	fields := map[string]any{}
+	if !reflect.DeepEqual(before.Title, after.Title) {
+		fields["title"] = after.Title
+	}
+	if !agentsnapshot.SameRawJSON(before.Metadata, after.Metadata) {
+		fields["metadata"] = agentsnapshot.RawJSONValue(after.Metadata, map[string]any{})
+	}
+	if !agentsnapshot.SameRawJSON(before.AgentSnapshot, after.AgentSnapshot) {
+		fields["agent"] = agentsnapshot.RawJSONValue(after.AgentSnapshot, nil)
+	}
+	return fields
+}
+
+func (h *Handler) sessionUpdatedEvent(session db.Session, fields map[string]any) (db.SessionEvent, error) {
 	eventID, err := ids.New("sevt_")
 	if err != nil {
 		return db.SessionEvent{}, err
 	}
 	now := time.Now().UTC()
-	payload, err := httpapi.MarshalRaw(map[string]any{
-		"id":           eventID,
-		"agent":        agentsnapshot.RawJSONValue(session.AgentSnapshot, nil),
-		"created_at":   httpapi.FormatTime(now),
-		"metadata":     agentsnapshot.RawJSONValue(session.Metadata, map[string]any{}),
-		"processed_at": now.Format(time.RFC3339),
-		"title":        session.Title,
-		"type":         "session.updated",
-	})
+	fields["id"] = eventID
+	fields["processed_at"] = now.Format(time.RFC3339)
+	fields["type"] = "session.updated"
+	payload, err := httpapi.MarshalRaw(fields)
 	if err != nil {
 		return db.SessionEvent{}, err
 	}
@@ -51,7 +61,6 @@ func (h *Handler) simpleSessionEvent(eventType, sessionID string, threadID *stri
 	now := eventTime(time.Now())
 	payload := map[string]any{
 		"id":           eventID,
-		"created_at":   formatEventTime(now),
 		"processed_at": formatEventTime(now),
 		"type":         eventType,
 	}

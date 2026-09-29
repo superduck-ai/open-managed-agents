@@ -217,6 +217,9 @@ func TestWorkerPreviewConverterEmitsThinkingStartWithoutDeltas(t *testing.T) {
 	}
 	wantID := managedagentsevents.StableAssistantEventID(batch.CodeSessionID, "msg_test", 0, "agent.thinking")
 	assertPreviewStart(t, events[0].Payload, "agent.thinking", wantID)
+	if events[0].ExternalID != wantID {
+		t.Fatalf("thinking preview frame id = %q, want %q", events[0].ExternalID, wantID)
+	}
 }
 
 func TestWorkerPreviewConverterForwardsTextFragmentsAcrossBatches(t *testing.T) {
@@ -244,8 +247,11 @@ func TestWorkerPreviewConverterForwardsTextFragmentsAcrossBatches(t *testing.T) 
 	assertPreviewDelta(t, events[1].Payload, wantID, "Hello")
 	assertPreviewDelta(t, events[2].Payload, wantID, " world")
 	for index, event := range events {
-		if event.CreatedAt.IsZero() || event.ProcessedAt.IsZero() {
-			t.Fatalf("preview event %d times = created:%v processed:%v, want non-zero", index, event.CreatedAt, event.ProcessedAt)
+		if event.ExternalID != wantID {
+			t.Fatalf("text preview frame %d id = %q, want %q", index, event.ExternalID, wantID)
+		}
+		if event.ProcessedAt.IsZero() {
+			t.Fatalf("preview event %d processing time is zero", index)
 		}
 	}
 
@@ -271,21 +277,23 @@ func TestPreviewSessionEventDistinguishesPrimaryAndChildScopes(t *testing.T) {
 }
 
 func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
-	createdAt := time.Date(2026, time.August, 20, 1, 2, 3, 0, time.UTC)
-	processedAt := createdAt.Add(2 * time.Second)
+	processedAt := time.Date(2026, time.August, 20, 1, 2, 5, 0, time.UTC)
 	event := previewSessionEvent(
 		previewTestBatch(),
-		workerStreamPayload{CreatedAt: createdAt.Format(time.RFC3339Nano)},
+		workerStreamPayload{},
 		processedAt,
 		"preview-event",
 		previewEventStart,
-		json.RawMessage(`{"type":"event_start"}`),
+		json.RawMessage(`{"type":"event_start","event":{"id":"preview-event","type":"agent.message"}}`),
 	)
 	recorder := httptest.NewRecorder()
 
 	writeSSE(recorder, event, "primary-thread")
+	if !strings.HasPrefix(recorder.Body.String(), "id: preview-event\nevent: event_start\n") {
+		t.Fatalf("preview SSE has the wrong frame ID: %s", recorder.Body.String())
+	}
 
-	data := strings.TrimSpace(strings.TrimPrefix(strings.Split(recorder.Body.String(), "\n")[1], "data: "))
+	data := strings.TrimSpace(strings.TrimPrefix(strings.Split(recorder.Body.String(), "\n")[2], "data: "))
 	var payload struct {
 		CreatedAt       string `json:"created_at"`
 		ProcessedAt     string `json:"processed_at"`
@@ -296,6 +304,177 @@ func TestPreviewSSEHasNoPersistedEventEnvelope(t *testing.T) {
 	}
 	if payload.CreatedAt != "" || payload.ProcessedAt != "" || payload.SessionThreadID != "" {
 		t.Fatalf("preview gained persisted event fields: %+v", payload)
+	}
+}
+
+func TestPreviewSSEFrameIDsMatchFinalContentBlocks(t *testing.T) {
+	batch := previewTestBatch()
+	previews := convertPreviewTestPayloads(newWorkerPreviewConverter(), batch, []json.RawMessage{
+		json.RawMessage(`{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_test"}},"session_id":"raw-session","uuid":"message-start"}`),
+		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}},"session_id":"raw-session","uuid":"thinking-start"}`),
+		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_stop","index":0},"session_id":"raw-session","uuid":"thinking-stop"}`),
+		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"text"}},"session_id":"raw-session","uuid":"message-start-block"}`),
+		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello"}},"session_id":"raw-session","uuid":"message-delta-one"}`),
+		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" world"}},"session_id":"raw-session","uuid":"message-delta-two"}`),
+	})
+	if len(previews) != 4 {
+		t.Fatalf("preview count = %d, want 4", len(previews))
+	}
+	thinkingID := managedagentsevents.StableAssistantEventID(batch.CodeSessionID, "msg_test", 0, "agent.thinking")
+	messageID := managedagentsevents.StableAssistantEventID(batch.CodeSessionID, "msg_test", 1, "agent.message")
+	events := []sessionStreamEvent{
+		previews[0],
+		{ExternalID: thinkingID, EventType: "agent.thinking", Payload: json.RawMessage(`{"type":"agent.thinking"}`)},
+		previews[1], previews[2], previews[3],
+		{ExternalID: messageID, EventType: "agent.message", Payload: json.RawMessage(`{"type":"agent.message"}`)},
+	}
+	wantIDs := []string{thinkingID, thinkingID, messageID, messageID, messageID, messageID}
+	recorder := httptest.NewRecorder()
+	for _, event := range events {
+		writeSSE(recorder, event, "primary-thread")
+	}
+	frames := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n\n")
+	if len(frames) != len(events) {
+		t.Fatalf("SSE frame count = %d, want %d", len(frames), len(events))
+	}
+	for index, frame := range frames {
+		if !strings.HasPrefix(frame, "id: "+wantIDs[index]+"\n") {
+			t.Errorf("frame %d has wrong transport ID, want %s: %s", index, wantIDs[index], frame)
+		}
+	}
+	if thinkingID == messageID {
+		t.Fatal("thinking and message blocks must have distinct IDs")
+	}
+}
+
+func TestPreviewSSEUsesTargetEventIDInFrameAndPayload(t *testing.T) {
+	cases := []struct {
+		name   string
+		event  sessionStreamEvent
+		wantID string
+	}{
+		{
+			name: "thinking start",
+			event: sessionStreamEvent{
+				ExternalID: "sevt_thinking",
+				EventType:  previewEventStart,
+				Payload:    json.RawMessage(`{"type":"event_start","event":{"id":"sevt_thinking","type":"agent.thinking"}}`),
+			},
+			wantID: "sevt_thinking",
+		},
+		{
+			name: "message start",
+			event: sessionStreamEvent{
+				ExternalID: "sevt_message",
+				EventType:  previewEventStart,
+				Payload:    json.RawMessage(`{"type":"event_start","event":{"id":"sevt_message","type":"agent.message"}}`),
+			},
+			wantID: "sevt_message",
+		},
+		{
+			name: "message delta",
+			event: sessionStreamEvent{
+				ExternalID: "sevt_message",
+				EventType:  previewEventDelta,
+				Payload:    json.RawMessage(`{"type":"event_delta","event_id":"sevt_message","delta":{"index":0}}`),
+			},
+			wantID: "sevt_message",
+		},
+		{
+			name: "legacy envelope ID differs from target",
+			event: sessionStreamEvent{
+				ExternalID: "sevt_envelope",
+				EventType:  previewEventDelta,
+				Payload:    json.RawMessage(`{"type":"event_delta","event_id":"sevt_message","delta":{"index":0}}`),
+			},
+			wantID: "sevt_message",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, threadID := range []string{"primary-thread", "child-thread"} {
+				recorder := httptest.NewRecorder()
+				writeSSE(recorder, tc.event, threadID)
+				body := recorder.Body.String()
+				prefix := "id: " + tc.wantID + "\nevent: " + tc.event.EventType + "\ndata: "
+				if !strings.HasPrefix(body, prefix) || !strings.Contains(strings.TrimPrefix(body, prefix), tc.wantID) {
+					t.Fatalf("preview SSE frame and payload must share the target ID: %s", body)
+				}
+			}
+		})
+	}
+}
+
+func TestPersistedSSEUsesEventID(t *testing.T) {
+	event := sessionStreamEvent{
+		ExternalID: "sevt_test",
+		EventType:  "agent.message",
+		Payload:    json.RawMessage(`{"type":"agent.message","id":"sevt_test"}`),
+	}
+	for _, threadID := range []string{"primary-thread", "child-thread"} {
+		t.Run(threadID, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeSSE(recorder, event, threadID)
+			body := recorder.Body.String()
+			if !strings.HasPrefix(body, "id: sevt_test\nevent: agent.message\n") {
+				t.Fatalf("persisted SSE does not use the event id: %s", body)
+			}
+			var payload struct {
+				ID              string `json:"id"`
+				SessionThreadID string `json:"session_thread_id"`
+			}
+			data := strings.TrimSpace(strings.TrimPrefix(strings.Split(body, "\n")[2], "data: "))
+			if err := json.Unmarshal([]byte(data), &payload); err != nil {
+				t.Fatalf("decode SSE data: %v", err)
+			}
+			if payload.ID != event.ExternalID || payload.SessionThreadID != threadID {
+				t.Fatalf("SSE data and frame id differ: %+v", payload)
+			}
+		})
+	}
+}
+
+func TestPersistedSSEDoesNotWriteInvalidEventID(t *testing.T) {
+	event := sessionStreamEvent{
+		ExternalID: "sevt_test\nretry: 0",
+		EventType:  "agent.message",
+		Payload:    json.RawMessage(`{"type":"agent.message"}`),
+	}
+	recorder := httptest.NewRecorder()
+
+	writeSSE(recorder, event, "primary-thread")
+
+	if body := recorder.Body.String(); strings.Contains(body, "id: ") || strings.Contains(body, "retry: 0\n") {
+		t.Fatalf("invalid event id escaped into SSE fields: %s", body)
+	}
+}
+
+func TestNewStreamSubscriberReceivesOnlyLaterEvents(t *testing.T) {
+	hub := newStreamHub()
+	event := sessionStreamEvent{
+		ExternalID:        "sevt_before",
+		WorkspaceUUID:     "workspace-test",
+		SessionExternalID: "session-test",
+		EventType:         "agent.message",
+	}
+	hub.broadcastEvent(event)
+	subID, deliveries := hub.subscribe("workspace-test", "session-test")
+	defer hub.unsubscribe(subID)
+	select {
+	case delivery := <-deliveries:
+		t.Fatalf("new subscriber replayed an earlier event: %#v", delivery)
+	default:
+	}
+	event.ExternalID = "sevt_after"
+	hub.broadcastEvent(event)
+	select {
+	case delivery := <-deliveries:
+		got, ok := delivery.(sessionEventDelivery)
+		if !ok || got.event.ExternalID != "sevt_after" {
+			t.Fatalf("new subscriber received %#v, want later event", delivery)
+		}
+	default:
+		t.Fatal("new subscriber missed a later event")
 	}
 }
 
@@ -404,6 +583,12 @@ func TestStreamConnectionAcceptsLegacyDeltaWithoutPreviewID(t *testing.T) {
 	}
 	if _, accepted := connection.event(sessionEventDelivery{event: event}); !accepted {
 		t.Fatal("legacy stream delta without preview ID was not accepted")
+	}
+	recorder := httptest.NewRecorder()
+	writeSSE(recorder, sessionStreamEvent{ExternalID: "sevt_previous", EventType: "agent.thinking", Payload: json.RawMessage(`{"type":"agent.thinking","id":"sevt_previous"}`)}, "thread-test")
+	writeSSE(recorder, event, "thread-test")
+	if !strings.Contains(recorder.Body.String(), "\n\nid:\nevent: event_delta\n") {
+		t.Fatalf("legacy delta must clear the previous SSE frame ID: %s", recorder.Body.String())
 	}
 }
 

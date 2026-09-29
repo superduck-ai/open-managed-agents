@@ -293,7 +293,7 @@ func TestTunnelReducedStorageBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if commands.Config.MaxBytes != commandStorageBytes || commands.Config.MaxMsgSize != maxBrokerValueBytes || commands.Config.MaxMsgs != -1 || commands.Config.Replicas != 3 {
+	if commands.Config.MaxBytes != cfg.CommandStream.MaxBytes || commands.Config.MaxMsgSize != maxBrokerValueBytes || commands.Config.MaxMsgs != cfg.CommandStream.MaxMsgs || commands.Config.Replicas != 3 {
 		t.Fatal("command storage contract changed")
 	}
 	if _, err := b.js.Stream(t.Context(), "KV_OMA_TUNNEL_REQUESTS_V1"); !errors.Is(err, jetstream.ErrStreamNotFound) {

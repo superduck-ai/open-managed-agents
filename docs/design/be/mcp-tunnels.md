@@ -232,7 +232,10 @@ Connector 在 deadline 前上线即可领取，始终无人领取则超时。调
 不取消已入队或已执行的命令，不承诺撤销远端副作用。
 
 命令 Stream 为 `OMA_TUNNEL_COMMANDS_V1`，subject 为 `oma.tunnel.command.v1.<Tunnel UUID 摘要>.<channel>.shared`。
-它使用 R3 FileStorage、WorkQueuePolicy、DiscardNew 和有限 MaxAge。同 Tunnel/channel 共享 durable consumer，
+它使用 R3 FileStorage、WorkQueuePolicy、DiscardNew 和有限 MaxAge。`tunnel.command_stream.max_bytes` 默认每节点 513 MiB，
+`max_msgs` 默认 -1（不限制数量）；启动时按配置创建或原地更新同名 Stream，以兼容旧版容量配置。
+降低容量上限前应确认现有消息量与 NATS 节点存储预算。从旧版协议升级时应停止旧版写入并等待在途命令过期；
+原地更新 Stream 配置不会转换旧消息格式。同 Tunnel/channel 共享 durable consumer，
 `MaxDeliver=1`；未 ACK、断连或 NAK 都不会使该 consumer 再次投递。consumer 无活动超过 request timeout 加一分钟才回收，
 避免在命令仍有效时自动重建而重新读取。运维不得在有在途命令时删除重建 consumer。
 

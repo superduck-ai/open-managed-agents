@@ -14,7 +14,6 @@ import (
 const (
 	commandStreamName      = "OMA_TUNNEL_COMMANDS_V1"
 	commandSubjectPrefix   = "oma.tunnel.command.v1."
-	commandStorageBytes    = 513 << 20
 	maxBrokerValueBytes    = 2 << 20
 	maxCommandConsumers    = 131072 // Existing global Stream consumer limit.
 	maxRequestBindingBytes = 4096

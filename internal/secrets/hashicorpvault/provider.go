@@ -20,36 +20,45 @@ const providerName = "hashicorp_vault"
 const requestTimeout = 10 * time.Second
 const maxResponseBytes = 64 * 1024
 
-// Config names a pre-created Transit key and an externally maintained token file.
-// No CA, insecure TLS, login or renewal configuration is accepted.
 type Config struct {
 	Address      string
 	TransitMount string
 	KeyName      string
 	TokenFile    string
+	Token        string
+	CAFile       string
 }
 
-// Provider retains only public routing information and a token file path.
 type Provider struct {
 	baseURL   string
 	keyName   string
 	tokenFile string
+	token     string
 	client    *http.Client
 }
 
-// New validates routing before reading a token or contacting Vault. The
-// transport uses system trust roots, with no global HTTP client mutation.
 func New(cfg Config) (*Provider, error) {
 	u, err := url.Parse(strings.TrimSpace(cfg.Address))
 	if err != nil || !allowedOrigin(u) || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return nil, errors.New("hashicorp_vault: address must be HTTPS or local HTTP, without credentials, path, query or fragment")
 	}
 	mount, key := strings.TrimSpace(cfg.TransitMount), strings.TrimSpace(cfg.KeyName)
+	if mount == "" {
+		mount = "transit"
+	}
 	if !validMount(mount) || !validSegment(key) {
 		return nil, errors.New("hashicorp_vault: transit_mount and key_name must be non-empty safe path segments")
 	}
-	if strings.TrimSpace(cfg.TokenFile) == "" {
-		return nil, errors.New("hashicorp_vault: token_file is required")
+	token, tokenFile := strings.TrimSpace(cfg.Token), strings.TrimSpace(cfg.TokenFile)
+	if (token == "") == (tokenFile == "") {
+		return nil, errors.New("hashicorp_vault: configure exactly one of token or token_file")
+	}
+	if token != "" && !validToken([]byte(token)) {
+		return nil, errors.New("hashicorp_vault: invalid token")
+	}
+	tlsConfig, err := clientTLSConfig(strings.TrimSpace(cfg.CAFile))
+	if err != nil {
+		return nil, err
 	}
 	proxy := http.ProxyFromEnvironment
 	if u.Scheme == "http" {
@@ -57,12 +66,13 @@ func New(cfg Config) (*Provider, error) {
 	}
 	return &Provider{
 		baseURL: u.Scheme + "://" + u.Host + "/v1/" + mount,
-		keyName: key, tokenFile: cfg.TokenFile,
+		keyName: key, tokenFile: tokenFile, token: token,
 		client: &http.Client{
 			Timeout:       requestTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 			Transport: &http.Transport{
 				Proxy:             proxy,
+				TLSClientConfig:   tlsConfig,
 				DialContext:       (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 				ForceAttemptHTTP2: true, TLSHandshakeTimeout: 3 * time.Second,
 				IdleConnTimeout: 90 * time.Second, MaxIdleConns: 10,

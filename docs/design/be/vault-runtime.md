@@ -107,14 +107,16 @@ vault:
     provider: hashicorp_vault
     hashicorp_vault:
       address: https://vault.example.com
-      transit_mount: transit
+      transit_mount: transit  # 可省略，默认 transit
       key_name: oma-dek
       token_file: /run/secrets/vault-token
+      # token: <vault-token>  # 与 token_file 二选一
+      # ca_file: /run/certs/vault-ca.pem  # 可选，私有 CA 的 PEM 文件
 ```
 
-该域名为部署示例，不是默认地址或已验证的线上端点。如使用反向代理终止 TLS 并路由到 Vault，需保留 `/v1/<transit_mount>/encrypt/<key_name>`、`decrypt/<key_name>` 的路径、请求体与 `X-Vault-Token`；不要把这些请求改写为登录页面、缓存响应或重定向到其他域名。云端使用 HTTPS origin（可带端口）及操作系统/容器的信任库；本地仅对 loopback IP、`localhost` 和 Compose 服务名 `vault` 允许 HTTP，并绕过环境 HTTP 代理；没有 `ca_file` 或关闭证书验证的配置。私有 CA 由部署层安装到系统信任库。TLS 信任与 OMA 出站 MITM CA 是独立的两条链路。
+该域名为部署示例，不是默认地址或已验证的线上端点。如使用反向代理终止 TLS 并路由到 Vault，需保留 `/v1/<transit_mount>/encrypt/<key_name>`、`decrypt/<key_name>` 的路径、请求体与 `X-Vault-Token`；不要把这些请求改写为登录页面、缓存响应或重定向到其他域名。云端使用 HTTPS origin（可带端口）及操作系统/容器的信任库；本地仅对 loopback IP、`localhost` 和 Compose 服务名 `vault` 允许 HTTP，并绕过环境 HTTP 代理；可选的 `ca_file` 在客户端初始化时读取 PEM 证书并追加到该客户端的系统信任根，不修改全局信任库；文件不可读或没有有效证书时装配失败。未配置时只使用系统信任库。证书链和主机名校验始终开启，没有跳过校验选项；CA 文件更新后需重启 OMA。TLS 信任与 OMA 出站 MITM CA 是独立的两条链路。
 
-四个字段均必填。`transit_mount` 支持安全路径段组成的嵌套 mount（如 `team/transit`）；`key_name` 是单个路径段。拒绝 traversal、转义路径、查询和 fragment。选择该 Provider 时移除 `local` 配置块；不会回退本地或阿里云密钥。
+`address` 和 `key_name` 必填，`token` 与 `token_file` 必须且只能配置一个。`transit_mount` 省略或为空时使用 `transit`，表示 Transit 引擎的 API 挂载路径，支持嵌套 mount（如 `team/transit`）；请求地址为 `/v1/<transit_mount>/encrypt/<key_name>` 或 `decrypt/<key_name>`，`key_name` 是单个路径段。拒绝 traversal、转义路径、查询和 fragment。选择该 Provider 时移除 `local` 配置块；不会回退本地或阿里云密钥。
 
 **初始化和认证属于部署层。** 外部先初始化/解封 Vault、启用 Transit、创建 `aes256-gcm96` key（非 derived、非 convergent）、配置 policy 并签发应用 token。OMA 不调用登录、续租、建 key、rotate、export 或 rewrap。Vault Agent 可作为外部 token 管理方式，但不是 Provider 的依赖。应用 token 的最小策略如下（与实际 mount/key 对齐）：
 
@@ -125,7 +127,7 @@ path "transit/decrypt/oma-dek" { capabilities = ["update"] }
 
 不要授予 encrypt 的 `create` 能力：该能力可在 key 不存在时自动创建 key。缺 key、权限不足、token 无效或 TLS/网络错误在实际 encrypt/decrypt 时返回；启动不发起探测请求。
 
-`token_file` 使用现有相对配置目录、`~` 和环境变量路径展开规则。文件保存原始 Vault token，不能使用 response-wrapped/encrypted sink 内容；由外部限制读取权限并在到期前续租或更新。每次加解密重新打开文件，支持原子 rename 与 Kubernetes projected-volume symlink 更新；不保存旧 token 作回退，不修改共享客户端认证状态。挂载可更新的目录/投影卷，避免将被替换的单个 inode 绑定到容器。文件丢失、为空、超限或包含内部空白/控制字符时拒绝请求。拒绝 HTTP 重定向，因此反向代理上游应选择 active Service 或保证 Vault 服务端 forwarding 可用。
+`token_file` 和 `ca_file` 使用现有相对配置目录、`~` 和环境变量路径展开规则。直接配置的 `token` 在装配时读取，更新需重启 OMA，不由 OMA 自动续租。使用 `token_file` 时，文件保存原始 Vault token，不能使用 response-wrapped/encrypted sink 内容；由外部限制读取权限并在到期前续租或更新。每次加解密重新打开文件，支持原子 rename 与 Kubernetes projected-volume symlink 更新；不保存旧 token 作回退，不修改共享客户端认证状态。挂载可更新的目录/投影卷，避免将被替换的单个 inode 绑定到容器。文件丢失、为空、超限或包含内部空白/控制字符时拒绝请求。拒绝 HTTP 重定向，因此反向代理上游应选择 active Service 或保证 Vault 服务端 forwarding 可用。
 
 封装只上传 32 字节 DEK 的 Base64；固定 `associated_data=Base64("oma-dek-v1")` 用于用途绑定。完整 `vault:vN:...` 字符串作为 `wrapped_dek` 保存；`key_provider=hashicorp_vault`，整数 `key_version=1` 表示 OMA 封装协议，而非 Transit 物理版本 N。业务 `format_version` 与 AAD 保持不变。解封严格检查格式和解码后的 DEK 长度，清零临时可写缓冲区；Go string/加密库内部副本不具备全内存擦除保证。
 

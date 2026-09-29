@@ -42,7 +42,7 @@ func New(mk config.MasterKeyConfig, opts ...Option) (*secrets.Service, error) {
 		cfg := mk.HashicorpVault
 		provider, err = hashicorpvault.New(hashicorpvault.Config{
 			Address: cfg.Address, TransitMount: cfg.TransitMount,
-			KeyName: cfg.KeyName, TokenFile: cfg.TokenFile,
+			KeyName: cfg.KeyName, TokenFile: cfg.TokenFile, Token: cfg.Token, CAFile: cfg.CAFile,
 		})
 	case "aliyun_kms":
 		cfg := mk.AliyunKMS

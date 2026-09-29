@@ -64,13 +64,13 @@ type LocalKeyConfig struct {
 	DecryptOnly []DecryptOnlyKeyConfig `yaml:"decrypt_only"`
 }
 
-// HashicorpVaultConfig selects a pre-provisioned Transit key. Authentication
-// and token renewal are managed outside OMA; HTTPS uses the system trust store.
 type HashicorpVaultConfig struct {
 	Address      string `yaml:"address"`
 	TransitMount string `yaml:"transit_mount"`
 	KeyName      string `yaml:"key_name"`
 	TokenFile    string `yaml:"token_file"`
+	Token        string `yaml:"token,omitempty"`
+	CAFile       string `yaml:"ca_file,omitempty"`
 }
 
 // AliyunKMSConfig contains deployment inputs, never key material. Empty access

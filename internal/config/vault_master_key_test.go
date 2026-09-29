@@ -22,7 +22,7 @@ func TestValidateMasterKey(t *testing.T) {
 		{"missing aliyun config", MasterKeyConfig{Provider: "aliyun_kms"}, "endpoint and key_id are required"},
 		{"partial access key", MasterKeyConfig{Provider: "aliyun_kms", AliyunKMS: &AliyunKMSConfig{Endpoint: "kms.example", KeyID: "key", AccessKeyID: "partial"}}, "access_key_id and access_key_secret must be configured together"},
 		{"local with aliyun", MasterKeyConfig{Provider: "aliyun_kms", AliyunKMS: aliyun, Local: &LocalKeyConfig{}}, "local key settings cannot be combined with aliyun_kms"},
-		{"missing vault config", MasterKeyConfig{Provider: "hashicorp_vault"}, "address, transit_mount, key_name and token_file are required"},
+		{"missing vault config", MasterKeyConfig{Provider: "hashicorp_vault"}, "address and key_name are required"},
 		{"local with vault", MasterKeyConfig{Provider: "hashicorp_vault", HashicorpVault: vault, Local: &LocalKeyConfig{}}, "local key settings cannot be combined with hashicorp_vault"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -36,14 +36,12 @@ func TestValidateMasterKey(t *testing.T) {
 		clear func(*HashicorpVaultConfig)
 	}{
 		{"address", func(v *HashicorpVaultConfig) { v.Address = " " }},
-		{"transit_mount", func(v *HashicorpVaultConfig) { v.TransitMount = " " }},
 		{"key_name", func(v *HashicorpVaultConfig) { v.KeyName = " " }},
-		{"token_file", func(v *HashicorpVaultConfig) { v.TokenFile = " " }},
 	} {
 		t.Run("missing vault "+tc.name, func(t *testing.T) {
 			v := *vault
 			tc.clear(&v)
-			if err := ValidateMasterKey(MasterKeyConfig{Provider: "hashicorp_vault", HashicorpVault: &v}); err == nil || !strings.Contains(err.Error(), "address, transit_mount, key_name and token_file are required") {
+			if err := ValidateMasterKey(MasterKeyConfig{Provider: "hashicorp_vault", HashicorpVault: &v}); err == nil || !strings.Contains(err.Error(), "address and key_name are required") {
 				t.Fatalf("missing %s error = %v", tc.name, err)
 			}
 		})
@@ -81,8 +79,8 @@ func TestRemoteProviderYAMLRoundTrip(t *testing.T) {
 }
 
 func TestHashicorpVaultYAML(t *testing.T) {
-	const fields = "address: 'https://vault.example', transit_mount: transit, key_name: oma, token_file: tokens/vault-token"
-	for _, forbidden := range []string{"ca_file", "token", "skip_tls_verify", "auth_method"} {
+	const fields = "address: 'https://vault.example', transit_mount: transit, key_name: oma, token_file: tokens/vault-token, ca_file: certs/vault.pem"
+	for _, forbidden := range []string{"skip_tls_verify", "auth_method"} {
 		t.Run(forbidden, func(t *testing.T) {
 			_, err := loadMasterKeyTestYAML(t, "{provider: hashicorp_vault, hashicorp_vault: {"+fields+", "+forbidden+": unsupported}}")
 			if err == nil || !strings.Contains(err.Error(), "field "+forbidden+" not found") {
@@ -97,6 +95,22 @@ func TestHashicorpVaultYAML(t *testing.T) {
 	want := filepath.Join(filepath.Dir(os.Getenv(configFileEnv)), "tokens/vault-token")
 	if cfg.Vault.MasterKey.HashicorpVault.TokenFile != want {
 		t.Fatal("relative token path not resolved")
+	}
+	if cfg.Vault.MasterKey.HashicorpVault.CAFile != filepath.Join(filepath.Dir(os.Getenv(configFileEnv)), "certs/vault.pem") {
+		t.Fatal("relative CA path not resolved")
+	}
+	for _, auth := range []string{"", ", token: inline-token, token_file: tokens/vault-token"} {
+		_, err := loadMasterKeyTestYAML(t, "{provider: hashicorp_vault, hashicorp_vault: {address: 'https://vault.example', key_name: oma"+auth+"}}")
+		if err == nil || !strings.Contains(err.Error(), "configure exactly one of token or token_file") {
+			t.Fatalf("ambiguous or absent authentication accepted: %v", err)
+		}
+	}
+	cfg, err = loadMasterKeyTestYAML(t, "{provider: hashicorp_vault, hashicorp_vault: {address: 'https://vault.example', key_name: oma, token: inline-token}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Vault.MasterKey.HashicorpVault.Token != "inline-token" {
+		t.Fatal("inline token not preserved")
 	}
 }
 

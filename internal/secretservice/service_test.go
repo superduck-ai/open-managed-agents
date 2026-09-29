@@ -3,6 +3,8 @@ package secretservice_test
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,10 +30,12 @@ func TestNewRejectsInvalidProviderWithoutFallback(t *testing.T) {
 	}
 }
 
-func TestHashicorpVaultDefersRemoteFailures(t *testing.T) {
+func TestHashicorpVaultTLSConfiguration(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("untrusted server received authenticated request")
-		w.WriteHeader(500)
+		if r.Header.Get("X-Vault-Token") != "inline-token" || r.URL.Path != "/v1/transit/encrypt/oma-dek" {
+			t.Error("incorrect configured authentication or mount")
+		}
+		_, _ = io.WriteString(w, `{"data":{"ciphertext":"vault:v1:YQ=="}}`)
 	}))
 	defer server.Close()
 	token := filepath.Join(t.TempDir(), "token")
@@ -48,6 +52,21 @@ func TestHashicorpVaultDefersRemoteFailures(t *testing.T) {
 	binding := secrets.Binding{OrganizationUUID: "org", WorkspaceUUID: "ws", VaultExternalID: "vault", CredentialExternalID: "credential"}
 	if _, err := svc.Seal(t.Context(), binding, []byte("secret")); err == nil {
 		t.Fatal("untrusted HTTPS accepted")
+	}
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mk.HashicorpVault.TokenFile = ""
+	mk.HashicorpVault.Token = "inline-token"
+	mk.HashicorpVault.TransitMount = ""
+	mk.HashicorpVault.CAFile = caFile
+	svc, err = secretservice.New(mk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Seal(t.Context(), binding, []byte("secret")); err != nil {
+		t.Fatalf("configured token and CA did not reach provider: %v", err)
 	}
 }
 

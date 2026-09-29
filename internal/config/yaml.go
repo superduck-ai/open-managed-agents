@@ -250,7 +250,10 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		paths = append(paths, struct {
 			name  string
 			value *string
-		}{name: "vault.master_key.hashicorp_vault.token_file", value: &v.TokenFile})
+		}{name: "vault.master_key.hashicorp_vault.token_file", value: &v.TokenFile}, struct {
+			name  string
+			value *string
+		}{name: "vault.master_key.hashicorp_vault.ca_file", value: &v.CAFile})
 	}
 	if local := cfg.Vault.MasterKey.Local; local != nil {
 		paths = append(paths, struct {

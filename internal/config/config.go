@@ -371,8 +371,11 @@ func validateHashicorpVaultMasterKey(mk MasterKeyConfig) error {
 		return errors.New("vault.master_key: local key settings cannot be combined with hashicorp_vault")
 	}
 	v := mk.HashicorpVault
-	if v == nil || strings.TrimSpace(v.Address) == "" || strings.TrimSpace(v.TransitMount) == "" || strings.TrimSpace(v.KeyName) == "" || strings.TrimSpace(v.TokenFile) == "" {
-		return errors.New("vault.master_key.hashicorp_vault: address, transit_mount, key_name and token_file are required")
+	if v == nil || strings.TrimSpace(v.Address) == "" || strings.TrimSpace(v.KeyName) == "" {
+		return errors.New("vault.master_key.hashicorp_vault: address and key_name are required")
+	}
+	if (strings.TrimSpace(v.Token) == "") == (strings.TrimSpace(v.TokenFile) == "") {
+		return errors.New("vault.master_key.hashicorp_vault: configure exactly one of token or token_file")
 	}
 	return nil
 }

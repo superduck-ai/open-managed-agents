@@ -3,8 +3,11 @@ package hashicorpvault
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -27,9 +30,13 @@ func (p *Provider) call(ctx context.Context, operation string, input transitRequ
 	if err := ctx.Err(); err != nil {
 		return transitData{}, err
 	}
-	token, err := readToken(p.tokenFile)
-	if err != nil {
-		return transitData{}, failure(operation, "TokenUnavailable", 0)
+	token := []byte(p.token)
+	if p.tokenFile != "" {
+		var err error
+		token, err = readToken(p.tokenFile)
+		if err != nil {
+			return transitData{}, failure(operation, "TokenUnavailable", 0)
+		}
 	}
 	defer clear(token)
 	input.AssociatedData = base64.StdEncoding.EncodeToString([]byte("oma-dek-v1"))
@@ -89,9 +96,31 @@ func readToken(path string) ([]byte, error) {
 		return nil, failure("token", "TokenUnavailable", 0)
 	}
 	token := bytes.TrimSpace(data)
-	if len(token) == 0 || bytes.ContainsFunc(token, func(r rune) bool { return r < 0x21 || r > 0x7e }) {
+	if !validToken(token) {
 		clear(data)
 		return nil, failure("token", "TokenUnavailable", 0)
 	}
 	return token, nil
+}
+
+func validToken(token []byte) bool {
+	return len(token) > 0 && len(token) <= maxResponseBytes && !bytes.ContainsFunc(token, func(r rune) bool { return r < 0x21 || r > 0x7e })
+}
+
+func clientTLSConfig(path string) (*tls.Config, error) {
+	if path == "" {
+		return nil, nil
+	}
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, errors.New("hashicorp_vault: cannot read ca_file")
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, errors.New("hashicorp_vault: cannot load system CA certificates")
+	}
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, errors.New("hashicorp_vault: ca_file contains no valid certificates")
+	}
+	return &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}, nil
 }

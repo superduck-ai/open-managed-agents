@@ -170,11 +170,17 @@ vault:
       # HTTPS verifies the certificate using the OS/container trust store.
       # Local development permits HTTP only for loopback, localhost or host vault.
       address: "https://vault.example.com"
+      # Defaults to transit; this is an API mount path, not a filesystem path.
       transit_mount: "transit"
       key_name: "oma-dek"
       # Externally issued/renewed token. Reopened on each operation so atomic
       # replacement takes effect without restarting OMA. No login or renewal.
       token_file: "/run/secrets/vault-token"
+      # Alternative to token_file. Configure exactly one; inline changes require restart.
+      token: ""
+      # Optional PEM CA bundle added to system trust for this client at startup.
+      # Relative paths resolve against the configuration directory; TLS verification stays on.
+      ca_file: ""
     # Used only when provider is aliyun_kms. Remove the local block before selecting it.
     # No local fallback.
     aliyun_kms:

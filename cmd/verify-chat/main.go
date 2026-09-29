@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -187,7 +188,17 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 
 func runTest(ctx context.Context, env *environment, worker string, selected scenario) (testResult, error) {
 	path := filepath.Join(env.directory, "tests.jsonl")
-	err := loggedCommand(ctx, env.root, append(env.env(), "OMA_WORKER_CONTROL_IMAGE="+worker, "VERIFY_CHAT_TIMEOUT="+selected.Timeout.String()), path, selected.Timeout+2*time.Minute,
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		return testResult{}, err
+	}
+	defer file.Close()
+	stderr, err := os.OpenFile(filepath.Join(env.directory, "tests.stderr.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return testResult{}, err
+	}
+	defer stderr.Close()
+	err = execute(ctx, env.root, append(env.env(), "OMA_WORKER_CONTROL_IMAGE="+worker, "VERIFY_CHAT_TIMEOUT="+selected.Timeout.String()), file, stderr, selected.Timeout+2*time.Minute,
 		"go", "test", selected.Package, "-json", "-count=1", "-timeout="+(selected.Timeout+30*time.Second).String(), "-run", "^"+selected.Test+"$")
 	code := 0
 	if err != nil {
@@ -197,10 +208,8 @@ func runTest(ctx context.Context, env *environment, worker string, selected scen
 		}
 		code = exit.ExitCode()
 	}
-	file, err := os.Open(path)
-	if err != nil {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return testResult{}, err
 	}
-	defer file.Close()
 	return evaluate(file, code, selected)
 }

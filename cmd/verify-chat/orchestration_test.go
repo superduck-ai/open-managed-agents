@@ -173,12 +173,12 @@ func TestEnvironmentConfigurationAndTopology(t *testing.T) {
 func TestCommandCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	err := execute(ctx, t.TempDir(), nil, io.Discard, time.Second, "sh", "-c", "sleep 30 & wait")
+	err := execute(ctx, t.TempDir(), nil, io.Discard, io.Discard, time.Second, "sh", "-c", "sleep 30 & wait")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled command: %v", err)
 	}
 	started := time.Now()
-	err = execute(t.Context(), t.TempDir(), nil, io.Discard, 50*time.Millisecond, "sh", "-c", "sleep 30 & wait")
+	err = execute(t.Context(), t.TempDir(), nil, io.Discard, io.Discard, 50*time.Millisecond, "sh", "-c", "sleep 30 & wait")
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 3*time.Second {
 		t.Fatalf("process group timeout: %v", err)
 	}
@@ -239,5 +239,30 @@ func TestMarkdownContainsComparableEnvironment(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("report missing %s", want)
 		}
+	}
+}
+
+func TestGoToolStderrDoesNotCorruptTestEvidence(t *testing.T) {
+	directory := t.TempDir()
+	selected := scenarios["chat.roundtrip"]
+	evidence := filepath.Join(directory, "fixture.jsonl")
+	events := testOutput(t, selected, []testEvent{{Test: selected.Test, Action: "pass"}, {Action: "pass"}}, true)
+	if err := os.WriteFile(evidence, []byte(events), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nprintf 'go: downloading example.test/module v1.0.0\\n' >&2\ncat \"$VERIFY_TEST_EVENTS\"\n"
+	if err := os.WriteFile(filepath.Join(directory, "go"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("VERIFY_TEST_EVENTS", evidence)
+	env := newEnvironment(directory, directory, "stderr-fixture")
+	result, err := runTest(t.Context(), env, "test-image", selected)
+	if err != nil || result.Status != "pass" {
+		t.Fatalf("stderr invalidated successful tests: %+v %v", result, err)
+	}
+	stderr, err := os.ReadFile(filepath.Join(directory, "tests.stderr.log"))
+	if err != nil || !strings.Contains(string(stderr), "go: downloading") {
+		t.Fatalf("missing tool diagnostics: %s %v", stderr, err)
 	}
 }

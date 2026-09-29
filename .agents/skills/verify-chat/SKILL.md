@@ -71,7 +71,7 @@ Most scenarios prepare Session/CodeSession activation through existing service/D
 
 ## Evidence
 
-The CLI prints the absolute `tmp/verify-chat/<run-id>/` evidence directory. Read `report.json` for the machine verdict and `report.md` for scope and timeline. `tests.jsonl` contains test assertions and stage markers; `server.log`, `build.log`, `dependencies.log` and `cleanup.log` diagnose failures. Evidence is private to the local user. Do not upload raw diagnostic files; share the summary and selected non-sensitive metadata.
+The CLI prints the absolute `tmp/verify-chat/<run-id>/` evidence directory. Read `report.json` for the machine verdict and `report.md` for scope and timeline. `tests.jsonl` contains only Go test JSON assertions and stage markers; `tests.stderr.log` keeps separate Go tool diagnostics such as cold-cache module downloads; `server.log`, `build.log`, `dependencies.log` and `cleanup.log` diagnose failures. Evidence is private to the local user. Do not upload raw diagnostic files; share the summary and selected non-sensitive metadata.
 
 Passing requires the expected test and package to pass, every proof stage to be present, no skipped tests, an unchanged source fingerprint, and successful cleanup. Exit codes: `0` pass, successful doctor or help; `1` failure or performance regression; `2` invalid arguments, incompatible baseline or blocked prerequisites. A skip, no matching test, startup failure or incomplete run is never success. Stage timestamps are observations; only `chat.performance --baseline REPORT` produces a performance regression verdict.
 

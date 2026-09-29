@@ -43,14 +43,14 @@ func loggedCommand(ctx context.Context, root string, env []string, path string, 
 		return err
 	}
 	defer log.Close()
-	return execute(ctx, root, env, log, timeout, args...)
+	return execute(ctx, root, env, log, log, timeout, args...)
 }
 
-func execute(ctx context.Context, root string, env []string, output io.Writer, timeout time.Duration, args ...string) error {
+func execute(ctx context.Context, root string, env []string, stdout, stderr io.Writer, timeout time.Duration, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := command(ctx, root, env, args...)
-	cmd.Stdout, cmd.Stderr = output, output
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return fmt.Errorf("command %s interrupted: %w", args[0], ctx.Err())

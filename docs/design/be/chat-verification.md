@@ -210,3 +210,7 @@ Markdown 和 JSON 报告均记录验证源码提交与哈希、后端提交、�
 镜像 ID 和期限。基线必须具有由 `--backend-ref` 解析的完整提交 SHA；工作区自测不能作为基线。
 CI 进一步要求该提交等于 PR base SHA。编排单测覆盖配置隔离、拓扑、进程取消、探针失败和
 清理、证据保留、下载边界、包选择及超时分类；真实场景仍是最终集成验收。
+
+`go test -json` 的 stdout 单独保存为 `tests.jsonl` 并严格解析；stderr 保存到
+`tests.stderr.log`。Go 在冷缓存下载模块时会向 stderr 写普通文本，不允许它混入 JSON
+证据流。stderr 仅用于本地诊断，不加入 CI 上传产物，也不替代测试退出码与阶段断言。

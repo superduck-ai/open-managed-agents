@@ -84,12 +84,7 @@ export function SessionTranscriptView({
       {blocks.map((block, index) => {
         if (block.kind === 'user') {
           return (
-            <MessageScrollerItem
-              key={block.id}
-              messageId={block.id}
-              scrollAnchor
-              className={index === 0 ? 'mt-1.5' : 'mt-3'}
-            >
+            <MessageScrollerItem key={block.id} messageId={block.id} className={index === 0 ? 'mt-1.5' : 'mt-3'}>
               <Message align="end" data-transcript-block="user" className="items-start">
                 <MessageContent className="w-auto max-w-[92%] gap-0 sm:max-w-[80%]">
                   {renderEntry(block.entry, 'standalone')}

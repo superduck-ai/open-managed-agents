@@ -197,11 +197,7 @@ func TestWebhookMemoryCleanupFailureAndDelivery(t *testing.T) {
 	calls := 0
 	probe.beforeDelete = func() {
 		calls++
-		var count int
-		err := app.pool.QueryRow(context.Background(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND payload->'event'->'data'->>'id'=$1 AND payload->'event'->'data'->>'type'='memory_store.deleted'`, store.ID).Scan(&count)
-		if err != nil || count != 1 {
-			t.Errorf("deleted event not enqueued before cleanup: count=%d error=%v", count, err)
-		}
+		assertWebhookCount(t, app, "memory_store.deleted", store.ID, 1)
 	}
 	objects.deleteErr = errors.New("test storage unavailable")
 	deleteMemoryStore(t, app, store.ID)
@@ -219,7 +215,7 @@ func TestWebhookMemoryCleanupFailureAndDelivery(t *testing.T) {
 		}
 	})
 	worker := cleanup.NewWorker(app.db, newFakeStorageClient(objects), time.Second, nil)
-	if err := worker.RunOnce(t.Context(), "memory-cleanup-failed"); err != nil {
+	if err := worker.RunOnce(t.Context(), "memory-webhook-cleanup"); err != nil {
 		t.Fatal(err)
 	}
 	var pending int
@@ -230,7 +226,7 @@ func TestWebhookMemoryCleanupFailureAndDelivery(t *testing.T) {
 	if _, err := app.pool.Exec(t.Context(), `UPDATE jobs SET run_after=NOW() WHERE type='object_cleanup' AND workspace_uuid=$1 AND payload->>'bucket'=$2`, scope, objects.Name()); err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.RunOnce(t.Context(), "memory-cleanup-success"); err != nil {
+	if err := worker.RunOnce(t.Context(), "memory-webhook-cleanup"); err != nil {
 		t.Fatal(err)
 	}
 	if len(objects.objects) != 0 {
@@ -259,10 +255,7 @@ func assertMemoryWebhookCounts(t *testing.T, app *testApp, id string, created, a
 }
 func assertMemoryWebhookTotal(t *testing.T, app *testApp, want int) {
 	t.Helper()
-	var total int
-	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery'`).Scan(&total); err != nil || total != want {
-		t.Fatalf("webhook jobs=%d want %d: %v", total, want, err)
-	}
+	assertWebhookQueueCount(t, app, want)
 }
 func memoryWebhookRowCounts(t *testing.T, app *testApp, id string) [3]int {
 	t.Helper()

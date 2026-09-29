@@ -335,10 +335,16 @@ func (h *Handler) archiveVaultRoute(w http.ResponseWriter, r *http.Request) erro
 		return internalError("Could not archive vault", fmt.Errorf("archive vault %q: %w", vaultID, err))
 	}
 	occurredAt := time.Now().UTC()
+	ctx, cancel := context.WithTimeout(r.Context(), webhooks.EnqueueTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
 	if result.Changed {
 		h.enqueueWebhook(r, principal, "vault.archived", result.Vault.ExternalID, nil, *result.Vault.ArchivedAt)
 	}
 	for _, credentialID := range result.CredentialIDs {
+		if ctx.Err() != nil {
+			break
+		}
 		h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", credentialID, webhooks.EventOptions{VaultID: &result.Vault.ExternalID}, occurredAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromVault(result.Vault))
@@ -359,8 +365,14 @@ func (h *Handler) deleteVaultRoute(w http.ResponseWriter, r *http.Request) error
 		return internalError("Could not delete vault", fmt.Errorf("delete vault %q: %w", vaultID, err))
 	}
 	occurredAt := time.Now().UTC()
+	ctx, cancel := context.WithTimeout(r.Context(), webhooks.EnqueueTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
 	h.enqueueWebhook(r, principal, "vault.deleted", vaultID, nil, occurredAt)
 	for _, credentialID := range credentialIDs {
+		if ctx.Err() != nil {
+			break
+		}
 		parentVaultID := vaultID
 		h.enqueueWebhookWithOptions(r, principal, "vault_credential.deleted", credentialID, webhooks.EventOptions{VaultID: &parentVaultID}, occurredAt)
 	}

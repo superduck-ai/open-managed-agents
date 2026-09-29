@@ -4,9 +4,56 @@
 
 2026-09-21 分步实施：第一阶段订阅管理已提交为 `85ff33a`；第二阶段 17 项事件与 Deployment 创建 Session 通知已提交为 `18a7cef`；Environment 四项事件已提交为 `842a099`；Memory Store 三项事件已提交为 `0109df2`；Agent 三项事件已提交为 `63aa796`；Deployment 五项事件已提交为 `2fb9a78`；Deployment Run 三项已提交为 `53be80c`，共 35 项有实际触发入口的事件。2026-09-22 按确认范围，另开放 `agent.deleted` 和 `deployment.deleted` 作为预留订阅，共 37 个可选类型；预留项当前不会产生通知。2026-09-23 再预留 `session.budget_reached`，当前共 38 项（35 项已接入、3 项预留）。其他资源事件和投递策略差异留待后续。旧占位 Webhook 数据没有上线，不增加兼容迁移或旧事件别名支持。
 
-保留现有 `internal/webhooks` resource、Yourbatis Mapper、endpoint/job 表、Enqueuer、Worker 和鉴权路径。前端继续使用现有 Console 路由、TanStack Query、shadcn Dialog/Sheet；只拆出事件目录、反馈、复用的事件选择和表单模块，不引入新的事件总线、服务或数据库表。
+保留现有 `internal/webhooks` resource、Yourbatis Mapper、endpoint 表与 JetStream 队列、Enqueuer、Worker 和鉴权路径。前端继续使用现有 Console 路由、TanStack Query、shadcn Dialog/Sheet；只拆出事件目录、反馈、复用的事件选择和表单模块，不引入新的事件总线、服务或数据库表。
 
 Webhook 页面保留参考 Claude Console 的布局与交互，按钮、操作提示和事件展示标签遵循现有 `useI18n` 及中英文词典。中文模式显示“添加 Webhook 端点”“全选”等中文文案；事件协议名（如 `session.updated`）保持原样，英文模式仍提供英文文案。无端点时，列表中央使用信号塔图标和带加号的次要“添加 Webhook 端点”按钮，与顶部按钮共用创建弹窗；加载、请求失败和搜索无匹配结果时不显示此创建空状态。
+
+## 当前投递架构：JetStream（2026-09-29）
+
+本节是当前队列、投递和升级合同。下文标有历史阶段的 jobs、租约、结果与统计同事务说明仅记录演进，已被本节替代；资源触发、API、UI 与 38 项目录（35 项入口、3 项预留）保持不变。
+
+```mermaid
+flowchart TD
+    Commit[资源事务成功] --> Match[查询匹配订阅 UUID]
+    Match --> Event[生成一次事件 ID、发生时间与 payload]
+    Event --> Publish[逐订阅发布并等待 PublishAck]
+    Publish --> JS[JetStream 文件存储 WorkQueue]
+    JS --> Batch[每批最多 10 条并发，不预取]
+    Batch --> Target[按 workspace 与订阅 UUID 读取当前目标]
+    Target --> Send[公网 IP 检查、签名、HTTP POST]
+    Send --> Stats[尽力更新 PostgreSQL 失败窗口]
+    Stats --> Finish{结束或重试}
+    Finish --> ACK[DoubleAck：删除消息]
+    Finish --> NAK[NakWithDelay：延后消费]
+    NAK --> JS
+```
+
+- PostgreSQL 只保存订阅、密钥、启用状态与失败窗口；不再保存 Webhook delivery jobs 或 HTTP 结果账本。运行时 SQL 仍使用 Yourbatis。业务提交与发布、订阅结果更新与消息确认均不原子化，不引入 Outbox、死信队列、重放或清理 Worker。
+- Stream `OMA_WEBHOOK_DELIVERY`，Subject `oma.webhook.delivery.v1`，所有实例共享 durable pull consumer `oma_webhook_delivery`。FileStorage、WorkQueuePolicy、DiscardNew；默认 64 MiB、24h、3 副本。新增 `nats.webhook_stream.{max_bytes,max_age,replicas}`，单节点显式 replicas=1。容量为逻辑消息存储预算，不是进程内存上限；副本与存储管理另有开销。
+- 单条 envelope 最多 64 KiB，只包含 version=1、workspace_uuid、endpoint_uuid、原始 event。无 URL、密钥或完整资源内容。相同事件的扇出共享 ID、时间和 payload，发布 MsgID 为 event ID 与 endpoint UUID 的组合。去重窗口 min(2min,max_age)，不能替代 HTTP 接收方去重。
+- Vault 及其 Credential 级联通知、Agent 归档产生的一组 Deployment 通知、定时 Deployment 一次执行及同批 Session 事件分别共用 5s 通知期限，包含租户信息查询。到期停止后续通知，允许部分丢失但不改变已提交业务结果；不按子资源数累加独立等待，也不引入后台补发。
+- Enqueue 的订阅查询和顺序发布共用最长 5s，受上游 context 限制。只查询匹配的启用订阅 UUID；无匹配不发布。逐条等待持久化确认，不使用客户端额外发布重试或后台缓冲；失败可部分成功，日志不改变成功的业务响应。订阅快照发生在提交后的查询时刻，不宣称事务级事件发生时快照。
+- HTTP/River 生产入口之前初始化队列、Consumer 和共享 Enqueuer，失败阻止启动；无数据库或内存降级。worker_enabled=false 只关闭消费，发布仍生效并受过期/容量限制。
+- Fetch 最多 10 条、最长 1s，消息到达即处理，等本次 Fetch 与整批完成才继续；没有预取下一批或按订阅启动 goroutine。MaxRequestBatch=10，Consumer 共享 MaxAckPending=1000。空批正常，领取错误等待可取消的 1s。每实例最多 10 条，多实例叠加，不承诺顺序或订阅公平性。
+- HTTP timeout 为 T，批次从领取前计时 T+15s，AckWait=max(60s,T+30s)。不设置 Consumer BackOff、不续租。目标按 workspace 与 endpoint UUID 查询，缺失/禁用/删除/越界则确认跳过，不更新统计；不重新匹配事件列表。配置取消费时快照，之后编辑无法撤销已发送请求。
+- 专用 Client/Transport 每批共享，直连、忽略代理、DNS 公网 IP 与 TLS 校验、不跟随跳转保持不变；结束关闭空闲连接。收到响应头即按状态判定并关闭正文，不读取或保存响应正文；不在 HTTP 期间持有数据库连接。
+- 默认 max_attempts=3 映射 MaxDeliver，显式配置优先。它是消费机会，而非精确 HTTP 次数：查询失败和进程中断也会消耗机会。普通失败按第 n 次消费使用 [5s,min(120s,5s×2ⁿ)) 抖动，NakWithDelay 延迟重投；实际时间受批次与积压影响。崩溃/确认丢失由 AckWait 恢复，不声称沿用相同抖动。
+- 2xx、无效目标、非法消息、永久拒绝、次数耗尽及本次普通失败触发自动禁用，都 DoubleAck 结束；ACK 表示处理结束，不代表 HTTP 成功。确认失败不在原处理函数重发 HTTP。正常 ACK 删除 WorkQueue 消息；崩溃耗尽次数的残留交 MaxAge 清理。重新启用不恢复已确认消息；提高 MaxDeliver 可能影响异常残留，不删除重建 Consumer。
+- 订阅统计最多尝试写入 2s（且受批次期限限制）。保留 workspace、未删除和 enabled 条件，迟到成功不能启用已禁用端点。写入失败只记录日志，不让成功 HTTP 因统计失败重发；永久拒绝仍结束，禁用可能未落库。统计按数据库接受顺序，可能遗漏或重复，没有领取标记 fencing 或精确结果幂等。
+- 持续失败默认 24h 与消息保留默认 24h 是独立配置。首次失败建窗口，后续失败达到阈值才禁用；成功/显式启用清零，普通编辑不清零，计数不用于禁用。3xx 和永久地址拒绝使用既有原因并立即结束；DB 写入可用时禁用端点。
+- Worker 的 stop 函数取消领取和处理并等待退出，在共享 NATS Drain 和 DB Close 之前完成；初始化后启动失败也执行清理。
+
+### 升级与可靠性边界
+
+停止所有旧生产者与 Worker → 执行 migration `00070_webhook_failure_window.sql` → 启动新版。该迁移同时增加 nullable failure_started_at，并仅将旧 webhook_delivery 的 pending/retry/running 标记 failed，释放锁、注明队列停用；保留 payload 中原 event、attempts、订阅统计和其他 jobs，不迁移消息、不删除历史。Down 不复活。不得混跑；回退旧版不转移 JetStream 消息，也不恢复旧任务。
+
+本分支尚未发布，按本轮确认将原 71 收尾 SQL 合并进 70。新安装/从 upstream 升级按合并版 70 一次执行。已执行旧版 70 的开发库不会自动重跑：应停止服务、备份并核实字段和版本，仅补执行收尾 SQL，保留原失败窗口及版本 70；不要 Down/Up 清空已有失败窗口。曾手动执行 71 的开发库需另行核对迁移历史，不能直接启动或删除业务数据。
+
+更早版本的全局配置 endpoint_url/signing_key/event_types 仍需删除，严格配置拒绝空值。数据库订阅及其密钥保持有效。副本/容量/有效期是 OMA 选择，所有实例需一致配置，变更消费策略先停机。Claude 未公开内部队列实现；我们保留有限重试、薄 payload、签名、重复与无序语义，但不保证零遗漏、精确 HTTP 次数或统计与确认原子一致。发布超时/满队列、进程中断、过期或消费耗尽可能丢失通知，重要状态由资源 API 校准。
+
+### 验收路径
+
+现有资源操作/失败/重复/级联测试改为读取真实 JetStream 消息，投递测试仍经本地 HTTP 接收器及官方 Go SDK 验签。新增队列容量、单条限制、重启、短 TTL、消费耗尽、统计失败不重发成功 HTTP、10 条并发、取消及旧 jobs 精确迁移测试。验证记录见 [JetStream 迁移验证记录](webhook-jetstream-verification.md)，不能沿用历史门禁结论。人工顺序：创建订阅 → 资源操作 → 正常签名 → 普通失败重试 → 永久拒绝 → 重新启用确认旧消息不恢复 → 停启 Worker 验证积压和过期。
 
 ## 创建对话框渲染稳定性（2026-09-29）
 
@@ -22,7 +69,9 @@ Session 更新保留 upstream 的变更字段事件体，并由数据库实际�
 
 曾应用本分支旧编号 69（或更早 64）Webhook 迁移的本地数据库需要单独协调迁移历史：停止服务并备份后，核对 `failure_started_at` 列、`processed_at` 约束及 goose 记录，再处理版本对应关系。不能把旧 Webhook 69 当作 upstream 69 已执行，也不能仅重命名文件后直接启动；否则可能漏跑 upstream 约束迁移，并因重复添加 Webhook 列而失败。本次仅修正仓库迁移顺序，不自动改写开发数据库。
 
-## 数据库订阅单一路径（2026-09-28）
+## 历史阶段：数据库订阅单一路径（2026-09-28）
+
+> 以下记录 PostgreSQL jobs 阶段的设计与验收，不是当前投递合同；当前以文首 JetStream 架构为准。
 
 全局 Webhook 已移除。没有同 workspace 下启用且匹配事件的订阅就不入队，没有有效订阅目标就不发送。Enqueuer 仅持有 DB 和 logger，直接查询匹配订阅并逐个创建绑定订阅 UUID 的任务；不再预查询订阅是否存在，也不提供无目标入队方法。多个订阅共享事件 ID、发生时间和 payload，分别使用各订阅的密钥签名。
 
@@ -75,7 +124,7 @@ Worker 保留原始订阅 UUID 与当前订阅状态的区分，以及带 worksp
 - Name 和 Description 可省略或为空字符串，显式 `null` 和非字符串被拒绝；不再把空名称自动改为域名。沿用既有字节长度限制：名称 255，描述/URL 2048。
 - 创建时零事件选择；至少选择一项才可提交。创建与编辑共用事件目录、全局全选、分组半选/计数和事件协议名复制。
 - API 白名单和前端目录统一为 12 组 38 项规范事件（35 项已接入、3 项预留）。移除 `session.error`、`session.thread_status_*` 的对外订阅，以及前端未知事件和 `session.record_*` 兼容分支；内部会话流名称保持不变，在 Webhook 边界转换。
-- `session.budget_reached`、`agent.deleted`、`deployment.deleted` 按确认范围仅预留订阅，不添加产生入口或模拟投递。当前 35 项覆盖真实 API 或现有 worker 事件入口到本地接收器的验签测试，不代表真实模型已自动产生全部事件。
+- `session.budget_reached`、`agent.deleted`、`deployment.deleted` 按确认范围仅预留订阅，不添加产生入口或模拟投递。当前 35 项已有生产入口；本轮复用既有资源操作、事件入口和验签回归，不等同于为每一项事件都建立了独立端到端用例，也不代表真实模型已自动产生全部事件。
 - 列表增加 ID 搜索、名称/状态/创建时间排序和空列表创建入口。搜索/排序作用于现有 API 返回集合，不增加未经官方确认的查询参数。
 - 编辑复用现有更新 API，增加 URL 输入，支持清空可选字段；详情显示描述和禁用原因。
 - 创建和重置后的 secret 仅放在一次性弹窗状态，不放入列表缓存或 mutation 返回数据。关闭/切换 workspace 后清除展示状态；复制失败时提示重试，不能显示虚假的复制成功。
@@ -108,7 +157,7 @@ flowchart LR
     Transaction --> Result{提交成功且创建 Session}
     Result -->|是| Enqueuer[共享 Enqueuer]
     Result -->|否| Skip[不新增通知]
-    Enqueuer --> Jobs[匹配 workspace 订阅并写入 jobs]
+    Enqueuer --> Jobs[匹配 workspace 订阅并发布 JetStream]
     Jobs --> Worker[Webhook worker 签名投递]
 ```
 
@@ -117,7 +166,9 @@ flowchart LR
 - 失败运行、事务回滚、过期任务、归档分支，以及同一定时执行时刻的重复处理不新增通知。两次独立手动运行各自创建 Session、分别通知。
 - 通知准备和入队失败只记录错误，不将已提交的运行报告为失败；业务提交和入队尚未原子化。不增加 `deployment.*` 或 `deployment_run.*` 订阅。
 
-## 保留的投递边界
+## 历史阶段：保留的投递边界
+
+> 以下记录 PostgreSQL jobs 阶段的设计与验收，不是当前投递合同；当前以文首 JetStream 架构为准。
 
 沿用现有按事件发生时的 workspace 订阅选择、持久化 delivery jobs 和 Standard Webhooks 签名。投递策略由下述各阶段逐步对齐，不引入事务 outbox，不增加测试通知、投递日志 UI、手动/批量重放或多密钥宽限期。
 
@@ -167,7 +218,9 @@ flowchart TD
 
 基于时间的持续失败禁用由第三阶段补齐；资源写入和 webhook 入队的事务可靠性仍待后续处理；具体随机算法未公开，OMA 明确记录自己的实现选择。实际连接地址约束见下节。
 
-## 重试节奏与永久失败终止（第二阶段，2026-09-24）
+## 历史阶段：重试节奏与永久失败终止（第二阶段，2026-09-24）
+
+> 以下记录 PostgreSQL jobs 阶段的设计与验收，不是当前投递合同；当前以文首 JetStream 架构为准。
 
 配置与 Worker 默认总尝试次数改为 3（包含首次发送），显式正数 max_attempts 继续生效，应用于所有有效订阅目标。第 n 次失败的上界为 min(120秒, 5秒 × 2ⁿ)，从 [5秒, 上界) 均匀随机采样，默认两次重试为 5–10、5–20 秒。指数提前封顶避免溢出，使用 math/rand/v2 的并发安全随机源。随机值写入 jobs.run_after，不在 goroutine 内等待；轮询、整批耗时和积压可能延后真正发送。
 
@@ -228,7 +281,9 @@ lint、dead-code、duplicates、complexity、large-files、web-format-check、ho
 人工顺序：在测试订阅上制造失败并编辑元数据，确认自动禁用/计数保持 → 显式启用确认清零 → 验证被拒绝地址与临时 DNS 失败分类 → 正常接收并使用官方 SDK 验签 → 暂停投递后恢复，核对原始事件时间、重试 payload 和新签名时间。生产直连出口与浏览器人工流程未在本阶段执行。
 
 
-## 持续失败时间窗口（第三阶段，2026-09-24）
+## 历史阶段：持续失败时间窗口（第三阶段，2026-09-24）
+
+> 以下记录 PostgreSQL jobs 阶段的设计与验收，不是当前投递合同；当前以文首 JetStream 架构为准。
 
 成功和失败写回均先锁定有效任务领取，再更新订阅统计，最后以当前领取标记和数据库时钟条件写入任务结果；等待订阅行锁期间租约过期时，统计和任务一起回滚。跳过及已耗尽任务不更新订阅统计，直接使用现有条件写回，不增加额外领取查询。
 

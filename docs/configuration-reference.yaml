@@ -26,6 +26,11 @@ nats:
   url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
   connect_timeout: 5s
   drain_timeout: 10s
+  # Dedicated webhook queue; independent from the endpoint failure window.
+  webhook_stream:
+    max_bytes: 67108864
+    max_age: 24h
+    replicas: 3 # Set 1 for a single-node JetStream deployment.
   worker_event_stream:
     max_bytes: 268435456
     max_age: 0s
@@ -160,7 +165,7 @@ webhook:
   # Delivery uses workspace subscriptions only. Set false to pause this instance.
   worker_enabled: true
   timeout: 10s
-  # Includes the first attempt; explicit positive values override this default.
+  # JetStream consumption opportunities, including the first; not guaranteed HTTP sends.
   max_attempts: 3
   # Positive duration; checked on failures, reset by a successful delivery or explicit enable.
   failure_disable_after: 24h

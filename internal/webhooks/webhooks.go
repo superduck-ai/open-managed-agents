@@ -6,27 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
-)
-
-const (
-	defaultWorkerInterval = 5 * time.Second
-	defaultLeaseDuration  = time.Minute
-	defaultBatchSize      = 10
 )
 
 type EventData struct {
@@ -63,122 +50,6 @@ type deliveryFailure struct {
 
 func (e deliveryFailure) Error() string {
 	return e.reason
-}
-
-// Worker owns the webhook delivery loop and its stable dependencies.
-type Worker struct {
-	database *db.DB
-	cfg      config.WebhookConfig
-	logger   *slog.Logger
-}
-
-// NewWorker constructs a webhook delivery worker.
-func NewWorker(database *db.DB, cfg config.WebhookConfig, logger *slog.Logger) *Worker {
-	return &Worker{
-		database: database,
-		cfg:      cfg,
-		logger:   logging.LoggerOrDefault(logger),
-	}
-}
-
-// Start launches the webhook delivery loop when it is enabled.
-func (w *Worker) Start(ctx context.Context) {
-	if w == nil || w.database == nil || !w.cfg.WorkerEnabled {
-		return
-	}
-	workerID := fmt.Sprintf("webhook-delivery-%d", os.Getpid())
-	go func() {
-		ticker := time.NewTicker(defaultWorkerInterval)
-		defer ticker.Stop()
-		for {
-			if err := w.RunOnce(ctx, workerID); err != nil {
-				w.logger.ErrorContext(ctx, "webhook delivery worker", "error", err)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-}
-
-// RunOnce leases and processes one batch of webhook delivery jobs.
-func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
-	timeout := webhookTimeout(w.cfg)
-	ctx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
-	defer cancel()
-	lease := max(defaultLeaseDuration, timeout+30*time.Second)
-	jobs, err := w.database.LeaseWebhookDeliveryJobs(ctx, workerID, defaultBatchSize, lease)
-	if err != nil {
-		return err
-	}
-	transport := newDeliveryTransport(ctx, w.cfg.AllowInsecure, timeout)
-	defer transport.CloseIdleConnections()
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	errs := make([]error, len(jobs))
-	var pending sync.WaitGroup
-	for i, job := range jobs {
-		pending.Go(func() {
-			errs[i] = w.processJob(ctx, client, job)
-		})
-	}
-	pending.Wait()
-	return errors.Join(errs...)
-}
-
-func (w *Worker) processJob(ctx context.Context, client *http.Client, job db.WebhookDeliveryJob) error {
-	target, skip, deliveryErr := targetForJob(w.cfg, job)
-	var applied bool
-	var err error
-	switch {
-	case skip:
-		applied, err = w.database.CompleteWebhookDeliveryJob(ctx, job, false)
-	case job.Attempts >= webhookMaxAttempts(w.cfg):
-		applied, err = w.database.ExhaustWebhookDeliveryJob(ctx, job)
-	default:
-		if deliveryErr == nil {
-			deliveryErr = deliver(ctx, client, target, job.Event)
-		}
-		if deliveryErr == nil {
-			applied, err = w.database.CompleteWebhookDeliveryJob(ctx, job, true)
-		} else {
-			result := db.WebhookDeliveryFailure{Reason: deliveryErr.Error(), MaxAttempts: webhookMaxAttempts(w.cfg), DisableAfter: webhookFailureDisableAfter(w.cfg)}
-			var failure deliveryFailure
-			if errors.As(deliveryErr, &failure) && failure.immediateDisable {
-				result.Terminal = true
-			}
-			if !result.Terminal && job.Attempts+1 < result.MaxAttempts {
-				result.RetryDelay = retryDelay(job.Attempts+1, rand.Int64N)
-			}
-			applied, err = w.database.FailWebhookDeliveryJob(ctx, job, result)
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("record webhook job %s result: %w", job.ExternalID, err)
-	}
-	if !applied {
-		w.logger.DebugContext(ctx, "webhook claim no longer current", "job_id", job.ExternalID)
-	}
-	return nil
-}
-
-func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (deliveryTarget, bool, error) {
-	if job.WebhookEndpointUUID == nil || job.WebhookEndpointStatus != "enabled" || job.WebhookEndpointURL == "" || job.WebhookEndpointSecret == "" {
-		return deliveryTarget{}, true, nil
-	}
-	target := deliveryTarget{
-		URL:           job.WebhookEndpointURL,
-		SigningKey:    job.WebhookEndpointSecret,
-		AllowInsecure: cfg.AllowInsecure,
-	}
-	return target, false, validateDeliveryTarget(target, "webhook endpoint")
 }
 
 func deliver(ctx context.Context, client *http.Client, target deliveryTarget, payload []byte) error {
@@ -222,7 +93,6 @@ func deliver(ctx context.Context, client *http.Client, target deliveryTarget, pa
 		return fmt.Errorf("post webhook: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 			return deliveryFailure{reason: redirectReason, immediateDisable: true}

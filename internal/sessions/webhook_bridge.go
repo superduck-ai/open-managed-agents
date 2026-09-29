@@ -15,11 +15,16 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 	if h.webhooks == nil || len(events) == 0 {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, webhooks.EnqueueTimeout)
+	defer cancel()
 	var workspaceIDs db.WorkspaceIdentifiers
 	var workspaceLoaded, primaryLoaded, primaryFound bool
 	var primaryID string
 	seen := map[string]struct{}{}
 	for _, event := range events {
+		if ctx.Err() != nil {
+			return
+		}
 		for _, webhookEvent := range webhookEventsFromSessionEvent(event) {
 			if strings.HasPrefix(webhookEvent.EventType, "session.thread_") {
 				if webhookEvent.ThreadID == nil {

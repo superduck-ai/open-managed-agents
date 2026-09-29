@@ -6,22 +6,9 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/superduck-ai/yourbatis"
 )
 
 func TestWebhookFailureWindowMapperResults(t *testing.T) {
-	for _, populated := range []bool{false, true} {
-		var rows [][]driver.Value
-		if populated {
-			rows = [][]driver.Value{{"job_uuid"}}
-		}
-		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}, rows: rows})
-		row, found, err := NewWebhookDeliveryJobMapper(executor).LockClaim(t.Context(), "job", "workspace", "claim")
-		if err != nil || found != populated || (found && row.UUID != "job_uuid") {
-			t.Fatalf("claim=%+v %t %v", row, found, err)
-		}
-	}
 	for _, state := range []string{"missing", "enabled", "disabled"} {
 		var rows [][]driver.Value
 		if state != "missing" {
@@ -54,20 +41,4 @@ func TestWebhookFailureWindowMapperResults(t *testing.T) {
 			t.Fatal("lost timestamp")
 		}
 	}
-}
-
-func TestWebhookFailureWindowClaimSQL(t *testing.T) {
-	bound := buildWebhookDeliveryJobMapperLockClaim(yourbatis.DialectPostgres, "job", "workspace", "claim")
-	assertWebhookMapperContract(t, webhookMapperContract{
-		name: "lock claim", statement: webhookDeliveryJobMapperLockClaimStatement, bound: bound,
-		id: "WebhookDeliveryJobMapper.LockClaim", kind: yourbatis.StatementSelect,
-		values:    []any{"job", "workspace", "claim"},
-		fragments: []string{"FOR UPDATE", "uuid = $1", "workspace_uuid = $2", "locked_by = $3", "status = 'running'", "locked_until > clock_timestamp()", "type = 'webhook_delivery'"},
-	})
-	assertMapperExecutionError(t, mapperExecutionErrorContract{
-		"WebhookDeliveryJobMapper.LockClaim", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
-			_, _, err := NewWebhookDeliveryJobMapper(executor).LockClaim(t.Context(), "job", "workspace", "claim")
-			return err
-		},
-	})
 }

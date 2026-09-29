@@ -30,11 +30,9 @@ func TestWebhookMapperStatements(t *testing.T) {
 		workspaceUUID    = "00000000-0000-4000-8000-000000000002"
 		apiKeyUUID       = "00000000-0000-4000-8000-000000000003"
 		endpointUUID     = "00000000-0000-4000-8000-000000000004"
-		jobUUID          = "00000000-0000-4000-8000-000000000005"
 	)
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	disabledReason := "temporary failure"
-	payload := []byte(`{"event_type":"session.status_idled","event":{"type":"session.status_idled"}}`)
 	events := json.RawMessage(`["session.status_idled"]`)
 	insertParams := insertWebhookEndpointParams{
 		UUID:                endpointUUID,
@@ -68,9 +66,6 @@ func TestWebhookMapperStatements(t *testing.T) {
 		SigningSecret: "new-secret",
 		UpdatedAt:     now,
 	}
-	failJobParams := failWebhookDeliveryJobParams{
-		JobUUID: jobUUID, WorkspaceUUID: workspaceUUID, ClaimToken: "claim_test", Status: "retry", RunAfter: now, Attempts: 2, Reason: disabledReason,
-	}
 	failEndpointParams := recordWebhookEndpointFailureParams{
 		EndpointUUID: endpointUUID, WorkspaceUUID: workspaceUUID, DisableAfterMicroseconds: (24 * time.Hour).Microseconds(), Reason: disabledReason,
 	}
@@ -81,32 +76,6 @@ func TestWebhookMapperStatements(t *testing.T) {
 			bound: buildWebhookWorkspaceMapperFindIdentifiers(yourbatis.DialectPostgres, workspaceUUID),
 			id:    "WebhookWorkspaceMapper.FindIdentifiers", kind: yourbatis.StatementSelect,
 			values: []any{workspaceUUID}, fragments: []string{"FROM workspaces", "uuid = $1"},
-		},
-		{
-			name: "insert delivery job", statement: webhookDeliveryJobMapperInsertStatement,
-			bound: buildWebhookDeliveryJobMapperInsert(yourbatis.DialectPostgres, workspaceUUID, payload),
-			id:    "WebhookDeliveryJobMapper.Insert", kind: yourbatis.StatementInsert,
-			values: []any{workspaceUUID, payload}, fragments: []string{"INSERT INTO jobs", "'webhook_delivery'", "CAST($2 AS jsonb)"},
-		},
-		{
-			name: "lease delivery jobs", statement: webhookDeliveryJobMapperLeaseStatement,
-			bound: buildWebhookDeliveryJobMapperLease(yourbatis.DialectPostgres, "worker_test", 10, time.Minute.Microseconds()),
-			id:    "WebhookDeliveryJobMapper.Lease", kind: yourbatis.StatementSelect,
-			values:    []any{10, "worker_test", time.Minute.Microseconds()},
-			fragments: []string{"FOR UPDATE SKIP LOCKED", "UPDATE jobs", "LEFT JOIN webhook_endpoints", "AS uuid)", "NULLIF(u.payload->>'webhook_endpoint_uuid', '') AS webhook_endpoint_uuid", "we.workspace_uuid = u.workspace_uuid", "u.locked_by"},
-		},
-		{
-			name: "complete delivery job", statement: webhookDeliveryJobMapperCompleteStatement,
-			bound: buildWebhookDeliveryJobMapperComplete(yourbatis.DialectPostgres, jobUUID, workspaceUUID, "claim_test"),
-			id:    "WebhookDeliveryJobMapper.Complete", kind: yourbatis.StatementUpdate,
-			values: []any{jobUUID, workspaceUUID, "claim_test"}, fragments: []string{"UPDATE jobs", "status = 'completed'", "uuid = $1", "workspace_uuid = $2", "locked_by = $3", "status = 'running'", "locked_until > clock_timestamp()"},
-		},
-		{
-			name: "fail delivery job", statement: webhookDeliveryJobMapperFailStatement,
-			bound: buildWebhookDeliveryJobMapperFail(yourbatis.DialectPostgres, failJobParams),
-			id:    "WebhookDeliveryJobMapper.Fail", kind: yourbatis.StatementUpdate,
-			values:    []any{"retry", now, 2, disabledReason, jobUUID, workspaceUUID, "claim_test"},
-			fragments: []string{"UPDATE jobs", "jsonb_build_object", "CAST($4 AS text)", "uuid = $5", "workspace_uuid = $6", "locked_by = $7", "status = 'running'", "locked_until > clock_timestamp()"},
 		},
 		{
 			name: "insert endpoint", statement: webhookEndpointMapperInsertStatement,
@@ -250,24 +219,9 @@ func TestWebhookMapperResultSemantics(t *testing.T) {
 			columns: webhookEndpointMapperTestColumns(),
 			rows:    [][]driver.Value{webhookEndpointMapperTestRow(), webhookEndpointMapperTestRow()},
 		})
-		rows, err = NewWebhookEndpointMapper(executor).ListActiveForEvent(context.Background(), "workspace", "event")
+		rows, err = NewWebhookEndpointMapper(executor).List(context.Background(), "workspace")
 		if err != nil || len(rows) != 2 {
-			t.Fatalf("ListActiveForEvent() = (%+v, %v)", rows, err)
-		}
-	})
-
-	t.Run("lease row scans nullable string UUID", func(t *testing.T) {
-		executor := newMapperTestExecutor(t, mapperTestResponse{
-			columns: webhookDeliveryJobMapperTestColumns(),
-			rows:    [][]driver.Value{webhookDeliveryJobMapperTestRow()},
-		})
-		rows, err := NewWebhookDeliveryJobMapper(executor).Lease(context.Background(), "worker", 1, 1)
-		if err != nil || len(rows) != 1 {
-			t.Fatalf("Lease() = (%+v, %v)", rows, err)
-		}
-		job := rows[0].job()
-		if job.WebhookEndpointUUID == nil || *job.WebhookEndpointUUID != "00000000-0000-4000-8000-000000000004" {
-			t.Fatalf("Lease() job = %+v", job)
+			t.Fatalf("List() = (%+v, %v)", rows, err)
 		}
 	})
 
@@ -278,96 +232,6 @@ func TestWebhookMapperResultSemantics(t *testing.T) {
 			t.Fatalf("UpdateSigningSecret() = (%d, %v)", rowsAffected, err)
 		}
 	})
-}
-
-func TestWebhookJobMapperAffectedRows(t *testing.T) {
-	for _, count := range []int64{0, 1} {
-		for _, operation := range []string{"complete", "fail", "exhaust"} {
-			executor := newMapperTestExecutor(t, mapperTestResponse{rowsAffected: count})
-			mapper := NewWebhookDeliveryJobMapper(executor)
-			var rows int64
-			var err error
-			switch operation {
-			case "fail":
-				rows, err = mapper.Fail(t.Context(), failWebhookDeliveryJobParams{})
-			case "exhaust":
-				rows, err = mapper.Exhaust(t.Context(), "job", "workspace", "claim")
-			default:
-				rows, err = mapper.Complete(t.Context(), "job", "workspace", "claim")
-			}
-			if err != nil || rows != count {
-				t.Fatalf("operation=%s rows=%d error=%v want=%d", operation, rows, err, count)
-			}
-		}
-	}
-}
-
-func TestWebhookMapperMethodsPropagateExecutionErrors(t *testing.T) {
-	ctx := context.Background()
-	tests := []struct {
-		name     string
-		contract mapperExecutionErrorContract
-	}{
-		{"workspace identifiers", mapperExecutionErrorContract{"WebhookWorkspaceMapper.FindIdentifiers", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookWorkspaceMapper(executor).FindIdentifiers(ctx, "workspace")
-			return err
-		}}},
-		{"insert job", mapperExecutionErrorContract{"WebhookDeliveryJobMapper.Insert", yourbatis.StatementInsert, false, func(executor yourbatis.Executor) error {
-			return NewWebhookDeliveryJobMapper(executor).Insert(ctx, "workspace", nil)
-		}}},
-		{"lease jobs", mapperExecutionErrorContract{"WebhookDeliveryJobMapper.Lease", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookDeliveryJobMapper(executor).Lease(ctx, "worker", 1, 1)
-			return err
-		}}},
-		{"complete job", mapperExecutionErrorContract{"WebhookDeliveryJobMapper.Complete", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookDeliveryJobMapper(executor).Complete(ctx, "job", "workspace", "claim")
-			return err
-		}}},
-		{"fail job", mapperExecutionErrorContract{"WebhookDeliveryJobMapper.Fail", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookDeliveryJobMapper(executor).Fail(ctx, failWebhookDeliveryJobParams{})
-			return err
-		}}},
-		{"insert endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.Insert", yourbatis.StatementInsert, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).Insert(ctx, insertWebhookEndpointParams{})
-			return err
-		}}},
-		{"list endpoints", mapperExecutionErrorContract{"WebhookEndpointMapper.List", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).List(ctx, "workspace")
-			return err
-		}}},
-		{"find endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.FindByExternalID", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).FindByExternalID(ctx, "workspace", "external")
-			return err
-		}}},
-		{"update endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.UpdateByExternalID", yourbatis.StatementUpdate, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).UpdateByExternalID(ctx, updateWebhookEndpointParams{})
-			return err
-		}}},
-		{"update secret", mapperExecutionErrorContract{"WebhookEndpointMapper.UpdateSigningSecret", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).UpdateSigningSecret(ctx, regenerateWebhookEndpointSecretParams{})
-			return err
-		}}},
-		{"delete endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.SoftDeleteByExternalID", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).SoftDeleteByExternalID(ctx, "workspace", "external")
-			return err
-		}}},
-		{"list active endpoints", mapperExecutionErrorContract{"WebhookEndpointMapper.ListActiveForEvent", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).ListActiveForEvent(ctx, "workspace", "event")
-			return err
-		}}},
-		{"record success", mapperExecutionErrorContract{"WebhookEndpointMapper.RecordDeliverySuccess", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
-			return NewWebhookEndpointMapper(executor).RecordDeliverySuccess(ctx, "endpoint", "workspace")
-		}}},
-		{"record failure", mapperExecutionErrorContract{"WebhookEndpointMapper.RecordDeliveryFailure", yourbatis.StatementUpdate, true, func(executor yourbatis.Executor) error {
-			_, err := NewWebhookEndpointMapper(executor).RecordDeliveryFailure(ctx, recordWebhookEndpointFailureParams{})
-			return err
-		}}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assertMapperExecutionError(t, test.contract)
-		})
-	}
 }
 
 func webhookEndpointMapperTestColumns() []string {
@@ -385,22 +249,6 @@ func webhookEndpointMapperTestRow() []driver.Value {
 		"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002",
 		"00000000-0000-4000-8000-000000000003", "https://example.test", "Test", "Description",
 		[]byte(`["session.status_idled"]`), "secret", "disabled", "temporary failure", 1, nil, now, now, nil,
-	}
-}
-
-func webhookDeliveryJobMapperTestColumns() []string {
-	return []string{
-		"uuid", "external_id", "workspace_uuid", "locked_by", "event", "attempts",
-		"webhook_endpoint_uuid", "webhook_endpoint_external_id", "webhook_endpoint_url",
-		"webhook_endpoint_secret", "webhook_endpoint_status",
-	}
-}
-
-func webhookDeliveryJobMapperTestRow() []driver.Value {
-	return []driver.Value{
-		"00000000-0000-4000-8000-000000000005", "job_test",
-		"00000000-0000-4000-8000-000000000002", "claim_test", []byte(`{"type":"session.status_idled"}`), 1,
-		"00000000-0000-4000-8000-000000000004", "wh_test", "https://example.test", "secret", "enabled",
 	}
 }
 
@@ -457,28 +305,84 @@ func TestWebhookEndpointPartialUpdateSQL(t *testing.T) {
 	}
 }
 
-func TestWebhookTerminalMapperSQL(t *testing.T) {
-	bound := buildWebhookDeliveryJobMapperExhaust(yourbatis.DialectPostgres, "job", "workspace", "claim")
+func TestWebhookDeliveryTargetMapper(t *testing.T) {
+	bound := buildWebhookEndpointMapperFindDeliveryTarget(yourbatis.DialectPostgres, "workspace", "endpoint")
 	assertWebhookMapperContract(t, webhookMapperContract{
-		statement: webhookDeliveryJobMapperExhaustStatement, bound: bound,
-		id: "WebhookDeliveryJobMapper.Exhaust", kind: yourbatis.StatementUpdate,
-		values:    []any{"job", "workspace", "claim"},
-		fragments: []string{"status = 'failed'", "workspace_uuid = $2", "locked_by = $3", "status = 'running'", "locked_until > clock_timestamp()"},
+		name: "delivery target", statement: webhookEndpointMapperFindDeliveryTargetStatement, bound: bound,
+		id: "WebhookEndpointMapper.FindDeliveryTarget", kind: yourbatis.StatementSelect,
+		values: []any{"workspace", "endpoint"}, fragments: []string{"SELECT url, signing_secret, status", "workspace_uuid = $1", "uuid = $2", "deleted_at IS NULL"},
 	})
-	for _, forbidden := range []string{"attempts =", "payload =", "run_after ="} {
-		if strings.Contains(bound.SQL, forbidden) {
-			t.Fatalf("exhaustion rewrites %s", forbidden)
+	for _, populated := range []bool{false, true} {
+		var rows [][]driver.Value
+		if populated {
+			rows = [][]driver.Value{{"https://example.com", "secret", "enabled"}}
+		}
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"url", "signing_secret", "status"}, rows: rows})
+		target, found, err := NewWebhookEndpointMapper(executor).FindDeliveryTarget(t.Context(), "workspace", "endpoint")
+		if err != nil || found != populated || (found && target.Status != "enabled") {
+			t.Fatalf("target=%+v %t %v", target, found, err)
 		}
 	}
-	bound = buildWebhookDeliveryJobMapperFail(yourbatis.DialectPostgres, failWebhookDeliveryJobParams{Status: "failed", Attempts: 1, Reason: "permanent", JobUUID: "job", WorkspaceUUID: "workspace", ClaimToken: "claim"})
-	if strings.Contains(bound.SQL, "run_after =") {
-		t.Fatal("terminal failure schedules retry")
+	ids := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}, rows: [][]driver.Value{{"one"}, {"two"}}})
+	rows, err := NewWebhookEndpointMapper(ids).ListActiveForEvent(t.Context(), "workspace", "event")
+	if err != nil || len(rows) != 2 || rows[1].UUID != "two" {
+		t.Fatalf("ids=%+v %v", rows, err)
 	}
-	if !reflect.DeepEqual(bound.Values(), []any{"failed", 1, "permanent", "job", "workspace", "claim"}) {
-		t.Fatalf("bindings=%#v", bound.Values())
-	}
-	assertMapperExecutionError(t, mapperExecutionErrorContract{"WebhookDeliveryJobMapper.Exhaust", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
-		_, err := NewWebhookDeliveryJobMapper(executor).Exhaust(t.Context(), "job", "workspace", "claim")
+	assertMapperExecutionError(t, mapperExecutionErrorContract{"WebhookEndpointMapper.FindDeliveryTarget", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
+		_, _, err := NewWebhookEndpointMapper(executor).FindDeliveryTarget(t.Context(), "workspace", "endpoint")
 		return err
 	}})
+}
+
+func TestWebhookMapperMethodsPropagateExecutionErrors(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name     string
+		contract mapperExecutionErrorContract
+	}{
+		{"workspace identifiers", mapperExecutionErrorContract{"WebhookWorkspaceMapper.FindIdentifiers", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookWorkspaceMapper(executor).FindIdentifiers(ctx, "workspace")
+			return err
+		}}},
+		{"insert endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.Insert", yourbatis.StatementInsert, true, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).Insert(ctx, insertWebhookEndpointParams{})
+			return err
+		}}},
+		{"list endpoints", mapperExecutionErrorContract{"WebhookEndpointMapper.List", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).List(ctx, "workspace")
+			return err
+		}}},
+		{"find endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.FindByExternalID", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).FindByExternalID(ctx, "workspace", "external")
+			return err
+		}}},
+		{"update endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.UpdateByExternalID", yourbatis.StatementUpdate, true, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).UpdateByExternalID(ctx, updateWebhookEndpointParams{})
+			return err
+		}}},
+		{"update secret", mapperExecutionErrorContract{"WebhookEndpointMapper.UpdateSigningSecret", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).UpdateSigningSecret(ctx, regenerateWebhookEndpointSecretParams{})
+			return err
+		}}},
+		{"delete endpoint", mapperExecutionErrorContract{"WebhookEndpointMapper.SoftDeleteByExternalID", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).SoftDeleteByExternalID(ctx, "workspace", "external")
+			return err
+		}}},
+		{"list active endpoints", mapperExecutionErrorContract{"WebhookEndpointMapper.ListActiveForEvent", yourbatis.StatementSelect, true, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).ListActiveForEvent(ctx, "workspace", "event")
+			return err
+		}}},
+		{"record success", mapperExecutionErrorContract{"WebhookEndpointMapper.RecordDeliverySuccess", yourbatis.StatementUpdate, false, func(executor yourbatis.Executor) error {
+			return NewWebhookEndpointMapper(executor).RecordDeliverySuccess(ctx, "endpoint", "workspace")
+		}}},
+		{"record failure", mapperExecutionErrorContract{"WebhookEndpointMapper.RecordDeliveryFailure", yourbatis.StatementUpdate, true, func(executor yourbatis.Executor) error {
+			_, err := NewWebhookEndpointMapper(executor).RecordDeliveryFailure(ctx, recordWebhookEndpointFailureParams{})
+			return err
+		}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertMapperExecutionError(t, test.contract)
+		})
+	}
 }

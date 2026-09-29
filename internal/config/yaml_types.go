@@ -62,6 +62,7 @@ type yamlDatabaseConfig struct {
 }
 
 type yamlNATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
@@ -102,6 +103,7 @@ func newYAMLConfig() yamlConfig {
 		Redis:    defaults.Redis,
 		NATS: yamlNATSConfig{
 			WorkerEventStream: defaults.NATS.WorkerEventStream,
+			WebhookStream:     defaults.NATS.WebhookStream,
 			URL:               defaults.NATS.URL,
 			ConnectTimeout:    defaults.NATS.ConnectTimeout,
 			DrainTimeout:      defaults.NATS.DrainTimeout,
@@ -148,6 +150,7 @@ func (input yamlConfig) resolve() Config {
 		Redis:    input.Redis,
 		NATS: NATSConfig{
 			WorkerEventStream: input.NATS.WorkerEventStream,
+			WebhookStream:     input.NATS.WebhookStream,
 			URL:               input.NATS.URL,
 			ConnectTimeout:    input.NATS.ConnectTimeout,
 			DrainTimeout:      input.NATS.DrainTimeout,

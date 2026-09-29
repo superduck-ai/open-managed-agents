@@ -178,11 +178,16 @@ func run(logger *slog.Logger) error {
 	}
 	stopRunner := environmentRunner.Start(ctx)
 	defer stopRunner()
-	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	webhookQueue, err := webhooks.NewQueue(ctx, natsConnection, cfg.NATS.WebhookStream, cfg.Webhook)
+	if err != nil {
+		return fmt.Errorf("open webhook queue: %w", err)
+	}
+	webhookEnqueuer := webhooks.NewEnqueuer(database, webhookQueue, logger.With("component", "webhooks"))
+	stopWebhookWorker := webhooks.NewWorker(database, webhookQueue, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	defer stopWebhookWorker()
 	workers := river.NewWorkers()
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
-	webhookEnqueuer := webhooks.NewEnqueuer(database, logger.With("component", "webhooks"))
 	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
 		WithEventPayloadStorage(objectStore).WithWebhooks(webhookEnqueuer)
 	deployments.RegisterWorkers(workers, deploymentStore)

@@ -81,10 +81,7 @@ func TestWebhookEnvironmentDatabaseFailures(t *testing.T) {
 		t.Fatal("failed writes changed environment")
 	}
 	assertEnvironmentWebhookCounts(t, app, environment.ID, 1, 0, 0, 0)
-	var total int
-	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery'`).Scan(&total); err != nil || total != 1 {
-		t.Fatalf("jobs=%d: %v", total, err)
-	}
+	assertWebhookQueueCount(t, app, 1)
 }
 
 func TestWebhookEnvironmentNoopAndAttributeChanges(t *testing.T) {
@@ -203,10 +200,7 @@ func TestWebhookFormerSDKEnvironmentMissingOperationsDoNotNotify(t *testing.T) {
 		response := doEnvironmentRequest(t, app, tc.method, tc.path+"?beta=true", strings.NewReader(`{}`), formerSDKKey, true)
 		assertError(t, response, 404, "not_found_error")
 	}
-	var count int
-	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery'`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("missing resource jobs=%d: %v", count, err)
-	}
+	assertWebhookQueueCount(t, app, 0)
 }
 
 func TestWebhookEnvironmentSubscriptionFiltering(t *testing.T) {

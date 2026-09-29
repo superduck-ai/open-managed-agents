@@ -55,7 +55,7 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 `ArchiveAgentTx` 和 `Store.ArchiveAgent` 返回资源、changed 与 error。Agent 的条件归档只修改首次归档的记录，重复归档不刷新 Agent 时间戳；未命中时在同一 Yourbatis 事务内按 workspace 重读。无论 Agent 是否已归档，都继续保留既有 Deployment 级联及 River schedule 清理流程。任一后续步骤失败会整体回滚，Store 不返回有效 changed。
 
-Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `agent.archived`，不额外发送 updated；Store 在同一事务成功后，为实际归档的 Deployment 分别发送 `deployment.archived`。通知入队在事务之外，失败只记录日志。`tests/agent_webhooks_test.go` 覆盖 Deployment 更新及 River schedule 删除故障回滚、并发归档、带计划/不带计划资源、实际通知及 SDK 验签。
+Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `agent.archived`，不额外发送 updated；Store 在同一事务成功后，为实际归档的 Deployment 分别发送 `deployment.archived`。通知入队在事务之外，失败只记录日志。Agent 归档产生的一组 Deployment 通知共用 5 秒期限，定时 occurrence 的 Run、Deployment 与 Session 通知也共用 5 秒期限（包含租户信息查询）；超时停止剩余通知，不能把已提交业务重新报告为失败。`tests/agent_webhooks_test.go` 覆盖 Deployment 更新及 River schedule 删除故障回滚、并发归档、带计划/不带计划资源、实际通知及 SDK 验签。
 
 ## 创建 Session 的 Webhook 通知
 
@@ -143,3 +143,7 @@ Agent 归档仍在同一事务处理 Agent、所有实际归档的 Deployment �
 `ApplyScheduledOccurrenceTx` 返回实际插入的 Run；Store 仅在包含 Session、Run、Deployment 状态与 River 计划的整体事务成功后，连续入队 deployment_run.started 与 succeeded/failed，使用相同 Run external ID。无 Run 的归档分支返回空结果；回滚、过期与重复 occurrence 不通知。手动运行不产生 Run Webhook。
 
 维持一次事务完成 Session 创建结果的模型，没有新的 running 状态或中间事务；started 是提交后发出的逻辑开始通知，不提供实时创建进度。succeeded 不跟踪 Session 后续模型执行，failed 仅表示已落库的业务失败，不用于数据库/进程错误；后者继续由 River 重试。payload 只有类型、Run ID、租户标识；事件不保证投递顺序，资源提交与入队仍非原子化。
+
+## Webhook 队列迁移（2026-09-29）
+
+共享 Enqueuer 在 Deployment/River 与 HTTP 生产入口启动前注入 JetStream 发布组件；Deployment 事务、Session/Run 通知时机保持不变。通知经匹配订阅 UUID 发布到独立 WorkQueue，不再写 webhook_delivery jobs。一次 Enqueue 查询/发布最长 5 秒、允许部分成功；发布失败记录日志，不将已经提交的业务重新报告失败。事务提交与发布仍非原子，迁移不引入 Deployment outbox。升级及消息边界见 [Webhook 设计](../webhook-subscriptions.md)。

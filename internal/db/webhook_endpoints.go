@@ -149,13 +149,16 @@ func (d *DB) DeleteWebhookEndpoint(ctx context.Context, workspaceUUID string, ex
 	return nil
 }
 
-func (d *DB) ListActiveWebhookEndpointsForEvent(ctx context.Context, workspaceUUID string, eventType string) ([]WebhookEndpoint, error) {
-	mapper := NewWebhookEndpointMapper(d.mapperDB)
-	rows, err := mapper.ListActiveForEvent(ctx, workspaceUUID, eventType)
+func (d *DB) ListActiveWebhookEndpointUUIDs(ctx context.Context, workspaceUUID, eventType string) ([]string, error) {
+	rows, err := NewWebhookEndpointMapper(d.mapperDB).ListActiveForEvent(ctx, workspaceUUID, eventType)
 	if err != nil {
 		return nil, err
 	}
-	return webhookEndpoints(rows)
+	ids := make([]string, len(rows))
+	for i, row := range rows {
+		ids[i] = row.UUID
+	}
+	return ids, nil
 }
 
 func webhookEndpoints(rows []webhookEndpointRow) ([]WebhookEndpoint, error) {
@@ -200,11 +203,4 @@ func (r webhookEndpointRow) endpoint() (WebhookEndpoint, error) {
 		endpoint.DisabledReason = &disabledReason
 	}
 	return endpoint, nil
-}
-
-func truncateWebhookFailureReason(reason string) string {
-	if len(reason) <= 1000 {
-		return reason
-	}
-	return reason[:1000]
 }

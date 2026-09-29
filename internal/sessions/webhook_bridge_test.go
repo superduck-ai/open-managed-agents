@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -26,4 +27,11 @@ func TestWebhookBridgeSkipsDatabaseWithoutNotification(t *testing.T) {
 			tc.h.enqueueWebhooksForSessionEvents(t.Context(), "workspace", "session", tc.events)
 		})
 	}
+}
+
+func TestWebhookBridgeCanceledBatchDoesNotQuery(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	h := Handler{webhooks: &webhooks.Enqueuer{}}
+	h.enqueueWebhooksForSessionEvents(ctx, "workspace", "session", []db.SessionEvent{{EventType: "session.status_running"}})
 }

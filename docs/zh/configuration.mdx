@@ -60,7 +60,7 @@ LLM Provider 是工作区数据，不属于进程配置。服务启动后，在�
     配置沙箱回调 URL、OTLP 文件日志、JWT 签名私钥和可选的上游代理 CA。
   </Accordion>
   <Accordion title="vault 和 webhook">
-    配置密钥库主 KEK，以及 Webhook 端点、签名密钥、重试和 worker 行为。
+    配置密钥库主 KEK，以及 Webhook 重试和 Worker 行为。端点地址、签名密钥属于 workspace 订阅；JetStream 保留期与容量在 nats.webhook_stream 下配置。
   </Accordion>
 </AccordionGroup>
 

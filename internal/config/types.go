@@ -92,7 +92,14 @@ type WorkerEventStreamConfig struct {
 	MaxMsgSize int32         `yaml:"max_msg_size"`
 }
 
+type WebhookStreamConfig struct {
+	MaxBytes int64         `yaml:"max_bytes"`
+	MaxAge   time.Duration `yaml:"max_age"`
+	Replicas int           `yaml:"replicas"`
+}
+
 type NATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`

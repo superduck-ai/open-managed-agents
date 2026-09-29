@@ -116,9 +116,8 @@
         AND deleted_at IS NULL
     </update>
 
-    <select id="ListActiveForEvent" resultType="webhookEndpointRow">
-        SELECT
-        <include refid="columns"/>
+    <select id="ListActiveForEvent" resultType="webhookEndpointIDRow">
+        SELECT uuid
         FROM webhook_endpoints
         WHERE workspace_uuid = #{workspaceUUID}
         AND deleted_at IS NULL
@@ -127,6 +126,10 @@
         ORDER BY created_at ASC, uuid ASC
     </select>
 
+    <select id="FindDeliveryTarget" resultType="webhookDeliveryTargetRow">
+        SELECT url, signing_secret, status FROM webhook_endpoints
+        WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{endpointUUID} AND deleted_at IS NULL
+    </select>
     <update id="RecordDeliverySuccess" result="exec">
         UPDATE webhook_endpoints
         SET consecutive_failures = 0,

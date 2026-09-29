@@ -131,9 +131,6 @@ func NewServer(deps ServerDeps) *Server {
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := deps.WebhookEnqueuer
-	if webhookEnqueuer == nil {
-		webhookEnqueuer = webhooksapi.NewEnqueuer(deps.DB, webhookLogger)
-	}
 	workbenchLogger := componentLogger("workbench")
 	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
 	filestoreService := deps.FilestoreService

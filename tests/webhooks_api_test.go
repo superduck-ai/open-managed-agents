@@ -241,7 +241,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load api key: %v", err)
 	}
-	enqueuer := webhooks.NewEnqueuer(app.db, nil)
+	enqueuer := webhooks.NewEnqueuer(app.db, app.webhookQueue, nil)
 	occurredAt := time.Date(2020, 1, 2, 3, 4, 5, 123456789, time.UTC)
 	enqueue := func(eventType, resourceID string) {
 		enqueuer.Enqueue(ctx, webhooks.EnqueueInput{
@@ -258,7 +258,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	if count := webhookJobCount(t, app, "session.status_idled", sessionID); count != 1 {
 		t.Fatalf("session.status_idled webhook jobs = %d, want 1", count)
 	}
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(ctx, "webhook-endpoint-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(ctx); err != nil {
 		t.Fatalf("run endpoint webhook delivery: %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	redirectEndpoint := createWebhook(t, app, `{"url":`+quoteJSON(redirectReceiver.URL)+`,"name":"redirect callback","enabled_events":["session.status_terminated"]}`)
 	redirectSessionID := "sesn_webhook_endpoint_redirect"
 	enqueue("session.status_terminated", redirectSessionID)
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(ctx, "webhook-redirect-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(ctx); err != nil {
 		t.Fatalf("run redirect webhook delivery: %v", err)
 	}
 	disabled := retrieveWebhook(t, app, redirectEndpoint.ID)
@@ -421,8 +421,8 @@ func deleteWebhook(t *testing.T, app *testApp, webhookID string) struct {
 
 func clearWebhookState(t *testing.T, app *testApp) {
 	t.Helper()
-	if _, err := app.pool.Exec(context.Background(), `delete from jobs where type = 'webhook_delivery'`); err != nil {
-		t.Fatalf("clear webhook jobs: %v", err)
+	if err := app.webhookStream.Purge(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := app.pool.Exec(context.Background(), `delete from webhook_endpoints`); err != nil {
 		t.Fatalf("clear webhook endpoints: %v", err)

@@ -24,9 +24,11 @@ func (s *Store) enqueueSessionCreated(ctx context.Context, session db.Session) {
 }
 
 func (s *Store) enqueueResource(ctx context.Context, workspaceUUID, resourceID string, occurredAt time.Time, eventTypes ...string) {
-	if s.webhooks == nil {
+	if s.webhooks == nil || ctx.Err() != nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, webhooks.EnqueueTimeout)
+	defer cancel()
 	scope, err := s.database.GetWorkspaceIdentifiers(ctx, workspaceUUID)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "load workspace identifiers for deployment webhook", "resource_id", resourceID, "error", err)

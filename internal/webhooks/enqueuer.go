@@ -11,6 +11,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
+// EnqueueTimeout bounds notification work, including all events in one cascade.
+const EnqueueTimeout = 5 * time.Second
+
 // EnqueueInput contains event-specific values while Enqueuer owns the stable
 // database and logger dependencies.
 type EnqueueInput struct {
@@ -24,38 +27,41 @@ type EnqueueInput struct {
 }
 
 type enqueueStore interface {
-	ListActiveWebhookEndpointsForEvent(ctx context.Context, workspaceUUID, eventType string) ([]db.WebhookEndpoint, error)
-	EnqueueWebhookDeliveryJobForEndpoint(ctx context.Context, workspaceUUID, eventType string, event json.RawMessage, endpointUUID string) error
+	ListActiveWebhookEndpointUUIDs(ctx context.Context, workspaceUUID, eventType string) ([]string, error)
 }
 
-// Enqueuer creates webhook events and persists delivery jobs.
+// Enqueuer creates webhook events and publishes delivery messages.
 type Enqueuer struct {
-	store  enqueueStore
-	logger *slog.Logger
+	publisher Publisher
+	store     enqueueStore
+	logger    *slog.Logger
 }
 
 // NewEnqueuer constructs a webhook event enqueuer with component-owned dependencies.
-func NewEnqueuer(database *db.DB, logger *slog.Logger) *Enqueuer {
-	return newEnqueuer(database, logger)
+func NewEnqueuer(database *db.DB, publisher Publisher, logger *slog.Logger) *Enqueuer {
+	return newEnqueuer(database, publisher, logger)
 }
 
-func newEnqueuer(store enqueueStore, logger *slog.Logger) *Enqueuer {
+func newEnqueuer(store enqueueStore, publisher Publisher, logger *slog.Logger) *Enqueuer {
 	return &Enqueuer{
-		store:  store,
-		logger: logging.LoggerOrDefault(logger),
+		store:     store,
+		publisher: publisher,
+		logger:    logging.LoggerOrDefault(logger),
 	}
 }
 
-// Enqueue creates delivery jobs for one webhook event.
+// Enqueue publishes delivery messages for one webhook event.
 func (e *Enqueuer) Enqueue(ctx context.Context, input EnqueueInput) {
-	if e == nil || e.store == nil {
+	if e == nil || e.store == nil || e.publisher == nil {
 		return
 	}
 	if input.OccurredAt.IsZero() {
 		e.logger.ErrorContext(ctx, "webhook occurrence time missing", "event_type", input.EventType, "resource_id", input.ResourceID)
 		return
 	}
-	endpoints, err := e.store.ListActiveWebhookEndpointsForEvent(ctx, input.WorkspaceUUID, input.EventType)
+	ctx, cancel := context.WithTimeout(ctx, EnqueueTimeout)
+	defer cancel()
+	endpoints, err := e.store.ListActiveWebhookEndpointUUIDs(ctx, input.WorkspaceUUID, input.EventType)
 	if err != nil {
 		e.logger.ErrorContext(ctx, "list webhook endpoints event", "event_type", input.EventType, "workspace_uuid", input.WorkspaceUUID, "error", err)
 		return
@@ -88,8 +94,12 @@ func (e *Enqueuer) Enqueue(ctx context.Context, input EnqueueInput) {
 	}
 
 	for _, endpoint := range endpoints {
-		if err := e.store.EnqueueWebhookDeliveryJobForEndpoint(ctx, input.WorkspaceUUID, input.EventType, payload, endpoint.UUID); err != nil {
-			e.logger.ErrorContext(ctx, "enqueue webhook event", "endpoint_uuid", endpoint.ExternalID, "event_type", input.EventType, "resource_id", input.ResourceID, "error", err)
+		if ctx.Err() != nil {
+			e.logger.ErrorContext(ctx, "webhook publication deadline", "event_id", eventID, "error", ctx.Err())
+			break
+		}
+		if err := e.publisher.Publish(ctx, Envelope{Version: 1, WorkspaceUUID: input.WorkspaceUUID, EndpointUUID: endpoint, Event: payload}); err != nil {
+			e.logger.ErrorContext(ctx, "enqueue webhook event", "endpoint_uuid", endpoint, "event_type", input.EventType, "resource_id", input.ResourceID, "error", err)
 		}
 	}
 }

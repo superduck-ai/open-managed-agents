@@ -71,7 +71,15 @@ func TestWebhookResourceEventDelivery(t *testing.T) {
  ]}`
 	postCodeSessionIngressEvents(t, app, codeID, ingress)
 	postCodeSessionIngressEvents(t, app, codeID, ingress)
-	assertPayloadSQLCount(t, app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND payload->'event'->'data'->>'id'=$1 AND payload->'event'->'data'->>'type'='session.status_run_started' AND payload->'event'->>'created_at'='2026-09-20T01:00:00Z'`, 1, session.ID)
+	matches := 0
+	for _, event := range queuedWebhookEvents(t, app) {
+		if event.Data.ID == session.ID && event.Data.Type == "session.status_run_started" && event.CreatedAt == "2026-09-20T01:00:00Z" {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("persisted occurrence matches=%d", matches)
+	}
 	assertWebhookCount(t, app, "session.status_run_started", session.ID, 2)
 	assertWebhookCount(t, app, "session.thread_created", session.ID, 1)
 	assertWebhookCount(t, app, "session.thread_idled", session.ID, 1)
@@ -135,7 +143,7 @@ func triggerOAuthRefreshFailure(t *testing.T, app *testApp, vaultID, codeID stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	injector := vaults.NewInjector(app.db, app.vaultSecrets, nil).WithWebhooks(webhooks.NewEnqueuer(app.db, nil))
+	injector := vaults.NewInjector(app.db, app.vaultSecrets, nil).WithWebhooks(webhooks.NewEnqueuer(app.db, app.webhookQueue, nil))
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		t.Fatal(err)
@@ -164,11 +172,16 @@ func TestWebhookVaultDeleteIncludesAllArchivedCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	deleteVault(t, app, vault.ID)
-	var count int
-	err = app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND payload->'event'->'data'->>'vault_id'=$1`, vault.ID).Scan(&count)
-	if err != nil || count != 1001 {
-		t.Fatalf("cascade jobs=%d want 1001: %v", count, err)
+	count := 0
+	for _, event := range queuedWebhookEvents(t, app) {
+		if event.Data.VaultID != nil && *event.Data.VaultID == vault.ID {
+			count++
+		}
 	}
+	if count != 1001 {
+		t.Fatalf("cascade messages=%d want 1001", count)
+	}
+
 }
 
 func newEventSubscription(t *testing.T, events []string) (*testApp, webhookAPIResponse, chan capturedWebhookRequest) {
@@ -220,20 +233,9 @@ func assertWebhookCount(t *testing.T, app *testApp, event, resourceID string, wa
 
 func assertDeliveredEventMatrix(t *testing.T, app *testApp, endpoint webhookAPIResponse, received chan capturedWebhookRequest) {
 	t.Helper()
-	worker := webhooks.NewWorker(app.db, app.cfg.Webhook, nil)
-	for range 10 {
-		var count int
-		err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='pending'`).Scan(&count)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if count == 0 {
-			break
-		}
-		if err := worker.RunOnce(context.Background(), "event-matrix"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	worker := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil)
+	drainWebhookQueue(t, app, worker)
+
 	sdk := anthropic.NewClient(option.WithWebhookKey(*endpoint.SigningSecret), option.WithAPIKey(defaultTestKey))
 	seen := map[string]bool{}
 	for len(received) > 0 {
@@ -277,7 +279,8 @@ func TestWebhookSubscriptionWorkerStart(t *testing.T) {
 			defer cancel()
 			cfg := app.cfg.Webhook
 			cfg.WorkerEnabled = enabled
-			webhooks.NewWorker(app.db, cfg, nil).Start(ctx)
+			stopWorker := webhooks.NewWorker(app.db, app.webhookQueue, cfg, nil).Start(ctx)
+			defer stopWorker()
 			wait := 100 * time.Millisecond
 			if enabled {
 				wait = 3 * time.Second

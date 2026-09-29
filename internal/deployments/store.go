@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -146,6 +147,8 @@ func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplySche
 	})
 	if err == nil {
 		occurredAt := time.Now().UTC()
+		ctx, cancel := context.WithTimeout(ctx, webhooks.EnqueueTimeout)
+		defer cancel()
 		s.enqueueScheduledRun(ctx, run, occurredAt)
 		switch {
 		case input.ArchiveDeployment:
@@ -187,7 +190,12 @@ func (s *Store) ArchiveAgent(ctx context.Context, workspaceUUID, externalID stri
 	})
 	if err == nil {
 		occurredAt := time.Now().UTC()
+		ctx, cancel := context.WithTimeout(ctx, webhooks.EnqueueTimeout)
+		defer cancel()
 		for _, deployment := range archivedDeployments {
+			if ctx.Err() != nil {
+				break
+			}
 			s.enqueueResource(ctx, deployment.WorkspaceUUID, deployment.ExternalID, occurredAt, "deployment.archived")
 		}
 	}

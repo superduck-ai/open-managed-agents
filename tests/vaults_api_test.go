@@ -646,19 +646,22 @@ func containsVaultCredential(credentials []vaultCredentialAPIResponse, id string
 
 func webhookJobDataField(t *testing.T, app *testApp, eventType, resourceID, field string) string {
 	t.Helper()
-	var value string
-	if err := app.pool.QueryRow(context.Background(), `
-		select jsonb_extract_path_text(payload, 'event', 'data', $3)
-		from jobs
-		where type = 'webhook_delivery'
-			and payload->>'event_type' = $1
-			and payload->'event'->'data'->>'id' = $2
-		order by created_at desc, id desc
-		limit 1
-	`, eventType, resourceID, field).Scan(&value); err != nil {
-		t.Fatalf("load webhook job data field: %v", err)
+	for _, event := range queuedWebhookEvents(t, app) {
+		if event.Data.Type != eventType || event.Data.ID != resourceID {
+			continue
+		}
+		encoded, err := json.Marshal(event.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields[field]
 	}
-	return value
+	t.Fatal("queued webhook not found")
+	return ""
 }
 
 func cleanupVaultRows(t *testing.T, app *testApp, vaultID string) {

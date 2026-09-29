@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nats-io/nats.go/jetstream"
 	"image"
 	"image/color"
 	"image/png"
@@ -52,6 +53,8 @@ const defaultTestKey = config.DefaultAPIKey
 const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 
 type testApp struct {
+	webhookQueue         *webhooks.Queue
+	webhookStream        jetstream.Stream
 	cfg                  config.Config
 	db                   *db.DB
 	deployments          *deploymentsapi.Store
@@ -1173,7 +1176,8 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("create vault secrets service: %v", err)
 	}
-	webhookEnqueuer := webhooks.NewEnqueuer(database, logger)
+	webhookQueue, webhookStream := newWebhookTestQueue(t, cfg.Webhook)
+	webhookEnqueuer := webhooks.NewEnqueuer(database, webhookQueue, logger)
 	deploymentStore := deploymentsapi.NewStore(database, logger).WithEventPayloadStorage(store).WithWebhooks(webhookEnqueuer)
 	workers := river.NewWorkers()
 	deploymentsapi.RegisterWorkers(workers, deploymentStore)
@@ -1204,6 +1208,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		VaultSecrets:           vaultSecrets,
 	}))
 	app := &testApp{
+		webhookQueue: webhookQueue, webhookStream: webhookStream,
 		cfg:                  cfg,
 		db:                   database,
 		deployments:          deploymentStore,

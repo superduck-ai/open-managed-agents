@@ -8,24 +8,22 @@ import (
 	"log/slog"
 	"testing"
 	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 type failingEnqueueStore struct{}
 
-func (failingEnqueueStore) ListActiveWebhookEndpointsForEvent(context.Context, string, string) ([]db.WebhookEndpoint, error) {
+func (failingEnqueueStore) ListActiveWebhookEndpointUUIDs(context.Context, string, string) ([]string, error) {
 	return nil, errors.New("load endpoints")
 }
 
-func (failingEnqueueStore) EnqueueWebhookDeliveryJobForEndpoint(context.Context, string, string, json.RawMessage, string) error {
+func (failingEnqueueStore) Publish(context.Context, Envelope) error {
 	return nil
 }
 
 func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil)).With("component", "webhooks")
-	enqueuer := newEnqueuer(failingEnqueueStore{}, logger)
+	enqueuer := newEnqueuer(failingEnqueueStore{}, failingEnqueueStore{}, logger)
 
 	enqueuer.Enqueue(context.Background(), EnqueueInput{
 		OccurredAt:          time.Now().UTC(),
@@ -55,11 +53,11 @@ type capturingEnqueueStore struct {
 	payloads []json.RawMessage
 }
 
-func (s *capturingEnqueueStore) ListActiveWebhookEndpointsForEvent(context.Context, string, string) ([]db.WebhookEndpoint, error) {
-	return []db.WebhookEndpoint{{UUID: "one"}, {UUID: "two"}}, nil
+func (s *capturingEnqueueStore) ListActiveWebhookEndpointUUIDs(context.Context, string, string) ([]string, error) {
+	return []string{"one", "two"}, nil
 }
-func (s *capturingEnqueueStore) EnqueueWebhookDeliveryJobForEndpoint(_ context.Context, _, _ string, event json.RawMessage, _ string) error {
-	s.payloads = append(s.payloads, append(json.RawMessage(nil), event...))
+func (s *capturingEnqueueStore) Publish(_ context.Context, envelope Envelope) error {
+	s.payloads = append(s.payloads, append(json.RawMessage(nil), envelope.Event...))
 	return nil
 }
 
@@ -67,7 +65,7 @@ func TestEnqueuerOccurrenceTime(t *testing.T) {
 	store := &capturingEnqueueStore{}
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
-	enqueuer := newEnqueuer(store, logger)
+	enqueuer := newEnqueuer(store, store, logger)
 	input := EnqueueInput{EventType: "agent.created", ResourceID: "agent_test"}
 	enqueuer.Enqueue(t.Context(), input)
 	if len(store.payloads) != 0 {
@@ -96,5 +94,45 @@ func TestEnqueuerOccurrenceTime(t *testing.T) {
 	}
 	if event.CreatedAt != "2020-01-01T19:04:05.123456789Z" || event.ID == "" {
 		t.Fatalf("event = %+v", event)
+	}
+}
+
+type partialPublisher struct {
+	calls     int
+	fail      bool
+	deadlines []time.Duration
+}
+
+func (p *partialPublisher) Publish(ctx context.Context, _ Envelope) error {
+	p.calls++
+	deadline, ok := ctx.Deadline()
+	if ok {
+		p.deadlines = append(p.deadlines, time.Until(deadline))
+	}
+	if p.fail && p.calls == 1 {
+		return errors.New("queue unavailable")
+	}
+	return nil
+}
+func TestEnqueuerPartialFailureAndDeadline(t *testing.T) {
+	store := &capturingEnqueueStore{}
+	publisher := &partialPublisher{fail: true}
+	var logs bytes.Buffer
+	enqueuer := newEnqueuer(store, publisher, slog.New(slog.NewJSONHandler(&logs, nil)))
+	input := EnqueueInput{OccurredAt: time.Now(), EventType: "agent.created", ResourceID: "agent_test"}
+	enqueuer.Enqueue(t.Context(), input)
+	if publisher.calls != 2 || len(publisher.deadlines) != 2 {
+		t.Fatalf("partial fanout calls=%d", publisher.calls)
+	}
+	for _, left := range publisher.deadlines {
+		if left <= 0 || left > 5*time.Second {
+			t.Fatalf("deadline=%v", left)
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	enqueuer.Enqueue(ctx, input)
+	if publisher.calls != 2 {
+		t.Fatal("canceled publisher called")
 	}
 }

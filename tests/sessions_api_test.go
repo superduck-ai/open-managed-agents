@@ -520,7 +520,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(context.Background()); err != nil {
 		t.Fatalf("deliver ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -542,7 +542,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if len(again.Data) != 1 {
 		t.Fatalf("ingress should be idempotent, agent.message count = %d", len(again.Data))
 	}
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(context.Background()); err != nil {
 		t.Fatalf("deliver duplicate ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -3581,23 +3581,12 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("session.pending webhook jobs = %d, want 0", count)
 	}
 
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(context.Background()); err != nil {
 		t.Fatalf("webhook run once failure path: %v", err)
 	}
-	status, attempts := latestWebhookJobStatus(t, app, "session.status_idled", session.ID)
-	if status != "retry" || attempts != 1 {
-		t.Fatalf("after 500 status=%s attempts=%d, want retry/1", status, attempts)
-	}
-	if _, err := app.pool.Exec(context.Background(), `update jobs set run_after = now() where type = 'webhook_delivery' and payload->>'event_type' = 'session.status_idled' and payload->'event'->'data'->>'id' = $1`, session.ID); err != nil {
-		t.Fatalf("reset webhook run_after: %v", err)
-	}
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
-		t.Fatalf("webhook run once success path: %v", err)
-	}
-	status, attempts = latestWebhookJobStatus(t, app, "session.status_idled", session.ID)
-	if status != "completed" || attempts != 1 {
-		t.Fatalf("after 2xx status=%s attempts=%d, want completed/1", status, attempts)
-	}
+	assertWebhookQueueCount(t, app, 1)
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
+	assertWebhookQueueCount(t, app, 0)
 
 	mu.Lock()
 	if len(requests) != 2 {
@@ -4811,33 +4800,11 @@ func sessionWorkData(t *testing.T, app *testApp, sessionID string) (string, stri
 
 func webhookJobCount(t *testing.T, app *testApp, eventType, resourceID string) int {
 	t.Helper()
-	var count int
-	if err := app.pool.QueryRow(context.Background(), `
-		select count(*)
-		from jobs
-		where type = 'webhook_delivery'
-			and payload->>'event_type' = $1
-			and payload->'event'->'data'->>'id' = $2
-	`, eventType, resourceID).Scan(&count); err != nil {
-		t.Fatalf("count webhook jobs: %v", err)
+	count := 0
+	for _, event := range queuedWebhookEvents(t, app) {
+		if event.Data.Type == eventType && event.Data.ID == resourceID {
+			count++
+		}
 	}
 	return count
-}
-
-func latestWebhookJobStatus(t *testing.T, app *testApp, eventType, resourceID string) (string, int) {
-	t.Helper()
-	var status string
-	var attempts int
-	if err := app.pool.QueryRow(context.Background(), `
-		select status, attempts
-		from jobs
-		where type = 'webhook_delivery'
-			and payload->>'event_type' = $1
-			and payload->'event'->'data'->>'id' = $2
-		order by created_at desc, id desc
-		limit 1
-	`, eventType, resourceID).Scan(&status, &attempts); err != nil {
-		t.Fatalf("load webhook job status: %v", err)
-	}
-	return status, attempts
 }

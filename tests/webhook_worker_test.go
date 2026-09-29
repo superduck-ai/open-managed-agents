@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,7 +51,7 @@ func newDeliveryFixture(t *testing.T, handler http.HandlerFunc) deliveryFixture 
 
 func (f deliveryFixture) enqueue(t *testing.T, count int) {
 	t.Helper()
-	enqueuer := webhooks.NewEnqueuer(f.app.db, nil)
+	enqueuer := webhooks.NewEnqueuer(f.app.db, f.app.webhookQueue, nil)
 	for range count {
 		enqueuer.Enqueue(t.Context(), webhooks.EnqueueInput{
 			OccurredAt:    time.Now().UTC(),
@@ -60,16 +59,7 @@ func (f deliveryFixture) enqueue(t *testing.T, count int) {
 			EventType: "session.status_idled", ResourceID: "sesn_" + uuid.NewV4().String(),
 		})
 	}
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery'`, count)
-}
-
-func (f deliveryFixture) lease(t *testing.T) db.WebhookDeliveryJob {
-	t.Helper()
-	jobs, err := f.app.db.LeaseWebhookDeliveryJobs(t.Context(), "same-worker", 1, time.Minute)
-	if err != nil || len(jobs) != 1 {
-		t.Fatalf("lease count=%d error=%v", len(jobs), err)
-	}
-	return jobs[0]
+	assertWebhookQueueCount(t, f.app, count)
 }
 
 func (f deliveryFixture) exec(t *testing.T, query string, args ...any) {
@@ -77,12 +67,6 @@ func (f deliveryFixture) exec(t *testing.T, query string, args ...any) {
 	if _, err := f.app.pool.Exec(t.Context(), query, args...); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func (f deliveryFixture) assertState(t *testing.T, job db.WebhookDeliveryJob, status string, attempts, failures int) {
-	t.Helper()
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE uuid=$1 AND status=$2 AND attempts=$3`, 1, job.UUID, status, attempts)
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=$2`, 1, f.endpoint.UUID, failures)
 }
 
 func TestWebhookWorkerTargetIsolation(t *testing.T) {
@@ -102,107 +86,20 @@ func TestWebhookWorkerTargetIsolation(t *testing.T) {
 			case "disabled":
 				f.exec(t, `UPDATE webhook_endpoints SET status='disabled', consecutive_failures=4 WHERE uuid=$1`, f.endpoint.UUID)
 			case "other-workspace":
-				f.exec(t, `UPDATE jobs SET workspace_uuid=$1 WHERE type='webhook_delivery'`, uuid.NewV4().String())
+				f.exec(t, `UPDATE webhook_endpoints SET workspace_uuid=$1 WHERE uuid=$2`, uuid.NewV4().String(), f.endpoint.UUID)
 			}
-			if err := webhooks.NewWorker(f.app.db, cfg, nil).RunOnce(t.Context(), "isolation"); err != nil {
+			if err := webhooks.NewWorker(f.app.db, f.app.webhookQueue, cfg, nil).RunOnce(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if endpointCalls.Load() != 0 {
 				t.Fatalf("unexpected calls: endpoint=%d", endpointCalls.Load())
 			}
-			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='completed' AND attempts=0`, 1)
+			assertWebhookQueueCount(t, f.app, 0)
 			if mode == "disabled" {
 				assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=4`, 1, f.endpoint.UUID)
 			}
 
 		})
-	}
-}
-
-func TestWebhookWorkerClaimFencing(t *testing.T) {
-	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-	f.enqueue(t, 1)
-	first := f.lease(t)
-	f.exec(t, `UPDATE webhook_endpoints SET consecutive_failures=4 WHERE uuid=$1`, f.endpoint.UUID)
-	assertRejected := func(job db.WebhookDeliveryJob) {
-		t.Helper()
-		if applied, err := f.app.db.ExhaustWebhookDeliveryJob(t.Context(), job); err != nil || applied {
-			t.Fatalf("stale exhaustion=%t %v", applied, err)
-		}
-		if applied, err := f.app.db.CompleteWebhookDeliveryJob(t.Context(), job, true); err != nil || applied {
-			t.Fatalf("stale completion=%t %v", applied, err)
-		}
-		if applied, err := f.app.db.FailWebhookDeliveryJob(t.Context(), job, db.WebhookDeliveryFailure{Reason: "stale", RetryDelay: time.Minute, MaxAttempts: 3, Terminal: true, DisableAfter: 24 * time.Hour}); err != nil || applied {
-			t.Fatalf("stale failure=%t %v", applied, err)
-		}
-	}
-	wrong := first
-	wrong.WorkspaceUUID = uuid.NewV4().String()
-	assertRejected(wrong)
-	wrong = first
-	wrong.ClaimToken = "wrong-claim"
-	assertRejected(wrong)
-	f.exec(t, `UPDATE jobs SET locked_until=clock_timestamp()-interval '1 second' WHERE uuid=$1`, first.UUID)
-	assertRejected(first) // Expired, even before another worker claims it.
-	f.assertState(t, first, "running", 0, 4)
-	second := f.lease(t)
-	if second.ClaimToken == first.ClaimToken || second.ClaimToken == "" {
-		t.Fatal("claim token reused")
-	}
-	assertRejected(first)
-	f.assertState(t, second, "running", 0, 4)
-	applied, err := f.app.db.FailWebhookDeliveryJob(t.Context(), second, db.WebhookDeliveryFailure{Reason: "temporary", RetryDelay: time.Minute, MaxAttempts: 3, DisableAfter: 24 * time.Hour})
-	if err != nil || !applied {
-		t.Fatalf("current failure=%t %v", applied, err)
-	}
-	f.assertState(t, second, "retry", 1, 5)
-	assertRejected(second)
-	f.assertState(t, second, "retry", 1, 5)
-	f.exec(t, `UPDATE jobs SET run_after=NOW()-interval '1 second' WHERE uuid=$1`, second.UUID)
-	third := f.lease(t)
-	applied, err = f.app.db.CompleteWebhookDeliveryJob(t.Context(), third, true)
-	if err != nil || !applied {
-		t.Fatalf("current completion=%t %v", applied, err)
-	}
-	assertRejected(third)
-	f.assertState(t, third, "completed", 1, 0)
-}
-
-func TestWebhookWorkerResultRollback(t *testing.T) {
-	for _, table := range []string{"webhook_endpoints", "jobs"} {
-		for _, failure := range []bool{true, false} {
-			t.Run(fmt.Sprintf("%s/failure=%t", table, failure), func(t *testing.T) {
-				f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-				f.enqueue(t, 1)
-				job := f.lease(t)
-				f.exec(t, `UPDATE webhook_endpoints SET consecutive_failures=4 WHERE uuid=$1`, f.endpoint.UUID)
-				targetID := f.endpoint.UUID
-				if table == "jobs" {
-					targetID = job.UUID
-				}
-				remove := installWebhookMutationFailure(t, f.app, table, "UPDATE", "NEW.uuid = '"+targetID+"'")
-				finish := func() (bool, error) {
-					if failure {
-						return f.app.db.FailWebhookDeliveryJob(t.Context(), job, db.WebhookDeliveryFailure{Reason: "temporary", RetryDelay: time.Minute, MaxAttempts: 3, DisableAfter: 24 * time.Hour})
-					}
-					return f.app.db.CompleteWebhookDeliveryJob(t.Context(), job, true)
-				}
-				if applied, err := finish(); err == nil || applied {
-					t.Fatalf("rollback=%t %v", applied, err)
-				}
-				f.assertState(t, job, "running", 0, 4)
-				assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE uuid=$1 AND locked_by=$2`, 1, job.UUID, job.ClaimToken)
-				remove()
-				if applied, err := finish(); err != nil || !applied {
-					t.Fatalf("retry result=%t %v", applied, err)
-				}
-				if failure {
-					f.assertState(t, job, "retry", 1, 5)
-				} else {
-					f.assertState(t, job, "completed", 0, 0)
-				}
-			})
-		}
 	}
 }
 
@@ -236,9 +133,9 @@ func TestWebhookWorkerConcurrentBatch(t *testing.T) {
 	t.Cleanup(unblock)
 	f.app.cfg.Webhook.Timeout = 10 * time.Second
 	f.enqueue(t, 11)
-	worker := webhooks.NewWorker(f.app.db, f.app.cfg.Webhook, nil)
+	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
 	done := make(chan error, 1)
-	go func() { done <- worker.RunOnce(t.Context(), "parallel") }()
+	go func() { done <- worker.RunOnce(t.Context()) }()
 	sdk := anthropic.NewClient(option.WithWebhookKey(f.endpoint.SigningSecret))
 	for range 10 {
 		select {
@@ -250,7 +147,10 @@ func TestWebhookWorkerConcurrentBatch(t *testing.T) {
 			t.Fatal("10 requests did not enter concurrently")
 		}
 	}
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='pending'`, 1)
+	assertWebhookQueueCount(t, f.app, 11)
+	if inUse := f.app.db.SQLDB().Stats().InUse; inUse != 0 {
+		t.Fatalf("HTTP requests retained %d database connections", inUse)
+	}
 	if peak.Load() != 10 {
 		t.Fatalf("peak=%d", peak.Load())
 	}
@@ -263,14 +163,14 @@ func TestWebhookWorkerConcurrentBatch(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("batch did not finish")
 	}
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='completed'`, 10)
-	if err := worker.RunOnce(t.Context(), "parallel"); err != nil {
+	assertWebhookQueueCount(t, f.app, 1)
+	if err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if len(entered) != 1 || peak.Load() != 10 {
 		t.Fatal("eleventh task or concurrency limit incorrect")
 	}
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='completed'`, 11)
+	assertWebhookQueueCount(t, f.app, 0)
 }
 
 func TestWebhookWorkerIndependentFailuresAndRetrySignature(t *testing.T) {
@@ -293,23 +193,18 @@ func TestWebhookWorkerIndependentFailuresAndRetrySignature(t *testing.T) {
 			})
 			f.app.cfg.Webhook.Timeout = 100 * time.Millisecond
 			f.enqueue(t, 2)
-			worker := webhooks.NewWorker(f.app.db, f.app.cfg.Webhook, nil)
-			if err := worker.RunOnce(t.Context(), "independent"); err != nil {
+			worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
+			if err := worker.RunOnce(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='completed'`, 1)
-			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='retry' AND attempts=1`, 1)
-			var retryID string
-			if err := f.app.pool.QueryRow(t.Context(), `SELECT payload->'event'->>'id' FROM jobs WHERE type='webhook_delivery' AND status='retry'`).Scan(&retryID); err != nil {
-				t.Fatal(err)
-			}
-			f.exec(t, `UPDATE jobs SET run_after=NOW()-interval '1 second' WHERE type='webhook_delivery' AND status='retry'`)
-			if err := worker.RunOnce(t.Context(), "retry"); err != nil {
-				t.Fatal(err)
-			}
+			assertWebhookQueueCount(t, f.app, 1)
+			retryID := queuedWebhookEvents(t, f.app)[0].ID
+			drainWebhookQueue(t, f.app, worker)
+
 			sdk := anthropic.NewClient(option.WithWebhookKey(f.endpoint.SigningSecret))
 			counts := map[string]int{}
 			bodies := map[string]string{}
+			timestamps := map[string]string{}
 			for range 3 {
 				req := <-captured
 				if _, err := sdk.Beta.Webhooks.Unwrap(req.Body, req.Header); err != nil {
@@ -319,6 +214,10 @@ func TestWebhookWorkerIndependentFailuresAndRetrySignature(t *testing.T) {
 				if previous, found := bodies[id]; found && previous != string(req.Body) {
 					t.Fatal("retry changed payload or occurrence time")
 				}
+				if previous, found := timestamps[id]; found && previous == req.Header.Get("webhook-timestamp") {
+					t.Fatal("retry did not regenerate signing time")
+				}
+				timestamps[id] = req.Header.Get("webhook-timestamp")
 				bodies[id] = string(req.Body)
 				counts[id]++
 			}
@@ -329,118 +228,14 @@ func TestWebhookWorkerIndependentFailuresAndRetrySignature(t *testing.T) {
 	}
 }
 
-func TestWebhookWorkerCancellationAndLeaseBudget(t *testing.T) {
-	entered, exited := make(chan struct{}), make(chan struct{})
-	f := newDeliveryFixture(t, func(_ http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		close(entered)
-		<-r.Context().Done()
-		close(exited)
-	})
-	f.app.cfg.Webhook.Timeout = 70 * time.Second
-	f.enqueue(t, 1)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- webhooks.NewWorker(f.app.db, f.app.cfg.Webhook, nil).RunOnce(ctx, "cancel") }()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no delivery")
-	}
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND locked_until-updated_at=interval '100 seconds'`, 1)
-	cancel()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("canceled write reported success")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("worker did not exit")
-	}
-	select {
-	case <-exited:
-	case <-time.After(5 * time.Second):
-		t.Fatal("HTTP request did not exit")
-	}
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='running' AND attempts=0`, 1)
-	f.exec(t, `UPDATE jobs SET locked_until=NOW()-interval '1 second' WHERE type='webhook_delivery'`)
-	recovered := f.lease(t)
-	if applied, err := f.app.db.CompleteWebhookDeliveryJob(t.Context(), recovered, false); err != nil || !applied {
-		t.Fatalf("recovery=%t %v", applied, err)
-	}
-}
-
-func TestWebhookWorkerConcurrentClaims(t *testing.T) {
-	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-	f.enqueue(t, 20)
-	type result struct {
-		jobs []db.WebhookDeliveryJob
-		err  error
-	}
-	results := make(chan result, 2)
-	start := make(chan struct{})
-	for range 2 {
-		go func() {
-			<-start
-			jobs, err := f.app.db.LeaseWebhookDeliveryJobs(t.Context(), "same-name", 10, time.Minute)
-			results <- result{jobs, err}
-		}()
-	}
-	close(start)
-	seen := map[string]bool{}
-	tokens := map[string]bool{}
-	for range 2 {
-		r := <-results
-		if r.err != nil || len(r.jobs) != 10 {
-			t.Fatalf("jobs=%d error=%v", len(r.jobs), r.err)
-		}
-		tokens[r.jobs[0].ClaimToken] = true
-		for _, job := range r.jobs {
-			if seen[job.UUID] {
-				t.Fatal("duplicate lease")
-			}
-			seen[job.UUID] = true
-		}
-	}
-	if len(seen) != 20 || len(tokens) != 2 {
-		t.Fatal("claims were not independent")
-	}
-	jobs, err := f.app.db.LeaseWebhookDeliveryJobs(t.Context(), "third", 10, time.Minute)
-	if err != nil || len(jobs) != 0 {
-		t.Fatalf("unexpired jobs reclaimed: %d %v", len(jobs), err)
-	}
-}
-
-func TestWebhookWorkerCommitFailure(t *testing.T) {
-	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-	f.enqueue(t, 1)
-	job := f.lease(t)
-	// A deferred constraint trigger fails COMMIT, after both updates succeeded.
-	f.exec(t, `CREATE FUNCTION test_webhook_result_commit() RETURNS trigger LANGUAGE plpgsql AS $$
- BEGIN IF NEW.type='webhook_delivery' AND NEW.status='retry' THEN RAISE EXCEPTION 'test commit rejected'; END IF; RETURN NEW; END $$;
- CREATE CONSTRAINT TRIGGER test_webhook_result_commit AFTER UPDATE ON jobs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION test_webhook_result_commit()`)
-	t.Cleanup(func() {
-		if _, err := f.app.pool.Exec(context.Background(), `DROP TRIGGER test_webhook_result_commit ON jobs; DROP FUNCTION test_webhook_result_commit()`); err != nil {
-			t.Error(err)
-		}
-	})
-	applied, err := f.app.db.FailWebhookDeliveryJob(t.Context(), job, db.WebhookDeliveryFailure{Reason: "temporary", RetryDelay: time.Minute, MaxAttempts: 3, DisableAfter: 24 * time.Hour})
-	if err == nil || applied {
-		t.Fatalf("commit failure=%t %v", applied, err)
-	}
-	f.assertState(t, job, "running", 0, 0)
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE uuid=$1 AND locked_by=$2`, 1, job.UUID, job.ClaimToken)
-}
-
 func TestWebhookWorkerConcurrentFailuresDoNotUseCount(t *testing.T) {
 	var calls atomic.Int32
 	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(500) })
 	f.enqueue(t, 21)
-	worker := webhooks.NewWorker(f.app.db, f.app.cfg.Webhook, nil)
+	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
 	var firstWindow *time.Time
 	for range 3 {
-		if err := worker.RunOnce(t.Context(), "threshold"); err != nil {
+		if err := worker.RunOnce(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		endpoint, err := f.app.db.GetWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID)
@@ -457,6 +252,114 @@ func TestWebhookWorkerConcurrentFailuresDoNotUseCount(t *testing.T) {
 		t.Fatalf("requests=%d, want 21 without disabling", calls.Load())
 	}
 	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=21 AND status='enabled' AND failure_started_at IS NOT NULL`, 1, f.endpoint.UUID)
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='retry' AND attempts=1`, 21)
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='completed' AND attempts=0`, 0)
+	assertWebhookQueueCount(t, f.app, 21)
+}
+
+func TestWebhookStatisticsFailureDoesNotRetrySuccessfulHTTP(t *testing.T) {
+	var calls atomic.Int32
+	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(204) })
+	f.exec(t, `UPDATE webhook_endpoints SET consecutive_failures=4 WHERE uuid=$1`, f.endpoint.UUID)
+	f.enqueue(t, 1)
+	remove := installWebhookMutationFailure(t, f.app, "webhook_endpoints", "UPDATE", "NEW.uuid = '"+f.endpoint.UUID+"'")
+	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
+	if err := worker.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertWebhookQueueCount(t, f.app, 0)
+	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=4`, 1, f.endpoint.UUID)
+	remove()
+	if err := worker.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("statistics failure duplicated successful HTTP")
+	}
+}
+
+func TestWebhookWorkerMultipleInstances(t *testing.T) {
+	received := make(chan string, 20)
+	f := newDeliveryFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		received <- r.Header.Get("webhook-id")
+		w.WriteHeader(204)
+	})
+	f.enqueue(t, 20)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Go(func() {
+			if err := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil).RunOnce(t.Context()); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	workers.Wait()
+	assertWebhookQueueCount(t, f.app, 0)
+	if len(received) != 20 {
+		t.Fatalf("deliveries=%d", len(received))
+	}
+	seen := map[string]bool{}
+	for range 20 {
+		id := <-received
+		if seen[id] {
+			t.Fatal("concurrent duplicate consumption")
+		}
+		seen[id] = true
+	}
+}
+
+func TestWebhookWorkerStopCancelsActiveBatch(t *testing.T) {
+	entered, exited := make(chan struct{}), make(chan struct{})
+	f := newDeliveryFixture(t, func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(entered)
+		<-r.Context().Done()
+		close(exited)
+	})
+	f.enqueue(t, 1)
+	f.app.cfg.Webhook.Timeout = time.Minute
+	stop := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil).Start(t.Context())
+	defer stop()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no active request")
+	}
+	done := make(chan struct{})
+	go func() { stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stop did not wait/cancel")
+	}
+	select {
+	case <-exited:
+	case <-time.After(time.Second):
+		t.Fatal("request leaked")
+	}
+	assertWebhookQueueCount(t, f.app, 1)
+}
+
+func TestWebhookWorkerUsesCurrentTarget(t *testing.T) {
+	f := newDeliveryFixture(t, func(http.ResponseWriter, *http.Request) { t.Error("old endpoint received request") })
+	f.enqueue(t, 1)
+	received := make(chan capturedWebhookRequest, 1)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- capturedWebhookRequest{Header: r.Header.Clone(), Body: body}
+		w.WriteHeader(204)
+	}))
+	defer receiver.Close()
+	const secret = "whsec_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+	f.exec(t, `UPDATE webhook_endpoints SET url=$2,signing_secret=$3,enabled_events='[]'::jsonb WHERE uuid=$1`, f.endpoint.UUID, receiver.URL, secret)
+	if err := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil).RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(received) != 1 {
+		t.Fatal("queued event lost when event selection changed")
+	}
+	request := <-received
+	sdk := anthropic.NewClient(option.WithWebhookKey(secret))
+	if _, err := sdk.Beta.Webhooks.Unwrap(request.Body, request.Header); err != nil {
+		t.Fatal(err)
+	}
+	assertWebhookQueueCount(t, f.app, 0)
 }

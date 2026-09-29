@@ -46,7 +46,6 @@ func TestWebhookSubscriptionPatchIsolation(t *testing.T) {
 func TestWebhookSubscriptionPatchConcurrentWorker(t *testing.T) {
 	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
 	f.enqueue(t, 1)
-	job := f.lease(t)
 	name, description := "new name", "new description"
 	start := make(chan struct{})
 	errs := make(chan error, 3)
@@ -61,7 +60,7 @@ func TestWebhookSubscriptionPatchConcurrentWorker(t *testing.T) {
 	}
 	wg.Go(func() {
 		<-start
-		applied, err := f.app.db.FailWebhookDeliveryJob(t.Context(), job, db.WebhookDeliveryFailure{Reason: "delivery failure", RetryDelay: time.Minute, MaxAttempts: 10, Terminal: true, DisableAfter: 24 * time.Hour})
+		applied, err := f.app.db.RecordWebhookDeliveryFailure(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.UUID, "delivery failure", true, 24*time.Hour)
 		if err == nil && !applied {
 			err = errors.New("worker result not applied")
 		}

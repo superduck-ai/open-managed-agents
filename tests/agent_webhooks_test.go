@@ -270,10 +270,7 @@ func assertAgentWebhookCounts(t *testing.T, app *testApp, id string, created, up
 }
 func assertAgentWebhookTotal(t *testing.T, app *testApp, want int) {
 	t.Helper()
-	var got int
-	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery'`).Scan(&got); err != nil || got != want {
-		t.Fatalf("jobs=%d want %d: %v", got, want, err)
-	}
+	assertWebhookQueueCount(t, app, want)
 }
 func newAgentWebhookDeployments(t *testing.T, app *testApp, agentID string) []deploymentAPIResponse {
 	t.Helper()

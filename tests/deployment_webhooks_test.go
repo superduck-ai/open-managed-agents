@@ -212,18 +212,12 @@ func assertDeploymentSessionCount(t *testing.T, app *testApp, deploymentID strin
 
 func assertDeploymentWebhookTotal(t *testing.T, app *testApp, want int) {
 	t.Helper()
-	var count int
-	if err := app.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE type='webhook_delivery'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != want {
-		t.Fatalf("webhook jobs=%d want %d", count, want)
-	}
+	assertWebhookQueueCount(t, app, want)
 }
 
 func assertWebhookDeliveries(t *testing.T, app *testApp, endpoint webhookAPIResponse, received chan capturedWebhookRequest, expected map[string]int, inspectors ...func(*testing.T, []byte)) {
 	t.Helper()
-	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(t.Context(), "deployment-events"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	sdk := anthropic.NewClient(option.WithWebhookKey(*endpoint.SigningSecret), option.WithAPIKey(defaultTestKey))

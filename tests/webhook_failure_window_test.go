@@ -1,8 +1,6 @@
 package tests
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -13,106 +11,6 @@ import (
 )
 
 const sustainedFailureReason = "auto-disabled after sustained delivery failures"
-
-func windowFailure() db.WebhookDeliveryFailure {
-	return db.WebhookDeliveryFailure{Reason: "receiver unavailable", RetryDelay: time.Minute, MaxAttempts: 3, DisableAfter: 24 * time.Hour}
-}
-
-func TestWebhookFailureWindowResultRollback(t *testing.T) {
-	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
-	f.enqueue(t, 1)
-	job := f.lease(t)
-	// Fail the task write after the endpoint has already been changed in the transaction.
-	f.exec(t, `UPDATE webhook_endpoints SET failure_started_at=clock_timestamp()-interval '25 hours' WHERE uuid=$1`, f.endpoint.UUID)
-	remove := installWebhookMutationFailure(t, f.app, "jobs", "UPDATE", "NEW.uuid = '"+job.UUID+"'")
-	applied, err := f.app.db.FailWebhookDeliveryJob(t.Context(), job, windowFailure())
-	if err == nil || applied {
-		t.Fatalf("write failure=%t %v", applied, err)
-	}
-	f.assertState(t, job, "running", 0, 0)
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND status='enabled' AND disabled_reason IS NULL AND failure_started_at<clock_timestamp()-interval '24 hours'`, 1, f.endpoint.UUID)
-	remove()
-	applied, err = f.app.db.FailWebhookDeliveryJob(t.Context(), job, windowFailure())
-	if err != nil || !applied {
-		t.Fatalf("retry=%t %v", applied, err)
-	}
-	f.assertState(t, job, "failed", 1, 1)
-}
-
-func TestWebhookResultExpiredWhileWaiting(t *testing.T) {
-	for _, operation := range []struct {
-		name, blockedQuery string
-		finish             func(context.Context, *db.DB, db.WebhookDeliveryJob) (bool, error)
-	}{
-		{"failure", "%WITH locked_endpoint%", func(ctx context.Context, database *db.DB, job db.WebhookDeliveryJob) (bool, error) {
-			return database.FailWebhookDeliveryJob(ctx, job, windowFailure())
-		}},
-		{"success", "%UPDATE webhook_endpoints%failure_started_at = NULL%", func(ctx context.Context, database *db.DB, job db.WebhookDeliveryJob) (bool, error) {
-			return database.CompleteWebhookDeliveryJob(ctx, job, true)
-		}},
-	} {
-		t.Run(operation.name, func(t *testing.T) {
-			f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
-			f.enqueue(t, 1)
-			job := f.lease(t)
-			f.exec(t, `UPDATE webhook_endpoints SET consecutive_failures=7,failure_started_at=clock_timestamp()-interval '1 hour' WHERE uuid=$1`, f.endpoint.UUID)
-			before, err := f.app.db.GetWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			blocker, err := f.app.pool.Begin(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = blocker.Rollback(context.Background()) }()
-			var id string
-			if err := blocker.QueryRow(t.Context(), `SELECT uuid FROM webhook_endpoints WHERE uuid=$1 FOR UPDATE`, f.endpoint.UUID).Scan(&id); err != nil {
-				t.Fatal(err)
-			}
-			f.exec(t, `UPDATE jobs SET locked_until=clock_timestamp()+interval '500 milliseconds' WHERE uuid=$1`, job.UUID)
-			type result struct {
-				applied bool
-				err     error
-			}
-			done := make(chan result, 1)
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			go func() {
-				applied, err := operation.finish(ctx, f.app.db, job)
-				done <- result{applied, err}
-			}()
-			waitWindowSQL(t, f, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0 AND query LIKE $1)`, operation.blockedQuery)
-			waitWindowSQL(t, f, `SELECT locked_until<=clock_timestamp() FROM jobs WHERE uuid=$1`, job.UUID)
-			if err := blocker.Commit(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			r := <-done
-			if r.err != nil || r.applied {
-				t.Fatalf("expired result=%+v", r)
-			}
-			f.assertState(t, job, "running", 0, 7)
-			assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND failure_started_at=$2 AND status='enabled'`, 1, f.endpoint.UUID, before.FailureStartedAt)
-		})
-	}
-}
-
-func waitWindowSQL(t *testing.T, f deliveryFixture, query string, args ...any) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		var ready bool
-		if err := f.app.pool.QueryRow(t.Context(), query, args...).Scan(&ready); err != nil {
-			t.Fatal(err)
-		}
-		if ready {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for database condition")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
 
 func TestWebhookFailureWindowBoundaries(t *testing.T) {
 	for _, tc := range []struct {
@@ -127,7 +25,6 @@ func TestWebhookFailureWindowBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
 			f.enqueue(t, 1)
-			job := f.lease(t)
 			if tc.age != "" {
 				f.exec(t, `UPDATE webhook_endpoints SET failure_started_at=clock_timestamp()-CAST($2 AS interval) WHERE uuid=$1`, f.endpoint.UUID, tc.age)
 			}
@@ -135,8 +32,8 @@ func TestWebhookFailureWindowBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			applied, err := f.app.db.FailWebhookDeliveryJob(t.Context(), job, windowFailure())
-			if err != nil || !applied {
+			applied, err := f.app.db.RecordWebhookDeliveryFailure(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.UUID, "receiver unavailable", false, 24*time.Hour)
+			if err != nil || applied != tc.disabled {
 				t.Fatalf("failure=%t %v", applied, err)
 			}
 			after, err := f.app.db.GetWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID)
@@ -146,18 +43,13 @@ func TestWebhookFailureWindowBoundaries(t *testing.T) {
 			if after.FailureStartedAt == nil || (before.FailureStartedAt != nil && !after.FailureStartedAt.Equal(*before.FailureStartedAt)) {
 				t.Fatal("failure window changed incorrectly")
 			}
-			status := "retry"
+
 			if tc.disabled {
-				status = "failed"
 				if after.Status != "disabled" || after.DisabledReason == nil || *after.DisabledReason != sustainedFailureReason {
 					t.Fatalf("endpoint=%+v", after)
 				}
 			} else if after.Status != "enabled" || after.DisabledReason != nil {
 				t.Fatalf("endpoint=%+v", after)
-			}
-			f.assertState(t, job, status, 1, 1)
-			if tc.disabled {
-				assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE uuid=$1 AND run_after<=clock_timestamp() AND payload->>'last_error'='receiver unavailable'`, 1, job.UUID)
 			}
 		})
 	}
@@ -168,7 +60,6 @@ func TestWebhookFailureWindowResetAndEdits(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
 			f.enqueue(t, 1)
-			job := f.lease(t)
 			f.exec(t, `UPDATE webhook_endpoints SET failure_started_at=clock_timestamp()-interval '25 hours',consecutive_failures=21 WHERE uuid=$1`, f.endpoint.UUID)
 			before, err := f.app.db.GetWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID)
 			if err != nil {
@@ -190,11 +81,7 @@ func TestWebhookFailureWindowResetAndEdits(t *testing.T) {
 				if operation == "late-success" {
 					f.exec(t, `UPDATE webhook_endpoints SET status='disabled',disabled_reason=$2 WHERE uuid=$1`, f.endpoint.UUID, sustainedFailureReason)
 				}
-				var applied bool
-				applied, err = f.app.db.CompleteWebhookDeliveryJob(t.Context(), job, true)
-				if err == nil && !applied {
-					t.Fatal("success not applied")
-				}
+				err = f.app.db.RecordWebhookDeliverySuccess(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.UUID)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -225,33 +112,33 @@ func TestWebhookFailureWindowWorkerAndReenable(t *testing.T) {
 	f.enqueue(t, 1)
 	f.exec(t, `UPDATE webhook_endpoints SET failure_started_at=clock_timestamp()-interval '2 hours' WHERE uuid=$1`, f.endpoint.UUID)
 	// The programmatic default is 24h; a two-hour-old window remains enabled.
-	worker := webhooks.NewWorker(f.app.db, f.app.cfg.Webhook, nil)
-	if err := worker.RunOnce(t.Context(), "default-window"); err != nil {
+	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
+	if err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND status='enabled'`, 1, f.endpoint.UUID)
 	f.app.cfg.Webhook.FailureDisableAfter = time.Hour
-	worker = webhooks.NewWorker(f.app.db, f.app.cfg.Webhook, nil)
-	f.exec(t, `UPDATE jobs SET run_after=clock_timestamp()-interval '1 second' WHERE status='retry'`)
-	if err := worker.RunOnce(t.Context(), "custom-window"); err != nil {
+	worker = webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
+	drainWebhookQueue(t, f.app, worker)
+	if err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM jobs WHERE type='webhook_delivery' AND status='failed' AND attempts=2`, 1)
+	assertWebhookQueueCount(t, f.app, 0)
 	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND status='disabled' AND disabled_reason=$2`, 1, f.endpoint.UUID, sustainedFailureReason)
 	enabled := "enabled"
 	if _, err := f.app.db.UpdateWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID, db.WebhookEndpointUpdate{Status: &enabled, UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	status.Store(204)
-	if err := worker.RunOnce(t.Context(), "no-revival"); err != nil {
+	if err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("old job revived: %d", calls.Load())
 	}
 	// Enqueue a fresh event through the existing producer boundary.
-	webhooks.NewEnqueuer(f.app.db, nil).Enqueue(t.Context(), webhooks.EnqueueInput{OccurredAt: time.Now(), WorkspaceUUID: f.endpoint.WorkspaceUUID, OrganizationUUID: f.endpoint.OrganizationUUID, EventType: "session.status_idled", ResourceID: "sesn_fresh"})
-	if err := worker.RunOnce(t.Context(), "fresh-event"); err != nil {
+	webhooks.NewEnqueuer(f.app.db, f.app.webhookQueue, nil).Enqueue(t.Context(), webhooks.EnqueueInput{OccurredAt: time.Now(), WorkspaceUUID: f.endpoint.WorkspaceUUID, OrganizationUUID: f.endpoint.OrganizationUUID, EventType: "session.status_idled", ResourceID: "sesn_fresh"})
+	if err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 3 {
@@ -263,24 +150,17 @@ func TestWebhookFailureWindowWorkerAndReenable(t *testing.T) {
 func TestWebhookFailureWindowConcurrentSuccessAndFailure(t *testing.T) {
 	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
 	f.enqueue(t, 2)
-	first, second := f.lease(t), f.lease(t)
 	f.exec(t, `UPDATE webhook_endpoints SET failure_started_at=clock_timestamp()-interval '1 hour',consecutive_failures=4 WHERE uuid=$1`, f.endpoint.UUID)
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		applied, err := f.app.db.CompleteWebhookDeliveryJob(t.Context(), first, true)
-		if err == nil && !applied {
-			err = fmt.Errorf("success not applied")
-		}
+		err := f.app.db.RecordWebhookDeliverySuccess(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.UUID)
 		results <- err
 	}()
 	go func() {
 		<-start
-		applied, err := f.app.db.FailWebhookDeliveryJob(t.Context(), second, windowFailure())
-		if err == nil && !applied {
-			err = fmt.Errorf("failure not applied")
-		}
+		_, err := f.app.db.RecordWebhookDeliveryFailure(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.UUID, "temporary", false, 24*time.Hour)
 		results <- err
 	}()
 	close(start)

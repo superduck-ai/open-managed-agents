@@ -145,6 +145,63 @@ OMA 连接部署方已有的 Vault；Vault 的部署、初始化、解封、密�
 
 协议参考：[Transit API](https://developer.hashicorp.com/vault/api-docs/secret/transit)、[Vault HTTP API](https://developer.hashicorp.com/vault/api-docs)、[Token 生命周期](https://developer.hashicorp.com/vault/docs/concepts/tokens)。
 
+#### 本地按需试用 Vault Docker
+
+日常开发继续使用默认 Local Provider，无需启动 Vault，也不将 Vault 加入项目 Docker Compose。只有验证 Transit 接入时，才单独启动以下容器；命令适用于 OMA 直接运行在宿主机的场景。
+
+```bash
+docker run --detach --rm --name oma-vault-dev \
+  --publish 127.0.0.1:19200:8200 \
+  --cap-add IPC_LOCK \
+  --env VAULT_DEV_ROOT_TOKEN_ID=oma-dev-only \
+  --env VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+  --env VAULT_ADDR=http://127.0.0.1:8200 \
+  --env VAULT_TOKEN=oma-dev-only \
+  hashicorp/vault server -dev
+
+docker exec oma-vault-dev vault status
+```
+
+确认 `Initialized=true`、`Sealed=false` 后，启用 Transit 并创建密钥：
+
+```bash
+docker exec oma-vault-dev vault secrets enable transit
+docker exec oma-vault-dev vault write transit/keys/oma-dek type=aes256-gcm96
+```
+
+复制现有开发配置，保持原文件的 Local 模式和其他设置不变：
+
+```bash
+cp config/config.yaml config/config.vault-local.yaml
+```
+
+仅在复制的配置中将 `vault.master_key.provider` 改为 `hashicorp_vault`，并添加以下配置块；保留原有 `local` 块用于读取旧数据：
+
+```yaml
+vault:
+  master_key:
+    provider: hashicorp_vault
+    hashicorp_vault:
+      address: http://127.0.0.1:19200
+      transit_mount: transit
+      key_name: oma-dek
+      token: oma-dev-only
+```
+
+在这份配置中将 `server.addr` 设为 `127.0.0.1:18080`，然后从仓库根目录启动 OMA：
+
+```bash
+CONFIG_FILE="$PWD/config/config.vault-local.yaml" go run .
+```
+
+仅用临时测试凭据验证，结束后先归档这些凭据、停止该 OMA 进程，再停止 Vault：
+
+```bash
+docker stop oma-vault-dev
+```
+
+此示例使用 [Vault dev 模式](https://developer.hashicorp.com/vault/docs/concepts/dev-server)：自动初始化和解封，密钥只保存在内存中；停止或重启 Vault 后，对应的数据库密文将无法解密。需要长期保留密文时，应使用持久化的 Vault 部署。示例 root token 仅供本机临时试用；实际部署使用上文的最小权限应用 token。测试配置不要提交到仓库，日常开发仍使用原 `config/config.yaml`。
+
 ### 信封、版本与切换
 
 业务明文只交给本地 AES-256-GCM。插件仅接受长度恰为 32 的 DEK，调用 KMS Encrypt / Decrypt，附固定 purpose `oma-dek-v1` 与规范化 CMK ID 的 EncryptionContext。持久化的 `wrapped_dek` 是解码后的 KMS CiphertextBlob；业务 AAD、`format_version` 与表结构不变。

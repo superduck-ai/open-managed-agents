@@ -55,9 +55,14 @@ tunnel:
   # Local completion receipts expire at the request deadline plus this TTL.
   # Immutable bindings live for request_timeout + tombstone_ttl after creation.
   tombstone_ttl: 5m
-  # Commands: no message-count limit; fixed 513 MiB per NATS node (R3).
+  # Commands stream limits; max_msgs=-1 means no message-count limit.
+  # A positive max_msgs rejects new commands when the stream reaches that count.
+  # The defaults are 513 MiB per NATS node (R3) and unlimited messages.
+  command_stream:
+    max_bytes: 537919488
+    max_msgs: -1
   # Immutable bindings use Redis SET NX PX, up to 4 KiB per record.
-  # Bindings and local waiters have no request-count admission limit.
+  # Bindings and local waiters have no separate request-count admission limit.
   # Only NATS envelopes exceeding 2 MiB offload their bodies; no 32 KiB threshold.
   max_body_bytes: 16777216
   max_header_bytes: 32768

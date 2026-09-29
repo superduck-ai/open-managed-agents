@@ -301,6 +301,20 @@ func TestCommandStorageBudgetStillRejectsFullStream(t *testing.T) {
 	t.Fatal("stream byte budget was ignored")
 }
 
+func TestCommandMessageLimitRejectsFullStream(t *testing.T) {
+	cfg := brokerTestConfig()
+	cfg.CommandStream.MaxMsgs = 1
+	b := testNATSBroker(t, cfg)
+	if err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand("first")); err != nil {
+		t.Fatal(err)
+	}
+	err := b.Enqueue(t.Context(), "tunnel", "tunnel", testQueuedCommand("second"))
+	if !errors.Is(err, errCommandStorageFull) {
+		t.Fatalf("full command stream error = %v, want capacity error", err)
+	}
+	assertTunnelErrorKind(t, ingressQueueError(err), apperr.RateLimited)
+}
+
 func TestPollReturnsSuccessfulClaimsAlongsideRedisFailure(t *testing.T) {
 	b := testNATSBroker(t, brokerTestConfig())
 	for _, id := range []string{"first", "second"} {

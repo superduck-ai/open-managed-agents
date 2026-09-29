@@ -62,7 +62,8 @@ func TestNATSBrokerConcurrentConnectionsDispatchOnlyOnce(t *testing.T) {
 
 func brokerTestConfig() config.TunnelConfig {
 	return config.TunnelConfig{RequestTimeout: time.Minute, PollTimeout: time.Second, PresenceTTL: time.Minute, TombstoneTTL: time.Minute,
-		MaxBodyBytes: 1 << 20, MaxHeaderBytes: 32 << 10, MaxHeaderValueBytes: 8 << 10}
+		CommandStream: config.TunnelCommandStreamConfig{MaxBytes: 513 << 20, MaxMsgs: -1},
+		MaxBodyBytes:  1 << 20, MaxHeaderBytes: 32 << 10, MaxHeaderValueBytes: 8 << 10}
 }
 
 func testNATSBroker(t *testing.T, cfg config.TunnelConfig) *Broker {
@@ -121,14 +122,52 @@ func testTerminalResponse(requestID string) TunnelResponse {
 	return TunnelResponse{RequestID: requestID, Channel: "main", ResponseType: ResponseTypeJSONRPC, ResponseCode: 200, JSONResponse: json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`)}
 }
 
-func TestNATSBrokerCommandsHaveOnlyStorageBudget(t *testing.T) {
-	b := testNATSBroker(t, brokerTestConfig())
+func TestNATSBrokerAppliesCommandStreamLimits(t *testing.T) {
+	cfg := brokerTestConfig()
+	cfg.CommandStream = config.TunnelCommandStreamConfig{MaxBytes: 4 << 20, MaxMsgs: 10}
+	b := testNATSBroker(t, cfg)
 	info, err := b.commands.Info(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Config.MaxMsgs != -1 || info.Config.MaxBytes != commandStorageBytes || info.Config.Discard != jetstream.DiscardNew {
+	if info.Config.MaxMsgs != cfg.CommandStream.MaxMsgs || info.Config.MaxBytes != cfg.CommandStream.MaxBytes || info.Config.Discard != jetstream.DiscardNew {
 		t.Fatalf("request stream = %+v", info.Config)
+	}
+}
+
+func TestNATSBrokerUpdatesExistingCommandStream(t *testing.T) {
+	srv := startTunnelNATS(t, server.Options{})
+	connection := connectTunnelNATS(t, srv.ClientURL())
+	js, err := jetstream.New(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := brokerTestConfig()
+	cfg.CommandStream = config.TunnelCommandStreamConfig{MaxBytes: 4 << 20, MaxMsgs: 10}
+	_, err = js.CreateStream(t.Context(), jetstream.StreamConfig{
+		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
+		Storage: jetstream.FileStorage, Replicas: 1, Retention: jetstream.WorkQueuePolicy,
+		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: -1,
+		MaxBytes: 8 << 30, MaxMsgSize: maxBrokerValueBytes, MaxConsumers: maxCommandConsumers,
+		Duplicates: cfg.RequestTimeout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.Publish(t.Context(), commandSubject("tunnel", "main"), []byte("pending")); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := newBroker(t.Context(), connection, cfg, 1, testRequestBindings(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(broker.Close)
+	info, err := broker.commands.Info(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Config.MaxBytes != cfg.CommandStream.MaxBytes || info.Config.MaxMsgs != cfg.CommandStream.MaxMsgs || info.State.Msgs != 1 {
+		t.Fatalf("stream after update: max_bytes=%d max_msgs=%d messages=%d", info.Config.MaxBytes, info.Config.MaxMsgs, info.State.Msgs)
 	}
 }
 

@@ -137,15 +137,21 @@ type EmailSMTPConfig struct {
 }
 
 type TunnelConfig struct {
-	PublicBaseURL       string        `yaml:"public_base_url"`
-	DomainSuffix        string        `yaml:"domain_suffix"`
-	PollTimeout         time.Duration `yaml:"poll_timeout"`
-	RequestTimeout      time.Duration `yaml:"request_timeout"`
-	PresenceTTL         time.Duration `yaml:"presence_ttl"`
-	TombstoneTTL        time.Duration `yaml:"tombstone_ttl"`
-	MaxBodyBytes        int64         `yaml:"max_body_bytes"`
-	MaxHeaderBytes      int64         `yaml:"max_header_bytes"`
-	MaxHeaderValueBytes int64         `yaml:"max_header_value_bytes"`
+	PublicBaseURL       string                    `yaml:"public_base_url"`
+	DomainSuffix        string                    `yaml:"domain_suffix"`
+	PollTimeout         time.Duration             `yaml:"poll_timeout"`
+	RequestTimeout      time.Duration             `yaml:"request_timeout"`
+	PresenceTTL         time.Duration             `yaml:"presence_ttl"`
+	TombstoneTTL        time.Duration             `yaml:"tombstone_ttl"`
+	CommandStream       TunnelCommandStreamConfig `yaml:"command_stream"`
+	MaxBodyBytes        int64                     `yaml:"max_body_bytes"`
+	MaxHeaderBytes      int64                     `yaml:"max_header_bytes"`
+	MaxHeaderValueBytes int64                     `yaml:"max_header_value_bytes"`
+}
+
+type TunnelCommandStreamConfig struct {
+	MaxBytes int64 `yaml:"max_bytes"`
+	MaxMsgs  int64 `yaml:"max_msgs"`
 }
 
 type StorageConfig struct {

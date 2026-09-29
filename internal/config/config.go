@@ -421,6 +421,7 @@ func validatePositiveValues(cfg Config) error {
 		{name: "tunnel.request_timeout", valid: cfg.Tunnel.RequestTimeout >= time.Second && cfg.Tunnel.RequestTimeout <= 10*time.Minute},
 		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
 		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
+		{name: "tunnel.command_stream.max_bytes", valid: cfg.Tunnel.CommandStream.MaxBytes > 0},
 		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
 		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
 		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},
@@ -446,6 +447,9 @@ func validatePositiveValues(cfg Config) error {
 		if !check.valid {
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
+	}
+	if cfg.Tunnel.CommandStream.MaxMsgs != -1 && cfg.Tunnel.CommandStream.MaxMsgs <= 0 {
+		return errors.New("tunnel.command_stream.max_msgs must be -1 or greater than zero")
 	}
 	return nil
 }

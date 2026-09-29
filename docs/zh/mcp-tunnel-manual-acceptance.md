@@ -239,7 +239,7 @@ go test ./internal/tunnels -run '^TestConnector' -count=1 -v
 
 ## 超过 NATS 上限的正文验收
 
-默认配置：`tunnel.max_body_bytes=16777216`，已删除 `max_stored_requests`。每节点 Tunnel Commands 存储预算固定 513 MiB，三副本约 1.50 GiB；Worker Stream 的预算不变。不要为通过验收提高 NATS `max_payload` 或存储容量。
+默认配置：`tunnel.max_body_bytes=16777216`，已删除 `max_stored_requests`。每节点 Tunnel Commands 存储预算默认 513 MiB，三副本约 1.50 GiB；可通过 `tunnel.command_stream.max_bytes` 调整。Worker Stream 的预算不变。不要为通过验收提高 NATS `max_payload` 或存储容量。
 
 1. 先测失败：16 MiB+1 正文、对象不存在、长度/摘要不符、对象上传/读取失败、清理任务登记失败；错误沿用当前合同，不重投。错误 Response 绑定不能上传对象。
 2. 检查编码后完整 NATS 消息（包含命令去重 header）在上限前、恰好达到上限和超过上限的行为。前两者不访问存储，后者只发布引用，接收方恢复完整正文。
@@ -267,7 +267,7 @@ go test ./internal/tunnels -run 'TestTunnelPayloadRealStorageAndClient|TestOffic
 ### Redis 领取绑定与无请求数量准入验收
 
 1. 使用专用 Redis 8 运行 `TestRequestBindingsRedis8`；通过 `TEST_TUNNEL_REDIS_ADDR` 指定可短暂停顿的验收实例，不能使用共享开发 Redis。验证并发 NX、独立 TTL、读取不续期及暂停时失败。
-2. 验证不存在旧 Request KV，Commands 为 R3、MaxMsgs=-1、MaxBytes=537919488；超过 256 个排队命令、绑定和等待者仍可处理。
+2. 默认配置下验证不存在旧 Request KV，Commands 为 R3、MaxMsgs=-1、MaxBytes=537919488；超过 256 个排队命令、绑定和等待者仍可处理。
 3. 绑定缺失/过期为 404；Redis 故障为 503。领取写入失败不交付，不后台重投。已有成功领取的旧 token 在轮换后仍可完成响应。
 4. 设置真实存储与官方 client 验收所需环境变量，同时指定上述 Redis 地址；运行 `TestTunnelPayloadRealStorageAndClient` 与 `TestOfficialTunnelClientIntegration`，验证跨实例回传、普通正文、超 2 MiB 正文及 SSE 顺序。
 5. Redis 丢失绑定导致在途请求失败是已接受的行为；绑定读取不查询 PostgreSQL 当前凭据、不回退 NATS KV。检查 readiness 分别显示 tunnel_nats/tunnel_redis。
@@ -277,6 +277,6 @@ go test ./internal/tunnels -run 'TestTunnelPayloadRealStorageAndClient|TestOffic
 
 - 专用 Redis 8 验证 NX 并发唯一创建、TTL 不续期、独立过期、暂停超时，以及三个独立 Broker/Redis 客户端的领取与响应回传，均通过。
 - 未修改的 tunnel-client v0.0.14 完成 HTTP JSON、HTTP SSE、stdio、server-info v2 验收；真实 PostgreSQL、版本化 S3 与 Redis 8 完成 3 MiB 请求、响应和 SSE 通知，以及临时对象清理验收。Token 查询仍使用该集成测试原有 fixture，此结果不等同于真实 Managed Agent/Sandbox 验收。
-- Tunnel 包全量测试和定向并发 race 检查通过；300 个排队命令、绑定和等待者无数量准入，固定字节预算及无 Request KV 检查通过。
+- Tunnel 包全量测试和定向并发 race 检查通过；300 个排队命令、绑定和等待者无数量准入，默认字节预算及无 Request KV 检查通过。
 - 全仓库 just test 的其他包通过，tests 包仍有 TestCodeSessionAskUserQuestionUsesCustomToolResult 缺少 session.status_idle 的失败；变更前验收日志也有同样失败，本次没有修改该逻辑。
 - lint、dead-code、duplicates、complexity、large-files 均通过；E2E build tag 编译通过。

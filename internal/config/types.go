@@ -100,7 +100,8 @@ type DecryptOnlyKeyConfig struct {
 }
 
 type ServerConfig struct {
-	Addr string `yaml:"addr"`
+	Addr            string `yaml:"addr"`
+	DiagnosticsAddr string `yaml:"diagnostics_addr"`
 }
 
 type DatabaseConfig struct {

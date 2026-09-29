@@ -779,6 +779,7 @@ export type EventsTabProps = {
   scrollerRef: RefObject<HTMLDivElement | null>;
   selectedEntry: SessionEventListEntry | null;
   selectedEntryId: string | null;
+  sentMessageVersion: number;
   showArchivedLanes: boolean;
   suppressScrollSeekUntilRef: MutableRefObject<number>;
   threadNameById: Map<string, string>;

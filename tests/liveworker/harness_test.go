@@ -164,10 +164,11 @@ func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path
 }
 
 type liveSession struct {
-	env     *liveEnv
-	session db.Session
-	code    db.CodeSession
-	token   string
+	env        *liveEnv
+	session    db.Session
+	code       db.CodeSession
+	token      string
+	modelToken string
 }
 
 func (e *liveEnv) newSession(t *testing.T) *liveSession {
@@ -203,9 +204,10 @@ func (e *liveEnv) newSessionWithSnapshot(t *testing.T, snapshot json.RawMessage)
 			t.Errorf("delete test session: %v", err)
 		}
 	})
-	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(uuid.NewString()), InitialWorkerEpoch: 1, CreatedAt: now})
+	modelToken := uuid.NewString()
+	code, err := e.database.CreateCodeSession(ctx, db.CreateCodeSessionInput{ExternalID: "cse_" + strings.ReplaceAll(uuid.NewString(), "-", ""), OrganizationUUID: org, WorkspaceUUID: workspace, SessionUUID: session.UUID, SessionExternalID: sessionID, EnvironmentUUID: e.environment.UUID, EnvironmentExternalID: e.environment.ExternalID, Status: "initializing", Model: agentConfig.Model.ID, PermissionMode: "default", Metadata: json.RawMessage(`{"config":{}}`), OAuthAccessTokenHash: auth.HashAPIKey(modelToken), InitialWorkerEpoch: 1, CreatedAt: now})
 	requireOK(t, err)
-	f := &liveSession{env: e, session: session, code: code}
+	f := &liveSession{env: e, session: session, code: code, modelToken: modelToken}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()

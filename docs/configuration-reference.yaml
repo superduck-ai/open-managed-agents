@@ -10,6 +10,8 @@ env: dev
 
 server:
   addr: 127.0.0.1:38080
+  # Empty disables profiles. If enabled, use a literal loopback IP on a separate port.
+  diagnostics_addr: ""
 
 database:
   url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable

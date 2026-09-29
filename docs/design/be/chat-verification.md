@@ -104,8 +104,8 @@ CLI 使用 Cobra 注册 `chat`、`files` 和各自场景，另有公共及分域
 根命令、子命令和具体场景均支持 `-h` / `--help`，也支持 `help [命令 [场景]]`。
 帮助列出可用命令、场景说明、镜像配置优先级、示例、报告路径、退出码和覆盖范围；场景名称与
 说明来自实际执行使用的同一注册表，选项帮助直接从 Cobra flag 定义生成。
-`--timeout` 是全局选项；`--worker-image` 属于 `chat`；性能参数属于 `chat performance`。长选项统一使用 `--worker-image` 等双横线写法，帮助保留 `-h` 缩写。
-性能专属参数仍只允许用于 `chat performance`，诊断与基线比较不能同时启用。
+`--timeout` 是全局选项；`--worker-image` 属于 `chat` 和 `files generated`。长选项统一使用 `--worker-image` 等双横线写法，帮助保留 `-h` 缩写。
+`--baseline`、`--backend-ref` 和 `--diagnostics` 仅用于 `chat performance` 和 `files performance`，诊断与基线比较不能同时启用。
 帮助在读取本地配置、查找 Git 根目录和连接 Docker 前返回成功；shell 入口仍需 Go 来构建 CLI。
 CLI 单测覆盖参数错误、选项位置、帮助入口、场景清单和私有镜像值不回显。
 

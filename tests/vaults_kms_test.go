@@ -18,7 +18,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
-	"github.com/superduck-ai/open-managed-agents/internal/testutil/kmsfake"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"go.yaml.in/yaml/v3"
 )
@@ -26,7 +25,7 @@ import (
 // Uses the production config loader, provider assembly, signed HTTPS SDK,
 // PostgreSQL/API paths and the existing MITM entry point. No cloud account.
 func TestVaultAliyunKMSLifecycle(t *testing.T) {
-	fake := kmsfake.New(t)
+	fake := newFakeKMSServer(t)
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)

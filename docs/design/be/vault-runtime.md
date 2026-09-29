@@ -185,7 +185,8 @@ SDK wire logger 会输出含 DEK 的 URL，凭证 SDK 也可能打印 metadata t
 
 ### 离线验证与消融
 
-- `go test ./internal/secrets/... ./internal/secretservice ./internal/config ./internal/vaults -count=1`：本地兼容、官方 SDK + 本地 HTTPS Fake KMS、配置到信封往返、权限/禁用/错误 Key/篡改/取消/超时、错误脱敏、DEK 清零以及 OAuth 换票后保存失败与重新授权。没有真实云凭证或外部 KMS 依赖。
+- `go test ./internal/secrets/... ./internal/secretservice ./internal/config ./internal/vaults -count=1`：本地兼容、配置校验、权限/禁用/错误 Key/篡改/取消/超时、错误脱敏、DEK 清零以及 OAuth 换票后保存失败与重新授权。没有真实云凭证或外部 KMS 依赖。
+- `go test ./tests -run '^TestConfiguredKMSService$' -count=1 -v`：配置加载到官方 SDK 与本地 HTTPS Fake KMS 的信封往返，无需 PostgreSQL。测试及私有 Fake 集中在 `tests/kms_test.go`，生命周期测试在同包复用，不提供独立的测试工具包。
 - `go test ./tests -run '^TestVaultAliyunKMSLifecycle$' -count=1 -v`：沿用项目测试 DB 配置，在 PostgreSQL 上贯穿创建、读取、局部更新、MITM 注入、失败不落库/不转发、归档清秘密及日志检查。Fake KMS 在当前进程运行，通过 `secretservice.WithKMSCA` 将 PEM CA 注入该 SDK 客户端；不使用子进程、全局根证书或 `GODEBUG`，也不关闭 TLS 校验。覆盖实际 SDK 请求构造、HTTPS 通信和响应解析；Fake 不承担云端签名校验。
 - `secrets_test.go` 的 `TestServiceWipesDEK` 保留成功路径及 Provider 返回 DEK 同时报错的清零回归，不重复枚举所有参数错误。
 - 故障测试按层分工：Provider 覆盖错误码与取消/超时；装配层覆盖配置、无远端探测及 local 兼容；生命周期集成测试选一个权限故障验证不落库、不改旧信封、不转发，并单独覆盖持久化密文篡改。

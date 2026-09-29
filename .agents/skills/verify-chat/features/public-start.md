@@ -4,6 +4,8 @@ Run `just verify-chat run chat.public`.
 
 Create a Session through the public API, submit its first message, and let the actual environment Runner claim the queued work. A test-only Provider allocates a Docker container instead of calling the E2B cloud API. The real Runner writes the filestore configuration, starts the image's rclone mounts, waits for readiness, creates the Code Session, sends credentials to the real environment-manager over stdin and publishes runtime metadata. The manager starts the real Worker. Public SSE, final history and queue drainage must then pass.
 
+The test omits the Session title and checks that final history contains only the normal answer and one model request per chat turn. This also detects background title responses leaking into public `agent.message` history.
+
 The Docker container requires `/dev/fuse`, `SYS_ADMIN` and an unconfined AppArmor profile for the real mounts. It is labeled with the verification run ID and removed after testing. The preinstalled image must contain environment-manager, rclone-filestore and Claude.
 
 This covers the public application startup path and real sandbox commands. It does not certify the external cloud provider's API, network restrictions, billing or allocation capacity. No startup or mount stage is replaced with an unconditional success.

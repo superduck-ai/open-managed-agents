@@ -538,7 +538,7 @@ flowchart LR
 - Redis 领取绑定按 requestId 摘要定位，只存 Tunnel ID、领取 token 哈希、channel、命令类型、deadline、Origin 和清理所需租户 UUID。交付前不可覆盖地创建，不保存请求状态或结果，不进行领取/取消/完成 CAS。
 - 通知和最终响应使用相同的 Core NATS request-reply 路由。原实例接纳才返回成功；通知仍有每请求 16 条 / 2 MiB、全进程 64 MiB 背压。最终响应有独立槽位，计入全局预算，接受的通知先于最终结果交付。
 - 原实例本地完成标记保留到 deadline 加 tombstone TTL，合法重复返回 200，不重复交付。标记不持久化，实例重启导致旧 Origin 不可达时返回 503；实例可达但没有等待者或完成标记返回 404。
-- Commands、Redis 绑定和本地等待者不限制请求总数。Commands 固定 513 MiB/节点的磁盘预算。绑定通过 SET NX PX 创建，每条最多 4 KiB，保留 request timeout 加 tombstone TTL，读取和重复创建不续期。
+- Commands 默认不限制待处理消息数；正数 `tunnel.command_stream.max_msgs` 会限制该数量。Redis 绑定和本地等待者没有独立请求数量准入。Commands 默认每节点 513 MiB，可通过 `tunnel.command_stream.max_bytes` 调整。绑定通过 SET NX PX 创建，每条最多 4 KiB，保留 request timeout 加 tombstone TTL，读取和重复创建不续期。
 - Poll 尊重客户端的正整数 limit，省略默认 25，取消服务端额外 25 条限制及 Poll 累计字节截断。先对 channel 做一轮非阻塞读取，有有效命令即返回；没有才进入每轮最多 100ms 的有限等待。
 - 每轮最多选 min(limit, channel 数量) 个 channel，各申请一条；本轮收束后一起返回，不凑满，空轮轮换 channel。`timeout_ms=0` 只读现有命令。SDK 单次非阻塞拉取的预分配保护固定为 256 条，与积压量和并发请求总量无关，不新增客户端 limit 上限。
 - 正常返回前收束本轮全部拉取；connector HTTP 断开后停止新拉取，并终止晚到且无法交付的消息，不 NAK、不留后台预取。consumer 无活动超过 request timeout 加一分钟才回收，运维不得在有效命令仍存在时重建。
@@ -595,7 +595,7 @@ Ingress 请求 denylist 至少包括：
 | presence TTL                              | 60 秒  |
 | terminal tombstone                        | 5 分钟 |
 
-删除 `max_stored_requests`，不提供配置兼容别名。Commands 固定每节点 513 MiB，三副本合计约 1.50 GiB，不新增容量配置项；不改变 Worker Stream 的 10 GiB 预算。Redis 绑定无记录数量额度，16 MiB 正文上限不进入 NATS 容量公式。
+删除 `max_stored_requests`，不提供配置兼容别名。Commands 默认每节点 513 MiB，三副本合计约 1.50 GiB；`tunnel.command_stream` 可配置字节与消息条数上限，Worker Stream 配置不受影响。Redis 绑定无记录数量额度，16 MiB 正文上限不进入 NATS 容量公式。
 
 完整 NATS 消息只有超出 2 MiB 才外置正文，命令计入 NATS 去重 header。复用对象存储与定时清理，原 deadline 后 5 分钟开始删除所有版本。引用只在 OMA 内部传递，出口校验长度和 SHA-256 并恢复完整正文；SSE 保持原有交付顺序，不改客户端协议。详见 [正文暂存设计](be/mcp-tunnels.md#超过-nats-消息上限的正文)。
 

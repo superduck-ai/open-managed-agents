@@ -14,7 +14,6 @@ import (
 const (
 	commandStreamName      = "OMA_TUNNEL_COMMANDS_V1"
 	commandSubjectPrefix   = "oma.tunnel.command.v1."
-	commandStorageBytes    = 513 << 20
 	maxBrokerValueBytes    = 2 << 20
 	maxCommandConsumers    = 131072 // Existing global Stream consumer limit.
 	maxRequestBindingBytes = 4096
@@ -43,8 +42,8 @@ func brokerKey(parts ...string) string {
 }
 
 func brokerCapacityError(err error) error {
-	var apiError *jetstream.APIError
-	if errors.As(err, &apiError) && apiError.ErrorCode == 10077 && apiError.Description == "maximum bytes exceeded" {
+	apiError, ok := errors.AsType[*jetstream.APIError](err)
+	if ok && apiError.ErrorCode == 10077 && (apiError.Description == "maximum bytes exceeded" || apiError.Description == "maximum messages exceeded") {
 		return fmt.Errorf("%w: %v", errCommandStorageFull, err)
 	}
 	return err

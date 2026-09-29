@@ -111,4 +111,4 @@ MCP Tunnel 的 Commands Stream、Redis 绑定、2 MiB 节点 payload 要求、�
 
 Tunnel 完整 NATS 消息（命令包含去重 header）超过 2 MiB 时才将正文暂存对象存储，队列/响应通道传引用；未超限保持内联。接收 OMA 恢复并校验完整正文，客户端协议不变。对象清理复用 PostgreSQL 任务，原 deadline 后 5 分钟开始删除所有版本。此阈值与 Worker 事件 32 KiB 外置阈值无关。
 
-Tunnel 不设置请求数量准入，Commands 的 MaxMsgs=-1，固定每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB。删除 max_stored_requests，不新增容量配置；Redis 绑定不占 NATS 存储预算。默认正文上限 16 MiB 不改变命令预算。Worker Stream 默认 256 MiB、R3，可通过 `nats.worker_event_stream` 调整容量与副本数；这些设置不调整 NATS 集群容量，也不保证任意小磁盘都能运行完整应用。
+Tunnel 默认不设置请求数量准入，Commands 的 `max_msgs=-1`，`max_bytes` 默认每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB；两项可通过 `tunnel.command_stream` 配置，启动时原地更新已有 Stream。`max_stored_requests` 已删除；Redis 绑定不占 NATS 存储预算。默认正文上限 16 MiB 不改变命令预算。Worker Stream 默认 256 MiB、R3，可通过 `nats.worker_event_stream` 调整容量与副本数；这些设置不调整 NATS 集群容量，也不保证任意小磁盘都能运行完整应用。

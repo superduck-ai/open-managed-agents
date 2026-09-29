@@ -24,6 +24,7 @@ import {
   Pencil,
   Plus,
   Power,
+  RadioTower,
   RotateCcw,
   Trash2,
   Webhook,
@@ -57,7 +58,7 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Badge } from '../../shared/ui/badge';
-import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from '../../shared/ui/empty';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { Card, CardContent } from '../../shared/ui/card';
@@ -80,6 +81,8 @@ import {
   type WebhookEndpoint,
   type WebhookEndpointStatus,
 } from './webhooksApi';
+
+const EMPTY_WEBHOOKS: WebhookEndpoint[] = [];
 
 type WorkspaceWebhooksContentProps = {
   routeWorkspaceId?: string;
@@ -207,11 +210,12 @@ function WorkspaceWebhookManager({
     },
   });
 
-  const webhooks = webhooksQuery.data ?? [];
+  const webhooks = webhooksQuery.data ?? EMPTY_WEBHOOKS;
+  const columnFilters = useMemo(() => [{ id: 'id', value: search }], [search]);
   const table = useReactTable({
     data: webhooks,
     columns: webhookColumns,
-    state: { sorting, columnFilters: [{ id: 'id', value: search }] },
+    state: { sorting, columnFilters },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -366,15 +370,27 @@ function WorkspaceWebhookManager({
         </div>
 
         {!webhooksQuery.isLoading && !errorMessage && webhooks.length === 0 ? (
-          <ResourceListState
-            icon={Webhook}
-            title={msg('webhooks.emptyTitle', 'No webhook endpoints yet')}
-            body={msg(
-              'webhooks.empty',
-              'Create a webhook endpoint for the {workspaceName} workspace to receive event notifications.',
-              { workspaceName },
-            )}
-          />
+          <Empty className="min-h-[320px]" data-testid="webhooks-empty-state">
+            <EmptyHeader className="max-w-[360px]">
+              <EmptyMedia>
+                <RadioTower className="size-14 stroke-[1.2] text-foreground" aria-hidden />
+              </EmptyMedia>
+              <EmptyTitle>{msg('webhooks.emptyTitle', 'No webhook endpoints yet')}</EmptyTitle>
+              <EmptyDescription>
+                {msg(
+                  'webhooks.empty',
+                  'Create a webhook endpoint for the {workspaceName} workspace to receive event notifications.',
+                  { workspaceName },
+                )}
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button type="button" variant="secondary" disabled={!ready} onClick={() => setCreateOpen(true)}>
+                <Plus className="size-4" aria-hidden />
+                {msg('webhooks.addEndpoint', 'Add webhook endpoint')}
+              </Button>
+            </EmptyContent>
+          </Empty>
         ) : null}
       </div>
 
@@ -945,16 +961,7 @@ function ConfirmWebhookActionDialog({
   );
 }
 
-function WebhooksState({
-  text,
-  tone = 'muted',
-  onCreate,
-}: {
-  text: string;
-  tone?: 'muted' | 'error';
-  onCreate?: () => void;
-}) {
-  const { msg } = useI18n();
+function WebhooksState({ text, tone = 'muted' }: { text: string; tone?: 'muted' | 'error' }) {
   return (
     <TableRow className="border-border hover:bg-transparent">
       <TableCell colSpan={5} className="h-[156px] px-4 py-8 text-center text-sm text-muted-foreground">
@@ -967,12 +974,6 @@ function WebhooksState({
           <div>
             <Webhook className="mx-auto mb-3 size-6 text-muted-foreground/70" aria-hidden />
             <p>{text}</p>
-            {onCreate ? (
-              <Button className="mt-4" onClick={onCreate}>
-                <Plus aria-hidden />
-                {msg('webhooks.addEndpoint', 'Add webhook endpoint')}
-              </Button>
-            ) : null}
           </div>
         )}
       </TableCell>

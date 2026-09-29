@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { useMemo, type ReactNode } from 'react';
+import { Profiler, useMemo, type ReactNode } from 'react';
 import { resetTestDom } from '../../test/setup';
 import { ConsoleShell } from '../../app/layout/ConsoleLayout';
 import { setConsoleRequestContext } from '../../shared/api/client';
@@ -11,7 +11,7 @@ import { WorkspaceWebhooksContent } from './WorkspaceWebhooksPage';
 import type { WebhookEndpoint } from './webhooksApi';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
 
@@ -22,6 +22,54 @@ afterEach(() => {
 });
 
 describe('Workspace webhooks page', () => {
+  test.each([false, true])(
+    'settles after opening and closing create dialog with existing endpoints: %s',
+    async (hasEndpoints) => {
+      resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
+      mockWebhooks(hasEndpoints ? [enabledWebhook] : []);
+      let commits = 0;
+      render(
+        <WorkspaceWebhooksHarness>
+          <Profiler
+            id="webhooks"
+            onRender={() => {
+              commits++;
+              if (commits > 80) throw new Error('Webhook page keeps rendering without user input');
+            }}
+          >
+            <WorkspaceWebhooksContent />
+          </Profiler>
+        </WorkspaceWebhooksHarness>,
+      );
+      await screen.findByText(
+        hasEndpoints
+          ? 'Prod events'
+          : 'Create a webhook endpoint for the Default workspace to receive event notifications.',
+      );
+      fireEvent.click(screen.getAllByRole('button', { name: 'Add webhook endpoint' })[0]);
+      const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
+      fireEvent.change(within(dialog).getByLabelText('Endpoint URL'), {
+        target: { value: 'https://example.com/hooks' },
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      expect((within(dialog).getByLabelText('Endpoint URL') as HTMLInputElement).value).toBe(
+        'https://example.com/hooks',
+      );
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+      expect(dialog.hasAttribute('data-closed')).toBe(true);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      const settledCommits = commits;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+      expect(commits).toBe(settledCommits);
+    },
+  );
+
   test('preserves upstream event translations with the complete subscription catalog', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
     mockWebhooks([]);
@@ -32,10 +80,19 @@ describe('Workspace webhooks page', () => {
         </WorkspaceWebhooksHarness>
       </I18nProvider>,
     );
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Add webhook endpoint' }))[0]);
+    const emptyState = await screen.findByTestId('webhooks-empty-state');
+    expect(screen.getAllByRole('button', { name: '添加 Webhook 端点' })).toHaveLength(2);
+    fireEvent.click(within(emptyState).getByRole('button', { name: '添加 Webhook 端点' }));
     const dialog = screen.getByRole('dialog', { name: '创建 Webhook 端点' });
     expect(within(dialog).getByText('会话生命周期')).toBeTruthy();
     expect(within(dialog).getByText('运行已开始')).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '按 ID 查找 Webhook', hidden: true })).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: '全选' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '创建' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '复制 session.updated' })).toBeTruthy();
+    for (const label of ['预算', '环境', '部署运行', '部署', '智能体', '记忆存储']) {
+      expect(within(dialog).getByText(label)).toBeTruthy();
+    }
     expect(within(dialog).getByText('0/38')).toBeTruthy();
     await toggleCheckbox(within(dialog).getByRole('checkbox', { name: '会话生命周期事件' }));
     expect(within(dialog).getByText('4/38')).toBeTruthy();
@@ -180,6 +237,7 @@ describe('Workspace webhooks page', () => {
       </WorkspaceWebhooksHarness>,
     );
     await screen.findByText('Prod events');
+    expect(screen.queryByTestId('webhooks-empty-state')).toBeNull();
     expect(screen.getAllByRole('row')[1].textContent).toContain('Deploy events');
     fireEvent.click(screen.getByRole('button', { name: 'Name' }));
     fireEvent.click(screen.getByRole('button', { name: 'Name' }));

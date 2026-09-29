@@ -262,9 +262,9 @@ Response 不查询 PostgreSQL 凭据；大正文暂存会写入现有对象清�
 deadline 后仅允许确认已有完成标记。等待者与标记均不存在返回 404；旧 Origin 因重启不可达返回 503。
 缺少 Bearer 为 401，格式错误为 400，绑定不符/未领取/过期未完成为 404，基础设施故障为 503。
 
-Commands Stream 显式设置 `MaxMsgs=-1`，Redis 绑定和本地等待者也没有请求数量准入，不引入替代计数器或额度释放补偿。
-命令总字节预算固定为每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB；不再通过请求数推导，不新增容量配置。
-预算不随 MCP 正文上限扩大。既有 Worker Stream 的 10 GiB 预算不变。请求超时、ACK 和本地等待者关闭负责释放资源；TTL 不能限制突发流量的峰值内存。
+Commands Stream 的 `MaxMsgs` 默认 -1；正数 `tunnel.command_stream.max_msgs` 限制待处理命令数。Redis 绑定和本地等待者没有独立请求数量准入，不引入替代计数器或额度释放补偿。
+命令总字节预算默认每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB；可通过 `tunnel.command_stream.max_bytes` 调整，不再通过请求数推导。
+预算不随 MCP 正文上限扩大。Worker Stream 配置不受影响。请求超时、ACK 和本地等待者关闭负责释放资源；TTL 不能限制突发流量的峰值内存。
 绑定创建后保留 `request_timeout + tombstone_ttl`（默认 7 分钟），读取、重复创建和重复响应均不续期，完成或取消也不主动删除。
 所有 OMA 实例必须使用一致的 Redis 和配置。Redis 数据丢失会使部分在途请求失败，不新增恢复、补投或 NATS KV 回退。
 绑定存储复用应用 Redis 客户端，与在线展示组件分开；每次操作最长 2 秒且受调用方 context 约束，不增加应用层重试。
@@ -366,7 +366,7 @@ channel 名称 JSON 列表。鉴权及格式校验成功的 Poll 用 Redis 8 [`H
 - 保留普通 MCP Header、initialize 和 DELETE 的透传，不升级 MCP 协议，不承诺支持依赖特定 Connector 进程的 Server；
 - Poll 不再使用持续预取的 `Consume`。先按轮换顺序对每个 channel 做一次 `FetchNoWait`，申请数不超过客户端剩余 limit；完成这一轮后，有命令即返回，不等待凑满；
 - 无命令且允许长轮询时，每轮选 `min(limit, channel 数量)` 个 channel，各拉取一条、最多等待 100ms，并受 Poll 剩余期限约束。本轮全部收束后一起返回有效命令；空轮轮换 channel 继续等待；
-- 拉取前分配接收名额，不超过客户端 limit；不再根据累计大小截断或 NAK 退回。SDK 按拉取数量分配内存，每次 `FetchNoWait` 最多申请 256 条以限制单次 SDK 预分配；不存在全局请求条数上限，也没有单次 Poll 恢复正文的累计字节预算。Commands Stream 的 513 MiB 预算只约束 NATS 消息存储，不包含对象存储中的正文，不能作为 Poll 恢复正文的内存上限；
+- 拉取前分配接收名额，不超过客户端 limit；不再根据累计大小截断或 NAK 退回。SDK 按拉取数量分配内存，每次 `FetchNoWait` 最多申请 256 条以限制单次 SDK 预分配；默认不限制 Commands Stream 消息条数，也没有单次 Poll 恢复正文的累计字节预算。Commands Stream 默认 513 MiB 的预算只约束 NATS 消息存储，不包含对象存储中的正文，不能作为 Poll 恢复正文的内存上限；
 - connector 的 Poll HTTP 连接断开时，停止发起新拉取，排空本轮有限拉取并终止已收但无法交付的消息，不后台预取、不重投；SDK 网络等待有界，收尾不依赖 ACK 的服务端回执；
 - OMA 不设置实例级活动 Poll 名额。consumer 的 `MaxAckPending=32`、`MaxWaiting=128` 继续作为每路由的 NATS 资源约束；
 - limit 省略时为 25，显式值为正整数，不再设置服务端 25 条上限；timeout 默认及最大值为 30 秒。`timeout_ms=0` 只读当前可用命令。正常空轮询返回 204，没有可交付命令且发生基础设施故障返回 503；

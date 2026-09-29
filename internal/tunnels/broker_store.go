@@ -42,8 +42,8 @@ func brokerKey(parts ...string) string {
 }
 
 func brokerCapacityError(err error) error {
-	var apiError *jetstream.APIError
-	if errors.As(err, &apiError) && apiError.ErrorCode == 10077 && apiError.Description == "maximum bytes exceeded" {
+	apiError, ok := errors.AsType[*jetstream.APIError](err)
+	if ok && apiError.ErrorCode == 10077 && (apiError.Description == "maximum bytes exceeded" || apiError.Description == "maximum messages exceeded") {
 		return fmt.Errorf("%w: %v", errCommandStorageFull, err)
 	}
 	return err

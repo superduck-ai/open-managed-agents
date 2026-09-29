@@ -162,9 +162,12 @@ webhook:
 
 vault:
   master_key:
-    # Omitted provider defaults to local. Also supports aliyun_kms and hashicorp_vault.
+    # Selects new writes; omitted defaults to local. Also supports aliyun_kms and hashicorp_vault.
+    # Every configured block is enabled for reads selected by the stored key_provider.
+    # Retain old provider blocks and keys until their historical envelopes are retired.
+    # Remove unused blocks from the deployed config; all present blocks are validated.
     provider: local
-    # Used only when provider is hashicorp_vault. Remove the local block before selecting it.
+    # Configured Transit can read historical envelopes even when another provider handles writes.
     hashicorp_vault:
       # A reverse proxy, if used, must forward /v1/<mount>/* unchanged to Vault.
       # HTTPS verifies the certificate using the OS/container trust store.
@@ -181,8 +184,8 @@ vault:
       # Optional PEM CA bundle added to system trust for this client at startup.
       # Relative paths resolve against the configuration directory; TLS verification stays on.
       ca_file: ""
-    # Used only when provider is aliyun_kms. Remove the local block before selecting it.
-    # No local fallback.
+    # Configured KMS can read historical envelopes even when another provider handles writes.
+    # A failed operation never falls back to another provider.
     aliyun_kms:
       # Required host or HTTPS origin without path; use your private gateway.
       # TLS certificate verification stays enabled.
@@ -200,7 +203,7 @@ vault:
     # Legacy flat local fields are accepted on input, but cannot coexist with local.
     local:
       # Base64-encoded 32-byte key-encryption key. Exactly one of kek or kek_file
-      # must be set for provider local (same discipline as storage.s3 access keys).
+      # must be set whenever this local block is present, including for historical reads.
       # Generate with: just generate-vault-kek config/secrets/vault-kek
       # then set kek_file, or paste the printed base64 into kek.
       # The value below is a documentation placeholder only — replace before deploy.

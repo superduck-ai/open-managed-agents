@@ -302,8 +302,8 @@ func TestEnvelopeRoundTripAndTokenRotation(t *testing.T) {
 	}
 	count := calls.Load()
 	envelope.KeyProvider = "local"
-	if _, err := svc.Open(t.Context(), binding, envelope); !errors.Is(err, secrets.ErrKeyProviderMismatch) || count != calls.Load() {
-		t.Fatal("provider mismatch not rejected locally")
+	if _, err := svc.Open(t.Context(), binding, envelope); !errors.Is(err, secrets.ErrKeyProviderUnavailable) || count != calls.Load() {
+		t.Fatal("unconfigured provider not rejected locally")
 	}
 }
 

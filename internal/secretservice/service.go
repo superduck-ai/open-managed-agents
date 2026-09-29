@@ -3,7 +3,6 @@
 package secretservice
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -24,7 +23,6 @@ func WithKMSCA(pem string) Option {
 	return func(o *options) { o.kmsCA = pem }
 }
 
-// New builds exactly one provider without remote probes. Failure never selects another.
 func New(mk config.MasterKeyConfig, opts ...Option) (*secrets.Service, error) {
 	if err := config.ValidateMasterKey(mk); err != nil {
 		return nil, err
@@ -33,31 +31,47 @@ func New(mk config.MasterKeyConfig, opts ...Option) (*secrets.Service, error) {
 	for _, option := range opts {
 		option(&settings)
 	}
-	var provider secrets.KeyProvider
-	var err error
-	switch mk.EffectiveProvider() {
+	var writer secrets.KeyProvider
+	var providers []secrets.KeyProvider
+	for _, name := range []string{"local", "aliyun_kms", "hashicorp_vault"} {
+		provider, err := newProvider(name, mk, settings)
+		if err != nil {
+			return nil, err
+		}
+		if provider == nil {
+			continue
+		}
+		providers = append(providers, provider)
+		if name == mk.EffectiveProvider() {
+			writer = provider
+		}
+	}
+	return secrets.NewService(writer, providers...), nil
+}
+
+func newProvider(name string, mk config.MasterKeyConfig, settings options) (secrets.KeyProvider, error) {
+	switch name {
 	case "local":
-		provider, err = localProvider(*mk.Local)
+		if mk.Local != nil {
+			return localProvider(*mk.Local)
+		}
 	case "hashicorp_vault":
-		cfg := mk.HashicorpVault
-		provider, err = hashicorpvault.New(hashicorpvault.Config{
-			Address: cfg.Address, TransitMount: cfg.TransitMount,
-			KeyName: cfg.KeyName, TokenFile: cfg.TokenFile, Token: cfg.Token, CAFile: cfg.CAFile,
-		})
+		if cfg := mk.HashicorpVault; cfg != nil {
+			return hashicorpvault.New(hashicorpvault.Config{
+				Address: cfg.Address, TransitMount: cfg.TransitMount,
+				KeyName: cfg.KeyName, TokenFile: cfg.TokenFile, Token: cfg.Token, CAFile: cfg.CAFile,
+			})
+		}
 	case "aliyun_kms":
-		cfg := mk.AliyunKMS
-		provider, err = aliyunkms.New(aliyunkms.Config{
-			Endpoint: cfg.Endpoint, KeyID: cfg.KeyID,
-			AccessKeyID: cfg.AccessKeyID, AccessKeySecret: cfg.AccessKeySecret,
-			SecurityToken: cfg.SecurityToken, CA: settings.kmsCA,
-		})
-	default:
-		return nil, errors.New("unsupported vault.master_key.provider")
+		if cfg := mk.AliyunKMS; cfg != nil {
+			return aliyunkms.New(aliyunkms.Config{
+				Endpoint: cfg.Endpoint, KeyID: cfg.KeyID,
+				AccessKeyID: cfg.AccessKeyID, AccessKeySecret: cfg.AccessKeySecret,
+				SecurityToken: cfg.SecurityToken, CA: settings.kmsCA,
+			})
+		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	return secrets.NewService(provider), nil
+	return nil, nil
 }
 
 func localProvider(mk config.LocalKeyConfig) (secrets.KeyProvider, error) {

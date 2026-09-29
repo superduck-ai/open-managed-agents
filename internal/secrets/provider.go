@@ -13,8 +13,6 @@ type WrappedKey struct {
 // KeyProvider supplies the KEK used to protect per-secret DEKs. Provider/KMS
 // calls must happen outside any DB transaction; Seal/Open never hold one.
 type KeyProvider interface {
-	// Name is persisted on envelopes and checked at Open to reject envelopes
-	// sealed by a different provider mechanism.
 	Name() string
 	// WrapDEK encrypts dek under the current KEK and records its version.
 	WrapDEK(ctx context.Context, dek []byte) (WrappedKey, error)

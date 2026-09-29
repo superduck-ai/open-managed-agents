@@ -297,18 +297,29 @@ func (m LocalKeyConfig) EffectiveVersion() int64 {
 	return m.Version
 }
 
-// ValidateMasterKey validates the configuration for the active provider.
 func ValidateMasterKey(mk MasterKeyConfig) error {
-	switch mk.EffectiveProvider() {
-	case "local":
-		return validateLocalMasterKey(mk)
-	case "aliyun_kms":
-		return validateAliyunKMSMasterKey(mk)
-	case "hashicorp_vault":
-		return validateHashicorpVaultMasterKey(mk)
+	selected := mk.EffectiveProvider()
+	switch selected {
+	case "local", "aliyun_kms", "hashicorp_vault":
 	default:
 		return errors.New("unsupported vault.master_key.provider")
 	}
+	for _, provider := range []struct {
+		name       string
+		configured bool
+		validate   func(MasterKeyConfig) error
+	}{
+		{"local", mk.Local != nil, validateLocalMasterKey},
+		{"aliyun_kms", mk.AliyunKMS != nil, validateAliyunKMSMasterKey},
+		{"hashicorp_vault", mk.HashicorpVault != nil, validateHashicorpVaultMasterKey},
+	} {
+		if provider.configured || provider.name == selected {
+			if err := provider.validate(mk); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // validateLocalMasterKey requires one KEK source per key and unique positive
@@ -354,9 +365,6 @@ func validateLocalMasterKey(mk MasterKeyConfig) error {
 }
 
 func validateAliyunKMSMasterKey(mk MasterKeyConfig) error {
-	if mk.Local != nil {
-		return errors.New("vault.master_key: local key settings cannot be combined with aliyun_kms")
-	}
 	if mk.AliyunKMS == nil || mk.AliyunKMS.Endpoint == "" || mk.AliyunKMS.KeyID == "" {
 		return errors.New("vault.master_key.aliyun_kms.endpoint and key_id are required")
 	}
@@ -367,9 +375,6 @@ func validateAliyunKMSMasterKey(mk MasterKeyConfig) error {
 }
 
 func validateHashicorpVaultMasterKey(mk MasterKeyConfig) error {
-	if mk.Local != nil {
-		return errors.New("vault.master_key: local key settings cannot be combined with hashicorp_vault")
-	}
 	v := mk.HashicorpVault
 	if v == nil || strings.TrimSpace(v.Address) == "" || strings.TrimSpace(v.KeyName) == "" {
 		return errors.New("vault.master_key.hashicorp_vault: address and key_name are required")

@@ -21,7 +21,7 @@ import (
 func TestNewRejectsInvalidProviderWithoutFallback(t *testing.T) {
 	for _, mk := range []config.MasterKeyConfig{
 		{Provider: "unknown_provider", Local: &config.LocalKeyConfig{Kek: base64.StdEncoding.EncodeToString(make([]byte, 32))}},
-		{Provider: "aliyun_kms", Local: &config.LocalKeyConfig{Kek: base64.StdEncoding.EncodeToString(make([]byte, 32))}, AliyunKMS: &config.AliyunKMSConfig{Endpoint: "kms.example", KeyID: "key"}},
+		{Provider: "aliyun_kms", Local: &config.LocalKeyConfig{Kek: "invalid-key"}, AliyunKMS: &config.AliyunKMSConfig{Endpoint: "kms.example", KeyID: "key"}},
 		{Provider: "aliyun_kms"},
 	} {
 		if svc, err := secretservice.New(mk); err == nil || svc != nil {

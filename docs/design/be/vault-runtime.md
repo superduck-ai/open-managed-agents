@@ -62,7 +62,7 @@ flowchart LR
 
 本地 KEK 读取、版本选择和 DEK 封装集中在 `secrets/local`；公共包只保留信封合同、AAD 和加解密流程。公共信封错误位于 `secrets/errors.go`，厂商错误解析仍在各插件中。根目录 `crypto.go` 保留信封加密辅助函数，local 直接使用标准库完成密钥封装；不增加共享子包。`local.New` 不接受 context，调用方以 `secrets.NewService(provider)` 显式组装。`local/provider_test.go` 内的固定旧版信封常量验证解密兼容性，无额外 testdata 目录。
 
-装配只选择一个 Provider，校验配置并创建客户端，不执行远端加解密探测。远端鉴权、网络、密钥可用性与 TLS 错误在实际封装或解封时返回，不阻止服务装配，也不尝试另一个 Provider。
+装配所有已配置的 Provider，`master_key.provider` 仅选择新写入使用的 Provider，省略仍默认 `local`。每个配置块都需通过校验，本地密钥与显式 CA 文件在装配时读取；不执行远端加解密探测。读取按信封 `key_provider` 精确选择已配置的 Provider，缺少对应配置或解密失败直接报错，不尝试其他 Provider。远端不可用不影响其他 Provider 的历史数据读取。
 
 ### 本地模式与兼容性
 
@@ -97,7 +97,7 @@ vault:
 - 显式 `access_key_id` 与 `access_key_secret` 必须同时配置；可附加 `security_token` 使用显式 STS 凭证。显式字段优先，静态配置不会自动替换过期的 STS token；生产优先绑定 RAM 角色。长期 AK 仍是敏感访问凭证，不应随配置入库或提交。
 - RAM / CMK policy 最小授权为目标 CMK 的 `kms:Encrypt` 与 `kms:Decrypt`。不需要 DescribeKey 或导出 CMK 权限；实际 Encrypt / Decrypt 失败时请求返回错误。
 - ACK 的 STS 换票是独立网络链路。完全私网部署同时设置 `ALIBABA_CLOUD_STS_REGION=cn-hangzhou` 与 `ALIBABA_CLOUD_VPC_ENDPOINT_ENABLED=true`，并保证对应区域 STS VPC 端点可达；只设置 KMS endpoint 不会改变 STS 的路由。
-- 远端 Provider 拒绝同时配置 `local` 块。配置参考文件列出各模式字段，激活远端 Provider 前应移除 `local`。旧格式中为空的本地字段及 `version: 0/1` 仍兼容，不能包含实际本地密钥。
+- 可保留 `local` 或 `hashicorp_vault` 配置块，用于解密对应的历史信封；新写入仍只使用 `provider` 指定的实现。旧平铺本地密钥字段仍归一到 `local`，可用于历史读取；旧远端配置中的空本地字段及 `version: 0/1` 不启用 Local。
 
 ### HashiCorp Vault Transit 模式
 
@@ -116,7 +116,7 @@ vault:
 
 该域名为部署示例，不是默认地址或已验证的线上端点。如使用反向代理终止 TLS 并路由到 Vault，需保留 `/v1/<transit_mount>/encrypt/<key_name>`、`decrypt/<key_name>` 的路径、请求体与 `X-Vault-Token`；不要把这些请求改写为登录页面、缓存响应或重定向到其他域名。云端使用 HTTPS origin（可带端口）及操作系统/容器的信任库；本地仅对 loopback IP、`localhost` 和 Compose 服务名 `vault` 允许 HTTP，并绕过环境 HTTP 代理；可选的 `ca_file` 在客户端初始化时读取 PEM 证书并追加到该客户端的系统信任根，不修改全局信任库；文件不可读或没有有效证书时装配失败。未配置时只使用系统信任库。证书链和主机名校验始终开启，没有跳过校验选项；CA 文件更新后需重启 OMA。TLS 信任与 OMA 出站 MITM CA 是独立的两条链路。
 
-`address` 和 `key_name` 必填，`token` 与 `token_file` 必须且只能配置一个。`transit_mount` 省略或为空时使用 `transit`，表示 Transit 引擎的 API 挂载路径，支持嵌套 mount（如 `team/transit`）；请求地址为 `/v1/<transit_mount>/encrypt/<key_name>` 或 `decrypt/<key_name>`，`key_name` 是单个路径段。拒绝 traversal、转义路径、查询和 fragment。选择该 Provider 时移除 `local` 配置块；不会回退本地或阿里云密钥。
+`address` 和 `key_name` 必填，`token` 与 `token_file` 必须且只能配置一个。`transit_mount` 省略或为空时使用 `transit`，表示 Transit 引擎的 API 挂载路径，支持嵌套 mount（如 `team/transit`）；请求地址为 `/v1/<transit_mount>/encrypt/<key_name>` 或 `decrypt/<key_name>`，`key_name` 是单个路径段。拒绝 traversal、转义路径、查询和 fragment。可保留 Local 和阿里云配置以读取历史信封；Transit 信封失败时不会回退本地或阿里云密钥。
 
 **初始化和认证属于部署层。** 外部先初始化/解封 Vault、启用 Transit、创建 `aes256-gcm96` key（非 derived、非 convergent）、配置 policy 并签发应用 token。OMA 不调用登录、续租、建 key、rotate、export 或 rewrap。Vault Agent 可作为外部 token 管理方式，但不是 Provider 的依赖。应用 token 的最小策略如下（与实际 mount/key 对齐）：
 
@@ -137,7 +137,7 @@ path "transit/decrypt/oma-dek" { capabilities = ["update"] }
 
 验证入口：
 
-- 默认测试入口：`go test ./internal/secrets/... ./internal/secretservice ./internal/config ./internal/vaults -count=1`，覆盖 HTTPS 验证、路径/输入拒绝、外部 token 更新、故障脱敏、取消/超时、信封篡改与跨 Provider 拒绝。离线服务只用于故障注入，不代替真实 Transit 合同。
+- 默认测试入口：`go test ./internal/secrets/... ./internal/secretservice ./internal/config ./internal/vaults -count=1`，覆盖 HTTPS 验证、路径/输入拒绝、外部 token 更新、故障脱敏、取消/超时、信封篡改、多 Provider 配置校验及未配置 Provider 拒绝。离线服务只用于故障注入，不代替真实 Transit 合同。
 - 部署方使用专用 Transit key 和 token 验证真实加解密、密钥轮换、token 撤销与替换，以及封印和重启后的恢复；真实 Vault 不作为默认 CI 的依赖。
 - 在目标环境验证 HTTPS 证书、反向代理路径转发（如有）、token 文件挂载更新及真实业务调用。
 
@@ -151,11 +151,29 @@ OMA 连接部署方已有的 Vault；Vault 的部署、初始化、解封、密�
 
 KMS 的物理 `KeyVersionId` 是不透明字符串，已经由 CiphertextBlob 携带。现有整数 `key_version=1` 表示插件封装格式，不冒充云上的密钥版本。CMK 自动轮换由 KMS 解封旧 CiphertextBlob，配置中不递增本地 version；禁用或删除仍被使用的 CMK 会立即导致解密失败。
 
-**切换配置不等于迁移历史信封。** `Service.Open` 仍严格比较 `key_provider`；本地信封在 KMS 模式下被拒绝，KMS 信封在本地模式下同样被拒绝。适合新部署、没有历史秘密的部署或已经完成受控迁移的部署。已有数据必须在停写窗口单独迁移/重新登记，并确认所有使用同一 Service 的凭据（包括 OAuth flow、Tunnel token、Git/LLM 资源）均已处理，再撤销旧 KEK。此切片不提供批量迁移/rewrap 工具，不声称改一个配置即可无停机迁移既有数据。回滚前同样必须处理新 Provider 已产生的信封。
+**一个写入 Provider，多个历史解密 Provider。** 信封原有 `key_provider` 决定读取使用的实现，数据库列和 JSON 信封格式不变。例如从 Local 切换为 KMS，保留旧 `local` 配置并添加 KMS 配置：
+
+```yaml
+vault:
+  master_key:
+    provider: aliyun_kms
+    local:
+      kek_file: secrets/vault-kek
+      version: 1
+    aliyun_kms:
+      endpoint: kst-example.cryptoservice.kms.aliyuncs.com
+      key_id: key-example
+```
+
+旧 Local 信封继续由原 KEK 解密，新建或实际重新 Seal 的秘密使用 KMS。单纯读取和未重加密的元数据更新不改变信封，不触发后台迁移。所有使用同一 Service 的凭据（包括 OAuth flow、Tunnel token、Git/LLM 资源）遵守相同规则。KMS 故障时 Local 历史数据仍可读，但新写入失败，不改用 Local。部署方应移除不需要启用的配置块；所有已配置的块都会校验和装配。
+
+多实例先统一部署支持多 Provider 的代码和新旧配置，保持旧写入 Provider；所有实例都能解密两种信封后再切换写入配置并重启生效。回滚写入选择时保留新旧 Provider，确保切换期间产生的密文仍可读；不能直接退回只支持单 Provider 的旧代码。
+
+**兼容读取不等于完成迁移。** 对应历史信封尚未全部迁移或删除时，必须保留旧 Provider 的配置、密钥和解密权限；移除后相关数据会报错。保留 Local 解密能力期间仍需保管本地 KEK。本切片不提供批量迁移/rewrap 工具；每种 Provider 只配置一组后端，同种 Provider 切换到另一 CMK、Transit key 或实例仍需单独迁移，不自动兼容。Local 自身的 `decrypt_only` 版本轮换保持不变。
 
 ### 故障、内存与日志
 
-每次操作继承调用方 context，并设置 10 秒 KMS 请求上限，不增加应用重试或明文 DEK 缓存。网络超时、身份权限错误、CMK 禁用/不存在、篡改、返回错误 CMK、非 32 字节 DEK 均返回错误；不落明文、不使用本地 KEK 兜底。SDK 的身份刷新遵循其自身有界网络超时。
+阿里云 KMS 每次操作继承调用方 context，并设置 10 秒 KMS 请求上限。应用层和 KMS SDK 自动重试均关闭，不缓存明文 DEK。网络超时、限流、服务端错误、身份权限错误、CMK 禁用/不存在、篡改、返回错误 CMK、非 32 字节 DEK 均直接返回错误；不落明文、不使用本地 KEK 兜底。SDK 的身份刷新遵循其自身有界网络超时。
 
 业务写入发生在 Seal 成功之后；部分 auth 更新先 Open 再 merge/Seal。无秘密变更的元数据读取/更新和归档不要求 KMS 可用；归档仍可清除密文。匹配凭证需要解密而失败时，沿用 MITM 的 fail-closed 错误出口，不转发没有凭据的请求。
 

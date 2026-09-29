@@ -21,9 +21,9 @@ func TestValidateMasterKey(t *testing.T) {
 		{"unknown provider", MasterKeyConfig{Provider: "unknown"}, "unsupported vault.master_key.provider"},
 		{"missing aliyun config", MasterKeyConfig{Provider: "aliyun_kms"}, "endpoint and key_id are required"},
 		{"partial access key", MasterKeyConfig{Provider: "aliyun_kms", AliyunKMS: &AliyunKMSConfig{Endpoint: "kms.example", KeyID: "key", AccessKeyID: "partial"}}, "access_key_id and access_key_secret must be configured together"},
-		{"local with aliyun", MasterKeyConfig{Provider: "aliyun_kms", AliyunKMS: aliyun, Local: &LocalKeyConfig{}}, "local key settings cannot be combined with aliyun_kms"},
+		{"local with aliyun", MasterKeyConfig{Provider: "aliyun_kms", AliyunKMS: aliyun, Local: &LocalKeyConfig{}}, "local.kek or kek_file is required"},
 		{"missing vault config", MasterKeyConfig{Provider: "hashicorp_vault"}, "address and key_name are required"},
-		{"local with vault", MasterKeyConfig{Provider: "hashicorp_vault", HashicorpVault: vault, Local: &LocalKeyConfig{}}, "local key settings cannot be combined with hashicorp_vault"},
+		{"local with vault", MasterKeyConfig{Provider: "hashicorp_vault", HashicorpVault: vault, Local: &LocalKeyConfig{}}, "local.kek or kek_file is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := ValidateMasterKey(tc.config); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -118,7 +118,7 @@ func TestLocalMasterKeyYAML(t *testing.T) {
 	for _, tc := range []struct{ name, body, want string }{
 		{"mixed empty legacy", "{local: {kek: key}, kek: ''}", "local cannot be combined"},
 		{"mixed legacy version", "{local: {kek: key}, version: 0}", "local cannot be combined"},
-		{"legacy version with remote", "{provider: aliyun_kms, version: 2, aliyun_kms: {endpoint: kms.example, key_id: key}}", "local key settings cannot be combined"},
+		{"legacy version with remote", "{provider: aliyun_kms, version: 2, aliyun_kms: {endpoint: kms.example, key_id: key}}", "local.kek or kek_file is required"},
 		{"unknown local field", "{local: {typo: key}}", "field typo not found"},
 		{"null local", "{local: null}", "must not be null"},
 		{"null legacy", "{kek: null}", "must not be null"},
@@ -170,4 +170,48 @@ func loadMasterKeyTestYAML(t *testing.T, body string) (Config, error) {
 	writeConfigTestContents(t, path, prefix+"vault:\n  master_key: "+body+"\n")
 	t.Setenv(configFileEnv, path)
 	return Load()
+}
+
+func TestMultipleProviderConfiguration(t *testing.T) {
+	const fields = `local: {kek_file: keys/current}, aliyun_kms: {endpoint: kms.example, key_id: key}, hashicorp_vault: {address: 'https://vault.example', key_name: oma, token: offline-token}`
+	for _, selection := range []string{"", "provider: local, ", "provider: aliyun_kms, ", "provider: hashicorp_vault, "} {
+		cfg, err := loadMasterKeyTestYAML(t, "{"+selection+fields+"}")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mk := cfg.Vault.MasterKey
+		if mk.Local == nil || mk.AliyunKMS == nil || mk.HashicorpVault == nil {
+			t.Fatal("historical provider dropped")
+		}
+		if !filepath.IsAbs(mk.Local.KekFile) {
+			t.Fatal("historical key path not resolved")
+		}
+		encoded, err := yaml.Marshal(mk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var roundtrip MasterKeyConfig
+		if err := yaml.Unmarshal(encoded, &roundtrip); err != nil {
+			t.Fatal(err)
+		}
+		again, err := yaml.Marshal(roundtrip)
+		if err != nil || string(encoded) != string(again) {
+			t.Fatalf("mixed configuration roundtrip: %v", err)
+		}
+		if err := ValidateMasterKey(roundtrip); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy, err := loadMasterKeyTestYAML(t, `{provider: aliyun_kms, kek_file: keys/legacy, aliyun_kms: {endpoint: kms.example, key_id: key}}`)
+	if err != nil || legacy.Vault.MasterKey.Local == nil {
+		t.Fatalf("legacy local reader: %v", err)
+	}
+	for _, fields := range []string{
+		`local: {kek_file: keys/current}, aliyun_kms: {key_id: missing-endpoint}`,
+		`local: {kek_file: keys/current}, hashicorp_vault: {address: 'https://vault.example', key_name: oma}`,
+	} {
+		if _, err := loadMasterKeyTestYAML(t, "{provider: local, "+fields+"}"); err == nil {
+			t.Fatal("invalid read provider was ignored")
+		}
+	}
 }

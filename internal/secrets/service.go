@@ -51,12 +51,17 @@ type Envelope struct {
 // holds no plaintext or DEK between calls; Seal/Open materialize a DEK only for
 // the duration of one operation and wipe it before returning.
 type Service struct {
-	provider KeyProvider
+	writeProvider KeyProvider
+	readProviders map[string]KeyProvider
 }
 
-// NewService returns a Service backed by the given provider.
-func NewService(provider KeyProvider) *Service {
-	return &Service{provider: provider}
+func NewService(writer KeyProvider, readers ...KeyProvider) *Service {
+	providers := make(map[string]KeyProvider, len(readers)+1)
+	for _, reader := range readers {
+		providers[reader.Name()] = reader
+	}
+	providers[writer.Name()] = writer
+	return &Service{writeProvider: writer, readProviders: providers}
 }
 
 // Seal encrypts plaintext under a fresh one-time DEK and returns the envelope.
@@ -109,7 +114,7 @@ func (s *Service) sealWithAAD(ctx context.Context, plaintext, aad []byte) (Envel
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: generate nonce: %w", err)
 	}
-	wrapped, err := s.provider.WrapDEK(ctx, dek)
+	wrapped, err := s.writeProvider.WrapDEK(ctx, dek)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: wrap DEK: %w", err)
 	}
@@ -118,7 +123,7 @@ func (s *Service) sealWithAAD(ctx context.Context, plaintext, aad []byte) (Envel
 		Nonce:         nonce,
 		WrappedDEK:    wrapped.Ciphertext,
 		FormatVersion: envelopeFormatVersion,
-		KeyProvider:   s.provider.Name(),
+		KeyProvider:   s.writeProvider.Name(),
 		KeyVersion:    wrapped.KeyVersion,
 	}, nil
 }
@@ -127,10 +132,11 @@ func (s *Service) openWithAAD(ctx context.Context, envelope Envelope, aad []byte
 	if envelope.FormatVersion != envelopeFormatVersion {
 		return nil, fmt.Errorf("%w: %d", ErrUnknownEnvelopeFormat, envelope.FormatVersion)
 	}
-	if envelope.KeyProvider != s.provider.Name() {
-		return nil, fmt.Errorf("%w: envelope %q, active %q", ErrKeyProviderMismatch, envelope.KeyProvider, s.provider.Name())
+	provider, ok := s.readProviders[envelope.KeyProvider]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrKeyProviderUnavailable, envelope.KeyProvider)
 	}
-	dek, err := s.provider.UnwrapDEK(ctx, WrappedKey{Ciphertext: envelope.WrappedDEK, KeyVersion: envelope.KeyVersion})
+	dek, err := provider.UnwrapDEK(ctx, WrappedKey{Ciphertext: envelope.WrappedDEK, KeyVersion: envelope.KeyVersion})
 	defer clear(dek)
 	if err != nil {
 		return nil, err

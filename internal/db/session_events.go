@@ -147,7 +147,7 @@ func sessionEventBatchTx(ctx context.Context, executor yourbatis.Executor, sessi
 }
 
 func validateSessionInputBatch(primary SessionThread, worker codeSessionInputStateRow, events []SessionEvent) (string, error) {
-	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, "")
+	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, primary.ExternalID)
 	if err != nil {
 		return "", err
 	}

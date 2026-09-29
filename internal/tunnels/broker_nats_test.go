@@ -148,7 +148,7 @@ func TestNATSBrokerUpdatesExistingCommandStream(t *testing.T) {
 		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
 		Storage: jetstream.FileStorage, Replicas: 1, Retention: jetstream.WorkQueuePolicy,
 		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: -1,
-		MaxBytes: 8 << 30, MaxMsgSize: maxBrokerValueBytes, MaxConsumers: maxCommandConsumers,
+		MaxBytes: 8 << 20, MaxMsgSize: maxBrokerValueBytes, MaxConsumers: maxCommandConsumers,
 		Duplicates: cfg.RequestTimeout,
 	})
 	if err != nil {

@@ -33,7 +33,6 @@ func TestTranscriptArchiveSoftAndHardVisibility(t *testing.T) {
 			if err := service.Archive(t.Context(), scope, false); err != nil {
 				t.Fatal(err)
 			}
-			// Inline data supports direct observation-window rollback without blob GC.
 			if _, err := app.pool.Exec(t.Context(), "update code_session_internal_events set deleted_at=null"); err != nil {
 				t.Fatal(err)
 			}
@@ -48,9 +47,13 @@ func TestTranscriptArchiveSoftAndHardVisibility(t *testing.T) {
 				t.Fatal(err)
 			}
 			if hard {
+				if _, err := app.pool.Exec(t.Context(), "update code_session_internal_events set deleted_at=now()-interval '15 days' where deleted_at is not null"); err != nil {
+					t.Fatal(err)
+				}
 				if err := service.HardDelete(t.Context(), scope); err != nil {
 					t.Fatal(err)
 				}
+				assertPayloadSQLCount(t, app, "select count(*) from code_session_internal_events where deleted_at is not null", 0)
 			}
 			if !bytes.Equal(before, transcriptHTTPBytes(t, app, session.ExternalID, "internal-events")) {
 				t.Fatal("deletion changed visible boundary or response")

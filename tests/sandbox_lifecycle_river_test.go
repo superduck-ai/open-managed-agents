@@ -31,8 +31,6 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 	lifecycle := environments.NewSandboxLifecycle(f.app.db, killer, config.SandboxLifecycleConfig{Enabled: true, IdleTimeout: 24 * time.Hour}, nil)
 	workers := river.NewWorkers()
 	lifecycle.Register(workers)
-	// Separate sweep and reclaim queues avoid River coalescing their insert notifications.
-	// A long fallback interval makes this test exercise notification-driven fetches.
 	const sweepQueue = "sandbox_lifecycle_test_sweep"
 	client, err := riverjobs.NewClient(f.app.db, nil, workers, map[string]river.QueueConfig{
 		sweepQueue:                         {MaxWorkers: 1, FetchPollInterval: time.Hour},
@@ -55,15 +53,7 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 	if err != nil || !before.NextRunAt.Equal(after.NextRunAt) {
 		t.Fatalf("startup changed existing schedule: before=%+v after=%+v err=%v", before, after, err)
 	}
-	// Exercise the durable leader and sweep/reclaim queues without waiting for a minute boundary.
 	scheduleID := "lifecycle-test-" + uuid.NewV4().String()
-	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{
-		ID: scheduleID, Kind: "sandbox_lifecycle_sweep", Queue: sweepQueue,
-		Schedule: &river.DurablePeriodicJobSchedule{NextRunAt: time.Now().Add(-time.Second)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if err := client.Start(runCtx); err != nil {
@@ -79,6 +69,13 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 		_, _ = client.DurablePeriodicJobDelete(ctx, "sandbox_lifecycle_sweep")
 	}()
 	assertRiverListenerConnected(t, f.app)
+	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{
+		ID: scheduleID, Kind: "sandbox_lifecycle_sweep", Queue: sweepQueue,
+		Schedule: &river.DurablePeriodicJobSchedule{NextRunAt: time.Now().Add(-time.Second)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	timeout := time.NewTimer(15 * time.Second)
 	defer timeout.Stop()
 	for {

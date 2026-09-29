@@ -38,8 +38,8 @@ func chatSDKHistory(t *testing.T, client *anthropic.Client, sessionID string) []
 }
 
 func TestChatTools(t *testing.T) {
-	if os.Getenv("VERIFY_CHAT_RUN_ID") == "" || os.Getenv("LIVE_WORKER_REAL_CLAUDE") != "1" {
-		t.Skip("run through verify-chat with isolated dependencies and a real Worker image")
+	if os.Getenv("VERIFY_BE_RUN_ID") == "" || os.Getenv("LIVE_WORKER_REAL_CLAUDE") != "1" {
+		t.Skip("run through verify-be with isolated dependencies and a real Worker image")
 	}
 	started := time.Now()
 	e := newLiveEnv(t)
@@ -50,7 +50,7 @@ func TestChatTools(t *testing.T) {
 			if decision == "allow" {
 				stage = "tool_allowed"
 			}
-			t.Logf("CHAT_PROOF {\"stage\":%q,\"elapsed_ms\":%d}", stage, time.Since(started).Milliseconds())
+			t.Logf("BE_PROOF {\"stage\":%q,\"elapsed_ms\":%d}", stage, time.Since(started).Milliseconds())
 		}
 	}
 }
@@ -61,7 +61,7 @@ func verifySDKToolDecision(t *testing.T, e *liveEnv, client *anthropic.Client, d
 	var calls, queued atomic.Int32
 	resume := make(chan struct{})
 	close(resume)
-	modelURL := realWorkerModelFixture(t, &calls, &queued, false, resume)
+	modelURL := realWorkerModelFixture(t, &calls, &queued, false, resume, "/tmp/oma-control-e2e.txt")
 	configureChatModel(t, e, strings.Replace(modelURL, "host.docker.internal", "127.0.0.1", 1))
 	worker := startRealControlWorker(t, f, "")
 	sendChatSDK(t, client, f.session.ExternalID, anthropic.BetaManagedAgentsEventParamsUnion{
@@ -82,7 +82,7 @@ func verifySDKToolDecision(t *testing.T, e *liveEnv, client *anthropic.Client, d
 		return input.NumPending == 0 && input.NumAckPending == 0 && reply.NumPending == 0 && reply.NumAckPending == 0
 	})
 	assertToolFile(t, worker, decision == "allow")
-	assertSDKToolHistory(t, chatSDKHistory(t, client, f.session.ExternalID), toolID, decision)
+	assertSDKToolHistory(t, chatSDKHistory(t, client, f.session.ExternalID), toolID, decision, 1)
 }
 
 func waitSDKToolPermission(t *testing.T, client *anthropic.Client, sessionID string) string {
@@ -119,7 +119,7 @@ func assertToolFile(t *testing.T, worker *realControlWorker, written bool) {
 	}
 }
 
-func assertSDKToolHistory(t *testing.T, events []anthropic.BetaManagedAgentsSessionEventUnion, toolID string, decision anthropic.BetaManagedAgentsUserToolConfirmationEventParamsResult) {
+func assertSDKToolHistory(t *testing.T, events []anthropic.BetaManagedAgentsSessionEventUnion, toolID string, decision anthropic.BetaManagedAgentsUserToolConfirmationEventParamsResult, wantConfirmations int) {
 	t.Helper()
 	var uses, results, confirmations, answers int
 	for _, event := range events {
@@ -147,7 +147,7 @@ func assertSDKToolHistory(t *testing.T, events []anthropic.BetaManagedAgentsSess
 			answers++
 		}
 	}
-	if uses != 1 || results != 1 || confirmations != 1 || answers != 1 {
+	if uses != 1 || results != 1 || confirmations != wantConfirmations || answers != 1 {
 		t.Fatalf("tool history: uses=%d results=%d confirmations=%d answers=%d", uses, results, confirmations, answers)
 	}
 }

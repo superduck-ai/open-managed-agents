@@ -64,7 +64,7 @@ func TestRealWorkerControlDelivery(t *testing.T) {
 			if !scenario.reconnect {
 				release()
 			}
-			model := realWorkerModelFixture(t, &calls, &queuedCall, scenario.textOnly, resume)
+			model := realWorkerModelFixture(t, &calls, &queuedCall, scenario.textOnly, resume, `/tmp/oma-control-e2e.txt`)
 			worker := startRealControlWorker(t, f, model)
 			waitRealWorker(t, "initialize ACK", func() bool {
 				consumer, err := e.stream.Consumer(t.Context(), "oma_worker_"+f.code.ExternalID)
@@ -222,7 +222,7 @@ func waitRealWorker(t *testing.T, label string, ready func() bool) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("CHAT_TIMEOUT waiting for %s", label)
+	t.Fatalf("BE_TIMEOUT waiting for %s", label)
 }
 
 type realControlWorker struct {
@@ -280,8 +280,8 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 		image = "ghcr.io/superduck-ai/managed-agent-sandbox:latest"
 	}
 	args := []string{"run", "--rm", "--pull=never", "--name", name, "--entrypoint", "/opt/claude-code/bin/claude"}
-	if runID := os.Getenv("VERIFY_CHAT_RUN_ID"); runID != "" {
-		args = append(args, "--label", "oma.verify-chat.run="+runID)
+	if runID := os.Getenv("VERIFY_BE_RUN_ID"); runID != "" {
+		args = append(args, "--label", "oma.verify-be.run="+runID)
 	}
 	args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	for key, value := range map[string]string{
@@ -319,7 +319,7 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 	return worker
 }
 
-func realWorkerModelFixture(t *testing.T, calls, queuedCall *atomic.Int32, textOnly bool, resume <-chan struct{}) string {
+func realWorkerModelFixture(t *testing.T, calls, queuedCall *atomic.Int32, textOnly bool, resume <-chan struct{}, toolPath string) string {
 	t.Helper()
 	return serveRealWorkerFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
@@ -353,7 +353,8 @@ func realWorkerModelFixture(t *testing.T, calls, queuedCall *atomic.Int32, textO
 		if call == 1 && !textOnly {
 			reason = "tool_use"
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "toolu_control_e2e", "name": "Write", "input": map[string]any{}}})
-			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": `{"file_path":"/tmp/oma-control-e2e.txt","content":"verified control delivery"}`}})
+			input, _ := json.Marshal(map[string]string{"file_path": toolPath, "content": "verified control delivery"})
+			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(input)}})
 		} else {
 			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "text", "text": ""}})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "text_delta", "text": "done"}})

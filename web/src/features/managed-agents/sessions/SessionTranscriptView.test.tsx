@@ -99,7 +99,7 @@ describe('SessionTranscriptView', () => {
     expect(agentIteration?.className).toContain('border-session-border');
     expect(agentIteration?.className).toContain('bg-session-surface');
     const userItem = userMessage?.closest('[data-slot="message-scroller-item"]');
-    expect(userItem?.getAttribute('data-scroll-anchor')).toBe('true');
+    expect(userItem?.getAttribute('data-scroll-anchor')).toBe('false');
     expect(userItem?.parentElement?.getAttribute('data-slot')).toBe('message-scroller-content');
   });
 

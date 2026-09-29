@@ -69,14 +69,14 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 
 ## 数据来源
 
-| 区域          | 数据来源                                            | 说明                                              |
-| ------------- | --------------------------------------------------- | ------------------------------------------------- |
-| 标题摘要      | Session retrieve + events                           | 状态、引用、用量、时间与实时状态                  |
-| 转录与 Events | Session/Thread events + SSE                         | 保留现有缓存、补帧、lane 和实时状态机             |
-| Session       | Session retrieve + Agent/Environment/Vault retrieve | 只读取关联实体名称和固定版本信息                  |
-| Tools         | 原始事件 + Agent retrieve                           | 聚合配置工具、权限、调用、失败和耗时              |
+| 区域          | 数据来源                                            | 说明                                                                                                |
+| ------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 标题摘要      | Session retrieve + events                           | 状态、引用、用量、时间与实时状态                                                                    |
+| 转录与 Events | Session/Thread events + SSE                         | 保留现有缓存、补帧、lane 和实时状态机                                                               |
+| Session       | Session retrieve + Agent/Environment/Vault retrieve | 只读取关联实体名称和固定版本信息                                                                    |
+| Tools         | 原始事件 + Agent retrieve                           | 聚合配置工具、权限、调用、失败和耗时                                                                |
 | Resources     | Session retrieve + File metadata                    | 挂载关系来自 Session；File 名称/大小按 `file_id` 获取；Memory Store 用快照 `name`/`memory_store_id` |
-| Threads       | Session threads + thread events + Agent retrieve    | 聚合线程状态、模型用量和 context 阶梯点           |
+| Threads       | Session threads + thread events + Agent retrieve    | 聚合线程状态、模型用量和 context 阶梯点                                                             |
 
 进入 Resources 页签时重新请求 Session retrieve，以获取后端最新挂载关系；再次点击已激活的 Resources 页签也会刷新。打开 File 表单时按需读取 Files list，提交后调用 Session resources add，并再次刷新 Session。Memory Store 资源直接使用 Session 快照里的 `name` 和 `memory_store_id`，不额外请求 Memory Store retrieve。
 
@@ -87,7 +87,7 @@ Events、Tools、Threads 共用 list 最小 `120px`、detail 默认 `360px` 的�
 - 空消息、发送中、已归档、已终止或已删除的 Session 不能发送；只有 idle 或初始 queued Session 可提交新消息。运行期间保留输入框草稿，但 Send 和 Enter 不发请求；草稿只在当前页面内存中，刷新后丢失。本次不增加客户端待发队列或自动重发。
 - running、queued 或 rescheduled Session 显示停止按钮，并通过既有 `user.interrupt` 合同停止。
 - 最新 `session.status_idle.stop_reason` 为 `requires_action` 时，在转录与输入框之间展示 Action Card。普通工具审批发送 `user.tool_confirmation`，AskUserQuestion 答案发送 `user.custom_tool_result`；等待期间禁用普通消息输入框。
-- 用户离开列表底部后停止自动跟随并显示“回到最新事件”；位于底部时继续跟随流式正文增长。
+- 用户离开列表底部后停止自动跟随并显示“回到最新事件”；位于底部时继续跟随流式正文增长。发送新消息成功后重新跟随底部，即使随后重连补入更早的历史事件，也应保持最新回复可见；主动上滚阅读历史时不强制拉回底部。
 - Session 最终状态以 SSE/后端响应为准；前端临时状态只用于交互反馈。
 
 ## 非目标

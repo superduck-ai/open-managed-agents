@@ -172,6 +172,10 @@
 
 ## 测试要求
 
+- 修改聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付、Runner 启动或聊天性能路径时，主动使用项目的 [verify-chat Skill](.agents/skills/verify-chat/SKILL.md)，无需等待用户再次提醒。先读 Skill 的 Agent workflow 和相关功能地图，运行 `just verify-chat doctor`，再按改动范围选择场景；场景选择和性能基线流程统一维护在 Skill 中。
+- 聊天验证使用现有 Go CLI，不另写临时编排脚本或重新引入 Python。生成、构建和质量检查与验证串行执行，验证期间不修改源码。此验证不替代本节要求的静态检查和单测。
+- 交付时列出实际运行的场景、结果、`report.json` / `report.md` 路径和未覆盖范围；性能比较同时给出基准提交和报告。skip、缺少依赖、未完成、清理失败或不兼容基线均不能报告为通过，不得更新基线或放宽阈值掩盖退化。
+
 - 测试组织顺序应先写失败场景，再写成功场景。
 - `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。仓库标准 `just` 命令会自动完成生成。
 - 修改 `web/` 下的文件后，运行 `just web-format-check`，确保 Prettier 格式门禁通过。

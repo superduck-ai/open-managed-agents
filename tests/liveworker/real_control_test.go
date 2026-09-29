@@ -212,14 +212,17 @@ func realWorkerReplyConsumer(t *testing.T, f *liveSession) *jetstream.ConsumerIn
 
 func waitRealWorker(t *testing.T, label string, ready func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(chatTimeout(t, 30*time.Second))
+	if testDeadline, ok := t.Deadline(); ok && testDeadline.Before(deadline) {
+		deadline = testDeadline.Add(-5 * time.Second)
+	}
 	for time.Now().Before(deadline) {
 		if ready() {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", label)
+	t.Fatalf("CHAT_TIMEOUT waiting for %s", label)
 }
 
 type realControlWorker struct {
@@ -247,6 +250,7 @@ func (w *realControlWorker) reconnect(t *testing.T) {
 
 func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *realControlWorker {
 	t.Helper()
+	ingressToken, modelToken := f.token, f.modelToken
 	name := "oma-control-e2e-" + f.code.ExternalID
 	worker := &realControlWorker{container: name}
 	target, err := url.Parse(f.env.url)
@@ -264,6 +268,10 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 		}
 		proxy.ServeHTTP(w, r)
 	}))
+	modelKey := "isolated-fake-model-key"
+	if modelURL == "" {
+		modelURL, modelKey = proxyURL, f.modelToken
+	}
 	log, err := os.Create(filepath.Join(t.TempDir(), "worker.log"))
 	requireOK(t, err)
 	t.Cleanup(func() { _ = log.Close() })
@@ -272,9 +280,13 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 		image = "ghcr.io/superduck-ai/managed-agent-sandbox:latest"
 	}
 	args := []string{"run", "--rm", "--pull=never", "--name", name, "--entrypoint", "/opt/claude-code/bin/claude"}
+	if runID := os.Getenv("VERIFY_CHAT_RUN_ID"); runID != "" {
+		args = append(args, "--label", "oma.verify-chat.run="+runID)
+	}
+	args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	for key, value := range map[string]string{
-		"ANTHROPIC_BASE_URL": modelURL, "ANTHROPIC_API_KEY": "isolated-fake-model-key",
-		"CLAUDE_CODE_SESSION_ACCESS_TOKEN": f.token, "CLAUDE_CODE_WORKER_EPOCH": "1",
+		"ANTHROPIC_BASE_URL": modelURL, "ANTHROPIC_API_KEY": modelKey,
+		"CLAUDE_CODE_SESSION_ACCESS_TOKEN": f.token, "CLAUDE_CODE_WORKER_EPOCH": fmt.Sprint(f.code.CurrentWorkerEpoch),
 		"CLAUDE_CODE_USE_CCR_V2": "1", "CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2": "1",
 		"CLAUDE_CODE_REMOTE": "true", "CLAUDE_CODE_REMOTE_SESSION_ID": f.code.ExternalID,
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
@@ -301,7 +313,7 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 			data, _ := os.ReadFile(log.Name())
 			// Diagnostic output is from this test's fake model. Never print the
 			// short-lived ingress token even if a CLI diagnostic includes it.
-			t.Log(strings.ReplaceAll(string(data[max(0, len(data)-6000):]), f.token, "[redacted]"))
+			t.Log(strings.NewReplacer(ingressToken, "[redacted]", modelToken, "[redacted]").Replace(string(data[max(0, len(data)-6000):])))
 		}
 	})
 	return worker

@@ -10,6 +10,7 @@ Thumbs.db
 # Local environment and secrets
 .env
 .env.*
+/.verify-chat.local.json
 /config/config.yaml
 /config/config.local.yaml
 /deploy/docker-compose/oma-server.local.yaml

@@ -47,7 +47,7 @@ func TestObjectCleanupJobsPostgres(t *testing.T) {
 		if job.WorkspaceUUID != workspaceUUID || job.Bucket != "payloads" || job.Key != "tenant/payload.json" || job.FileExternalID != "" {
 			t.Fatalf("hydrated cleanup job = %+v", job)
 		}
-		if err := store.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, "temporary", 0, 3); err != nil {
+		if err := store.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, "temporary", -time.Minute, 3); err != nil {
 			t.Fatal(err)
 		}
 		jobs, err = store.LeaseObjectCleanupJobs(ctx, "worker", 10)

@@ -32,6 +32,9 @@ func TestTranscriptArchiveRestoreAfterBlobGC(t *testing.T) {
 	if err := service.Archive(t.Context(), scope, true); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := app.pool.Exec(t.Context(), "update code_session_internal_events set deleted_at=now()-interval '15 days' where deleted_at is not null"); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.HardDelete(t.Context(), scope); err != nil {
 		t.Fatal(err)
 	}

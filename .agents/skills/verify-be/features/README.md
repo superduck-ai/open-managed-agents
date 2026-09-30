@@ -15,3 +15,11 @@ The upstream model is scripted. The local chat scenarios do not verify cloud all
 ## Files
 
 See [Files lifecycle, isolation, invalid uploads and object storage](files.md). Run `just verify-be files doctor`, nine local functional scenarios and the [Files performance baseline/gate](files-performance.md). `files generated` additionally requires a Worker image and FUSE; run `files doctor generated` for its preflight. [Cloud adapter verification](cloud.md) requires explicit dedicated credentials and is independent of the local suite.
+
+## Transcript
+
+See [Transcript archive, restore and integrity](transcript.md). Run `just verify-be transcript doctor`, then `integrity`, `recovery`, `concurrency`, `boundary` and `lifecycle`. These production-service integration scenarios use real PostgreSQL/MinIO; lifecycle also invokes the maintenance CLI. They do not require a Worker or verify background River scheduling.
+
+## Memory / Filestore
+
+See [Memory / Filestore](memory.md). Run `just verify-be memory doctor`, then `integrity`, `isolation`, `cleanup`, `lifecycle` and `filestore`. These reuse production HTTP handlers over real PostgreSQL/MinIO. Run `memory doctor mounts` and `memory mounts` separately for actual Runner/Docker/FUSE mounting and a fresh sandbox's cross-session reads.

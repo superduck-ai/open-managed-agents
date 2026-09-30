@@ -23,10 +23,11 @@ import (
 )
 
 type chatDockerProvider struct {
-	name, image string
-	t           *testing.T
-	created     atomic.Int32
-	failNext    atomic.Bool
+	name, image        string
+	t                  *testing.T
+	created            atomic.Int32
+	failNext           atomic.Bool
+	failMemoryMarkdown atomic.Bool
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -49,6 +50,9 @@ func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
 }
 func (p *chatDockerProvider) WriteFile(ctx context.Context, id, path string, data []byte) error {
+	if path == "/mnt/memory/MEMORY.md" && p.failMemoryMarkdown.Swap(false) {
+		return errors.New("injected memory mount setup failure")
+	}
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", id, "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path)
 	cmd.Stdin = bytes.NewReader(data)
 	return cmd.Run()

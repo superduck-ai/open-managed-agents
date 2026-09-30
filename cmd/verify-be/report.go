@@ -19,22 +19,34 @@ import (
 const testPackage = "github.com/superduck-ai/open-managed-agents/tests/liveworker"
 
 type scenario struct {
-	Package     string
-	Timeout     time.Duration
-	Test        string
-	Stages      []string
-	Description string
+	DependenciesOnly bool
+	Package          string
+	Timeout          time.Duration
+	Test             string
+	Stages           []string
+	Description      string
 }
 
 var scenarios = map[string]scenario{
-	"files.cloud-storage": {Timeout: 3 * time.Minute, Stages: []string{"cloud_storage_roundtrip", "cloud_readonly_enforced", "cloud_storage_cleaned"}, Description: "显式云配置：真实 S3 字节一致、只读 IAM 拒绝写入/删除及对象清理"},
-	"chat.cloud-renewal":  {Timeout: 5 * time.Minute, Stages: []string{"cloud_sandbox_created", "cloud_timeout_extended", "cloud_sandbox_deleted"}, Description: "显式云配置：真实 E2B 创建、生产 Provider 续期、到期时间核对及销毁"},
-	"files.exhaustion":    {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesExhaustion", Stages: []string{"cleanup_retry_budget_exhausted", "failed_job_stays_terminal", "explicit_recovery_completed"}, Description: "真实清理 Worker 连续十次失败、终态停止领取、显式恢复；测试提前调度重试"},
-	"files.performance":   {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 5 * time.Minute, Test: "TestFilesPerformance", Stages: []string{"files_load_completed", "files_load_cleaned"}, Description: "固定 32 KiB 文件负载，测量上传、元数据、列表、下载、删除并比较基线"},
-	"files.generated":     {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestFilesGenerated", Stages: []string{"worker_output_projected", "generated_download_matches", "generated_reference_protected"}, Description: "真实 Worker 经 FUSE 生成文件、Files 投影、会话资源与下载内容一致"},
-	"files.recovery":      {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 5 * time.Minute, Test: "TestFilesRecovery", Stages: []string{"cleanup_failures_enqueued", "backoff_and_recovery", "compensation_preserved_owner"}, Description: "对象删除与配额回滚失败自动入队、真实后台退避重试及恢复清理"},
-	"files.attachments":   {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesAttachments", Stages: []string{"referenced_delete_rejected", "unlink_then_delete", "expired_output_hidden", "archive_preserves_output", "session_cleanup_preserves_upload"}, Description: "会话引用阻止删除、解除引用、输出过期不可见及会话删除后的对象清理"},
-	"files.platform":      {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesPlatform", Stages: []string{"platform_invalid_rejected", "preview_and_thumbnail_match", "derived_objects_deleted"}, Description: "平台登录、Base64 上传、预览、缩略图与衍生对象清理"},
+	"memory.integrity":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryIntegrity", Stages: []string{"invalid_writes_rejected", "missing_object_rejected", "repaired_memory_matches"}, Description: "Memory 无效正文、路径树冲突、缺失对象拒绝读取与修复"},
+	"memory.isolation":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryIsolation", Stages: []string{"readonly_and_scope_enforced", "archived_store_readonly", "deleted_session_token_revoked"}, Description: "Memory 挂载权限、filesystem 及租户隔离、归档拒写与旧 token 撤销"},
+	"memory.lifecycle":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryLifecycle", Stages: []string{"memory_versions_match", "cross_session_memory_preserved", "deleted_memory_history_preserved"}, Description: "Memory 双会话读写、不可变版本、相同正文幂等及会话删除后记忆保留"},
+	"memory.cleanup":         {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryCleanup", Stages: []string{"deletion_cleanup_atomic", "failed_write_compensated", "discarded_upload_cleanup_recovered", "cleanup_retry_persisted", "memory_objects_removed"}, Description: "Memory 写入失败补偿、对象删除失败入队重试及真实非版本化 MinIO 清理"},
+	"memory.filestore":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryFilestore", Stages: []string{"filestore_mutations_match", "session_owned_cleanup_completed", "memory_survives_filesystem_cleanup"}, Description: "普通 Filestore 覆盖/复制/移动/删除字节一致、Session Owned 对象与账本清理"},
+	"memory.mounts":          {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestVerifyMemoryMounts", Stages: []string{"memory_mounts_ready", "mounted_write_persisted", "sandbox_lifecycle_matches", "mount_failure_cleaned"}, Description: "实际 Runner/Docker/FUSE：只读与可写挂载、沙箱销毁后的新会话和启动失败清理"},
+	"transcript.boundary":    {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyTranscriptBoundary", Stages: []string{"scope_boundaries_preserved", "boundary_delete_preserves_reads", "boundary_restore_matches"}, Description: "真实 S3：前台/subagent 交错 compaction 边界归档，软删和物理删除保持 HTTP 可见历史"},
+	"transcript.lifecycle":   {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 5 * time.Minute, Test: "TestVerifyTranscriptLifecycle", Stages: []string{"archive_export_matches", "hard_delete_preserves_backup", "blob_gc_completed", "cli_restore_matches", "tenant_history_isolated"}, Description: "真实 PostgreSQL/MinIO：归档、导出、物理删除、旧 blob 清理及维护 CLI 幂等还原"},
+	"transcript.recovery":    {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 5 * time.Minute, Test: "TestVerifyTranscriptRecovery", Stages: []string{"upload_failures_recovered", "archive_batches_recovered", "delete_batches_recovered", "restore_batches_recovered"}, Description: "真实对象存储：上传前后中断、pending 回收及归档/删除/还原分批失败后重试"},
+	"transcript.concurrency": {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyTranscriptConcurrency", Stages: []string{"concurrent_archive_coordinated", "single_manifest_preserved", "concurrent_retry_matches"}, Description: "两个归档调用在上传完成后确定性交错，无重复有效段且重试结果一致"},
+	"transcript.integrity":   {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyTranscriptIntegrity", Stages: []string{"missing_object_blocks_operations", "corrupt_object_blocks_operations", "repaired_object_recovers"}, Description: "真实 MinIO 对象丢失/损坏时导出、还原、物理删除拒绝执行，修复后恢复"},
+	"files.cloud-storage":    {Timeout: 3 * time.Minute, Stages: []string{"cloud_storage_roundtrip", "cloud_readonly_enforced", "cloud_storage_cleaned"}, Description: "显式云配置：真实 S3 字节一致、只读 IAM 拒绝写入/删除及对象清理"},
+	"chat.cloud-renewal":     {Timeout: 5 * time.Minute, Stages: []string{"cloud_sandbox_created", "cloud_timeout_extended", "cloud_sandbox_deleted"}, Description: "显式云配置：真实 E2B 创建、生产 Provider 续期、到期时间核对及销毁"},
+	"files.exhaustion":       {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesExhaustion", Stages: []string{"cleanup_retry_budget_exhausted", "failed_job_stays_terminal", "explicit_recovery_completed"}, Description: "真实清理 Worker 连续十次失败、终态停止领取、显式恢复；测试提前调度重试"},
+	"files.performance":      {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 5 * time.Minute, Test: "TestFilesPerformance", Stages: []string{"files_load_completed", "files_load_cleaned"}, Description: "固定 32 KiB 文件负载，测量上传、元数据、列表、下载、删除并比较基线"},
+	"files.generated":        {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestFilesGenerated", Stages: []string{"worker_output_projected", "generated_download_matches", "generated_reference_protected"}, Description: "真实 Worker 经 FUSE 生成文件、Files 投影、会话资源与下载内容一致"},
+	"files.recovery":         {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 5 * time.Minute, Test: "TestFilesRecovery", Stages: []string{"cleanup_failures_enqueued", "backoff_and_recovery", "compensation_preserved_owner"}, Description: "对象删除与配额回滚失败自动入队、真实后台退避重试及恢复清理"},
+	"files.attachments":      {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesAttachments", Stages: []string{"referenced_delete_rejected", "unlink_then_delete", "expired_output_hidden", "archive_preserves_output", "session_cleanup_preserves_upload"}, Description: "会话引用阻止删除、解除引用、输出过期不可见及会话删除后的对象清理"},
+	"files.platform":         {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesPlatform", Stages: []string{"platform_invalid_rejected", "preview_and_thumbnail_match", "derived_objects_deleted"}, Description: "平台登录、Base64 上传、预览、缩略图与衍生对象清理"},
 
 	"files.lifecycle":  {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesLifecycle", Stages: []string{"upload_stored", "metadata_and_listing", "download_bytes_match", "deleted_objects_absent"}, Description: "上传和对象字节一致、元数据与列表、可下载文件内容一致、删除及对象清理"},
 	"files.isolation":  {Package: "github.com/superduck-ai/open-managed-agents/tests/livefiles", Timeout: 3 * time.Minute, Test: "TestFilesIsolation", Stages: []string{"tenant_access_denied", "owner_data_unchanged"}, Description: "同组织跨工作区及跨组织的读取、下载、列表、删除隔离"},
@@ -133,6 +145,8 @@ func evaluate(reader io.Reader, code int, selected scenario) (testResult, error)
 				}
 				result.Samples = append(result.Samples, sample)
 			}
+		}
+		if event.Test == selected.Test || strings.HasPrefix(event.Test, selected.Test+"/") {
 			if _, data, ok := strings.Cut(event.Output, "BE_PROOF "); ok {
 				var p proof
 				if err := json.Unmarshal([]byte(data), &p); err != nil {
@@ -210,6 +224,8 @@ func saveReport(directory string, r report) error {
 	fmt.Fprintf(&out, "Verification source SHA-256: %s\nBackend commit: %s\nBackend binary SHA-256: %s\nScenario timeout: %s\nFailure kind: %s\n\n", r.Source.SHA256, r.BackendCommit, r.BinarySHA256, r.Timeout, r.FailureKind)
 	if isCloudScenario(r.Scenario) {
 		out.WriteString("Execution: cloud adapter assertions in the Go CLI; no local backend or Worker model is started. Credentials are supplied by an explicit private configuration.\n\n")
+	} else if selectScenario(r.Scenario).DependenciesOnly {
+		out.WriteString("Execution: production services and HTTP handlers in the Go test process, with isolated PostgreSQL schemas and real MinIO. No standalone backend or Worker is started.\n\n")
 	} else if r.Scenario != "test" && r.BackendCommit == "" {
 		out.WriteString("Backend built from the working tree; this measurement is not eligible as a baseline.\n\n")
 	}
@@ -246,6 +262,10 @@ func saveReport(directory string, r report) error {
 		out.WriteString("\n")
 	} else if isCloudScenario(r.Scenario) {
 		out.WriteString("Coverage: only the selected cloud storage or E2B provider operations and final cleanup. This does not certify public chat confirmation, all IAM/network policies or cloud availability.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "transcript.") {
+		out.WriteString("Coverage: archive/export/restore/delete service, real S3 adapter, deterministic test-side interruptions and batch rollback. lifecycle also runs the actual maintenance CLI. Fixtures explicitly age rows; five-minute River sweeps, automatic River retries, crash recovery, cloud IAM and production throughput are not verified.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "memory.") {
+		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "files.") {
 		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
 	} else {

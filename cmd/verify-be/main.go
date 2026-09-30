@@ -150,6 +150,7 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 	env.backendRef, env.diagnostics = options.BackendRef, options.Diagnostics
 	env.files = strings.HasPrefix(options.Scenario, "files.")
 	env.suite = options.Scenario == "test"
+	env.dependenciesOnly = selected.DependenciesOnly
 	defer func() {
 		r.CleanupErrors = env.close()
 		r.CleanupComplete = len(r.CleanupErrors) == 0
@@ -157,15 +158,15 @@ func perform(ctx context.Context, root, directory, worker string, options cliOpt
 			r.Status = "fail"
 		}
 	}()
-	if env.suite {
-		fmt.Println("Starting isolated dependencies for the Go suite…")
+	if env.suite || env.dependenciesOnly {
+		fmt.Println("Starting isolated dependencies for Go tests…")
 	} else {
 		fmt.Println("Starting isolated dependencies and building the backend…")
 	}
 	if err := env.start(ctx, r.Doctor.Images); err != nil {
 		return fmt.Errorf("startup: %w", err)
 	}
-	if !env.suite {
+	if !env.suite && !env.dependenciesOnly {
 		r.BinarySHA256, err = fileSHA256(filepath.Join(directory, "server"))
 		if err != nil {
 			return err
@@ -218,6 +219,12 @@ func runTest(ctx context.Context, env *environment, worker string, selected scen
 	}
 	defer stderr.Close()
 	values := append(env.env(), "OMA_WORKER_CONTROL_IMAGE="+worker, "VERIFY_BE_TIMEOUT="+selected.Timeout.String())
+	if strings.HasPrefix(selected.Test, "TestVerifyTranscript") {
+		values = append(values, "VERIFY_BE_TRANSCRIPT=1")
+	}
+	if strings.HasPrefix(selected.Test, "TestVerifyMemory") {
+		values = append(values, "VERIFY_BE_MEMORY=1")
+	}
 	args := []string{"go", "test", selected.Package, "-json", "-count=1", "-timeout=" + (selected.Timeout + 30*time.Second).String()}
 	if env.suite {
 		values, err = suiteEnvironment(env)

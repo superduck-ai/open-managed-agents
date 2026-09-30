@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -19,6 +20,7 @@ import (
 )
 
 type memoryFilestoreStore interface {
+	EnqueueObjectCleanupResourceJob(context.Context, string, string, string, string, string) error
 	ListSessionMemoryMounts(ctx context.Context, workspaceUUID, filesystemUUID string) ([]db.SessionMemoryMount, error)
 	GetMemoryByPath(ctx context.Context, workspaceUUID, memoryStoreExternalID, path string) (db.Memory, bool, error)
 	ListMemoriesPage(ctx context.Context, params db.ListMemoriesPageParams) ([]db.Memory, bool, error)
@@ -357,11 +359,13 @@ func (b *memoryPathBackend) upsertMemoryContent(
 			Now:                   now,
 		})
 		if err != nil {
-			b.discardMemoryObject(ctx, objectKey)
-			return db.Memory{}, mapMemoryMutationError("update memory", err)
+			cleanupErr := b.discardMemoryObject(ctx, principal.WorkspaceUUID, objectKey, versionID)
+			return db.Memory{}, mapMemoryMutationError("update memory", errors.Join(err, cleanupErr))
 		}
 		if !result.VersionCreated {
-			b.discardMemoryObject(ctx, objectKey)
+			if err := b.discardMemoryObject(ctx, principal.WorkspaceUUID, objectKey, versionID); err != nil {
+				return db.Memory{}, internalError("schedule discarded memory cleanup", err)
+			}
 		}
 		return result.Memory, nil
 	}
@@ -392,8 +396,8 @@ func (b *memoryPathBackend) upsertMemoryContent(
 		CreatedAt:        now,
 	})
 	if err != nil {
-		b.discardMemoryObject(ctx, objectKey)
-		return db.Memory{}, mapMemoryMutationError("create memory", err)
+		cleanupErr := b.discardMemoryObject(ctx, principal.WorkspaceUUID, objectKey, versionID)
+		return db.Memory{}, mapMemoryMutationError("create memory", errors.Join(err, cleanupErr))
 	}
 	return record, nil
 }
@@ -501,10 +505,13 @@ func (b *memoryPathBackend) resolveMount(
 	return mount, nil
 }
 
-func (b *memoryPathBackend) discardMemoryObject(ctx context.Context, key string) {
+func (b *memoryPathBackend) discardMemoryObject(ctx context.Context, workspaceUUID, key, versionID string) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	_ = b.store.Delete(cleanupCtx, key, storage.DeleteOptions{})
+	if err := b.store.Delete(cleanupCtx, key, storage.DeleteOptions{AllVersions: true}); err != nil {
+		return b.memories.EnqueueObjectCleanupResourceJob(cleanupCtx, workspaceUUID, b.store.Name(), key, "memory_version", versionID)
+	}
+	return nil
 }
 
 func requireMemoryDocumentPath(parsed memoryFilestorePath) *apiError {

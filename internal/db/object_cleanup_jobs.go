@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/superduck-ai/yourbatis"
 )
 
 type ObjectCleanupJob struct {
@@ -40,11 +42,15 @@ func (d *DB) EnqueueObjectCleanupJob(ctx context.Context, workspaceUUID string, 
 }
 
 func (d *DB) EnqueueObjectCleanupResourceJob(ctx context.Context, workspaceUUID string, bucket, key, resourceType, resourceID string) error {
-	payload, err := objectCleanupJobPayload(bucket, key, resourceType, resourceID)
+	return enqueueObjectCleanupRef(ctx, d.mapperDB, ObjectRef{WorkspaceUUID: workspaceUUID, Bucket: bucket, Key: key, ResourceType: resourceType, ResourceID: resourceID})
+}
+
+func enqueueObjectCleanupRef(ctx context.Context, executor yourbatis.Executor, ref ObjectRef) error {
+	payload, err := objectCleanupJobPayload(ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID)
 	if err != nil {
 		return fmt.Errorf("encode object cleanup job payload: %w", err)
 	}
-	return NewObjectCleanupJobMapper(d.mapperDB).EnqueueObjectCleanupJob(ctx, workspaceUUID, payload)
+	return NewObjectCleanupJobMapper(executor).EnqueueObjectCleanupJob(ctx, ref.WorkspaceUUID, payload)
 }
 
 func (d *DB) EnqueueScheduledObjectCleanupResourceJob(

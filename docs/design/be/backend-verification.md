@@ -1,6 +1,6 @@
 # Backend verification
 
-`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios. No old CLI aliases are retained.
+`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. `memory` adds production-handler integration scenarios and real Runner/FUSE mount coverage. No old CLI aliases are retained.
 
 ```sh
 just verify-be -h
@@ -18,21 +18,50 @@ just verify-be files doctor generated
 just verify-be files generated
 ```
 
-Scenario identities in reports use `chat.roundtrip`, etc., and `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance`, `files.cloud-storage`, `chat.cloud-renewal`. Use `DOMAIN SCENARIO`, not `run DOMAIN.SCENARIO`. `--timeout` applies to all scenario commands. Worker flags belong to `chat` and `files generated`; baseline/backend-ref/diagnostics flags belong to both performance commands. Help does not load runtime settings. Root `doctor` checks common dependencies; a cloud-specific doctor checks only its explicit private configuration.
+Scenario identities in reports use `chat.roundtrip`, etc., and `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance`, `files.cloud-storage`, `chat.cloud-renewal`. Use `DOMAIN SCENARIO`, not `run DOMAIN.SCENARIO`. `--timeout` applies to all scenario commands. Worker flags belong to `chat`, `files generated` and `memory mounts`; baseline/backend-ref/diagnostics flags belong to both performance commands. Help does not load runtime settings. Root `doctor` checks common dependencies; a cloud-specific doctor checks only its explicit private configuration.
 
-The implementation lives in `cmd/verify-be`; the reusable shell entry only builds/executes Go. The project Skill and maps live in `.agents/skills/verify-be/`. Local settings move to `.verify-be.local.json`, evidence to `tmp/verify-be/`, owned container labels to `oma.verify-be.run`. Old evidence directories are retained. The backend PR workflow keeps a Chat verification job and adds a separate Files verification job; branch protection should require both.
+The implementation lives in `cmd/verify-be`; the reusable shell entry only builds/executes Go. The project Skill and maps live in `.agents/skills/verify-be/`. Local settings move to `.verify-be.local.json`, evidence to `tmp/verify-be/`, owned container labels to `oma.verify-be.run`. Old evidence directories are retained. The backend PR workflow has separate Chat, Files, Transcript and Memory verification jobs; branch protection should require all four.
 
 ```mermaid
 flowchart LR
     CLI[verify-be] --> Chat[chat scenarios]
     CLI --> Files[files scenarios]
+    CLI --> Memory[memory scenarios]
+    Memory --> Integration
+    Memory --> Mounts[Real Runner and Docker/FUSE]
+    Mounts --> Runtime
+    CLI --> Transcript[transcript scenarios]
+    Transcript --> Integration[Production service and isolated dependencies]
     Chat --> Runtime[Isolated backend and dependencies]
     Files --> Runtime
     Chat --> Worker[Real Worker and scripted model]
     Runtime --> Evidence[Go test JSON and required proof stages]
+    Integration --> Evidence
     Evidence --> Cleanup[Stop backend and remove owned containers and volumes]
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
+
+## Memory / Filestore verification contract
+
+See the [Memory feature map](../../../.agents/skills/verify-be/features/memory.md). `memory.integrity`, `memory.isolation`, `memory.cleanup`, `memory.lifecycle` and `memory.filestore` select existing `tests` package fixtures with unique PostgreSQL schemas and real MinIO. They use production HTTP handlers in the test process with `DependenciesOnly`, no standalone backend or Worker. `VERIFY_BE_MEMORY=1` is supplied only to the selected scenario. Default Go suites explicitly list these scenarios as skipped.
+
+The contracts cover invalid writes, path conflicts, missing objects and repair, read-only mounts, token/filesystem and tenant scope, archived-store rejection, old token revocation, immutable versions and Session deletion preserving shared Memory. Ordinary Filestore checks cover overwrite/copy/move/remove byte equality, more than 100 owned objects spanning cleanup batches, zero final quota and Memory survival. Cleanup checks test-side upload/delete/enqueue failures, transactional store-delete/redaction rollback on enqueue rejection, durable compensation jobs, retry attempts, retained bytes, completion idempotency and real unversioned MinIO removal of all Memory object keys. Portable fixtures assert bucket versioning is disabled; Memory history uses independent immutable object keys.
+
+`memory.mounts` runs the actual backend and background Runner with the existing local Docker Provider and real rclone/FUSE, using public Session/resource creation. It injects failure while writing `MEMORY.md` after mounts start and verifies that the allocated sandbox is removed and no CodeSession becomes visible. Success checks all five fixed mounts, two Memory mounts, read-only rejection, literal seed bytes, literal Markdown and token-config removal. A write through FUSE must persist exact S3 bytes with a `session_actor` version. The fixture explicitly kills the first container; another Session must read those store bytes while its local root contains a rebuilt Markdown file and no first-session scratch file. No upstream model response or tool turn is used in this scenario.
+
+The portable scenarios drive production cleanup with `RunOnce` and explicitly advance retry eligibility and a pending orphan guard created by rejected ordinary overwrite. Automatic loop/backoff timing, crash recovery, concurrent editing, performance, cloud IAM/allocation, token renewal and browser rendering remain outside coverage. Portable deadlines are 3m, `mounts` 8m. The Memory CI job runs five portable scenarios; actual mounts run in the Worker job after its FUSE preflight. The verdict collects proof stages only from the selected test or its slash-delimited descendants in the registered package; sibling prefixes cannot supply proof. Reports reject skipped tests, missing stages, source mutation or incomplete cleanup.
+
+## Transcript verification contract
+
+See the [Transcript feature map](../../../.agents/skills/verify-be/features/transcript.md). `transcript doctor` checks common dependencies without loading a Worker image or requiring FUSE. Scenario registration sets `DependenciesOnly`; the environment starts the disposable Compose dependencies and supplies a private configuration without building or starting a standalone backend. Reports describe this execution scope instead of claiming compiled-backend coverage. The registered tests live in the existing `tests` package and reuse its schema/session fixtures. They opt in through the CLI's child environment; ordinary `go test ./...` and `verify-be test` skip them explicitly.
+
+`transcript lifecycle` compares export bytes through archive, hard deletion and real cleanup of an old external payload, then invokes the actual `cmd/transcript-archive` export/restore commands twice. It checks private HTTP bytes, sequence watermark and foreign workspace isolation. `boundary` interleaves foreground/subagent events and checks that their separate compaction boundaries remain visible through soft deletion, hard deletion and restore.
+
+`recovery` injects errors before/after real upload and rejects later DB batches with schema-local triggers. It checks pending expiration/rebuild, retained manifest identity after upload, partial batch progress and idempotent retries, including the 500-record restore boundary. `concurrency` pauses an upload caller after persistence and lets another caller recover the same pending segment, checking one upload and manifest. `integrity` removes/corrupts real MinIO objects; export, restore and deletion must fail without modifying covered rows, then succeed after repair.
+
+Attached archive objects remain the recoverable copy after source rows and old payload blobs are removed. Fixtures explicitly age rows and invoke the production cleanup Worker with `RunOnce`. Fault wrappers only surround real storage calls in test code. No production fault controls, schema migrations or archive API changes are introduced. These scenarios do not verify five-minute River sweeps, automatic River retries, process crash/restart behavior, cloud IAM or throughput. Lifecycle/recovery default to five minutes; others to three, with the shared `--timeout` override.
+
+The PR workflow adds `Transcript verification` with all five scenarios and JSON/Markdown evidence uploads. Branch protection configuration remains an external administrative step.
 
 ## Files verification contract
 

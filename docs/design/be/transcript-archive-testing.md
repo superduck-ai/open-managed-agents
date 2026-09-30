@@ -1,5 +1,24 @@
 # Transcript 归档 DB 回归验证
 
+## 可复用真实对象存储验收
+
+通过现有 Go CLI 运行，命令和断言维护在 [Transcript 功能地图](../../../.agents/skills/verify-be/features/transcript.md)。无需配置 Worker 或 FUSE：
+
+```sh
+just verify-be transcript doctor
+just verify-be transcript integrity
+just verify-be transcript recovery
+just verify-be transcript concurrency
+just verify-be transcript boundary
+just verify-be transcript lifecycle
+```
+
+五个场景复用本文件的集成测试夹具，但连接 CLI 创建的 PostgreSQL 和真实 MinIO。生命周期场景调用真实维护 CLI 导出/还原，比较完整记录字节、私有 HTTP 历史及序号水位；旧外置 payload 被真实清理后仍能恢复。失败场景通过真实上传前后钩子和隔离 schema 中的数据库触发器制造中断，覆盖 pending 回收、分批回滚、重试和并发交错。对象缺失/损坏必须阻止导出、还原和物理删除，修复原始对象后恢复。边界场景验证前台与 subagent 交错事件在 compaction 前后独立归档。
+
+`report.json`、`report.md` 位于命令输出的证据目录；缺阶段、skip、失败、源码变化或清理失败均不能通过。这些场景在普通全仓 Go 测试中显式跳过，必须另行运行。它们手动驱动生产服务和 cleanup Worker，显式调整 fixture 的年龄，不验证 River 的五分钟扫描、自动重试、进程崩溃恢复、云端权限或生产吞吐。
+
+## DB 不变量
+
 归档的 DB 测试必须使用真实事件证明查询和删除发生，不能仅验证空表操作没有报错。测试通过 `TEST_MIGRATION_DATABASE_URL` 连接测试 PostgreSQL，在独立 schema 中应用 migrations，结束后删除该 schema。
 
 | 测试 | 必须验证的行为 |

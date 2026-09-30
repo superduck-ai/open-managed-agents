@@ -412,7 +412,7 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 
 ## 验收
 
-自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。Memory Filestore API 合同由 `tests/filestore_memory_namespace_test.go` 覆盖；真实 Sandbox 跨 Session 的 Memory 持久化验收仍待补充，当前分支不宣称已有该 E2E 覆盖。
+自动化覆盖协议编解码、路由与 JWT 隔离、Session 自动建档、Input Resource 原子 attach/删除、同一 Source 多次 attach 与 Catalog 去重、Source ID metadata/download、Source protection、Input 通用 mutation 拒绝、Output create/overwrite/copy/move/delete、Catalog 分页、配额、递归删除、TTL、Session cleanup、Skill Archive 动态成员、`/memory/{slug}` 写回 Memory 三表，以及 migration 后旧表、旧 Input projection 与 `fse_` identity 消失。真实验收继续覆盖官方 SDK、rclone/FUSE multimount 与 E2B `/uploads`、`/outputs` 生命周期。Memory Filestore API 合同由 `tests/filestore_memory_namespace_test.go` 覆盖；`just verify-be memory mounts` 通过实际 Runner、Docker sandbox 与 FUSE 验证跨 Session 的 Memory 持久化、只读挂载、本地根重建及启动失败清理。该场景直接执行沙箱文件 I/O，不调用模型；沙箱销毁由测试显式执行，不代表云端故障检测。
 
 Memory 文档路径由 `internal/memorypath` 与 REST API 共享校验：只接受 NFC 规范形式，拒绝控制字符及 Unicode 格式字符，不自动归一化。M2-05 分别验证普通 `/memory` 父目录缺失时写入返回 409，以及目录存在时普通 Filestore 写入成功；两者均不得写入 Memory 三表。
 
@@ -420,3 +420,9 @@ Memory 文档路径由 `internal/memorypath` 与 REST API 共享校验：只接�
 
 [沙箱生命周期](sandbox-lifecycle.md) 可以销毁长期 idle 的托管 Sandbox。第一版接受工作目录和未上传写缓存丢失，
 不实现 checkpoint；已提交的 Filestore 文件、transcript 和事件保留。恢复重建固定挂载，但不保证恢复沙箱本地仓库或进程状态。
+
+## Memory / Filestore 验证与补偿
+
+[Memory 功能地图](../../../.agents/skills/verify-be/features/memory.md) 维护六个 Go CLI 场景。`memory filestore` 检查普通 Owned File 覆盖、复制、移动、删除字节一致，Session 删除后分批清理超过 100 个对象及用量归零，同时验证同一个 Memory store 在新会话仍可读。测试显式推进被拒绝覆盖操作的 orphan guard 到期时间，不宣称覆盖其后台等待时序。`memory cleanup` 使用真实非版本化 MinIO 验证写入失败与相同正文 flush 的冗余对象删除，要求读取已删除对象返回 NotFound。Memory 业务历史版本使用独立对象 key，不需要开启桶版本控制。
+
+Memory upload 的正文 key 对每个 version 唯一。metadata 写入失败或相同正文没有生成 version 时，补偿删除使用全版本删除；删除失败登记 `memory_version` 的通用对象清理任务，后台 Worker 也执行全版本删除。删除和入队均失败时返回错误。此策略不会改变普通 Filestore Owned File 的精确 VersionID 清理合同，也不覆盖 upload 与 metadata 提交之间的进程崩溃窗口。

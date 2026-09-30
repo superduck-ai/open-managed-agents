@@ -31,8 +31,6 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 	lifecycle := environments.NewSandboxLifecycle(f.app.db, killer, config.SandboxLifecycleConfig{Enabled: true, IdleTimeout: 24 * time.Hour}, nil)
 	workers := river.NewWorkers()
 	lifecycle.Register(workers)
-	// Separate sweep and reclaim queues avoid River coalescing their insert notifications.
-	// A long fallback interval makes this test exercise notification-driven fetches.
 	const sweepQueue = "sandbox_lifecycle_test_sweep"
 	client, err := riverjobs.NewClient(f.app.db, nil, workers, map[string]river.QueueConfig{
 		sweepQueue:                         {MaxWorkers: 1, FetchPollInterval: time.Hour},
@@ -55,15 +53,7 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 	if err != nil || !before.NextRunAt.Equal(after.NextRunAt) {
 		t.Fatalf("startup changed existing schedule: before=%+v after=%+v err=%v", before, after, err)
 	}
-	// Exercise the durable leader and sweep/reclaim queues without waiting for a minute boundary.
 	scheduleID := "lifecycle-test-" + uuid.NewV4().String()
-	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{
-		ID: scheduleID, Kind: "sandbox_lifecycle_sweep", Queue: sweepQueue,
-		Schedule: &river.DurablePeriodicJobSchedule{NextRunAt: time.Now().Add(-time.Second)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if err := client.Start(runCtx); err != nil {
@@ -79,6 +69,13 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 		_, _ = client.DurablePeriodicJobDelete(ctx, "sandbox_lifecycle_sweep")
 	}()
 	assertRiverListenerConnected(t, f.app)
+	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{
+		ID: scheduleID, Kind: "sandbox_lifecycle_sweep", Queue: sweepQueue,
+		Schedule: &river.DurablePeriodicJobSchedule{NextRunAt: time.Now().Add(-time.Second)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	timeout := time.NewTimer(15 * time.Second)
 	defer timeout.Stop()
 	for {
@@ -88,8 +85,35 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 				return
 			}
 		case <-timeout.C:
+			logSandboxLifecycleState(t, f)
 			t.Fatal("durable sweep did not dispatch idle sandbox reclamation")
 		}
+	}
+}
+
+func logSandboxLifecycleState(t *testing.T, f sandboxLifecycleFixture) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var state string
+	if err := f.app.pool.QueryRow(ctx, `SELECT json_build_object(
+        'session_status', s.status, 'session_deleted', s.deleted_at IS NOT NULL,
+        'session_archived', s.archived_at IS NOT NULL, 'worker_status', cs.worker_status,
+        'code_status', cs.status, 'idle_since', cs.idle_since, 'environment_type', e.config->>'type',
+        'work_state', w.state, 'sandbox_state', b.state)
+        FROM environment_sandboxes b JOIN environment_work w ON w.uuid=b.work_uuid
+        JOIN sessions s ON s.uuid=w.session_uuid JOIN code_sessions cs ON cs.session_uuid=s.uuid
+        JOIN environments e ON e.uuid=s.environment_uuid WHERE b.uuid=$1`, f.target.SandboxUUID).Scan(&state); err != nil {
+		t.Logf("sandbox state unavailable: %v", err)
+	} else {
+		t.Logf("sandbox state: %s", state)
+	}
+	var jobs string
+	if err := f.app.pool.QueryRow(ctx, `SELECT COALESCE(json_agg(state), '[]'::json) FROM public.river_job
+        WHERE kind='sandbox_reclaim' AND args->>'sandbox_uuid'=$1`, f.target.SandboxUUID).Scan(&jobs); err != nil {
+		t.Logf("reclaim job state unavailable: %v", err)
+	} else {
+		t.Logf("reclaim jobs: %s", jobs)
 	}
 }
 

@@ -36,9 +36,9 @@ func startChatPeer(t *testing.T) string {
 	log, err := os.Create(filepath.Join(directory, "peer.log"))
 	requireOK(t, err)
 	t.Cleanup(func() { _ = log.Close() })
-	binary := os.Getenv("VERIFY_CHAT_SERVER")
+	binary := os.Getenv("VERIFY_BE_SERVER")
 	if binary == "" {
-		t.Fatal("VERIFY_CHAT_SERVER required")
+		t.Fatal("VERIFY_BE_SERVER required")
 	}
 	cmd := exec.Command(binary)
 	cmd.Env = append(os.Environ(), "CONFIG_FILE="+configPath, "OMA_HTTP_LISTENER_FD=3")

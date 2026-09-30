@@ -108,3 +108,25 @@ func TestSessionContractUsageIsAtomicAndIdempotent(t *testing.T) {
 		t.Fatalf("all threads idle: %s", status)
 	}
 }
+
+func TestSessionContractExhaustedReasonSurvivesBatchedIdle(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("contract-exhausted"))
+	worker, _ := newPayloadIntegrationSession(t, app)
+	sink := sessionsapi.NewHandler(app.cfg, app.db, newCodeSessionService(app, nil, nil), nil, nil, app.vaultSecrets, nil)
+	payloads := []json.RawMessage{
+		json.RawMessage(`{"type":"session.status_running","id":"sevt_batch_running"}`),
+		json.RawMessage(`{"type":"session.status_idle","id":"sevt_batch_failed","stop_reason":{"type":"retries_exhausted"}}`),
+		json.RawMessage(`{"type":"session.status_idle","id":"sevt_batch_idle","stop_reason":{"type":"end_turn"}}`),
+	}
+	if err := sink.PublishCodeSessionEvents(t.Context(), worker, payloads); err != nil {
+		t.Fatal(err)
+	}
+	events := listSessionEvents(t, app, worker.SessionExternalID, "types[]=session.status_idle", defaultTestKey)
+	if len(events.Data) != 1 {
+		t.Fatalf("batch rewrote exhaustion: idle events=%d", len(events.Data))
+	}
+	event := sessionEventObjectByType(t, events, "session.status_idle")
+	if event["stop_reason"].(map[string]any)["type"] != "retries_exhausted" {
+		t.Fatalf("batch lost failure reason: %v", event)
+	}
+}

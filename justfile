@@ -43,9 +43,8 @@ restart-web:
 test: generate
   go test ./... -count=1
 
-# Isolated real-Worker chat verification; see .agents/skills/verify-chat/SKILL.md.
-verify-chat *args:
-  ./.agents/skills/verify-chat/scripts/verify-chat {{args}}
+verify-be *args:
+  ./.agents/skills/verify-be/scripts/verify-be {{args}}
 
 # Real E2B Memory Store lifetime. Skips without e2b.api_key. Uses config/config.yaml when present.
 test-e2e-memory-sandbox: generate

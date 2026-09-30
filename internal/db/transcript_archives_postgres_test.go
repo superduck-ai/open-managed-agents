@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,8 +142,7 @@ func TestTranscriptArchivePostgres(t *testing.T) {
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("attached cleanup: %d %v", len(jobs), err)
 	}
-	// Verify the schema rollback guard without discarding the only archive copy.
-	if _, err := provider.Down(ctx); err == nil {
-		t.Fatal("attached migration rollback accepted")
+	if _, err := provider.DownTo(ctx, 61); err == nil || !strings.Contains(err.Error(), "restore archived transcript segments before rollback") {
+		t.Fatalf("attached archive rollback guard: %v", err)
 	}
 }

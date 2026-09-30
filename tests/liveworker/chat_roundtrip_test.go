@@ -31,7 +31,15 @@ type chatEvent struct {
 		ID string `json:"id"`
 	} `json:"event"`
 	EventID string `json:"event_id"`
-	Delta   struct {
+	Error   struct {
+		RetryStatus struct {
+			Type string `json:"type"`
+		} `json:"retry_status"`
+	} `json:"error"`
+	StopReason struct {
+		Type string `json:"type"`
+	} `json:"stop_reason"`
+	Delta struct {
 		Content struct {
 			Text string `json:"text"`
 		} `json:"content"`
@@ -39,14 +47,14 @@ type chatEvent struct {
 }
 
 func TestChatRoundtrip(t *testing.T) {
-	if os.Getenv("VERIFY_CHAT_RUN_ID") == "" || os.Getenv("LIVE_WORKER_REAL_CLAUDE") != "1" {
-		t.Skip("run through verify-chat with isolated dependencies and a real Worker image")
+	if os.Getenv("VERIFY_BE_RUN_ID") == "" || os.Getenv("LIVE_WORKER_REAL_CLAUDE") != "1" {
+		t.Skip("run through verify-be with isolated dependencies and a real Worker image")
 	}
 	started := time.Now()
 	proof := func(stage string) {
 		data, err := json.Marshal(map[string]any{"stage": stage, "elapsed_ms": time.Since(started).Milliseconds()})
 		requireOK(t, err)
-		t.Logf("CHAT_PROOF %s", data)
+		t.Logf("BE_PROOF %s", data)
 	}
 	e := newLiveEnv(t)
 	previewSeen := make(chan struct{}, 2)

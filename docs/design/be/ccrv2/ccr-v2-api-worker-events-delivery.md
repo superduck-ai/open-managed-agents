@@ -133,6 +133,8 @@ JetStream ACK floor。旧 `GET /v1/code/sessions/{code_session_id}` poll 入口�
 
 ## 验收
 
+`TestRealWorkerControlDelivery` 可以连接显式配置的本地后端。等待工具确认时，公开 API 的第二条输入必须返回 409，且不能改变 Worker 队列；测试随后通过生产 ingress service 注入协议任务，单独检查内部队列、控制回复优先交付和重连后的 ACK。这不代表公开 API 支持繁忙时排队。Worker 使用真实镜像，模型响应仍是固定 fixture。
+
 - 正整数/string epoch 与最多 64 条 update 可成功解析；非法输入返回 400。
 - 当前 epoch 的 received/processing 刷新映射且不移除 JetStream 消息。
 - 当前 epoch 的 processed DoubleAck 并移除消息。

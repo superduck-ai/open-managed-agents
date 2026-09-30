@@ -324,6 +324,15 @@
           )
     </update>
 
+    <update id="UpdateWorkerToolMetadata" result="rows">
+        UPDATE code_sessions
+        SET worker_external_metadata = CAST(#{metadata,sensitive=true} AS jsonb),
+            worker_requires_action_details = CASE WHEN #{clearDetails} THEN NULL ELSE worker_requires_action_details END
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND external_id = #{externalID}
+          AND deleted_at IS NULL
+    </update>
+
     <update id="UpdateWorkerState" result="returning" resultType="codeSessionRow">
         UPDATE code_sessions
         SET idle_since = CASE WHEN #{params.WorkerStatus} = 'idle'

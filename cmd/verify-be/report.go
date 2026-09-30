@@ -28,6 +28,10 @@ type scenario struct {
 }
 
 var scenarios = map[string]scenario{
+	"deployment.lifecycle":   {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentLifecycle", Stages: []string{"invalid_runs_leave_no_effects", "manual_run_effects_match", "durable_schedule_executed", "pause_archive_stop_schedule"}, Description: "Deployment 公开创建/运行、持久化调度执行、终态与 Session/Work/事件/挂载副作用一致"},
+	"deployment.retry":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentRetry", Stages: []string{"failed_attempt_rolled_back", "automatic_retry_matches", "exhausted_job_has_no_effects", "reference_failure_paused"}, Description: "真实 River 自动退避重试、事务回滚、耗尽终态与依赖失败自动暂停"},
+	"deployment.idempotency": {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyDeploymentIdempotency", Stages: []string{"stale_jobs_have_no_effects", "duplicate_occurrence_single_effect", "distinct_occurrence_preserved"}, Description: "真实 River 并发重复投递、旧调度快照拒绝、同 occurrence 副作用唯一与不同 occurrence 保留"},
+	"deployment.restart":     {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 5 * time.Minute, Test: "TestVerifyDeploymentRestart", Stages: []string{"uncommitted_crash_rolled_back", "uncommitted_restart_recovered", "committed_crash_preserved", "committed_restart_deduplicated", "overdue_schedule_recovered"}, Description: "SIGKILL 真实 River 进程，在业务提交前后恢复运行并核对副作用；测试缩短 rescue 时间"},
 	"memory.integrity":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryIntegrity", Stages: []string{"invalid_writes_rejected", "missing_object_rejected", "repaired_memory_matches"}, Description: "Memory 无效正文、路径树冲突、缺失对象拒绝读取与修复"},
 	"memory.isolation":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryIsolation", Stages: []string{"readonly_and_scope_enforced", "archived_store_readonly", "deleted_session_token_revoked"}, Description: "Memory 挂载权限、filesystem 及租户隔离、归档拒写与旧 token 撤销"},
 	"memory.lifecycle":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryLifecycle", Stages: []string{"memory_versions_match", "cross_session_memory_preserved", "deleted_memory_history_preserved"}, Description: "Memory 双会话读写、不可变版本、相同正文幂等及会话删除后记忆保留"},
@@ -224,6 +228,8 @@ func saveReport(directory string, r report) error {
 	fmt.Fprintf(&out, "Verification source SHA-256: %s\nBackend commit: %s\nBackend binary SHA-256: %s\nScenario timeout: %s\nFailure kind: %s\n\n", r.Source.SHA256, r.BackendCommit, r.BinarySHA256, r.Timeout, r.FailureKind)
 	if isCloudScenario(r.Scenario) {
 		out.WriteString("Execution: cloud adapter assertions in the Go CLI; no local backend or Worker model is started. Credentials are supplied by an explicit private configuration.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "deployment.") {
+		out.WriteString("Execution: production Deployment HTTP/Store and asynchronous River workers with disposable PostgreSQL/MinIO. restart uses separate River processes. No standalone backend or model Worker is started.\n\n")
 	} else if selectScenario(r.Scenario).DependenciesOnly {
 		out.WriteString("Execution: production services and HTTP handlers in the Go test process, with isolated PostgreSQL schemas and real MinIO. No standalone backend or Worker is started.\n\n")
 	} else if r.Scenario != "test" && r.BackendCommit == "" {
@@ -262,6 +268,8 @@ func saveReport(directory string, r report) error {
 		out.WriteString("\n")
 	} else if isCloudScenario(r.Scenario) {
 		out.WriteString("Coverage: only the selected cloud storage or E2B provider operations and final cleanup. This does not certify public chat confirmation, all IAM/network policies or cloud availability.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "deployment.") {
+		out.WriteString("Coverage: production Deployment HTTP handlers and scheduled worker with real PostgreSQL/River, unique business schema and disposable public River tables. Jobs run asynchronously; retries retain their nominal occurrence. restart SIGKILLs a River worker process before and after business commit and uses real rescue with a test-only 10s job timeout/15s rescue threshold; the default one-hour rescue delay is not measured. Durable dispatch is made due through River APIs. No standalone backend or model Worker; Session execution, cloud sandbox allocation and production throughput are not verified.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "transcript.") {
 		out.WriteString("Coverage: archive/export/restore/delete service, real S3 adapter, deterministic test-side interruptions and batch rollback. lifecycle also runs the actual maintenance CLI. Fixtures explicitly age rows; five-minute River sweeps, automatic River retries, crash recovery, cloud IAM and production throughput are not verified.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "memory.") {

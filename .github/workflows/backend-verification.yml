@@ -192,6 +192,43 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+  verify-deployment:
+    name: Deployment verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare common images
+        run: |
+          for image in postgres:17 redis:8 nats:2.14.6-alpine pgsty/minio:latest; do
+            docker pull "$image"
+          done
+      - name: Build verification CLI
+        run: |
+          mkdir -p tmp/bin
+          ./scripts/generate-go.sh
+          go build -o tmp/bin/verify-be ./cmd/verify-be
+      - name: Verify Deployment and River recovery
+        run: |
+          tmp/bin/verify-be deployment doctor
+          for scenario in lifecycle retry idempotency restart; do
+            tmp/bin/verify-be deployment "$scenario"
+          done
+      - name: Upload Deployment verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-verification-verdicts
+          path: |
+            tmp/verify-be/*/report.json
+            tmp/verify-be/*/report.md
+          retention-days: 14
+          if-no-files-found: warn
+
   verify-cloud:
     name: Cloud adapter verification
     if: github.event_name == 'workflow_dispatch' && inputs.verify_cloud

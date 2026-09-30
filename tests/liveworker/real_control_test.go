@@ -80,7 +80,14 @@ func TestRealWorkerControlDelivery(t *testing.T) {
 			var queuedSequence uint64
 			if scenario.policy == "always_ask" {
 				toolID := waitRealWorkerPermission(t, f)
-				sendRealWorkerInput(t, f, "Reply queued done after the previous task.")
+				const queuedText = "Reply queued done after the previous task."
+				e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{
+					"events": []any{map[string]any{"type": "user.message", "content": []any{map[string]string{"type": "text", "text": queuedText}}}},
+				}, http.StatusConflict)
+				if info := f.consumer(t); info.NumPending != 0 || info.NumAckPending != 1 {
+					t.Fatal("rejected public input changed the Worker task lane")
+				}
+				f.queue(t, payloadFor(uuid.NewString(), queuedText))
 				waitRealWorker(t, "blocked task lane", func() bool {
 					info := f.consumer(t)
 					return info.NumAckPending == 1 && info.NumPending == 1
@@ -99,8 +106,6 @@ func TestRealWorkerControlDelivery(t *testing.T) {
 					})
 				}
 				if scenario.control == "interrupt" {
-					// Public user.interrupt conversion is a separate bugfix; this tests
-					// delivery of the canonical Worker protocol message.
 					queueRealWorkerControl(t, f, map[string]any{"type": "control_request", "request_id": "interrupt_probe", "request": map[string]string{"subtype": "interrupt"}})
 				} else {
 					e.request(t, "POST", "/v1/sessions/"+f.session.ExternalID+"/events", e.apiKey, map[string]any{

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -49,18 +50,32 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 		thread = row.thread()
 	}
+	var payload sessionStatusPayload
+	if len(source.Payload) > 0 {
+		if err := jsonv2.Unmarshal(source.Payload, &payload); err != nil {
+			return nil, err
+		}
+	}
+	if status == "idle" {
+		reason, apply, err := resolveIdleStopReasonTx(ctx, executor, session, thread, source, payload.StopReason)
+		if err != nil || !apply {
+			return nil, err
+		}
+		payload.StopReason = reason
+		if reason != nil && reason.Type == "retries_exhausted" {
+			metadata, err := clearExhaustedToolRequestsTx(ctx, executor, session, primary, thread, worker)
+			if err != nil {
+				return nil, err
+			}
+			worker.WorkerExternalMetadata = metadata
+		}
+	}
 	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, thread.ExternalID)
 	if err != nil {
 		return nil, err
 	}
 	if status == "running" && len(pending) > 0 {
 		return nil, nil
-	}
-	var payload sessionStatusPayload
-	if len(source.Payload) > 0 {
-		if err := jsonv2.Unmarshal(source.Payload, &payload); err != nil {
-			return nil, err
-		}
 	}
 	allPending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, "")
 	if err != nil {
@@ -111,6 +126,59 @@ func sessionUsagePayload(event SessionEvent, usage json.RawMessage) (json.RawMes
 	return jsonv2.Marshal(map[string]any{
 		"id": event.ExternalID, "type": event.EventType, "processed_at": event.ProcessedAt, "usage": usage, "budget": nil,
 	})
+}
+
+func clearExhaustedToolRequestsTx(ctx context.Context, executor yourbatis.Executor, session Session, primary, thread SessionThread, worker codeSessionInputStateRow) ([]byte, error) {
+	metadata, err := maevents.ClearPendingToolRequests(worker.WorkerExternalMetadata, primary.ExternalID, thread.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	clearDetails := thread.ExternalID == primary.ExternalID
+	if clearDetails || !bytes.Equal(metadata, worker.WorkerExternalMetadata) {
+		if _, err := NewCodeSessionMapper(executor).UpdateWorkerToolMetadata(ctx, session.WorkspaceUUID, worker.ExternalID, metadata, clearDetails); err != nil {
+			return nil, err
+		}
+	}
+	return metadata, nil
+}
+
+func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, session Session, thread SessionThread, source SessionEvent, reason *sessionStopReason) (*sessionStopReason, bool, error) {
+	if reason != nil && reason.Type != "end_turn" && reason.Type != "retries_exhausted" {
+		return reason, true, nil
+	}
+	mapper := NewSessionEventMapper(executor)
+	if reason != nil && reason.Type == "retries_exhausted" {
+		start, found, err := mapper.FindLatestTurnStart(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
+		if err != nil || (found && source.ProcessedAt.Before(start.ProcessedAt)) {
+			return nil, false, err
+		}
+		return reason, true, nil
+	}
+	if thread.Status != "idle" {
+		return reason, true, nil
+	}
+	previous, found, err := mapper.FindLatestStatus(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
+	if err != nil || !found {
+		return reason, true, err
+	}
+	if previous.EventType != "session.thread_status_idle" {
+		return reason, true, nil
+	}
+	var status sessionStatusPayload
+	if err := jsonv2.Unmarshal(previous.Payload, &status); err != nil {
+		return nil, false, err
+	}
+	if status.StopReason != nil && status.StopReason.Type == "retries_exhausted" {
+		return status.StopReason, true, nil
+	}
+	return reason, true, nil
+}
+
+func trackPrimaryThreadStatus(primary *SessionThread, event SessionEvent) {
+	status, ok := maevents.ThreadStatus(event.EventType)
+	if ok && (event.StatusThreadID == "" || event.StatusThreadID == primary.ExternalID) {
+		primary.Status = status
+	}
 }
 
 func sessionStatusAfterThread(threads []sessionThreadRow, threadID, status string) string {

@@ -389,7 +389,7 @@ func TestSessionWorkerIdleHasSingleSource(t *testing.T) {
 				publishIdle()
 			default:
 				publishResult()
-				if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; status != "running" {
+				if status := retrieveSession(t, app, codeSession.SessionExternalID, defaultTestKey).Status; order != "failed result" && status != "running" {
 					t.Fatalf("result changed worker state to %s", status)
 				}
 				publishIdle()
@@ -515,5 +515,117 @@ func TestSessionToolConfirmationACKLeavesOriginalInputUnchanged(t *testing.T) {
 	}
 	if confirmationCount != 1 || !sawSystem {
 		t.Fatalf("confirmation count=%d system=%t scan=%v", confirmationCount, sawSystem, scanner.Err())
+	}
+}
+
+func TestSessionWorkerExhaustedReason(t *testing.T) {
+	for _, order := range []string{"result first", "idle first", "concurrent"} {
+		t.Run(order, func(t *testing.T) {
+			app := newPayloadIntegrationApp(t, newFakeStore("exhausted-reason"))
+			record, epoch := newPayloadIntegrationSession(t, app)
+			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
+			result := fmt.Sprintf(`{"worker_epoch":%s,"events":[{"payload":{"type":"result","uuid":"exhausted-result","is_error":true}}]}`, epoch)
+			publishResult := func() { postCodeSessionWorkerEvents(t, app, record.ExternalID, result) }
+			publishIdle := func() {
+				putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+			}
+			switch order {
+			case "idle first":
+				publishIdle()
+				publishResult()
+			case "concurrent":
+				var group sync.WaitGroup
+				group.Go(publishResult)
+				group.Go(publishIdle)
+				group.Wait()
+			default:
+				publishResult()
+				publishIdle()
+			}
+			assertReason := func(eventType, want string) {
+				t.Helper()
+				events := listSessionEvents(t, app, record.SessionExternalID, "types[]="+eventType+"&order=desc", defaultTestKey)
+				event := sessionEventObjectByType(t, events, eventType)
+				reason := event["stop_reason"].(map[string]any)
+				if reason["type"] != want {
+					t.Fatalf("%s reason=%v, want %s", eventType, reason, want)
+				}
+			}
+			assertReason("session.status_idle", "retries_exhausted")
+			assertReason("session.thread_status_idle", "retries_exhausted")
+			before := listSessionEvents(t, app, record.SessionExternalID, "limit=100", defaultTestKey)
+			publishResult()
+			publishIdle()
+			after := listSessionEvents(t, app, record.SessionExternalID, "limit=100", defaultTestKey)
+			if len(after.Data) != len(before.Data) {
+				t.Fatalf("retries appended events: before=%d after=%d", len(before.Data), len(after.Data))
+			}
+			usages := listSessionEvents(t, app, record.SessionExternalID, "types[]=session.usage", defaultTestKey)
+			if len(usages.Data) != 1 {
+				t.Fatalf("usage events=%d, want 1", len(usages.Data))
+			}
+			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
+			publishResult()
+			if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "running" {
+				t.Fatalf("previous failed result ended new turn: %s", status)
+			}
+			publishIdle()
+			assertReason("session.status_idle", "end_turn")
+			assertReason("session.thread_status_idle", "end_turn")
+		})
+	}
+}
+
+func TestSessionWorkerExhaustionClearsPendingTool(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("exhausted-pending-tool"))
+	record, epoch := newPayloadIntegrationSession(t, app)
+	putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
+	putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"external_metadata":{"task_summary":"keep","managed_agent_tool_permission_request:sevt_tool":{"public_event_id":"sevt_tool","request_id":"request","provider_tool_use_id":"tool"}},"requires_action_details":{"tool_name":"Bash"}}`, epoch))
+	postCodeSessionWorkerEvents(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"events":[{"payload":{"type":"result","uuid":"exhausted-tool-result","is_error":true}}]}`, epoch))
+	current, found, err := app.db.GetCodeSession(t.Context(), record.ExternalID)
+	if err != nil || !found {
+		t.Fatalf("load worker: found=%t error=%v", found, err)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(current.WorkerExternalMetadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata) != 1 || metadata["task_summary"] != "keep" || (len(current.WorkerRequiresActionDetails) > 0 && !rawMessageIsJSONNull(current.WorkerRequiresActionDetails)) {
+		t.Fatalf("worker retained failed tool request: metadata=%s details=%q parsed=%v", current.WorkerExternalMetadata, current.WorkerRequiresActionDetails, metadata)
+	}
+	putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+	events := listSessionEvents(t, app, record.SessionExternalID, "types[]=session.status_idle", defaultTestKey)
+	event := sessionEventObjectByType(t, events, "session.status_idle")
+	if reason := event["stop_reason"].(map[string]any)["type"]; reason != "retries_exhausted" {
+		t.Fatalf("failed tool turn reason=%v", reason)
+	}
+	sendSessionEvents(t, app, record.SessionExternalID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"next turn"}]}]}`, defaultTestKey)
+	if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "running" {
+		t.Fatalf("failed tool blocked next turn: %s", status)
+	}
+}
+
+func TestSessionWorkerLateExhaustionDoesNotEndNewTurn(t *testing.T) {
+	for _, nextStatus := range []string{"running", "idle"} {
+		t.Run(nextStatus, func(t *testing.T) {
+			app := newPayloadIntegrationApp(t, newFakeStore("late-exhausted"))
+			record, epoch := newPayloadIntegrationSession(t, app)
+			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
+			oldTime := time.Now().UTC().Format(time.RFC3339Nano)
+			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+			putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
+			if nextStatus == "idle" {
+				putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+			}
+			before := listSessionEvents(t, app, record.SessionExternalID, "types[]=session.status_idle", defaultTestKey)
+			postCodeSessionWorkerEvents(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"events":[{"payload":{"type":"result","uuid":"late-exhausted","is_error":true,"created_at":%q}}]}`, epoch, oldTime))
+			if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != nextStatus {
+				t.Fatalf("old failure changed new turn: %s", status)
+			}
+			after := listSessionEvents(t, app, record.SessionExternalID, "types[]=session.status_idle", defaultTestKey)
+			if len(before.Data) != len(after.Data) {
+				t.Fatal("old failure added an idle to the next turn")
+			}
+		})
 	}
 }

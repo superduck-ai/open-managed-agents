@@ -383,12 +383,19 @@ func TestPublicWorkerDiagnosticsDoNotBecomeMessages(t *testing.T) {
 
 	}
 	payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result"}, json.RawMessage(`{"type":"result","is_error":true,"subtype":"error_max_turns","result":"private credentials","errors":["private credentials"]}`))
-	if err != nil || !ok || len(payloads) != 1 {
+	if err != nil || !ok || len(payloads) != 2 {
 		t.Fatalf("error event: %s %v", payloads, err)
 	}
 	object := decodePublicPayloads(t, payloads)[0]
 	if object["type"] != "session.error" || object["result"] != nil || object["errors"] != nil {
 		t.Fatalf("unsafe error: %s", payloads)
+	}
+	idle := decodePublicPayloads(t, payloads)[1]
+	if idle["type"] != "session.status_idle" || idle["stop_reason"].(map[string]any)["type"] != "retries_exhausted" {
+		t.Fatalf("failed turn idle = %#v", idle)
+	}
+	if idle["id"] == object["id"] {
+		t.Fatal("error and idle share an event ID")
 	}
 	errorPayload := object["error"].(map[string]any)
 	if errorPayload["message"] != "Agent reached the maximum number of turns." {

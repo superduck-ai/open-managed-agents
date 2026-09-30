@@ -582,31 +582,8 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 	if request.ToolName == "" || request.ToolUseID == "" || request.RequestID == "" {
 		return request, nil, nil
 	}
-	eventType, publicName := toolPermissionPublicIdentity(request.ToolName, identity)
-	toolEventID := toolUsePublicEventID(codeSessionID, request.ToolUseID)
-	request.PublicEventID = toolEventID
-	request.EventType = eventType
-	if request.SessionThreadID != "" {
-		request.PublicEventID = derivedPrimarySessionEventID(codeSessionID, toolEventID, eventType)
-	}
 	now := time.Now().UTC()
-	toolPayload := map[string]any{
-		"id":           toolEventID,
-		"type":         eventType,
-		"name":         publicName,
-		"input":        cloneStringAnyMap(request.Input),
-		"processed_at": formatTime(now),
-	}
-	if eventType != "agent.custom_tool_use" {
-		toolPayload["evaluated_permission"] = string(permission)
-	}
-	if eventType == "agent.mcp_tool_use" {
-		toolPayload["mcp_server_name"] = identity.ServerName
-	}
-	if request.SessionThreadID != "" {
-		toolPayload["session_thread_id"] = request.SessionThreadID
-	}
-	toolRaw, err := marshalRaw(toolPayload)
+	request, toolRaw, err := toolCallPublicPayload(codeSessionID, request, identity, permission, now)
 	if err != nil {
 		return toolPermissionRequest{}, nil, err
 	}
@@ -628,6 +605,37 @@ func toolPermissionPublicPayloads(codeSessionID string, payload *workerControlRe
 		return toolPermissionRequest{}, nil, err
 	}
 	return request, append(payloads, statusRaw), nil
+}
+
+func toolCallPublicPayload(codeSessionID string, request toolPermissionRequest, identity toolIdentity, permission resolvedToolPermission, at time.Time) (toolPermissionRequest, json.RawMessage, error) {
+	eventType, publicName := toolPermissionPublicIdentity(request.ToolName, identity)
+	toolEventID := toolUsePublicEventID(codeSessionID, request.ToolUseID)
+	request.PublicEventID = toolEventID
+	request.EventType = eventType
+	if request.SessionThreadID != "" {
+		request.PublicEventID = derivedPrimarySessionEventID(codeSessionID, toolEventID, eventType)
+	}
+	toolPayload := map[string]any{
+		"id":           toolEventID,
+		"type":         eventType,
+		"name":         publicName,
+		"input":        cloneStringAnyMap(request.Input),
+		"processed_at": formatTime(at),
+	}
+	if eventType != "agent.custom_tool_use" {
+		toolPayload["evaluated_permission"] = string(permission)
+		if permission == resolvedToolPermissionAllow {
+			toolPayload["evaluation"] = map[string]string{"type": "always_allow"}
+		}
+	}
+	if eventType == "agent.mcp_tool_use" {
+		toolPayload["mcp_server_name"] = identity.ServerName
+	}
+	if request.SessionThreadID != "" {
+		toolPayload["session_thread_id"] = request.SessionThreadID
+	}
+	toolRaw, err := marshalRaw(toolPayload)
+	return request, toolRaw, err
 }
 
 func toolPermissionPublicIdentity(toolName string, identity toolIdentity) (string, string) {

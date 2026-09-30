@@ -230,6 +230,10 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 代理最终消息与 end 在同一批次写入；最终消息和预览使用原始 content block index 生成的事件 ID。Worker 的 assistant echo 可能省略 thinking，使文本块索引偏移；它也可能含有代理未发布的 server tool/result 等块。代理消息与 Worker echo 因此按同一 model request、内容块类型与文本摘要，在已有 Session 行锁事务中跨来源去重，先写入的一份保留，另一来源独有的块继续写入。Worker 独有块使用独立于预览索引的 ID，避免索引偏移误撞代理文本 ID。去重元数据仅在存储层使用，历史和 SSE 恢复为原公开 payload。非流式 Worker echo 即使先于代理 end 到达也遵循同一规则；代理失败时仍由 Worker 兜底。
 end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。`model_usage` 中未知的 token 字段保持缺失；中英文 OpenAPI 均将这些字段列为可选，避免把未知用量误报为零。
 `event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。`tool_use_ids` 是 provider 原始工具调用 ID（如 `toolu_...`），不是公开事件 ID，客户端不能用它直接关联 `agent.tool_use` 等公开事件。
+
+默认允许的工具可能由 Worker 直接执行，不经过 `can_use_tool` 回调。模型代理因此保留工具名称与完整 input；流式 input 从 `input_json_delta` 拼接，非流式 input 从 response content 读取。在成功模型响应结束时，按 Session agent snapshot 解析权限，对 `allow` 调用生成含 `evaluated_permission: allow` 与 `evaluation.type: always_allow` 的公开工具事件，并在同一批次的模型 end 之前持久化与广播。事件 ID 与权限回调、工具结果使用同一个 provider tool ID 映射，因此后来到达的回调不会生成重复调用。`ask`、`deny` 继续由原权限桥处理；代理记录调用不会批准工具或发送确认响应。子线程自动允许的调用保留子线程归属。
+
+Worker 的 runtime idle 不一定表示用户回合完成：模型返回工具调用后，工具执行和下一次模型请求仍属于同一回合。Worker idle 或 requires_action 发布前读取主线程最近的模型 end、中断或错误事实；成功模型 end 含有 `tool_use_ids` 且没有持久化的待确认请求时，不发布 idle 或 usage 快照。这也覆盖自动允许工具在等待内部许可回调时短暂上报的 requires_action，避免它被无待确认请求的状态映射变为 end_turn。真正的待确认请求仍按现有路径暂停并等待用户确认；最终无工具的模型 end、用户中断或失败后仍按现有路径收敛。该检查使用公开事件与待确认 metadata 读取边界，不引入第二份工具链状态。验收包含缺少权限回调的流式/非流式 Bash、回调重投去重，以及 Write→Read 的中间 idle/requires_action；外部 `oma-verify` 的三条内置工具用例检查 SSE/历史调用与结果 ID、真实文件内容、最终唯一 idle 和累计 usage。
 SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。
 
 历史排序、游标与 `created_at[...]` 筛选规则见上文；代理事件沿用同一写入入口。事件批次不按随机 ID 重排，

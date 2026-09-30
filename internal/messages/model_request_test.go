@@ -69,6 +69,15 @@ func TestResponseObservationNonStreaming(t *testing.T) {
 	}
 }
 
+func TestResponseObservationInvalidToolInput(t *testing.T) {
+	observation := &responseObservation{request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+	_, _ = observation.Write([]byte(`{"id":"msg_tool","type":"message","content":[{"type":"tool_use","id":"toolu_test","name":"Bash","input":null}]}`))
+	observation.finish()
+	if observation.result.ErrorType != "invalid_response" || len(observation.result.ToolUses) != 0 {
+		t.Fatalf("invalid tool input result = %+v", observation.result)
+	}
+}
+
 func TestResponseObservationRetainsUsageWhenClientWriteFails(t *testing.T) {
 	observation := &responseObservation{request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
 	body := `{"id":"msg_json","type":"message","usage":{"input_tokens":2,"output_tokens":3},"content":[{"type":"text","text":"answer"}]}`

@@ -19,6 +19,7 @@ type ModelRequest struct {
 	ThreadID      string
 	Model         string
 	codeSession   db.CodeSession
+	toolThreadID  string
 }
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
@@ -38,11 +39,18 @@ type ModelRequestCacheUsage struct {
 type ModelRequestResult struct {
 	Messages          []ModelRequestMessage
 	ToolUseIDs        []string
+	ToolUses          []ModelRequestToolUse
 	EndedAt           time.Time
 	Usage             ModelRequestUsage
 	EventIDs          []string
 	UpstreamRequestID string
 	ErrorType         string
+}
+
+type ModelRequestToolUse struct {
+	ID    string
+	Name  string
+	Input json.RawMessage
 }
 
 // ModelRequestMessage is a completed public message observed at the proxy.
@@ -97,6 +105,9 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 		return nil, err
 	}
 	request := &ModelRequest{StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
+	if agentID != "" {
+		request.toolThreadID = threadID
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	err = s.publishModelRequestEvent(ctx, request, modelRequestEvent{ID: startID, Type: "span.model_request_start", CreatedAt: now, ProcessedAt: now}, nil)
 	if err != nil {
@@ -113,6 +124,11 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 	}
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+1)
 	if result.ErrorType == "" {
+		tools, err := s.modelToolUsePayloads(ctx, request, result.ToolUses, result.EndedAt)
+		if err != nil {
+			return err
+		}
+		payloads = append(payloads, tools...)
 		for _, message := range result.Messages {
 			payload, err := jsonv2.Marshal(struct {
 				ModelRequestMessage

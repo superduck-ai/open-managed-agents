@@ -127,6 +127,7 @@ SQL 和事务仍经现有 `database/sql` 包装层，监听复用同一个 pgxpo
 回收与 River 集成测试也使用真实 `E2BProvider`，通过本地 HTTP 服务模拟 E2B 删除响应。
 `tests/sandbox_lifecycle_river_test.go` 验证 durable schedule 的 sweep → reclaim 投递、LISTEN 连接及
 重复启动不重置 next_run_at。测试队列轮询设为一小时，并用独立 sweep 队列避免同队列通知限流干扰。
+投递超时时记录目标 Session、Worker、Work、Sandbox 的状态及对应 reclaim job 状态，供定位失败使用；诊断不改变调度行为或验收期限。
 原有 `tests/session_sandbox_recovery_test.go` 验证消息触发的 lease 恢复及缺失沙箱重建没有回归。
 
 本地运行 `just test`、`just lint`、`just dead-code`、`just duplicates`、`just complexity`。

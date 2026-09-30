@@ -85,8 +85,35 @@ func TestSandboxLifecycleDurableScheduleDispatchesReclaim(t *testing.T) {
 				return
 			}
 		case <-timeout.C:
+			logSandboxLifecycleState(t, f)
 			t.Fatal("durable sweep did not dispatch idle sandbox reclamation")
 		}
+	}
+}
+
+func logSandboxLifecycleState(t *testing.T, f sandboxLifecycleFixture) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var state string
+	if err := f.app.pool.QueryRow(ctx, `SELECT json_build_object(
+        'session_status', s.status, 'session_deleted', s.deleted_at IS NOT NULL,
+        'session_archived', s.archived_at IS NOT NULL, 'worker_status', cs.worker_status,
+        'code_status', cs.status, 'idle_since', cs.idle_since, 'environment_type', e.config->>'type',
+        'work_state', w.state, 'sandbox_state', b.state)
+        FROM environment_sandboxes b JOIN environment_work w ON w.uuid=b.work_uuid
+        JOIN sessions s ON s.uuid=w.session_uuid JOIN code_sessions cs ON cs.session_uuid=s.uuid
+        JOIN environments e ON e.uuid=s.environment_uuid WHERE b.uuid=$1`, f.target.SandboxUUID).Scan(&state); err != nil {
+		t.Logf("sandbox state unavailable: %v", err)
+	} else {
+		t.Logf("sandbox state: %s", state)
+	}
+	var jobs string
+	if err := f.app.pool.QueryRow(ctx, `SELECT COALESCE(json_agg(state), '[]'::json) FROM public.river_job
+        WHERE kind='sandbox_reclaim' AND args->>'sandbox_uuid'=$1`, f.target.SandboxUUID).Scan(&jobs); err != nil {
+		t.Logf("reclaim job state unavailable: %v", err)
+	} else {
+		t.Logf("reclaim jobs: %s", jobs)
 	}
 }
 

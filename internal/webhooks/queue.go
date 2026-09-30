@@ -61,7 +61,7 @@ func NewQueue(ctx context.Context, conn *nats.Conn, cfg config.WebhookStreamConf
 		Name: deliveryConsumer, Durable: deliveryConsumer, FilterSubject: deliverySubject,
 		DeliverPolicy: jetstream.DeliverAllPolicy, AckPolicy: jetstream.AckExplicitPolicy,
 		MaxDeliver: webhookMaxAttempts(delivery), AckWait: max(time.Minute, webhookTimeout(delivery)+30*time.Second),
-		MaxAckPending: 1000, MaxRequestBatch: defaultBatchSize,
+		MaxAckPending: 3000, MaxRequestBatch: defaultBatchSize,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ensure webhook consumer: %w", err)

@@ -28,7 +28,7 @@ nats:
   drain_timeout: 10s
   # Dedicated webhook queue; independent from the endpoint failure window.
   webhook_stream:
-    max_bytes: 67108864
+    max_bytes: 268435456
     max_age: 24h
     replicas: 3 # Set 1 for a single-node JetStream deployment.
   worker_event_stream:

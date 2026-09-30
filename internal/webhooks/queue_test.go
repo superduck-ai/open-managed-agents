@@ -61,12 +61,16 @@ func assertQueueMessages(t *testing.T, q *Queue, want uint64) {
 
 func TestWebhookQueueLimitsAndPublication(t *testing.T) {
 	conn := queueConnection(t, startQueueServer(t, t.TempDir()))
-	cfg := config.WebhookStreamConfig{MaxBytes: 64 << 20, MaxAge: 24 * time.Hour, Replicas: 3}
+	cfg := config.WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3}
 	if _, err := NewQueue(t.Context(), conn, cfg, config.WebhookConfig{}); err == nil {
 		t.Fatal("three replicas accepted on single node")
 	}
 	cfg.Replicas = 1
 	q := createTestQueue(t, conn, cfg, config.WebhookConfig{})
+	si, err := queueStream(t, q).Info(t.Context())
+	if err != nil || si.Config.MaxBytes != 256<<20 || si.Config.MaxMsgSize != maxMessageBytes {
+		t.Fatalf("stream=%+v err=%v", si, err)
+	}
 	env := testEnvelope(t)
 	invalid := env
 	invalid.Version = 2
@@ -93,7 +97,7 @@ func TestWebhookQueueLimitsAndPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ci.Config.MaxDeliver != 3 || ci.Config.AckWait != time.Minute || ci.Config.MaxAckPending != 1000 || ci.Config.MaxRequestBatch != 10 || len(ci.Config.BackOff) != 0 {
+	if ci.Config.MaxDeliver != 3 || ci.Config.AckWait != time.Minute || ci.Config.MaxAckPending != 3000 || ci.Config.MaxRequestBatch != 10 || len(ci.Config.BackOff) != 0 {
 		t.Fatalf("consumer=%+v", ci.Config)
 	}
 	cfg.MaxBytes = 1

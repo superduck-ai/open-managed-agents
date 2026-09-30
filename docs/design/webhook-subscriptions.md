@@ -29,12 +29,12 @@ flowchart TD
 ```
 
 - PostgreSQL 只保存订阅、密钥、启用状态与失败窗口；不再保存 Webhook delivery jobs 或 HTTP 结果账本。运行时 SQL 仍使用 Yourbatis。业务提交与发布、订阅结果更新与消息确认均不原子化，不引入 Outbox、死信队列、重放或清理 Worker。
-- Stream `OMA_WEBHOOK_DELIVERY`，Subject `oma.webhook.delivery.v1`，所有实例共享 durable pull consumer `oma_webhook_delivery`。FileStorage、WorkQueuePolicy、DiscardNew；默认 64 MiB、24h、3 副本。新增 `nats.webhook_stream.{max_bytes,max_age,replicas}`，单节点显式 replicas=1。容量为逻辑消息存储预算，不是进程内存上限；副本与存储管理另有开销。
+- Stream `OMA_WEBHOOK_DELIVERY`，Subject `oma.webhook.delivery.v1`，所有实例共享 durable pull consumer `oma_webhook_delivery`。FileStorage、WorkQueuePolicy、DiscardNew；默认 256 MiB、24h、3 副本。新增 `nats.webhook_stream.{max_bytes,max_age,replicas}`，单节点显式 replicas=1。容量为逻辑消息存储预算，不是进程内存上限；副本与存储管理另有开销。
 - 单条 envelope 最多 64 KiB，只包含 version=1、workspace_uuid、endpoint_uuid、原始 event。无 URL、密钥或完整资源内容。相同事件的扇出共享 ID、时间和 payload，发布 MsgID 为 event ID 与 endpoint UUID 的组合。去重窗口 min(2min,max_age)，不能替代 HTTP 接收方去重。
 - Vault 及其 Credential 级联通知、Agent 归档产生的一组 Deployment 通知、定时 Deployment 一次执行及同批 Session 事件分别共用 5s 通知期限，包含租户信息查询。到期停止后续通知，允许部分丢失但不改变已提交业务结果；不按子资源数累加独立等待，也不引入后台补发。
 - Enqueue 的订阅查询和顺序发布共用最长 5s，受上游 context 限制。只查询匹配的启用订阅 UUID；无匹配不发布。逐条等待持久化确认，不使用客户端额外发布重试或后台缓冲；失败可部分成功，日志不改变成功的业务响应。订阅快照发生在提交后的查询时刻，不宣称事务级事件发生时快照。
 - HTTP/River 生产入口之前初始化队列、Consumer 和共享 Enqueuer，失败阻止启动；无数据库或内存降级。worker_enabled=false 只关闭消费，发布仍生效并受过期/容量限制。
-- Fetch 最多 10 条、最长 1s，消息到达即处理，等本次 Fetch 与整批完成才继续；没有预取下一批或按订阅启动 goroutine。MaxRequestBatch=10，Consumer 共享 MaxAckPending=1000。空批正常，领取错误等待可取消的 1s。每实例最多 10 条，多实例叠加，不承诺顺序或订阅公平性。
+- Fetch 最多 10 条、最长 1s，消息到达即处理，等本次 Fetch 与整批完成才继续；没有预取下一批或按订阅启动 goroutine。MaxRequestBatch=10，Consumer 共享 MaxAckPending=3000；这是所有实例的未确认消息上限，不是单实例并发数，不预分配等量客户端缓冲。空批正常，领取错误等待可取消的 1s。每实例最多 10 条，多实例叠加，不承诺顺序或订阅公平性。
 - HTTP timeout 为 T，批次从领取前计时 T+15s，AckWait=max(60s,T+30s)。不设置 Consumer BackOff、不续租。目标按 workspace 与 endpoint UUID 查询，缺失/禁用/删除/越界则确认跳过，不更新统计；不重新匹配事件列表。配置取消费时快照，之后编辑无法撤销已发送请求。
 - 专用 Client/Transport 每批共享，直连、忽略代理、DNS 公网 IP 与 TLS 校验、不跟随跳转保持不变；结束关闭空闲连接。收到响应头即按状态判定并关闭正文，不读取或保存响应正文；不在 HTTP 期间持有数据库连接。
 - 默认 max_attempts=3 映射 MaxDeliver，显式配置优先。它是消费机会，而非精确 HTTP 次数：查询失败和进程中断也会消耗机会。普通失败按第 n 次消费使用 [5s,min(120s,5s×2ⁿ)) 抖动，NakWithDelay 延迟重投；实际时间受批次与积压影响。崩溃/确认丢失由 AckWait 恢复，不声称沿用相同抖动。

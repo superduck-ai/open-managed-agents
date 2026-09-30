@@ -14,7 +14,7 @@ func defaultConfig() Config {
 			},
 		},
 		NATS: NATSConfig{
-			WebhookStream:     WebhookStreamConfig{MaxBytes: 64 << 20, MaxAge: 24 * time.Hour, Replicas: 3},
+			WebhookStream:     WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3},
 			WorkerEventStream: WorkerEventStreamConfig{MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
 			ConnectTimeout:    5 * time.Second,
 			DrainTimeout:      10 * time.Second,

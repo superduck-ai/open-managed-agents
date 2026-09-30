@@ -20,7 +20,7 @@ func TestLoadWebhookStream(t *testing.T) {
 		{name: "too many replicas", yaml: "replicas: 6", err: "replicas must be between 1 and 5"},
 		{name: "zero age", yaml: "max_age: 0s", err: "max_age must be positive"},
 		{name: "negative age", yaml: "max_age: -1s", err: "max_age must be positive"},
-		{name: "defaults", want: WebhookStreamConfig{MaxBytes: 64 << 20, MaxAge: 24 * time.Hour, Replicas: 3}},
+		{name: "defaults", want: WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3}},
 		{name: "override", yaml: "max_bytes: 2097152\n    max_age: 1h\n    replicas: 1", want: WebhookStreamConfig{MaxBytes: 2 << 20, MaxAge: time.Hour, Replicas: 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

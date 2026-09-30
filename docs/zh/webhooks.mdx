@@ -109,9 +109,9 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
 
 投递 worker 默认随主服务启动，仅通过数据库订阅投递。通过 `webhook.worker_enabled: false` 可以关闭当前实例的投递。
 
-OMA 使用独立的 JetStream 文件存储 WorkQueue 和所有实例共享的 durable consumer。PostgreSQL 保留订阅及失败窗口，不再保存投递 jobs。每个 Worker 每批领取最多 10 条并发处理，整批结束后才领取下一批，不预取；多实例并发叠加。目标缺失、删除、禁用或跨 workspace 时确认跳过，不发送、不更新统计。消费时读取当前 URL 和密钥，之后的编辑不能撤回已发出请求。
+OMA 使用独立的 JetStream 文件存储 WorkQueue 和所有实例共享的 durable consumer。PostgreSQL 保留订阅及失败窗口，不再保存投递 jobs。每个 Worker 每批领取最多 10 条并发处理，整批结束后才领取下一批，不预取；多实例并发叠加；共享 Consumer 最多 3000 条未确认消息，这不是单实例并发数，也不会预分配同等大小的客户端缓冲。目标缺失、删除、禁用或跨 workspace 时确认跳过，不发送、不更新统计。消费时读取当前 URL 和密钥，之后的编辑不能撤回已发出请求。
 
-只向业务提交后查询时匹配的启用订阅发布，后来订阅不补发。一次查询和发布共用最长 5 秒，允许部分成功。队列默认 64 MiB、24 小时、3 副本，使用 nats.webhook_stream.max_bytes、max_age、replicas 配置；单节点显式设 1 副本。单条 envelope 上限 64 KiB，不含地址或密钥。存储容量不是进程内存上限。关闭 Worker 只暂停消费，仍会发布并按期限过期。
+只向业务提交后查询时匹配的启用订阅发布，后来订阅不补发。一次查询和发布共用最长 5 秒，允许部分成功。队列默认 256 MiB、24 小时、3 副本，使用 nats.webhook_stream.max_bytes、max_age、replicas 配置；单节点显式设 1 副本。单条 envelope 上限 64 KiB，不含地址或密钥。存储容量不是进程内存上限。关闭 Worker 只暂停消费，仍会发布并按期限过期。
 
 一次 Vault 及其 Credential 级联、Agent 归档产生的一组 Deployment 通知或同批 Session 事件分别共用 5 秒发布期限，包含租户信息查询。到期后不再发布剩余通知，已提交的业务操作仍成功；不会按子资源数量累加等待时间。
 

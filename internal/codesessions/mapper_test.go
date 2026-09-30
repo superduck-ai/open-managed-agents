@@ -19,6 +19,24 @@ func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testi
 	}
 }
 
+func TestPublicPayloadsFromWorkerAssistantErrorIsDiagnostic(t *testing.T) {
+	for _, errorType := range []string{"unknown", "authentication_failed", "rate_limit"} {
+		t.Run(errorType, func(t *testing.T) {
+			raw := mustRawJSON(t, map[string]any{
+				"type": "assistant", "uuid": "assistant-error", "error": errorType,
+				"message": map[string]any{"content": []map[string]string{{"type": "text", "text": "API Error: private upstream details"}}},
+			})
+			payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{EventType: "assistant", CreatedAt: time.Now().UTC()}, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok || len(payloads) != 0 {
+				t.Fatalf("assistant error became public content: %s", payloads)
+			}
+		})
+	}
+}
+
 func TestPublicPayloadFromWorkerEventPassesThroughCanonicalOutputs(t *testing.T) {
 	outputs := []string{
 		"agent.message",

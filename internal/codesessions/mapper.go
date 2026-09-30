@@ -389,6 +389,9 @@ func publicPayloadWithType(object map[string]any, eventType string) map[string]a
 }
 
 func assistantPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+	if schema.Error != "" {
+		return nil
+	}
 	delete(object, "content_block_index")
 	if schema.ParentToolUseID != "" {
 		object["_owner_session_thread_id"] = maevents.ClaudeTaskThreadID(codeSessionID, schema.ParentToolUseID)

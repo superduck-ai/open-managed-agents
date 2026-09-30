@@ -518,6 +518,52 @@ func TestSessionToolConfirmationACKLeavesOriginalInputUnchanged(t *testing.T) {
 	}
 }
 
+func TestSessionWorkerExhaustionCorrectionHistoryOrder(t *testing.T) {
+	app := newPayloadIntegrationApp(t, newFakeStore("exhausted-correction-order"))
+	record, epoch := newPayloadIntegrationSession(t, app)
+	putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"running"}`, epoch))
+	resultTime := time.Now().UTC().Format(time.RFC3339Nano)
+	putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+	result := fmt.Sprintf(`{"worker_epoch":%s,"events":[{"payload":{"type":"result","uuid":"delayed-exhausted-result","is_error":true,"created_at":%q}}]}`, epoch, resultTime)
+	postCodeSessionWorkerEvents(t, app, record.ExternalID, result)
+	for _, eventType := range []string{"session.status_idle", "session.thread_status_idle"} {
+		t.Run(eventType, func(t *testing.T) {
+			for _, order := range []string{"asc", "desc"} {
+				events := listSessionEvents(t, app, record.SessionExternalID, "types[]="+eventType+"&order="+order, defaultTestKey)
+				if len(events.Data) != 2 {
+					t.Fatalf("%s %s events=%s, want original idle and correction", eventType, order, events.Data)
+				}
+				index := len(events.Data) - 1
+				if order == "desc" {
+					index = 0
+				}
+				var event struct {
+					StopReason struct {
+						Type string `json:"type"`
+					} `json:"stop_reason"`
+				}
+				if err := json.Unmarshal(events.Data[index], &event); err != nil {
+					t.Fatal(err)
+				}
+				if event.StopReason.Type != "retries_exhausted" {
+					t.Fatalf("%s %s ends with %s, want retries_exhausted", eventType, order, event.StopReason.Type)
+				}
+			}
+		})
+	}
+	before := listSessionEvents(t, app, record.SessionExternalID, "limit=100", defaultTestKey)
+	postCodeSessionWorkerEvents(t, app, record.ExternalID, result)
+	putCodeSessionWorkerState(t, app, record.ExternalID, fmt.Sprintf(`{"worker_epoch":%s,"worker_status":"idle"}`, epoch))
+	after := listSessionEvents(t, app, record.SessionExternalID, "limit=100", defaultTestKey)
+	if len(before.Data) != len(after.Data) {
+		t.Fatalf("repeated failure appended events: before=%d after=%d", len(before.Data), len(after.Data))
+	}
+	usages := listSessionEvents(t, app, record.SessionExternalID, "types[]=session.usage", defaultTestKey)
+	if len(usages.Data) != 1 {
+		t.Fatalf("usage events=%d, want 1", len(usages.Data))
+	}
+}
+
 func TestSessionWorkerExhaustedReason(t *testing.T) {
 	for _, order := range []string{"result first", "idle first", "concurrent"} {
 		t.Run(order, func(t *testing.T) {

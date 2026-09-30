@@ -55,6 +55,7 @@ type workerOutputCommonPayload struct {
 }
 
 type workerAssistantOutputPayload struct {
+	Error             string              `json:"error"`
 	ParentToolUseID   string              `json:"parent_tool_use_id"`
 	RequestID         string              `json:"request_id"`
 	Type              string              `json:"type"`

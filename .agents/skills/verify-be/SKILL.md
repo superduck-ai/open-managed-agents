@@ -1,6 +1,6 @@
 ---
 name: verify-be
-description: Verify OMA backend Files lifecycle, tenant isolation, invalid uploads and object storage, or chat after changes to Sessions, Worker delivery, tool approval, model proxy, SSE, history, multi-instance delivery, Runner startup or chat performance. Run isolated real Worker scenarios with a Go CLI and official Managed Agents Go SDK.
+description: Verify OMA backend Transcript archive, restore, deletion and integrity; Files lifecycle, tenant isolation, invalid uploads and object storage; or chat after changes to Sessions, Worker delivery, tool approval, model proxy, SSE, history, multi-instance delivery, Runner startup or chat performance. Use the Go CLI with isolated dependencies and scenario-specific real services or Workers.
 ---
 
 # Verify backend
@@ -11,9 +11,9 @@ Use this project's `.agents/skills` discovery location. The default suite verifi
 
 ## Agent workflow
 
-Use this workflow when implementing or fixing Files or chat paths named in the description. Read the relevant [feature map](features/README.md), then select scenarios by the behavior the change can affect. Pure documentation changes do not require starting the environment.
+Use this workflow when implementing or fixing Transcript, Files or chat paths named in the description. Read the relevant [feature map](features/README.md), then select scenarios by the behavior the change can affect. Pure documentation changes do not require starting the environment.
 
-1. Run `just verify-be files doctor` for Files, or `just verify-be chat doctor` for chat. If prerequisites are blocked, report the missing requirement; doctor success alone is not application verification.
+1. Run `just verify-be transcript doctor`, `just verify-be files doctor` or `just verify-be chat doctor` for the affected domain. If prerequisites are blocked, report the missing requirement; doctor success alone is not application verification.
 2. Finish edits and required repository checks before running scenarios. Run generation, builds and checks that regenerate Mapper files serially with verification in this checkout. Keep source unchanged during each run, and avoid competing local loads during performance comparisons.
 3. Run `just verify-be DOMAIN SCENARIO` using the selection table below. For Files changes run all nine local functional scenarios plus `files performance` with an explicit base commit and baseline comparison; for shared verification changes also run chat scenarios. Always include `chat.roundtrip` for chat behavior changes; add every relevant scenario when a change crosses boundaries. Cloud scenarios require explicit private configuration and are run separately.
 4. For performance-sensitive changes, use the [performance workflow](features/performance.md). Resolve the comparison commit explicitly: use the PR base, or the pre-change commit for local work. `HEAD` is suitable only if it does not already contain the change being evaluated. Measure it with `--backend-ref REF`, then compare the candidate using that run's `report.json` with `--baseline REPORT`. Diagnose regressions in a separate `--diagnostics` run, fix the cause and rerun the comparison. Do not replace a baseline just to make the candidate pass.
@@ -21,6 +21,7 @@ Use this workflow when implementing or fixing Files or chat paths named in the d
 
 | Changed behavior | Additional scenario |
 | --- | --- |
+| Transcript archive/export/restore/delete, compaction boundary, pending cleanup or object integrity | All five `transcript` scenarios below |
 | Files API, file metadata, workspace authorization, storage or cleanup | `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance` |
 | Tool permissions or confirmation | `chat.tools` |
 | Busy-input rejection and retry, ACK, Worker reconnection or replacement, history recovery | `chat.reliability` |
@@ -56,13 +57,19 @@ Worker image selection follows this order: `--worker-image IMAGE`, `OMA_WORKER_C
 
 ## Doctor
 
-`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public` and `files doctor generated` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and backend readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
+`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public` and `files doctor generated` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
 
 ## Full Go suite
 
 Run `just verify-be test` for all default-build Go packages in disposable PostgreSQL, Redis, NATS and MinIO. This runs `go test ./... -json -count=1` with a default 15-minute package deadline, overridden by `--timeout`. It starts dependencies without a standalone backend, supplies a fresh config/signing key and enables migration, Redis integration, S3 adapter and event-payload S3 integration tests. External test targets and cloud opt-in environment variables are removed from the child environment. Each run removes its containers, volumes and private config.
 
 The suite report lists failures and skipped test names. Required migration/S3/Redis tests must pass. `passed_with_skips` and exit 0 mean the Go command completed with unverified tests explicitly listed; they do not certify skipped tests or end-to-end coverage. Ordinary verification scenarios still reject every skip. Run live Files/chat scenarios separately. Real cloud tests, `e2e` build-tag suites and external Python/TypeScript SDK suites require their own environments and are not covered by this command.
+
+## Transcript scenarios
+
+Read [Transcript coverage](features/transcript.md). Run `just verify-be transcript doctor`, then `integrity`, `recovery`, `concurrency`, `boundary` and `lifecycle` with `just verify-be transcript SCENARIO`.
+
+These reuse existing Go integration fixtures with isolated PostgreSQL schemas and real MinIO. The production retention service and private history HTTP handler run in the test process; lifecycle also builds and invokes the actual maintenance CLI. No standalone backend, Worker or FUSE is required. Upload hooks and schema-local triggers inject deterministic failures; fixtures explicitly age rows and drive cleanup with `RunOnce`. Reports exclude River sweeps, automatic River retries, process crash recovery, cloud IAM and throughput. Lifecycle/recovery default to 5m; the other three default to 3m.
 
 ## Files scenarios
 
@@ -95,7 +102,7 @@ The CLI prints the absolute `tmp/verify-be/<run-id>/` evidence directory. Read `
 
 Local scenarios require the expected test and package to pass, every proof stage to be present, no skipped tests, an unchanged source fingerprint, and successful cleanup. Cloud scenarios require their direct assertions, all proof stages, unchanged source and successful cleanup. Exit codes: `0` pass, successful doctor or help; `1` failure or performance regression; `2` invalid arguments, incompatible baseline or blocked prerequisites. A skip, no matching test, startup failure or incomplete run is never success. Stage timestamps are observations; `chat performance --baseline REPORT` and `files performance --baseline REPORT` produce performance regression verdicts.
 
-The backend PR workflow has a separate Files verification job without Worker dependencies. Its `Chat verification` job also runs `files generated` and all chat reliability scenarios, measures the PR base backend and gates the candidate on the same host. It explicitly pulls prerequisite images before invoking this offline-image CLI. Repository branch protection must require both `Chat verification` and `Files verification` checks to prevent merging a failing PR. CI uploads only JSON/Markdown verdicts, never raw logs, configurations or profiles.
+The backend PR workflow has separate Files and Transcript verification jobs without Worker dependencies. `Transcript verification` runs all five archive scenarios. Its `Chat verification` job also runs `files generated` and all chat reliability scenarios, measures the PR base backend and gates the candidate on the same host. It explicitly pulls prerequisite images before invoking this offline-image CLI. Repository branch protection should require `Chat verification`, `Files verification` and `Transcript verification`; adding the workflow does not configure protection. CI uploads only JSON/Markdown verdicts, never raw logs, configurations or profiles.
 
 ## Cleanup
 

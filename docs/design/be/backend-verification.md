@@ -1,6 +1,6 @@
 # Backend verification
 
-`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios. No old CLI aliases are retained.
+`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. No old CLI aliases are retained.
 
 ```sh
 just verify-be -h
@@ -20,19 +20,34 @@ just verify-be files generated
 
 Scenario identities in reports use `chat.roundtrip`, etc., and `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance`, `files.cloud-storage`, `chat.cloud-renewal`. Use `DOMAIN SCENARIO`, not `run DOMAIN.SCENARIO`. `--timeout` applies to all scenario commands. Worker flags belong to `chat` and `files generated`; baseline/backend-ref/diagnostics flags belong to both performance commands. Help does not load runtime settings. Root `doctor` checks common dependencies; a cloud-specific doctor checks only its explicit private configuration.
 
-The implementation lives in `cmd/verify-be`; the reusable shell entry only builds/executes Go. The project Skill and maps live in `.agents/skills/verify-be/`. Local settings move to `.verify-be.local.json`, evidence to `tmp/verify-be/`, owned container labels to `oma.verify-be.run`. Old evidence directories are retained. The backend PR workflow keeps a Chat verification job and adds a separate Files verification job; branch protection should require both.
+The implementation lives in `cmd/verify-be`; the reusable shell entry only builds/executes Go. The project Skill and maps live in `.agents/skills/verify-be/`. Local settings move to `.verify-be.local.json`, evidence to `tmp/verify-be/`, owned container labels to `oma.verify-be.run`. Old evidence directories are retained. The backend PR workflow has separate Chat, Files and Transcript verification jobs; branch protection should require all three.
 
 ```mermaid
 flowchart LR
     CLI[verify-be] --> Chat[chat scenarios]
     CLI --> Files[files scenarios]
+    CLI --> Transcript[transcript scenarios]
+    Transcript --> Integration[Production service and isolated dependencies]
     Chat --> Runtime[Isolated backend and dependencies]
     Files --> Runtime
     Chat --> Worker[Real Worker and scripted model]
     Runtime --> Evidence[Go test JSON and required proof stages]
+    Integration --> Evidence
     Evidence --> Cleanup[Stop backend and remove owned containers and volumes]
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
+
+## Transcript verification contract
+
+See the [Transcript feature map](../../../.agents/skills/verify-be/features/transcript.md). `transcript doctor` checks common dependencies without loading a Worker image or requiring FUSE. Scenario registration sets `DependenciesOnly`; the environment starts the disposable Compose dependencies and supplies a private configuration without building or starting a standalone backend. Reports describe this execution scope instead of claiming compiled-backend coverage. The registered tests live in the existing `tests` package and reuse its schema/session fixtures. They opt in through the CLI's child environment; ordinary `go test ./...` and `verify-be test` skip them explicitly.
+
+`transcript lifecycle` compares export bytes through archive, hard deletion and real cleanup of an old external payload, then invokes the actual `cmd/transcript-archive` export/restore commands twice. It checks private HTTP bytes, sequence watermark and foreign workspace isolation. `boundary` interleaves foreground/subagent events and checks that their separate compaction boundaries remain visible through soft deletion, hard deletion and restore.
+
+`recovery` injects errors before/after real upload and rejects later DB batches with schema-local triggers. It checks pending expiration/rebuild, retained manifest identity after upload, partial batch progress and idempotent retries, including the 500-record restore boundary. `concurrency` pauses an upload caller after persistence and lets another caller recover the same pending segment, checking one upload and manifest. `integrity` removes/corrupts real MinIO objects; export, restore and deletion must fail without modifying covered rows, then succeed after repair.
+
+Attached archive objects remain the recoverable copy after source rows and old payload blobs are removed. Fixtures explicitly age rows and invoke the production cleanup Worker with `RunOnce`. Fault wrappers only surround real storage calls in test code. No production fault controls, schema migrations or archive API changes are introduced. These scenarios do not verify five-minute River sweeps, automatic River retries, process crash/restart behavior, cloud IAM or throughput. Lifecycle/recovery default to five minutes; others to three, with the shared `--timeout` override.
+
+The PR workflow adds `Transcript verification` with all five scenarios and JSON/Markdown evidence uploads. Branch protection configuration remains an external administrative step.
 
 ## Files verification contract
 

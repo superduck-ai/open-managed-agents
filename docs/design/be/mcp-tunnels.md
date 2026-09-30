@@ -357,6 +357,8 @@ channel 名称 JSON 列表。鉴权及格式校验成功的 Poll 用 Redis 8 [`H
 
 ## Channel、长轮询与超时
 
+`TestPollCancellationAndConnectionLossAreBounded` 同时关闭 NATS 连接并取消 Poll。按执行顺序，返回错误可以是 `context.Canceled`、`nats.ErrDisconnected` 或 `nats.ErrConnectionClosed`；测试逐项识别这些错误，不接受 nil 或其他错误，并保留两秒内结束的断言。该检查验证收尾有界，不要求取消与连接关闭的竞争产生唯一错误类型。
+
 - channel 匹配 `[a-z0-9_-]{1,64}`，每个 Tunnel 最多 32 个；
 - channel 在 Connector 声明、Broker claim/enqueue、Ingress 和 probe 每个可信边界校验，拒绝重复名称与路径逃逸；
 - Connector 在 poll 中声明 channel allowlist；默认 channel 取 server-info，缺失时为 `main`；

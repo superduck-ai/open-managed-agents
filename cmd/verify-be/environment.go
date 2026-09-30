@@ -28,6 +28,7 @@ type environment struct {
 	diagnostics                                bool
 	files                                      bool
 	suite                                      bool
+	dependenciesOnly                           bool
 	storageFault                               *storageFault
 	root, directory, runID                     string
 	compose                                    []string
@@ -130,7 +131,7 @@ func (e *environment) start(ctx context.Context, images map[string]string) error
 	if err := e.writeConfig(ctx); err != nil {
 		return err
 	}
-	if e.suite {
+	if e.suite || e.dependenciesOnly {
 		return nil
 	}
 	buildRoot, err := e.backendSource(ctx)

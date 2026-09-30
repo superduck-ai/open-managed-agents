@@ -28,7 +28,7 @@ func TestChatPerformance(t *testing.T) {
 	var inputs []string
 	for i := 0; i < warmup+samples; i++ {
 		if i == warmup {
-			if path := os.Getenv("VERIFY_CHAT_PROFILE_READY"); path != "" {
+			if path := os.Getenv("VERIFY_BE_PROFILE_READY"); path != "" {
 				requireOK(t, os.WriteFile(path, []byte("ready"), 0o600))
 			}
 		}

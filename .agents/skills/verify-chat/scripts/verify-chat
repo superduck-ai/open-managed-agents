@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-cd -- "$root"
-mkdir -p tmp/bin
-go build -o tmp/bin/verify-chat ./cmd/verify-chat
-exec tmp/bin/verify-chat "$@"

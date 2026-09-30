@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="ObjectCleanupJobMapper">
+    <select id="FindObjectCleanupState" resultType="objectCleanupStateRow">
+        SELECT status, attempts, run_after
+        FROM jobs
+        WHERE workspace_uuid = #{workspaceUUID}
+            AND external_id = #{externalID} AND type = 'object_cleanup'
+    </select>
     <insert id="EnqueueObjectCleanupJob" result="exec">
         INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
         VALUES (

@@ -1,10 +1,12 @@
+> 统一入口和 Files 验证见 [Backend verification](backend-verification.md)。本文件保留 chat 场景的设计细节。
+
 # 聊天后端自我验证
 
 ## 范围
 
-项目级 `.agents/skills/verify-chat` 提供固定 CLI，注册 `chat.roundtrip`、`chat.tools`、
+项目级 `.agents/skills/verify-be` 提供固定 CLI，注册 `chat.roundtrip`、`chat.tools`、
 `chat.reliability`、`chat.instances`、`chat.public` 和 `chat.performance`。
-CLI 实现在 `cmd/verify-chat`，Skill 中的 shell 入口只负责构建和执行。环境编排、进程管理、
+CLI 实现在 `cmd/verify-be`，Skill 中的 shell 入口只负责构建和执行。环境编排、进程管理、
 报告判定及其测试全部使用 Go，不依赖 Python；临时 Ed25519 密钥由 Go 标准库生成。
 验证使用实际编译的后端、真实 PostgreSQL / Redis / 三节点 NATS / MinIO、真实 Claude Worker，
 以及测试侧固定模型响应。Worker 的模型请求经过生产 `/v1/messages` 代理。
@@ -47,7 +49,7 @@ NATS 每节点显式配置 16 GB store 上限，支持当前默认 256 MiB 三�
 同一主机上的 CLI 使用文件锁串行占用固定 E2E 端口，不删除活跃锁文件。
 
 正常退出、测试失败、Ctrl-C 和 SIGTERM 都执行清理。Worker 使用 run label 标记归属。
-清理删除该轮配置、签名密钥、二进制和容器/卷，保留 `tmp/verify-chat/<run-id>/` 证据。
+清理删除该轮配置、签名密钥、二进制和容器/卷，保留 `tmp/verify-be/<run-id>/` 证据。
 SIGKILL/主机崩溃后的人工恢复方法在 Skill 中记录，不能把未完成报告当作通过。
 
 ## 断言和结果
@@ -77,7 +79,7 @@ CLI 解析 `go test -json`，要求目标测试和 package 均 pass、所有阶�
 ## 验收入口
 
 根目录 `AGENTS.md` 定义聊天改动何时必须使用验证 Skill；场景选择、执行顺序、基准提交选择及
-交付证据要求统一维护在 `.agents/skills/verify-chat/SKILL.md` 的 Agent workflow 中。
+交付证据要求统一维护在 `.agents/skills/verify-be/SKILL.md` 的 Agent workflow 中。
 功能地图记录各场景的链路、断言和覆盖边界，避免把操作步骤复制到多个入口后产生分歧。
 
 `chat.tools` 复用仓库已固定版本的官方 `anthropic-sdk-go`，连接本轮本地后端。SDK 发送任务、
@@ -89,26 +91,26 @@ CLI 解析 `go test -json`，要求目标测试和 package 均 pass、所有阶�
 相关协议见 [Managed Agents tools](https://platform.claude.com/docs/en/managed-agents/tools)。
 
 ```sh
-go test ./cmd/verify-chat -count=1
-just verify-chat -h
-just verify-chat run -h
-just verify-chat run chat.tools --help
-.agents/skills/verify-chat/scripts/verify-chat doctor
-.agents/skills/verify-chat/scripts/verify-chat run chat.roundtrip
-.agents/skills/verify-chat/scripts/verify-chat run chat.tools
+go test ./cmd/verify-be -count=1
+just verify-be -h
+just verify-be chat -h
+just verify-be chat tools --help
+.agents/skills/verify-be/scripts/verify-be chat doctor
+.agents/skills/verify-be/scripts/verify-be chat roundtrip
+.agents/skills/verify-be/scripts/verify-be chat tools
 ```
 
-CLI 使用 Cobra 命令树注册 `doctor`、`run` 和各场景，共享 persistent flags，统一处理参数与错误。
+CLI 使用 Cobra 注册 `chat`、`files` 和各自场景，另有公共及分域 `doctor`，统一处理参数与错误。
 根命令、子命令和具体场景均支持 `-h` / `--help`，也支持 `help [命令 [场景]]`。
 帮助列出可用命令、场景说明、镜像配置优先级、示例、报告路径、退出码和覆盖范围；场景名称与
 说明来自实际执行使用的同一注册表，选项帮助直接从 Cobra flag 定义生成。
-选项可以放在命令或场景前后。长选项统一使用 `--worker-image` 等双横线写法，帮助保留 `-h` 缩写。
-性能专属参数仍只允许用于 `run chat.performance`，诊断与基线比较不能同时启用。
+`--timeout` 是全局选项；`--worker-image` 属于 `chat` 和 `files generated`。长选项统一使用 `--worker-image` 等双横线写法，帮助保留 `-h` 缩写。
+`--baseline`、`--backend-ref` 和 `--diagnostics` 仅用于 `chat performance` 和 `files performance`，诊断与基线比较不能同时启用。
 帮助在读取本地配置、查找 Git 根目录和连接 Docker 前返回成功；shell 入口仍需 Go 来构建 CLI。
 CLI 单测覆盖参数错误、选项位置、帮助入口、场景清单和私有镜像值不回显。
 
 Worker 镜像按 `--worker-image`、`OMA_WORKER_CONTROL_IMAGE`、仓库根目录
-`.verify-chat.local.json` 的 `worker_image` 字段依次解析，最后使用公共镜像
+`.verify-be.local.json` 的 `worker_image` 字段依次解析，最后使用公共镜像
 `ghcr.io/superduck-ai/managed-agent-sandbox:latest`。本地配置已加入 Git 忽略，内部仓库地址
 只保存在该文件中，日常无需 export。帮助信息不展示解析后的私有配置，报告仅记录镜像 ID；
 镜像检查错误也不回显实际地址。本地配置不参与源码指纹，实际运行的镜像 ID 单独记录。
@@ -174,13 +176,13 @@ runner 上以当前负载分别测试 PR 基准提交和候选后端，比较性
 
 ## 验证器的可靠性边界
 
-`doctor [SCENARIO]` 检查 Go、Docker、Compose、Bash、git、tar、本地镜像及 18080 端口，
+`chat doctor [SCENARIO]` 检查 Go、Docker、Compose、Bash、git、tar、本地镜像及 18080 端口，
 并创建短期探针检查 Docker 数据卷至少有 1 GiB 可用空间。此值是小型固定负载的最低余量，
 不是容量保证；三个 NATS 节点的 16 GB 配置是各自上限，不代表必须预留 48 GB。
-`doctor chat.public` 还用实际 Worker 镜像打开 `/dev/fuse` 并执行 tmpfs mount/unmount，
+`chat doctor public` 还用实际 Worker 镜像打开 `/dev/fuse` 并执行 tmpfs mount/unmount，
 检查 Docker daemon 的设备和挂载权限；不根据客户端操作系统推断可用性。
 探针不拉取镜像，携带独立 label，成功或失败均删除容器和匿名卷。
-`run` 自动执行对应场景的先决检查。依赖不满足为 blocked（2），清理无法确认不能通过。
+`场景命令` 自动执行对应场景的先决检查。依赖不满足为 blocked（2），清理无法确认不能通过。
 
 默认场景期限：roundtrip/tools/instances 为 3 分钟，reliability/performance 为 5 分钟，
 public 为 6 分钟。`--timeout 8m` 可覆盖场景期限，测试辅助等待也使用该预算；

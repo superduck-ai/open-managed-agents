@@ -21,14 +21,14 @@ import (
 
 func isolatedChat(t *testing.T) {
 	t.Helper()
-	if os.Getenv("VERIFY_CHAT_RUN_ID") == "" || os.Getenv("LIVE_WORKER_REAL_CLAUDE") != "1" {
-		t.Skip("requires verify-chat isolated environment")
+	if os.Getenv("VERIFY_BE_RUN_ID") == "" || os.Getenv("LIVE_WORKER_REAL_CLAUDE") != "1" {
+		t.Skip("requires verify-be isolated environment")
 	}
 }
 
 func chatProof(t *testing.T, started time.Time, stage string) {
 	t.Helper()
-	t.Logf("CHAT_PROOF {\"stage\":%q,\"elapsed_ms\":%d}", stage, time.Since(started).Milliseconds())
+	t.Logf("BE_PROOF {\"stage\":%q,\"elapsed_ms\":%d}", stage, time.Since(started).Milliseconds())
 }
 
 func sequentialChatModel(t *testing.T, resume <-chan struct{}, calls *atomic.Int32, cadence time.Duration) *httptest.Server {
@@ -96,7 +96,7 @@ func nextChatEvent(t *testing.T, ctx context.Context, events <-chan chatEvent, k
 	for {
 		select {
 		case <-ctx.Done():
-			t.Fatalf("CHAT_TIMEOUT waiting for %s: %v", kind, ctx.Err())
+			t.Fatalf("BE_TIMEOUT waiting for %s: %v", kind, ctx.Err())
 		case event, ok := <-events:
 			if !ok {
 				t.Fatalf("stream ended before %s", kind)
@@ -298,11 +298,11 @@ func TestChatReliability(t *testing.T) {
 
 func chatTimeout(t *testing.T, fallback time.Duration) time.Duration {
 	t.Helper()
-	if value := os.Getenv("VERIFY_CHAT_TIMEOUT"); value != "" {
+	if value := os.Getenv("VERIFY_BE_TIMEOUT"); value != "" {
 		duration, err := time.ParseDuration(value)
 		requireOK(t, err)
 		if duration <= 0 {
-			t.Fatal("VERIFY_CHAT_TIMEOUT must be positive")
+			t.Fatal("VERIFY_BE_TIMEOUT must be positive")
 		}
 		return duration
 	}

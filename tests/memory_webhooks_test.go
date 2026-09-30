@@ -215,6 +215,13 @@ func TestWebhookMemoryCleanupFailureAndDelivery(t *testing.T) {
 		}
 	})
 	worker := cleanup.NewWorker(app.db, newFakeStorageClient(objects), time.Second, nil)
+	advanceCleanup := func() {
+		result, err := app.pool.Exec(t.Context(), `UPDATE jobs SET run_after='2000-01-01T00:00:00Z' WHERE type='object_cleanup' AND workspace_uuid=$1 AND payload->>'bucket'=$2 AND status IN ('pending','retry')`, scope, objects.Name())
+		if err != nil || result.RowsAffected() != 3 {
+			t.Fatalf("scheduled cleanup jobs=%d: %v", result.RowsAffected(), err)
+		}
+	}
+	advanceCleanup()
 	if err := worker.RunOnce(t.Context(), "memory-webhook-cleanup"); err != nil {
 		t.Fatal(err)
 	}
@@ -223,9 +230,7 @@ func TestWebhookMemoryCleanupFailureAndDelivery(t *testing.T) {
 		t.Fatalf("retried cleanup jobs=%d: %v", pending, err)
 	}
 	objects.deleteErr = nil
-	if _, err := app.pool.Exec(t.Context(), `UPDATE jobs SET run_after=NOW() WHERE type='object_cleanup' AND workspace_uuid=$1 AND payload->>'bucket'=$2`, scope, objects.Name()); err != nil {
-		t.Fatal(err)
-	}
+	advanceCleanup()
 	if err := worker.RunOnce(t.Context(), "memory-webhook-cleanup"); err != nil {
 		t.Fatal(err)
 	}

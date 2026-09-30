@@ -63,7 +63,7 @@ func TestDeploymentVerificationProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := deployments.NewStore(database).WithEventPayloadStorage(objects)
+	store := deployments.NewStore(database, logger).WithEventPayloadStorage(objects)
 	workers := river.NewWorkers()
 	deployments.RegisterWorkers(workers, store)
 	options := &river.Config{

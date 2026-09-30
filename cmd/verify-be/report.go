@@ -28,6 +28,12 @@ type scenario struct {
 }
 
 var scenarios = map[string]scenario{
+	"memory.integrity":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryIntegrity", Stages: []string{"invalid_writes_rejected", "missing_object_rejected", "repaired_memory_matches"}, Description: "Memory 无效正文、路径树冲突、缺失对象拒绝读取与修复"},
+	"memory.isolation":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryIsolation", Stages: []string{"readonly_and_scope_enforced", "archived_store_readonly", "deleted_session_token_revoked"}, Description: "Memory 挂载权限、filesystem 及租户隔离、归档拒写与旧 token 撤销"},
+	"memory.lifecycle":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryLifecycle", Stages: []string{"memory_versions_match", "cross_session_memory_preserved", "deleted_memory_history_preserved"}, Description: "Memory 双会话读写、不可变版本、相同正文幂等及会话删除后记忆保留"},
+	"memory.cleanup":         {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryCleanup", Stages: []string{"deletion_cleanup_atomic", "failed_write_compensated", "discarded_upload_cleanup_recovered", "cleanup_retry_persisted", "memory_objects_removed"}, Description: "Memory 写入失败补偿、对象删除失败入队重试及真实非版本化 MinIO 清理"},
+	"memory.filestore":       {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyMemoryFilestore", Stages: []string{"filestore_mutations_match", "session_owned_cleanup_completed", "memory_survives_filesystem_cleanup"}, Description: "普通 Filestore 覆盖/复制/移动/删除字节一致、Session Owned 对象与账本清理"},
+	"memory.mounts":          {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestVerifyMemoryMounts", Stages: []string{"memory_mounts_ready", "mounted_write_persisted", "sandbox_lifecycle_matches", "mount_failure_cleaned"}, Description: "实际 Runner/Docker/FUSE：只读与可写挂载、沙箱销毁后的新会话和启动失败清理"},
 	"transcript.boundary":    {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestVerifyTranscriptBoundary", Stages: []string{"scope_boundaries_preserved", "boundary_delete_preserves_reads", "boundary_restore_matches"}, Description: "真实 S3：前台/subagent 交错 compaction 边界归档，软删和物理删除保持 HTTP 可见历史"},
 	"transcript.lifecycle":   {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 5 * time.Minute, Test: "TestVerifyTranscriptLifecycle", Stages: []string{"archive_export_matches", "hard_delete_preserves_backup", "blob_gc_completed", "cli_restore_matches", "tenant_history_isolated"}, Description: "真实 PostgreSQL/MinIO：归档、导出、物理删除、旧 blob 清理及维护 CLI 幂等还原"},
 	"transcript.recovery":    {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 5 * time.Minute, Test: "TestVerifyTranscriptRecovery", Stages: []string{"upload_failures_recovered", "archive_batches_recovered", "delete_batches_recovered", "restore_batches_recovered"}, Description: "真实对象存储：上传前后中断、pending 回收及归档/删除/还原分批失败后重试"},
@@ -139,6 +145,8 @@ func evaluate(reader io.Reader, code int, selected scenario) (testResult, error)
 				}
 				result.Samples = append(result.Samples, sample)
 			}
+		}
+		if event.Test == selected.Test || strings.HasPrefix(event.Test, selected.Test+"/") {
 			if _, data, ok := strings.Cut(event.Output, "BE_PROOF "); ok {
 				var p proof
 				if err := json.Unmarshal([]byte(data), &p); err != nil {
@@ -217,7 +225,7 @@ func saveReport(directory string, r report) error {
 	if isCloudScenario(r.Scenario) {
 		out.WriteString("Execution: cloud adapter assertions in the Go CLI; no local backend or Worker model is started. Credentials are supplied by an explicit private configuration.\n\n")
 	} else if selectScenario(r.Scenario).DependenciesOnly {
-		out.WriteString("Execution: production retention service and HTTP Handler in the Go test process, with isolated PostgreSQL schemas and real MinIO. No standalone backend or Worker is started.\n\n")
+		out.WriteString("Execution: production services and HTTP handlers in the Go test process, with isolated PostgreSQL schemas and real MinIO. No standalone backend or Worker is started.\n\n")
 	} else if r.Scenario != "test" && r.BackendCommit == "" {
 		out.WriteString("Backend built from the working tree; this measurement is not eligible as a baseline.\n\n")
 	}
@@ -256,6 +264,8 @@ func saveReport(directory string, r report) error {
 		out.WriteString("Coverage: only the selected cloud storage or E2B provider operations and final cleanup. This does not certify public chat confirmation, all IAM/network policies or cloud availability.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "transcript.") {
 		out.WriteString("Coverage: archive/export/restore/delete service, real S3 adapter, deterministic test-side interruptions and batch rollback. lifecycle also runs the actual maintenance CLI. Fixtures explicitly age rows; five-minute River sweeps, automatic River retries, crash recovery, cloud IAM and production throughput are not verified.\n\n")
+	} else if strings.HasPrefix(r.Scenario, "memory.") {
+		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "files.") {
 		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
 	} else {

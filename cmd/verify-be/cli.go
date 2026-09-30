@@ -47,7 +47,7 @@ func parseCLI(args []string, output io.Writer) (cliOptions, error) {
 func newCLI(options *cliOptions) *cobra.Command {
 	root := &cobra.Command{
 		Use: "verify-be", Short: "后端自验证：隔离环境、客观断言、证据报告和清理",
-		Long:          "后端自验证工具。chat 使用真实 Worker 与固定模型；files 使用实际后端；transcript 复用生产归档服务和维护 CLI。\n本地依赖使用隔离 PostgreSQL 与 MinIO。报告: tmp/verify-be/<run-id>/report.json 和 report.md\n退出码: 0 = 通过或帮助；1 = 失败；2 = 参数错误或先决条件阻塞。",
+		Long:          "后端自验证工具。chat 使用真实 Worker 与固定模型；files 使用实际后端；transcript 复用生产归档服务和维护 CLI；memory 验证 Memory/Filestore 与实际 FUSE 挂载。\n本地依赖使用隔离 PostgreSQL 与 MinIO。报告: tmp/verify-be/<run-id>/report.json 和 report.md\n退出码: 0 = 通过或帮助；1 = 失败；2 = 参数错误或先决条件阻塞。",
 		SilenceErrors: true, SilenceUsage: true, Args: cobra.NoArgs,
 		RunE:    missingCommand,
 		Example: "  just verify-be files doctor\n  just verify-be files lifecycle\n  just verify-be chat roundtrip\n  just verify-be chat performance --timeout 8m",
@@ -64,13 +64,15 @@ func newCLI(options *cliOptions) *cobra.Command {
 			return validateOptions(*options)
 		},
 	})
-	for _, domain := range []string{"chat", "files", "transcript"} {
+	for _, domain := range []string{"chat", "files", "transcript", "memory"} {
 		group := &cobra.Command{Use: domain, Short: domain + " 场景", Args: cobra.NoArgs, RunE: missingCommand}
 		if domain == "chat" {
 			group.Long = "聊天验证使用真实 Worker 和固定模型。\n镜像优先级: --worker-image > OMA_WORKER_CONTROL_IMAGE > .verify-be.local.json 的 worker_image > 公共默认镜像。\n本地配置被 Git 忽略；帮助不显示私有值。公共默认镜像: " + defaultWorker
 			group.PersistentFlags().StringVar(&options.WorkerImage, "worker-image", "", "覆盖 Worker 镜像，不自动拉取")
 		} else if domain == "files" {
 			group.Long = "Files API 与真实对象存储验证。generated 额外需要 Worker 镜像和 FUSE；其他场景无需 Worker。"
+		} else if domain == "memory" {
+			group.Long = "Memory / Filestore：真实 PostgreSQL/MinIO 验证读写、隔离、跨会话生命周期和清理。mounts 使用实际 Runner 与 Docker/FUSE；其他场景不需要 Worker。"
 		} else {
 			group.Long = "Transcript 私有历史归档集成验证。复用生产服务和真实 PostgreSQL/MinIO；lifecycle 运行实际导出/还原 CLI。\n不启动独立后端或 Worker，不验证 River 定时 sweep；无需 Worker 镜像与 FUSE。"
 		}
@@ -89,7 +91,7 @@ func newCLI(options *cliOptions) *cobra.Command {
 					return validateOptions(*options)
 				},
 			}
-			if name == "files.generated" {
+			if name == "files.generated" || name == "memory.mounts" {
 				command.Flags().StringVar(&options.WorkerImage, "worker-image", "", "覆盖 Worker 镜像，不自动拉取")
 			}
 			if isCloudScenario(name) {
@@ -129,7 +131,7 @@ func doctorCommand(options *cliOptions, domain string) *cobra.Command {
 	}
 	command := &cobra.Command{
 		Use: use, Short: "检查工具、本地镜像、18080 端口和 Docker 卷空间；不拉取镜像",
-		Long: "检查工具、本地镜像、18080 端口及至少 1 GiB Docker 卷空间。短暂创建并清理探针。\nchat doctor public / files doctor generated 额外验证 Docker 内的 FUSE、SYS_ADMIN 和挂载权限。根 doctor 只检查公共依赖。",
+		Long: "检查工具、本地镜像、18080 端口及至少 1 GiB Docker 卷空间。短暂创建并清理探针。\nchat doctor public / files doctor generated / memory doctor mounts 额外验证 Docker 内的 FUSE、SYS_ADMIN 和挂载权限。根 doctor 只检查公共依赖。",
 		Args: func(command *cobra.Command, args []string) error {
 			if domain == "" {
 				return cobra.NoArgs(command, args)
@@ -174,5 +176,5 @@ func needsWorker(selected string) bool {
 	if isCloudScenario(selected) {
 		return false
 	}
-	return selected == "files.generated" || selected == "chat" || strings.HasPrefix(selected, "chat.")
+	return selected == "files.generated" || selected == "memory.mounts" || selected == "chat" || strings.HasPrefix(selected, "chat.")
 }

@@ -1,6 +1,6 @@
 ---
 name: verify-be
-description: Verify OMA backend Transcript archive, restore, deletion and integrity; Files lifecycle, tenant isolation, invalid uploads and object storage; or chat after changes to Sessions, Worker delivery, tool approval, model proxy, SSE, history, multi-instance delivery, Runner startup or chat performance. Use the Go CLI with isolated dependencies and scenario-specific real services or Workers.
+description: Verify OMA backend Memory/Filestore mounts, read/write, cross-session lifetime and resource cleanup; Transcript archive, restore, deletion and integrity; Files lifecycle, tenant isolation, invalid uploads and object storage; or chat after changes to Sessions, Worker delivery, tool approval, model proxy, SSE, history, multi-instance delivery, Runner startup or chat performance. Use the Go CLI with isolated dependencies and scenario-specific real services or Workers.
 ---
 
 # Verify backend
@@ -11,9 +11,9 @@ Use this project's `.agents/skills` discovery location. The default suite verifi
 
 ## Agent workflow
 
-Use this workflow when implementing or fixing Transcript, Files or chat paths named in the description. Read the relevant [feature map](features/README.md), then select scenarios by the behavior the change can affect. Pure documentation changes do not require starting the environment.
+Use this workflow when implementing or fixing Memory/Filestore, Transcript, Files or chat paths named in the description. Read the relevant [feature map](features/README.md), then select scenarios by the behavior the change can affect. Pure documentation changes do not require starting the environment.
 
-1. Run `just verify-be transcript doctor`, `just verify-be files doctor` or `just verify-be chat doctor` for the affected domain. If prerequisites are blocked, report the missing requirement; doctor success alone is not application verification.
+1. Run `just verify-be memory doctor`, `just verify-be transcript doctor`, `just verify-be files doctor` or `just verify-be chat doctor` for the affected domain. If prerequisites are blocked, report the missing requirement; doctor success alone is not application verification.
 2. Finish edits and required repository checks before running scenarios. Run generation, builds and checks that regenerate Mapper files serially with verification in this checkout. Keep source unchanged during each run, and avoid competing local loads during performance comparisons.
 3. Run `just verify-be DOMAIN SCENARIO` using the selection table below. For Files changes run all nine local functional scenarios plus `files performance` with an explicit base commit and baseline comparison; for shared verification changes also run chat scenarios. Always include `chat.roundtrip` for chat behavior changes; add every relevant scenario when a change crosses boundaries. Cloud scenarios require explicit private configuration and are run separately.
 4. For performance-sensitive changes, use the [performance workflow](features/performance.md). Resolve the comparison commit explicitly: use the PR base, or the pre-change commit for local work. `HEAD` is suitable only if it does not already contain the change being evaluated. Measure it with `--backend-ref REF`, then compare the candidate using that run's `report.json` with `--baseline REPORT`. Diagnose regressions in a separate `--diagnostics` run, fix the cause and rerun the comparison. Do not replace a baseline just to make the candidate pass.
@@ -21,6 +21,7 @@ Use this workflow when implementing or fixing Transcript, Files or chat paths na
 
 | Changed behavior | Additional scenario |
 | --- | --- |
+| Memory/Filestore mounts, mutation, token scope, cross-session lifetime or cleanup | All six `memory` scenarios below; run `memory doctor mounts` for FUSE preflight |
 | Transcript archive/export/restore/delete, compaction boundary, pending cleanup or object integrity | All five `transcript` scenarios below |
 | Files API, file metadata, workspace authorization, storage or cleanup | `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance` |
 | Tool permissions or confirmation | `chat.tools` |
@@ -38,10 +39,10 @@ Use `just verify-be chat -h` to list scenarios and `just verify-be chat tools -h
 for scenario help. `help`, `help doctor` and `help chat tools` are also supported.
 Help exits with code 0 before reading local settings or checking Git/Docker; the shell
 entry point still needs Go to build the CLI. Cobra handles commands and shared options.
-`--timeout` is shared. `--worker-image` belongs to `chat` and `files generated`; baseline/backend-ref/diagnostics belong to both `chat performance` and `files performance`. Cloud commands and their doctor accept `--cloud-config`. Long options use two dashes,
+`--timeout` is shared. `--worker-image` belongs to `chat`, `files generated` and `memory mounts`; baseline/backend-ref/diagnostics belong to both `chat performance` and `files performance`. Cloud commands and their doctor accept `--cloud-config`. Long options use two dashes,
 such as `--worker-image`; `-h` is the short form of `--help`.
 
-Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker Engine with Compose and enough disk space for three JetStream replicas. The CLI generates its ephemeral signing key with Go's standard library. The common images must already exist locally: `postgres:17`, `redis:8`, `nats:2.14.6-alpine`, `pgsty/minio:latest`. Chat additionally needs the Worker image containing `/opt/claude-code/bin/claude`. Only `files generated` needs a Worker image and FUSE; other Files scenarios ignore Worker configuration. The CLI does not pull images. Record image IDs in each report; never compare performance across different images.
+Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker Engine with Compose and enough disk space for three JetStream replicas. The CLI generates its ephemeral signing key with Go's standard library. The common images must already exist locally: `postgres:17`, `redis:8`, `nats:2.14.6-alpine`, `pgsty/minio:latest`. Chat additionally needs the Worker image containing `/opt/claude-code/bin/claude`. `files generated` and `memory mounts` need a Worker image and FUSE; other Files and Memory scenarios ignore Worker configuration. The CLI does not pull images. Record image IDs in each report; never compare performance across different images.
 
 ```sh
 .agents/skills/verify-be/scripts/verify-be chat doctor
@@ -57,13 +58,19 @@ Worker image selection follows this order: `--worker-image IMAGE`, `OMA_WORKER_C
 
 ## Doctor
 
-`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public` and `files doctor generated` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
+`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` / `memory doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public`, `files doctor generated` and `memory doctor mounts` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
 
 ## Full Go suite
 
 Run `just verify-be test` for all default-build Go packages in disposable PostgreSQL, Redis, NATS and MinIO. This runs `go test ./... -json -count=1` with a default 15-minute package deadline, overridden by `--timeout`. It starts dependencies without a standalone backend, supplies a fresh config/signing key and enables migration, Redis integration, S3 adapter and event-payload S3 integration tests. External test targets and cloud opt-in environment variables are removed from the child environment. Each run removes its containers, volumes and private config.
 
 The suite report lists failures and skipped test names. Required migration/S3/Redis tests must pass. `passed_with_skips` and exit 0 mean the Go command completed with unverified tests explicitly listed; they do not certify skipped tests or end-to-end coverage. Ordinary verification scenarios still reject every skip. Run live Files/chat scenarios separately. Real cloud tests, `e2e` build-tag suites and external Python/TypeScript SDK suites require their own environments and are not covered by this command.
+
+## Memory / Filestore scenarios
+
+Read [Memory / Filestore coverage](features/memory.md). Run `just verify-be memory doctor`, then `integrity`, `isolation`, `cleanup`, `lifecycle` and `filestore`. Run `just verify-be memory doctor mounts` and `just verify-be memory mounts` for real FUSE, Runner and Docker sandbox coverage. The first five need no Worker and reuse production HTTP handlers with isolated PostgreSQL schemas and real MinIO. Ordinary `go test ./...` explicitly skips these opt-in scenarios.
+
+Store deletion and version redaction must preserve their metadata if transactional cleanup enqueue fails. Portable Memory scenarios assert that the disposable MinIO bucket has never enabled versioning. Memory history uses separate object keys and does not require bucket versioning; `cleanup` checks that deleted objects return NotFound while retained bytes remain readable. Test-only faults reject upload, deletion or cleanup enqueue. The fixture invokes real cleanup Workers with `RunOnce` and explicitly advances retry eligibility and pending orphan guards; it does not verify wall-clock backoff or automatic background scheduling. `mounts` starts the actual Runner, rejects Memory setup after allocation and checks sandbox removal. It performs filesystem I/O directly in the container, without a model turn, then explicitly destroys that sandbox and checks persistent store bytes and a freshly rebuilt local root in another Session. These scenarios do not certify cloud allocation/IAM, browser UI, process crashes, one-hour token renewal, concurrent editing or performance.
 
 ## Transcript scenarios
 
@@ -102,7 +109,7 @@ The CLI prints the absolute `tmp/verify-be/<run-id>/` evidence directory. Read `
 
 Local scenarios require the expected test and package to pass, every proof stage to be present, no skipped tests, an unchanged source fingerprint, and successful cleanup. Cloud scenarios require their direct assertions, all proof stages, unchanged source and successful cleanup. Exit codes: `0` pass, successful doctor or help; `1` failure or performance regression; `2` invalid arguments, incompatible baseline or blocked prerequisites. A skip, no matching test, startup failure or incomplete run is never success. Stage timestamps are observations; `chat performance --baseline REPORT` and `files performance --baseline REPORT` produce performance regression verdicts.
 
-The backend PR workflow has separate Files and Transcript verification jobs without Worker dependencies. `Transcript verification` runs all five archive scenarios. Its `Chat verification` job also runs `files generated` and all chat reliability scenarios, measures the PR base backend and gates the candidate on the same host. It explicitly pulls prerequisite images before invoking this offline-image CLI. Repository branch protection should require `Chat verification`, `Files verification` and `Transcript verification`; adding the workflow does not configure protection. CI uploads only JSON/Markdown verdicts, never raw logs, configurations or profiles.
+The backend PR workflow has separate Files, Transcript and Memory verification jobs without Worker dependencies. `Transcript verification` runs all five archive scenarios. `Memory verification` runs five portable scenarios. Its `Chat verification` job also runs `memory mounts`, `files generated` and all chat reliability scenarios, measures the PR base backend and gates the candidate on the same host. It explicitly pulls prerequisite images before invoking this offline-image CLI. Repository branch protection should require `Chat verification`, `Files verification`, `Transcript verification` and `Memory verification`; adding the workflow does not configure protection. CI uploads only JSON/Markdown verdicts, never raw logs, configurations or profiles.
 
 ## Cleanup
 
@@ -126,5 +133,7 @@ go test ./cmd/verify-be -count=1
 These tests cover CLI parsing/help, image configuration precedence and verdict rejection of missing, skipped and incomplete Go tests. They also cover configuration isolation, dependency topology, cancellation, doctor probes and cleanup, diagnostic download bounds and comparable report metadata. Update the feature map and design document when contracts change.
 
 Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliability/performance and 6m for public/generated. Files recovery/performance and cloud renewal default to 5m; other Files scenarios default to 3m. Override with `--timeout 8m`; this excludes environment build/startup. Go testing gets 30s cleanup grace and the outer command gets 2m compile/exit grace. Read `failure_kind` to distinguish scenario/outer timeouts, prerequisite blockers and incompatible baselines. A timeout alone is not a measured performance regression.
+
+Memory deadlines default to 3m for portable scenarios and 8m for `mounts`.
 
 CLI migration: `verify-chat run chat.roundtrip` is replaced by `verify-be chat roundtrip`. There are no aliases for the old command. Move local Worker settings to `.verify-be.local.json`. Reports and resource labels now use `verify-be`; old evidence remains where it was generated. Root `doctor` checks only common dependencies.

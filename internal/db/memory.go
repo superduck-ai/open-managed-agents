@@ -301,6 +301,11 @@ func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceUUID, externalID st
 			return txErr
 		}
 		refs = memoryObjectRefsFromMapperRows(rows)
+		for _, ref := range refs {
+			if txErr = enqueueObjectCleanupRef(ctx, executor, ref); txErr != nil {
+				return txErr
+			}
+		}
 		if txErr = versionMapper.DeleteByStoreUUID(ctx, workspaceUUID, storeUUID); txErr != nil {
 			return txErr
 		}
@@ -725,6 +730,9 @@ func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceUUID, memoryStore
 			}
 			if version.S3Bucket != nil {
 				ref.Bucket = *version.S3Bucket
+			}
+			if txErr = enqueueObjectCleanupRef(ctx, executor, *ref); txErr != nil {
+				return txErr
 			}
 		}
 		row, txErr = versionMapper.RedactByExternalID(ctx, redactMemoryVersionParams{

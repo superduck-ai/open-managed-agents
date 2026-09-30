@@ -133,7 +133,7 @@ func doctorCommand(options *cliOptions, domain string) *cobra.Command {
 	}
 	command := &cobra.Command{
 		Use: use, Short: "检查工具、本地镜像、18080 端口和 Docker 卷空间；不拉取镜像",
-		Long: "检查工具、本地镜像、18080 端口及至少 1 GiB Docker 卷空间。短暂创建并清理探针。\nchat doctor public / files doctor generated / memory doctor mounts 额外验证 Docker 内的 FUSE、SYS_ADMIN 和挂载权限。根 doctor 只检查公共依赖。",
+		Long: "检查工具、本地镜像、18080 端口及至少 1 GiB Docker 卷空间。短暂创建并清理探针。\nchat doctor public / chat doctor upstream-errors / files doctor generated / memory doctor mounts 额外验证 Docker 内的 FUSE、SYS_ADMIN 和挂载权限。根 doctor 只检查公共依赖。",
 		Args: func(command *cobra.Command, args []string) error {
 			if domain == "" {
 				return cobra.NoArgs(command, args)

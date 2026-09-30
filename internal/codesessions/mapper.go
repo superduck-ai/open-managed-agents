@@ -389,7 +389,7 @@ func publicPayloadWithType(object map[string]any, eventType string) map[string]a
 }
 
 func assistantPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
-	if schema.Error != "" {
+	if schema.Error != "" || schema.IsAPIErrorMessage {
 		return nil
 	}
 	delete(object, "content_block_index")

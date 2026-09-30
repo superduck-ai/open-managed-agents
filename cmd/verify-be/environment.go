@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +30,8 @@ type environment struct {
 	files                                      bool
 	suite                                      bool
 	dependenciesOnly                           bool
+	publicSandbox                              bool
+	sandboxAPI                                 *httptest.Server
 	storageFault                               *storageFault
 	root, directory, runID                     string
 	compose                                    []string
@@ -85,6 +88,10 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		"storage":      map[string]any{"type": "s3", "s3": map[string]any{"endpoint": "http://127.0.0.1:" + ports["minio"], "bucket": "verify-be", "region": "us-east-1", "access_key_id": "verifychat", "secret_access_key": "verifychat-local-only", "force_path_style": true}},
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
 		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem")},
+	}
+	if e.publicSandbox {
+		e.sandboxAPI = newLocalSandboxAPI(e.runID)
+		config["e2b"] = map[string]any{"api_key": "e2b_local_verification_only", "api_url": e.sandboxAPI.URL, "sandbox_url": e.sandboxAPI.URL}
 	}
 	if e.files {
 		storage := config["storage"].(map[string]any)
@@ -224,6 +231,9 @@ func (e *environment) close() []string {
 	}
 	if e.storageFault != nil {
 		e.storageFault.close()
+	}
+	if e.sandboxAPI != nil {
+		e.sandboxAPI.Close()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

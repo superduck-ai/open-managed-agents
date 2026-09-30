@@ -29,12 +29,12 @@ Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Manag
 
 每条密码用一次性 DEK 加密，DEK 再用 KEK 包一层一起存。
 
-信封布局预留了“将来只 rewrap DEK、不必重加密业务密文”的空间（AAD 不绑 KEK version）。**本期本地轮换不做 rewrap**：旧行保留原来的 `wrapped_dek` 与 `key_version`；换主密钥后必须把旧 KEK 留在 `decrypt_only`，直到相关凭证被写路径重新 Seal（换新 DEK / 新 `key_version`）。若在仍有旧信封时从 `decrypt_only` 删掉旧钥，Open 会失败，凭证不可用。
+信封布局允许迁移时只重新封装 DEK、不必重加密业务密文（AAD 不绑 KEK version）。**本地版本轮换不自动 rewrap**：旧行保留原来的 `wrapped_dek` 与 `key_version`；换主密钥后必须把旧 KEK 留在 `decrypt_only`，直到相关凭证被写路径重新 Seal（换新 DEK / 新 `key_version`）。若在仍有旧信封时从 `decrypt_only` 删掉旧钥，Open 会失败，凭证不可用。
 
 细节：
 
 - AES-256-GCM，每次新 nonce，带 auth tag。
-- AAD 绑 `organization_uuid` / `workspace_uuid` / `vault_external_id` / `credential_external_id`（长度前缀字符串）；搬走就解不开。四字段均须非空，`Seal`/`Open` 在空或纯空白时直接拒绝，避免封出之后填 ID 就解不开的信封。故意不绑 KEK 版本，以便将来若做 rewrap 时业务密文可不动。
+- AAD 绑 `organization_uuid` / `workspace_uuid` / `vault_external_id` / `credential_external_id`（长度前缀字符串）；搬走就解不开。四字段均须非空，`Seal`/`Open` 在空或纯空白时直接拒绝，避免封出之后填 ID 就解不开的信封。故意不绑 KEK 版本，以便迁移 Provider 时保持业务密文不变。
 - 密文头带 key version，老数据自带“用几号钥匙锁的”。
 - 解不开就报错。不退化明文，不换别的 key 凑合。
 
@@ -226,7 +226,13 @@ vault:
 
 多实例先统一部署支持多 Provider 的代码和新旧配置，保持旧写入 Provider；所有实例都能解密两种信封后再切换写入配置并重启生效。回滚写入选择时保留新旧 Provider，确保切换期间产生的密文仍可读；不能直接退回只支持单 Provider 的旧代码。
 
-**兼容读取不等于完成迁移。** 对应历史信封尚未全部迁移或删除时，必须保留旧 Provider 的配置、密钥和解密权限；移除后相关数据会报错。保留 Local 解密能力期间仍需保管本地 KEK。本切片不提供批量迁移/rewrap 工具；每种 Provider 只配置一组后端，同种 Provider 切换到另一 CMK、Transit key 或实例仍需单独迁移，不自动兼容。Local 自身的 `decrypt_only` 版本轮换保持不变。
+**兼容读取不等于完成迁移。** 对应历史信封尚未全部迁移或删除时，必须保留旧 Provider 的配置、密钥和解密权限；移除后相关数据会报错。保留 Local 解密能力期间仍需保管本地 KEK。跨 Provider 全量迁移可使用 `vault-migrate` 工具；每种 Provider 只配置一组后端，同种 Provider 切换到另一 CMK、Transit key 或实例仍需单独迁移，不自动兼容。Local 自身的 `decrypt_only` 版本轮换保持不变。
+
+### 全量迁移到另一个 Provider
+
+跨 Provider 全量重新封装已有数据加密密钥（DEK）使用专用的 `vault-migrate` 命令行工具。支持在 `local`、`aliyun_kms` 和 `hashicorp_vault` 之间任意双向迁移，迁移期间业务密文、nonce 与 AAD 保持不变。
+
+详细的 CLI 参数、标准操作流程（SOP）、数据表信封映射及故障排查指引详见 [Vault 主密钥 Provider 迁移指南 (`vault-migrate`)](./vault-migrate.md)。
 
 ### 故障、内存与日志
 
@@ -333,7 +339,7 @@ Provider/KMS 调用放在 DB 事务外。
 1. 生成新 KEK，把旧 current 挪进 `decrypt_only`（带原 `version`）。
 2. 配置新 `kek`/`kek_file` 与递增的 `version`。
 3. 滚动重启。新写入打新 `key_version`；旧行继续用 decrypt_only 解开。
-4. 从 `decrypt_only` 删除旧钥是运维责任：库中若仍有该 `key_version`，Open 会 5xx。本期不提供批量 rewrap / 退役证明。
+4. 从 `decrypt_only` 删除旧钥是运维责任：库中若仍有该 `key_version`，Open 会 5xx。迁移命令仅支持跨 Provider 迁移，不处理同一 Local Provider 内的版本迁移，也不提供备份的密钥退役证明。
 
 ```yaml
 vault:
@@ -346,7 +352,7 @@ vault:
           kek: <old-base64-32-bytes>
 ```
 
-KMS CMK 自动轮换保持同一 Key ID；禁用旧 CMK 将 fail-closed。AAD 不绑 KEK version，以便未来受控 rewrap 不改变业务密文。
+KMS CMK 自动轮换保持同一 Key ID；禁用旧 CMK 将 fail-closed。AAD 不绑 KEK version，受控 rewrap 不改变业务密文。
 
 KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销毁；本期价值在「换钥后旧数据仍可读」，不靠扫表迁移。
 
@@ -520,7 +526,7 @@ sequenceDiagram
 - Git LFS、dumb HTTP、原生 git SSH 隧道；通用任意 `git@`→HTTPS 不在 Vault 切片。内置 github.com + `environment_runner.git_ssh_to_https_hosts` 的 insteadOf 见 CCRv2 upstream-proxy 文档
 - GitHub App `x-access-token` Basic 用户名
 - Expand/Backfill、`backfill_secrets`
-- Shamir 驱动；跨 Provider 的批量迁移/rewrap 工具
+- Shamir 驱动；同种 Provider 内跨 CMK、Transit key 或实例的批量迁移
 - 重做 vault CRUD、管理页、MCP Catalog/Permission/Confirmation
 - 防「打进 OMA 进程」（运行时加固，另议）
 

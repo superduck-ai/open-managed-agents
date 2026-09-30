@@ -6,7 +6,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"errors"
 	"fmt"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -94,19 +93,20 @@ func (p *Provider) WrapDEK(_ context.Context, dek []byte) (secrets.WrappedKey, e
 func (p *Provider) UnwrapDEK(_ context.Context, wrapped secrets.WrappedKey) ([]byte, error) {
 	kek, ok := p.keys[wrapped.KeyVersion]
 	if !ok {
-		return nil, fmt.Errorf("secrets: unsupported KEK version %d", wrapped.KeyVersion)
+		return nil, fmt.Errorf("local: KEK version %d is not configured; check current and decrypt_only keys", wrapped.KeyVersion)
 	}
 	gcm, err := newAESGCM(kek)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: build AES-GCM for unwrap: %w", err)
 	}
 	nonceSize := gcm.NonceSize()
-	if len(wrapped.Ciphertext) < nonceSize {
-		return nil, errors.New("secrets: wrapped DEK is too short")
+	expectedLength := nonceSize + 32 + gcm.Overhead()
+	if len(wrapped.Ciphertext) != expectedLength {
+		return nil, fmt.Errorf("local: invalid wrapped DEK length: got %d bytes, expected %d; restore the complete envelope", len(wrapped.Ciphertext), expectedLength)
 	}
 	dek, err := gcm.Open(nil, wrapped.Ciphertext[:nonceSize], wrapped.Ciphertext[nonceSize:], nil)
 	if err != nil {
-		return nil, fmt.Errorf("secrets: unwrap DEK: %w", err)
+		return nil, fmt.Errorf("local: DEK authentication failed with KEK version %d; key mismatch or corrupted wrapped DEK", wrapped.KeyVersion)
 	}
 	return dek, nil
 }

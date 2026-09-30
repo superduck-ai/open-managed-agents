@@ -4,11 +4,42 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 )
+
+func TestLocalUnwrapFailureReasons(t *testing.T) {
+	p, err := localkeys.New(localkeys.KeyMaterial{KEK: bytes.Repeat([]byte{1}, 32)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := localkeys.New(localkeys.KeyMaterial{KEK: bytes.Repeat([]byte{2}, 32)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := other.WrapDEK(t.Context(), bytes.Repeat([]byte{3}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, want string
+		key        secrets.WrappedKey
+	}{
+		{"truncated", "got 15 bytes, expected 60", secrets.WrappedKey{KeyVersion: 1, Ciphertext: wrapped.Ciphertext[:15]}},
+		{"wrong key", "key mismatch or corrupted wrapped DEK", wrapped},
+		{"missing version", "KEK version 2 is not configured", secrets.WrappedKey{KeyVersion: 2, Ciphertext: wrapped.Ciphertext}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dek, err := p.UnwrapDEK(t.Context(), tc.key)
+			if len(dek) != 0 || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q without a DEK, got %v", tc.want, err)
+			}
+		})
+	}
+}
 
 func TestLocalKeyProviderRejectsBadMaterial(t *testing.T) {
 	if _, err := localkeys.New(localkeys.KeyMaterial{Version: 1, KEK: make([]byte, 16)}, nil); err == nil {

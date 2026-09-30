@@ -47,7 +47,7 @@ func parseCLI(args []string, output io.Writer) (cliOptions, error) {
 func newCLI(options *cliOptions) *cobra.Command {
 	root := &cobra.Command{
 		Use: "verify-be", Short: "后端自验证：隔离环境、客观断言、证据报告和清理",
-		Long:          "后端自验证工具。chat 使用真实 Worker 与固定模型；files 使用实际后端；transcript 复用生产归档服务和维护 CLI；memory 验证 Memory/Filestore 与实际 FUSE 挂载。\n本地依赖使用隔离 PostgreSQL 与 MinIO。报告: tmp/verify-be/<run-id>/report.json 和 report.md\n退出码: 0 = 通过或帮助；1 = 失败；2 = 参数错误或先决条件阻塞。",
+		Long:          "后端自验证工具。deployment 验证运行与 River 重试/重启；chat 使用真实 Worker 与固定模型；files 使用实际后端；transcript 复用生产归档服务和维护 CLI；memory 验证 Memory/Filestore 与实际 FUSE 挂载。\n本地依赖使用隔离 PostgreSQL 与 MinIO。报告: tmp/verify-be/<run-id>/report.json 和 report.md\n退出码: 0 = 通过或帮助；1 = 失败；2 = 参数错误或先决条件阻塞。",
 		SilenceErrors: true, SilenceUsage: true, Args: cobra.NoArgs,
 		RunE:    missingCommand,
 		Example: "  just verify-be files doctor\n  just verify-be files lifecycle\n  just verify-be chat roundtrip\n  just verify-be chat performance --timeout 8m",
@@ -64,13 +64,15 @@ func newCLI(options *cliOptions) *cobra.Command {
 			return validateOptions(*options)
 		},
 	})
-	for _, domain := range []string{"chat", "files", "transcript", "memory"} {
+	for _, domain := range []string{"chat", "files", "transcript", "memory", "deployment"} {
 		group := &cobra.Command{Use: domain, Short: domain + " 场景", Args: cobra.NoArgs, RunE: missingCommand}
 		if domain == "chat" {
 			group.Long = "聊天验证使用真实 Worker 和固定模型。\n镜像优先级: --worker-image > OMA_WORKER_CONTROL_IMAGE > .verify-be.local.json 的 worker_image > 公共默认镜像。\n本地配置被 Git 忽略；帮助不显示私有值。公共默认镜像: " + defaultWorker
 			group.PersistentFlags().StringVar(&options.WorkerImage, "worker-image", "", "覆盖 Worker 镜像，不自动拉取")
 		} else if domain == "files" {
 			group.Long = "Files API 与真实对象存储验证。generated 额外需要 Worker 镜像和 FUSE；其他场景无需 Worker。"
+		} else if domain == "deployment" {
+			group.Long = "Deployment / River：真实 PostgreSQL 验证运行创建、事务副作用、自动重试、重复投递与进程崩溃恢复。无需 Worker 镜像与 FUSE；不执行 Session 中的模型回合。"
 		} else if domain == "memory" {
 			group.Long = "Memory / Filestore：真实 PostgreSQL/MinIO 验证读写、隔离、跨会话生命周期和清理。mounts 使用实际 Runner 与 Docker/FUSE；其他场景不需要 Worker。"
 		} else {

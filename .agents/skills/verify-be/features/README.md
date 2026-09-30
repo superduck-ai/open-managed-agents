@@ -23,3 +23,7 @@ See [Transcript archive, restore and integrity](transcript.md). Run `just verify
 ## Memory / Filestore
 
 See [Memory / Filestore](memory.md). Run `just verify-be memory doctor`, then `integrity`, `isolation`, `cleanup`, `lifecycle` and `filestore`. These reuse production HTTP handlers over real PostgreSQL/MinIO. Run `memory doctor mounts` and `memory mounts` separately for actual Runner/Docker/FUSE mounting and a fresh sandbox's cross-session reads.
+
+## Deployment / River
+
+See [Deployment / River](deployment.md). Run `just verify-be deployment doctor`, then `lifecycle`, `retry`, `idempotency` and `restart`. These verify production HTTP/Worker paths, real River retries and terminal states, transactional side effects, duplicate occurrences and SIGKILL recovery. Session model turns remain separate; restart uses explicit test-only rescue deadlines.

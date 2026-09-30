@@ -1,6 +1,6 @@
 # Backend verification
 
-`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. `memory` adds production-handler integration scenarios and real Runner/FUSE mount coverage. No old CLI aliases are retained.
+`verify-be` replaces `verify-chat` with domain commands. It shares the existing isolated environment, image preflight, source fingerprint, Go test JSON verdict, reports and cleanup. `chat` retains its six scenarios and performance gate; `files` adds independent HTTP/object-store scenarios; `transcript` runs archive integration scenarios over real PostgreSQL/MinIO. `memory` adds production-handler integration scenarios and real Runner/FUSE mount coverage. `deployment` verifies production Run creation, asynchronous River execution/retry, occurrence deduplication and process recovery. No old CLI aliases are retained.
 
 ```sh
 just verify-be -h
@@ -20,7 +20,7 @@ just verify-be files generated
 
 Scenario identities in reports use `chat.roundtrip`, etc., and `files.lifecycle`, `files.isolation`, `files.invalid`, `files.storage`, `files.attachments`, `files.platform`, `files.recovery`, `files.exhaustion`, `files.generated`, `files.performance`, `files.cloud-storage`, `chat.cloud-renewal`. Use `DOMAIN SCENARIO`, not `run DOMAIN.SCENARIO`. `--timeout` applies to all scenario commands. Worker flags belong to `chat`, `files generated` and `memory mounts`; baseline/backend-ref/diagnostics flags belong to both performance commands. Help does not load runtime settings. Root `doctor` checks common dependencies; a cloud-specific doctor checks only its explicit private configuration.
 
-The implementation lives in `cmd/verify-be`; the reusable shell entry only builds/executes Go. The project Skill and maps live in `.agents/skills/verify-be/`. Local settings move to `.verify-be.local.json`, evidence to `tmp/verify-be/`, owned container labels to `oma.verify-be.run`. Old evidence directories are retained. The backend PR workflow has separate Chat, Files, Transcript and Memory verification jobs; branch protection should require all four.
+The implementation lives in `cmd/verify-be`; the reusable shell entry only builds/executes Go. The project Skill and maps live in `.agents/skills/verify-be/`. Local settings move to `.verify-be.local.json`, evidence to `tmp/verify-be/`, owned container labels to `oma.verify-be.run`. Old evidence directories are retained. The backend PR workflow has separate Chat, Files, Transcript, Memory and Deployment verification jobs; branch protection should require all five.
 
 ```mermaid
 flowchart LR
@@ -40,6 +40,16 @@ flowchart LR
     Evidence --> Cleanup[Stop backend and remove owned containers and volumes]
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
+
+## Deployment / River verification contract
+
+See the [Deployment feature map](../../../.agents/skills/verify-be/features/deployment.md). `deployment.lifecycle`, `deployment.retry`, `deployment.idempotency` and `deployment.restart` reuse existing Go integration fixtures with a unique business schema and the isolated environment's real PostgreSQL/River. `VERIFY_BE_DEPLOYMENT=1` is supplied only to selected scenarios; ordinary suites skip them explicitly. They start asynchronous River consumers and compare the Job terminal state with Run error, Deployment status/schedule, public API responses and Session/Thread/Work/initial event/Filestore rows. A completed River Job may mean a permanent failure Run or an intentional stale-job no-op, so completion alone is insufficient.
+
+Retry faults reject Run insertion after Session writes, verify total transaction rollback, and wait for real default River backoff and automatic attempts without modifying retry eligibility. Persistent faults use a two-attempt budget and require discarded state with no effects. Duplicate jobs share one occurrence and run on a ten-worker queue; all must complete while preserving one business Run and associated rows. Durable dispatch is made due with River's upsert API; it still uses River leader scheduling and the production occurrence-stamping hook.
+
+Restart launches a separate process with the production scheduled Worker, Store and PostgreSQL listener/driver. A test PostgreSQL lock holds business writes before Run insertion; a test middleware holds the process after business commit and before River completion. SIGKILL at each barrier must leave respectively zero effects or exactly the original committed effects. A fresh process must rescue and finish the same Job; the latter case preserves Run and Session IDs. Restart also verifies dispatch and cursor advancement for a durable schedule persisted while all worker processes were stopped. The test process sets Job timeout/rescue threshold to 10s/15s; the production one-hour rescue delay, full API/Runner restart, Session model execution, cloud side effects and throughput remain unverified. The other three scenarios use the production River client configuration. Deadlines are 3m, or 5m for restart.
+
+The PR workflow adds `Deployment verification` and runs all four scenarios. Branch protection must be configured separately to require this job. Reports retain explicit boundaries, skip rejection, source identity and cleanup gates.
 
 ## Memory / Filestore verification contract
 

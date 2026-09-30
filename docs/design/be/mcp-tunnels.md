@@ -465,6 +465,6 @@ Probe 在同一个初始化会话及总超时内按 `nextCursor` 完整读取 `t
 
 ### 本地大报文与对象清理验收
 
-`TestTunnelPayloadRealStorageAndClient` 可以复用本地 PostgreSQL/MinIO 服务，通过显式测试数据库 URL 或 search_path 将迁移和清理领取限制在测试数据范围。S3 凭据来自本地 `CONFIG_FILE`，endpoint 由测试参数指定；每次创建唯一的临时 bucket，保持默认未版本化，实际读取确认清理对象返回 NotFound，并删除空测试 bucket。此入口不改变现有业务桶的版本控制设置，不验收历史 S3 版本和 delete marker；Token 查询仍是 fixture。
+`TestTunnelPayloadRealStorageAndClient` 可以复用本地 PostgreSQL/MinIO 服务，通过显式测试数据库 URL 或 search_path 将迁移和清理领取限制在测试数据范围。S3 凭据来自本地 `CONFIG_FILE`，endpoint 由测试参数指定；每次创建唯一的临时 bucket，保持默认未版本化，实际读取确认清理对象返回 NotFound，并删除空测试 bucket。bucket 创建成功后立即注册删除回调，版本状态检查失败时仍清理空桶；后注册的对象清理先执行。此入口不改变现有业务桶的版本控制设置，不验收历史 S3 版本和 delete marker；Token 查询仍是 fixture。
 
 真实 Claude HTTP 客户端验收同时记录私有 MCP 收到的工具发现/调用计数及方法错误。TypeScript 证据补充模型可见工具、实际工具事件、Assistant 错误、stop reason、权限拒绝数和回合数；仅在失败时记录已移除配置凭据、endpoint、随机标记的至多 512 字符测试回答。MCP 连接成功与 SDK 回合结束均不能替代工具调用及随机标记验证。历史证据缺少上述字段时，复测通过不能证明首次失败的根因。

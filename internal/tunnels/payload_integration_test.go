@@ -78,10 +78,17 @@ func TestTunnelPayloadRealStorageAndClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s3Client := s3.NewFromConfig(aws.Config{Region: cfg.S3.Region, Credentials: credentials.NewStaticCredentialsProvider(cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey, "")}, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint); o.UsePathStyle = true })
 	if err := objects.Ensure(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	s3Client := s3.NewFromConfig(aws.Config{Region: cfg.S3.Region, Credentials: credentials.NewStaticCredentialsProvider(cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey, "")}, func(o *s3.Options) { o.BaseEndpoint = aws.String(endpoint); o.UsePathStyle = true })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(cfg.S3.Bucket)}); err != nil {
+			t.Error(err)
+		}
+	})
 	versioning, err := s3Client.GetBucketVersioning(t.Context(), &s3.GetBucketVersioningInput{Bucket: aws.String(cfg.S3.Bucket)})
 	if err != nil {
 		t.Fatal(err)
@@ -116,9 +123,6 @@ func TestTunnelPayloadRealStorageAndClient(t *testing.T) {
 			} else if !errors.Is(err, storage.ErrNotFound) {
 				t.Error(err)
 			}
-		}
-		if _, err := s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(cfg.S3.Bucket)}); err != nil {
-			t.Error(err)
 		}
 	})
 	for _, stream := range []bool{false, true} {

@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -275,11 +274,10 @@ func TestWebhookSubscriptionWorkerStart(t *testing.T) {
 			app, _, received := newEventSubscription(t, []string{"vault.created"})
 			vault := createVault(t, app, `{"display_name":"worker start"}`)
 			defer cleanupVaultRows(t, app, vault.ID)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
+
 			cfg := app.cfg.Webhook
 			cfg.WorkerEnabled = enabled
-			stopWorker := webhooks.NewWorker(app.db, app.webhookQueue, cfg, nil).Start(ctx)
+			stopWorker := startWebhookWorker(t, webhooks.NewWorker(app.db, app.webhookQueue, cfg, nil))
 			defer stopWorker()
 			wait := 100 * time.Millisecond
 			if enabled {

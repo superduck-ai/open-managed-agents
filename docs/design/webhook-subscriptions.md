@@ -8,7 +8,7 @@
 
 Webhook 页面保留参考 Claude Console 的布局与交互，按钮、操作提示和事件展示标签遵循现有 `useI18n` 及中英文词典。中文模式显示“添加 Webhook 端点”“全选”等中文文案；事件协议名（如 `session.updated`）保持原样，英文模式仍提供英文文案。无端点时，列表中央使用信号塔图标和带加号的次要“添加 Webhook 端点”按钮，与顶部按钮共用创建弹窗；加载、请求失败和搜索无匹配结果时不显示此创建空状态。
 
-## 当前投递架构：JetStream（2026-09-29）
+## 当前投递架构：JetStream（2026-09-30）
 
 本节是当前队列、投递和升级合同。下文标有历史阶段的 jobs、租约、结果与统计同事务说明仅记录演进，已被本节替代；资源触发、API、UI 与 38 项目录（35 项入口、3 项预留）保持不变。
 
@@ -18,14 +18,16 @@ flowchart TD
     Match --> Event[生成一次事件 ID、发生时间与 payload]
     Event --> Publish[逐订阅发布并等待 PublishAck]
     Publish --> JS[JetStream 文件存储 WorkQueue]
-    JS --> Batch[每批最多 10 条并发，不预取]
-    Batch --> Target[按 workspace 与订阅 UUID 读取当前目标]
+    JS --> Consume[每实例 N 个 Consume 会话，各领取一条，默认 10]
+    Consume --> Target[按 workspace 与订阅 UUID 读取当前目标]
     Target --> Send[公网 IP 检查、签名、HTTP POST]
     Send --> Stats[尽力更新 PostgreSQL 失败窗口]
     Stats --> Finish{结束或重试}
     Finish --> ACK[DoubleAck：删除消息]
+    ACK --> Consume
     Finish --> NAK[NakWithDelay：延后消费]
     NAK --> JS
+    NAK --> Consume
 ```
 
 - PostgreSQL 只保存订阅、密钥、启用状态与失败窗口；不再保存 Webhook delivery jobs 或 HTTP 结果账本。运行时 SQL 仍使用 Yourbatis。业务提交与发布、订阅结果更新与消息确认均不原子化，不引入 Outbox、死信队列、重放或清理 Worker。
@@ -34,14 +36,15 @@ flowchart TD
 - Vault 及其 Credential 级联通知、Agent 归档产生的一组 Deployment 通知、定时 Deployment 一次执行及同批 Session 事件分别共用 5s 通知期限，包含租户信息查询。到期停止后续通知，允许部分丢失但不改变已提交业务结果；不按子资源数累加独立等待，也不引入后台补发。
 - Enqueue 的订阅查询和顺序发布共用最长 5s，受上游 context 限制。只查询匹配的启用订阅 UUID；无匹配不发布。逐条等待持久化确认，不使用客户端额外发布重试或后台缓冲；失败可部分成功，日志不改变成功的业务响应。订阅快照发生在提交后的查询时刻，不宣称事务级事件发生时快照。
 - HTTP/River 生产入口之前初始化队列、Consumer 和共享 Enqueuer，失败阻止启动；无数据库或内存降级。worker_enabled=false 只关闭消费，发布仍生效并受过期/容量限制。
-- Fetch 最多 10 条、最长 1s，消息到达即处理，等本次 Fetch 与整批完成才继续；没有预取下一批或按订阅启动 goroutine。MaxRequestBatch=10，Consumer 共享 MaxAckPending=3000；这是所有实例的未确认消息上限，不是单实例并发数，不预分配等量客户端缓冲。空批正常，领取错误等待可取消的 1s。每实例最多 10 条，多实例叠加，不承诺顺序或订阅公平性。
-- HTTP timeout 为 T，批次从领取前计时 T+15s，AckWait=max(60s,T+30s)。不设置 Consumer BackOff、不续租。目标按 workspace 与 endpoint UUID 查询，缺失/禁用/删除/越界则确认跳过，不更新统计；不重新匹配事件列表。配置取消费时快照，之后编辑无法撤销已发送请求。
-- 专用 Client/Transport 每批共享，直连、忽略代理、DNS 公网 IP 与 TLS 校验、不跟随跳转保持不变；结束关闭空闲连接。收到响应头即按状态判定并关闭正文，不读取或保存响应正文；不在 HTTP 期间持有数据库连接。
-- 默认 max_attempts=3 映射 MaxDeliver，显式配置优先。它是消费机会，而非精确 HTTP 次数：查询失败和进程中断也会消耗机会。普通失败按第 n 次消费使用 [5s,min(120s,5s×2ⁿ)) 抖动，NakWithDelay 延迟重投；实际时间受批次与积压影响。崩溃/确认丢失由 AckWait 恢复，不声称沿用相同抖动。
+- 每个 Worker 实例按 webhook.concurrency 建立 Consume 会话，默认 10，配置必须为正整数，共享同一 durable Consumer 和 NATS 连接；显式 PullMaxMessages(1)，回调同步处理，不额外启动逐消息 goroutine 或应用层等待队列。完成一条即可自动补充，不等待其他位置。保留 SDK 默认拉取有效期和心跳；MaxRequestBatch=10，Consumer 共享 MaxAckPending=3000。后者是所有实例的未确认消息上限，不是单实例并发数，不预分配等量客户端缓冲。每实例最多同时处理 concurrency 条，多实例叠加；重连可能产生额外在途消息及重复，不承诺顺序或订阅公平性。
+- HTTP timeout 为 T，每条回调开始时建立 T+15s 处理期限，AckWait=max(60s,T+30s) 从服务器投递时计时。默认分别为 25s 和 60s；异常暂停仍可能发生重投。不设置 Consumer BackOff、不续租。目标按 workspace 与 endpoint UUID 查询，缺失/禁用/删除/越界则确认跳过，不更新统计；不重新匹配事件列表。配置取消费时快照，之后编辑无法撤销已发送请求。
+- 专用 Client/Transport 在一次 Worker 生命周期内共享，直连、忽略代理、DNS 公网 IP 与 TLS 校验、不跟随跳转保持不变；空闲连接总数、单 Host 空闲和连接上限均等于 concurrency（默认 10）。单条请求受自身期限限制，拨号还受 Worker 取消及 HTTP timeout 限制。停止后关闭空闲连接。收到响应头即按状态判定并关闭正文，不读取或保存响应正文；不在 HTTP 期间持有数据库连接。
+- 默认 max_attempts=3 映射 MaxDeliver，显式配置优先。它是消费机会，而非精确 HTTP 次数：查询失败和进程中断也会消耗机会。普通失败按第 n 次消费使用 [5s,min(120s,5s×2ⁿ)) 抖动，NakWithDelay 延迟重投；实际时间受可用处理位置与积压影响。崩溃/确认丢失由 AckWait 恢复，不声称沿用相同抖动。
 - 2xx、无效目标、非法消息、永久拒绝、次数耗尽及本次普通失败触发自动禁用，都 DoubleAck 结束；ACK 表示处理结束，不代表 HTTP 成功。确认失败不在原处理函数重发 HTTP。正常 ACK 删除 WorkQueue 消息；崩溃耗尽次数的残留交 MaxAge 清理。重新启用不恢复已确认消息；提高 MaxDeliver 可能影响异常残留，不删除重建 Consumer。
-- 订阅统计最多尝试写入 2s（且受批次期限限制）。保留 workspace、未删除和 enabled 条件，迟到成功不能启用已禁用端点。写入失败只记录日志，不让成功 HTTP 因统计失败重发；永久拒绝仍结束，禁用可能未落库。统计按数据库接受顺序，可能遗漏或重复，没有领取标记 fencing 或精确结果幂等。
+- 订阅统计最多尝试写入 2s（且受单条处理期限限制）。保留 workspace、未删除和 enabled 条件，迟到成功不能启用已禁用端点。写入失败只记录日志，不让成功 HTTP 因统计失败重发；永久拒绝仍结束，禁用可能未落库。统计按数据库接受顺序，可能遗漏或重复，没有领取标记 fencing 或精确结果幂等。
 - 持续失败默认 24h 与消息保留默认 24h 是独立配置。首次失败建窗口，后续失败达到阈值才禁用；成功/显式启用清零，普通编辑不清零，计数不用于禁用。3xx 和永久地址拒绝使用既有原因并立即结束；DB 写入可用时禁用端点。
-- Worker 的 stop 函数取消领取和处理并等待退出，在共享 NATS Drain 和 DB Close 之前完成；初始化后启动失败也执行清理。
+- 消息处理回调有 recover 边界，捕获该回调中的 panic 后记录 ERROR、处理位置和堆栈，不记录 panic 原始值或消息内容。回调返回后同一 Consume 会话继续处理，不减少处理位置；不主动 ACK/NAK 或额外记录接收端失败。尚未确认的消息按 AckWait/MaxDeliver 恢复，耗尽后由 MaxAge 清理；若发送后发生 panic，可能重复投递，统计也可能已写入。此边界不保护其他 goroutine、运行时不可恢复故障或操作系统终止。
+- Start 返回 stop 与 error；任一 Consume 初始化失败时清理已启动会话并返回错误。暂时断线由 SDK 恢复；会话意外结束则等待已保存的 Closed 通知后，经可取消的 1s 间隔重建该会话，不重建 durable Consumer 或连接。共享连接永久关闭时停止恢复。stop 支持重复及并发调用，停止全部领取、取消处理、等待回调及管理循环退出，再关闭空闲连接；在共享 NATS Drain 和 DB Close 之前完成。
 
 ### 升级与可靠性边界
 
@@ -53,7 +56,7 @@ flowchart TD
 
 ### 验收路径
 
-现有资源操作/失败/重复/级联测试改为读取真实 JetStream 消息，投递测试仍经本地 HTTP 接收器及官方 Go SDK 验签。新增队列容量、单条限制、重启、短 TTL、消费耗尽、统计失败不重发成功 HTTP、10 条并发、取消及旧 jobs 精确迁移测试。验证记录见 [JetStream 迁移验证记录](webhook-jetstream-verification.md)，不能沿用历史门禁结论。人工顺序：创建订阅 → 资源操作 → 正常签名 → 普通失败重试 → 永久拒绝 → 重新启用确认旧消息不恢复 → 停启 Worker 验证积压和过期。
+现有资源操作/失败/重复/级联测试改为读取真实 JetStream 消息，投递测试仍经本地 HTTP 接收器及官方 Go SDK 验签。新增队列容量、单条限制、重启、短 TTL、消费耗尽、统计失败不重发成功 HTTP、默认及自定义处理位置自动补充、panic 恢复与重投、取消、部分启动失败、会话恢复、NATS 重启及旧 jobs 精确迁移测试。验证记录见 [JetStream 迁移验证记录](webhook-jetstream-verification.md)，不能沿用历史门禁结论。人工顺序：创建订阅 → 资源操作 → 正常签名 → 普通失败重试 → 永久拒绝 → 重新启用确认旧消息不恢复 → 停启 Worker 验证积压和过期。
 
 ## 创建对话框渲染稳定性（2026-09-29）
 

@@ -19,8 +19,11 @@ type deliveryDialer struct {
 	dial          func(context.Context, string, string) (net.Conn, error)
 }
 
-func newDeliveryTransport(batchCtx context.Context, allowInsecure bool, timeout time.Duration) *http.Transport {
+func newDeliveryTransport(workerCtx context.Context, allowInsecure bool, timeout time.Duration, concurrency int) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = concurrency
+	transport.MaxIdleConnsPerHost = concurrency
+	transport.MaxConnsPerHost = concurrency
 	transport.Proxy = nil
 	transport.DialTLSContext = nil
 	transport.DialTLS = nil
@@ -29,7 +32,7 @@ func newDeliveryTransport(batchCtx context.Context, allowInsecure bool, timeout 
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		stop := context.AfterFunc(batchCtx, cancel)
+		stop := context.AfterFunc(workerCtx, cancel)
 		defer stop()
 		return guarded.dialContext(ctx, network, address)
 	}

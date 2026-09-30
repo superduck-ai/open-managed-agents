@@ -65,9 +65,7 @@ func TestWebhookSubscriptionFanoutWithHistoricalJob(t *testing.T) {
 	})
 	assertWebhookQueueCount(t, f.app, 2)
 	f.exec(t, `INSERT INTO jobs(external_id,workspace_uuid,type,status,payload) VALUES('job_legacy_mixed',$1,'webhook_delivery','pending','{"event_type":"session.status_idled","event":{"id":"wevt_legacy"}}')`, f.endpoint.WorkspaceUUID)
-	if err := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil).RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, f.app, webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil))
 	if len(received) != 2 {
 		t.Fatalf("deliveries=%d want 2", len(received))
 	}

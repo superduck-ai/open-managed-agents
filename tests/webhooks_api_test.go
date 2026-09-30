@@ -258,9 +258,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	if count := webhookJobCount(t, app, "session.status_idled", sessionID); count != 1 {
 		t.Fatalf("session.status_idled webhook jobs = %d, want 1", count)
 	}
-	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(ctx); err != nil {
-		t.Fatalf("run endpoint webhook delivery: %v", err)
-	}
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
 
 	mu.Lock()
 	if len(requests) != 1 {
@@ -309,9 +307,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	redirectEndpoint := createWebhook(t, app, `{"url":`+quoteJSON(redirectReceiver.URL)+`,"name":"redirect callback","enabled_events":["session.status_terminated"]}`)
 	redirectSessionID := "sesn_webhook_endpoint_redirect"
 	enqueue("session.status_terminated", redirectSessionID)
-	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(ctx); err != nil {
-		t.Fatalf("run redirect webhook delivery: %v", err)
-	}
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
 	disabled := retrieveWebhook(t, app, redirectEndpoint.ID)
 	if disabled.Status != "disabled" || disabled.DisabledReason == nil || *disabled.DisabledReason != "auto-disabled: endpoint URL returned a redirect (3xx)" {
 		t.Fatalf("redirect endpoint = %+v, want disabled with status reason", disabled)

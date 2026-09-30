@@ -80,6 +80,7 @@ func defaultConfig() Config {
 			},
 		},
 		Webhook: WebhookConfig{
+			Concurrency:         10,
 			WorkerEnabled:       true,
 			Timeout:             10 * time.Second,
 			MaxAttempts:         3,

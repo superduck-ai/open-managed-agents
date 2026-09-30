@@ -1,4 +1,65 @@
-# Webhook JetStream 迁移验证记录
+# Webhook JetStream 验证记录
+
+## 并发配置与消息回调 panic 隔离（2026-09-30）
+
+在当前未提交的 Consume 实现上补充 `webhook.concurrency`，默认 10，显式零和负数启动校验失败。每实例按该值建立会话，专用 Transport 的总空闲、单 Host 空闲和连接上限同步变化；修改配置需重启实例，不改变共享 Consumer 的限制。
+
+消息处理回调在当前 goroutine 中 recover，错误日志只记录处理位置和堆栈，不记录 panic 原始值。恢复后同一会话继续处理，未确认消息按 AckWait/MaxDeliver 恢复，不新增重试队列或接收端失败统计。发送后的异常仍可能造成重复；此边界不保护其他 goroutine 或不可恢复的运行时故障。
+
+- `TestWebhookConcurrencyConfiguration` 覆盖默认、自定义及零/负数拒绝。
+- `TestWebhookConsumeConfiguredConcurrency` 使用真实文件存储 JetStream，覆盖内部默认、1、4、12 个位置，验证会话数、实际处理上限、HTTP 上限和取消后无统计写入。
+- `TestWebhookConsumePanicRecoveryAndRedelivery` 仅启动一个位置，模拟首次查询 panic，验证继续处理下一条、原消息按 AckWait 重投、无接收端失败计数及结构化日志不包含模拟凭据。
+- 配置和 Webhook 包完整 race 检测通过（1.676s、12.522s），日志 `/tmp/webhook-concurrency-panic-race.log`。
+
+- 最新 `just test` 使用本轮专用数据库执行，配置及 Webhook 包通过（3.394s、16.467s），全部 Webhook 资源和投递用例未失败；全量未通过：`TestSandboxLifecycleDurableScheduleDispatchesReclaim` 调度超时、`TestSessionPendingToolRulesMatchAcceptance/child` 返回 409 而非 200。日志 `/tmp/webhook-safety-just-test.log`。没有修改这些模块或跳过失败项。
+- 调度用例随后在复用库和另一全新专用库定向复跑均通过（2.540s、2.296s），日志 `/tmp/webhook-safety-schedule-{reused,fresh}.log`；全量并发测试中的超时仍保留为未解决结果。Session 子线程的未修改 HEAD 复现证据见下文上轮记录，未把定向通过表述为全量通过。
+- `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files`、`just hooks-run` 均通过，三个未跟踪文件另行显式 hooks 通过；日志 `/tmp/webhook-safety-{lint,dead-code,duplicates,complexity,large-files,hooks-run}.log` 和 `/tmp/webhook-safety-new-files-hooks.log`。本轮没有前端改动，未扩大前端功能测试。
+
+两个本轮专用 PostgreSQL 测试库及专用对象存储桶已清理；嵌入式 NATS 和接收器随测试结束停止，开发数据库、开发桶和用户已有容器未改动。代码没有暂存或提交。
+
+Review 检查了配置默认值与拒绝语义、会话与连接上限、recover 只覆盖消息回调、恢复后的补充消费、未确认消息保留、日志不暴露 panic 值以及取消清理。未发现需要额外修复的逻辑问题；已写统计和 HTTP 发送不能因 panic 撤回，仍需接收端去重。
+
+本轮验收不包括 Console 人工操作、长期容量压测或所有不可恢复故障。下文保留前一次 Consume 实现的验证记录。
+
+
+## Consume 持续消费验证（2026-09-30）
+
+基于 `fd87782`，分支 `codex/webhook-subscriptions`。每实例 10 个 Consume 会话，共享原 durable Consumer 和连接，各会话显式 PullMaxMessages(1)、同步处理，完成即可补充。无新增 schema、队列、公开 API 或前端行为；发布、有限消费机会、重试、失败窗口和签名不变。
+
+| 范围 | 当前测试证据 |
+| --- | --- |
+| 自动补充、单实例最多 10 条、HTTP 期间无数据库连接占用 | `TestWebhookWorkerAutomaticRefill`：阻塞前 10 条，仅释放其中一条，第 11 条在其余九条仍阻塞时进入 |
+| 两实例共享消费 | `TestWebhookWorkerMultipleInstances`：首实例占满 10 个位置，次实例再处理另外 10 条；检查事件 ID 无重复 |
+| 初始化部分失败、回调退出、无遗留订阅 | `TestWebhookConsumeStartupFailureCleanup`：第 4 个会话初始化失败，前三个实际进入处理，再验证取消、关闭通知、连接订阅数恢复、无统计写入 |
+| 单条期限、较长 HTTP 超时、并发重复停止 | `TestWebhookConsumeTimeoutAndConcurrentStop`：T=10s/70s，检查 T+15s 与 AckWait，10 条在途并发调用 stop |
+| 10 条真实 HTTP 在途停止 | `TestWebhookWorkerStopCancelsActiveRequests`：请求全部退出，消息留待恢复，失败窗口不变 |
+| 意外关闭会话恢复、空闲停止、永久连接关闭 | `TestWebhookConsumeSessionRestartsAndIdleStop`、`TestWebhookConsumePermanentConnectionClosure` |
+| 文件存储 JetStream 重启后恢复 | `TestWebhookConsumeNATSRestart`：重启同端口、同存储目录的 NATS，原 Worker 和连接恢复消费 |
+| 跨消息复用 HTTP 连接、停机关闭 | `TestWebhookConsumeReusesAndClosesHTTPConnection` |
+| 重试、目标隔离、禁用、当前配置、统计故障及签名 | 原投递测试改为真实 Worker.Start；`TestWebhookRetryContinuousConsumer`、`TestSessionWebhooks`、失败窗口及资源入口测试仍覆盖成功和失败边界 |
+
+所有 Webhook 投递测试已移除 RunOnce，改为启动 Consume 并等待队列、订阅和接收状态；资源生产失败、重复和级联断言保留。本轮没有扩展此前待办的全事件独立端到端回归体系，也没有执行 Console 人工验收或长期内存/容量压测。
+
+### 最新执行结果
+
+- 使用专用 PostgreSQL 数据库、专用测试桶、逐测试的文件存储 JetStream 和本地接收器；未使用开发数据库或付费 sandbox。
+- 定向 race：`go test -race ./internal/webhooks ./tests -run 'Webhook|Enqueuer' -count=1 -timeout 10m` 通过，分别 8.775s、88.392s；日志 `/tmp/webhook-consume-final-race.log`。最后调整的 Session Webhook 失败观察和 10 条在途取消断言另行复跑通过（9.808s），日志 `/tmp/webhook-consume-last-race.log`。
+- 最新 `just test` 在重建的专用数据库执行，Webhook 用例通过，但全量未通过：`TestPollCancellationAndConnectionLossAreBounded`、`TestSessionPendingToolRulesMatchAcceptance/child`、`TestTranscriptArchiveRestoreAfterBlobGC` 失败；日志 `/tmp/webhook-consume-just-test-final.log`。首次执行另发现旧 Session Webhook 测试仍检查批次结束后的队列，已修复；调度和 Filestore 的首次失败没有在此次干净库复跑中重现。
+- 未修改 HEAD 源码导出到独立目录，用另一专用数据库复核：Session 子线程和 transcript 用例连续三次同样失败；Tunnel 取消用例重复 100 次复现相同的连接关闭错误。日志 `/tmp/webhook-consume-baseline.log`、`/tmp/webhook-consume-baseline-poll.log`。未修改这些模块或跳过门禁。
+
+- 源码生成及 `just lint`、`just dead-code`、`just duplicates`、`just complexity`、`just large-files`、`just hooks-run` 全部通过；日志 `/tmp/webhook-consume-{lint,dead-code,duplicates,complexity,large-files,hooks-run}.log`。未跟踪的两个新文件及最终文档另行显式执行适用 hooks 通过，日志 `/tmp/webhook-consume-new-files-hooks.log`。没有 SKIP 或预算调整；全量 Go 失败单独保留。
+
+- 两个本轮专用测试库已删除，专用测试桶已清理（基线桶未创建）；嵌入式 NATS 和接收器随测试结束停止。用户原有容器、开发数据库和开发桶保持原状。
+
+### Review 与人工顺序
+
+Review 检查了处理位置上限、会话不重叠重启、提前保存 Closed 通知、部分初始化清理、并发 stop、共享 Transport、租户查询和取消后不确认未完成消息。每条消息的 T+15s 从回调开始计时，AckWait 从服务器投递计时；重连可能增加在途消息或重复，统计与确认仍不原子。同步发布、256 MiB / 3000 / 64 KiB 限制、事件目录及生产入口均未改变。
+
+人工顺序：正常投递并验签 → 阻塞 10 条、仅释放一条观察补充 → 慢快端点混合 → 普通及永久失败 → NATS 重连 → 在途停机及恢复。停用当前版本 Worker 后启用新版，继续使用原 Stream/Consumer；本轮无需 migration，不删除 Consumer 或重放消息。
+
+## JetStream 迁移阶段历史记录
+
+以下保留当时的 Fetch/RunOnce 测试与执行事实，消费和连接生命周期已由上面的 Consume 方案替代，旧测试名不再是当前运行入口。
 
 2026-09-29，基于 `76f5d1b`，分支 `codex/webhook-subscriptions`。本轮只迁移投递基础设施，不修改资源业务触发时机、订阅公开 API、前端或 38 项目录（35 项有入口、3 项预留）。代码保留待审核。
 

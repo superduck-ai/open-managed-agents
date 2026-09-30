@@ -81,21 +81,45 @@ func assertWebhookQueueCount(t *testing.T, app *testApp, want int) {
 	}
 }
 
-// Wait for real JetStream delayed redelivery; no PostgreSQL schedule is edited.
-func drainWebhookQueue(t *testing.T, app *testApp, worker *webhooks.Worker) {
+func startWebhookWorker(t *testing.T, worker *webhooks.Worker) func() {
+	t.Helper()
+	stop, err := worker.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	return stop
+}
+
+func waitWebhookCondition(t *testing.T, condition func() bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 	defer cancel()
-	for {
-		info, err := app.webhookStream.Info(ctx)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for !condition() {
+		select {
+		case <-ctx.Done():
+			t.Fatal("webhook condition did not complete", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitWebhookQueueEmpty(t *testing.T, app *testApp) {
+	t.Helper()
+	waitWebhookCondition(t, func() bool {
+		info, err := app.webhookStream.Info(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.State.Msgs == 0 {
-			return
-		}
-		if err := worker.RunOnce(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
+		return info.State.Msgs == 0
+	})
+}
+
+func drainWebhookQueue(t *testing.T, app *testApp, worker *webhooks.Worker) {
+	t.Helper()
+	stop := startWebhookWorker(t, worker)
+	defer stop()
+	waitWebhookQueueEmpty(t, app)
 }

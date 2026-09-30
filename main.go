@@ -183,7 +183,10 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open webhook queue: %w", err)
 	}
 	webhookEnqueuer := webhooks.NewEnqueuer(database, webhookQueue, logger.With("component", "webhooks"))
-	stopWebhookWorker := webhooks.NewWorker(database, webhookQueue, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	stopWebhookWorker, err := webhooks.NewWorker(database, webhookQueue, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	if err != nil {
+		return fmt.Errorf("start webhook worker: %w", err)
+	}
 	defer stopWebhookWorker()
 	workers := river.NewWorkers()
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))

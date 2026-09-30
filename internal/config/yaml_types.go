@@ -78,6 +78,7 @@ type yamlCodeSessionConfig struct {
 }
 
 type yamlWebhookConfig struct {
+	Concurrency         int            `yaml:"concurrency"`
 	WorkerEnabled       optional[bool] `yaml:"worker_enabled"`
 	Timeout             time.Duration  `yaml:"timeout"`
 	FailureDisableAfter time.Duration  `yaml:"failure_disable_after"`
@@ -126,6 +127,7 @@ func newYAMLConfig() yamlConfig {
 		},
 		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
+			Concurrency:         defaults.Webhook.Concurrency,
 			Timeout:             defaults.Webhook.Timeout,
 			MaxAttempts:         defaults.Webhook.MaxAttempts,
 			FailureDisableAfter: defaults.Webhook.FailureDisableAfter,
@@ -173,6 +175,7 @@ func (input yamlConfig) resolve() Config {
 		},
 		Observability: input.Observability,
 		Webhook: WebhookConfig{
+			Concurrency:         input.Webhook.Concurrency,
 			Timeout:             input.Webhook.Timeout,
 			MaxAttempts:         input.Webhook.MaxAttempts,
 			FailureDisableAfter: input.Webhook.FailureDisableAfter,

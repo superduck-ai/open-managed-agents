@@ -88,9 +88,7 @@ func TestWebhookWorkerTargetIsolation(t *testing.T) {
 			case "other-workspace":
 				f.exec(t, `UPDATE webhook_endpoints SET workspace_uuid=$1 WHERE uuid=$2`, uuid.NewV4().String(), f.endpoint.UUID)
 			}
-			if err := webhooks.NewWorker(f.app.db, f.app.webhookQueue, cfg, nil).RunOnce(t.Context()); err != nil {
-				t.Fatal(err)
-			}
+			drainWebhookQueue(t, f.app, webhooks.NewWorker(f.app.db, f.app.webhookQueue, cfg, nil))
 			if endpointCalls.Load() != 0 {
 				t.Fatalf("unexpected calls: endpoint=%d", endpointCalls.Load())
 			}
@@ -103,11 +101,15 @@ func TestWebhookWorkerTargetIsolation(t *testing.T) {
 	}
 }
 
-func TestWebhookWorkerConcurrentBatch(t *testing.T) {
-	entered := make(chan capturedWebhookRequest, 11)
-	release := make(chan struct{})
+func TestWebhookWorkerAutomaticRefill(t *testing.T) {
+	type blockedRequest struct {
+		request capturedWebhookRequest
+		release chan struct{}
+	}
+	entered := make(chan blockedRequest, 11)
+	releaseAll := make(chan struct{})
 	var once sync.Once
-	unblock := func() { once.Do(func() { close(release) }) }
+	unblock := func() { once.Do(func() { close(releaseAll) }) }
 	var active, peak atomic.Int32
 	f := newDeliveryFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -122,55 +124,55 @@ func TestWebhookWorkerConcurrentBatch(t *testing.T) {
 				break
 			}
 		}
-		entered <- capturedWebhookRequest{Header: r.Header.Clone(), Body: body}
+		release := make(chan struct{})
+		entered <- blockedRequest{capturedWebhookRequest{Header: r.Header.Clone(), Body: body}, release}
 		select {
 		case <-release:
+			w.WriteHeader(204)
+		case <-releaseAll:
 			w.WriteHeader(204)
 		case <-r.Context().Done():
 		}
 	})
-	// Ensure a failed assertion releases blocked receiver handlers before cleanup.
 	t.Cleanup(unblock)
 	f.app.cfg.Webhook.Timeout = 10 * time.Second
 	f.enqueue(t, 11)
-	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
-	done := make(chan error, 1)
-	go func() { done <- worker.RunOnce(t.Context()) }()
+	stop := startWebhookWorker(t, webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil))
+	defer stop()
+	defer unblock()
 	sdk := anthropic.NewClient(option.WithWebhookKey(f.endpoint.SigningSecret))
-	for range 10 {
+	receive := func() blockedRequest {
+		t.Helper()
 		select {
-		case req := <-entered:
-			if _, err := sdk.Beta.Webhooks.Unwrap(req.Body, req.Header); err != nil {
+		case request := <-entered:
+			if _, err := sdk.Beta.Webhooks.Unwrap(request.request.Body, request.request.Header); err != nil {
 				t.Fatal(err)
 			}
+			return request
 		case <-time.After(5 * time.Second):
-			t.Fatal("10 requests did not enter concurrently")
+			t.Fatal("request did not enter")
+			return blockedRequest{}
 		}
 	}
-	assertWebhookQueueCount(t, f.app, 11)
-	if inUse := f.app.db.SQLDB().Stats().InUse; inUse != 0 {
-		t.Fatalf("HTTP requests retained %d database connections", inUse)
+	first := receive()
+	for range 9 {
+		receive()
 	}
-	if peak.Load() != 10 {
-		t.Fatalf("peak=%d", peak.Load())
+	if inUse := f.app.db.SQLDB().Stats().InUse; inUse != 0 {
+		t.Fatalf("HTTP retained %d DB connections", inUse)
+	}
+	select {
+	case <-entered:
+		t.Fatal("eleventh request entered before a slot was free")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(first.release)
+	receive()
+	if active.Load() != 10 || peak.Load() != 10 {
+		t.Fatalf("active=%d peak=%d", active.Load(), peak.Load())
 	}
 	unblock()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("batch did not finish")
-	}
-	assertWebhookQueueCount(t, f.app, 1)
-	if err := worker.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if len(entered) != 1 || peak.Load() != 10 {
-		t.Fatal("eleventh task or concurrency limit incorrect")
-	}
-	assertWebhookQueueCount(t, f.app, 0)
+	waitWebhookQueueEmpty(t, f.app)
 }
 
 func TestWebhookWorkerIndependentFailuresAndRetrySignature(t *testing.T) {
@@ -194,11 +196,6 @@ func TestWebhookWorkerIndependentFailuresAndRetrySignature(t *testing.T) {
 			f.app.cfg.Webhook.Timeout = 100 * time.Millisecond
 			f.enqueue(t, 2)
 			worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
-			if err := worker.RunOnce(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			assertWebhookQueueCount(t, f.app, 1)
-			retryID := queuedWebhookEvents(t, f.app)[0].ID
 			drainWebhookQueue(t, f.app, worker)
 
 			sdk := anthropic.NewClient(option.WithWebhookKey(f.endpoint.SigningSecret))
@@ -221,8 +218,15 @@ func TestWebhookWorkerIndependentFailuresAndRetrySignature(t *testing.T) {
 				bodies[id] = string(req.Body)
 				counts[id]++
 			}
-			if counts[retryID] != 2 {
+			if len(counts) != 2 {
 				t.Fatal("retry changed event ID")
+			}
+			retried := false
+			for _, count := range counts {
+				retried = retried || count == 2
+			}
+			if !retried {
+				t.Fatal("retry was not delivered")
 			}
 		})
 	}
@@ -233,21 +237,17 @@ func TestWebhookWorkerConcurrentFailuresDoNotUseCount(t *testing.T) {
 	f := newDeliveryFixture(t, func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(500) })
 	f.enqueue(t, 21)
 	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
-	var firstWindow *time.Time
-	for range 3 {
-		if err := worker.RunOnce(t.Context()); err != nil {
+	stop := startWebhookWorker(t, worker)
+	defer stop()
+	waitWebhookCondition(t, func() bool {
+		endpoint, err := f.app.db.GetWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		endpoint, err := f.app.db.GetWebhookEndpoint(t.Context(), f.endpoint.WorkspaceUUID, f.endpoint.ExternalID)
-		if err != nil || endpoint.FailureStartedAt == nil {
-			t.Fatalf("missing window: %+v %v", endpoint, err)
-		}
-		if firstWindow == nil {
-			firstWindow = endpoint.FailureStartedAt
-		} else if !endpoint.FailureStartedAt.Equal(*firstWindow) {
-			t.Fatal("concurrent failures moved the first failure time")
-		}
-	}
+		return endpoint.ConsecutiveFailures == 21 && endpoint.FailureStartedAt != nil
+	})
+	stop()
+
 	if calls.Load() != 21 {
 		t.Fatalf("requests=%d, want 21 without disabling", calls.Load())
 	}
@@ -262,15 +262,11 @@ func TestWebhookStatisticsFailureDoesNotRetrySuccessfulHTTP(t *testing.T) {
 	f.enqueue(t, 1)
 	remove := installWebhookMutationFailure(t, f.app, "webhook_endpoints", "UPDATE", "NEW.uuid = '"+f.endpoint.UUID+"'")
 	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
-	if err := worker.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, f.app, worker)
 	assertWebhookQueueCount(t, f.app, 0)
 	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=4`, 1, f.endpoint.UUID)
 	remove()
-	if err := worker.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, f.app, worker)
 	if calls.Load() != 1 {
 		t.Fatal("statistics failure duplicated successful HTTP")
 	}
@@ -278,24 +274,30 @@ func TestWebhookStatisticsFailureDoesNotRetrySuccessfulHTTP(t *testing.T) {
 
 func TestWebhookWorkerMultipleInstances(t *testing.T) {
 	received := make(chan string, 20)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
 	f := newDeliveryFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		received <- r.Header.Get("webhook-id")
-		w.WriteHeader(204)
+		select {
+		case <-release:
+			w.WriteHeader(204)
+		case <-r.Context().Done():
+		}
 	})
+	t.Cleanup(unblock)
+	f.app.cfg.Webhook.Timeout = 10 * time.Second
 	f.enqueue(t, 20)
-	var workers sync.WaitGroup
-	for range 2 {
-		workers.Go(func() {
-			if err := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil).RunOnce(t.Context()); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	workers.Wait()
-	assertWebhookQueueCount(t, f.app, 0)
-	if len(received) != 20 {
-		t.Fatalf("deliveries=%d", len(received))
-	}
+	first := startWebhookWorker(t, webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil))
+	defer first()
+	defer unblock()
+	waitWebhookCondition(t, func() bool { return len(received) == 10 })
+	second := startWebhookWorker(t, webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil))
+	defer second()
+	defer unblock()
+	waitWebhookCondition(t, func() bool { return len(received) == 20 })
+	unblock()
+	waitWebhookQueueEmpty(t, f.app)
 	seen := map[string]bool{}
 	for range 20 {
 		id := <-received
@@ -306,22 +308,24 @@ func TestWebhookWorkerMultipleInstances(t *testing.T) {
 	}
 }
 
-func TestWebhookWorkerStopCancelsActiveBatch(t *testing.T) {
-	entered, exited := make(chan struct{}), make(chan struct{})
+func TestWebhookWorkerStopCancelsActiveRequests(t *testing.T) {
+	entered, exited := make(chan struct{}, 10), make(chan struct{}, 10)
 	f := newDeliveryFixture(t, func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
-		close(entered)
+		entered <- struct{}{}
 		<-r.Context().Done()
-		close(exited)
+		exited <- struct{}{}
 	})
-	f.enqueue(t, 1)
+	f.enqueue(t, 10)
 	f.app.cfg.Webhook.Timeout = time.Minute
-	stop := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil).Start(t.Context())
+	stop := startWebhookWorker(t, webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil))
 	defer stop()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no active request")
+	for range 10 {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no active request")
+		}
 	}
 	done := make(chan struct{})
 	go func() { stop(); close(done) }()
@@ -330,12 +334,15 @@ func TestWebhookWorkerStopCancelsActiveBatch(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("stop did not wait/cancel")
 	}
-	select {
-	case <-exited:
-	case <-time.After(time.Second):
-		t.Fatal("request leaked")
+	for range 10 {
+		select {
+		case <-exited:
+		case <-time.After(time.Second):
+			t.Fatal("request leaked")
+		}
 	}
-	assertWebhookQueueCount(t, f.app, 1)
+	assertWebhookQueueCount(t, f.app, 10)
+	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND consecutive_failures=0 AND failure_started_at IS NULL`, 1, f.endpoint.UUID)
 }
 
 func TestWebhookWorkerUsesCurrentTarget(t *testing.T) {
@@ -350,9 +357,7 @@ func TestWebhookWorkerUsesCurrentTarget(t *testing.T) {
 	defer receiver.Close()
 	const secret = "whsec_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 	f.exec(t, `UPDATE webhook_endpoints SET url=$2,signing_secret=$3,enabled_events='[]'::jsonb WHERE uuid=$1`, f.endpoint.UUID, receiver.URL, secret)
-	if err := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil).RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, f.app, webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil))
 	if len(received) != 1 {
 		t.Fatal("queued event lost when event selection changed")
 	}

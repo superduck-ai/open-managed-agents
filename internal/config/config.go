@@ -396,6 +396,7 @@ func validatePositiveValues(cfg Config) error {
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
 		{name: "observability.otlp.max_request_bytes", valid: cfg.Observability.OTLP.MaxRequestBytes > 0},
 		{name: "observability.otlp.forward_timeout", valid: cfg.Observability.OTLP.ForwardTimeout > 0},
+		{name: "webhook.concurrency", valid: cfg.Webhook.Concurrency > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},
 		{name: "webhook.failure_disable_after", valid: cfg.Webhook.FailureDisableAfter > 0},

@@ -520,9 +520,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
-	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(context.Background()); err != nil {
-		t.Fatalf("deliver ingress webhook: %v", err)
-	}
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
 	mu.Lock()
 	delivered := requests
 	mu.Unlock()
@@ -542,9 +540,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if len(again.Data) != 1 {
 		t.Fatalf("ingress should be idempotent, agent.message count = %d", len(again.Data))
 	}
-	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(context.Background()); err != nil {
-		t.Fatalf("deliver duplicate ingress webhook: %v", err)
-	}
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
 	mu.Lock()
 	delivered = requests
 	mu.Unlock()
@@ -3581,11 +3577,22 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("session.pending webhook jobs = %d, want 0", count)
 	}
 
-	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(context.Background()); err != nil {
-		t.Fatalf("webhook run once failure path: %v", err)
+	key, err := app.db.GetAPIKey(t.Context(), auth.HashAPIKey(defaultTestKey))
+	if err != nil {
+		t.Fatal(err)
 	}
+	workspaceUUID := key.WorkspaceUUID.String()
+	stop := startWebhookWorker(t, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
+	defer stop()
+	waitWebhookCondition(t, func() bool {
+		stored, err := app.db.GetWebhookEndpoint(t.Context(), workspaceUUID, endpoint.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.ConsecutiveFailures == 1
+	})
 	assertWebhookQueueCount(t, app, 1)
-	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
+	waitWebhookQueueEmpty(t, app)
 	assertWebhookQueueCount(t, app, 0)
 
 	mu.Lock()

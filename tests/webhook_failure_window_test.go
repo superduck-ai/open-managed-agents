@@ -112,17 +112,14 @@ func TestWebhookFailureWindowWorkerAndReenable(t *testing.T) {
 	f.enqueue(t, 1)
 	f.exec(t, `UPDATE webhook_endpoints SET failure_started_at=clock_timestamp()-interval '2 hours' WHERE uuid=$1`, f.endpoint.UUID)
 	// The programmatic default is 24h; a two-hour-old window remains enabled.
+	f.app.cfg.Webhook.MaxAttempts = 1
 	worker := webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
-	if err := worker.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, f.app, worker)
 	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND status='enabled'`, 1, f.endpoint.UUID)
+	f.enqueue(t, 1)
 	f.app.cfg.Webhook.FailureDisableAfter = time.Hour
 	worker = webhooks.NewWorker(f.app.db, f.app.webhookQueue, f.app.cfg.Webhook, nil)
 	drainWebhookQueue(t, f.app, worker)
-	if err := worker.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	assertWebhookQueueCount(t, f.app, 0)
 	assertPayloadSQLCount(t, f.app, `SELECT count(*) FROM webhook_endpoints WHERE uuid=$1 AND status='disabled' AND disabled_reason=$2`, 1, f.endpoint.UUID, sustainedFailureReason)
 	enabled := "enabled"
@@ -130,17 +127,13 @@ func TestWebhookFailureWindowWorkerAndReenable(t *testing.T) {
 		t.Fatal(err)
 	}
 	status.Store(204)
-	if err := worker.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, f.app, worker)
 	if calls.Load() != 2 {
 		t.Fatalf("old job revived: %d", calls.Load())
 	}
 	// Enqueue a fresh event through the existing producer boundary.
 	webhooks.NewEnqueuer(f.app.db, f.app.webhookQueue, nil).Enqueue(t.Context(), webhooks.EnqueueInput{OccurredAt: time.Now(), WorkspaceUUID: f.endpoint.WorkspaceUUID, OrganizationUUID: f.endpoint.OrganizationUUID, EventType: "session.status_idled", ResourceID: "sesn_fresh"})
-	if err := worker.RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, f.app, worker)
 	if calls.Load() != 3 {
 		t.Fatalf("fresh delivery count=%d", calls.Load())
 	}

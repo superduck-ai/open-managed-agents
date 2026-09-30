@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -22,7 +21,6 @@ type deliveryStore interface {
 	RecordWebhookDeliveryFailure(context.Context, string, string, string, bool, time.Duration) (bool, error)
 }
 
-// Worker processes bounded batches. Each instance owns at most one active batch.
 type Worker struct {
 	database deliveryStore
 	queue    *Queue
@@ -34,57 +32,39 @@ func NewWorker(database *db.DB, queue *Queue, cfg config.WebhookConfig, logger *
 	return &Worker{database: database, queue: queue, cfg: cfg, logger: logging.LoggerOrDefault(logger)}
 }
 
-// Start returns an idempotent stop function which cancels and waits before the
-// shared NATS connection or database may be closed, including startup failures.
-func (w *Worker) Start(ctx context.Context) func() {
+func (w *Worker) Start(ctx context.Context) (func(), error) {
 	if !w.cfg.WorkerEnabled {
-		return func() {}
+		return func() {}, nil
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	runtime := newWorkerRuntime(ctx, w)
+	for index := range runtime.sessions {
+		session, err := runtime.consume(index)
+		if err != nil {
+			runtime.stop()
+			return nil, err
+		}
+		runtime.sessions[index] = session
+	}
+	for index, session := range runtime.sessions {
+		runtime.pending.Go(func() { runtime.runSession(index, session) })
+	}
 	go func() {
-		defer close(done)
-		for ctx.Err() == nil {
-			if err := w.RunOnce(ctx); err != nil && ctx.Err() == nil {
-				w.logger.ErrorContext(ctx, "webhook consumption failed", "error", err)
-				timer := time.NewTimer(time.Second)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-				}
-			}
+		select {
+		case <-runtime.ctx.Done():
+			runtime.stop()
+		case <-runtime.done:
 		}
 	}()
-	return func() { cancel(); <-done }
-}
-
-func (w *Worker) RunOnce(ctx context.Context) error {
-	timeout := webhookTimeout(w.cfg)
-	ctx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
-	defer cancel()
-	fetchCtx, stopFetch := context.WithTimeout(ctx, time.Second)
-	defer stopFetch()
-	batch, err := w.queue.consumer.Fetch(defaultBatchSize, jetstream.FetchContext(fetchCtx))
-	if err != nil {
-		return err
-	}
-	transport := newDeliveryTransport(ctx, w.cfg.AllowInsecure, timeout)
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	var pending sync.WaitGroup
-	for msg := range batch.Messages() {
-		pending.Go(func() { w.processMessage(ctx, client, msg) })
-	}
-	pending.Wait()
-	if err := batch.Error(); err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, jetstream.ErrNoMessages) {
-		return err
-	}
-	return ctx.Err()
+	return runtime.stop, nil
 }
 
 func (w *Worker) processMessage(ctx context.Context, client *http.Client, msg jetstream.Msg) {
+	if ctx.Err() != nil {
+		return
+	}
 	var envelope Envelope
 	if len(msg.Data()) > maxMessageBytes || json.Unmarshal(msg.Data(), &envelope) != nil {
 		w.logger.WarnContext(ctx, "invalid webhook envelope")
@@ -117,6 +97,9 @@ func (w *Worker) processMessage(ctx context.Context, client *http.Client, msg je
 	if err == nil {
 		err = deliver(ctx, client, destination, envelope.Event)
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	terminal := w.recordResult(ctx, envelope, err)
 	if err == nil || terminal {
 		w.finish(ctx, msg)
@@ -144,6 +127,9 @@ func (w *Worker) recordResult(ctx context.Context, envelope Envelope, deliveryEr
 }
 
 func (w *Worker) finish(ctx context.Context, msg jetstream.Msg) {
+	if ctx.Err() != nil {
+		return
+	}
 	if err := msg.DoubleAck(ctx); err != nil {
 		w.logger.ErrorContext(ctx, "webhook acknowledgment failed", "error", err)
 	}

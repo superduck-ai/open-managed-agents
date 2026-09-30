@@ -145,3 +145,10 @@ func webhookFailureDisableAfter(cfg config.WebhookConfig) time.Duration {
 	}
 	return cfg.FailureDisableAfter
 }
+
+func webhookConcurrency(cfg config.WebhookConfig) int {
+	if cfg.Concurrency <= 0 {
+		return 10
+	}
+	return cfg.Concurrency
+}

@@ -217,9 +217,7 @@ func assertDeploymentWebhookTotal(t *testing.T, app *testApp, want int) {
 
 func assertWebhookDeliveries(t *testing.T, app *testApp, endpoint webhookAPIResponse, received chan capturedWebhookRequest, expected map[string]int, inspectors ...func(*testing.T, []byte)) {
 	t.Helper()
-	if err := webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil).RunOnce(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	drainWebhookQueue(t, app, webhooks.NewWorker(app.db, app.webhookQueue, app.cfg.Webhook, nil))
 	sdk := anthropic.NewClient(option.WithWebhookKey(*endpoint.SigningSecret), option.WithAPIKey(defaultTestKey))
 	scope, err := app.db.GetWorkspaceIdentifiers(t.Context(), getDefaultDBIDs(t, app.pool).WorkspaceUUID)
 	if err != nil {

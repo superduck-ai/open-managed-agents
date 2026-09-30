@@ -97,7 +97,7 @@ func TestDeliveryTransportDirectTLS(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	transport := newDeliveryTransport(t.Context(), false, time.Second)
+	transport := newDeliveryTransport(t.Context(), false, time.Second, 10)
 	defer transport.CloseIdleConnections()
 	if transport.Proxy != nil || transport.TLSClientConfig != nil && transport.TLSClientConfig.InsecureSkipVerify {
 		t.Fatal("unsafe transport")
@@ -162,7 +162,7 @@ func TestDeliveryDialerCancellation(t *testing.T) {
 }
 
 func TestDeliverPreservesAddressRejection(t *testing.T) {
-	transport := newDeliveryTransport(t.Context(), false, time.Second)
+	transport := newDeliveryTransport(t.Context(), false, time.Second, 10)
 	defer transport.CloseIdleConnections()
 	d := deliveryDialer{lookup: func(context.Context, string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("10.1.2.3")}}, nil

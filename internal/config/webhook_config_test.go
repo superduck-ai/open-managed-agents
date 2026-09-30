@@ -102,3 +102,34 @@ func TestWebhookRetiredConfigurationRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestWebhookConcurrencyConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml string
+		want       int
+		invalid    bool
+	}{
+		{"zero", "webhook:\n  concurrency: 0\n", 0, true},
+		{"negative", "webhook:\n  concurrency: -1\n", 0, true},
+		{"default", "", 10, false},
+		{"one", "webhook:\n  concurrency: 1\n", 1, false},
+		{"custom", "webhook:\n  concurrency: 20\n", 20, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepareLoadTest(t)
+			cfg, err := loadConfigTestYAML(t, tc.yaml)
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), "webhook.concurrency must be greater than zero") {
+					t.Fatalf("concurrency validation error=%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Webhook.Concurrency != tc.want {
+				t.Fatalf("concurrency=%d want=%d", cfg.Webhook.Concurrency, tc.want)
+			}
+		})
+	}
+}

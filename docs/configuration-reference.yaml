@@ -162,6 +162,7 @@ observability:
       timeout: 15s
 
 webhook:
+  concurrency: 10
   # Delivery uses workspace subscriptions only. Set false to pause this instance.
   worker_enabled: true
   timeout: 10s

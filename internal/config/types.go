@@ -237,6 +237,7 @@ type ObservabilityOTLPConfig struct {
 }
 
 type WebhookConfig struct {
+	Concurrency         int           `yaml:"concurrency"`
 	WorkerEnabled       bool          `yaml:"worker_enabled"`
 	Timeout             time.Duration `yaml:"timeout"`
 	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`

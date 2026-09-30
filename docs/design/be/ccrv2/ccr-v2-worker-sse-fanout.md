@@ -122,6 +122,7 @@ Session 与 Thread SSE 对持久化事件写入 `id: <event.id>`，使用公开�
 各自拥有一对 start/end；工具执行和整轮 `result` 不属于同一次模型请求。
 start 写入失败时不转发上游请求；生命周期事件的写入错误必须返回调用方，不能静默跳过。
 普通 `system`（init、hook 等）和成功 `result` 不生成公开消息；显式 `system.message` 仍保留。
+Worker `assistant.error` 非空时，该消息属于 API 错误诊断，不映射为公开 `agent.message` 或 `agent.thinking`；失败仍由 `result(is_error=true)` 的安全错误与结束事件表达。正常 assistant 消息不按文本内容过滤。
 `system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败、终止或用户停止（`stopped`）时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
 失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。`exhausted` 已明确本轮失败，因此紧随错误生成 `session.status_idle`，其 `stop_reason.type` 为 `retries_exhausted`；错误和结束事件在同一公开事件事务中写入。结束事件使用由原 result UUID 和固定 suffix 派生的稳定 ID，重投不会再次结束下一轮。成功 `result` 仍只作为诊断汇总，不驱动状态。
 
@@ -140,6 +141,8 @@ sequenceDiagram
 ```
 
 同一回合后续普通 Worker idle 保留最近的 `retries_exhausted`，不能改回 `end_turn`。仅线程已处于 idle 时读取历史原因，正常 running → idle 不增加历史查询；批次内每个成功写入的主线程状态同步更新事务中的线程快照，后续事件按新状态判断。新一轮 running 是原因继承的边界，下一轮正常 idle 仍为 `end_turn`。若 Worker idle 先于失败 result，先前 idle 事实保持不可变，失败结果另写原因更正的 idle 事件；累计 usage 不重复写入。当前 Worker 协议不提供回合标识，首次到达且没有源时间的结果按接收时间归属；携带早于最近线程 running/rescheduled 时间的失败结束事件不会改写新一轮状态。要完全区分跨轮乱序的首次无时间结果，需要 Worker 提供回合标识，不能由服务端猜测。
+
+失败结果可能在普通 idle 之前生成、之后才提交。更正的 thread/session idle 在完成原始源时间的跨回合校验后，将 `processed_at` 提升到至少为该线程最近状态的处理时间。历史按 `(processed_at, id)` 排序，同时间按写入顺序排列，因此旧 idle 在前、更正在后；不会因源时间较早而让历史最终原因退回 `end_turn`。原 idle 和错误事件保持不可变。此时间调整只发生在失败更正路径，正常 running → idle 不增加查询。
 
 失败结束在 Session → Worker 锁内清除该线程的有效待确认工具 metadata，主线程同时清除 requires_action_details；其他线程请求及无关 metadata 保留。清理和错误、状态写入共用 Yourbatis 事务。其他线程仍有有效待确认请求时，整体 Session idle 仍可使用 requires_action 原因；其他线程仍运行时，不提前生成整体 Session idle。
 内部 transcript 入口保持不变；不会把 stdout 诊断写入恢复用 transcript。未单独上报到内部入口的
@@ -237,7 +240,7 @@ SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_
 Claude Code 2.1.251 和 2.1.278 的独立假网关验证确认了上述 header/task/message 关联；
 这不等同于 Linux sandbox 与真实模型供应商的完整 E2E。
 
-`tests/session_worker_status_test.go` 验证初始化/重复 idle、Worker 重注册、结束发布重试，以及正常 idle 去重、失败与 idle 的并发/乱序、更正原因后重投幂等、仅一次 usage、下一轮清除失败原因、迟到结果和失败工具请求清理；同时覆盖真实 SSE 与历史的主线程状态顺序、公开诊断过滤和审批原因。
+`tests/session_worker_status_test.go` 验证初始化/重复 idle、Worker 重注册、结束发布重试，以及正常 idle 去重、失败与 idle 的并发/乱序、更正原因后重投幂等、仅一次 usage、下一轮清除失败原因、迟到结果和失败工具请求清理；同时覆盖真实 SSE 与历史的主线程状态顺序、公开诊断过滤和审批原因。失败源时间早于已提交 idle 的回归用例同时检查 thread/session 历史正序、倒序和重投，确保最后原因均为 `retries_exhausted`；mapper 测试检查 assistant 错误诊断不会生成公开内容。
 
 ## 累计用量与线程状态
 

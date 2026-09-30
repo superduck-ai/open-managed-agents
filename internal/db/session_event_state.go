@@ -57,7 +57,7 @@ func sessionStatusEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 		}
 	}
 	if status == "idle" {
-		reason, apply, err := resolveIdleStopReasonTx(ctx, executor, session, thread, source, payload.StopReason)
+		reason, apply, err := resolveIdleStopReasonTx(ctx, executor, session, thread, &source, payload.StopReason)
 		if err != nil || !apply {
 			return nil, err
 		}
@@ -142,7 +142,7 @@ func clearExhaustedToolRequestsTx(ctx context.Context, executor yourbatis.Execut
 	return metadata, nil
 }
 
-func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, session Session, thread SessionThread, source SessionEvent, reason *sessionStopReason) (*sessionStopReason, bool, error) {
+func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, session Session, thread SessionThread, source *SessionEvent, reason *sessionStopReason) (*sessionStopReason, bool, error) {
 	if reason != nil && reason.Type != "end_turn" && reason.Type != "retries_exhausted" {
 		return reason, true, nil
 	}
@@ -151,6 +151,15 @@ func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, s
 		start, found, err := mapper.FindLatestTurnStart(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
 		if err != nil || (found && source.ProcessedAt.Before(start.ProcessedAt)) {
 			return nil, false, err
+		}
+		if thread.Status == "idle" {
+			previous, found, err := mapper.FindLatestStatus(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
+			if err != nil {
+				return nil, false, err
+			}
+			if found && source.ProcessedAt.Before(previous.ProcessedAt) {
+				source.ProcessedAt = previous.ProcessedAt
+			}
 		}
 		return reason, true, nil
 	}

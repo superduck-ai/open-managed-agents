@@ -122,7 +122,7 @@ Session 与 Thread SSE 对持久化事件写入 `id: <event.id>`，使用公开�
 各自拥有一对 start/end；工具执行和整轮 `result` 不属于同一次模型请求。
 start 写入失败时不转发上游请求；生命周期事件的写入错误必须返回调用方，不能静默跳过。
 普通 `system`（init、hook 等）和成功 `result` 不生成公开消息；显式 `system.message` 仍保留。
-Worker `assistant.error` 非空时，该消息属于 API 错误诊断，不映射为公开 `agent.message` 或 `agent.thinking`；失败仍由 `result(is_error=true)` 的安全错误与结束事件表达。正常 assistant 消息不按文本内容过滤。
+Worker `assistant.error` 非空或 `is_api_error_message: true` 时，该消息属于 API 错误诊断，不映射为公开 `agent.message` 或 `agent.thinking`；失败仍由 `result(is_error=true)` 的安全错误与结束事件表达。正常 assistant 消息不按文本内容过滤。
 `system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败、终止或用户停止（`stopped`）时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
 失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。`exhausted` 已明确本轮失败，因此紧随错误生成 `session.status_idle`，其 `stop_reason.type` 为 `retries_exhausted`；错误和结束事件在同一公开事件事务中写入。结束事件使用由原 result UUID 和固定 suffix 派生的稳定 ID，重投不会再次结束下一轮。成功 `result` 仍只作为诊断汇总，不驱动状态。
 

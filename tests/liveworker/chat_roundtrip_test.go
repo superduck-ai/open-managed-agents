@@ -31,7 +31,15 @@ type chatEvent struct {
 		ID string `json:"id"`
 	} `json:"event"`
 	EventID string `json:"event_id"`
-	Delta   struct {
+	Error   struct {
+		RetryStatus struct {
+			Type string `json:"type"`
+		} `json:"retry_status"`
+	} `json:"error"`
+	StopReason struct {
+		Type string `json:"type"`
+	} `json:"stop_reason"`
+	Delta struct {
 		Content struct {
 			Text string `json:"text"`
 		} `json:"content"`

@@ -74,7 +74,7 @@ func doctor(ctx context.Context, root, worker, selected string) (doctorResult, e
 	if err != nil {
 		return result, err
 	}
-	if selected == "chat.public" || selected == "files.generated" || selected == "memory.mounts" {
+	if selected == "chat.public" || selected == "chat.upstream-errors" || selected == "files.generated" || selected == "memory.mounts" {
 		if _, err := doctorProbe(ctx, root, result.Images["worker"], true); err != nil {
 			return result, fmt.Errorf("Docker sandbox requires usable FUSE, SYS_ADMIN and AppArmor configuration: %w", err)
 		}

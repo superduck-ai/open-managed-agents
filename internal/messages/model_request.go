@@ -86,6 +86,12 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 	defer response.Body.Close()
 	if request != nil {
 		observation.result.UpstreamRequestID = response.Header.Get("Request-Id")
+		if response.StatusCode == http.StatusUnauthorized {
+			observation.result.ErrorType = "http_error"
+			w.Header().Set("X-Should-Retry", "false")
+			httpapi.WriteError(w, r, upstreamAuthenticationRejectedError())
+			return
+		}
 		w.Header().Del("Request-Id")
 		response.Header.Set("Request-Id", request.StartID)
 		observation.streaming = strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")

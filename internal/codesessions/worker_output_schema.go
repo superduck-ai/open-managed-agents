@@ -56,6 +56,7 @@ type workerOutputCommonPayload struct {
 
 type workerAssistantOutputPayload struct {
 	Error             string              `json:"error"`
+	IsAPIErrorMessage bool                `json:"is_api_error_message"`
 	ParentToolUseID   string              `json:"parent_tool_use_id"`
 	RequestID         string              `json:"request_id"`
 	Type              string              `json:"type"`

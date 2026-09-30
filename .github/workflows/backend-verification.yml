@@ -45,7 +45,7 @@ jobs:
           go build -o tmp/bin/verify-be ./cmd/verify-be
       - name: Verify chat behavior and reliability
         run: |
-          for scenario in roundtrip tools reliability instances public; do
+          for scenario in roundtrip tools reliability instances public upstream-errors; do
             tmp/bin/verify-be chat "$scenario"
           done
       - name: Verify Memory mounts and sandbox lifetime

@@ -44,6 +44,7 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 			}
 			if inserted {
 				created = append(created, stored)
+				trackPrimaryThreadStatus(&primary, next)
 			}
 		}
 	}
@@ -119,6 +120,7 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 			}
 			if inserted {
 				created = append(created, stored)
+				trackPrimaryThreadStatus(&primary, next)
 			}
 		}
 	}

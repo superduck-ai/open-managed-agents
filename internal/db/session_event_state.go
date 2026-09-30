@@ -154,6 +154,9 @@ func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, s
 		}
 		return reason, true, nil
 	}
+	if thread.Status != "idle" {
+		return reason, true, nil
+	}
 	previous, found, err := mapper.FindLatestStatus(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
 	if err != nil || !found {
 		return reason, true, err
@@ -169,6 +172,13 @@ func resolveIdleStopReasonTx(ctx context.Context, executor yourbatis.Executor, s
 		return status.StopReason, true, nil
 	}
 	return reason, true, nil
+}
+
+func trackPrimaryThreadStatus(primary *SessionThread, event SessionEvent) {
+	status, ok := maevents.ThreadStatus(event.EventType)
+	if ok && (event.StatusThreadID == "" || event.StatusThreadID == primary.ExternalID) {
+		primary.Status = status
+	}
 }
 
 func sessionStatusAfterThread(threads []sessionThreadRow, threadID, status string) string {

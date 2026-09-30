@@ -139,7 +139,7 @@ sequenceDiagram
     API->>PG: 沿用本轮失败原因，去重
 ```
 
-同一回合后续普通 Worker idle 保留最近的 `retries_exhausted`，不能改回 `end_turn`。新一轮 running 是原因继承的边界，下一轮正常 idle 仍为 `end_turn`。若 Worker idle 先于失败 result，先前 idle 事实保持不可变，失败结果另写原因更正的 idle 事件；累计 usage 不重复写入。当前 Worker 协议不提供回合标识，首次到达且没有源时间的结果按接收时间归属；携带早于最近线程 running/rescheduled 时间的失败结束事件不会改写新一轮状态。要完全区分跨轮乱序的首次无时间结果，需要 Worker 提供回合标识，不能由服务端猜测。
+同一回合后续普通 Worker idle 保留最近的 `retries_exhausted`，不能改回 `end_turn`。仅线程已处于 idle 时读取历史原因，正常 running → idle 不增加历史查询；批次内每个成功写入的主线程状态同步更新事务中的线程快照，后续事件按新状态判断。新一轮 running 是原因继承的边界，下一轮正常 idle 仍为 `end_turn`。若 Worker idle 先于失败 result，先前 idle 事实保持不可变，失败结果另写原因更正的 idle 事件；累计 usage 不重复写入。当前 Worker 协议不提供回合标识，首次到达且没有源时间的结果按接收时间归属；携带早于最近线程 running/rescheduled 时间的失败结束事件不会改写新一轮状态。要完全区分跨轮乱序的首次无时间结果，需要 Worker 提供回合标识，不能由服务端猜测。
 
 失败结束在 Session → Worker 锁内清除该线程的有效待确认工具 metadata，主线程同时清除 requires_action_details；其他线程请求及无关 metadata 保留。清理和错误、状态写入共用 Yourbatis 事务。其他线程仍有有效待确认请求时，整体 Session idle 仍可使用 requires_action 原因；其他线程仍运行时，不提前生成整体 Session idle。
 内部 transcript 入口保持不变；不会把 stdout 诊断写入恢复用 transcript。未单独上报到内部入口的

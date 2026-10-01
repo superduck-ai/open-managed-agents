@@ -4,8 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
 func TestLocalSandboxAPIRejectsUnownedResources(t *testing.T) {
@@ -79,5 +84,37 @@ func TestLocalSandboxAPIOwnedLifecycle(t *testing.T) {
 	data, err := os.ReadFile(calls)
 	if err != nil || !strings.Contains(string(data), "rm -f oma-public-0-1") {
 		t.Fatalf("owned sandbox deletion: calls=%s error=%v", data, err)
+	}
+}
+
+func TestLocalSandboxConfigSupportsProviderRenewal(t *testing.T) {
+	fakeDocker(t)
+	directory := t.TempDir()
+	env := newEnvironment(directory, directory, "0")
+	env.publicSandbox = true
+	defer env.close()
+	if err := env.writeConfig(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		E2B struct {
+			APIKey     string `json:"api_key"`
+			APIURL     string `json:"api_url"`
+			SandboxURL string `json:"sandbox_url"`
+		} `json:"e2b"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider := e2bruntime.NewProvider(config.E2BConfig{
+		APIKey: cfg.E2B.APIKey, APIURL: cfg.E2B.APIURL, SandboxURL: cfg.E2B.SandboxURL,
+		RequestTimeout: time.Second,
+	})
+	if err := provider.SetTimeout(t.Context(), "oma-public-0-1", time.Minute); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -91,7 +91,7 @@ func (e *environment) writeConfig(ctx context.Context) error {
 	}
 	if e.publicSandbox {
 		e.sandboxAPI = newLocalSandboxAPI(e.runID)
-		config["e2b"] = map[string]any{"api_key": "e2b_local_verification_only", "api_url": e.sandboxAPI.URL, "sandbox_url": e.sandboxAPI.URL}
+		config["e2b"] = map[string]any{"api_key": "e2b_0000000000000000000000000000000000000000", "api_url": e.sandboxAPI.URL, "sandbox_url": e.sandboxAPI.URL}
 	}
 	if e.files {
 		storage := config["storage"].(map[string]any)

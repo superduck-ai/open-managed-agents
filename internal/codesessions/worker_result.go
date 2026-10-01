@@ -60,13 +60,14 @@ func (r *interruptedModelResult) observe(event db.SessionEvent) (bool, error) {
 			if err := json.Unmarshal(event.Payload, &end); err != nil {
 				return false, fmt.Errorf("decode model request end: %w", err)
 			}
-			if end.Error == nil || end.Error.Type != "cancelled" || end.StartID == "" {
+			if end.Error == nil || end.StartID == "" ||
+				(end.Error.Type != "cancelled" && (end.Error.Type != "http_error" || !r.interrupted)) {
 				return true, nil
 			}
 			r.end = &end
 		}
 	case "user.interrupt":
-		if r.end != nil && !r.matched {
+		if !r.matched {
 			r.interrupted = true
 		}
 	case "span.model_request_start":

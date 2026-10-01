@@ -165,6 +165,9 @@ export function AgentSelectField({
                     type="button"
                     variant="ghost"
                     size="sm"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.stopPropagation();
+                    }}
                     onClick={() => (query.isFetchNextPageError ? loadMore() : void query.refetch())}
                   >
                     {msg('common.retry', 'Retry')}
@@ -172,7 +175,15 @@ export function AgentSelectField({
                 </div>
               )}
               {!query.isError && !searching && query.hasNextPage && !query.isFetching && (
-                <Button type="button" variant="ghost" className="w-full" onClick={loadMore}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.stopPropagation();
+                  }}
+                  onClick={loadMore}
+                >
                   {msg('managedAgents.agentPicker.more', 'Load more')}
                 </Button>
               )}

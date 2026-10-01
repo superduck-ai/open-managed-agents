@@ -112,3 +112,26 @@ test('finds an agent by exact ID without a name search request', async () => {
   await screen.findByText('Later agent');
   expect(requests).toEqual(['/v1/agents', '/v1/agents/' + last.id]);
 });
+
+for (const failed of [false, true]) {
+  test(`Enter on ${failed ? 'Retry' : 'Load more'} preserves button activation without selecting an agent`, async () => {
+    let requests = 0;
+    globalThis.fetch = async () => {
+      requests++;
+      if (failed && requests === 1)
+        return jsonResponse(JSON.stringify({ error: { type: 'invalid_request_error', message: 'Test failure' } }), {
+          status: 400,
+        });
+      return jsonResponse(JSON.stringify({ data: [first], next_page: requests === 1 ? 'next' : null }));
+    };
+    const selected = mountPicker();
+    const button = await screen.findByRole('button', { name: failed ? 'Retry' : 'Load more' });
+    button.focus();
+    expect(fireEvent.keyDown(button, { key: 'Enter', code: 'Enter' })).toBe(true);
+    expect(selected).toEqual([]);
+    expect(screen.getByPlaceholderText('Search by name or agent ID...')).toBeTruthy();
+    fireEvent.click(button);
+    await waitFor(() => expect(requests).toBe(2));
+    expect(selected).toEqual([]);
+  });
+}

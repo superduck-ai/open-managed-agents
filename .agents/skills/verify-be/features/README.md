@@ -3,7 +3,7 @@
 | User symptom | Map | Runnable coverage |
 | --- | --- | --- |
 | Sending a message produces no reply | [Roundtrip](roundtrip.md) | `chat roundtrip` |
-| Upstream authentication failure leaves a chat running | [Upstream errors](upstream-errors.md) | `chat upstream-errors` |
+| Upstream authentication failure or interruption during retry backoff ends incorrectly | [Upstream errors](upstream-errors.md) | `chat upstream-errors` |
 | A reply disappears after reopening | [History](history.md) | Successful-turn history in `chat.roundtrip`; mid-stream interruption in `chat.reliability` |
 | Tool approval or rejection behaves incorrectly | [Tools](tools.md) | `chat tools` through the official Go SDK |
 | Busy rejection, idle retry or replacement Worker behaves incorrectly | [Recovery](recovery.md) | `chat reliability` |

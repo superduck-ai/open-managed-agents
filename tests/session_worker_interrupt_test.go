@@ -19,12 +19,19 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 		subtype   string
 		newTurn   bool
 		idleFirst bool
+		backoff   bool
+		retry     bool
 		want      string
 	}{
 		{name: "connection cancelled without interrupt", errorType: "cancelled", want: "retries_exhausted"},
 		{name: "upstream failure after interrupt", interrupt: true, errorType: "http_error", want: "retries_exhausted"},
 		{name: "budget exhausted after interrupt", interrupt: true, errorType: "cancelled", subtype: "error_max_budget_usd", want: "retries_exhausted"},
 		{name: "previous turn interrupted", interrupt: true, errorType: "cancelled", newTurn: true, want: "retries_exhausted"},
+		{name: "backoff interrupt previous turn", interrupt: true, errorType: "http_error", backoff: true, newTurn: true, want: "retries_exhausted"},
+		{name: "backoff interrupt budget exhausted", interrupt: true, errorType: "http_error", backoff: true, subtype: "error_max_budget_usd", want: "retries_exhausted"},
+		{name: "new request after backoff interrupt", interrupt: true, errorType: "http_error", backoff: true, retry: true, want: "retries_exhausted"},
+		{name: "backoff interrupt result before idle", interrupt: true, errorType: "http_error", backoff: true, want: "end_turn"},
+		{name: "backoff interrupt result after idle", interrupt: true, errorType: "http_error", backoff: true, idleFirst: true, want: "end_turn"},
 		{name: "interrupt result before idle", interrupt: true, errorType: "cancelled", subtype: "error_during_execution", want: "end_turn"},
 		{name: "interrupt result after idle", interrupt: true, errorType: "cancelled", idleFirst: true, want: "end_turn"},
 	} {
@@ -42,6 +49,17 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			endRequest := func() {
+				if err := service.EndModelRequest(t.Context(), request, codesessions.ModelRequestResult{
+					EndedAt: time.Now().UTC(), ErrorType: scenario.errorType,
+					Usage: codesessions.ModelRequestUsage{InputTokens: new(int64(9)), OutputTokens: new(int64(1))},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario.backoff {
+				endRequest()
+			}
 			if scenario.interrupt {
 				resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+record.SessionExternalID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.interrupt"}]}`), defaultTestKey, true)
 				resp.Body.Close()
@@ -49,11 +67,15 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 					t.Fatalf("interrupt status = %d", resp.StatusCode)
 				}
 			}
-			if err := service.EndModelRequest(t.Context(), request, codesessions.ModelRequestResult{
-				EndedAt: time.Now().UTC(), ErrorType: scenario.errorType,
-				Usage: codesessions.ModelRequestUsage{InputTokens: new(int64(9)), OutputTokens: new(int64(1))},
-			}); err != nil {
-				t.Fatal(err)
+			if !scenario.backoff {
+				endRequest()
+			}
+			if scenario.retry {
+				request, err = service.BeginModelRequest(t.Context(), record.WorkspaceUUID, record.SessionExternalID, record.ExternalID, "", "model-mock")
+				if err != nil {
+					t.Fatal(err)
+				}
+				endRequest()
 			}
 			if scenario.newTurn {
 				workerState("idle")
@@ -64,6 +86,11 @@ func TestSessionWorkerInterruptedResult(t *testing.T) {
 			}
 			result := internalPayloadRequest(epoch, fmt.Sprintf(`{"type":"result","uuid":"interrupted-result","is_error":true,"subtype":%q}`, scenario.subtype))
 			postCodeSessionWorkerEvents(t, app, record.ExternalID, result)
+			if scenario.want == "end_turn" && !scenario.idleFirst {
+				if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "running" {
+					t.Fatalf("result ended session before Worker idle: %s", status)
+				}
+			}
 			workerState("idle")
 			if status := retrieveSession(t, app, record.SessionExternalID, defaultTestKey).Status; status != "idle" {
 				t.Fatalf("session status = %s, want idle", status)

@@ -14,19 +14,6 @@ import (
 // re-sealed. It is bound into the AAD so an attacker cannot swap versions.
 const envelopeFormatVersion = 1
 
-var (
-	// ErrUnknownEnvelopeFormat is returned when an envelope carries an
-	// unsupported format version. Fails closed; no plaintext fallback.
-	ErrUnknownEnvelopeFormat = errors.New("secrets: unknown envelope format")
-	// ErrKeyProviderMismatch is returned when an envelope was sealed by a
-	// different provider than the active one.
-	ErrKeyProviderMismatch = errors.New("secrets: envelope key provider mismatch")
-	// ErrIncompleteBinding is returned when any AAD binding field is empty.
-	// Sealing with an incomplete binding would produce ciphertext that cannot
-	// be opened once the real identity fields are filled in.
-	ErrIncompleteBinding = errors.New("secrets: binding fields must be non-empty")
-)
-
 // Binding is the per-credential context bound into the authenticated associated
 // data (AAD). All four fields are required and non-empty. A ciphertext moved to
 // another org/workspace/vault/credential fails to decrypt, so a stolen row is
@@ -64,12 +51,17 @@ type Envelope struct {
 // holds no plaintext or DEK between calls; Seal/Open materialize a DEK only for
 // the duration of one operation and wipe it before returning.
 type Service struct {
-	provider KeyProvider
+	writeProvider KeyProvider
+	readProviders map[string]KeyProvider
 }
 
-// NewService returns a Service backed by the given provider.
-func NewService(provider KeyProvider) *Service {
-	return &Service{provider: provider}
+func NewService(writer KeyProvider, readers ...KeyProvider) *Service {
+	providers := make(map[string]KeyProvider, len(readers)+1)
+	for _, reader := range readers {
+		providers[reader.Name()] = reader
+	}
+	providers[writer.Name()] = writer
+	return &Service{writeProvider: writer, readProviders: providers}
 }
 
 // Seal encrypts plaintext under a fresh one-time DEK and returns the envelope.
@@ -122,7 +114,7 @@ func (s *Service) sealWithAAD(ctx context.Context, plaintext, aad []byte) (Envel
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: generate nonce: %w", err)
 	}
-	wrapped, err := s.provider.WrapDEK(ctx, dek)
+	wrapped, err := s.writeProvider.WrapDEK(ctx, dek)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: wrap DEK: %w", err)
 	}
@@ -131,7 +123,7 @@ func (s *Service) sealWithAAD(ctx context.Context, plaintext, aad []byte) (Envel
 		Nonce:         nonce,
 		WrappedDEK:    wrapped.Ciphertext,
 		FormatVersion: envelopeFormatVersion,
-		KeyProvider:   s.provider.Name(),
+		KeyProvider:   s.writeProvider.Name(),
 		KeyVersion:    wrapped.KeyVersion,
 	}, nil
 }
@@ -140,14 +132,18 @@ func (s *Service) openWithAAD(ctx context.Context, envelope Envelope, aad []byte
 	if envelope.FormatVersion != envelopeFormatVersion {
 		return nil, fmt.Errorf("%w: %d", ErrUnknownEnvelopeFormat, envelope.FormatVersion)
 	}
-	if envelope.KeyProvider != s.provider.Name() {
-		return nil, fmt.Errorf("%w: envelope %q, active %q", ErrKeyProviderMismatch, envelope.KeyProvider, s.provider.Name())
+	provider, ok := s.readProviders[envelope.KeyProvider]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrKeyProviderUnavailable, envelope.KeyProvider)
 	}
-	dek, err := s.provider.UnwrapDEK(ctx, WrappedKey{Ciphertext: envelope.WrappedDEK, KeyVersion: envelope.KeyVersion})
+	dek, err := provider.UnwrapDEK(ctx, WrappedKey{Ciphertext: envelope.WrappedDEK, KeyVersion: envelope.KeyVersion})
+	defer clear(dek)
 	if err != nil {
 		return nil, err
 	}
-	defer clear(dek)
+	if len(dek) != 32 {
+		return nil, errors.New("secrets: unwrapped DEK must be 32 bytes")
+	}
 	gcm, err := newAESGCM(dek)
 	if err != nil {
 		return nil, err

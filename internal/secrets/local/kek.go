@@ -1,6 +1,7 @@
-package secrets
+package local
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -17,17 +18,17 @@ func ResolveKEK(base64KEK, kekFile string) ([]byte, error) {
 	kekFile = strings.TrimSpace(kekFile)
 	switch {
 	case base64KEK != "" && kekFile != "":
-		return nil, errors.New("secrets: configure at most one of vault.master_key.kek or kek_file")
+		return nil, errors.New("secrets: configure at most one of vault.master_key.local.kek or kek_file")
 	case base64KEK != "":
-		return decodeKEK(base64KEK, "vault.master_key.kek")
+		return decodeKEK(base64KEK, "vault.master_key.local.kek")
 	case kekFile != "":
 		data, err := os.ReadFile(kekFile)
 		if err != nil {
-			return nil, fmt.Errorf("secrets: read vault.master_key.kek_file: %w", err)
+			return nil, fmt.Errorf("secrets: read vault.master_key.local.kek_file: %w", err)
 		}
-		return decodeKEK(string(data), "vault.master_key.kek_file")
+		return decodeKEK(string(data), "vault.master_key.local.kek_file")
 	default:
-		return nil, errors.New("secrets: vault.master_key.kek or kek_file is required")
+		return nil, errors.New("secrets: vault.master_key.local.kek or kek_file is required")
 	}
 }
 
@@ -46,8 +47,8 @@ func decodeKEK(value, source string) ([]byte, error) {
 // generation helpers. Production and local servers must load a configured KEK
 // from vault.master_key; there is no process-scoped ephemeral startup fallback.
 func GenerateKEK() ([]byte, error) {
-	kek, err := randomBytes(32)
-	if err != nil {
+	kek := make([]byte, 32)
+	if _, err := rand.Read(kek); err != nil {
 		return nil, fmt.Errorf("secrets: generate KEK: %w", err)
 	}
 	return kek, nil

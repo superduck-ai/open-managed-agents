@@ -14,10 +14,22 @@ import (
 // unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
 
+// ErrMCPOAuthReauthorizationRequired indicates that the stored OAuth grant can no
+// longer be used. It remains active to keep matching requests fail-closed.
+var ErrMCPOAuthReauthorizationRequired = errors.New("MCP OAuth credentials require reauthorization")
+
+// InjectionPublicMessage exposes the recovery action without leaking private causes.
+func InjectionPublicMessage(err error) string {
+	if errors.Is(err, ErrMCPOAuthReauthorizationRequired) {
+		return ErrMCPOAuthReauthorizationRequired.Error()
+	}
+	return InjectionUnavailablePublicMessage
+}
+
 // ErrInjectionRejected is the MITM MCP inject fail-closed sentinel: the request
 // host is covered by a vault credential but no injectable credential could be used.
 // Transport adapters match with errors.Is and must not invent a second wording
-// for the client-facing message — use InjectionUnavailablePublicMessage.
+// for the client-facing message — use InjectionPublicMessage.
 var ErrInjectionRejected = errors.New("vault credential injection rejected")
 
 // InjectionUnavailablePublicMessage is the client-safe text for MITM 502

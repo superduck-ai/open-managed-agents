@@ -7,7 +7,7 @@
 1. **存库加密（已完成）**：库被拖走、或只有读库权限的人，都拿不到明文密码。
 2. **运行时注入（已完成）**：Managed Agent 出站经 CONNECT MITM 注入 `static_bearer` / `mcp_oauth`，并对 `environment_variable` 做 Egress Secret Substitution；Sandbox 默认看不到真密码。
 
-主密钥放 `config.yaml` / `kek_file`（全局一把，多 workspace 共用）。本地支持 `version` + `decrypt_only`。不做分片；`KeyProvider` 预留以后接 KMS。
+主密钥支持 `local`、`aliyun_kms` 与 `hashicorp_vault` 三种 Provider（部署级配置，多 workspace 共用）。省略 Provider 保持本地 `kek` / `kek_file` 与 `version` + `decrypt_only` 行为。远程模式的主密钥留在阿里云 KMS 或 HashiCorp Vault Transit，OMA 仅发送待封装的数据密钥。
 
 ## 背景
 
@@ -19,45 +19,246 @@ Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Manag
 |---|---|
 | 数据库被偷（备份/磁盘） | 能 |
 | 只有查库权限的人偷看 | 能 |
-| 数据库 + `config.yaml` 一起丢 | 不能。主密钥就在 config 里，以后分片/KMS 再管 |
+| 数据库 + `config.yaml` 一起丢 | 本地模式不能；KMS + RAM 工作负载身份模式下配置没有 CMK 或长期云凭证，攻击者仍需取得 KMS 调用权限。显式 AK 模式若 AK 同时泄漏，不能承诺此保护 |
 | 打进运行中的 OMA 进程 | 不能。本期不解决 |
 | 沙箱里靠 prompt injection 骗 Agent 偷密码 | 加密不管。靠注入设计：沙箱只见占位符 / 原始 MCP URL，真密码只在 MITM 注入瞬态出现 |
 
-加密只覆盖前两行。沙箱偷密走注入（后续）；进程被拿下是运行时加固，另议；config 一起丢是接受的缺口。
+沙箱取密由运行时注入边界约束；KMS 保护静态密钥托管，不防止持有 RAM 权限的运行进程被攻陷。硬件保护和合规等级取决于部署所选 KMS 实例及 CMK 保护级别，接入 SDK 本身不是 HSM 合规证明。
 
 ## 加密方案：信封加密
 
 每条密码用一次性 DEK 加密，DEK 再用 KEK 包一层一起存。
 
-信封布局预留了“将来只 rewrap DEK、不必重加密业务密文”的空间（AAD 不绑 KEK version）。**本期本地轮换不做 rewrap**：旧行保留原来的 `wrapped_dek` 与 `key_version`；换主密钥后必须把旧 KEK 留在 `decrypt_only`，直到相关凭证被写路径重新 Seal（换新 DEK / 新 `key_version`）。若在仍有旧信封时从 `decrypt_only` 删掉旧钥，Open 会失败，凭证不可用。
+信封布局允许迁移时只重新封装 DEK、不必重加密业务密文（AAD 不绑 KEK version）。**本地版本轮换不自动 rewrap**：旧行保留原来的 `wrapped_dek` 与 `key_version`；换主密钥后必须把旧 KEK 留在 `decrypt_only`，直到相关凭证被写路径重新 Seal（换新 DEK / 新 `key_version`）。若在仍有旧信封时从 `decrypt_only` 删掉旧钥，Open 会失败，凭证不可用。
 
 细节：
 
 - AES-256-GCM，每次新 nonce，带 auth tag。
-- AAD 绑 `organization_uuid` / `workspace_uuid` / `vault_external_id` / `credential_external_id`（长度前缀字符串）；搬走就解不开。四字段均须非空，`Seal`/`Open` 在空或纯空白时直接拒绝，避免封出之后填 ID 就解不开的信封。故意不绑 KEK 版本，以便将来若做 rewrap 时业务密文可不动。
+- AAD 绑 `organization_uuid` / `workspace_uuid` / `vault_external_id` / `credential_external_id`（长度前缀字符串）；搬走就解不开。四字段均须非空，`Seal`/`Open` 在空或纯空白时直接拒绝，避免封出之后填 ID 就解不开的信封。故意不绑 KEK 版本，以便迁移 Provider 时保持业务密文不变。
 - 密文头带 key version，老数据自带“用几号钥匙锁的”。
 - 解不开就报错。不退化明文，不换别的 key 凑合。
 
-## 主密钥
+## 主密钥与 Provider 装配
+
+```mermaid
+flowchart LR
+    Config[配置读取与校验] --> Assembly[secretservice.New]
+    Assembly --> Local[secrets/local.Provider]
+    Assembly --> KMS[secrets/aliyunkms.Provider]
+    KMS --> Cloud[阿里云 KMS HTTPS 私网端点]
+    Assembly --> Transit[secrets/hashicorpvault.Provider]
+    Transit -->|HTTPS| VaultServer[HashiCorp Vault Transit]
+    TokenFile[外部维护 token 文件] --> Transit
+    Assembly --> Service[secrets.Service]
+    Vault[Vault / OAuth / MITM] --> Service
+    Vault --> DB[现有数据库信封列]
+    Service --> Interface[KeyProvider 接口]
+    Interface -.实现.-> Local
+    Interface -.实现.-> KMS
+    Interface -.实现.-> Transit
+```
+
+`internal/secretservice` 是应用装配边界，由 `main.go` 调用。`internal/secrets` 定义通用 `KeyProvider`（`Name`、`WrapDEK`、`UnwrapDEK`），仅处理本地 AES-GCM 和信封；它不导入云 SDK。`internal/secrets/local`、`internal/secrets/aliyunkms` 与 `internal/secrets/hashicorpvault` 是并列的叶子插件，不导入 `vaults`、MITM 或 `db`。Transit 只使用标准库 HTTP/JSON 调用两个接口，不引入登录或 SDK 生命周期；未知 Provider 直接拒绝。
+
+本地 KEK 读取、版本选择和 DEK 封装集中在 `secrets/local`；公共包只保留信封合同、AAD 和加解密流程。公共信封错误位于 `secrets/errors.go`，厂商错误解析仍在各插件中。根目录 `crypto.go` 保留信封加密辅助函数，local 直接使用标准库完成密钥封装；不增加共享子包。`local.New` 不接受 context，调用方以 `secrets.NewService(provider)` 显式组装。`local/provider_test.go` 内的固定旧版信封常量验证解密兼容性，无额外 testdata 目录。
+
+装配所有已配置的 Provider，`master_key.provider` 仅选择新写入使用的 Provider，省略仍默认 `local`。每个配置块都需通过校验，本地密钥与显式 CA 文件在装配时读取；不执行远端加解密探测。读取按信封 `key_provider` 精确选择已配置的 Provider，缺少对应配置或解密失败直接报错，不尝试其他 Provider。远端不可用不影响其他 Provider 的历史数据读取。
+
+### 本地模式与兼容性
 
 ```yaml
 vault:
   master_key:
-    kek: <32 字节, base64>   # 必填（或 kek_file）；dev/prod 均无临时密钥
-    # 以后可换: provider: shamir | kms | openbao
+    provider: local          # 可省略，默认 local
+    local:
+      kek_file: secrets/vault-kek
+      version: 1
 ```
 
-本期从 `config.yaml` 读（与 S3 access key 相同：启动必填，无 ephemeral 兜底），也支持 `_file` 挂载（同 `upstream_proxy_ca_key_file`）。本地可用 `just generate-vault-kek config/secrets/vault-kek` 生成后配置 `kek_file`，或把打印的 base64 写入 `kek`。
+旧配置中直接位于 `master_key` 下的 `kek`、`kek_file`、`version` 和 `decrypt_only` 仍可读取，YAML 入口会将它们归一到 `LocalKeyConfig`，校验、路径解析与 Provider 装配只使用该结构。新旧写法同时出现会报错，即使旧字段为空也不允许混用。序列化和配置示例只输出新格式。
 
-“主密钥从哪来”做成可替换模块：`KeyProvider` + 启动时通用 `Prepare`。主流程不写死读 config。以后要防 config 一起丢，加 Shamir 或 KMS provider 即可；业务密文、DB 字段、对外接口不用动。
+本地 `local.kek` / `local.kek_file` 必须二选一；没有临时随机主密钥兜底。可用 `just generate-vault-kek config/secrets/vault-kek` 生成。本地轮换与 `decrypt_only` 不变。解析后的临时 KEK 字节在复制到 LocalKeyProvider 后清零。
 
-```go
-type KeyProvider interface {
-    Prepare(ctx) error
-    WrapDEK(...) (wrappedDEK, error)
-    UnwrapDEK(...) (dek, error)
-}
+### 阿里云 KMS 模式
+
+```yaml
+vault:
+  master_key:
+    provider: aliyun_kms
+    aliyun_kms:
+      endpoint: kst-example.cryptoservice.kms.aliyuncs.com
+      key_id: acs:kms:cn-hangzhou:1234567890123456:key/key-example
 ```
+
+- `endpoint` 必填，接受域名或 `https://域名`，可带端口或末尾 `/`，末尾 `/` 会归一化为主机地址；不接受 HTTP、用户名、非根路径、查询或 fragment。填写 VPC 可达的 KMS 私网域名；客户端不推导公共端点、不跟随重定向，沿用 SDK 提供的 HTTP Transport，TLS 始终验证证书。DNS、路由和安全组由部署方保证。
+- `key_id` 必填，接受 CMK ID 或 `acs:kms:<region>:<account>:key/<key-id>` ARN，不接受别名。Encrypt 使用指定值；Encrypt / Decrypt 返回的 CMK ID 必须匹配配置。更换 CMK 不会允许旧 CMK 的密文自动解封。
+- 不配置 AK 时优先使用 ACK RRSA：检测 `ALIBABA_CLOUD_OIDC_TOKEN_FILE`、`ALIBABA_CLOUD_OIDC_PROVIDER_ARN`、`ALIBABA_CLOUD_ROLE_ARN`，由官方 Credentials SDK 获取并自动刷新 STS 凭证。部分配置或 OIDC 获取失败直接失败，不改用节点角色。
+- 没有 OIDC 配置时使用 ECS 实例 RAM 角色，由 SDK 从 IMDSv2 自动发现角色并刷新；禁止 IMDSv1 回退。可用 `ALIBABA_CLOUD_ECS_METADATA` 指定角色名。不会读取开发机上的 CLI/profile 凭证，也不会以环境 AK 覆盖工作负载身份。
+- 显式 `access_key_id` 与 `access_key_secret` 必须同时配置；可附加 `security_token` 使用显式 STS 凭证。显式字段优先，静态配置不会自动替换过期的 STS token；生产优先绑定 RAM 角色。长期 AK 仍是敏感访问凭证，不应随配置入库或提交。
+- RAM / CMK policy 最小授权为目标 CMK 的 `kms:Encrypt` 与 `kms:Decrypt`。不需要 DescribeKey 或导出 CMK 权限；实际 Encrypt / Decrypt 失败时请求返回错误。
+- ACK 的 STS 换票是独立网络链路。完全私网部署同时设置 `ALIBABA_CLOUD_STS_REGION=cn-hangzhou` 与 `ALIBABA_CLOUD_VPC_ENDPOINT_ENABLED=true`，并保证对应区域 STS VPC 端点可达；只设置 KMS endpoint 不会改变 STS 的路由。
+- 可保留 `local` 或 `hashicorp_vault` 配置块，用于解密对应的历史信封；新写入仍只使用 `provider` 指定的实现。旧平铺本地密钥字段仍归一到 `local`，可用于历史读取；旧远端配置中的空本地字段及 `version: 0/1` 不启用 Local。
+
+### HashiCorp Vault Transit 模式
+
+```yaml
+vault:
+  master_key:
+    provider: hashicorp_vault
+    hashicorp_vault:
+      address: https://vault.example.com
+      transit_mount: transit  # 可省略，默认 transit
+      key_name: oma-dek
+      token_file: /run/secrets/vault-token
+      # token: <vault-token>  # 与 token_file 二选一
+      # ca_file: /run/certs/vault-ca.pem  # 可选，私有 CA 的 PEM 文件
+```
+
+该域名为部署示例，不是默认地址或已验证的线上端点。如使用反向代理终止 TLS 并路由到 Vault，需保留 `/v1/<transit_mount>/encrypt/<key_name>`、`decrypt/<key_name>` 的路径、请求体与 `X-Vault-Token`；不要把这些请求改写为登录页面、缓存响应或重定向到其他域名。云端使用 HTTPS origin（可带端口）及操作系统/容器的信任库；本地仅对 loopback IP、`localhost` 和 Compose 服务名 `vault` 允许 HTTP，并绕过环境 HTTP 代理；可选的 `ca_file` 在客户端初始化时读取 PEM 证书并追加到该客户端的系统信任根，不修改全局信任库；文件不可读或没有有效证书时装配失败。未配置时只使用系统信任库。证书链和主机名校验始终开启，没有跳过校验选项；CA 文件更新后需重启 OMA。TLS 信任与 OMA 出站 MITM CA 是独立的两条链路。
+
+`address` 和 `key_name` 必填，`token` 与 `token_file` 必须且只能配置一个。`transit_mount` 省略或为空时使用 `transit`，表示 Transit 引擎的 API 挂载路径，支持嵌套 mount（如 `team/transit`）；请求地址为 `/v1/<transit_mount>/encrypt/<key_name>` 或 `decrypt/<key_name>`，`key_name` 是单个路径段。拒绝 traversal、转义路径、查询和 fragment。可保留 Local 和阿里云配置以读取历史信封；Transit 信封失败时不会回退本地或阿里云密钥。
+
+**初始化和认证属于部署层。** 外部先初始化/解封 Vault、启用 Transit、创建 `aes256-gcm96` key（非 derived、非 convergent）、配置 policy 并签发应用 token。OMA 不调用登录、续租、建 key、rotate、export 或 rewrap。Vault Agent 可作为外部 token 管理方式，但不是 Provider 的依赖。应用 token 的最小策略如下（与实际 mount/key 对齐）：
+
+```hcl
+path "transit/encrypt/oma-dek" { capabilities = ["update"] }
+path "transit/decrypt/oma-dek" { capabilities = ["update"] }
+```
+
+不要授予 encrypt 的 `create` 能力：该能力可在 key 不存在时自动创建 key。缺 key、权限不足、token 无效或 TLS/网络错误在实际 encrypt/decrypt 时返回；启动不发起探测请求。
+
+`token_file` 和 `ca_file` 使用现有相对配置目录、`~` 和环境变量路径展开规则。直接配置的 `token` 在装配时读取，更新需重启 OMA，不由 OMA 自动续租。使用 `token_file` 时，文件保存原始 Vault token，不能使用 response-wrapped/encrypted sink 内容；由外部限制读取权限并在到期前续租或更新。每次加解密重新打开文件，支持原子 rename 与 Kubernetes projected-volume symlink 更新；不保存旧 token 作回退，不修改共享客户端认证状态。挂载可更新的目录/投影卷，避免将被替换的单个 inode 绑定到容器。文件丢失、为空、超限或包含内部空白/控制字符时拒绝请求。拒绝 HTTP 重定向，因此反向代理上游应选择 active Service 或保证 Vault 服务端 forwarding 可用。
+
+封装只上传 32 字节 DEK 的 Base64；固定 `associated_data=Base64("oma-dek-v1")` 用于用途绑定。完整 `vault:vN:...` 字符串作为 `wrapped_dek` 保存；`key_provider=hashicorp_vault`，整数 `key_version=1` 表示 OMA 封装协议，而非 Transit 物理版本 N。业务 `format_version` 与 AAD 保持不变。解封严格检查格式和解码后的 DEK 长度，清零临时可写缓冲区；Go string/加密库内部副本不具备全内存擦除保证。
+
+单次请求继承调用方 context，上限 10 秒，无应用自动重试或明文 DEK 缓存。非 200、缺 data、非法 JSON、超大响应、篡改及错误长度均拒绝。返回安全 `RequestError`（operation、分类 code、HTTP status），保留 context 取消/超时语义；不保留原始网络错误、token 文件内容、Vault/反向代理响应 body 或 URL。服务器完成 encrypt 但响应丢失时，本次 Seal 返回失败，业务不得写入不完整信封。OAuth 换票后无法保存沿用下文的失效清理/重新授权合同；现有刷新租约预算及进程崩溃窗口仍需单独处理。
+
+密钥轮换由外部执行；保留历史版本时旧密文继续可读，新写入使用最新版本。提升 `min_decryption_version` 会拒绝更旧信封，删除/trim 历史密钥可能永久失去解密能力。切换 Provider、替换 key 或重建没有旧 key 的 Vault 都不迁移历史数据。本地 Docker 日常部署应持久化 Vault 存储，并保留解封/恢复能力，不能让数据库持久化而密钥只存在于临时 dev server。
+
+验证入口：
+
+- 默认测试入口：`go test ./internal/secrets/... ./internal/secretservice ./internal/config ./internal/vaults -count=1`，覆盖 HTTPS 验证、路径/输入拒绝、外部 token 更新、故障脱敏、取消/超时、信封篡改、多 Provider 配置校验及未配置 Provider 拒绝。离线服务只用于故障注入，不代替真实 Transit 合同。
+- 部署方使用专用 Transit key 和 token 验证真实加解密、密钥轮换、token 撤销与替换，以及封印和重启后的恢复；真实 Vault 不作为默认 CI 的依赖。
+- 在目标环境验证 HTTPS 证书、反向代理路径转发（如有）、token 文件挂载更新及真实业务调用。
+
+OMA 连接部署方已有的 Vault；Vault 的部署、初始化、解封、密钥创建和 token 续期由部署方负责，不随 Provider 提供专用部署脚本。
+
+协议参考：[Transit API](https://developer.hashicorp.com/vault/api-docs/secret/transit)、[Vault HTTP API](https://developer.hashicorp.com/vault/api-docs)、[Token 生命周期](https://developer.hashicorp.com/vault/docs/concepts/tokens)。
+
+#### 本地按需试用 Vault Docker
+
+日常开发继续使用默认 Local Provider，无需启动 Vault，也不将 Vault 加入项目 Docker Compose。只有验证 Transit 接入时，才单独启动以下容器；命令适用于 OMA 直接运行在宿主机的场景。
+
+```bash
+docker run --detach --rm --name oma-vault-dev \
+  --publish 127.0.0.1:19200:8200 \
+  --cap-add IPC_LOCK \
+  --env VAULT_DEV_ROOT_TOKEN_ID=oma-dev-only \
+  --env VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+  --env VAULT_ADDR=http://127.0.0.1:8200 \
+  --env VAULT_TOKEN=oma-dev-only \
+  hashicorp/vault server -dev
+
+docker exec oma-vault-dev vault status
+```
+
+确认 `Initialized=true`、`Sealed=false` 后，启用 Transit 并创建密钥：
+
+```bash
+docker exec oma-vault-dev vault secrets enable transit
+docker exec oma-vault-dev vault write transit/keys/oma-dek type=aes256-gcm96
+```
+
+复制现有开发配置，保持原文件的 Local 模式和其他设置不变：
+
+```bash
+cp config/config.yaml config/config.vault-local.yaml
+```
+
+仅在复制的配置中将 `vault.master_key.provider` 改为 `hashicorp_vault`，并添加以下配置块；保留原有 `local` 块用于读取旧数据：
+
+```yaml
+vault:
+  master_key:
+    provider: hashicorp_vault
+    hashicorp_vault:
+      address: http://127.0.0.1:19200
+      transit_mount: transit
+      key_name: oma-dek
+      token: oma-dev-only
+```
+
+在这份配置中将 `server.addr` 设为 `127.0.0.1:18080`，然后从仓库根目录启动 OMA：
+
+```bash
+CONFIG_FILE="$PWD/config/config.vault-local.yaml" go run .
+```
+
+仅用临时测试凭据验证，结束后先归档这些凭据、停止该 OMA 进程，再停止 Vault：
+
+```bash
+docker stop oma-vault-dev
+```
+
+此示例使用 [Vault dev 模式](https://developer.hashicorp.com/vault/docs/concepts/dev-server)：自动初始化和解封，密钥只保存在内存中；停止或重启 Vault 后，对应的数据库密文将无法解密。需要长期保留密文时，应使用持久化的 Vault 部署。示例 root token 仅供本机临时试用；实际部署使用上文的最小权限应用 token。测试配置不要提交到仓库，日常开发仍使用原 `config/config.yaml`。
+
+### 信封、版本与切换
+
+业务明文只交给本地 AES-256-GCM。插件仅接受长度恰为 32 的 DEK，调用 KMS Encrypt / Decrypt，附固定 purpose `oma-dek-v1` 与规范化 CMK ID 的 EncryptionContext。持久化的 `wrapped_dek` 是解码后的 KMS CiphertextBlob；业务 AAD、`format_version` 与表结构不变。
+
+KMS 的物理 `KeyVersionId` 是不透明字符串，已经由 CiphertextBlob 携带。现有整数 `key_version=1` 表示插件封装格式，不冒充云上的密钥版本。CMK 自动轮换由 KMS 解封旧 CiphertextBlob，配置中不递增本地 version；禁用或删除仍被使用的 CMK 会立即导致解密失败。
+
+**一个写入 Provider，多个历史解密 Provider。** 信封原有 `key_provider` 决定读取使用的实现，数据库列和 JSON 信封格式不变。例如从 Local 切换为 KMS，保留旧 `local` 配置并添加 KMS 配置：
+
+```yaml
+vault:
+  master_key:
+    provider: aliyun_kms
+    local:
+      kek_file: secrets/vault-kek
+      version: 1
+    aliyun_kms:
+      endpoint: kst-example.cryptoservice.kms.aliyuncs.com
+      key_id: key-example
+```
+
+旧 Local 信封继续由原 KEK 解密，新建或实际重新 Seal 的秘密使用 KMS。单纯读取和未重加密的元数据更新不改变信封，不触发后台迁移。所有使用同一 Service 的凭据（包括 OAuth flow、Tunnel token、Git/LLM 资源）遵守相同规则。KMS 故障时 Local 历史数据仍可读，但新写入失败，不改用 Local。部署方应移除不需要启用的配置块；所有已配置的块都会校验和装配。
+
+多实例先统一部署支持多 Provider 的代码和新旧配置，保持旧写入 Provider；所有实例都能解密两种信封后再切换写入配置并重启生效。回滚写入选择时保留新旧 Provider，确保切换期间产生的密文仍可读；不能直接退回只支持单 Provider 的旧代码。
+
+**兼容读取不等于完成迁移。** 对应历史信封尚未全部迁移或删除时，必须保留旧 Provider 的配置、密钥和解密权限；移除后相关数据会报错。保留 Local 解密能力期间仍需保管本地 KEK。跨 Provider 全量迁移可使用 `vault-migrate` 工具；每种 Provider 只配置一组后端，同种 Provider 切换到另一 CMK、Transit key 或实例仍需单独迁移，不自动兼容。Local 自身的 `decrypt_only` 版本轮换保持不变。
+
+### 全量迁移到另一个 Provider
+
+跨 Provider 全量重新封装已有数据加密密钥（DEK）使用专用的 `vault-migrate` 命令行工具。支持在 `local`、`aliyun_kms` 和 `hashicorp_vault` 之间任意双向迁移，迁移期间业务密文、nonce 与 AAD 保持不变。
+
+详细的 CLI 参数、标准操作流程（SOP）、数据表信封映射及故障排查指引详见 [Vault 主密钥 Provider 迁移指南 (`vault-migrate`)](./vault-migrate.md)。
+
+### 故障、内存与日志
+
+阿里云 KMS 每次操作继承调用方 context，并设置 10 秒 KMS 请求上限。应用层和 KMS SDK 自动重试均关闭，不缓存明文 DEK。网络超时、限流、服务端错误、身份权限错误、CMK 禁用/不存在、篡改、返回错误 CMK、非 32 字节 DEK 均直接返回错误；不落明文、不使用本地 KEK 兜底。SDK 的身份刷新遵循其自身有界网络超时。
+
+业务写入发生在 Seal 成功之后；部分 auth 更新先 Open 再 merge/Seal。无秘密变更的元数据读取/更新和归档不要求 KMS 可用；归档仍可清除密文。匹配凭证需要解密而失败时，沿用 MITM 的 fail-closed 错误出口，不转发没有凭据的请求。
+
+`secrets.Service` 在 Seal / Open 成功和失败路径都清零临时可写 DEK，包括 Provider 返回 DEK 同时返回 error 的情况；插件清零无效解码结果。官方 SDK 的 Base64 string 由 Go 管理，插件不缓存它们；Go 的不可变 string、SDK 编解码内部副本及 AES key schedule 无法提供全进程内存擦除保证，此机制不替代进程隔离与内存转储防护。
+
+错误保留标准 context 取消/超时语义；`KMSError` 提供 Code、RequestID、HTTP Status，支持 `errors.As` 和直接传给 `slog` 时的结构化输出。只从 SDK 结构化字段提取元数据，标识符限 ASCII 字母、数字、`_.-` 且不超过 128 字节，异常字段省略；不包装原始 SDK error，不输出 Message、URL 或完整响应。未知网络失败保留 NetworkError 分类。
+
+SDK wire logger 会输出含 DEK 的 URL，凭证 SDK 也可能打印 metadata token 请求头，因此仅当 `DEBUG` 的逗号分隔项精确等于 `dara`、`tea` 或 `credential` 时拒绝 KMS 初始化，匹配区分大小写且不去空格；`DEBUG=1`、`DEBUG=*`、`DEBUG=app` 均允许。不配置 SDK wire logger / tracker。SDK 在包初始化时捕获 DEBUG，应用随后修改环境变量不能关闭已启用的输出，保护检查也保留初始化时的状态。
+
+### 离线验证与消融
+
+- `go test ./internal/secrets/... ./internal/secretservice ./internal/config ./internal/vaults -count=1`：本地兼容、配置校验、权限/禁用/错误 Key/篡改/取消/超时、错误脱敏、DEK 清零以及 OAuth 换票后保存失败与重新授权。没有真实云凭证或外部 KMS 依赖。
+- `go test ./tests -run '^TestConfiguredKMSService$' -count=1 -v`：配置加载到官方 SDK 与本地 HTTPS Fake KMS 的信封往返，无需 PostgreSQL。测试及私有 Fake 集中在 `tests/kms_test.go`，生命周期测试在同包复用，不提供独立的测试工具包。
+- `go test ./tests -run '^TestVaultAliyunKMSLifecycle$' -count=1 -v`：沿用项目测试 DB 配置，在 PostgreSQL 上贯穿创建、读取、局部更新、MITM 注入、失败不落库/不转发、归档清秘密及日志检查。Fake KMS 在当前进程运行，通过 `secretservice.WithKMSCA` 将 PEM CA 注入该 SDK 客户端；不使用子进程、全局根证书或 `GODEBUG`，也不关闭 TLS 校验。覆盖实际 SDK 请求构造、HTTPS 通信和响应解析；Fake 不承担云端签名校验。
+- `secrets_test.go` 的 `TestServiceWipesDEK` 保留成功路径及 Provider 返回 DEK 同时报错的清零回归，不重复枚举所有参数错误。
+- 故障测试按层分工：Provider 覆盖错误码与取消/超时；装配层覆盖配置、无远端探测及 local 兼容；生命周期集成测试选一个权限故障验证不落库、不改旧信封、不转发，并单独覆盖持久化密文篡改。
+- 架构消融：`go list -deps ./internal/secrets ./internal/vaults ./internal/db` 不应包含 `internal/secrets/local`、`internal/secrets/aliyunkms`、`internal/secrets/hashicorpvault`、`internal/secretservice` 或阿里云 SDK；核心包可在插件源码不可构建时独立测试。移除插件只需改应用装配和该插件自身测试/依赖，不改领域或持久化代码。
+- 全量门禁：`just lint`、`just test`、`just dead-code`、`just duplicates`、`just complexity`。真实云验收是部署方的可选步骤：用专用 CMK / RAM 角色验证私网路由、角色刷新、DisableKey 后拒绝注入；CI 不访问云服务。
+
+### 部署验收
+
+部署前应在目标环境验证 KMS 连通性、权限、凭据创建/更新/读取与出站注入，以及 KMS 不可用时的拒绝行为。VPC 路由和 ECS/ACK 身份轮转需要在对应云环境验证，公网 Endpoint + AccessKey 的结果不能替代这些验证。真实云验收使用部署方准备的本地工具和专属测试资源，不作为仓库自动化测试的前置条件。
 
 ## 数据库
 
@@ -83,8 +284,8 @@ API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析
 | `nonce` | bytea(12) | nonce |
 | `wrapped_dek` | bytea | 被 KEK 包过的 DEK |
 | `format_version` | int | 密文/AAD 格式版本 |
-| `key_provider` | text | provider 名（`local` / 以后 `aws_kms` 等） |
-| `key_version` | bigint | 用几号 KEK |
+| `key_provider` | text | provider 名（`local` / `aliyun_kms` / `hashicorp_vault`） |
+| `key_version` | bigint | 本地 KEK 版本；远程 Provider 的 OMA 封装格式版本（当前为 1） |
 | `version` | bigint not null default 0 | CAS 乐观锁 |
 
 **Direct envelope cutover**：同一 migration 增加信封列并 `drop column secret_payload`。无 Expand/Backfill/Contract 双读窗口；既有明文随列一起丢弃，不提供 `backfill_secrets` 维护接口。信封完整性与 active/archived 生命周期由应用写路径强制，**不使用 PostgreSQL CHECK**。
@@ -138,19 +339,20 @@ Provider/KMS 调用放在 DB 事务外。
 1. 生成新 KEK，把旧 current 挪进 `decrypt_only`（带原 `version`）。
 2. 配置新 `kek`/`kek_file` 与递增的 `version`。
 3. 滚动重启。新写入打新 `key_version`；旧行继续用 decrypt_only 解开。
-4. 从 `decrypt_only` 删除旧钥是运维责任：库中若仍有该 `key_version`，Open 会 5xx。本期不提供批量 rewrap / 退役证明。
+4. 从 `decrypt_only` 删除旧钥是运维责任：库中若仍有该 `key_version`，Open 会 5xx。迁移命令仅支持跨 Provider 迁移，不处理同一 Local Provider 内的版本迁移，也不提供备份的密钥退役证明。
 
 ```yaml
 vault:
   master_key:
-    kek: <new-base64-32-bytes>
-    version: 2
-    decrypt_only:
-      - version: 1
-        kek: <old-base64-32-bytes>
+    local:
+      kek: <new-base64-32-bytes>
+      version: 2
+      decrypt_only:
+        - version: 1
+          kek: <old-base64-32-bytes>
 ```
 
-正式 DisableKey / 云 KMS 自动轮换等接 KMS 再说。AAD 故意不绑 KEK version，以便将来若要做 rewrap 时业务密文可不动。
+KMS CMK 自动轮换保持同一 Key ID；禁用旧 CMK 将 fail-closed。AAD 不绑 KEK version，受控 rewrap 不改变业务密文。
 
 KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销毁；本期价值在「换钥后旧数据仍可读」，不靠扫表迁移。
 
@@ -234,8 +436,10 @@ sequenceDiagram
 | 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk。`excluded` / `forceRefresh` 按 **plan 凭证 ExternalID**（`planCredID`）记账，不依赖 refresh CAS 返回行是否带齐字段 |
 | 401 重试 body | **仅当** injection plan 有可注入 URL 匹配时才缓冲请求体（上限 32 MiB）以支持 inject/401 重放；无匹配 → 流式 passthrough，不触发 32 MiB 门闩。超限 **fail closed**（不静默截断重放）。打出的是 clone；snapshot 路径用 `defer closeRequestBody(req)` 关闭原始 body；passthrough 由 base RoundTripper 关闭 |
 | Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
-| 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MITM ErrorHandler / Prepare 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
-| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，覆盖整段 Hold，nil Redis 拒绝）。持约后重读。每次 Hold **最多一次** token-endpoint exchange。exchange 成功后必须落盘：`version` CAS 冲突时重读，信封仍是换票前那份或重读 token 不可用则 rebase 再写 R1；重读已有未过期 token 则复用。exchange 失败后重读，仅当信封 token 已变且 access 未过期时复用，否则保留换票错误（改名导致的 version +1 不再触发二次换票）。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
+| 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案经 `InjectionPublicMessage` 选择：需要重新授权时为 `MCP OAuth credentials require reauthorization`，其余保持 `InjectionUnavailablePublicMessage`。MITM ErrorHandler / Prepare 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
+| 并发 refresh | 同 credential **短租约**串行换票。组装层注入 `OAuthRefreshLease`：测试/无 Redis 默认进程内 **cap-1 channel 信号量**（ctx 取消不泄漏持有者）；生产 `NewRedisOAuthRefreshLease`（`SET NX`，TTL = `maxOAuthRefreshCASAttempts × token超时 + 5s`，尚未随 KMS I/O 延长或续约，nil Redis 拒绝）。持约后重读，读取失败直接返回，不使用旧快照换票。每次 Hold **最多一次** token-endpoint exchange。exchange 成功后必须落盘：`version` CAS 冲突时重读，信封仍是换票前那份或重读 token 不可用则 rebase 再写 R1；重读已有未过期 token 则复用。exchange 失败后重读，仅当信封 token 已变且 access 未过期时复用，否则保留换票错误（改名导致的 version +1 不再触发二次换票）。抢约失败则等待租约（尊重 ctx），不并行打 IdP |
+| 换票成功但无法保存 | refresh 的 reseal / DB 保存失败返回 `ErrMCPOAuthReauthorizationRequired`，不返回新 token。用独立的 5 秒清理 context（不受调用方取消影响）清除换票前那份信封；匹配 workspace / vault / credential 与完整旧密文，保留并发改名，不清除其他写者新授权的密文。清理不依赖 KMS。记录仍 active，继续覆盖目标 host；缺信封的 OAuth 凭据不再换票，等待重新授权 |
+| 重新授权恢复 | Start 允许相同 URL 的 active、缺信封 OAuth 凭据重新授权；callback 成功后复用其 ID、UUID，保留用户设置的名称；Metadata 按顶层字段合并，保留原字段并以新授权字段覆盖同名值（如 `oauth_flow_id`），解析失败则拒绝保存。CAS 填回新信封，保护并发修改。健康 OAuth 或 static bearer 仍拒绝重复授权。callback 换票后封装失败将 flow 标记 failed 并清除 PKCE 密文；再次回调该 flow 不再换票，必须新建授权流程 |
 | 平台 client_secret | 不进用户信封。callback 与 refresh 共用 `ResolveMCPOAuthTokenClientSecret`。公开 `auth.client_credential_source` 为 `platform`（或遗留 confidential 且信封无 secret）时按 `mcp_server_url` 再查 registry；`sealed` 用信封值。reseal 仍不把平台 secret 写回信封 |
 | 数据加载 | **每个 MCP RoundTrip 查库一次**（`vault_ids` + active credentials）；401 walk / 换凭证不重复加载；不缓存明文 token |
 | Redirect | **不自动跟随**跨 origin redirect |
@@ -272,7 +476,7 @@ sequenceDiagram
 
 ## 验收（存库加密：已完成）
 
-- DB、日志、trace 不出现明文密码 / DEK；**主密钥只在 `config.yaml` / `kek_file`**（不进 DB/日志）；dev/prod 均须配置，无 ephemeral 兜底。`mcp_oauth_flows` 敏感字段走 Secret envelope；平台 client secret 不落 flow 表，也不复制进用户 `vault_credentials`。
+- DB、日志、trace 不出现明文密码 / DEK；本地主密钥在 `config.yaml` / `kek_file`；KMS CMK 不离开 KMS。dev/prod 均须配置有效 Provider，无 ephemeral 兜底。`mcp_oauth_flows` 敏感字段走 Secret envelope；平台 client secret 不落 flow 表，也不复制进用户 `vault_credentials`。
 - 写统一经 Secret Service；读不返回密码；`secret_payload` 列不存在。
 - 篡改密文 / nonce / wrapped_dek / AAD 后解密失败；未知格式或 key 不可用 → fail closed（HTTP 5xx）。
 - 活动凭证缺信封且未带完整替换 secret 的 update/validate（含仅改 metadata/display_name）→ HTTP 400；带完整替换 secret 的 update → 直接 reseal；`version` CAS 冲突 → HTTP 409。
@@ -301,7 +505,7 @@ sequenceDiagram
 - Git Smart HTTP：`GET` `info/refs?service=…` 与 `POST` `git-upload-pack` / `git-receive-pack` 在第一次转发前写入 `Authorization: Basic oauth2:<secret>`；错误 method / 未覆盖透传；Open 失败 → 502；LFS / dumb HTTP / REST 不注票。SSH→HTTPS（内置 `github.com` + `environment_runner.git_ssh_to_https_hosts`）属 Runner/environment-manager，不在本模块。
 - 旧凭证缺 placeholder / injection_location → update/挂载拒绝（archive 重建）。
 
-> 注：云 KMS 自动轮换 / DisableKey 另议。
+> KMS 禁用/权限错误的离线验证见主密钥章节；真实云实例验收不由 CI 强制执行。
 
 ## Platform OAuth Client（登记）
 
@@ -322,14 +526,25 @@ sequenceDiagram
 - Git LFS、dumb HTTP、原生 git SSH 隧道；通用任意 `git@`→HTTPS 不在 Vault 切片。内置 github.com + `environment_runner.git_ssh_to_https_hosts` 的 insteadOf 见 CCRv2 upstream-proxy 文档
 - GitHub App `x-access-token` Basic 用户名
 - Expand/Backfill、`backfill_secrets`
-- Shamir / 云 KMS provider 实现
+- Shamir 驱动；同种 Provider 内跨 CMK、Transit key 或实例的批量迁移
 - 重做 vault CRUD、管理页、MCP Catalog/Permission/Confirmation
 - 防「打进 OMA 进程」（运行时加固，另议）
 
 ## 参考
+
+- [阿里云 KMS Encrypt（含私网网关与 Key ARN）](https://www.alibabacloud.com/help/en/kms/key-management-service/developer-reference/api-kms-2016-01-20-encrypt)
+- [阿里云 KMS Decrypt](https://www.alibabacloud.com/help/en/kms/key-management-service/developer-reference/api-kms-2016-01-20-decrypt)
+- [官方 Go Credentials SDK（ECS RAM / ACK RRSA）](https://github.com/aliyun/credentials-go)
 
 - https://platform.claude.com/docs/en/managed-agents/vaults
 - https://www.anthropic.com/engineering/managed-agents
 - HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
 - Related: #65、#52、#121、#137、#142、#256
 - Ubiquitous language: `CONTEXT.md`（Secret envelope / Runtime credential injection / Credential URL match / Platform OAuth Client / Git Smart HTTP Authorization）
+
+### OAuth 换票后封装失败的回归验证
+
+- `TestRefreshSealFailureRequiresReauthorization`：token endpoint 成功后仅故障注入 WrapDEK；请求取消仍清除旧信封，KMS 恢复也不再发送旧 refresh token。
+- `TestPlatformMCPOAuthReauthorizationPostgres`：真实 PostgreSQL 验证租户/父级隔离、改名后失效、并发新授权不被清除，以及 HTTP callback 换票成功但封装失败、旧 flow 不可重放、新 flow 恢复同一凭据。该测试的 KMS 故障是离线注入，不声称真实云故障。
+- 剩余边界：若 KMS 封装与数据库清理同时失败，当前请求仍失败，并保留清理错误，但无法保证旧信封已被持久化清除；需要恢复数据库后处理该凭据并重新授权。进程在换票后、失效清理前崩溃的窗口也仍存在。这里未引入持久化换票意图或分布式事务。
+- 50 秒 Redis 刷新租约的续约/超时预算问题独立存在，本轮未修改；慢 KMS 与 CAS 冲突可能使临界区超过 TTL。

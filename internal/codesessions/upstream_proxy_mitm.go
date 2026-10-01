@@ -175,7 +175,7 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			status := http.StatusBadGateway
 			message := http.StatusText(status)
 			if errors.Is(err, vaults.ErrInjectionRejected) {
-				message = vaults.InjectionUnavailablePublicMessage
+				message = vaults.InjectionPublicMessage(err)
 			}
 			http.Error(w, message, status)
 		},

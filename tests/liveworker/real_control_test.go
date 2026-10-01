@@ -25,7 +25,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
-	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 )
 
 // Public inputs, permissions and ACKs use the real API; raw controls use its
@@ -391,11 +391,7 @@ func ensureRealWorkerProvider(t *testing.T, e *liveEnv, cfg config.Config) {
 	if len(providers) != 0 {
 		return
 	}
-	mk := cfg.Vault.MasterKey
-	kek, err := secrets.ResolveKEK(mk.Kek, mk.KekFile)
-	requireOK(t, err)
-	defer clear(kek)
-	service, err := secrets.NewLocalServiceWithKeys(t.Context(), secrets.LocalKeyMaterial{Version: mk.EffectiveVersion(), KEK: kek}, nil)
+	service, err := secretservice.New(cfg.Vault.MasterKey)
 	requireOK(t, err)
 	now := time.Now().UTC()
 	provider := db.LLMProvider{UUID: uuid.NewString(), ExternalID: "llmprov_probe_" + uuid.NewString(), OrganizationUUID: org, WorkspaceUUID: workspace, Name: "isolated worker model metadata", BaseURL: "http://127.0.0.1:9", APIKeyLast4: "fake", ModelIDs: []string{"claude-opus-4-6", "claude-sonnet-4-6"}, CreatedAt: now, UpdatedAt: now}

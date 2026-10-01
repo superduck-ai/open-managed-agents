@@ -56,6 +56,44 @@ type yamlConfig struct {
 	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
 }
 
+// Legacy flat fields exist only at the YAML boundary. All consumers use Local.
+type yamlMasterKeyConfig struct {
+	Provider       string                           `yaml:"provider"`
+	Local          *LocalKeyConfig                  `yaml:"local"`
+	AliyunKMS      *AliyunKMSConfig                 `yaml:"aliyun_kms"`
+	HashicorpVault *HashicorpVaultConfig            `yaml:"hashicorp_vault"`
+	Kek            optional[string]                 `yaml:"kek"`
+	KekFile        optional[string]                 `yaml:"kek_file"`
+	Version        optional[int64]                  `yaml:"version"`
+	DecryptOnly    optional[[]DecryptOnlyKeyConfig] `yaml:"decrypt_only"`
+}
+
+func (m *MasterKeyConfig) UnmarshalYAML(node *yaml.Node) error {
+	var input yamlMasterKeyConfig
+	if err := node.Decode(&input); err != nil {
+		return err
+	}
+	legacy := input.Kek.set || input.KekFile.set || input.Version.set || input.DecryptOnly.set
+	if input.Local != nil && legacy {
+		return errors.New("vault.master_key: local cannot be combined with legacy kek, kek_file, version or decrypt_only fields")
+	}
+	*m = MasterKeyConfig{
+		Provider: input.Provider, Local: input.Local,
+		AliyunKMS: input.AliyunKMS, HashicorpVault: input.HashicorpVault,
+	}
+	if legacy {
+		local := &LocalKeyConfig{
+			Kek: input.Kek.value, KekFile: input.KekFile.value,
+			Version: input.Version.value, DecryptOnly: input.DecryptOnly.value,
+		}
+		// Older serialized remote configs included empty local fields and version 0/1.
+		if m.EffectiveProvider() == "local" || local.KEKConfigured() || len(local.DecryptOnly) > 0 || (local.Version != 0 && local.Version != 1) {
+			m.Local = local
+		}
+	}
+	return nil
+}
+
 type yamlDatabaseConfig struct {
 	URL         string         `yaml:"url"`
 	AutoMigrate optional[bool] `yaml:"auto_migrate"`

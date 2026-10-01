@@ -2355,5 +2355,9 @@
   "webhooks.event.archived": "已归档",
   "webhooks.event.deleted": "已删除",
   "webhooks.event.refreshFailed": "刷新失败",
-  "webhooks.event.updated": "已更新"
+  "webhooks.event.updated": "已更新",
+  "managedAgents.agentPicker.search": "按名称或 Agent ID 搜索…",
+  "managedAgents.agentPicker.empty": "没有找到 Agent。",
+  "managedAgents.agentPicker.failed": "无法加载 Agent。",
+  "managedAgents.agentPicker.more": "加载更多"
 }

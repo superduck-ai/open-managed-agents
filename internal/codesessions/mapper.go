@@ -432,8 +432,12 @@ func assistantPublicPayloadCandidates(codeSessionID string, object map[string]an
 		case "thinking", "redacted_thinking":
 			eventType = "agent.thinking"
 		}
+		if blockType == "thinking" {
+			thinking, _ := block["thinking"].(string)
+			block = map[string]any{"type": "thinking", "thinking": thinking}
+		}
 		payload := publicPayloadWithSingleContentBlock(object, eventType, block)
-		if eventType == "agent.thinking" {
+		if blockType == "redacted_thinking" {
 			delete(payload, "content")
 			delete(payload, "message")
 		}

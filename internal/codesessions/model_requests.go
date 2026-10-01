@@ -63,8 +63,9 @@ type ModelRequestMessage struct {
 
 // ModelRequestContent is a public agent.message content block; Text is absent for redacted blocks.
 type ModelRequestContent struct {
-	Type string  `json:"type"`
-	Text *string `json:"text,omitempty"`
+	Type     string  `json:"type"`
+	Text     *string `json:"text,omitempty"`
+	Thinking *string `json:"thinking,omitempty"`
 }
 
 type modelRequestEvent struct {

@@ -52,7 +52,7 @@ sequenceDiagram
 - Preview 的 `message_start.message.id` 与最终 assistant payload 的 `message.id` 都在各自 Worker JSON 解码边界修剪首尾空白，再参与确定性 ID 计算。
 - `content_block_start` 根据 block type 发送一次 `event_start`。
 - `text_delta.text` 原样映射成 `event_delta.delta.content.text`，公开 `delta.index` 固定为 `0`。
-- `thinking_delta` 不产生 `event_delta`；`agent.thinking` 只有 `event_start` 预览。
+- `thinking_delta.thinking` 原样映射成 `event_delta.delta.content.thinking`，content type 为 `thinking`，公开 `delta.index` 固定为 `0`；只接受与 thinking block 匹配的 delta，签名不产生公开预览。
 - 缺少 message start、block start 或消息总线重连后丢失上下文时，后续 delta 直接舍弃。
 - `parent_tool_use_id` 为空时归属主线程；非空时使用既有确定性 child thread ID。
 - Preview JSON envelope 没有自己的 `id`、`created_at` 或 `processed_at`；关联 ID 位于 `event_start.event.id` / `event_delta.event_id`，同时写入对应 SSE 帧的 `id:`。内部接收时间只用于转换与清理，不进入公开 preview envelope。
@@ -221,7 +221,7 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
   最终子消息继续通过 `parent_tool_use_id` 指向同一个确定性 thread ID。
 
 代理逐帧观察响应，不修改 SSE body。code-session 上游请求不转发客户端的 `Accept-Encoding`，由 Go Transport 协商并透明解压，观测器因此读到明文帧，客户端收到的是解压后的响应。`message_start.usage` 与 `message_delta.usage` 按字段合并，
-其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 无内容的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
+其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 带公开 thinking 正文的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
 非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。非流式响应已完整读取但向客户端写入失败时，end 保留已知用量并标记 `stream_error`。
 取消后的落库使用独立 5 秒 context；end 持久化失败在该期限内每 250 毫秒重试，成功即停止，期限耗尽时记录 start ID 和错误，不记录原始响应。
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
@@ -258,3 +258,7 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 `session.usage` 由 `sessionStatusEventsTx` 在 thread idle 与 session idle 之间派生，写入时在 Session 行锁内用最新累计值生成快照，
 避免同批 end/idle 或并发线程读到旧值；Session 已为 idle 的重复上报不再生成 usage。重复 end 不重复累计，重复事件 ID 不重新推动状态。
 线程状态和事件同一事务提交。仍有 running/rescheduling 线程时，仅发布线程 idle，不发布 Session usage/idle。
+
+### Thinking 正文合同
+
+代理解析流式 `thinking_delta` 并累计到对应 content block，非流式响应读取 `thinking` 字段；最终事件使用 `content: [{"type":"thinking","thinking":"..."}]`。thinking 与 text/input 共享现有 4 MiB 观察容量上限。Worker assistant 映射也保留相同正文格式，签名字段不进入公开 thinking 内容。`redacted_thinking` 继续只产生无正文的 `agent.thinking`。已持久化的无正文事件不回填；上游未公开返回正文时只能展示 Thinking 状态。

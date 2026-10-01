@@ -60,7 +60,7 @@ describe('SessionTranscriptView', () => {
     const thinking = displayEntry('live-thinking', 'thinking', '', 'bracket-live');
     thinking.displayEvent.isStreaming = true;
     thinking.inProgress = true;
-    const tree = (text: string) => (
+    const tree = (text: string, entry = thinking) => (
       <SessionDetailDeltaFramesContext.Provider
         value={{
           'display-live-thinking': {
@@ -69,15 +69,22 @@ describe('SessionTranscriptView', () => {
           },
         }}
       >
-        {transcriptTree([thinking])}
+        {transcriptTree([entry])}
       </SessionDetailDeltaFramesContext.Provider>
     );
     const view = render(tree('公开 **思考**'));
     expect(view.container.querySelector('[data-transcript-thinking-content] strong')?.textContent).toBe('思考');
     view.rerender(tree('公开 **思考**\n\n- 下一步'));
     expect(view.container.querySelector('[data-transcript-thinking-content] li')?.textContent).toBe('下一步');
-    view.rerender(transcriptTree([displayEntry('live-thinking', 'thinking', '最终思考正文', 'bracket-live')]));
+    view.rerender(tree('', displayEntry('live-thinking', 'thinking', '最终思考正文', 'bracket-live')));
+    const summary = view.container.querySelector('[data-transcript-thinking-row]')!;
+    expect(summary.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('最终思考正文')).toBeNull();
+    fireEvent.click(summary);
+    expect(summary.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('最终思考正文')).toBeTruthy();
+    fireEvent.click(summary);
+    expect(summary.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('下一步')).toBeNull();
   });
 
@@ -156,7 +163,7 @@ describe('SessionTranscriptView', () => {
 
     expect(screen.getAllByText('Researcher')).toHaveLength(1);
     expect(screen.getByText('Thought for 2.0s')).toBeTruthy();
-    expect(screen.getByText('private chain of thought')).toBeTruthy();
+    expect(screen.queryByText('private chain of thought')).toBeNull();
     expect(screen.getByText('Thought for 2.0s').closest('[data-slot="bubble"]')?.getAttribute('data-variant')).toBe(
       'ghost',
     );

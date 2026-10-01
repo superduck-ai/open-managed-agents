@@ -1,6 +1,7 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import { Bubble, BubbleContent } from '../../../shared/ui/bubble';
 import { MessageHeader } from '../../../shared/ui/message';
 import {
@@ -16,7 +17,7 @@ import {
 } from '../types';
 import { compactEntityId, numericValueFromKeys, toRecord } from '../utils';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight, Ban, Check, CircleX, Clock3, Loader2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loader2, Wrench } from 'lucide-react';
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { formatSessionDuration } from './sessionDetailModel';
@@ -326,30 +327,34 @@ function TranscriptThinkingRow({
       className={clsx('w-full max-w-full', presentation === 'standalone' && 'my-1')}
     >
       <BubbleContent className="!w-full !max-w-full !overflow-visible !rounded-md !px-0 !py-0">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-event-id={entry.traceEntry.id}
-          data-entry-kind={entry.kind}
-          data-display-kind={entry.traceEntry.displayKind}
-          data-transcript-thinking-row
-          aria-pressed={selected}
-          className={clsx(
-            'h-auto min-h-6 w-full justify-start rounded-md border-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal italic text-muted-foreground transition-colors hover:bg-session-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30',
-            selected && 'bg-session-selected text-foreground',
-          )}
-          onClick={onSelect}
-        >
-          {inProgress ? (
-            <SynchronizedShimmerText className="min-w-0 flex-1 truncate">{label}</SynchronizedShimmerText>
-          ) : (
-            <span className="min-w-0 flex-1 truncate">{label}</span>
-          )}
-        </Button>
-        <div className="px-1.5 py-1 text-sm text-muted-foreground" data-transcript-thinking-content>
-          <LiveRowPreview displayEvent={entry.displayEvent} msg={msg} compact={false} />
-        </div>
+        <Collapsible key={inProgress ? 'streaming' : 'complete'} defaultOpen={inProgress}>
+          <CollapsibleTrigger
+            type="button"
+            data-event-id={entry.traceEntry.id}
+            data-entry-kind={entry.kind}
+            data-display-kind={entry.traceEntry.displayKind}
+            data-transcript-thinking-row
+            aria-pressed={selected}
+            className={clsx(
+              'group flex items-center gap-1 h-auto min-h-6 w-full justify-start rounded-md border-transparent px-1.5 py-0.5 text-left text-sm leading-5 font-normal italic text-muted-foreground transition-colors hover:bg-session-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/30',
+              selected && 'bg-session-selected text-foreground',
+            )}
+            onClick={onSelect}
+          >
+            <ChevronRight aria-hidden className="size-3 shrink-0 transition-transform group-aria-expanded:rotate-90" />
+            {inProgress ? (
+              <SynchronizedShimmerText className="min-w-0 flex-1 truncate">{label}</SynchronizedShimmerText>
+            ) : (
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+            )}
+          </CollapsibleTrigger>
+          <CollapsibleContent
+            className="px-1.5 py-1 text-sm text-muted-foreground [&_*]:!text-muted-foreground"
+            data-transcript-thinking-content
+          >
+            <LiveRowPreview displayEvent={entry.displayEvent} msg={msg} compact={false} />
+          </CollapsibleContent>
+        </Collapsible>
       </BubbleContent>
     </Bubble>
   );

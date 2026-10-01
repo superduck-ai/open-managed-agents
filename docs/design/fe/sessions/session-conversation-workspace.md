@@ -35,7 +35,7 @@ Viewer 包含两个区域：
 - User 使用 `session-speaker-user/10` 角色色背景和 `0.5px session-border` 的轻量 panel bubble，圆角 `10px`、水平内边距 `11px`、垂直内边距 `6px`；Bubble 高度由正文自然决定，不设置会在单行正文下方制造额外空白的固定最小高度。Agent 名称和时间在连续 turn 中只展示一次；每个 Agent iteration 使用 `10px` 圆角、`0.5px` 语义边框、`10px 4px` 内边距和 `5px` 间距，Agent text、Thinking 和 Tool Call 在 panel 内保持 `6px 2px` 行内节奏。idle、outcome 和 status 等系统边界保持全宽，不伪装成对话气泡。
 - Agent 标签使用 `session-speaker-agent` 主题变量，User 标签使用 `session-speaker-user`；两个变量必须同时定义浅色和深色值，不使用 chart token 或硬编码颜色冒充领域语义。
 - Agent 消息在流式增量到达时和完成后共用 `react-markdown` 与 `remark-gfm` 渲染 CommonMark/GFM；每次增量更新当前 Markdown，结束时由最终事件内容接管，不从纯文本切换渲染方式。支持标题、有序/无序/嵌套列表、引用、任务列表、删除线、表格、代码、链接和 Markdown 图片。原始 HTML 不解析；URL 只允许 HTTP(S)、邮件、页内锚点与站内根路径；代码块复用现有 Highlight.js 渲染。单条正文按生产 JS 的 UTF-16 `length/slice` 语义最多渲染前 `50,000` 个字符，超限时显示原始总字符数；普通 Markdown 与 fenced code 在流式和完成态均使用同一上限。
-- Agent 正文与 Thinking 摘要都复用 shadcn `Bubble/BubbleContent`；iteration 内使用无额外卡片层级的 `ghost` variant，正文保持 Markdown 语义，Thinking 使用紧凑的 ghost Button。Thinking 在转录中只显示单行斜体摘要 `Thought for {duration}` 或 `Thinking…`；完整原文通过 Inspector Events 查看。
+- Agent 正文与 Thinking 摘要都复用 shadcn `Bubble/BubbleContent`；iteration 内使用无额外卡片层级的 `ghost` variant，正文保持 Markdown 语义，Thinking 使用紧凑的 ghost Button。Thinking 保留单行斜体摘要 `Thought for {duration}` 或 `Thinking…`，摘要下直接用 Markdown 展示上游公开返回的 thinking 正文；实时 delta 更新正文，最终事件到达后用完整内容替换。无正文或 redacted thinking 仅显示摘要，不展示签名或加密数据。
 - Agent turn 挂载时只要仍是 open 状态，就播放一次 `180ms ease-out` 入场；首次加载和切换 Lane 后重新挂载的 open turn 也会播放，已经闭合的 turn 直接显示最终状态。`prefers-reduced-motion: reduce` 下不播放位移或缩放。
 - 工具调用保持 `24–28px` 的单行结构，展示工具名、截断输入摘要、执行状态和耗时；点击后在 Inspector 的 Events 页签查看原始事件。
 - Markdown 的交互链接不能嵌套在事件选择按钮中；正文链接保持自身语义，事件选择使用独立可访问控件。

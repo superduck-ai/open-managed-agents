@@ -347,6 +347,9 @@ function TranscriptThinkingRow({
             <span className="min-w-0 flex-1 truncate">{label}</span>
           )}
         </Button>
+        <div className="px-1.5 py-1 text-sm text-muted-foreground" data-transcript-thinking-content>
+          <LiveRowPreview displayEvent={entry.displayEvent} msg={msg} compact={false} />
+        </div>
       </BubbleContent>
     </Bubble>
   );
@@ -910,7 +913,7 @@ export function LiveRowPreview({
   const family = sessionEventFamily(liveEvent);
   const label = sessionEventLabel(liveEvent, family, msg);
   const value = sessionEventIsThinking(liveEvent)
-    ? sessionThinkingText(liveEvent)
+    ? sessionThinkingText(liveEvent) || displayEvent.content
     : sessionEventTranscriptText(liveEvent) ||
       sessionEventStructuredContentText(liveEvent) ||
       sessionToolResultText(liveEvent) ||

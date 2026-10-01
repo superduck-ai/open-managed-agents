@@ -55,6 +55,32 @@ describe('SessionTranscriptView', () => {
     expect(view.container.querySelector('[data-event-id="trace-live-answer"] li')?.textContent).toBe('first item');
   });
 
+  test('renders streamed thinking Markdown and replaces it with final content', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const thinking = displayEntry('live-thinking', 'thinking', '', 'bracket-live');
+    thinking.displayEvent.isStreaming = true;
+    thinking.inProgress = true;
+    const tree = (text: string) => (
+      <SessionDetailDeltaFramesContext.Provider
+        value={{
+          'display-live-thinking': {
+            message: { type: 'agent.thinking', content: [{ type: 'thinking', thinking: text }] },
+            frames: [],
+          },
+        }}
+      >
+        {transcriptTree([thinking])}
+      </SessionDetailDeltaFramesContext.Provider>
+    );
+    const view = render(tree('公开 **思考**'));
+    expect(view.container.querySelector('[data-transcript-thinking-content] strong')?.textContent).toBe('思考');
+    view.rerender(tree('公开 **思考**\n\n- 下一步'));
+    expect(view.container.querySelector('[data-transcript-thinking-content] li')?.textContent).toBe('下一步');
+    view.rerender(transcriptTree([displayEntry('live-thinking', 'thinking', '最终思考正文', 'bracket-live')]));
+    expect(screen.getByText('最终思考正文')).toBeTruthy();
+    expect(screen.queryByText('下一步')).toBeNull();
+  });
+
   test('keeps markdown links outside buttons and ignores them when selecting a message', () => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const onSelectEntry = mock(() => {});
@@ -130,7 +156,7 @@ describe('SessionTranscriptView', () => {
 
     expect(screen.getAllByText('Researcher')).toHaveLength(1);
     expect(screen.getByText('Thought for 2.0s')).toBeTruthy();
-    expect(screen.queryByText('private chain of thought')).toBeNull();
+    expect(screen.getByText('private chain of thought')).toBeTruthy();
     expect(screen.getByText('Thought for 2.0s').closest('[data-slot="bubble"]')?.getAttribute('data-variant')).toBe(
       'ghost',
     );

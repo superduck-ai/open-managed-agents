@@ -44,14 +44,16 @@ type responseMessage struct {
 }
 
 type responseContentBlock struct {
-	ID          string            `json:"id"`
-	Type        string            `json:"type"`
-	Text        string            `json:"text"`
-	Name        string            `json:"name"`
-	Input       jsonv1.RawMessage `json:"input"`
-	PartialJSON string            `json:"partial_json"`
-	textBuffer  strings.Builder
-	inputBuffer strings.Builder
+	ID             string            `json:"id"`
+	Type           string            `json:"type"`
+	Text           string            `json:"text"`
+	Thinking       string            `json:"thinking"`
+	Name           string            `json:"name"`
+	Input          jsonv1.RawMessage `json:"input"`
+	PartialJSON    string            `json:"partial_json"`
+	thinkingBuffer strings.Builder
+	textBuffer     strings.Builder
+	inputBuffer    strings.Builder
 }
 
 type responseStreamEvent struct {
@@ -205,7 +207,8 @@ func (o *responseObservation) observeFrame(data []byte) {
 		}
 		block := event.ContentBlock
 		block.textBuffer.WriteString(block.Text)
-		o.contentBytes += len(block.Text) + len(block.Input)
+		block.thinkingBuffer.WriteString(block.Thinking)
+		o.contentBytes += len(block.Text) + len(block.Thinking) + len(block.Input)
 		if o.contentBytes > 4*1024*1024 {
 			o.malformed = true
 			o.result.ErrorType = "observation_limit"
@@ -226,6 +229,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		for _, index := range slices.Sorted(maps.Keys(o.blocks)) {
 			block := o.blocks[index]
 			block.Text = block.textBuffer.String()
+			block.Thinking = block.thinkingBuffer.String()
 			o.addMessage(index, *block)
 		}
 		o.complete = true
@@ -242,10 +246,10 @@ func (o *responseObservation) observeFrame(data []byte) {
 }
 
 func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
-	if event.Delta.Type != "text_delta" && event.Delta.Type != "input_json_delta" {
+	if event.Delta.Type != "text_delta" && event.Delta.Type != "input_json_delta" && event.Delta.Type != "thinking_delta" {
 		return
 	}
-	o.contentBytes += len(event.Delta.Text) + len(event.Delta.PartialJSON)
+	o.contentBytes += len(event.Delta.Text) + len(event.Delta.Thinking) + len(event.Delta.PartialJSON)
 	if o.contentBytes > 4*1024*1024 {
 		o.malformed = true
 		o.result.ErrorType = "observation_limit"
@@ -258,6 +262,8 @@ func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
 	}
 	if event.Delta.Type == "text_delta" {
 		block.textBuffer.WriteString(event.Delta.Text)
+	} else if event.Delta.Type == "thinking_delta" {
+		block.thinkingBuffer.WriteString(event.Delta.Thinking)
 	} else {
 		block.inputBuffer.WriteString(event.Delta.PartialJSON)
 	}
@@ -328,7 +334,10 @@ func (o *responseObservation) addMessage(index int, block responseContentBlock) 
 		}
 		o.result.ToolUses = append(o.result.ToolUses, codesessions.ModelRequestToolUse{ID: block.ID, Name: block.Name, Input: input})
 		return
-	case "thinking", "redacted_thinking":
+	case "thinking":
+		message.Type = "agent.thinking"
+		message.Content = []codesessions.ModelRequestContent{{Type: "thinking", Thinking: &block.Thinking}}
+	case "redacted_thinking":
 		message.Type = "agent.thinking"
 	case "text":
 		message.Content = []codesessions.ModelRequestContent{{Type: "text", Text: &block.Text}}

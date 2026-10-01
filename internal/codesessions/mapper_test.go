@@ -3,6 +3,7 @@ package codesessions
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,7 +168,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 			"id":   "msg_assistant_blocks",
 			"role": "assistant",
 			"content": []any{
-				map[string]any{"type": "thinking", "thinking": "plan"},
+				map[string]any{"type": "thinking", "thinking": "plan", "signature": "signature-secret"},
 				map[string]any{"type": "text", "text": "starting"},
 				map[string]any{
 					"type":  "tool_use",
@@ -187,6 +188,12 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	objects := decodePublicPayloads(t, payloads)
 	if got, want := len(objects), 2; got != want {
 		t.Fatalf("payload count = %d, want %d: %#v", got, want, objects)
+	}
+	if blocks, ok := objects[0]["content"].([]any); !ok || len(blocks) != 1 || blocks[0].(map[string]any)["thinking"] != "plan" {
+		t.Fatalf("thinking content missing: %#v", objects[0])
+	}
+	if strings.Contains(string(payloads[0]), "signature-secret") {
+		t.Fatal("thinking payload exposed signature")
 	}
 	wantTypes := []string{"agent.thinking", "agent.message"}
 	for index, wantType := range wantTypes {

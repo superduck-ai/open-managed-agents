@@ -95,6 +95,7 @@ environment-manager 在启动 Claude Code 前调用 `/worker/register`，建立�
 code-session 请求来自受信任的沙箱调用方。公共 Messages 入口完整扫描有界请求体的顶层对象，只读取唯一的 `model` 以选择 Provider；其余字段仍由上游按 Anthropic Messages 合同校验。本服务负责入口鉴权、请求大小限制、header 清洗、Provider 解析和响应流式代理。
 
 Claude Code 所需的 `ANTHROPIC_MODEL` 等变量名保留，但值为 Agent 保存的真实模型 ID；Provider Key 不进入 sandbox。
+Runner 在 Worker 启动环境中固定设置 `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`。在支持的 Claude Code 2.1.251 中，这会跳过 Agent SDK/headless 模式的后台标题生成请求，避免其 JSON 响应被 Messages 代理记录为公开 `agent.message`；显式创建或更新 Session 的 `title` API 不受影响。该变量独立于 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`，因此启用 OTLP 时仍生效。
 
 Agent PATCH 只有在请求显式携带 `model` 时才校验新模型；只修改名称、描述等字段时原样保留旧模型，即使管理员已经从 Provider 删除了该模型。这样旧 Agent 仍可通过后续 PATCH 切换到有效模型；实际运行仍按当前 Provider 配置失败关闭。
 

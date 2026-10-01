@@ -24,6 +24,10 @@ func upstreamUnavailableError() *httpapi.Error {
 	return httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable")
 }
 
+func upstreamAuthenticationRejectedError() *httpapi.Error {
+	return httpapi.NewError(http.StatusForbidden, "permission_error", "Messages upstream rejected its configured credentials")
+}
+
 func modelNotConfiguredError() *httpapi.Error {
 	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Model is not configured for this workspace")
 }

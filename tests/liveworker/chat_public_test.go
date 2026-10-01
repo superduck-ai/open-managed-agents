@@ -23,10 +23,11 @@ import (
 )
 
 type chatDockerProvider struct {
-	name, image string
-	t           *testing.T
-	created     atomic.Int32
-	failNext    atomic.Bool
+	name, image        string
+	t                  *testing.T
+	created            atomic.Int32
+	failNext           atomic.Bool
+	failMemoryMarkdown atomic.Bool
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -42,13 +43,16 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 		defer cancel()
 		_ = p.Kill(cleanupCtx, name)
 	})
-	err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-chat.run="+os.Getenv("VERIFY_CHAT_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway", "--entrypoint", "sleep", p.image, "infinity").Run()
+	err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run="+os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway", "--entrypoint", "sleep", p.image, "infinity").Run()
 	return e2bruntime.Sandbox{ID: name}, err
 }
 func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
 }
 func (p *chatDockerProvider) WriteFile(ctx context.Context, id, path string, data []byte) error {
+	if path == "/mnt/memory/MEMORY.md" && p.failMemoryMarkdown.Swap(false) {
+		return errors.New("injected memory mount setup failure")
+	}
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", id, "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path)
 	cmd.Stdin = bytes.NewReader(data)
 	return cmd.Run()
@@ -97,20 +101,7 @@ func TestChatPublicStart(t *testing.T) {
 	var calls atomic.Int32
 	model := chatModelFixture(t, previewSeen, &calls)
 	configureChatModel(t, e, model.URL)
-	cfg, err := config.Load()
-	requireOK(t, err)
-	target, err := url.Parse(e.url)
-	requireOK(t, err)
-	cfg.CodeSession.SandboxAPIBaseURL = serveRealWorkerFixture(t, httputil.NewSingleHostReverseProxy(target))
-	cfg.CodeSession.UpstreamProxyMITMEnabled = false
-	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_CHAT_RUN_ID"), image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t}
-	cfg.EnvironmentRunner.Enabled = true
-	cfg.EnvironmentRunner.Concurrency = 2
-	credentials, err := filestore.NewTokenCredentials(cfg)
-	requireOK(t, err)
-	runner, err := environments.NewRunner(environments.RunnerDependencies{DB: e.database, Provider: provider, Config: cfg, CodeSessions: e.service, Skills: skillsapi.NewRuntimeResolver(e.database), FilestoreTokens: credentials})
-	requireOK(t, err)
-	stopRunner := runner.Start(t.Context())
+	provider, stopRunner := startPublicRunner(t, e)
 	defer stopRunner()
 	provider.failNext.Store(true)
 	failed := createPublicChat(t, e)
@@ -162,7 +153,12 @@ func verifyPublicTurn(t *testing.T, e *liveEnv, previewSeen chan struct{}) {
 	requireOK(t, err)
 	verifyChatHistory(t, f, input, final)
 	waitChatIdle(t, f, 1)
-	sandbox, err := e.database.GetResumableEnvironmentSandboxForCodeSession(ctx, f.code.ExternalID)
+	registerPublicSandboxCleanup(t, e, f)
+}
+
+func registerPublicSandboxCleanup(t *testing.T, e *liveEnv, f *liveSession) {
+	t.Helper()
+	sandbox, err := e.database.GetResumableEnvironmentSandboxForCodeSession(t.Context(), f.code.ExternalID)
 	requireOK(t, err)
 	t.Cleanup(func() {
 		cleanupCtx, stop := context.WithTimeout(context.Background(), 15*time.Second)
@@ -177,4 +173,23 @@ func verifyPublicTurn(t *testing.T, e *liveEnv, previewSeen chan struct{}) {
 			}
 		}
 	})
+}
+
+func startPublicRunner(t *testing.T, e *liveEnv) (*chatDockerProvider, func()) {
+	t.Helper()
+	cfg, err := config.Load()
+	requireOK(t, err)
+	target, err := url.Parse(e.url)
+	requireOK(t, err)
+	cfg.CodeSession.SandboxAPIBaseURL = serveRealWorkerFixture(t, httputil.NewSingleHostReverseProxy(target))
+	cfg.CodeSession.UpstreamProxyMITMEnabled = false
+	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID"), image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t}
+	cfg.EnvironmentRunner.Enabled = true
+	cfg.EnvironmentRunner.Concurrency = 2
+	credentials, err := filestore.NewTokenCredentials(cfg)
+	requireOK(t, err)
+	runner, err := environments.NewRunner(environments.RunnerDependencies{DB: e.database, Provider: provider, Config: cfg, CodeSessions: e.service, Skills: skillsapi.NewRuntimeResolver(e.database), FilestoreTokens: credentials})
+	requireOK(t, err)
+	stopRunner := runner.Start(t.Context())
+	return provider, stopRunner
 }

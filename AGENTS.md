@@ -172,7 +172,10 @@
 
 ## 测试要求
 
-- 修改聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付、Runner 启动或聊天性能路径时，主动使用项目的 [verify-chat Skill](.agents/skills/verify-chat/SKILL.md)，无需等待用户再次提醒。先读 Skill 的 Agent workflow 和相关功能地图，运行 `just verify-chat doctor`，再按改动范围选择场景；场景选择和性能基线流程统一维护在 Skill 中。
+- 修改 Transcript 私有历史的归档、导出、还原、物理删除、pending 回收或对象完整性路径时，使用 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be transcript doctor`，再运行五个 Transcript 场景。功能地图说明真实 PostgreSQL/MinIO、维护 CLI 与进程内服务调用的范围；这些场景不代表 River 定时调度、自动重试或生产性能验证。
+- 修改聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付、Runner 启动或聊天性能路径时，主动使用项目的 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，无需等待用户再次提醒。先读 Skill 的 Agent workflow 和相关功能地图，运行 `just verify-be chat doctor`，再按改动范围选择场景；场景选择和性能基线流程统一维护在 Skill 中。
+- 修改 Files 上传、元数据、下载、删除、租户隔离、对象存储或清理时，使用同一 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be files doctor`，再按 Skill 运行九个本地功能场景及 Files 性能基线比较。`files generated` 需要真实 Worker 镜像与 FUSE，先运行 `just verify-be files doctor generated`；其他 Files 场景不要求 Worker。云端适配器验证使用显式私有配置，缺少配置必须报告 blocked，不能以本地模拟结果代替。
+- 修改 Memory store、Memory Filestore 读写、挂载权限、跨会话生命周期或对象清理时，使用同一 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be memory doctor`，再运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`；真实挂载另运行 `just verify-be memory doctor mounts` 与 `just verify-be memory mounts`。前五个场景无需 Worker，`mounts` 需要真实 Worker 镜像与 FUSE。清理重试由测试显式驱动，不代表后台重试时序验收。
 - 聊天验证使用现有 Go CLI，不另写临时编排脚本或重新引入 Python。生成、构建和质量检查与验证串行执行，验证期间不修改源码。此验证不替代本节要求的静态检查和单测。
 - 交付时列出实际运行的场景、结果、`report.json` / `report.md` 路径和未覆盖范围；性能比较同时给出基准提交和报告。skip、缺少依赖、未完成、清理失败或不兼容基线均不能报告为通过，不得更新基线或放宽阈值掩盖退化。
 

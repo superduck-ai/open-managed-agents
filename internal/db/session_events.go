@@ -44,6 +44,7 @@ func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, ses
 			}
 			if inserted {
 				created = append(created, stored)
+				trackPrimaryThreadStatus(&primary, next)
 			}
 		}
 	}
@@ -119,6 +120,7 @@ func insertSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, se
 			}
 			if inserted {
 				created = append(created, stored)
+				trackPrimaryThreadStatus(&primary, next)
 			}
 		}
 	}
@@ -147,7 +149,7 @@ func sessionEventBatchTx(ctx context.Context, executor yourbatis.Executor, sessi
 }
 
 func validateSessionInputBatch(primary SessionThread, worker codeSessionInputStateRow, events []SessionEvent) (string, error) {
-	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, "")
+	pending, err := maevents.PendingToolEventIDs(worker.WorkerExternalMetadata, primary.ExternalID, primary.ExternalID)
 	if err != nil {
 		return "", err
 	}

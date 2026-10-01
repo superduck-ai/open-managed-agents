@@ -158,6 +158,7 @@ type resumeCodeSessionWorkerLeaseParams struct {
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
+	UpdateWorkerToolMetadata(ctx context.Context, workspaceUUID, externalID string, metadata []byte, clearDetails bool) (int64, error)
 	ClearToolPermissionRequest(ctx context.Context, workspaceUUID, codeSessionExternalID, publicEventID string) error
 	LockLatestInputState(ctx context.Context, workspaceUUID, sessionUUID string) (codeSessionInputStateRow, bool, error)
 	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string, newTurn bool) error

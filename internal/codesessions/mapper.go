@@ -153,18 +153,22 @@ func publicPayloadCandidatesFromWorkerEvent(codeSessionID string, event db.CodeS
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, false, fmt.Errorf("%w: invalid result payload: %w", ErrProtocol, err)
 		}
-		// Results summarize a turn, not a model request or a state transition.
 		if !payload.IsError {
 			return nil, false, nil
 		}
 		return []publicPayloadCandidate{{payload: map[string]any{
-			"type": "session.error",
+			"type":         "session.error",
+			"processed_at": formatTime(firstPayloadTime(object, event.CreatedAt)),
 			"error": map[string]any{
 				"type":         "unknown_error",
 				"message":      workerResultErrorMessage(payload.Subtype),
 				"retry_status": map[string]any{"type": "exhausted"},
 			},
-		}}}, true, nil
+		}}, {payload: map[string]any{
+			"type":         "session.status_idle",
+			"processed_at": formatTime(firstPayloadTime(object, event.CreatedAt)),
+			"stop_reason":  map[string]any{"type": "retries_exhausted"},
+		}, seedSuffix: "result:retries_exhausted"}}, true, nil
 	default:
 		if !maevents.IsWorkerOutputEvent(event.EventType) && !maevents.IsStreamDelta(event.EventType) {
 			return nil, false, nil
@@ -385,6 +389,9 @@ func publicPayloadWithType(object map[string]any, eventType string) map[string]a
 }
 
 func assistantPublicPayloadCandidates(codeSessionID string, object map[string]any, schema workerAssistantOutputPayload) []publicPayloadCandidate {
+	if schema.Error != "" || schema.IsAPIErrorMessage {
+		return nil
+	}
 	delete(object, "content_block_index")
 	if schema.ParentToolUseID != "" {
 		object["_owner_session_thread_id"] = maevents.ClaudeTaskThreadID(codeSessionID, schema.ParentToolUseID)

@@ -170,8 +170,10 @@ go test ./internal/tunnels -run '^TestClaudeClientsTunnelIntegration$' -count=1 
 
 预期 9 个子用例通过：TypeScript、Python、CLI 各覆盖 HTTP JSON、HTTP SSE 和 stdio。
 每组实际调用一次 `mcp__tunnel__tunnel_proof`，最终回答包含只由私有 MCP 返回的随机标记。
-内置工具关闭、项目和用户 settings 不加载、会话不持久化；日志只输出工具调用次数、连接状态和结果校验状态。
+内置工具关闭、项目和用户 settings 不加载、会话不持久化；日志记录工具调用次数、连接状态、结果校验状态及下述诊断信息。
 测试创建的三副本 NATS、Connector、私有 MCP 与临时客户端目录自动清理；安装目录保留供复跑使用。
+
+HTTP 用例另记录私有 MCP 实际收到的 `tools/list`、`tools/call` 和方法错误计数。TypeScript 客户端记录初始化工具列表、工具调用名称、Assistant 错误类型、回合数、stop reason 和权限拒绝数；失败时保留最多 512 字符的测试模型最终回答，先移除配置中的凭据、endpoint 和随机标记。`connected=true` 只证明 MCP 初始化成功；`success` 只表示 SDK 回合结束。不能据此判定工具已暴露给模型或调用结果已验证，也不能把一次失败后的复测通过解释为已定位根因。
 
 ### 9.2 真实 Managed Agent Sandbox
 
@@ -244,16 +246,17 @@ go test ./internal/tunnels -run '^TestConnector' -count=1 -v
 1. 先测失败：16 MiB+1 正文、对象不存在、长度/摘要不符、对象上传/读取失败、清理任务登记失败；错误沿用当前合同，不重投。错误 Response 绑定不能上传对象。
 2. 检查编码后完整 NATS 消息（包含命令去重 header）在上限前、恰好达到上限和超过上限的行为。前两者不访问存储，后者只发布引用，接收方恢复完整正文。
 3. 两个 OMA 实例分别领取和接收 Response；验证 16 MiB 正文完整性、小/大 SSE 通知交错顺序与最终结果，以及合法重复响应不再次交付。
-4. 在独立 PostgreSQL、版本化 S3 bucket 和官方 tunnel-client v0.0.14 下运行：
+4. 使用本地 PostgreSQL、非版本化 MinIO 和官方 tunnel-client 运行。数据库 URL 指向专用测试库或测试 schema，可复用现有 PostgreSQL 服务：
 
 ```sh
-TEST_TUNNEL_PAYLOAD_DATABASE_URL=postgresql://postgres:payload-test@127.0.0.1:55439/tunnel_payload \
-TEST_TUNNEL_PAYLOAD_S3_ENDPOINT=http://127.0.0.1:59009 \
+CONFIG_FILE=/absolute/path/to/local-config.yaml \
+TEST_TUNNEL_PAYLOAD_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/tunnel_payload \
+TEST_TUNNEL_PAYLOAD_S3_ENDPOINT=http://127.0.0.1:9000 \
 TEST_TUNNEL_CLIENT_BINARY=/absolute/path/to/tunnel-client \
 go test ./internal/tunnels -run 'TestTunnelPayloadRealStorageAndClient|TestOfficialTunnelClientIntegration' -count=1 -v
 ```
 
-此专用测试要求 S3 测试凭据 `payload-test` / `payload-test-secret`，使用独立 `tunnel-payload-test` bucket。不要指向业务环境。它验证 3 MiB 请求、响应及 SSE 通知，沿用测试凭据查询 fixture；清理登记使用真实 PostgreSQL，测试会验证清理不会提前执行，再主动提前测试任务并检查所有对象版本消失。生产清理仍按原 deadline 加 5 分钟调度。
+测试从显式 `CONFIG_FILE` 加载本地 S3 凭据，每次创建唯一的 `tunnel-payload-<UUID>` bucket，不开启版本控制；检查对象读取返回 NotFound 后删除测试 bucket。数据库迁移和清理任务领取限定在调用方提供的专用测试库或 schema，不能使用共享业务 schema。它验证 3 MiB 请求、响应及 SSE 通知，沿用测试凭据查询 fixture；清理登记使用真实 PostgreSQL，测试会验证清理不会提前执行，再主动提前测试任务并确认对象消失。生产清理仍按原 deadline 加 5 分钟调度。
 
 `TestTunnelReducedStorageBudget` 使用每节点 600 MiB 的独立三副本 JetStream 验证新 Tunnel 预算可初始化、旧预算被拒绝。它仅验证 Tunnel，不代表完整应用可在 600 MiB 下运行。测试和验收结束后停止自行启动的 PostgreSQL、S3、Redis 与 connector 进程。
 

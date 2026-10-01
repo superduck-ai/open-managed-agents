@@ -55,3 +55,27 @@ func PendingToolEventIDs(raw []byte, primaryID, threadID string) ([]string, erro
 	slices.Sort(ids)
 	return slices.Compact(ids), nil
 }
+
+func ClearPendingToolRequests(raw []byte, primaryID, threadID string) ([]byte, error) {
+	ids, err := PendingToolEventIDs(raw, primaryID, threadID)
+	if err != nil || len(ids) == 0 {
+		return raw, err
+	}
+	var metadata map[string]json.RawMessage
+	if err := jsonv2.Unmarshal(raw, &metadata); err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		delete(metadata, ToolPermissionRequestMetadataKey+":"+id)
+	}
+	if value, ok := metadata[ToolPermissionRequestMetadataKey]; ok {
+		var request toolPermissionRequestMetadata
+		if err := jsonv2.Unmarshal(value, &request); err != nil {
+			return nil, err
+		}
+		if slices.Contains(ids, request.PublicEventID) {
+			delete(metadata, ToolPermissionRequestMetadataKey)
+		}
+	}
+	return jsonv2.Marshal(metadata)
+}

@@ -77,6 +77,16 @@
         )
     </select>
 
+    <select id="FindLatestTurnStart" result="optional" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+          AND event_type IN ('session.thread_status_running', 'session.thread_status_rescheduled')
+          AND payload-&gt;&gt;'session_thread_id' = #{threadID}
+          AND deleted_at IS NULL
+        ORDER BY id DESC LIMIT 1
+    </select>
+
     <select id="FindLatestStatus" result="optional" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events

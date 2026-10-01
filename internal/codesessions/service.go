@@ -280,6 +280,12 @@ type preparedPublicAction struct {
 	payloads []json.RawMessage
 }
 
+type preparedFailedResultAction struct {
+	preparedPublicAction
+	threadID string
+	at       time.Time
+}
+
 func (preparedNoopAction) implPreparedWorkerOutputEvent()      {}
 func (preparedKeepAliveAction) implPreparedWorkerOutputEvent() {}
 func (preparedStreamAction) implPreparedWorkerOutputEvent()    {}
@@ -340,6 +346,17 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !ok {
 		return preparedNoopAction{}, nil
 	}
+	if meta.EventType == "result" && (meta.EventSubtype == "" || meta.EventSubtype == "error_during_execution") {
+		var schema workerOutputCommonPayload
+		if err := json.Unmarshal(payload, &schema); err != nil {
+			return nil, err
+		}
+		return preparedFailedResultAction{
+			preparedPublicAction: preparedPublicAction{payloads: publicPayloads},
+			threadID:             schema.SessionThreadID,
+			at:                   firstWorkerPayloadTime(schema, now),
+		}, nil
+	}
 	return preparedPublicAction{payloads: publicPayloads}, nil
 }
 
@@ -380,6 +397,12 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 		return nil
 	case preparedControlAction:
 		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
+	case preparedFailedResultAction:
+		interrupted, err := s.workerResultWasInterrupted(ctx, codeSessionID, prepared)
+		if err != nil || interrupted {
+			return err
+		}
+		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	case preparedPublicAction:
 		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	default:

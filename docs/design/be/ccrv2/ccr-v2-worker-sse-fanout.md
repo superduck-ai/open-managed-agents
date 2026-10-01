@@ -122,22 +122,45 @@ Session 与 Thread SSE 对持久化事件写入 `id: <event.id>`，使用公开�
 各自拥有一对 start/end；工具执行和整轮 `result` 不属于同一次模型请求。
 start 写入失败时不转发上游请求；生命周期事件的写入错误必须返回调用方，不能静默跳过。
 普通 `system`（init、hook 等）和成功 `result` 不生成公开消息；显式 `system.message` 仍保留。
+Worker `assistant.error` 非空或 `is_api_error_message: true` 时，该消息属于 API 错误诊断，不映射为公开 `agent.message` 或 `agent.thinking`；失败仍由 `result(is_error=true)` 的安全错误与结束事件表达。正常 assistant 消息不按文本内容过滤。
 `system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败、终止或用户停止（`stopped`）时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
-失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。
+失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。`exhausted` 已明确本轮失败，因此紧随错误生成 `session.status_idle`，其 `stop_reason.type` 为 `retries_exhausted`；错误和结束事件在同一公开事件事务中写入。结束事件使用由原 result UUID 和固定 suffix 派生的稳定 ID，重投不会再次结束下一轮。成功 `result` 仍只作为诊断汇总，不驱动状态。
+
+通用失败 result（无 subtype 或 `error_during_execution`）在发布前检查同线程、本轮且不晚于 result 源时间的公开历史。最后一次模型请求在开始后收到 `user.interrupt` 并以 `cancelled` 结束，或者请求已以 `http_error` / `cancelled` 结束、随后在没有新模型请求的等待期间收到 `user.interrupt`，且本轮没有已记录的 `session.error`，该 result 视为用户取消，不生成错误和失败结束事件。正常 Worker idle 仍以 `end_turn` 收敛；模型 span、已生成的部分消息和实际 usage 保留。仅抑制 result 不会提前生成 idle，Worker 尚未上报 idle 时 Session 仍 running。检查止于本轮 running/rescheduled，不继承上一轮中断；无中断的连接取消、中断后发生的新 HTTP 错误、预算或回合限制失败继续使用原失败契约。查询只发生于上述通用失败 result，正常输出与成功 result 不增加查询。当前修复不覆盖模型请求以外的工具等待中断，也不声称能识别 Worker 缺少回合标识和源时间时的跨轮乱序。历史识别属于兼容策略，普通失败 result 与用户中断并发时，严格区分自然耗尽和取消仍需 Worker 提供本轮终止原因及关联标识。
+
+```mermaid
+sequenceDiagram
+    participant Worker
+    participant API
+    participant PG
+    participant Client
+    Worker->>API: result(is_error=true)
+    API->>PG: 同一事务写入错误与失败结束事件
+    PG-->>API: error → thread idle → usage → session idle
+    API-->>Client: exhausted / retries_exhausted
+    Worker->>API: worker_status=idle
+    API->>PG: 沿用本轮失败原因，去重
+```
+
+同一回合后续普通 Worker idle 保留最近的 `retries_exhausted`，不能改回 `end_turn`。仅线程已处于 idle 时读取历史原因，正常 running → idle 不增加历史查询；批次内每个成功写入的主线程状态同步更新事务中的线程快照，后续事件按新状态判断。新一轮 running 是原因继承的边界，下一轮正常 idle 仍为 `end_turn`。若 Worker idle 先于失败 result，先前 idle 事实保持不可变，失败结果另写原因更正的 idle 事件；累计 usage 不重复写入。当前 Worker 协议不提供回合标识，首次到达且没有源时间的结果按接收时间归属；携带早于最近线程 running/rescheduled 时间的失败结束事件不会改写新一轮状态。要完全区分跨轮乱序的首次无时间结果，需要 Worker 提供回合标识，不能由服务端猜测。
+
+失败结果可能在普通 idle 之前生成、之后才提交。更正的 thread/session idle 在完成原始源时间的跨回合校验后，将 `processed_at` 提升到至少为该线程最近状态的处理时间。历史按 `(processed_at, id)` 排序，同时间按写入顺序排列，因此旧 idle 在前、更正在后；不会因源时间较早而让历史最终原因退回 `end_turn`。原 idle 和错误事件保持不可变。此时间调整只发生在失败更正路径，正常 running → idle 不增加查询。
+
+失败结束在 Session → Worker 锁内清除该线程的有效待确认工具 metadata，主线程同时清除 requires_action_details；其他线程请求及无关 metadata 保留。清理和错误、状态写入共用 Yourbatis 事务。其他线程仍有有效待确认请求时，整体 Session idle 仍可使用 requires_action 原因；其他线程仍运行时，不提前生成整体 Session idle。
 内部 transcript 入口保持不变；不会把 stdout 诊断写入恢复用 transcript。未单独上报到内部入口的
-init/hook/result 不另行持久化。`result` 不驱动 Session 状态，也不使用 `duration_api_ms` 或汇总 usage 补造 span。
+init/hook/result 不另行持久化。成功 `result` 不驱动 Session 状态；所有 `result` 均不使用 `duration_api_ms` 或汇总 usage 补造 span。
 接受主线程 `user.message` 时激活本轮，在同一事务内更新 Session/主线程为 running，并按
 `session.status_running → session.thread_status_running → user.message` 写入、广播，沿用 Qoder 的激活顺序。
 这里 running 表示任务已激活，不表示模型 HTTP 请求已发出。事务在 Session 锁内判断当前状态，
 已处于 running 时不重复写入状态对；Worker 后续上报或并发输入也复用这个去重规则。
-发送接口仍只返回客户端提交的事件。idle 和无新消息的恢复执行继续由 Worker 状态上报驱动；
+发送接口仍只返回客户端提交的事件。正常 idle 和无新消息的恢复执行继续由 Worker 状态上报驱动；
 工具审批仍使用带 `requires_action` 原因的 idle。
 Worker 初始化的 idle 不代表已接受任务执行完毕。内部字段 `worker_turn_started` 记录当前 Worker
 是否已显式上报 running：注册 Worker 或接受新一轮主线程消息时清零，显式 running 置为 true。
 普通 idle 只在该标记为 true 时同步公开状态；metadata-only 更新不改变标记。
 完成后保留标记，保证“Worker 状态已写入、公开事件写入失败”时重试 idle 仍能补齐结束事件。
 这避免启动时出现 `running → user.message → idle → running`；标记不进入公开 API。
-这样 result 与 Worker idle 的先后顺序不会产生两条结束事件，迟到 result 也不会结束新一轮。
+成功 result 与 Worker idle 的先后顺序不会产生两条结束事件；失败 result 可更正已发布的普通 idle 原因，重投已处理 result 不会结束新一轮。
 Session 与 thread 的 running/idle 事件分别表达整体任务状态和线程状态。公开事件桥接按
 `session.status_running → session.thread_status_running`、`session.thread_status_idle → session.usage → session.status_idle`
 生成主线程配套事件，两者共用时间戳，保留相同的 stop_reason（包括 requires_action.event_ids），
@@ -168,7 +191,7 @@ flowchart TD
 
 `system.message` 在接收时设置处理时间并广播。工具确认和 `AskUserQuestion` 回答（`user.custom_tool_result`）生成的 `control_response` 使用顶层 `id` 携带原始公开输入 ID，`uuid` 仍标识控制响应。Worker 用外层 `event_id` 回 ACK；ACK、重投和清理仍属于内部投递通道，不触碰公开 Session 事件。工具控制响应发布成功与清理对应待确认 metadata 共用同一个 Worker 行锁，发布失败保留请求以便重试，发布前在锁内复核 Worker epoch。清理同时移除对应的旧格式请求，避免旧值重新生效。
 
-Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。result 不再驱动 idle，也不再补造模型 span；结束状态由 Worker 状态上报产生，模型 span 由下文的代理请求生命周期产生。已接纳但 Worker 尚未开始的回合，可以直接归档或删除：事务按 Session → Worker 锁定并复核，撤销 Worker 凭证，并经统一写入入口写入 session.thread_status_terminated → session.status_terminated；提交后清空该 Worker 的 JetStream 投递队列，再广播状态事件并投递 webhook。已开始执行的回合仍拒绝归档、删除。归档后的 Session 不能再激活 Worker。
+Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_started，显式 running 上报才置为 true；初始化 idle 不结束任务。成功 result 不驱动 idle；失败 result 以 retries_exhausted 结束本轮。result 不补造模型 span；正常结束状态由 Worker 状态上报产生，模型 span 由下文的代理请求生命周期产生。已接纳但 Worker 尚未开始的回合，可以直接归档或删除：事务按 Session → Worker 锁定并复核，撤销 Worker 凭证，并经统一写入入口写入 session.thread_status_terminated → session.status_terminated；提交后清空该 Worker 的 JetStream 投递队列，再广播状态事件并投递 webhook。已开始执行的回合仍拒绝归档、删除。归档后的 Session 不能再激活 Worker。
 
 已知风险：输入接纳在发送事务内提交，Worker 投递（`QueuePublicSessionEvents`）在提交之后执行，两者之间没有 outbox。投递失败时接口返回错误，但本轮已进入 running，且没有自动补投；Worker 收不到输入也不会上报 running，历史保留一条已处理但未执行的 `user.message`。忙碌状态也阻止再发消息，不能以重发掩盖恢复缺口。后续通过事务内 outbox 或推迟接纳到投递成功来修复，见 [#388](https://github.com/superduck-ai/open-managed-agents/issues/388)。
 
@@ -207,6 +230,10 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 代理最终消息与 end 在同一批次写入；最终消息和预览使用原始 content block index 生成的事件 ID。Worker 的 assistant echo 可能省略 thinking，使文本块索引偏移；它也可能含有代理未发布的 server tool/result 等块。代理消息与 Worker echo 因此按同一 model request、内容块类型与文本摘要，在已有 Session 行锁事务中跨来源去重，先写入的一份保留，另一来源独有的块继续写入。Worker 独有块使用独立于预览索引的 ID，避免索引偏移误撞代理文本 ID。去重元数据仅在存储层使用，历史和 SSE 恢复为原公开 payload。非流式 Worker echo 即使先于代理 end 到达也遵循同一规则；代理失败时仍由 Worker 兜底。
 end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。`model_usage` 中未知的 token 字段保持缺失；中英文 OpenAPI 均将这些字段列为可选，避免把未知用量误报为零。
 `event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。`tool_use_ids` 是 provider 原始工具调用 ID（如 `toolu_...`），不是公开事件 ID，客户端不能用它直接关联 `agent.tool_use` 等公开事件。
+
+默认允许的工具可能由 Worker 直接执行，不经过 `can_use_tool` 回调。模型代理因此保留工具名称与完整 input；流式 input 从 `input_json_delta` 拼接，非流式 input 从 response content 读取。在成功模型响应结束时，按 Session agent snapshot 解析权限，对 `allow` 调用生成含 `evaluated_permission: allow` 与 `evaluation.type: always_allow` 的公开工具事件，并在同一批次的模型 end 之前持久化与广播。事件 ID 与权限回调、工具结果使用同一个 provider tool ID 映射，因此后来到达的回调不会生成重复调用。`ask`、`deny` 继续由原权限桥处理；代理记录调用不会批准工具或发送确认响应。子线程自动允许的调用保留子线程归属。
+
+Worker 的 runtime idle 不一定表示用户回合完成：模型返回工具调用后，工具执行和下一次模型请求仍属于同一回合。Worker idle 或 requires_action 发布前读取主线程最近的模型 end、中断或错误事实；成功模型 end 含有 `tool_use_ids` 且没有持久化的待确认请求时，不发布 idle 或 usage 快照。这也覆盖自动允许工具在等待内部许可回调时短暂上报的 requires_action，避免它被无待确认请求的状态映射变为 end_turn。真正的待确认请求仍按现有路径暂停并等待用户确认；最终无工具的模型 end、用户中断或失败后仍按现有路径收敛。该检查使用公开事件与待确认 metadata 读取边界，不引入第二份工具链状态。验收包含缺少权限回调的流式/非流式 Bash、回调重投去重，以及 Write→Read 的中间 idle/requires_action；外部 `oma-verify` 的三条内置工具用例检查 SSE/历史调用与结果 ID、真实文件内容、最终唯一 idle 和累计 usage。
 SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。
 
 历史排序、游标与 `created_at[...]` 筛选规则见上文；代理事件沿用同一写入入口。事件批次不按随机 ID 重排，
@@ -219,7 +246,7 @@ SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_
 Claude Code 2.1.251 和 2.1.278 的独立假网关验证确认了上述 header/task/message 关联；
 这不等同于 Linux sandbox 与真实模型供应商的完整 E2E。
 
-`tests/session_worker_status_test.go` 验证初始化/重复 idle、Worker 重注册、结束发布重试，以及正常、失败、乱序下的唯一 idle；同时覆盖真实 SSE 与历史的主线程状态顺序、公开诊断过滤和审批原因。
+`tests/session_worker_status_test.go` 验证初始化/重复 idle、Worker 重注册、结束发布重试，以及正常 idle 去重、失败与 idle 的并发/乱序、更正原因后重投幂等、仅一次 usage、下一轮清除失败原因、迟到结果和失败工具请求清理；同时覆盖真实 SSE 与历史的主线程状态顺序、公开诊断过滤和审批原因。失败源时间早于已提交 idle 的回归用例同时检查 thread/session 历史正序、倒序和重投，确保最后原因均为 `retries_exhausted`；mapper 测试检查 assistant 错误诊断不会生成公开内容。
 
 ## 累计用量与线程状态
 

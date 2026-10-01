@@ -411,7 +411,7 @@ func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID st
 		return
 	}
 	for _, ref := range refs {
-		h.deleteObjectOrEnqueue(r.Context(), ref)
+		h.deleteQueuedObject(r.Context(), ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": storeID, "type": "memory_store_deleted"})
 }
@@ -992,7 +992,7 @@ func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID,
 		return
 	}
 	if ref != nil {
-		h.deleteObjectOrEnqueue(r.Context(), *ref)
+		h.deleteQueuedObject(r.Context(), *ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromVersionRecord(record, nil))
 }
@@ -1072,11 +1072,17 @@ func (h *Handler) deleteObjectOrEnqueue(ctx context.Context, ref db.ObjectRef) {
 	if ref.Key == "" {
 		return
 	}
-	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{}); err != nil {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
 		h.logger.ErrorContext(ctx, "delete memory object", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceUUID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
 			h.logger.ErrorContext(ctx, "enqueue memory object cleanup", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", enqueueErr)
 		}
+	}
+}
+
+func (h *Handler) deleteQueuedObject(ctx context.Context, ref db.ObjectRef) {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
+		h.logger.WarnContext(ctx, "memory object cleanup deferred", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 	}
 }
 

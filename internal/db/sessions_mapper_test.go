@@ -293,3 +293,13 @@ func TestSessionEventCursorExistsMapper(t *testing.T) {
 		wantSQLFragments:  []string{"SELECT EXISTS", "workspace_uuid = $1", "session_external_id = $2", "external_id = $3"},
 	})
 }
+
+func TestSessionEventMapperLatestTurnStart(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperFindLatestTurnStartStatement,
+		bound:     buildSessionEventMapperFindLatestTurnStart(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", "sthr_primary"),
+		wantID:    "SessionEventMapper.FindLatestTurnStart", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID"},
+		wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "payload->>'session_thread_id' = $3", "deleted_at IS NULL", "'session.thread_status_running'", "'session.thread_status_rescheduled'", "ORDER BY id DESC LIMIT 1"},
+	})
+}

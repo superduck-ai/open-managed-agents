@@ -14,6 +14,7 @@ func defaultConfig() Config {
 			},
 		},
 		NATS: NATSConfig{
+			WebhookStream:     WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3},
 			WorkerEventStream: WorkerEventStreamConfig{MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
 			ConnectTimeout:    5 * time.Second,
 			DrainTimeout:      10 * time.Second,
@@ -79,9 +80,11 @@ func defaultConfig() Config {
 			},
 		},
 		Webhook: WebhookConfig{
-			EventTypes:  defaultWebhookEventTypes(),
-			Timeout:     10 * time.Second,
-			MaxAttempts: 10,
+			Concurrency:         10,
+			WorkerEnabled:       true,
+			Timeout:             10 * time.Second,
+			MaxAttempts:         3,
+			FailureDisableAfter: 24 * time.Hour,
 		},
 		Bootstrap: BootstrapConfig{
 			WorkspaceName:       "default",
@@ -102,38 +105,5 @@ func defaultDatabaseAutoMigrate(appEnv string) bool {
 func setDefaultSeedAPIKeys(cfg *Config) {
 	cfg.Bootstrap.SeedAPIKeys = []SeedAPIKey{
 		{ExternalID: cfg.Bootstrap.APIKeyExternalID, Key: DefaultAPIKey},
-	}
-}
-
-func defaultWebhookEventTypes() []string {
-	return []string{
-		"session.created",
-		"session.pending",
-		"session.running",
-		"session.idled",
-		"session.requires_action",
-		"session.archived",
-		"session.deleted",
-		"session.status_rescheduled",
-		"session.status_run_started",
-		"session.status_idled",
-		"session.status_terminated",
-		"session.updated",
-		"session.error",
-		"session.thread_created",
-		"session.thread_status_running",
-		"session.thread_status_idle",
-		"session.thread_status_rescheduled",
-		"session.thread_status_terminated",
-		"session.thread_idled",
-		"session.thread_terminated",
-		"session.outcome_evaluation_ended",
-		"vault.created",
-		"vault.archived",
-		"vault.deleted",
-		"vault_credential.created",
-		"vault_credential.archived",
-		"vault_credential.deleted",
-		"vault_credential.refresh_failed",
 	}
 }

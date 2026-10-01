@@ -96,8 +96,8 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `CODE_SESSION_SANDBOX_API_BASE_URL`                                 | `code_session.sandbox_api_base_url`                                        | 必须是 sandbox 实际可达地址，不从监听地址推导                                     |
 | `CODE_SESSION_JWT_SIGNING_KEY_FILE`                                 | `code_session.jwt_signing_private_key_file`                                | 字段改名；生产环境必须指向稳定只读私钥                                            |
 | `CODE_SESSION_UPSTREAM_PROXY_*`                                     | `code_session.upstream_proxy_*`                                            | 迁移 MITM、CA 私钥路径和 SSRF 诊断开关                                            |
-| `WEBHOOK_ENDPOINT_URL` / `ANTHROPIC_WEBHOOK_SIGNING_KEY`            | `webhook.endpoint_url` / `webhook.signing_key`                             | signing key 字段不再使用 Anthropic 环境变量名                                     |
-| `WEBHOOK_EVENT_TYPES`                                               | `webhook.event_types`                                                      | 旧 CSV 改为 YAML 字符串列表                                                       |
+| `WEBHOOK_ENDPOINT_URL` / `ANTHROPIC_WEBHOOK_SIGNING_KEY` | 已移除 | 服务端只支持数据库订阅；接收方 SDK 的同名验签环境变量不受影响 |
+| `WEBHOOK_EVENT_TYPES` | 已移除 | 事件选择由 workspace 订阅的 enabled_events 管理 |
 | 其他 `WEBHOOK_*`                                                    | `webhook.*`                                                                | 后缀转为小写 snake case                                                           |
 
 `POSTGRES_ADMIN_URL`、`PUBLIC_BASE_URL` 和 `CODE_SESSION_API_BASE_URL` 没有 YAML 对应字段。数据库和角色应在部署前准备好；首次启动回退只使用 `database.url` 派生的 maintenance 连接。客户端响应 URL 根据请求地址及受信任反向代理设置的 `X-Forwarded-*` header 构造；sandbox 回调则显式使用 `code_session.sandbox_api_base_url`。
@@ -137,8 +137,11 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 部分默认值依赖其他字段，因此只在 YAML 未显式设置对应字段时派生：
 
 - `database.auto_migrate`：`env` 为 `prod` 时默认关闭，`dev` 时默认开启。
-- `webhook.worker_enabled`：同时配置 endpoint 和 signing key 时默认开启。
 - `bootstrap.seed_api_keys`：未配置时根据 Bootstrap ID 和默认开发 Key 生成一个默认 seed key；显式空列表表示不 seed API key。
+
+`webhook.worker_enabled` 固定默认开启，显式 false 关闭当前实例的投递。
+
+Webhook 全局投递已移除：`webhook.endpoint_url`、`webhook.signing_key`、`webhook.event_types` 均属于未知字段，即便留空也会被严格校验拒绝。升级前停止旧版生产者与 Worker，删除三个字段，再启动新版；依赖旧地址的部署应提前创建 workspace 订阅。本次删除无需数据库迁移，既有订阅和密钥继续有效。保留 Worker 开关、超时、最大尝试次数、持续失败窗口及 allow_insecure 配置。
 
 SDK 测试不再有生产配置或专用默认身份。旧配置与测试的迁移方式见 [SDK 契约测试与真实资源生命周期](sdk-contract-testing.md)。
 
@@ -180,7 +183,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令                                                |
 | `CodeSessionConfig`       | `code_session`       | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置                           |
 | `ObservabilityConfig`     | `observability`      | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
-| `WebhookConfig`           | `webhook`            | Webhook endpoint、签名、事件和投递 worker 策略                                           |
+| `WebhookConfig`           | `webhook`            | Webhook 投递 worker 开关、超时、重试、失败窗口和地址策略                                           |
 | `BootstrapConfig`         | `bootstrap`          | 本地默认身份和需要 seed 的 API keys                                                      |
 
 ### S3 兼容对象存储

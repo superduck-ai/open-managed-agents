@@ -285,7 +285,7 @@ func (svc *Prebuilds) StartOrRetryPrebuild(ctx context.Context, env db.Environme
 			return err
 		}
 		current.UpdatedAt = time.Now().UTC()
-		_, err = svc.db.UpdateEnvironmentTx(ctx, tx, current)
+		_, _, err = svc.db.UpdateEnvironmentTx(ctx, tx, current)
 		return err
 	})
 }

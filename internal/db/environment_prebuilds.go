@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -24,12 +26,17 @@ func (d *DB) LockEnvironmentTx(ctx context.Context, tx *yourbatis.Tx, workspaceU
 	row, err := m.FindByExternalID(ctx, workspaceUUID, externalID)
 	return row.environment(), mapNoRows(err)
 }
-func (d *DB) UpdateEnvironmentTx(ctx context.Context, tx *yourbatis.Tx, env Environment) (Environment, error) {
-	row, err := NewEnvironmentMapper(tx).UpdateByExternalID(ctx, environmentWriteParamsFrom(env))
+func (d *DB) UpdateEnvironmentTx(ctx context.Context, tx *yourbatis.Tx, env Environment) (Environment, bool, error) {
+	mapper := NewEnvironmentMapper(tx)
+	row, err := mapper.UpdateByExternalID(ctx, environmentWriteParamsFrom(env))
 	if isUniqueViolation(err) {
-		return Environment{}, ErrDuplicate
+		return Environment{}, false, ErrDuplicate
 	}
-	return row.environment(), mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.environment(), err == nil, err
+	}
+	row, err = mapper.FindByExternalID(ctx, env.WorkspaceUUID, env.ExternalID)
+	return row.environment(), false, mapNoRows(err)
 }
 
 // Lock the owning environment before updating its build or the River checkpoint.

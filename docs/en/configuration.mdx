@@ -60,7 +60,7 @@ LLM Providers are workspace data, not process configuration. Add one or more Pro
     Configure the sandbox callback URL, OTLP file logs, JWT signing key, and optional upstream proxy CA.
   </Accordion>
   <Accordion title="vault and webhook">
-    Configure the vault master KEK, webhook endpoint, signing key, retries, and worker behavior.
+    Configure the vault master KEK and Webhook retries/worker behavior. Endpoint URLs and signing keys belong to workspace subscriptions; JetStream retention and capacity are configured under nats.webhook_stream.
   </Accordion>
 </AccordionGroup>
 

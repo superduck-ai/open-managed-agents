@@ -92,7 +92,14 @@ type WorkerEventStreamConfig struct {
 	MaxMsgSize int32         `yaml:"max_msg_size"`
 }
 
+type WebhookStreamConfig struct {
+	MaxBytes int64         `yaml:"max_bytes"`
+	MaxAge   time.Duration `yaml:"max_age"`
+	Replicas int           `yaml:"replicas"`
+}
+
 type NATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
 	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
 	URL               string                  `yaml:"url"`
 	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
@@ -230,13 +237,12 @@ type ObservabilityOTLPConfig struct {
 }
 
 type WebhookConfig struct {
-	EndpointURL   string        `yaml:"endpoint_url"`
-	SigningKey    string        `yaml:"signing_key"`
-	EventTypes    []string      `yaml:"event_types"`
-	WorkerEnabled bool          `yaml:"worker_enabled"`
-	Timeout       time.Duration `yaml:"timeout"`
-	MaxAttempts   int           `yaml:"max_attempts"`
-	AllowInsecure bool          `yaml:"allow_insecure"`
+	Concurrency         int           `yaml:"concurrency"`
+	WorkerEnabled       bool          `yaml:"worker_enabled"`
+	Timeout             time.Duration `yaml:"timeout"`
+	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
+	MaxAttempts         int           `yaml:"max_attempts"`
+	AllowInsecure       bool          `yaml:"allow_insecure"`
 }
 
 type BootstrapConfig struct {

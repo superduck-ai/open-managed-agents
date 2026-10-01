@@ -361,21 +361,13 @@ func TestVaultWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Webhook.EndpointURL = "https://webhook.example.com"
-	cfg.Webhook.SigningKey = "whsec_c2VjcmV0Cg=="
-	cfg.Webhook.EventTypes = []string{
-		"vault.created",
-		"vault.archived",
-		"vault.deleted",
-		"vault_credential.created",
-		"vault_credential.archived",
-		"vault_credential.deleted",
-	}
+
 	cfg.Webhook.WorkerEnabled = true
 	app := newTestAppWithStore(t, &cfg, newFakeStore("vaults-webhooks-bucket"))
 	defer app.close()
 	clearWebhookState(t, app)
 	defer clearWebhookState(t, app)
+	createWebhook(t, app, `{"url":"https://webhook.example.com","enabled_events":["vault.created","vault.archived","vault.deleted","vault_credential.created","vault_credential.archived","vault_credential.deleted"]}`)
 
 	vault := createVault(t, app, `{"display_name":"vault webhook lifecycle"}`)
 	defer cleanupVaultRows(t, app, vault.ID)
@@ -654,19 +646,22 @@ func containsVaultCredential(credentials []vaultCredentialAPIResponse, id string
 
 func webhookJobDataField(t *testing.T, app *testApp, eventType, resourceID, field string) string {
 	t.Helper()
-	var value string
-	if err := app.pool.QueryRow(context.Background(), `
-		select jsonb_extract_path_text(payload, 'event', 'data', $3)
-		from jobs
-		where type = 'webhook_delivery'
-			and payload->>'event_type' = $1
-			and payload->'event'->'data'->>'id' = $2
-		order by created_at desc, id desc
-		limit 1
-	`, eventType, resourceID, field).Scan(&value); err != nil {
-		t.Fatalf("load webhook job data field: %v", err)
+	for _, event := range queuedWebhookEvents(t, app) {
+		if event.Data.Type != eventType || event.Data.ID != resourceID {
+			continue
+		}
+		encoded, err := json.Marshal(event.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields[field]
 	}
-	return value
+	t.Fatal("queued webhook not found")
+	return ""
 }
 
 func cleanupVaultRows(t *testing.T, app *testApp, vaultID string) {

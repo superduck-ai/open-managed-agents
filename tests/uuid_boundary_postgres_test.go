@@ -362,7 +362,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
 		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
 	}
-	if archived, err := app.deployments.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
+	if archived, _, err := app.deployments.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
 		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
 	}
 
@@ -629,29 +629,10 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Webhook endpoint through typed UUID parameters: %v", err)
 	}
-	eventType := "typed_uuid." + suffix
-	if err := app.db.EnqueueWebhookDeliveryJobForEndpoint(ctx, ids.WorkspaceUUID, eventType, []byte(`{"type":"typed_uuid"}`), endpoint.UUID); err != nil {
-		t.Fatalf("enqueue Webhook delivery through typed UUID parameters: %v", err)
+	target, found, err := app.db.FindWebhookDeliveryTarget(ctx, ids.WorkspaceUUID, endpoint.UUID)
+	if err != nil || !found || target.URL != endpoint.URL {
+		t.Fatalf("webhook UUID lookup: %+v %t %v", target, found, err)
 	}
-	jobs, err := app.db.LeaseWebhookDeliveryJobs(ctx, "typed-uuid-"+suffix, 100, time.Minute)
-	if err != nil {
-		t.Fatalf("lease Webhook deliveries through typed UUID rows: %v", err)
-	}
-	foundJob := false
-	for _, job := range jobs {
-		if job.EventType == eventType {
-			foundJob = job.WorkspaceUUID == ids.WorkspaceUUID &&
-				job.WebhookEndpointUUID != nil &&
-				*job.WebhookEndpointUUID == endpoint.UUID
-			if err := app.db.CompleteWebhookDeliveryJob(ctx, job.UUID); err != nil {
-				t.Fatalf("complete Webhook job through typed UUID parameter: %v", err)
-			}
-		}
-	}
-	if !foundJob {
-		t.Fatalf("leased Webhook jobs did not contain typed UUID endpoint %s: %+v", endpoint.UUID, jobs)
-	}
-
 	if loadedSkill, err := app.db.GetSkill(ctx, ids.WorkspaceUUID, skillID); err != nil || loadedSkill.UUID != skill.UUID {
 		t.Fatalf("get Skill through typed UUID row = (%+v, %v)", loadedSkill, err)
 	}

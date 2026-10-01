@@ -138,6 +138,9 @@ func TestArchiveIdleSessionEmitsTermination(t *testing.T) {
 
 func TestArchiveIdleThreadEmitsTermination(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("archive-idle-thread"))
+	clearWebhookState(t, app)
+	t.Cleanup(func() { clearWebhookState(t, app) })
+	createWebhook(t, app, `{"url":"https://example.com/hooks","enabled_events":["session.status_terminated","session.thread_terminated"]}`)
 	worker, _ := newPayloadIntegrationSession(t, app)
 	threads := listSessionThreads(t, app, worker.SessionExternalID, defaultTestKey)
 	if len(threads.Data) != 1 {
@@ -152,6 +155,9 @@ func TestArchiveIdleThreadEmitsTermination(t *testing.T) {
 	if len(events.Data) != 1 || sessionEventStringField(t, events.Data[0], "session_thread_id") != threadID {
 		t.Fatalf("thread archive missing termination event: %s", events.Data)
 	}
+	archiveSessionThread(t, app, worker.SessionExternalID, threadID)
+	assertWebhookCount(t, app, "session.status_terminated", worker.SessionExternalID, 1)
+	assertWebhookCount(t, app, "session.thread_terminated", worker.SessionExternalID, 0)
 	threadEvents := listThreadEvents(t, app, worker.SessionExternalID, threadID, defaultTestKey)
 	if len(threadEvents.Data) != 2 || sessionEventStringField(t, threadEvents.Data[0], "type") != "session.thread_status_terminated" {
 		t.Fatalf("thread archive missing thread history: %s", threadEvents.Data)

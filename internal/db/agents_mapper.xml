@@ -177,6 +177,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
         AND deleted_at IS NULL
+        AND archived_at IS NULL
         RETURNING
         <include refid="agentColumns"/>
     </update>

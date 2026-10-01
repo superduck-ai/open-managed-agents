@@ -1,116 +1,35 @@
 package db
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"database/sql"
+	"errors"
 	"time"
 )
 
-type WebhookDeliveryJob struct {
-	UUID                      string
-	ExternalID                string
-	WorkspaceUUID             string
-	EventType                 string
-	Event                     json.RawMessage
-	Attempts                  int
-	WebhookEndpointUUID       *string
-	WebhookEndpointExternalID string
-	WebhookEndpointURL        string
-	WebhookEndpointSecret     string
-	WebhookEndpointStatus     string
+// WebhookDeliveryTarget contains only the current configuration needed to send.
+type WebhookDeliveryTarget struct {
+	URL           string
+	SigningSecret string
+	Status        string
 }
 
-type webhookDeliveryJobPayload struct {
-	EventType           string          `json:"event_type"`
-	Event               json.RawMessage `json:"event"`
-	WebhookEndpointUUID string          `json:"webhook_endpoint_uuid,omitempty"`
+func (d *DB) FindWebhookDeliveryTarget(ctx context.Context, workspaceUUID, endpointUUID string) (WebhookDeliveryTarget, bool, error) {
+	row, found, err := NewWebhookEndpointMapper(d.mapperDB).FindDeliveryTarget(ctx, workspaceUUID, endpointUUID)
+	return WebhookDeliveryTarget{URL: row.URL, SigningSecret: row.SigningSecret, Status: row.Status}, found, err
+}
+func (d *DB) RecordWebhookDeliverySuccess(ctx context.Context, workspaceUUID, endpointUUID string) error {
+	return NewWebhookEndpointMapper(d.mapperDB).RecordDeliverySuccess(ctx, endpointUUID, workspaceUUID)
 }
 
-func (d *DB) EnqueueWebhookDeliveryJob(ctx context.Context, workspaceUUID, eventType string, event json.RawMessage) error {
-	payload, err := json.Marshal(webhookDeliveryJobPayload{EventType: eventType, Event: event})
-	if err != nil {
-		return err
-	}
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	return mapper.Insert(ctx, workspaceUUID, payload)
-}
-
-func (d *DB) EnqueueWebhookDeliveryJobForEndpoint(ctx context.Context, workspaceUUID, eventType string, event json.RawMessage, endpointUUID string) error {
-	parsedEndpointUUID, err := parseDBUUID("webhook_endpoint_uuid", endpointUUID)
-	if err != nil {
-		return err
-	}
-	payload, err := json.Marshal(webhookDeliveryJobPayload{
-		EventType:           eventType,
-		Event:               event,
-		WebhookEndpointUUID: parsedEndpointUUID.String(),
+// RecordWebhookDeliveryFailure returns whether this observation disabled the endpoint.
+// Message acknowledgment is deliberately outside this database operation.
+func (d *DB) RecordWebhookDeliveryFailure(ctx context.Context, workspaceUUID, endpointUUID, reason string, immediate bool, disableAfter time.Duration) (bool, error) {
+	row, err := NewWebhookEndpointMapper(d.mapperDB).RecordDeliveryFailure(ctx, recordWebhookEndpointFailureParams{
+		WorkspaceUUID: workspaceUUID, EndpointUUID: endpointUUID, Reason: reason, ImmediateDisable: immediate, DisableAfterMicroseconds: disableAfter.Microseconds(),
 	})
-	if err != nil {
-		return err
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	return mapper.Insert(ctx, workspaceUUID, payload)
-}
-
-func (d *DB) LeaseWebhookDeliveryJobs(ctx context.Context, workerID string, limit int, leaseDuration time.Duration) ([]WebhookDeliveryJob, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-	if leaseDuration <= 0 {
-		leaseDuration = time.Minute
-	}
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	rows, err := mapper.Lease(ctx, workerID, limit, leaseDuration.Microseconds())
-	if err != nil {
-		return nil, err
-	}
-
-	jobs := make([]WebhookDeliveryJob, 0, len(rows))
-	for _, row := range rows {
-		jobs = append(jobs, row.job())
-	}
-	return jobs, nil
-}
-
-func (d *DB) CompleteWebhookDeliveryJob(ctx context.Context, jobUUID string) error {
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	return mapper.Complete(ctx, jobUUID)
-}
-
-func (d *DB) FailWebhookDeliveryJob(ctx context.Context, jobUUID string, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {
-	nextAttempts := attempts + 1
-	status := "retry"
-	if nextAttempts >= maxAttempts {
-		status = "failed"
-	}
-	runAfter := time.Now().UTC().Add(retryDelay)
-	mapper := NewWebhookDeliveryJobMapper(d.mapperDB)
-	return mapper.Fail(ctx, failWebhookDeliveryJobParams{
-		JobUUID:  jobUUID,
-		Status:   status,
-		RunAfter: runAfter,
-		Attempts: nextAttempts,
-		Reason:   reason,
-	})
-}
-
-func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
-	job := WebhookDeliveryJob{
-		UUID:                      r.UUID,
-		ExternalID:                r.ExternalID,
-		WorkspaceUUID:             r.WorkspaceUUID,
-		EventType:                 r.EventType,
-		Event:                     bytes.Clone(r.Event),
-		Attempts:                  r.Attempts,
-		WebhookEndpointExternalID: r.WebhookEndpointExternalID.String,
-		WebhookEndpointURL:        r.WebhookEndpointURL.String,
-		WebhookEndpointSecret:     r.WebhookEndpointSecret.String,
-		WebhookEndpointStatus:     r.WebhookEndpointStatus.String,
-	}
-	if r.WebhookEndpointUUID.Valid {
-		endpointUUID := r.WebhookEndpointUUID.String
-		job.WebhookEndpointUUID = &endpointUUID
-	}
-	return job
+	return row.Disabled, err
 }

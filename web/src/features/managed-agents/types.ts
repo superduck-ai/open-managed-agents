@@ -495,7 +495,7 @@ export type ToolCallEntry = BaseSessionEventEntry & {
   confirmationEvent?: QuickstartSessionEvent;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketId: string;
   bracketStartMs?: number;
@@ -507,7 +507,7 @@ export type ToolBatchEntry = Omit<BaseSessionEventEntry, 'kind'> & {
   toolCounts: Array<{ name: string; count: number }>;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketStartMs?: number;
 };
@@ -516,7 +516,7 @@ export type DisplayEventEntry = BaseSessionEventEntry & {
   kind: 'message' | 'status' | 'passthrough' | 'outcome' | 'debug';
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   inProgress?: boolean;
   outcomeStatus?: string;
   outcomeIteration?: number;

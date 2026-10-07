@@ -762,11 +762,25 @@ export function toolCallEntryFromTraceEntry(
     confirmationEvent,
     usage: extractSessionEventUsage(event),
     inferenceMs: sessionEventInferenceMs(event),
-    executionMs: sessionEventDurationMs(resultEvent ?? event) || sessionEventDurationMs(event),
+    executionMs: sessionToolExecutionMs(event, resultEvent, confirmationEvent),
     lifecycle: sessionToolLifecycle(event, resultEvent, confirmationEvent),
     bracketId: sessionEventBracketId(event),
     isError: traceEntry.isError || sessionToolResultIsError(resultEvent),
   };
+}
+
+function sessionToolExecutionMs(
+  event: QuickstartSessionEvent,
+  resultEvent?: QuickstartSessionEvent,
+  confirmationEvent?: QuickstartSessionEvent,
+) {
+  const reportedMs = (resultEvent ? sessionEventDurationMs(resultEvent) : undefined) ?? sessionEventDurationMs(event);
+  if (reportedMs !== undefined) return reportedMs;
+  if (!resultEvent || sessionToolLifecycle(event, resultEvent, confirmationEvent) === 'denied') return undefined;
+  const startEvent = confirmationEvent ?? event;
+  const startMs = sessionEventProcessedTimestamp(startEvent);
+  const endMs = sessionEventProcessedTimestamp(resultEvent);
+  return startMs && endMs >= startMs ? endMs - startMs : undefined;
 }
 
 export function baseEventEntry(
@@ -892,7 +906,8 @@ export function toolBatchEntry(calls: ToolCallEntry[]): ToolBatchEntry {
     (total, call) => addSessionEventUsage(total, call.usage),
     emptySessionEventUsage(),
   );
-  const executionMs = calls.reduce((max, call) => Math.max(max, call.executionMs), 0);
+  const durations = calls.flatMap((call) => (call.executionMs === undefined ? [] : [call.executionMs]));
+  const executionMs = durations.length ? Math.max(...durations) : undefined;
   const inferenceMs = calls.reduce((total, call) => total + call.inferenceMs, 0);
   const toolCounts = [
     ...calls.reduce((counts, call) => {

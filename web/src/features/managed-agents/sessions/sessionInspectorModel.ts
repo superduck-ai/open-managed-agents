@@ -335,7 +335,9 @@ function inspectorToolExecutionMs(call: ToolCallEntry) {
   if (startedAt && finishedAt >= startedAt) {
     return finishedAt - startedAt;
   }
-  return Number.isFinite(call.executionMs) && call.executionMs >= 0 ? call.executionMs : undefined;
+  return call.executionMs !== undefined && Number.isFinite(call.executionMs) && call.executionMs >= 0
+    ? call.executionMs
+    : undefined;
 }
 
 function inspectorToolSpanMs(calls: ToolCallEntry[], span: (call: ToolCallEntry) => [number, number] | null) {

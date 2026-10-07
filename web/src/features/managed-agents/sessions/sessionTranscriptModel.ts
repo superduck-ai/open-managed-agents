@@ -28,6 +28,24 @@ export type SessionTranscriptBlock =
       entry: SessionEventListEntry;
     };
 
+export function sessionTranscriptEntryDurationMs(entry: SessionEventListEntry): number | undefined {
+  if (entry.kind === 'idle_gap') return entry.durationMs;
+  if (entry.kind === 'tool_call' || entry.kind === 'tool_batch') return entry.executionMs;
+  if (entry.inProgress || entry.displayEvent.isStreaming || entry.bracketOpen) return undefined;
+  if (entry.displayEvent.type === 'thinking') {
+    return entry.bracketStartMs === undefined
+      ? entry.executionMs
+      : Math.max(0, entry.processedAtMs - entry.bracketStartMs);
+  }
+  if (entry.displayEvent.type === 'agent') {
+    if (entry.bracketStartMs !== undefined && entry.bracketEndMs !== undefined) {
+      return Math.max(0, entry.inferenceMs, entry.bracketEndMs - entry.bracketStartMs);
+    }
+    return entry.inferenceMs > 0 ? entry.inferenceMs : entry.executionMs;
+  }
+  return entry.executionMs;
+}
+
 export function buildSessionTranscriptBlocks(entries: SessionEventListEntry[]): SessionTranscriptBlock[] {
   const blocks: SessionTranscriptBlock[] = [];
   const bracketIds = entries.map((_, index) => sessionTranscriptEffectiveBracketId(entries, index));

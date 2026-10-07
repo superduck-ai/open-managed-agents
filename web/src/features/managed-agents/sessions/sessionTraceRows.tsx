@@ -21,6 +21,7 @@ import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loade
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { formatSessionDuration } from './sessionDetailModel';
+import { sessionTranscriptEntryDurationMs } from './sessionTranscriptModel';
 import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
   sessionEventFamily,
@@ -127,7 +128,7 @@ export function DisplayEventRow({
         ) : null}
         <MetaStrip
           usage={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.usage : undefined}
-          inferenceMs={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.inferenceMs : undefined}
+          durationMs={sessionTranscriptEntryDurationMs(entry)}
           isError={entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}
@@ -309,8 +310,8 @@ function TranscriptThinkingRow({
 }) {
   const { msg } = useI18n();
   const inProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
-  const durationSeconds =
-    entry.bracketStartMs === undefined ? undefined : (entry.processedAtMs - entry.bracketStartMs) / 1000;
+  const durationMs = sessionTranscriptEntryDurationMs(entry);
+  const durationSeconds = durationMs === undefined ? undefined : durationMs / 1000;
   const duration =
     durationSeconds !== undefined && Number.isFinite(durationSeconds) && durationSeconds >= 0
       ? `${durationSeconds.toFixed(durationSeconds < 10 ? 1 : 0)}s`
@@ -373,7 +374,8 @@ export function ToolCallRow({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const duration = formatSessionDuration(entry.executionMs, formatters, msg);
+  const duration =
+    entry.executionMs === undefined ? undefined : formatSessionDuration(entry.executionMs, formatters, msg);
   return (
     <div
       data-event-id={entry.traceEntry.id}
@@ -438,7 +440,7 @@ function CompactToolRowContent({
 }: {
   name: string;
   preview: string;
-  duration: string;
+  duration?: string;
   lifecycle: ToolLifecycle;
 }) {
   return (
@@ -548,7 +550,7 @@ export function OutcomeRow({
         )}
         <MetaStrip
           usage={entry.usage}
-          executionMs={entry.durationMs}
+          durationMs={entry.durationMs}
           isError={entry.isError}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}

@@ -152,8 +152,8 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-delta"}`),
 		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signature"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"signature-delta"}`),
 	})
-	if len(firstEvents) != 1 {
-		t.Fatalf("first preview event count = %d, want thinking start: %#v", len(firstEvents), firstEvents)
+	if len(firstEvents) != 2 {
+		t.Fatalf("first preview event count = %d, want thinking start and delta: %#v", len(firstEvents), firstEvents)
 	}
 
 	second := previewTestBatch()
@@ -187,7 +187,6 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 	}
 
 	for _, eventUUID := range []string{
-		"thinking-delta",
 		"signature-delta",
 		"tool-start",
 		"input-json-delta",
@@ -202,7 +201,7 @@ func TestWorkerPreviewConverterFiltersNonPreviewStreamVariantsBeforeDedup(t *tes
 	}
 }
 
-func TestWorkerPreviewConverterEmitsThinkingStartWithoutDeltas(t *testing.T) {
+func TestWorkerPreviewConverterEmitsThinkingContent(t *testing.T) {
 	converter := newWorkerPreviewConverter()
 	batch := previewTestBatch()
 	events := convertPreviewTestPayloads(converter, batch, []json.RawMessage{
@@ -212,11 +211,25 @@ func TestWorkerPreviewConverterEmitsThinkingStartWithoutDeltas(t *testing.T) {
 		json.RawMessage(`{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" user"}},"session_id":"raw-session","parent_tool_use_id":null,"uuid":"thinking-two"}`),
 	})
 
-	if len(events) != 1 {
-		t.Fatalf("preview event count = %d, want 1: %#v", len(events), events)
+	if len(events) != 3 {
+		t.Fatalf("preview event count = %d, want 3: %#v", len(events), events)
 	}
 	wantID := managedagentsevents.StableAssistantEventID(batch.CodeSessionID, "msg_test", 0, "agent.thinking")
 	assertPreviewStart(t, events[0].Payload, "agent.thinking", wantID)
+	for index, fragment := range []string{"The", " user"} {
+		var delta struct {
+			EventID string `json:"event_id"`
+			Delta   struct {
+				Content struct {
+					Type     string `json:"type"`
+					Thinking string `json:"thinking"`
+				} `json:"content"`
+			} `json:"delta"`
+		}
+		if err := json.Unmarshal(events[index+1].Payload, &delta); err != nil || delta.EventID != wantID || delta.Delta.Content.Type != "thinking" || delta.Delta.Content.Thinking != fragment {
+			t.Fatalf("thinking delta = %s, error = %v", events[index+1].Payload, err)
+		}
+	}
 	if events[0].ExternalID != wantID {
 		t.Fatalf("thinking preview frame id = %q, want %q", events[0].ExternalID, wantID)
 	}
@@ -540,7 +553,7 @@ func TestStreamConnectionResetDropsOrphanDelta(t *testing.T) {
 		ExternalID:    block.eventID,
 		PrimaryThread: true,
 		EventType:     previewEventDelta,
-		Payload:       eventDeltaPayload(block.eventID, "orphan"),
+		Payload:       eventDeltaPayload(block.eventID, previewDeltaContent{Type: "text", Text: "orphan"}),
 	}
 	if _, accepted := connection.event(sessionEventDelivery{event: delta}); accepted {
 		t.Fatal("orphan delta was accepted after reset")
@@ -553,7 +566,7 @@ func TestStreamConnectionRequestEndRetiresOnlyItsPreviews(t *testing.T) {
 		block := previewBlock{eventID: id, eventType: "agent.message"}
 		payload := eventStartPayload(block)
 		if eventType == previewEventDelta {
-			payload = eventDeltaPayload(id, "text")
+			payload = eventDeltaPayload(id, previewDeltaContent{Type: "text", Text: "text"})
 		}
 		_, accepted := connection.event(sessionEventDelivery{event: sessionStreamEvent{ExternalID: id, PrimaryThread: true, EventType: eventType, Payload: payload}})
 		return accepted

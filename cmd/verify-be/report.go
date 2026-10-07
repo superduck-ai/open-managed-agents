@@ -63,7 +63,7 @@ var scenarios = map[string]scenario{
 	"chat.roundtrip":   {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatRoundtrip", Stages: []string{"sse_connected", "input_submitted", "preview_and_final_match", "history_recovered", "idle_and_drained"}, Description: "消息发送、中文流式预览、最终回复、历史恢复和队列清空"},
 	"chat.tools":       {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"tool_denied", "tool_allowed"}, Description: "通过 Go SDK 拒绝/允许 Write，核对文件副作用、事件历史和队列清空"},
 
-	"chat.upstream-errors": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatUpstreamErrors", Stages: []string{"anthropic_401_failed_and_idle", "generic_401_failed_and_idle"}, Description: "真实 Worker 收到两种上游 401 后，在 90 秒内报告错误并恢复空闲；超时后单独记录公开中断清理"},
+	"chat.upstream-errors": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatUpstreamErrors", Stages: []string{"anthropic_401_failed_and_idle", "generic_401_failed_and_idle", "backoff_500_interrupted_and_recovered"}, Description: "真实 Worker 的上游 401 自然失败收敛、500 退避中断与下一轮恢复"},
 }
 
 type proof struct {

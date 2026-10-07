@@ -7,6 +7,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.CodeSession, workerStatus string) error {
@@ -17,6 +18,16 @@ func (s *Service) syncPublicSessionFromWorker(ctx context.Context, record db.Cod
 	// Keep the durable marker after completion so failed publication can retry.
 	if workerStatus == "idle" && !record.WorkerTurnStarted {
 		return nil
+	}
+	if workerStatus == "idle" || workerStatus == "requires_action" {
+		requests, err := maevents.PendingToolEventIDs(record.WorkerExternalMetadata, "", "")
+		if err != nil {
+			return err
+		}
+		pending, err := s.modelToolTurnPending(ctx, record)
+		if err != nil || (pending && len(requests) == 0) {
+			return err
+		}
 	}
 	eventType, ok := publicEventTypeFromWorkerStatus(workerStatus)
 	if !ok {

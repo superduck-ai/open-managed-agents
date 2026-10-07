@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,6 +70,15 @@ func TestResponseObservationNonStreaming(t *testing.T) {
 	}
 }
 
+func TestResponseObservationInvalidToolInput(t *testing.T) {
+	observation := &responseObservation{request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+	_, _ = observation.Write([]byte(`{"id":"msg_tool","type":"message","content":[{"type":"tool_use","id":"toolu_test","name":"Bash","input":null}]}`))
+	observation.finish()
+	if observation.result.ErrorType != "invalid_response" || len(observation.result.ToolUses) != 0 {
+		t.Fatalf("invalid tool input result = %+v", observation.result)
+	}
+}
+
 func TestResponseObservationRetainsUsageWhenClientWriteFails(t *testing.T) {
 	observation := &responseObservation{request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
 	body := `{"id":"msg_json","type":"message","usage":{"input_tokens":2,"output_tokens":3},"content":[{"type":"text","text":"answer"}]}`
@@ -111,5 +121,44 @@ func TestMergeRequestUsagePreservesMissingAndExplicitZero(t *testing.T) {
 	})
 	if *usage.InputTokens != 0 || *usage.OutputTokens != 0 || *usage.CacheCreationInputTokens != 0 || *usage.CacheReadInputTokens != 0 {
 		t.Fatal("explicit zero did not overwrite prior usage")
+	}
+}
+
+func TestResponseObservationPreservesThinking(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			body := `{"id":"msg_thinking","type":"message","content":[{"type":"thinking","thinking":"公开思考正文","signature":"secret"},{"type":"redacted_thinking","data":"encrypted"}]}`
+			if streaming {
+				body = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_thinking\"}}\n\n" +
+					"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"公开\"}}\n\n" +
+					"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"思考正文\"}}\n\n" +
+					"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"secret\"}}\n\n" +
+					"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"encrypted\"}}\n\n" +
+					"data: {\"type\":\"message_stop\"}\n\n"
+			}
+			observation := &responseObservation{streaming: streaming, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+			for _, b := range []byte(body) {
+				_, _ = observation.Write([]byte{b})
+			}
+			observation.finish()
+			messages := observation.result.Messages
+			if observation.result.ErrorType != "" || len(messages) != 2 || len(messages[0].Content) != 1 || messages[0].Content[0].Thinking == nil || *messages[0].Content[0].Thinking != "公开思考正文" || len(messages[1].Content) != 0 {
+				t.Fatalf("thinking result = %+v", observation.result)
+			}
+		})
+	}
+}
+
+func TestResponseObservationLimitsThinkingContent(t *testing.T) {
+	observation := &responseObservation{streaming: true, request: &codesessions.ModelRequest{CodeSessionID: "cse_test"}}
+	observation.observeFrame([]byte(`{"type":"message_start","message":{"id":"msg_limit"}}`))
+	observation.observeFrame([]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`))
+	delta := responseStreamEvent{Index: 0, Delta: responseContentBlock{Type: "thinking_delta", Thinking: strings.Repeat("a", 1024*1024)}}
+	for range 5 {
+		observation.observeContentDelta(delta)
+	}
+	observation.finish()
+	if observation.result.ErrorType != "observation_limit" || !observation.malformed || observation.blocks[0].thinkingBuffer.Len() != 4*1024*1024 {
+		t.Fatalf("thinking observation exceeded bound: error=%q bytes=%d", observation.result.ErrorType, observation.blocks[0].thinkingBuffer.Len())
 	}
 }

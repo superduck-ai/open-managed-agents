@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"io"
 	"maps"
@@ -43,10 +44,16 @@ type responseMessage struct {
 }
 
 type responseContentBlock struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Text       string `json:"text"`
-	textBuffer strings.Builder
+	ID             string            `json:"id"`
+	Type           string            `json:"type"`
+	Text           string            `json:"text"`
+	Thinking       string            `json:"thinking"`
+	Name           string            `json:"name"`
+	Input          jsonv1.RawMessage `json:"input"`
+	PartialJSON    string            `json:"partial_json"`
+	thinkingBuffer strings.Builder
+	textBuffer     strings.Builder
+	inputBuffer    strings.Builder
 }
 
 type responseStreamEvent struct {
@@ -200,7 +207,8 @@ func (o *responseObservation) observeFrame(data []byte) {
 		}
 		block := event.ContentBlock
 		block.textBuffer.WriteString(block.Text)
-		o.contentBytes += len(block.Text)
+		block.thinkingBuffer.WriteString(block.Thinking)
+		o.contentBytes += len(block.Text) + len(block.Thinking) + len(block.Input)
 		if o.contentBytes > 4*1024*1024 {
 			o.malformed = true
 			o.result.ErrorType = "observation_limit"
@@ -211,20 +219,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 			o.result.ToolUseIDs = append(o.result.ToolUseIDs, event.ContentBlock.ID)
 		}
 	case "content_block_delta":
-		if event.Delta.Type == "text_delta" {
-			o.contentBytes += len(event.Delta.Text)
-			if o.contentBytes > 4*1024*1024 {
-				o.malformed = true
-				o.result.ErrorType = "observation_limit"
-				return
-			}
-			block := o.blocks[event.Index]
-			if block == nil {
-				o.malformed = true
-				return
-			}
-			block.textBuffer.WriteString(event.Delta.Text)
-		}
+		o.observeContentDelta(event)
 	case "message_delta":
 		mergeRequestUsage(&o.result.Usage, event.Usage)
 	case "message_stop":
@@ -234,6 +229,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		for _, index := range slices.Sorted(maps.Keys(o.blocks)) {
 			block := o.blocks[index]
 			block.Text = block.textBuffer.String()
+			block.Thinking = block.thinkingBuffer.String()
 			o.addMessage(index, *block)
 		}
 		o.complete = true
@@ -246,6 +242,30 @@ func (o *responseObservation) observeFrame(data []byte) {
 		if o.onComplete != nil {
 			o.onComplete()
 		}
+	}
+}
+
+func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
+	if event.Delta.Type != "text_delta" && event.Delta.Type != "input_json_delta" && event.Delta.Type != "thinking_delta" {
+		return
+	}
+	o.contentBytes += len(event.Delta.Text) + len(event.Delta.Thinking) + len(event.Delta.PartialJSON)
+	if o.contentBytes > 4*1024*1024 {
+		o.malformed = true
+		o.result.ErrorType = "observation_limit"
+		return
+	}
+	block := o.blocks[event.Index]
+	if block == nil {
+		o.malformed = true
+		return
+	}
+	if event.Delta.Type == "text_delta" {
+		block.textBuffer.WriteString(event.Delta.Text)
+	} else if event.Delta.Type == "thinking_delta" {
+		block.thinkingBuffer.WriteString(event.Delta.Thinking)
+	} else {
+		block.inputBuffer.WriteString(event.Delta.PartialJSON)
 	}
 }
 
@@ -298,7 +318,26 @@ func (o *responseObservation) finish() {
 func (o *responseObservation) addMessage(index int, block responseContentBlock) {
 	message := codesessions.ModelRequestMessage{Type: "agent.message"}
 	switch block.Type {
-	case "thinking", "redacted_thinking":
+	case "tool_use":
+		input := block.Input
+		if block.inputBuffer.Len() > 0 {
+			input = jsonv1.RawMessage(block.inputBuffer.String())
+		}
+		if block.ID == "" || block.Name == "" || !jsonv1.Valid(input) {
+			o.malformed = true
+			return
+		}
+		var fields map[string]jsonv1.RawMessage
+		if err := jsonv1.Unmarshal(input, &fields); err != nil || fields == nil {
+			o.malformed = true
+			return
+		}
+		o.result.ToolUses = append(o.result.ToolUses, codesessions.ModelRequestToolUse{ID: block.ID, Name: block.Name, Input: input})
+		return
+	case "thinking":
+		message.Type = "agent.thinking"
+		message.Content = []codesessions.ModelRequestContent{{Type: "thinking", Thinking: &block.Thinking}}
+	case "redacted_thinking":
 		message.Type = "agent.thinking"
 	case "text":
 		message.Content = []codesessions.ModelRequestContent{{Type: "text", Text: &block.Text}}

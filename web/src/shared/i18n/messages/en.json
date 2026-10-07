@@ -2375,5 +2375,9 @@
   "webhooks.event.paused": "Paused",
   "webhooks.event.unpaused": "Unpaused",
   "webhooks.group.agent": "Agent",
-  "webhooks.group.memoryStore": "Memory Store"
+  "webhooks.group.memoryStore": "Memory Store",
+  "managedAgents.agentPicker.search": "Search by name or agent ID...",
+  "managedAgents.agentPicker.empty": "No agents found.",
+  "managedAgents.agentPicker.failed": "Could not load agents.",
+  "managedAgents.agentPicker.more": "Load more"
 }

@@ -117,6 +117,9 @@ func TestChatUpstreamErrors(t *testing.T) {
 			t.Logf("BE_PROOF {\"stage\":%q,\"elapsed_ms\":%d}", tc.name+"_failed_and_idle", time.Since(started).Milliseconds())
 		}
 	}
+	if t.Run("backoff_500_interrupt", func(t *testing.T) { verifyBackoffInterrupt(t, e) }) {
+		chatProof(t, started, "backoff_500_interrupted_and_recovered")
+	}
 }
 
 func upstream401Fixture(t *testing.T, body string, calls *atomic.Int32) *httptest.Server {

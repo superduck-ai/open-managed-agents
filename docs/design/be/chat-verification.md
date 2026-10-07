@@ -130,6 +130,16 @@ Go 变更仍运行 `just lint`、`just dead-code`、`just duplicates` 和 `just 
 `post_interrupt_observations`。人工清理成功不改变自然结束失败的判定。缺少模型调用、错误事件、
 完整请求 span 或清理失败均不能通过。用例边界和执行入口维护在 Skill 的功能地图中。
 
+同一场景增加持续 500 的退避中断回归。SSE 在提交输入前连接，mock 快速返回至少六次
+`500/api_error`；已观察请求的 span 全部结束且会话仍 running 时发送公开中断。验收 SSE
+与历史具有相同 ID 的 `idle/end_turn`、没有 `session.error`、下一条输入前没有新增模型请求且队列清空。
+随后放行正常文本响应，验证同一会话的新消息完成。状态证据保存于
+`upstream-backoff-observations.json`，对应必需阶段 `backoff_500_interrupted_and_recovered`。
+六次请求是为了进入较长退避窗口，不是生产重试上限；该场景不验收持续 500 的自然耗尽期限。
+本地沙箱控制 API 配置使用符合 E2B SDK 格式的虚拟 key，API 与 sandbox 地址均为 loopback。
+后续公开输入触发的 connect/timeout 必须经过生产 Provider 到达此控制 API；测试覆盖配置生成与
+Provider 续期调用，不因虚拟 key 格式错误而绕开真实投递链路。
+
 `chat.reliability` 在第一条模型请求输出首片段后暂停响应，验证第二条输入返回 409 和
 `conflict_error`，不落库且不触发模型请求。随后断开 Worker SSE 并等待真实重连，确保运行中的
 模型请求没有重复。公开 SSE 客户端在回复途中断开，模型放行后从历史恢复第一轮，空闲后重试

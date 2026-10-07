@@ -1,4 +1,4 @@
-# Upstream authentication failures
+# Upstream failures and backoff interruption
 
 Run `just verify-be chat upstream-errors` with an installed real Worker image.
 
@@ -11,3 +11,9 @@ Passing requires at least one upstream request, matching completed model request
 The evidence directory contains `upstream-401-observations.json`, plus the usual `report.json`, `report.md`, and `tests.jsonl`. Each case records `naturally_completed` and `before_interrupt`, including request counts, model span counts, error event IDs, Worker/Session status, and queue state. If the Session remains running, the test sends public `user.interrupt`, waits up to 15 seconds for idle, and records `post_interrupt_observations` separately. Successful interruption cannot turn a failed natural completion into a pass. Missing requests, missing errors, unfinished spans, or cleanup failure also fail the test.
 
 This verifies the configured local Worker image with scripted upstream errors. It does not establish real provider credential validity, browser error rendering, or behavior of other Worker versions.
+
+The scenario also runs `backoff_500_interrupt`. A scripted upstream returns six or more quick HTTP 500/api_error responses. Once all observed model spans have ended while the Session is still running, the test sends public `user.interrupt` during the retry wait. SSE is connected before the message. Passing requires same-ID idle/end_turn in SSE and history, no session.error, no additional requests before the next user message, and a drained input queue. The fixture then returns successful text for the next message; the same Session must finish normally. `upstream-backoff-observations.json` records the pre/post-interrupt state. The required proof stage is `backoff_500_interrupted_and_recovered`.
+
+Six attempts select a retry wait long enough to submit the interrupt; they are not a production retry limit. This test does not verify natural exhaustion of persistent HTTP 500 or a 90-second retry SLA.
+
+The isolated sandbox API uses a format-valid dummy E2B key with loopback API and sandbox URLs. Production SDK connect/timeout calls must reach this owned-resource fixture when subsequent public inputs renew the sandbox; key-format rejection is a verification failure, not an interruption verdict. `TestLocalSandboxConfigSupportsProviderRenewal` exercises that configuration through the production provider.

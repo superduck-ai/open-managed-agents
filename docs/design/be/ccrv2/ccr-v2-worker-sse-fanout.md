@@ -52,7 +52,7 @@ sequenceDiagram
 - Preview 的 `message_start.message.id` 与最终 assistant payload 的 `message.id` 都在各自 Worker JSON 解码边界修剪首尾空白，再参与确定性 ID 计算。
 - `content_block_start` 根据 block type 发送一次 `event_start`。
 - `text_delta.text` 原样映射成 `event_delta.delta.content.text`，公开 `delta.index` 固定为 `0`。
-- `thinking_delta` 不产生 `event_delta`；`agent.thinking` 只有 `event_start` 预览。
+- `thinking_delta.thinking` 原样映射成 `event_delta.delta.content.thinking`，content type 为 `thinking`，公开 `delta.index` 固定为 `0`；只接受与 thinking block 匹配的 delta，签名不产生公开预览。
 - 缺少 message start、block start 或消息总线重连后丢失上下文时，后续 delta 直接舍弃。
 - `parent_tool_use_id` 为空时归属主线程；非空时使用既有确定性 child thread ID。
 - Preview JSON envelope 没有自己的 `id`、`created_at` 或 `processed_at`；关联 ID 位于 `event_start.event.id` / `event_delta.event_id`，同时写入对应 SSE 帧的 `id:`。内部接收时间只用于转换与清理，不进入公开 preview envelope。
@@ -125,6 +125,8 @@ start 写入失败时不转发上游请求；生命周期事件的写入错误�
 Worker `assistant.error` 非空或 `is_api_error_message: true` 时，该消息属于 API 错误诊断，不映射为公开 `agent.message` 或 `agent.thinking`；失败仍由 `result(is_error=true)` 的安全错误与结束事件表达。正常 assistant 消息不按文本内容过滤。
 `system/compact_boundary` 映射为官方类型 `agent.thread_context_compacted`。`system/task_notification` 的线程 idle 使用官方 stop_reason `end_turn`，失败、终止或用户停止（`stopped`）时写 `session.thread_status_terminated` 且不带 stop_reason；Worker 的 `completed` 等状态值不再写入 stop_reason.type。
 失败 `result` 生成 `session.error`，使用官方 `unknown_error` / exhausted 表达无法进一步归因的执行失败，只公开已知失败类别的安全文案，不透传原始错误、结果和凭据字段。`exhausted` 已明确本轮失败，因此紧随错误生成 `session.status_idle`，其 `stop_reason.type` 为 `retries_exhausted`；错误和结束事件在同一公开事件事务中写入。结束事件使用由原 result UUID 和固定 suffix 派生的稳定 ID，重投不会再次结束下一轮。成功 `result` 仍只作为诊断汇总，不驱动状态。
+
+通用失败 result（无 subtype 或 `error_during_execution`）在发布前检查同线程、本轮且不晚于 result 源时间的公开历史。最后一次模型请求在开始后收到 `user.interrupt` 并以 `cancelled` 结束，或者请求已以 `http_error` / `cancelled` 结束、随后在没有新模型请求的等待期间收到 `user.interrupt`，且本轮没有已记录的 `session.error`，该 result 视为用户取消，不生成错误和失败结束事件。正常 Worker idle 仍以 `end_turn` 收敛；模型 span、已生成的部分消息和实际 usage 保留。仅抑制 result 不会提前生成 idle，Worker 尚未上报 idle 时 Session 仍 running。检查止于本轮 running/rescheduled，不继承上一轮中断；无中断的连接取消、中断后发生的新 HTTP 错误、预算或回合限制失败继续使用原失败契约。查询只发生于上述通用失败 result，正常输出与成功 result 不增加查询。当前修复不覆盖模型请求以外的工具等待中断，也不声称能识别 Worker 缺少回合标识和源时间时的跨轮乱序。历史识别属于兼容策略，普通失败 result 与用户中断并发时，严格区分自然耗尽和取消仍需 Worker 提供本轮终止原因及关联标识。
 
 ```mermaid
 sequenceDiagram
@@ -219,7 +221,7 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
   最终子消息继续通过 `parent_tool_use_id` 指向同一个确定性 thread ID。
 
 代理逐帧观察响应，不修改 SSE body。code-session 上游请求不转发客户端的 `Accept-Encoding`，由 Go Transport 协商并透明解压，观测器因此读到明文帧，客户端收到的是解压后的响应。`message_start.usage` 与 `message_delta.usage` 按字段合并，
-其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 无内容的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
+其中输出 token 数是本次请求累计值。正常 `message_stop` 将完整 `agent.message` / 带公开 thinking 正文的 `agent.thinking` 与 end 按顺序放入同一写入批次；provider error 只发布 end；
 非流式响应完成、HTTP 错误、网络错误、缺失 stop 的 EOF 和客户端取消也会收尾。非流式响应已完整读取但向客户端写入失败时，end 保留已知用量并标记 `stream_error`。
 取消后的落库使用独立 5 秒 context；end 持久化失败在该期限内每 250 毫秒重试，成功即停止，期限耗尽时记录 start ID 和错误，不记录原始响应。
 单帧、累计文本和非流式 JSON 的观察缓冲上限为 4 MiB，超过上限仍原样转发，但 end 标记
@@ -228,6 +230,10 @@ Worker 注册和立即接纳的新一轮主线程输入清除 worker_turn_starte
 代理最终消息与 end 在同一批次写入；最终消息和预览使用原始 content block index 生成的事件 ID。Worker 的 assistant echo 可能省略 thinking，使文本块索引偏移；它也可能含有代理未发布的 server tool/result 等块。代理消息与 Worker echo 因此按同一 model request、内容块类型与文本摘要，在已有 Session 行锁事务中跨来源去重，先写入的一份保留，另一来源独有的块继续写入。Worker 独有块使用独立于预览索引的 ID，避免索引偏移误撞代理文本 ID。去重元数据仅在存储层使用，历史和 SSE 恢复为原公开 payload。非流式 Worker echo 即使先于代理 end 到达也遵循同一规则；代理失败时仍由 Worker 兜底。
 end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联 start。`model_usage` 中未知的 token 字段保持缺失；中英文 OpenAPI 均将这些字段列为可选，避免把未知用量误报为零。
 `event_ids`、`tool_use_ids` 和诊断字段仍是本地扩展，不是 CMA 保证字段。`tool_use_ids` 是 provider 原始工具调用 ID（如 `toolu_...`），不是公开事件 ID，客户端不能用它直接关联 `agent.tool_use` 等公开事件。
+
+默认允许的工具可能由 Worker 直接执行，不经过 `can_use_tool` 回调。模型代理因此保留工具名称与完整 input；流式 input 从 `input_json_delta` 拼接，非流式 input 从 response content 读取。在成功模型响应结束时，按 Session agent snapshot 解析权限，对 `allow` 调用生成含 `evaluated_permission: allow` 与 `evaluation.type: always_allow` 的公开工具事件，并在同一批次的模型 end 之前持久化与广播。事件 ID 与权限回调、工具结果使用同一个 provider tool ID 映射，因此后来到达的回调不会生成重复调用。`ask`、`deny` 继续由原权限桥处理；代理记录调用不会批准工具或发送确认响应。子线程自动允许的调用保留子线程归属。
+
+Worker 的 runtime idle 不一定表示用户回合完成：模型返回工具调用后，工具执行和下一次模型请求仍属于同一回合。Worker idle 或 requires_action 发布前读取主线程最近的模型 end、中断或错误事实；成功模型 end 含有 `tool_use_ids` 且没有持久化的待确认请求时，不发布 idle 或 usage 快照。这也覆盖自动允许工具在等待内部许可回调时短暂上报的 requires_action，避免它被无待确认请求的状态映射变为 end_turn。真正的待确认请求仍按现有路径暂停并等待用户确认；最终无工具的模型 end、用户中断或失败后仍按现有路径收敛。该检查使用公开事件与待确认 metadata 读取边界，不引入第二份工具链状态。验收包含缺少权限回调的流式/非流式 Bash、回调重投去重，以及 Write→Read 的中间 idle/requires_action；外部 `oma-verify` 的三条内置工具用例检查 SSE/历史调用与结果 ID、真实文件内容、最终唯一 idle 和累计 usage。
 SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。
 
 历史排序、游标与 `created_at[...]` 筛选规则见上文；代理事件沿用同一写入入口。事件批次不按随机 ID 重排，
@@ -252,3 +258,7 @@ nil 保持缺失，显式 0 保留。没有来源的计费金额、active_second
 `session.usage` 由 `sessionStatusEventsTx` 在 thread idle 与 session idle 之间派生，写入时在 Session 行锁内用最新累计值生成快照，
 避免同批 end/idle 或并发线程读到旧值；Session 已为 idle 的重复上报不再生成 usage。重复 end 不重复累计，重复事件 ID 不重新推动状态。
 线程状态和事件同一事务提交。仍有 running/rescheduling 线程时，仅发布线程 idle，不发布 Session usage/idle。
+
+### Thinking 正文合同
+
+代理解析流式 `thinking_delta` 并累计到对应 content block，非流式响应读取 `thinking` 字段；最终事件使用 `content: [{"type":"thinking","thinking":"..."}]`。thinking 与 text/input 共享现有 4 MiB 观察容量上限。Worker assistant 映射也保留相同正文格式，签名字段不进入公开 thinking 内容。`redacted_thinking` 继续只产生无正文的 `agent.thinking`。已持久化的无正文事件不回填；上游未公开返回正文时只能展示 Thinking 状态。

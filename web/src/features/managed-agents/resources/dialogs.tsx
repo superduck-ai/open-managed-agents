@@ -15,15 +15,14 @@ import {
 import { Label } from '../../../shared/ui/label';
 import { ChevronDown } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { compactAgentId } from '../agents/AgentsResourcePage';
+import { AgentSelectField } from '../agents/AgentSelectField';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { listAgents, listManagedEntities, listMemoryStoreOptions, startMCPVaultAuth } from '../api';
+import { listManagedEntities, listMemoryStoreOptions, startMCPVaultAuth } from '../api';
 import { LockedAgentReferenceField, ManagedSelectField, ManagedTextArea, ManagedTextField } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
   type AgentApiResponse,
-  type AgentPageResponse,
   type CredentialFormValues,
   type EntityOption,
   type EnvironmentApiResponse,
@@ -740,7 +739,6 @@ function GenericManagedEntityDialog({
     [entity, lockedAgent, section],
   );
   const [values, setValues] = useState<ManagedEntityFormValues>(initialValues);
-  const [agents, setAgents] = useState<EntityOption[]>([]);
   const [environments, setEnvironments] = useState<EntityOption[]>([]);
   const [vaults, setVaults] = useState<EntityOption[]>([]);
   const [memoryStores, setMemoryStores] = useState<EntityOption[]>([]);
@@ -764,8 +762,7 @@ function GenericManagedEntityDialog({
 
       setLoadingOptions(true);
       try {
-        const [agentPage, environmentPage, vaultPage, memoryStorePage] = await Promise.all([
-          lockedAgent ? Promise.resolve({ data: [], next_page: null } as AgentPageResponse) : listAgents(workspaceId),
+        const [environmentPage, vaultPage, memoryStorePage] = await Promise.all([
           listManagedEntities('environments', workspaceId),
           listManagedEntities('credential-vaults', workspaceId),
           listMemoryStoreOptions(workspaceId),
@@ -773,19 +770,6 @@ function GenericManagedEntityDialog({
         if (!active) {
           return;
         }
-        const agentOptions = lockedAgent
-          ? [
-              {
-                id: lockedAgent.id,
-                label: lockedAgent.name || lockedAgent.id,
-                secondary: `v${lockedAgent.version} · ${compactAgentId(lockedAgent.id)}`,
-              },
-            ]
-          : (agentPage.data ?? []).map((agent) => ({
-              id: agent.id,
-              label: agent.name || agent.id,
-              secondary: compactAgentId(agent.id),
-            }));
         const environmentOptions = (environmentPage.data as EnvironmentApiResponse[]).map((environment) => ({
           id: environment.id,
           label: environment.name || environment.id,
@@ -802,13 +786,12 @@ function GenericManagedEntityDialog({
           label: memoryStore.name || memoryStore.id,
           secondary: memoryStore.id,
         }));
-        setAgents(agentOptions);
         setEnvironments(environmentOptions);
         setVaults(vaultOptions);
         setMemoryStores(memoryStoreOptions);
         setValues((current) => ({
           ...current,
-          agentId: lockedAgent?.id || current.agentId || (section === 'sessions' ? agentOptions[0]?.id || '' : ''),
+          agentId: lockedAgent?.id || current.agentId,
           environmentId: current.environmentId || (section === 'sessions' ? environmentOptions[0]?.id || '' : ''),
         }));
         setLoadingOptions(false);
@@ -868,7 +851,6 @@ function GenericManagedEntityDialog({
                 values={values}
                 lockedAgent={lockedAgent}
                 workspaceId={workspaceId}
-                agents={agents}
                 environments={environments}
                 vaults={vaults}
                 memoryStores={memoryStores}
@@ -933,15 +915,10 @@ function GenericManagedEntityDialog({
                 {lockedAgent ? (
                   <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
                 ) : (
-                  <ManagedSelectField
-                    label={msg('managedAgents.common.agent', 'Agent')}
+                  <AgentSelectField
+                    workspaceId={workspaceId}
                     value={values.agentId}
-                    placeholder={
-                      loadingOptions
-                        ? msg('managedAgents.agents.loading', 'Loading agents...')
-                        : msg('managedAgents.deployments.selectAgent', 'Select an agent')
-                    }
-                    options={agents}
+                    defaultFirst
                     onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
                   />
                 )}

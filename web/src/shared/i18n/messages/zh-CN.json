@@ -2375,5 +2375,9 @@
   "webhooks.event.paused": "已暂停",
   "webhooks.event.unpaused": "已恢复",
   "webhooks.group.agent": "智能体",
-  "webhooks.group.memoryStore": "记忆存储"
+  "webhooks.group.memoryStore": "记忆存储",
+  "managedAgents.agentPicker.search": "按名称或 Agent ID 搜索…",
+  "managedAgents.agentPicker.empty": "没有找到 Agent。",
+  "managedAgents.agentPicker.failed": "无法加载 Agent。",
+  "managedAgents.agentPicker.more": "加载更多"
 }

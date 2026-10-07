@@ -127,12 +127,15 @@ func createPublicChat(t *testing.T, e *liveEnv) *liveSession {
 	var session struct {
 		ID string `json:"id"`
 	}
-	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/sessions", e.apiKey, map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID, "title": "Public startup verification"}, 200), &session))
+	requireOK(t, json.Unmarshal(e.request(t, "POST", "/v1/sessions", e.apiKey, map[string]string{"agent": e.agent.ExternalID, "environment_id": e.environment.ExternalID}, 200), &session))
 	t.Cleanup(func() {
 		e.requestContext(context.Background(), t, "DELETE", "/v1/sessions/"+session.ID, e.apiKey, nil, 200)
 	})
 	record, _, err := e.database.GetSession(t.Context(), e.key.WorkspaceUUID.String(), session.ID)
 	requireOK(t, err)
+	if record.Title != nil {
+		t.Fatalf("new session title = %q, want nil", *record.Title)
+	}
 	return &liveSession{env: e, session: record}
 }
 

@@ -154,6 +154,7 @@ describe('session inspector tool metrics', () => {
       );
 
       expect(rows[0]?.p50Ms).toBe(expected);
+      expect(rows[0]?.calls[0]?.executionMs).toBe(expected);
     },
   );
 

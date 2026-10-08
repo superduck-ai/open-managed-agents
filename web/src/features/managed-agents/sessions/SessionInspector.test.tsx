@@ -42,20 +42,25 @@ function renderInspector(
 }
 
 describe('SessionInspector', () => {
-  test.each([0, 40])('shows reported tool duration %s consistently in the call table and p50', async (durationMs) => {
+  test.each([
+    [-1, 300, '300ms'],
+    [-1, -2, '1.0s'],
+    [0, 300, '0ms'],
+    [40, 300, '40ms'],
+  ])('uses result %s and call %s consistently in the call table and p50', async (durationMs, callMs, expected) => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
     const events = [
-      { ...toolUseEvent('tool_bash', 'Bash', '2026-08-27T08:00:00.000Z'), duration_ms: 300 },
+      { ...toolUseEvent('tool_bash', 'Bash', '2026-08-27T08:00:00.000Z'), duration_ms: callMs },
       { ...toolResultEvent('result_bash', 'tool_bash', '2026-08-27T08:00:01.000Z'), duration_ms: durationMs },
     ];
     renderInspector({ activeTab: 'tools', events });
     await act(async () => Promise.resolve());
     const toolRow = screen.getByText('bash').closest('tr')!;
-    expect(toolRow.querySelectorAll('td')[4]?.textContent).toBe(`${durationMs}ms`);
+    expect(toolRow.querySelectorAll('td')[4]?.textContent).toBe(expected);
     fireEvent.click(toolRow);
 
-    expect(screen.getByText('completed').closest('tr')?.textContent).toContain(`${durationMs}ms`);
-    expect(screen.getByText('p50', { selector: 'dt' }).nextElementSibling?.textContent).toBe(`${durationMs}ms`);
+    expect(screen.getByText('completed').closest('tr')?.textContent).toContain(expected);
+    expect(screen.getByText('p50', { selector: 'dt' }).nextElementSibling?.textContent).toBe(expected);
   });
 
   test('does not invent a zero cost when usage is missing', async () => {

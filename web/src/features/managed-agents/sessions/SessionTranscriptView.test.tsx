@@ -226,10 +226,12 @@ describe('SessionTranscriptView', () => {
   });
 
   test.each([
-    [undefined, '750ms'],
-    [0, '0ms'],
-    [40, '40ms'],
-  ])('uses reported tool duration %s before timestamp fallback', (reportedMs, expected) => {
+    [-1, 300, '300ms'],
+    [-1, -2, '750ms'],
+    [undefined, undefined, '750ms'],
+    [0, 300, '0ms'],
+    [40, 300, '40ms'],
+  ])('uses valid result duration %s then call duration %s before timestamps', (reportedMs, callMs, expected) => {
     resetTestDom('https://oma.duck.ai/sessions/test');
     const entries = buildSessionEventEntries(
       [
@@ -241,7 +243,7 @@ describe('SessionTranscriptView', () => {
           name: 'Write',
           input: {},
           permission_behavior: 'ask',
-          duration_ms: reportedMs === undefined ? undefined : 300,
+          duration_ms: callMs,
         },
         {
           id: 'approved',
@@ -265,6 +267,22 @@ describe('SessionTranscriptView', () => {
     const { container } = render(transcriptTree(entries));
 
     expect(container.querySelector('[data-transcript-tool-row]')?.textContent).toContain(expected);
+  });
+
+  test('hides invalid tool durations when timestamps are unavailable', () => {
+    resetTestDom('https://oma.duck.ai/sessions/test');
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'write', type: 'agent.tool_use', name: 'Write', input: {}, duration_ms: -2 },
+        { id: 'written', type: 'agent.tool_result', tool_use_id: 'write', content: 'Done', duration_ms: -1 },
+      ],
+      'transcript',
+    );
+
+    const { container } = render(transcriptTree(entries));
+
+    expect(container.querySelector('[data-transcript-tool-row]')?.textContent).toContain('Completed');
+    expect(screen.queryByText('0ms')).toBeNull();
   });
 
   test('renders Markdown as an agent message grows and after the stream ends', () => {

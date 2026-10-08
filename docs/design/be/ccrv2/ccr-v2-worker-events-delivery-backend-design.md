@@ -294,10 +294,10 @@ LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE
 测试不应指向生产或有用户正在工作的环境，结束后停止专用测试 API 和依赖。
 
 
-`nats.worker_event_stream.consumer_inactive_threshold` 默认 `5m`，必须为正数。两路 consumer 创建和服务启动时使用相同值。启动扫描只更新名称、durable、精确 subject 均匹配本项目的 pull consumer，仅修改阈值，保留 ACK、退避和队列配置。更新使用 UpdateConsumer，不重建扫描期间已经删除的 consumer；所有 API 实例必须同步配置，避免相互覆盖。
+`nats.worker_event_stream.consumer_inactive_threshold` 默认 `5m`，必须为正数。两路 consumer 在创建或订阅时设置该阈值。后端启动不扫描或更新存量 consumer；旧配置在下次订阅时更新，开发环境中不再使用的旧 consumer 可另行清理。所有 API 实例必须同步配置，避免相互覆盖。
 
 阈值衡量 consumer 的拉取活动，不衡量 Session idle 时长。仍在 Fetch 的 Worker 保持 consumer。沙箱 idle timeout 沿用现有回收流程，Worker 停止后由 NATS 处理无活动 consumer。待 ACK 的消息和 BackOff 会延后回收，`5m` 不表示断线后精确五分钟删除。
 
 临时 consumer 回收不 purge subject。WorkQueue 保留未 ACK 消息，下一次订阅按 DeliverAll 重建 consumer，使用原 event ID 投递。已 ACK 消息已从 Stream 移除。在途消息可再次投递，Worker 必须按 event ID 保持处理幂等；该机制不提供跨进程工具副作用的 exactly-once 保证。旧 SSE 退出仅停止本地 Fetch，禁止删除新连接共享的 consumer。
 
-新增验收覆盖两路 consumer 真实过期、未 ACK 消息及 ID 保留、重建后 ACK 排空、活跃 pull 与旧连接关闭不误删、存量阈值更新和外部 consumer 保留；删除/整体终态的事务回滚、历史 Worker 清理、软删除后的晚订阅补偿与子线程归档保留父会话队列。
+新增验收覆盖两路 consumer 真实过期、未 ACK 消息及 ID 保留、重建后 ACK 排空、活跃 pull 与旧连接关闭不误删；删除/整体终态的事务回滚、历史 Worker 清理、软删除后的晚订阅补偿与子线程归档保留父会话队列。

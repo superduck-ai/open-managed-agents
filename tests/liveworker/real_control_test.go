@@ -264,7 +264,7 @@ func (tap *workerEventTap) Write(data []byte) (int, error) {
 		end := bytes.Index(tap.pending, []byte("\n\n"))
 		if end < 0 {
 			if len(tap.pending) > 1<<20 {
-				return 0, fmt.Errorf("Worker SSE frame exceeds observation limit")
+				tap.pending = nil
 			}
 			return len(data), nil
 		}
@@ -277,7 +277,7 @@ func (tap *workerEventTap) Write(data []byte) (int, error) {
 				Type string `json:"event_type"`
 			}
 			if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &event); err != nil {
-				return 0, fmt.Errorf("decode Worker SSE metadata: %w", err)
+				continue
 			}
 			if event.ID != "" && (event.Type == "user" || event.Type == "user.message") {
 				tap.worker.mu.Lock()

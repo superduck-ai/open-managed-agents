@@ -146,7 +146,7 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	if cfg.MaxAge > 0 {
 		duplicates = min(duplicates, cfg.MaxAge)
 	}
-	stream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+	_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:       StreamName,
 		Subjects:   []string{streamSubject},
 		Retention:  jetstream.WorkQueuePolicy,
@@ -161,11 +161,7 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event stream: %w", err)
 	}
-	broker := &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}
-	if err := broker.refreshConsumerInactivity(ctx, stream); err != nil {
-		return nil, err
-	}
-	return broker, nil
+	return &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}, nil
 }
 
 func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) error {

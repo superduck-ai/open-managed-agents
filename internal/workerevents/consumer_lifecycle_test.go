@@ -102,49 +102,6 @@ func TestConsumerExpiryRetainsUnacknowledgedMessages(t *testing.T) {
 	}
 }
 
-func TestStartupUpdatesOnlyOwnedConsumers(t *testing.T) {
-	broker := lifecycleBroker(t, time.Hour)
-	for _, lane := range deliveryLanes {
-		if _, err := broker.laneConsumer(t.Context(), "cse_stock", lane); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, err := broker.js.CreateConsumer(t.Context(), StreamName, jetstream.ConsumerConfig{
-		Name: "foreign", Durable: "foreign", FilterSubject: subjectPrefix + "cse_foreign", AckPolicy: jetstream.AckExplicitPolicy,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = NewJetStream(t.Context(), broker.connection, config.WorkerEventStreamConfig{
-		MaxBytes: 1 << 24, MaxMsgSize: 1 << 20, Replicas: 1, ConsumerInactiveThreshold: 5 * time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, lane := range deliveryLanes {
-		consumer, err := broker.js.Consumer(t.Context(), StreamName, lane.consumerName("cse_stock"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		info, err := consumer.Info(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfg := info.Config
-		if cfg.InactiveThreshold != 5*time.Minute || cfg.MaxAckPending != 1 || cfg.MaxDeliver != -1 || len(cfg.BackOff) != 3 || cfg.BackOff[0] != time.Minute {
-			t.Fatalf("stock consumer changed unexpected properties: %+v", cfg)
-		}
-	}
-	foreign, err := broker.js.Consumer(t.Context(), StreamName, "foreign")
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := foreign.Info(t.Context())
-	if err != nil || info.Config.InactiveThreshold != 0 {
-		t.Fatalf("changed foreign consumer: %+v %v", info, err)
-	}
-}
-
 func TestActivePullAndReplacementKeepConsumers(t *testing.T) {
 	broker := lifecycleBroker(t, 200*time.Millisecond)
 	old, err := broker.Subscribe(t.Context(), "cse_active")

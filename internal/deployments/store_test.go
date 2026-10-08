@@ -8,7 +8,7 @@ import (
 )
 
 func TestStoreRejectsWritesBeforeConfigure(t *testing.T) {
-	store := NewStore(nil)
+	store := NewStore(nil, nil)
 	if _, err := store.Create(t.Context(), db.Deployment{}); !errors.Is(err, errStoreNotConfigured) {
 		t.Fatalf("Create() error = %v, want unconfigured store", err)
 	}

@@ -83,9 +83,13 @@ type listVaultCredentialsMapperParams struct {
 	IncludeArchived bool
 }
 
+type vaultCredentialReferenceRow struct {
+	ExternalID string `db:"external_id"`
+}
+
 type VaultCredentialMapper interface {
-	ArchiveByVaultUUID(ctx context.Context, workspaceUUID, vaultUUID string) error
-	DeleteByVaultUUID(ctx context.Context, workspaceUUID, vaultUUID string) error
+	ArchiveByVaultUUID(ctx context.Context, workspaceUUID, vaultUUID string) ([]vaultCredentialReferenceRow, error)
+	DeleteByVaultUUID(ctx context.Context, workspaceUUID, vaultUUID string) ([]vaultCredentialReferenceRow, error)
 	CountActive(ctx context.Context, workspaceUUID, vaultUUID string) (int, error)
 	Insert(ctx context.Context, params insertVaultCredentialParams) (vaultCredentialRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (vaultCredentialRow, error)

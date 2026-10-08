@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -183,12 +185,16 @@ func isNullJSON(raw json.RawMessage) bool {
 	return value == nil
 }
 
-func (d *DB) ArchiveAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Agent, error) {
-	row, err := NewAgentMapper(tx).ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Agent{}, mapNoRows(err)
+func (d *DB) ArchiveAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Agent, bool, error) {
+	mapper := NewAgentMapper(tx)
+	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
+	if errors.Is(err, sql.ErrNoRows) {
+		row, err = mapper.FindByExternalID(ctx, workspaceUUID, externalID)
+		current, loadErr := agentFromRow(row, err)
+		return current, false, loadErr
 	}
-	return row.agent(), nil
+	archived, err := agentFromRow(row, err)
+	return archived, err == nil, err
 }
 
 func (d *DB) ListAgentsPage(ctx context.Context, params ListAgentsPageParams) ([]Agent, bool, error) {

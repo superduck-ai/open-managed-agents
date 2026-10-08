@@ -62,6 +62,7 @@ func (h *Handler) normalizeResources(
 	r *http.Request,
 	principal auth.Principal,
 	raw json.RawMessage,
+	previousSecrets json.RawMessage,
 ) (json.RawMessage, json.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return json.RawMessage(`[]`), json.RawMessage(`{}`), nil
@@ -76,6 +77,10 @@ func (h *Handler) normalizeResources(
 
 	resources := make([]deploymentResourcePayload, 0, len(items))
 	resourceSecrets := map[string]json.RawMessage{}
+	var previous map[string]json.RawMessage
+	if err := json.Unmarshal(previousSecrets, &previous); err != nil {
+		previous = nil
+	}
 	gitSpecs := make([]sessionresource.GitRepositorySpec, 0, len(items))
 	fileMountPaths := make([]string, 0, len(items))
 	memoryStores := sessionresource.NewMemoryAttachSet()
@@ -95,9 +100,9 @@ func (h *Handler) normalizeResources(
 		}
 		if resource.resourceType == sessionresource.GitRepositoryType {
 			gitSpecs = append(gitSpecs, sessionresource.GitRepositorySpec{URL: resource.payload.URL, MountPath: resource.mountPath})
-			secret, err := sessionresource.EncryptGitToken(r.Context(), h.secretService, secrets.ResourceBinding{
+			secret, err := h.normalizeGitToken(r.Context(), secrets.ResourceBinding{
 				OrganizationUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID,
-			}, resource.token)
+			}, resource.token, previous[strconv.Itoa(index)])
 			if err != nil {
 				return nil, nil, err
 			}
@@ -123,6 +128,16 @@ func (h *Handler) normalizeResources(
 		return nil, nil, err
 	}
 	return resourcesRaw, secretsRaw, nil
+}
+
+func (h *Handler) normalizeGitToken(ctx context.Context, binding secrets.ResourceBinding, token string, previous json.RawMessage) (json.RawMessage, error) {
+	if token != "" && len(previous) > 0 {
+		stored, err := sessionresource.DecryptGitToken(ctx, h.secretService, binding, previous)
+		if err == nil && stored == token {
+			return previous, nil
+		}
+	}
+	return sessionresource.EncryptGitToken(ctx, h.secretService, binding, token)
 }
 
 // normalizeResource keeps tokens separate from public configuration for subsequent encryption.

@@ -66,13 +66,3 @@ func workspaceUUIDFromRequest(r *http.Request) string {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	return principal.WorkspaceUUID
 }
-
-func organizationUUIDFromRequest(r *http.Request) string {
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.OrganizationUUID
-}
-
-func workspaceExternalIDFromRequest(r *http.Request) string {
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.WorkspaceExternalID
-}

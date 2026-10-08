@@ -37,6 +37,7 @@ var (
 )
 
 type Handler struct {
+	webhooks     webhookEnqueuer
 	db           *db.DB
 	deployments  *deployments.Store
 	errorAdapter *httpapi.ErrorAdapter
@@ -177,6 +178,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError("Could not create agent", fmt.Errorf("create agent %q: %w", agentID, err))
 	}
+	h.enqueueWebhook(r.Context(), principal, "agent.created", created.ExternalID, created.CreatedAt)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(created))
 	return nil
 }
@@ -351,6 +353,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		}
 		return internalError("Could not update agent", fmt.Errorf("update agent %q: %w", agentID, err))
 	}
+	if updated.CurrentVersion > expectedVersion {
+		h.enqueueWebhook(r.Context(), principal, "agent.updated", updated.ExternalID, updated.UpdatedAt)
+	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
 	return nil
 }
@@ -361,13 +366,15 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-
-	record, err := h.deployments.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
+	record, changed, err := h.deployments.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return agentNotFound(agentID, err)
 		}
 		return internalError("Could not archive agent", fmt.Errorf("archive agent %q: %w", agentID, err))
+	}
+	if changed {
+		h.enqueueWebhook(r.Context(), principal, "agent.archived", record.ExternalID, *record.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(record))
 	return nil

@@ -66,6 +66,9 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.NATS.URL) == "" {
 		return errors.New("nats.url is required")
 	}
+	if err := validateWebhookStream(cfg.NATS.WebhookStream); err != nil {
+		return err
+	}
 	if err := validateWorkerEventStream(cfg.NATS.WorkerEventStream); err != nil {
 		return err
 	}
@@ -393,8 +396,10 @@ func validatePositiveValues(cfg Config) error {
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
 		{name: "observability.otlp.max_request_bytes", valid: cfg.Observability.OTLP.MaxRequestBytes > 0},
 		{name: "observability.otlp.forward_timeout", valid: cfg.Observability.OTLP.ForwardTimeout > 0},
+		{name: "webhook.concurrency", valid: cfg.Webhook.Concurrency > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},
+		{name: "webhook.failure_disable_after", valid: cfg.Webhook.FailureDisableAfter > 0},
 	}
 	for _, check := range checks {
 		if !check.valid {

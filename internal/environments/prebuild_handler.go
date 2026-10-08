@@ -28,8 +28,9 @@ func (h *Handler) createEnvironment(ctx context.Context, next db.Environment) (d
 	return result, err
 }
 
-func (h *Handler) updateEnvironment(ctx context.Context, workspace, id string, body environmentMutationRequest) (db.Environment, error) {
+func (h *Handler) updateEnvironment(ctx context.Context, workspace, id string, body environmentMutationRequest) (db.Environment, bool, error) {
 	var result db.Environment
+	var changed bool
 	err := h.db.EnvironmentTransaction(ctx, func(tx *yourbatis.Tx) error {
 		current, err := h.db.LockEnvironmentTx(ctx, tx, workspace, id)
 		if err != nil {
@@ -44,10 +45,10 @@ func (h *Handler) updateEnvironment(ctx context.Context, workspace, id string, b
 				return err
 			}
 		}
-		result, err = h.db.UpdateEnvironmentTx(ctx, tx, next)
+		result, changed, err = h.db.UpdateEnvironmentTx(ctx, tx, next)
 		return err
 	})
-	return result, err
+	return result, changed && err == nil, err
 }
 
 func (h *Handler) applyEnvironmentMutation(current db.Environment, body environmentMutationRequest) (db.Environment, error) {

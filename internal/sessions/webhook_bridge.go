@@ -12,17 +12,46 @@ import (
 )
 
 func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) {
-	if len(events) == 0 {
+	if h.webhooks == nil || len(events) == 0 {
 		return
 	}
-	workspaceIDs, err := h.db.GetWorkspaceIdentifiers(ctx, workspaceUUID)
-	if err != nil {
-		h.logger.ErrorContext(ctx, "load workspace identifiers for session webhook", "session_id", sessionID, "error", err)
-		return
-	}
+	ctx, cancel := context.WithTimeout(ctx, webhooks.EnqueueTimeout)
+	defer cancel()
+	var workspaceIDs db.WorkspaceIdentifiers
+	var workspaceLoaded, primaryLoaded, primaryFound bool
+	var primaryID string
 	seen := map[string]struct{}{}
 	for _, event := range events {
+		if ctx.Err() != nil {
+			return
+		}
 		for _, webhookEvent := range webhookEventsFromSessionEvent(event) {
+			if strings.HasPrefix(webhookEvent.EventType, "session.thread_") {
+				if webhookEvent.ThreadID == nil {
+					continue
+				}
+				if !primaryLoaded {
+					var err error
+					primaryID, primaryFound, err = h.db.GetPrimarySessionThreadExternalID(ctx, workspaceUUID, sessionID)
+					primaryLoaded = true
+					if err != nil {
+						primaryFound = false
+						h.logger.ErrorContext(ctx, "load primary thread for session webhook", "session_id", sessionID, "error", err)
+					}
+				}
+				if !primaryFound || *webhookEvent.ThreadID == primaryID {
+					continue
+				}
+			}
+			if !workspaceLoaded {
+				var err error
+				workspaceIDs, err = h.db.GetWorkspaceIdentifiers(ctx, workspaceUUID)
+				if err != nil {
+					h.logger.ErrorContext(ctx, "load workspace identifiers for session webhook", "session_id", sessionID, "error", err)
+					return
+				}
+				workspaceLoaded = true
+			}
 			key := webhookEvent.EventType + "\x00" + event.CreatedAt.Format(time.RFC3339Nano)
 			if webhookEvent.ThreadID != nil {
 				key += "\x00" + *webhookEvent.ThreadID
@@ -32,6 +61,7 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 			}
 			seen[key] = struct{}{}
 			h.enqueueWebhook(ctx, webhooks.EnqueueInput{
+				OccurredAt:          event.CreatedAt,
 				WorkspaceUUID:       workspaceUUID,
 				OrganizationUUID:    workspaceIDs.OrganizationUUID,
 				WorkspaceExternalID: workspaceIDs.WorkspaceExternalID,
@@ -49,8 +79,9 @@ func (h *Handler) enqueueWebhook(ctx context.Context, input webhooks.EnqueueInpu
 	}
 }
 
-func (h *Handler) enqueuePrincipalWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
+func (h *Handler) enqueuePrincipalWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string, occurredAt time.Time) {
 	h.enqueueWebhook(ctx, webhooks.EnqueueInput{
+		OccurredAt:          occurredAt,
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceExternalID: principal.WorkspaceExternalID,
@@ -79,29 +110,13 @@ func webhookEventsFromSessionEvent(event db.SessionEvent) []sessionWebhookEvent 
 		return []sessionWebhookEvent{{EventType: "session.deleted"}}
 	case "session.updated":
 		return []sessionWebhookEvent{{EventType: "session.updated"}}
-	case "session.error":
-		return []sessionWebhookEvent{{EventType: "session.error"}}
 	case "session.thread_created":
 		return []sessionWebhookEvent{{EventType: "session.thread_created", ThreadID: sessionThreadIDFromEvent(event)}}
-	case "session.thread_status_running":
-		threadID := sessionThreadIDFromEvent(event)
-		return []sessionWebhookEvent{{EventType: "session.thread_status_running", ThreadID: threadID}}
 	case "session.thread_status_idle", "session.thread_idled":
-		threadID := sessionThreadIDFromEvent(event)
-		return []sessionWebhookEvent{
-			{EventType: "session.thread_status_idle", ThreadID: threadID},
-			{EventType: "session.thread_idled", ThreadID: threadID},
-		}
-	case "session.thread_status_rescheduled":
-		threadID := sessionThreadIDFromEvent(event)
-		return []sessionWebhookEvent{{EventType: "session.thread_status_rescheduled", ThreadID: threadID}}
+		return []sessionWebhookEvent{{EventType: "session.thread_idled", ThreadID: sessionThreadIDFromEvent(event)}}
 	case "session.thread_status_terminated", "session.thread_terminated":
-		threadID := sessionThreadIDFromEvent(event)
-		return []sessionWebhookEvent{
-			{EventType: "session.thread_status_terminated", ThreadID: threadID},
-			{EventType: "session.thread_terminated", ThreadID: threadID},
-		}
-	case "session.outcome_evaluation_ended":
+		return []sessionWebhookEvent{{EventType: "session.thread_terminated", ThreadID: sessionThreadIDFromEvent(event)}}
+	case "span.outcome_evaluation_end":
 		return []sessionWebhookEvent{{EventType: "session.outcome_evaluation_ended"}}
 	default:
 		return nil
@@ -113,12 +128,12 @@ func sessionThreadIDFromEvent(event db.SessionEvent) *string {
 		SessionThreadID string `json:"session_thread_id"`
 	}
 	if err := json.Unmarshal(event.Payload, &payload); err == nil {
-		if value := strings.TrimSpace(payload.SessionThreadID); value != "" {
+		if value := payload.SessionThreadID; value != "" {
 			return &value
 		}
 	}
-	if event.ThreadExternalID != nil && strings.TrimSpace(*event.ThreadExternalID) != "" {
-		value := strings.TrimSpace(*event.ThreadExternalID)
+	if event.ThreadExternalID != nil && *event.ThreadExternalID != "" {
+		value := *event.ThreadExternalID
 		return &value
 	}
 	return nil

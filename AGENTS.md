@@ -38,6 +38,10 @@
 - 不要通过 `nolint`、ESLint disable 注释、忽略新增生产文件或提高复杂度阈值来绕过失败。确需调整预算时，必须同时说明无法拆分的边界原因，并更新 `docs/design/development-complexity-guardrails.md`。
 - pre-commit 和 `.github/workflows/complexity.yml` 都调用仓库固定的复杂度配置；本地验收入口为 `just complexity`。
 
+## 代码注释
+
+- 禁止代码注释。
+
 ## 命名规范
 
 - Go package 名使用简短的小写单词；导出类型、函数和方法使用 PascalCase，未导出标识符使用 mixedCaps。缩写保持 Go 惯例并在同一标识符中一致，例如 `API`、`HTTP`、`ID`、`URL`、`UUID`；接收器名应简短且在同一类型的方法中一致。
@@ -147,8 +151,8 @@
 - 使用 Yourbatis 的资源按以下职责拆分文件，不要把对上层暴露的 DB API、业务编排、Mapper 声明、XML SQL 和生成代码混放在同一个文件中：
   - `xxxxs.go`：承载 `DB` 对上层暴露的公共方法、领域参数与结果类型，以及事务、错误映射、分页和其他业务编排；不要在这里声明 Yourbatis Mapper interface 或 `go:generate` 入口。
   - `xxx_mapper.go`：承载 Yourbatis Mapper interface、Mapper 专属的查询参数与数据库行类型，以及对应的 `//go:generate go tool sqlmapgen ...` 生成入口；不要在这里实现 `DB` 对上层暴露的业务方法。
-  - `xxx.xml`：只承载该 Mapper 的 SQL、动态 SQL、公共 SQL fragment 和结果映射；XML `namespace` 必须与 Mapper interface 名一致，statement `id` 必须与 Mapper 方法名一一对应。
-  - `xxx.sqlmap.gen.go`：由 `sqlmapgen` 生成，禁止手工编辑且不纳入版本控制；修改 Mapper interface 或 XML 后必须重新运行 `go generate ./...` 验证生成结果。
+  - `xxx_mapper.xml`：只承载该 Mapper 的 SQL、动态 SQL、公共 SQL fragment 和结果映射；XML `namespace` 必须与 Mapper interface 名一致，statement `id` 必须与 Mapper 方法名一一对应。
+  - `xxx_mapper.sqlmap.gen.go`：由 `sqlmapgen` 生成，禁止手工编辑且不纳入版本控制；修改 Mapper interface 或 XML 后必须重新运行 `go generate ./...` 验证生成结果。
 - 上述文件应放在同一个资源 package 和目录中，并使用一致的 `xxx` 资源前缀，使 Go Mapper、XML 与生成输出可以直接对应；一个生成入口只负责一个 Mapper interface 和一个 XML 文件。
 
 ## PostgreSQL Schema 规则
@@ -167,6 +171,13 @@
 - 保留 `tests/files_api_test.go` 中的 no-FK 守卫测试。
 
 ## 测试要求
+
+- 修改 Transcript 私有历史的归档、导出、还原、物理删除、pending 回收或对象完整性路径时，使用 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be transcript doctor`，再运行五个 Transcript 场景。功能地图说明真实 PostgreSQL/MinIO、维护 CLI 与进程内服务调用的范围；这些场景不代表 River 定时调度、自动重试或生产性能验证。
+- 修改聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付、Runner 启动或聊天性能路径时，主动使用项目的 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，无需等待用户再次提醒。先读 Skill 的 Agent workflow 和相关功能地图，运行 `just verify-be chat doctor`，再按改动范围选择场景；场景选择和性能基线流程统一维护在 Skill 中。
+- 修改 Files 上传、元数据、下载、删除、租户隔离、对象存储或清理时，使用同一 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be files doctor`，再按 Skill 运行九个本地功能场景及 Files 性能基线比较。`files generated` 需要真实 Worker 镜像与 FUSE，先运行 `just verify-be files doctor generated`；其他 Files 场景不要求 Worker。云端适配器验证使用显式私有配置，缺少配置必须报告 blocked，不能以本地模拟结果代替。
+- 修改 Memory store、Memory Filestore 读写、挂载权限、跨会话生命周期或对象清理时，使用同一 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，先运行 `just verify-be memory doctor`，再运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`；真实挂载另运行 `just verify-be memory doctor mounts` 与 `just verify-be memory mounts`。前五个场景无需 Worker，`mounts` 需要真实 Worker 镜像与 FUSE。清理重试由测试显式驱动，不代表后台重试时序验收。
+- 聊天验证使用现有 Go CLI，不另写临时编排脚本或重新引入 Python。生成、构建和质量检查与验证串行执行，验证期间不修改源码。此验证不替代本节要求的静态检查和单测。
+- 交付时列出实际运行的场景、结果、`report.json` / `report.md` 路径和未覆盖范围；性能比较同时给出基准提交和报告。skip、缺少依赖、未完成、清理失败或不兼容基线均不能报告为通过，不得更新基线或放宽阈值掩盖退化。
 
 - 测试组织顺序应先写失败场景，再写成功场景。
 - `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。仓库标准 `just` 命令会自动完成生成。

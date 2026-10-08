@@ -172,6 +172,20 @@ export function codeBlockContaining(value: string) {
   return Array.from(document.querySelectorAll('pre')).find((element) => element.textContent?.includes(value));
 }
 
+export async function addMemoryStoreResource(container: HTMLElement, storeName: string | RegExp) {
+  fireEvent.click(within(container).getByRole('button', { name: 'Add resource' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Memory store' }));
+  const trigger = await waitFor(() => within(container).getByRole('combobox', { name: 'Memory store' }));
+  fireEvent.pointerDown(trigger);
+  fireEvent.pointerUp(trigger);
+  fireEvent.click(trigger);
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+  const option = await screen.findByRole('option', { name: storeName });
+  fireEvent.pointerDown(option);
+  fireEvent.pointerUp(option);
+  fireEvent.click(option);
+}
+
 export async function selectManagedComboboxOption(
   container: HTMLElement,
   name: string | RegExp,
@@ -317,8 +331,11 @@ export type MockAgentsApiOptions = {
   deployments?: DeploymentFixture[];
   skills?: SkillFixture[];
   mcpDirectoryServers?: Array<Record<string, unknown>>;
+  mcpTunnels?: Array<Record<string, unknown>>;
+  mcpTunnelProbeResult?: Record<string, unknown>;
   mcpDirectoryErrorOnce?: boolean;
   workspaceMCPServers?: Array<Record<string, unknown>>;
+  mcpTunnelsErrorOnce?: boolean;
   mcpToolCatalogs?: Array<Record<string, unknown>>;
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
@@ -349,6 +366,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentsSearchErrorsRemaining = options.agentsSearchErrorOnce ? 1 : 0;
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
+  let mcpTunnelsErrorsRemaining = options.mcpTunnelsErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
   let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
   let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
@@ -481,6 +499,27 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       method === 'GET'
     ) {
       return jsonResponse({ data: options.workspaceMCPServers ?? [], next_page: null });
+    }
+
+    if (url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\?/) && method === 'GET') {
+      if (mcpTunnelsErrorsRemaining > 0) {
+        mcpTunnelsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'MCP tunnels unavailable' } }, 503);
+      }
+      return jsonResponse(options.mcpTunnels ?? []);
+    }
+
+    if (
+      url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\/[^/]+\/probe$/) &&
+      method === 'POST'
+    ) {
+      return jsonResponse(
+        options.mcpTunnelProbeResult ?? {
+          status: 'ok',
+          channel: typeof body?.channel === 'string' ? body.channel : 'main',
+          tools: [],
+        },
+      );
     }
 
     if (url.startsWith('/v1/agents?') && method === 'GET') {
@@ -925,7 +964,19 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
 
 type MockManagedResourceApiOptions = {
   agent?: Pick<AgentFixture, 'tools' | 'version'>;
+  memoryStoresPageSize?: number;
 };
+
+export function pageResourceRows<T>(rows: T[], limit: number, page: string | null) {
+  const parsedOffset = page?.startsWith('offset_') ? Number(page.slice('offset_'.length)) : Number.NaN;
+  const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+  const data = rows.slice(offset, offset + limit);
+  const nextOffset = offset + data.length;
+  return {
+    data,
+    next_page: nextOffset < rows.length ? `offset_${nextOffset}` : null,
+  };
+}
 
 export function mockManagedResourceApi(options: MockManagedResourceApiOptions = {}) {
   const now = new Date().toISOString();
@@ -940,6 +991,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     },
   ];
   const resources = {
+    failSessionList: false,
     files: [
       {
         id: 'file_input123456',
@@ -1045,7 +1097,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         id: 'evt_user_queued',
         type: 'user.message',
         created_at: new Date(Date.now() - 84_000).toISOString(),
-        is_queued: true,
+        processed_at: null,
         content: [{ type: 'text', text: 'Queued warmup request' }],
       },
       {
@@ -1402,6 +1454,14 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         type: 'vault',
         updated_at: now,
       },
+      {
+        id: 'vlt_two123456',
+        archived_at: null,
+        created_at: now,
+        display_name: 'Vault two',
+        type: 'vault',
+        updated_at: now,
+      },
     ],
     vaultCredentials: {
       vlt_one123456: [
@@ -1414,6 +1474,18 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
           type: 'vault_credential',
           updated_at: now,
           vault_id: 'vlt_one123456',
+        },
+      ],
+      vlt_two123456: [
+        {
+          id: 'vcrd_two123456',
+          archived_at: null,
+          auth: { type: 'mcp_oauth' },
+          created_at: now,
+          display_name: 'Vault credential two',
+          type: 'vault_credential',
+          updated_at: now,
+          vault_id: 'vlt_two123456',
         },
       ],
     },
@@ -1493,6 +1565,10 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       });
     }
     if (url.startsWith('/v1/sessions?') && method === 'GET') {
+      if (resources.failSessionList) {
+        resources.failSessionList = false;
+        return jsonResponse({ error: { message: 'list failed' } }, 500);
+      }
       const params = new URL(url, 'https://oma.duck.ai').searchParams;
       const agentId = params.get('agent_id');
       const deploymentId = params.get('deployment_id');
@@ -1514,7 +1590,8 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(session, params);
       });
-      return jsonResponse({ data: filteredSessions, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredSessions.length) || filteredSessions.length;
+      return jsonResponse(pageResourceRows(filteredSessions, limit, params.get('page')));
     }
     if (url.startsWith('/v1/files?') && method === 'GET') {
       return jsonResponse({
@@ -1553,6 +1630,21 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     if (sessionThreadsMatch && method === 'GET') {
       return jsonResponse({ data: resources.sessionThreads, next_page: null });
     }
+    if (url.match(/^\/v1\/sessions\/[^/]+\/(?:events\/stream|threads\/[^/]+\/stream)\?/) && method === 'GET') {
+      return new Response(
+        new ReadableStream({
+          start(stream) {
+            if (init?.signal?.aborted) {
+              stream.close();
+              return;
+            }
+            stream.enqueue(new TextEncoder().encode(': connected\n\n'));
+            init?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
     const sessionThreadEventsMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/threads\/([^/?]+)\/events\?/);
     if (sessionThreadEventsMatch && method === 'GET') {
       const threadId = decodeURIComponent(sessionThreadEventsMatch[2]);
@@ -1572,7 +1664,7 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const createdEvents = incomingEvents.map((event, index) => ({
         ...event,
         id: `evt_user_action_${resources.sessionEvents.length + index + 1}`,
-        created_at: new Date().toISOString(),
+        processed_at: new Date().toISOString(),
       }));
       (resources.sessionEvents as Record<string, unknown>[]).push(...createdEvents);
       return jsonResponse({ data: createdEvents });
@@ -1594,13 +1686,30 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(deployment, params);
       });
-      return jsonResponse({ data: filteredDeployments, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredDeployments.length) || filteredDeployments.length;
+      return jsonResponse(pageResourceRows(filteredDeployments, limit, params.get('page')));
     }
     const retrieveDeploymentMatch = url.match(/^\/v1\/deployments\/([^/?]+)\?beta=true$/);
     if (retrieveDeploymentMatch && method === 'GET') {
       const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
       const deployment = resources.deployments.find((item) => item.id === deploymentId);
       return deployment ? jsonResponse(deployment) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (retrieveDeploymentMatch && method === 'POST') {
+      const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
+      const existing = resources.deployments.find((item) => item.id === deploymentId);
+      if (!existing) {
+        return jsonResponse({ error: { message: 'not found' } }, 404);
+      }
+      const updated = {
+        ...existing,
+        name: typeof body?.name === 'string' ? body.name : existing.name,
+        description: body?.description === undefined ? existing.description : body.description,
+        resources: body?.resources ?? existing.resources,
+        updated_at: new Date().toISOString(),
+      };
+      resources.deployments = [updated, ...resources.deployments.filter((item) => item.id !== deploymentId)];
+      return jsonResponse(updated);
     }
     if (url.startsWith('/v1/deployment_runs?') && method === 'GET') {
       const deploymentId = new URL(url, 'https://oma.duck.ai').searchParams.get('deployment_id');
@@ -1618,7 +1727,8 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(environment, params);
       });
-      return jsonResponse({ data: filteredEnvironments, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredEnvironments.length) || filteredEnvironments.length;
+      return jsonResponse(pageResourceRows(filteredEnvironments, limit, params.get('page')));
     }
     const retrieveEnvironmentMatch = url.match(/^\/v1\/environments\/([^/?]+)\?beta=true$/);
     if (retrieveEnvironmentMatch && method === 'GET') {
@@ -1660,7 +1770,8 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(vault, params);
       });
-      return jsonResponse({ data: filteredVaults, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredVaults.length) || filteredVaults.length;
+      return jsonResponse(pageResourceRows(filteredVaults, limit, params.get('page')));
     }
     const retrieveVaultMatch = url.match(/^\/v1\/vaults\/([^/?]+)\?beta=true$/);
     if (retrieveVaultMatch && method === 'GET') {
@@ -1749,7 +1860,15 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
         }
         return matchesCreatedAtParams(memoryStore, params);
       });
-      return jsonResponse({ data: filteredMemoryStores, next_page: null });
+      const requestedLimit = Number(params.get('limit') ?? 5) || 5;
+      const limit = options.memoryStoresPageSize ?? requestedLimit;
+      const page = params.get('page');
+      const parsedOffset = page?.startsWith('memory_') ? Number(page.slice('memory_'.length)) : NaN;
+      const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+      const data = filteredMemoryStores.slice(offset, offset + limit);
+      const nextOffset = offset + data.length;
+      const nextPage = nextOffset < filteredMemoryStores.length ? `memory_${nextOffset}` : null;
+      return jsonResponse({ data, next_page: nextPage });
     }
     if (url === '/v1/memory_stores/memstore_one123456?beta=true' && method === 'GET') {
       return jsonResponse(resources.memoryStores[0]);
@@ -2130,9 +2249,9 @@ function applyMetadataPatch(current: unknown, patch: unknown) {
 }
 
 export function persistedSessionEvents<T extends Record<string, unknown>>(events: T[]) {
-  return events.map((event) => ({
+  return events.map(({ created_at: createdAt, ...event }) => ({
     ...event,
-    processed_at: typeof event.processed_at === 'string' ? event.processed_at : event.created_at,
+    processed_at: event.processed_at === undefined ? createdAt : event.processed_at,
   }));
 }
 

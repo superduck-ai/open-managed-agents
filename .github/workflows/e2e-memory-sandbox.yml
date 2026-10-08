@@ -1,0 +1,51 @@
+name: Memory sandbox e2e
+
+on:
+  pull_request:
+    paths:
+      - '**/*.go'
+      - 'internal/db/*_mapper.xml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'justfile'
+      - 'scripts/generate-go.sh'
+      - '.github/workflows/e2e-memory-sandbox.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.go'
+      - 'internal/db/*_mapper.xml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'justfile'
+      - 'scripts/generate-go.sh'
+      - '.github/workflows/e2e-memory-sandbox.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-memory-sandbox-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memory-sandbox-e2e:
+    name: Memory sandbox lifetime
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate Go sources
+        run: ./scripts/generate-go.sh
+
+      - name: Run Memory Store sandbox lifetime tests
+        run: go test ./tests -tags e2e -count=1 -timeout 25m -run 'TestMemorySandbox'

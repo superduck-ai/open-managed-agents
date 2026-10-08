@@ -94,6 +94,6 @@ To get started, you need:
 2. The `managed-agents-2026-04-01` beta header on all requests
 3. A configured environment that can start sessions
 
-MCP tunnels and dreaming remain planned capabilities. The current release does not yet expose the complete Dreams API; see the implementation-status warning at the top of [Dreams](/docs/en/dreams).
+[MCP tunnels](/docs/en/mcp-connector) are available for connecting private MCP servers through an outbound-only connector. The current release does not yet expose the complete Dreams API; see the implementation-status warning at the top of [Dreams](/docs/en/dreams).
 
 Open Managed Agents is stateful by design: sessions are long-running, resume cleanly after pauses, and store conversation history, sandbox state, and outputs in your deployment. Retention, encryption, and compliance boundaries are controlled by the operator. You can [delete sessions](/docs/en/session-operations#deleting-a-session), and separately delete any uploaded [files](/docs/en/files), at any time through the API.

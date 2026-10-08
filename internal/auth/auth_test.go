@@ -63,3 +63,14 @@ func TestExtractBearerToken(t *testing.T) {
 		})
 	}
 }
+
+func TestPlatformCSRFTokenIsSessionBound(t *testing.T) {
+	t.Parallel()
+	token := PlatformCSRFToken("session-one")
+	if token == "" || !ValidatePlatformCSRFToken("session-one", token) {
+		t.Fatal("valid session-bound CSRF token was rejected")
+	}
+	if ValidatePlatformCSRFToken("session-two", token) || ValidatePlatformCSRFToken("session-one", token+"x") {
+		t.Fatal("CSRF token was accepted for the wrong session or after modification")
+	}
+}

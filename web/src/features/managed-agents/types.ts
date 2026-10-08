@@ -61,6 +61,7 @@ export type AgentApiResponse = {
 export type AgentPageResponse = {
   data: AgentApiResponse[];
   next_page: string | null;
+  total_count?: number;
 };
 
 export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
@@ -133,6 +134,7 @@ export type PageResponse<T> = {
   data: T[];
   next_page: string | null;
   prefixes?: unknown[];
+  total_count?: number;
 };
 
 export type PageCursor = string | null;
@@ -199,6 +201,7 @@ export type DeploymentApiResponse = {
 };
 
 export type EnvironmentApiResponse = {
+  metadata?: Record<string, string>;
   id: string;
   archived_at: string | null;
   config: unknown;
@@ -300,6 +303,8 @@ export type EnvironmentWorkApiResponse = {
 };
 
 export type SessionResourceApiResponse = {
+  name?: string;
+  memory_store_id?: string;
   id?: string;
   created_at?: string;
   file_id?: string;
@@ -350,7 +355,6 @@ export type SessionDetailEventCache = {
   events: QuickstartSessionEvent[];
   syncedThrough: PageCursor;
   historyComplete: boolean;
-  sawTerminated: boolean;
 };
 
 export type SessionDetailDeltaFrame = {
@@ -442,7 +446,6 @@ export type DisplayEvent = {
   label: string;
   content: string;
   event: QuickstartSessionEvent;
-  isQueued: boolean;
   isStreaming: boolean;
   isError: boolean;
   createdAtMs: number;
@@ -451,7 +454,7 @@ export type DisplayEvent = {
 };
 
 export type TranscriptEntryKind =
-  'idle_gap' | 'queued_boundary' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
+  'idle_gap' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
 
 export type ToolLifecycle = 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'denied';
 
@@ -484,17 +487,6 @@ export type IdleGapEntry = {
   isError: false;
 };
 
-export type QueuedBoundaryEntry = {
-  id: string;
-  kind: 'queued_boundary';
-  count: number;
-  createdAtMs: number;
-  processedAtMs: number;
-  relativeTime: string;
-  searchText: string;
-  isError: false;
-};
-
 export type ToolCallEntry = BaseSessionEventEntry & {
   kind: 'tool_call';
   name: string;
@@ -503,7 +495,7 @@ export type ToolCallEntry = BaseSessionEventEntry & {
   confirmationEvent?: QuickstartSessionEvent;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketId: string;
   bracketStartMs?: number;
@@ -515,7 +507,7 @@ export type ToolBatchEntry = Omit<BaseSessionEventEntry, 'kind'> & {
   toolCounts: Array<{ name: string; count: number }>;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketStartMs?: number;
 };
@@ -524,7 +516,7 @@ export type DisplayEventEntry = BaseSessionEventEntry & {
   kind: 'message' | 'status' | 'passthrough' | 'outcome' | 'debug';
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   inProgress?: boolean;
   outcomeStatus?: string;
   outcomeIteration?: number;
@@ -549,8 +541,16 @@ export type ModelRequestBracketMeta = {
   usage: SessionEventUsage;
 };
 
-export type SessionEventListEntry =
-  IdleGapEntry | QueuedBoundaryEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
+export type SessionEventListEntry = IdleGapEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
+
+export type MemoryAttachAccess = 'read_write' | 'read_only';
+
+export type MemoryAttachFormValue = {
+  memoryStoreId: string;
+  access: MemoryAttachAccess;
+  instructions: string;
+  mountPath?: string;
+};
 
 export type ManagedEntityFormValues = {
   name: string;
@@ -562,8 +562,19 @@ export type ManagedEntityFormValues = {
   cronExpression: string;
   timezone: string;
   vaultIds: string[];
-  memoryStoreIds: string[];
+  memoryAttaches: MemoryAttachFormValue[];
   fileResources: SessionFileResourceFormValue[];
+  gitResources: GitRepositoryResourceFormValue[];
+  originalResources: SessionResourceApiResponse[];
+  resourcesChanged: boolean;
+};
+
+export type GitRepositoryResourceFormValue = {
+  url: string;
+  authorizationToken: string;
+  checkoutType: '' | 'branch' | 'commit';
+  checkoutValue: string;
+  mountPath: string;
 };
 
 export type SessionFileResourceFormValue = {
@@ -575,6 +586,8 @@ export type EntityOption = {
   id: string;
   label: string;
   secondary?: string;
+  /** Absolute created timestamp for vault pickers (CMA-aligned). */
+  createdAt?: string;
 };
 
 export type AgentModelInput =
@@ -683,7 +696,8 @@ export type CredentialTokenEndpointAuthType = 'none' | 'client_secret_post' | 'c
 
 export type CredentialFormValues = {
   displayName: string;
-  authType: 'static_bearer' | 'environment_variable' | 'mcp_oauth';
+  /** Empty until the user picks a type in the create dialog (CMA progressive form). */
+  authType: '' | 'static_bearer' | 'environment_variable' | 'mcp_oauth';
   mcpServerUrl: string;
   token: string;
   secretName: string;
@@ -730,7 +744,6 @@ export type ResourceConfig = {
   columns: string[];
   emptyTitle: string;
   emptyBody?: string;
-  emptyAction?: string;
   emptyIcon: IconComponent;
   rows?: Array<Record<string, ReactNode>>;
 };
@@ -766,6 +779,7 @@ export type EventsTabProps = {
   scrollerRef: RefObject<HTMLDivElement | null>;
   selectedEntry: SessionEventListEntry | null;
   selectedEntryId: string | null;
+  sentMessageVersion: number;
   showArchivedLanes: boolean;
   suppressScrollSeekUntilRef: MutableRefObject<number>;
   threadNameById: Map<string, string>;

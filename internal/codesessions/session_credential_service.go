@@ -36,7 +36,11 @@ func (s *Service) AuthenticateSessionIngress(ctx context.Context, rawToken, expe
 }
 
 func (s *Service) issueSessionIngressToken(credentialContext db.CodeSessionCredentialContext, workerEpoch int64) (string, error) {
-	return s.credentials.Issue(SessionCredentialIdentity{
+	return s.credentials.Issue(sessionCredentialIdentity(credentialContext, workerEpoch))
+}
+
+func sessionCredentialIdentity(credentialContext db.CodeSessionCredentialContext, workerEpoch int64) SessionCredentialIdentity {
+	return SessionCredentialIdentity{
 		SessionID:        credentialContext.CodeSessionExternalID,
 		PublicSessionID:  credentialContext.PublicSessionExternalID,
 		AgentID:          credentialContext.AgentExternalID,
@@ -45,5 +49,5 @@ func (s *Service) issueSessionIngressToken(credentialContext db.CodeSessionCrede
 		WorkspaceUUID:    credentialContext.WorkspaceUUID,
 		AccountEmail:     credentialContext.AccountEmail,
 		WorkerEpoch:      workerEpoch,
-	})
+	}
 }

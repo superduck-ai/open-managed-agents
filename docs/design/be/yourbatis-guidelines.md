@@ -18,14 +18,14 @@ SQL，也不要让一次原子操作跨越多个事务实现。
 | --- | --- | --- |
 | `xxxxs.go` | `DB` 对上层暴露的公共 API、领域参数与结果类型、事务和业务编排 | Mapper interface、生成入口、XML SQL |
 | `xxx_mapper.go` | Mapper interface、Mapper 专属查询参数和数据库行类型、`go:generate` 入口 | `DB` 公共业务方法、HTTP 或权限逻辑 |
-| `xxx.xml` | SQL、动态 SQL、当前 Mapper 内的公共 fragment 和结果映射 | 业务错误映射、跨 Mapper fragment、运行时逻辑 |
-| `xxx.sqlmap.gen.go` | `sqlmapgen` 生成的绑定、构建和扫描代码 | 任何手工修改 |
+| `xxx_mapper.xml` | SQL、动态 SQL、当前 Mapper 内的公共 fragment 和结果映射 | 业务错误映射、跨 Mapper fragment、运行时逻辑 |
+| `xxx_mapper.sqlmap.gen.go` | `sqlmapgen` 生成的绑定、构建和扫描代码 | 任何手工修改 |
 
 四类文件放在同一个资源 package 和目录，使用能够直接对应的资源前缀。一个生成入口只负责一个
 Mapper interface 和一个 XML 文件。推荐的生成声明为：
 
 ```go
-//go:generate go tool sqlmapgen -dir $PWD -mapper XxxMapper -sql ./xxx.xml -out ./xxx.sqlmap.gen.go -dialect postgres
+//go:generate go tool sqlmapgen -dir $PWD -mapper XxxMapper -sql ./xxx_mapper.xml -out ./xxx_mapper.sqlmap.gen.go -dialect postgres
 ```
 
 生成的 `*.gen.go` 不纳入版本控制。Mapper interface 或 XML 变化后运行 `go generate ./...`，不得

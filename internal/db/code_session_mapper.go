@@ -25,7 +25,6 @@ type codeSessionRow struct {
 	Status                      string     `db:"status"`
 	Metadata                    []byte     `db:"metadata"`
 	ConnectionStatus            string     `db:"connection_status"`
-	LastInboundSequenceNum      int64      `db:"last_inbound_sequence_num"`
 	LastInternalSequenceNum     int64      `db:"last_internal_sequence_num"`
 	LastWorkerConnectedAt       *time.Time `db:"last_worker_connected_at"`
 	LastWorkerActivityAt        *time.Time `db:"last_worker_activity_at"`
@@ -36,11 +35,20 @@ type codeSessionRow struct {
 	WorkerTokenSessionID        *string    `db:"worker_token_session_id"`
 	WorkerBinding               []byte     `db:"worker_binding"`
 	WorkerStatus                string     `db:"worker_status"`
+	WorkerTurnStarted           bool       `db:"worker_turn_started"`
 	WorkerExternalMetadata      []byte     `db:"worker_external_metadata"`
 	WorkerRequiresActionDetails []byte     `db:"worker_requires_action_details"`
 	CreatedAt                   time.Time  `db:"created_at"`
 	UpdatedAt                   time.Time  `db:"updated_at"`
 	DeletedAt                   *time.Time `db:"deleted_at"`
+}
+
+type codeSessionInputStateRow struct {
+	ExternalID             string `db:"external_id"`
+	Status                 string `db:"status"`
+	WorkerTurnStarted      bool   `db:"worker_turn_started"`
+	WorkerStatus           string `db:"worker_status"`
+	WorkerExternalMetadata []byte `db:"worker_external_metadata"`
 }
 
 type createCodeSessionParams struct {
@@ -81,6 +89,7 @@ type heartbeatCodeSessionWorkerParams struct {
 type updateCodeSessionWorkerStateParams struct {
 	UUID                  string
 	WorkerStatus          string
+	TurnStarted           bool
 	RequiresActionDetails []byte
 	ExternalMetadata      []byte
 	Now                   time.Time
@@ -149,7 +158,10 @@ type resumeCodeSessionWorkerLeaseParams struct {
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
-	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) error
+	UpdateWorkerToolMetadata(ctx context.Context, workspaceUUID, externalID string, metadata []byte, clearDetails bool) (int64, error)
+	ClearToolPermissionRequest(ctx context.Context, workspaceUUID, codeSessionExternalID, publicEventID string) error
+	LockLatestInputState(ctx context.Context, workspaceUUID, sessionUUID string) (codeSessionInputStateRow, bool, error)
+	ResetIdleSinceForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string, newTurn bool) error
 	Insert(ctx context.Context, params createCodeSessionParams) (codeSessionRow, error)
 	FindCredentialByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (codeSessionCredentialContextRow, error)
 	FindCredentialForIssue(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionCredentialContextRow, error)
@@ -167,7 +179,6 @@ type CodeSessionMapper interface {
 	HeartbeatWorkerByUUID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
 	ResumeWorkerLeaseForSandbox(ctx context.Context, params resumeCodeSessionWorkerLeaseParams) (int64, error)
 	UpdateWorkerState(ctx context.Context, params updateCodeSessionWorkerStateParams) (codeSessionRow, error)
-	UpdateCodeSessionInboundSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) (int64, error)
 	UpdateCodeSessionInternalSequence(ctx context.Context, codeSessionUUID string, sequenceNum int64, now time.Time) error
 	ActivateCodeSession(ctx context.Context, codeSessionUUID string, now time.Time) (int64, error)
 	TouchWorkerActivityByUUID(ctx context.Context, codeSessionUUID string, now time.Time) error
@@ -198,7 +209,6 @@ func (r codeSessionRow) session() CodeSession {
 		Status:                      r.Status,
 		Metadata:                    bytes.Clone(r.Metadata),
 		ConnectionStatus:            r.ConnectionStatus,
-		LastInboundSequenceNum:      r.LastInboundSequenceNum,
 		LastInternalSequenceNum:     r.LastInternalSequenceNum,
 		LastWorkerConnectedAt:       r.LastWorkerConnectedAt,
 		LastWorkerActivityAt:        r.LastWorkerActivityAt,
@@ -209,6 +219,7 @@ func (r codeSessionRow) session() CodeSession {
 		WorkerTokenSessionID:        r.WorkerTokenSessionID,
 		WorkerBinding:               bytes.Clone(r.WorkerBinding),
 		WorkerStatus:                r.WorkerStatus,
+		WorkerTurnStarted:           r.WorkerTurnStarted,
 		WorkerExternalMetadata:      workerExternalMetadata,
 		WorkerRequiresActionDetails: bytes.Clone(r.WorkerRequiresActionDetails),
 		CreatedAt:                   r.CreatedAt,

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -23,10 +24,29 @@ import (
 const mcpProbeTimeout = 10 * time.Second
 
 type Handler struct {
-	database *db.DB
-	logger   *slog.Logger
-	prober   Prober
+	database     *db.DB
+	logger       *slog.Logger
+	prober       Prober
+	tunnelTarget TunnelTargetFunc
+	tunnelProber TunnelProbeFunc
 }
+
+type TunnelTargetFunc func(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	endpoint string,
+) (recognized bool, err error)
+
+// TunnelProbeFunc probes a canonical Tunnel endpoint without routing through
+// its authenticated public ingress. recognized=true prevents a failed Tunnel
+// probe from falling back to anonymous remote HTTP discovery.
+type TunnelProbeFunc func(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	endpoint string,
+) (tools []CatalogTool, recognized bool, err error)
 
 // catalogResponse 是面向 Agent Detail 的 server 视图，不暴露全局 catalog 的 endpoint 和内部 ID。
 // nil tools 会编码为 null，表示尚未成功刷新；成功发现零工具则编码为 []。
@@ -55,6 +75,14 @@ func NewHandler(database *db.DB, logger *slog.Logger) *Handler {
 	return &Handler{database: database, logger: logger, prober: Prober{}}
 }
 
+func (h *Handler) WithTunnelProber(target TunnelTargetFunc, prober TunnelProbeFunc) *Handler {
+	if h != nil {
+		h.tunnelTarget = target
+		h.tunnelProber = prober
+	}
+	return h
+}
+
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/workspaces/{workspaceId}/agents/{agentId}/mcp_tool_catalogs", h.list)
 	r.Post("/workspaces/{workspaceId}/agents/{agentId}/mcp_tool_catalogs/refresh", h.refresh)
@@ -62,7 +90,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 
 // list 只读取已经成功保存的工具快照。详情页读取不会连接外部 MCP，也不会隐式创建任务。
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	_, agent, version, ok := h.authorizedAgent(w, r)
+	principal, agent, version, ok := h.authorizedAgent(w, r)
 	if !ok {
 		return
 	}
@@ -73,7 +101,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	responses := make([]catalogResponse, 0, len(servers))
 	for _, server := range servers {
-		response, getErr := h.readCatalog(r.Context(), server)
+		response, getErr := h.readCatalog(
+			r.Context(),
+			principal.OrganizationUUID,
+			principal.WorkspaceUUID,
+			server,
+		)
 		if getErr != nil {
 			h.logger.ErrorContext(r.Context(), "list mcp catalog", "agent_id", agent.ExternalID, "server_name", server.Name, "error", getErr)
 			writeCatalogError(w, r, http.StatusInternalServerError, "Could not load MCP tool catalogs")
@@ -130,7 +163,12 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 	// 手动刷新应有明确的等待上限，且沿用请求 context：浏览器断开时会取消探测并且不会写库。
 	probeCtx, cancel := context.WithTimeout(r.Context(), mcpProbeTimeout)
 	defer cancel()
-	result, err := h.prober.Probe(probeCtx, normalized)
+	result, err := h.probeServer(
+		probeCtx,
+		principal.OrganizationUUID,
+		principal.WorkspaceUUID,
+		normalized,
+	)
 	if err != nil {
 		status, message := probeHTTPError(err)
 		h.logger.ErrorContext(r.Context(), "refresh mcp catalog", "workspace_external_id", principal.WorkspaceExternalID, "agent_id", agent.ExternalID, "server_name", server.Name, "error", err)
@@ -148,6 +186,40 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		Data:    mapCatalog(server.Name, catalog),
 		Version: version,
 	})
+}
+
+func (h *Handler) probeServer(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	endpoint string,
+) (ProbeResult, error) {
+	if h.tunnelProber != nil {
+		tools, recognized, err := h.tunnelProber(ctx, organizationUUID, workspaceUUID, endpoint)
+		if recognized {
+			if err != nil {
+				return ProbeResult{}, mapTunnelProbeError(err)
+			}
+			normalizedTools, err := normalizeCatalogTools(tools)
+			if err != nil {
+				return ProbeResult{}, err
+			}
+			return ProbeResult{Tools: normalizedTools}, nil
+		}
+	}
+	return h.prober.Probe(ctx, endpoint)
+}
+
+func mapTunnelProbeError(err error) error {
+	var appErr *apperr.Error
+	if !errors.As(err, &appErr) {
+		return probeError("upstream_unavailable", "The Tunnel MCP server could not be reached.")
+	}
+	code := "upstream_unavailable"
+	if appErr.Kind == apperr.Timeout {
+		code = "timeout"
+	}
+	return probeError(code, appErr.PublicMessage)
 }
 
 func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.Principal, db.Agent, int, bool) {
@@ -186,10 +258,21 @@ func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.
 	return principal, agent, version, true
 }
 
-func (h *Handler) readCatalog(ctx context.Context, server AgentServer) (catalogResponse, error) {
+func (h *Handler) readCatalog(
+	ctx context.Context,
+	organizationUUID string,
+	workspaceUUID string,
+	server AgentServer,
+) (catalogResponse, error) {
 	normalized, err := NormalizeEndpoint(server.URL)
 	if err != nil {
 		return catalogResponse{ServerName: server.Name, Status: "error", Tools: nil}, nil
+	}
+	if h.tunnelTarget != nil {
+		recognized, resolveErr := h.tunnelTarget(ctx, organizationUUID, workspaceUUID, normalized)
+		if recognized && resolveErr != nil {
+			return catalogResponse{ServerName: server.Name, Status: "error", Tools: nil}, nil
+		}
 	}
 	catalog, err := h.database.GetMCPToolCatalog(ctx, "url", normalized)
 	if errors.Is(err, db.ErrNotFound) {

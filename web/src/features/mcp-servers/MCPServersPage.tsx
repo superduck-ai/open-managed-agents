@@ -69,8 +69,8 @@ export function MCPServersPage({
       />
 
       <CursorPagination
-        previousLabel={msg('pagination.previousPage', 'Previous page')}
-        nextLabel={msg('pagination.nextPage', 'Next page')}
+        currentPage={data.pageIndex + 1}
+        totalPages={null}
         updatingLabel={msg('common.updating', 'Updating...')}
         canPrevious={data.pageIndex > 0 && !data.listQuery.isFetching}
         canNext={Boolean(data.listQuery.data?.next_page) && !data.listQuery.isFetching}

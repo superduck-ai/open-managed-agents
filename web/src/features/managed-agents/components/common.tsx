@@ -22,17 +22,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../shared/ui/dialog';
-import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-filters';
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
+import { ResourceListState } from '../../../shared/ui/resource-list-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Textarea } from '../../../shared/ui/textarea';
 import clsx from 'clsx';
 import { AlertCircle, Archive, ArrowUpRight, Bot, Plus, Search, Trash2, TriangleAlert, X } from 'lucide-react';
-import { type FormEvent, type KeyboardEventHandler, type ReactNode, useId, useState } from 'react';
+import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
-import { entityKindLabel, resourceEmptyAction, resourceEmptyBody, resourceEmptyTitle } from '../labels';
+import { entityKindLabel, resourceEmptyBody, resourceEmptyTitle } from '../labels';
 import { entityDisplayName } from '../resources/ManagedResources';
 import {
   type AgentApiResponse,
@@ -44,63 +44,6 @@ import {
   type ResourceConfig,
   type VaultCredentialApiResponse,
 } from '../types';
-
-export function ManagedSearchField({
-  id,
-  value,
-  placeholder,
-  prefix,
-  onChange,
-  onKeyDown,
-}: {
-  id: string;
-  value: string;
-  placeholder: string;
-  prefix?: string;
-  onChange: (value: string) => void;
-  onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
-}) {
-  const { msg } = useI18n();
-  return (
-    <ResourceSearchField
-      id={id}
-      value={value}
-      placeholder={placeholder}
-      clearLabel={msg('common.clearSearch', 'Clear {placeholder}', { placeholder })}
-      prefix={prefix}
-      onChange={onChange}
-      onKeyDown={onKeyDown}
-    />
-  );
-}
-
-export function AgentFilterDropdown<TValue extends string, TMenu extends string>({
-  label,
-  valueLabel,
-  options,
-  value,
-  menu,
-  open,
-  menuWidthClass,
-  onOpenChange,
-  onSelect,
-}: {
-  label: string;
-  valueLabel: string;
-  options: Array<{ value: TValue; label: string }>;
-  value: TValue;
-  menu: TMenu;
-  open: boolean;
-  menuWidthClass: string;
-  onOpenChange: (menu: TMenu | null) => void;
-  onSelect: (value: TValue) => void;
-}) {
-  return (
-    <ResourceFilterDropdown
-      {...{ label, valueLabel, options, value, menu, open, menuWidthClass, onOpenChange, onSelect }}
-    />
-  );
-}
 
 export function DetailKV({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -321,7 +264,7 @@ export function DeploymentFieldHeader({
   const { msg } = useI18n();
 
   return (
-    <div className="mb-2 flex items-center justify-between gap-4">
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
       <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
         {label}{' '}
         {optional ? (
@@ -336,7 +279,7 @@ export function DeploymentFieldHeader({
           target="_blank"
           rel="noreferrer"
           aria-label={msg('managedAgents.common.opensInNewTab', '{label} (opens in new tab)', { label: manageLabel })}
-          className="inline-flex items-center gap-0.5 text-xs leading-4 text-[#6da7ec] underline-offset-2 hover:underline"
+          className="inline-flex items-center gap-0.5 text-xs leading-4 text-primary underline-offset-2 hover:underline"
         >
           {manageLabel}
           <ArrowUpRight className="size-3" aria-hidden />
@@ -359,7 +302,7 @@ export function DeploymentTextField({
   autoFocus?: boolean;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-field-${useId()}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -368,7 +311,7 @@ export function DeploymentTextField({
         value={value}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        className="h-8 border-white/10 bg-transparent px-3 text-sm text-foreground ring-1 ring-white/10 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-9 bg-background"
         onChange={(event) => onChange(event.target.value)}
       />
     </div>
@@ -388,7 +331,7 @@ export function DeploymentTextArea({
   helpText?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-field-${useId()}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -397,7 +340,7 @@ export function DeploymentTextArea({
         value={value}
         rows={2}
         placeholder={placeholder}
-        className="min-h-14 resize-none border-white/10 bg-white/10 px-3 py-2 text-sm leading-5 text-foreground ring-1 ring-white/10 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
+        className="min-h-20 resize-y bg-background"
         onChange={(event) => onChange(event.target.value)}
       />
       {helpText ? <p className="mt-1.5 text-xs leading-4 text-muted-foreground">{helpText}</p> : null}
@@ -424,7 +367,7 @@ export function DeploymentSelectField({
   manageLabel?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `deployment-select-${useId()}`;
   const selected = options.find((option) => option.id === value);
   const items = [
     { value: '', label: placeholder },
@@ -448,18 +391,17 @@ export function DeploymentSelectField({
           }
         }}
       >
-        <SelectTrigger
-          id={id}
-          className="h-8 w-full border-0 bg-white/10 px-3 text-sm ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <SelectTrigger id={id} className="h-9 w-full min-w-0 bg-background">
           <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {selected?.label ?? placeholder}
           </SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
-          <SelectItem value="" label={placeholder}>
-            {placeholder}
-          </SelectItem>
+          {placeholder ? (
+            <SelectItem value="" label={placeholder}>
+              {placeholder}
+            </SelectItem>
+          ) : null}
           {options.map((option) => (
             <SelectItem key={option.id} value={option.id} label={option.label}>
               {option.label}
@@ -471,7 +413,7 @@ export function DeploymentSelectField({
   );
 }
 
-export function DeploymentAddSelectField({
+export function ManagedAddSelectField({
   label,
   optional = false,
   valueLabel,
@@ -479,6 +421,9 @@ export function DeploymentAddSelectField({
   options,
   manageHref,
   manageLabel,
+  tone = 'managed',
+  placeholder,
+  showPlus = true,
   onChange,
 }: {
   label: string;
@@ -488,19 +433,24 @@ export function DeploymentAddSelectField({
   options: EntityOption[];
   manageHref: string;
   manageLabel: string;
+  tone?: 'managed' | 'deployment';
+  /** When set, replaces the default “Add {label}” trigger copy while options remain. */
+  placeholder?: string;
+  showPlus?: boolean;
   onChange: (value: string[]) => void;
 }) {
   const { msg } = useI18n();
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `managed-add-select-${useId()}`;
   const availableOptions = options.filter((option) => !selectedIds.includes(option.id));
   const selectedOptions = options.filter((option) => selectedIds.includes(option.id));
-  const placeholder = availableOptions.length
-    ? msg('managedAgents.common.addValue', 'Add {label}', { label: valueLabel })
+  const triggerPlaceholder = availableOptions.length
+    ? (placeholder ?? msg('managedAgents.common.addValue', 'Add {label}', { label: valueLabel }))
     : msg('managedAgents.common.noValuesAvailable', 'No {label}s available', { label: valueLabel });
   const items = [
-    { value: '', label: placeholder },
+    { value: '', label: triggerPlaceholder },
     ...availableOptions.map((option) => ({ value: option.id, label: option.label })),
   ];
+  const deploymentTone = tone === 'deployment';
 
   return (
     <div>
@@ -523,18 +473,29 @@ export function DeploymentAddSelectField({
       >
         <SelectTrigger
           id={id}
-          className="h-8 w-full border-0 bg-white/10 pl-3 pr-2 text-sm text-muted-foreground ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground"
+          className={
+            deploymentTone
+              ? 'h-9 w-full min-w-0 bg-background text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground'
+              : 'managed-resource-field mt-0 h-10 w-full border-border bg-secondary px-3 text-sm text-muted-foreground focus-visible:border-ring focus-visible:ring-0 disabled:cursor-not-allowed'
+          }
         >
-          <Plus className="size-4 text-muted-foreground" aria-hidden />
-          <SelectValue className="text-muted-foreground">{placeholder}</SelectValue>
+          {showPlus ? <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden /> : null}
+          <SelectValue className="text-muted-foreground">{triggerPlaceholder}</SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
-          <SelectItem value="" label={placeholder} disabled>
-            {placeholder}
+          <SelectItem value="" label={triggerPlaceholder} disabled>
+            {triggerPlaceholder}
           </SelectItem>
           {availableOptions.map((option) => (
             <SelectItem key={option.id} value={option.id} label={option.label}>
-              {option.label}
+              <span className="flex min-w-0 flex-col gap-0.5 text-left">
+                <span className="truncate">{option.label}</span>
+                {option.secondary ? (
+                  <span className="truncate text-xs text-muted-foreground" aria-hidden>
+                    {option.secondary}
+                  </span>
+                ) : null}
+              </span>
             </SelectItem>
           ))}
         </SelectContent>
@@ -547,7 +508,11 @@ export function DeploymentAddSelectField({
               type="button"
               variant="outline"
               size="xs"
-              className="h-7 bg-white/10 text-xs text-foreground ring-1 ring-white/10 hover:bg-white/15"
+              className={
+                deploymentTone
+                  ? 'h-7 bg-white/10 text-xs text-foreground ring-1 ring-white/10 hover:bg-white/15'
+                  : 'h-7 bg-secondary text-xs text-foreground'
+              }
               onClick={() => onChange(selectedIds.filter((idValue) => idValue !== option.id))}
             >
               {option.label}
@@ -560,12 +525,17 @@ export function DeploymentAddSelectField({
   );
 }
 
+export function DeploymentAddSelectField(props: Omit<Parameters<typeof ManagedAddSelectField>[0], 'tone'>) {
+  return <ManagedAddSelectField {...props} tone="deployment" />;
+}
+
 export function ManagedTextField({
   label,
   value,
   placeholder,
   disabled = false,
   autoFocus = false,
+  optional = false,
   type = 'text',
   onChange,
 }: {
@@ -574,14 +544,21 @@ export function ManagedTextField({
   placeholder?: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  optional?: boolean;
   type?: 'text' | 'password';
   onChange: (value: string) => void;
 }) {
+  const { msg } = useI18n();
   const id = `managed-field-${useId()}`;
   return (
     <div>
-      <Label htmlFor={id} className="text-sm font-medium text-foreground">
-        {label}
+      <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
+        {label}{' '}
+        {optional ? (
+          <span className="font-normal text-muted-foreground">
+            {msg('managedAgents.common.optionalParen', '(optional)')}
+          </span>
+        ) : null}
       </Label>
       <Input
         id={id}
@@ -679,60 +656,6 @@ export function ManagedSelectField({
           ))}
         </SelectContent>
       </Select>
-    </div>
-  );
-}
-
-export function VaultMultiSelect({
-  vaults,
-  selectedIds,
-  onChange,
-}: {
-  vaults: EntityOption[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-}) {
-  const { msg } = useI18n();
-  const toggle = (id: string) => {
-    if (selectedIds.includes(id)) {
-      onChange(selectedIds.filter((item) => item !== id));
-    } else {
-      onChange([...selectedIds, id]);
-    }
-  };
-
-  return (
-    <div>
-      <div className="text-sm font-medium text-foreground">
-        {msg('managedAgents.credentialVaults.title', 'Credential vaults')}
-      </div>
-      <div className="mt-2 rounded-lg border border-border bg-secondary p-2">
-        {vaults.length ? (
-          vaults.map((vault) => {
-            const selected = selectedIds.includes(vault.id);
-            const checkboxId = `vault-option-${vault.id}`;
-            return (
-              <Label
-                key={vault.id}
-                htmlFor={checkboxId}
-                className="flex h-9 w-full cursor-pointer items-center gap-3 rounded-md px-2 text-left text-sm font-normal text-foreground transition hover:bg-accent"
-              >
-                <Checkbox
-                  id={checkboxId}
-                  checked={selected}
-                  className="size-5 rounded-[5px] border-border data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground"
-                  onCheckedChange={() => toggle(vault.id)}
-                />
-                <span className="truncate">{vault.label}</span>
-              </Label>
-            );
-          })
-        ) : (
-          <div className="px-2 py-2 text-sm text-muted-foreground">
-            {msg('managedAgents.credentialVaults.selectOneOrMore', 'Select one or more vaults')}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -903,36 +826,20 @@ export function AgentsListState({
   actionLabel?: string;
   onAction?: () => void;
 }) {
-  return (
-    <div className="grid min-h-[320px] place-items-center text-center">
-      <div className="max-w-[360px]">
-        <Icon className="mx-auto mb-4 size-12 stroke-[1.3] text-foreground" aria-hidden />
-        <div className="text-sm font-semibold text-foreground">{title}</div>
-        <p className="mt-3 text-sm leading-5 text-muted-foreground">{body}</p>
-        {actionLabel && onAction ? (
-          <Button type="button" variant="outline" className="mt-4" onClick={onAction}>
-            {actionLabel}
-          </Button>
-        ) : null}
-      </div>
-    </div>
-  );
+  return <ResourceListState icon={Icon} title={title} body={body} actionLabel={actionLabel} onAction={onAction} />;
 }
 
 export function AgentsEmptyState({
   trueEmpty,
   truncated,
-  trueEmptyActionLabel,
-  onCreate,
   onReset,
 }: {
   trueEmpty: boolean;
   truncated?: boolean;
-  trueEmptyActionLabel: string;
-  onCreate: () => void;
   onReset: () => void;
 }) {
   const { msg } = useI18n();
+  const filtered = !trueEmpty;
   return (
     <AgentsListState
       icon={trueEmpty ? Bot : Search}
@@ -951,37 +858,20 @@ export function AgentsEmptyState({
             ? msg('managedAgents.agents.emptyBody', 'Create an agent to start building managed workflows.')
             : msg('managedAgents.agents.noFilteredResultsBody', 'Try a different search or reset the filters.')
       }
-      actionLabel={
-        truncated
-          ? undefined
-          : trueEmpty
-            ? trueEmptyActionLabel
-            : msg('managedAgents.filters.resetFilters', 'Reset filters')
-      }
-      onAction={truncated ? undefined : trueEmpty ? onCreate : onReset}
+      actionLabel={filtered && !truncated ? msg('managedAgents.filters.resetFilters', 'Reset filters') : undefined}
+      onAction={filtered && !truncated ? onReset : undefined}
     />
   );
 }
 
 export function EmptyState({ config }: { config: ResourceConfig }) {
   const { msg } = useI18n();
-  const Icon = config.emptyIcon;
-  const title = resourceEmptyTitle(config, msg);
-  const body = resourceEmptyBody(config, msg);
-  const action = resourceEmptyAction(config, msg);
   return (
-    <div className="grid min-h-[320px] place-items-center text-center">
-      <div>
-        <Icon className="mx-auto mb-4 size-14 stroke-[1.2] text-foreground" aria-hidden />
-        <div className="text-sm font-medium text-foreground">{title}</div>
-        {body ? <p className="mt-3 text-sm text-muted-foreground">{body}</p> : null}
-        {action ? (
-          <Button type="button" variant="outline" className="mt-4">
-            {action}
-          </Button>
-        ) : null}
-      </div>
-    </div>
+    <ResourceListState
+      icon={config.emptyIcon}
+      title={resourceEmptyTitle(config, msg)}
+      body={resourceEmptyBody(config, msg) ?? ''}
+    />
   );
 }
 

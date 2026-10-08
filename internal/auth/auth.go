@@ -3,10 +3,13 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"strings"
 )
+
+const platformCSRFDomain = "oma-platform-csrf-v1\x00"
 
 type contextKey struct{}
 type platformMirrorOrganizationAliasKey struct{}
@@ -49,6 +52,15 @@ func HashSecret(secret string) string {
 
 func HashAPIKey(key string) string {
 	return HashSecret(key)
+}
+
+func PlatformCSRFToken(sessionKey string) string {
+	return HashSecret(platformCSRFDomain + sessionKey)
+}
+
+func ValidatePlatformCSRFToken(sessionKey, token string) bool {
+	expected := PlatformCSRFToken(sessionKey)
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(token)) == 1
 }
 
 func ExtractAPIKey(r *http.Request) string {

@@ -2,7 +2,7 @@
 
 Cloud Environment 可以通过与 Claude 兼容的 `config.packages` 配置 `apt`、`cargo`、`gem`、`go`、`npm` 和 `pip` package。HTTP 边界负责校验 package 对象与 spec，将省略的列表规范化为 `[]`，并将编码后的 v1 manifest 限制在 1 MiB 以内。package 配置为空时，保持既有 Sandbox 启动与 runtime 发布流程不变。
 
-对于非空 package 配置，Runner 创建 Sandbox、持久化 provider ID，然后执行：
+对于非空 package 配置，如果环境尚未绑定已完成的预构建模板，Runner 创建 Sandbox、持久化 provider ID，然后执行：
 
 ```text
 /usr/local/bin/environment-manager provision-packages --protocol v1 --stdin
@@ -14,11 +14,94 @@ Package 安装发生在 rclone 和 Environment Manager 启动之前。安装失�
 
 安装命令使用独立的 `environment_runner.package_provision_timeout`，默认 2 分钟。E2B 命令超时与本地 context deadline 使用同一预算：前者约束 Sandbox 进程，后者保证网络或 Wait 调用不会无限阻塞。
 
-Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment-manager`，并实现 `provision-packages` v1 合同。Registry credential、重试、派生 template、持久化清理协调以及事务化 Session event 交接均不在本功能范围内。
+Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment-manager`，并实现 `provision-packages` v1 合同。持久化清理协调以及事务化 Session event 交接不在本功能范围内。
 
-聚焦验证命令：
+## 软件包预构建
 
-```text
-go test ./internal/environments -run 'Test(BuildPackage|NormalizePackages|ValidatePackage|ProvisionPackages)' -count=1
+`Prebuild` 为单个环境提前安装软件包并生成可启动模板。开启 `environment_prebuilds` 后，创建环境或修改未归档环境的软件包会在保存环境的同一事务内插入 River 任务；每个环境独立构建。执行链路为 Aliyun Flow 构建镜像 → CubeSandbox 制作模板 → 绑定环境的 `resolved_template`。
+
+Environment 的 `build_job_id` 直接引用 River 的 bigint 主键 `river_job.id`，不新增构建表。任务类型与队列均为 `environment_prebuild`。River args 保存 workspace、environment、服务商配置标识和 Dockerfile；output 保存远端任务引用及检查点。Dockerfile 在入队时固定基础镜像和软件包输入。
+
+APT 列表非空时，索引更新与软件包安装在同一条 `RUN` 中执行。启用镜像构建缓存后，输入不变时可复用该层，APT 包列表变化时同时重新更新索引和安装；列表为空时跳过 APT。包名通过独立的位置参数传给固定脚本，不拼接为 shell 代码。
+
+环境行锁协调修改、重试、取消及检查点，所有远端请求在事务之外执行。查询校验任务类型、workspace 和 environment；检查点及绑定 SQL 校验当前 job ID，防止旧任务覆盖新配置或已删除的环境。取消请求在检查点写入时合并，避免并发 worker 丢失取消意图。
+
+软件包更新或清空后，旧任务下次执行时取消；已提交的 Flow 构建会先请求远端取消，失败则保留构建引用并每 5 秒重试，接受取消后结束旧 River job。提交过程中发生更新也会先保存返回的构建引用，再执行取消。已经结束的构建不重复取消；当前 CubeSandbox 模板构建不支持取消，旧结果不会绑定到环境。
+
+提交远端任务前先持久化提交标记。响应丢失时停止自动提交，避免重复创建；远端成功返回任务引用后，当前 worker 持有该引用并持续重试检查点写入，成功落库后才延后任务继续轮询。worker 在引用落库前退出时保留 `submitting` 标记，结果仍按不确定处理。查询进度失败时继续轮询。其他检查点写入失败时持续延后 River 任务，即使观察时间已经超限，也要等检查点可写后先保存不确定结果，再结束观察。超时、停用或服务商配置变化会停止观察，远端任务可能仍在执行；状态显示为 `unknown` 时提示显式重试可能重复运行远端任务。显式重试创建新 River job 和镜像 tag，使用当前配置，从镜像阶段完整重跑。
+
+提交失败必须区分「服务商已明确拒绝」和「结果不可知」：4xx 响应在服务商执行任何远端工作之前就被拒绝，因此清除 `submitting` 标记、把 HTTP 状态写入 `message`，并以 `status_code` 记录结构化日志，状态显示为 `failed`，操作者据状态码直接定位凭据或端点配置错误，显式重试不会重复运行远端任务。传输丢失、未跟随的重定向、5xx 响应以及缺少构建引用只证明请求结果不可知，此时保留 `submitting` 标记并写入 `OutcomeUncertain` 与稳定文案，详细原因只进入结构化日志，不进入面向操作者的 `message`；检查点写入失败时任务继续延后，不会在结果落库前结束观察。
+
+```mermaid
+flowchart TD
+    Guard["持久化 submitting=true"] --> Start["调用服务商 Start"]
+    Start --> Ok{"返回构建引用"}
+    Ok -->|是| Keep["持有引用并重试写入检查点"]
+    Ok -->|否| Kind{"失败类型"}
+    Kind -->|"4xx 明确拒绝"| Failed["清除 submitting<br/>message 写入 HTTP 状态<br/>日志记录 status_code"]
+    Kind -->|"传输丢失 / 3xx / 5xx / 空引用"| Unknown["保留 submitting<br/>写入 OutcomeUncertain<br/>日志记录原因"]
+    Failed --> FailedState["状态 failed：可直接显式重试"]
+    Unknown --> UnknownState["状态 unknown：重试可能重复运行远端任务"]
+```
+
+模板绑定遵循以下规则：
+
+- 仅修改名称、描述、网络或环境变量时保留原构建；清空软件包时解除绑定并恢复基础模板。
+- 不带 `config` 的更新不解析已存配置，也不协调预构建，因此名称、描述等字段仍可在旧配置中的软件包格式无效时更新。带 `config` 的更新必须产生有效的新配置；若旧软件包无法解析，则将其视为变化，允许有效配置修复旧数据并解除旧任务绑定。
+- 已成功的模板继续复用，不因构建开关、基础镜像或服务商设置变化而重建。新建环境、修改软件包及显式重试使用当前配置。
+- Runner 通过 `build_job_id != nil && resolved_template != ""` 选择已完成模板并跳过启动时安装；待构建或失败时使用当前基础模板并临时安装。
+- 没有关联任务的环境继续使用基础模板与启动期安装；保存包含 `config` 的更新时，按当前 E2B 配置刷新基础模板，手动开始预构建后才建立任务关联。
+- River 清理任务记录不影响成功模板，因此 `build_job_id` 不设外键；详情过期后不再返回 job ID、时间或日志。
+
+### 配置与服务商合同
+
+完整配置见 [`docs/configuration-reference.yaml`](../../configuration-reference.yaml) 的 `environment_prebuilds` 部分。`image.base_image` 支持 tag 或 digest，但必须显式写出 registry 主机名；构建产物固定写入同一镜像仓库，去掉基础镜像的 tag 和 digest，使用环境 UUID 与 River job ID 组成的新 tag。`image.flow` 保存流水线地址与 token。
+
+`image.base_image` 的 registry 主机名判定与 Docker 的 `splitDockerDomain` 一致：首个路径段包含 `.` 或 `:`、等于 `localhost`（忽略大小写），或不是全小写时才是 registry 主机名。省略主机名的引用（如 `team/base:stable`）以及带协议的引用（如 `https://registry.example.com/team/base`）在配置校验阶段即被拒绝，因为 Docker 会把前者的首段当作默认 registry（docker.io）上的命名空间、直接拒绝后者，两者都会让预构建推送到运维从未配置的仓库，并在流水线的远端日志或 CubeSandbox 的拉取阶段以无法定位的形式失败。
+
+Flow 运行请求的 `params` 为 JSON 字符串，其中 `envs` 仅包含 `DOCKERFILE_TEXT`、`IMAGE_REPO` 和 `IMAGE_TAG`。Dockerfile 内容使用 `base64:` 前缀加 Base64 编码传递。
+
+配置按默认值、YAML 覆盖、输入整理、校验的顺序加载。默认值统一由 `defaultConfig()` 提供：`timeout` 为 `1h`，`template.disk_size` 为 `20G`；启用预构建时，超时必须为正数、磁盘大小不能为空、`image.base_image` 必须带显式 registry 主机名与仓库路径，显式无效值不回退为默认值。
+
+CPU 单位为毫核，内存单位为 MiB；CPU/内存为 `0` 时由集群选择默认规格。网络 DNS 填写 IP，出站列表填写 CIDR；配置层只整理首尾空白，具体格式交由模板 API 处理，空列表不发送。`allow_internet` 和 `inject_egress_ca` 默认 `true`，显式 `false` 原样发送。
+
+模板请求遵循 [CubeSandbox v0.7.0 API](https://github.com/TencentCloud/CubeSandbox/blob/v0.7.0/CubeAPI/src/models/mod.rs)，网络字段为 `dns`、`allowOut`、`denyOut`、`allowInternetAccess`、`with_cube_ca`。端点、流水线、输出仓库、模板资源及网络设置计入服务商配置标识；凭据、运行时域名及已快照的基础镜像不参与标识。
+
+私有仓库拉取凭据位于 `template.registry_auth.username` / `password`，必须同时设置或同时留空，仅通过 HTTPS 模板请求发给 CubeSandbox，不进入 River job、配置标识或日志。Flow 推送凭据由流水线私密变量管理。镜像引用使用 `registry/repository:tag`，不带协议。
+
+### API 与控制台
+
+已保存环境的详情页在配置表单下方展示工作队列，通过 `GET /v1/environments/{id}/work` 加载工作项 ID、状态、创建时间和更新时间，并提供加载提示、空状态及错误提示；归档环境仍可查看。新建环境页面仅显示配置表单。
+
+API 沿用 `/v1/environments` 的鉴权和 `beta=true` 要求，返回 `build` 对象。`job_id` 全程使用十进制字符串，避免 JavaScript 大整数精度丢失。
+开始或取消操作在读取环境后仍会于事务中重新加锁；如果环境在两次读取之间被删除，返回环境不存在的 404。
+
+| 路由（相对于 `/v1/environments`） | 行为 |
+| --- | --- |
+| `GET /{id}/prebuild` | 当前状态、时间、`can_start`、`can_cancel` 和日志能力；有软件包但未关联任务时为 `idle`。 |
+| `POST /{id}/prebuild` | 无请求体；活动任务和成功结果直接复用，失败、取消或无成功模板且详情过期时创建新任务，不提供强制重建。 |
+| `GET /{id}/prebuild/logs?stage=image\|template&job_id=...&cursor=...` | 读取当前任务指定阶段的日志；过期、不匹配或尚未提交远端阶段的任务返回冲突。 |
+| `POST /{id}/prebuild/cancel` | 请求体为字符串 `job_id`，仅取消当前任务；服务商不支持时明确返回不支持。 |
+
+控制台在软件包标题旁显示预安装状态，详情弹窗呈现两个阶段、状态、发起时间、耗时及可用操作。耗时包含排队与观察时间。操作遵从后端能力，归档环境不显示操作；软件包有未保存修改时显示「待保存」。软件包输入框每次添加一个包，通过「添加」按钮或 Enter 生成独立条目；空白输入或同时输入多个包时禁用按钮，输入法组词确认不提交；创建或保存环境时统一提交草稿。包名、输入框和日志禁用字体连字，确保版本符号逐字符显示。
+
+状态缓存按组织、workspace、环境及已保存的软件包隔离，仅活动任务轮询。日志缓存另按 job ID 和阶段隔离，拼接分页后去除 ANSI 颜色控制码，以纯文本呈现且不入库。前端连续读取分页，追上输出后每 3 秒查询新增日志，直到服务商确认完整；构建结束不提前停读，暂时性下载失败保留已读内容并从失败游标重试。Flow 日志缩短导致游标失效时返回 409，控制台提示从头加载并重置该任务阶段的分页缓存；416 缺少长度或与游标不一致时，通过无 Range 下载确认是否发生截断，当前位置恰好位于末尾时继续正常轮询。自动跟随末尾，用户上滚时保留位置。Flow 已完成步骤读完后继续下一步。不支持日志的阶段显示失败原因或「此阶段不提供日志」。
+
+### 验证
+
+```bash
+go test ./internal/config ./internal/environments ./internal/db -run 'Test(BuildHTTP|LoadEnvironmentPrebuild|Prebuild|EnvironmentMapper|BuildPackage|NormalizePackages|ValidatePackage|ProvisionPackages)' -count=1
 go test ./internal/runtime/e2bruntime -count=1
 ```
+
+CubeSandbox HTTP 测试验证模板请求与状态映射，`BuildHTTP` 测试验证服务商状态码被区分为明确拒绝或结果不可知。真实部署还需验证镜像推送、拉取、模板转换及 Session 回连；镜像与模板构建本身无需 Sandbox 回连 OMA，启动 Session 后的注册、心跳、消息与模型代理需要此连通性。
+
+### 环境列表筛选与归档详情
+
+`GET /v1/environments` 支持可选 `search`（名称不区分大小写的字面子串或精确 external ID）与 `status=all|active|archived`。搜索输入在 HTTP 边界修剪一次；查询通过绑定参数保持 workspace 范围和原有游标排序，不把 `%` / `_` 解释为通配符。未传状态时保留原有 `include_archived` 语义；`active` 排除归档，`archived` 只返回归档，`all` 仍由 `include_archived` 决定是否包含归档。
+
+控制台按搜索、状态和游标分别缓存，每次只请求一页（最多 50 项），不再下载全量列表进行本地筛选。切换或清空搜索、状态时同时清空选择并重置到第一页；筛选结果也支持前后翻页。归档详情显示 Archived 徽标与只读说明，配置和工作队列仍可查阅。
+
+验收覆盖筛选 SQL 与参数绑定、真实 PostgreSQL/API 的搜索及归档分页、前端筛选往返的分页重置，以及归档详情提示。
+
+迁移使用 `00068_environment_prebuilds.sql`，避免与 main 的会话输入迁移 00064 冲突。新增 `build_job_id` 时使用 `IF NOT EXISTS`，兼容在 PR 合并前已通过旧编号安装该列的开发数据库。

@@ -8,9 +8,81 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
+
+func TestProbeServerRoutesCanonicalTunnelThroughInjectedProber(t *testing.T) {
+	t.Parallel()
+	const endpoint = "https://mcp.example.com/v1/mcp/tunnel_0123456789abcdef0123456789abcdef/secondary"
+
+	t.Run("recognized Tunnel failure does not fall back to anonymous HTTP", func(t *testing.T) {
+		handler := NewHandler(nil, nil).WithTunnelProber(nil, func(
+			context.Context,
+			string,
+			string,
+			string,
+		) ([]CatalogTool, bool, error) {
+			return nil, true, apperr.New(apperr.Unavailable, "No tunnel connector is available", nil)
+		})
+		_, err := handler.probeServer(context.Background(), "org", "workspace", endpoint)
+		var probeErr *ProbeError
+		if !errors.As(err, &probeErr) || probeErr.Message != "No tunnel connector is available" {
+			t.Fatalf("probe error = %#v, want safe Tunnel availability error", err)
+		}
+	})
+
+	t.Run("successful Tunnel probe uses authenticated workspace scope and normalizes tools", func(t *testing.T) {
+		var gotOrganization, gotWorkspace, gotEndpoint string
+		handler := NewHandler(nil, nil).WithTunnelProber(nil, func(
+			_ context.Context,
+			organizationUUID string,
+			workspaceUUID string,
+			probeEndpoint string,
+		) ([]CatalogTool, bool, error) {
+			gotOrganization, gotWorkspace, gotEndpoint = organizationUUID, workspaceUUID, probeEndpoint
+			return []CatalogTool{{Name: " search ", Title: " Search ", Description: " Find records. "}}, true, nil
+		})
+		result, err := handler.probeServer(context.Background(), "org-uuid", "workspace-uuid", endpoint)
+		if err != nil {
+			t.Fatalf("probe Tunnel server: %v", err)
+		}
+		if gotOrganization != "org-uuid" || gotWorkspace != "workspace-uuid" || gotEndpoint != endpoint {
+			t.Fatalf("Tunnel probe scope = (%q, %q, %q)", gotOrganization, gotWorkspace, gotEndpoint)
+		}
+		if len(result.Tools) != 1 || result.Tools[0].Name != "search" || result.Tools[0].Title != "Search" || result.Tools[0].Description != "Find records." {
+			t.Fatalf("Tunnel probe tools = %#v", result.Tools)
+		}
+	})
+}
+
+func TestReadCatalogRejectsTunnelOutsideAuthenticatedScope(t *testing.T) {
+	t.Parallel()
+	handler := NewHandler(nil, nil).WithTunnelProber(func(
+		_ context.Context,
+		organizationUUID string,
+		workspaceUUID string,
+		endpoint string,
+	) (bool, error) {
+		if organizationUUID != "org" || workspaceUUID != "workspace" || endpoint == "" {
+			t.Fatalf("resolve scope = (%q, %q, %q)", organizationUUID, workspaceUUID, endpoint)
+		}
+		return true, apperr.New(apperr.NotFound, "Tunnel not found", nil)
+	}, nil)
+	response, err := handler.readCatalog(
+		context.Background(),
+		"org",
+		"workspace",
+		AgentServer{Name: "private", URL: "https://mcp.example.com/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"},
+	)
+	if err != nil {
+		t.Fatalf("read out-of-scope Tunnel catalog: %v", err)
+	}
+	if response.Status != "error" || response.Tools != nil {
+		t.Fatalf("out-of-scope Tunnel catalog = %#v, want error/null", response)
+	}
+}
 
 func TestCatalogResponsePreservesToolListKnowledge(t *testing.T) {
 	tests := []struct {

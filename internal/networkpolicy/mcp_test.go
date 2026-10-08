@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -56,6 +57,15 @@ func TestMCPAllowedHostsRejectsMalformedRemoteServerContracts(t *testing.T) {
 				t.Fatalf("error = %q, want detail %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestParseMCPServerTargetsRejectsNonCanonicalServerNames(t *testing.T) {
+	for _, name := range []string{" local_tunnel", "local_tunnel ", "   "} {
+		snapshot := json.RawMessage(`{"mcp_servers":[{"name":` + strconv.Quote(name) + `,"type":"url","url":"https://mcp.example.test/mcp"}]}`)
+		if _, err := parseMCPServerTargets(snapshot); !errors.Is(err, ErrMalformedAgentSnapshot) {
+			t.Fatalf("name %q: expected ErrMalformedAgentSnapshot, got %v", name, err)
+		}
 	}
 }
 

@@ -7,6 +7,8 @@ import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
+import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
+import { McpTunnelDetailPage } from '../features/mcp-tunnels/McpTunnelDetailPage';
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
@@ -438,10 +440,16 @@ const webhooksRoute = createRoute({
   component: () => <DashboardPage section="webhooks" />,
 });
 
-const mcpTunnelsRoute = createRoute({
+const settingsWorkspaceMcpTunnelsRoute = createRoute({
   getParentRoute: () => consoleRoute,
-  path: 'mcp-tunnels',
-  component: () => <DashboardPage section="mcp-tunnels" />,
+  path: 'settings/workspaces/$workspaceId/mcp-tunnels',
+  component: McpTunnelsPage,
+});
+
+const settingsWorkspaceMcpTunnelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/workspaces/$workspaceId/mcp-tunnels/$tunnelId',
+  component: McpTunnelDetailPage,
 });
 
 const tagsRoute = createRoute({
@@ -561,7 +569,8 @@ const routeTree = rootRoute.addChildren([
       privacyControlsRoute,
       securityRoute,
       webhooksRoute,
-      mcpTunnelsRoute,
+      settingsWorkspaceMcpTunnelsRoute,
+      settingsWorkspaceMcpTunnelDetailRoute,
       tagsRoute,
       settingsWorkspaceKeysRoute,
       settingsWorkspaceWebhooksRoute,

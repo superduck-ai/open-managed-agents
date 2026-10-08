@@ -38,10 +38,14 @@ flowchart LR
 - MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；新增自定义 MCP 只能从当前工作区未删除的 MCP 配置目录中选择，选择时把名称与 URL 复制到新 Agent 版本，不保存目录项 ID。
 - 既有 Agent 中不属于当前工作区 MCP 配置目录的历史配置仍可在 Rendered 中回显、保存和移除；管理目录项修改或删除不回写已有 Agent 版本。
 - Rendered 不提供新增 Custom Tool 的入口，但继续允许编辑和移除已有 Custom Tool，Raw 往返不丢失其定义。
-- 内置工具只展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`；Raw 可继续保留后端合同允许的其他既有配置。
+- Tunnel 也复用 Create 的内联 Channel 配置：多/零
+  实时 Channel 的待确认卡片阻止 Save 和切换 Raw；已配置 Channel 只在 Apply 或选择有效建议后原子迁移 server/toolset
+  引用，保留既有权限和其他字段，并对已连接 Tunnel 重新发现工具。
+- 内置工具回显当前固定 Claude Code 2.1.120 的 22 项可选工具，与创建页和 Agent API 合同一致；未显式配置时 `ask_user_question` 默认关闭，用户可以主动开启。`web_fetch` 对应 Claude Code 本地 `WebFetch`，不启用 Messages API 的模型服务端同名工具。内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中。
 
 ## 布局与验收
 
 - Edit 与 Create 共用 `880px` 最大宽度、近全高滚动区、`220px + 控件列` 的桌面布局和固定底栏；窄屏回退单列。
-- 组件测试覆盖默认 Rendered、Raw YAML/JSON、无改动禁用保存、并发失败保留 Draft、固定引用与模型修饰项保留、旧配置回退 Raw。
+- 组件测试覆盖默认 Rendered、Raw YAML/JSON、无改动禁用保存、并发失败保留 Draft、固定引用与模型修饰项保留、
+  Tunnel Channel 待确认阻断与原子迁移，以及旧配置回退 Raw。
 - 纯函数测试覆盖 Rendered 兼容性判断，避免未来扩展 schema 时误将不可表达的配置带入表单。

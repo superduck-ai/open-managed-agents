@@ -7,13 +7,12 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
-const (
-	DefaultAPIKey             = "sk-ant-local-default"
-	OfficialSDKResourceAPIKey = "my-anthropic-api-key"
-)
+const DefaultAPIKey = "sk-ant-local-default"
 
 func Load() (Config, error) {
 	configPath, found, err := findConfigFile()
@@ -36,6 +35,8 @@ func Load() (Config, error) {
 	cfg.E2B.APIURL = strings.TrimSpace(cfg.E2B.APIURL)
 	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
 	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
+
+	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err
@@ -65,7 +66,13 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.NATS.URL) == "" {
 		return errors.New("nats.url is required")
 	}
+	if err := validateWorkerEventStream(cfg.NATS.WorkerEventStream); err != nil {
+		return err
+	}
 	if err := validateAuthConfig(cfg.Auth); err != nil {
+		return err
+	}
+	if err := validateEnvironmentPrebuildConfig(cfg.EnvironmentPrebuilds, cfg.E2B); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.Storage.Type) == "" {
@@ -87,6 +94,15 @@ func validate(cfg Config) error {
 		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
 	}
 	if err := validatePositiveValues(cfg); err != nil {
+		return err
+	}
+	if err := ValidateTranscriptArchive(cfg.TranscriptArchive); err != nil {
+		return err
+	}
+	if err := validateTunnelDomainSuffix(cfg.Tunnel.DomainSuffix); err != nil {
+		return err
+	}
+	if err := validateTunnelPublicBaseURL(cfg.Tunnel.PublicBaseURL); err != nil {
 		return err
 	}
 	if err := validateVaultMasterKey(cfg.Vault); err != nil {
@@ -216,6 +232,49 @@ func validateGitSSHtoHTTPSHostLabel(label string) error {
 	return nil
 }
 
+func validateTunnelPublicBaseURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return errors.New("tunnel.public_base_url must not contain surrounding whitespace")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.Hostname() == "" {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(value, "#") || (parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if port := parsed.Port(); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return errors.New("tunnel.public_base_url port must be between 1 and 65535")
+		}
+	}
+	return nil
+}
+
+func validateTunnelDomainSuffix(value string) error {
+	if value == "" {
+		return errors.New("tunnel.domain_suffix is required")
+	}
+	if value != strings.ToLower(value) || strings.TrimSpace(value) != value || len(value) > 253 {
+		return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+			}
+		}
+	}
+	return nil
+}
+
 func (m MasterKeyConfig) inlineKEKSet() bool {
 	return strings.TrimSpace(m.Kek) != ""
 }
@@ -311,6 +370,14 @@ func validatePositiveValues(cfg Config) error {
 		{name: "nats.connect_timeout", valid: cfg.NATS.ConnectTimeout > 0},
 		{name: "nats.drain_timeout", valid: cfg.NATS.DrainTimeout > 0},
 		{name: "storage.workspace_limit_bytes", valid: cfg.Storage.WorkspaceLimitBytes > 0},
+		{name: "tunnel.poll_timeout", valid: cfg.Tunnel.PollTimeout > 0 && cfg.Tunnel.PollTimeout <= 30*time.Second},
+		{name: "tunnel.request_timeout", valid: cfg.Tunnel.RequestTimeout >= time.Second && cfg.Tunnel.RequestTimeout <= 10*time.Minute},
+		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
+		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
+		{name: "tunnel.command_stream.max_bytes", valid: cfg.Tunnel.CommandStream.MaxBytes > 0},
+		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
+		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
+		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},
 		{name: "batch.worker_concurrency", valid: cfg.Batch.WorkerConcurrency > 0},
 		{name: "batch.max_requests", valid: cfg.Batch.MaxRequests > 0},
 		{name: "batch.max_body_bytes", valid: cfg.Batch.MaxBodyBytes > 0},
@@ -333,6 +400,9 @@ func validatePositiveValues(cfg Config) error {
 		if !check.valid {
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
+	}
+	if cfg.Tunnel.CommandStream.MaxMsgs != -1 && cfg.Tunnel.CommandStream.MaxMsgs <= 0 {
+		return errors.New("tunnel.command_stream.max_msgs must be -1 or greater than zero")
 	}
 	return nil
 }

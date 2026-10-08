@@ -57,14 +57,6 @@ type updateExternalKeyRequest struct {
 	Geo            *string         `json:"geo"`
 }
 
-type rotateTunnelTokenRequest struct {
-	Reason string `json:"reason"`
-}
-
-type createTunnelCertificateRequest struct {
-	CACertificatePEM string `json:"ca_certificate_pem"`
-}
-
 type organizationResponse struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -154,32 +146,6 @@ type rateLimitItem struct {
 	OrgLimit *int64 `json:"org_limit,omitempty"`
 	Type     string `json:"type"`
 	Value    int64  `json:"value"`
-}
-
-type tunnelResponse struct {
-	ID          string  `json:"id"`
-	ArchivedAt  *string `json:"archived_at"`
-	CreatedAt   string  `json:"created_at"`
-	DisplayName *string `json:"display_name"`
-	Domain      string  `json:"domain"`
-	Type        string  `json:"type"`
-	WorkspaceID *string `json:"workspace_id"`
-}
-
-type tunnelTokenResponse struct {
-	ID          string `json:"id"`
-	TunnelToken string `json:"tunnel_token"`
-	Type        string `json:"type"`
-}
-
-type tunnelCertificateResponse struct {
-	ID          string  `json:"id"`
-	ArchivedAt  *string `json:"archived_at"`
-	CreatedAt   string  `json:"created_at"`
-	ExpiresAt   *string `json:"expires_at"`
-	Fingerprint string  `json:"fingerprint"`
-	TunnelID    string  `json:"tunnel_id"`
-	Type        string  `json:"type"`
 }
 
 type cursorPageResponse[T any] struct {

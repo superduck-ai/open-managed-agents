@@ -37,15 +37,24 @@ flowchart LR
 
 - “添加 MCP 服务器”沿用 Popover，并提供 Directory 与“自定义 MCP”两个候选页签。自定义页签只列出当前工作区未删除的 MCP 配置目录项，不在 Agent 表单内编辑名称或 URL；“创建 MCP 服务器”会在新标签页打开 `/workspaces/{workspaceId}/mcp-servers/new`，原 Draft 保留，窗口重新获得焦点时刷新候选。
 - 选择 Directory 或工作区 MCP 配置时，前端把当时的 `{name,type:"url",url}` 复制进 Agent Draft，并原子添加同名 `mcp_toolset`；Agent 不保存工作区 MCP 目录项 ID。删除 Agent Draft 中的 MCP 时原子删除 server 与 toolset。管理目录项后续修改或删除不会改写已有 Agent 版本，删除目录项也不检查 Agent 使用情况。
-- Agent 名称与 URL 的 Draft 校验保持不变：名称 trim 后必填、最长 255 个字符、只允许字母、数字、下划线、连字符和句点、不得包含 `__`，并在当前 Agent 内大小写敏感唯一；URL 必须是不含内嵌凭据或 fragment 的 HTTP/HTTPS 绝对地址；每个 Agent 最多 20 个 MCP Server。
+- Agent 名称与 URL 的 Draft 校验保持不变：名称 trim 后必填、最长 255 个字符、只允许字母、数字、下划线、连字符和句点、不得包含 `__`，并在当前 Agent 内大小写敏感唯一；URL trim 后必填、最长 2048 个字符，必须是不含内嵌凭据或 fragment 的 HTTP/HTTPS 绝对地址；每个 Agent 最多 20 个 MCP Server。
 - 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API；工作区自定义 MCP 不探测工具列表，只提供 Toolset 级权限。
 - MCP 候选项优先加载 Directory 明确提供的 HTTP/HTTPS 图片 `icon_url`；若该字段是网页或图片加载失败，则依次尝试其同源 `/favicon.ico` 和基于该 Directory 公开主机名的公共 favicon 服务，仍不可用时回退到 Server 图标。自定义 MCP 不向图标组件提供 URL，因此前端不会探测 Agent 配置的 MCP 主机，也不会把自定义主机名发送给第三方。
 - Directory 与工作区 MCP 查询相互独立；任一来源失败都不会阻止另一页签选择，并分别提供重试。
 - 工作区候选与当前 Agent 已有 MCP 同名但 URL 不同时，不允许静默覆盖；候选保持不可添加并展示包含冲突名称的明确提示。
 - 合法 Raw 或既有 Agent 中未出现在工作区资源列表里的历史 MCP 仍在 Rendered 中按 Agent 快照回显，可调整权限、保存或移除，不会被强制迁移或丢弃。
-- 内置工具仅展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`，默认 `always_allow`；新 MCP 默认 `always_ask`。
+- Tunnel 在 Picker 中仍以一个 Tunnel 一个候选项展示。选择后在 MCP 工具卡中固定展示 Channel Combobox 和连接状态，
+  Channel 下方以无独立边框的弱提示行展示解析后的 canonical MCP URL，再展示工具权限；不使用独立
+  Channel Dialog，也不按实时 Channel 拆成多个 Picker 候选。
+- Tunnel 恰好一个实时 Channel 时自动选择实际值；多于一个或没有实时 Channel 时生成不进入 Draft 的待确认卡片，
+  Channel 初始为空并自动聚焦。`main` 在没有实时 Channel 时仅作为 placeholder/建议，不作为默认值。
+- 待确认 Tunnel Channel 会阻止创建和切换 Raw；取消不修改 Draft，模板或 Describe 整体替换 Draft 时清除待确认状态。
+  同一 Tunnel 可以配置多个不同 Channel，同一 Tunnel + Channel 不得重复。
+- 已配置 Tunnel 的 Channel 使用本地编辑缓冲；Apply 或选择有效建议后，原子更新 `mcp_server` 的名称和 URL 以及
+  `mcp_toolset.mcp_server_name`，保留权限与顺序，并在已连接时重新发现工具。
+- 内置工具展示当前固定 Claude Code 2.1.120 的 22 项可选工具。列表优先展示原有 7 项：`bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`，随后展示 `task`、`ask_user_question`、`cron_create`、`cron_delete`、`cron_list`、`enter_plan_mode`、`enter_worktree`、`exit_plan_mode`、`exit_worktree`、`notebook_edit`、`schedule_wakeup`、`skill`、`task_output`、`task_stop`、`todo_write`。除 `ask_user_question` 默认关闭并要求用户主动开启外，其余工具默认 `always_allow`；这样纯 API 调用不会进入无人处理的 HITL 等待。`web_fetch` 映射到 Claude Code 在 Sandbox 内执行的 `WebFetch`，不表示 Messages API 的模型服务端工具；内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中；新 MCP 默认 `always_ask`。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
-- Toolset 级权限写入 `default_config` 并清空逐工具覆盖；逐工具权限与默认值一致时不保留冗余覆盖。
+- Toolset 级权限写入 `default_config` 并清空逐工具覆盖；内置工具集会额外保留一条与分组权限一致的 `ask_user_question` 显式配置，避免提交规范化把它静默改回 deny。逐工具权限与默认值一致时不保留冗余覆盖，但 `ask_user_question` 即使选 `always_allow` 也保留显式配置。
 - `always_deny` 规范化为 `enabled:false`；`custom` 只是聚合展示状态，不写入 API。
 - Rendered 不再提供新增 Custom Tool 的入口；Raw、模板或既有 Agent 中合法的 Custom Tool 仍可在 Rendered 中编辑和移除，并在视图往返时保留。
 - Custom Tool 名称必须唯一且符合后端命名规则，描述与 JSON object `input_schema` 必须有效；Schema 输入框保留用户原始文本与光标，仅把合法 JSON 解析结果发布到 Draft。
@@ -64,6 +73,6 @@ flowchart LR
 
 - YAML 与 JSON 可往返全部支持字段，未知顶层字段和 `model.effort` 被拒绝。
 - Rendered 可完成 General、Multiagent、Skills、内置工具与 Directory/工作区 MCP 选择；表单中不再出现自定义 MCP 名称或 URL 输入。既有 Custom Tool 与历史 MCP 可继续编辑权限、保存或移除。
-- MCP 与 toolset 始终成对，权限聚合和 deny 序列化与运行时一致。
+- MCP 与 toolset 始终成对；Tunnel Channel 的待确认状态不会污染 Draft，Channel 迁移不会丢失权限；权限聚合和 deny 序列化与运行时一致。
 - 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
 - 弹窗支持键盘导航、浅深主题和窄屏单列布局。

@@ -145,3 +145,42 @@ func TestDecryptOnlyOpensOldKeyVersionWithoutRewrap(t *testing.T) {
 		t.Fatal("Open old envelope without decrypt_only succeeded")
 	}
 }
+
+func TestTunnelEnvelopeBindsEveryIdentityField(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	binding := secrets.TunnelBinding{
+		OrganizationUUID: "11111111-1111-1111-1111-111111111111",
+		WorkspaceUUID:    "22222222-2222-2222-2222-222222222222",
+		TunnelExternalID: "tunnel_0123456789abcdef0123456789abcdef",
+		TokenExternalID:  "ttkn_example",
+	}
+	envelope, err := svc.SealTunnel(ctx, binding, []byte("connector-secret"))
+	if err != nil {
+		t.Fatalf("SealTunnel: %v", err)
+	}
+	mutations := []struct {
+		name    string
+		binding secrets.TunnelBinding
+	}{
+		{name: "organization", binding: secrets.TunnelBinding{OrganizationUUID: "other", WorkspaceUUID: binding.WorkspaceUUID, TunnelExternalID: binding.TunnelExternalID, TokenExternalID: binding.TokenExternalID}},
+		{name: "workspace", binding: secrets.TunnelBinding{OrganizationUUID: binding.OrganizationUUID, WorkspaceUUID: "other", TunnelExternalID: binding.TunnelExternalID, TokenExternalID: binding.TokenExternalID}},
+		{name: "tunnel", binding: secrets.TunnelBinding{OrganizationUUID: binding.OrganizationUUID, WorkspaceUUID: binding.WorkspaceUUID, TunnelExternalID: "tunnel_fedcba9876543210fedcba9876543210", TokenExternalID: binding.TokenExternalID}},
+		{name: "token", binding: secrets.TunnelBinding{OrganizationUUID: binding.OrganizationUUID, WorkspaceUUID: binding.WorkspaceUUID, TunnelExternalID: binding.TunnelExternalID, TokenExternalID: "ttkn_other"}},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			if _, err := svc.OpenTunnel(ctx, mutation.binding, envelope); err == nil {
+				t.Fatal("OpenTunnel succeeded with a changed binding")
+			}
+		})
+	}
+
+	plaintext, err := svc.OpenTunnel(ctx, binding, envelope)
+	if err != nil {
+		t.Fatalf("OpenTunnel: %v", err)
+	}
+	if got, want := string(plaintext), "connector-secret"; got != want {
+		t.Fatalf("plaintext = %q, want %q", got, want)
+	}
+}

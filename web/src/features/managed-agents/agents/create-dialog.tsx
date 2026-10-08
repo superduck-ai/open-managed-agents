@@ -91,9 +91,12 @@ function CreateAgentDialogLoading({
         aria-label={msg('managedAgents.agents.createLabel', 'Create agent')}
         aria-busy={error ? undefined : true}
         className="max-w-[720px] sm:max-w-[720px]"
+        showCloseButton={false}
       >
         <DialogHeader>
-          <DialogTitle>{msg('managedAgents.agents.createLabel', 'Create agent')}</DialogTitle>
+          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            {msg('managedAgents.agents.createLabel', 'Create agent')}
+          </DialogTitle>
           <DialogDescription className={noModels ? 'sr-only' : undefined}>
             {noModels
               ? msg('llmModels.requiredDescription', 'Configure a model to get started.')
@@ -103,12 +106,19 @@ function CreateAgentDialogLoading({
           </DialogDescription>
         </DialogHeader>
         {noModels ? (
-          <LLMProviderRequired
-            compact
-            onConfigure={() =>
-              window.location.assign(`/workspaces/${encodeURIComponent(workspaceId ?? '')}/llm-models`)
-            }
-          />
+          <>
+            <LLMProviderRequired
+              compact
+              onConfigure={() =>
+                window.location.assign(`/workspaces/${encodeURIComponent(workspaceId ?? '')}/llm-models`)
+              }
+            />
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" onClick={onClose}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
+            </div>
+          </>
         ) : error ? (
           <>
             <ManagedErrorAlert>
@@ -117,11 +127,22 @@ function CreateAgentDialogLoading({
                 'Retry before creating an agent so its displayed and saved model IDs stay consistent.',
               )}
             </ManagedErrorAlert>
-            <Button type="button" className="justify-self-end" onClick={onRetry}>
-              {msg('common.retry', 'Retry')}
-            </Button>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={onClose}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
+              <Button type="button" onClick={onRetry}>
+                {msg('common.retry', 'Retry')}
+              </Button>
+            </div>
           </>
-        ) : null}
+        ) : (
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" onClick={onClose}>
+              {msg('common.cancel', 'Cancel')}
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -148,16 +169,21 @@ function CreateAgentDialogContent({
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [mcpTunnelChannelPending, setMcpTunnelChannelPending] = useState(false);
   const generateAbortRef = useRef<AbortController | null>(null);
   const rawErrorRef = useRef(draftState.rawError);
   rawErrorRef.current = draftState.rawError;
   const selectedTemplate =
     createAgentTemplates.find((template) => template.id === selectedTemplateId) ?? blankAgentTemplate;
-  const startingPointName =
-    mode === 'describe'
-      ? generatedConfig?.name?.trim() || templateTitle(blankAgentTemplate, msg)
-      : templateTitle(selectedTemplate, msg);
-  const createDisabled = createSubmissionDisabled(draftState.rawError, draftState.draftError, isGenerating, isCreating);
+  const startingPointName = createStartingPointName(mode, generatedConfig, selectedTemplate, msg);
+  const pendingTunnelError = pendingTunnelChannelError(mcpTunnelChannelPending, msg);
+  const createDisabled = createSubmissionDisabled(
+    draftState.rawError,
+    draftState.draftError,
+    isGenerating,
+    isCreating,
+    mcpTunnelChannelPending,
+  );
 
   const selectMode = (nextMode: 'describe' | 'template') => {
     if (nextMode === mode || draftState.rawError) {
@@ -229,7 +255,7 @@ function CreateAgentDialogContent({
   };
 
   const handleCreate = async () => {
-    if (draftState.rawError || draftState.draftError) {
+    if (agentDraftSubmissionBlocked(draftState.rawError, draftState.draftError, mcpTunnelChannelPending)) {
       return;
     }
     setIsCreating(true);
@@ -413,16 +439,21 @@ function CreateAgentDialogContent({
                   <TabsTrigger value="rendered">
                     {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
                   </TabsTrigger>
-                  <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
+                  <TabsTrigger value="raw" disabled={mcpTunnelChannelPending}>
+                    {msg('managedAgents.agents.createDialog.raw', 'Raw')}
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
             </div>
 
             {draftState.view === 'rendered' ? (
               <AgentConfigRenderedEditor
+                orgUuid={orgUuid}
                 workspaceId={workspaceId}
                 draft={draftState.draft}
                 modelOptions={modelOptions}
+                onPendingTunnelChange={setMcpTunnelChannelPending}
+                tunnelSelectionResetKey={draftState.replacementRevision}
                 onChange={draftState.setDraft}
               />
             ) : (
@@ -440,27 +471,34 @@ function CreateAgentDialogContent({
           </div>
 
           <div className="flex min-h-16 items-center justify-between gap-4 border-t border-border px-[23px] py-3">
-            {createError || draftState.draftError ? (
-              <p className="line-clamp-2 text-sm text-destructive">{createError || draftState.draftError}</p>
+            {createError || draftState.draftError || pendingTunnelError ? (
+              <p className="line-clamp-2 text-sm text-destructive">
+                {createError || draftState.draftError || pendingTunnelError}
+              </p>
             ) : (
               <span />
             )}
-            <Button
-              type="button"
-              disabled={createDisabled}
-              size="sm"
-              className={clsx(
-                'px-3 text-[14px] font-semibold leading-5',
-                createDisabled
-                  ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
-                  : 'bg-foreground text-background hover:bg-muted',
-              )}
-              onClick={handleCreate}
-            >
-              {isCreating
-                ? msg('common.creating', 'Creating...')
-                : msg('managedAgents.agents.createLabel', 'Create agent')}
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={onClose}>
+                {msg('common.cancel', 'Cancel')}
+              </Button>
+              <Button
+                type="button"
+                disabled={createDisabled}
+                size="sm"
+                className={clsx(
+                  'px-3 text-[14px] font-semibold leading-5',
+                  createDisabled
+                    ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
+                    : 'bg-foreground text-background hover:bg-muted',
+                )}
+                onClick={handleCreate}
+              >
+                {isCreating
+                  ? msg('common.creating', 'Creating...')
+                  : msg('managedAgents.agents.createLabel', 'Create agent')}
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
@@ -477,8 +515,36 @@ function createSubmissionDisabled(
   draftError: string | null,
   isGenerating: boolean,
   isCreating: boolean,
+  mcpTunnelChannelPending = false,
 ) {
-  return Boolean(rawError || draftError) || isGenerating || isCreating;
+  return agentDraftSubmissionBlocked(rawError, draftError, mcpTunnelChannelPending) || isGenerating || isCreating;
+}
+
+function agentDraftSubmissionBlocked(
+  rawError: string | null,
+  draftError: string | null,
+  mcpTunnelChannelPending: boolean,
+) {
+  return Boolean(rawError || draftError) || mcpTunnelChannelPending;
+}
+
+function pendingTunnelChannelError(pending: boolean, msg: ReturnType<typeof useI18n>['msg']) {
+  return pending
+    ? msg(
+        'managedAgents.agents.createDialog.mcpTunnelChannelPending',
+        'Finish choosing a Tunnel channel before continuing.',
+      )
+    : null;
+}
+
+function createStartingPointName(
+  mode: 'describe' | 'template',
+  generatedConfig: CreateAgentInput | null,
+  selectedTemplate: AgentTemplate,
+  msg: ReturnType<typeof useI18n>['msg'],
+) {
+  if (mode === 'template') return templateTitle(selectedTemplate, msg);
+  return generatedConfig?.name?.trim() || templateTitle(blankAgentTemplate, msg);
 }
 
 function runWithValidRaw(rawError: string | null, action: () => void) {

@@ -8,12 +8,28 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
+
+var (
+	ErrMCPDeclarationInvalid          = errors.New("MCP server declarations must have unique canonical names and valid targets")
+	ErrMCPGatewayMissing              = errors.New("code_session.sandbox_api_base_url is required for managed-agent MCP tunnels")
+	ErrMCPRuntimeIdentityMissing      = errors.New("managed-agent MCP Tunnel runtime identity is incomplete")
+	errInboundPayloadTooLarge         = errors.New("worker event payload exceeds 16 MiB")
+	errLargePayloadStorageUnavailable = errors.New("worker event payload object storage is unavailable")
+	errLargePayloadDigestMismatch     = errors.New("worker event payload digest mismatch")
+	errActivationSnapshotChanged      = errors.New("code session activation snapshot changed")
+)
+
 func codeSessionNotFound(cause error) error {
 	return apperr.New(apperr.NotFound, "Code session not found", cause)
 }
 
 func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
+}
+
+func sessionMCPConfigFailure(cause error) error {
+	return internalError("Could not build session MCP configuration", cause)
 }
 
 func codeSessionRouteNotFound() error {
@@ -40,15 +56,14 @@ func signCommitFailure(cause error) error {
 	return internalError("Could not sign commit", cause)
 }
 
-func codeSessionEventsLoadError(err error, codeSessionID string) error {
-	return internalError(
-		"Could not list code session events",
-		fmt.Errorf("list code session %q events: %w", codeSessionID, err),
-	)
+func workerEventStreamUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "Could not connect code session worker stream", cause)
 }
 
-func workerEventStreamUnavailable(cause error) error {
-	return internalError("Could not connect code session worker stream", cause)
+// workerEventUnavailable 将传输层失败包装为 503 应用错误，同时保留
+// ErrWorkerEventUnavailable sentinel，供调用方与测试用 errors.Is 识别。
+func workerEventUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "Could not deliver events to the code session worker", fmt.Errorf("%w: %w", ErrWorkerEventUnavailable, cause))
 }
 
 func mapCodeSessionLoadError(err error, codeSessionID string) error {

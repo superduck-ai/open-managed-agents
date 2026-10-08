@@ -18,6 +18,8 @@ type sessionEventRow struct {
 	ThreadExternalID  *string    `db:"thread_external_id"`
 	EventType         string     `db:"event_type"`
 	Payload           []byte     `db:"payload"`
+	PayloadBlobUUID   *string    `db:"payload_blob_uuid"`
+	ToolUseID         *string    `db:"tool_use_id"`
 	ProcessedAt       time.Time  `db:"processed_at"`
 	CreatedAt         time.Time  `db:"created_at"`
 	DeletedAt         *time.Time `db:"deleted_at"`
@@ -34,6 +36,8 @@ type sessionEventWriteParams struct {
 	ThreadExternalID  *string
 	EventType         string
 	Payload           []byte
+	PayloadBlobUUID   *string
+	ToolUseID         *string
 	ProcessedAt       time.Time
 	CreatedAt         time.Time
 }
@@ -55,9 +59,13 @@ type sessionEventPageMapperParams struct {
 
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
+	CursorExists(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (bool, error)
+	FindLatestTurnStart(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
+	FindLatestStatus(ctx context.Context, workspaceUUID, sessionExternalID, threadID string) (sessionEventRow, bool, error)
 	Insert(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionEventWriteParams) (sessionEventRow, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)
+	FindAssistantEchoKeys(ctx context.Context, workspaceUUID, sessionExternalID, requestID, source string) ([]string, error)
 	ListPage(ctx context.Context, params sessionEventPageMapperParams) ([]sessionEventRow, error)
 	ChildSessionToolUseIDs(ctx context.Context, workspaceUUID, sessionExternalID string, eventTypes, toolUseIDs []string) ([]string, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)

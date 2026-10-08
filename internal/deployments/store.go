@@ -7,18 +7,21 @@ import (
 
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/yourbatis"
 )
 
 // Store coordinates deployment writes and durable schedules in one transaction.
 // Configure must be called before HTTP handlers or workers use it.
 type Store struct {
-	database *db.DB
-	client   *river.Client[*sql.Tx]
+	eventPayloads *eventpayload.Store
+	database      *db.DB
+	client        *river.Client[*sql.Tx]
 }
 
 func NewStore(database *db.DB) *Store {
-	return &Store{database: database}
+	return &Store{database: database, eventPayloads: eventpayload.New(database, nil)}
 }
 
 // Configure binds the shared River client before HTTP handlers or workers start.
@@ -101,6 +104,11 @@ func (s *Store) Archive(ctx context.Context, workspaceUUID, externalID string) (
 }
 
 func (s *Store) ApplyScheduledOccurrence(ctx context.Context, input db.ApplyScheduledOccurrenceInput) error {
+	prepared, err := s.eventPayloads.PreparePublic(ctx, input.Deployment.OrganizationUUID, input.Deployment.WorkspaceUUID, input.Events)
+	if err != nil {
+		return err
+	}
+	input.Events = prepared
 	return s.transaction(ctx, func(tx *yourbatis.Tx) error {
 		if err := s.database.ApplyScheduledOccurrenceTx(ctx, tx, input); err != nil {
 			return err
@@ -136,4 +144,23 @@ func (s *Store) ArchiveAgent(ctx context.Context, workspaceUUID, externalID stri
 		return nil
 	})
 	return archived, err
+}
+
+func (s *Store) WithEventPayloadStorage(objects storage.ObjectStore) *Store {
+	s.eventPayloads = eventpayload.New(s.database, objects)
+	return s
+}
+
+func (s *Store) CreateManualRun(ctx context.Context, input db.CreateManualDeploymentRunInput) (db.DeploymentRun, db.Session, db.SessionThread, []db.SessionEvent, error) {
+	original := input.Events
+	prepared, err := s.eventPayloads.PreparePublic(ctx, input.Session.Session.OrganizationUUID, input.Session.Session.WorkspaceUUID, original)
+	if err != nil {
+		return db.DeploymentRun{}, db.Session{}, db.SessionThread{}, nil, err
+	}
+	input.Events = prepared
+	run, session, thread, events, err := s.database.CreateManualDeploymentRun(ctx, input)
+	if err != nil {
+		return run, session, thread, nil, err
+	}
+	return run, session, thread, eventpayload.RestoreCreatedPublic(events, original), nil
 }

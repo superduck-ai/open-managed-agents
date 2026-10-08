@@ -15,6 +15,7 @@ import {
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from '../../../shared/ui/message-scroller';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import {
@@ -28,6 +29,7 @@ import {
   sessionThreadListSignature,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
+import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import { resourceTitle } from '../labels';
 import {
@@ -119,6 +121,27 @@ function sessionPendingAction(
   return <SessionRequiresActionCard toolCall={toolCall} onConfirm={onConfirm} disabled={disabled} />;
 }
 
+function SessionNotFound({
+  sessionId,
+  listHref,
+  loadError,
+}: {
+  sessionId: string;
+  listHref: string;
+  loadError: string | null;
+}) {
+  const { msg } = useI18n();
+  const copy = useResourceMissingCopy(loadError, 'session', sessionId);
+  return (
+    <ResourceNotFound
+      title={copy.title}
+      sentence={copy.sentence}
+      backHref={listHref}
+      backLabel={msg('managedAgents.sessions.detail.backToList', 'Back to sessions')}
+    />
+  );
+}
+
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
   const { activeWorkspaceId } = useWorkspace();
   const { msg } = useI18n();
@@ -134,6 +157,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [eventRefreshKey, setEventRefreshKey] = useState(0);
+  const [sentMessageVersion, setSentMessageVersion] = useState(0);
   const [summaryClock, setSummaryClock] = useState(Date.now);
   const [query, setQuery] = useState('');
   const [selectedLaneId, setSelectedLaneId] = useState(readSessionDetailInitialLaneId);
@@ -587,16 +611,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   if (!session || loadError || !summary) {
-    return (
-      <section className="@container min-h-[calc(100vh-48px)] text-foreground">
-        <div className={SESSION_CHROME_GUTTER_CLASS_NAME}>
-          <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
-          <ManagedErrorAlert className="mt-6 max-w-xl">
-            {loadError || msg('managedAgents.sessions.detail.notFound', 'Session not found')}
-          </ManagedErrorAlert>
-        </div>
-      </section>
-    );
+    return <SessionNotFound sessionId={sessionId} listHref={listHref} loadError={loadError} />;
   }
 
   const archived = Boolean(session.archived_at);
@@ -735,6 +750,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               childLoading={eventsLoading}
               composer={
                 <SessionMessageComposer
+                  acceptingMessages={conversationState.acceptingMessages}
                   awaitingAction={Boolean(activeAwaitingToolCall)}
                   disabled={conversationState.disabled}
                   live={conversationState.live}
@@ -742,6 +758,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   onEventsChanged={() => setEventRefreshKey((value) => value + 1)}
                   onMessageSent={(sentEvents) => {
                     eventData.appendPrimaryEvents(sentEvents);
+                    setSentMessageVersion((version) => version + 1);
                     setSession((currentSession) =>
                       currentSession && currentSession.id === session.id
                         ? { ...currentSession, status: 'running' }
@@ -820,6 +837,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               scrollerRef={scrollerRef}
               selectedEntry={selectedEntry}
               selectedEntryId={selectedEntryId}
+              sentMessageVersion={sentMessageVersion}
               showArchivedLanes={showArchivedLanes}
               suppressScrollSeekUntilRef={suppressScrollSeekUntilRef}
               threadNameById={threadNameById}
@@ -871,9 +889,22 @@ function sessionConversationState(session: SessionApiResponse) {
   const archived = Boolean(session.archived_at);
   const status = session.status.toLowerCase();
   return {
+    acceptingMessages: !archived && (status === 'idle' || status === 'queued'),
     disabled: archived || status === 'deleted' || status === 'terminated',
     live: !archived && sessionStatusIsLive(status),
   };
+}
+
+function FollowSentSessionMessage({ version }: { version: number }) {
+  const { scrollToEnd } = useMessageScroller();
+  const previousVersion = useRef(version);
+  useLayoutEffect(() => {
+    if (version !== previousVersion.current) {
+      previousVersion.current = version;
+      scrollToEnd({ behavior: 'auto' });
+    }
+  }, [scrollToEnd, version]);
+  return null;
 }
 
 export function EventsTab({
@@ -907,6 +938,7 @@ export function EventsTab({
   scrollerRef,
   selectedEntry,
   selectedEntryId,
+  sentMessageVersion,
   showArchivedLanes,
   suppressScrollSeekUntilRef,
   threadNameById,
@@ -1052,6 +1084,7 @@ export function EventsTab({
                 onToggleArchivedLanes={onToggleArchivedLanes}
               />
               <MessageScrollerProvider key={activeLane} autoScroll defaultScrollPosition="end">
+                <FollowSentSessionMessage version={sentMessageVersion} />
                 <MessageScroller className="min-h-0 flex-1">
                   <MessageScrollerViewport
                     ref={scrollerRef}

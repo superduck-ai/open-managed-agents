@@ -25,7 +25,6 @@ import {
   type HighlightLanguage,
   type I18nMsg,
   type IdleGapEntry,
-  type QueuedBoundaryEntry,
   type QuickstartSessionEvent,
   type SessionEventListEntry,
   type SessionTraceEntry,
@@ -399,11 +398,7 @@ export function EventDetailPanel({
   );
 }
 
-export function EventDetailContent({
-  entry,
-}: {
-  entry: Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry>;
-}) {
+export function EventDetailContent({ entry }: { entry: Exclude<SessionEventListEntry, IdleGapEntry> }) {
   if (entry.kind === 'tool_batch') {
     return <BatchDetailPanel entry={entry} />;
   }
@@ -442,11 +437,7 @@ export function EventDetailContent({
   return <GenericEventDetail entry={entry} />;
 }
 
-export function MessageEventDetail({
-  entry,
-}: {
-  entry: Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry>;
-}) {
+export function MessageEventDetail({ entry }: { entry: Exclude<SessionEventListEntry, IdleGapEntry> }) {
   const { msg } = useI18n();
   if (entry.displayEvent.isStreaming) {
     return <LiveMessageContent displayEvent={entry.displayEvent} />;
@@ -631,11 +622,7 @@ export function BatchDetailPanel({ entry }: { entry: ToolBatchEntry }) {
   );
 }
 
-export function DebugDetailPanel({
-  entry,
-}: {
-  entry: Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry>;
-}) {
+export function DebugDetailPanel({ entry }: { entry: Exclude<SessionEventListEntry, IdleGapEntry> }) {
   const { msg } = useI18n();
   const deltaFrames = useContext(SessionDetailDeltaFramesContext);
   const frame = deltaFrames[entry.displayEvent.id];
@@ -806,7 +793,7 @@ export function GenericEventDetail({
   entry,
   compact = false,
 }: {
-  entry: Exclude<SessionEventListEntry, IdleGapEntry | QueuedBoundaryEntry>;
+  entry: Exclude<SessionEventListEntry, IdleGapEntry>;
   compact?: boolean;
 }) {
   const { msg } = useI18n();
@@ -850,7 +837,7 @@ export function CallSection({
         <SectionHeader title={title} />
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           <ApprovalChip lifecycle={lifecycle} />
-          {executionMs ? (
+          {executionMs !== undefined ? (
             <span className="inline-flex items-center gap-1 font-mono">
               <Timer className="size-3.5" aria-hidden />
               {formatSessionDuration(executionMs, formatters, msg)}

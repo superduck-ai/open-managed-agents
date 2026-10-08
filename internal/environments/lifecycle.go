@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
@@ -60,7 +61,7 @@ func (l *SandboxLifecycle) Configure(ctx context.Context, client *river.Client[*
 	if err != nil && !errors.Is(err, river.ErrNotFound) {
 		return err
 	}
-	if err == nil && matchesSandboxSweepSchedule(existing) {
+	if err == nil && riverjobs.MatchesActiveCron(existing, sandboxSweepArgs{}.Kind(), SandboxLifecycleQueue, sandboxSweepCron, sandboxSweepTimezone) {
 		return nil
 	}
 	_, err = client.DurablePeriodicJobUpsert(ctx, &river.DurablePeriodicJobUpsertOpts{
@@ -68,12 +69,6 @@ func (l *SandboxLifecycle) Configure(ctx context.Context, client *river.Client[*
 		Schedule: &river.DurablePeriodicJobSchedule{CronExpression: sandboxSweepCron, CronTimezone: sandboxSweepTimezone},
 	})
 	return err
-}
-
-func matchesSandboxSweepSchedule(job *rivertype.DurablePeriodicJob) bool {
-	return job != nil && job.CronExpression != nil && *job.CronExpression == sandboxSweepCron &&
-		job.CronTimezone == sandboxSweepTimezone && job.Kind == (sandboxSweepArgs{}).Kind() &&
-		job.Queue == SandboxLifecycleQueue && job.PausedAt == nil
 }
 
 func (l *SandboxLifecycle) allowsNewClaims() bool {

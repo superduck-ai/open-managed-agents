@@ -82,12 +82,28 @@ describe('SessionMessageComposer', () => {
     resolveRequest?.(jsonResponse({}));
     await waitFor(() => expect(onEventsChanged).toHaveBeenCalledTimes(1));
   });
+
+  test('keeps a draft without sending while the session is busy', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/session-test');
+    const fetchMock = mock(() => Promise.resolve(jsonResponse({ data: [] })));
+    globalThis.fetch = fetchMock as typeof fetch;
+    renderComposer({ acceptingMessages: false });
+    const input = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'draft' } });
+    fireEvent.submit(screen.getByTestId('session-message-composer'));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(input.value).toBe('draft');
+    expect(
+      screen.getByTestId('session-message-composer').querySelector('button[type="submit"]')?.hasAttribute('disabled'),
+    ).toBe(true);
+  });
 });
 
-function renderComposer({ live = false, onEventsChanged = () => {} } = {}) {
+function renderComposer({ live = false, acceptingMessages = true, onEventsChanged = () => {} } = {}) {
   return render(
     <I18nProvider initialLocale="en">
       <SessionMessageComposer
+        acceptingMessages={acceptingMessages}
         disabled={false}
         live={live}
         onError={() => {}}

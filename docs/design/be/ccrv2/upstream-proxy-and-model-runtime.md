@@ -122,7 +122,7 @@ Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handl
 4. 目标为该 Provider 的 `{base_url}/v1/messages`；请求 body 原样转发，不改写模型 ID。
 5. 删除下游 `Authorization`、`X-Api-Key` 和所有 hop-by-hop headers。
 6. 解密 Provider Key，并设置为上游 `X-Api-Key`；Key 不进入 sandbox。
-7. 原样转发上游状态、end-to-end headers 和响应流；提交状态后立即 flush，之后每次写入继续 flush，以支持 SSE。响应一旦提交，流错误只记录并终止连接，不再尝试改写 HTTP 状态。
+7. 已鉴权 Code Session 的上游 `401` 转为 `403 permission_error`，设置 `X-Should-Retry: false`，保留模型 span 的 `http_error` 与上游 request ID；这是 Provider 凭据被拒绝，不触发 Worker 自身的 OAuth 恢复。其余上游状态、end-to-end headers 和响应流原样转发；提交状态后立即 flush，之后每次写入继续 flush，以支持 SSE。响应一旦提交，流错误只记录并终止连接，不再尝试改写 HTTP 状态。完整错误合同见 [Messages 代理](../messages-proxy.md#失败语义)。
 
 ### `GET /v1/code/upstreamproxy/ca-cert`
 
@@ -175,7 +175,7 @@ Proxy-Authorization: Basic base64(code_session_id:session_ingress_jwt)
 
 ### `GET|POST|DELETE /v2/ccr-sessions/{code_session_id}/mcp`
 
-Runner 不再把 Managed Agent MCP URL 改写到该接口。MCP config 保留 Agent Snapshot 中的原始 URL，Claude 主进程通过 `HTTPS_PROXY` 将请求交给 CCRv2 CONNECT relay；配置中也不再为该接口注入 session-ingress header。
+Runner 不再把普通 Managed Agent MCP URL 改写到该接口。普通 MCP config 保留 Agent Snapshot 中的原始 URL，Claude 主进程通过 `HTTPS_PROXY` 将请求交给 CCRv2 CONNECT relay；配置中也不再为该接口注入 session-ingress header。canonical Tunnel 使用的是独立的 `/mcp/{server_name}` named Runtime Gateway 和 SessionIngressToken，不改变本接口合同。
 
 该接口作为显式调用的兼容入口继续保留，其边界如下：
 

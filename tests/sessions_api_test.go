@@ -26,6 +26,7 @@ import (
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -89,9 +90,25 @@ func TestSessionsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
+	t.Run("success missing beta query", func(t *testing.T) {
 		resp := doSessionRequest(t, app, http.MethodGet, "/v1/sessions", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want %d: %s", resp.StatusCode, http.StatusOK, readAll(t, resp.Body))
+		}
+	})
+
+	t.Run("create without beta query reaches validation", func(t *testing.T) {
+		resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions", strings.NewReader(`{}`), defaultTestKey, true)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d: %s", resp.StatusCode, http.StatusBadRequest, readAll(t, resp.Body))
+		}
+		var response errorResponse
+		decodeJSON(t, resp.Body, &response)
+		if response.Error.Message != "agent is required" {
+			t.Fatalf("error message = %q, want %q", response.Error.Message, "agent is required")
+		}
 	})
 
 	t.Run("success lifecycle resources threads events work and archive", func(t *testing.T) {
@@ -111,7 +128,7 @@ func TestSessionsAPI(t *testing.T) {
 			"metadata":{"case":"1234"},
 			"resources":[
 				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/session-resource.txt"},
-				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`,"name":"memory"}
+				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`}
 			]
 		}`)
 		if created.Type != "session" || created.Status != "idle" || created.EnvironmentID != env.ID {
@@ -152,24 +169,27 @@ func TestSessionsAPI(t *testing.T) {
 		if len(sent.Data) != 1 || !bytes.Contains(sent.Data[0], []byte(`"type":"user.message"`)) {
 			t.Fatalf("unexpected sent events: %+v", sent)
 		}
-		sentEventID := sessionEventStringField(t, sent.Data[0], "id")
-		sentCreatedAt := sessionEventStringField(t, sent.Data[0], "created_at")
-		if _, err := time.Parse(time.RFC3339, sentCreatedAt); err != nil {
-			t.Fatalf("sent event created_at = %q, want RFC3339: %v", sentCreatedAt, err)
+		if bytes.Contains(sent.Data[0], []byte(`"created_at"`)) || sessionEventStringField(t, sent.Data[0], "processed_at") == "" {
+			t.Fatalf("sent event must expose processed_at without created_at: %s", sent.Data[0])
 		}
-		if _, err := app.pool.Exec(context.Background(), `update session_events set payload = payload - 'created_at' where external_id = $1`, sentEventID); err != nil {
-			t.Fatalf("remove stored event created_at: %v", err)
-		}
-		events := listSessionEvents(t, app, created.ID, "", defaultTestKey)
+		events := listSessionEvents(t, app, created.ID, "types[]=user.message", defaultTestKey)
 		if len(events.Data) != 1 || !bytes.Contains(events.Data[0], []byte(`"id":"sevt_`)) {
 			t.Fatalf("unexpected listed events: %+v", events)
 		}
-		if listedCreatedAt := sessionEventStringField(t, events.Data[0], "created_at"); listedCreatedAt != sentCreatedAt {
-			t.Fatalf("listed event created_at = %q, want %q", listedCreatedAt, sentCreatedAt)
+		if bytes.Contains(events.Data[0], []byte(`"created_at"`)) {
+			t.Fatalf("listed event exposed created_at: %s", events.Data[0])
 		}
 		threadEvents := listThreadEvents(t, app, created.ID, thread.ID, defaultTestKey)
-		if len(threadEvents.Data) != 1 {
+		if len(threadEvents.Data) != 3 {
 			t.Fatalf("unexpected thread events: %+v", threadEvents)
+		}
+		// Complete the accepted turn before testing idle-only resource mutations.
+		storedSession := mustSessionRecord(t, app, created.ID)
+		if err := app.db.SetSessionStatus(t.Context(), storedSession.WorkspaceUUID, created.ID, "idle"); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.db.SetSessionThreadStatus(t.Context(), storedSession.WorkspaceUUID, created.ID, thread.ID, "idle"); err != nil {
+			t.Fatal(err)
 		}
 
 		updated := updateSession(t, app, created.ID, `{"title":"updated","metadata":{"case":"","priority":"high"},"agent":{"tools":[],"mcp_servers":[]}}`)
@@ -424,7 +444,14 @@ func TestPlatformWebSessionStream(t *testing.T) {
 		close(lineCh)
 	}()
 
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"hello from web-api stream"}]}]}`, defaultTestKey)
+	workerID := launchLocalCodeSession(t, app, session.ID)
+	epoch := registerCodeSessionWorker(t, app, workerID)
+	worker, err := getCodeSession(app, t.Context(), workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"hello from web-api stream"}]}]}`, defaultTestKey)
+	consumePublicInput(t, app, worker, epoch, sessionEventStringField(t, sent.Data[0], "id"))
 
 	deadline := time.After(5 * time.Second)
 	for {
@@ -434,8 +461,8 @@ func TestPlatformWebSessionStream(t *testing.T) {
 				t.Fatal("platform web stream closed before event arrived")
 			}
 			if strings.HasPrefix(line, "data: ") && strings.Contains(line, "hello from web-api stream") {
-				if !strings.Contains(line, `"created_at"`) {
-					t.Fatalf("streamed event missing created_at: %s", line)
+				if strings.Contains(line, `"created_at"`) || !strings.Contains(line, `"processed_at"`) {
+					t.Fatalf("streamed event timestamp differs from Claude contract: %s", line)
 				}
 				return
 			}
@@ -480,12 +507,15 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	clearWebhookState(t, app)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionIngressEvents(t, app, codeSessionID, `{"events":[
 		{"type":"assistant","uuid":"assistant-`+eventSuffix+`","message":{"role":"assistant","content":"hello from worker"},"created_at":"2026-06-16T01:00:01Z"},
 		{"type":"result","uuid":"result-`+eventSuffix+`","stop_reason":{"type":"end_turn"},"created_at":"2026-06-16T01:00:02Z"}
 	]}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 
 	events := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
@@ -627,6 +657,37 @@ func TestSessionCanonicalMultiAgentEventsFromCodeSessionIngress(t *testing.T) {
 	}
 }
 
+func TestSessionClaudeCodeStoppedTaskTerminatesThread(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-stopped-task-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-stopped-task-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-stopped-task-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
+		{"payload":{"type":"system","uuid":"stopped-task-start","subtype":"task_started","task_id":"stopped-task","tool_use_id":"stopped-tool","description":"Stopped task"}},
+		{"payload":{"type":"system","uuid":"stopped-task-end","subtype":"task_notification","task_id":"stopped-task","tool_use_id":"stopped-tool","status":"stopped"}}
+	]}`)
+	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
+	for _, thread := range threads.Data {
+		if thread.ParentThreadID != nil {
+			if thread.Status != "terminated" {
+				t.Fatalf("stopped child status = %q, want terminated", thread.Status)
+			}
+			events := listSessionEvents(t, app, session.ID, "types[]=session.thread_status_terminated", defaultTestKey)
+			if !eventPageContains(events, quoteJSON(thread.ID)) {
+				t.Fatalf("stopped child has no terminated event: %+v", events.Data)
+			}
+			return
+		}
+	}
+	t.Fatal("stopped child thread was not created")
+}
+
 func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-claude-code-task-bucket"))
 	defer app.close()
@@ -638,6 +699,7 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[
 		{"payload":{"type":"user","uuid":"user-task-echo","message":{"role":"user","content":"duplicate coordinator echo"},"created_at":"2026-06-16T00:59:59Z"}},
@@ -647,6 +709,9 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 		{"payload":{"type":"system","uuid":"system-task-done","subtype":"task_notification","task_id":"taskzh123","tool_use_id":"tool_translate_zh","status":"completed","summary":"Translate to Chinese","usage":{"duration_ms":1234,"total_tokens":456},"created_at":"2026-06-16T01:00:03Z"}},
 		{"payload":{"type":"result","uuid":"result-task","stop_reason":"end_turn","created_at":"2026-06-16T01:00:04Z"}}
 	]}`)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
+
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 
 	threads := listSessionThreads(t, app, session.ID, defaultTestKey)
 	var child *sessionThreadAPIResponse
@@ -686,10 +751,11 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 		}
 	}
 	if eventPageContains(events, `"type":"agent.tool_use"`) {
-		t.Fatalf("Claude Code assistant tool_use leaked instead of using can_use_tool as the canonical public event source: %+v", events.Data)
+		t.Fatal("automatic tool invocation is not mapped yet")
 	}
-	if eventPageContains(events, `"type":"system.message"`) {
-		t.Fatalf("Claude Code task lifecycle leaked raw system.message instead of canonical events: %+v", events.Data)
+	diagnostics := listSessionEvents(t, app, session.ID, "types[]=system.message", defaultTestKey)
+	if len(diagnostics.Data) != 0 {
+		t.Fatalf("internal diagnostics leaked publicly: %+v", diagnostics.Data)
 	}
 	if eventPageContains(events, "duplicate coordinator echo") {
 		t.Fatalf("Claude Code user transcript echo leaked into public session events: %+v", events.Data)
@@ -709,7 +775,7 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	env := createEnvironment(t, app, `{"name":"sessions-managed-agent-activation-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
+	defer cleanupSession(t, app, session.ID)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 
 	if _, err := app.pool.Exec(ctx, `
@@ -724,14 +790,13 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load initializing code session: %v", err)
 	}
-	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
+	codeSessionService := newCodeSessionService(app, nil, nil)
 
 	accepted := sendSessionEvents(t, app, session.ID, `{"events":[
-		{"type":"user.message","content":[{"type":"text","text":"startup message one"}]},
-		{"type":"user.message","content":[{"type":"text","text":"startup message two"}]}
+		{"type":"user.message","content":[{"type":"text","text":"startup message"}]}
 	]}`, defaultTestKey)
-	if len(accepted.Data) != 2 {
-		t.Fatalf("accepted session events = %#v, want two", accepted.Data)
+	if len(accepted.Data) != 1 {
+		t.Fatalf("accepted session events = %#v, want one", accepted.Data)
 	}
 
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
@@ -744,26 +809,24 @@ func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	if codeSession.Status != "active" {
 		t.Fatalf("status after activation = %q, want active", codeSession.Status)
 	}
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	inbound, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 	if err != nil {
 		t.Fatalf("list inbound after activation: %v", err)
 	}
-	if len(inbound) != 3 ||
-		!bytes.Contains(inbound[1].Payload, []byte("startup message one")) ||
-		!bytes.Contains(inbound[2].Payload, []byte("startup message two")) {
-		t.Fatalf("inbound after activation = %#v, want initialize and both startup messages", inbound)
+	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte("startup message")) {
+		t.Fatalf("inbound after activation = %#v, want initialize and startup message", inbound)
 	}
 
-	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"post-cutover message"}]}]}`, defaultTestKey)
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 	if len(sent.Data) != 1 {
 		t.Fatalf("post-cutover events = %#v, want one", sent.Data)
 	}
-	inbound, err = app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	inbound, err = listQueuedCodeSessionInboundEvents(app, codeSessionID)
 	if err != nil {
 		t.Fatalf("list post-cutover inbound: %v", err)
 	}
-	if len(inbound) != 4 || !bytes.Contains(inbound[3].Payload, []byte("post-cutover message")) {
-		t.Fatalf("post-cutover inbound = %#v, want realtime message after startup history", inbound)
+	if len(inbound) != 3 || !bytes.Contains(inbound[2].Payload, []byte(`"subtype":"interrupt"`)) {
+		t.Fatalf("post-cutover inbound = %#v, want realtime interrupt after startup history", inbound)
 	}
 }
 
@@ -811,14 +874,15 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 			CreatedAt:   createdAt,
 		})
 	}
-	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events, nil); err != nil {
+	if _, err := app.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events); err != nil {
 		t.Fatalf("append large history: %v", err)
 	}
-	if err := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
+	if err := newCodeSessionService(app, nil, nil).
+		ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
 		t.Fatalf("activate Code Session: %v", err)
 	}
 
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	inbound, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 	if err != nil {
 		t.Fatalf("list inbound: %v", err)
 	}
@@ -842,7 +906,7 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	env := createEnvironment(t, app, `{"name":"sessions-history-activation-rollback-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, sessionResponse.ID)
+	defer cleanupSession(t, app, sessionResponse.ID)
 	codeSessionID := launchLocalCodeSession(t, app, sessionResponse.ID)
 
 	if _, err := app.pool.Exec(ctx, `
@@ -872,15 +936,15 @@ func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T)
 	}}, nil); err != nil {
 		t.Fatalf("append invalid forwardable history event: %v", err)
 	}
-	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	before, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	codeSessionService := newCodeSessionService(app, nil, nil)
+	before, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 	if err != nil || len(before) != 1 {
 		t.Fatalf("rollback inbound before delivery = (%#v, %v), want initialize", before, err)
 	}
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err == nil {
 		t.Fatal("activation with invalid forwardable history succeeded")
 	}
-	after, listErr := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	after, listErr := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 	if listErr != nil || len(after) != 1 {
 		t.Fatalf("rollback inbound after delivery = (%#v, %v), want unchanged initialize", after, listErr)
 	}
@@ -982,7 +1046,7 @@ func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.
 		}
 	}
 	if eventPageContains(primaryEvents, `"type":"agent.tool_use"`) {
-		t.Fatalf("subagent assistant tool_use leaked instead of using can_use_tool as the canonical public event source: %+v", primaryEvents.Data)
+		t.Fatal("automatic tool invocation is not mapped yet")
 	}
 	for _, blocked := range []string{"private child prompt only in child stream", "private child thinking only in child stream", "private child answer only in child stream"} {
 		if eventPageContains(primaryEvents, blocked) {
@@ -1217,7 +1281,7 @@ func TestLegacyCodeSessionWebSocketRoutesAreRemoved(t *testing.T) {
 	}
 }
 
-func TestCodeSessionHTTPPollReceivesQueuedUserEvents(t *testing.T) {
+func TestCodeSessionHTTPPollRouteIsUnavailable(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-http-poll-bucket"))
 	defer app.close()
 
@@ -1226,7 +1290,6 @@ func TestCodeSessionHTTPPollReceivesQueuedUserEvents(t *testing.T) {
 	env := createEnvironment(t, app, `{"name":"sessions-code-http-poll-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"queued over http poll"}]}]}`, defaultTestKey)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 
 	req, err := http.NewRequest(http.MethodGet, app.baseURL+"/v1/code/sessions/"+codeSessionID, nil)
@@ -1239,22 +1302,11 @@ func TestCodeSessionHTTPPollReceivesQueuedUserEvents(t *testing.T) {
 		t.Fatalf("poll code session events: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("poll code session events status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
-	var polled struct {
-		Events []json.RawMessage `json:"events"`
-	}
-	decodeJSON(t, resp.Body, &polled)
-	if len(polled.Events) < 2 || !eventPageContains(sessionEventPageAPIResponse{Data: polled.Events}, "queued over http poll") {
-		t.Fatalf("unexpected polled events: %s", polled.Events)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("poll code session events status = %d, want 405: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
-	// The canonical path remains an HTTP poll endpoint, but WebSocket upgrade
-	// requests on it are retired. Queue an event first so a regression that
-	// accidentally falls through to polling cannot wait for its 30-second empty
-	// response timeout.
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"queued for upgrade-shaped poll"}]}]}`, defaultTestKey)
+	// Upgrade-shaped requests cannot revive the removed poll/WebSocket path.
 	upgradeReq, err := http.NewRequest(http.MethodGet, app.baseURL+"/v1/code/sessions/"+codeSessionID, nil)
 	if err != nil {
 		t.Fatalf("new upgrade-shaped code session poll request: %v", err)
@@ -1267,8 +1319,8 @@ func TestCodeSessionHTTPPollReceivesQueuedUserEvents(t *testing.T) {
 		t.Fatalf("upgrade-shaped code session poll: %v", err)
 	}
 	defer upgradeResp.Body.Close()
-	if upgradeResp.StatusCode != http.StatusNotFound {
-		t.Fatalf("retired canonical websocket upgrade status = %d, want 404: %s", upgradeResp.StatusCode, readAll(t, upgradeResp.Body))
+	if upgradeResp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("retired canonical websocket upgrade status = %d, want 405: %s", upgradeResp.StatusCode, readAll(t, upgradeResp.Body))
 	}
 }
 
@@ -1376,22 +1428,23 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	if err := app.db.SetSessionStatus(context.Background(), sessionRecord.WorkspaceUUID, session.ID, "idle"); err != nil {
 		t.Fatalf("make session projection stale: %v", err)
 	}
-	retryService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, nil)
+	retryService := newCodeSessionService(app, nil, nil)
+	retrySink := sessionsapi.NewHandler(app.cfg, app.db, retryService, nil, nil, app.vaultSecrets, nil)
 	if err := retrySink.PublishCodeSessionEvents(context.Background(), codeSession, runningEvents.Data); err != nil {
 		t.Fatalf("retry existing running event projection: %v", err)
 	}
-	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
-		t.Fatalf("public session status after projection retry = %q, want running", got)
+	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "idle" {
+		t.Fatalf("public session status after projection retry = %q, want idle", got)
 	}
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
-	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
-		t.Fatalf("primary thread status after projection retry = %+v, want running", threads.Data)
+	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
+		t.Fatalf("primary thread status after projection retry = %+v, want idle", threads.Data)
 	}
 	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
 	if len(runningEvents.Data) != 1 {
 		t.Fatalf("projection retry produced %d running events, want 1: %+v", len(runningEvents.Data), runningEvents.Data)
 	}
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 	runningDetailsOnlyState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"requires_action_details":{"tool_name":"Bash"}}`)
 	if runningDetailsOnlyState.Worker.WorkerStatus != "running" || !rawMessageIsJSONNull(runningDetailsOnlyState.Worker.RequiresActionDetails) {
 		t.Fatalf("running details-only worker state = %+v, details=%s; want running with cleared details", runningDetailsOnlyState.Worker, runningDetailsOnlyState.Worker.RequiresActionDetails)
@@ -1489,8 +1542,8 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("worker idle produced %d total idle events, want %d: %+v", len(idleEvents.Data), len(idleEventsBefore.Data)+1, idleEvents.Data)
 	}
 	idleEvent := sessionEventObjectByType(t, idleEvents, "session.status_idle")
-	if _, ok := idleEvent["stop_reason"]; ok {
-		t.Fatalf("worker session.status_idle unexpectedly contains stop_reason: %#v", idleEvent)
+	if reason, ok := idleEvent["stop_reason"].(map[string]any); !ok || reason["type"] != "end_turn" {
+		t.Fatalf("worker session.status_idle missing end_turn reason: %#v", idleEvent)
 	}
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"idle"}`)
 	duplicateIdleEvents := listSessionEvents(t, app, session.ID, "types[]=session.status_idle", defaultTestKey)
@@ -1557,8 +1610,8 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 
 	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+workerEpoch+`,"worker_status":"running"}`)
 	runningEvents = listSessionEvents(t, app, session.ID, "types[]=session.status_running", defaultTestKey)
-	if len(runningEvents.Data) != 2 {
-		t.Fatalf("second idle-to-running transition produced %d events, want 2: %+v", len(runningEvents.Data), runningEvents.Data)
+	if len(runningEvents.Data) != 3 {
+		t.Fatalf("initial, explicit restart, and final running transitions = %d, want 3", len(runningEvents.Data))
 	}
 }
 
@@ -1886,14 +1939,7 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 	controlUUID := "control-worker-" + suffix
 	controlBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":{"type":"control_request","uuid":` + quoteJSON(controlUUID) + `,"request_id":"req_` + suffix + `","request":{"subtype":"can_use_tool","tool_use_id":"toolu_` + suffix + `","input":{"ok":true}}}}]}`
 	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
-	var autoApproveCount int
-	if err := app.pool.QueryRow(ctx, `
-		select count(*)
-		from code_session_inbound_events
-		where code_session_external_id = $1 and source = 'auto-approve' and deleted_at is null
-	`, codeSessionID).Scan(&autoApproveCount); err != nil {
-		t.Fatalf("count auto-approve inbound events: %v", err)
-	}
+	autoApproveCount := countQueuedCodeSessionInboundEvents(app, codeSessionID, "control_response", controlUUID)
 	if autoApproveCount != 0 {
 		t.Fatalf("control_request auto-approved %d events, want 0", autoApproveCount)
 	}
@@ -1904,93 +1950,108 @@ func TestCodeSessionWorkerEventsAppendContract(t *testing.T) {
 }
 
 func TestCodeSessionMCPDefaultAllowAutoApprovesWorkerPermissionRequest(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-mcp-default-allow-bucket"))
-	defer app.close()
+	for _, scenario := range []struct {
+		name, serverName, runtimeName string
+	}{
+		{"unchanged", "weather_service", "weather_service"},
+		{"dotted_tunnel", "tunnel_0123456789abcdef0123456789abcdef.main", "tunnel_0123456789abcdef0123456789abcdef_main"},
+		{"consecutive_dots", "weather..service", "weather__service"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-mcp-default-allow-bucket"))
+			defer app.close()
 
-	agent := createAgent(t, app, `{
+			agent := createAgent(t, app, `{
 		"model":"claude-opus-4-6",
 		"name":"sessions-worker-mcp-default-allow-agent",
-		"mcp_servers":[{"type":"url","name":"weather_service","url":"http://host.docker.internal:39090/mcp"}],
+		"mcp_servers":[{"type":"url","name":`+quoteJSON(scenario.serverName)+`,"url":"http://host.docker.internal:39090/mcp"}],
 		"tools":[
 			{"type":"agent_toolset_20260401"},
 			{
 				"type":"mcp_toolset",
-				"mcp_server_name":"weather_service",
+				"mcp_server_name":`+quoteJSON(scenario.serverName)+`,
 				"configs":[],
 				"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}
 			}
 		]
 	}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-worker-mcp-default-allow-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
-	suffix := strings.TrimPrefix(session.ID, "sesn_")
-	toolUseID := "toolu_weather_" + suffix
-	requestID := "req_weather_" + suffix
+			defer cleanupAgentRows(t, app.pool, agent.ID)
+			env := createEnvironment(t, app, `{"name":"sessions-worker-mcp-default-allow-env"}`)
+			defer cleanupEnvironmentRows(t, app.pool, env.ID)
+			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+			codeSessionID := launchLocalCodeSession(t, app, session.ID)
+			workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+			suffix := strings.TrimPrefix(session.ID, "sesn_")
+			toolUseID := "toolu_weather_" + suffix
+			requestID := "req_weather_" + suffix
 
-	controlBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":{` +
-		`"type":"control_request",` +
-		`"uuid":"control-weather-` + suffix + `",` +
-		`"request_id":` + quoteJSON(requestID) + `,` +
-		`"request":{"subtype":"can_use_tool","tool_name":"mcp__weather_service__get_weather","tool_use_id":` + quoteJSON(toolUseID) + `,"input":{"location":"Beijing"}}` +
-		`}}]}`
-	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
-	postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
-	var autoApproveCount int
-	if err := app.pool.QueryRow(context.Background(), `
-		select count(*)
-		from code_session_inbound_events
-		where code_session_external_id = $1 and source = 'auto-approve' and deleted_at is null
-	`, codeSessionID).Scan(&autoApproveCount); err != nil {
-		t.Fatalf("count auto-approve inbound events: %v", err)
-	}
-	if autoApproveCount != 1 {
-		t.Fatalf("duplicate control request produced %d auto responses, want 1", autoApproveCount)
-	}
+			controlBody := `{"worker_epoch":` + quoteJSON(workerEpoch) + `,"events":[{"payload":{` +
+				`"type":"control_request",` +
+				`"uuid":"control-weather-` + suffix + `",` +
+				`"request_id":` + quoteJSON(requestID) + `,` +
+				`"request":{"subtype":"can_use_tool","tool_name":` + quoteJSON("mcp__"+scenario.runtimeName+"__get_weather") + `,"tool_use_id":` + quoteJSON(toolUseID) + `,"input":{"location":"Beijing"}}` +
+				`}}]}`
+			postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+			postCodeSessionWorkerEvents(t, app, codeSessionID, controlBody)
+			autoApproveCount := countQueuedCodeSessionInboundEvents(app, codeSessionID, "control_response", requestID)
+			if autoApproveCount != 1 {
+				t.Fatalf("retried control request produced %d auto responses, want one deduplicated delivery", autoApproveCount)
+			}
+			var responseEventIDs []string
+			for _, envelope := range app.workerEvents.Pending(codeSessionID) {
+				if envelope.EventType == "control_response" && bytes.Contains(envelope.Payload, []byte(requestID)) {
+					responseEventIDs = append(responseEventIDs, envelope.PayloadEventID)
+				}
+			}
+			if len(responseEventIDs) != 1 || responseEventIDs[0] == "" {
+				t.Fatalf("retried control response event IDs = %#v, want one stable non-empty ID", responseEventIDs)
+			}
 
-	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "auto-approve")
-	if source != "auto-approve" || eventType != "control_response" {
-		t.Fatalf("auto response source/event_type = %q/%q, want auto-approve/control_response payload=%s", source, eventType, payload)
-	}
-	var object map[string]any
-	if err := json.Unmarshal(payload, &object); err != nil {
-		t.Fatalf("decode auto response payload: %v", err)
-	}
-	response := object["response"].(map[string]any)
-	if response["request_id"] != requestID {
-		t.Fatalf("auto response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
-	}
-	nested := response["response"].(map[string]any)
-	if nested["behavior"] != "allow" || nested["toolUseID"] != toolUseID {
-		t.Fatalf("auto response nested = %#v, want allow for %s; payload=%s", nested, toolUseID, payload)
-	}
+			eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
+			if eventType != "control_response" {
+				t.Fatalf("auto response event_type = %q, want control_response payload=%s", eventType, payload)
+			}
+			var object map[string]any
+			if err := json.Unmarshal(payload, &object); err != nil {
+				t.Fatalf("decode auto response payload: %v", err)
+			}
+			response := object["response"].(map[string]any)
+			if response["request_id"] != requestID {
+				t.Fatalf("auto response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
+			}
+			nested := response["response"].(map[string]any)
+			if nested["behavior"] != "allow" || nested["toolUseID"] != toolUseID {
+				t.Fatalf("auto response nested = %#v, want allow for %s; payload=%s", nested, toolUseID, payload)
+			}
 
-	allPublicEvents := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
-	if eventPageContains(allPublicEvents, "control-weather-"+suffix) {
-		t.Fatalf("control_request leaked into public session events: %+v", allPublicEvents.Data)
-	}
-	toolEvent := sessionEventObjectByType(t, allPublicEvents, "agent.mcp_tool_use")
-	toolEventID, _ := toolEvent["id"].(string)
-	if toolEventID == "" || toolEvent["name"] != "get_weather" || toolEvent["mcp_server_name"] != "weather_service" || toolEvent["evaluated_permission"] != "allow" {
-		t.Fatalf("canonical allow tool event = %#v", toolEvent)
-	}
-	assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
+			allPublicEvents := listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
+			if eventPageContains(allPublicEvents, "control-weather-"+suffix) {
+				t.Fatalf("control_request leaked into public session events: %+v", allPublicEvents.Data)
+			}
+			toolEvent := sessionEventObjectByType(t, allPublicEvents, "agent.mcp_tool_use")
+			toolEventID, _ := toolEvent["id"].(string)
+			if toolEventID == "" || toolEvent["name"] != "get_weather" || toolEvent["mcp_server_name"] != scenario.serverName || toolEvent["evaluated_permission"] != "allow" {
+				t.Fatalf("canonical allow tool event = %#v", toolEvent)
+			}
+			assertCanonicalToolEventHasNoPrivateFields(t, toolEvent)
+			if eventPageContains(allPublicEvents, `"requires_action"`) {
+				t.Fatalf("always_allow unexpectedly requested approval: %+v", allPublicEvents.Data)
+			}
 
-	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
-		`"type":"user",`+
-		`"uuid":"result-weather-`+suffix+`",`+
-		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":`+quoteJSON(toolUseID)+`,"content":[{"type":"text","text":"Sunny"}]}]}`+
-		`}}]}`)
-	allPublicEvents = listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
-	resultEvent := sessionEventObjectByType(t, allPublicEvents, "agent.tool_result")
-	if resultEvent["tool_use_id"] != toolEventID {
-		t.Fatalf("tool result tool_use_id = %#v, want public event id %s: %#v", resultEvent["tool_use_id"], toolEventID, resultEvent)
-	}
-	if eventPageContains(allPublicEvents, toolUseID) {
-		t.Fatalf("provider tool id leaked into public events: %+v", allPublicEvents.Data)
+			postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
+				`"type":"user",`+
+				`"uuid":"result-weather-`+suffix+`",`+
+				`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":`+quoteJSON(toolUseID)+`,"content":[{"type":"text","text":"Sunny"}]}]}`+
+				`}}]}`)
+			allPublicEvents = listSessionEvents(t, app, session.ID, "order=asc", defaultTestKey)
+			resultEvent := sessionEventObjectByType(t, allPublicEvents, "agent.tool_result")
+			if resultEvent["tool_use_id"] != toolEventID {
+				t.Fatalf("tool result tool_use_id = %#v, want public event id %s: %#v", resultEvent["tool_use_id"], toolEventID, resultEvent)
+			}
+			if eventPageContains(allPublicEvents, toolUseID) {
+				t.Fatalf("provider tool id leaked into public events: %+v", allPublicEvents.Data)
+			}
+		})
 	}
 }
 
@@ -2001,12 +2062,12 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	agent := createAgent(t, app, `{
 		"model":"claude-opus-4-6",
 		"name":"sessions-worker-mcp-default-ask-agent",
-		"mcp_servers":[{"type":"url","name":"weather_service","url":"http://host.docker.internal:39090/mcp"}],
+		"mcp_servers":[{"type":"url","name":"weather.service","url":"http://host.docker.internal:39090/mcp"}],
 		"tools":[
 			{"type":"agent_toolset_20260401"},
 			{
 				"type":"mcp_toolset",
-				"mcp_server_name":"weather_service",
+				"mcp_server_name":"weather.service",
 				"configs":[],
 				"default_config":{"enabled":true,"permission_policy":{"type":"always_ask"}}
 			}
@@ -2029,14 +2090,7 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 		`"request":{"subtype":"can_use_tool","tool_name":"mcp__weather_service__get_weather","tool_use_id":`+quoteJSON(toolUseID)+`,"input":{"location":"Beijing"}}`+
 		`}}]}`)
 
-	var autoApproveCount int
-	if err := app.pool.QueryRow(context.Background(), `
-		select count(*)
-		from code_session_inbound_events
-		where code_session_external_id = $1 and source = 'auto-approve' and deleted_at is null
-	`, codeSessionID).Scan(&autoApproveCount); err != nil {
-		t.Fatalf("count auto-approve inbound events: %v", err)
-	}
+	autoApproveCount := countQueuedCodeSessionInboundEvents(app, codeSessionID, "control_response", requestID)
 	if autoApproveCount != 0 {
 		t.Fatalf("always_ask auto-approved %d events, want 0", autoApproveCount)
 	}
@@ -2045,7 +2099,7 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	for _, want := range []string{
 		`"type":"agent.mcp_tool_use"`,
 		`"name":"get_weather"`,
-		`"mcp_server_name":"weather_service"`,
+		`"mcp_server_name":"weather.service"`,
 		`"evaluated_permission":"ask"`,
 		`"type":"session.status_idle"`,
 		`"type":"requires_action"`,
@@ -2091,9 +2145,9 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("send tool confirmation status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
-	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "tool-confirmation")
-	if source != "tool-confirmation" || eventType != "control_response" {
-		t.Fatalf("confirmation response source/event_type = %q/%q, want tool-confirmation/control_response payload=%s", source, eventType, payload)
+	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
+	if eventType != "control_response" {
+		t.Fatalf("confirmation response event_type = %q, want control_response payload=%s", eventType, payload)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(payload, &object); err != nil {
@@ -2118,7 +2172,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
 	defer app.close()
 
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent"}`)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]}]}`)
 	defer cleanupAgentRows(t, app.pool, agent.ID)
 	env := createEnvironment(t, app, `{"name":"sessions-worker-ask-user-question-env"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
@@ -2167,7 +2221,15 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("send AskUserQuestion custom result status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
-	_, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "custom-tool-result")
+	var submitted sessionEventPageAPIResponse
+	decodeJSON(t, resp.Body, &submitted)
+
+	receiptTime := sessionInputProcessedAt(t, submitted.Data[0])
+	if receiptTime == "" {
+		t.Fatal("custom tool result must be processed on receipt")
+	}
+
+	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
 	if eventType != "control_response" {
 		t.Fatalf("confirmation event_type = %q, want control_response payload=%s", eventType, payload)
 	}
@@ -2191,6 +2253,20 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	if !ok || answers["Color"] != "Blue" {
 		t.Fatalf("confirmation updatedInput.answers = %#v, want Color=Blue; payload=%s", updatedInput["answers"], payload)
 	}
+	inputID := sessionEventStringField(t, submitted.Data[0], "id")
+	if object["id"] != inputID {
+		t.Fatalf("control response lost input ID: %v", object["id"])
+	}
+	codeSession, found, err := app.db.GetCodeSession(t.Context(), codeSessionID)
+	if err != nil || !found {
+		t.Fatalf("code session: %v", err)
+	}
+	consumePublicInput(t, app, codeSession, workerEpoch, inputID)
+	history := listSessionEvents(t, app, session.ID, "types[]=user.custom_tool_result", defaultTestKey)
+	if len(history.Data) != 1 || sessionInputProcessedAt(t, history.Data[0]) != receiptTime {
+		t.Fatal("ACK changed custom tool result processing time")
+	}
+
 }
 
 func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testing.T) {
@@ -2314,9 +2390,9 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 		}
 	}
 
-	source, eventType, payload := latestCodeSessionInboundEventForSource(t, app, codeSessionID, "tool-confirmation")
-	if source != "tool-confirmation" || eventType != "control_response" {
-		t.Fatalf("confirmation response source/event_type = %q/%q, want tool-confirmation/control_response payload=%s", source, eventType, payload)
+	eventType, payload := latestCodeSessionControlResponse(t, app, codeSessionID)
+	if eventType != "control_response" {
+		t.Fatalf("confirmation response event_type = %q, want control_response payload=%s", eventType, payload)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(payload, &object); err != nil {
@@ -2485,7 +2561,7 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	postCodeSessionWorkerDiagnostics(t, app, codeSessionID, workerDiagnosticsBody(codeSessionID, epoch2, "current diag"))
 }
 
-func TestCodeSessionInboundEventAppendPreservesIdempotencyAndSequence(t *testing.T) {
+func TestCodeSessionInboundEventRetryUsesJetStreamDeduplication(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-event-append-sequences-bucket"))
 	defer app.close()
 
@@ -2495,39 +2571,18 @@ func TestCodeSessionInboundEventAppendPreservesIdempotencyAndSequence(t *testing
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	ctx := context.Background()
-
-	before, err := getCodeSession(app, ctx, codeSessionID)
-	if err != nil {
-		t.Fatalf("load Code Session before append: %v", err)
-	}
 	suffix := strings.TrimPrefix(codeSessionID, "cse_")
-	inboundInput := db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_inbound_sequence_" + suffix,
-		EventType:      "user",
-		Payload:        json.RawMessage(`{"type":"user"}`),
-		PayloadHash:    "inbound-sequence",
-		IdempotencyKey: "inbound-sequence:" + suffix,
-		Source:         "test",
+	payload := json.RawMessage(`{"type":"user","uuid":"retry-` + suffix + `"}`)
+	first := queueRawCodeSessionInboundEvent(t, app, codeSessionID, payload)
+	if first.SequenceNum <= 0 {
+		t.Fatalf("first JetStream sequence = %d, want positive", first.SequenceNum)
 	}
-	inbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, inboundInput)
-	if err != nil || duplicate {
-		t.Fatalf("append inbound event = (%+v, duplicate=%v, err=%v)", inbound, duplicate, err)
+	second := queueRawCodeSessionInboundEvent(t, app, codeSessionID, payload)
+	if second.SequenceNum != first.SequenceNum || second.EventID != first.EventID {
+		t.Fatalf("retry envelope = %#v after %#v, want same deduplicated event", second, first)
 	}
-	if inbound.SequenceNum != before.LastInboundSequenceNum+1 {
-		t.Fatalf("inbound sequence = %d, want %d", inbound.SequenceNum, before.LastInboundSequenceNum+1)
-	}
-	duplicateInbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, inboundInput)
-	if err != nil || !duplicate || duplicateInbound.UUID != inbound.UUID {
-		t.Fatalf("duplicate inbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateInbound, duplicate, err, inbound.UUID)
-	}
-
-	after, err := getCodeSession(app, ctx, codeSessionID)
-	if err != nil {
-		t.Fatalf("load Code Session after append: %v", err)
-	}
-	if after.LastInboundSequenceNum != inbound.SequenceNum {
-		t.Fatalf("stored inbound sequence = %d, want %d", after.LastInboundSequenceNum, inbound.SequenceNum)
+	if second.PayloadEventID != first.PayloadEventID {
+		t.Fatalf("retry payload event ID = %q, want stable %q", second.PayloadEventID, first.PayloadEventID)
 	}
 }
 
@@ -3025,33 +3080,34 @@ func TestCodeSessionWorkerEventsStreamReceivesQueuedAndLiveUserEvents(t *testing
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 
-	frames := readCodeSessionWorkerSSEFramesAfterConnect(
+	queuedFrames := readCodeSessionWorkerSSEFramesAfterConnect(
 		t,
 		app,
 		codeSessionID,
 		"events/stream?worker_epoch="+url.QueryEscape(workerEpoch),
-		"live over worker sse",
+		"queued over worker sse",
+		nil,
+	)
+	if len(queuedFrames) < 2 {
+		t.Fatalf("worker SSE frames len = %d, want initialize and queued message: %#v", len(queuedFrames), queuedFrames)
+	}
+	if !strings.Contains(queuedFrames[0], "event: client_event") || !strings.Contains(queuedFrames[0], `"event_type":"control_request"`) {
+		t.Fatalf("unexpected first worker SSE frame: %s", queuedFrames[0])
+	}
+	queuedData := decodeWorkerSSEFrameData(t, queuedFrames[len(queuedFrames)-1])
+	queuedID, _ := queuedData["event_id"].(string)
+	if queuedID == "" {
+		t.Fatalf("queued worker SSE event has no ID: %s", queuedFrames[len(queuedFrames)-1])
+	}
+	postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(queuedID)+`,"status":"processed"}]}`)
+	frames := readCodeSessionWorkerSSEFramesAfterConnect(
+		t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(workerEpoch),
+		`"subtype":"interrupt"`,
 		func() {
-			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"live over worker sse"}]}]}`, defaultTestKey)
+			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
 		},
 	)
-	if len(frames) < 3 {
-		t.Fatalf("worker SSE frames len = %d, want at least 3: %#v", len(frames), frames)
-	}
-	if !strings.Contains(frames[0], "event: client_event") || !strings.Contains(frames[0], `"event_type":"control_request"`) {
-		t.Fatalf("unexpected first worker SSE frame: %s", frames[0])
-	}
-	queuedSeen := false
-	for _, frame := range frames {
-		if strings.Contains(frame, "queued over worker sse") {
-			queuedSeen = true
-			break
-		}
-	}
-	if !queuedSeen {
-		t.Fatalf("worker SSE frames missing queued event: %#v", frames)
-	}
-	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], "live over worker sse") {
+	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], `"subtype":"interrupt"`) {
 		t.Fatalf("unexpected user worker SSE frame: %s", frames[len(frames)-1])
 	}
 	frameData := decodeWorkerSSEFrameData(t, frames[len(frames)-1])
@@ -3101,19 +3157,7 @@ func TestCodeSessionWorkerEventsStreamStopsAfterEpochTakeover(t *testing.T) {
 	}
 	payloadUUID := "stream-takeover-" + strings.TrimPrefix(codeSessionID, "cse_")
 	payload := json.RawMessage(`{"type":"user","uuid":` + quoteJSON(payloadUUID) + `,"message":{"role":"user","content":[{"type":"text","text":"queued after takeover"}]}}`)
-	_, _, err = app.db.AppendCodeSessionInboundEvent(context.Background(), codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csev_stream_takeover_" + strings.TrimPrefix(codeSessionID, "cse_"),
-		EventType:      "user",
-		PayloadUUID:    &payloadUUID,
-		Payload:        payload,
-		PayloadHash:    "stream-takeover",
-		IdempotencyKey: "stream-takeover:" + payloadUUID,
-		DeliveryStatus: "queued",
-		Source:         "test",
-	})
-	if err != nil {
-		t.Fatalf("append takeover inbound event: %v", err)
-	}
+	queueRawCodeSessionInboundEvent(t, app, codeSessionID, payload)
 
 	done := make(chan error, 1)
 	go func() {
@@ -3129,7 +3173,7 @@ func TestCodeSessionWorkerEventsStreamStopsAfterEpochTakeover(t *testing.T) {
 		t.Fatal("stale worker stream stayed open after epoch takeover")
 	}
 
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSessionID)
 	if err != nil {
 		t.Fatalf("list queued inbound events after stale stream closed: %v", err)
 	}
@@ -3178,7 +3222,7 @@ func TestCodeSessionWorkerEventsStreamRejectsInvalidReplayCursorWithoutConnectin
 	}
 }
 
-func TestCodeSessionWorkerDeliveryUpdatesInboundEventStatus(t *testing.T) {
+func TestCodeSessionWorkerDeliveryControlsJetStreamAcknowledgement(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-delivery-ack-bucket"))
 	defer app.close()
 
@@ -3192,65 +3236,126 @@ func TestCodeSessionWorkerDeliveryUpdatesInboundEventStatus(t *testing.T) {
 
 	suffix := strings.TrimPrefix(codeSessionID, "cse_")
 	payloadUUID := "delivery-ack-" + suffix
-	externalID := "csev_delivery_ack_" + suffix
 	payload := json.RawMessage(`{"type":"user","uuid":` + quoteJSON(payloadUUID) + `,"message":{"role":"user","content":[{"type":"text","text":"ack me"}]}}`)
-	_, _, err := app.db.AppendCodeSessionInboundEvent(context.Background(), codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     externalID,
-		EventType:      "user",
-		PayloadUUID:    &payloadUUID,
-		Payload:        payload,
-		PayloadHash:    "delivery-ack",
-		IdempotencyKey: "delivery-ack:" + payloadUUID,
-		DeliveryStatus: "queued",
-		Source:         "test",
-	})
-	if err != nil {
-		t.Fatalf("append delivery ack inbound event: %v", err)
-	}
-	epoch, err := strconv.ParseInt(workerEpoch, 10, 64)
-	if err != nil {
-		t.Fatalf("parse worker epoch: %v", err)
-	}
-	if err := app.db.MarkCodeSessionInboundEventSentForEpoch(context.Background(), codeSessionID, externalID, epoch); err != nil {
-		t.Fatalf("mark delivery ack event sent: %v", err)
-	}
+	queueRawCodeSessionInboundEvent(t, app, codeSessionID, payload)
+	readCodeSessionWorkerSSEFramesFromSuffix(t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(workerEpoch), "ack me")
 
 	deliveryResp := postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processing"},{"event_id":"unknown-delivery-event","status":"processed"}]}`)
 	if !deliveryResp.OK || deliveryResp.Applied != 1 || deliveryResp.Ignored != 1 {
 		t.Fatalf("delivery response = %+v, want ok applied=1 ignored=1", deliveryResp)
 	}
 
-	status, deliveryEpoch, receivedAt, processingAt, processedAt := loadInboundDeliveryState(t, app, externalID)
-	if status != "processing" {
-		t.Fatalf("delivery status after processing = %q, want processing", status)
-	}
-	if deliveryEpoch == nil || strconv.FormatInt(*deliveryEpoch, 10) != workerEpoch {
-		t.Fatalf("delivery epoch = %v, want %s", deliveryEpoch, workerEpoch)
-	}
-	if receivedAt == nil || processingAt == nil || processedAt != nil {
-		t.Fatalf("timestamps after processing received=%v processing=%v processed=%v, want received+processing only", receivedAt, processingAt, processedAt)
+	if countQueuedCodeSessionInboundEvents(app, codeSessionID, "user", payloadUUID) != 1 {
+		t.Fatal("processing ACK removed the JetStream message")
 	}
 
 	deliveryResp = postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"received"}]}`)
 	if !deliveryResp.OK || deliveryResp.Applied != 1 || deliveryResp.Ignored != 0 {
 		t.Fatalf("lower delivery response = %+v, want ok applied=1 ignored=0", deliveryResp)
 	}
-	status, _, _, _, _ = loadInboundDeliveryState(t, app, externalID)
-	if status != "processing" {
-		t.Fatalf("delivery status after late received = %q, want processing", status)
-	}
-
-	deliveryResp = postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(externalID)+`,"status":"processed"}]}`)
+	deliveryResp = postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processed"}]}`)
 	if !deliveryResp.OK || deliveryResp.Applied != 1 || deliveryResp.Ignored != 0 {
 		t.Fatalf("processed delivery response = %+v, want ok applied=1 ignored=0", deliveryResp)
 	}
-	status, _, receivedAt, processingAt, processedAt = loadInboundDeliveryState(t, app, externalID)
-	if status != "processed" || receivedAt == nil || processingAt == nil || processedAt == nil {
-		t.Fatalf("delivery final state status=%q received=%v processing=%v processed=%v, want processed with all timestamps", status, receivedAt, processingAt, processedAt)
+	if countQueuedCodeSessionInboundEvents(app, codeSessionID, "user", payloadUUID) != 0 {
+		t.Fatal("processed ACK did not remove the JetStream message")
+	}
+	deliveryResp = postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processed"}]}`)
+	if !deliveryResp.OK || deliveryResp.Applied != 0 || deliveryResp.Ignored != 1 {
+		t.Fatalf("duplicate processed ACK = %+v, want ignored", deliveryResp)
 	}
 }
 
-func TestCodeSessionWorkerDeliveryIgnoresUnsentOrStaleEpochEvents(t *testing.T) {
+func TestCodeSessionWorkerStreamLoadsOffloadedLargePayloadAndTriggersCleanupNow(t *testing.T) {
+	store := newFakeStore("sessions-code-worker-large-payload-bucket")
+	app := newTestAppWithStore(t, nil, store)
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-large-payload-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-worker-large-payload-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+
+	eventID := "large-payload-" + strings.TrimPrefix(codeSessionID, "cse_")
+	marker := "large-payload-end-marker"
+	content := strings.Repeat("L", workerevents.LargePayloadThreshold+1024) + marker
+	payload, err := json.Marshal(map[string]any{
+		"type": "user",
+		"uuid": eventID,
+		"message": map[string]any{
+			"role":    "user",
+			"content": []map[string]string{{"type": "text", "text": content}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queueRawCodeSessionInboundEvent(t, app, codeSessionID, payload)
+	pending := app.workerEvents.Pending(codeSessionID)
+	largeEnvelope := pending[len(pending)-1]
+	if largeEnvelope.PayloadRef == nil || len(largeEnvelope.Payload) != 0 {
+		t.Fatalf("large worker envelope payload_ref = %#v, inline bytes = %d", largeEnvelope.PayloadRef, len(largeEnvelope.Payload))
+	}
+	encoded, err := json.Marshal(largeEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > (1 << 20) {
+		t.Fatalf("referenced worker envelope size = %d, want <= %d", len(encoded), (1 << 20))
+	}
+	stored, found := store.objects[largeEnvelope.PayloadRef.Key]
+	if !found || !bytes.Equal(stored.data, payload) {
+		t.Fatalf("offloaded payload found = %t, bytes = %d, want %d", found, len(stored.data), len(payload))
+	}
+
+	frames := readCodeSessionWorkerSSEFramesFromSuffix(
+		t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(workerEpoch), marker,
+	)
+	frameData := decodeWorkerSSEFrameData(t, frames[len(frames)-1])
+	loadedPayload, err := json.Marshal(frameData["payload"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded struct {
+		UUID    string `json:"uuid"`
+		Message struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(loadedPayload, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	loadedContent := ""
+	if len(loaded.Message.Content) == 1 {
+		loadedContent = loaded.Message.Content[0].Text
+	}
+	if loaded.UUID != eventID || loadedContent != content {
+		t.Fatalf("loaded payload uuid = %q, content items = %d, content bytes = %d", loaded.UUID, len(loaded.Message.Content), len(loadedContent))
+	}
+
+	delivery := postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(eventID)+`,"status":"processed"}]}`)
+	if !delivery.OK || delivery.Applied != 1 || delivery.Ignored != 0 {
+		t.Fatalf("large payload delivery response = %+v", delivery)
+	}
+	var cleanupReady bool
+	if err := app.pool.QueryRow(context.Background(), `
+		select run_after <= now()
+		from jobs
+		where external_id = $1 and type = 'object_cleanup'
+	`, largeEnvelope.PayloadRef.CleanupJobID).Scan(&cleanupReady); err != nil {
+		t.Fatalf("load large payload cleanup job: %v", err)
+	}
+	if !cleanupReady {
+		t.Fatal("processed large payload cleanup job was not triggered to run now")
+	}
+}
+
+func TestCodeSessionWorkerDeliveryIgnoresMissingAndStaleEpochReferences(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-delivery-epoch-gate-bucket"))
 	defer app.close()
 
@@ -3261,64 +3366,27 @@ func TestCodeSessionWorkerDeliveryIgnoresUnsentOrStaleEpochEvents(t *testing.T) 
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	epoch1Text := registerCodeSessionWorker(t, app, codeSessionID)
-	epoch1, err := strconv.ParseInt(epoch1Text, 10, 64)
-	if err != nil {
-		t.Fatalf("parse epoch1: %v", err)
-	}
-
 	suffix := strings.TrimPrefix(codeSessionID, "cse_")
 	payloadUUID := "delivery-epoch-gate-" + suffix
-	externalID := "csev_delivery_epoch_gate_" + suffix
-	_, _, err = app.db.AppendCodeSessionInboundEvent(context.Background(), codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     externalID,
-		EventType:      "user",
-		PayloadUUID:    &payloadUUID,
-		Payload:        json.RawMessage(`{"type":"user","uuid":` + quoteJSON(payloadUUID) + `}`),
-		PayloadHash:    "delivery-epoch-gate",
-		IdempotencyKey: "delivery-epoch-gate:" + payloadUUID,
-		DeliveryStatus: "queued",
-		Source:         "test",
-	})
-	if err != nil {
-		t.Fatalf("append epoch gate inbound event: %v", err)
-	}
+	queueRawCodeSessionInboundEvent(t, app, codeSessionID, json.RawMessage(`{"type":"user","uuid":`+quoteJSON(payloadUUID)+`}`))
 
 	deliveryResp := postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch1Text)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processing"}]}`)
 	if !deliveryResp.OK || deliveryResp.Applied != 0 || deliveryResp.Ignored != 1 {
 		t.Fatalf("queued delivery ack response = %+v, want ok applied=0 ignored=1", deliveryResp)
 	}
-	status, deliveryEpoch, receivedAt, processingAt, processedAt := loadInboundDeliveryState(t, app, externalID)
-	if status != "queued" || deliveryEpoch != nil || receivedAt != nil || processingAt != nil || processedAt != nil {
-		t.Fatalf("queued delivery state after ignored ack status=%q epoch=%v received=%v processing=%v processed=%v", status, deliveryEpoch, receivedAt, processingAt, processedAt)
-	}
-
-	if err := app.db.MarkCodeSessionInboundEventSentForEpoch(context.Background(), codeSessionID, externalID, epoch1); err != nil {
-		t.Fatalf("mark epoch1 delivery sent: %v", err)
-	}
+	readCodeSessionWorkerSSEFramesFromSuffix(t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(epoch1Text), payloadUUID)
 	epoch2Text := registerCodeSessionWorker(t, app, codeSessionID)
-	epoch2, err := strconv.ParseInt(epoch2Text, 10, 64)
-	if err != nil {
-		t.Fatalf("parse epoch2: %v", err)
-	}
 	deliveryResp = postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch2Text)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processed"}]}`)
 	if !deliveryResp.OK || deliveryResp.Applied != 0 || deliveryResp.Ignored != 1 {
 		t.Fatalf("stale-epoch delivery ack response = %+v, want ok applied=0 ignored=1", deliveryResp)
 	}
-	status, deliveryEpoch, _, _, processedAt = loadInboundDeliveryState(t, app, externalID)
-	if status != "sent" || deliveryEpoch == nil || *deliveryEpoch != epoch1 || processedAt != nil {
-		t.Fatalf("stale-epoch delivery state status=%q epoch=%v processed=%v, want sent epoch1 without processed timestamp", status, deliveryEpoch, processedAt)
-	}
-
-	if err := app.db.MarkCodeSessionInboundEventSentForEpoch(context.Background(), codeSessionID, externalID, epoch2); err != nil {
-		t.Fatalf("mark epoch2 delivery sent: %v", err)
-	}
+	readCodeSessionWorkerSSEFramesFromSuffix(t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(epoch2Text), payloadUUID)
 	deliveryResp = postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch2Text)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processed"}]}`)
 	if !deliveryResp.OK || deliveryResp.Applied != 1 || deliveryResp.Ignored != 0 {
 		t.Fatalf("current-epoch delivery ack response = %+v, want ok applied=1 ignored=0", deliveryResp)
 	}
-	status, deliveryEpoch, _, _, processedAt = loadInboundDeliveryState(t, app, externalID)
-	if status != "processed" || deliveryEpoch == nil || *deliveryEpoch != epoch2 || processedAt == nil {
-		t.Fatalf("current-epoch delivery state status=%q epoch=%v processed=%v, want processed epoch2", status, deliveryEpoch, processedAt)
+	if countQueuedCodeSessionInboundEvents(app, codeSessionID, "user", payloadUUID) != 0 {
+		t.Fatal("current epoch processed ACK did not remove the message")
 	}
 }
 
@@ -3358,63 +3426,18 @@ func TestCodeSessionWorkerStreamReplaysUnprocessedEventsForNewEpoch(t *testing.T
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 
 	epoch1Text := registerCodeSessionWorker(t, app, codeSessionID)
-	epoch1, err := strconv.ParseInt(epoch1Text, 10, 64)
-	if err != nil {
-		t.Fatalf("parse epoch1: %v", err)
-	}
-
 	suffix := strings.TrimPrefix(codeSessionID, "cse_")
-	legacyPayloadUUID := "stream-legacy-" + suffix
-	legacyExternalID := "csev_stream_legacy_" + suffix
-	_, _, err = app.db.AppendCodeSessionInboundEvent(context.Background(), codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     legacyExternalID,
-		EventType:      "user",
-		PayloadUUID:    &legacyPayloadUUID,
-		Payload:        json.RawMessage(`{"type":"user","uuid":` + quoteJSON(legacyPayloadUUID) + `}`),
-		PayloadHash:    "stream-legacy",
-		IdempotencyKey: "stream-legacy:" + legacyPayloadUUID,
-		DeliveryStatus: "queued",
-		Source:         "test",
-	})
-	if err != nil {
-		t.Fatalf("append legacy inbound event: %v", err)
-	}
-	if err := app.db.MarkCodeSessionInboundEventSent(context.Background(), legacyExternalID); err != nil {
-		t.Fatalf("mark legacy event sent: %v", err)
-	}
-
 	payloadUUID := "stream-replay-" + suffix
-	externalID := "csev_stream_replay_" + suffix
 	payload := json.RawMessage(`{"type":"user","uuid":` + quoteJSON(payloadUUID) + `,"message":{"role":"user","content":[{"type":"text","text":"replay me"}]}}`)
-	event, _, err := app.db.AppendCodeSessionInboundEvent(context.Background(), codeSessionID, db.AppendCodeSessionEventInput{
-		ExternalID:     externalID,
-		EventType:      "user",
-		PayloadUUID:    &payloadUUID,
-		Payload:        payload,
-		PayloadHash:    "stream-replay",
-		IdempotencyKey: "stream-replay:" + payloadUUID,
-		DeliveryStatus: "queued",
-		Source:         "test",
-	})
-	if err != nil {
-		t.Fatalf("append replay inbound event: %v", err)
-	}
-	if err := app.db.MarkCodeSessionInboundEventSentForEpoch(context.Background(), codeSessionID, externalID, epoch1); err != nil {
-		t.Fatalf("mark replay event sent: %v", err)
+	queueRawCodeSessionInboundEvent(t, app, codeSessionID, payload)
+	firstFrames := readCodeSessionWorkerSSEFramesFromSuffix(t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(epoch1Text), "replay me")
+	if !strings.Contains(firstFrames[len(firstFrames)-1], payloadUUID) {
+		t.Fatalf("first worker epoch did not receive event %q: %#v", payloadUUID, firstFrames)
 	}
 
 	epoch2Text := registerCodeSessionWorker(t, app, codeSessionID)
-	epoch2, err := strconv.ParseInt(epoch2Text, 10, 64)
-	if err != nil {
-		t.Fatalf("parse epoch2: %v", err)
-	}
 
 	frames := readCodeSessionWorkerSSEFramesFromSuffix(t, app, codeSessionID, "events/stream?worker_epoch="+url.QueryEscape(epoch2Text), "replay me")
-	for _, frame := range frames {
-		if strings.Contains(frame, legacyPayloadUUID) {
-			t.Fatalf("new epoch stream included legacy sent/null epoch event %q: frames=%+v", legacyPayloadUUID, frames)
-		}
-	}
 	frameData := decodeWorkerSSEFrameData(t, frames[len(frames)-1])
 	eventID, _ := frameData["event_id"].(string)
 	payloadData, _ := frameData["payload"].(map[string]any)
@@ -3422,26 +3445,12 @@ func TestCodeSessionWorkerStreamReplaysUnprocessedEventsForNewEpoch(t *testing.T
 	if eventID != payloadUUID || replayedPayloadUUID != payloadUUID {
 		t.Fatalf("replay stream event_id=%q payload uuid=%q, want %q; frame=%s", eventID, replayedPayloadUUID, payloadUUID, frames[len(frames)-1])
 	}
-	waitInboundDeliveryStatusForEpoch(t, app, externalID, "sent", epoch2)
-
-	afterReplay, err := app.db.ListCodeSessionInboundEventsForWorkerStream(context.Background(), codeSessionID, epoch2, event.SequenceNum)
-	if err != nil {
-		t.Fatalf("list replay events after sequence: %v", err)
-	}
-	if codeSessionEventsContainPayloadUUID(afterReplay, payloadUUID) {
-		t.Fatalf("after-sequence replay included already seen event %q: %+v", payloadUUID, afterReplay)
-	}
-
 	deliveryResp := postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch2Text)+`,"updates":[{"event_id":`+quoteJSON(payloadUUID)+`,"status":"processed"}]}`)
 	if !deliveryResp.OK || deliveryResp.Applied != 1 || deliveryResp.Ignored != 0 {
 		t.Fatalf("processed replay delivery response = %+v, want ok applied=1 ignored=0", deliveryResp)
 	}
-	replay, err := app.db.ListCodeSessionInboundEventsForWorkerStream(context.Background(), codeSessionID, epoch2, 0)
-	if err != nil {
-		t.Fatalf("list replay events after processed: %v", err)
-	}
-	if codeSessionEventsContainPayloadUUID(replay, payloadUUID) {
-		t.Fatalf("processed event replayed: %+v", replay)
+	if countQueuedCodeSessionInboundEvents(app, codeSessionID, "user", payloadUUID) != 0 {
+		t.Fatal("processed event remains in JetStream")
 	}
 }
 
@@ -3504,8 +3513,8 @@ func TestSessionEventInputValidation(t *testing.T) {
 	resp = doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"done"}]}`), defaultTestKey, true)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
-	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
-	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.custom_tool_result"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
+	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"system.message","content":[{"type":"text","text":"context"}]},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
+	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"system.message"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
 		t.Fatalf("unexpected valid events response: %+v", valid)
 	}
 	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
@@ -3626,7 +3635,7 @@ func TestSessionsSchemaHasNoForeignKeys(t *testing.T) {
 			and ns.oid = current_schema()::regnamespace
 			and cls.relname in (
 				'sessions', 'session_threads', 'session_events', 'session_resources',
-				'code_sessions', 'code_session_inbound_events', 'code_session_internal_events'
+				'code_sessions', 'code_session_internal_events'
 			)
 	`).Scan(&foreignKeyCount); err != nil {
 		t.Fatalf("count sessions foreign keys: %v", err)
@@ -3644,6 +3653,24 @@ func TestSessionsSchemaHasNoForeignKeys(t *testing.T) {
 	if outboundTableExists {
 		t.Fatal("code_session_outbound_events still exists")
 	}
+	var inboundTableExists bool
+	if err := app.pool.QueryRow(context.Background(), `
+		select to_regclass(current_schema() || '.code_session_inbound_events') is not null
+	`).Scan(&inboundTableExists); err != nil {
+		t.Fatalf("check inbound event table: %v", err)
+	}
+	if inboundTableExists {
+		t.Fatal("code_session_inbound_events still exists")
+	}
+	var outboxTableExists bool
+	if err := app.pool.QueryRow(context.Background(), `
+		select to_regclass(current_schema() || '.event_outbox') is not null
+	`).Scan(&outboxTableExists); err != nil {
+		t.Fatalf("check event outbox table: %v", err)
+	}
+	if outboxTableExists {
+		t.Fatal("event_outbox still exists")
+	}
 
 	var outboundSequenceColumnCount int
 	if err := app.pool.QueryRow(context.Background(), `
@@ -3657,6 +3684,19 @@ func TestSessionsSchemaHasNoForeignKeys(t *testing.T) {
 	}
 	if outboundSequenceColumnCount != 0 {
 		t.Fatalf("last_outbound_sequence_num column count = %d, want 0", outboundSequenceColumnCount)
+	}
+	var inboundSequenceColumnCount int
+	if err := app.pool.QueryRow(context.Background(), `
+		select count(*)
+		from information_schema.columns
+		where table_schema = current_schema()
+		  and table_name = 'code_sessions'
+		  and column_name = 'last_inbound_sequence_num'
+	`).Scan(&inboundSequenceColumnCount); err != nil {
+		t.Fatalf("check inbound sequence column: %v", err)
+	}
+	if inboundSequenceColumnCount != 0 {
+		t.Fatalf("last_inbound_sequence_num column count = %d, want 0", inboundSequenceColumnCount)
 	}
 }
 
@@ -3763,6 +3803,16 @@ func archiveSession(t *testing.T, app *testApp, sessionID string) sessionAPIResp
 	var session sessionAPIResponse
 	decodeJSON(t, resp.Body, &session)
 	return session
+}
+
+func cleanupSession(t *testing.T, app *testApp, sessionID string) {
+	t.Helper()
+	// Tests that leave accepted work queued must end it before deleting it.
+	session := mustSessionRecord(t, app, sessionID)
+	if err := app.db.SetSessionStatus(context.Background(), session.WorkspaceUUID, sessionID, "terminated"); err != nil {
+		t.Fatal(err)
+	}
+	deleteSession(t, app, sessionID)
 }
 
 func deleteSession(t *testing.T, app *testApp, sessionID string) {
@@ -3938,21 +3988,16 @@ func eventPageContainsCount(events sessionEventPageAPIResponse, needle string) i
 	return count
 }
 
-func latestCodeSessionInboundEventForSource(t *testing.T, app *testApp, codeSessionID string, source string) (string, string, json.RawMessage) {
+func latestCodeSessionControlResponse(t *testing.T, app *testApp, codeSessionID string) (string, json.RawMessage) {
 	t.Helper()
-	var gotSource string
-	var eventType string
-	var payload []byte
-	if err := app.pool.QueryRow(context.Background(), `
-		select source, event_type, payload
-		from code_session_inbound_events
-		where code_session_external_id = $1 and source = $2 and deleted_at is null
-		order by sequence_num desc
-		limit 1
-	`, codeSessionID, source).Scan(&gotSource, &eventType, &payload); err != nil {
-		t.Fatalf("load latest inbound event source=%s: %v", source, err)
+	events := app.workerEvents.Pending(codeSessionID)
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].EventType == "control_response" {
+			return events[i].EventType, append(json.RawMessage(nil), events[i].Payload...)
+		}
 	}
-	return gotSource, eventType, json.RawMessage(append([]byte(nil), payload...))
+	t.Fatal("load latest control response: not found")
+	return "", nil
 }
 
 func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string {
@@ -4337,23 +4382,6 @@ func assertCodeSessionWorkerDelivery(t *testing.T, app *testApp, codeSessionID s
 	}
 }
 
-func loadInboundDeliveryState(t *testing.T, app *testApp, eventExternalID string) (string, *int64, *time.Time, *time.Time, *time.Time) {
-	t.Helper()
-	var status string
-	var deliveryEpoch *int64
-	var receivedAt *time.Time
-	var processingAt *time.Time
-	var processedAt *time.Time
-	if err := app.pool.QueryRow(context.Background(), `
-		select delivery_status, delivery_worker_epoch, received_at, processing_at, processed_at
-		from code_session_inbound_events
-		where external_id = $1 and deleted_at is null
-	`, eventExternalID).Scan(&status, &deliveryEpoch, &receivedAt, &processingAt, &processedAt); err != nil {
-		t.Fatalf("load inbound delivery state event_id=%s: %v", eventExternalID, err)
-	}
-	return status, deliveryEpoch, receivedAt, processingAt, processedAt
-}
-
 type codeSessionWorkerDeliveryAPIResponse struct {
 	OK      bool `json:"ok"`
 	Applied int  `json:"applied"`
@@ -4372,30 +4400,6 @@ func postCodeSessionWorkerDelivery(t *testing.T, app *testApp, codeSessionID str
 		t.Fatalf("decode delivery response: %v", err)
 	}
 	return deliveryResp
-}
-
-func waitInboundDeliveryStatusForEpoch(t *testing.T, app *testApp, eventExternalID string, wantStatus string, wantEpoch int64) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		status, deliveryEpoch, _, _, _ := loadInboundDeliveryState(t, app, eventExternalID)
-		if status == wantStatus && deliveryEpoch != nil && *deliveryEpoch == wantEpoch {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("delivery state for %s status=%q epoch=%v, want status=%q epoch=%d", eventExternalID, status, deliveryEpoch, wantStatus, wantEpoch)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func codeSessionEventsContainPayloadUUID(events []db.CodeSessionEvent, payloadUUID string) bool {
-	for _, event := range events {
-		if event.PayloadUUID != nil && *event.PayloadUUID == payloadUUID {
-			return true
-		}
-	}
-	return false
 }
 
 func assertCodeSessionWorkerHeartbeat(t *testing.T, app *testApp, codeSessionID string, workerEpoch string) time.Time {
@@ -4671,6 +4675,11 @@ func readCodeSessionWorkerSSEFramesAfterConnect(t *testing.T, app *testApp, code
 	reader := bufio.NewReader(resp.Body)
 	frames := []string{}
 	var frame strings.Builder
+	current, found, loadErr := app.db.GetCodeSession(context.Background(), codeSessionID)
+	if loadErr != nil || !found {
+		t.Fatalf("load Code Session worker epoch = (%t, %v)", found, loadErr)
+	}
+	workerEpoch := strconv.FormatInt(current.CurrentWorkerEpoch, 10)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -4685,6 +4694,10 @@ func readCodeSessionWorkerSSEFramesAfterConnect(t *testing.T, app *testApp, code
 			frames = append(frames, raw)
 			if strings.Contains(raw, waitFor) {
 				return frames
+			}
+			data := decodeWorkerSSEFrameData(t, raw)
+			if eventID, ok := data["event_id"].(string); ok && eventID != "" {
+				postCodeSessionWorkerDelivery(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"updates":[{"event_id":`+quoteJSON(eventID)+`,"status":"processed"}]}`)
 			}
 			continue
 		}

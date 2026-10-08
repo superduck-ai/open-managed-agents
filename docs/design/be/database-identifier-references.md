@@ -178,7 +178,7 @@ Filestore 的授权 Principal、service 输入、后台清理任务和目录分�
 子查询反查 UUID；命名空间 advisory lock 使用带命名空间前缀的 UUID 稳定哈希，行更新也直接
 按 UUID 定位。目录分页以 `(path, uuid)` 作为键集排序。
 
-Admin Tunnel 使用 `mcp_tunnels.organization_uuid`、可空的 `workspace_uuid`，Certificate 使用
+Admin Tunnel 使用 `mcp_tunnels.organization_uuid`、必填的 `workspace_uuid`，Certificate 使用
 `organization_uuid` 与 `tunnel_uuid`。Tunnel 与 Certificate 列表以自身 UUID 作为同时间戳下的
 稳定排序键，因此 Admin service 不再需要 `Principal.OrganizationID` 或 Tunnel identity。
 

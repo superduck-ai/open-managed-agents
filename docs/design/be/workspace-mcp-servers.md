@@ -43,6 +43,8 @@ flowchart LR
 
 表名为 `mcp_servers`，使用 identity 内部主键、UUID 业务身份和 `mcp_...` external ID。新建资源使用 `mcp_` 前缀；已有 `mcpsrv_` ID 保持兼容，不做数据迁移。所有运行时 SQL 通过 `MCPServerMapper` 执行；表中不建立外键。
 
+迁移使用 `00070_create_mcp_servers.sql` 与 `00071_remove_mcp_server_archiving.sql`，排在 main 的既有迁移之后，避免复用已占用的版本号。建表保持幂等，随后移除 `archived_at`，继续兼容已执行过旧版 MCP 建表迁移的开发库。
+
 - `organization_uuid`、`workspace_uuid` 明确租户边界。
 - `transport_type` 当前固定为 `url`。
 - 未软删除的目录项在同一工作区内名称唯一、规范化 endpoint 唯一；软删除后可以重新创建同名或相同 endpoint 的新目录项。

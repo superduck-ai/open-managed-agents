@@ -99,18 +99,6 @@ func TestFileMapperBuildsPostgresArguments(t *testing.T) {
 			wantArgCount: 2,
 			wantClauses:  []string{"UPDATE files", "deleted_at = now()"},
 		},
-		{
-			name:         "enqueue cleanup",
-			bound:        buildFileMapperEnqueueObjectCleanupJob(yourbatis.DialectPostgres, workspaceUUID, []byte(`{"bucket":"files"}`)),
-			wantArgCount: 2,
-			wantClauses:  []string{"INSERT INTO jobs", "CAST($2 AS jsonb)"},
-		},
-		{
-			name:         "lease cleanup",
-			bound:        buildFileMapperLeaseObjectCleanupJobs(yourbatis.DialectPostgres, "worker_test", 10),
-			wantArgCount: 2,
-			wantClauses:  []string{"FOR UPDATE SKIP LOCKED", "locked_by = $2"},
-		},
 	}
 
 	for _, test := range tests {
@@ -127,7 +115,7 @@ func TestFileMapperBuildsPostgresArguments(t *testing.T) {
 	}
 }
 
-func TestFileMapperOwnedAndCleanupBuilderContracts(t *testing.T) {
+func TestFileMapperOwnedBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
 	listParams := fileMapperListParams{
 		WorkspaceUUID:    "workspace-uuid",
@@ -157,7 +145,6 @@ func TestFileMapperOwnedAndCleanupBuilderContracts(t *testing.T) {
 	}
 	retireParams := sessionResourceRetireParams{ResourceUUID: "resource-uuid", WorkspaceUUID: "workspace-uuid", RetiredAt: now}
 	subtreeParams := sessionResourceSubtreeParams{WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid", EntryPath: "/outputs/root", Now: now}
-	failureParams := objectCleanupJobFailureParams{JobUUID: "job-uuid", Status: "retry", RunAfter: now, Attempts: 2, Reason: "temporary"}
 	tests := []struct {
 		name     string
 		contract mapperBuilderContract
@@ -277,28 +264,6 @@ func TestFileMapperOwnedAndCleanupBuilderContracts(t *testing.T) {
 				wantSQLFragments:  []string{"UPDATE files", "resource.session_uuid = $4", "resource.path = $5"},
 			},
 		},
-		{
-			name: "complete object cleanup job",
-			contract: mapperBuilderContract{
-				statement:         fileMapperCompleteObjectCleanupJobStatement,
-				bound:             buildFileMapperCompleteObjectCleanupJob(yourbatis.DialectPostgres, "job-uuid"),
-				wantID:            "FileMapper.CompleteObjectCleanupJob",
-				wantKind:          yourbatis.StatementUpdate,
-				wantArgumentNames: []string{"jobUUID"},
-				wantSQLFragments:  []string{"UPDATE jobs", "status = 'completed'", "uuid = $1"},
-			},
-		},
-		{
-			name: "fail object cleanup job",
-			contract: mapperBuilderContract{
-				statement:         fileMapperFailObjectCleanupJobStatement,
-				bound:             buildFileMapperFailObjectCleanupJob(yourbatis.DialectPostgres, failureParams),
-				wantID:            "FileMapper.FailObjectCleanupJob",
-				wantKind:          yourbatis.StatementUpdate,
-				wantArgumentNames: []string{"params.Status", "params.RunAfter", "params.Attempts", "params.Reason", "params.JobUUID"},
-				wantSQLFragments:  []string{"UPDATE jobs", "status = $1", "run_after = $2", "uuid = $5"},
-			},
-		},
 	}
 
 	for _, test := range tests {
@@ -405,22 +370,6 @@ func TestFileMapperFileAndSkillBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"params.FileUUID", "params.FileExternalID", "params.Filename", "params.SizeBytes", "params.Source", "params.SHA256", "params.S3Bucket", "params.S3Key", "params.Now", "params.SessionUUID", "params.WorkspaceUUID"},
 			wantSQLFragments:  []string{"INSERT INTO files", "skill_source", "FROM sessions session"},
 		}},
-		{name: "enqueue cleanup", contract: mapperBuilderContract{
-			statement:         fileMapperEnqueueObjectCleanupJobStatement,
-			bound:             buildFileMapperEnqueueObjectCleanupJob(yourbatis.DialectPostgres, "workspace-uuid", []byte(`{"bucket":"files"}`)),
-			wantID:            "FileMapper.EnqueueObjectCleanupJob",
-			wantKind:          yourbatis.StatementInsert,
-			wantArgumentNames: []string{"workspaceUUID", "payload"},
-			wantSQLFragments:  []string{"INSERT INTO jobs", "CAST($2 AS jsonb)"},
-		}},
-		{name: "lease cleanup", contract: mapperBuilderContract{
-			statement:         fileMapperLeaseObjectCleanupJobsStatement,
-			bound:             buildFileMapperLeaseObjectCleanupJobs(yourbatis.DialectPostgres, "worker", 10),
-			wantID:            "FileMapper.LeaseObjectCleanupJobs",
-			wantKind:          yourbatis.StatementUpdate,
-			wantArgumentNames: []string{"limit", "workerID"},
-			wantSQLFragments:  []string{"FOR UPDATE SKIP LOCKED", "locked_by = $2", "RETURNING"},
-		}},
 	}
 
 	for _, test := range tests {
@@ -430,13 +379,12 @@ func TestFileMapperFileAndSkillBuilderContracts(t *testing.T) {
 	}
 }
 
-func TestFileMapperOwnedAndCleanupMethodsPropagateExecutionErrors(t *testing.T) {
+func TestFileMapperOwnedMethodsPropagateExecutionErrors(t *testing.T) {
 	ctx := context.Background()
 	listParams := fileMapperListParams{}
 	writeParams := sessionResourceFileWriteParams{}
 	retireParams := sessionResourceRetireParams{}
 	subtreeParams := sessionResourceSubtreeParams{}
-	failureParams := objectCleanupJobFailureParams{}
 	tests := []struct {
 		name     string
 		contract mapperExecutionErrorContract
@@ -477,12 +425,6 @@ func TestFileMapperOwnedAndCleanupMethodsPropagateExecutionErrors(t *testing.T) 
 		}}},
 		{name: "retire owned subtree", contract: mapperExecutionErrorContract{statementID: "FileMapper.RetireOwnedFilesInSubtree", kind: yourbatis.StatementUpdate, call: func(executor yourbatis.Executor) error {
 			return NewFileMapper(executor).RetireOwnedFilesInSubtree(ctx, subtreeParams)
-		}}},
-		{name: "complete cleanup", contract: mapperExecutionErrorContract{statementID: "FileMapper.CompleteObjectCleanupJob", kind: yourbatis.StatementUpdate, call: func(executor yourbatis.Executor) error {
-			return NewFileMapper(executor).CompleteObjectCleanupJob(ctx, "")
-		}}},
-		{name: "fail cleanup", contract: mapperExecutionErrorContract{statementID: "FileMapper.FailObjectCleanupJob", kind: yourbatis.StatementUpdate, call: func(executor yourbatis.Executor) error {
-			return NewFileMapper(executor).FailObjectCleanupJob(ctx, failureParams)
 		}}},
 	}
 
@@ -531,13 +473,6 @@ func TestFileMapperFileAndSkillMethodsPropagateExecutionErrors(t *testing.T) {
 		}}},
 		{name: "insert skill file", contract: mapperExecutionErrorContract{statementID: "FileMapper.InsertSkillArchiveFile", kind: yourbatis.StatementInsert, call: func(executor yourbatis.Executor) error {
 			return NewFileMapper(executor).InsertSkillArchiveFile(ctx, sessionSkillArchiveInsertParams{})
-		}}},
-		{name: "enqueue cleanup", contract: mapperExecutionErrorContract{statementID: "FileMapper.EnqueueObjectCleanupJob", kind: yourbatis.StatementInsert, call: func(executor yourbatis.Executor) error {
-			return NewFileMapper(executor).EnqueueObjectCleanupJob(ctx, "", nil)
-		}}},
-		{name: "lease cleanup", contract: mapperExecutionErrorContract{statementID: "FileMapper.LeaseObjectCleanupJobs", kind: yourbatis.StatementUpdate, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewFileMapper(executor).LeaseObjectCleanupJobs(ctx, "", 0)
-			return err
 		}}},
 	}
 
@@ -622,22 +557,4 @@ func TestFileMapperResultSemantics(t *testing.T) {
 		}
 	})
 
-	for _, test := range []struct {
-		name string
-		call func(FileMapper) error
-	}{
-		{name: "complete cleanup success", call: func(mapper FileMapper) error {
-			return mapper.CompleteObjectCleanupJob(context.Background(), "job-uuid")
-		}},
-		{name: "fail cleanup success", call: func(mapper FileMapper) error {
-			return mapper.FailObjectCleanupJob(context.Background(), objectCleanupJobFailureParams{})
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			executor := newMapperTestExecutor(t, mapperTestResponse{rowsAffected: 1})
-			if err := test.call(NewFileMapper(executor)); err != nil {
-				t.Fatalf("cleanup mutation error = %v", err)
-			}
-		})
-	}
 }

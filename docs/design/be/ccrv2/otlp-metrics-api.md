@@ -258,7 +258,7 @@ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={api_base_url}/v1/code/sessions/{code_sessio
 OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {session_ingress_token}
 ```
 
-Console Agent 可观测不再从 PostgreSQL 读取 Active Time / Token 看板。写入端仍把 OTLP 转发到 OpenObserve（凭据键为 `observability.openobserve.ingestion.*`）；查询走 `observability.openobserve.query.*` 与 `POST /api/organizations/{org}/observability/panels/query`。默认 Claude Code 版本保持 `2.1.120`。
+Console Agent 可观测不再从 PostgreSQL 读取 Active Time / Token 看板。写入端仍把 OTLP 转发到 OpenObserve（凭据键为 `observability.openobserve.ingestion.*`）；查询走 `observability.openobserve.query.*` 与 `POST /api/organizations/{org}/observability/panels/query`。默认 Claude Code 版本为 `2.1.251`。
 
 Console 查询 API 只在 `observability.enabled=true` 时注册，统一使用平台 session 中的 organization/workspace scope；浏览器不能覆盖租户字段，也不会获得 OpenObserve SQL 或凭据。接口为：
 

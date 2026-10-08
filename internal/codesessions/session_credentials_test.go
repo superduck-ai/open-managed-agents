@@ -44,6 +44,24 @@ func TestSessionCredentialsRejectInvalidTokens(t *testing.T) {
 		})
 	}
 
+	for _, test := range []struct {
+		name   string
+		change func(*SessionCredentialClaims)
+	}{
+		{"issuer", func(c *SessionCredentialClaims) { c.Issuer = "other-service" }},
+		{"audience", func(c *SessionCredentialClaims) { c.Audience = jwt.ClaimStrings{"other-service"} }},
+		{"role", func(c *SessionCredentialClaims) { c.Role = "other-role" }},
+	} {
+		t.Run("failure "+test.name, func(t *testing.T) {
+			changed := claims
+			test.change(&changed)
+			token := signTestJWT(t, jwt.SigningMethodEdDSA, credentials.privateKey, credentials.kid, changed)
+			if _, err := credentials.Verify(token); err == nil {
+				t.Fatal("accepted incompatible credential claims")
+			}
+		})
+	}
+
 	t.Run("failure signature", func(t *testing.T) {
 		other := newTestSessionCredentials(t, &now)
 		rawToken := signTestJWT(t, jwt.SigningMethodEdDSA, other.privateKey, credentials.kid, claims)

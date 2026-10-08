@@ -20,8 +20,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
+	"github.com/superduck-ai/open-managed-agents/internal/diagnostics"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
@@ -33,6 +35,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
+	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
@@ -55,6 +59,11 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	closeDiagnostics, err := diagnostics.Start(cfg.Server.DiagnosticsAddr, os.Getenv("OMA_DIAGNOSTICS_LISTENER_FD"), logger.With("component", "diagnostics"))
+	if err != nil {
+		return fmt.Errorf("start diagnostics: %w", err)
+	}
+	defer func() { _ = closeDiagnostics() }()
 
 	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
@@ -97,7 +106,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
-	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection)
+	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection, cfg.NATS.WorkerEventStream)
 	if err != nil {
 		return fmt.Errorf("open worker event broker: %w", err)
 	}
@@ -114,6 +123,13 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
+	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
+	if err != nil {
+		return fmt.Errorf("open tunnel broker: %w", err)
+	}
+	defer tunnelBroker.Close()
+
+	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
 	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)
 	if err != nil {
@@ -129,7 +145,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load vault secrets service: %w", err)
 	}
-	filestoreService := filestore.NewService(cfg, database, objectStore)
+	filestoreService := filestore.NewService(cfg, database, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
@@ -142,11 +158,17 @@ func run(logger *slog.Logger) error {
 	).Start(ctx)
 	environmentLogger := logger.With("component", "environment_runner")
 	sandboxProvider := e2bruntime.NewProvider(cfg.E2B)
+	// runner 与 worker-event 过期处置共享同一个 code-session Service，
+	// 过期策略只存在一份实现。
+	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).
+		WithWorkerEventBroker(workerEventBroker).
+		WithWorkerEventState(workerEventAcks, objectStore)
+	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
 		Provider:        sandboxProvider,
 		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger).WithWorkerEventBroker(workerEventBroker),
+		CodeSessions:    runnerCodeSessions,
 		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 		Logger:          environmentLogger,
@@ -154,23 +176,40 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create environment runner: %w", err)
 	}
-	environmentRunner.Start(ctx)
+	stopRunner := environmentRunner.Start(ctx)
+	defer stopRunner()
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
-	deploymentStore := deployments.NewStore(database)
+	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
+	prebuilds.Register(workers)
+	deploymentStore := deployments.NewStore(database).WithEventPayloadStorage(objectStore)
 	deployments.RegisterWorkers(workers, deploymentStore)
 	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
 		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
 	lifecycle.Register(workers)
+	transcripts, err := transcriptretention.New(database, objectStore, cfg.TranscriptArchive, logger.With("component", "transcript-archive"))
+	if err != nil {
+		return fmt.Errorf("create transcript archive service: %w", err)
+	}
+	transcripts.Register(workers)
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
-		map[string]river.QueueConfig{deploymentjobs.Queue: {MaxWorkers: 10}, environments.SandboxLifecycleQueue: {MaxWorkers: 4}})
+		map[string]river.QueueConfig{
+			environments.PrebuildQueue:         {MaxWorkers: 4},
+			deploymentjobs.Queue:               {MaxWorkers: 10},
+			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
+			transcriptretention.Queue:          {MaxWorkers: 2},
+		})
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
 	if err := lifecycle.Configure(ctx, jobClient); err != nil {
 		return fmt.Errorf("configure sandbox lifecycle: %w", err)
 	}
+	if err := transcripts.Configure(ctx, jobClient); err != nil {
+		return fmt.Errorf("configure transcript archive: %w", err)
+	}
 	deploymentStore.Configure(jobClient)
+	prebuilds.Configure(jobClient)
 	if err := jobClient.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
 	}
@@ -185,6 +224,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			Prebuilds:              prebuilds,
 			Config:                 cfg,
 			DB:                     database,
 			Deployments:            deploymentStore,
@@ -200,6 +240,9 @@ func run(logger *slog.Logger) error {
 			Redis:                  redisClient,
 			SessionEventBus:        sessionEventBus,
 			WorkerEventBroker:      workerEventBroker,
+			TunnelBroker:           tunnelBroker,
+			TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
+			WorkerEventAcks:        workerEventAcks,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
@@ -207,10 +250,19 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	return serveHTTP(ctx, server, logger)
+}
+
+func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
+	listener, err := listeners.Open(server.Addr, os.Getenv("OMA_HTTP_LISTENER_FD"))
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	defer listener.Close()
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("claude api server listening", "addr", cfg.Server.Addr)
-		errCh <- server.ListenAndServe()
+		logger.Info("claude api server listening", "addr", server.Addr)
+		errCh <- server.Serve(listener)
 	}()
 
 	select {

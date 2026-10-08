@@ -14,6 +14,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -29,6 +30,7 @@ import (
 const maxEnvironmentBodySize = 4 << 20
 
 type Handler struct {
+	prebuilds    *Prebuilds
 	cfg          config.Config
 	db           *db.DB
 	errorAdapter *httpapi.ErrorAdapter
@@ -128,6 +130,10 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 	router.Post("/", wrap(h.create))
 	router.Get("/", wrap(h.list))
 	router.Get("/{environment_id}", wrap(h.retrieveRoute))
+	router.Get("/{environment_id}/prebuild", wrap(h.getPrebuild))
+	router.Get("/{environment_id}/prebuild/logs", wrap(h.getPrebuildLogs))
+	router.Post("/{environment_id}/prebuild", wrap(h.startPrebuild))
+	router.Post("/{environment_id}/prebuild/cancel", wrap(h.cancelPrebuild))
 	router.Post("/{environment_id}", wrap(h.updateRoute))
 	router.Post("/{environment_id}/archive", wrap(h.archiveRoute))
 	router.Delete("/{environment_id}", wrap(h.deleteRoute))
@@ -164,10 +170,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if h.isOfficialSDKPrincipal(principal) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false))
-		return nil
-	}
+
 	name, err := parseRequiredRawString(body.Name, "name")
 	if err != nil {
 		return invalidRequest(err)
@@ -193,7 +196,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not generate environment ID", fmt.Errorf("generate environment ID: %w", err))
 	}
 	now := time.Now().UTC()
-	created, err := h.db.CreateEnvironment(r.Context(), db.Environment{
+	created, err := h.createEnvironment(r.Context(), db.Environment{
 		UUID:                uuid.NewV4().String(),
 		ExternalID:          envID,
 		OrganizationUUID:    principal.OrganizationUUID,
@@ -229,29 +232,35 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	}
 	cursor, err := decodeEnvironmentCursor(r.URL.Query().Get("page"))
 	if err != nil {
-		if h.isOfficialSDKPrincipal(principal) {
-			httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
-			return nil
-		}
 		return invalidRequest(err)
 	}
 	includeArchived, err := parseOptionalBool(r, "include_archived")
 	if err != nil {
 		return invalidRequest(err)
 	}
+	status := r.URL.Query().Get("status")
+	switch status {
+	case "", "all":
+	case "active":
+		includeArchived = false
+	case "archived":
+		includeArchived = true
+	default:
+		return invalidEnvironmentListStatus()
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	records, hasMore, err := h.db.ListEnvironmentsPage(r.Context(), db.ListEnvironmentsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
+		ArchivedOnly:    status == "archived",
+		Search:          search,
 	})
 	if err != nil {
 		return internalError("Could not list environments", fmt.Errorf("list environments: %w", err))
 	}
-	if h.isOfficialSDKPrincipal(principal) && len(records) == 0 {
-		httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
-		return nil
-	}
+
 	data := make([]environmentResponse, 0, len(records))
 	for _, record := range records {
 		data = append(data, responseFromEnvironment(record))
@@ -276,10 +285,6 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID
 	}
 	record, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, false))
-			return nil
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			return environmentNotFound(environmentID, err)
 		}
@@ -298,56 +303,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 	if authErr != nil {
 		return authErr
 	}
-	if h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, false))
-		return nil
-	}
-	current, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return environmentNotFound(environmentID, err)
-		}
-		return internalError("Could not update environment", fmt.Errorf("retrieve environment %q for update: %w", environmentID, err))
-	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	next := current
-	if len(body.Name) > 0 {
-		next.Name, err = parseRequiredRawString(body.Name, "name")
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Description) > 0 {
-		next.Description, err = descriptionFromRaw(body.Description)
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Metadata) > 0 {
-		next.Metadata, err = patchMetadata(next.Metadata, body.Metadata)
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Scope) > 0 {
-		next.Scope, err = parseScope(body.Scope)
-		if err != nil {
-			return invalidRequest(err)
-		}
-	}
-	if len(body.Config) > 0 {
-		next.Config, err = normalizeConfigForUpdate(current.Config, body.Config)
-		if err != nil {
-			return invalidRequest(err)
-		}
-		next.ResolvedTemplate = h.resolvedTemplate(next.Config)
-	}
-	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, next)
+	updated, err := h.updateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, *body)
 	if err != nil {
+		var appError *apperr.Error
+		if errors.As(err, &appError) {
+			return err
+		}
 		if errors.Is(err, db.ErrDuplicate) {
 			return environmentNameConflict(err)
 		}
@@ -369,10 +334,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 	if authErr != nil {
 		return authErr
 	}
-	if h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, true))
-		return nil
-	}
+
 	record, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -390,10 +352,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	environmentID := chi.URLParam(r, "environment_id")
-	if h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
-		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: environmentID, Type: "environment_deleted"})
-		return nil
-	}
+
 	if err := h.db.DeleteEnvironment(r.Context(), principal.WorkspaceUUID, environmentID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return environmentHasActiveWork(err)
@@ -412,10 +371,7 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if h.isOfficialSDKRequest(r) {
-		httpapi.WriteJSON(w, http.StatusOK, workPageResponse{Data: []workResponse{h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued")}})
-		return nil
-	}
+
 	limit, err := parseLimit(r)
 	if err != nil {
 		return invalidRequest(err)
@@ -452,10 +408,7 @@ func (h *Handler) retrieveWorkRoute(w http.ResponseWriter, r *http.Request) erro
 		return err
 	}
 	workID := chi.URLParam(r, "work_id")
-	if h.isOfficialSDKWorkFixture(r, workID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "queued"))
-		return nil
-	}
+
 	record, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -473,10 +426,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	workID := chi.URLParam(r, "work_id")
-	if h.isOfficialSDKWorkFixture(r, workID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "queued"))
-		return nil
-	}
+
 	body, err := httpapi.DecodeObjectBodyAs[environmentWorkUpdateRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
 		return invalidRequest(err)
@@ -508,10 +458,7 @@ func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if h.isOfficialSDKRequest(r) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued"))
-		return nil
-	}
+
 	blockFor, err := parseBlockMS(r)
 	if err != nil {
 		return invalidRequest(err)
@@ -548,10 +495,7 @@ func (h *Handler) workStatsRoute(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if h.isOfficialSDKRequest(r) {
-		httpapi.WriteJSON(w, http.StatusOK, workStatsResponse{Type: "work_queue_stats"})
-		return nil
-	}
+
 	stats, err := h.db.EnvironmentWorkStats(r.Context(), env.WorkspaceUUID, env.ExternalID)
 	if err != nil {
 		return internalError("Could not retrieve environment work stats", fmt.Errorf("retrieve work stats for environment %q: %w", env.ExternalID, err))
@@ -566,10 +510,7 @@ func (h *Handler) ackWorkRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	workID := chi.URLParam(r, "work_id")
-	if h.isOfficialSDKWorkFixture(r, workID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "starting"))
-		return nil
-	}
+
 	record, err := h.db.AckEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -587,16 +528,7 @@ func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) err
 		return err
 	}
 	workID := chi.URLParam(r, "work_id")
-	if h.isOfficialSDKWorkFixture(r, workID) {
-		httpapi.WriteJSON(w, http.StatusOK, heartbeatResponse{
-			Type:          "work_heartbeat",
-			LastHeartbeat: formatTime(time.Now().UTC()),
-			LeaseExtended: true,
-			State:         "active",
-			TTLSeconds:    60,
-		})
-		return nil
-	}
+
 	ttl, err := parseOptionalInt(r, "desired_ttl_seconds")
 	if err != nil {
 		return invalidRequest(err)
@@ -632,10 +564,7 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) error {
 		return invalidRequest(err)
 	}
 	workID := chi.URLParam(r, "work_id")
-	if h.isOfficialSDKWorkFixture(r, workID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "stopped"))
-		return nil
-	}
+
 	current, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -712,21 +641,6 @@ func (h *Handler) authorizeWork(r *http.Request) (db.Environment, error) {
 	}
 	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
-			return db.Environment{
-				ExternalID:       environmentID,
-				OrganizationUUID: principal.OrganizationUUID,
-				WorkspaceUUID:    principal.WorkspaceUUID,
-				Name:             "python-data-analysis",
-				Description:      "Fixture environment",
-				Config:           defaultCloudConfig(),
-				Metadata:         json.RawMessage(`{}`),
-				Provider:         "e2b",
-				ResolvedTemplate: h.resolvedTemplate(nil),
-				CreatedAt:        time.Now().UTC(),
-				UpdatedAt:        time.Now().UTC(),
-			}, nil
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			return db.Environment{}, environmentNotFound(environmentID, err)
 		}
@@ -810,34 +724,6 @@ func responseFromStats(stats db.EnvironmentWorkStats) workStatsResponse {
 		OldestQueuedAt: oldest,
 		WorkersPolling: platformWorkersPollingForResponse(stats.WorkersPolling),
 	}
-}
-
-func (h *Handler) fixtureEnvironment(environmentID string, archived bool) environmentResponse {
-	now := formatTime(time.Now().UTC())
-	var archivedAt *string
-	if archived {
-		archivedAt = &now
-	}
-	return environmentResponse{
-		ID:          environmentID,
-		ArchivedAt:  archivedAt,
-		Config:      platformEnvironmentConfigForResponse(defaultCloudConfig()),
-		CreatedAt:   now,
-		Description: "Fixture environment",
-		Metadata:    json.RawMessage(`{}`),
-		Name:        "python-data-analysis",
-		Scope:       "organization",
-		State:       environmentStateForArchived(archived),
-		Type:        "environment",
-		UpdatedAt:   now,
-	}
-}
-
-func environmentStateForArchived(archived bool) string {
-	if archived {
-		return "archived"
-	}
-	return "active"
 }
 
 func platformEnvironmentConfigForResponse(raw json.RawMessage) json.RawMessage {
@@ -954,40 +840,6 @@ func platformWorkersPollingForResponse(value *int) *int {
 	}
 	zero := 0
 	return &zero
-}
-
-func (h *Handler) fixtureWork(environmentID, workID, state string) workResponse {
-	now := formatTime(time.Now().UTC())
-	return workResponse{
-		ID:            workID,
-		CreatedAt:     now,
-		Data:          SessionWorkData{ID: "session_id", Type: "session"},
-		EnvironmentID: environmentID,
-		Metadata:      json.RawMessage(`{}`),
-		State:         state,
-		Type:          "work",
-	}
-}
-
-func (h *Handler) isOfficialSDKPrincipal(principal auth.Principal) bool {
-	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
-}
-
-func (h *Handler) isOfficialSDKRequest(r *http.Request) bool {
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	return h.isOfficialSDKPrincipal(principal)
-}
-
-func (h *Handler) isOfficialSDKEnvironmentFixture(principal auth.Principal, environmentID string) bool {
-	return h.isOfficialSDKPrincipal(principal) &&
-		environmentID == h.cfg.SDKFixtures.EnvironmentID
-}
-
-func (h *Handler) isOfficialSDKWorkFixture(r *http.Request, workID string) bool {
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	return h.isOfficialSDKPrincipal(principal) &&
-		workID == h.cfg.SDKFixtures.WorkID
 }
 
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {

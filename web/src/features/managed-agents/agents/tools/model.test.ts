@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { type AgentApiResponse } from '../../types';
 import {
   aggregateToolPermissions,
+  BUILT_IN_AGENT_TOOLSETS,
+  builtInAgentToolDescription,
   buildAgentToolDisplayCards,
   configuredAgentToolPermission,
   effectiveToolPermission,
@@ -10,6 +12,40 @@ import {
 } from './model';
 
 describe('agent tool display model', () => {
+  test('exposes pinned Claude Code built-in tools while continuing to omit web search', () => {
+    expect(BUILT_IN_AGENT_TOOLSETS.agent_toolset_20260401.map((tool) => tool.name)).toEqual([
+      'bash',
+      'read',
+      'write',
+      'edit',
+      'glob',
+      'grep',
+      'web_fetch',
+      'task',
+      'ask_user_question',
+      'cron_create',
+      'cron_delete',
+      'cron_list',
+      'enter_plan_mode',
+      'enter_worktree',
+      'exit_plan_mode',
+      'exit_worktree',
+      'notebook_edit',
+      'schedule_wakeup',
+      'skill',
+      'task_output',
+      'task_stop',
+      'todo_write',
+    ]);
+    expect(
+      builtInAgentToolDescription(
+        { name: 'web_fetch', description: 'Fetch URL content' },
+        (id: string, defaultMessage: string) =>
+          id === 'managedAgents.agents.createDialog.builtInTool.webFetch' ? '获取 URL 内容' : defaultMessage,
+      ),
+    ).toBe('获取 URL 内容');
+  });
+
   test('does not create content from an orphaned mcp_toolset config', () => {
     const agent = agentFixture({
       tools: [{ type: 'mcp_toolset', mcp_server_name: 'notion' }],
@@ -127,9 +163,56 @@ describe('agent tool display model', () => {
 
     expect(configuredAgentToolPermission(agent, 'Bash')).toBe('always_ask');
     expect(configuredAgentToolPermission(agent, 'Read')).toBe('always_deny');
+    expect(configuredAgentToolPermission(agent, 'AskUserQuestion')).toBe('always_deny');
     expect(configuredAgentToolPermission(agent, 'mcp__private_docs__search')).toBe('always_allow');
     expect(configuredAgentToolPermission(agent, 'mcp__private_docs__delete_page')).toBe('always_deny');
     expect(configuredAgentToolPermission(agent, 'lookup_customer')).toBeUndefined();
+  });
+
+  test('treats unconfigured built-in AskUserQuestion as deny without using the toolset default', () => {
+    const agent = agentFixture({
+      mcp_servers: [{ name: 'private_docs', url: 'https://docs.example.com/mcp' }],
+      tools: [
+        {
+          type: 'agent_toolset_20260401',
+          default_config: { permission_policy: { type: 'always_allow' } },
+        },
+        {
+          type: 'mcp_toolset',
+          mcp_server_name: 'private_docs',
+          default_config: { permission_policy: { type: 'always_ask' } },
+        },
+      ],
+    });
+    const [builtIn, mcp] = buildAgentToolDisplayCards(agent, [
+      {
+        slug: 'private_docs',
+        displayName: 'Private Docs',
+        url: 'https://docs.example.com/mcp',
+        toolNames: ['ask_user_question'],
+      },
+    ]);
+
+    expect(builtIn.tools.find((tool) => tool.name === 'ask_user_question')?.permission).toBe('always_deny');
+    expect(builtIn.tools.find((tool) => tool.name === 'bash')?.permission).toBe('always_allow');
+    expect(configuredAgentToolPermission(agent, 'AskUserQuestion')).toBe('always_deny');
+    expect(mcp.tools.find((tool) => tool.name === 'ask_user_question')?.permission).toBe('always_ask');
+  });
+
+  test('keeps an explicit built-in AskUserQuestion allow', () => {
+    const agent = agentFixture({
+      tools: [
+        {
+          type: 'agent_toolset_20260401',
+          default_config: { permission_policy: { type: 'always_allow' } },
+          configs: [{ name: 'ask_user_question', enabled: true, permission_policy: { type: 'always_allow' } }],
+        },
+      ],
+    });
+    const [card] = buildAgentToolDisplayCards(agent);
+
+    expect(card.tools.find((tool) => tool.name === 'ask_user_question')?.permission).toBe('always_allow');
+    expect(configuredAgentToolPermission(agent, 'AskUserQuestion')).toBe('always_allow');
   });
 
   test('uses the MCP runtime default when directory tools have no matching toolset', () => {
@@ -309,13 +392,18 @@ describe('agent tool display model', () => {
       },
     ]);
 
-    const [tunnel] = buildAgentToolDisplayCards(
+    const [currentTunnel] = buildAgentToolDisplayCards(
       agentFixture({
-        mcp_servers: [{ name: 'tunnel:fallback-id', url: 'https://wiki.example.com/mcp' }],
+        mcp_servers: [
+          {
+            name: 'tunnel_0123456789abcdef0123456789abcdef.main',
+            url: 'https://oma.example.com/v1/mcp/tunnel_0123456789abcdef0123456789abcdef',
+          },
+        ],
       }),
     );
-    expect(tunnel.title).toBe('wiki.example.com');
-    expect(tunnel.tools).toEqual([]);
+    expect(currentTunnel.title).toBe('oma.example.com');
+    expect(currentTunnel.tools).toEqual([]);
   });
 
   test('uses a directory URL option when the canonical remote URL is absent', () => {

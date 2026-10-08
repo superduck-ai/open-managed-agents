@@ -10,23 +10,25 @@ const (
 )
 
 type Config struct {
-	Env               string                  `yaml:"env"`
-	Server            ServerConfig            `yaml:"server"`
-	Database          DatabaseConfig          `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	NATS              NATSConfig              `yaml:"nats"`
-	Auth              AuthConfig              `yaml:"auth"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Batch             BatchConfig             `yaml:"batch"`
-	SandboxLifecycle  SandboxLifecycleConfig  `yaml:"sandbox_lifecycle"`
-	E2B               E2BConfig               `yaml:"e2b"`
-	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
-	CodeSession       CodeSessionConfig       `yaml:"code_session"`
-	Observability     ObservabilityConfig     `yaml:"observability"`
-	Webhook           WebhookConfig           `yaml:"webhook"`
-	Vault             VaultConfig             `yaml:"vault"`
-	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                  string                    `yaml:"env"`
+	Server               ServerConfig              `yaml:"server"`
+	Database             DatabaseConfig            `yaml:"database"`
+	Redis                RedisConfig               `yaml:"redis"`
+	NATS                 NATSConfig                `yaml:"nats"`
+	Auth                 AuthConfig                `yaml:"auth"`
+	Tunnel               TunnelConfig              `yaml:"tunnel"`
+	Storage              StorageConfig             `yaml:"storage"`
+	Batch                BatchConfig               `yaml:"batch"`
+	SandboxLifecycle     SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                  E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession          CodeSessionConfig         `yaml:"code_session"`
+	Observability        ObservabilityConfig       `yaml:"observability"`
+	Webhook              WebhookConfig             `yaml:"webhook"`
+	Vault                VaultConfig               `yaml:"vault"`
+	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
 }
 
 // VaultConfig configures at-rest encryption for vault credential secrets and
@@ -70,7 +72,8 @@ type DecryptOnlyKeyConfig struct {
 }
 
 type ServerConfig struct {
-	Addr string `yaml:"addr"`
+	Addr            string `yaml:"addr"`
+	DiagnosticsAddr string `yaml:"diagnostics_addr"`
 }
 
 type DatabaseConfig struct {
@@ -82,10 +85,18 @@ type RedisConfig struct {
 	URL string `yaml:"url"`
 }
 
+type WorkerEventStreamConfig struct {
+	MaxBytes   int64         `yaml:"max_bytes"`
+	MaxAge     time.Duration `yaml:"max_age"`
+	Replicas   int           `yaml:"replicas"`
+	MaxMsgSize int32         `yaml:"max_msg_size"`
+}
+
 type NATSConfig struct {
-	URL            string        `yaml:"url"`
-	ConnectTimeout time.Duration `yaml:"connect_timeout"`
-	DrainTimeout   time.Duration `yaml:"drain_timeout"`
+	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL               string                  `yaml:"url"`
+	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
 }
 
 type AuthConfig struct {
@@ -96,6 +107,24 @@ type EmailSMTPConfig struct {
 	Addr     string `yaml:"addr"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+type TunnelConfig struct {
+	PublicBaseURL       string                    `yaml:"public_base_url"`
+	DomainSuffix        string                    `yaml:"domain_suffix"`
+	PollTimeout         time.Duration             `yaml:"poll_timeout"`
+	RequestTimeout      time.Duration             `yaml:"request_timeout"`
+	PresenceTTL         time.Duration             `yaml:"presence_ttl"`
+	TombstoneTTL        time.Duration             `yaml:"tombstone_ttl"`
+	CommandStream       TunnelCommandStreamConfig `yaml:"command_stream"`
+	MaxBodyBytes        int64                     `yaml:"max_body_bytes"`
+	MaxHeaderBytes      int64                     `yaml:"max_header_bytes"`
+	MaxHeaderValueBytes int64                     `yaml:"max_header_value_bytes"`
+}
+
+type TunnelCommandStreamConfig struct {
+	MaxBytes int64 `yaml:"max_bytes"`
+	MaxMsgs  int64 `yaml:"max_msgs"`
 }
 
 type StorageConfig struct {
@@ -143,7 +172,6 @@ type EnvironmentRunnerConfig struct {
 	Concurrency             int           `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
 	ManagerPath             string        `yaml:"manager_path"`
-	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
 	ClaudePath              string        `yaml:"claude_path"`
 	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
 	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
@@ -220,25 +248,6 @@ type BootstrapConfig struct {
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
 }
 
-type SDKFixtureConfig struct {
-	FileID            string `yaml:"file_id"`
-	BatchID           string `yaml:"batch_id"`
-	AgentID           string `yaml:"agent_id"`
-	ReferenceAgentID  string `yaml:"reference_agent_id"`
-	EnvironmentID     string `yaml:"environment_id"`
-	WorkID            string `yaml:"work_id"`
-	SessionID         string `yaml:"session_id"`
-	SessionResourceID string `yaml:"session_resource_id"`
-	SessionThreadID   string `yaml:"session_thread_id"`
-	SessionEventID    string `yaml:"session_event_id"`
-	SkillID           string `yaml:"skill_id"`
-	SkillVersion      string `yaml:"skill_version"`
-	DeploymentID      string `yaml:"deployment_id"`
-	DeploymentRunID   string `yaml:"deployment_run_id"`
-	APIKey            string `yaml:"api_key"`
-	APIKeyExternalID  string `yaml:"api_key_external_id"`
-}
-
 type SeedAPIKey struct {
 	ExternalID string `yaml:"external_id"`
 	Key        string `yaml:"key"`
@@ -249,4 +258,18 @@ type SandboxLifecycleConfig struct {
 	Enabled     bool          `yaml:"enabled"`
 	DryRun      bool          `yaml:"dry_run"`
 	IdleTimeout time.Duration `yaml:"idle_timeout"`
+}
+
+type TranscriptArchiveConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	DryRun                bool          `yaml:"dry_run"`
+	TerminalSweepEnabled  bool          `yaml:"terminal_sweep_enabled"`
+	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
+	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
+	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
+	ArchiveMinAge         time.Duration `yaml:"archive_min_age"`
+	SoftDeleteWindow      time.Duration `yaml:"soft_delete_window"`
+	TargetSegmentRawBytes int           `yaml:"target_segment_raw_bytes"`
+	DeleteBatchRows       int           `yaml:"delete_batch_rows"`
+	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
 }

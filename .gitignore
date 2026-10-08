@@ -10,6 +10,8 @@ Thumbs.db
 # Local environment and secrets
 .env
 .env.*
+/.verify-be.local.json
+.verify-chat.local.json
 /config/config.yaml
 /config/config.local.yaml
 /deploy/docker-compose/oma-server.local.yaml
@@ -31,6 +33,10 @@ temp/
 *.prof
 coverage.out
 coverage.html
+
+# Python acceptance helpers
+__pycache__/
+*.pyc
 
 # Frontend dependencies and build artifacts
 node_modules/
@@ -71,3 +77,4 @@ CLAUDE.local.md
 AGENTS.override.md
 .grok/
 .worktrees/
+.verify-be.cloud.local.yaml

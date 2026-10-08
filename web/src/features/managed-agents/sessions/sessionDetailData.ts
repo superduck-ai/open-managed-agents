@@ -45,6 +45,7 @@ export function useSessionDetailEventData({
   const [loading, setLoading] = useState(false);
   const [childLoading, setChildLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectedScope, setConnectedScope] = useState<string | null>(null);
   const previousRefreshKeyRef = useRef(refreshKey);
   const childThreadIds = useMemo(
     () =>
@@ -169,6 +170,7 @@ export function useSessionDetailEventData({
     if (!sessionId || !live) {
       return;
     }
+    let active = true;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
@@ -184,6 +186,9 @@ export function useSessionDetailEventData({
         setLoading(false);
       },
       onPrimaryEvent,
+      onConnectionChange: (connected) => {
+        if (active) setConnectedScope(connected ? `${workspaceId}:${sessionId}` : null);
+      },
     })
       .catch((streamError: unknown) => {
         if (!controller.signal.aborted) setError(errorMessage(streamError));
@@ -192,6 +197,8 @@ export function useSessionDetailEventData({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => {
+      active = false;
+      setConnectedScope(null);
       controller.abort();
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '');
       bump();
@@ -245,7 +252,15 @@ export function useSessionDetailEventData({
     [queryClient, scopeKey, sessionId, version, workspaceId],
   );
 
-  return { events, deltaFrames, loading, childLoading, error, appendPrimaryEvents };
+  return {
+    events,
+    deltaFrames,
+    loading,
+    childLoading,
+    error,
+    appendPrimaryEvents,
+    connected: connectedScope === `${workspaceId}:${sessionId}`,
+  };
 }
 
 export async function runSessionEventStreamLoop({
@@ -257,6 +272,7 @@ export async function runSessionEventStreamLoop({
   onCacheChange,
   onHistorySynced,
   onPrimaryEvent,
+  onConnectionChange,
 }: {
   queryClient: QueryClient;
   sessionId: string;
@@ -266,6 +282,7 @@ export async function runSessionEventStreamLoop({
   onCacheChange: () => void;
   onHistorySynced?: () => void;
   onPrimaryEvent?: (event: QuickstartSessionEvent) => void;
+  onConnectionChange?: (connected: boolean) => void;
 }) {
   let consecutiveFailures = 0;
   let backoff = 0;
@@ -323,6 +340,7 @@ export async function runSessionEventStreamLoop({
               if (!attempt.signal.aborted) {
                 onCacheChange();
                 onHistorySynced?.();
+                onConnectionChange?.(true);
               }
             })
             .catch((error: unknown) => {
@@ -354,13 +372,13 @@ export async function runSessionEventStreamLoop({
       cancelIdleReconciliation();
       cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, threadId);
       onCacheChange();
-      if (signal.aborted || sessionStreamShouldStop(streamError)) {
-        return;
-      }
+      if (signal.aborted) return;
+      if (sessionStreamShouldStop(streamError)) throw streamError;
       consecutiveFailures += 1;
       backoff = sessionStreamBackoff(streamError, backoff);
       await sleepWithAbort(Math.max(1000, backoff), signal).catch(() => undefined);
     } finally {
+      onConnectionChange?.(false);
       signal.removeEventListener('abort', abortAttempt);
     }
   }

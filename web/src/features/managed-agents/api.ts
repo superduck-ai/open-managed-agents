@@ -34,8 +34,6 @@ import {
   type MemoryStoreApiResponse,
   type PageCursor,
   type PageResponse,
-  type QuickstartCreateEnvironmentInput,
-  type QuickstartDeploymentInput,
   type QuickstartSessionEvent,
   type QuickstartStreamEvent,
   type SessionApiResponse,
@@ -49,7 +47,7 @@ import {
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from './types';
-import { isContentSha256, objectRecord, toRecord } from './utils';
+import { isContentSha256, toRecord } from './utils';
 
 export function workspaceHeaders(workspaceId: string) {
   return workspaceId ? { 'x-workspace-id': workspaceId } : undefined;
@@ -759,122 +757,6 @@ export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) 
     .join('|');
 }
 
-export function createQuickstartEnvironment(input: QuickstartCreateEnvironmentInput, workspaceId: string) {
-  const reuseEnvironmentId = typeof input.reuse_environment_id === 'string' ? input.reuse_environment_id.trim() : '';
-  if (reuseEnvironmentId) {
-    return retrieveManagedEntity('environments', reuseEnvironmentId, workspaceId) as Promise<EnvironmentApiResponse>;
-  }
-  return anthropicBetaApi.environments.create<EnvironmentApiResponse>(
-    quickstartEnvironmentRequestBody(input),
-    workspaceId,
-  );
-}
-
-export function quickstartEnvironmentRequestBody(input: QuickstartCreateEnvironmentInput | Record<string, unknown>) {
-  const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Quickstart environment';
-  const body: Record<string, unknown> = {
-    name,
-    metadata: {},
-    scope: 'organization',
-    config: quickstartEnvironmentConfig(input.config),
-  };
-  if (typeof input.description === 'string' && input.description.trim()) {
-    body.description = input.description.trim();
-  }
-  return body;
-}
-
-export function quickstartEnvironmentConfig(configValue: unknown) {
-  const config = objectRecord(configValue);
-  if (config.type === 'self_hosted') {
-    return { type: 'self_hosted' };
-  }
-  return {
-    type: 'cloud',
-    packages: quickstartEnvironmentPackages(config.packages),
-    networking: quickstartEnvironmentNetworking(config.networking),
-  };
-}
-
-export function quickstartEnvironmentPackages(packagesValue: unknown) {
-  const packages = objectRecord(packagesValue);
-  return {
-    pip: quickstartPackageList(packages.pip),
-    npm: quickstartPackageList(packages.npm),
-    apt: quickstartPackageList(packages.apt),
-    cargo: quickstartPackageList(packages.cargo),
-    gem: quickstartPackageList(packages.gem),
-    go: quickstartPackageList(packages.go),
-  };
-}
-
-export function quickstartPackageList(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-}
-
-export function quickstartEnvironmentNetworking(networkingValue: unknown) {
-  const networking = objectRecord(networkingValue);
-  if (networking.type === 'limited') {
-    const allowedHosts = Array.isArray(networking.allowed_hosts)
-      ? networking.allowed_hosts.filter((host): host is string => typeof host === 'string')
-      : [];
-    return {
-      type: 'limited',
-      allow_mcp_servers: networking.allow_mcp_servers === true,
-      allow_package_managers: networking.allow_package_managers === true,
-      allowed_hosts: allowedHosts,
-    };
-  }
-  return { type: 'unrestricted' };
-}
-
-export function createQuickstartVault(input: Record<string, unknown>, workspaceId: string) {
-  const displayName =
-    typeof input.display_name === 'string' && input.display_name.trim()
-      ? input.display_name.trim()
-      : typeof input.name === 'string' && input.name.trim()
-        ? input.name.trim()
-        : 'Quickstart vault';
-  return anthropicBetaApi.vaults.create<VaultApiResponse>({ display_name: displayName, metadata: {} }, workspaceId);
-}
-
-export function createQuickstartVaultCredential(vaultId: string, input: Record<string, unknown>, workspaceId: string) {
-  const displayName =
-    typeof input.display_name === 'string' && input.display_name.trim()
-      ? input.display_name.trim()
-      : typeof input.name === 'string' && input.name.trim()
-        ? input.name.trim()
-        : 'Quickstart credential';
-  const auth = input.auth && typeof input.auth === 'object' && !Array.isArray(input.auth) ? input.auth : null;
-  if (!auth) {
-    throw new Error('Credential auth is required before a vault credential can be created.');
-  }
-  return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
-    vaultId,
-    { display_name: displayName, auth, metadata: {} },
-    workspaceId,
-  );
-}
-
-export function createQuickstartSession(
-  agent: AgentApiResponse,
-  environmentId: string,
-  vaultIds: string[],
-  workspaceId: string,
-) {
-  return anthropicBetaApi.sessions.create<SessionApiResponse>(
-    {
-      title: null,
-      agent: { type: 'agent', id: agent.id, version: agent.version },
-      environment_id: environmentId,
-      vault_ids: vaultIds,
-      metadata: {},
-      resources: [],
-    },
-    workspaceId,
-  );
-}
-
 export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
   return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
@@ -923,48 +805,6 @@ export function interruptQuickstartSession(sessionId: string, workspaceId: strin
     },
     workspaceId,
   );
-}
-
-export async function streamQuickstartSessionEvents({
-  sessionId,
-  workspaceId,
-  signal,
-  onEvent,
-}: {
-  sessionId: string;
-  workspaceId: string;
-  signal: AbortSignal;
-  onEvent: (event: QuickstartSessionEvent) => void;
-}) {
-  const headers = new Headers({ Accept: 'text/event-stream' });
-  if (workspaceId) {
-    headers.set('X-Workspace-ID', workspaceId);
-  }
-  const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?beta=true`, {
-    credentials: 'include',
-    headers,
-    signal,
-  });
-
-  if (!response.ok || !response.body) {
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const parsed = consumeSseBuffer<QuickstartSessionEvent>(buffer);
-    buffer = parsed.remaining;
-    parsed.events.forEach((event) => onEvent(event.data));
-  }
-  buffer += decoder.decode();
-  consumeSseBuffer<QuickstartSessionEvent>(`${buffer}\n\n`).events.forEach((event) => onEvent(event.data));
 }
 
 export async function streamSessionEvents({
@@ -1598,39 +1438,6 @@ export function sleepWithAbort(ms: number, signal: AbortSignal) {
     }, ms);
     signal.addEventListener('abort', abort, { once: true });
   });
-}
-
-export function createQuickstartDeployment(
-  agent: AgentApiResponse,
-  environmentId: string,
-  vaultIds: string[],
-  input: QuickstartDeploymentInput,
-  workspaceId: string,
-) {
-  const timezone =
-    typeof input.timezone === 'string' && input.timezone.trim()
-      ? input.timezone.trim()
-      : Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return anthropicBetaApi.deployments.create<DeploymentApiResponse>(
-    {
-      name: input.name?.trim() || 'Quickstart deployment',
-      agent: { type: 'agent', id: agent.id, version: agent.version },
-      environment_id: environmentId,
-      ...(vaultIds.length ? { vault_ids: vaultIds } : {}),
-      initial_events: [
-        {
-          type: 'user.message',
-          content: [{ type: 'text', text: input.initial_message?.trim() || 'Run the scheduled quickstart task.' }],
-        },
-      ],
-      schedule: {
-        type: 'cron',
-        expression: input.cron_expression?.trim() || '0 9 * * 1',
-        timezone,
-      },
-    },
-    workspaceId,
-  );
 }
 
 export async function postQuickstartProxyStream({

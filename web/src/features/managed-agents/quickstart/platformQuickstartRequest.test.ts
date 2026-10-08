@@ -5,7 +5,6 @@ import {
   buildQuickstartTurnContextText,
   platformQuickstartToolNames,
 } from './platformQuickstartRequest';
-import { quickstartToolResultText } from './quickstartPromptText';
 
 const configuredModelID = 'kimi-k2.5';
 
@@ -196,22 +195,5 @@ describe('platform quickstart request builder', () => {
 
     expect(text).toContain('我正在构建一个 agent。这是我的描述：');
     expect(text).toContain('"构建一个汇总收件箱发票邮件的发票跟踪器。"');
-  });
-
-  test('localizes model-facing tool results without translating technical identifiers', () => {
-    const english = quickstartToolResultText('en');
-    const chinese = quickstartToolResultText('zh-CN');
-
-    expect(english.environmentCreated('env_123')).toBe('Environment created (id: env_123).');
-    expect(chinese.environmentCreated('env_123')).toBe('已创建环境（id: env_123）。');
-    expect(chinese.deploymentCreated('deployment_123')).toContain('deployment_123');
-    expect(chinese.sessionCreatedWithMessage('session_123', 'Run the report')).toContain('session_123');
-    expect(chinese.sessionCreatedWithMessage('session_123', 'Run the report')).toContain('Run the report');
-    expect(chinese.webSearchUpstream).toContain('web_search');
-    expect(english.questionSkipped).toBe('Skipped.');
-    expect(chinese.questionSkipped).toBe('已跳过。');
-    expect(chinese.agentCreated).toBe('Agent 已创建。');
-    expect(chinese.refineAgentConfig).toBe('我想在创建前继续调整配置。');
-    expect(chinese.keepRefining).toBe('继续调整。');
   });
 });

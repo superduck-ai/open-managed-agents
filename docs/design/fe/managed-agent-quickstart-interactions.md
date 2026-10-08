@@ -1,155 +1,72 @@
 # Managed Agent Quickstart 交互与响应式布局
 
-## 状态
+## 范围与目标
 
-本文记录 `/workspaces/{workspace_id}/agent-quickstart` 的对话呈现、问题确认和顶部进度条契约。键盘发送行为仍由 [Managed Agent Quickstart Composer 键盘交互](./managed-agent-quickstart-composer.md) 定义；模型提示词语言由 [Quickstart / Agent Builder 提示词 i18n](./agent/quickstart-prompt-i18n.md) 定义。
+`/workspaces/{workspace_id}/agent-quickstart` 使用四步确定性配置：选择起始点、配置 Agent、配置环境、第一个 API 调用。目标是先完成一轮真实对话，再进入完整资源管理。此前由 Builder 模型编排环境、Vault、部署与集成的流程已移除；Agent 创建对话框中的 Builder 继续使用原有请求与提示词模块。
 
-## 目标
+参考资料来自用户提供的 `oma-quickstart-handoff.zip`。资料中的原型用于流程与视觉参考，不直接迁入其模拟资源、认证或请求脚本。原流程与后端约束分析保存在 [简化研究](./managed-agent-quickstart-simplification-research.md)。
 
-- 把 Quickstart 呈现为连续的对话记录，使用户能够回看每一次说明、工具动作、问题和结果。
-- 让一个问题集中的答案在提交前可检查、切换和修改，避免点击单个选项时意外提交。
-- 在宽屏展示完整步骤名称，在窄屏保持进度条居中且不产生横向溢出。
-- 保持模型会话、API payload、Quickstart step key 和已有资源写入流程不变。
+## 四步流程
 
-## 对话记录
+| 步骤            | 用户操作                                                         | 请求与完成条件                                                                |
+| --------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 选择起始点      | 默认 Hello World；可选研究、数据分析、领域追踪、代码评审、自定义 | 卡片只选择草稿；点击开始配置后进入表单；不写入资源                            |
+| 配置 Agent      | 名称、可选描述、可用模型、系统提示词                             | 明确新建或选择同名已有 Agent；成功保存或确认复用后推进                        |
+| 配置环境        | 选择当前工作区可用环境，或明确新建                               | 优先选择实际存在的 Default；仅一个可用环境时选择它；没有 Default 时不自动创建 |
+| 第一个 API 调用 | 准备应用密钥、查看三个请求、在线测试                             | 首次发送才创建 Session；先订阅并同步完整历史，再投递消息                      |
 
-Quickstart 的文本消息、状态、工具调用、问题集和完成结果都按发生顺序进入同一个 transcript。等待用户输入的 Interaction card 不再从 transcript 中抽出，也不固定在 composer 上方。
+场景说明明确依赖用户提供的数据、主题、来源或代码。模板仅配置系统提示词与核心工具集，不自动授权私有系统，也不承诺创建定时任务。当前模型 API 没有独立的默认模型标记；使用其第一项作为初始模型，与服务端 Workbench 的 `default_prompt_settings.model_name` 规则一致，用户可以在表单中更改。
 
-这项设计有两个直接结果：
+同名 Agent 不自动复用。用户选中候选时展示服务端保存的名称、描述、模型和提示词，字段只读；选择新建恢复自己的草稿。同名候选可通过 ID 区分。空描述不发送；新建时必填字段缺失或模型不在可用列表时不能提交，复用时保留已有空提示词。复用 GET 示例固定到当前选择的 Agent 版本。
 
-- 用户可以在原始上下文中查看待回答问题，并在完成后继续回看选择结果；
-- transcript 是唯一的对话顺序来源，不再同时维护滚动消息和 pinned interaction 两套呈现位置。
+新环境复用现有环境表单的标准 cloud 配置与 limited 网络默认值。所有环境页都扫描，包含归档资源以检测名称占用；新建名称去除前后空格后，与可用同名环境匹配则复用，归档同名则禁用提交并提示更名。自托管环境保留选择入口，并提示需要执行服务。
 
-Transcript 由 `MessageScroller` 的 `autoScroll` 跟随底部；单条消息、流式状态和错误状态都不设置 `scrollAnchor`。因此新增内容保持在 composer 上方可见，不通过尾部 spacer 把最新消息固定到滚动区顶部。
+## 草稿、绑定与写入恢复
 
-连续的同一发言方内容组成一个视觉消息组。消息组的第一项显示头像和发言方名称，后续相邻项复用该视觉上下文；状态行不会改变前后内容的发言方归属。
+表单草稿按场景保存。再次选择同一场景不重置输入；返回起始页、返回配置与切换 API 请求不创建资源。非凭据草稿、已确认 ID、Session 绑定以及未确认请求标记保存在当前标签页的 sessionStorage，键包含账号和工作区。存储失败有可见提示，服务端资源仍是事实来源。
 
-消息分组由 transcript 层统一决定。每个带发言方的可见项只向 `QuickstartTurnGroup` 声明自己是否延续上一视觉消息组，具体文本、工具卡、流式状态和错误状态从 turn group 上下文读取头像、名称、间距和缩进规则。工具卡不接收也不透传 `hideHeader` 一类消息 chrome 参数。
+资源查询与缓存以账号、工作区隔离。切换上下文使原页面卸载；旧请求可以在原工作区完成，但不能更新新工作区的 UI。刷新后重新读取可用资源，失效的 Agent 或环境 ID 清理，并退回对应配置步骤。
 
-原始 `chatItems` 不直接参与分组。`transcriptModel` 先把它们归一化为可见 presentation，过滤没有可见文本的消息，并从 `toolPresentation` 读取工具是否占用发言方；随后只在这份可见序列上计算 `continued`。renderer 消费同一份 presentation，不再单独通过返回 `null` 改变可见性。
+顶部与底部返回使用同一导航条件：请求中或存在未确认创建结果时禁止切换步骤；返回只切换界面，不写入资源。配置 Agent 可从起始页进入；只有已选择实际存在且模型可用的 Agent，才能进入环境；同时选择可用环境后才能进入最终页。返回前面的步骤不会清除这些资源或让后续入口失效。更换场景、新建 Agent 草稿或选择尚未创建的环境时，后续入口随依赖失效而禁用；顶部跳转不会绕过创建或自动提交。底部继续按钮在新建时明确执行保存，在复用时确认已有选择。第一步没有上一环节，最后一步提供查看 Agent 的结束入口，不添加第五步。
 
-流式 `Thinking` 和请求错误是临时的 assistant turn，也参与相同的分组规则：如果前一个可归属项已经是 assistant，它们复用该组的头像和名称；如果前一个可归属项是 user，它们开启新的 assistant 组。请求错误只有这一份临时 turn，不再同时写入永久 status item。普通状态行以及 `list_environments`、`list_vaults`、`flag_schedule_intent` 这类紧凑状态工具不占用发言方，也不切断前后的视觉消息组。
+Session 绑定由 Agent ID、版本和环境 ID 组成。绑定相同时保留 Session 与对话；资源组合改变则使用新上下文，直到下一次发送才创建 Session。显式开始新的测试对话也只清除绑定，不立即 POST。运行中、等待工具确认或发送结果不确定时，不能清除当前会话来隐式重试。
 
-```mermaid
-flowchart TD
-  Model["模型返回 tool_use"] --> Item["Interaction card 加入 transcript"]
-  Item --> Awaiting["状态：awaiting_user"]
-  Awaiting --> Draft["用户编辑本地草稿答案"]
-  Draft --> Confirm["用户显式确认"]
-  Confirm --> Result["生成一个 tool_result"]
-  Result --> Completed["原卡片保留在 transcript 并显示完成结果"]
-  Completed --> Continue["模型继续下一轮"]
-```
-
-## 问题集与显式确认
-
-`ask_user_questions` 的一次 tool call 构成一个 Question set，可以包含一个或多个问题。
-
-等待确认的 Questionnaire 使用 shadcn 官方 styled component 的扁平组合：表单不再额外包一层卡片边框，选项自身承担交互边界；内容宽度限制为 `max-w-xl`，与 assistant 文本气泡保持接近，并保留官方标题、选项和操作区的默认间距。已提交摘要仍可使用紧凑卡片承载回看入口。
-
-### 单个问题
-
-- 单选、多选和 Other 输入都只更新本地草稿；单选题的选项与 Other 互斥，多选题可以同时保留选项和 Other，选择或输入都不会自动提交。
-- 只有草稿包含至少一个选项或非空 Other 内容时，Confirm 才可用。
-- 点击 Confirm 后一次性生成该问题集的 `tool_result`。
-- Skip 保留既有语义：结束整个问题集并把跳过结果返回模型。
-
-### 多个问题
-
-- 卡片一次展示一个问题，并显示当前位置，例如 `1/3`。
-- 非最后一个问题使用 Next；当前问题没有答案时 Next 不可用。
-- Previous 返回上一题，并保留每一题已经选择的选项和 Other 输入。
-- 最后一题使用 Confirm；确认时按原始问题顺序一次性提交整个问题集的答案。
-- 在 Confirm 之前，不向模型发送部分答案，也不启动下一轮模型请求。
-- 存在等待确认的 Question set 时，底部 Reply composer 保持可编辑但禁止发送；发送按钮、Enter 路径和提交 handler 使用同一阻断条件，不能通过自由文本绕过 Explicit confirmation。
-- 如果 `ask_user_questions` 的输入无法解析为可渲染的 Question set，Interaction card 降级为通用工具卡，但不阻断 Reply composer；用户可以通过自由文本完成等待中的工具调用，避免 Quickstart 进入没有可用操作的等待状态。
-- 多问题确认完成后，卡片默认收起为完成摘要。用户可以点击 Review answers 展开只读结果；展开时从第一题开始，并可用 Previous/Next 在全部已提交答案之间切换。
-- 单问题完成卡继续直接显示结果，不增加可折叠回看交互；多问题专属的折叠与只读导航不会改变单问题行为。
+Agent、Environment、Session 的创建都带 `metadata.quickstart_operation_id`。发送前记录未确认操作，成功保存真实返回 ID 后才推进。确定的 4xx 失败保留输入并允许显式重试；网络或 5xx 的不确定结果禁止再次创建，提供“检查已保存结果”，扫描当前工作区全部分页并按精确操作标记恢复唯一资源。没有结果或发现多个结果时保持阻止状态，提示检查资源。该标记用于恢复，不能当作服务端幂等键，也不能解决服务端并发写入本身。
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Editing
-  Editing --> Editing: 选择 / 取消选择 / 编辑 Other
-  Editing --> NextQuestion: Next 且当前题有答案
-  NextQuestion --> Editing: 展示下一题
-  Editing --> PreviousQuestion: Previous
-  PreviousQuestion --> Editing: 恢复上一题草稿
-  Editing --> Submitted: 最后一题 Confirm
-  Editing --> Skipped: Skip 整个问题集
-  Submitted --> [*]
-  Skipped --> [*]
+  [*] --> 草稿
+  草稿 --> 请求中: 明确提交
+  请求中 --> 已确认: 保存返回 ID
+  请求中 --> 草稿: 确定拒绝
+  请求中 --> 结果未确认: 网络或服务端错误
+  结果未确认 --> 已确认: 找到唯一操作标记
+  结果未确认 --> 结果未确认: 未找到或多个结果
+  已确认 --> 下一步
 ```
 
-## 顶部进度条
+## 在线测试与历史
 
-进度条始终位于三列 header 的中间列。左右列使用相同的弹性宽度，因此左侧 Quickstart 操作和右侧 Test run 操作不会改变进度条相对于页面的水平中心。
+在线测试使用 Cookie、组织/工作区上下文与现有 SDK 的 CSRF 处理，不要求输入 API 密钥。首次发送先保存 Session，然后复用 `useSessionDetailEventData` 的 SSE、分页历史、按精确事件 ID 合并、断线重连和 idle 校对能力。发送必须等待本次流连接的历史同步完成；单独完成历史回补不能代表当前 SSE 已连通。准备连接等待上限为 30 秒，超时保留消息并允许用户显式重试；卸载时终止等待与订阅。
 
-### 宽屏
+对话复用 `SessionTranscriptView`、公开 Thinking 渲染和 `SessionRequiresActionCard`，工具批准、拒绝及问题回答通过现有公开事件接口发送。Stop 发送 `user.interrupt`。返回配置不等于停止后台执行。点击成功投递后，共享 `FollowSentSessionMessage` 恢复跟随末尾；手动阅读历史时继续沿用 MessageScroller 的跟随规则，不设置 User 行 anchor。
 
-- 从 Tailwind `xl` 断点（`1280px`）开始使用宽屏呈现，覆盖 14 寸 MacBook 常见的 `1512px` CSS 视口。
-- 显示步骤编号或完成勾、完整的本地化步骤名称以及标准宽度连接线。
-- active step 使用 `aria-current="step"`；completed step 使用完成勾。
+消息已接受、Agent 运行和对话完成分别呈现。只有最后一个 User 消息后出现回复，并观察到正常结束的 idle 事件且没有待确认工具，才显示首次对话完成；创建 Session 的初始 idle 不能表示完成。失败终止保留对话与错误，不伪造成功。当前轮存在用户中断时，部分输出加 idle 也不能显示完成；停止后显示“测试已停止”，公开终止状态优先于旧的 idle 历史。Quickstart 不把中断控制事件作为原始 JSON 消息展示，完整事件仍保留在会话详情。
 
-### 窄屏
+发送前保存未确认消息标记；确定拒绝允许显式重试，网络或服务端错误保持标记，刷新页面也不会自动重发。用户应先刷新并核对对话，再通过独立按钮解除阻止；解除本身不发送消息。请求层关闭自动 POST 重试。工具和停止操作也没有自动重试。
 
-- 隐藏步骤名称的可见文本，只保留编号或完成勾。
-- 缩短连接线和进度条横向 padding。
-- 完整步骤名称仍通过仅供辅助技术读取的文本暴露。
-- 不使用横向滚动；紧凑后的进度条仍作为一个整体居中。
+## 应用接入示例
 
-宽窄模式只改变呈现密度，不改变当前步骤、完成状态或可访问名称。
+示例使用当前 `anthropicBaseURL()` origin、工作区头、实际 Agent ID/版本和环境 ID。密钥固定为 `YOUR_API_KEY`，文案明确前往当前工作区的「API 密钥」页面创建，链接跳转现有工作区密钥管理，不读取或保存真实密钥。配置页复用已有资源时展示 GET；新建时展示对应 POST。JSON 使用统一序列化与安全的 shell 单引号转义。
 
-## 头像与认证上下文
+最终页依实际执行顺序展示创建会话、接收回复、发送消息。创建请求不展示 Session ID 输入，并解释响应 `id` 是后续请求的会话标识。只有展开接收回复或发送消息时才提供输入，两个请求共享填写值，用同一个 ID 指定同一次对话。应用示例不自动填入在线测试会话，用户应填写应用创建请求的响应 ID；在线测试单独自动创建 Session。先在终端 A 打开 SSE 并等待 connected，再在终端 B 投递；SSE 是实时流，不承诺 Last-Event-ID 重放。
 
-Quickstart 使用 `boring-avatars` 为助手和当前登录用户生成稳定头像。用户头像 seed 来自认证上下文中的 email 或 account UUID；助手使用固定 seed。Quickstart 位于登录后控制台，必须处于 `AuthProvider` 内：缺少 Provider 属于应用接线错误，不进行静默降级。
+请求采用 curl 与 Highlight.js 显式 bash 语言。长行自动换行；复制成功有反馈，失败可手动选中。一次只展开一个请求。独立 API origin 的部署仍需使用其可访问的对外地址；开发环境示例指向本地 Vite 代理。
 
-头像色板和边框使用 shadcn 语义主题令牌。`boring-avatars` 的颜色从 `--chart-*` 变量取得，边框使用 `border-border` 或其他语义令牌；不在 feature 中硬编码十六进制色板或 `zinc-*` 明暗分支。
+## 布局与验收
 
-测试必须显式提供认证上下文，并验证用户与助手消息仍包含头像的可访问名称。
+顶部四步整体居中，圆形节点由连续引导线连接，完整标签可换行；明暗主题的步骤按钮悬浮时保持透明背景，保留键盘焦点提示；当前位置与已具备资源条件的步骤分别展示数字和勾选。Hello World 作为独立推荐入口占满一行，使用更大的标题、图标与首次体验说明；下方四个应用场景以两列两行排列，自定义入口在底部占满一行。手机全部使用单列，六个场景仍属于同一个单选组；选择只修改草稿，开始配置动作保持在底部。配置页左表单、右请求，桌面用独立垂直边界分隔，窄屏用水平边界分隔；环境选择卡片约 72px 高，最大宽度 440px，新建与已有卡片均占满容器宽度。四步共用整页宽度的底部操作栏与分隔线，返回在左，继续或最终查看 Agent 固定对齐页面右边缘。桌面页面至少占满可用视口高度，四步使用相同上下留白，操作栏通过弹性布局落在页面底部，不随较短的环境配置内容上移；内容较长时自然滚动，操作栏保留在正文之后。配置步骤的操作栏位于表单与 API 两列之外，底部提交按钮通过原生 form 关联对应表单，保留校验、Enter 提交与保存成功后推进的行为；起始页不再单独限制宽度。窄屏操作项换行时仍向右对齐。最终页左应用调用、右单一完整对话，860px 以下上下排列并优先显示在线测试；桌面最终页按视口高度分配剩余空间，API 区与对话等高，返回和查看 Agent 在首屏底部可见；API 示例与消息分别在区域内滚动，展开请求不增加整页高度。手机对话区 380px，页面自然滚动；桌面最终页最小高度 640px，极矮窗口保留必要阅读和操作空间并允许整页滚动。对话标题与 composer 固定，消息内部滚动。所有页面使用语义主题令牌。
 
-## 前端模块边界
+主要回归入口是 `quickstart/AgentQuickstartPage.test.tsx`，覆盖失败恢复、同名选择、草稿/刷新、环境分页与归档名称、真实请求示例、延迟 Session 创建、订阅先于投递、完成判断、连续对话、不确定发送恢复和工具/中断接口。现有模型权限门控测试保留，Session 数据 hook 与 stream loop 测试继续验证共享历史能力。
 
-```mermaid
-flowchart LR
-  Page["AgentQuickstartPage"] --> Components["Quickstart 展示组件"]
-  Components --> Transcript["transcriptModel：可见 presentation 与 continued"]
-  Transcript --> TurnGroup["QuickstartTurnGroup：视觉消息分组 interface"]
-  TurnGroup --> ChatLayout["chatLayout：头像、名称、间距与状态 turn"]
-  Components --> Chat["chatModel：文本与聊天状态"]
-  Components --> Questions["questions/：问题集状态、编辑与回看"]
-  Questions --> QuestionModel["questionModel：问题 payload 解析"]
-  Components --> Vaults["vaultModel：vault / MCP 映射"]
-  Components --> Tools["toolPresentation：工具标签、图标与布局元数据"]
-  Transcript --> Tools
-  Header["QuickstartHeader"] --> Steps["steps：步骤常量与类型"]
-  Labels["labels：本地化标签映射"] --> Steps
-```
-
-- `steps` 是步骤名称与类型的事实来源，展示组件和标签映射只单向依赖它。
-- 聊天状态、可见 transcript presentation、问题集交互、vault 映射和工具展示元数据分别演进，不放入兜底 `utils` 模块。
-- `components.tsx` 保留现有公共导出外观，避免页面入口承担与本次重构无关的导入迁移。
-- `transcriptModel` 是原始聊天状态与可见 transcript 之间的 seam。它通过一个纯 interface 返回可见 entries、`continued` 和最后一个发言方，测试不需要进入 renderer 内部。
-- `QuickstartTurnGroup` 是可见 transcript 与视觉消息 chrome 之间的 seam。transcript 只提供 `continued`，`chatLayout` 在该 interface 后集中处理所有 turn 的头像、名称、间距和缩进。
-- `AskUserQuestionsCard` 配合 shadcn Questionnaire 管理逐题草稿、导航和一次性提交；`SubmittedQuestionSet` 只负责已提交结果的回看。
-- `toolPresentation` 同时提供展示布局与 `occupiesSpeaker`，renderer 和 transcript 分组共用同一份工具元数据。
-
-## 工具动作呈现
-
-- 工具调用必须在 transcript 中留下可回看的可见结果，不通过名称白名单把工具动作从视觉记录中删除。
-- `flag_schedule_intent` 仍保持即时完成，不改变官方模型工具 schema、请求 payload 或部署状态流；UI 使用现有本地化 tool result 渲染紧凑状态行，避免为内部状态更新展示笨重的通用工具卡。
-- `list_environments`、`list_vaults` 和 `flag_schedule_intent` 的紧凑状态行不声明 assistant 发言方，因此不会切断或错误延续相邻的文本消息组。
-- 未知工具继续使用既有 fallback：把工具名中的下划线转换为空格，并使用 Terminal 图标。模块抽取不得顺带改变 fallback 文案或图标。
-
-## 验收
-
-- 单问题单选后不会自动发送；点击 Confirm 后只发送一次。
-- 多问题可以 Next/Previous，返回上一题时草稿保持不变，最后 Confirm 一次性提交全部答案。
-- 多问题完成卡默认收起，可展开并用 Previous/Next 回看全部已提交答案；单问题完成卡仍直接显示结果。
-- 待回答与已完成的问题卡都位于 transcript 内，不存在独立 pinned interaction 容器。
-- 连续同一发言方的消息只在组首显示头像和名称。
-- 流式与错误 turn 遵循同一分组规则，不重复显示连续 assistant 组的头像和名称。
-- 新消息、流式状态和问题卡跟随 transcript 底部，消息列表末尾不保留锚定 spacer。
-- `flag_schedule_intent` 以紧凑状态行保留在 transcript 中；未知工具保持既有的人类可读 fallback 和 Terminal 图标。
-- 窄屏模式隐藏可见步骤名称、缩短连接线、无横向溢出，进度条仍居中且完整名称可被辅助技术读取。
-- 缺少 `AuthProvider` 时不静默降级；测试环境显式注入认证上下文。
-- 运行 Quickstart 窄范围测试、`bun run build`、格式、命名、复杂度和重复代码门禁。
+UI 验收需重启前端并在浏览器检查宽屏、窄屏、明暗主题、键盘和内部滚动。相关后端链路使用 verify-be 的 chat roundtrip、tools、reliability、public；这些场景使用真实 Worker 和本地依赖、脚本化上游模型，不代表外部云分配、实际模型质量或浏览器通过。

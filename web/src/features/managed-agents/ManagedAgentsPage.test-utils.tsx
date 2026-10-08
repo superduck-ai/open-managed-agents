@@ -334,6 +334,7 @@ export type MockAgentsApiOptions = {
   mcpTunnels?: Array<Record<string, unknown>>;
   mcpTunnelProbeResult?: Record<string, unknown>;
   mcpDirectoryErrorOnce?: boolean;
+  workspaceMCPServers?: Array<Record<string, unknown>>;
   mcpTunnelsErrorOnce?: boolean;
   mcpToolCatalogs?: Array<Record<string, unknown>>;
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
@@ -491,6 +492,13 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'MCP directory unavailable' } }, 503);
       }
       return jsonResponse({ servers: options.mcpDirectoryServers ?? [] });
+    }
+
+    if (
+      url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_servers(?:\?|$)/) &&
+      method === 'GET'
+    ) {
+      return jsonResponse({ data: options.workspaceMCPServers ?? [], next_page: null });
     }
 
     if (url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\?/) && method === 'GET') {

@@ -77,7 +77,7 @@ export const consoleNavigation: NavItem[] = [
       { href: '/workbench', label: 'Workbench', labelId: 'nav.workbench', hidden: true },
       { href: '/files', label: 'Files', labelId: 'nav.files' },
       { href: '/skills', label: 'Skills', labelId: 'nav.skills' },
-      // Temporarily hidden from the sidebar; this entry stays so the route can be restored.
+      { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers' },
       { href: '/batches', label: 'Batches', labelId: 'nav.batches', hidden: true },
     ],
   },
@@ -180,6 +180,7 @@ export const placeholderIcons = {
   '/playground': Braces,
   '/files': FileText,
   '/skills': ToggleLeft,
+  '/mcp-servers': Plug,
   '/batches': Receipt,
   '/quickstart': Bot,
   '/agents': Bot,

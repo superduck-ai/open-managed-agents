@@ -80,6 +80,9 @@ describe('ConsoleShell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build' }));
     expect(screen.getByRole('link', { name: 'Files' }).getAttribute('href')).toBe('/workspaces/default/files');
     expect(screen.getByRole('link', { name: 'Skills' }).getAttribute('href')).toBe('/workspaces/default/skills');
+    expect(screen.getByRole('link', { name: 'MCP Servers' }).getAttribute('href')).toBe(
+      '/workspaces/default/mcp-servers',
+    );
     expect(screen.queryByRole('link', { name: 'Workbench' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Batches' })).toBeNull();
 
@@ -203,6 +206,23 @@ describe('ConsoleShell', () => {
       .closest('[data-sidebar-scroll-area="true"]');
     expect(scrollArea).toBeTruthy();
     expect(scrollArea?.classList.contains('scrollbar-none')).toBe(true);
+  });
+
+  test('uses the wide build layout for MCP server routes', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/mcp-servers"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        onLogout={() => undefined}
+      >
+        <div>MCP server content</div>
+      </ConsoleShell>,
+    );
+
+    const content = screen.getByText('MCP server content').parentElement;
+    expect(content?.className).toContain('lg:px-8');
+    expect(content?.className).not.toContain('max-w-[928px]');
   });
 
   test('collapses and expands the desktop sidebar from the sidebar rail', () => {
@@ -619,6 +639,27 @@ describe('ConsoleShell', () => {
 
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/workspaces/wrkspc_foo/agents'));
     expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
+  });
+
+  test('keeps the MCP server subroute when selecting another workspace', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers/mcpsrv_test');
+    const navigate = mock(async () => undefined);
+
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/mcp-servers/mcpsrv_test"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        onLogout={() => undefined}
+        onNavigate={navigate}
+      >
+        <div>MCP server content</div>
+      </ConsoleShell>,
+    );
+
+    fireEvent.click(getWorkspaceMenuButton(/Default/i));
+    fireEvent.click(screen.getByRole('menuitem', { name: /foo/i }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/workspaces/wrkspc_foo/mcp-servers/mcpsrv_test'));
   });
 
   test('syncs the workspace selector from workspace-scoped routes', async () => {

@@ -25,12 +25,13 @@ type sandboxLifecycleScope struct {
 	SandboxUUID      string
 }
 
-// SandboxLifecycleMapper selects and claims idle sandbox attempts for deletion.
 type SandboxLifecycleMapper interface {
+	ListArchivedForSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) ([]sandboxLifecycleRow, error)
 	ListCandidates(ctx context.Context, cutoff time.Time, after string, limit int, reclaim bool) ([]sandboxLifecycleRow, error)
 	FindTarget(ctx context.Context, scope sandboxLifecycleScope) (sandboxLifecycleRow, bool, error)
 	LockTarget(ctx context.Context, scope sandboxLifecycleScope) (sandboxLifecycleRow, bool, error)
 	Claim(ctx context.Context, codeSessionUUID, sandboxUUID string, cutoff time.Time) (int64, error)
 	BeginStop(ctx context.Context, scope sandboxLifecycleScope) error
 	FinishStop(ctx context.Context, scope sandboxLifecycleScope) (int64, error)
+	BeginArchiveStop(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) error
 }

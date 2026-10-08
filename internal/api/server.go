@@ -87,6 +87,7 @@ type Server struct {
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
 	Prebuilds              *environments.Prebuilds
+	SandboxLifecycle       *environments.SandboxLifecycle
 	Config                 config.Config
 	DB                     *db.DB
 	Deployments            *deploymentsapi.Store
@@ -172,6 +173,9 @@ func NewServer(deps ServerDeps) *Server {
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")),
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:         deps.TunnelBroker,
+	}
+	if deps.SandboxLifecycle != nil {
+		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()

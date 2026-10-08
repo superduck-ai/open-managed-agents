@@ -6,6 +6,9 @@ import (
 )
 
 func validateWorkerEventStream(cfg WorkerEventStreamConfig) error {
+	if cfg.ConsumerInactiveThreshold <= 0 {
+		return errors.New("nats.worker_event_stream.consumer_inactive_threshold must be positive")
+	}
 	if cfg.MaxBytes <= 0 {
 		return errors.New("nats.worker_event_stream.max_bytes must be positive")
 	}

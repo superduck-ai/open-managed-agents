@@ -1,6 +1,7 @@
 package liveworker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -231,10 +232,83 @@ func waitRealWorker(t *testing.T, label string, ready func() bool) {
 }
 
 type realControlWorker struct {
-	container   string
-	mu          sync.Mutex
-	connections int
-	disconnect  context.CancelFunc
+	container        string
+	loseProcessedACK atomic.Bool
+	recordDeliveries atomic.Bool
+	deliveries       map[string]int
+	mu               sync.Mutex
+	connections      int
+	disconnect       context.CancelFunc
+}
+
+type workerStreamObserver struct {
+	io.ReadCloser
+	reader io.Reader
+}
+
+func (s *workerStreamObserver) Read(data []byte) (int, error) {
+	return s.reader.Read(data)
+}
+
+type workerEventTap struct {
+	worker  *realControlWorker
+	pending []byte
+}
+
+func (tap *workerEventTap) Write(data []byte) (int, error) {
+	if !tap.worker.recordDeliveries.Load() {
+		return len(data), nil
+	}
+	tap.pending = append(tap.pending, data...)
+	for {
+		end := bytes.Index(tap.pending, []byte("\n\n"))
+		if end < 0 {
+			if len(tap.pending) > 1<<20 {
+				return 0, fmt.Errorf("Worker SSE frame exceeds observation limit")
+			}
+			return len(data), nil
+		}
+		for _, line := range bytes.Split(tap.pending[:end], []byte("\n")) {
+			if !bytes.HasPrefix(line, []byte("data: ")) {
+				continue
+			}
+			var event struct {
+				ID   string `json:"event_id"`
+				Type string `json:"event_type"`
+			}
+			if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &event); err != nil {
+				return 0, fmt.Errorf("decode Worker SSE metadata: %w", err)
+			}
+			if event.ID != "" && (event.Type == "user" || event.Type == "user.message") {
+				tap.worker.mu.Lock()
+				tap.worker.deliveries[event.ID]++
+				tap.worker.mu.Unlock()
+			}
+		}
+		tap.pending = tap.pending[end+2:]
+	}
+}
+
+func (w *realControlWorker) retainedInput(t *testing.T) string {
+	t.Helper()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.deliveries) != 1 {
+		t.Fatalf("expected one observed input, got %d", len(w.deliveries))
+	}
+	for id, count := range w.deliveries {
+		if count != 1 {
+			t.Fatalf("input was already redelivered before consumer deletion: %d", count)
+		}
+		return id
+	}
+	return ""
+}
+
+func (w *realControlWorker) deliveredAgain(id string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.deliveries[id] >= 2
 }
 
 func (w *realControlWorker) reconnect(t *testing.T) {
@@ -257,10 +331,17 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 	t.Helper()
 	ingressToken, modelToken := f.token, f.modelToken
 	name := "oma-control-e2e-" + f.code.ExternalID
-	worker := &realControlWorker{container: name}
+	worker := &realControlWorker{container: name, deliveries: make(map[string]int)}
 	target, err := url.Parse(f.env.url)
 	requireOK(t, err)
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.StatusCode == http.StatusOK && strings.HasSuffix(response.Request.URL.Path, "/worker/events/stream") {
+			body := response.Body
+			response.Body = &workerStreamObserver{ReadCloser: body, reader: io.TeeReader(body, &workerEventTap{worker: worker})}
+		}
+		return nil
+	}
 	proxyURL := serveRealWorkerFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/worker/events/stream") {
 			ctx, cancel := context.WithCancel(r.Context())
@@ -270,6 +351,31 @@ func startRealControlWorker(t *testing.T, f *liveSession, modelURL string) *real
 			worker.disconnect = cancel
 			worker.mu.Unlock()
 			r = r.WithContext(ctx)
+		}
+		if worker.loseProcessedACK.Load() && strings.HasSuffix(r.URL.Path, "/worker/events/delivery") {
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			_ = r.Body.Close()
+			if err != nil {
+				http.Error(w, "read delivery fault request", http.StatusBadRequest)
+				return
+			}
+			var payload struct {
+				Updates []struct {
+					Status string `json:"status"`
+				} `json:"updates"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				http.Error(w, "decode delivery fault request", http.StatusBadRequest)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			for _, update := range payload.Updates {
+				if update.Status == "processed" {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "applied": len(payload.Updates), "ignored": 0})
+					return
+				}
+			}
 		}
 		proxy.ServeHTTP(w, r)
 	}))

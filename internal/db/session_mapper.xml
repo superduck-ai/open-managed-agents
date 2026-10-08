@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <mapper namespace="SessionMapper">
+    <select id="IsRetired" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM sessions
+            WHERE organization_uuid = #{organizationUUID}
+            AND workspace_uuid = #{workspaceUUID}
+            AND uuid = #{sessionUUID}
+            AND (archived_at IS NOT NULL OR deleted_at IS NOT NULL OR status = 'terminated')
+        )
+    </select>
     <sql id="usageIncrement">
         usage || jsonb_strip_nulls(jsonb_build_object(
             'input_tokens', COALESCE(CAST(usage-&gt;&gt;'input_tokens' AS bigint), 0) + #{usage.InputTokens},

@@ -242,9 +242,38 @@ consumer ACK floor。
 
 ## 升级边界
 
+### Session 永久结束与 consumer 自动回收
+
+Session 归档、删除或整体 `terminated` 的事务按 Session → Worker 的既有锁顺序完成状态转换，并终止租户范围内所有关联 Code Session（包括历史实例），清除 token/lease、推进 epoch，再通过同一个 Yourbatis SQL transaction executor 的 River 适配器持久化清理任务。入队失败则整个状态事务回滚。归档和整体终止保留公开历史；删除沿用软删除合同。Agent 归档不会触发此清理，也不会终止其已有 Session。
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant PG
+    participant River
+    participant NATS
+    Client->>API: archive / delete / terminate Session
+    API->>PG: 归档、终止关联 Code Session、推进 epoch、插入清理任务
+    PG-->>API: 同一事务提交
+    API-->>Client: 200
+    River->>NATS: 删除关联 task/reply consumer，purge 精确 subject
+    alt NATS 暂不可用
+        NATS-->>River: 错误
+        River->>PG: 保留任务并安排重试
+    else 成功或资源已不存在
+        River->>PG: 任务完成
+    end
+```
+
+事务返回后由 River 尽快执行，不把 NATS 清理放在 HTTP 请求内。任务保存稳定的租户、Session UUID 和关联 Code Session ID；排序后的参数对活跃任务去重，失败与进程重启沿用 River 的持久重试和 running job rescue。重试次数有限，耗尽后任务进入 discarded，本次没有增加自动对账扫描。已完成或已 discarded 的任务不阻止再次归档重新入队。清理重复执行安全，不依赖消息仍存在；不会 purge 共享 Stream 或其他 Session。
+
+epoch 在永久结束事务内推进，已有 Worker SSE 会按既有一秒校验间隔退出，旧凭证无法重新订阅或注册。订阅创建后、发出 HTTP 200 前再次检查 epoch。每个关联 Session 的 Worker 订阅在开始创建时分配稳定的关闭 ID，结束时先停止读取，再检查父 Session；仅父 Session 已永久结束或查询失败时独立持久化补偿任务，正常断连与 replacement 不产生无效清理任务。订阅创建失败但已经留下 consumer 时也进入该补偿路径。任务通过组织、工作区和 Session UUID 查询包含软删除记录的永久结束状态，仅在归档、删除或整体终止时 purge；记录不存在不视为永久结束，普通 Worker replacement 不会删除新连接共用的 consumer。补偿任务独立于归档任务去重，覆盖旧请求在归档清理完成之后才创建 consumer 的窗口。无父 Session 的独立 Code Session 不入队。关闭补偿入队使用独立的五秒 context。进程在重建 consumer 后、持久化补偿前崩溃时，consumer 由 NATS inactivity 回收；该窗口中的残留消息仍依赖逻辑到期扫描，不承诺即时 purge。归档与旧消息处理并发仍受既有 epoch/Session 锁保护，不承诺跨系统瞬时原子删除。常规断连、idle/paused 与 Agent archive 不调用此清理；Redis ACK key 沿用 TTL，不即时删除。无 River 的进程内 HTTP removal 组装保留同步清理路径；生产 main 必须注入已配置的 SessionCleanup，包含事件历史写入和线程终止派生的整体终态。River kind/queue 保留 `session_archive_cleanup`，使已有持久任务可继续执行。
+
+验收包含真实 PostgreSQL/River/NATS 的入队回滚、部分清理失败后 client 重启恢复、历史实例清理、重复归档、其他 subject 保留、已有 Worker stream 失效、延迟订阅重建后的补偿及普通 epoch replacement 保留 consumer；`chat reliability` 增加真实 Worker 完成后公开归档与两路 consumer 删除检查。
+
 旧 subject 中可能已有被任务阻塞的控制回应。仅增加新 consumer 不会自动移动这些存量消息。
-本次不提供存量迁移，也不自动恢复或删除旧对话，由用户另行处理。当前删除 API 拒绝
-`running/rescheduling` 状态；本次不改变删除限制，也不包含停止按钮修复。
+本次不提供存量迁移，也不自动恢复或删除旧对话，由用户另行处理。删除保留既有执行中禁止删除、尚未开始执行的已接收输入可取消的限制；本次不改变删除限制，也不包含停止按钮修复。
 新版本发布的控制回应使用独立通道。
 
 部署时先停止旧 API 实例，再启动新版本，避免旧实例继续写入旧 subject，或将 `.reply` subject
@@ -263,3 +292,12 @@ LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE
 仍能在重连后作为独立任务执行。中断与未知回应通过生产入队服务注入；不验证公共停止按钮。
 需要本地已有 sandbox 镜像和 Docker，可通过 `OMA_WORKER_CONTROL_IMAGE` 固定镜像。
 测试不应指向生产或有用户正在工作的环境，结束后停止专用测试 API 和依赖。
+
+
+`nats.worker_event_stream.consumer_inactive_threshold` 默认 `5m`，必须为正数。两路 consumer 创建和服务启动时使用相同值。启动扫描只更新名称、durable、精确 subject 均匹配本项目的 pull consumer，仅修改阈值，保留 ACK、退避和队列配置。更新使用 UpdateConsumer，不重建扫描期间已经删除的 consumer；所有 API 实例必须同步配置，避免相互覆盖。
+
+阈值衡量 consumer 的拉取活动，不衡量 Session idle 时长。仍在 Fetch 的 Worker 保持 consumer。沙箱 idle timeout 沿用现有回收流程，Worker 停止后由 NATS 处理无活动 consumer。待 ACK 的消息和 BackOff 会延后回收，`5m` 不表示断线后精确五分钟删除。
+
+临时 consumer 回收不 purge subject。WorkQueue 保留未 ACK 消息，下一次订阅按 DeliverAll 重建 consumer，使用原 event ID 投递。已 ACK 消息已从 Stream 移除。在途消息可再次投递，Worker 必须按 event ID 保持处理幂等；该机制不提供跨进程工具副作用的 exactly-once 保证。旧 SSE 退出仅停止本地 Fetch，禁止删除新连接共享的 consumer。
+
+新增验收覆盖两路 consumer 真实过期、未 ACK 消息及 ID 保留、重建后 ACK 排空、活跃 pull 与旧连接关闭不误删、存量阈值更新和外部 consumer 保留；删除/整体终态的事务回滚、历史 Worker 清理、软删除后的晚订阅补偿与子线程归档保留父会话队列。

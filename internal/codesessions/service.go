@@ -23,16 +23,33 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
-	eventPayloads          *eventpayload.Store
-	db                     *db.DB
-	credentials            *SessionCredentials
-	logger                 *slog.Logger
-	sink                   PublicEventSink
-	sandboxTimeoutExtender SandboxTimeoutExtender
-	sandboxTimeout         time.Duration
-	workerEvents           workerevents.Broker
-	workerEventAcks        workerevents.AckStore
-	workerEventObjects     storage.ObjectStore
+	eventPayloads             *eventpayload.Store
+	db                        *db.DB
+	credentials               *SessionCredentials
+	logger                    *slog.Logger
+	sink                      PublicEventSink
+	sandboxTimeoutExtender    SandboxTimeoutExtender
+	sandboxTimeout            time.Duration
+	workerEvents              workerevents.Broker
+	workerEventAcks           workerevents.AckStore
+	workerEventObjects        storage.ObjectStore
+	closedSubscriptionCleanup func(context.Context, db.CodeSession, string) error
+}
+
+func (s *Service) WithClosedSubscriptionCleanup(cleanup func(context.Context, db.CodeSession, string) error) *Service {
+	s.closedSubscriptionCleanup = cleanup
+	return s
+}
+
+func (s *Service) reclaimClosedSubscription(codeSession db.CodeSession, subscriptionID string) {
+	if s.closedSubscriptionCleanup == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.closedSubscriptionCleanup(ctx, codeSession, subscriptionID); err != nil {
+		s.logger.ErrorContext(ctx, "enqueue closed worker subscription cleanup", "code_session_id", codeSession.ExternalID, "error", err)
+	}
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {

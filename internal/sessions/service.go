@@ -370,9 +370,12 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) finishSessionRemoval(ctx context.Context, removal db.SessionRemoval) {
-	if removal.TerminatedCodeSession != "" && h.codeSessions != nil {
-		if err := h.codeSessions.TerminateManagedAgentCodeSession(ctx, removal.Session, removal.TerminatedCodeSession); err != nil {
-			h.logger.ErrorContext(ctx, "purge removed session worker events", "session_id", removal.Session.ExternalID, "code_session_id", removal.TerminatedCodeSession, "error", err)
+	if !removal.CleanupScheduled && h.codeSessions != nil {
+		codeSessionIDs := removal.CodeSessionIDs
+		for _, codeSessionID := range codeSessionIDs {
+			if err := h.codeSessions.TerminateManagedAgentCodeSession(ctx, removal.Session, codeSessionID); err != nil {
+				h.logger.ErrorContext(ctx, "purge removed session worker events", "session_id", removal.Session.ExternalID, "code_session_id", codeSessionID, "error", err)
+			}
 		}
 	}
 	h.publishSessionEvents(ctx, removal.StatusEvents)

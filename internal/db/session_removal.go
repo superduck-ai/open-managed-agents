@@ -9,16 +9,13 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
-// SessionRemoval reports accepted work cancelled by archive or delete. The
-// caller purges the worker queue and publishes StatusEvents after commit.
 type SessionRemoval struct {
-	Session               Session
-	TerminatedCodeSession string
-	StatusEvents          []SessionEvent
+	Session          Session
+	CodeSessionIDs   []string
+	CleanupScheduled bool
+	StatusEvents     []SessionEvent
 }
 
-// Removal may cancel accepted work that the worker has not started. Serialize
-// with input acceptance and worker reports using the same Session → Worker locks.
 func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string, archive bool) (SessionRemoval, error) {
 	session, err := lockSessionForEvents(ctx, NewSessionMapper(executor), workspaceUUID, sessionID)
 	if err != nil {
@@ -33,14 +30,8 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 		return SessionRemoval{}, err
 	}
 	var removal SessionRemoval
-	if found {
-		if session.Status != "idle" && worker.Status != "terminated" && worker.WorkerTurnStarted {
-			return SessionRemoval{}, ErrInvalidState
-		}
-		if _, err := codeSessions.TerminateByExternalID(ctx, session.OrganizationUUID, workspaceUUID, worker.ExternalID); err != nil {
-			return SessionRemoval{}, err
-		}
-		removal.TerminatedCodeSession = worker.ExternalID
+	if found && session.Status != "idle" && worker.Status != "terminated" && worker.WorkerTurnStarted {
+		return SessionRemoval{}, ErrInvalidState
 	}
 	eventID, err := ids.New("sevt_")
 	if err != nil {
@@ -51,4 +42,54 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 		UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.status_terminated", CreatedAt: now, ProcessedAt: now,
 	}})
 	return removal, err
+}
+
+func (d *DB) ConfigureSessionCleanup(enqueue func(context.Context, *yourbatis.Tx, SessionRemoval) error) {
+	d.sessionCleanup = enqueue
+}
+
+func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Executor, removal *SessionRemoval) error {
+	session := removal.Session
+	ids, err := NewCodeSessionMapper(executor).TerminateBySession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+	if err != nil {
+		return err
+	}
+	removal.CodeSessionIDs = ids
+	if len(ids) == 0 || d.sessionCleanup == nil {
+		return nil
+	}
+	if err := d.sessionCleanup(ctx, executor.(*yourbatis.Tx), *removal); err != nil {
+		return err
+	}
+	removal.CleanupScheduled = true
+	return nil
+}
+
+func (d *DB) retireSessionForEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) error {
+	for _, event := range events {
+		if event.EventType == "session.status_terminated" {
+			return d.retireSessionWorkersTx(ctx, executor, &SessionRemoval{Session: session})
+		}
+	}
+	return nil
+}
+
+func (d *DB) persistSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
+	created, err := insertSessionEventsTx(ctx, executor, session, events)
+	if err != nil {
+		return nil, err
+	}
+	return created, d.retireSessionForEventsTx(ctx, executor, session, created)
+}
+
+func (d *DB) persistSessionHistoryTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
+	created, err := insertSessionHistoryTx(ctx, executor, session, events)
+	if err != nil {
+		return nil, err
+	}
+	return created, d.retireSessionForEventsTx(ctx, executor, session, created)
+}
+
+func (d *DB) IsSessionRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error) {
+	return NewSessionMapper(d.mapperDB).IsRetired(ctx, organizationUUID, workspaceUUID, sessionUUID)
 }

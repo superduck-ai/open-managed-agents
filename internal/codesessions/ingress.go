@@ -203,6 +203,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 			h.logger.ErrorContext(r.Context(), "mark code session worker stream disconnected", "code_session_id", codeSessionID, "error", err)
 		}
 	}
+	defer h.service.reclaimClosedSubscription(codeSession, uuid.NewV4().String())
 	subscription, err := h.service.workerEvents.Subscribe(r.Context(), codeSessionID)
 	if err != nil {
 		disconnect()
@@ -215,6 +216,10 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 			h.logger.WarnContext(r.Context(), "close code session worker event subscription", "code_session_id", codeSessionID, "error", err)
 		}
 	}()
+	if err := h.db.ValidateCodeSessionWorkerEpoch(r.Context(), codeSessionID, epoch); err != nil {
+		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not connect code session worker stream")
+		return
+	}
 	header := w.Header()
 	header.Set("Content-Type", "text/event-stream")
 	header.Set("Cache-Control", "no-cache")

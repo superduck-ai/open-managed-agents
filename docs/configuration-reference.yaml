@@ -27,6 +27,7 @@ nats:
   connect_timeout: 5s
   drain_timeout: 10s
   worker_event_stream:
+    consumer_inactive_threshold: 5m
     max_bytes: 268435456
     max_age: 0s
     replicas: 3

@@ -125,12 +125,16 @@ func Subject(codeSessionID string) (string, error) {
 func consumerName(codeSessionID string) string { return "oma_worker_" + codeSessionID }
 
 type JetStreamBroker struct {
-	maxMessageBytes int32
-	connection      *nats.Conn
-	js              jetstream.JetStream
+	consumerInactiveThreshold time.Duration
+	maxMessageBytes           int32
+	connection                *nats.Conn
+	js                        jetstream.JetStream
 }
 
 func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerEventStreamConfig) (*JetStreamBroker, error) {
+	if cfg.ConsumerInactiveThreshold <= 0 {
+		return nil, errors.New("worker event consumer inactive threshold must be positive")
+	}
 	if connection == nil || !connection.IsConnected() {
 		return nil, nats.ErrDisconnected
 	}
@@ -142,7 +146,7 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	if cfg.MaxAge > 0 {
 		duplicates = min(duplicates, cfg.MaxAge)
 	}
-	_, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+	stream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:       StreamName,
 		Subjects:   []string{streamSubject},
 		Retention:  jetstream.WorkQueuePolicy,
@@ -157,7 +161,11 @@ func NewJetStream(ctx context.Context, connection *nats.Conn, cfg config.WorkerE
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event stream: %w", err)
 	}
-	return &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize}, nil
+	broker := &JetStreamBroker{connection: connection, js: js, maxMessageBytes: cfg.MaxMsgSize, consumerInactiveThreshold: cfg.ConsumerInactiveThreshold}
+	if err := broker.refreshConsumerInactivity(ctx, stream); err != nil {
+		return nil, err
+	}
+	return broker, nil
 }
 
 func (b *JetStreamBroker) Publish(ctx context.Context, messageID string, envelope EnvelopeV1) error {
@@ -211,15 +219,16 @@ func (b *JetStreamBroker) laneConsumer(ctx context.Context, codeSessionID string
 	}
 	name := lane.consumerName(codeSessionID)
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, StreamName, jetstream.ConsumerConfig{
-		Name:            name,
-		Durable:         name,
-		DeliverPolicy:   jetstream.DeliverAllPolicy,
-		AckPolicy:       jetstream.AckExplicitPolicy,
-		FilterSubject:   filter,
-		MaxDeliver:      -1,
-		BackOff:         []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute},
-		MaxAckPending:   1,
-		MaxRequestBatch: 1,
+		Name:              name,
+		Durable:           name,
+		DeliverPolicy:     jetstream.DeliverAllPolicy,
+		AckPolicy:         jetstream.AckExplicitPolicy,
+		FilterSubject:     filter,
+		MaxDeliver:        -1,
+		BackOff:           []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute},
+		MaxAckPending:     1,
+		MaxRequestBatch:   1,
+		InactiveThreshold: b.consumerInactiveThreshold,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ensure worker event consumer: %w", err)
@@ -313,6 +322,9 @@ func (b *JetStreamBroker) PurgeSession(ctx context.Context, codeSessionID string
 		return err
 	}
 	stream, err := b.js.Stream(ctx, StreamName)
+	if errors.Is(err, jetstream.ErrStreamNotFound) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

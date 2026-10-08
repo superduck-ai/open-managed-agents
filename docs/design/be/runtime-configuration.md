@@ -34,9 +34,10 @@ flowchart LR
 | `max_bytes` | 268435456（`1 << 28`，256 MiB） | 正数字节数 |
 | `max_age` | `0s`（不自动过期） | `0s` 或至少 `100ms` |
 | `replicas` | 3 | 1–5，且 NATS 集群有足够节点 |
+| `consumer_inactive_threshold` | `5m` | 正数；task/reply durable consumer 无有效 pull 活动后的回收阈值。待 ACK 和退避可能延迟回收。 |
 | `max_msg_size` | 1048576（1 MiB） | 正数，int32 字节数 |
 
-启动时通过 `CreateOrUpdateStream` 应用配置，修改后需要重启服务；所有 API 实例必须使用一致的值。发布前按 `max_msg_size` 校验最终 envelope。Stream 名称、subjects、WorkQueue retention、DiscardNew 和 FileStorage 保持固定。去重窗口默认 24 小时；非零 `max_age` 小于 24 小时时，去重窗口同步缩短至 `max_age`，满足 JetStream 的限制。100ms 下限来自 JetStream 去重窗口的最小值。设置非零 `max_age` 会让 NATS 自动删除到期消息，包括未 ACK 的消息，不再保证这些消息保留到应用的 30 天逻辑过期清理。
+启动时通过 `CreateOrUpdateStream` 应用 Stream 配置，并更新本项目已有 consumer 的过期阈值，修改后需要重启服务；所有 API 实例必须使用一致的值。发布前按 `max_msg_size` 校验最终 envelope。Stream 名称、subjects、WorkQueue retention、DiscardNew 和 FileStorage 保持固定。去重窗口默认 24 小时；非零 `max_age` 小于 24 小时时，去重窗口同步缩短至 `max_age`，满足 JetStream 的限制。100ms 下限来自 JetStream 去重窗口的最小值。设置非零 `max_age` 会让 NATS 自动删除到期消息，包括未 ACK 的消息，不再保证这些消息保留到应用的 30 天逻辑过期清理。
 
 Session SSE fanout 固定使用 Core NATS，不再提供 Redis Pub/Sub 实现或故障回退。Redis 仍用于平台登录会话等运行时协调能力；详见 [NATS 消息基础设施](nats-messaging-foundation.md)。
 

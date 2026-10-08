@@ -33,6 +33,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
@@ -180,6 +181,8 @@ func run(logger *slog.Logger) error {
 	defer stopRunner()
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 	workers := river.NewWorkers()
+	sessionCleanup := sessions.NewSessionCleanup(database, workerEventBroker)
+	sessionCleanup.Register(workers)
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
 	deploymentStore := deployments.NewStore(database).WithEventPayloadStorage(objectStore)
@@ -194,6 +197,7 @@ func run(logger *slog.Logger) error {
 	transcripts.Register(workers)
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
 		map[string]river.QueueConfig{
+			sessions.SessionCleanupQueue:       {MaxWorkers: 4},
 			environments.PrebuildQueue:         {MaxWorkers: 4},
 			deploymentjobs.Queue:               {MaxWorkers: 10},
 			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
@@ -209,6 +213,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("configure transcript archive: %w", err)
 	}
 	deploymentStore.Configure(jobClient)
+	sessionCleanup.Configure(jobClient)
 	prebuilds.Configure(jobClient)
 	if err := jobClient.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
@@ -224,6 +229,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			SessionCleanup:         sessionCleanup,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,

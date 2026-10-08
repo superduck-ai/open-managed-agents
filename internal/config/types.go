@@ -86,10 +86,11 @@ type RedisConfig struct {
 }
 
 type WorkerEventStreamConfig struct {
-	MaxBytes   int64         `yaml:"max_bytes"`
-	MaxAge     time.Duration `yaml:"max_age"`
-	Replicas   int           `yaml:"replicas"`
-	MaxMsgSize int32         `yaml:"max_msg_size"`
+	ConsumerInactiveThreshold time.Duration `yaml:"consumer_inactive_threshold"`
+	MaxBytes                  int64         `yaml:"max_bytes"`
+	MaxAge                    time.Duration `yaml:"max_age"`
+	Replicas                  int           `yaml:"replicas"`
+	MaxMsgSize                int32         `yaml:"max_msg_size"`
 }
 
 type NATSConfig struct {

@@ -233,6 +233,8 @@ end 使用 `model_usage` 和 `is_error`，通过 `model_request_start_id` 关联
 
 默认允许的工具可能由 Worker 直接执行，不经过 `can_use_tool` 回调。模型代理因此保留工具名称与完整 input；流式 input 从 `input_json_delta` 拼接，非流式 input 从 response content 读取。在成功模型响应结束时，按 Session agent snapshot 解析权限，对 `allow` 调用生成含 `evaluated_permission: allow` 与 `evaluation.type: always_allow` 的公开工具事件，并在同一批次的模型 end 之前持久化与广播。事件 ID 与权限回调、工具结果使用同一个 provider tool ID 映射，因此后来到达的回调不会生成重复调用。`ask`、`deny` 继续由原权限桥处理；代理记录调用不会批准工具或发送确认响应。子线程自动允许的调用保留子线程归属。
 
+完整模型响应中的工具 input 非法或不是 JSON object 时，观测器保留工具 ID/名称，把 input 包装为 `__unparsedToolInput: {raw, len}` 并标记参数拒绝，模型 end 仍标记 `invalid_response`。这类内置工具不论 snapshot 的权限策略是什么，都在 end 前发布 `evaluated_permission: deny` 的调用事件，不生成策略 evaluation 或确认请求；失败响应只发布参数被拒绝的调用，同响应里的正常调用不由此分支发布。Worker 的错误工具结果可能早于 assistant echo，因此不能等 echo 再补调用。代理在转发流式 message_stop 前持久化调用；结果使用同一稳定 ID，历史和 SSE 都先看到调用再看到结果。非流式响应仍在完整 body 转发后结束观察，不保证这项提前顺序。此分支不覆盖 custom/MCP、观测超限、传输失败或缺少 ID/名称的响应。
+
 Worker 的 runtime idle 不一定表示用户回合完成：模型返回工具调用后，工具执行和下一次模型请求仍属于同一回合。Worker idle 或 requires_action 发布前读取主线程最近的模型 end、中断或错误事实；成功模型 end 含有 `tool_use_ids` 且没有持久化的待确认请求时，不发布 idle 或 usage 快照。这也覆盖自动允许工具在等待内部许可回调时短暂上报的 requires_action，避免它被无待确认请求的状态映射变为 end_turn。真正的待确认请求仍按现有路径暂停并等待用户确认；最终无工具的模型 end、用户中断或失败后仍按现有路径收敛。该检查使用公开事件与待确认 metadata 读取边界，不引入第二份工具链状态。验收包含缺少权限回调的流式/非流式 Bash、回调重投去重，以及 Write→Read 的中间 idle/requires_action；外部 `oma-verify` 的三条内置工具用例检查 SSE/历史调用与结果 ID、真实文件内容、最终唯一 idle 和累计 usage。
 SSE 在最终消息后关闭该消息的预览，在 end 后只关闭其 `event_ids` 列出的预览，并忽略这些预览迟到的 start/delta；同线程重叠请求互不影响，不要求错误路径一定有最终消息。只有订阅了 stream delta 的连接记录已结束的预览 ID。
 

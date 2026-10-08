@@ -19,11 +19,17 @@ import (
 const chatAnswer = "你好，聊天验证完成。"
 
 type chatEvent struct {
-	ID        string  `json:"id"`
-	Type      string  `json:"type"`
-	ThreadID  string  `json:"session_thread_id"`
-	Processed *string `json:"processed_at"`
-	Content   []struct {
+	ID                  string          `json:"id"`
+	Type                string          `json:"type"`
+	ThreadID            string          `json:"session_thread_id"`
+	Processed           *string         `json:"processed_at"`
+	Name                string          `json:"name"`
+	Input               json.RawMessage `json:"input"`
+	ToolUseID           string          `json:"tool_use_id"`
+	IsError             bool            `json:"is_error"`
+	EvaluatedPermission string          `json:"evaluated_permission"`
+	Evaluation          json.RawMessage `json:"evaluation"`
+	Content             []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`

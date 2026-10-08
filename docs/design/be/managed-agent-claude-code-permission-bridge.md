@@ -115,7 +115,8 @@ Claude Code 执行工具前发出内部事件：
 
 - 直接解析 `control_request`，不保存私有 outbound event log。
 - 调用统一 permission handler 计算 effective policy。
-- `can_use_tool` 是唯一 public tool-use event 生产入口；`allow` / `ask` / `deny` 都先发布同一扁平事件。
+- `can_use_tool` 对 `allow` / `ask` / `deny` 都先发布同一扁平工具事件；模型代理也会补发无需权限回调的自动允许调用，事件 ID 相同以保证去重。
+- 非法 JSON 在 Worker 的参数校验阶段失败，不会进入 `can_use_tool`。模型代理保留这类内置工具的 ID、名称和原始 input，包装成 `__unparsedToolInput: {raw, len}`，在模型 end 前发布 `agent.tool_use`；之后接收 Worker 的错误 `agent.tool_result`。两者使用同一 provider tool ID 派生的公开 `sevt_...` ID。调用标记 `evaluated_permission=deny`，不制造策略 `evaluation` 或等待确认请求。这里的 deny 表示参数被拒绝，不表示已执行权限策略。assistant 工具块仍不投影，避免重复事件；此兼容分支仅覆盖内置工具，不覆盖 custom/MCP。
 - 对 `allow` / `deny` 再生成 inbound `control_response`，响应 UUID 由原始 `request_id` 稳定派生以保证重试幂等。
 - 对 `ask` 将后续确认所需的 provider tool id、`request_id`、`input` 和 thread 信息按 public event id 分别保存在 Code Session 私有 worker metadata，等待客户端发送确认事件。
 
@@ -253,7 +254,7 @@ agent toolset：
 1. 不自动发送 Claude Code `control_response`。
 2. 将该阻塞请求投影成 Managed Agents public event 契约：
    - `agent.tool_use` 或 `agent.mcp_tool_use` 带 `evaluated_permission=ask`。
-   - 一次工具调用只产生一条 public tool use 事件；assistant 原始 `tool_use` block 不做 public 投影，事件统一由 `can_use_tool` 产生。
+   - 一次正常工具调用只产生一条 public tool use 事件；assistant `tool_use` block 不做 public 投影。非法 JSON 在权限请求之前被拒绝时，由模型代理生成拒绝调用事件，不进入 `requires_action`。
    - public event 只保留 `id`、`type`、`name`、`input`、`evaluated_permission`、`processed_at` 及可选 thread/MCP 字段，不公开 provider tool id、worker `request_id`、`content` 或 `message`。
    - 事件 id 由 `code_session_id + provider tool id` 稳定派生；provider tool id、`request_id`、原始 input 和 thread 信息只保存在 Code Session 私有 worker metadata。
    - session 进入 idle / requires_action 状态。

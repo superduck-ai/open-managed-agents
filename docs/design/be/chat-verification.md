@@ -85,7 +85,8 @@ CLI 解析 `go test -json`，要求目标测试和 package 均 pass、所有阶�
 `chat.tools` 复用仓库已固定版本的官方 `anthropic-sdk-go`，连接本轮本地后端。SDK 发送任务、
 读取 `requires_action` 和 `agent.tool_use`、提交 `user.tool_confirmation`、读取最终历史。
 固定模型通过真实模型代理请求 Write，由真实 Worker 执行；SDK 本身不执行工具。
-先验证拒绝，再验证允许：确认前文件必须不存在；拒绝后仍不存在；允许后文件内容必须匹配。
+先验证非法 JSON：分别使用 always_ask 和 always_allow 策略，先订阅 SSE，再发送任务；模型流式返回含控制字符、中文和 emoji 的 Bash 参数。真实 Worker 应拒绝执行，下一次模型请求保留非法参数包装及错误工具结果，随后正常回复。SSE 和历史都必须先有拒绝调用，再有同 ID 关联的错误结果；调用/结果的事件 ID 在两边相同，最终为 idle/end_turn，没有 session.error、待确认或文件副作用。观测保存为 `malformed-tool-<policy>-observations.json`。测试精确比较 JSON 解码后的 raw 与原始输入，以及 len 与 Worker 使用的 UTF-16 code unit 数量；样本为 83 个 UTF-16 code unit、87 个 UTF-8 字节。此项不要求模型遇到非法参数就终止，模型可以继续处理错误。
+随后验证拒绝，再验证允许：确认前文件必须不存在；拒绝后仍不存在；允许后文件内容必须匹配。
 同时检查一次工具调用、结果、确认和最终回复，输入与回复队列都必须清空。
 此场景不调用 Anthropic 云端，不需要真实模型凭据，不包含 custom tool 或 MCP 覆盖。
 相关协议见 [Managed Agents tools](https://platform.claude.com/docs/en/managed-agents/tools)。

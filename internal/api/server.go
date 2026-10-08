@@ -313,7 +313,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
-			mcpServerHandler.RegisterRoutes(r)
+			mcpServerHandler.RegisterRoutes(r.With(platformCSRFMiddleware))
 			if s.consoleTunnels != nil {
 				r.With(platformCSRFMiddleware).Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
 			}

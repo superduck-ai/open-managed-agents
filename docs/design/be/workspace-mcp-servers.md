@@ -24,6 +24,8 @@ flowchart LR
 - `GET|POST /workspaces/{workspaceId}/mcp_servers`
 - `GET|POST|DELETE /workspaces/{workspaceId}/mcp_servers/{mcpServerId}`
 
+创建、更新和删除统一通过平台 CSRF 中间件校验 `X-CSRF-Token`，token 必须与当前 `sessionKey` 会话绑定；缺失或错误时返回 403，且不执行资源写入。GET 列表和详情不要求 CSRF token。
+
 列表只返回未删除的目录项，支持 `search`、`limit` 和 `page` 游标。跨组织或跨工作区访问统一返回 404；`default`、workspace external ID 与 UUID 都可作为当前已认证 workspace 的路径身份。平台镜像恢复出的组织别名只在受信 `platform.claude.com` host 接受。
 
 创建与更新请求：
@@ -67,7 +69,7 @@ Agent Create/Edit 的“自定义 MCP”页签加载当前未删除的目录项�
 
 ## 验收
 
-- Console API 覆盖规范化、重复冲突、跨租户 404、直接删除、游标分页和受信组织别名。
+- Console API 覆盖规范化、重复冲突、跨租户 404、直接删除、游标分页和受信组织别名；路由层覆盖缺失、错误及其他会话的 CSRF token 被拒绝，正确 token 可完成创建、更新和删除，GET 无需 token。
 - Mapper 单测覆盖每个方法、动态 SQL 分支、参数顺序、endpoint/search 敏感参数、多行/nullable、`sql.ErrNoRows` 与执行错误；真实 PostgreSQL 测试覆盖 `RETURNING`、工作区隔离和软删除。
 - 管理页覆盖资源列表、居中创建/编辑表单、右侧详情面板、编辑/删除菜单与游标分页。
 - Agent 表单覆盖 Directory 失败时仍可选择工作区 MCP、请求体只复制 `{name,type,url}`，以及历史未入库 MCP 的 Rendered 保存。

@@ -61,7 +61,7 @@ var scenarios = map[string]scenario{
 	"chat.public":      {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatPublicStart", Stages: []string{"public_runner_error_recovered", "public_session_started", "public_runner_roundtrip", "public_runner_multiple_work"}, Description: "公开创建会话，后台 Runner 连续领取工作，经本地 Docker 沙箱完成聊天"},
 	"chat.reliability": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatReliability", Stages: []string{"busy_input_rejected", "worker_stream_reconnected", "midstream_history_recovered", "public_stream_reconnected", "public_history_reconciled", "busy_input_retried", "worker_restarted"}, Description: "忙时拒绝与重试、Worker 重连与重启、公开 SSE 重订阅和历史对账"},
 	"chat.roundtrip":   {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatRoundtrip", Stages: []string{"sse_connected", "input_submitted", "preview_and_final_match", "history_recovered", "idle_and_drained"}, Description: "消息发送、中文流式预览、最终回复、历史恢复和队列清空"},
-	"chat.tools":       {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"tool_denied", "tool_allowed"}, Description: "通过 Go SDK 拒绝/允许 Write，核对文件副作用、事件历史和队列清空"},
+	"chat.tools":       {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTools", Stages: []string{"malformed_tool_rejected", "tool_denied", "tool_allowed"}, Description: "拒绝非法参数工具，核对 SSE/历史关联，再通过 Go SDK 拒绝/允许 Write 并核对副作用和队列清空"},
 
 	"chat.upstream-errors": {Package: testPackage, Timeout: 5 * time.Minute, Test: "TestChatUpstreamErrors", Stages: []string{"anthropic_401_failed_and_idle", "generic_401_failed_and_idle", "backoff_500_interrupted_and_recovered"}, Description: "真实 Worker 的上游 401 自然失败收敛、500 退避中断与下一轮恢复"},
 }

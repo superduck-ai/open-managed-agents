@@ -22,7 +22,13 @@ func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelReques
 	var payloads []json.RawMessage
 	for _, tool := range tools {
 		permission, identity := resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, tool.Name)
-		if permission != resolvedToolPermissionAllow {
+		if tool.InputRejected {
+			eventType, _ := toolPermissionPublicIdentity(tool.Name, identity)
+			if identity.Kind != "agent_toolset" || eventType != "agent.tool_use" {
+				continue
+			}
+			permission = resolvedToolPermissionDeny
+		} else if permission != resolvedToolPermissionAllow {
 			continue
 		}
 		var input map[string]any

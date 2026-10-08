@@ -225,6 +225,7 @@ func run(logger *slog.Logger) error {
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
 			Prebuilds:              prebuilds,
+			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,
 			DB:                     database,
 			Deployments:            deploymentStore,

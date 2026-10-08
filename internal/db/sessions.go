@@ -351,8 +351,11 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalI
 			return err
 		}
 		row, err := NewSessionMapper(executor).Archive(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return mapNoRows(err)
+		}
 		removal.Session = row.session()
-		return mapNoRows(err)
+		return NewSandboxLifecycleMapper(executor).BeginArchiveStop(ctx, removal.Session.OrganizationUUID, workspaceUUID, removal.Session.UUID)
 	})
 	return removal, err
 }

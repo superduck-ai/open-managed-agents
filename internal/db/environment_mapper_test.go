@@ -345,10 +345,9 @@ func TestEnvironmentSandboxMapperBuilderContracts(t *testing.T) {
 			bound:     buildEnvironmentSandboxMapperUpdateState(yourbatis.DialectPostgres, stateParams),
 			wantID:    "EnvironmentSandboxMapper.UpdateState", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.State", "params.ProviderSandboxID", "params.LastError", "params.StoppedAt",
-				"params.WorkspaceUUID", "params.ExternalID",
+				"params.WorkspaceUUID", "params.ExternalID", "params.State", "params.ProviderSandboxID", "params.LastError", "params.StoppedAt",
 			},
-			wantSensitiveArgumentNames: []string{"params.LastError"}, wantSQLFragments: []string{"UPDATE environment_sandboxes", "workspace_uuid = $5"},
+			wantSensitiveArgumentNames: []string{"params.LastError"}, wantSQLFragments: []string{"UPDATE environment_sandboxes", "workspace_uuid = $1", "target.archived", "session_archived"},
 		}},
 		{"find active", mapperBuilderContract{
 			statement: environmentSandboxMapperFindActiveForWorkStatement,

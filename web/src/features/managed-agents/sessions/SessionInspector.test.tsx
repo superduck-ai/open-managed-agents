@@ -42,6 +42,19 @@ function renderInspector(
 }
 
 describe('SessionInspector', () => {
+  test('shows a reported zero tool duration in call details', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    const events = [
+      { ...toolUseEvent('tool_bash', 'Bash', '2026-08-27T08:00:00.000Z'), duration_ms: 300 },
+      { ...toolResultEvent('result_bash', 'tool_bash', '2026-08-27T08:00:01.000Z'), duration_ms: 0 },
+    ];
+    renderInspector({ activeTab: 'tools', events });
+    await act(async () => Promise.resolve());
+    fireEvent.click(screen.getByText('bash').closest('tr')!);
+
+    expect(screen.getByText('completed').closest('tr')?.textContent).toContain('0ms');
+  });
+
   test('does not invent a zero cost when usage is missing', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
 

@@ -17,7 +17,7 @@ import {
 } from '../types';
 import { compactEntityId, numericValueFromKeys, toRecord } from '../utils';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loader2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loader2, Timer, Wrench } from 'lucide-react';
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { formatSessionDuration } from './sessionDetailModel';
@@ -172,6 +172,7 @@ function TranscriptMessageRow({
           speaker={speaker}
           processedAtMs={entry.processedAtMs}
           relativeTime={entry.relativeTime}
+          durationMs={speaker === 'agent' ? sessionTranscriptEntryDurationMs(entry) : undefined}
           selected={selected}
           onSelect={onSelect}
         />
@@ -252,6 +253,7 @@ export function TranscriptSpeakerHeader({
   speaker,
   processedAtMs,
   relativeTime,
+  durationMs,
   selected,
   onSelect,
 }: {
@@ -259,6 +261,7 @@ export function TranscriptSpeakerHeader({
   speaker: 'agent' | 'user';
   processedAtMs: number;
   relativeTime: string;
+  durationMs?: number;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -286,6 +289,12 @@ export function TranscriptSpeakerHeader({
         <span className="truncate">{label}</span>
       </Button>
       <time className="shrink-0 font-mono text-[11px] font-normal text-muted-foreground">{time}</time>
+      {durationMs !== undefined ? (
+        <span className="ml-auto inline-flex items-center gap-1 font-mono">
+          <Timer className="size-3.5" aria-hidden />
+          {formatSessionDuration(durationMs, formatters, msg)}
+        </span>
+      ) : null}
     </MessageHeader>
   );
 }

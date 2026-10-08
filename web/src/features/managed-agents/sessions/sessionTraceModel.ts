@@ -23,7 +23,7 @@ import {
   type ToolCallEntry,
   type ToolLifecycle,
 } from '../types';
-import { compactEntityId, numericValueFromKeys, objectRecord, stringValueFromKeys, toRecord } from '../utils';
+import { compactEntityId, optionalNumericValueFromKeys, objectRecord, stringValueFromKeys, toRecord } from '../utils';
 import {
   addSessionEventUsage,
   emptySessionEventUsage,
@@ -735,7 +735,7 @@ export function displayEntryFromTraceEntry(
     ...baseEventEntry(traceEntry, kind, traceStartMs, msg),
     kind,
     usage: extractSessionEventUsage(event),
-    inferenceMs: sessionEventInferenceMs(event),
+    inferenceMs: sessionEventInferenceMs(event) ?? 0,
     executionMs: durationMs,
     inProgress: sessionDisplayEntryInProgress(event, kind),
     outcomeStatus,
@@ -761,7 +761,7 @@ export function toolCallEntryFromTraceEntry(
     resultEvent,
     confirmationEvent,
     usage: extractSessionEventUsage(event),
-    inferenceMs: sessionEventInferenceMs(event),
+    inferenceMs: sessionEventInferenceMs(event) ?? 0,
     executionMs: sessionToolExecutionMs(event, resultEvent, confirmationEvent),
     lifecycle: sessionToolLifecycle(event, resultEvent, confirmationEvent),
     bracketId: sessionEventBracketId(event),
@@ -949,7 +949,7 @@ export function sessionEventProcessedTimestamp(event: QuickstartSessionEvent) {
 }
 
 export function sessionEventInferenceMs(event: QuickstartSessionEvent) {
-  return numericValueFromKeys(event, ['inference_ms', 'model_duration_ms', 'model_request_duration_ms']);
+  return optionalNumericValueFromKeys(event, ['inference_ms', 'model_duration_ms', 'model_request_duration_ms']);
 }
 
 export function sessionToolLifecycle(

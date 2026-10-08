@@ -131,6 +131,32 @@ describe('session inspector event order', () => {
 });
 
 describe('session inspector tool metrics', () => {
+  test.each([
+    [0, false, 0],
+    [40, false, 40],
+    [0, true, 0],
+    [40, true, 40],
+    [undefined, false, 1000],
+    [-1, false, 1000],
+  ] as const)(
+    'uses valid execution duration %s for finished-call p50 (failed: %s)',
+    (durationMs, isError, expected) => {
+      const rows = buildInspectorToolRows(
+        [
+          toolUse('tool_bash', 'Bash', '2026-08-27T08:00:00.000Z'),
+          {
+            ...toolResult('result_bash', 'tool_bash', '2026-08-27T08:00:01.000Z'),
+            duration_ms: durationMs,
+            is_error: isError,
+          },
+        ],
+        null,
+      );
+
+      expect(rows[0]?.p50Ms).toBe(expected);
+    },
+  );
+
   test('counts calls across threads and calculates failures and finished-call p50 latency', () => {
     const events: QuickstartSessionEvent[] = [
       toolUse('tool_bash_ok', 'Bash', '2026-08-27T08:00:00.000Z'),

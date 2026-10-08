@@ -42,17 +42,20 @@ function renderInspector(
 }
 
 describe('SessionInspector', () => {
-  test('shows a reported zero tool duration in call details', async () => {
+  test.each([0, 40])('shows reported tool duration %s consistently in the call table and p50', async (durationMs) => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
     const events = [
       { ...toolUseEvent('tool_bash', 'Bash', '2026-08-27T08:00:00.000Z'), duration_ms: 300 },
-      { ...toolResultEvent('result_bash', 'tool_bash', '2026-08-27T08:00:01.000Z'), duration_ms: 0 },
+      { ...toolResultEvent('result_bash', 'tool_bash', '2026-08-27T08:00:01.000Z'), duration_ms: durationMs },
     ];
     renderInspector({ activeTab: 'tools', events });
     await act(async () => Promise.resolve());
-    fireEvent.click(screen.getByText('bash').closest('tr')!);
+    const toolRow = screen.getByText('bash').closest('tr')!;
+    expect(toolRow.querySelectorAll('td')[4]?.textContent).toBe(`${durationMs}ms`);
+    fireEvent.click(toolRow);
 
-    expect(screen.getByText('completed').closest('tr')?.textContent).toContain('0ms');
+    expect(screen.getByText('completed').closest('tr')?.textContent).toContain(`${durationMs}ms`);
+    expect(screen.getByText('p50', { selector: 'dt' }).nextElementSibling?.textContent).toBe(`${durationMs}ms`);
   });
 
   test('does not invent a zero cost when usage is missing', async () => {

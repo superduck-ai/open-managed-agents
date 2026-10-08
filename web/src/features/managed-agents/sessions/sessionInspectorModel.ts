@@ -330,14 +330,15 @@ function inspectorToolExecutionMs(call: ToolCallEntry) {
   if ((call.lifecycle !== 'completed' && call.lifecycle !== 'failed') || !call.resultEvent) {
     return undefined;
   }
+  if (call.executionMs !== undefined && Number.isFinite(call.executionMs) && call.executionMs >= 0) {
+    return call.executionMs;
+  }
   const startedAt = sessionEventTimestamp(call.confirmationEvent ?? call.event);
   const finishedAt = sessionEventTimestamp(call.resultEvent);
   if (startedAt && finishedAt >= startedAt) {
     return finishedAt - startedAt;
   }
-  return call.executionMs !== undefined && Number.isFinite(call.executionMs) && call.executionMs >= 0
-    ? call.executionMs
-    : undefined;
+  return undefined;
 }
 
 function inspectorToolSpanMs(calls: ToolCallEntry[], span: (call: ToolCallEntry) => [number, number] | null) {

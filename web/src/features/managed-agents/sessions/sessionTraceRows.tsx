@@ -17,10 +17,11 @@ import {
 } from '../types';
 import { compactEntityId, numericValueFromKeys, toRecord } from '../utils';
 import clsx from 'clsx';
-import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loader2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Ban, Check, ChevronRight, CircleX, Clock3, Loader2, Timer, Wrench } from 'lucide-react';
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
 import { formatSessionDuration } from './sessionDetailModel';
+import { sessionTranscriptEntryDurationMs } from './sessionTranscriptModel';
 import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
   sessionEventFamily,
@@ -127,7 +128,7 @@ export function DisplayEventRow({
         ) : null}
         <MetaStrip
           usage={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.usage : undefined}
-          inferenceMs={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.inferenceMs : undefined}
+          durationMs={sessionTranscriptEntryDurationMs(entry)}
           isError={entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}
@@ -171,6 +172,7 @@ function TranscriptMessageRow({
           speaker={speaker}
           processedAtMs={entry.processedAtMs}
           relativeTime={entry.relativeTime}
+          durationMs={speaker === 'agent' ? sessionTranscriptEntryDurationMs(entry) : undefined}
           selected={selected}
           onSelect={onSelect}
         />
@@ -251,6 +253,7 @@ export function TranscriptSpeakerHeader({
   speaker,
   processedAtMs,
   relativeTime,
+  durationMs,
   selected,
   onSelect,
 }: {
@@ -258,6 +261,7 @@ export function TranscriptSpeakerHeader({
   speaker: 'agent' | 'user';
   processedAtMs: number;
   relativeTime: string;
+  durationMs?: number;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -285,6 +289,12 @@ export function TranscriptSpeakerHeader({
         <span className="truncate">{label}</span>
       </Button>
       <time className="shrink-0 font-mono text-[11px] font-normal text-muted-foreground">{time}</time>
+      {durationMs !== undefined ? (
+        <span className="ml-auto inline-flex items-center gap-1 font-mono">
+          <Timer className="size-3.5" aria-hidden />
+          {formatSessionDuration(durationMs, formatters, msg)}
+        </span>
+      ) : null}
     </MessageHeader>
   );
 }
@@ -309,8 +319,8 @@ function TranscriptThinkingRow({
 }) {
   const { msg } = useI18n();
   const inProgress = Boolean(entry.inProgress || entry.displayEvent.isStreaming);
-  const durationSeconds =
-    entry.bracketStartMs === undefined ? undefined : (entry.processedAtMs - entry.bracketStartMs) / 1000;
+  const durationMs = sessionTranscriptEntryDurationMs(entry);
+  const durationSeconds = durationMs === undefined ? undefined : durationMs / 1000;
   const duration =
     durationSeconds !== undefined && Number.isFinite(durationSeconds) && durationSeconds >= 0
       ? `${durationSeconds.toFixed(durationSeconds < 10 ? 1 : 0)}s`
@@ -373,7 +383,8 @@ export function ToolCallRow({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const duration = formatSessionDuration(entry.executionMs, formatters, msg);
+  const duration =
+    entry.executionMs === undefined ? undefined : formatSessionDuration(entry.executionMs, formatters, msg);
   return (
     <div
       data-event-id={entry.traceEntry.id}
@@ -438,7 +449,7 @@ function CompactToolRowContent({
 }: {
   name: string;
   preview: string;
-  duration: string;
+  duration?: string;
   lifecycle: ToolLifecycle;
 }) {
   return (
@@ -548,7 +559,7 @@ export function OutcomeRow({
         )}
         <MetaStrip
           usage={entry.usage}
-          executionMs={entry.durationMs}
+          durationMs={entry.durationMs}
           isError={entry.isError}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}

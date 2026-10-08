@@ -4,14 +4,35 @@ import { TooltipProvider } from '../../../shared/ui/tooltip';
 import { resetTestDom } from '../../../test/setup';
 import { type QuickstartSessionEvent } from '../types';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
-import { DebugDetailPanel } from './SessionTracePanel';
-import { buildSessionEventEntries } from './sessionTraceModel';
+import { BatchDetailPanel, DebugDetailPanel } from './SessionTracePanel';
+import { buildSessionEventEntries, toolBatchEntry } from './sessionTraceModel';
 
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 
 afterEach(cleanup);
 
 describe('DebugDetailPanel', () => {
+  test('shows a reported zero duration in a batch call section', () => {
+    resetTestDom();
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'write', type: 'agent.tool_use', name: 'Write', input: {}, duration_ms: 300 },
+        { id: 'written', type: 'agent.tool_result', tool_use_id: 'write', content: 'Done', duration_ms: 0 },
+      ],
+      'transcript',
+    );
+    const call = entries.find((entry) => entry.kind === 'tool_call');
+    if (!call || call.kind !== 'tool_call') throw new Error('Expected a tool call');
+
+    render(
+      <I18nProvider initialLocale="en">
+        <BatchDetailPanel entry={toolBatchEntry([call])} />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText('0ms')).toBeTruthy();
+  });
+
   test('switches from the raw event to live delta frames', () => {
     resetTestDom();
     const event: QuickstartSessionEvent = {

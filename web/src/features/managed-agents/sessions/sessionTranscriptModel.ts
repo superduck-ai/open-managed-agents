@@ -1,6 +1,6 @@
 import { type DisplayEventEntry, type SessionEventListEntry } from '../types';
 import { sessionEventThreadId } from './sessionDetailModel';
-import { sessionSubagentName } from './sessionTraceModel';
+import { sessionEventInferenceMs, sessionSubagentName } from './sessionTraceModel';
 
 export type SessionTranscriptIteration = {
   id: string;
@@ -27,6 +27,27 @@ export type SessionTranscriptBlock =
       kind: 'standalone';
       entry: SessionEventListEntry;
     };
+
+export function sessionTranscriptEntryDurationMs(entry: SessionEventListEntry): number | undefined {
+  if (entry.kind === 'idle_gap') return entry.durationMs;
+  if (entry.kind === 'tool_call' || entry.kind === 'tool_batch') return entry.executionMs;
+  const reportedMs =
+    entry.displayEvent.type === 'agent'
+      ? (sessionEventInferenceMs(entry.event) ?? entry.executionMs)
+      : entry.executionMs;
+  if (reportedMs !== undefined) return reportedMs;
+  if (entry.inProgress || entry.displayEvent.isStreaming || entry.bracketOpen) return undefined;
+  if (entry.displayEvent.type === 'thinking') {
+    return entry.bracketStartMs === undefined ? undefined : Math.max(0, entry.processedAtMs - entry.bracketStartMs);
+  }
+  if (entry.displayEvent.type === 'agent') {
+    if (entry.bracketStartMs !== undefined && entry.bracketEndMs !== undefined) {
+      return Math.max(0, entry.inferenceMs, entry.bracketEndMs - entry.bracketStartMs);
+    }
+    return entry.inferenceMs > 0 ? entry.inferenceMs : undefined;
+  }
+  return undefined;
+}
 
 export function buildSessionTranscriptBlocks(entries: SessionEventListEntry[]): SessionTranscriptBlock[] {
   const blocks: SessionTranscriptBlock[] = [];

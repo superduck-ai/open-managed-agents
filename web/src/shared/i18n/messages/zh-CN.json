@@ -986,7 +986,6 @@
   "managedAgents.sessions.trace.noMatchingEvents": "没有事件匹配当前筛选条件。",
   "managedAgents.sessions.trace.noResult": "暂无结果",
   "managedAgents.sessions.trace.model": "模型",
-  "managedAgents.sessions.trace.modelInferenceDuration": "模型推理：{duration}",
   "managedAgents.sessions.trace.modelRequestComplete": "模型请求完成",
   "managedAgents.sessions.trace.modelRequestStart": "模型请求开始",
   "managedAgents.sessions.trace.modelUsage": "{input} 输入 → {output} 输出",

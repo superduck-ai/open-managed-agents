@@ -837,7 +837,7 @@ export function CallSection({
         <SectionHeader title={title} />
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           <ApprovalChip lifecycle={lifecycle} />
-          {executionMs ? (
+          {executionMs !== undefined ? (
             <span className="inline-flex items-center gap-1 font-mono">
               <Timer className="size-3.5" aria-hidden />
               {formatSessionDuration(executionMs, formatters, msg)}

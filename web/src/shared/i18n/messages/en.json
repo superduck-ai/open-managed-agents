@@ -986,7 +986,6 @@
   "managedAgents.sessions.trace.noMatchingEvents": "No events match the current filters.",
   "managedAgents.sessions.trace.noResult": "No result",
   "managedAgents.sessions.trace.model": "Model",
-  "managedAgents.sessions.trace.modelInferenceDuration": "Model inference: {duration}",
   "managedAgents.sessions.trace.modelRequestComplete": "Model request complete",
   "managedAgents.sessions.trace.modelRequestStart": "Model request start",
   "managedAgents.sessions.trace.modelUsage": "{input} input → {output} output",
